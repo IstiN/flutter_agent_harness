@@ -15,36 +15,14 @@ Two flavors are supported:
   `MACOS_IDENTITY` to a Developer ID certificate for distribution; the
   default `-` produces an ad-hoc signed local build.
 
-## Local test & CRAP measurement (issue #490)
+## Local test runs aligned with CI (issues #490, #1851)
 
 The suite is not wedged — a "75-minute coverage hang" report was a
 measurement-procedure artifact (coverage instrumentation × default
 concurrency-4 file IO thrash), not a stuck test. The supported local
-full-suite run:
-
-```bash
-cd flutter_app
-flutter test --concurrency=2 --timeout 120s
-```
-
-That completes in ~20 minutes with zero timeouts. Anti-pattern: never
-run `--coverage` with default concurrency locally — 14 concurrent
-flutter_tester processes crawl for 75+ minutes and produce no lcov.
-
-Expected local-red classes (all benign, see the 2026-09-16 evidence run:
-1994 passed / 26 skipped / 85 failed):
-
-- **Golden failures** — goldens are host-locked (they encode CI-machine
-  fonts/emoji/shadows; guarded by build-macos.yml and the nightly matrix,
-  never by local runs). For a clean signal, filter them out exactly like
-  CI does:
-  `flutter test --concurrency=2 --timeout 120s --exclude-tags integration $(find test -name '*_test.dart' ! -path '*/golden/*' ! -path '*/cli_visual/*')`
-- **Deliberately red ACs of in-flight cards** —
-  `wasm_sandbox_toolchain_test` (#337) and
-  `session_oversized_windowed_test` (#381) fail on main on purpose until
-  those cards land.
-- `[fah][sessions] open … loading from disk` spam is session_reuse /
-  oversized-window tests doing their job, not a hang.
+full-suite run keeps `--concurrency=2`; never run `--coverage` with
+default concurrency locally — 14 concurrent flutter_tester processes
+crawl for 75+ minutes and produce no lcov.
 
 **CRAP numbers are valid only from CI.** The `app-crap-gate` job ranks
 from shard-merged lcov (union DA hits); a local ad-hoc `crap4dart
@@ -57,6 +35,86 @@ tools/crap_top.sh 100      # top-100
 ```
 
 or download the raw JSON: `gh run download -R IstiN/flutter_agent_harness -n crap_report`.
+
+### One copy-pasteable block per CI leg (issue #1851 AC1)
+
+All blocks run from `flutter_app/` on a macOS dev host. Common prep
+first (mirrors the ci.yml `flutter-tests` setup steps — both files are
+gitignored hard build inputs):
+
+```bash
+cd flutter_app
+ulimit -n 10240            # macOS agent shells: 256 FDs wedge the suite for hours
+cat > .env << 'EOF'        # placeholder .env asset
+OPENROUTER_API_KEY=
+MODEL_ID=
+BASE_URL=
+HUGGINGFACE_TOKEN=
+EOF
+cp firebase_options.template.dart lib/firebase_options.dart
+flutter pub get
+```
+
+**PR gate** (`ci.yml` `flutter-tests`, shards 0/1) — same `find` filter
+the leg uses (goldens and cli_visual out); NO `--timeout` flag: CI runs
+the per-test default, and a local `--timeout=120s` kills slow tests and
+invents failures (issue #1851):
+
+```bash
+find test -name '*_test.dart' ! -path '*/golden/*' ! -path '*/cli_visual/*' \
+  | sort | awk 'NR % 2 == 0' > /tmp/shard0.txt    # shard 1: NR % 2 == 1
+flutter test --exclude-tags integration $(cat /tmp/shard0.txt)
+```
+
+**JS-engine exclusion zone** (`ci.yml` `flutter-app-exzone`, the macOS
+leg for `test/apps`):
+
+```bash
+flutter test --exclude-tags integration test/apps
+```
+
+**Terminal visual** (`ci.yml` `pty-visual`) — integration tags ON, PTY
+budget stretched for loaded hosts, NO per-test timeout:
+
+```bash
+FA_PTY_BUDGET_SCALE=2 flutter test test/cli_visual --tags integration
+```
+
+**WASM sandbox toolchain** (`nightly.yml` build-release macos row,
+issue #1851 AC4) — needs the native `libwasm_run_dart.dylib`; the test
+cannot download it itself (flutter_tester mocks sockets after binding
+init), so seed it first:
+
+```bash
+mkdir -p .dart_tool/wasm_run temp
+curl -L --retry 3 -o temp/macos.tar.gz \
+  https://github.com/juancastillo0/wasm_run/releases/download/wasm_run-v0.1.0/macos.tar.gz
+tar xzf temp/macos.tar.gz -C temp
+cp temp/macos-arm64/libwasm_run_dart.dylib .dart_tool/wasm_run/
+WASM_RUN_DART_DYNAMIC_LIBRARY=$PWD/.dart_tool/wasm_run/libwasm_run_dart.dylib \
+  flutter test test/wasm_sandbox_toolchain_test.dart --tags integration
+```
+
+**Golden suite** — host-locked: goldens encode the rendering host's
+fonts/emoji/shadows and redden across minor SDK differences (the
+dynamic_messages saga). Local red here is expected environment noise,
+not a regression:
+
+```bash
+flutter test test/golden
+```
+
+### Why local can be red while CI is green (issue #1851, measured 2026-10-25)
+
+Whole `flutter_app/test` tree on origin/main (macOS arm64, no
+`--timeout`, integration tags on): **4156 passed / ~50 skipped / 36
+failed in ~4.3 min**. Full per-test classification table lives in issue
+#1851. The ci.yml comment "goldens stay guarded by build-macos.yml and
+the nightly full matrix" is STALE: build-macos.yml has never contained
+a `flutter test` step (whole git history) and gh-1538 retired nightly's
+full-suite backstop — nightly is builds + integration-only. At HEAD no
+leg guards the golden suite; the pinned-font golden migration follow-up
+(#1856) is the systemic fix tracked from issue #177 E5/OQ3.
 
 ## Getting Started
 

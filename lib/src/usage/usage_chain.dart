@@ -423,6 +423,13 @@ final class _PendingSummary {
           }
         }
       }
+      // issue #1882 AC1: stripped records fold older messages into a
+      // {count, chars} aggregate — its chars are part of the estimation
+      // basis exactly like the per-message ones.
+      final dropped = data['droppedMessages'];
+      if (dropped is Map) {
+        chars += dropped['chars'] as int? ?? 0;
+      }
     }
     return _PendingSummary(chars, systemChars);
   }

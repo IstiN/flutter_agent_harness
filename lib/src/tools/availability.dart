@@ -554,20 +554,31 @@ ToolsConfig parseToolsSpec(String csv) {
   for (final raw in trimmed.split(',')) {
     final token = raw.trim();
     if (token.isEmpty) continue;
-    final separator = token.indexOf('=');
-    final id = separator < 0 ? '' : token.substring(0, separator).trim();
-    final value = separator < 0
-        ? ''
-        : token.substring(separator + 1).trim().toLowerCase();
-    final enabled = switch (value) {
-      'on' || 'true' => true,
-      'off' || 'false' => false,
-      _ => null,
-    };
-    if (id.isEmpty || enabled == null) {
-      throw ConfigException('invalid tools spec token: "$token"');
-    }
+    final (id, enabled) = _parseToolsToken(token);
     tools[id] = enabled;
   }
   return ToolsConfig(tools: tools);
 }
+
+/// Parses one `id=value` token; throws [ConfigException] naming [token]
+/// when the id or the value is malformed.
+(String, bool) _parseToolsToken(String token) {
+  final separator = token.indexOf('=');
+  final id = separator < 0 ? '' : token.substring(0, separator).trim();
+  final value = separator < 0
+      ? ''
+      : token.substring(separator + 1).trim().toLowerCase();
+  final enabled = _parseToolsEnabled(value);
+  if (id.isEmpty || enabled == null) {
+    throw ConfigException('invalid tools spec token: "$token"');
+  }
+  return (id, enabled);
+}
+
+/// `on`/`true` → true, `off`/`false` → false (case handled by the
+/// caller's lower-casing), anything else → null (malformed).
+bool? _parseToolsEnabled(String value) => switch (value) {
+  'on' || 'true' => true,
+  'off' || 'false' => false,
+  _ => null,
+};

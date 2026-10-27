@@ -198,7 +198,6 @@ extension SettingsFlow on AgentCli {
       apply: (choice) async {
         final entry = choice.savedEntry;
         if (entry != null) {
-          _activeCustomName = entry.name;
           final keyName = entry.keyName;
           final token = keyName != null
               ? config.secureKeys?.read(keyName)
@@ -210,6 +209,9 @@ extension SettingsFlow on AgentCli {
             token: token,
             tokenKeyName: keyName,
             authHeader: entry.authHeader,
+            // The switch WRITES the pin: the saved entry binds the gate
+            // (issue #1921) and stays the active custom name after it.
+            customName: entry.name,
           );
           // Keep the entry's last-used model in sync (the flow bypasses
           // _switchModel, which normally records it).
@@ -1410,6 +1412,20 @@ extension SettingsFlow on AgentCli {
     }
   }
 
+  /// Reads [path] for the surgical `mcp:` write: the file's text, `''`
+  /// when absent, or null (reason printed) when unreadable.
+  Future<String?> _readMcpSourceForWrite(String path) async {
+    switch (await _env.readTextFile(path)) {
+      case Ok(:final value):
+        return value;
+      case Err(:final error) when error.code == FileErrorCode.notFound:
+        return '';
+      case Err(:final error):
+        io.writeln('mcp: cannot read $path: $error — not saved');
+        return null;
+    }
+  }
+
   /// The surgical `mcp:` write shared by every action: block replace in
   /// [path] (absent block appends), validated with the real parser BEFORE
   /// the write (AC4), then the same section diff applied to the live
@@ -1420,16 +1436,8 @@ extension SettingsFlow on AgentCli {
     McpConfig next, {
     required McpConfig before,
   }) async {
-    final String source;
-    switch (await _env.readTextFile(path)) {
-      case Ok(:final value):
-        source = value;
-      case Err(:final error) when error.code == FileErrorCode.notFound:
-        source = '';
-      case Err(:final error):
-        io.writeln('mcp: cannot read $path: $error — not saved');
-        return false;
-    }
+    final source = await _readMcpSourceForWrite(path);
+    if (source == null) return false;
     final edited = _replaceTopLevelYamlBlock(source, 'mcp', next.toYaml());
     // Never persist a file the next boot would reject.
     final doc = loadYaml(edited);
@@ -1736,11 +1744,12 @@ extension SettingsFlow on AgentCli {
 
   /// The settings-hub row and `/settings` summary label for the image
   /// registry (issue #395): the kill-switch state (what `registry: false`
-  /// means — byte-identical legacy requests) and the per-request cap.
+  /// means — byte-identical legacy requests) and the per-request caps.
   String _imagesStatusLabel() {
     final cfg = imageRegistryConfig;
     return '${cfg.enabled ? 'on' : 'off · legacy request shape'} · '
-        'cap ${cfg.maxPerRequest}';
+        'cap ${cfg.maxPerRequest} · '
+        '~${(cfg.maxBytesPerRequest / (1024 * 1024)).toStringAsFixed(0)}MB';
   }
 
   /// Settings → Images: the `images:` config section (issue #395) — the
@@ -1772,6 +1781,8 @@ extension SettingsFlow on AgentCli {
         ], '${!imageRegistryConfig.enabled}');
       case 'maxPerRequest':
         await _askImagesCap();
+      case 'maxBytesPerRequest':
+        await _askImagesByteCap();
     }
   }
 
@@ -1789,6 +1800,12 @@ extension SettingsFlow on AgentCli {
         'maxPerRequest',
         'Per-request cap',
         '${cfg.maxPerRequest} unique image(s) per request',
+      ),
+      (
+        'maxBytesPerRequest',
+        'Per-request image budget',
+        '~${(cfg.maxBytesPerRequest / (1024 * 1024)).toStringAsFixed(0)}MB '
+            'of base64 per request',
       ),
       ('done', 'Done', ''),
     ];
@@ -1954,6 +1971,20 @@ extension SettingsFlow on AgentCli {
     final value = answer.trim();
     if (value.isEmpty) return;
     await _writeImagesKey(const ['images', 'maxPerRequest'], value);
+  }
+
+  /// The per-request image byte budget prompt (issue #1916): a plain
+  /// integer of base64 chars (the wire size of one request's images).
+  Future<void> _askImagesByteCap() async {
+    final current = imageRegistryConfig.maxBytesPerRequest;
+    final currentMb = (current / (1024 * 1024)).toStringAsFixed(0);
+    final answer = await _askLine(
+      "per-request image budget in bytes (empty keeps '$current, ~$currentMb MB'): ",
+    );
+    if (answer == null) return;
+    final value = answer.trim();
+    if (value.isEmpty) return;
+    await _writeImagesKey(const ['images', 'maxBytesPerRequest'], value);
   }
 
   /// The shared write path: a USER-file upsert of [segments] → [value]
@@ -2237,6 +2268,26 @@ extension SettingsFlow on AgentCli {
     }
   }
 
+  /// Reads the config file [path] for a surgical yaml edit: the current
+  /// source text — an empty string when the file does not exist yet — or
+  /// null when the read failed (already reported "not saved"; the caller
+  /// writes nothing). Split out of [_upsertConfigYaml] to stay under the
+  /// repo's CRAP ratchet (crap4dart threshold 12 — the gh-1787 parse
+  /// guard pushed the body over it), the established
+  /// split-into-a-helper pattern of this library.
+  Future<String?> _readConfigSource(String path) async {
+    final read = await _env.readTextFile(path);
+    switch (read) {
+      case Ok(:final value):
+        return value;
+      case Err(:final error) when error.code == FileErrorCode.notFound:
+        return '';
+      case Err(:final error):
+        io.writeln('cannot read $path: $error — not saved');
+        return null;
+    }
+  }
+
   /// Upserts [segments] → [value] in the project or user config file,
   /// validating the edited section with [validate] (the real parser)
   /// BEFORE the write — and, when [validateDoc] is given, the WHOLE
@@ -2258,28 +2309,29 @@ extension SettingsFlow on AgentCli {
     final path = projectScope
         ? '${_env.cwd}/.fah/config.yaml'
         : _userConfigPath()!;
-    final read = await _env.readTextFile(path);
-    final String source;
-    switch (read) {
-      case Ok(:final value):
-        source = value;
-      case Err(:final error) when error.code == FileErrorCode.notFound:
-        source = '';
-      case Err(:final error):
-        io.writeln('cannot read $path: $error — not saved');
-        return false;
-    }
+    final source = await _readConfigSource(path);
+    if (source == null) return false;
     final edited = upsertYamlPath(
       source,
       segments,
       configLeafLines(value, depth: segments.length - 1),
     );
-    // Never persist a file the next boot would reject.
-    final doc = loadYaml(edited);
-    final section = doc is YamlMap ? doc[segments.first] : null;
+    // Never persist a file the next boot would reject. The PARSE sits
+    // inside the guard too (gh-1787): a malformed edit is a "not saved"
+    // print, never a throw escaping up the submit path as a raw stack
+    // (the incident: a duplicated-key chain threw YamlException here,
+    // before the write, and crashed the TUI submit boundary).
+    final Object? parsed;
+    try {
+      parsed = loadYaml(edited);
+    } on Object catch (error) {
+      io.writeln('not saved: $error');
+      return false;
+    }
+    final section = parsed is YamlMap ? parsed[segments.first] : null;
     try {
       validate?.call(section);
-      if (doc is YamlMap) validateDoc?.call(doc);
+      if (parsed is YamlMap) validateDoc?.call(parsed);
     } on Object catch (error) {
       io.writeln('not saved: $error');
       return false;
@@ -2374,9 +2426,15 @@ extension SettingsFlow on AgentCli {
     await persist(url: isUrl ? value : null, name: isUrl ? null : value);
     await _refreshDapHubSnapshot();
     io.writeln('dap: saved ${isUrl ? 'hub url' : 'agent name'} $value');
-    // Higher-precedence sources (env, the yaml `hub:` section, the running
-    // client's startup values) can shadow the persisted value until they
-    // clear — say so instead of letting the menu silently show another url.
+    _warnDapHubValueShadowed(isUrl: isUrl, value: value);
+  }
+
+  /// The post-save override note (split out of [_editDapHubValue] to keep
+  /// it under the CRAP ratchet): higher-precedence sources (env, the yaml
+  /// `hub:` section, the running client's startup values) can shadow the
+  /// persisted value until they clear — say so instead of letting the menu
+  /// silently show another value.
+  void _warnDapHubValueShadowed({required bool isUrl, required String value}) {
     final effective = isUrl ? _dapHubSnapshot?.url : _dapHubSnapshot?.name;
     if (effective != null && effective != value) {
       io.writeln(
@@ -2428,11 +2486,6 @@ extension SettingsFlow on AgentCli {
     return [
       MenuItem(key: 'provider', label: 'Provider', description: model.provider),
       MenuItem(key: 'model', label: 'Chat model', description: model.id),
-      const MenuItem(
-        key: 'model-edit',
-        label: 'Model parameters',
-        description: 'context window, token limits',
-      ),
       MenuItem(
         key: 'model-caps',
         label: 'Model capabilities',
@@ -2564,9 +2617,17 @@ extension SettingsFlow on AgentCli {
   McpManager? get mcpManagerForTest => _mcp.manager;
 
   /// A settings-hub selection launches the same flow its dedicated slash
-  /// command would open.
+  /// command would open — CONTAINED like the composer submit boundary
+  /// (gh-1787 rework): the hub is the flows' primary entry, its dispatch
+  /// future is consumed by dart_tui's `runCmd` (a raw stack on stderr),
+  /// so a throwing flow renders the clean one-line error panel here.
   Future<void> _tuiPickSetting(String key) async {
-    await _settingsPickerHandlers[key]?.call();
+    final handler = _settingsPickerHandlers[key];
+    if (handler == null) return;
+    await runContainedSubmit(
+      handler,
+      (error) => io.writeln(tuiError(submitErrorPanelLine(error))),
+    );
   }
 
   /// Settings-hub key → the flow its dedicated slash command would open.
@@ -2575,7 +2636,6 @@ extension SettingsFlow on AgentCli {
     'model': startChatModelFlow,
     'approval': () async => _openApprovalPicker(),
     'mode': () async => _openModePicker(),
-    'model-edit': () => _handleModelEdit(''),
     'model-caps': startModelCapsFlow,
     'media': startMediaSlotFlow,
     'agent-models': startAgentModelFlow,

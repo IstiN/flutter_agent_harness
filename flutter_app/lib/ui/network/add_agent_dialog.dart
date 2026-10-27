@@ -2,10 +2,14 @@
 // Use of this source code is governed by an MIT license that can be found
 // in the LICENSE file.
 
+import 'dart:convert';
+
+import 'package:crypto/crypto.dart';
 import 'package:fa_ui/fa_ui.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 
+import 'package:fa/l10n/app_localizations.dart';
 import 'package:fa/l10n/l10n_ext.dart';
 import 'package:fa/network/fa_network_client.dart';
 import 'package:fa/network/invite_codec.dart';
@@ -24,6 +28,11 @@ enum AgentInviteScope { channel, network }
 /// set for clients that know nothing about fa_network (a self-hosted DAP
 /// hub + `fa dap`).
 enum AgentInviteFormat { link, cli, env, dap }
+
+/// The non-secret scoped-identity discriminator for an enrolled credential:
+/// the first 16 lowercase hex characters of SHA-256 over its UTF-8 secret.
+String dapAgentInstance(String clientSecret) =>
+    sha256.convert(utf8.encode(clientSecret)).toString().substring(0, 16);
 
 /// The AC-B17 minimal agent pairing (issue #955): the agent invite
 /// string for a channel or the whole network, as a link or a CLI
@@ -76,7 +85,7 @@ class AddAgentDialog extends StatefulWidget {
 
 class _AddAgentDialogState extends State<AddAgentDialog> {
   late AgentInviteScope _scope;
-  AgentInviteFormat _format = AgentInviteFormat.link;
+  AgentInviteFormat _format = AgentInviteFormat.dap;
 
   /// The DAP tab's editable agent name (prefilled with the [_agentName]
   /// suggestion); enrollment mints a name-bound credential for it.
@@ -101,6 +110,7 @@ class _AddAgentDialogState extends State<AddAgentDialog> {
   static const hubUrlPrefix = 'DAP_HUB_URL=';
   static const clientSecretPrefix = 'DAP_CLIENT_SECRET=';
   static const agentNamePrefix = 'DAP_AGENT_NAME=';
+  static const agentInstancePrefix = 'DAP_AGENT_INSTANCE=';
 
   bool get _agentNameValid => _agentNamePattern.hasMatch(_agentNameCtrl.text);
 
@@ -246,11 +256,12 @@ class _AddAgentDialogState extends State<AddAgentDialog> {
   /// `FA_CHANNEL_URL='…' FA_AGENT_NAME=… fa` (reserved for the CLI
   /// network mode). The DAP format is for pure-DAP clients that know
   /// nothing about fa_network: the DEPLOYED agent-enrollment backend
-  /// mints a one-time, name-bound credential (`POST
-  /// /api/networks/{id}/agents/enroll`, owner/admin only) — the payload
-  /// is the DAP env launch line built from THAT response
-  /// (`DAP_HUB_URL` / `DAP_CLIENT_SECRET` / `DAP_AGENT_NAME`). The hub
-  /// master secret is banned from this UI: enrollment replaces it.
+  /// creates an additional one-time, name-bound credential (`POST
+  /// /api/networks/{id}/agents/enrollments`, owner/admin only) — the payload
+  /// is the DAP env launch line built from THAT response (`DAP_HUB_URL` /
+  /// `DAP_CLIENT_SECRET` / `DAP_AGENT_NAME` / `DAP_AGENT_INSTANCE`). The
+  /// instance keeps simultaneous same-name agents on distinct identities.
+  /// The hub master secret is banned from this UI: enrollment replaces it.
   String? get _payload {
     final invite = _invite;
     if (invite == null) return null;
@@ -284,24 +295,27 @@ class _AddAgentDialogState extends State<AddAgentDialog> {
                 "fa dap import '$channelInvite'",
             ];
       final import = imports.isEmpty ? '' : "${imports.join(' && ')} && ";
+      final instance = dapAgentInstance(enrollment.clientSecret);
       return '$import$hubUrlPrefix${enrollment.hubUrl} '
           "$clientSecretPrefix'${enrollment.clientSecret}' "
-          '$agentNamePrefix${enrollment.name} fa';
+          '$agentNamePrefix${enrollment.name} '
+          '$agentInstancePrefix$instance fa';
     }
     if (_scope == AgentInviteScope.network) return invite;
     return "fa dap import '$invite'";
   }
 
-  /// Enrolls the typed agent name through the session manager (management
-  /// route — owner/admin JWT required). The one-time credential lands in
-  /// [_enrollment]; failures surface inline as [_enrollError].
+  /// Creates an independent credential for the typed agent name through the
+  /// session manager (owner/admin JWT required). Existing same-name agents
+  /// keep their credentials. The one-time secret lands in [_enrollment];
+  /// failures surface inline as [_enrollError].
   Future<void> _enroll() async {
     setState(() {
       _enrolling = true;
       _enrollError = null;
     });
     try {
-      final enrollment = await widget.manager.enrollAgent(
+      final enrollment = await widget.manager.createAgentCredential(
         widget.networkId,
         _agentNameCtrl.text,
       );
@@ -343,304 +357,463 @@ class _AddAgentDialogState extends State<AddAgentDialog> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              _scope == AgentInviteScope.network
-                  ? l10n.networkAddAgentNetworkHint
-                  : isPublicChannel
-                  ? l10n.networkAddAgentPublicHint
-                  : l10n.networkAddAgentWarning,
-              key: ValueKey(
-                _scope == AgentInviteScope.network
-                    ? 'inviteScopeHint'
-                    : 'inviteHint',
-              ),
-              style: TextStyle(
-                color: _scope == AgentInviteScope.network || isPublicChannel
-                    ? colors.dim
-                    : colors.error,
-                fontSize: 13,
-              ),
-            ),
+            _buildInviteHint(colors, l10n, isPublicChannel),
             const SizedBox(height: 12),
-            if (widget.channel != null) ...[
-              SegmentedButton<AgentInviteScope>(
-                key: const ValueKey('inviteScope'),
-                segments: [
-                  ButtonSegment(
-                    value: AgentInviteScope.channel,
-                    icon: const Icon(Icons.tag, size: 16),
-                    label: Text(l10n.networkAddAgentScopeChannel),
-                  ),
-                  ButtonSegment(
-                    value: AgentInviteScope.network,
-                    icon: const Icon(Icons.hub, size: 16),
-                    label: Text(l10n.networkAddAgentScopeNetwork),
-                  ),
-                ],
-                selected: {_scope},
-                onSelectionChanged: (s) => setState(() => _scope = s.first),
-              ),
-              const SizedBox(height: 8),
-            ],
-            SegmentedButton<AgentInviteFormat>(
-              key: const ValueKey('inviteFormat'),
-              segments: [
-                ButtonSegment(
-                  value: AgentInviteFormat.link,
-                  icon: const Icon(Icons.link, size: 16),
-                  label: Text(l10n.networkAddAgentFormatLink),
-                ),
-                ButtonSegment(
-                  value: AgentInviteFormat.cli,
-                  icon: const Icon(Icons.terminal, size: 16),
-                  label: Text(l10n.networkAddAgentFormatCli),
-                ),
-                ButtonSegment(
-                  value: AgentInviteFormat.env,
-                  icon: const Icon(Icons.settings_ethernet, size: 16),
-                  label: Text(l10n.networkAddAgentFormatEnv),
-                ),
-                ButtonSegment(
-                  value: AgentInviteFormat.dap,
-                  icon: const Icon(Icons.dns, size: 16),
-                  label: Text(l10n.networkAddAgentFormatDap),
-                ),
-              ],
-              selected: {_format},
-              onSelectionChanged: (s) => setState(() => _format = s.first),
-            ),
-            if (_scope == AgentInviteScope.network && !_hasNetworkPassword) ...[
-              const SizedBox(height: 8),
-              Text(
-                l10n.networkAddAgentNetworkNoPassword,
-                key: const ValueKey('inviteNoPassword'),
-                style: TextStyle(color: colors.dim, fontSize: 12),
-              ),
-            ],
-            if (_format == AgentInviteFormat.env) ...[
-              const SizedBox(height: 8),
-              Text(
-                l10n.networkAddAgentEnvHint,
-                key: const ValueKey('inviteEnvHint'),
-                style: TextStyle(color: colors.dim, fontSize: 12),
-              ),
-              const SizedBox(height: 8),
-              // Per-variable rows with their own copy buttons — CI/CD
-              // secrets/vars are pasted one key=value at a time. The
-              // network password is its OWN row: the URL stays a plain
-              // variable, the password goes into masked CI secrets.
-              if (_scope == AgentInviteScope.network) ...[
-                _envCopyRow(
-                  context,
-                  keyName: 'FA_NETWORK_URL',
-                  display: 'FA_NETWORK_URL=$_networkUrlNoPassword',
-                  copyText: 'FA_NETWORK_URL=$_networkUrlNoPassword',
-                ),
-                if (_hasNetworkPassword)
-                  _envCopyRow(
-                    context,
-                    keyName: 'FA_NETWORK_PASSWORD',
-                    display: 'FA_NETWORK_PASSWORD=$_networkPassword',
-                    copyText: 'FA_NETWORK_PASSWORD=$_networkPassword',
-                  ),
-              ] else if (_invite != null)
-                _envCopyRow(
-                  context,
-                  keyName: 'FA_CHANNEL_URL',
-                  display: 'FA_CHANNEL_URL=$_invite',
-                  copyText: 'FA_CHANNEL_URL=$_invite',
-                ),
-              _envCopyRow(
-                context,
-                keyName: 'FA_AGENT_NAME',
-                display: 'FA_AGENT_NAME=$_agentName',
-                copyText: 'FA_AGENT_NAME=$_agentName',
-              ),
-              // The network-scope chankey bundle: one import command per
-              // channel this wallet can hand over (pure-DAP CI agents
-              // need them today — the CLI network mode will consume
-              // FA_NETWORK_URL later).
-              if (_scope == AgentInviteScope.network) ...[
-                for (final (channel, channelInvite) in _channelInvites)
-                  _envCopyRow(
-                    context,
-                    keyName: 'IMPORT:${channel.id}',
-                    display: "fa dap import '$channelInvite'",
-                    copyText: "fa dap import '$channelInvite'",
-                  ),
-                if (_channelInvites.isEmpty)
-                  Text(
-                    l10n.networkAddAgentNoChannelKeys,
-                    key: const ValueKey('inviteNoChannelKeys'),
-                    style: TextStyle(color: colors.dim, fontSize: 12),
-                  ),
-              ],
-            ],
-            if (_format == AgentInviteFormat.dap) ...[
-              const SizedBox(height: 8),
-              Text(
-                l10n.networkAddAgentEnrollHint,
-                key: const ValueKey('inviteDapHint'),
-                style: TextStyle(color: colors.dim, fontSize: 12),
-              ),
-              const SizedBox(height: 8),
-              if (!widget.manager.hasJwt)
-                Text(
-                  l10n.networkAddAgentEnrollNeedSignIn,
-                  key: const ValueKey('enrollNeedSignIn'),
-                  style: TextStyle(color: colors.error, fontSize: 13),
-                )
-              else ...[
-                Row(
-                  children: [
-                    Expanded(
-                      child: TextField(
-                        key: const ValueKey('agentNameField'),
-                        controller: _agentNameCtrl,
-                        onChanged: (_) => setState(() {}),
-                        style: const TextStyle(
-                          fontFamily: 'monospace',
-                          fontSize: 12,
-                        ),
-                        decoration: InputDecoration(
-                          isDense: true,
-                          errorText: _agentNameValid
-                              ? null
-                              : l10n.networkAddAgentNameInvalid,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    FilledButton(
-                      key: const ValueKey('enrollAgent'),
-                      onPressed: _agentNameValid && !_enrolling
-                          ? _enroll
-                          : null,
-                      child: Text(l10n.networkAddAgentEnroll),
-                    ),
-                  ],
-                ),
-                if (_enrollError != null) ...[
-                  const SizedBox(height: 8),
-                  Text(
-                    _enrollError!,
-                    key: const ValueKey('enrollError'),
-                    style: TextStyle(color: colors.error, fontSize: 12),
-                  ),
-                ],
-                // The one-time credential panel — the secret is shown
-                // here, once; re-enrolling the same name rotates it.
-                if (_enrollment != null) ...[
-                  const SizedBox(height: 8),
-                  if (_scope == AgentInviteScope.channel && _invite != null)
-                    _envCopyRow(
-                      context,
-                      keyName: 'IMPORT',
-                      display: "fa dap import '$_invite'",
-                      copyText: "fa dap import '$_invite'",
-                    ),
-                  _envCopyRow(
-                    context,
-                    keyName: 'DAP_HUB_URL',
-                    display: '$hubUrlPrefix${_enrollment!.hubUrl}',
-                    copyText: '$hubUrlPrefix${_enrollment!.hubUrl}',
-                  ),
-                  _envCopyRow(
-                    context,
-                    keyName: 'DAP_CLIENT_SECRET',
-                    display: '$clientSecretPrefix${_enrollment!.clientSecret}',
-                    copyText: '$clientSecretPrefix${_enrollment!.clientSecret}',
-                  ),
-                  _envCopyRow(
-                    context,
-                    keyName: 'DAP_AGENT_NAME',
-                    display: '$agentNamePrefix${_enrollment!.name}',
-                    copyText: '$agentNamePrefix${_enrollment!.name}',
-                  ),
-                  // The network scope: the identity alone cannot read or
-                  // post — hand over every channel invite this wallet can
-                  // produce, one IMPORT row per channel.
-                  if (_scope == AgentInviteScope.network) ...[
-                    for (final (channel, channelInvite) in _channelInvites)
-                      _envCopyRow(
-                        context,
-                        keyName: 'IMPORT:${channel.id}',
-                        display: "fa dap import '$channelInvite'",
-                        copyText: "fa dap import '$channelInvite'",
-                      ),
-                    if (_channelInvites.isEmpty) ...[
-                      const SizedBox(height: 4),
-                      Text(
-                        l10n.networkAddAgentNoChannelKeys,
-                        key: const ValueKey('inviteNoChannelKeys'),
-                        style: TextStyle(color: colors.dim, fontSize: 12),
-                      ),
-                    ],
-                  ],
-                ],
-              ],
-            ],
-            if (_format == AgentInviteFormat.cli &&
-                _scope == AgentInviteScope.channel) ...[
-              const SizedBox(height: 8),
-              Text(
-                l10n.networkAddAgentCliHint,
-                key: const ValueKey('inviteCliHint'),
-                style: TextStyle(color: colors.dim, fontSize: 12),
-              ),
-            ],
-            if (_format == AgentInviteFormat.cli &&
-                _scope == AgentInviteScope.network) ...[
-              const SizedBox(height: 8),
-              Text(
-                l10n.networkAddAgentNetworkCliHint,
-                key: const ValueKey('inviteNetworkCliHint'),
-                style: TextStyle(color: colors.dim, fontSize: 12),
-              ),
-            ],
+            if (widget.channel != null) ..._buildScopeSelector(l10n),
+            _buildFormatSelector(l10n),
+            ..._buildNoPasswordNote(colors, l10n),
+            if (_format == AgentInviteFormat.env)
+              ..._buildEnvRows(colors, l10n),
+            if (_format == AgentInviteFormat.dap)
+              ..._buildDapRows(colors, l10n),
+            ..._buildCliHints(colors, l10n),
             const SizedBox(height: 12),
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(
-                color: colors.codeBg,
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: colors.border),
-              ),
-              child: Text(
-                payload ??
-                    (_format == AgentInviteFormat.dap
-                        // Pre-enrollment (or signed out): explain that
-                        // enrollment mints the unique, revocable
-                        // credential instead of showing a payload.
-                        ? l10n.networkAddAgentEnrollHint
-                        : l10n.networkAddAgentNoKeys),
-                key: const ValueKey('agentInvite'),
-                style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
-              ),
-            ),
+            _buildPayloadBox(colors, l10n, payload),
           ],
         ),
       ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: Text(l10n.networkClose),
-        ),
-        FilledButton.icon(
-          key: const ValueKey('copyInvite'),
-          onPressed: payload == null
-              ? null
-              : () async {
-                  await Clipboard.setData(ClipboardData(text: payload));
-                  if (context.mounted) {
-                    showFahSnack(context, l10n.networkInviteCopied);
-                  }
-                },
-          icon: const Icon(Icons.copy, size: 16),
-          label: Text(l10n.networkCopy),
-        ),
-      ],
+      actions: _buildActions(l10n, payload),
     );
   }
+
+  /// The scope hint line: dim for the network scope and public channels,
+  /// the error color for the private-channel warning.
+  Widget _buildInviteHint(
+    FahColors colors,
+    AppLocalizations l10n,
+    bool isPublicChannel,
+  ) {
+    return Text(
+      _scope == AgentInviteScope.network
+          ? l10n.networkAddAgentNetworkHint
+          : isPublicChannel
+          ? l10n.networkAddAgentPublicHint
+          : l10n.networkAddAgentWarning,
+      key: ValueKey(
+        _scope == AgentInviteScope.network ? 'inviteScopeHint' : 'inviteHint',
+      ),
+      style: TextStyle(
+        color: _inviteHintColor(colors, isPublicChannel),
+        fontSize: 13,
+      ),
+    );
+  }
+
+  Color _inviteHintColor(FahColors colors, bool isPublicChannel) =>
+      _scope == AgentInviteScope.network || isPublicChannel
+      ? colors.dim
+      : colors.error;
+
+  /// Compact windows cannot fit even the two scope segments without
+  /// shrinking their labels to a few characters. Wrapping ChoiceChips keep
+  /// the same single-select semantics at their intrinsic, readable widths.
+  bool get _useCompactLayout => MediaQuery.sizeOf(context).width < 600;
+
+  List<Widget> _buildScopeSelector(AppLocalizations l10n) => [
+    if (_useCompactLayout)
+      Wrap(
+        key: const ValueKey('inviteScope'),
+        spacing: 8,
+        runSpacing: 8,
+        children: [
+          _scopeChoice(
+            value: AgentInviteScope.channel,
+            icon: Icons.tag,
+            label: l10n.networkAddAgentScopeChannel,
+          ),
+          _scopeChoice(
+            value: AgentInviteScope.network,
+            icon: Icons.hub,
+            label: l10n.networkAddAgentScopeNetwork,
+          ),
+        ],
+      )
+    else
+      SegmentedButton<AgentInviteScope>(
+        key: const ValueKey('inviteScope'),
+        segments: [
+          ButtonSegment(
+            value: AgentInviteScope.channel,
+            icon: const Icon(Icons.tag, size: 16),
+            label: Text(l10n.networkAddAgentScopeChannel),
+          ),
+          ButtonSegment(
+            value: AgentInviteScope.network,
+            icon: const Icon(Icons.hub, size: 16),
+            label: Text(l10n.networkAddAgentScopeNetwork),
+          ),
+        ],
+        selected: {_scope},
+        onSelectionChanged: (s) => setState(() => _scope = s.first),
+      ),
+    const SizedBox(height: 8),
+  ];
+
+  ChoiceChip _scopeChoice({
+    required AgentInviteScope value,
+    required IconData icon,
+    required String label,
+  }) => ChoiceChip(
+    key: ValueKey('inviteScope:${value.name}'),
+    avatar: Icon(icon, size: 16),
+    label: Text(label),
+    selected: _scope == value,
+    showCheckmark: false,
+    padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+    onSelected: (selected) {
+      if (selected) setState(() => _scope = value);
+    },
+  );
+
+  Widget _buildFormatSelector(AppLocalizations l10n) {
+    if (_useCompactLayout) {
+      return Wrap(
+        key: const ValueKey('inviteFormat'),
+        spacing: 8,
+        runSpacing: 8,
+        children: [
+          _formatChoice(
+            value: AgentInviteFormat.dap,
+            icon: Icons.dns,
+            label: l10n.networkAddAgentFormatDap,
+          ),
+          _formatChoice(
+            value: AgentInviteFormat.link,
+            icon: Icons.link,
+            label: l10n.networkAddAgentFormatLink,
+          ),
+          _formatChoice(
+            value: AgentInviteFormat.cli,
+            icon: Icons.terminal,
+            label: l10n.networkAddAgentFormatCli,
+          ),
+          _formatChoice(
+            value: AgentInviteFormat.env,
+            icon: Icons.settings_ethernet,
+            label: l10n.networkAddAgentFormatEnv,
+          ),
+        ],
+      );
+    }
+    return SegmentedButton<AgentInviteFormat>(
+      key: const ValueKey('inviteFormat'),
+      segments: [
+        ButtonSegment(
+          value: AgentInviteFormat.dap,
+          icon: const Icon(Icons.dns, size: 16),
+          label: Text(l10n.networkAddAgentFormatDap),
+        ),
+        ButtonSegment(
+          value: AgentInviteFormat.link,
+          icon: const Icon(Icons.link, size: 16),
+          label: Text(l10n.networkAddAgentFormatLink),
+        ),
+        ButtonSegment(
+          value: AgentInviteFormat.cli,
+          icon: const Icon(Icons.terminal, size: 16),
+          label: Text(l10n.networkAddAgentFormatCli),
+        ),
+        ButtonSegment(
+          value: AgentInviteFormat.env,
+          icon: const Icon(Icons.settings_ethernet, size: 16),
+          label: Text(l10n.networkAddAgentFormatEnv),
+        ),
+      ],
+      selected: {_format},
+      onSelectionChanged: (s) => setState(() => _format = s.first),
+    );
+  }
+
+  ChoiceChip _formatChoice({
+    required AgentInviteFormat value,
+    required IconData icon,
+    required String label,
+  }) => ChoiceChip(
+    key: ValueKey('inviteFormat:${value.name}'),
+    avatar: Icon(icon, size: 16),
+    label: Text(label),
+    selected: _format == value,
+    showCheckmark: false,
+    padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+    onSelected: (selected) {
+      if (selected) setState(() => _format = value);
+    },
+  );
+
+  List<Widget> _buildNoPasswordNote(FahColors colors, AppLocalizations l10n) =>
+      [
+        if (_scope == AgentInviteScope.network && !_hasNetworkPassword) ...[
+          const SizedBox(height: 8),
+          Text(
+            l10n.networkAddAgentNetworkNoPassword,
+            key: const ValueKey('inviteNoPassword'),
+            style: TextStyle(color: colors.dim, fontSize: 12),
+          ),
+        ],
+      ];
+
+  List<Widget> _buildEnvRows(FahColors colors, AppLocalizations l10n) => [
+    const SizedBox(height: 8),
+    Text(
+      l10n.networkAddAgentEnvHint,
+      key: const ValueKey('inviteEnvHint'),
+      style: TextStyle(color: colors.dim, fontSize: 12),
+    ),
+    const SizedBox(height: 8),
+    // Per-variable rows with their own copy buttons — CI/CD
+    // secrets/vars are pasted one key=value at a time. The
+    // network password is its OWN row: the URL stays a plain
+    // variable, the password goes into masked CI secrets.
+    if (_scope == AgentInviteScope.network) ...[
+      _envCopyRow(
+        context,
+        keyName: 'FA_NETWORK_URL',
+        display: 'FA_NETWORK_URL=$_networkUrlNoPassword',
+        copyText: 'FA_NETWORK_URL=$_networkUrlNoPassword',
+      ),
+      if (_hasNetworkPassword)
+        _envCopyRow(
+          context,
+          keyName: 'FA_NETWORK_PASSWORD',
+          display: 'FA_NETWORK_PASSWORD=$_networkPassword',
+          copyText: 'FA_NETWORK_PASSWORD=$_networkPassword',
+        ),
+    ] else if (_invite != null)
+      _envCopyRow(
+        context,
+        keyName: 'FA_CHANNEL_URL',
+        display: 'FA_CHANNEL_URL=$_invite',
+        copyText: 'FA_CHANNEL_URL=$_invite',
+      ),
+    _envCopyRow(
+      context,
+      keyName: 'FA_AGENT_NAME',
+      display: 'FA_AGENT_NAME=$_agentName',
+      copyText: 'FA_AGENT_NAME=$_agentName',
+    ),
+    // The network-scope chankey bundle: one import command per
+    // channel this wallet can hand over (pure-DAP CI agents
+    // need them today — the CLI network mode will consume
+    // FA_NETWORK_URL later).
+    if (_scope == AgentInviteScope.network) ..._envChannelImportRows(l10n),
+  ];
+
+  List<Widget> _envChannelImportRows(AppLocalizations l10n) => [
+    for (final (channel, channelInvite) in _channelInvites)
+      _envCopyRow(
+        context,
+        keyName: 'IMPORT:${channel.id}',
+        display: "fa dap import '$channelInvite'",
+        copyText: "fa dap import '$channelInvite'",
+      ),
+    if (_channelInvites.isEmpty)
+      Text(
+        l10n.networkAddAgentNoChannelKeys,
+        key: const ValueKey('inviteNoChannelKeys'),
+        style: TextStyle(color: FahColors.of(context).dim, fontSize: 12),
+      ),
+  ];
+
+  List<Widget> _buildDapRows(FahColors colors, AppLocalizations l10n) => [
+    const SizedBox(height: 8),
+    Text(
+      l10n.networkAddAgentDapHint,
+      key: const ValueKey('inviteDapHint'),
+      style: TextStyle(color: colors.dim, fontSize: 12),
+    ),
+    const SizedBox(height: 8),
+    Text(
+      l10n.networkAddAgentEnrollHint,
+      key: const ValueKey('inviteEnrollHint'),
+      style: TextStyle(color: colors.dim, fontSize: 12),
+    ),
+    const SizedBox(height: 8),
+    if (!widget.manager.hasJwt)
+      Text(
+        l10n.networkAddAgentEnrollNeedSignIn,
+        key: const ValueKey('enrollNeedSignIn'),
+        style: TextStyle(color: colors.error, fontSize: 13),
+      )
+    else ...[
+      ..._enrollForm(colors, l10n),
+      // The one-time credential panel — another enrollment adds an
+      // independent identity instead of rotating same-name credentials.
+      if (_enrollment != null) ..._enrollmentRows(l10n),
+    ],
+  ];
+
+  List<Widget> _enrollForm(FahColors colors, AppLocalizations l10n) {
+    final nameField = TextField(
+      key: const ValueKey('agentNameField'),
+      controller: _agentNameCtrl,
+      onChanged: (_) => setState(() {}),
+      style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+      decoration: InputDecoration(
+        isDense: true,
+        errorText: _agentNameValid ? null : l10n.networkAddAgentNameInvalid,
+      ),
+    );
+    final enrollButton = FilledButton(
+      key: const ValueKey('enrollAgent'),
+      onPressed: _agentNameValid && !_enrolling ? _enroll : null,
+      child: Text(l10n.networkAddAgentEnroll),
+    );
+    return [
+      if (_useCompactLayout)
+        SizedBox(
+          width: double.infinity,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              nameField,
+              const SizedBox(height: 8),
+              SizedBox(height: 48, child: enrollButton),
+            ],
+          ),
+        )
+      else
+        Row(
+          children: [
+            Expanded(child: nameField),
+            const SizedBox(width: 8),
+            enrollButton,
+          ],
+        ),
+      if (_enrollError != null) ...[
+        const SizedBox(height: 8),
+        Text(
+          _enrollError!,
+          key: const ValueKey('enrollError'),
+          style: TextStyle(color: colors.error, fontSize: 12),
+        ),
+      ],
+    ];
+  }
+
+  List<Widget> _enrollmentRows(AppLocalizations l10n) => [
+    const SizedBox(height: 8),
+    if (_scope == AgentInviteScope.channel && _invite != null)
+      _envCopyRow(
+        context,
+        keyName: 'IMPORT',
+        display: "fa dap import '$_invite'",
+        copyText: "fa dap import '$_invite'",
+      ),
+    _envCopyRow(
+      context,
+      keyName: 'DAP_HUB_URL',
+      display: '$hubUrlPrefix${_enrollment!.hubUrl}',
+      copyText: '$hubUrlPrefix${_enrollment!.hubUrl}',
+    ),
+    _envCopyRow(
+      context,
+      keyName: 'DAP_CLIENT_SECRET',
+      display: '$clientSecretPrefix${_enrollment!.clientSecret}',
+      copyText: '$clientSecretPrefix${_enrollment!.clientSecret}',
+    ),
+    _envCopyRow(
+      context,
+      keyName: 'DAP_AGENT_NAME',
+      display: '$agentNamePrefix${_enrollment!.name}',
+      copyText: '$agentNamePrefix${_enrollment!.name}',
+    ),
+    _envCopyRow(
+      context,
+      keyName: 'DAP_AGENT_INSTANCE',
+      display:
+          '$agentInstancePrefix${dapAgentInstance(_enrollment!.clientSecret)}',
+      copyText:
+          '$agentInstancePrefix${dapAgentInstance(_enrollment!.clientSecret)}',
+    ),
+    // The network scope: the identity alone cannot read or
+    // post — hand over every channel invite this wallet can
+    // produce, one IMPORT row per channel.
+    if (_scope == AgentInviteScope.network) ..._enrollChannelImportRows(l10n),
+  ];
+
+  List<Widget> _enrollChannelImportRows(AppLocalizations l10n) => [
+    for (final (channel, channelInvite) in _channelInvites)
+      _envCopyRow(
+        context,
+        keyName: 'IMPORT:${channel.id}',
+        display: "fa dap import '$channelInvite'",
+        copyText: "fa dap import '$channelInvite'",
+      ),
+    if (_channelInvites.isEmpty) ...[
+      const SizedBox(height: 4),
+      Text(
+        l10n.networkAddAgentNoChannelKeys,
+        key: const ValueKey('inviteNoChannelKeys'),
+        style: TextStyle(color: FahColors.of(context).dim, fontSize: 12),
+      ),
+    ],
+  ];
+
+  List<Widget> _buildCliHints(FahColors colors, AppLocalizations l10n) => [
+    if (_format == AgentInviteFormat.cli &&
+        _scope == AgentInviteScope.channel) ...[
+      const SizedBox(height: 8),
+      Text(
+        l10n.networkAddAgentCliHint,
+        key: const ValueKey('inviteCliHint'),
+        style: TextStyle(color: colors.dim, fontSize: 12),
+      ),
+    ],
+    if (_format == AgentInviteFormat.cli &&
+        _scope == AgentInviteScope.network) ...[
+      const SizedBox(height: 8),
+      Text(
+        l10n.networkAddAgentNetworkCliHint,
+        key: const ValueKey('inviteNetworkCliHint'),
+        style: TextStyle(color: colors.dim, fontSize: 12),
+      ),
+    ],
+  ];
+
+  Widget _buildPayloadBox(
+    FahColors colors,
+    AppLocalizations l10n,
+    String? payload,
+  ) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: colors.codeBg,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: colors.border),
+      ),
+      child: Text(
+        payload ??
+            (_format == AgentInviteFormat.dap
+                // Pre-enrollment (or signed out): explain that
+                // enrollment mints the unique, revocable
+                // credential instead of showing a payload.
+                ? l10n.networkAddAgentEnrollHint
+                : l10n.networkAddAgentNoKeys),
+        key: const ValueKey('agentInvite'),
+        style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+      ),
+    );
+  }
+
+  List<Widget> _buildActions(AppLocalizations l10n, String? payload) => [
+    TextButton(
+      onPressed: () => Navigator.of(context).pop(),
+      child: Text(l10n.networkClose),
+    ),
+    FilledButton.icon(
+      key: const ValueKey('copyInvite'),
+      onPressed: payload == null
+          ? null
+          : () async {
+              await Clipboard.setData(ClipboardData(text: payload));
+              if (mounted) {
+                showFahSnack(context, l10n.networkInviteCopied);
+              }
+            },
+      icon: const Icon(Icons.copy, size: 16),
+      label: Text(l10n.networkCopy),
+    ),
+  ];
 }

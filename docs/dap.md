@@ -450,7 +450,9 @@ Precedence, highest first (`dap_settings.dart` `resolveDapSettings`,
 
 1. **Environment**: `DAP_HUB_URL`, `DAP_KEY_PATH`, `DAP_AGENT_NAME`,
    `DAP_CHANNELS_FILE` — env beats the yaml section for url/keyPath/name
-   (`fromMap`: `environment[envUrl] ?? scalar('url')`).
+   (`fromMap`: `environment[envUrl] ?? scalar('url')`). Scoped enrolled
+   connections also honor the optional non-secret `DAP_AGENT_INSTANCE`
+   identity discriminator (§15.4).
 2. **`.fah/packages.yaml`** `hub:` section:
 
    ```yaml
@@ -633,3 +635,239 @@ Consequences for invite producers and consumers:
 - Public (keyless) channels accept hub joins with an empty `chanPubkey`
   (`{"op":"join","channel":<id>,"chanPubkey":""}`); payloads are raw
   UTF-8 (no fanet1 wrapper) and render as plain text.
+
+### Scoped agent identity (one per project)
+
+The hub keeps ONE live connection per agent id and evicts the previous
+one. The vendored default identity (`~/.dap/keys/fah/<name>.key`) is
+shared by every process with the same display name, so two projects
+enrolled as the same agent kept evicting each other (gh-1825). Scoped
+(/network, enrolled-credential) connections therefore derive the
+identity key per PROJECT: `…/<name>-<sha256(cwd)[:10]>.key` — stable
+across restarts (offline mailbox preserved), distinct across working
+directories. `DAP_KEY_PATH` / `hub.keyPath` overrides are respected
+verbatim; concurrent sessions in ONE directory still share an identity
+(last connection wins) unless you give them distinct key paths.
+
+### Public showcase channels (fa_network interop)
+
+A PUBLIC channel has no chankey: payloads are `base64({"text": …})`
+(raw utf8 tolerated), not DAP/1 chankey E2E. The CLI joins public
+channels keyless (never minting a channel keypair), sends through
+`sendChannelEnvelope` with the public codec, and drains `#channel`
+inboxes alongside the agent DM inbox (draining only the agent id drops
+channel traffic entirely). Inbound public decoding requires
+fa_hub_client with the public-payload fallback (0.2.11+ /
+feat/public-channel-payloads); on older clients inbound public frames
+surface as "undecryptable".
+
+### Enrolled hub credentials (the app's DAP tab)
+
+A bare invite link is enough only on hubs that accept the machine's
+default credential. Production hubs enroll NAME-BOUND agent secrets: a
+secret minted for one hub is rejected by another (HTTP 401), and the
+agent name must match the enrollment (`hello name does not match the
+enrolled secret`). Therefore `/network` accepts the WHOLE DAP block from
+Add an agent → DAP (or the one-line CLI command):
+
+```
+fa dap import 'wss://hub…/ws?channel=<id>' && DAP_HUB_URL=wss://hub…/ws DAP_CLIENT_SECRET='…' DAP_AGENT_NAME=<name> DAP_AGENT_INSTANCE=<instance> fa
+```
+
+The app's DAP action creates an additional independent credential instead of
+rotating earlier credentials for the same display name. It calls
+`POST /api/networks/{id}/agents/enrollments`, which requires a hub with the
+`enroll_create` operation; it never falls back to legacy `/agents/enroll`.
+A hub that answers `unknown op enroll_create` must be upgraded — the app
+reports that existing credentials were not changed. The action also emits
+`DAP_AGENT_INSTANCE`, the first 16 lowercase hex characters of SHA-256 over
+the UTF-8 client secret. This discriminator is not a secret;
+`DAP_AGENT_NAME` remains the unchanged display name.
+
+Paste it into the composer or `/network` — the invite, client secret,
+agent name and instance are parsed together (the command is never executed).
+CLI session/project memberships and native/plain-web app enrollment records
+retain the instance, so paste and every later reconnect select the same
+independent identity. The secret is stored `dapkey1.`-encrypted for
+session/project scopes and decrypted only into the live connection; at global
+scope it stays in memory (the legacy files have no per-hub credential field).
+Boot and resume reconnect with the stored credential automatically. After every
+join the wizard prints an explicit LIVE / NOT-live verdict — a stored
+membership is never presented as a working connection.
+
+The browser extension has ONE service-worker DAP runtime and one active
+enrollment/identity. Pasting another bundle replaces that enrollment; it does
+not host simultaneous same-name agents inside that worker. Use independent
+CLI or native/plain-web runtimes for simultaneous independent identities.
+
+## 15. Scoped channel membership + `/network` (issue #1825)
+
+Joining a DAP hub channel from the TUI takes three steps: `/network` →
+paste the invite → pick a scope. No shell, no restart, no file editing.
+
+### 15.1 The `/network` menu
+
+- **Join channel** (default): one paste field accepts every invite form —
+  `wss://hub/ws?channel=<id>`, the same with `#pub=P&priv=K`, a bare
+  `<channel-id>` (uses the configured hub), or the whole copied
+  `fa dap import '…'` command. Then one scope question:
+  **session** (default) / **project** / **global**. The join takes effect
+  IMMEDIATELY on the live connection.
+- **Channels**: joined channels with scope badges, `copy invite`
+  (app-compatible string; keyless form for public channels) and `leave`
+  per scope — leaving one scope keeps the others; leaving the last stops
+  delivery at once.
+- **Status**: hub url, connection state.
+
+Pasting an invite into the normal composer opens the SAME join wizard
+(prefilled) instead of sending it as an agent message (only unambiguous
+forms — full invite urls and `fa dap import …` — ever intercept; prose
+never does).
+
+**Trust model:** a joined channel is a shared trust domain — ANY member
+can steer this agent (the join UI says so). Scope is the blast-radius
+control: session < project < global.
+
+### 15.2 Scopes and stores
+
+| scope | store | reaches |
+|---|---|---|
+| session | `dap_channel_membership` custom record on the session JSONL (leave = tombstone record) | this session, re-joins on resume, follows the branch |
+| project | `<project>/.fah/dap.json` — MAY be committed (encrypted keys only) | every fa agent booted from that folder |
+| global | the legacy `~/.dap/config.json` + `~/.dap/channels.json` | every fa agent on the machine |
+| env | `DAP_CHANNELS_JSON` (no files at all) | the headless/CI boot |
+
+Effective membership = union deduped by `(hubUrl, channelId)` — the same
+channel at two scopes delivers each frame ONCE; the narrowest scope wins
+the key material.
+
+### 15.3 Key encryption (`dapkey1`)
+
+Session/project stores hold the channel private key ONLY as a
+`dapkey1.<base64url(json)>` envelope: PBKDF2-HMAC-SHA256 (iteration count
+in the envelope, sanity-bounded at 5 000 000 — a hostile `"iter"` is
+rejected before any KDF work) → ChaCha20-Poly1305, AAD `dapkey1`.
+Plaintext keys exist in memory, in the runtime overlay
+(`~/.dap/runtime/channels.json`, 0600 — ONE stable name per `$HOME`,
+rewritten atomically on every re-seed, never per-pid). Every normal and
+signal-graceful CLI shutdown calls the hub host's idempotent `dispose()`;
+pid guard files (no secret content) keep the shared overlay while another
+live agent uses it, and the last exiting agent deletes it. Stale guards
+and legacy per-pid overlays from older builds are swept at boot. A live
+pid is authoritative regardless of guard age (no wall-clock TTL: agents
+may run for days without rewriting their boot guard). Each guard also
+records the writer's process-start identity (`/proc/<pid>/stat` starttime
+on Linux, parsed `ps lstart` on macOS — process metadata, never secret
+material), so a guard whose pid is alive but whose recorded identity
+differs from the current incarnation is a RECYCLED pid: the writer
+crashed, the cleanup reclaims the guard, and the shared plaintext overlay
+is not pinned forever. Probe, listing, or identity-parse failures keep
+the keep-on-doubt behavior (the overlay survives); guards written by
+older builds (pid only) are kept on the same doubt. Embedded hosts with
+their own lifecycle must call `HubPluginHost.dispose()`.
+The pure-env CI path also carries plaintext values in process memory and
+its environment; those values are registered with both redaction systems.
+**Global scope is the deliberate exception** (see the table above): it
+persists the invite keypair PLAINTEXT, byte-equivalent with
+`fa dap import` — the REG-* interop tests pin that equivalence, and the
+legacy `~/.dap/channels.json` format has no envelope field. Passphrase
+resolution per channel:
+(1) `DAP_KEY_PASSPHRASE` env; (2) OS Keychain item
+`fa.dap.channel-key.<hubHost>.<channelId>` (macOS `security` CLI);
+(3) ONE interactive prompt, save-to-Keychain by default. Headless with
+neither env nor Keychain: loud one-line warning, the key stays in memory
+for that run, the primary job proceeds — never a prompt, never a block.
+
+### 15.4 Headless / CI provisioning
+
+All optional, all zero-prompt:
+
+- `DAP_HUB_URL` — the hub websocket url.
+- `DAP_CLIENT_SECRET` — the hub-issued per-client secret (enables the
+  plugin via the boot credential mirror; no `DAP_MASTER_SECRET` needed).
+- `DAP_AGENT_NAME` — the display name bound to that credential.
+- `DAP_AGENT_INSTANCE` — an optional NON-SECRET identity discriminator for
+  independent same-name agents.
+- `DAP_CHANNELS_JSON` —
+  `[{"channel":"<id>","pub":"…","priv":"…"}, …]`, joined AT BOOT before
+  the first turn. Keyless entries are public channels; `priv` may be
+  plaintext from the CI secret store OR a `dapkey1.` envelope (mixed sets
+  join together); an optional per-entry `hubUrl` overrides the default.
+- `DAP_KEY_PASSPHRASE` — decrypts envelope entries.
+
+For scoped enrolled connections, an absent or empty `DAP_AGENT_INSTANCE`
+keeps the legacy project-derived identity-key path byte-for-byte. A nonempty
+value is hashed WITHOUT the project cwd into the key-path suffix: one instance
+keeps the same Ed25519 identity and agentId across projects and restarts,
+while different instances produce different identities even when
+`DAP_AGENT_NAME` is identical. An explicit `DAP_KEY_PATH` still wins verbatim.
+Direct environment boots apply the discriminator before the first dial too,
+whether they carry a client secret or use the master-secret enrollment flow;
+no previously persisted membership is required. Independent enrollment
+configs can stay online simultaneously; reusing one config reconnects that
+same identity rather than minting another.
+
+Identity = session name: `fa --session goal_builder` already sets the hub
+display name to `goal_builder`, stable across resumes, addressable via
+`agent_message to: "goal_builder"`. Hub down or a rejected secret → a
+loud warning and the agent's primary job proceeds; the file-fabric
+fallback is unchanged.
+
+## App composer enrollment (gh-1825)
+
+The Flutter app accepts the same enrollment block as the CLI: paste the
+whole `fa dap import … && DAP_HUB_URL=… DAP_CLIENT_SECRET=…
+DAP_AGENT_NAME=… fa` block into the agent chat composer (a smart-pasted
+`.txt` attachment with exactly that payload is recognized too). The
+composer consumes the paste synchronously — no `sendText`, no analytics,
+no session record — and shows a localized joined/failed status.
+
+Native joins through the SAME hub repository that feeds the agent
+fabric, so inbound channel mail wakes the agent and
+`agent_message to: "#channel"` answers into the channel. Identity is
+scoped per project (stable across restarts, distinct across working
+directories); invite `pub`/`priv` are imported for private channels,
+public channels join keyless and speak the public showcase payload
+(`base64({"text": …})`, raw UTF-8 tolerated). The enrollment secret goes
+only to the WebSocket `Authorization` header and the dedicated
+enrollment store (Keychain/Keystore where available, with the explicitly
+unencrypted fallback below) — never to `SecretsExecutionEnv`, model
+context, or logs.
+Membership is restored on reconnect (rejoin precedes the outbound
+drain). Saving the manual `/settings` connection form clears the invite
+enrollment. One live hub connection per app agent: a new paste replaces
+the previous enrollment.
+
+Plain web builds join through the browser `WebHubTransport`
+(`web_socket_channel`, no `dart:io`): the enrollment secret rides the
+hub's browser bearer equivalent `?token=` (same server-side credential
+check as `Authorization: Bearer`; the credentialed URI is never logged
+or propagated into errors), and the identity persists in the
+IndexedDB-backed app sandbox through the same key-file codec as native.
+In the browser EXTENSION the join instead rides the service worker's
+existing DAP client (`hub.join` op + `joined`-ack polling): a
+panel-local socket would evict the worker's presence for the same
+agent, and the worker restores its persisted enrollment itself.
+
+### App enrollment secret storage
+
+Here `<scope>` is the first ten lowercase hex characters of
+`sha256(projectCwd)`, and the app-storage root is
+`ExecutionEnv.appStorageCwd` (never the mounted user project). The record
+name is `fa_dap_enrollment_<scope>`.
+
+| Platform / backend | Exact enrollment location | Secret protection at rest |
+|---|---|---|
+| macOS/iOS with an available Keychain | Keychain item `fa_dap_enrollment_<scope>` (service `fa.app`) | OS Keychain encryption; behavior is unchanged |
+| Android with an available Keystore | `fa_dap_enrollment_<scope>` in the app's Keystore-encrypted preferences | Android Keystore encryption; behavior is unchanged |
+| **Linux and Windows (always)**; also a native platform whose Keychain/Keystore probe is unavailable | `<app-storage-root>/fa_dap_enrollment_<scope>.json` (the application-support sandbox on Linux/Windows) | **PLAINTEXT, unencrypted JSON** |
+| **Plain web (always)** | Sandbox file `/fa_dap_enrollment_<scope>.json`, persisted inside the `sandbox` record of the origin's IndexedDB database **`fah_web_fs`**, object store **`snapshots`** | **PLAINTEXT, unencrypted JSON inside IndexedDB** |
+
+In either fallback, the invite's `priv` and the hub-issued `clientSecret`
+are written verbatim as JSON string fields whenever present; they are not
+ciphertext. App-sandbox or browser-origin isolation does not encrypt them.
+Linux, Windows, and web have no `KeychainStore` backend, so their successful
+composer join result explicitly warns that the invite private key and hub
+credential are stored unencrypted in the app sandbox (IndexedDB on web).
+The browser extension's service-worker-owned enrollment follows its own
+storage path rather than `DapEnrollmentStore`.

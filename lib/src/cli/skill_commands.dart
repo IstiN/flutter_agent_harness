@@ -115,10 +115,13 @@ extension AgentCliSkillsExt on AgentCli {
   /// consent is denied).
   Future<SkillRootsFingerprint> _computeSkillRootsFingerprint() {
     final roots = defaultSkillRoots(cwd: _env.cwd, homeDir: config.homeDir);
-    return computeSkillRootsFingerprint(_env, [
-      ...roots.projectRoots,
-      ...roots.userRoots,
-    ].where(_skillRootAllowed).toList());
+    return computeSkillRootsFingerprint(
+      _env,
+      [
+        ...roots.projectRoots,
+        ...roots.userRoots,
+      ].where(_skillRootAllowed).toList(),
+    );
   }
 
   bool _skillRootAllowed(SkillRoot root) =>
@@ -410,6 +413,17 @@ extension AgentCliSkillsExt on AgentCli {
     final agentName = canonicalTaskAgentName(
       skill.manifest.agent ?? defaultTaskAgentName,
     );
+    await _executeForkedSkill(skill, tool, agentName, body);
+  }
+
+  /// Runs the fork task through [tool] and reports the outcome; a failed
+  /// fork prints and returns — the skill run itself is already committed.
+  Future<void> _executeForkedSkill(
+    Skill skill,
+    AgentTool tool,
+    String agentName,
+    String body,
+  ) async {
     try {
       final result = await tool.execute(
         {

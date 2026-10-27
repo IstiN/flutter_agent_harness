@@ -423,115 +423,165 @@ class AddProviderPresetPickerPage extends StatelessWidget {
     return Tooltip(message: strings.ssoFlowUnavailableTooltip, child: tile);
   }
 
-  Future<void> _onPresetTap(
+  /// The per-key tap arms (issue #1848 decomposition): the four auth
+  /// presets share one SSO arm (each with its host callback + default
+  /// flow), Custom pushes the bare editor, every other key is a keyed
+  /// preset.
+  Map<String, Future<void> Function(BuildContext)> get _tapArms => {
+    'aiin': (c) => _tapSsoPreset(c, onAiinConnect, sso?.connectAiin),
+    'codemie': (c) => _tapSsoPreset(c, onCodeMieSso, sso?.connectCodeMie),
+    'chatgpt': (c) => _tapSsoPreset(c, onChatGptOAuth, sso?.connectChatGpt),
+    'copilot': (c) => _tapSsoPreset(c, onCopilotConnect, sso?.connectCopilot),
+    'custom': _tapCustom,
+  };
+
+  Future<void> _onPresetTap(BuildContext context, AddProviderPreset preset) {
+    final arm = _tapArms[preset.key];
+    if (arm != null) return arm(context);
+    return _tapKeyedPreset(context, preset);
+  }
+
+  /// The auth presets (AIIN/CodeMie/ChatGPT/Copilot): the host callback
+  /// wins and the picker pops first; otherwise the default [FaUiSso] flow
+  /// runs with the picker's own context (the page stays mounted — the flow
+  /// pushes its pages on top).
+  Future<void> _tapSsoPreset(
+    BuildContext context,
+    VoidCallback? hostCallback,
+    Future<bool> Function(BuildContext)? defaultFlow,
+  ) async {
+    if (hostCallback != null) {
+      Navigator.of(context).pop();
+      hostCallback();
+      return;
+    }
+    await _runDefaultSsoFlow(context, defaultFlow!);
+  }
+
+  /// The Custom tile: the bare editor in create mode (in-memory registry
+  /// when the host gave none). gh-1378 AC3: the manual add runs the same
+  /// endpoint confirmation the row's gauge reads — the probe fires now,
+  /// not at the next pull-to-refresh. Key-less adds stay probe-less (the
+  /// gauge gates on connectivity the same way).
+  Future<void> _tapCustom(BuildContext context) async {
+    final reg = registry ?? ProviderRegistry.inMemory();
+    final landed = await pushProviderEditor(
+      context,
+      reg,
+      title: FaUiStrings.of(context).settingsAddProvider,
+      modelsFetcher: modelsFetcher,
+      // Not a boarding context (issue #1020 gates onboarding only) —
+      // the model stays optional here, as everywhere but onboarding.
+      requireModel: false,
+    );
+    if (landed != null) {
+      _confirmQuotaFor(
+        landed.baseUrl,
+        keyed: (reg.keyFor(landed.id) ?? '').isNotEmpty,
+      );
+    }
+    if (context.mounted) Navigator.of(context).pop(true);
+  }
+
+  /// A key-based preset (OpenRouter, Ollama Cloud, Gemini, DIAL, MiniMax,
+  /// Kimi Code, Z.AI): every quick-add keeps an editable base URL in the
+  /// editor (the user may point DIAL/Ollama/… at another instance); the
+  /// [ProviderPreset]-backed ones open in preset mode so the model field
+  /// seeds the preset default, the rest open with editable prefills —
+  /// several instances of the same provider with custom names are a
+  /// first-class use case.
+  Future<void> _tapKeyedPreset(
     BuildContext context,
     AddProviderPreset preset,
   ) async {
-    switch (preset.key) {
-      case 'aiin':
-        if (onAiinConnect != null) {
-          Navigator.of(context).pop();
-          onAiinConnect!();
-          return;
-        }
-        await _runDefaultSsoFlow(context, sso!.connectAiin);
-        return;
-      case 'codemie':
-        if (onCodeMieSso != null) {
-          Navigator.of(context).pop();
-          onCodeMieSso!();
-          return;
-        }
-        await _runDefaultSsoFlow(context, sso!.connectCodeMie);
-        return;
-      case 'chatgpt':
-        if (onChatGptOAuth != null) {
-          Navigator.of(context).pop();
-          onChatGptOAuth!();
-          return;
-        }
-        await _runDefaultSsoFlow(context, sso!.connectChatGpt);
-        return;
-      case 'copilot':
-        if (onCopilotConnect != null) {
-          Navigator.of(context).pop();
-          onCopilotConnect!();
-          return;
-        }
-        await _runDefaultSsoFlow(context, sso!.connectCopilot);
-        return;
-      case 'custom':
-        final reg = registry ?? ProviderRegistry.inMemory();
-        final landed = await pushProviderEditor(
-          context,
-          reg,
-          title: FaUiStrings.of(context).settingsAddProvider,
-          modelsFetcher: modelsFetcher,
-          // Not a boarding context (issue #1020 gates onboarding only) —
-          // the model stays optional here, as everywhere but onboarding.
-          requireModel: false,
-        );
-        // gh-1378 AC3: the manual add runs the same endpoint confirmation
-        // the row's gauge reads — the probe fires now, not at the next
-        // pull-to-refresh. Key-less adds stay probe-less (the gauge gates
-        // on connectivity the same way).
-        if (landed != null) {
-          _confirmQuotaFor(
-            landed.baseUrl,
-            keyed: (reg.keyFor(landed.id) ?? '').isNotEmpty,
-          );
-        }
-        if (context.mounted) Navigator.of(context).pop(true);
-        return;
-      default:
-        // Key-based preset. Every quick-add keeps an editable base URL in
-        // the editor (the user may point DIAL/Ollama/… at another
-        // instance); the ProviderPreset-backed ones (OpenRouter, Ollama
-        // Cloud, Gemini, DIAL, MiniMax) open in preset mode so the model
-        // field seeds the preset default, the rest (Kimi Code, Z.AI)
-        // open with editable prefills — several instances of the same
-        // provider with custom names are a first-class use case.
-        final providerPreset = _matchProviderPreset(preset.key);
-        final editable = providerPreset == ProviderPreset.custom;
-        final reg = registry;
-        // Issue #977, CLI `_entryForBaseUrl` parity: an entry already
-        // serving this preset's endpoint prefills the name, so a re-add
-        // keeps the (possibly renamed) entry's identity and lands as an
-        // update instead of duplicating it.
-        final targetUrl = providerPreset.baseUrl ?? preset.baseUrl;
-        final existing = targetUrl == null ? null : reg?.byBaseUrl(targetUrl);
-        // A key resolved through the host's chain (env / secure store /
-        // saved keys) counts as saved — the editor shows the keep-note.
-        final namedKey = editable
-            ? null
-            : hostedProviderKeyName(providerPreset);
-        final hasSavedKey =
-            namedKey != null &&
-            FaUiHost.resolveKey(namedKey, () => '').isNotEmpty;
-        final result = await pushFaPage<ProviderEditorResult>(
-          context,
-          ProviderEditorPage(
-            title: preset.name,
-            preset: editable ? null : providerPreset,
-            prefillName: existing?.name ?? (editable ? preset.name : null),
-            prefillBaseUrl: editable ? preset.baseUrl : null,
-            hasSavedKey: hasSavedKey,
-            keyHelpUrl: preset.keyHelpUrl,
-            registry: registry,
-            openRouterOAuthCallbackUrl: openRouterOAuthCallbackUrl,
-            openRouterOAuthCapture: openRouterOAuthCapture,
-            modelsFetcher: modelsFetcher,
-          ),
-        );
-        if (result == null || result.deleted) return;
-        // Persist the new provider (a same-endpoint name clash lands as an
-        // update — see [landProviderResult]).
-        if (reg != null) {
-          await landProviderResult(reg, result);
-        }
-        _confirmQuotaFor(result.baseUrl, keyed: result.apiKey.isNotEmpty);
-        if (context.mounted) Navigator.of(context).pop(true);
+    final providerPreset = _matchProviderPreset(preset.key);
+    final reg = registry;
+    // Issue #977, CLI `_entryForBaseUrl` parity: an entry already
+    // serving this preset's endpoint prefills the name, so a re-add
+    // keeps the (possibly renamed) entry's identity and lands as an
+    // update instead of duplicating it.
+    final existing = _existingEntryFor(providerPreset, preset);
+    final prefill = _keyedPrefill(providerPreset, preset, existing);
+    final result = await pushFaPage<ProviderEditorResult>(
+      context,
+      ProviderEditorPage(
+        title: preset.name,
+        preset: prefill.preset,
+        prefillName: prefill.name,
+        prefillBaseUrl: prefill.baseUrl,
+        hasSavedKey: _hasResolvedKey(_keyedNamedKey(providerPreset)),
+        keyHelpUrl: preset.keyHelpUrl,
+        registry: registry,
+        openRouterOAuthCallbackUrl: openRouterOAuthCallbackUrl,
+        openRouterOAuthCapture: openRouterOAuthCapture,
+        modelsFetcher: modelsFetcher,
+      ),
+    );
+    final landed = await _landKeyedResult(reg, result);
+    if (landed && context.mounted) Navigator.of(context).pop(true);
+  }
+
+  /// The saved entry already serving the preset's endpoint (issue #977,
+  /// CLI `_entryForBaseUrl` parity): the re-add lands as an update.
+  CustomProvider? _existingEntryFor(
+    ProviderPreset providerPreset,
+    AddProviderPreset preset,
+  ) {
+    final targetUrl = providerPreset.baseUrl ?? preset.baseUrl;
+    return targetUrl == null ? null : registry?.byBaseUrl(targetUrl);
+  }
+
+  /// The keyed editor's prefill: in preset mode (a [ProviderPreset]-
+  /// backed quick-add) the preset seeds the model; in editable mode (an
+  /// unknown key) the tile's own URL prefills and the name follows the
+  /// tile.
+  ({ProviderPreset? preset, String? name, String? baseUrl}) _keyedPrefill(
+    ProviderPreset providerPreset,
+    AddProviderPreset preset,
+    CustomProvider? existing,
+  ) {
+    final editable = providerPreset == ProviderPreset.custom;
+    return (
+      preset: editable ? null : providerPreset,
+      name: existing?.name ?? (editable ? preset.name : null),
+      baseUrl: editable ? preset.baseUrl : null,
+    );
+  }
+
+  /// The preset's named key for the host key chain; null for editable
+  /// quick-adds (their key is user-typed, not named).
+  String? _keyedNamedKey(ProviderPreset providerPreset) =>
+      providerPreset == ProviderPreset.custom
+      ? null
+      : hostedProviderKeyName(providerPreset);
+
+  /// Whether a preset's named key resolves non-empty through the host's
+  /// chain (env / secure store / saved keys).
+  static bool _hasResolvedKey(String? namedKey) =>
+      namedKey != null && FaUiHost.resolveKey(namedKey, () => '').isNotEmpty;
+
+  /// Editor outcome for a keyed preset: cancels and deletes land nothing
+  /// (return false); anything else persists (see [_landNewProvider]) and
+  /// returns true.
+  Future<bool> _landKeyedResult(
+    ProviderRegistry? reg,
+    ProviderEditorResult? result,
+  ) async {
+    if (result == null || result.deleted) return false;
+    await _landNewProvider(reg, result);
+    return true;
+  }
+
+  /// Persists the new provider (a same-endpoint name clash lands as an
+  /// update — see [landProviderResult]) and probes the quota.
+  Future<void> _landNewProvider(
+    ProviderRegistry? reg,
+    ProviderEditorResult result,
+  ) async {
+    if (reg != null) {
+      await landProviderResult(reg, result);
     }
+    _confirmQuotaFor(result.baseUrl, keyed: result.apiKey.isNotEmpty);
   }
 
   /// gh-1378 AC3: a manual add on a quota-marked endpoint runs the same
@@ -576,30 +626,40 @@ class AddProviderPresetPickerPage extends StatelessWidget {
         if (context.mounted) Navigator.of(context).pop(config);
       }),
     );
+    // Async-gap rule at the call site (the callee re-checks verbatim).
+    if (!context.mounted) return;
+    _landOnDeviceConfig(context, config);
+  }
+
+  /// Lands a completed on-device connect: a real config and a live picker
+  /// context report through [onOnDeviceConnected] and pop the picker
+  /// (gh-1848 tier-2 split; verbatim guard order).
+  void _landOnDeviceConfig(BuildContext context, FaChatModelConfig? config) {
     if (config == null || !context.mounted) return;
-    onOnDeviceConnected?.call(config);
+    _reportOnDeviceConnected(config);
     Navigator.of(context).pop(true);
   }
+
+  void _reportOnDeviceConnected(FaChatModelConfig config) =>
+      onOnDeviceConnected?.call(config);
+
+  /// [AddProviderPreset.key] → the matching [ProviderPreset] for the
+  /// editor's preset-mode (preset-seeded model, keep-key note). Falls
+  /// back to [custom] (plain editable prefill) for unknown keys. Note the
+  /// auth presets ('aiin' et al.) never reach this table — their taps
+  /// route to the SSO arm before the keyed one.
+  static const _presetByKey = <String, ProviderPreset>{
+    'aiin': ProviderPreset.aiin,
+    'openrouter': ProviderPreset.openrouter,
+    'ollama': ProviderPreset.ollamaCloud,
+    'google': ProviderPreset.gemini,
+    'dial': ProviderPreset.dial,
+    'minimax': ProviderPreset.minimax,
+  };
 
   /// Maps a [AddProviderPreset.key] to the matching [ProviderPreset] for
   /// the editor's preset-mode (preset-seeded model, keep-key note). Falls
   /// back to [custom] (plain editable prefill) for unknown keys.
-  static ProviderPreset _matchProviderPreset(String key) {
-    switch (key) {
-      case 'aiin':
-        return ProviderPreset.aiin;
-      case 'openrouter':
-        return ProviderPreset.openrouter;
-      case 'ollama':
-        return ProviderPreset.ollamaCloud;
-      case 'google':
-        return ProviderPreset.gemini;
-      case 'dial':
-        return ProviderPreset.dial;
-      case 'minimax':
-        return ProviderPreset.minimax;
-      default:
-        return ProviderPreset.custom;
-    }
-  }
+  static ProviderPreset _matchProviderPreset(String key) =>
+      _presetByKey[key] ?? ProviderPreset.custom;
 }

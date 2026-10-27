@@ -13,10 +13,14 @@
 /// - [parallel.dart](parallel.dart) — the session [Semaphore].
 /// - [output_manager.dart](output_manager.dart) — `agent://` id allocation,
 ///   the session output store, and the URL resolver.
+/// - [deliverables.dart](deliverables.dart) — the durable deliverable path
+///   (issue #1829): capture, redacting artifact writer, envelope, chunk
+///   contract.
 /// - [task_types.dart](task_types.dart) — the wire and result types.
 library;
 
 export 'agent_registry.dart';
+export 'deliverables.dart';
 export 'output_manager.dart';
 export 'parallel.dart';
 export 'task_executor.dart';

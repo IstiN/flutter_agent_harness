@@ -604,6 +604,47 @@ async function main() {
     await ctxN.close();
   }
 
+  // gh-182: the homepage Benchmarks section — the nav targets it and
+  // the section links resolve (the ticket's link/target check, page
+  // half; the row-level half — every rendered result row links its run
+  // — is pinned in bench/leaderboard/test_pbench_leaderboard.py, since
+  // rows render at deploy time and the source page ships the
+  // placeholder).
+  console.log('gh-182 — homepage Benchmarks section (link/target)');
+  {
+    const ctxB = await browser.newContext();
+    const pageB = await ctxB.newPage();
+    await pageB.setViewportSize({ width: 1280, height: 800 });
+    await pageB.goto(`${BASE}/index.html`, { waitUntil: 'load' });
+    await pageB.waitForTimeout(200);
+    ok('benchmarks section present (#benchmarks)',
+      await pageB.locator('#benchmarks').count() === 1);
+    ok('header nav Bench link targets the section',
+      await pageB.locator('.nav-links a[href="#benchmarks"]').count() === 1);
+    const hrefs = await pageB.$$eval('#benchmarks a', (as) =>
+      as.map((a) => a.getAttribute('href')));
+    ok('section links resolve (in-page anchor or ./results page)',
+      hrefs.length > 0 && hrefs.every((h) => h && (h.startsWith('#') || h.startsWith('./'))));
+    ok('section body present (placeholder or rendered rows)',
+      await pageB.locator('#benchmarks p, #benchmarks table').count() > 0);
+    // The anchor jump must land the heading below the sticky header
+    // (same AC3 discipline as the other homepage sections).
+    await pageB.evaluate(() => window.scrollTo(0, 0));
+    await pageB.click('.nav-links a[href="#benchmarks"]');
+    await waitScrollSettled(pageB);
+    const bench = await pageB.evaluate(() => {
+      const sec = document.querySelector('#benchmarks');
+      const head = sec.querySelector('h1,h2') || sec;
+      const s = sec.getBoundingClientRect();
+      const b = head.getBoundingClientRect();
+      return { headerH: document.querySelector('.nav').getBoundingClientRect().height,
+               headTop: Math.round(b.top), secW: Math.round(s.width) };
+    });
+    ok('#benchmarks heading lands below the header',
+      bench.headTop >= bench.headerH, JSON.stringify(bench));
+    await ctxB.close();
+  }
+
   await browser.close();
   cleanup();
 

@@ -65,8 +65,17 @@ permissions:
 # by design (#359 — decoupled from each other): their runs tell apart by
 # the run-name correlation (#343), not by serialization, and the single
 # self-hosted macOS runner serializes the iOS builds physically.
+# gh-1801: the key ALSO embeds the leg/content selection
+# (android_content/ios_content) — the discriminator keeps the Play
+# (android-only) and TestFlight (iOS-only) dispatches in different groups
+# even if the run_id scoping is ever relaxed, and a REG test
+# (test/release_empty_latest_guard_test.dart) fails any concurrency key
+# that drops either guard. Evidence note: the 2026-10-23 cancelled
+# TestFlight child (run 39905802767) was killed by its OWN 90m job
+# ceiling on fa-m5-2, not by a sibling cancel — the discriminator is a
+# structural guard, not the incident's cause.
 concurrency:
-  group: Build Mobile Apps-${{ github.ref }}-${{ github.run_id }}
+  group: Build Mobile Apps-${{ github.ref }}-${{ inputs.android_content }}-${{ inputs.ios_content }}-${{ github.run_id }}
   cancel-in-progress: false
 
 jobs:
@@ -210,7 +219,7 @@ jobs:
       - name: Setup Ruby
         # ubuntu-24.04 runner images ship no Ruby — `bundle: command not
         # found` exit 127 (issue #353). Same setup as store-metadata.yml.
-        uses: ruby/setup-ruby@651ff0d62c5c79bed6d53ec518387aae20e72c1a # v1.328.0 (branch head; v1 moves)
+        uses: ruby/setup-ruby@26e5b7d197ebf60545ee9667bcbace0be11ccaec # v1.328.0 (branch head; v1 moves)
         with:
           ruby-version: '3.2'
 
@@ -314,7 +323,7 @@ jobs:
       - name: Setup Ruby
         # ubuntu-24.04 runner images ship no Ruby — `bundle: command not
         # found` exit 127 (issue #353). Same setup as store-metadata.yml.
-        uses: ruby/setup-ruby@651ff0d62c5c79bed6d53ec518387aae20e72c1a # v1.328.0 (branch head; v1 moves)
+        uses: ruby/setup-ruby@26e5b7d197ebf60545ee9667bcbace0be11ccaec # v1.328.0 (branch head; v1 moves)
         with:
           ruby-version: '3.2'
 
@@ -614,16 +623,17 @@ jobs:
   build-ios:
     name: Build iOS IPA
     needs: version
-    # gh-1600 F-A + gh-1692: pin the ONE self-hosted macOS runner (fa-m5-1)
-    # via its unique registration label PLUS its runner-name label. The old
-    # generic [self-hosted, macOS, ARM64] list also matched the Linux
-    # self-hosted box's labels, and this job ran on Linux (`bundle: command
-    # not found`, exit 127; later steps died on `security: command not
-    # found`). `macos-m5` alone was still a coin flip: it matches BOTH
-    # fa-m5-1 (proven good 10-16) AND fa-m5-2 (10-17/10-18 `** ARCHIVE
-    # FAILED **`, signing env unverified) — the runner-name label `fa-m5-1`
-    # resolves the job to the known-good box until fa-m5-2 is fixed.
-    runs-on: [self-hosted, macos-m5, fa-m5-1]
+    # gh-1906: route to the shared `macos-m5` POOL. The gh-1692 pin of the
+    # ONE known-good box (`fa-m5-1` runner-name label) is dead — no m5
+    # runner carries a runner-name label anymore, so a set containing one
+    # matched ZERO runners and both iOS legs queued forever (live
+    # 2026-10-26, blocked v1.0.648 TestFlight). The gh-1692 fa-m5-2
+    # signing-env concern is retired: fa-m5-2/fa-m5-3 signed desktop green.
+    # The generic [self-hosted, macOS, ARM64] list stays banned (gh-1600
+    # F-A: it also matches the Linux box) — see
+    # test/workflow_selfhosted_legs_test.dart, which audits this exact
+    # label set and bans `fa-m5-*` name labels repo-wide.
+    runs-on: [self-hosted, macos-m5]
     # Issue #344: a wedged self-hosted worker (lost completion report)
     # otherwise holds the slot AND the in_progress status until the 300m
     # daily-publish watcher times out; a job-level timeout lets GitHub
@@ -775,13 +785,21 @@ jobs:
       # action keeps the SDK at ~/actions-runner-yoloit/flutter-sdk with a
       # .fah-version marker: subsecond reuse when the pin is unchanged,
       # exactly one download per pin bump, no cache POST step at all.
-      # Still a pinned 3.47.x install — the runner's hardcoded
-      # $HOME/.local/flutter is a stale 3.44.4, below the repo floor
-      # >=3.47.0 (daily-publish #260).
+      # EXACT patch pin (gh-1826; #1431 discipline — the same 3.47.7 the
+      # desktop lane pins): a wildcard spec (3.47.x) re-resolves a freshly
+      # released patch the fa-m5 runners have not cached — run 40066130883
+      # (2026-10-24) resolved 3.47.x to 3.47.8 and the TestFlight leg died
+      # downloading the 2.27 GB SDK inside the bounded curl budget
+      # (600s/attempt, 900s total) with 1.48 GB received. 3.47.7 already
+      # sits in the persistent slot on every fa-m5 runner (zero download).
+      # The runner's hardcoded $HOME/.local/flutter is a stale 3.44.4,
+      # below the repo floor >=3.47.0 (daily-publish #260). Bump the pin
+      # consciously, matching the desktop lane, in the same PR as any
+      # floor reseed.
       - name: Setup Flutter (self-hosted)
         uses: ./.github/actions/setup-flutter-selfhosted
         with:
-          flutter-version: '3.47.x'
+          flutter-version: '3.47.7'
 
       - name: Setup environment (self-hosted)
         run: |
@@ -935,6 +953,7 @@ jobs:
           echo "All required iOS secrets are present"
 
       - name: Import certificates and provisioning profile
+        id: ios_signing
         env:
           IOS_P12_BASE64: ${{ secrets.IOS_P12_BASE64 }}
           IOS_P12_PASSWORD: ${{ secrets.IOS_P12_PASSWORD }}
@@ -948,11 +967,48 @@ jobs:
           security default-keychain -s build.keychain
           security unlock-keychain -p "" build.keychain
           security set-keychain-settings -t 3600 -u build.keychain
-          security list-keychains -d user -s build.keychain ~/Library/Keychains/login.keychain-db
+          # gh-1866: publish the search list ADDITIVELY, never with a fixed
+          # list — this job runs CONCURRENTLY with the daily cli leg's
+          # build-macos legs on the same host/user (fa-m5 registrations
+          # share one account), and this exact fixed-list write evicted
+          # build-arm64.keychain 75 s after its import on 2026-10-25
+          # (runs 40165497544 → 40165498619, "No certificate for team
+          # YP9HC3USZ3 matching ... found"). The helper unions the current
+          # list and verifies this keychain survived the write.
+          bash scripts/keychain_searchlist_add.sh \
+            "$HOME/Library/Keychains/build.keychain-db"
 
           echo "$IOS_P12_BASE64" | base64 --decode > certificate.p12
           security import certificate.p12 -k build.keychain -P "$IOS_P12_PASSWORD" -T /usr/bin/codesign
           security set-key-partition-list -S apple-tool:,apple: -s -k "" build.keychain
+
+          # gh-1865: pin the signing identity by SHA-1, never by name. The
+          # per-user keychain search list is ADDITIVE by design (gh-1866),
+          # so it can legitimately hold BOTH this job's cert and a
+          # concurrent signing leg's cert with the SAME common name ("Apple
+          # Distribution: Uladzimir Klyshevich (YP9HC3USZ3)") but a
+          # DIFFERENT serial (owner-verified gh-1865 timeline, run
+          # 40455401630: the build-macos arm64 leg imported its macOS cert
+          # 05:31:23Z, this job's union write landed 05:31:35Z, and
+          # xcodebuild resolved the generic name to the WRONG cert at
+          # 05:56:14Z — its serial is not in the iOS profile, the archive
+          # is dead). Resolve the fingerprint from THIS job's OWN keychain
+          # right after import and thread it into every signing call, so
+          # resolution stays deterministic even with same-named duplicates
+          # in the search list.
+          IDENT_LINE=$(security find-identity -v -p codesigning build.keychain \
+            | grep 'Apple Distribution' || true)
+          IDENT_COUNT=$(printf '%s\n' "$IDENT_LINE" | grep -c . || true)
+          if [ "$IDENT_COUNT" -ne 1 ]; then
+            echo "::error::gh-1865: expected exactly 1 'Apple Distribution' codesigning identity in build.keychain, found $IDENT_COUNT. Refusing to pick silently:"
+            security find-identity -v -p codesigning build.keychain || true
+            exit 1
+          fi
+          IOS_CERT_SHA1=$(printf '%s\n' "$IDENT_LINE" | awk '{print $2}')
+          IOS_CERT_NAME=$(printf '%s\n' "$IDENT_LINE" | sed -E 's/^[^"]*"([^"]+)".*/\1/')
+          echo "identity_sha1=$IOS_CERT_SHA1" >> $GITHUB_OUTPUT
+          echo "identity_name=$IOS_CERT_NAME" >> $GITHUB_OUTPUT
+          echo "gh-1865: signing identity pinned by SHA-1: $IOS_CERT_NAME ($IOS_CERT_SHA1)"
 
           mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
           echo "$IOS_PROVISIONING_PROFILE_BASE64" | base64 --decode > ~/Library/MobileDevice/Provisioning\ Profiles/profile.mobileprovision
@@ -966,6 +1022,38 @@ jobs:
             echo "::error::IOS_LIVE_ACTIVITY_PROFILE_BASE64 secret is not set (App Store profile for dev.fa1.app.FaLiveActivity)"
             exit 1
           fi
+
+          # gh-1865 fail-fast precheck (owner option B): every profile must
+          # embed the certificate we JUST imported. A profile issued under
+          # a stale/revoked/different cert used to surface only after a
+          # ~24-minute archive (run 40455519923: gym rejected the cert on
+          # BOTH targets, Runner and FaLiveActivity, after ~24 min) — now
+          # the mismatch aborts in seconds, BEFORE flutter build.
+          IOS_CERT_SERIAL=$(security find-certificate -c "$IOS_CERT_NAME" -p build.keychain \
+            | openssl x509 -noout -serial | sed 's/^serial=//')
+          profile_contains_identity() {
+            local label="$1" profile="$2" serials=""
+            serials=$(security cms -D -i "$profile" \
+              | awk '/<key>DeveloperCertificates<\/key>/{grab=1; next}
+                     grab && /<\/array>/{grab=0; next}
+                     grab && /<data>/{indata=1; buf=""; sub(/.*<data>/, ""); if ($0 != "") {gsub(/[ \t\r]/, ""); buf=$0}; next}
+                     grab && indata && /<\/data>/{sub(/<\/data>.*/, ""); gsub(/[ \t\r]/, ""); print buf $0; indata=0; next}
+                     grab && indata {gsub(/[ \t\r]/, ""); buf = buf $0}' \
+              | while IFS= read -r der; do
+                  printf '%s' "$der" | base64 --decode \
+                    | openssl x509 -inform DER -noout -serial 2>/dev/null \
+                    | sed 's/^serial=//' || true
+                done)
+            if ! printf '%s\n' "$serials" | grep -qxF "$IOS_CERT_SERIAL"; then
+              echo "::error::gh-1865 fail-fast: $label does not contain the imported signing certificate (profile cert serials: $(printf '%s' "$serials" | tr '\n' ' ')— imported identity serial: $IOS_CERT_SERIAL). Re-issue the profile under the current distribution certificate in the Apple Developer Portal and update the profile secret. Aborting BEFORE the archive (the ~24-minute gym failure class, gh-1865)."
+              exit 1
+            fi
+            echo "gh-1865 precheck OK: $label contains identity serial $IOS_CERT_SERIAL"
+          }
+          profile_contains_identity "Fa Profile (profile.mobileprovision)" \
+            "$HOME/Library/MobileDevice/Provisioning Profiles/profile.mobileprovision"
+          profile_contains_identity "FaLiveActivity Profile (liveactivity.mobileprovision)" \
+            "$HOME/Library/MobileDevice/Provisioning Profiles/liveactivity.mobileprovision"
 
       - name: Ensure iOS device SDK is available
         run: |
@@ -1016,6 +1104,12 @@ jobs:
           # so the daily train stalled forever. Ship the derived next-tag
           # version (e.g. 0.1.446), which strictly increases.
           BUILD_NAME: ${{ needs.version.outputs.version }}
+          # gh-1865: CODE_SIGN_IDENTITY as a SHA-1 fingerprint (read from
+          # THIS job's own keychain right after import) instead of the
+          # generic "iPhone Distribution" — a concurrent signing leg's
+          # same-CN cert in the shared additive search list can no longer
+          # shadow the identity at codesign time.
+          IOS_CERT_SHA1: ${{ steps.ios_signing.outputs.identity_sha1 }}
         run: |
           set -euo pipefail
           export PATH="/opt/homebrew/opt/ruby/bin:/opt/homebrew/bin:$PATH"
@@ -1036,7 +1130,7 @@ jobs:
           IOS_BUNDLE_ID="$BUNDLE_ID" \
           IOS_PROVISIONING_PROFILE_NAME="$PROFILE_NAME" \
           IOS_LIVE_ACTIVITY_PROFILE_NAME="$LA_PROFILE_NAME" \
-          IOS_SIGNING_IDENTITY="iPhone Distribution" \
+          IOS_SIGNING_IDENTITY="$IOS_CERT_SHA1" \
           bundle exec fastlane ios build_only
 
       # gh-1692 AC2: the gym log holds the REAL xcodebuild error — without
@@ -1191,11 +1285,12 @@ jobs:
   submit-ios:
     name: Submit iOS to TestFlight
     needs: [build-ios]
-    # gh-1600 F-A + gh-1692: same runner-name pin as build-ios above — the
-    # generic [self-hosted, macOS, ARM64] list also matched the Linux box,
-    # and `macos-m5` alone is a coin flip between fa-m5-1 (good) and
-    # fa-m5-2 (broken signing env).
-    runs-on: [self-hosted, macos-m5, fa-m5-1]
+    # gh-1906: same shared `macos-m5` pool as build-ios above — the gh-1692
+    # fa-m5-1 name pin is dead (no runner carries a name label; the set
+    # matched zero runners and queued forever). The generic [self-hosted,
+    # macOS, ARM64] list stays banned (gh-1600 F-A: it also matches the
+    # Linux box).
+    runs-on: [self-hosted, macos-m5]
     # Issue #344 wedge bound + #351 arithmetic: the submit_only lane waits
     # for Apple processing (TESTFLIGHT_WAIT_TIMEOUT_SECONDS, default 5400s
     # = 90m — a healthy slow ASC processing is NOT a wedge); distribution
@@ -1451,6 +1546,11 @@ jobs:
         if: needs.build-android.result == 'success' || needs.build-android-apks.result == 'success' || needs.build-ios.result == 'success'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # PAT (not the job token) so the tag push fires tag CI — the
+          # attach-or-create script builds its push URL only when GH_TOKEN
+          # is set; without it `git push ""` died with "fatal: bad
+          # repository ''" (2026-10-22 v1.0.626 mobile leg).
+          GH_TOKEN: ${{ secrets.RELEASE_PAT }}
           RELEASE_TAG: ${{ needs.version.outputs.tag }}
           VERSION: ${{ needs.version.outputs.version }}
         run: |

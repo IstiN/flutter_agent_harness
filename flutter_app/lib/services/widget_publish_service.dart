@@ -162,7 +162,27 @@ class WidgetPublishService {
   Future<List<WidgetPreflightIssue>> preflight(JsAppInfo app) async {
     final issues = <WidgetPreflightIssue>[];
 
-    // Id shape: catalog ids are lowercase slug segments.
+    _checkPreflightId(app, issues);
+    _checkPreflightVersion(app, issues);
+    final manifest = await _readPreflightManifest(app, issues);
+    await _checkPreflightEntry(app, issues);
+    await _checkPreflightIcon(app, issues);
+    await _checkPreflightFolderLimits(app, issues);
+
+    // The catalog's own rule engine (issue #1045 AC1): every manifest rule
+    // the CI validator enforces — required strings, strict semver,
+    // minRuntime — checked on-device with the engine's VERBATIM error
+    // strings, so what the user sees here is byte-identical to what the
+    // run would have said. Advisory only (I2): CI stays the authority.
+    if (manifest != null) {
+      issues.addAll(await _catalogValidatorIssues(app, manifest));
+    }
+
+    return issues;
+  }
+
+  /// Id shape: catalog ids are lowercase slug segments.
+  void _checkPreflightId(JsAppInfo app, List<WidgetPreflightIssue> issues) {
     if (!_idPattern.hasMatch(app.id)) {
       issues.add(
         WidgetPreflightIssue(
@@ -173,8 +193,13 @@ class WidgetPublishService {
         ),
       );
     }
+  }
 
-    // Version shape.
+  /// Version shape.
+  void _checkPreflightVersion(
+    JsAppInfo app,
+    List<WidgetPreflightIssue> issues,
+  ) {
     if (!_semverPattern.hasMatch(app.version)) {
       issues.add(
         WidgetPreflightIssue(
@@ -184,8 +209,15 @@ class WidgetPublishService {
         ),
       );
     }
+  }
 
-    // Manifest parses and its id matches the folder name.
+  /// Manifest parses and its id matches the folder name. Returns the
+  /// decoded manifest (null when missing/invalid — the failure already
+  /// carries its issue).
+  Future<Map<String, Object?>?> _readPreflightManifest(
+    JsAppInfo app,
+    List<WidgetPreflightIssue> issues,
+  ) async {
     final manifestText = (await _env.readTextFile(
       app.manifestPath,
     )).valueOrNull;
@@ -227,9 +259,15 @@ class WidgetPublishService {
         );
       }
     }
+    return manifest;
+  }
 
-    // Entry file: widget.js, or the tile entry when the app has no full
-    // widget entry.
+  /// Entry file: widget.js, or the tile entry when the app has no full
+  /// widget entry.
+  Future<void> _checkPreflightEntry(
+    JsAppInfo app,
+    List<WidgetPreflightIssue> issues,
+  ) async {
     final entryOk =
         await _nonEmptyFile('${app.dir}/widget.js') ||
         (app.tileWidget != null && await _nonEmptyFile(app.tileWidgetPath));
@@ -242,8 +280,13 @@ class WidgetPublishService {
         ),
       );
     }
+  }
 
-    // Icon: an icon.svg file OR a non-empty emoji/string icon field.
+  /// Icon: an icon.svg file OR a non-empty emoji/string icon field.
+  Future<void> _checkPreflightIcon(
+    JsAppInfo app,
+    List<WidgetPreflightIssue> issues,
+  ) async {
     final hasIconFile =
         (await _env.exists('${app.dir}/icon.svg')).valueOrNull == true;
     if (!hasIconFile && app.icon.trim().isEmpty) {
@@ -255,8 +298,13 @@ class WidgetPublishService {
         ),
       );
     }
+  }
 
-    // Folder limits (E4).
+  /// Folder limits (E4): total bytes and file count over the walk.
+  Future<void> _checkPreflightFolderLimits(
+    JsAppInfo app,
+    List<WidgetPreflightIssue> issues,
+  ) async {
     var totalBytes = 0;
     var totalFiles = 0;
     await _walk(app.dir, (path, size) {
@@ -281,17 +329,6 @@ class WidgetPublishService {
         ),
       );
     }
-
-    // The catalog's own rule engine (issue #1045 AC1): every manifest rule
-    // the CI validator enforces — required strings, strict semver,
-    // minRuntime — checked on-device with the engine's VERBATIM error
-    // strings, so what the user sees here is byte-identical to what the
-    // run would have said. Advisory only (I2): CI stays the authority.
-    if (manifest != null) {
-      issues.addAll(await _catalogValidatorIssues(app, manifest));
-    }
-
-    return issues;
   }
 
   /// [manifest] with `minRuntime` stamped (issue #1045 AC2): a present,
@@ -535,115 +572,189 @@ class WidgetPublishService {
     final token = _account.token!;
     final client = _clientFactory(token);
     final login = _account.login ?? (await client.getUser()).login;
+    final (owner, name, repoCommit) = await _ensureWidgetRepo(
+      app: app,
+      login: login,
+      client: client,
+      repoName: repoName,
+      existing: existing,
+    );
+    return _openCatalogPr(
+      app: app,
+      login: login,
+      client: client,
+      owner: owner,
+      name: name,
+      repoCommit: repoCommit,
+    );
+  }
 
-    final String owner;
-    final String name;
-    final String repoCommit;
-
+  /// The repo step: resolve owner/name (E7 kill-resume reuses the
+  /// recorded repo + commit and continues at the PR step), create or
+  /// validate the repo (E3 provenance guard), snapshot-commit the
+  /// widget sources, and record `stepRepoPushed` BEFORE the PR work so
+  /// an app kill resumes there instead of duplicating the push.
+  Future<(String, String, String)> _ensureWidgetRepo({
+    required JsAppInfo app,
+    required String login,
+    required GithubApiClient client,
+    String? repoName,
+    WidgetPublication? existing,
+  }) async {
+    // E7 kill-resume: sources were already pushed before the app died —
+    // reuse the recorded repo + commit and continue at the PR step.
+    final recorded = existing?.repoFullName;
     if (existing != null &&
         existing.step == WidgetPublication.stepRepoPushed &&
-        existing.repoFullName.contains('/')) {
-      // E7 kill-resume: sources were already pushed before the app died —
-      // reuse the recorded repo + commit and continue at the PR step.
-      final parts = existing.repoFullName.split('/');
-      owner = parts.first;
-      name = parts.last;
-      repoCommit = existing.repoCommit;
-    } else {
-      // Repo step: reuse the ledger-recorded repo when re-publishing. An
-      // optimistic record with an EMPTY repoFullName (a failed first
-      // attempt that never reached the repo step) is not a recorded repo —
-      // recompute, so a retry after a failure is never `GET /repos//`.
-      if (existing != null && existing.repoFullName.contains('/')) {
-        final parts = existing.repoFullName.split('/');
-        owner = parts.first;
-        name = parts.last;
-      } else {
-        owner = login;
-        name = sanitizeRepoName(repoName ?? 'fa-widget-${app.id}');
-      }
+        recorded != null &&
+        recorded.contains('/')) {
+      final parts = recorded.split('/');
+      return (parts.first, parts.last, existing.repoCommit);
+    }
+    final (owner, name) = _publishRepoTarget(app, login, repoName, existing);
+    final repoCommit = await _pushWidgetRepo(
+      app,
+      login,
+      client,
+      owner,
+      name,
+      existing,
+    );
+    return (owner, name, repoCommit);
+  }
 
-      final repo = await client.getRepo(owner, name);
-      if (repo == null) {
-        await client.createRepo(name: name, description: _repoDescription(app));
-      } else if (repo.isPrivate) {
-        throw StateError(
-          'Repository $owner/$name is private — make it public; the '
-          'catalog clones widget repos anonymously.',
-        );
-      }
-      final headSha = await client.getHeadSha(owner, name, 'main');
-      if (repo != null) {
-        // E3: never push into a foreign repo. Provenance holds when the
-        // repo is the ledger-recorded one, carries our description marker,
-        // or is still empty.
-        final ledgerRecorded =
-            existing != null && existing.repoFullName == '$owner/$name';
-        final hasMarker =
-            repo.description?.contains(_provenanceMarker(app.id)) ?? false;
-        if (!ledgerRecorded && !hasMarker && headSha != null) {
-          throw StateError(
-            'Repository $owner/$name already exists and is not a Fa widget '
-            'repo for "${app.id}" — pick a different repo name instead of '
-            'pushing into a foreign repository.',
-          );
-        }
-      }
+  /// The owner/name to publish into: the ledger-recorded repo when
+  /// re-publishing. An optimistic record with an EMPTY repoFullName (a
+  /// failed first attempt that never reached the repo step) is not a
+  /// recorded repo — recompute, so a retry after a failure is never
+  /// `GET /repos//`.
+  (String, String) _publishRepoTarget(
+    JsAppInfo app,
+    String login,
+    String? repoName,
+    WidgetPublication? existing,
+  ) {
+    final recorded = existing?.repoFullName;
+    if (recorded != null && recorded.contains('/')) {
+      final parts = recorded.split('/');
+      return (parts.first, parts.last);
+    }
+    return (login, sanitizeRepoName(repoName ?? 'fa-widget-${app.id}'));
+  }
 
-      // The git data API (blobs/trees/commits) answers 409 "Git
-      // Repository is empty." on a repo with zero commits — bootstrap it
-      // with a Contents-API commit first (the only write endpoint that
-      // works there); it also creates refs/heads/main for the follow-up
-      // updateRef.
-      var parentSha = headSha;
-      parentSha ??= await client.putFile(
-        owner,
-        name,
-        'README.md',
-        message: 'Initialize Fa widget repo',
-        content: _repoReadme(app),
-      );
-
-      // Commit the widget sources (flat repo root = widget root). The
-      // tree is a FULL SNAPSHOT (no base_tree): the repo root must be
-      // exactly the widget sources + README — carrying a base over would
-      // keep any earlier garbage alive forever.
-      final files = await _collectWidgetFiles(app);
-      final readmeBlob = await client.createBlob(owner, name, _repoReadme(app));
-      final entries = <GithubTreeEntry>[
-        GithubTreeEntry.file('README.md', readmeBlob),
-        for (final path in (files.keys.toList()..sort()))
-          GithubTreeEntry.file(
-            path,
-            await client.createBlob(owner, name, files[path]!),
-          ),
-      ];
-      final treeSha = await client.createTree(owner, name, entries);
-      repoCommit = await client.createCommit(
-        owner,
-        name,
-        treeSha: treeSha,
-        message: 'Publish ${app.id} ${app.version}',
-        parentSha: parentSha,
-      );
-      await client.updateRef(owner, name, 'main', repoCommit);
-      // E7: record the reached step BEFORE the PR work so an app kill
-      // resumes here instead of duplicating the push.
-      await _ledger.record(
-        WidgetPublication(
-          widgetId: app.id,
-          version: app.version,
-          repoFullName: '$owner/$name',
-          repoCommit: repoCommit,
-          step: WidgetPublication.stepRepoPushed,
-          submittedAt: _clock().toUtc(),
-          prNumber: existing?.prNumber,
-          prHtmlUrl: existing?.prHtmlUrl,
-        ),
+  /// Creates the repo when missing, refuses private ones (the catalog
+  /// clones widget repos anonymously), and snapshot-commits the widget
+  /// sources onto `main`. Answers the pushed commit sha.
+  Future<String> _pushWidgetRepo(
+    JsAppInfo app,
+    String login,
+    GithubApiClient client,
+    String owner,
+    String name,
+    WidgetPublication? existing,
+  ) async {
+    final repo = await client.getRepo(owner, name);
+    if (repo == null) {
+      await client.createRepo(name: name, description: _repoDescription(app));
+    } else if (repo.isPrivate) {
+      throw StateError(
+        'Repository $owner/$name is private — make it public; the '
+        'catalog clones widget repos anonymously.',
       );
     }
+    final headSha = await client.getHeadSha(owner, name, 'main');
+    if (repo != null) {
+      _checkRepoProvenance(app, repo, owner, name, headSha, existing);
+    }
 
-    // PR step: fork → branch + overlay (source pin only) → open/reuse the PR.
+    // The git data API (blobs/trees/commits) answers 409 "Git
+    // Repository is empty." on a repo with zero commits — bootstrap it
+    // with a Contents-API commit first (the only write endpoint that
+    // works there); it also creates refs/heads/main for the follow-up
+    // updateRef.
+    var parentSha = headSha;
+    parentSha ??= await client.putFile(
+      owner,
+      name,
+      'README.md',
+      message: 'Initialize Fa widget repo',
+      content: _repoReadme(app),
+    );
+
+    // Commit the widget sources (flat repo root = widget root). The
+    // tree is a FULL SNAPSHOT (no base_tree): the repo root must be
+    // exactly the widget sources + README — carrying a base over would
+    // keep any earlier garbage alive forever.
+    final files = await _collectWidgetFiles(app);
+    final readmeBlob = await client.createBlob(owner, name, _repoReadme(app));
+    final entries = <GithubTreeEntry>[
+      GithubTreeEntry.file('README.md', readmeBlob),
+      for (final path in (files.keys.toList()..sort()))
+        GithubTreeEntry.file(
+          path,
+          await client.createBlob(owner, name, files[path]!),
+        ),
+    ];
+    final treeSha = await client.createTree(owner, name, entries);
+    final repoCommit = await client.createCommit(
+      owner,
+      name,
+      treeSha: treeSha,
+      message: 'Publish ${app.id} ${app.version}',
+      parentSha: parentSha,
+    );
+    await client.updateRef(owner, name, 'main', repoCommit);
+    // E7: record the reached step BEFORE the PR work so an app kill
+    // resumes here instead of duplicating the push.
+    await _ledger.record(
+      WidgetPublication(
+        widgetId: app.id,
+        version: app.version,
+        repoFullName: '$owner/$name',
+        repoCommit: repoCommit,
+        step: WidgetPublication.stepRepoPushed,
+        submittedAt: _clock().toUtc(),
+        prNumber: existing?.prNumber,
+        prHtmlUrl: existing?.prHtmlUrl,
+      ),
+    );
+    return repoCommit;
+  }
+
+  /// E3: never push into a foreign repo. Provenance holds when the repo
+  /// is the ledger-recorded one, carries our description marker, or is
+  /// still empty.
+  void _checkRepoProvenance(
+    JsAppInfo app,
+    GithubRepo repo,
+    String owner,
+    String name,
+    String? headSha,
+    WidgetPublication? existing,
+  ) {
+    final ledgerRecorded =
+        existing != null && existing.repoFullName == '$owner/$name';
+    final hasMarker =
+        repo.description?.contains(_provenanceMarker(app.id)) ?? false;
+    if (!ledgerRecorded && !hasMarker && headSha != null) {
+      throw StateError(
+        'Repository $owner/$name already exists and is not a Fa widget '
+        'repo for "${app.id}" — pick a different repo name instead of '
+        'pushing into a foreign repository.',
+      );
+    }
+  }
+
+  /// The PR step: fork → branch + overlay (source pin only) → open or
+  /// reuse the catalog PR, then record `stepPrOpened`.
+  Future<WidgetPublishResult> _openCatalogPr({
+    required JsAppInfo app,
+    required String login,
+    required GithubApiClient client,
+    required String owner,
+    required String name,
+    required String repoCommit,
+  }) async {
     final fork = await client.ensureFork(
       owner: GithubApiClient.catalogOwner,
       repo: GithubApiClient.catalogRepo,
@@ -757,76 +868,29 @@ class WidgetPublishService {
       GithubApiClient.catalogRepo,
       prNumber,
     );
-    final state = pull == null
-        ? WidgetPublication.stateUnknown
-        : pull.state == 'open'
-        ? WidgetPublication.stateOpen
-        : pull.merged
-        ? WidgetPublication.stateMerged
-        : WidgetPublication.stateClosed;
+    final state = _pullState(pull);
 
     // CI verdict on the PR head (issue #1045 AC3). A failed check read
     // (offline / rate limit) keeps the plain open state — never invent a
     // verdict the API did not confirm.
-    var effective = state;
-    var validatorErrors = publication.validatorErrors;
-    var runUrl = publication.runHtmlUrl;
+    var (effective, validatorErrors, runUrl) = (
+      state,
+      publication.validatorErrors,
+      publication.runHtmlUrl,
+    );
     if (state == WidgetPublication.stateOpen && pull?.headSha != null) {
-      try {
-        final checks = await client.listCheckRuns(
-          GithubApiClient.catalogOwner,
-          GithubApiClient.catalogRepo,
-          pull!.headSha!,
-        );
-        final failing = checks.where((check) => check.isFailed).toList();
-        if (checks.isEmpty || checks.any((check) => !check.isCompleted)) {
-          effective = WidgetPublication.stateValidating;
-          validatorErrors = const [];
-          runUrl = null;
-        } else if (failing.isNotEmpty) {
-          effective = WidgetPublication.stateInvalid;
-          validatorErrors = await _verbatimValidatorErrors(client, failing);
-          runUrl = failing.first.htmlUrl;
-        } else {
-          effective = WidgetPublication.stateOpen;
-          validatorErrors = const [];
-          runUrl = null;
-        }
-      } on Object {
-        // Offline / rate limit: keep the plain open state — never invent a
-        // verdict the API did not confirm.
-      }
+      (effective, validatorErrors, runUrl) = await _ciVerdict(
+        client,
+        pull!,
+        publication,
+      );
     }
 
     // Reviewer feedback snapshot (AC7): the latest comments ride the same
     // refresh as the state so the publications view needs one action per
     // update. Capped at the newest [_maxStoredComments] to bound the
     // ledger file; bodies stay plain text (display-only data).
-    var comments = publication.comments;
-    if (pull != null) {
-      try {
-        final fetched = await client.listPullComments(
-          GithubApiClient.catalogOwner,
-          GithubApiClient.catalogRepo,
-          prNumber,
-        );
-        comments = [
-          for (final c
-              in fetched.length > _maxStoredComments
-                  ? fetched.sublist(fetched.length - _maxStoredComments)
-                  : fetched)
-            WidgetPublicationComment(
-              author: c.author,
-              body: c.body,
-              createdAt: c.createdAt,
-              isReview: c.isReview,
-            ),
-        ];
-      } on Object {
-        // State still refreshes when comments are unreachable (a partial
-        // degrade beats a failed refresh).
-      }
-    }
+    final comments = await _latestComments(client, prNumber, publication, pull);
 
     // Persist only on a real change: the effective state (PR state merged
     // with the CI verdict — `open` under the hood must NOT re-record every
@@ -834,12 +898,14 @@ class WidgetPublishService {
     // lines, the run link, or the comment snapshot differs. The poller
     // runs on a timer — re-recording an unchanged publication would
     // rewrite the ledger file and notify listeners every tick for nothing.
-    final changed =
-        effective != publication.lastKnownState ||
-        !listEquals(validatorErrors, publication.validatorErrors) ||
-        runUrl != publication.runHtmlUrl ||
-        (pull != null && !listEquals(comments, publication.comments));
-    if (changed) {
+    if (_refreshChanged(
+      publication,
+      effective,
+      validatorErrors,
+      runUrl,
+      comments,
+      pull: pull,
+    )) {
       await _ledger.record(
         publication.copyWith(
           lastKnownState: effective,
@@ -850,6 +916,109 @@ class WidgetPublishService {
       );
     }
     return widgetPublicationStateOf(effective);
+  }
+
+  /// The stored `lastKnownState` for a fetched PR.
+  static String _pullState(GithubPull? pull) => pull == null
+      ? WidgetPublication.stateUnknown
+      : pull.state == 'open'
+      ? WidgetPublication.stateOpen
+      : pull.merged
+      ? WidgetPublication.stateMerged
+      : WidgetPublication.stateClosed;
+
+  /// The CI verdict on an open PR's head sha (issue #1045 AC3): pending →
+  /// `validating`, any failure → `invalid` with the validator's error
+  /// lines stored VERBATIM plus the run link, all green → plain `open`.
+  /// Returns `(effectiveState, validatorErrors, runUrl)`. A failed check
+  /// read (offline / rate limit) keeps the plain open state — never invent
+  /// a verdict the API did not confirm.
+  Future<(String, List<String>, String?)> _ciVerdict(
+    GithubApiClient client,
+    GithubPull pull,
+    WidgetPublication publication,
+  ) async {
+    var effective = WidgetPublication.stateOpen;
+    var validatorErrors = publication.validatorErrors;
+    var runUrl = publication.runHtmlUrl;
+    try {
+      final checks = await client.listCheckRuns(
+        GithubApiClient.catalogOwner,
+        GithubApiClient.catalogRepo,
+        pull.headSha!,
+      );
+      final failing = checks.where((check) => check.isFailed).toList();
+      if (checks.isEmpty || checks.any((check) => !check.isCompleted)) {
+        effective = WidgetPublication.stateValidating;
+        validatorErrors = const [];
+        runUrl = null;
+      } else if (failing.isNotEmpty) {
+        effective = WidgetPublication.stateInvalid;
+        validatorErrors = await _verbatimValidatorErrors(client, failing);
+        runUrl = failing.first.htmlUrl;
+      } else {
+        effective = WidgetPublication.stateOpen;
+        validatorErrors = const [];
+        runUrl = null;
+      }
+    } on Object {
+      // Offline / rate limit: keep the plain open state — never invent a
+      // verdict the API did not confirm.
+    }
+    return (effective, validatorErrors, runUrl);
+  }
+
+  /// The newest reviewer comments, capped at the stored newest
+  /// [_maxStoredComments]; the publication's own snapshot is kept when the
+  /// PR is gone or comments are unreachable (a partial degrade beats a
+  /// failed refresh).
+  Future<List<WidgetPublicationComment>> _latestComments(
+    GithubApiClient client,
+    int prNumber,
+    WidgetPublication publication,
+    GithubPull? pull,
+  ) async {
+    var comments = publication.comments;
+    if (pull == null) return comments;
+    try {
+      final fetched = await client.listPullComments(
+        GithubApiClient.catalogOwner,
+        GithubApiClient.catalogRepo,
+        prNumber,
+      );
+      final newest = fetched.length > _maxStoredComments
+          ? fetched.sublist(fetched.length - _maxStoredComments)
+          : fetched;
+      comments = [
+        for (final c in newest)
+          WidgetPublicationComment(
+            author: c.author,
+            body: c.body,
+            createdAt: c.createdAt,
+            isReview: c.isReview,
+          ),
+      ];
+    } on Object {
+      // State still refreshes when comments are unreachable (a partial
+      // degrade beats a failed refresh).
+    }
+    return comments;
+  }
+
+  /// Whether anything the ledger persists changed (state, verbatim error
+  /// lines, run link, or comment snapshot).
+  static bool _refreshChanged(
+    WidgetPublication publication,
+    String effective,
+    List<String> validatorErrors,
+    String? runUrl,
+    List<WidgetPublicationComment> comments, {
+    required GithubPull? pull,
+  }) {
+    return effective != publication.lastKnownState ||
+        !listEquals(validatorErrors, publication.validatorErrors) ||
+        runUrl != publication.runHtmlUrl ||
+        (pull != null && !listEquals(comments, publication.comments));
   }
 
   /// The failing checks' error lines, VERBATIM (issue #1045 — "no

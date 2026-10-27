@@ -586,4 +586,73 @@ void main() {
       expect('usage: /ext'.allMatches(io.out.toString()).length, 2);
     },
   );
+
+  test(
+    '/ext update re-plans from an explicit local path source (gh-1713)',
+    () async {
+      // Trust caps must match the manifest parser's normalized JSON (the
+      // hash-only test's fixture) so the re-plan lands on the silent
+      // re-grant path instead of the headless caps-diff refusal.
+      const normalizedCaps = {
+        'network': false,
+        'allowedCommands': <String>[],
+        'keys': false,
+        'fs': false,
+        'tools': true,
+        'menus': false,
+        'hooks': <String>[],
+      };
+      final store = ExtensionStore(
+        env: env,
+        projectDir: '/work',
+        userDir: '/home',
+      );
+      await store.write(
+        'hello-ext',
+        files: {
+          'manifest.json': jsonEncode({
+            'name': 'hello-ext',
+            'kind': 'cli-extension',
+            'version': '1.0.0',
+            'capabilities': {'tools': true},
+          }),
+          'main.js': '// test extension',
+        },
+        trust: TrustRecord(
+          source: ExtTrustSource.local,
+          sourceRef: '/work/.fah/js-ext/hello-ext',
+          contentSha256: 'deadbeef',
+          capabilities: normalizedCaps,
+          grantedAt: DateTime.utc(2026, 1, 1),
+        ),
+      );
+      io.isInteractive = false;
+      final cli = _cli(env, io);
+      final run = cli.run();
+      await _waitFor(() => io.out.toString().contains('fa>'));
+      // A local-path source takes the same stored-dir planning path as the
+      // default — the update re-plans from those files (hash-only re-grant).
+      io.sendLine('/ext update hello-ext /work/.fah/js-ext/hello-ext');
+      await _waitFor(() => io.out.toString().contains('updated hello-ext'));
+      io.sendLine('/exit');
+      await run;
+    },
+  );
+
+  test(
+    '/ext update reports failure for a bare non-local source (gh-1713)',
+    () async {
+      io.isInteractive = false;
+      final cli = _cli(env, io);
+      final run = cli.run();
+      await _waitFor(() => io.out.toString().contains('fa>'));
+      // Neither `gh:` nor `catalog:` nor a local path: the planning falls to
+      // the local installer, which cannot inspect a URL — the failure is
+      // reported, not crashed (no network is touched).
+      io.sendLine('/ext update hello-ext https://example.com/ext.jsz');
+      await _waitFor(() => io.out.toString().contains('ext: update failed:'));
+      io.sendLine('/exit');
+      await run;
+    },
+  );
 }

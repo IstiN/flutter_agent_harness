@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart' show MethodChannel;
+import 'package:fa/apps/open_app_tool.dart';
 import 'package:fa/prompts.g.dart';
 import 'package:fa/sandbox/sandbox_registry.dart';
 import 'package:fa/services/agent_service.dart';
@@ -30,6 +31,28 @@ StreamFunction _singleTextResponse(String text) {
     return stream;
   };
 }
+
+/// An [ImageDropReport] with [drops] history drops over [registry] window
+/// images at the default cap — the shape the loop's rewrite reports.
+/// Keys are realistic 64-hex content keys (production keys are SHA-256;
+/// the debug seam previews their first 8 chars, so short fixtures would
+/// RangeError — review round 1, PR #1891).
+ImageDropReport _dropReport({required int drops, required int registry}) =>
+    ImageDropReport(
+      drops: [
+        for (var i = 0; i < drops; i++)
+          ImageDropEvent(
+            index: i,
+            key: 'deadbeef${i.toString().padLeft(56, '0')}',
+            fromCurrentMessage: false,
+          ),
+      ],
+      cap: 20,
+      modelId: 'test-model',
+      currentImageCount: 0,
+      registryCount: registry,
+      ridingCount: registry - drops,
+    );
 
 /// Issue #1102 repro: one event-loop turn between the model-request-summary
 /// persist window (ModelRequestEvent) and the assistant MessageEnd persist —
@@ -462,6 +485,73 @@ void main() {
       },
     );
 
+    test('gh-1745: the request summary spills its heavy payload to the blob '
+        'dir', () async {
+      final env = MemoryExecutionEnv();
+      final service = AgentService(
+        agent: _createAgent(_singleTextResponse('hello back')),
+        env: env,
+        sessionsRoot: '/sessions',
+      );
+      await service.initialize();
+
+      await service.sendText('hello');
+      await service.waitForIdle();
+
+      final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
+      final metadata = (await repo.list()).single;
+      final session = await repo.open(metadata);
+      final entries = await session.getEntries();
+      final summary = entries.whereType<CustomRecord>().firstWhere(
+        (r) => r.customType == 'model_request_summary',
+      );
+      final data = summary.data! as Map;
+      // The primary JSONL record is lightweight: a spill pointer, no
+      // per-message block texts.
+      expect(data['spillFile'], isNotNull);
+      expect((data['messages'] as List).first['blocks'], isNull);
+
+      // The blob carries the FULL detail next to the session's .fah.
+      final store = TrajectoryRequestBlobStore(
+        env: env,
+        sessionId: () => metadata.id,
+      );
+      final detail = await store.readDetail(data['spillFile'] as String);
+      expect(detail, isNotNull);
+      expect(detail!.systemPromptChars, greaterThan(0));
+    });
+
+    test(
+      'trajectoryRequestBlobs:false keeps the legacy inline summary',
+      () async {
+        final env = MemoryExecutionEnv();
+        final service = AgentService(
+          agent: _createAgent(_singleTextResponse('hello back')),
+          env: env,
+          sessionsRoot: '/sessions',
+          trajectoryRequestBlobs: false,
+        );
+        await service.initialize();
+
+        await service.sendText('hello');
+        await service.waitForIdle();
+
+        final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
+        final metadata = (await repo.list()).single;
+        final session = await repo.open(metadata);
+        final entries = await session.getEntries();
+        final summary = entries.whereType<CustomRecord>().firstWhere(
+          (r) => r.customType == 'model_request_summary',
+        );
+        expect((summary.data! as Map)['spillFile'], isNull);
+        expect(
+          (await env.listDir('.fah/trajectories')).isErr,
+          isTrue,
+          reason: 'no blob dir is created when spilling is off',
+        );
+      },
+    );
+
     test(
       'a persist pass skipped by the run finalizer still lands by idle (#1102)',
       () async {
@@ -703,10 +793,11 @@ void main() {
 
         // The service owns the process-wide drop notice now: a drop must
         // reach the debug log the user can copy, like the CLI's dim line.
-        expect(imageDropNotice, isNotNull);
-        imageDropNotice!(7, 'a1b2c3d4');
-        expect(AppLog.dump(), contains('[Image 7]'));
-        expect(AppLog.dump(), contains('a1b2c3d4'));
+        expect(imageDropReportNotice, isNotNull);
+        imageDropReportNotice!(_dropReport(drops: 1, registry: 21));
+        expect(AppLog.dump(), contains('[Image 0]'));
+        // Issue #1889: the aggregated latch also fed the chat chip.
+        expect(service.chatImageNotice.value, isNotNull);
       },
     );
 
@@ -728,9 +819,9 @@ void main() {
 
         // The config-built constructor is what the real app boots through;
         // its drop notice must be armed as well.
-        expect(imageDropNotice, isNotNull);
-        imageDropNotice!(3, 'deadbeef');
-        expect(AppLog.dump(), contains('[Image 3]'));
+        expect(imageDropReportNotice, isNotNull);
+        imageDropReportNotice!(_dropReport(drops: 1, registry: 21));
+        expect(AppLog.dump(), contains('[Image 0]'));
       },
     );
 
@@ -2975,6 +3066,87 @@ void main() {
         }
       },
     );
+  });
+
+  group('consent + open_app wiring (gh-1848)', () {
+    test('setSkillsAccess records a changed choice and notifies', () async {
+      final env = MemoryExecutionEnv();
+      final service = AgentService(
+        agent: _createAgent(_singleTextResponse('ok')),
+        env: env,
+        sessionsRoot: '/sessions',
+      );
+      await service.initialize();
+      var notifications = 0;
+      service.addListener(() => notifications++);
+
+      expect(service.skillsAccess, SkillsAccess.granted);
+      await service.setSkillsAccess(SkillsAccess.denied);
+      expect(service.skillsAccess, SkillsAccess.denied);
+      // The change branch notifies — the UI re-reads the consent.
+      expect(notifications, 1);
+
+      // The early return: recording the SAME choice is a no-op — no second
+      // notification, choice unchanged.
+      await service.setSkillsAccess(SkillsAccess.denied);
+      expect(notifications, 1);
+      expect(service.skillsAccess, SkillsAccess.denied);
+    });
+
+    test('appLauncher registers, replaces and unregisters the open_app '
+        'tool', () async {
+      final env = MemoryExecutionEnv();
+      final service = AgentService(
+        agent: _createAgent(_singleTextResponse('ok')),
+        env: env,
+        sessionsRoot: '/sessions',
+      );
+      await service.initialize();
+      expect(
+        service.registeredToolNamesForTest,
+        isNot(contains(openAppToolName)),
+      );
+
+      final AppLauncher launcherA = (app) {};
+      service.appLauncher = launcherA;
+      expect(service.registeredToolNamesForTest, contains(openAppToolName));
+      expect(
+        service.registeredToolNamesForTest.where(
+          (name) => name == openAppToolName,
+        ),
+        hasLength(1),
+      );
+
+      // Replacing the launcher keeps exactly one open_app tool.
+      final AppLauncher launcherB = (app) {};
+      service.appLauncher = launcherB;
+      expect(
+        service.registeredToolNamesForTest.where(
+          (name) => name == openAppToolName,
+        ),
+        hasLength(1),
+      );
+
+      // The same launcher instance is the setter's early-return case.
+      final names = List.of(service.registeredToolNamesForTest);
+      service.appLauncher = launcherB;
+      expect(service.registeredToolNamesForTest, names);
+
+      // Null unregisters — the safe headless default.
+      service.appLauncher = null;
+      expect(
+        service.registeredToolNamesForTest,
+        isNot(contains(openAppToolName)),
+      );
+
+      // And a repeated null is the early return again, not a second
+      // unregister.
+      service.appLauncher = null;
+      expect(
+        service.registeredToolNamesForTest,
+        isNot(contains(openAppToolName)),
+      );
+    });
   });
 }
 

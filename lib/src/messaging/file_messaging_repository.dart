@@ -300,7 +300,9 @@ final class FileMessagingRepository implements MessagingRepository {
     }
   }
 
-  Future<String?> _registrySlugFor(String agentId) async {
+  /// The parsed `~/.fah/messages-registry.json`, or `null` when there is
+  /// nothing usable (missing home, absent/corrupt file).
+  Future<Map<String, dynamic>?> _readRegistry() async {
     final home = _homeDir;
     if (home == null || home.isEmpty) return null;
     final path = (await _env.joinPath([
@@ -312,13 +314,21 @@ final class FileMessagingRepository implements MessagingRepository {
     final text = existing.valueOrNull;
     if (text == null || text.isEmpty) return null;
     try {
-      final decoded = jsonDecode(text) as Map<String, dynamic>;
-      final entry = decoded[agentId];
-      if (entry is Map<String, dynamic> && entry['slug'] is String) {
-        return entry['slug'] as String;
-      }
+      // Shape-guarded (gh-1744 review): a valid-JSON document that is not
+      // an object (another tool corrupted the file) is "nothing usable" —
+      // an `as` cast here would throw a TypeError that `on FormatException`
+      // does not catch and take the whole listing down.
+      final decoded = jsonDecode(text);
+      return decoded is Map<String, dynamic> ? decoded : null;
     } on FormatException {
       return null;
+    }
+  }
+
+  Future<String?> _registrySlugFor(String agentId) async {
+    final entry = (await _readRegistry())?[agentId];
+    if (entry is Map<String, dynamic> && entry['slug'] is String) {
+      return entry['slug'] as String;
     }
     return null;
   }
@@ -348,45 +358,75 @@ final class FileMessagingRepository implements MessagingRepository {
   Future<List<MailboxEntry>> directory() async {
     final sessionRoot = _sessionRoot();
     final entries = <MailboxEntry>[];
+    // gh-1744: the registry holds each mailbox's EXACT cwd (written from
+    // the live env at registration) — read once, before the slug walk,
+    // and preferred over the slug decode whose legacy form is lossy for
+    // hyphenated workspaces.
+    final registry = await _readRegistry();
     final slugDirs = (await _env.listDir(sessionRoot)).valueOrNull ?? const [];
     for (final slugDir in slugDirs) {
       if (slugDir.kind != FileKind.directory) continue;
-      final messagesDir = _peerMessagesRoot(slugDir);
-      final mbDirs = (await _env.listDir(messagesDir)).valueOrNull ?? const [];
-      for (final mbDir in mbDirs) {
-        if (mbDir.kind != FileKind.directory) continue;
-        // Reserved names are not agent mailboxes: dot-dirs are hidden
-        // state, `_scheduled` is the delayed-message store.
-        if (mbDir.name.startsWith('.') || mbDir.name.startsWith('_')) {
-          continue;
-        }
-        final idMarker = (await _env.readTextFile(
-          '${mbDir.path}/.id',
-        )).valueOrNull?.trim();
-        final id = (idMarker != null && idMarker.isNotEmpty)
-            ? idMarker
-            : mbDir.name;
-        final nameMarker = (await _env.readTextFile(
-          '${mbDir.path}/.name',
-        )).valueOrNull?.trim();
-        final cwd = _decodeSessionCwd?.call(slugDir.name);
-        entries.add(
-          MailboxEntry(
-            id: id,
-            name: (nameMarker != null && nameMarker.isNotEmpty)
-                ? nameMarker
-                : null,
-            slug: _peerSlug(slugDir),
-            cwd: cwd,
-            lastActivity: await _lastActivity(mbDir.path),
-            presence: await _busyPresence(mbDir.path),
-            capabilities: await _capabilities(mbDir.path),
-          ),
-        );
-      }
+      entries.addAll(await _mailboxEntries(slugDir, registry));
     }
     return entries;
   }
+
+  /// Every agent mailbox under one `<slug>/messages` root, in directory
+  /// order (reserved names skipped — see [_mailboxEntry]).
+  Future<List<MailboxEntry>> _mailboxEntries(
+    FileInfo slugDir,
+    Map<String, dynamic>? registry,
+  ) async {
+    final mbDirs =
+        (await _env.listDir(_peerMessagesRoot(slugDir))).valueOrNull ??
+        const [];
+    final entries = <MailboxEntry>[];
+    for (final mbDir in mbDirs) {
+      if (mbDir.kind != FileKind.directory) continue;
+      final entry = await _mailboxEntry(slugDir, mbDir, registry);
+      if (entry != null) entries.add(entry);
+    }
+    return entries;
+  }
+
+  /// One mailbox's directory entry, or null for reserved names: dot-dirs
+  /// are hidden state, `_scheduled` is the delayed-message store.
+  Future<MailboxEntry?> _mailboxEntry(
+    FileInfo slugDir,
+    FileInfo mbDir,
+    Map<String, dynamic>? registry,
+  ) async {
+    if (mbDir.name.startsWith('.') || mbDir.name.startsWith('_')) {
+      return null;
+    }
+    final id = _nonEmpty(await _markerText('${mbDir.path}/.id')) ?? mbDir.name;
+    // Shape-guarded (gh-1744 review): an entry that is valid JSON but
+    // not an object (e.g. a plain string written by another tool) must
+    // not crash the whole listing with a NoSuchMethodError — the slug
+    // decode answers instead.
+    final entry = registry?[id];
+    final registryCwd = entry is Map<String, dynamic> ? entry['cwd'] : null;
+    final cwd =
+        _nonEmpty(registryCwd is String ? registryCwd : null) ??
+        _decodeSessionCwd?.call(slugDir.name);
+    return MailboxEntry(
+      id: id,
+      name: _nonEmpty(await _markerText('${mbDir.path}/.name')),
+      slug: _peerSlug(slugDir),
+      cwd: cwd,
+      lastActivity: await _lastActivity(mbDir.path),
+      presence: await _busyPresence(mbDir.path),
+      capabilities: await _capabilities(mbDir.path),
+    );
+  }
+
+  /// The trimmed content of one mailbox marker file, null when absent.
+  Future<String?> _markerText(String path) async =>
+      (await _env.readTextFile(path)).valueOrNull?.trim();
+
+  /// [value] when it is a non-empty string, null otherwise.
+  static String? _nonEmpty(String? value) =>
+      (value != null && value.isNotEmpty) ? value : null;
 
   /// The newest dated file inside [mailboxDir]: the `.heartbeat` marker at
   /// the top level plus everything in `inbox/` and `read/`. The `.id`
@@ -440,7 +480,11 @@ final class FileMessagingRepository implements MessagingRepository {
     final home = _homeDir;
     if (home == null || home.isEmpty) return;
     final slug = encodeSessionCwd(_env.cwd);
-    final cwd = _decodeSessionCwd?.call(slug) ?? '';
+    // gh-1744: the registry exists so tooling gets the EXACT cwd — the
+    // live env knows it, while decoding the slug back is lossy for
+    // hyphenated workspaces. Hosts without a slug decoder keep the
+    // legacy empty-cwd shape.
+    final cwd = _decodeSessionCwd != null ? _env.cwd : '';
     final path = (await _env.joinPath([
       home,
       '.fah',
@@ -451,8 +495,13 @@ final class FileMessagingRepository implements MessagingRepository {
     final existingText = existing.valueOrNull;
     if (existingText != null && existingText.isNotEmpty) {
       try {
-        final decoded = jsonDecode(existingText) as Map<String, dynamic>;
-        registry = Map<String, dynamic>.from(decoded);
+        // Shape-guarded like _readRegistry (gh-1744 review): a non-map
+        // document is treated as nothing usable — the fresh entry replaces
+        // it instead of crashing the registration.
+        final decoded = jsonDecode(existingText);
+        if (decoded is Map<String, dynamic>) {
+          registry = Map<String, dynamic>.from(decoded);
+        }
       } on FormatException {
         registry = {};
       }

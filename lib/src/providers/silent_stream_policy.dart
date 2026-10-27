@@ -397,18 +397,13 @@ final class SilentStreamPolicy {
 
 /// Whether [event] carries OBSERVABLE content (the #964 commit guard: a
 /// replay may never follow content the host already rendered). A bare
-/// [StartEvent] (the model started; nothing visible) is pre-commit.
+/// [StartEvent] (the model started; nothing visible) is pre-commit, and
+/// the terminal events are classified by the ladder, not here.
 bool _isCommitEvent(AssistantMessageEvent event) => switch (event) {
   StartEvent() || DoneEvent() || ErrorEvent() => false,
-  TextStartEvent() ||
-  TextDeltaEvent() ||
-  TextEndEvent() ||
-  ThinkingStartEvent() ||
-  ThinkingDeltaEvent() ||
-  ThinkingEndEvent() ||
-  ToolCallStartEvent() ||
-  ToolCallDeltaEvent() ||
-  ToolCallEndEvent() => true,
+  // [AssistantMessageEvent] is sealed: every remaining subtype is a
+  // content event — classify new kinds explicitly above if they arrive.
+  _ => true,
 };
 
 /// Convenience: wraps [inner] (statically bound) with the policy — the

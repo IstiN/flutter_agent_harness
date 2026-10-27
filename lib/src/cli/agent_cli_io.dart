@@ -164,7 +164,9 @@ extension AgentCliRunNotices on AgentCli {
   void wireRunNoticesForTesting() {
     _wireTransientRetryNotice();
     _wireImageDropNotice();
+    _wireImageCapLearnedNotice();
     _wireTextOnlyImageDropNotice();
+    _wirePayloadStallAdvice();
     _wireDeliverySloNotice();
     _wireOperativePinNotice();
   }
@@ -261,20 +263,51 @@ extension AgentCliRunNotices on AgentCli {
     );
   }
 
-  /// Image registry drop visibility (issue #171): when the per-request
-  /// cap drops a history image, say so — a dim transcript line + an
-  /// fa.log entry instead of a silent degradation.
+  /// Image registry drop visibility (issues #171 + #1889): the per-image
+  /// detail lands in fa.log (never silent at the debug surface), while
+  /// the transcript shows ONE latched, aggregated notice per meaningful
+  /// drop-situation change — the same dropped set on later requests is
+  /// silence, a change or a recovery is one updated line.
   void _wireImageDropNotice() {
-    imageDropNotice = (index, keyPreview) {
+    imageDropReportNotice = (report) {
+      for (final drop in report.drops) {
+        _logDiagnostic(
+          'image registry drop sid=$_logSid index=${drop.index} '
+          'key=${drop.keyPreview}${drop.fromCurrentMessage ? ' (current)' : ''}',
+        );
+      }
+      final view = imageDropUx.observe(report);
+      if (view == null) return;
+      final line = '[images] ${view.line}';
+      io.writeln(view.prominent ? _style.bold(line) : _style.dim(line));
+    };
+  }
+
+  /// Repeated identical-payload stalls (issue #1916 AC3): ONE actionable
+  /// advice line per stalled payload instead of endless silent retries —
+  /// the dim `[net]` transcript line + fa.log entry, same as the other
+  /// net notices.
+  void _wirePayloadStallAdvice() {
+    payloadStallAdvice = (bytes, fingerprint) {
+      io.writeln(_style.dim('[net] ${payloadStallAdviceLine(bytes)}'));
+      _logDiagnostic(
+        'payload stall advice sid=$_logSid bytes=$bytes fp=$fingerprint',
+      );
+    };
+  }
+
+  /// Adaptive image-cap visibility (issue #1750): when a provider
+  /// image-count refusal teaches the loop a smaller cap, say so before
+  /// the per-image drop lines follow — never silent.
+  void _wireImageCapLearnedNotice() {
+    imageCapLearnedNotice = (modelId, cap) {
       io.writeln(
         _style.dim(
-          '[images] dropping [Image $index] (key $keyPreview…) '
-          '— per-request cap reached',
+          '[images] provider refused: too many images for $modelId — '
+          'cap learned: $cap; re-sending with fewer images',
         ),
       );
-      _logDiagnostic(
-        'image registry drop sid=$_logSid index=$index key=$keyPreview',
-      );
+      _logDiagnostic('image cap learned sid=$_logSid model=$modelId cap=$cap');
     };
   }
 

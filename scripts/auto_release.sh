@@ -10,7 +10,12 @@
 # (gh-1265). Now:
 #
 #   latest tag + 1  →  `git tag -a v$next origin/main`  →  push the tag
-#   →  `gh release create` with release_notes.sh notes.
+#
+# NO GitHub Release is created here (gh-1801): this script has an EMPTY
+# resolved asset list, and creating the release would publish an empty
+# `latest` that breaks `fa update` until the binaries backfill. The
+# tag-run binaries job owns release creation — draft-first, published
+# only after an asset upload lands.
 #
 # Runs in CI on every push to main / the 2h catch-up cron / manual dispatch
 # (the `release` job in .github/workflows/ci.yml). The job authenticates via
@@ -27,9 +32,12 @@
 # Dry-run: RELEASE_DRY_RUN=1 (or "true") computes the tag that WOULD be
 # cut, logs it, and stops before any push.
 #
-# Release notes: scripts/release_notes.sh — curated `## <version>` section,
-# else the curated `## Unreleased` body (gh-1522 §2), else conventional
-# commits since the previous tag.
+# Release notes: scripts/release_notes.sh is NOT invoked here anymore —
+# with no release create there is no body to prepare. The release body is
+# owned by the tag-run binaries job's lazy draft create
+# (scripts/release_lazy_draft.sh), which folds the curated CHANGELOG
+# section via release_notes.sh into the DRAFT it creates; the signed
+# provenance job publishes it (gh-1801).
 set -euo pipefail
 
 # Tag authorship names the App so releases are attributable in history
@@ -88,21 +96,23 @@ for attempt in 1 2 3; do
   git tag -a "$tag" -m "Release $tag" origin/main
 
   if [ "$dry_run" -eq 1 ]; then
-    echo "Auto-release DRY-RUN: would push tag $tag at $(git rev-parse --short origin/main) and create the GitHub Release."
+    echo "Auto-release DRY-RUN: would push tag $tag at $(git rev-parse --short origin/main). No GitHub Release is created (gh-1801: the binaries job owns creation, draft-first)."
     git tag -d "$tag" >/dev/null
     exit 0
   fi
 
   if git push origin "refs/tags/$tag"; then
     echo "Auto-release: pushed $tag — the tag-scoped publish/binaries jobs fire from it."
-    # GitHub Release so the binaries job can attach assets to it. Notes come
-    # from release_notes.sh (issue #282). Bare vX.Y.Z title, latest explicit.
-    notes=$(bash "$(dirname "$0")/release_notes.sh" "$next") || notes="Release $tag"
-    gh release create "$tag" \
-      --title "$tag" \
-      --notes "$notes" \
-      --latest \
-      --repo "$GITHUB_REPOSITORY" || true
+    # gh-1801: NO release is created here. This script resolves an EMPTY
+    # asset list — the CLI tarballs/SPA zip do not exist until the tag-run
+    # binaries/web-spa jobs build them. Creating the release now would
+    # publish an EMPTY `latest` immediately, and `fa update` would 404 on
+    # fa-<os>-<arch>.tar.gz for every user until the binaries backfilled
+    # (the v1.0.630 window, 2026-10-23: empty latest from 09:11 until
+    # 09:14–09:20). A warning-only variant leaves the same window — the
+    # skip is hard. The binaries job owns creation, draft-first, and
+    # publishes only after its asset upload lands (pinned by
+    # test/release_empty_latest_guard_test.dart).
     exit 0
   fi
   echo "Tag push raced (tag likely appeared mid-run), re-deriving..."

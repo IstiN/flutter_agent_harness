@@ -262,48 +262,54 @@ class _FocusRing extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return SizedBox(
-      width: size,
-      height: size,
-      child: Stack(
-        alignment: Alignment.center,
-        children: [
-          SizedBox(
-            width: size,
-            height: size,
-            child: CircularProgressIndicator(
-              value: 0.75,
-              strokeWidth: size * 0.05,
-              backgroundColor: Colors.white.withValues(alpha: 0.12),
-              valueColor: const AlwaysStoppedAnimation(Color(0xFF5B8DEF)),
-              strokeCap: StrokeCap.round,
+    // Fixed-size art in a width-flexible slot: when the slot is narrower
+    // than [size], scale the ring down uniformly instead of overflowing
+    // the card (issue #1824, the 7.3px right overflow on page 1).
+    return FittedBox(
+      fit: BoxFit.scaleDown,
+      child: SizedBox(
+        width: size,
+        height: size,
+        child: Stack(
+          alignment: Alignment.center,
+          children: [
+            SizedBox(
+              width: size,
+              height: size,
+              child: CircularProgressIndicator(
+                value: 0.75,
+                strokeWidth: size * 0.05,
+                backgroundColor: Colors.white.withValues(alpha: 0.12),
+                valueColor: const AlwaysStoppedAnimation(Color(0xFF5B8DEF)),
+                strokeCap: StrokeCap.round,
+              ),
             ),
-          ),
-          FittedBox(
-            fit: BoxFit.scaleDown,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  '25:00',
-                  style: TextStyle(
-                    fontSize: timeSize,
-                    fontWeight: FontWeight.w800,
-                    color: Colors.white,
-                    letterSpacing: -0.5,
+            FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    '25:00',
+                    style: TextStyle(
+                      fontSize: timeSize,
+                      fontWeight: FontWeight.w800,
+                      color: Colors.white,
+                      letterSpacing: -0.5,
+                    ),
                   ),
-                ),
-                Text(
-                  'Focus time',
-                  style: TextStyle(
-                    fontSize: timeSize * 0.38,
-                    color: Colors.white70,
+                  Text(
+                    'Focus time',
+                    style: TextStyle(
+                      fontSize: timeSize * 0.38,
+                      color: Colors.white70,
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -428,121 +434,136 @@ class _AppTile extends StatelessWidget {
     _ => Colors.white,
   };
 
-  Widget _glyph(double s) => switch (kind) {
-    _AppKind.calendar => Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Container(
-          width: 20 * s,
-          height: 4 * s,
-          decoration: BoxDecoration(
-            color: const Color(0xFF2F7CF6),
-            borderRadius: BorderRadius.circular(2),
-          ),
-        ),
-        SizedBox(height: 2 * s),
-        Text(
-          '31',
-          style: TextStyle(
-            fontSize: 15 * s,
-            fontWeight: FontWeight.w800,
-            color: const Color(0xFF2F7CF6),
-            height: 1,
-          ),
-        ),
-      ],
-    ),
-    _AppKind.notes => Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Container(
-          width: 22 * s,
-          height: 6 * s,
-          decoration: BoxDecoration(
-            color: const Color(0xFFFBBF24),
-            borderRadius: BorderRadius.circular(3),
-          ),
-        ),
-        SizedBox(height: 3 * s),
-        for (var i = 0; i < 3; i++)
-          Container(
-            width: 18 * s,
-            height: 2 * s,
-            margin: EdgeInsets.symmetric(vertical: 1.4 * s),
-            decoration: BoxDecoration(
-              color: const Color(0xFFD8DBE6),
-              borderRadius: BorderRadius.circular(1),
-            ),
-          ),
-      ],
-    ),
-    _AppKind.utilities => Wrap(
-      spacing: 2.5 * s,
-      runSpacing: 2.5 * s,
-      children: [
-        for (final c in const [
-          Color(0xFF5B8DEF),
-          Color(0xFFFBBF24),
-          Color(0xFF2EBD9E),
-          Color(0xFF9AA0B4),
-        ])
-          Container(
-            width: 9 * s,
-            height: 9 * s,
-            decoration: BoxDecoration(
-              color: c,
-              borderRadius: BorderRadius.circular(2.5 * s),
-            ),
-          ),
-      ],
-    ),
-    _AppKind.files => Icon(Icons.folder, size: 24 * s, color: Colors.white),
-    _AppKind.calculator => Wrap(
-      spacing: 2 * s,
-      runSpacing: 2 * s,
-      children: [
-        for (var i = 0; i < 9; i++)
-          Container(
-            width: 5 * s,
-            height: 5 * s,
-            decoration: BoxDecoration(
-              color: i == 7 ? const Color(0xFFF59E0B) : const Color(0xFF8A8FA8),
-              borderRadius: BorderRadius.circular(1.2 * s),
-            ),
-          ),
-      ],
-    ),
-    _AppKind.maps => Icon(
-      Icons.place,
-      size: 24 * s,
-      color: const Color(0xFFEA4335),
-    ),
-    _AppKind.focusTimer => SizedBox(
-      width: 24 * s,
-      height: 24 * s,
-      child: CircularProgressIndicator(
-        value: 0.75,
-        strokeWidth: 2.5 * s,
-        backgroundColor: Colors.white.withValues(alpha: 0.2),
-        valueColor: const AlwaysStoppedAnimation(Color(0xFF5B8DEF)),
-      ),
-    ),
-    _AppKind.settings => Icon(
-      Icons.settings,
-      size: 24 * s,
-      color: const Color(0xFF7A7F96),
-    ),
-    _AppKind.addApp || _AppKind.createWithFa => Icon(
-      Icons.add,
-      size: 24 * s,
-      color: const Color(0xFF9AA0B4),
-    ),
-    _AppKind.habitGarden => Icon(
-      Icons.eco,
-      size: 22 * s,
-      color: const Color(0xFF10B981),
-    ),
+  /// Per-kind mock glyphs (gh-1848 tier-4 split): a static route table —
+  /// the #558 route-dispatch pattern, so the switch arms' loop/ternary
+  /// complexity moves into small named builders.
+  static final Map<_AppKind, Widget Function(double)> _glyphBuilders = {
+    _AppKind.calendar: _calendarGlyph,
+    _AppKind.notes: _notesGlyph,
+    _AppKind.utilities: _utilitiesGlyph,
+    _AppKind.files: _filesGlyph,
+    _AppKind.calculator: _calculatorGlyph,
+    _AppKind.maps: _mapsGlyph,
+    _AppKind.focusTimer: _focusTimerGlyph,
+    _AppKind.settings: _settingsGlyph,
+    _AppKind.addApp: _addAppGlyph,
+    _AppKind.createWithFa: _addAppGlyph,
+    _AppKind.habitGarden: _habitGardenGlyph,
   };
+
+  Widget _glyph(double s) => _glyphBuilders[kind]!(s);
+
+  static Widget _calendarGlyph(double s) => Column(
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      Container(
+        width: 20 * s,
+        height: 4 * s,
+        decoration: BoxDecoration(
+          color: const Color(0xFF2F7CF6),
+          borderRadius: BorderRadius.circular(2),
+        ),
+      ),
+      SizedBox(height: 2 * s),
+      Text(
+        '31',
+        style: TextStyle(
+          fontSize: 15 * s,
+          fontWeight: FontWeight.w800,
+          color: const Color(0xFF2F7CF6),
+          height: 1,
+        ),
+      ),
+    ],
+  );
+
+  static Widget _notesGlyph(double s) => Column(
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      Container(
+        width: 22 * s,
+        height: 6 * s,
+        decoration: BoxDecoration(
+          color: const Color(0xFFFBBF24),
+          borderRadius: BorderRadius.circular(3),
+        ),
+      ),
+      SizedBox(height: 3 * s),
+      for (var i = 0; i < 3; i++)
+        Container(
+          width: 18 * s,
+          height: 2 * s,
+          margin: EdgeInsets.symmetric(vertical: 1.4 * s),
+          decoration: BoxDecoration(
+            color: const Color(0xFFD8DBE6),
+            borderRadius: BorderRadius.circular(1),
+          ),
+        ),
+    ],
+  );
+
+  static Widget _utilitiesGlyph(double s) => Wrap(
+    spacing: 2.5 * s,
+    runSpacing: 2.5 * s,
+    children: [
+      for (final c in const [
+        Color(0xFF5B8DEF),
+        Color(0xFFFBBF24),
+        Color(0xFF2EBD9E),
+        Color(0xFF9AA0B4),
+      ])
+        Container(
+          width: 9 * s,
+          height: 9 * s,
+          decoration: BoxDecoration(
+            color: c,
+            borderRadius: BorderRadius.circular(2.5 * s),
+          ),
+        ),
+    ],
+  );
+
+  static Widget _filesGlyph(double s) =>
+      Icon(Icons.folder, size: 24 * s, color: Colors.white);
+
+  static Widget _calculatorGlyph(double s) => Wrap(
+    spacing: 2 * s,
+    runSpacing: 2 * s,
+    children: [
+      for (var i = 0; i < 9; i++)
+        Container(
+          width: 5 * s,
+          height: 5 * s,
+          decoration: BoxDecoration(
+            color: i == 7 ? const Color(0xFFF59E0B) : const Color(0xFF8A8FA8),
+            borderRadius: BorderRadius.circular(1.2 * s),
+          ),
+        ),
+    ],
+  );
+
+  static Widget _mapsGlyph(double s) =>
+      Icon(Icons.place, size: 24 * s, color: const Color(0xFFEA4335));
+
+  static Widget _focusTimerGlyph(double s) => SizedBox(
+    width: 24 * s,
+    height: 24 * s,
+    child: CircularProgressIndicator(
+      value: 0.75,
+      strokeWidth: 2.5 * s,
+      backgroundColor: Colors.white.withValues(alpha: 0.2),
+      valueColor: const AlwaysStoppedAnimation(Color(0xFF5B8DEF)),
+    ),
+  );
+
+  static Widget _settingsGlyph(double s) =>
+      Icon(Icons.settings, size: 24 * s, color: const Color(0xFF7A7F96));
+
+  static Widget _addAppGlyph(double s) =>
+      Icon(Icons.add, size: 24 * s, color: const Color(0xFF9AA0B4));
+
+  static Widget _habitGardenGlyph(double s) =>
+      Icon(Icons.eco, size: 22 * s, color: const Color(0xFF10B981));
 }
 
 class _FlowCard extends StatelessWidget {
@@ -740,7 +761,7 @@ class _PermCard extends StatelessWidget {
     );
     final allow = Container(
       width: 62,
-      height: 30,
+      height: 32,
       decoration: BoxDecoration(
         color: _kSelBg,
         borderRadius: BorderRadius.circular(8),
@@ -758,7 +779,7 @@ class _PermCard extends StatelessWidget {
     );
     final later = Container(
       width: 62,
-      height: 30,
+      height: 32,
       decoration: BoxDecoration(
         color: const Color(0xFFF3F4F8),
         borderRadius: BorderRadius.circular(8),
@@ -804,8 +825,14 @@ class _PermCard extends StatelessWidget {
             ),
             const SizedBox(height: 8),
             askPill,
-            const SizedBox(height: 12),
-            Row(children: [allow, const SizedBox(width: 8), later]),
+            const SizedBox(height: 14),
+            // Fixed-width pair in a narrow card: scale down uniformly when
+            // the card is tighter than the pair instead of clipping its
+            // right edge (issue #1824, the 8.2px right overflow on page 3).
+            FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Row(children: [allow, const SizedBox(width: 10), later]),
+            ),
           ],
         ),
       );

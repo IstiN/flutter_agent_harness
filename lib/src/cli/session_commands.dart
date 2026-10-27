@@ -24,6 +24,7 @@ extension on AgentCli {
     _subagentManager.reset();
     // The status meter belongs to the session (see _switchToMetadata).
     _usage.reset();
+    _meter.reset();
     final matches = await _sessionNameMatches(trimmed);
     SessionMetadata? metadata;
     if (matches.length > 1 &&
@@ -80,6 +81,7 @@ extension on AgentCli {
     _checkpoints.clear();
     _ttsr?.reset();
     _session = await _createSession(name: trimmed);
+    _notifyPluginSessionReady();
     _syncMailboxPrefix();
     // herdr pane state (issue #1481): in-process session switch — re-report
     // the new session, never a release.
@@ -128,6 +130,7 @@ extension on AgentCli {
     // The status meter belongs to the session: tok/cost/turn must not carry
     // the previous session's totals into the new one.
     _usage.reset();
+    _meter.reset();
     _agent.reset();
     _checkpoints.clear();
     _ttsr?.reset();
@@ -152,6 +155,7 @@ extension on AgentCli {
     // tree for the SAME project re-pays the boot for nothing.
     if (cwdChanged) await _loadAgentContext();
     _session = await _loadSession(metadata);
+    _notifyPluginSessionReady();
     _syncMailboxPrefix();
     // herdr pane state (issue #1481): in-process session switch — re-report
     // the new session, never a release.
@@ -276,6 +280,21 @@ extension on AgentCli {
     io.writeln(
       _style.dim('switch: /session <name> · rename: /rename-session <name>'),
     );
+    // gh-1746 Visibility: the usage footer, only when the user configured
+    // a retention cap (REG-1: the cap-free listing stays byte-identical).
+    final sessionsRetention = config.sessionsRetention?.retention;
+    if (sessionsRetention != null && sessionsRetention.hasCap) {
+      try {
+        final usage = await SessionRetentionSweeper(
+          fs: _env,
+          sessionsRoot: config.sessionRoot,
+        ).usage();
+        final footer = sessionUsageFooterLine(usage, sessionsRetention);
+        if (footer != null) io.writeln(_style.dim(footer));
+      } on Object {
+        // Best-effort chrome: a failed walk never fails the listing.
+      }
+    }
   }
 
   Future<void> _createNamedSession(String name) async {
@@ -294,6 +313,7 @@ extension on AgentCli {
     _checkpoints.clear();
     _ttsr?.reset();
     _session = await _createSession(name: trimmed);
+    _notifyPluginSessionReady();
     _syncMailboxPrefix();
     // herdr pane state (issue #1481): in-process session switch — re-report
     // the new session, never a release.
@@ -406,14 +426,24 @@ extension on AgentCli {
   }
 
   Future<Session> _initializeSession() async {
-    // gh-1660 boot hygiene: crashed/killed runs leave header-only session
-    // files behind (the clean-exit `deleteSessionIfEmpty` never ran for
-    // them). Fire-and-forget, best-effort — never delays the first turn.
-    unawaited(_sweepHeaderOnlySessions());
+    // gh-1746 boot hygiene: resolve the resume target FIRST, then run the
+    // opt-in sessions retention sweep (AC7). The sweeper must exempt the
+    // session this process is about to open: its presence row registers
+    // only after the load (agent_cli `_registerLivePresence`), so at sweep
+    // time the resolved id is the only protection — sweeping before the
+    // name scan deleted the very transcript `fa --session <id>` was about
+    // to open (and any resume under `keepNamed: false`), silently
+    // replacing it with a fresh empty session. Awaited (unlike the
+    // header-only sweep below): it DELETES files, so it must finish before
+    // this process opens a session the sweep could otherwise race. Only
+    // runs when the user touched `sessions:` in the config — a
+    // section-free boot stays byte-identical legacy (AC1).
     final name = config.sessionName?.trim();
+    var matches = const <SessionMetadata>[];
+    SessionMetadata? metadata;
     if (name != null && name.isNotEmpty) {
-      final matches = await _sessionNameMatches(name);
-      final metadata = _resolveSessionNameMatch(
+      matches = await _sessionNameMatches(name);
+      metadata = _resolveSessionNameMatch(
         matches,
         onAmbiguous: (all) {
           // Interactive prompting is impossible this early (the input pump
@@ -423,6 +453,13 @@ extension on AgentCli {
           _startupAmbiguousName = name;
         },
       );
+    }
+    await _retentionBootCheck(currentSessionId: metadata?.id);
+    // gh-1660 boot hygiene: crashed/killed runs leave header-only session
+    // files behind (the clean-exit `deleteSessionIfEmpty` never ran for
+    // them). Fire-and-forget, best-effort — never delays the first turn.
+    unawaited(_sweepHeaderOnlySessions());
+    if (name != null && name.isNotEmpty) {
       if (metadata != null) {
         if (matches.length > 1) {
           io.writeln(
@@ -455,6 +492,41 @@ extension on AgentCli {
       await repo.cleanupEmptySessions(olderThan: _headerOnlySweepGrace);
     } on Object {
       // Best-effort: never let hygiene delay or fail the boot.
+    }
+  }
+
+  /// The boot retention check (gh-1746): with the `sessions:` config
+  /// section present, run [SessionRetentionSweeper.enforceAtBoot] — cap
+  /// + `sweep: boot` deletes whole units; every outcome renders through
+  /// [sessionSweepReportLines] into the boot log (fa.log, AC7) and the
+  /// dim notice channel (line mode + the TUI re-print after the banner,
+  /// the same surface as the roles-drop warning). Absent section (null)
+  /// returns immediately: no sweep, no note, no walk (AC1). Best-effort:
+  /// a failed check never fails the boot. [currentSessionId] exempts the
+  /// resume target this boot resolved BEFORE sweeping — the one session
+  /// the sweep must never eat (its presence row registers only after the
+  /// load).
+  Future<void> _retentionBootCheck({String? currentSessionId}) async {
+    final sessions = config.sessionsRetention;
+    if (sessions == null) return;
+    try {
+      final report = await SessionRetentionSweeper(
+        fs: _env,
+        sessionsRoot: config.sessionRoot,
+        retention: sessions.retention,
+        presenceStore: config.presenceStore,
+        currentSessionId: currentSessionId,
+        // AC7: one log line per auto-deletion (+ the plan on a boot
+        // apply) lands in fa.log with the other lifecycle lines.
+        log: (line) => _logDiagnostic('[retention] $line'),
+      ).enforceAtBoot();
+      final lines = sessionSweepReportLines(report);
+      for (final line in lines) {
+        _logDiagnostic('[retention] $line');
+      }
+      _retentionBootLines = List.unmodifiable(lines);
+    } on Object catch (error) {
+      _logDiagnostic('[retention] boot check failed: $error');
     }
   }
 
@@ -661,6 +733,93 @@ extension on AgentCli {
     }
   }
 
+  /// The opt-in keep-latest vacuum at session open (issue #1882 AC2):
+  /// with `sessions.vacuumLedgers: true`, drop the resumed session's
+  /// superseded `shell_job_registry` / `subagent_registry` /
+  /// `obligations_ledger` snapshots. The surgery is the SAME
+  /// [repairSessionLedgers] `fa session repair` performs — MINUS the
+  /// full-drop ledger types (`model_request_summary`, the trajectory
+  /// blobs): a resume-time vacuum reclaims dead SNAPSHOTS only; dropping
+  /// request summaries is the explicit `fa session repair` deep clean,
+  /// never an automatic side effect (issue #1882 review coherence — PR1
+  /// bounded those records at ≤ 20 KB, and the Request tab plus the
+  /// usage-estimation basis live in them). Everything else matches the
+  /// verb: newest snapshot per ledger kept, everything else byte-
+  /// verbatim, pre-vacuum bytes preserved at `<path>.bak`, atomic swap.
+  /// Never a silent default: the config flag is the explicit opt-in, the
+  /// report lands as a dim line plus a `[vacuum]` fa.log entry. Guards:
+  /// a live presence row means another instance holds the session — skip
+  /// (this process registers its own row only after the load); a
+  /// filesystem without the ranged-read/atomic-rename surface, or any
+  /// failure, logs and leaves the file untouched. Runs before the
+  /// warm-switch fingerprint so the cache keys the post-vacuum bytes.
+  Future<void> _vacuumLedgersAtOpen(SessionMetadata metadata) async {
+    final sessions = config.sessionsRetention;
+    if (sessions == null || !sessions.vacuumLedgers) return;
+    final presenceRows = await config.presenceStore?.list() ?? const {};
+    if (presenceRows.containsKey(metadata.id)) {
+      _logDiagnostic(
+        '[vacuum] skipped ${metadata.id}: another instance holds the '
+        'session (live presence row)',
+      );
+      return;
+    }
+    SessionRepairReport report;
+    try {
+      report = await repairSessionLedgers(
+        _env,
+        metadata.path,
+        dropTypes: const {},
+      );
+    } on Object catch (error) {
+      _logDiagnostic('[vacuum] failed for ${metadata.id}: $error');
+      return;
+    }
+    final droppedTotal = report.droppedByType.values.fold<int>(
+      0,
+      (a, b) => a + b,
+    );
+    if (droppedTotal == 0) return;
+    final reclaimed = report.bytesBefore - report.bytesAfter;
+    final ledgerParts = [
+      for (final MapEntry(key: type, value: count)
+          in report.droppedByType.entries)
+        '$type ×$count',
+    ].join(', ');
+    final line =
+        'vacuum: dropped $droppedTotal superseded ledger snapshots '
+        '($ledgerParts), reclaimed $reclaimed bytes '
+        '(${report.bytesBefore} → ${report.bytesAfter}); '
+        'original at ${report.backupPath}';
+    io.writeln(_style.dim(line));
+    _logDiagnostic('[vacuum] $line');
+  }
+
+  /// Stores a freshly built context for the warm-switch cache only when
+  /// the file did not change during the open: the fingerprint must
+  /// describe exactly the bytes the context was built from, or a later
+  /// warm hit could serve a stale transcript (gh-1734).
+  Future<void> _rememberResumedContext(
+    SessionMetadata metadata,
+    ({int sizeBytes, int mtimeMs})? fpBefore,
+    int budget,
+    SessionContext built,
+  ) async {
+    final fpAfter = await _sessionFileFingerprint(metadata);
+    if (fpBefore != null &&
+        fpAfter != null &&
+        fpBefore.sizeBytes == fpAfter.sizeBytes &&
+        fpBefore.mtimeMs == fpAfter.mtimeMs) {
+      _resumedContextCache.remember(
+        metadata.path,
+        sizeBytes: fpAfter.sizeBytes,
+        mtimeMs: fpAfter.mtimeMs,
+        variant: budget,
+        context: built,
+      );
+    }
+  }
+
   Future<Session> _loadSessionInner(SessionMetadata metadata) async {
     final bootSw = Stopwatch()..start();
     // gh-968 parity: the budget must price the prompt the FIRST REQUEST
@@ -681,6 +840,20 @@ extension on AgentCli {
     // compaction degenerate to the full load, so behavior is unchanged
     // for them. Context stays byte-identical: the compaction transform
     // drops everything before the boundary anyway.
+    // Issue #1882 AC2: the opt-in (`sessions.vacuumLedgers`) keep-latest
+    // vacuum runs BEFORE the open — and before the fingerprint, so the
+    // warm-switch cache keys the post-vacuum bytes. Best-effort: a failed
+    // vacuum logs and the resume proceeds on the untouched file.
+    await _vacuumLedgersAtOpen(metadata);
+    // Issue #1882 AC3: no silent GB-scale operations — a resume over a
+    // heavy session file says so (exact size + the hygiene escapes).
+    final heavyScan = await sessionSizeIfHeavy(_env, metadata.path);
+    if (heavyScan != null) {
+      for (final line in heavyScanGuardLines(heavyScan, metadata.path)) {
+        io.writeln(_style.dim(line));
+      }
+      _logDiagnostic('[heavy-scan] resume over $heavyScan bytes');
+    }
     final fpBefore = await _sessionFileFingerprint(metadata);
     // The resume budget bounds how much history the walk keeps resident —
     // two different budgets legitimately build different context slices,
@@ -752,22 +925,7 @@ extension on AgentCli {
       final built = await session.buildContext();
       context = built;
       stage('context');
-      // Store only when the file did not change during the open: the
-      // fingerprint must describe exactly the bytes the context was
-      // built from, or a later warm hit could serve a stale transcript.
-      final fpAfter = await _sessionFileFingerprint(metadata);
-      if (fpBefore != null &&
-          fpAfter != null &&
-          fpBefore.sizeBytes == fpAfter.sizeBytes &&
-          fpBefore.mtimeMs == fpAfter.mtimeMs) {
-        _resumedContextCache.remember(
-          metadata.path,
-          sizeBytes: fpAfter.sizeBytes,
-          mtimeMs: fpAfter.mtimeMs,
-          variant: budget,
-          context: built,
-        );
-      }
+      await _rememberResumedContext(metadata, fpBefore, budget, built);
     }
     final messages = context.messages;
     // Loaded usage anchors are generation-time: post-compaction they
@@ -912,6 +1070,11 @@ extension on AgentCli {
   /// direct stream function), and records the binding back into the
   /// session. Best-effort: an unresolvable provider keeps the current
   /// model with a note.
+  ///
+  /// G3 judges only RE-APPLY restores: [_restoreBindingSatisfied]
+  /// early-returns when the boot already applied this exact binding, so a
+  /// boot that applied a mixed triple never reaches this gate — the G2
+  /// request-build gate catches that at request time.
   Future<void> _applyRestoredModelBinding(
     Session session, {
     required String providerKind,
@@ -934,6 +1097,35 @@ extension on AgentCli {
       entry: entry,
     );
     if (built == null) return;
+    // G3 restore gate (gh-178): a persisted triple that no longer forms a
+    // valid binding is never applied mixed. Auto-repair keeps the
+    // boot-coherent model with a loud diagnostic naming the conflicted
+    // fields and the repair (OQ3: repair, not halt — the session still
+    // boots, on a coherent quadruple). The resolvability is the REAL
+    // verdict — normally redundant with [_buildRestoredModel]'s guard
+    // (an unresolvable kind returns null above), but it keeps the
+    // decision core's three-way contract honest at the wired site.
+    final gate = restoreGateDecision(
+      providerResolvable: resolveCliProviderSpec(providerKind) != null,
+      bindingResolves: _restoreBindingResolves(providerKind, modelId, baseUrl),
+      persistedModelId: modelId,
+      providerName: providerKind,
+      repairModelId: _agent.state.model.id,
+    );
+    if (gate.verdict != RestoreGateVerdict.restore) {
+      // `repairModelId` IS the id the session repairs/keeps to (OQ3): the
+      // boot-coherent model. The refuse verdict (unresolvable provider)
+      // carries none — the boot model is kept there too.
+      final keptId = gate.repairModelId ?? _agent.state.model.id;
+      io.writeln(_style.dim('note: ${gate.refusal!.message}'));
+      io.writeln(
+        _style.dim(
+          '      keeping $keptId '
+          '(${_agent.state.model.provider} @ ${_agent.state.model.baseUrl})',
+        ),
+      );
+      return;
+    }
     final spec = resolveCliProviderSpec(built.provider)!;
     // The resolved KIND feeds the session state and the stream factory —
     // a raw name-shaped id here would throw at providerStreamFunction
@@ -955,7 +1147,13 @@ extension on AgentCli {
       );
       if (!applied) return;
     } else {
-      _streamFunction = _catalogStreamFunction(spec.kind, key);
+      _streamFunction = _catalogStreamFunction(
+        spec.kind,
+        key,
+        // _activeCustomName was JUST assigned from entry?.name above —
+        // state it explicitly (entry bind keys the entry name).
+        providerName: entry?.name ?? spec.name,
+      );
       _agent.streamFunction = _streamFunction;
     }
     if (key.isEmpty) {
@@ -1006,6 +1204,36 @@ extension on AgentCli {
       ),
     );
     return null;
+  }
+
+  /// G3 (gh-178): whether the persisted `(kind, modelId, baseUrl)` triple
+  /// still resolves through the ONE validating constructor. A null
+  /// persisted endpoint resolves the record default first — the same
+  /// resolution `buildCliDefaultModel` applies — so legacy states without
+  /// a recorded baseUrl are judged on the triple they would actually bind.
+  /// Unknown/private endpoints pass leniently (nothing to judge them by);
+  /// canonical-endpoint dialect/family conflicts refuse.
+  bool _restoreBindingResolves(
+    String providerKind,
+    String modelId,
+    String? baseUrl,
+  ) {
+    final effective =
+        baseUrl?.trim() ??
+        resolveCliProviderSpec(providerKind)?.defaultBaseUrl ??
+        '';
+    if (effective.isEmpty) return true;
+    try {
+      ProviderModelBinding.resolve(
+        providerKind: providerKind,
+        modelId: modelId,
+        baseUrl: effective,
+        provenance: BindingProvenance.restore,
+      );
+      return true;
+    } on ConfigException {
+      return false;
+    }
   }
 
   /// Builds the restored model with the issue-#964 authHeader precedence:

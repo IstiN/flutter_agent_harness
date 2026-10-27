@@ -126,6 +126,61 @@ void main() {
       expect(m.memberClass, MemberClass.unknown);
       expect(m.presence, Presence.unknown);
     });
+
+    test('decodes additive network and channel access', () {
+      final owner = Member.fromJson({
+        'id': 'owner',
+        'class': 'owner',
+        'displayName': 'Owner',
+        'presence': 'live',
+        'access': {'scope': 'network'},
+      });
+      final agent = Member.fromJson({
+        'id': 'agent',
+        'class': 'agent',
+        'displayName': 'Agent',
+        'presence': 'live',
+        'access': {
+          'scope': 'channels',
+          'channelIds': ['c1', 'c2'],
+        },
+      });
+
+      expect(owner.access?.scope, MemberAccessScope.network);
+      expect(owner.access?.channelIds, isEmpty);
+      expect(owner.access?.isNetworkWide, isTrue);
+      expect(agent.access?.scope, MemberAccessScope.channels);
+      expect(agent.access?.channelIds, ['c1', 'c2']);
+      expect(agent.access?.isNetworkWide, isFalse);
+    });
+
+    test(
+      'legacy absent access is null and an empty channel ACL is network-wide',
+      () {
+        final legacy = Member.fromJson({
+          'id': 'legacy',
+          'class': 'agent',
+          'displayName': 'Legacy',
+          'presence': 'offline',
+        });
+        final networkWide = Member.fromJson({
+          'id': 'wide',
+          'class': 'agent',
+          'displayName': 'Wide',
+          'presence': 'live',
+          'access': {'scope': 'channels', 'channelIds': <String>[]},
+        });
+        final future = Member.fromJson({
+          'id': 'future',
+          'access': {'scope': 'future-scope'},
+        });
+
+        expect(legacy.access, isNull);
+        expect(networkWide.access?.isNetworkWide, isTrue);
+        expect(future.access?.scope, MemberAccessScope.unknown);
+        expect(future.access?.isNetworkWide, isFalse);
+      },
+    );
   });
 
   group('Channel.fromJson', () {
@@ -151,6 +206,19 @@ void main() {
             as Map<String, Object?>,
       );
       expect(c.retentionDays, 0);
+    });
+  });
+
+  group('channelDisplayLabel', () {
+    test('keeps real names and never exposes a full unnamed hash id', () {
+      const id =
+          '0123456789abcdef0123456789abcdef'
+          '0123456789abcdef0123456789abcdef';
+      expect(id.length, 64);
+      expect(channelDisplayLabel(id), '01234567…');
+      expect(channelDisplayLabel(id), isNot(id));
+      expect(channelDisplayLabel(id, '   '), '01234567…');
+      expect(channelDisplayLabel(id, 'general'), 'general');
     });
   });
 

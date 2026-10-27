@@ -139,10 +139,26 @@ String _codepointSafeSlice(String text, int start, int end) {
 /// background shell job exits. The command rides the bounded
 /// [shellJobCommandLabel], never the full body (gh-1604: a multi-KB
 /// command must not enter the transcript through every settle).
+///
+/// gh-1835 review (threads 2/7 related note): a job killed by its timeout
+/// cap exits with the SIGKILL code (-9) — without naming the stop reason
+/// the model misreads its own carried cap firing as a crash. The timeout
+/// line rides the notice exactly when the job's `stopReason` is
+/// `'timeout'`, with the same retry guidance the bash tool description
+/// gives for converted calls.
 String shellJobSettleNoticeText(ShellJobEntry job) {
+  final capSeconds = job.timeout?.inSeconds;
+  final timeoutLine = job.stopReason == 'timeout'
+      ? 'Stop reason: timeout — the job\'s timeout cap '
+            '${capSeconds == null || capSeconds <= 0 ? '' : 'of ${capSeconds}s '}'
+            'fired; this is the cap the command was started with, not a '
+            'crash. Retry the command yourself if you still need the '
+            'result.\n'
+      : '';
   return '<system-notice>\n'
       'Background shell job ${job.id} finished with exit code '
       '${job.exitCode}.\n'
+      '$timeoutLine'
       // Issue #599: the preview, never the multi-line body — this
       // notice is echoed into the transcript verbatim, and the full
       // command lives in the job log (right below).
@@ -627,18 +643,7 @@ Future<({int groups, int processes})> reapOrphanJobGroups({
   // 35213198081). The `kill` below stays a real shell action.
   final listed = await (groupTableOverride ?? processGroupTableSnapshot)();
   if (listed == null) return zero;
-  final livePids = <int>{};
-  final groupOf = <int, int>{};
-  for (final line in listed.split('\n')) {
-    final cols = line.trim().split(RegExp(r'\s+'));
-    if (cols.length < 2) continue;
-    final pid = int.tryParse(cols[0]);
-    final pgid = int.tryParse(cols[1]);
-    if (pid != null && pgid != null) {
-      livePids.add(pid);
-      groupOf[pid] = pgid;
-    }
-  }
+  final (:livePids, :groupOf) = _parseProcessGroupTable(listed);
   var groups = 0;
   var processes = 0;
   for (final pid in pids) {
@@ -662,4 +667,25 @@ Future<({int groups, int processes})> reapOrphanJobGroups({
     );
   }
   return (groups: groups, processes: processes);
+}
+
+/// Parses a `pid pgid` process-table snapshot (whitespace-separated
+/// columns, one process per line; malformed lines are skipped) into the
+/// live pid set and each live pid's process group.
+({Set<int> livePids, Map<int, int> groupOf}) _parseProcessGroupTable(
+  String listed,
+) {
+  final livePids = <int>{};
+  final groupOf = <int, int>{};
+  for (final line in listed.split('\n')) {
+    final cols = line.trim().split(RegExp(r'\s+'));
+    if (cols.length < 2) continue;
+    final pid = int.tryParse(cols[0]);
+    final pgid = int.tryParse(cols[1]);
+    if (pid != null && pgid != null) {
+      livePids.add(pid);
+      groupOf[pid] = pgid;
+    }
+  }
+  return (livePids: livePids, groupOf: groupOf);
 }

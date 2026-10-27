@@ -60,28 +60,48 @@ class AgentNetworkStore {
   /// corrupt file yields the first-run default (off — joining the network
   /// is an explicit opt-in).
   static Future<AgentNetworkStore> load(ExecutionEnv env) async {
-    var enabled = false;
-    var url = defaultAgentNetworkUrl;
-    var token = '';
-    var name = defaultAgentNetworkName;
+    var settings = const _AgentNetworkSettings();
     try {
-      final text = (await env.readTextFile('${env.cwd}/$fileName')).valueOrNull;
-      if (text != null) {
-        final decoded = jsonDecode(text);
-        if (decoded is Map<String, dynamic> && decoded['version'] == _version) {
-          enabled = decoded['enabled'] == true;
-          url = '${decoded['url'] ?? defaultAgentNetworkUrl}'.trim();
-          token = '${decoded['token'] ?? ''}';
-          final savedName = '${decoded['name'] ?? defaultAgentNetworkName}'
-              .trim();
-          name = savedName.isEmpty ? defaultAgentNetworkName : savedName;
-        }
-      }
+      settings = await _readPersistedSettings(env) ?? settings;
       // Corrupt or incompatible file → the defaults, never crash boot.
     } on Object {
       // (handled above: fall through to the defaults)
     }
-    return AgentNetworkStore._(env, enabled, url, token, name);
+    return AgentNetworkStore._(
+      env,
+      settings.enabled,
+      settings.url,
+      settings.token,
+      settings.name,
+    );
+  }
+
+  /// The settings persisted in `agent_network.json`, or null when the file
+  /// is absent or not the stored schema version.
+  static Future<_AgentNetworkSettings?> _readPersistedSettings(
+    ExecutionEnv env,
+  ) async {
+    final text = (await env.readTextFile('${env.cwd}/$fileName')).valueOrNull;
+    if (text == null) return null;
+    return _decodeSettings(jsonDecode(text));
+  }
+
+  static _AgentNetworkSettings? _decodeSettings(Object? decoded) {
+    if (decoded is! Map<String, dynamic> || decoded['version'] != _version) {
+      return null;
+    }
+    return _AgentNetworkSettings(
+      enabled: decoded['enabled'] == true,
+      url: '${decoded['url'] ?? defaultAgentNetworkUrl}'.trim(),
+      token: '${decoded['token'] ?? ''}',
+      name: _decodedName(decoded),
+    );
+  }
+
+  /// The stored agent name, trimmed; blank falls back to the default.
+  static String _decodedName(Map<String, dynamic> decoded) {
+    final savedName = '${decoded['name'] ?? defaultAgentNetworkName}'.trim();
+    return savedName.isEmpty ? defaultAgentNetworkName : savedName;
   }
 
   Future<void> _persist() async {
@@ -115,4 +135,20 @@ class AgentNetworkStore {
     if (name != null && name.trim().isNotEmpty) _name = name.trim();
     await _persist();
   }
+}
+
+/// The decoded file contents of a [AgentNetworkStore.load]: first-run
+/// defaults unless the stored JSON overrides them.
+class _AgentNetworkSettings {
+  const _AgentNetworkSettings({
+    this.enabled = false,
+    this.url = AgentNetworkStore.defaultAgentNetworkUrl,
+    this.token = '',
+    this.name = AgentNetworkStore.defaultAgentNetworkName,
+  });
+
+  final bool enabled;
+  final String url;
+  final String token;
+  final String name;
 }

@@ -119,6 +119,87 @@ void main() {
     );
   });
 
+  test('gh-1834 C1: conformance coverage is a numbered step (2.6) between '
+      'grader parity and fix', () {
+    // The self-certification blind spot: a run declared "behavioral
+    // parity confirmed" off a happy-path-only suite; the external
+    // evaluation then failed exactly the unprobed branches — mutually
+    // exclusive option pairs never rejected, "must error" inputs never
+    // run. The gate must make negative + combination coverage a
+    // NUMBERED step (flash executes numbered steps, skims the bullet
+    // list — gh-1652).
+    expect(
+      finalizeGateContractPrompt,
+      contains('2.6. **Conformance coverage**'),
+    );
+    expect(
+      finalizeGateContractPrompt,
+      isNot(contains('- **Conformance coverage**')),
+    );
+    final parityAt = finalizeGateContractPrompt.indexOf(
+      '2.5. **Grader parity**',
+    );
+    final coverageAt = finalizeGateContractPrompt.indexOf('2.6. **Conformance');
+    final fixAt = finalizeGateContractPrompt.indexOf('3. **Fix every unmet');
+    expect(coverageAt, greaterThan(parityAt));
+    expect(fixAt, greaterThan(coverageAt));
+    // AC1: the checklist classes a conformance claim must quote.
+    expect(
+      finalizeGateContractPrompt,
+      contains('negative and combination checks'),
+    );
+    expect(finalizeGateContractPrompt, contains('incompatible'));
+    expect(finalizeGateContractPrompt, contains('mutually exclusive'));
+    expect(finalizeGateContractPrompt, contains('empty and corrupt inputs'));
+    expect(finalizeGateContractPrompt, contains('boundary values'));
+    expect(finalizeGateContractPrompt, contains('"must NOT work"'));
+    // A blanket "everything matches" is not a verified item.
+    expect(
+      finalizeGateContractPrompt,
+      contains('without such coverage is not verified'),
+    );
+  });
+
+  test('gh-1834 C2: the principle is taught abstractly; no benchmark or '
+      'task-specific names in the prompt', () {
+    // AC2 — happy-path agreement certifies nothing about rejection paths
+    // and combinations; the example is abstract (a port agreeing on every
+    // well-formed input), never a real benchmark/task/flag name.
+    expect(
+      finalizeGateContractPrompt,
+      contains('certifies nothing about rejection paths'),
+    );
+    expect(finalizeGateContractPrompt, contains('well-formed'));
+    for (final banned in [
+      'terminal-bench',
+      'harbor',
+      'compcert',
+      'crack-7z',
+      'TB-2',
+      'gh-18',
+    ]) {
+      expect(
+        finalizeGateContractPrompt,
+        isNot(contains(banned)),
+        reason: banned,
+      );
+    }
+  });
+
+  test('gh-1834 C3: tasks with no conformance claim see no gate change', () {
+    // The new requirement is CONDITIONAL — it binds only when the final
+    // claim includes conformance/parity. A task with no such claim keeps
+    // today's checklist shape (no new mandatory requirements).
+    expect(finalizeGateContractPrompt, contains('applies ONLY when'));
+  });
+
+  test('gh-1834 C4: the composed headless prompt carries the conformance '
+      'coverage step', () async {
+    final prompt = await promptOf(ApprovalMode.unattended, headlessRun: true);
+    expect(prompt, contains('2.6. **Conformance coverage**'));
+    expect(prompt, contains('negative and combination checks'));
+  });
+
   test('headless boots carry the contract under any approval mode', () async {
     for (final mode in [ApprovalMode.alwaysAsk, ApprovalMode.write]) {
       final prompt = await promptOf(mode, headlessRun: true);
@@ -289,10 +370,7 @@ void main() {
     final upperBound = [
       if (nextBulletAt != -1) nextBulletAt,
       if (paragraphEndAt != -1) paragraphEndAt,
-    ].fold(
-      finalizeGateContractPrompt.length,
-      (a, b) => a < b ? a : b,
-    );
+    ].fold(finalizeGateContractPrompt.length, (a, b) => a < b ? a : b);
     expect(refAt, lessThan(upperBound));
     expect(finalizeGateContractPrompt, contains('(step 4)'));
   });

@@ -358,13 +358,20 @@ void _takeConfigEntry(String key, Object? value, _ParsedConfig into) {
         }
       }
     default:
-      if (value is! String) {
-        throw ConfigException(
-          'FA_PROVIDER_CONFIG key "$key" must be a string, got: $value',
-        );
-      }
-      if (value.trim().isNotEmpty) into.values[key] = value;
+      _takePlainStringEntry(key, value, into);
   }
+}
+
+/// The plain-string arm of [_takeConfigEntry]: a supported key beyond
+/// the structured ones is a required-shape string (blank = absent,
+/// like every other text value).
+void _takePlainStringEntry(String key, Object? value, _ParsedConfig into) {
+  if (value is! String) {
+    throw ConfigException(
+      'FA_PROVIDER_CONFIG key "$key" must be a string, got: $value',
+    );
+  }
+  if (value.trim().isNotEmpty) into.values[key] = value;
 }
 
 /// One `contextWindow`/`maxTokens` declaration: a JSON integer at or

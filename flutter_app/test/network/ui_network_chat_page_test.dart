@@ -2,20 +2,42 @@
 // Use of this source code is governed by a MIT license that can be found
 // in the LICENSE file.
 
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:fa/network/envelope_codec.dart';
+import 'package:fa/network/invite_codec.dart';
+import 'package:fa/network/key_wallet.dart';
+import 'package:fa/network/models.dart';
 import 'package:fa/network/network_mode.dart';
 import 'package:fa/network/network_session.dart';
 import 'package:fa/network/network_session_manager.dart';
+import 'package:fa/network/showcase_viewer.dart';
 import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/network/network_chat_page.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
 
 import 'fakes.dart';
 
 import 'package:fa/ui/network/add_agent_dialog.dart';
+
+/// Holds only the channel-list response. The concurrent history request is
+/// allowed to finish first, reproducing restored-session first-open timing.
+final class _HoldChannelsHttpClient extends FakeHttpClient {
+  final Completer<void> channelsReady = Completer<void>();
+
+  @override
+  Future<http.StreamedResponse> send(http.BaseRequest request) async {
+    final response = await super.send(request);
+    if (request.url.path == '/api/networks/net1/channels') {
+      await channelsReady.future;
+    }
+    return response;
+  }
+}
 
 void main() {
   group('NetworkChatPage', () {
@@ -32,36 +54,68 @@ void main() {
         NetworkSession session,
         FakeNetworkChannel channel,
         NetworkSessionManager manager,
+        FakeHttpClient httpClient,
       })
     >
-    pumpChat(WidgetTester tester) async {
-      final wallet = await walletWithChannel(
-        channelPub: channelKeys.pub,
-        channelPriv: channelKeys.priv,
-      );
-      final payload = await encryptAs(
-        sender: otherIdentity,
-        channelPub: channelKeys.pub,
-        envelopeId: 'e-1',
-        plaintext: 'from olya',
-      );
+    pumpChat(
+      WidgetTester tester, {
+      String channelId = 'c1',
+      String? channelName = 'general',
+      bool withChannelKeys = true,
+      bool isPublic = false,
+      // The reload response served after a missing-key import — pass a
+      // malformed body to make the post-import history reload throw.
+      String? importReloadBody,
+    }) async {
+      final wallet = await KeyWallet.load(MemoryWalletBackend());
+      await wallet.createIfMissing(displayName: 'Me');
+      await wallet.addNetwork(networkId: 'net1', name: 'fa-team');
+      if (withChannelKeys) {
+        await wallet.addChannelKeys(
+          networkId: 'net1',
+          channel: channelId,
+          pub: channelKeys.pub,
+          priv: channelKeys.priv,
+        );
+      }
+      final payload = isPublic
+          ? encodePublicChannelText('from olya')
+          : await encryptAs(
+              sender: otherIdentity,
+              channelPub: channelKeys.pub,
+              envelopeId: 'e-1',
+              plaintext: 'from olya',
+              aadTarget: channelName ?? channelId,
+            );
+      final historyBody = jsonEncode({
+        'items': [
+          {
+            'id': 'e-1',
+            'channelId': channelId,
+            'senderId': 'other-1',
+            'payload': payload,
+          },
+        ],
+        'nextCursor': '',
+      });
       final httpClient = FakeHttpClient()
-        ..respond(200, body: channelsBody) // start: channels
-        ..respond(200, body: membersBody) // start: members
         ..respond(
           200,
-          body: jsonEncode({
-            'items': [
-              {
-                'id': 'e-1',
-                'channelId': 'c1',
-                'senderId': 'other-1',
-                'payload': payload,
-              },
-            ],
-            'nextCursor': '',
-          }),
-        );
+          body: jsonEncode([
+            {
+              'id': channelId,
+              'networkId': 'net1',
+              'name': ?channelName,
+              'public': isPublic,
+            },
+          ]),
+        ) // start: channels
+        ..respond(200, body: membersBody) // start: members
+        ..respond(200, body: historyBody);
+      // A missing-key import reloads the newest history page in place.
+      if (!withChannelKeys) {
+        httpClient.respond(200, body: importReloadBody ?? historyBody);
+      }
       final connector = FakeWsConnector();
       final session = buildSession(
         httpClient: httpClient,
@@ -73,7 +127,7 @@ void main() {
       final controller = NetworkModeController.inMemory(
         mode: AppMode.network,
         networkId: 'net1',
-        channelId: 'c1',
+        channelId: channelId,
       );
       final manager = NetworkSessionManager(
         baseUrl: testBase,
@@ -98,6 +152,7 @@ void main() {
         session: session,
         channel: connector.channels.single,
         manager: manager,
+        httpClient: httpClient,
       );
     }
 
@@ -107,6 +162,220 @@ void main() {
       expect(find.textContaining('Olya'), findsWidgets);
       // Close inside the body: the WS heartbeat timer must not outlive
       // the test (fake-async invariant).
+      await rig.session.close();
+    });
+
+    testWidgets('a missing private key offers import and redecrypts history', (
+      tester,
+    ) async {
+      final rig = await pumpChat(tester, withChannelKeys: false);
+
+      expect(
+        find.text(
+          'This device needs the private channel key to read and write.',
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.byWidgetPredicate(
+          (widget) =>
+              widget is TextField &&
+              widget.decoration?.hintText == 'Message general',
+        ),
+        findsNothing,
+      );
+
+      await tester.tap(find.text('Import channel key'));
+      for (var i = 0; i < 6; i++) {
+        await tester.pump(const Duration(milliseconds: 20));
+      }
+      final invite = buildAgentInvite(
+        hubUri: Uri.parse('wss://hub.fa1.dev/ws'),
+        channel: 'c1',
+        pub: channelKeys.pub,
+        priv: channelKeys.priv,
+      );
+      await tester.enterText(
+        find.byKey(const ValueKey('channelKeyInviteField')),
+        invite,
+      );
+      await tester.tap(find.byKey(const ValueKey('channelKeyImportSubmit')));
+      for (var i = 0; i < 10; i++) {
+        await tester.pump(const Duration(milliseconds: 20));
+      }
+
+      expect(rig.manager.wallet.channelKeysFor('net1', 'c1'), isNotNull);
+      expect(find.textContaining('from olya'), findsWidgets);
+      expect(
+        find.byWidgetPredicate(
+          (widget) =>
+              widget is TextField &&
+              widget.decoration?.hintText == 'Message general',
+        ),
+        findsOneWidget,
+      );
+      expect(
+        rig.httpClient.requests.where(
+          (request) => request.url.path == '/api/channels/c1/messages',
+        ),
+        hasLength(2),
+      );
+      await rig.session.close();
+    });
+
+    testWidgets(
+      'key import rejects wrong-channel and torn keypairs fail closed',
+      (tester) async {
+        final rig = await pumpChat(tester, withChannelKeys: false);
+        await tester.tap(find.text('Import channel key'));
+        for (var i = 0; i < 6; i++) {
+          await tester.pump(const Duration(milliseconds: 20));
+        }
+        final field = find.byKey(const ValueKey('channelKeyInviteField'));
+        final submit = find.byKey(const ValueKey('channelKeyImportSubmit'));
+
+        await tester.enterText(
+          field,
+          buildAgentInvite(
+            hubUri: Uri.parse('wss://hub.fa1.dev/ws'),
+            channel: 'another-channel',
+            pub: channelKeys.pub,
+            priv: channelKeys.priv,
+          ),
+        );
+        await tester.tap(submit);
+        for (var i = 0; i < 6; i++) {
+          await tester.pump(const Duration(milliseconds: 20));
+        }
+        expect(
+          find.text('This invite is for a different channel.'),
+          findsOneWidget,
+        );
+
+        await tester.enterText(
+          field,
+          buildAgentInvite(
+            hubUri: Uri.parse('wss://hub.fa1.dev/ws'),
+            channel: 'c1',
+            pub: otherIdentity.pub,
+            priv: channelKeys.priv,
+          ),
+        );
+        await tester.tap(submit);
+        for (var i = 0; i < 6; i++) {
+          await tester.pump(const Duration(milliseconds: 20));
+        }
+        expect(
+          find.text('The invite public and private keys do not match.'),
+          findsOneWidget,
+        );
+        expect(rig.manager.wallet.channelKeysFor('net1', 'c1'), isNull);
+        expect(
+          rig.httpClient.requests.where(
+            (request) => request.url.path == '/api/channels/c1/messages',
+          ),
+          hasLength(1),
+        );
+        await rig.session.close();
+      },
+    );
+
+    testWidgets('key import rejects a cross-hub invite before persisting', (
+      tester,
+    ) async {
+      final rig = await pumpChat(tester, withChannelKeys: false);
+      await tester.tap(find.text('Import channel key'));
+      for (var i = 0; i < 6; i++) {
+        await tester.pump(const Duration(milliseconds: 20));
+      }
+      // Same channel id, consistent keypair — only the hub differs. The
+      // key belongs to a channel on another deployment; persisting it
+      // would encrypt outgoing traffic no peer here can decrypt.
+      await tester.enterText(
+        find.byKey(const ValueKey('channelKeyInviteField')),
+        buildAgentInvite(
+          hubUri: Uri.parse('wss://hub.other-hub.example/ws'),
+          channel: 'c1',
+          pub: channelKeys.pub,
+          priv: channelKeys.priv,
+        ),
+      );
+      await tester.tap(find.byKey(const ValueKey('channelKeyImportSubmit')));
+      for (var i = 0; i < 6; i++) {
+        await tester.pump(const Duration(milliseconds: 20));
+      }
+      expect(find.text('This invite is for a different hub.'), findsOneWidget);
+      expect(rig.manager.wallet.channelKeysFor('net1', 'c1'), isNull);
+      // No history reload ran — the invite was rejected before persist.
+      expect(
+        rig.httpClient.requests.where(
+          (request) => request.url.path == '/api/channels/c1/messages',
+        ),
+        hasLength(1),
+      );
+      await rig.session.close();
+    });
+
+    testWidgets(
+      'key import keeps the key when the history reload fails after persist',
+      (tester) async {
+        final rig = await pumpChat(
+          tester,
+          withChannelKeys: false,
+          // A malformed 200 body makes MessagePage.fromJson throw a
+          // FormatException inside the post-import reload.
+          importReloadBody: 'not-json',
+        );
+        await tester.tap(find.text('Import channel key'));
+        for (var i = 0; i < 6; i++) {
+          await tester.pump(const Duration(milliseconds: 20));
+        }
+        final invite = buildAgentInvite(
+          hubUri: Uri.parse('wss://hub.fa1.dev/ws'),
+          channel: 'c1',
+          pub: channelKeys.pub,
+          priv: channelKeys.priv,
+        );
+        await tester.enterText(
+          find.byKey(const ValueKey('channelKeyInviteField')),
+          invite,
+        );
+        await tester.tap(find.byKey(const ValueKey('channelKeyImportSubmit')));
+        for (var i = 0; i < 10; i++) {
+          await tester.pump(const Duration(milliseconds: 20));
+        }
+        // The key IS in the vault — the dialog must not claim the import
+        // failed, and the deterministic rebuild still swaps the composer.
+        expect(
+          find.text('The channel key could not be imported. Try again.'),
+          findsNothing,
+        );
+        expect(rig.manager.wallet.channelKeysFor('net1', 'c1'), isNotNull);
+        expect(
+          find.byWidgetPredicate(
+            (widget) =>
+                widget is TextField &&
+                widget.decoration?.hintText == 'Message general',
+          ),
+          findsOneWidget,
+        );
+        await rig.session.close();
+      },
+    );
+
+    testWidgets('a joined guest gets showcase ACL copy, not another join CTA', (
+      tester,
+    ) async {
+      final rig = await pumpChat(tester, isPublic: true);
+
+      expect(
+        find.text('Only the owner and admins can post in this showcase.'),
+        findsOneWidget,
+      );
+      expect(
+        find.text('Read-only preview — tap to join the network and write.'),
+        findsNothing,
+      );
       await rig.session.close();
     });
 
@@ -133,6 +402,50 @@ void main() {
       }
       expect(find.textContaining('hello from dap'), findsWidgets);
       expect(find.textContaining('fa-agent'), findsWidgets);
+      await rig.session.close();
+    });
+
+    testWidgets('unnamed title and composer use the short label; rename '
+        'updates both live', (tester) async {
+      const id =
+          '0123456789abcdef0123456789abcdef'
+          '0123456789abcdef0123456789abcdef';
+      final rig = await pumpChat(tester, channelId: id, channelName: null);
+      const fallback = '01234567…';
+
+      expect(find.text(id), findsNothing);
+      expect(find.text(fallback), findsOneWidget);
+      expect(
+        find.byWidgetPredicate(
+          (widget) =>
+              widget is TextField &&
+              widget.decoration?.hintText == 'Message $fallback',
+        ),
+        findsOneWidget,
+      );
+
+      rig.httpClient.respond(
+        200,
+        body: jsonEncode({
+          'id': id,
+          'networkId': 'net1',
+          'name': 'ops',
+          'public': false,
+        }),
+      );
+      await rig.session.renameChannel(id, 'ops');
+      await tester.pump();
+
+      expect(find.text(fallback), findsNothing);
+      expect(find.text('ops'), findsOneWidget);
+      expect(
+        find.byWidgetPredicate(
+          (widget) =>
+              widget is TextField &&
+              widget.decoration?.hintText == 'Message ops',
+        ),
+        findsOneWidget,
+      );
       await rig.session.close();
     });
 
@@ -166,6 +479,224 @@ void main() {
       await rig.session.close();
     });
 
+    testWidgets('mention menu accepts the highlighted option with Tab', (
+      tester,
+    ) async {
+      final rig = await pumpChat(tester);
+      rig.session.roster.addAll({
+        'agent-kb': const Member(
+          id: 'agent-kb',
+          memberClass: MemberClass.agent,
+          displayName: 'kb-agent',
+          presence: Presence.live,
+        ),
+        'agent-helper': const Member(
+          id: 'agent-helper',
+          memberClass: MemberClass.agent,
+          displayName: 'kb-helper',
+          presence: Presence.offline,
+        ),
+      });
+      rig.session.notifyListeners();
+      await tester.pump();
+      final field = find.byWidgetPredicate(
+        (w) => w is TextField && w.decoration?.hintText == 'Message general',
+      );
+      await tester.enterText(field, '@');
+      await tester.pump();
+      expect(
+        find.byKey(const ValueKey('mentionOption:agent-kb')),
+        findsOneWidget,
+      );
+      await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+      await tester.pump();
+      expect(tester.widget<TextField>(field).controller!.text, '@kb-agent ');
+      expect(
+        find.byKey(const ValueKey('mentionOption:agent-kb')),
+        findsNothing,
+      );
+      await rig.session.close();
+    });
+
+    testWidgets('mention menu navigates with arrows and accepts with Enter', (
+      tester,
+    ) async {
+      final rig = await pumpChat(tester);
+      rig.session.roster.addAll({
+        'agent-kb': const Member(
+          id: 'agent-kb',
+          memberClass: MemberClass.agent,
+          displayName: 'kb-agent',
+          presence: Presence.live,
+        ),
+        'agent-helper': const Member(
+          id: 'agent-helper',
+          memberClass: MemberClass.agent,
+          displayName: 'kb-helper',
+          presence: Presence.live,
+        ),
+      });
+      rig.session.notifyListeners();
+      await tester.pump();
+      final field = find.byWidgetPredicate(
+        (w) => w is TextField && w.decoration?.hintText == 'Message general',
+      );
+      await tester.enterText(field, '@kb');
+      await tester.pump();
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+      await tester.pump();
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pump();
+      expect(tester.widget<TextField>(field).controller!.text, '@kb-helper ');
+      await rig.session.close();
+    });
+
+    testWidgets('composer keys ignore non-Enter input, preserve Shift+Enter, '
+        'and send with Enter', (tester) async {
+      final rig = await pumpChat(tester);
+      final field = find.byWidgetPredicate(
+        (w) => w is TextField && w.decoration?.hintText == 'Message general',
+      );
+      await tester.enterText(field, 'keyboard send');
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.f1);
+      await tester.pump();
+      expect(
+        rig.session.channelStates['c1']!.messages.where((m) => m.isOwn),
+        isEmpty,
+      );
+
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.shift);
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.shift);
+      await tester.pump();
+      expect(
+        rig.session.channelStates['c1']!.messages.where((m) => m.isOwn),
+        isEmpty,
+      );
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      for (var i = 0; i < 6; i++) {
+        await tester.pump(const Duration(milliseconds: 20));
+      }
+      final sent = rig.session.channelStates['c1']!.messages.last;
+      expect(sent.isOwn, isTrue);
+      expect(sent.text, 'keyboard send');
+      await rig.session.close();
+    });
+
+    testWidgets('mention menu navigates upward and Escape dismisses it', (
+      tester,
+    ) async {
+      final rig = await pumpChat(tester);
+      rig.session.roster.addAll({
+        'agent-kb': const Member(
+          id: 'agent-kb',
+          memberClass: MemberClass.agent,
+          displayName: 'kb-agent',
+          presence: Presence.live,
+        ),
+        'agent-helper': const Member(
+          id: 'agent-helper',
+          memberClass: MemberClass.agent,
+          displayName: 'kb-helper',
+          presence: Presence.live,
+        ),
+      });
+      rig.session.notifyListeners();
+      await tester.pump();
+      final field = find.byWidgetPredicate(
+        (w) => w is TextField && w.decoration?.hintText == 'Message general',
+      );
+
+      await tester.enterText(field, '@kb');
+      await tester.pump();
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowUp);
+      await tester.pump();
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pump();
+      expect(tester.widget<TextField>(field).controller!.text, '@kb-helper ');
+
+      await tester.enterText(field, '@kb');
+      await tester.pump();
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pump();
+      expect(tester.widget<TextField>(field).controller!.text, '@kb');
+      expect(find.byType(ListTile), findsNothing);
+      expect(
+        rig.session.channelStates['c1']!.messages.where((m) => m.isOwn),
+        isEmpty,
+      );
+      await rig.session.close();
+    });
+
+    testWidgets('mention autocomplete filters, inserts the literal name, and '
+        'resolves its member id on send', (tester) async {
+      final rig = await pumpChat(tester);
+      rig.session.roster.addAll({
+        'agent-kb': const Member(
+          id: 'agent-kb',
+          memberClass: MemberClass.agent,
+          displayName: 'kb-agent',
+          presence: Presence.live,
+        ),
+        'agent-helper': const Member(
+          id: 'agent-helper',
+          memberClass: MemberClass.agent,
+          displayName: 'kb-helper',
+          presence: Presence.offline,
+        ),
+        'agent-other': const Member(
+          id: 'agent-other',
+          memberClass: MemberClass.agent,
+          displayName: 'other-agent',
+          presence: Presence.live,
+        ),
+      });
+      rig.session.notifyListeners();
+      await tester.pump();
+
+      final field = find.byWidgetPredicate(
+        (w) => w is TextField && w.decoration?.hintText == 'Message general',
+      );
+      await tester.enterText(field, 'hello @kb');
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(
+        find.byKey(const ValueKey('mentionOption:agent-kb')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('mentionOption:agent-helper')),
+        findsOneWidget,
+      );
+      expect(find.text('other-agent'), findsNothing);
+
+      await tester.tap(find.byKey(const ValueKey('mentionOption:agent-kb')));
+      await tester.pump();
+      expect(
+        tester.widget<TextField>(field).controller!.text,
+        'hello @kb-agent ',
+      );
+
+      await tester.enterText(field, 'hello @kb-agent please review');
+      await tester.tap(find.byTooltip('Send'));
+      for (var i = 0; i < 6; i++) {
+        await tester.pump(const Duration(milliseconds: 20));
+      }
+
+      expect(
+        rig.session.channelStates['c1']!.messages.last.text,
+        'hello @kb-agent please review',
+      );
+      final frame = rig.channel.sentFrames.lastWhere(
+        (f) => f['type'] == 'envelope.send',
+      );
+      expect(frame['mentions'], equals(['agent-kb']));
+      await rig.session.close();
+    });
+
     testWidgets(
       'private channels expose Add agent in the header (AC-B17 entry)',
       (tester) async {
@@ -193,7 +724,123 @@ void main() {
         find.textContaining('Reconnecting — messages will send when back'),
         findsOneWidget,
       );
+
+      // The banner offers manual recovery: it restarts the socket and
+      // reloads the channels + roster snapshot through the session.
+      final before = rig.httpClient.requests.length;
+      rig.httpClient
+        ..respond(200, body: channelsBody)
+        ..respond(200, body: membersBody);
+      await tester.tap(find.byTooltip('Reconnect now'));
+      for (var i = 0; i < 6; i++) {
+        await tester.pump(const Duration(milliseconds: 20));
+      }
+      expect(rig.httpClient.requests, hasLength(before + 2));
+      // A healthy fresh socket clears the sticky flag even though the
+      // server replays no historical drain to this new connection.
+      expect(find.textContaining('Reconnecting'), findsNothing);
       await rig.session.close();
     });
+
+    testWidgets(
+      'first open waits for public-channel decoding and never shows the '
+      'raw payload',
+      (tester) async {
+        final payload = encodePublicChannelText('first-open plaintext');
+        final httpClient = _HoldChannelsHttpClient()
+          ..respond(
+            200,
+            body:
+                '[{"id":"pc1","networkId":"net1","name":"public",'
+                '"public":true}]',
+          )
+          // start() is holding the channel response, so the concurrently
+          // opened history consumes this response before members is asked.
+          ..respond(
+            200,
+            body: jsonEncode({
+              'items': [
+                {
+                  'id': 'e-public',
+                  'channelId': 'pc1',
+                  'senderId': 'hub-agent',
+                  'senderName': 'public-agent',
+                  'payload': payload,
+                },
+              ],
+              'nextCursor': '',
+            }),
+          )
+          ..respond(200, body: membersBody);
+        final wallet = await walletWithChannel(
+          channelPub: channelKeys.pub,
+          channelPriv: channelKeys.priv,
+        );
+        final session = buildSession(
+          httpClient: httpClient,
+          connector: FakeWsConnector(),
+          wallet: wallet,
+        );
+        addTearDown(session.close);
+        final controller = NetworkModeController.inMemory(
+          mode: AppMode.network,
+          networkId: 'net1',
+          channelId: 'pc1',
+        );
+        final manager = NetworkSessionManager(
+          baseUrl: testBase,
+          wallet: wallet,
+          httpClient: FakeHttpClient(),
+          wsConnector: FakeWsConnector(),
+        );
+        manager.sessions['net1'] = session;
+        addTearDown(manager.disconnectAll);
+
+        // The manager publishes the session before start() completes. Open
+        // the page in that window, with history winning the metadata race.
+        unawaited(session.start());
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: buildFahTheme(),
+            home: Scaffold(
+              body: NetworkChatPage(controller: controller, manager: manager),
+            ),
+          ),
+        );
+        for (var i = 0; i < 6; i++) {
+          await tester.pump(const Duration(milliseconds: 20));
+        }
+        expect(session.channels, isEmpty);
+        expect(
+          httpClient.requests.map((r) => r.url.path),
+          contains('/api/channels/pc1/messages'),
+        );
+        expect(find.textContaining(payload), findsNothing);
+
+        // Metadata becoming ready must drive the decoded bubble by itself —
+        // no channel switch or other manual refresh.
+        httpClient.channelsReady.complete();
+        for (var i = 0; i < 8; i++) {
+          await tester.pump(const Duration(milliseconds: 20));
+        }
+        expect(find.textContaining('first-open plaintext'), findsOneWidget);
+        expect(find.text('public-agent'), findsOneWidget);
+        expect(find.textContaining(payload), findsNothing);
+        expect(find.textContaining('unable to decrypt'), findsNothing);
+
+        // The established later behavior is unchanged: revisiting the
+        // channel reuses its decoded history and senderName.
+        await controller.backToChannels();
+        await tester.pump();
+        await controller.selectChannel('pc1');
+        for (var i = 0; i < 6; i++) {
+          await tester.pump(const Duration(milliseconds: 20));
+        }
+        expect(find.textContaining('first-open plaintext'), findsOneWidget);
+        expect(find.text('public-agent'), findsOneWidget);
+        expect(find.textContaining(payload), findsNothing);
+        await session.close();
+      },
+    );
   });
 }

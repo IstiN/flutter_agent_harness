@@ -35,6 +35,13 @@ const _requiredReferences = <String, List<String>>{
     'splitWireServeArgs',
     // `fa jsr …` pass-through (gh-1033).
     'runJsrCliCommand',
+    // The `fa session` verbs intercepted without an agent boot: list
+    // (issue #198), repair (gh-1073), and clean (gh-1746 AC6). The clean
+    // verb shares the list branch's io/env/root and the presence store
+    // (gh-1746 review: the wiring must not drift between verbs).
+    'runSessionListCliCommand',
+    'runSessionRepairCliCommand',
+    'runSessionCleanCliCommand',
     // Session segment rotation warnings on stderr (gh-1077).
     'onRotationWarning',
     // FA_PROVIDER_TIMEOUT_SECONDS env override fold-in (issue #1036).
@@ -80,14 +87,14 @@ String _executableSource() {
 }
 
 void main() {
+  final exeSource = _executableSource();
   test('bin main keeps every boot-wiring symbol (gh-1000 rework reg)', () {
     final violations = <String>[];
     _requiredReferences.forEach((path, symbols) {
       if (path == 'bin/fah.dart') {
         // The executable library: primary + its bin/ part files.
-        final source = _executableSource();
         for (final symbol in symbols) {
-          if (!source.contains(symbol)) {
+          if (!exeSource.contains(symbol)) {
             violations.add('$path: no reference to `$symbol`');
           }
         }
@@ -118,6 +125,106 @@ toggles, resume parity). If the symbol moved INTENTIONALLY, update
 _requiredReferences in the same commit — never delete the reference
 without a replacement wiring.
 ''',
+    );
+  });
+
+  test('runtime overlay cleanup is wired into every CLI shutdown path', () {
+    final runapp = File('bin/fah_runapp.dart').readAsStringSync();
+    final util = File('bin/fah_util.dart').readAsStringSync();
+    final model = File('bin/fah_model.dart').readAsStringSync();
+    // A2A, bridge, interactive Ctrl+C, wire-serve, headless, REPL, and
+    // the post-resolution _fail wrapper.
+    expect(RegExp(r'await teardownPlugins\(\);').allMatches(runapp).length, 7);
+    expect(runapp, contains('_fahPluginTeardown = teardownPlugins'));
+    expect(util, contains('await _fahPluginTeardown?.call()'));
+    expect(model, contains('hubHost = plugin'));
+  });
+
+  test('post-resolution _fail paths run plugin teardown before exiting '
+      '(gh-1895 review)', () {
+    final runapp = File('bin/fah_runapp.dart').readAsStringSync();
+    expect(runapp, contains('Future<Never> failAfterPlugins'));
+    final postSeam = runapp.split('_fahPluginTeardown = teardownPlugins;').last;
+    // Every _fail after the teardown seam must route through the wrapper
+    // (usage/config failures remove the plaintext overlay before exit);
+    // the only direct _fail left is the wrapper's own inner call.
+    expect(RegExp(r'\b_fail\(').allMatches(postSeam).length, 1);
+    expect(postSeam, contains('await failAfterPlugins('));
+  });
+
+  test('REG-preconfig-and-queue: the queue is resolved before '
+      'keyCache.preload and the key gate (gh-1781 AC1/AC3)', () {
+    // Boot order: the queue scope resolution precedes BOTH the preload and
+    // the key gate (a queue-only boot satisfies the gate — AC1); the queue
+    // runtime build sits between the preload (it consumes the secrets
+    // snapshot) and the gate (an all-keyless queue fails with the loud
+    // queue error first — AC3).
+    final queueResolve = exeSource.indexOf('resolveProviderQueueAtBoot(');
+    final preload = exeSource.indexOf('keyCache.preload(');
+    final queueBuild = exeSource.indexOf('ProviderQueueRuntime.build(');
+    final keyGate = exeSource.indexOf('startupApiKey(');
+    expect(
+      queueResolve,
+      greaterThan(0),
+      reason: 'queue scope resolution wired',
+    );
+    expect(
+      preload,
+      greaterThan(queueResolve),
+      reason:
+          'keyCache.preload must run AFTER the queue resolution so '
+          'queue key names feed the preload set (I4)',
+    );
+    expect(
+      queueBuild,
+      greaterThan(preload),
+      reason:
+          'ProviderQueueRuntime.build consumes collectQueueSecrets, '
+          'which reads the preloaded store snapshot',
+    );
+    expect(
+      keyGate,
+      greaterThan(queueBuild),
+      reason:
+          'the legacy key gate must see the built queue (queueResolved) '
+          'and lose to the queue error when every entry is keyless (I3)',
+    );
+  });
+
+  test('REG-preconfig-and-queue: queueResolved threads into startupApiKey '
+      'and queueSecrets into buildSecretRedactor (gh-1781 I1/I5)', () {
+    expect(
+      exeSource.contains('queueResolved: queueRuntime != null'),
+      isTrue,
+      reason: 'startupApiKey must receive the queue presence',
+    );
+    expect(
+      exeSource.contains('queueSecrets: queueSecrets'),
+      isTrue,
+      reason: 'buildSecretRedactor must receive the queue secrets snapshot',
+    );
+    expect(
+      exeSource.contains('queueEntries: queueResolution?.entries'),
+      isTrue,
+      reason: 'secureKeyPreloadNames must receive the resolved queue entries',
+    );
+  });
+
+  test('REG-preconfig-and-queue: the boot model identity follows the queue '
+      'head when the launch pinned nothing (gh-1781 I6)', () {
+    final override = exeSource.indexOf('queueOwnsBootModel(');
+    final assign = exeSource.indexOf(
+      'model = queueRuntime.streamFunction.currentModel',
+    );
+    expect(
+      override,
+      greaterThan(0),
+      reason: 'the boot-model override must ride the shared pure predicate',
+    );
+    expect(
+      assign,
+      greaterThan(override),
+      reason: 'the queue-head assignment must be gated by the predicate',
     );
   });
 }

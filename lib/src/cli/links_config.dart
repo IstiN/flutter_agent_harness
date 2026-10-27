@@ -21,6 +21,18 @@ const defaultAppStoreUrl =
 const defaultTestFlightUrl = 'https://testflight.apple.com/join/En1eC9UK';
 const defaultSiteUrl = 'https://fa1.dev';
 
+/// The Android APKs (god / standard modes, issue #1864): direct asset
+/// downloads pinned to the latest PUBLIC release carrying them (v1.0.636).
+/// `/releases/latest` points at the CLI-only release and
+/// `releases/latest/download/<apk>` 404s, so the tag is pinned — bump it
+/// when the next public APK release ships.
+const defaultApkGodUrl =
+    'https://github.com/IstiN/flutter_agent_harness/releases/download/'
+    'v1.0.636/app-god-release.apk';
+const defaultApkStandardUrl =
+    'https://github.com/IstiN/flutter_agent_harness/releases/download/'
+    'v1.0.636/app-store-release.apk';
+
 /// The `links:` config section.
 final class LinksConfig {
   /// Creates a configuration; see each field for its default.
@@ -28,6 +40,8 @@ final class LinksConfig {
     this.appstore = defaultAppStoreUrl,
     this.testflight = defaultTestFlightUrl,
     this.play,
+    this.apkGod = defaultApkGodUrl,
+    this.apkStandard = defaultApkStandardUrl,
     this.site = defaultSiteUrl,
     this.banner = true,
     this.notes = const [],
@@ -40,8 +54,15 @@ final class LinksConfig {
   final String testflight;
 
   /// The Google Play release; null until live — surfaces render the
-  /// Android slot as "coming soon" while unset.
+  /// Android slot as direct APK downloads while unset.
   final String? play;
+
+  /// The Android APK, god mode — a direct GitHub Releases download
+  /// (issue #1864).
+  final String apkGod;
+
+  /// The Android APK, standard mode — same release as [apkGod].
+  final String apkStandard;
 
   /// The product site.
   final String site;
@@ -63,6 +84,8 @@ final class LinksConfig {
       appstore == defaultAppStoreUrl &&
       testflight == defaultTestFlightUrl &&
       play == null &&
+      apkGod == defaultApkGodUrl &&
+      apkStandard == defaultApkStandardUrl &&
       site == defaultSiteUrl &&
       banner;
 
@@ -80,6 +103,8 @@ final class LinksConfig {
     String appstore = defaultAppStoreUrl;
     String testflight = defaultTestFlightUrl;
     String? play;
+    String apkGod = defaultApkGodUrl;
+    String apkStandard = defaultApkStandardUrl;
     String site = defaultSiteUrl;
     bool banner = true;
     node.forEach((key, value) {
@@ -90,6 +115,10 @@ final class LinksConfig {
           testflight = _link('$key', value);
         case 'play':
           play = value == null ? null : _link('$key', value);
+        case 'apk-god':
+          apkGod = _link('$key', value);
+        case 'apk-standard':
+          apkStandard = _link('$key', value);
         case 'site':
           site = _link('$key', value);
         case 'banner':
@@ -105,6 +134,8 @@ final class LinksConfig {
       appstore: appstore,
       testflight: testflight,
       play: play,
+      apkGod: apkGod,
+      apkStandard: apkStandard,
       site: site,
       banner: banner,
       notes: List.unmodifiable(notes),
@@ -136,6 +167,12 @@ final class LinksConfig {
       buffer.write('  testflight: "$testflight"\n');
     }
     if (play != null) buffer.write('  play: "$play"\n');
+    if (apkGod != defaultApkGodUrl) {
+      buffer.write('  apk-god: "$apkGod"\n');
+    }
+    if (apkStandard != defaultApkStandardUrl) {
+      buffer.write('  apk-standard: "$apkStandard"\n');
+    }
     if (site != defaultSiteUrl) buffer.write('  site: "$site"\n');
     if (!banner) buffer.write('  banner: false\n');
     return buffer.toString();

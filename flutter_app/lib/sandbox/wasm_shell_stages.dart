@@ -31,17 +31,38 @@ final class _ExprEvaluator {
     }
     final right = _parseSum();
     if (_pos != _args.length) throw const FormatException('syntax error');
-    final result = switch (op) {
-      '=' => left == right,
-      '!=' => left != right,
-      '<' => left < right,
-      '<=' => left <= right,
-      '>' => left > right,
-      '>=' => left >= right,
-      _ => false,
-    };
-    return result ? '1' : '0';
+    return _compareOp(op, left, right) ? '1' : '0';
   }
+
+  /// The GNU expr comparison [op] applied to [left]/[right].
+  static bool _compareOp(String op, int left, int right) {
+    final equality = _equalityResult(op, left, right);
+    if (equality != null) return equality;
+    final less = _lessResult(op, left, right);
+    if (less != null) return less;
+    return _greaterResult(op, left, right)!;
+  }
+
+  /// The `=`/`!=` arm, or null when [op] is not an equality.
+  static bool? _equalityResult(String op, int left, int right) => switch (op) {
+    '=' => left == right,
+    '!=' => left != right,
+    _ => null,
+  };
+
+  /// The `<`/`<=` arm, or null when [op] is not a less-than.
+  static bool? _lessResult(String op, int left, int right) => switch (op) {
+    '<' => left < right,
+    '<=' => left <= right,
+    _ => null,
+  };
+
+  /// The `>`/`>=` arm, or null when [op] is not a greater-than.
+  static bool? _greaterResult(String op, int left, int right) => switch (op) {
+    '>' => left > right,
+    '>=' => left >= right,
+    _ => null,
+  };
 
   int _parseValue() {
     if (_pos >= _args.length) throw const FormatException('syntax error');

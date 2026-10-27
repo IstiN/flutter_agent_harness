@@ -47,6 +47,9 @@ bool isGlobWord(String word) =>
 /// segment whose own pattern starts with `.` (bash dotglob off). `**`
 /// crosses directory levels (zero or more, depth-capped); `*`/`?` never
 /// cross `/`.
+///
+/// The per-segment arms live in the `_expand*Segment` helpers below; the
+/// loop only routes (gh-1848 CRAP descent).
 Future<List<String>?> expandGlobPattern(
   String pattern,
   String cwd,
@@ -66,69 +69,106 @@ Future<List<String>?> expandGlobPattern(
   for (var i = 0; i < segments.length; i++) {
     final segment = segments[i];
     final last = i == segments.length - 1;
-    final next = <_Candidate>[];
+    final List<_Candidate> next;
     if (segment == '**') {
-      for (final candidate in candidates) {
-        // `**` matches zero or more directory levels (globstar): keep the
-        // candidate itself plus every descendant directory — and, when it
-        // is the last segment, every file too (bash `dir/**` lists the
-        // whole subtree).
-        next.add(_Candidate(candidate.path, dir: true, keep: true));
-        await _descend(
-          next,
-          candidate.path,
-          listDir,
-          _globstarDepthCap,
-          includeFiles: last,
-        );
-      }
+      next = await _expandGlobstarSegment(candidates, last, listDir);
     } else if (isGlobWord(segment)) {
-      final matcher = _segmentToRegExp(segment);
-      final matchDot = segment.startsWith('.');
-      for (final candidate in candidates) {
-        final entries = await listDir(candidate.path);
-        if (entries == null) continue;
-        for (final entry in entries) {
-          if (!matchDot && entry.name.startsWith('.')) continue;
-          if (!matcher.hasMatch(entry.name)) continue;
-          final path = _join(candidate.path, entry.name);
-          next.add(_Candidate(path, dir: entry.isDir, keep: !last));
-        }
-      }
+      next = await _expandWildcardSegment(candidates, segment, last, listDir);
     } else {
-      // Literal segment: candidates extend; existence is verified lazily —
-      // a listing of the parent must contain the name (bash only emits
-      // existing paths).
-      for (final candidate in candidates) {
-        if (last) {
-          final parent = candidate.path.isEmpty ? '/' : candidate.path;
-          final entries = await listDir(parent);
-          if (entries == null || !entries.any((e) => e.name == segment)) {
-            continue;
-          }
-        }
-        next.add(_Candidate(_join(candidate.path, segment), keep: !last));
-      }
+      next = await _expandLiteralSegment(candidates, segment, last, listDir);
     }
     candidates = next;
     if (candidates.isEmpty) return null;
   }
+  return _formatMatches(candidates, cwd, absolute);
+}
 
+/// The `**` segment: keep every candidate (zero levels crossed) plus
+/// every descendant directory — and, when it is the last segment, every
+/// file too (bash `dir/**` lists the whole subtree).
+Future<List<_Candidate>> _expandGlobstarSegment(
+  List<_Candidate> candidates,
+  bool last,
+  GlobDirList listDir,
+) async {
+  final next = <_Candidate>[];
+  for (final candidate in candidates) {
+    next.add(_Candidate(candidate.path, dir: true, keep: true));
+    await _descend(
+      next,
+      candidate.path,
+      listDir,
+      _globstarDepthCap,
+      includeFiles: last,
+    );
+  }
+  return next;
+}
+
+/// A wildcard segment (`*`/`?`/brackets): list each candidate directory
+/// and keep the entries the segment matcher accepts.
+Future<List<_Candidate>> _expandWildcardSegment(
+  List<_Candidate> candidates,
+  String segment,
+  bool last,
+  GlobDirList listDir,
+) async {
+  final matcher = _segmentToRegExp(segment);
+  final matchDot = segment.startsWith('.');
+  final next = <_Candidate>[];
+  for (final candidate in candidates) {
+    final entries = await listDir(candidate.path);
+    if (entries == null) continue;
+    for (final entry in entries) {
+      if (!matchDot && entry.name.startsWith('.')) continue;
+      if (!matcher.hasMatch(entry.name)) continue;
+      final path = _join(candidate.path, entry.name);
+      next.add(_Candidate(path, dir: entry.isDir, keep: !last));
+    }
+  }
+  return next;
+}
+
+/// A literal segment: candidates extend; existence is verified lazily —
+/// a listing of the parent must contain the name (bash only emits
+/// existing paths).
+Future<List<_Candidate>> _expandLiteralSegment(
+  List<_Candidate> candidates,
+  String segment,
+  bool last,
+  GlobDirList listDir,
+) async {
+  final next = <_Candidate>[];
+  for (final candidate in candidates) {
+    if (last) {
+      final parent = candidate.path.isEmpty ? '/' : candidate.path;
+      final entries = await listDir(parent);
+      if (entries == null || !entries.any((e) => e.name == segment)) {
+        continue;
+      }
+    }
+    next.add(_Candidate(_join(candidate.path, segment), keep: !last));
+  }
+  return next;
+}
+
+/// Output in the pattern's shape: relative matches are relative to [cwd]
+/// (bash emits `apps/x/app.json`, not the absolute path); sorted
+/// lexicographically; `null` when nothing matched.
+List<String>? _formatMatches(
+  List<_Candidate> candidates,
+  String cwd,
+  bool absolute,
+) {
   final matches =
-      candidates
-          .where((c) => c.path.isNotEmpty && c.path != '/')
-          .map((c) {
-            var path = c.path;
-            if (!absolute) {
-              // Output in the pattern's shape: relative matches are relative to
-              // [cwd] (bash emits `apps/x/app.json`, not the absolute path).
-              final prefix = cwd == '/' ? '/' : '$cwd/';
-              if (path.startsWith(prefix)) path = path.substring(prefix.length);
-            }
-            return path;
-          })
-          .toList()
-        ..sort();
+      candidates.where((c) => c.path.isNotEmpty && c.path != '/').map((c) {
+        var path = c.path;
+        if (!absolute) {
+          final prefix = cwd == '/' ? '/' : '$cwd/';
+          if (path.startsWith(prefix)) path = path.substring(prefix.length);
+        }
+        return path;
+      }).toList()..sort();
   return matches.isEmpty ? null : matches;
 }
 
@@ -193,46 +233,68 @@ final class _BracketClass {
   final bool negated;
 }
 
+/// Whether the bracket expression opening at [i] starts with a `!`/`^`
+/// negation; returns the index of the first member and the flag.
+(int, bool) _bracketNegation(String segment, int i) {
+  if (i < segment.length && (segment[i] == '!' || segment[i] == '^')) {
+    return (i + 1, true);
+  }
+  return (i, false);
+}
+
+/// The compiled regex class body: a `^` prefix and a `/` exclusion when
+/// negated (segments never cross `/`).
+String _bracketRegex(String body, bool negated) =>
+    '[${negated ? '^' : ''}$body${negated ? '/' : ''}]';
+
+/// Whether [i] opens a backslash escape pair in [segment].
+bool _bracketEscaped(String segment, int i) =>
+    segment[i] == r'\' && i + 1 < segment.length;
+
+/// Appends one bracket-class member at [i] to [body]: an escaped char
+/// joins the class literally (bash fnmatch rule), `x-y` spans a range,
+/// anything else is escaped verbatim. Returns the next index.
+int _bracketMember(String segment, int i, StringBuffer body) {
+  final char = segment[i];
+  if (_bracketEscaped(segment, i)) {
+    body.write(RegExp.escape(segment[i + 1]));
+    return i + 2;
+  }
+  if (i + 2 < segment.length &&
+      segment[i + 1] == '-' &&
+      segment[i + 2] != ']') {
+    body
+      ..write(RegExp.escape(char))
+      ..write('-')
+      ..write(RegExp.escape(segment[i + 2]));
+    return i + 3;
+  }
+  body.write(RegExp.escape(char));
+  return i + 1;
+}
+
 /// Compiles the bracket expression whose `[` sits at [start] in
 /// [segment], or `null` when it never closes (the caller emits a literal
 /// `[`). Bash rules: a leading `!`/`^` negates; a `]` in first position
 /// is a literal class member; `x-y` spans a range; an unterminated
 /// expression is not a class at all.
 _BracketClass? _bracketClass(String segment, int start) {
-  var i = start + 1;
-  var negated = false;
-  if (i < segment.length && (segment[i] == '!' || segment[i] == '^')) {
-    negated = true;
-    i++;
-  }
+  final (i, negated) = _bracketNegation(segment, start + 1);
   final body = StringBuffer();
   var first = true;
-  while (i < segment.length) {
-    final char = segment[i];
+  var j = i;
+  while (j < segment.length) {
+    final char = segment[j];
     if (char == ']' && !first) {
       // A negated class must not match `/` either.
-      final regex = '[${negated ? '^' : ''}$body${negated ? '/' : ''}]';
-      return _BracketClass(regex, i + 1, negated: negated);
+      return _BracketClass(
+        _bracketRegex('$body', negated),
+        j + 1,
+        negated: negated,
+      );
     }
     first = false;
-    if (char == r'\' && i + 1 < segment.length) {
-      // An escaped char joins the class literally (bash fnmatch rule).
-      body.write(RegExp.escape(segment[i + 1]));
-      i += 2;
-      continue;
-    }
-    if (i + 2 < segment.length &&
-        segment[i + 1] == '-' &&
-        segment[i + 2] != ']') {
-      body
-        ..write(RegExp.escape(char))
-        ..write('-')
-        ..write(RegExp.escape(segment[i + 2]));
-      i += 3;
-      continue;
-    }
-    body.write(RegExp.escape(char));
-    i++;
+    j = _bracketMember(segment, j, body);
   }
   return null;
 }

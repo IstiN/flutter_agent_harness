@@ -364,7 +364,7 @@ List<String> _words(String segment) {
       hasWord = true;
       continue;
     }
-    if (!inSingle && !inDouble && (ch == ' ' || ch == '\t')) {
+    if (_isWordBoundary(inSingle, inDouble, ch)) {
       if (hasWord) {
         words.add(current.toString());
         current.clear();
@@ -378,6 +378,10 @@ List<String> _words(String segment) {
   if (hasWord) words.add(current.toString());
   return words;
 }
+
+/// Whitespace outside any quoting context ends the current word.
+bool _isWordBoundary(bool inSingle, bool inDouble, String ch) =>
+    !inSingle && !inDouble && (ch == ' ' || ch == '\t');
 
 /// Redirect operators recognized for path checks: `>`, `>>`, `<>`, `&>`,
 /// and the fd-numbered variants (`2>`, `1>>`, …). `2>&1` parses as `2>`

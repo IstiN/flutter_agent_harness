@@ -88,17 +88,11 @@ Future<bool> setProjectMountScoped({
   required bool scoped,
   required void Function() onApplied,
 }) async {
-  final mountEnv = _resolveMountEnv(env);
-  if (mountEnv == null) {
+  final target = await _scopedMountTarget(env);
+  if (target == null) {
     return false;
   }
-  if (mountEnv.mountedRoot == null) {
-    return false;
-  }
-  final stored = await ProjectMountStore.load(env);
-  if (stored == null) {
-    return false;
-  }
+  final (mountEnv, stored) = target;
   mountEnv.scoped = scoped;
   await ProjectMountStore.save(
     env,
@@ -108,6 +102,29 @@ Future<bool> setProjectMountScoped({
   );
   onApplied();
   return true;
+}
+
+/// The mount target of the scoped toggle: `(mountEnv, stored record)`, or
+/// null when any precondition is missing.
+Future<(ProjectMountEnv, ProjectMountStore)?> _scopedMountTarget(
+  ExecutionEnv env,
+) async {
+  final mountEnv = _mountedProjectEnv(env);
+  if (mountEnv == null) {
+    return null;
+  }
+  final stored = await ProjectMountStore.load(env);
+  if (stored == null) {
+    return null;
+  }
+  return (mountEnv, stored);
+}
+
+/// The mount env only when a folder is actually mounted (nothing mounted
+/// means nothing to scope TO).
+ProjectMountEnv? _mountedProjectEnv(ExecutionEnv env) {
+  final mountEnv = _resolveMountEnv(env);
+  return mountEnv?.mountedRoot == null ? null : mountEnv;
 }
 
 /// Whether native directory picking is available on this platform (macOS).

@@ -811,6 +811,77 @@ void main() {
     );
 
     test(
+      'a hand-back carrying a leading rewrite notice is still marked as a '
+      'background conversion (gh-1835 review)',
+      timeout: const Timeout(Duration(seconds: 30)),
+      () async {
+        // The secret-shape interceptor (issue #1408) prepends its notice
+        // line to the hand-back text — the conversion result then starts
+        // with `[bash interceptor rewrote …]`, and an anchor check on the
+        // raw first characters misreads a real conversion as an ordinary
+        // retry completion. The recognition must skip that one leading
+        // notice line.
+        final outcome = await runSupervisedTurn(
+          executor: (attempt, onUpdate, cancelToken) async {
+            if (attempt == 1) {
+              await Completer<void>().future;
+            }
+            await Future<void>.delayed(const Duration(milliseconds: 340));
+            return ToolExecutionResult.text(
+              '[bash interceptor rewrote 1 secret-shaped value in the '
+              'command (GitHub Token) — the executed command carries the '
+              '[REDACTED:GitHub Token] marker.]\n'
+              '${stuckBackgroundHandbackText(jobId: 'sh-rw2', logPath: '/tmp/sh-rw2.log', supervisorMoved: false)}',
+            );
+          },
+        );
+        expect(
+          outcome.resultText,
+          contains('converted to a background job'),
+          reason: 'the rewrite notice must not hide the real conversion',
+        );
+        expect(
+          outcome.stuckEvents.map((e) => e.action),
+          contains(StuckFollowUpAction.backgroundConvert),
+        );
+      },
+    );
+
+    test(
+      'the anchor sentence quoted mid-body (after ordinary output) is '
+      'still not a conversion under the rewrite-notice skip',
+      timeout: const Timeout(Duration(seconds: 30)),
+      () async {
+        // The prefix skip is bounded: at most ONE leading interceptor
+        // notice line, then the anchor must be positional. A sentence
+        // quoted after ordinary output (an echo, a log tail) must keep
+        // failing the recognition (gh-1054 round 2 holds).
+        final outcome = await runSupervisedTurn(
+          executor: (attempt, onUpdate, cancelToken) async {
+            if (attempt == 1) {
+              await Completer<void>().future;
+            }
+            await Future<void>.delayed(const Duration(milliseconds: 340));
+            return ToolExecutionResult.text(
+              'preamble output\n'
+              '${stuckBackgroundHandbackText(jobId: 'sh-q2', logPath: '/tmp/sh-q2.log', supervisorMoved: false)}',
+            );
+          },
+        );
+        expect(
+          outcome.resultText,
+          isNot(contains('converted to a background job')),
+          reason: 'a mid-body quote after ordinary output is not a hand-back',
+        );
+        expect(
+          outcome.resultText,
+          contains('retried once'),
+          reason: 'the truthful mark: attempt 1 was cancelled and retried',
+        );
+      },
+    );
+
+    test(
       'a retry that self-completes inside the grace leaves no '
       'background-convert record — the record waits for the conversion',
       timeout: const Timeout(Duration(seconds: 30)),

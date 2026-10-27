@@ -356,17 +356,8 @@ class _FileBrowserState extends State<FileBrowser> {
   Future<void> _upload() async {
     final picker = _picker;
     if (picker == null) return;
-    final List<UploadFile> picked;
-    try {
-      picked = await picker.pick();
-    } on Object catch (e) {
-      if (mounted) {
-        _showSnack(context.l10n.filesUploadFailed(e.toString()), error: true);
-      }
-      return;
-    }
-    if (picked.isEmpty || !mounted) return;
-
+    final picked = await _pickUploadFiles(picker);
+    if (picked == null || picked.isEmpty || !mounted) return;
     final sizeError = uploadBatchSizeError(
       picked,
       maxBytes: widget.maxUploadBatchBytes,
@@ -376,7 +367,32 @@ class _FileBrowserState extends State<FileBrowser> {
       _showSnack(sizeError, error: true);
       return;
     }
+    await _writeUploadedFiles(picked);
+  }
 
+  /// The picked files; null when the picker failed (error snack shown).
+  Future<List<UploadFile>?> _pickUploadFiles(UploadPicker picker) async {
+    final List<UploadFile> picked;
+    try {
+      picked = await picker.pick();
+    } on Object catch (e) {
+      if (mounted) {
+        _showSnack(context.l10n.filesUploadFailed(e.toString()), error: true);
+      }
+      return null;
+    }
+    return picked;
+  }
+
+  Future<void> _writeUploadedFiles(List<UploadFile> picked) async {
+    final (written, failed) = await _writeUploadBatch(picked);
+    if (!mounted) return;
+    if (written > 0) await _load();
+    if (!mounted) return;
+    _showUploadSummary(written, failed);
+  }
+
+  Future<(int, List<String>)> _writeUploadBatch(List<UploadFile> picked) async {
     var written = 0;
     final failed = <String>[];
     final emptyName = context.l10n.filesEmptyFileName;
@@ -396,10 +412,11 @@ class _FileBrowserState extends State<FileBrowser> {
         failed.add(name);
       }
     }
-    if (!mounted) return;
-    if (written > 0) await _load();
-    if (!mounted) return;
-    // Failures stay visible: which files, not just how many.
+    return (written, failed);
+  }
+
+  /// Failures stay visible: which files, not just how many.
+  void _showUploadSummary(int written, List<String> failed) {
     final failures = failed.isNotEmpty
         ? context.l10n.filesUploadFailures(
             failed.length.toString(),

@@ -4,15 +4,12 @@
 
 import 'auth_flow.dart';
 
-/// Web stub for `startOAuthCallbackReceiver` (auth_loopback.dart): the
-/// browser sandbox cannot bind a loopback HTTP server, so OAuth sign-in on
-/// web surfaces this error until a redirect-based flow lands.
+/// Fallback for platforms with neither `dart:io` nor browser callbacks.
+/// Web selects `auth_loopback_web.dart`; native selects
+/// `auth_loopback_io.dart`.
 Future<OAuthCallbackReceiver> startOAuthCallbackReceiverImpl() async =>
-    throw UnsupportedError(
-      'OAuth loopback sign-in requires dart:io (unavailable on web)',
-    );
+    throw UnsupportedError('OAuth sign-in is unavailable on this platform');
 
-/// Web stub for `openAuthUrl` (auth_loopback.dart).
-Future<void> openAuthUrlImpl(Uri authUrl) async => throw UnsupportedError(
-  'OAuth loopback sign-in requires dart:io (unavailable on web)',
-);
+/// Fallback opener for the same unsupported platforms.
+Future<void> openAuthUrlImpl(Uri authUrl) async =>
+    throw UnsupportedError('OAuth sign-in is unavailable on this platform');

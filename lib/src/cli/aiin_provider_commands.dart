@@ -150,7 +150,7 @@ extension _AiinProviderCommands on AgentCli {
       // The configured HTTP client (faked in tests) carries the exchange
       // and key-registration calls; only the loopback callback is a real
       // socket.
-      client: config.modelsHttpClient,
+      client: modelFetchClient('aiin'),
     );
   }
 
@@ -159,7 +159,7 @@ extension _AiinProviderCommands on AgentCli {
   /// when the list cannot be fetched (offline / standalone mode).
   Future<String?> _pickAiinIdentityProvider() async {
     var providers = await fetchAiinOAuthProviders(
-      client: config.modelsHttpClient,
+      client: modelFetchClient('aiin'),
     ).catchError((_) => const <String>[]);
     if (providers.isEmpty) providers = const [aiinDefaultOAuthProvider];
     providers = [

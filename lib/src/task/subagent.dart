@@ -4,6 +4,7 @@
 library;
 
 import '../cli/tui_theme.dart';
+import 'deliverables.dart';
 
 /// The lifecycle state of a retained subagent.
 enum SubagentStatus { queued, running, idle, completed, failed, aborted }
@@ -16,6 +17,7 @@ final class SubagentMessage {
     required this.sentAt,
     this.hops = 0,
     this.isUserInput = false,
+    this.toId = '',
   });
 
   /// Sender id (`parent` for parent-originated messages).
@@ -30,6 +32,11 @@ final class SubagentMessage {
   /// Remaining hop budget (sibling-relay cap; 0 refuses further relaying).
   final int hops;
 
+  /// Recipient id as delivered by the fabric: `#channel` for channel
+  /// traffic, the agent/mailbox id otherwise ('' when unknown). Lets the
+  /// steering renderer teach channel replies instead of DMs (gh-1825).
+  final String toId;
+
   /// True when the message is user input forwarded by an attached client
   /// (the Fa app's attach view) — the recipient delivers it as the user's
   /// own words, not agent chat.
@@ -41,6 +48,7 @@ final class SubagentMessage {
     sentAt: sentAt,
     hops: hops - 1,
     isUserInput: isUserInput,
+    toId: toId,
   );
 
   Map<String, dynamic> toJson() => {
@@ -49,6 +57,7 @@ final class SubagentMessage {
     'sentAt': sentAt,
     'hops': hops,
     if (isUserInput) 'isUserInput': true,
+    if (toId.isNotEmpty) 'toId': toId,
   };
 
   factory SubagentMessage.fromJson(Map<String, dynamic> json) =>
@@ -58,6 +67,7 @@ final class SubagentMessage {
         sentAt: json['sentAt'] as String? ?? '',
         hops: json['hops'] as int? ?? 0,
         isUserInput: json['isUserInput'] as bool? ?? false,
+        toId: json['toId'] as String? ?? '',
       );
 }
 
@@ -131,14 +141,34 @@ final class SubagentHandle {
   /// Last-known context pressure of the child (issue #439): the executor
   /// stamps the estimated request tokens and the effective window at every
   /// turn boundary, so `task_status` can surface the wall before it is
-  /// hit. Null until the child's first turn.
+  /// hit. Null until the child's first turn. gh-1742: reconciled with the
+  /// provider-reported usage — `max(estimate, observed input+cacheRead)`.
   int? estTokens;
 
   /// The window [estTokens] was measured against (see [estTokens]).
   int? windowTokens;
 
+  /// The provider-reported context of the child's last completed request
+  /// (gh-1742: `usage.input + cacheRead`), null when the child has no
+  /// usage-bearing assistant message yet (fresh transcript, or a gateway
+  /// without usage reporting — estimate-only, E1).
+  int? observedTokens;
+
+  /// Whether [windowTokens] is backed by an endpoint report or a user pin
+  /// (gh-1742 AC6): false means the window is the carried catalog value —
+  /// the pressure rows mark it unverified.
+  bool windowVerified = false;
+
   /// Completed proactive compactions (issue #439).
   int compactions = 0;
+
+  /// The actionable parent-visible compaction-failure stamp (issue #1924):
+  /// set when the child's boundary compaction fails repeatedly
+  /// (consecutively, bounded latch in the executor) — the parent should
+  /// `task_resume` the child (its resume compacts before the first
+  /// request) or respawn it. Cleared by the next successful pass. Null =
+  /// compaction is healthy (or has never run).
+  String? compactionError;
 
   /// Tokens freed by the most recent compaction (see [compactions]).
   int lastCompactionFreed = 0;
@@ -147,11 +177,14 @@ final class SubagentHandle {
   String? lastCompactionAt;
 
   /// `~NN%` context pressure for status lines, or null when unknown.
+  /// Issue #1924: an at-or-over-window child is marked `OVER WINDOW` so an
+  /// over-wall child reads differently from a mere high-pressure one.
   String? get contextPressureText {
     final est = estTokens;
     final window = windowTokens;
     if (est == null || window == null || window <= 0) return null;
-    return '~${(est * 100 / window).round()}% ctx';
+    final pct = (est * 100 / window).round();
+    return '~$pct% ctx${est >= window ? ' OVER WINDOW' : ''}';
   }
 
   /// One-line last-compaction summary, or null when never compacted.
@@ -180,6 +213,22 @@ final class SubagentHandle {
   /// Inter-agent messages addressed to this child and not yet consumed
   /// (Phase 3b pending queue). Bounded by the manager's size guard.
   final List<SubagentMessage> pendingMessages = [];
+
+  /// Deliverable artifacts this child produced (issue #1829): over-cap
+  /// reports, salvaged partial text, and chunk-manifest verdicts, in
+  /// capture order. Deliberately IN-MEMORY ONLY — not serialized by
+  /// [toJson]: the artifacts live in the session output store, which is
+  /// in-memory with the same live-session lifetime; a restarted process
+  /// could not resolve the pointers anyway (the store is gone), so a
+  /// persisted list would advertise dead pointers.
+  final List<DeliverableRecord> deliverables = [];
+
+  /// Whether an output-truncated `reply`/`agent_message` call was recorded
+  /// for this child (issue #1829), even when salvage produced no usable
+  /// text. Set by the deliverable capture; cleared never — a later
+  /// successful reply does not unrecord the failure. In-memory like
+  /// [deliverables].
+  bool hadTruncatedDeliverable = false;
 
   /// True when the child is waiting for input (e.g. an ask tool answer).
   bool get isWaitingForInput => status == SubagentStatus.idle;
@@ -210,7 +259,10 @@ final class SubagentHandle {
     'liveRequests': liveRequests,
     if (estTokens != null) 'estTokens': estTokens,
     if (windowTokens != null) 'windowTokens': windowTokens,
+    if (observedTokens != null) 'observedTokens': observedTokens,
+    if (windowVerified) 'windowVerified': true,
     'compactions': compactions,
+    if (compactionError != null) 'compactionError': compactionError,
     'lastCompactionFreed': lastCompactionFreed,
     'lastCompactionAt': lastCompactionAt,
     if (supersedes != null) 'supersedes': supersedes,
@@ -240,7 +292,10 @@ final class SubagentHandle {
     handle.liveRequests = json['liveRequests'] as int? ?? 0;
     handle.estTokens = json['estTokens'] as int?;
     handle.windowTokens = json['windowTokens'] as int?;
+    handle.observedTokens = json['observedTokens'] as int?;
+    handle.windowVerified = json['windowVerified'] as bool? ?? false;
     handle.compactions = json['compactions'] as int? ?? 0;
+    handle.compactionError = json['compactionError'] as String?;
     handle.lastCompactionFreed = json['lastCompactionFreed'] as int? ?? 0;
     handle.lastCompactionAt = json['lastCompactionAt'] as String?;
     handle.lastReply = json['lastReply'] as String?;
@@ -272,9 +327,14 @@ final class SubagentHandle {
       case SubagentStatus.aborted:
         parts.add('🛑 aborted');
     }
-    if (tokens > 0) parts.add('${tokens}t');
+    // Issue #1924: the figure is CUMULATIVE billed usage across the child's
+    // whole life (input+output+cacheWrite per request) — never the live
+    // context. Label it, so a long-running child's 667k lifetime total is
+    // not misread against the model window; the live basis is the ctx%.
+    if (tokens > 0) parts.add('lifetime ${tokens}t');
     final pressure = contextPressureText;
     if (pressure != null) parts.add(pressure);
+    if (compactionError != null) parts.add('compaction failing');
     if (modelId != null) parts.add(modelId!);
     return parts.join(' · ');
   }

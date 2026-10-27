@@ -359,16 +359,20 @@ extension AgentCliExt on AgentCli {
   /// stored directory.
   Future<void> _extRemove(String name) async {
     final host = _ext.host;
-    if (host != null) {
-      try {
-        await host.disable(name);
-      } on ArgumentError {
-        // Not loaded — the removal still applies.
-      }
-    }
+    if (host != null) await _disableLoadedExt(host, name);
     await _extStore().remove(name);
     _extRefreshSurface();
     io.writeln('ext: removed $name');
+  }
+
+  /// Disables [name] on a live host; not-loaded is not an error here —
+  /// the removal below still applies.
+  Future<void> _disableLoadedExt(JsExtensionHost host, String name) async {
+    try {
+      await host.disable(name);
+    } on ArgumentError {
+      // Not loaded — the removal still applies.
+    }
   }
 
   /// `/ext update <name> [source]` — re-plans through the install machinery
@@ -449,16 +453,20 @@ extension AgentCliExt on AgentCli {
   /// so they are not reserved against the fresh load) and re-run the load.
   Future<void> _extReload() async {
     final previous = _ext.host;
-    if (previous != null) {
-      _ext.host = null;
-      for (final tool in previous.tools) {
-        _toolRegistry.unregister(tool.name);
-      }
-      _agent.state.tools = _toolRegistry.tools;
-      await previous.dispose();
-    }
+    if (previous != null) await _disposeExtHost(previous);
     _ext.engineUnavailableWarned = false;
     await initJsExtensions();
+  }
+
+  /// Tears down a live extension host: unregister its tools first, so
+  /// they are not reserved against the fresh load, then dispose it.
+  Future<void> _disposeExtHost(JsExtensionHost previous) async {
+    _ext.host = null;
+    for (final tool in previous.tools) {
+      _toolRegistry.unregister(tool.name);
+    }
+    _agent.state.tools = _toolRegistry.tools;
+    await previous.dispose();
   }
 
   // --- ext provider flows (AC5) ---------------------------------------------

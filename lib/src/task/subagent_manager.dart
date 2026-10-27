@@ -485,6 +485,19 @@ final class SubagentManager {
   /// refuse them too (nothing drains their local inbox — see the guard).
   Future<void> _guardRecipient(String id, SubagentHandle? handle) async {
     if (!await _isDeliverable(id, handle)) {
+      // A hub-shaped target while the hub is still connecting is a
+      // transient state, not an unknown recipient: say so, so the model
+      // retries instead of rerouting the message into a dead file inbox
+      // (gh-1825).
+      final router = messaging is RoutingMessagingRepository
+          ? messaging as RoutingMessagingRepository
+          : null;
+      if (id.startsWith('#') && router != null && !router.isConnected) {
+        throw StateError(
+          'DAP hub is not connected yet — the channel "$id" will be '
+          'reachable in a few seconds; retry the same agent_message then',
+        );
+      }
       throw StateError(
         'unknown subagent "$id" — available: ${_handles.keys.join(', ')}',
       );
@@ -612,6 +625,7 @@ final class SubagentManager {
             sentAt: m.sentAt,
             hops: m.hops,
             isUserInput: m.kind == AgentMessageKind.user,
+            toId: m.toId,
           ),
       ];
     }
@@ -637,18 +651,24 @@ final class SubagentManager {
   }
 
   /// Context-pressure stamp (issue #439): the executor calls this at every
-  /// child turn boundary with the estimated request tokens and the
+  /// child turn boundary with the reconciled request pressure and the
   /// effective window, so `task_status` can show the wall approaching.
-  /// In-memory only, like [touch] — the next boundary refreshes it.
+  /// gh-1742 adds the observed channel (`usage.input + cacheRead` of the
+  /// last completed request) and the window's verification state (AC6).
+  /// In-memory event stamp like [touch] — the next boundary refreshes it.
   void notePressure(
     String id, {
     required int estTokens,
     required int windowTokens,
+    int? observedTokens,
+    bool windowVerified = false,
   }) {
     final handle = _handles[id];
     if (handle == null) return;
     handle.estTokens = estTokens;
     handle.windowTokens = windowTokens;
+    handle.observedTokens = observedTokens;
+    handle.windowVerified = windowVerified;
     _emit(handle);
   }
 
@@ -670,6 +690,18 @@ final class SubagentManager {
     _persist();
   }
 
+  /// Compaction-health stamp (issue #1924): the executor reports every
+  /// failed child compaction pass; after its bounded latch trips, [error]
+  /// carries the actionable parent-visible text (resume compacts first /
+  /// respawn). A successful pass clears the stamp. In-memory event stamp
+  /// like [notePressure].
+  void noteCompactionHealth(String id, {String? error}) {
+    final handle = _handles[id];
+    if (handle == null) return;
+    handle.compactionError = error;
+    _emit(handle);
+  }
+
   /// Counts the unread inbox messages of [id] (0 without a fabric) — the
   /// `mail:N` indicator in the agents panel.
   Future<int> pendingInboxCount(String id) async =>
@@ -686,6 +718,27 @@ final class SubagentManager {
   Future<bool> hasPendingMessages(String id) async =>
       (await pendingInboxCount(id)) > 0 ||
       (_handles[id]?.pendingMessages.isNotEmpty ?? false);
+
+  /// The send time of the oldest unconsumed pending mail for [id] — the
+  /// fabric inbox AND the in-process pending queue (issue #1923 AC3:
+  /// `task_status` flags mail sitting past the delivery SLO). Null = no
+  /// pending mail. O(pending); no timers, no background tasks. Entries
+  /// already carry their enqueue stamp (`sentAt`), so this only reads.
+  Future<DateTime?> oldestPendingMailSince(String id) async {
+    final sentAts = <String>[
+      for (final m in await pendingInbox(id)) m.sentAt,
+      for (final m
+          in _handles[id]?.pendingMessages ?? const <SubagentMessage>[])
+        m.sentAt,
+    ];
+    final stamps = <DateTime>[];
+    for (final sentAt in sentAts) {
+      final t = DateTime.tryParse(sentAt);
+      if (t != null) stamps.add(t);
+    }
+    if (stamps.isEmpty) return null;
+    return stamps.reduce((a, b) => a.isBefore(b) ? a : b);
+  }
 
   /// Records the child's explicit `reply` (Phase 3b) on its handle.
   Future<void> recordReply(String id, String text) async {

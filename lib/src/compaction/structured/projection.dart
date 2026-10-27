@@ -79,9 +79,8 @@ final class StructuredViewState {
 
   /// Whether no structured state exists on the path.
   bool get isEmpty =>
-      hiddenRecordIds.isEmpty &&
-      checkpoints.isEmpty &&
-      coveredRecordIds.isEmpty;
+      hiddenRecordIds.length + checkpoints.length + coveredRecordIds.length ==
+      0;
 
   /// Whether [recordId] is swallowed by a checkpoint (hidden-and-covered
   /// counts as covered — the checkpoint's marker owns the position).

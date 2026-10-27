@@ -31,6 +31,7 @@ import '../agent/misuse_breaker.dart';
 import '../dap/dap_hub_snapshot.dart';
 import 'agent_event_handler.dart';
 import 'ansi_markdown.dart';
+import 'live_token_rate_meter.dart';
 import 'path_candidates.dart';
 import 'slash_args.dart';
 import 'status_line_git_probe.dart';
@@ -39,6 +40,7 @@ import 'tui_status_line.dart'
         StatusLineConfig,
         StatusLineSnapshot,
         TuiStatusLine,
+        formatTokenRate,
         resolveStatusLineSpec;
 import 'browser_bridge_commands.dart';
 import '../browser/browser_tools.dart';
@@ -58,15 +60,22 @@ import '../agent/finalize_gate.dart';
 import '../session/windowed_session_storage.dart' show WindowedSessionStorage;
 import '../trajectory/event_projection.dart'
     show TrajectoryHiddenRecordPreview, projectHiddenRecordPreviews;
-import '../trajectory/trajectory_record.dart' show TrajectoryCompactedRecord;
+import '../trajectory/trajectory_record.dart'
+    show TrajectoryCompactedRecord, stripTrajectoryRequestDetail;
 import '../trajectory/trajectory_blobs.dart';
+import '../trajectory/trajectory_request_blobs.dart';
 import '../agent/agent_tool.dart';
 import '../agent/auto_compactor.dart';
 import '../agent/message_cap.dart';
 import '../overflow.dart' show MessageCapRefusal;
 import '../agent/stuck_tool.dart';
+import '../agent/foreground_call_budget.dart';
 import '../agent/tool_pairing.dart';
 import '../providers/models_for_endpoint.dart';
+import '../providers/payload_stall.dart'
+    show payloadStallAdvice, payloadStallAdviceLine;
+import '../providers/proxy_connector.dart';
+import '../providers/proxy_connector_io.dart';
 import '../providers/stream_trace.dart';
 import '../agent/tool_registry.dart';
 import '../utils/list_equals.dart';
@@ -121,6 +130,7 @@ import '../env/cwd_override_env.dart';
 import '../env/execution_env.dart';
 import '../env/session_vars_execution_env.dart';
 import '../hosts/host_agent_wiring.dart';
+import '../compaction/context_window_registry.dart';
 import '../hosts/host_capability_profile.dart';
 import '../hosts/host_extension_api.dart';
 import '../hosts/host_wiring_builder.dart';
@@ -139,6 +149,7 @@ import '../mcp/mcp_config.dart';
 import '../mcp/mcp_manager.dart';
 import '../model.dart';
 import '../model_roles/model_roles.dart';
+import '../model_roles/provider_model_binding.dart';
 import '../session_deadline.dart';
 import 'tool_phase_labels.dart';
 import 'tool_rows.dart';
@@ -153,9 +164,16 @@ import '../providers/models_endpoint.dart';
 import '../providers/openrouter_oauth.dart';
 import '../providers/thinking.dart';
 import '../agent/image_registry.dart'
-    show ImageRegistryConfig, imageDropNotice, imageRegistryConfig;
+    show
+        ImageRegistryConfig,
+        imageCapLearnedNotice,
+        imageDropReportNotice,
+        imageRegistryConfig;
+import '../agent/image_drop_ux.dart';
+import '../event_stream.dart';
 import '../providers/provider_common.dart'
     show
+        ProviderStreamState,
         authExpiredProvider,
         effectiveProviderConnectTimeout,
         effectiveProviderStreamIdleTimeout,
@@ -183,7 +201,9 @@ import '../session/session_record.dart';
 import '../env/session_parse_executor.dart';
 import '../session/session_repo.dart';
 import '../session_io_retry.dart';
+import '../session_repair.dart' show SessionRepairReport, repairSessionLedgers;
 import '../session/attach/file_presence_store.dart';
+import '../session_retention.dart';
 import '../session/attach/session_presence.dart';
 import '../session/attach/session_lease.dart';
 import '../session/attach/session_attachment.dart';
@@ -193,6 +213,7 @@ import 'startup.dart';
 import 'cli_config.dart';
 import 'pi_mode.dart';
 import 'custom_providers.dart';
+import 'model_switch_coherence.dart';
 import 'folder_model_state.dart';
 import 'provider_flow.dart';
 import '../session/session_storage.dart';
@@ -209,6 +230,8 @@ import '../tools/load_modes.dart';
 import '../tools/ask_tool.dart';
 import '../tools/request_secret_tool.dart';
 import '../tools/session_search_tool.dart';
+import '../session/session_chunk_reader.dart'
+    show heavyScanGuardIfHeavy, heavyScanGuardLines, sessionSizeIfHeavy;
 import '../session/session_search.dart';
 import '../tools/builtin_tools.dart';
 import '../tools/checkpoint_tool.dart';
@@ -283,11 +306,14 @@ export 'model_presets.dart' show bundledCatalogModelIds, knownModelPresets;
 
 part 'provider_flow_helpers.dart';
 part 'provider_commands.dart';
+part 'provider_codemie_sso.dart';
+part 'provider_proxy_gate.dart';
 part 'provider_key_persist.dart';
 part 'provider_export_command.dart';
 part 'chatgpt_import_command.dart';
 part 'agent_cli_compaction.dart';
 part 'provider_models.dart';
+part 'provider_model_coherence.dart';
 part 'codemie_provider_commands.dart';
 part 'aiin_provider_commands.dart';
 part 'provider_keys.dart';
@@ -317,6 +343,7 @@ part 'agent_cli_hep_io.dart';
 part 'agent_cli_headless_exit.dart';
 part 'agent_cli_banner.dart';
 part 'agent_cli_waiting.dart';
+part 'agent_cli_budget.dart';
 part 'agent_cli_subagent_board.dart';
 part 'agent_cli_mcp_print.dart';
 part 'agent_cli_commands.dart';
@@ -331,6 +358,7 @@ part 'agent_cli_wire_serve.dart';
 part 'agent_cli_diag_log.dart';
 part 'agent_cli_lifecycle.dart';
 part 'agent_cli_input.dart';
+part 'agent_cli_plugin_records.dart';
 part 'agent_cli_pickers.dart';
 part 'agent_cli_run.dart';
 part 'agent_cli_usage_ledger.dart';
@@ -346,6 +374,13 @@ const String headlessIncompleteMarker = '__FA_INCOMPLETE';
 /// The CLI harness: agent + built-in tools + session persistence +
 /// compaction, driven by a [CliIO].
 class AgentCli {
+  /// The shared per-model context-window registry (gh-1742 invariant 2):
+  /// live endpoint detections and `/model-edit` pins publish here, and
+  /// every `task` child spawned afterwards resolves its compaction
+  /// window from the SAME entry — the 131,072-advertised-vs-478k-served
+  /// asymmetry can no longer fork main from its children.
+  final ContextWindowRegistry contextWindowRegistry = ContextWindowRegistry();
+
   /// Creates an [AgentCli]. [streamFunction] overrides the provider adapter
   /// (used in tests); otherwise one is built from
   /// [AgentCliConfig.providerKind] and [AgentCliConfig.apiKey].
@@ -415,10 +450,13 @@ class AgentCli {
         config: _pluginConfig(plugin.name),
         pickOption: _pickOption,
         askLine: _askLine,
+        appendSessionRecord: _appendPluginSessionRecord,
+        readSessionRecords: _readPluginSessionRecords,
       );
       plugin.register(context);
       pluginTools.addAll(context.tools);
       _pluginInboxes.addAll(context.externalInboxes);
+      _pluginSessionReadyListeners.addAll(context.sessionReadyListeners);
       _pluginSlashCommands.addAll(context.slashCommands);
       _pluginSlashDescriptions.addAll(context.slashCommandDescriptions);
     }
@@ -426,7 +464,13 @@ class AgentCli {
     _streamFunction =
         streamFunction ??
         scriptedTestStreamFunction() ??
-        _catalogStreamFunction(config.providerKind, config.apiKey);
+        _catalogStreamFunction(
+          config.providerKind,
+          config.apiKey,
+          providerName:
+              config.activeCustomName ??
+              resolveCliProviderSpec(config.providerKind)?.name,
+        );
     // MCP servers connect lazily in the background; their tools land in
     // the registry via _onMcpChanged (registered after the agent exists).
     _mcp = AgentCliMcpWiring(config: config.mcpConfig, cwd: _env.cwd);
@@ -505,6 +549,12 @@ class AgentCli {
             const RedactionConfig(enabled: false),
         approvedSecretLiterals: () =>
             config.redactionPipeline?.registeredSecrets.toSet() ?? const {},
+        // gh-1835: the auto-background liveness threshold — the config key
+        // (0 = kill switch) rides `waiting:` next to the other liveness
+        // knobs; the bash tool converts (never restarts) at it.
+        shellAutoBackgroundAfter: Duration(
+          seconds: config.waiting.autoBackgroundSeconds,
+        ),
         configServiceFactory: (coreEnv) =>
             ConfigService(env: coreEnv, homeDir: config.homeDir),
         memory: _memory,
@@ -519,11 +569,16 @@ class AgentCli {
         isUnattended: () => _approval.mode == ApprovalMode.unattended,
         vision: config.visionConfig,
         transcribe: config.transcribeConfig,
+        transcribeSessionId: () => _session?.cachedId,
         media: MediaToolServices(
           modelsConfig: config.modelsConfig,
           mainApiKey: () => _apiKey,
           resolveKey: _resolveMediaKey,
         ),
+        // gh-1844 (review): `decide` rides its own facility bundle — it
+        // only needs the live main-connection accessors, not the media
+        // config.
+        decisions: DecisionsServices(mainApiKey: () => _apiKey),
         browserController: config.browserController,
         // Builder hands the decorated env (review #1230) — screenshot
         // saves clamp like every other fs-touching tool.
@@ -554,6 +609,16 @@ class AgentCli {
         // (constructed inside the builder) may not exist yet.
         mainMailbox: () => _subagentManager.mailboxOf('main'),
         subagents: SubagentServices(
+          // gh-1742: children resolve the same registered windows the
+          // CLI publishes on detection/pin (invariant 2), under the
+          // same owner cap.
+          contextWindowRegistry: contextWindowRegistry,
+          // Issue #1829: deliverable artifacts redact through the same
+          // assembled pipeline tool results pass (I3) — no new secrets
+          // surface.
+          deliverableRedactor: config.redactionPipeline == null
+              ? null
+              : (String text) => config.redactionPipeline!.redact(text),
           homeDir: config.homeDir,
           machineName: config.machineName,
           a2a: config.a2aConfig,
@@ -692,6 +757,7 @@ class AgentCli {
         ),
         contextWindowCap: config.contextWindowCap,
         stuckTool: config.effectiveStuckTool(),
+        foregroundCall: config.foregroundCall,
         wireDump: config.wireDump,
         // Issue #387: the loop's over-window guard hands the transcript to
         // this relief before refusing — one synchronous compaction pass.
@@ -710,6 +776,9 @@ class AgentCli {
     );
     _toolRegistry = stack.registry;
     _agent = stack.agent;
+    // Issue #1786: the one-key accept + the watchdog's escalate rung call
+    // into the loop's budget ladder through these controls.
+    _agent.foregroundBudgetControls = _foregroundBudgetControls;
     // gh-1556: the session deadline's per-turn budget line rides every
     // LLM request payload while armed (`time-left: 5min`); unarmed keeps
     // the request byte-for-byte (the provider returns null).
@@ -745,6 +814,13 @@ class AgentCli {
     // Non-draining probe for the same inbox: mid-run mail also triggers the
     // tool phase's soft-yield so a long bash/task call does not delay it.
     _agent.externalSteeringProbe = _mainInboxProbe;
+    // Issue #1923 AC4: the loop's steering-interrupt notices (queued /
+    // delivered) surface as visible transcript lines, same warning styling
+    // as the stall lines in agent_cli_steering.dart. The loop pins the
+    // wording — print verbatim.
+    _agent.onSteeringInterruptNotice = (line) {
+      io.writeln(tuiWarning(line));
+    };
     // Model roles: when the default role resolves, the agent runs through
     // the resolver's fallback stream (rotation/failover per provider call).
     // A resolver without a default role leaves the legacy wiring in place
@@ -1023,6 +1099,14 @@ class AgentCli {
     unawaited(_recordCustomModel(modelId));
   }
 
+  /// Test seam driving [_switchModel] with a RAW model id — no router
+  /// resolution, the shape an unresolved caller would hand it. Pins the G1
+  /// backstop refusal (gh-1788): a cross-provider reference that reaches
+  /// the same-provider reuse path is refused loudly, state untouched.
+  @visibleForTesting
+  Future<void> switchModelUnresolvedForTest(String modelId) =>
+      _switchModel(modelId);
+
   /// Test seam driving the TUI picker's Edit action in line mode: opens
   /// the prefilled edit wizard for [entry] (or the active provider when
   /// null), the same `_startProviderEditWizard` the picker calls.
@@ -1077,6 +1161,14 @@ class AgentCli {
   Set<String> settingsPickerHandlerKeysForTest() =>
       _settingsPickerHandlers.keys.toSet();
 
+  /// Test seam routing a wizard-picker selection through the live TUI
+  /// dispatch (`_tuiPickerSelected`): completes the pending `_pickOption`
+  /// answer the way a real picker row does — the settings flows'
+  /// multiple-choice steps in tests (gh-1787).
+  @visibleForTesting
+  Future<void> tuiWizardPickForTest(String pickerId, String key) =>
+      _tuiPickerSelected(pickerId, key);
+
   /// Test seam: opens the sessions picker (building its rows) without a
   /// TUI; the built items land in [sessionPickerItemsForTest].
   @visibleForTesting
@@ -1086,6 +1178,15 @@ class AgentCli {
   /// (commands, templates, skills) without a TUI.
   @visibleForTesting
   List<MenuItem> slashMenuForTest(String prefix) => _buildSlashMenu(prefix);
+
+  /// Test seam for the queue secret snapshot (gh-1781 review r1): the
+  /// exact map the quota-feed rebind and the `/providers queue` edit
+  /// reload resolve — pins the boot/rebuild parity (the rotation stack,
+  /// `NAME_2`/`NAME_3` …, must ride the rebuild's env view exactly like
+  /// the boot's [collectQueueSecrets] sweep saw it).
+  @visibleForTesting
+  Map<String, String> queueSecretsForTest(List<ProviderQueueEntry> entries) =>
+      _queueSecrets(entries);
 
   /// The items the most recent sessions picker opened with (see
   /// [openSessionsPickerForTest]).
@@ -1233,25 +1334,20 @@ class AgentCli {
   /// target's cwd. The headless turn drains the inbox fabric as user
   /// messages; the session JSONL is shared, so a later interactive
   /// `fa --session <name>` resumes that transcript. Returns an error text
-  /// or null on success.
+  /// or null on success. Delegates to [launchMailboxWake], which verifies
+  /// the cwd exists first (gh-1744 — a lossy decoded slug must not become
+  /// a ProcessException).
   Future<String?> _launchMailboxWake({
     required String cwd,
     required String sessionId,
     String? sessionName,
-  }) async {
-    final command = mailboxWakeCommand(
-      wakeExecutable: config.wakeExecutable,
-      sessionId: sessionId,
-      sessionName: sessionName,
-    );
-    final result = await _env.exec(
-      command,
-      options: ShellExecOptions(cwd: cwd),
-    );
-    return result.isOk
-        ? null
-        : 'shell exec failed: ${result.errorOrNull?.message ?? 'unknown error'}';
-  }
+  }) => launchMailboxWake(
+    env: _env,
+    wakeExecutable: config.wakeExecutable,
+    cwd: cwd,
+    sessionId: sessionId,
+    sessionName: sessionName,
+  );
 
   late final SubagentManager _subagentManager;
 
@@ -1381,6 +1477,13 @@ class AgentCli {
   /// reset + tool binding to the LIVE session.
   late final CompactExpandController _compactExpand;
   TtsrController? _ttsr;
+
+  /// The aggregated image-drop latch (issue #1889): one user-facing notice
+  /// per meaningful drop-situation change; `/images` renders its last
+  /// report. Fresh instance = new-session/resume re-latches once (R4);
+  /// `/reset` clears it explicitly.
+  final ImageDropUx imageDropUx = ImageDropUx();
+
   final _Style _style;
   final bool _useTui;
   final String _version;
@@ -1443,6 +1546,16 @@ class AgentCli {
   /// provider then; legacy mode reads them from the provider kind.
   var _rolesDriven = false;
   final _usage = UsageAccumulator();
+
+  /// gh-1762: the live token-rate meter — fed by the agent event tap
+  /// (text/thinking/tool-call-arg deltas + per-response usage), read by
+  /// the band snapshot and the classic footer. `ledgerClock` keeps the
+  /// rate exact on a scripted clock in tests; the window comes from
+  /// `tui.statusLine.rateWindowMs` (default 5000).
+  late final LiveTokenRateMeter _meter = LiveTokenRateMeter(
+    now: ledgerClock ?? DateTime.now,
+    windowMs: config.statusLine?.rateWindowMs ?? kDefaultRateWindowMs,
+  );
 
   // Issue #277 hub driver state (see agent_hub_cli.dart): the projection
   // accumulates running spans; the panel log keeps deferred (btw) history;
@@ -1588,6 +1701,11 @@ class AgentCli {
   );
   Session? _session;
 
+  /// The gh-1746 retention boot note, filled by `_retentionBootCheck`
+  /// before the session opens; printed dim through the roles-drop notice
+  /// channel (line mode + the TUI re-print after the banner).
+  List<String> _retentionBootLines = const [];
+
   /// The herdr pane reporter (issue #1481): fire-and-forget pane-state
   /// reports while this CLI runs inside a herdr pane. The gate is
   /// evaluated once in the constructor — outside herdr (and in every test
@@ -1600,6 +1718,15 @@ class AgentCli {
   /// sets live in it); recreated when the session changes.
   TrajectoryBlobPersister? _trajectoryBlobPersister;
   Session? _trajectoryBlobPersisterSession;
+
+  /// gh-1745 request-blob store (the session's spill dir + rotation
+  /// policy); built lazily on the first spilled capture.
+  TrajectoryRequestBlobStore? _requestBlobStore;
+
+  /// Issue #1882 AC3: the heavy-scan guard prints ONCE per process — the
+  /// `trajectory tail` poll re-evaluates the snapshot every interval and
+  /// must not re-warn each time.
+  bool _heavyScanGuardShown = false;
 
   /// HEP v1 writer for backend agent mode (`--output events`, issue #155);
   /// null in the REPL. Set by [runHeadless], read by the compaction pass
@@ -1650,6 +1777,19 @@ class AgentCli {
   /// steering them into the agent.
   Completer<String>? _pendingApprovalAnswer;
 
+  /// The budget ladder's CLI→loop controls (issue #1786): the loop
+  /// registers per-call closures while a budgeted call is in flight; the
+  /// one-key `b` accept and the liveness watchdog's escalate rung invoke
+  /// them (see agent_cli_budget.dart).
+  final ForegroundCallBudgetControls _foregroundBudgetControls =
+      ForegroundCallBudgetControls();
+
+  /// The outstanding one-key budget offer's tool call id, if any — set by
+  /// the `action: offer` budget record, cleared by any terminal action or
+  /// the call's end. State lives HERE (extensions cannot hold fields);
+  /// the affordance methods live in agent_cli_budget.dart.
+  String? _outstandingBudgetOffer;
+
   /// The pending ask-menu input line, if an `ask` tool call is waiting on
   /// the user. Unlike the approval prompt, EMPTY lines are routed here too:
   /// empty input is the menu's free-text affordance. Completes with `null`
@@ -1671,6 +1811,7 @@ class AgentCli {
   ProviderQuotaService? _quotaService;
   final Map<String, String> _pluginSlashDescriptions = {};
   final List<ExternalInbox> _pluginInboxes = [];
+  final List<void Function()> _pluginSessionReadyListeners = [];
 
   /// JS-extension wiring state (extensions cannot add fields) — the live
   /// host, ext slash commands, and the prompt section. See
@@ -1710,7 +1851,7 @@ class AgentCli {
   /// "keeping last good" serves when the project section turns broken
   /// (issue #1151 review; mirrors the tools scope cache).
   Map<String, bool>? _lastGoodProjectSkillToggles;
-  List<ProjectContextFile> _contextFiles = const [];
+  LoadedProjectContext _context = LoadedProjectContext.empty;
 
   /// Consent for third-party (Claude/Copilot/Codex) skill & agent roots.
   /// Mutable: the startup consent dialog and `/skills access` change it;
@@ -1784,9 +1925,11 @@ class AgentCli {
   /// episode instead of one per watchdog tick.
   bool _runStalledPushed = false;
 
-  /// Model ids shown by the most recent `/model` picker, so `/model N` can
-  /// select by number without retyping the full id.
-  List<String>? _lastModelList;
+  /// The `(providerIdentity, modelId)` rows of the most recent `/model`
+  /// listing, so `/model N` can select by number — each row carries its
+  /// provider identity (gh-178 G1: a numbered pick of a cross-provider row
+  /// moves the whole triple, never reuses the current one).
+  List<(String, String)>? _lastModelList;
 
   /// Cache of model ids fetched from an OpenAI-compatible `/models` endpoint,
   /// plus the in-flight refresh future so concurrent callers coalesce.
@@ -1879,6 +2022,7 @@ class AgentCli {
     // revalidates on the first menu open (stale entries) — no boot HTTP.
     await _loadPersistedModelCache();
     _session = await _initializeSession();
+    _notifyPluginSessionReady();
     // Ownership lease (#428): claim before anything can drive — a live
     // lease flips this boot into viewer mode (no takeover exists).
     await _claimSessionLease();
@@ -1899,6 +2043,7 @@ class AgentCli {
     _wireTransientRetryNotice();
     _wireDeliverySloNotice();
     _wireImageDropNotice();
+    _wirePayloadStallAdvice();
     _wireOperativePinNotice();
     onUnknownFinishReason = (reason) =>
         _logDiagnostic('unknown finish_reason sid=$_logSid reason=$reason');
@@ -2092,6 +2237,7 @@ class AgentCli {
     // same cached trees a REPL session would).
     await _cubeBootRestore();
     _session = await _initializeSession();
+    _notifyPluginSessionReady();
     // Ownership lease (#428, E7): a headless run NEVER spawns a second
     // writer over a live lease — it refuses with the banner (exit 3) so
     // wake loops reopen interactively instead of fighting the owner.
@@ -2181,10 +2327,20 @@ class AgentCli {
       // The same pre-flight compaction guard as the REPL's [_runPrompt]:
       // a resumed session already over the threshold must compact BEFORE
       // the first request, or it goes out over-window and gets rejected.
-      // Inside the guarded section (issue #1085 round-4): a cancel here
-      // surfaces through the same loud error line as any run failure —
-      // the listener above is already live for it.
-      await _maybeAutoCompact();
+      // Inside the guarded section (issue #1085 round-4): the listener
+      // above is already live for it. gh-1929: a cancel HERE — the
+      // pre-flight window, the prompt never sent — exits with the
+      // CANCELLED semantics (130, the aborted-run code) and the neutral
+      // dim receipt; a cancel DURING the run (in-flight relief, settle
+      // funnel) keeps its loud abort via the error line + exit 1 below
+      // (the pinned mid-run contract).
+      try {
+        await _maybeAutoCompact();
+      } on CancelledException {
+        _sealReactionRuns();
+        _renderUserCancel('submission cancelled');
+        return 130;
+      }
       if (images.isEmpty) {
         await _agent.prompt(_redactUserText(prompt));
       } else {
@@ -2314,6 +2470,13 @@ class AgentCli {
   /// attempt and before the exhaustion verdict; [_beginUserPrompt] resets
   /// it with the fresh turn.
   bool _runAbortRequested = false;
+
+  /// gh-1929: a submit's pre-flight compaction was cancelled by the user
+  /// (the prompt was never sent) — the TUI submit boundary consumes this
+  /// to hand the typed text back to the composer
+  /// ([FaTuiController.sendInputText]). Line mode and headless never
+  /// read it.
+  bool _submissionCancelRestorePending = false;
 
   /// Every compaction pass that actually STARTED (issue #1085 round-1):
   /// the over-window funnel's exhaustion verdict names how many passes
@@ -2472,14 +2635,11 @@ final class _CliMessageCapPolicy implements MessageCapPolicy {
   final AgentCli _cli;
   @override
   int? learnedCapFor(Model model) => ModelCapsStore.learnedCapOr(
-        _cli._modelCaps.recordFor(model.provider, model.id),
-        _cli
-            .config
-            .modelsConfig
-            ?.overrides
-            .lookup(model.provider, model.id)
-            ?.messageCap,
-      );
+    _cli._modelCaps.recordFor(model.provider, model.id),
+    _cli.config.modelsConfig?.overrides
+        .lookup(model.provider, model.id)
+        ?.messageCap,
+  );
 
   @override
   void learnFromRefusal(Model model, MessageCapRefusal refusal) {

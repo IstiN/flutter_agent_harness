@@ -439,11 +439,16 @@ final class ProviderQueueRuntime {
     // dialect mismatches on private/router endpoints) must not die in
     // the builder — hosts render them on the boot/reload notice channel.
     final bindingWarnings = <String>[];
+    // gh-1781: the chain's skipped entries (keyless heads a later keyed
+    // entry made survivable) ride the same channel — a boot that lost its
+    // head entry to a missing key never rides silently (AC2).
+    final skippedEntries = <String>[];
     final chain = buildProviderQueueChain(
       entries,
       secrets: secrets,
       streamFactory: streamFactory,
       mintChatGptCredentials: mintChatGptCredentials,
+      skipped: skippedEntries,
       warnings: bindingWarnings,
     );
     // gh-1617 review r2: the boot-time [onNotice] is often absent — the
@@ -453,6 +458,9 @@ final class ProviderQueueRuntime {
     final noticeListeners = <void Function(FallbackNotice notice)>[];
     for (final line in bindingWarnings) {
       onBindingWarning?.call(line);
+    }
+    for (final line in skippedEntries) {
+      onBindingWarning?.call('warning: provider queue skipped $line');
     }
     final streamFunction = FallbackStreamFunction(
       entries: chain,

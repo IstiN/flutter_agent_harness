@@ -221,22 +221,25 @@ void main() {
     addTearDown(revived.stop);
     await _waitFor(() => fabric.isConnected);
     await _waitFor(() => browser.connected);
-    final arrived = browser.inbound
-        .firstWhere((m) => m.plaintext == 'queued while offline')
-        // 15s, not 5: the forward ride follows TWO reconnect handshakes
-        // (fabric + browser peer, each poll-bounded above) plus the hub's
-        // bind-retry window (#948: 150ms..1.2s backoff) — on loaded
-        // runners (hostile-env leg, concurrency=4) the whole chain
-        // measured past a bare 5s (run 36327531059). The assertion is
-        // unchanged: exactly-once arrival.
-        .timeout(const Duration(seconds: 15));
-    await fabric.drain('sess1/main'); // triggers the flush
-    await arrived;
+    final arrived = browser.inbound.firstWhere(
+      (m) => m.plaintext == 'queued while offline',
+    );
+    // The forward rides the production 2s inbox probe, not one drain:
+    // EVERY fabric call re-triggers the flush, and each attempt's
+    // presence/whois ride is 10s-capped on a loaded runner — a single
+    // drain is ONE attempt, and a transient failure there (presence door
+    // timing out, whois dropping mid-reconnect) used to strand the queue
+    // for good (hostile-env red, run 401030921: TimeoutException at the
+    // old single-shot drain, following the same leg's 36327531059 and
+    // the bind 36732676599). Probing like production retries the flush
+    // until arrival; the assertion is unchanged: exactly-once arrival.
+    await _probeUntilForwarded(arrived, () => fabric.drain('sess1/main'));
 
     // The file copy is gone — a file-polling peer never sees it twice.
     expect(await fileFabric.peek(peerId), isEmpty);
-    // 45s, not the shared 20s: the 15s arrival wait plus a full bind-retry
-    // window must both fit on a loaded runner (run 36327531059 precedent).
+    // 45s, not the shared 20s: the probe budget below plus a full
+    // bind-retry window must both fit on a loaded runner (the
+    // run 36327531059 precedent, now with the probe shape).
   }, timeout: const Timeout(Duration(seconds: 45)));
 }
 
@@ -279,6 +282,34 @@ Future<void> _waitFor(bool Function() probe) async {
     await Future<void>.delayed(const Duration(milliseconds: 100));
   }
   fail('condition not reached within 5s');
+}
+
+/// Drives the fabric the way the CLI's 2s inbox probe does: every
+/// [flushTrigger] call (peek/drain/send) re-triggers the forward flush
+/// until [arrived] completes. Each attempt's roster/whois ride is
+/// 10s-capped on a loaded runner, so probing — production's own shape —
+/// is what makes the forward at-least-once under load; a single call
+/// gave it one attempt and lost the race (run 401030921). Bounded at
+/// ~20s so the failure always surfaces inside the test's 45s budget
+/// with a named cause; a real forward lands within a couple of probes
+/// once both clients are welcomed.
+Future<void> _probeUntilForwarded(
+  Future<void> arrived,
+  Future<void> Function() flushTrigger,
+) async {
+  final deadline = DateTime.now().add(const Duration(seconds: 20));
+  while (true) {
+    await flushTrigger(); // one flush attempt per probe
+    try {
+      await arrived.timeout(const Duration(milliseconds: 250));
+      return;
+    } on TimeoutException {
+      // Not arrived yet — the next probe re-triggers the flush.
+      if (DateTime.now().isAfter(deadline)) {
+        fail('queued mail not forwarded within 20s of inbox probes');
+      }
+    }
+  }
 }
 
 /// A primary that doubles every hub delivery: the verbatim frame plus a

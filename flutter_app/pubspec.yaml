@@ -74,6 +74,10 @@ dependencies:
   # (`voxel.mesh.bin`/`voxel.blocks.bin`), and raises the quickjs_runtime
   # floor to ^0.3.6 (pure-Dart, additive symbol-probed FFI), which forced
   # the transitive quickjs_runtime 0.3.5→0.3.6 bump in flutter_app/pubspec.lock.
+  # gh-1842 (lock bump to 0.4.189): the test-compilation floor is now
+  # 0.4.189 — flutter_app/test/apps/fa_craft_bsp_smoke_test.dart
+  # references VoxelDiagnostics, which does not exist below 0.4.189. The
+  # ^0.4.156 constraint is unchanged; the lock pin keeps the test compiling.
   js_widget_runtime: ^0.4.156
 
   # The fa_widgets catalog validator — the SAME rule engine the catalog CI
@@ -202,6 +206,11 @@ dependencies:
   stream_channel: ^2.1.0
 
 dev_dependencies:
+  # Settled-memory probe (flutter_app/test/memory_probe.dart, issue #1850):
+  # connects to the test's own VM service to snapshot the per-class live
+  # set after a forced full GC. Transitive via flutter_test; declared for
+  # the depend_on_referenced_packages lint.
+  vm_service: ^15.3.0
   # Mock seam for url_launcher in widget/golden tests.
   url_launcher_platform_interface: ^2.3.2
   flutter_test:
@@ -244,6 +253,15 @@ dependency_overrides:
   # (composer fa_tui needs LineEditor, which the hosted 2.x predates.)
   dart_tui:
     path: ../vendor/dart_tui
+  # PR #1785 rework: hosted quickjs_runtime 0.4.2 (pulled in by the
+  # js_widget_runtime 0.4.180 bump) fails its Native Assets build on the
+  # Build Android APK leg (`-lpthread` — the NDK has no libpthread since
+  # r18) and the Lockfile smoke windows leg (the QuickJS 2024-01-13
+  # sources are not MSVC-clean). Consume the patched vendored fork until
+  # upstream publishes the fix; pinned by
+  # ../test/quickjs_runtime_vendor_pin_test.dart (root).
+  quickjs_runtime:
+    path: ../vendor/quickjs_runtime
   wasm_run:
     path: ../vendor/wasm_run
   wasm_run_flutter:
@@ -268,6 +286,12 @@ dependency_overrides:
   # still on master). Vendored verbatim with ONLY the deployment floor raised
   # to the app's 14.0 (vendor/flutter_inappwebview_macos/VENDORED.md). Drop
   # the override once upstream fixes the minimum.
+  # gh-1798: the vendored Package.swift is DELETED — its existence is the
+  # SwiftPM opt-in signal, and the 14.0-floored product breaks the build
+  # whenever the tool's silent FlutterGeneratedPluginSwiftPackage floor bump
+  # (12.0 → the project's 14.0) skips. The plugin rides CocoaPods (podspec
+  # 14.0, pinned in macos/Podfile.lock); guarded by
+  # ../test/inappwebview_macos_pods_lane_test.dart.
   flutter_inappwebview_macos:
     path: ../vendor/flutter_inappwebview_macos
   # gh-1265: the umbrella's desktop implementations are pulled into every

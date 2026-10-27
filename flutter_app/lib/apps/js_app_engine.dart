@@ -36,18 +36,17 @@ typedef FaLlmMessage = ({String role, String content});
 /// LLM completion used by the `jsr.fa.llm*` bridge calls. Receives the
 /// conversation and resolves with the assistant's reply text. When [onDelta]
 /// is given (the `llm.stream` call), it reports text deltas as they arrive.
-typedef FaLlmHandler = Future<Object?> Function(
-  List<FaLlmMessage> messages, {
-  void Function(String delta)? onDelta,
-});
+typedef FaLlmHandler =
+    Future<Object?> Function(
+      List<FaLlmMessage> messages, {
+      void Function(String delta)? onDelta,
+    });
 
 /// Handler for platform bridges still without a real backend (health
 /// actions other than `health.summary`). Receives the action name
 /// (`health.stepsToday`, …) and args.
-typedef FaPlatformHandler = Future<Object?> Function(
-  String action,
-  Map<String, Object?> args,
-);
+typedef FaPlatformHandler =
+    Future<Object?> Function(String action, Map<String, Object?> args);
 
 /// Read source for the host's merged secrets (dotenv + saved keys) behind
 /// the `jsr.fa.keys.list/get` bridge calls; returns a fresh name → value
@@ -56,10 +55,11 @@ typedef FaHostKeysSource = Map<String, String> Function();
 
 /// One `home`/`homekit` action handler: resolves the bridge map from the
 /// gated [HomeApi] (see [_homeActions]).
-typedef _HomeAction = Future<Map<String, Object?>> Function(
-  HomeApi api,
-  Map<String, Object?> args,
-);
+typedef _HomeAction =
+    Future<Map<String, Object?>> Function(
+      HomeApi api,
+      Map<String, Object?> args,
+    );
 
 /// Theme-pack bridge behind `jsr.fa.theme.list/current/apply` (issue #169).
 /// The host implements it; the apply leg ALWAYS renders a consent prompt —
@@ -266,6 +266,11 @@ class JsAppEngine {
   String get sourceRevision => _sourceRevision ?? '';
   String? _sourceRevision;
 
+  /// The assembled entry JS the current boot ran — the never-rendered
+  /// watchdog scans it for the assembler's "file not found" markers so a
+  /// torn install names its missing sources (gh-1831 AC4).
+  String _bootJs = '';
+
   /// Whether this engine joins the process-wide per-app live-engine
   /// sibling group (gh-1164 review): live view engines (board tile +
   /// fullscreen) sync `jsr.storage` state across viewports through the
@@ -468,6 +473,7 @@ class JsAppEngine {
     // be indistinguishable between apps (and tiles vs full apps).
     AppLog.i('apps', 'engine start: ${app.id}/$entryFile');
     final js = await _assembleEntryJs();
+    _bootJs = js;
     // gh-1164: the error gate dedups per source revision — hash the WHOLE
     // app source tree (entry + sibling source files), so an edit to any
     // app source file re-arms reporting (a helper-only fix used to leave
@@ -546,18 +552,67 @@ class JsAppEngine {
     // A disposed engine's notifiers throw on read — check liveness first.
     if (!identical(_engine, armed)) return;
     if (tree.value != null) return;
-    final waited = uiTreeWarnAfter.inSeconds >= 1
-        ? '${uiTreeWarnAfter.inSeconds}s'
-        : '${uiTreeWarnAfter.inMilliseconds}ms';
-    bootError.value =
-        "widget '${app.id}' ($entryFile) produced no UI tree within $waited "
-        'of engine start — the app source likely fails to parse (syntax '
-        'error); fix the widget source and retry';
+    final waited = _uiTreeWaitLabel(uiTreeWarnAfter);
+    // gh-1831 AC4: when the assembler left "file not found" markers (a
+    // torn/partial install — the web catalog path used to drop a
+    // multi-file widget's siblings), the card must name WHAT is missing
+    // and the remedy instead of blaming a syntax error.
+    final message = bootTimeoutMessage(
+      appId: app.id,
+      entryFile: entryFile,
+      waited: waited,
+      missingFiles: missingSourceFiles(_bootJs),
+    );
+    bootError.value = message;
     AppLog.i(
       'apps',
       'WARNING: ${app.id}/$entryFile: uiTree not set $waited after '
           'engine start — eval failed before the first render',
     );
+  }
+
+  /// The human delay for the watchdog card: whole seconds from one
+  /// second up, milliseconds below that.
+  static String _uiTreeWaitLabel(Duration waited) => waited.inSeconds >= 1
+      ? '${waited.inSeconds}s'
+      : '${waited.inMilliseconds}ms';
+
+  /// The `/* … file not found: <path> */` markers the entry assembler
+  /// (js_widget_runtime `WidgetManifest.readJs`) leaves for every relative
+  /// import / `jsr.include` whose file did not make it into the app dir.
+  /// Returns the referenced paths, deduplicated, first-occurrence order.
+  @visibleForTesting
+  static List<String> missingSourceFiles(String assembledJs) {
+    final missing = <String>[];
+    final marker = RegExp(
+      r"/\* (?:import|jsr\.include): file not found: (.+?) \*/",
+    );
+    for (final match in marker.allMatches(assembledJs)) {
+      final path = match.group(1)!;
+      if (!missing.contains(path)) missing.add(path);
+    }
+    return missing;
+  }
+
+  /// The never-rendered watchdog card text. With a torn install
+  /// ([missingFiles] non-empty) it names the files and the remedy;
+  /// otherwise it keeps the historical parse-error wording (issue #1336).
+  @visibleForTesting
+  static String bootTimeoutMessage({
+    required String appId,
+    required String entryFile,
+    required String waited,
+    List<String> missingFiles = const [],
+  }) {
+    if (missingFiles.isEmpty) {
+      return "widget '$appId' ($entryFile) produced no UI tree within "
+          '$waited of engine start — the app source likely fails to parse '
+          '(syntax error); fix the widget source and retry';
+    }
+    return "widget '$appId' ($entryFile) produced no UI tree within $waited "
+        'of engine start — missing source files: '
+        '${missingFiles.join(', ')} (the install is incomplete or torn); '
+        'reinstall the app from the widgets catalog and retry';
   }
 
   Future<void> callEvent(String actionId, [Map<String, dynamic>? payload]) {
@@ -870,6 +925,15 @@ class JsAppEngine {
     Map<String, dynamic> changed,
   ) {
     if (changed.isEmpty) return;
+    _deliverToOtherSiblings(siblings, changed);
+  }
+
+  /// The fan-out leg (gh-1848 split): one `state.sync` per sibling engine
+  /// other than this one — the writer skips itself.
+  void _deliverToOtherSiblings(
+    Iterable<JsAppEngine> siblings,
+    Map<String, dynamic> changed,
+  ) {
     for (final sibling in siblings) {
       if (!identical(sibling, this)) {
         _sendStateSync(sibling, changed, writer: instanceId);
@@ -969,15 +1033,26 @@ class JsAppEngine {
       return;
     }
     try {
-      final uri = Uri.parse(url);
-      final response = switch (method.toUpperCase()) {
-        'POST' => await http.post(uri, headers: headers),
-        _ => await http.get(uri, headers: headers),
-      };
-      _resolve?.call(id, jsonDecode(response.body));
+      final body = await _fetchViaHttp(Uri.parse(url), method, headers);
+      _resolve?.call(id, jsonDecode(body));
     } on Object catch (error) {
       _resolve?.call(id, {'__error': error.toString()});
     }
+  }
+
+  /// The HTTP hop of `jsr.fetchJson` — POST or the GET default. Split out
+  /// (gh-1848): the fetch wrapper stays ≤ CRAP 24 even while its covering
+  /// suite is native-gated (the engine suite skips on bridge-less hosts).
+  Future<String> _fetchViaHttp(
+    Uri uri,
+    String method,
+    Map<String, String> headers,
+  ) async {
+    final response = switch (method.toUpperCase()) {
+      'POST' => await http.post(uri, headers: headers),
+      _ => await http.get(uri, headers: headers),
+    };
+    return response.body;
   }
 
   // --- jsr.loadAsset ---------------------------------------------------------
@@ -1004,8 +1079,14 @@ class JsAppEngine {
       _resolve?.call(id, {'__error': 'cannot launch $url'});
       return;
     }
+    _resolve?.call(id, await _launchExternal(uri));
+  }
+
+  /// The external-launch arm of `jsr.openUrl` (gh-1848 split): `true`
+  /// when the platform launched it, an error map when the launch failed.
+  Future<Object> _launchExternal(Uri uri) async {
     final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
-    _resolve?.call(id, ok ? true : {'__error': 'launch failed'});
+    return ok ? true : {'__error': 'launch failed'};
   }
 
   // --- jsr.exec + the jsr.fa bridge ------------------------------------------
@@ -1421,10 +1502,21 @@ Object.defineProperty(jsr, 'onBack', {
     Map<String, Object?> args,
   ) async {
     try {
+      // ignore: avoid_print
+      print(
+        'FA-CALL method=' +
+            method +
+            ' resolveMapNull=' +
+            (_resolve == null).toString(),
+      );
       final handler =
           _faHandlers[method] ?? (args) => _faPlatform(method, args);
       _resolve?.call(id, await handler(args));
+      // ignore: avoid_print
+      print('FA-CALL resolved-ok id=' + id);
     } on Object catch (error) {
+      // ignore: avoid_print
+      print('FA-CALL threw=' + error.toString());
       _resolve?.call(id, {'__error': error.toString()});
     }
   }
@@ -1434,15 +1526,22 @@ Object.defineProperty(jsr, 'onBack', {
   /// `llm`; a missing handler is a setup error, not a permission error.
   Future<Object?> _faLlm(String method, Map<String, Object?> args) async {
     if (!permissions.llm) throw StateError(_denied('llm'));
+    final handler = _requireLlmHandler();
+    final messages = _faLlmMessages(method, args);
+    if (method != 'llm.stream') return handler(messages);
+    return _faLlmStream(handler, messages, (args['stream'] ?? '').toString());
+  }
+
+  /// The connected LLM handler or an actionable setup error (gh-1848
+  /// split): a missing model is setup, not a permission failure.
+  FaLlmHandler _requireLlmHandler() {
     final handler = llmHandler;
     if (handler == null) {
       throw StateError(
         'no LLM is connected — connect a model in the Fa settings first',
       );
     }
-    final messages = _faLlmMessages(method, args);
-    if (method != 'llm.stream') return handler(messages);
-    return _faLlmStream(handler, messages, (args['stream'] ?? '').toString());
+    return handler;
   }
 
   /// A bare `llm` call carries `{prompt}`; the chat/stream forms carry
@@ -1482,15 +1581,23 @@ Object.defineProperty(jsr, 'onBack', {
     final event = (args['event'] ?? '').toString();
     if (event.isEmpty) return {'__error': 'emit requires an event name'};
     final sink = onEmit;
-    if (sink != null) {
-      // A throwing host sink must not reject the bridge promise.
-      try {
-        sink(event, emitPayload(args['payload']));
-      } on Object catch (error) {
-        AppLog.i('apps', 'jsr.fa.emit handler failed: $error');
-      }
-    }
+    if (sink != null) _deliverEmit(sink, event, args);
     return {'emitted': sink != null};
+  }
+
+  /// One emit delivery (gh-1848 split): a throwing host sink is logged
+  /// and never rejects the bridge promise.
+  void _deliverEmit(
+    void Function(String event, Map<String, Object?> payload) sink,
+    String event,
+    Map<String, Object?> args,
+  ) {
+    // A throwing host sink must not reject the bridge promise.
+    try {
+      sink(event, emitPayload(args['payload']));
+    } on Object catch (error) {
+      AppLog.i('apps', 'jsr.fa.emit handler failed: $error');
+    }
   }
 
   /// The `emit` payload (issue #565 descent): a map is copied so the JS
@@ -1521,6 +1628,13 @@ Object.defineProperty(jsr, 'onBack', {
       _ => false,
     };
   }
+
+  /// gh-1848: test seam — the prefix gate is otherwise reachable only via
+  /// `jsr.fa.call` on an unmapped method, and that promise never settles
+  /// for synchronously-thrown platform rejections (pre-existing bridge
+  /// behavior, documented on the gh-1848 PR — not this card's fix).
+  @visibleForTesting
+  bool faPrefixGrantedForTest(String prefix) => _faPrefixGranted(prefix);
 
   /// `jsr.fa.calendar({date, days})` → `{events: [...]}` — system calendar
   /// access, gated on the `calendar` permission.
@@ -1659,6 +1773,12 @@ Object.defineProperty(jsr, 'onBack', {
     if (!await api.isAvailable) {
       throw StateError('calendar is not available on this platform');
     }
+    return _grantedCalendarAccess(api);
+  }
+
+  /// The OS-access arm of the calendar gate (gh-1848 split): a denied
+  /// request rejects with the system privacy settings pointer.
+  Future<CalendarApi> _grantedCalendarAccess(CalendarApi api) async {
     if (!await api.requestAccess()) {
       throw StateError(
         'calendar access was denied — enable it in the system privacy '
@@ -1821,6 +1941,12 @@ Object.defineProperty(jsr, 'onBack', {
     if (!await api.isAvailable) {
       throw StateError('contacts are not available on this platform');
     }
+    return _grantedContactsAccess(api);
+  }
+
+  /// The OS-access arm of the contacts gate (gh-1848 split): a denied
+  /// request rejects with the system privacy settings pointer.
+  Future<ContactApi> _grantedContactsAccess(ContactApi api) async {
     if (!await api.requestAccess()) {
       throw StateError(
         'contacts access was denied — enable it in the system privacy '
@@ -1855,6 +1981,12 @@ Object.defineProperty(jsr, 'onBack', {
     if (!await api.isAvailable) {
       throw StateError('health data is not available on this platform');
     }
+    return _grantedHealthAccess(api);
+  }
+
+  /// The OS-access arm of the health gate (gh-1848 split): a denied
+  /// request rejects with the Health app pointer.
+  Future<HealthApi> _grantedHealthAccess(HealthApi api) async {
     if (!await api.requestAccess()) {
       throw StateError(
         'health access was denied — enable it in the Health app '
@@ -2205,6 +2337,12 @@ Object.defineProperty(jsr, 'onBack', {
         'microphone recording is not available on this platform',
       );
     }
+    return _grantedAsrAccess(api);
+  }
+
+  /// The OS-access arm of the microphone gate (gh-1848 split): a denied
+  /// request rejects with the system privacy settings pointer.
+  Future<AsrApi> _grantedAsrAccess(AsrApi api) async {
     if (!await api.requestAccess()) {
       throw StateError(
         'microphone access was denied — enable it in the system privacy '
@@ -2252,6 +2390,12 @@ Object.defineProperty(jsr, 'onBack', {
         'local notifications are not available on this platform',
       );
     }
+    return _grantedNotifyAccess(api);
+  }
+
+  /// The OS-access arm of the notifications gate (gh-1848 split): a
+  /// denied request rejects with the system settings pointer.
+  Future<NotifyApi> _grantedNotifyAccess(NotifyApi api) async {
     if (!await api.requestAccess()) {
       throw StateError(
         'notification access was denied — enable it in the system settings '
@@ -2332,10 +2476,7 @@ Object.defineProperty(jsr, 'onBack', {
       );
     }
     final path = mediaReadVideoPath(args);
-    final exists = await env.exists(path);
-    if (exists.valueOrNull != true) {
-      throw StateError('no such file: $path');
-    }
+    await _requireVideoFile(path);
     // The platform extractor (AVAssetImageGenerator) works on host paths;
     // the sandbox env maps the app-visible path.
     final hostPath = (await env.absolutePath(path)).valueOrNull ?? path;
@@ -2345,6 +2486,15 @@ Object.defineProperty(jsr, 'onBack', {
       question: args['question']?.toString(),
     );
     return {'description': description};
+  }
+
+  /// The sandbox-file guard of `media.readVideo` (gh-1848 split): the
+  /// app-visible path must exist before the host mapping below.
+  Future<void> _requireVideoFile(String path) async {
+    final exists = await env.exists(path);
+    if (exists.valueOrNull != true) {
+      throw StateError('no such file: $path');
+    }
   }
 
   /// The sandbox path of `media.readVideo` (issue #565 descent) — required,
@@ -2412,6 +2562,19 @@ Object.defineProperty(jsr, 'onBack', {
   /// resolves with the value, a decline/cancel rejects.
   Future<Map<String, Object?>> _keysRequest(Map<String, Object?> args) async {
     if (!permissions.keys) throw StateError(_denied('keys'));
+    final handler = _requireKeyRequestHandler();
+    final request = keysRequestArgs(args, appName: app.name);
+    final result = await handler(request.name, request.reason);
+    if (result == null) {
+      throw StateError('the user declined to provide ${request.name}');
+    }
+    return {'name': result.name, 'value': result.value};
+  }
+
+  /// The host's secret-prompt handler or an actionable setup error
+  /// (gh-1848 split): without a prompt channel the user must add the key
+  /// by hand.
+  RequestSecretCallback _requireKeyRequestHandler() {
     final handler = keyRequestHandler;
     if (handler == null) {
       throw StateError(
@@ -2419,12 +2582,7 @@ Object.defineProperty(jsr, 'onBack', {
         'in the Fa settings Keys section',
       );
     }
-    final request = keysRequestArgs(args, appName: app.name);
-    final result = await handler(request.name, request.reason);
-    if (result == null) {
-      throw StateError('the user declined to provide ${request.name}');
-    }
-    return {'name': result.name, 'value': result.value};
+    return handler;
   }
 
   /// The validated name + prompt reason of `keys.request` (issue #565

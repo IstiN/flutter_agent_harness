@@ -31,8 +31,9 @@
 85360	Payload/Runner.app/Frameworks/StreamProxy.framework/StreamProxy
 172080	Payload/Runner.app/Frameworks/libswiftCompatibilitySpan.dylib
 203136	Payload/Runner.app/Frameworks/objective_c.framework/objective_c
+950272	Payload/Runner.app/Frameworks/quickjs_bridge.framework/quickjs_bridge
 1648704	Payload/Runner.app/Frameworks/sqlite3.framework/sqlite3
 111760	Payload/Runner.app/PlugIns/FaLiveActivity.appex/FaLiveActivity
 10877488	Payload/Runner.app/Runner
 171952	SwiftSupport/iphoneos/libswiftCompatibilitySpan.dylib
-149337184	TOTAL
+150287456	TOTAL

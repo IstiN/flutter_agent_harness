@@ -105,6 +105,9 @@ const pathBlindLegs = {
   'pty-visual',
   'coverage-gate',
   'guards',
+  // gh-1788: step-level changes keying (the checkout/setup/pub-get/test
+  // steps), job-if carries the gh-1551 guard only — same shape as `guards`.
+  'model-switch-reg',
   'dep-audit',
   'supply-chain',
   'installer-verify',

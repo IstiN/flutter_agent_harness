@@ -45,6 +45,7 @@ final class FaTuiCallbacks {
     this.onPickerSelected,
     this.onPickerCancelled,
     this.onSteer,
+    this.onBudgetAccept,
     this.pathCandidates,
     this.onHubAction,
     this.readClipboardImage,
@@ -78,6 +79,11 @@ final class FaTuiCallbacks {
   final Future<void> Function(String pickerId, String key)? onPickerSelected;
   final void Function(String pickerId)? onPickerCancelled;
   final Future<void> Function(List<String> messages)? onSteer;
+
+  /// One-key budget-offer accept (issue #1786). See fa_tui.dart — the
+  /// field mirrors the real callbacks so the repl_boot call site
+  /// compiles for BOTH targets.
+  final bool Function()? onBudgetAccept;
   final List<String> Function(String fragment)? pathCandidates;
 
   /// Agents-hub overlay actions (issue #277). See fa_tui.dart.
@@ -139,7 +145,6 @@ final class FaTuiController {
   /// No-op on web: the boot replay anchor is a VM-TUI concern (issue #446
   /// wave-14); web never runs the controller.
   void markReplayAnchor() {}
-
 
   void sendBusy(bool busy, {String source = 'run'}) {}
 

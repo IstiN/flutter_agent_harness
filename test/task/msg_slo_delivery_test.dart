@@ -21,7 +21,6 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_agent_harness/src/task/child_session_io.dart';
 import 'package:test/test.dart';
 
-
 const _model = Model(
   id: 'parent-model',
   api: 'test-api',
@@ -116,8 +115,7 @@ final class _FakeShellJob implements ShellJob {
 
   @override
   Future<void> stop() async {
-    _stopReason = 'stopped';
-    complete(143);
+    complete(143, reason: 'stopped');
   }
 
   void emit(String data) => _output.add(data);
@@ -155,6 +153,7 @@ final class _SleepShellEnv implements ExecutionEnv, BackgroundShell {
     }
     return Ok(job);
   }
+
   @override
   String get cwd => _delegate.cwd;
 
@@ -180,8 +179,10 @@ final class _SleepShellEnv implements ExecutionEnv, BackgroundShell {
       _delegate.listDir(path);
 
   @override
-  Future<Result<void, FileError>> createDir(String path, {bool recursive = true}) =>
-      _delegate.createDir(path, recursive: recursive);
+  Future<Result<void, FileError>> createDir(
+    String path, {
+    bool recursive = true,
+  }) => _delegate.createDir(path, recursive: recursive);
 
   @override
   Future<Result<String, FileError>> readTextFile(String path) =>
@@ -207,7 +208,11 @@ const wakeMarker = '@@wake@@';
 enum _HandledWake { no, stopping }
 
 final class _ChildStream {
-  _ChildStream({required this.taskMarker, this.spawnSleepTool = true, this.resumeDelay = Duration.zero});
+  _ChildStream({
+    required this.taskMarker,
+    this.spawnSleepTool = true,
+    this.resumeDelay = Duration.zero,
+  });
 
   final String taskMarker;
 
@@ -277,12 +282,10 @@ final class _ChildStream {
         final wantsStop = text.contains('stop');
         final jobId = wantsStop
             ? _toolResults(context)
-                .map(
-                  (t) => RegExp(r'background job (sh-\S+)').firstMatch(t),
-                )
-                .whereType<RegExpMatch>()
-                .map((m) => m.group(1)!)
-                .firstOrNull
+                  .map((t) => RegExp(r'background job (sh-\S+)').firstMatch(t))
+                  .whereType<RegExpMatch>()
+                  .map((m) => m.group(1)!)
+                  .firstOrNull
             : null;
         events = _toolTurn([
           if (wantsStop)
@@ -316,9 +319,7 @@ final class _ChildStream {
     if (resumeDelay > Duration.zero && text.contains(wakeMarker)) {
       // The wake turn's model call stalls (a stalled provider stage); the
       // events land only after the delay.
-      unawaited(
-        Future<void>.delayed(resumeDelay).then((_) => flush()),
-      );
+      unawaited(Future<void>.delayed(resumeDelay).then((_) => flush()));
     } else {
       flush();
     }
@@ -356,7 +357,10 @@ final class _Wiring {
   }
 
   final _SleepShellEnv env = _SleepShellEnv(MemoryExecutionEnv(cwd: '/work'));
-  late final repo = JsonlSessionRepo(fs: env._delegate, sessionsRoot: '/sessions');
+  late final repo = JsonlSessionRepo(
+    fs: env._delegate,
+    sessionsRoot: '/sessions',
+  );
   final _ChildStream child;
   late final StreamFunction _streamFn;
   late final SubagentManager manager;
@@ -434,7 +438,8 @@ void main() {
       expect(
         receiptLag,
         lessThan(const Duration(seconds: 2)),
-        reason: 'the send unblocks inside the SLO even with a slow boot '
+        reason:
+            'the send unblocks inside the SLO even with a slow boot '
             '(today it waits out the whole resumed run)',
       );
       expect(receipt, contains('consumed'));
@@ -447,17 +452,24 @@ void main() {
         contains('stage=consumed'),
         reason: 'delivery stage lines land in the host sink',
       );
-      final consumedLine = sloLines
-        .firstWhere((l) => l.contains('stage=consumed'));
-      final consumedMs = RegExp(r'elapsed=(\d+)ms')
-        .firstMatch(consumedLine)
-        ?.group(1);
-      expect(consumedMs, isNotNull, reason: 'the consumed stamp carries '
-          'its elapsed time');
+      final consumedLine = sloLines.firstWhere(
+        (l) => l.contains('stage=consumed'),
+      );
+      final consumedMs = RegExp(
+        r'elapsed=(\d+)ms',
+      ).firstMatch(consumedLine)?.group(1);
+      expect(
+        consumedMs,
+        isNotNull,
+        reason:
+            'the consumed stamp carries '
+            'its elapsed time',
+      );
       expect(
         int.parse(consumedMs!),
         lessThan(2000),
-        reason: 'the message is consumed ≤2s after send, not after the '
+        reason:
+            'the message is consumed ≤2s after send, not after the '
             '2.5s session boot',
       );
       // AC6 (core side): the boot past the SLO names its stage.
@@ -465,8 +477,13 @@ void main() {
         () => sloLines.any((l) => l.contains('BREACH') && l.contains('stage=')),
         const Duration(seconds: 10),
       );
-      expect(drained, isTrue, reason: 'a stage past the SLO emits a breach '
-          'diagnostic naming the stalled stage; got:\n${sloLines.join('\n')}');
+      expect(
+        drained,
+        isTrue,
+        reason:
+            'a stage past the SLO emits a breach '
+            'diagnostic naming the stalled stage; got:\n${sloLines.join('\n')}',
+      );
       // The resumed run processes the message as its first action: the
       // scripted wake turn's echo lands in the child's context. The run
       // may linger open afterwards (steering-extension semantics), so
@@ -475,15 +492,20 @@ void main() {
       final echoVisible = await wiring.waitFor(
         () => child.contexts.any(
           (context) => context.messages.whereType<ToolResultMessage>().any(
-            (result) => result.content
-                .whereType<TextContent>()
-                .any((b) => b.text.contains('hello')),
+            (result) => result.content.whereType<TextContent>().any(
+              (b) => b.text.contains('hello'),
+            ),
           ),
         ),
         const Duration(seconds: 15),
       );
-      expect(echoVisible, isTrue, reason: 'the resumed run processed the '
-          'message as its first action');
+      expect(
+        echoVisible,
+        isTrue,
+        reason:
+            'the resumed run processed the '
+            'message as its first action',
+      );
     },
   );
 
@@ -501,8 +523,13 @@ void main() {
         () => wiring.env.jobs.isNotEmpty,
         const Duration(seconds: 15),
       );
-      expect(jobUp, isTrue, reason: 'the child runs its sleep in a job-backed '
-          'foreground bash');
+      expect(
+        jobUp,
+        isTrue,
+        reason:
+            'the child runs its sleep in a job-backed '
+            'foreground bash',
+      );
 
       final sendAt = DateTime.now();
       await wiring.send('task_send', {
@@ -511,22 +538,25 @@ void main() {
       });
       // The yield: the sleep moved to a background job, NOT killed.
       final consumedFast = await wiring.waitFor(
-        () => child.wakeSeenAt != null &&
+        () =>
+            child.wakeSeenAt != null &&
             child.wakeSeenAt!.difference(sendAt) < const Duration(seconds: 2),
         const Duration(seconds: 10),
       );
-      expect(consumedFast, isTrue, reason: 'the message is consumed ≤2s after '
-          'send — today the child sleeps the full 120s ignoring the inbox');
+      expect(
+        consumedFast,
+        isTrue,
+        reason:
+            'the message is consumed ≤2s after '
+            'send — today the child sleeps the full 120s ignoring the inbox',
+      );
       expect(wiring.env.singleJob, isNotNull);
       expect(
         wiring.env.singleJob!.isRunning,
         isTrue,
         reason: 'the yielded wait keeps running detached',
       );
-      expect(
-        sloLines.join('\n'),
-        contains('stage=consumed'),
-      );
+      expect(sloLines.join('\n'), contains('stage=consumed'));
       // The wake turn is a plain text ack (the job stays untouched), so
       // the child's run sees two model calls: the spawn and the wake.
       await wiring.waitFor(
@@ -571,30 +601,38 @@ void main() {
       final helloVisible = await wiring.waitFor(
         () => child.contexts.any(
           (context) => context.messages.whereType<ToolResultMessage>().any(
-            (result) => result.content
-                .whereType<TextContent>()
-                .any((b) => b.text.contains('hello')),
+            (result) => result.content.whereType<TextContent>().any(
+              (b) => b.text.contains('hello'),
+            ),
           ),
         ),
         const Duration(seconds: 30),
       );
       final roundTrip = DateTime.now().difference(sendAt);
-      expect(helloVisible, isTrue, reason: 'echo hello executed after the '
-          'stop');
+      expect(
+        helloVisible,
+        isTrue,
+        reason:
+            'echo hello executed after the '
+            'stop',
+      );
       expect(
         roundTrip,
         lessThan(const Duration(seconds: 30)),
-        reason: 'the owner round trip: jobs die mid-flight, hello echoed, '
+        reason:
+            'the owner round trip: jobs die mid-flight, hello echoed, '
             'all ≤30s (today the child never wakes until the sleep ends)',
       );
       final job = wiring.env.jobs.first;
-      expect(job.isRunning, isFalse, reason: 'bash_job stop killed the sleep '
-          'mid-flight');
-      expect(job.exitCode, 143, reason: 'the stop exit is captured');
       expect(
-        sloLines.join('\n'),
-        contains('stage=consumed'),
+        job.isRunning,
+        isFalse,
+        reason:
+            'bash_job stop killed the sleep '
+            'mid-flight',
       );
+      expect(job.exitCode, 143, reason: 'the stop exit is captured');
+      expect(sloLines.join('\n'), contains('stage=consumed'));
       unawaited(spawnDone.catchError((Object _) => throw StateError('gone')));
     },
   );
@@ -634,13 +672,28 @@ void main() {
                 const Duration(seconds: 2),
         const Duration(seconds: 10),
       );
-      expect(consumedFast, isTrue, reason: 'the steering is consumed ≤2s '
-          'after the keystroke, not after the 120s wait');
-      expect(env.jobs.single.isRunning, isTrue, reason: 'the yield moved '
-          'the wait to a background job without killing it');
+      expect(
+        consumedFast,
+        isTrue,
+        reason:
+            'the steering is consumed ≤2s '
+            'after the keystroke, not after the 120s wait',
+      );
+      expect(
+        env.jobs.single.isRunning,
+        isTrue,
+        reason:
+            'the yield moved '
+            'the wait to a background job without killing it',
+      );
       await run;
-      expect(child.contexts.length, 2, reason: 'the wake turn is the ack '
-          'text turn; the run settles right after it');
+      expect(
+        child.contexts.length,
+        2,
+        reason:
+            'the wake turn is the ack '
+            'text turn; the run settles right after it',
+      );
     },
   );
 }
@@ -652,4 +705,4 @@ Future<bool> _pollFor(bool Function() condition, Duration timeout) async {
     await Future<void>.delayed(const Duration(milliseconds: 50));
   }
   return condition();
- }
+}

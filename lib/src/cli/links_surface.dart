@@ -83,7 +83,8 @@ String _escapeAttr(String value) => value
 /// `#nav-menu`), and carries ONLY the paid link (`links.appstore`): no
 /// TestFlight, no Play, no pile-up when future links land. The per-position
 /// referral value is `appstore-header` (AC3).
-String renderAppStoreHeaderBadgeHtml(LinksConfig links) => '''
+String renderAppStoreHeaderBadgeHtml(LinksConfig links) =>
+    '''
     <a class="store-badge" href="${_escapeAttr(links.appstore)}" target="_blank" rel="noopener" data-store-referral="appstore-header" aria-label="Fa on the App Store">
       ${_appleLogoSvg('store-badge-mark', 14)}
       <span class="store-badge-text">App Store</span>
@@ -93,7 +94,8 @@ String renderAppStoreHeaderBadgeHtml(LinksConfig links) => '''
 /// issue #881: first in the hero CTA row, primary on mobile; the desktop
 /// demotion (CLI audience lands there) is CSS, not markup. Paid link only,
 /// referral value `appstore-hero` (AC3).
-String renderAppStoreHeroCtaHtml(LinksConfig links) => '''
+String renderAppStoreHeroCtaHtml(LinksConfig links) =>
+    '''
         <a class="btn btn-primary btn-store btn-store-hero" href="${_escapeAttr(links.appstore)}" target="_blank" rel="noopener" data-store-referral="appstore-hero">
           ${_appleLogoSvg('beta-mark', 15)}
           Download on the App Store
@@ -103,14 +105,19 @@ String renderAppStoreHeroCtaHtml(LinksConfig links) => '''
 /// element, WITHOUT the markers) for [links].
 ///
 /// AC2: App Store badge + link, paid-release vs free-forever-beta
-/// messaging, and an Android slot that renders "coming soon" while
-/// `links.play` is unset. AC6: zero superlative claims — the store copy
-/// compliance list (issue #643) applies to the site like to the store.
+/// messaging, and an Android slot that links the direct GitHub APKs —
+/// god and standard modes (issue #1864) — while `links.play` is unset,
+/// the Play badge once it is. AC6: zero superlative claims — the store
+/// copy compliance list (issue #643) applies to the site like to the
+/// store.
 String renderAppStoreBlockHtml(LinksConfig links) {
   final android = links.play == null
       ? '''
-      <a class="btn btn-store btn-soon" aria-disabled="true">
-        <span class="sooner">Android</span> coming soon
+      <a class="btn btn-store" href="${_escapeAttr(links.apkGod)}" target="_blank" rel="noopener" data-store-referral="apk-god">
+        <span class="sooner">Android</span> God mode APK
+      </a>
+      <a class="btn btn-store" href="${_escapeAttr(links.apkStandard)}" target="_blank" rel="noopener" data-store-referral="apk-standard">
+        <span class="sooner">Android</span> Standard APK
       </a>'''
       : '''
       <a class="btn btn-store" href="${_escapeAttr(links.play!)}" target="_blank" rel="noopener" data-store-referral="play">
@@ -142,7 +149,7 @@ $android
     <ul class="pills" aria-label="Release channels">
       <li>App Store — paid release</li>
       <li>TestFlight — free beta, forever</li>
-      <li>Android — ${links.play == null ? 'coming soon' : 'on Google Play'}</li>
+      <li>Android — ${links.play == null ? 'free direct APKs: god · standard' : 'on Google Play'}</li>
     </ul>
   </section>''';
 }

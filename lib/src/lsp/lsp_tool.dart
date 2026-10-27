@@ -156,8 +156,6 @@ AgentTool lspTool(ExecutionEnv env, {required LspToolConfig config}) {
       cancelToken?.throwIfCancelled();
       final op = arguments['op'] as String;
       final path = arguments['path'] as String;
-      final line = (arguments['line'] as num?)?.toInt() ?? 1;
-      final character = (arguments['character'] as num?)?.toInt() ?? 1;
       final newName = arguments['newName'] as String?;
 
       final nameError = _renameNameError(op, newName);
@@ -194,49 +192,71 @@ AgentTool lspTool(ExecutionEnv env, {required LspToolConfig config}) {
       cancelToken?.throwIfCancelled();
 
       try {
-        return await switch (op) {
-          'diagnostics' => _diagnostics(
-            env,
-            client,
-            absolute,
-            uri,
-            capturedVersion,
-            config.diagnosticsWait,
-          ),
-          'definition' => _locations(
-            env,
-            client,
-            'textDocument/definition',
-            uri,
-            line,
-            character,
-            'definition',
-          ),
-          'references' => _locations(
-            env,
-            client,
-            'textDocument/references',
-            uri,
-            line,
-            character,
-            'reference',
-          ),
-          'rename' => _rename(
-            env,
-            client,
-            absolute,
-            uri,
-            line,
-            character,
-            newName!,
-          ),
-          _ => throw StateError('unknown lsp op: $op'),
-        };
+        return await _runLspOp(
+          env,
+          config,
+          client,
+          arguments,
+          op,
+          absolute,
+          uri,
+          capturedVersion,
+          newName,
+        );
       } on LspRequestException catch (error) {
         throw StateError('LSP error: ${error.message}');
       }
     },
   );
+}
+
+/// Runs one lsp op against [client] after the document sync — the shared
+/// dispatch for all four ops; `newName` was validated by
+/// [_renameNameError]. Unknown ops are an internal error (the `op` enum
+/// lives in the tool schema).
+Future<ToolExecutionResult> _runLspOp(
+  ExecutionEnv env,
+  LspToolConfig config,
+  LspClient client,
+  Map<String, dynamic> arguments,
+  String op,
+  String absolute,
+  String uri,
+  int capturedVersion,
+  String? newName,
+) {
+  final line = (arguments['line'] as num?)?.toInt() ?? 1;
+  final character = (arguments['character'] as num?)?.toInt() ?? 1;
+  return switch (op) {
+    'diagnostics' => _diagnostics(
+      env,
+      client,
+      absolute,
+      uri,
+      capturedVersion,
+      config.diagnosticsWait,
+    ),
+    'definition' => _locations(
+      env,
+      client,
+      'textDocument/definition',
+      uri,
+      line,
+      character,
+      'definition',
+    ),
+    'references' => _locations(
+      env,
+      client,
+      'textDocument/references',
+      uri,
+      line,
+      character,
+      'reference',
+    ),
+    'rename' => _rename(env, client, absolute, uri, line, character, newName!),
+    _ => throw StateError('unknown lsp op: $op'),
+  };
 }
 
 /// The validation error for the rename op's `newName`, or null when valid.

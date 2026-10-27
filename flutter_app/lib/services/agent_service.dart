@@ -197,6 +197,18 @@ class AgentService extends ChangeNotifier
     /// (`provider: aiai`). The [_withEnv] boot maps the live
     /// [ProviderRegistry] instead.
     @visibleForTesting List<CustomProviderEntry> customProviders = const [],
+
+    /// gh-1745 request-blob spilling (`trajectory.requestBlobs` in the
+    /// CLI; the app host carries the same policy with the same default).
+    /// `false` restores the legacy inline persistence.
+    this.trajectoryRequestBlobs = true,
+
+    /// `trajectory.requestBlobMaxMb` — the per-session blob-dir byte
+    /// budget in MB.
+    this.trajectoryRequestBlobMaxMb = 50,
+
+    /// `trajectory.requestBlobTtlDays` — blob age bound in days.
+    this.trajectoryRequestBlobTtlDays = 30,
   }) : _resolveSecretName = null,
        _providerRegistry = null,
        // ignore: prefer_initializing_formals
@@ -277,17 +289,33 @@ class AgentService extends ChangeNotifier
     );
   }
 
-  /// F4: cap drops must never be silent — same rule as the CLI's dim
-  /// line, surfaced through the app debug log (logs/app.log). Armed from
-  /// every constructor (public, `_withEnv`, relay base delegates here).
-  static void _wireImageDropNotice() {
-    imageDropNotice = (index, keyPreview) {
-      AppLog.i(
-        'images',
-        'dropping [Image $index] (key $keyPreview…) '
-            '— per-request cap reached',
-      );
+  /// F4 + issue #1889: cap drops are never silent — the app's debug log
+  /// (logs/app.log) keeps every per-image drop event of every request,
+  /// while the CHAT surface gets one latched, aggregated notice per
+  /// meaningful drop-situation change ([chatImageNotice]; the chip + the
+  /// details panel render it). Armed from every constructor (public,
+  /// `_withEnv`, relay base delegates here).
+  void _wireImageDropNotice() {
+    // The global seam is process-wide; the closure self-identifies so
+    // dispose can disarm it ONLY when it is still ours — a later
+    // service's arming never gets clobbered by an earlier dispose, and
+    // a disposed service never keeps reporting into a dead notifier
+    // (review round 1, PR #1891).
+    _armedImageDropReporter = (report) {
+      for (final drop in report.drops) {
+        AppLog.i(
+          'images',
+          'dropping [Image ${drop.index}] (${drop.keyPreview}…) '
+              '${drop.fromCurrentMessage ? '(current message) ' : ''}'
+              '— per-request cap reached',
+        );
+      }
+      final view = imageDropUx.observe(report);
+      // Silence (same situation) keeps the previous notice displayed;
+      // null never clears the chip — only the user's dismiss does.
+      if (view != null) chatImageNotice.value = view;
     };
+    imageDropReportNotice = _armedImageDropReporter;
   }
 
   /// gh-1409 P4/P5/P6: pin notices (budget drops, lifecycle
@@ -518,6 +546,12 @@ class AgentService extends ChangeNotifier
 
     /// The `~/.fah` home the yaml loader reads (issue #1078).
     String? configHomeDir,
+
+    /// gh-1745 spill policy — `_withEnv` boots with the defaults (the
+    /// app's yaml surface carries no trajectory section yet).
+    bool trajectoryRequestBlobs = true,
+    int trajectoryRequestBlobMaxMb = 50,
+    int trajectoryRequestBlobTtlDays = 30,
   }) // ignore: prefer_initializing_formals — private fields, public params
     // ignore: prefer_initializing_formals
     : _skillsHomeDir = skillsHomeDir,
@@ -525,6 +559,12 @@ class AgentService extends ChangeNotifier
        _watchExternalSessions = watchExternalSessions,
        // ignore: prefer_initializing_formals
        _includeSharedSessionRoots = includeSharedSessionRoots,
+       // ignore: prefer_initializing_formals
+       trajectoryRequestBlobs = trajectoryRequestBlobs,
+       // ignore: prefer_initializing_formals
+       trajectoryRequestBlobMaxMb = trajectoryRequestBlobMaxMb,
+       // ignore: prefer_initializing_formals
+       trajectoryRequestBlobTtlDays = trajectoryRequestBlobTtlDays,
        _config = config,
        _skillsAccess = initialSkillsAccess ?? SkillsAccess.granted,
        _skillToggles = initialSkillToggles,
@@ -1302,13 +1342,23 @@ class AgentService extends ChangeNotifier
     final handle = _subagentManager?[id];
     if (handle == null) return const [];
     try {
-      final exists = await env.fileInfo(handle.sessionId);
-      if (exists.valueOrNull == null) return const [];
-      final session = await _repo.open(_subagentSessionMetadata(handle));
-      return tailMessagePairs(await session.buildContextMessages(), tail);
+      return await _observeSubagentSessionTail(handle, tail);
     } on Object {
       return const [];
     }
+  }
+
+  /// The try-body of [observeSubagent]: verify the child session file
+  /// still exists, open it, and return its tail pairs. Throws on any
+  /// backend failure — the caller degrades to empty.
+  Future<List<(String, String)>> _observeSubagentSessionTail(
+    SubagentHandle handle,
+    int tail,
+  ) async {
+    final exists = await env.fileInfo(handle.sessionId);
+    if (exists.valueOrNull == null) return const [];
+    final session = await _repo.open(_subagentSessionMetadata(handle));
+    return tailMessagePairs(await session.buildContextMessages(), tail);
   }
 
   /// Sends a follow-up message to subagent [id] (settings Agents section →
@@ -1626,23 +1676,7 @@ class AgentService extends ChangeNotifier
   get resolveHiddenRecords {
     final reader = _windowed?.reader;
     if (reader == null) return null;
-    return (record) async {
-      final ids = record.hiddenRecordIds ?? const <String>[];
-      if (ids.isEmpty) return const [];
-      try {
-        final resolved = await reader.readRecordsByIds(ids.toSet());
-        return projectHiddenRecordPreviews(recordIds: ids, resolved: resolved);
-      } on Object {
-        return [
-          for (final id in ids)
-            TrajectoryHiddenRecordPreview(
-              id: id,
-              type: 'missing',
-              preview: '[hidden: not captured for this session]',
-            ),
-        ];
-      }
-    };
+    return (record) => _hiddenRecordsResolver(reader, record);
   }
 
   bool _loadingHistory = false;
@@ -1728,59 +1762,13 @@ class AgentService extends ChangeNotifier
   /// concurrent page load and a stale load generation.
   @override
   Future<void> loadNewerHistory() async {
-    if (_loadingHistory) return;
     final windowed = _windowed;
-    if (windowed == null) return;
-    // At-tail tap: nothing sits below — skip the rebuild and the
-    // whole-file count re-scan entirely.
-    if (!windowed.hasNewer) return;
+    if (_loadingHistory || windowed == null || !windowed.hasNewer) return;
     final gen = _loadGeneration;
     _loadingHistory = true;
     _notify();
     try {
-      await windowed.jumpToTail();
-      if (gen != _loadGeneration) return;
-      // Let an in-flight persist pass flush first so the branch read
-      // below observes just-finalized records: a turn boundary landing
-      // mid-jump must not leave its row stranded out of view until the
-      // next reprojection (review -FbK vanish variant). Best effort —
-      // a failed persist must not break the jump.
-      if (_persistPass case final pass?) {
-        try {
-          await pass;
-        } on Object {
-          // Ignored: the next persist pass retries.
-        }
-        if (gen != _loadGeneration) return;
-      }
-      await _syncViewToWindow(windowed);
-      if (gen != _loadGeneration) return;
-      await _applyViewBranch();
-      if (gen != _loadGeneration) return;
-      // Live rows the projection cannot know — in-flight tool activity
-      // tiles and the streaming assistant/thinking bubbles are plain
-      // rows in [messages], not records yet. Re-read AFTER the rebuild
-      // settles: capturing earlier races a mid-jump turn boundary into
-      // re-appending a bubble the finalize already landed as a record —
-      // a duplicate (review -FbK). There is no await between the rebuild
-      // and this capture, so the fields are read atomically with the
-      // projection snapshot. The contains-check and the empty-bubble
-      // guard mirror _finalizeAssistant's own invariants.
-      final liveRows = [
-        ..._inFlightToolRows.map((e) => e.row),
-        if (_currentThinkingMessage case final t?) t,
-        if (_currentAssistantMessage case final a?
-            when a.content.trim().isNotEmpty)
-          a,
-      ].where((row) => !messages.contains(row)).toList();
-      messages.addAll(liveRows);
-      await _refreshHistoryAbove();
-      if (gen != _loadGeneration) return;
-      _historyLoadError = null;
-      _notify();
-    } on Object catch (e) {
-      _historyLoadError = e is StateError ? e.message : e.toString();
-      _notify();
+      await _jumpNewerHistory(windowed, gen);
     } finally {
       _loadingHistory = false;
       _notify();
@@ -1799,36 +1787,11 @@ class AgentService extends ChangeNotifier
   @override
   Future<bool> jumpToMessage(String messageId) async {
     final windowed = _windowed;
-    if (windowed == null) {
-      final index = _positionalRow(messageId);
-      if (index == null) return _jumpLoadedRecord(messageId);
-      return index >= 0 && index < messages.length;
-    }
+    if (windowed == null) return _jumpLoadedTranscript(messageId);
     if (!messageId.startsWith('msg-')) {
       return _jumpToRecord(windowed, messageId);
     }
-    final index = _positionalRow(messageId);
-    if (index == null) return false;
-    if (_loadingHistory || isStreaming) return index < messages.length;
-    final gen = _loadGeneration;
-    _loadingHistory = true;
-    _notify();
-    var reached = index < messages.length;
-    try {
-      for (var pass = 0; !reached && pass < 100 && windowed.hasOlder; pass++) {
-        final joined = await windowed.loadOlder();
-        if (joined.isEmpty || gen != _loadGeneration) break;
-        await _syncViewToWindow(windowed);
-        await _applyViewBranch();
-        reached = index < messages.length;
-      }
-    } on Object catch (e) {
-      _historyLoadError = e is StateError ? e.message : e.toString();
-    } finally {
-      _loadingHistory = false;
-      _notify();
-    }
-    return reached;
+    return _jumpPositional(windowed, messageId);
   }
 
   Session? _session;
@@ -1854,6 +1817,23 @@ class AgentService extends ChangeNotifier
   /// dump is redacted under the config active at capture time (E1).
   TrajectoryBlobPersister? _trajectoryBlobPersister;
   Session? _trajectoryBlobPersisterSession;
+
+  /// gh-1745 request-blob store (the session's spill dir + rotation
+  /// policy); built lazily on the first spilled capture. The service's
+  /// env resolves `.fah/trajectories/<sid>/requests/` next to the same
+  /// project `.fah` the session lives in.
+  TrajectoryRequestBlobStore? _requestBlobStore;
+
+  /// gh-1745 spill policy (ctor seams — the app host carries the CLI's
+  /// `trajectory.requestBlobs` config with the same defaults).
+  final bool trajectoryRequestBlobs;
+  final int trajectoryRequestBlobMaxMb;
+  final int trajectoryRequestBlobTtlDays;
+
+  /// The per-session blob-dir byte budget ([TrajectorySection]
+  /// `.requestBlobMaxBytes` shape — the canonical MB→bytes derivation,
+  /// consumed by the store instead of a call-site shift).
+  int get trajectoryRequestBlobMaxBytes => trajectoryRequestBlobMaxMb << 20;
 
   /// The producer behind [trajectory]: rebuilt from the active branch on
   /// session open/switch, mirrored live from agent events, and fed the
@@ -1938,6 +1918,22 @@ class AgentService extends ChangeNotifier
   /// machinery behind the `dynamic_message` tool. UI reads it for the
   /// ✦ list, the inline widget tiles, and save-as-app.
   late final DynamicMessagesService dynamicMessages;
+
+  /// The aggregated image-drop latch (issue #1889) — the same shared
+  /// core the CLI uses; the details panel renders its projection.
+  final ImageDropUx imageDropUx = ImageDropUx();
+
+  /// The latest aggregated image-drop notice for the chat chip (R5):
+  /// a new meaningful change replaces it; an all-clear updates it;
+  /// the user dismisses it. Null = nothing to show.
+  final ValueNotifier<ImageDropNoticeView?> chatImageNotice = ValueNotifier(
+    null,
+  );
+
+  /// The closure this service armed on the process-wide
+  /// [imageDropReportNotice] seam — dispose disarms the global ONLY when
+  /// it still points at ours (a newer service's arming wins).
+  void Function(ImageDropReport report)? _armedImageDropReporter;
 
   /// Sends a plain-text user message. While the agent is already running the
   /// message is queued as a steering message and the UI shows it as pending

@@ -76,7 +76,25 @@ factual: paths, commands, invariants — no essays.
   armed after the child exits because an orphaned descendant can hold
   the pipes — a drain that outlives the deadline marks the call
   `timedOut` even when the child exited 0). Background jobs (issue #517)
-  keep their own group + `stop()` semantics.
+  keep their own group + `stop()` semantics. Self-signal immunity
+  (gh-1763): POSIX scripts are delivered from a per-exec private temp
+  file (`sh -c '. "$1"' sh <script>` — prelude restores `sh -c`
+  positional-param parity, so `$0`/`$#`/exit codes/`set -e`/stdin are
+  unchanged; legacy `sh -c <command>` fallback when the temp dir cannot
+  be created) so the wrapper argv never carries the script body —
+  `pkill -f <pat>` inside a command cannot match its own shell; a
+  provisioned-once guard (`lib/src/env/bash_guard_io.dart`) puts
+  `pkill`/`killall` PATH shims at the head of PATH plus a `kill()`
+  prelude function, both excluding the harness pid chain + process group
+  (exported as `FA_PROTECTED_PIDS`, overridable per exec via
+  `ShellExecOptions.env` for tests) and the invoking shell, while
+  legitimate victims stay killable; Windows keeps `cmd /c` verbatim.
+  Residual caveat: shapes the shim cannot model — output modes
+  (`-c`, `-v`, `-l`, `-a`, `--count`, any other long option), a signal
+  spelled after the pattern, extra operands, or a selection pgrep
+  rejects — exec the real, unshimed binary and are NOT covered by the
+  exemption (keep the pattern away from the harness cmdline in those
+  spellings).
 - `lib/src/tools/checkpoint_tool.dart` — `checkpoint`/`rewind` tools:
   context hygiene for detours. `CheckpointRewindController` wraps
   `Agent.prepareNextTurn`, persists via host `CheckpointSessionSink`.
@@ -177,6 +195,14 @@ factual: paths, commands, invariants — no essays.
   estimating the duration against the time-left notices and switching to
   a cheaper satisfying strategy — or, when none fits, the next-best
   partial — rather than gambling the window on a known-infeasible path.
+  Conformance claims are the self-certification blind spot (gh-1834):
+  when the final claim includes parity/conformance to a reference or
+  specification (any domain), a "verified" item counts only with
+  negative and combination checks — refused incompatible options,
+  empty/corrupt inputs, boundary values, must-NOT-work cases — alongside
+  happy paths; a blanket "everything matches" is not verified (prompt
+  step 2.6, conditional: tasks with no conformance claim are
+  unchanged).
   The loop parses
   the final answer's `task-ledger` fenced block (`parseTaskLedger`,
   last block wins) and emits `TaskLedgerEvent`; hosts persist the hidden
@@ -247,7 +273,17 @@ factual: paths, commands, invariants — no essays.
   count, waiting row) hangs off it (issue #562). The model-facing notice
   (steered mid-run or a fresh idle turn; app `sendText` system-notice)
   is skipped when a foreground call consumed the result inline
-  (`suppressSettleNotification`). Headless `fa -p` DRAINS live shell
+  (`suppressSettleNotification`). gh-1835: a foreground bash call still
+  running after `waiting.autoBackgroundSeconds` (default 60; 0 = kill
+  switch) is auto-backgrounded — CONVERTED, never restarted (it already
+  runs as a registry job under the soft-yield path): the pending tool call
+  resolves exactly once with the backgrounded result (`bash_auto_background
+  .dart` text, anchored on the hand-back sentence so the loop's stuck
+  supervisor and budget ladder classify it as a real conversion), the
+  settle notification stays armed, an explicit `timeout` at/below the
+  threshold keeps the classic path while one above carries over as the
+  job's cap, and hosts without `BackgroundShell` keep legacy behavior.
+  Headless `fa -p` DRAINS live shell
   jobs after the final answer like in-flight subagents — the settles
   steer fresh reaction turns, loop (10 rounds) under ONE shared
   wall-clock ceiling `headless.shellJobDrainMs` (default 30 min; 0 =
@@ -790,7 +826,7 @@ factual: paths, commands, invariants — no essays.
   endpoint resolves ONLY its scoped store keys (env names never hijack a
   custom endpoint); `/key set` writes store-only, never config.
   `/settings` is the interactive settings hub: a TUI picker whose entries
-  (Provider, Edit/delete provider, Chat model, Model parameters, Media
+  (Provider, Edit/delete provider, Chat model, Model capabilities, Media
   models, Agent models, Approval mode, Agent mode, API keys, MCP servers)
   launch the same flows the dedicated slash commands open; line mode prints
   a summary. ALL TUI pickers (generic host pickers included) have
@@ -1796,10 +1832,11 @@ and `scripts/check_goldens.py --quick` (skipped for docs-only commits).
   `ci_fast_gate.sh` (ratchet — only tighten; the per-package gates above
   cannot see across module boundaries).
 - CRAP ratchet (`crap4dart analyze`, tool pinned as
-  `dart pub global activate crap4dart ">=0.11.0 <0.12.0"` — gh-1106
-  superseded the old 0.10 bound; gates/baselines need 0.11), one config
-  per package, thresholds are the current per-package max — only down
-  from here:
+  `dart pub global activate crap4dart ">=0.15.0 <0.16.0"` — gh-1738
+  superseded the old 0.11.0 bound: the root config's `gates.similarity`
+  block ConfigExceptions on <0.15.0 parsers; gates/baselines need 0.15),
+  one config per package, thresholds are the current per-package max —
+  only down from here:
   - core (`crap4dart.yaml`, sources `[lib, bin]`): **12.0** (issue #1234:
     the named census offenders moved — CC-12 trio + readPasteboardImage
     16.32 split, the 0%-cov CC-3 quartet and the named CC-9 tier covered
@@ -1965,10 +2002,18 @@ workspace.
   (main's required status checks reject both, #1098).
 - Commit subjects: `type(scope): ...` (`feat:`, `fix:`, `fix(example):`,
   `ci:`, `test(providers):`, `refactor(prompts):`).
-- Every push to `main` cuts an annotated TAG + GitHub Release
-  (`scripts/auto_release.sh` via `ci.yml`) — ZERO commits land on main
-  (gh-1522: the retired flow pushed a 4-file `chore(release):` bot commit
-  per release). The git TAG is the single source of truth for versions:
+- Every push to `main` cuts an annotated TAG (`scripts/auto_release.sh`
+  via `ci.yml`) — ZERO commits land on main (gh-1522: the retired flow
+  pushed a 4-file `chore(release):` bot commit per release). gh-1801: NO
+  GitHub Release is created at tag-cut time (an asset-less create
+  published an empty `latest` that broke `fa update`): the tag-run
+  `binaries` job creates the release DRAFT-first via
+  `scripts/release_lazy_draft.sh` (curated CHANGELOG notes via
+  `release_notes.sh` + a `release-draft-owner` marker), every leg attaches
+  into it, and `release-provenance` publishes + flags `latest` ONLY after
+  the signed SHA256SUMS(.sig) is attached — `latest` never points at a
+  release that cannot serve `fa update`. The git TAG is the single source
+  of truth for versions:
   both pubspecs carry the FIXED `0.0.0-dev` placeholder (a hand-bump fails
   the Static `Version placeholder guard`), `pubspec.lock` never churns, and
   CI stamps the version at the edges: the `publish` job stamps the STAGED
@@ -1985,7 +2030,8 @@ workspace.
   `CFBundleShortVersionString`, so the pre-promotion `0.1.<counter>`
   train can never upload again). Release checklist: push to main (or the
   `releaseDispatch` dispatch) → watch the ci.yml `release` job cut the tag
-  → watch the tag-scoped `publish` + `binaries` jobs. `fa --version` reads
+  → watch the tag-scoped `publish` + `binaries` + `release-provenance`
+  jobs (the release publishes at the provenance step). `fa --version` reads
   the stamped `version.txt` first, the placeholder pubspec second.
 - `packages/fa_llm` publishes per `fa_llm-v*` tag via
   `.github/workflows/publish-fa-llm.yml` (OIDC, no secrets). First

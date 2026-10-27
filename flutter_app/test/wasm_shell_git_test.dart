@@ -514,6 +514,24 @@ void main() {
       expect(out, matches(RegExp(r'^100644 blob [0-9a-f]{40}\thello\.txt\n$')));
     });
 
+    test('ls-tree lists an executable file as 100755', () async {
+      await seedRepo();
+      final script = io.File(p.join(temp.path, 'run.sh'))
+        ..writeAsStringSync('#!/bin/sh\nhi\n');
+      final chmod = io.Process.runSync('chmod', <String>['+x', script.path]);
+      expect(chmod.exitCode, 0, reason: chmod.stderr.toString());
+      expect((await runGit(['add', 'run.sh'])).$3, 0);
+      await runGit(['commit', '-m', 'add script'], env: authorEnv);
+      final (out, _, code) = await runGit(['ls-tree', 'HEAD']);
+      expect(code, 0);
+      expect(
+        out,
+        matches(
+          RegExp(r'^100755 blob [0-9a-f]{40}\trun\.sh$', multiLine: true),
+        ),
+      );
+    });
+
     test('ls-tree without args answers the usage line', () async {
       await seedRepo();
       expect((await runGit(['ls-tree'])).$2, 'usage: git ls-tree <tree-ish>\n');

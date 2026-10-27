@@ -1,8 +1,12 @@
+import 'dart:io';
+
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
+import 'package:flutter_agent_harness/io.dart';
 import 'package:test/test.dart';
 
 void main() {
   _attachRowGroup();
+  _pidProbeGroup();
   group('AgentMessage.kind', () {
     test('round-trips a user-kind message', () {
       final message = AgentMessage(
@@ -345,6 +349,23 @@ void _attachRowGroup() {
     test('empty assistant content renders nothing', () {
       final row = attachedRowFromMessage(assistant(const []));
       expect(row, isNull);
+    });
+  });
+}
+
+/// Coverage for probePidAlive (CRAP ratchet): the `kill -0` probe through
+/// the real shell — a live pid answers true, a reaped pid answers false.
+void _pidProbeGroup() {
+  group('probePidAlive', () {
+    test('our own live pid probes true', () {
+      if (!Platform.isLinux && !Platform.isMacOS) return;
+      expect(probePidAlive(pid), isTrue);
+    });
+
+    test('a reaped pid probes false (definitive absence)', () {
+      if (!Platform.isLinux && !Platform.isMacOS) return;
+      final exited = Process.runSync('true', const []);
+      expect(probePidAlive(exited.pid), isFalse);
     });
   });
 }

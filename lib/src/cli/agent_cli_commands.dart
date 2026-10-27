@@ -30,6 +30,7 @@ final _infoCommandHandlers = <String, Future<void> Function(AgentCli, String)>{
   '/trajectory': (cli, rest) async => cli._handleTrajectoryCommand(rest),
   '/import': (cli, rest) async => cli._handleImportCommand(rest),
   '/usage': (cli, rest) async => cli._handleUsageCommand(rest),
+  '/images': (cli, rest) async => cli._printImagesSurface(),
   '/mail': (cli, rest) async => cli.handleMailCommand(rest),
   '/reply': (cli, rest) async => cli.handleReplyCommand(rest),
   '/agents': (cli, rest) async => cli.handleAgentsCommand(rest),
@@ -113,6 +114,12 @@ extension SlashCommandDispatch on AgentCli {
     } on Object catch (error) {
       lines = ['bridge: $error'];
     }
+    _writelnAll(lines);
+  }
+
+  /// Writes [lines] one per line — the shared tail of the slash arms
+  /// that render pre-formatted output.
+  void _writelnAll(Iterable<String> lines) {
     for (final line in lines) {
       io.writeln(line);
     }
@@ -230,10 +237,14 @@ extension SlashCommandDispatch on AgentCli {
   /// Rebinds a boot-built queue runtime with the live quota feed
   /// (issue #823): the boot constructs the runtime before the CLI — and
   /// therefore before the service — exists. No-op without a queue, so
-  /// legacy boots stay byte-identical.
+  /// legacy boots stay byte-identical. The rebuild is SILENT on the
+  /// warning channel (gh-1781 AC2): it re-resolves the exact queue the
+  /// boot already rendered, so re-printing the skip/binding lines would
+  /// double every warning on every queue boot. A user-initiated queue
+  /// EDIT keeps its own loud reload (see [_rebuildProviderQueueRuntime]).
   Future<void> attachProviderQueueQuotaFeed() async {
     if (config.providersQueueRuntime != null) {
-      await _rebuildProviderQueueRuntime();
+      await _rebuildProviderQueueRuntime(warn: false);
     }
   }
 
@@ -246,14 +257,22 @@ extension SlashCommandDispatch on AgentCli {
       _quotaService ??= ProviderQuotaService(
         adapters: {
           'openrouter': OpenRouterQuotaAdapter(
-            client: config.quotaHttpClient ?? sharedProviderHttpClient(),
+            // OQ2 (issue #1921): a bound provider's quota requests honor
+            // the same proxy gate as its chat traffic.
+            client:
+                config.quotaHttpClient ??
+                proxiedProviderClient('openrouter') ??
+                sharedProviderHttpClient(),
             resolveApiKey: () async {
               final spec = providerCatalog['openrouter']!;
               return _providerKeyFor(spec, spec.defaultBaseUrl);
             },
           ),
           'codemie': CodeMieQuotaAdapter(
-            client: config.quotaHttpClient ?? sharedProviderHttpClient(),
+            client:
+                config.quotaHttpClient ??
+                proxiedProviderClient('codemie') ??
+                sharedProviderHttpClient(),
             // OQ1 lean (b): no pinned limits endpoint — the adapter stays
             // dark until the endpoint is confirmed, and renders its reason.
             resolveSessionCookie: _resolveCodeMieSessionCookie,
@@ -401,6 +420,18 @@ extension SlashCommandDispatch on AgentCli {
     io.writeln(dump ?? 'no tty available (stty missing or no /dev/tty)');
   }
 
+  /// `/images` (issue #1889 R3): the registry/cap/drop detail surface —
+  /// the shared projection ([imageSurfaceLines]) both hosts render.
+  void _printImagesSurface() {
+    for (final line in imageSurfaceLines(
+      lastReport: imageDropUx.lastReport,
+      config: imageRegistryConfig,
+      modelId: config.model.id,
+    )) {
+      io.writeln(line);
+    }
+  }
+
   /// `/memory [maintain]` — Phase 2 memory surface: stats by default,
   /// `maintain` runs the consolidation pipeline now.
   Future<void> _handleMemoryCommand(String rest) async {
@@ -444,9 +475,7 @@ extension SlashCommandDispatch on AgentCli {
       config.redactionPipeline,
       rest.split(_commandWhitespace).where((part) => part.isNotEmpty).toList(),
     );
-    for (final line in outcome.lines) {
-      io.writeln(line);
-    }
+    _writelnAll(outcome.lines);
     final newConfig = outcome.newConfig;
     if (newConfig != null) {
       config.redactionPipeline?.config = newConfig;
@@ -462,7 +491,11 @@ extension SlashCommandDispatch on AgentCli {
         _agent.reset();
         _checkpoints.clear();
         _ttsr?.reset();
+        // The image-drop latch is run-lifetime state (issue #1889 R4): a
+        // brand-new session re-latches from its first request.
+        imageDropUx.reset();
         _session = await _createSession();
+        _notifyPluginSessionReady();
         // /reset is an in-process switch to a brand-new session — herdr
         // must re-report it, or every later report (release included)
         // carries the stale pre-reset id (#1483 review).
@@ -934,7 +967,11 @@ extension ProviderQueueEditor on AgentCli {
 
   /// Rebuilds the queue runtime from the boot scopes after an edit so the
   /// next run resolves through the fresh queue (turn-boundary liveness).
-  Future<void> _rebuildProviderQueueRuntime() async {
+  /// [warn] keeps the rebuild's skip/binding warnings loud — true for a
+  /// user-initiated edit (the reload is the only channel those lines
+  /// reach), false for the boot-time quota-feed rebind (the boot already
+  /// rendered the same lines; gh-1781 AC2 prints them once).
+  Future<void> _rebuildProviderQueueRuntime({bool warn = true}) async {
     try {
       final queue = resolveProviderQueueAtBoot(
         projectDir: config.env.cwd,
@@ -949,7 +986,7 @@ extension ProviderQueueEditor on AgentCli {
               quotaFeed: quotaService,
               // gh-1624 (review r2): the reloaded queue's unverified
               // binding mismatches say themselves, like at boot.
-              onBindingWarning: io.writeln,
+              onBindingWarning: warn ? io.writeln : null,
             );
     } on ConfigException catch (error) {
       io.writeln('queue reload failed: ${error.message}');
@@ -957,31 +994,54 @@ extension ProviderQueueEditor on AgentCli {
   }
 
   /// Secrets for [entries]: the injected env lookup first (tests, embedders),
-  /// then the process environment, then the secure-key cache. The names
-  /// mirror [collectQueueSecrets]: `apiKeyEnv`, `refreshTokenEnv`, and the
-  /// default ChatGPT slot for a `chatgpt-codex` entry with no `apiKeyEnv`
-  /// (issue #1704).
+  /// then the secure-key cache. The names come from [queueEntryKeyNames]
+  /// (gh-1781 review r1 — one ladder: `apiKeyEnv`, `refreshTokenEnv`, and
+  /// the default ChatGPT slot for a `chatgpt-codex` entry with no
+  /// `apiKeyEnv`, issue #1704). The map also carries each base name's
+  /// ROTATION STACK (`NAME_2`, `NAME_3`, …) swept from the same enumerable
+  /// env view the queue scope re-resolves through
+  /// ([AgentCliConfig.providerQueueEnv] — bin hands `Platform.environment`,
+  /// the view the boot swept): the lookup cannot enumerate names, and
+  /// without the stack entries [collectQueueSecrets]'s sweep never fired on
+  /// the rebuild path, silently dropping boot-built multi-key `ApiKeyRing`s
+  /// to single keys (gh-1781 review r1). A null lookup keeps the old
+  /// behavior — [collectQueueSecrets] sweeps the process environment itself.
   Map<String, String> _queueSecrets(List<ProviderQueueEntry> entries) {
     final lookup = config.envVarValue;
     final env = lookup == null
         ? null
-        : {
-            for (final entry in entries) ...{
-              for (final name in [
-                ?entry.apiKeyEnv,
-                ?entry.refreshTokenEnv,
-                if (entry.apiKeyEnv == null &&
-                    entry.providerType == 'chatgpt-codex')
-                  chatGptOAuthCredentialsEnvName,
-              ])
-                name: lookup(name) ?? '',
-            },
-          };
+        : _queueSecretsEnv(entries, lookup, config.providerQueueEnv);
     return collectQueueSecrets(
       entries,
       config.secureKeys ?? _secureKeysMissing,
       env: env,
     );
+  }
+
+  /// The env map the rebuild hands to [collectQueueSecrets]: every
+  /// referenced base name through [lookup], plus each base name's rotation
+  /// stack swept from the enumerable [view] (null = nothing to sweep).
+  /// [collectQueueSecrets] re-filters the stack shape (`^NAME_\d+$`,
+  /// non-empty values) exactly like the boot sweep does.
+  Map<String, String> _queueSecretsEnv(
+    List<ProviderQueueEntry> entries,
+    String? Function(String name) lookup,
+    Map<String, String>? view,
+  ) {
+    final names = {
+      for (final entry in entries) ...queueEntryKeyNames([entry]),
+    };
+    final env = {for (final name in names) name: lookup(name) ?? ''};
+    if (view == null) return env;
+    final stackSuffix = RegExp(r'_(\d+)$');
+    for (final candidate in view.entries) {
+      if (candidate.value.isEmpty || !stackSuffix.hasMatch(candidate.key)) {
+        continue;
+      }
+      final base = candidate.key.substring(0, candidate.key.lastIndexOf('_'));
+      if (names.contains(base)) env[candidate.key] = candidate.value;
+    }
+    return env;
   }
 
   /// No secure store on this host: the env is the only key source (the

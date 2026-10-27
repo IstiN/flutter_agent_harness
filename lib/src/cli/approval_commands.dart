@@ -32,7 +32,15 @@ extension ApprovalCommands on AgentCli {
       ApprovalPromptSpec(request: request),
     );
     if (result is! ApprovalPromptAnswer) return ApprovalDecision.deny;
-    final note = result.note.trim();
+    _steerApprovalNote(result.note.trim(), request);
+    _noteApproveAlwaysAnswer(result.value);
+    return result.value;
+  }
+
+  /// Steers a typed approval note along as steering feedback so the model
+  /// sees it at the next step; an empty note rides nothing (split out of
+  /// [_promptForApprovalTui] to keep it under the CRAP ratchet).
+  void _steerApprovalNote(String note, ApprovalRequest request) {
     if (note.isNotEmpty) {
       _agent.steer(
         UserMessage.text(
@@ -40,8 +48,6 @@ extension ApprovalCommands on AgentCli {
         ),
       );
     }
-    _noteApproveAlwaysAnswer(result.value);
-    return result.value;
   }
 
   /// Persists the "always" preference change when [decision] is
@@ -132,9 +138,21 @@ extension ApprovalCommands on AgentCli {
     // TUI mode: each question runs through the on-screen prompt zone.
     final tui = _tuiController;
     if (_useTui && tui != null) return _answerAskQuestionsTui(tui, questions);
+    return _walkAskAnswers(_askOneQuestion, questions);
+  }
+
+  /// Walks [questions] one at a time through [answerOne]; the first
+  /// cancel (`null`) aborts the whole batch. Shared by the line-mode and
+  /// TUI branches of [_answerAskQuestions] (extracted so the TUI branch
+  /// stays under the CRAP ratchet).
+  Future<List<AskAnswer>?> _walkAskAnswers(
+    Future<AskAnswer?> Function(AskQuestion question, int index, int total)
+    answerOne,
+    List<AskQuestion> questions,
+  ) async {
     final answers = <AskAnswer>[];
     for (var i = 0; i < questions.length; i++) {
-      final answer = await _askOneQuestion(questions[i], i, questions.length);
+      final answer = await answerOne(questions[i], i, questions.length);
       if (answer == null) return null;
       answers.add(answer);
     }
@@ -147,20 +165,11 @@ extension ApprovalCommands on AgentCli {
   Future<List<AskAnswer>?> _answerAskQuestionsTui(
     FaTuiController tui,
     List<AskQuestion> questions,
-  ) async {
-    final answers = <AskAnswer>[];
-    for (var i = 0; i < questions.length; i++) {
-      final answer = await _answerOneAskQuestionTui(
-        tui,
-        questions[i],
-        i,
-        questions.length,
-      );
-      if (answer == null) return null;
-      answers.add(answer);
-    }
-    return answers;
-  }
+  ) => _walkAskAnswers(
+    (question, index, total) =>
+        _answerOneAskQuestionTui(tui, question, index, total),
+    questions,
+  );
 
   /// One TUI ask question: the prompt-zone answer, or null when cancelled
   /// (or the zone resolved with an unexpected type).
@@ -527,6 +536,11 @@ extension ApprovalCommands on AgentCli {
     // (agents visualization): named live badges — up to 3 active children
     // with type and elapsed seconds, then a +N overflow counter.
     final badge = _agentsBadge();
+    // gh-1762: the classic footer's rate part — the session average at
+    // turn granularity, moving at the same settle boundaries as
+    // tok/turn/cost. The LIVE rate stays on the band + snapshot: the
+    // classic row must not mutate between frame ticks (#467).
+    final ratePart = _statusRatePart();
     // Mid-run fold badge (issue #438 AC3): «compacted and still working»
     // must be distinguishable from «hung» at a glance — the badge shows
     // while the run continues after an auto-compaction and clears when
@@ -541,10 +555,26 @@ extension ApprovalCommands on AgentCli {
         '$foldBadge$cwd · ctx $pct% '
         '(${_formatTokenCount(contextTokens)}/${_formatTokenCount(window)}) · '
         '${_formatTokenCount(totalTokens)}tok'
-        '$costPart · turn ${_usage.turns}$badge · '
+        '$costPart · turn ${_usage.turns}$ratePart$badge · '
         '${_statusProviderLabel(model)}/${model.id}'
         '${_quotaBadgeSuffix(model.provider)}';
     return line;
+  }
+
+  /// The gh-1762 classic-footer rate part: ` · avg 38` — the session
+  /// average at TURN granularity ([LiveTokenRateMeter.settledAverageTokensPerSecond]),
+  /// so the part moves at the same settle boundaries as the tok/turn
+  /// figures and the classic status row stays frame-stable between ticks
+  /// (the #467 grid contract: mid-run the busy ticker is the ONLY row
+  /// that may change — a live rate in this row re-renders every frame
+  /// and breaks the PTY grid pins). The live rate is the band's surface
+  /// (per-frame by design) and the snapshot seam; before the first
+  /// settled turn this part is empty — the row reads byte-identically to
+  /// v0 (AC2: never a `0 t/s`, and the average appears with the first
+  /// completed turn).
+  String _statusRatePart() {
+    final avg = _meter.settledAverageTokensPerSecond(_usage.total.output);
+    return avg != null && avg > 0 ? ' · avg ${formatTokenRate(avg)}' : '';
   }
 
   /// The status-line quota badge (issue #823 AC5): `' [OR $48/$150 · 11d]'`
@@ -609,6 +639,14 @@ extension ApprovalCommands on AgentCli {
       // Unpriced/zero-cost models hide the spend segment (E2) — same
       // policy as the legacy footer's costPart.
       costUsd: cost > 0 ? cost : null,
+      // gh-1762: the live rate is a STREAMING metric — null the moment
+      // the run settles (the architecture contract: null when idle, never
+      // a stale `0 t/s`). During tool-execution gaps inside a run the
+      // window keeps decaying toward hidden on its own (AC7).
+      tokensPerSecond: isBusy ? _meter.tokensPerSecond : null,
+      // The session average is a persistent stat (like token_out): shown
+      // whenever the ledger + active-stream time exist.
+      tokensPerSecondAvg: _meter.tokensPerSecondAvg(total.output),
       sessionId: _session?.cachedId,
       idle: !isBusy,
       // gh-1446 AC5: the brand zone's ring frame, resolved from the
@@ -696,6 +734,11 @@ extension ApprovalCommands on AgentCli {
   /// the fold badge must clear at settle, error settles included).
   @visibleForTesting
   String statusLineForTest() => _statusLine();
+
+  /// Test hook for the host-built band snapshot (gh-1762 — the rate
+  /// fields ride the same per-tick projection the band renders from).
+  @visibleForTesting
+  StatusLineSnapshot statusLineSnapshotForTest() => _statusLineSnapshot();
 
   /// Endpoint equality ignoring a trailing slash (saved entries and pinned
   /// chains disagree on it routinely).
@@ -1058,7 +1101,12 @@ extension ApprovalCommands on AgentCli {
       onMessageUpdate: _onMessageUpdate,
       onToolExecutionStart: _onToolExecutionStart,
       onToolExecutionEnd: _onToolExecutionEnd,
-      onTurnEnd: (message) => _usage.add(message.usage),
+      onTurnEnd: (message) {
+        _usage.add(message.usage);
+        // gh-1762: the provider's real output tokens recalibrate the
+        // char→token factor for the next message's live estimate (AC4).
+        _meter.calibrate(message.usage.output);
+      },
       onModelRequest: _onModelRequest,
       onTaskLedger: _onTaskLedger,
     );
@@ -1082,14 +1130,10 @@ extension ApprovalCommands on AgentCli {
         _logDiagnostic('turn end sid=$_logSid stop=${message.stopReason.name}');
       case AgentEndEvent():
         _logDiagnostic('run end sid=$_logSid');
-      case ToolCallHeartbeatEvent():
-      case ToolCallStuckEvent():
-      case ToolPairingRepairEvent():
-      case MessageCapRepairEvent():
-        // Persisting cases: logged where the record is written (see
-        // [_persistEventLiveness]); nothing extra here.
-        break;
       default:
+      // The record-persisting cases (tool-call heartbeats, stuck calls,
+      // pairing repairs, message-cap repairs) log where the record is
+      // written (see [_persistEventLiveness]) — nothing extra here.
     }
   }
 
@@ -1148,6 +1192,47 @@ extension ApprovalCommands on AgentCli {
           '[stuck-call] $toolName: ${action.label} after '
           '${elapsed.inSeconds}s${shownDetail.isEmpty ? '' : ' — $shownDetail'}',
         );
+      case ToolCallBudgetEvent(
+        :final toolCallId,
+        :final toolName,
+        :final elapsed,
+        :final rung,
+        :final action,
+        :final steeringCount,
+        :final detail,
+      ):
+        // Foreground budget (issue #1786): every rung lands here, so no
+        // escalation is silent. An `offer` arms the one-key `b` accept;
+        // any terminal action (background/abort) clears it.
+        _logDiagnostic(
+          'tool budget sid=$_logSid name=$toolName rung=${rung.label} '
+          'action=${action.label} elapsed=${elapsed.inSeconds}s '
+          'steering=$steeringCount',
+        );
+        await _persistToolLivenessRecord(foregroundBudgetRecordType, {
+          'tool': toolName,
+          'toolCallId': toolCallId,
+          'elapsedMs': elapsed.inMilliseconds,
+          'rung': rung.label,
+          'action': action.label,
+          'steeringCount': steeringCount,
+          'detail': detail,
+        });
+        if (action == ForegroundBudgetAction.offer) {
+          budgetOfferSurfaced(toolCallId);
+        } else {
+          budgetOfferCleared();
+        }
+        // The terminal line carries the deterministic announcement (the
+        // detail IS the `[foreground-budget] …` line) — redacted the same
+        // way the stuck case redacts captured output.
+        final shownBudgetDetail =
+            config.redactionPipeline?.redact(detail) ?? detail;
+        io.writeln(
+          '[foreground-budget] $toolName: ${action.label} after '
+          '${elapsed.inSeconds}s'
+          '${shownBudgetDetail.isEmpty ? '' : ' — $shownBudgetDetail'}',
+        );
       case ToolPairingRepairEvent(:final report):
         // gh-1449 AC6: a batch of FIRST-TIME orphan notes is persisted as
         // the hidden `orphan_report` record — a resumed session seeds its
@@ -1178,20 +1263,29 @@ extension ApprovalCommands on AgentCli {
     if (message is! AssistantMessage) return;
     if (start) {
       _assistantPrefixPrinted = false;
+      // gh-1762: fresh per-message estimate baseline for the meter's
+      // end-of-message top-up.
+      _meter.startMessage();
       // AC3 orphan safety: post-tool narration held by a message whose
       // tool result never rendered flushes here — nothing swallowed, and
       // it lands BEFORE the new message's content (positional).
       _flushPostToolText();
       return;
     }
+    // gh-1762: providers that arrive whole (no deltas — several
+    // OpenAI-compat paths) still yield a live rate: the unobserved
+    // remainder lands as one arrival burst (AC6). Streamed messages
+    // top up ~0 (the deltas already counted the chars).
+    _meter.endMessage(estimateTokens(message));
     _onAssistantMessageEnd(message);
   }
 
-  /// Tool start row in the compact grammar (issue #366): `• label ·
-  /// detail` — the human detail (question text, command, path), never the
-  /// raw args JSON. Also records file-path args into [_touchedPaths] so
-  /// path-gated skills (`paths:` frontmatter) join the prompt on the next
-  /// turn, and stamps [_toolStarts] for the end row's elapsed zone.
+  /// Tool-call start bookkeeping (issue #366 grammar): records file-path
+  /// args into [_touchedPaths] so path-gated skills (`paths:` frontmatter)
+  /// join the prompt on the next turn, stamps [_toolStarts] for the end
+  /// row's detail + elapsed zone, arms the liveness watch, and — TUI only —
+  /// paints the running card. Line mode and headless print NOTHING here
+  /// since gh-1931: the end row is the single render per call.
   void _onToolExecutionStart(
     String toolCallId,
     String toolName,
@@ -1213,8 +1307,9 @@ extension ApprovalCommands on AgentCli {
     // its waiting row already covers it.
     _waiting.toolCallStarted(toolCallId, toolName, detail);
     // TUI chrome (issue #807): the phase-tinted card replaces the compact
-    // row — omp's card grammar keeps fa's detail extraction. Line mode and
-    // headless keep the legacy row byte-identically.
+    // row — omp's card grammar keeps fa's detail extraction. The TUI
+    // transcript grammar is a non-goal for gh-1931 (AC2): the running card
+    // still paints here.
     if (_useTui && tuiChromeEnabled) {
       io.writeln(
         tuiToolCard(
@@ -1225,15 +1320,12 @@ extension ApprovalCommands on AgentCli {
       );
       return;
     }
-    io.writeln(
-      tuiToolRow(
-        layoutToolRow(
-          ToolRowSegments(glyph: '•', label: toolName, detail: detail),
-          _rowWidth - 2,
-        ),
-        ToolRowState.running,
-      ),
-    );
+    // gh-1931 (AC1/AC3): line mode and headless render ONE row per call —
+    // the end row (`_onToolExecutionEnd`) already carries the detail
+    // (command), the status glyph and the elapsed cell, so the start row
+    // here was a pure duplicate print of every command. The start stays
+    // recorded above ([_toolStarts] feeds the end row's detail/elapsed)
+    // and the waiting coordinator still watches the call for liveness.
   }
 
   /// The row budget: the live TUI width, or UNBOUNDED for
@@ -1273,6 +1365,17 @@ extension ApprovalCommands on AgentCli {
       config.redactionPipeline?.redact(text) ?? text;
 
   void _onMessageUpdate(AssistantMessageEvent assistantMessageEvent) {
+    // gh-1762: the meter counts every delta as it arrives — text,
+    // thinking, and tool-call argument fragments alike — regardless of
+    // what the surface renders (a buffered or unstreamed-thinking face
+    // still prints on the model's side). O(1) per chunk.
+    final deltaChars = switch (assistantMessageEvent) {
+      TextDeltaEvent(:final delta) => delta.length,
+      ThinkingDeltaEvent(:final delta) => delta.length,
+      ToolCallDeltaEvent(:final delta) => delta.length,
+      _ => 0,
+    };
+    if (deltaChars > 0) _meter.observeDelta(deltaChars);
     if (assistantMessageEvent is ToolCallStartEvent ||
         assistantMessageEvent is ToolCallEndEvent) {
       _onToolCallGate(assistantMessageEvent);
@@ -1571,9 +1674,11 @@ extension ApprovalCommands on AgentCli {
   }
 
   /// Tool end row in the compact grammar (issue #366): `✓ label · detail
-  /// Ns` — the same detail the start row showed, plus the elapsed; errors
-  /// render `✗` with the result's first line as a full-bright snippet (the
-  /// one place the muted detail role gives way to readability).
+  /// Ns` — the detail stamped at start (the TUI running card's
+  /// description; since gh-1931 this row is the ONLY non-TUI render per
+  /// call), plus the elapsed. Errors render `✗` with the result's first
+  /// line as a full-bright snippet (the one place the muted detail role
+  /// gives way to readability).
   void _onToolExecutionEnd(
     String toolCallId,
     String toolName,
@@ -1582,6 +1687,9 @@ extension ApprovalCommands on AgentCli {
   }) {
     final (started, startDetail) = _toolStarts.remove(toolCallId) ?? (null, '');
     _waiting.toolCallEnded(toolCallId);
+    // No offer may outlive its call (issue #1786): the call ending is the
+    // last chance to clear a stale outstanding `b` affordance.
+    budgetOfferCleared();
     final elapsed = started == null
         ? ''
         : '${DateTime.now().difference(started).inSeconds}s';

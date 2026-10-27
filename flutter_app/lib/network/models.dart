@@ -117,6 +117,46 @@ class JoinCredentials {
       );
 }
 
+/// The network/channel scope advertised for a roster member.
+enum MemberAccessScope {
+  network,
+  channels,
+
+  /// Forward-compatible fallback: an unrecognized scope makes no UI claim.
+  unknown;
+
+  static MemberAccessScope parse(Object? value) => switch (value) {
+    'network' => MemberAccessScope.network,
+    'channels' => MemberAccessScope.channels,
+    _ => MemberAccessScope.unknown,
+  };
+}
+
+/// Additive access metadata carried by roster and presence frames.
+///
+/// This is display metadata, not an authorization decision. An empty channel
+/// list is network-wide by the fa_network contract.
+final class MemberAccess {
+  const MemberAccess({required this.scope, this.channelIds = const []});
+
+  final MemberAccessScope scope;
+  final List<String> channelIds;
+
+  bool get isNetworkWide =>
+      scope == MemberAccessScope.network ||
+      (scope == MemberAccessScope.channels && channelIds.isEmpty);
+
+  factory MemberAccess.fromJson(Map<String, Object?> json) => MemberAccess(
+    scope: MemberAccessScope.parse(json['scope']),
+    channelIds: _strList(json['channelIds']) ?? const [],
+  );
+
+  /// Absent or malformed additive metadata decodes as unknown ([null]).
+  static MemberAccess? parse(Object? value) => value is Map
+      ? MemberAccess.fromJson(value.cast<String, Object?>())
+      : null;
+}
+
 /// A roster member (person or agent).
 class Member {
   const Member({
@@ -124,19 +164,32 @@ class Member {
     required this.memberClass,
     required this.displayName,
     required this.presence,
+    this.access,
   });
 
   final String id;
   final MemberClass memberClass;
   final String displayName;
   final Presence presence;
+  final MemberAccess? access;
 
   factory Member.fromJson(Map<String, Object?> json) => Member(
     id: _str(json['id']),
     memberClass: MemberClass.parse(json['class']),
     displayName: _str(json['displayName']),
     presence: Presence.parse(json['presence']),
+    access: MemberAccess.parse(json['access']),
   );
+}
+
+/// The display label for a channel: its real name when present, otherwise a
+/// short id preview. CLI/hub-created channels often have no name, and their
+/// 64-character ids must not become page titles or composer hints.
+String channelDisplayLabel(String channelId, [String? name]) {
+  if (name != null && name.trim().isNotEmpty) return name;
+  if (channelId.isEmpty) return '…';
+  final end = channelId.length < 8 ? channelId.length : 8;
+  return '${channelId.substring(0, end)}…';
 }
 
 /// A channel of a network. Message payloads stay opaque ciphertext.
@@ -197,12 +250,13 @@ class NetworkAgent {
   );
 }
 
-/// The one-time agent enrollment credential returned by
-/// `POST /api/networks/{id}/agents/enroll` (owner/admin only). The
-/// [clientSecret] is name-bound (the agent's dap/1 hello name MUST equal
-/// [name]) and is returned EXACTLY ONCE — it is never stored server-side
-/// and never returned again; re-enrolling the same name silently ROTATES
-/// it (the old secret dies).
+/// The one-time agent enrollment credential returned by the legacy
+/// `POST /api/networks/{id}/agents/enroll` rotation route or the independent
+/// `POST /api/networks/{id}/agents/enrollments` creation route (owner/admin
+/// only). The [clientSecret] is name-bound (the agent's dap/1 hello name MUST
+/// equal [name]) and is returned EXACTLY ONCE — it is never stored server-side
+/// or returned again. Only the legacy route rotates an existing name's
+/// credential; the creation route adds an independent same-name credential.
 final class AgentEnrollment {
   const AgentEnrollment({
     required this.name,

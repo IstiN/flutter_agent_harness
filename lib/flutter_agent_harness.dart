@@ -12,8 +12,10 @@ export 'src/agent/agent_tool.dart';
 export 'src/agent/empty_completion.dart';
 export 'src/agent/misuse_breaker.dart';
 export 'src/agent/image_registry.dart';
+export 'src/agent/image_drop_ux.dart';
 export 'src/agent/message_cap.dart';
 export 'src/agent/stuck_tool.dart';
+export 'src/agent/foreground_call_budget.dart';
 export 'src/agent/tool_pairing.dart';
 export 'src/agent/auto_compactor.dart'
     show
@@ -43,6 +45,7 @@ export 'src/cli/custom_providers.dart';
 export 'src/cli/key_status.dart';
 export 'src/cli/env_provider_preconfig.dart';
 export 'src/cli/provider_tuning_seed.dart';
+export 'src/cli/model_switch_coherence.dart';
 export 'src/model_roles/provider_key_resolver.dart';
 export 'src/cli/config_command.dart';
 export 'src/config/config_service.dart';
@@ -51,18 +54,26 @@ export 'src/cli/cli_args.dart';
 export 'src/cli/cli_config.dart'
     show
         CliConfig,
+        TrajectorySection,
         applyProviderTimeoutEnvOverride,
         loadCliConfig,
         loadProjectCompactionEngine,
         loadProjectContextWindowCap,
         loadProjectMemoryConfig,
         loadProjectCubeSettings,
+        loadProjectTrajectorySection,
         parseProviderTimeouts,
         resolveStartupCubeSource;
 export 'src/config/app_config_sections.dart';
 export 'src/cli/pi_mode.dart';
 export 'src/cli/links_config.dart'
-    show LinksConfig, defaultAppStoreUrl, defaultSiteUrl, defaultTestFlightUrl;
+    show
+        LinksConfig,
+        defaultApkGodUrl,
+        defaultApkStandardUrl,
+        defaultAppStoreUrl,
+        defaultSiteUrl,
+        defaultTestFlightUrl;
 export 'src/cli/tui_status_line.dart'
     show
         LaidSegment,
@@ -128,6 +139,13 @@ export 'src/compaction/compaction.dart';
 export 'src/compaction/summary_sanitizer.dart';
 export 'src/compaction/token_estimation.dart';
 export 'src/compaction/bench_trigger.dart';
+// gh-1742 review round 1, comment 3: `hasAnyReportedUsage` stays internal
+// until a caller exists (gh-1232: the barrel is append-only — a
+// speculative export is the wrong order). The E1 discrimination it
+// enables ("no observation yet" vs "this provider never reports usage")
+// lands with its consumer.
+export 'src/compaction/context_pressure.dart' hide hasAnyReportedUsage;
+export 'src/compaction/context_window_registry.dart';
 export 'src/context.dart';
 export 'src/cube/cube.dart';
 export 'src/env/execution_env.dart';
@@ -163,6 +181,7 @@ export 'src/messaging/fabric_config.dart';
 export 'src/messaging/hub_identity.dart';
 export 'src/messaging/hub_transport.dart';
 export 'src/messaging/hub_messaging_repository.dart';
+export 'src/image_overflow.dart';
 export 'src/model.dart';
 export 'src/model_roles/model_roles.dart';
 export 'src/model_roles/provider_model_binding.dart';
@@ -219,6 +238,7 @@ export 'src/session/obligations_ledger.dart';
 export 'src/session_deadline.dart';
 export 'src/session/session_record.dart';
 export 'src/session/session_repo.dart';
+export 'src/session_retention.dart';
 export 'src/session/session_storage.dart';
 export 'src/session_io_retry.dart';
 export 'src/session_seal.dart';
@@ -235,6 +255,7 @@ export 'src/trajectory/event_projection.dart';
 export 'src/trajectory/trajectory_layout.dart';
 export 'src/trajectory/trajectory_preview.dart';
 export 'src/trajectory/trajectory_blobs.dart';
+export 'src/trajectory/trajectory_request_blobs.dart';
 export 'src/trajectory/trajectory_snapshot.dart';
 export 'src/trajectory/trajectory_snapshot_builder.dart';
 export 'src/trajectory/trajectory_export.dart';
@@ -262,6 +283,7 @@ export 'src/tools/availability_gate.dart';
 export 'src/tools/discover_tools_tool.dart';
 export 'src/tools/load_modes.dart';
 export 'src/tools/archive_reader.dart';
+export 'src/tools/bash_auto_background.dart';
 export 'src/tools/builtin_tools.dart';
 export 'src/tools/checkpoint_tool.dart';
 export 'src/tools/dynamic_message_tool.dart';
@@ -275,6 +297,7 @@ export 'src/tools/request_secret_tool.dart';
 export 'src/tools/shell_jobs.dart';
 export 'src/tools/sqlite/sqlite_reader.dart';
 export 'src/tools/transcribe_audio.dart';
+export 'src/tools/transcript_document.dart';
 export 'src/prompts/project_context.dart';
 export 'src/ttsr/ttsr.dart';
 export 'src/plugins/plugin.dart';
@@ -308,3 +331,8 @@ export 'src/wire/wire_serve.dart';
 export 'src/web_search/web_search.dart';
 // ── viewport ──
 export 'src/viewport/follow_mode.dart';
+// ── decisions ──
+export 'src/decisions/decisions.dart';
+// ── dap ──
+export 'src/hub/dap_invite_import.dart';
+export 'src/hub/dap_join_bundle.dart';

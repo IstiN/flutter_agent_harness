@@ -535,51 +535,73 @@ final class FlutterSessionManager extends ChangeNotifier {
   Future<SessionMetadata?> findReusableSession({
     List<SessionMetadata>? cachedSessionList,
   }) async {
-    final List<SessionMetadata> all;
-    if (cachedSessionList != null) {
-      all = cachedSessionList;
-    } else {
-      try {
-        all = await _repo.list();
-      } on Object {
-        // Storage-level failure — boot must not die on it; create fresh.
-        return null;
-      }
-    }
-    if (all.isEmpty) return null;
-    final newest = all.first;
-    final created = newest.createdAt.toLocal();
-    final now = DateTime.now();
-    if (created.year == now.year &&
-        created.month == now.month &&
-        created.day == now.day) {
-      return newest;
-    }
-    if (_tooLarge(newest)) return null;
-    Future<bool> hasUserMessages(SessionStorage storage) async {
-      final messages = await storage.findEntries('message');
-      return messages.any(
-        (r) => r is MessageRecord && r.message is UserMessage,
-      );
-    }
+    final all = await _listPersistedSessions(cachedSessionList);
+    if (all == null || all.isEmpty) return null;
+    return _resumableNewestSession(all.first);
+  }
 
+  /// The persisted sessions, newest first — the caller's cached list
+  /// when provided (a redundant [_repo.list] walks every session
+  /// directory); null when storage itself fails (boot must not die on
+  /// it: create fresh).
+  Future<List<SessionMetadata>?> _listPersistedSessions(
+    List<SessionMetadata>? cachedSessionList,
+  ) async {
+    if (cachedSessionList != null) return cachedSessionList;
     try {
-      final storage = (await _repo.open(newest, windowed: true)).getStorage();
-      if (await hasUserMessages(storage)) return null;
-      return newest;
+      return await _repo.list();
     } on Object {
-      // Windowed open failed (corrupt tail, IO hiccup) — fall back to the
-      // legacy full open, matching loadSession's compatibility path.
+      // Storage-level failure — boot must not die on it; create fresh.
+      return null;
+    }
+  }
+
+  /// The newest-session reuse rule: resume outright when it was created
+  /// today (local time — a relaunched app continues the day's chat);
+  /// otherwise reuse only while still EMPTY (no user messages), so
+  /// every relaunch of an untouched app does not pile up another empty
+  /// session file. Null = do not resume.
+  Future<SessionMetadata?> _resumableNewestSession(
+    SessionMetadata newest,
+  ) async {
+    if (_isToday(newest.createdAt.toLocal())) return newest;
+    if (_tooLarge(newest)) return null;
+    if (await _sessionHasUserMessages(newest)) return null;
+    return newest;
+  }
+
+  /// Whether [createdAt] falls on today (local time).
+  bool _isToday(DateTime createdAt) {
+    final now = DateTime.now();
+    return createdAt.year == now.year &&
+        createdAt.month == now.month &&
+        createdAt.day == now.day;
+  }
+
+  /// Whether [newest] carries any user message: the scan runs over a
+  /// windowed open (newest chunk only — issue #199, the boot FULL open
+  /// is gone); a failed windowed open (corrupt tail, IO hiccup) falls
+  /// back to the legacy full open, matching loadSession's compatibility
+  /// path; an UNREADABLE file is treated as non-empty (do not resume).
+  Future<bool> _sessionHasUserMessages(SessionMetadata newest) async {
+    try {
+      return await _hasUserMessages(
+        (await _repo.open(newest, windowed: true)).getStorage(),
+      );
+    } on Object {
       try {
-        if (await hasUserMessages((await _repo.open(newest)).getStorage())) {
-          return null;
-        }
-        return newest;
+        return await _hasUserMessages((await _repo.open(newest)).getStorage());
       } on Object {
         // Unreadable session file — do not resume it.
-        return null;
+        return true;
       }
     }
+  }
+
+  /// Whether any record in [storage] projects a user message.
+  Future<bool> _hasUserMessages(SessionStorage storage) async {
+    final records = await storage.findEntries('message');
+    return records.any((r) => r is MessageRecord && r.message is UserMessage);
   }
 
   /// Boot entry point: resumes the session picked by [findReusableSession]

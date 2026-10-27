@@ -574,7 +574,6 @@ void main() {
       expect(
         hubFabricWired(
           hubPluginEnabled: true,
-          dapUnlocked: true,
           fabricHubAllowed: true,
         ),
         isTrue,
@@ -583,25 +582,23 @@ void main() {
       expect(
         hubFabricWired(
           hubPluginEnabled: true,
-          dapUnlocked: true,
           fabricHubAllowed: false,
         ),
         isFalse,
       );
-      // No DAP_MASTER_SECRET (never started): legacy too.
+      // gh-1825: no DAP_MASTER_SECRET needed anymore — enrolled scoped
+      // credentials also drive the hub (the layer resolves lazily).
       expect(
         hubFabricWired(
           hubPluginEnabled: true,
-          dapUnlocked: false,
           fabricHubAllowed: true,
         ),
-        isFalse,
+        isTrue,
       );
       // Plugin not enabled: no hub layer at all.
       expect(
         hubFabricWired(
           hubPluginEnabled: false,
-          dapUnlocked: true,
           fabricHubAllowed: true,
         ),
         isFalse,

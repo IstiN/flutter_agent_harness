@@ -46,6 +46,19 @@ void main() {
     expect(r.stdout, 'hello web\n');
   });
 
+  test('echo -e interprets the POSIX escape table (gh-1713)', () async {
+    // Every table arm plus the unknown-escape passthrough: \t \r \\ \0
+    // pass, unknown letters (\d, \f, \g) ride through as themselves.
+    var r = await run(r'echo -e "a\tb\rc\d\0e\f\g"');
+    expect(r.exitCode, 0);
+    expect(r.stdout, 'a\tb\rc\\d\x00e\\f\\g\n');
+    // A trailing lone backslash stays literal (no next char to consume);
+    // unquoted \\ folds to one backslash at parse time.
+    r = await run(r'echo -e end\\');
+    expect(r.exitCode, 0);
+    expect(r.stdout, 'end\\\n');
+  });
+
   test('file operations: mkdir/touch/cp/mv/ls/rm/rmdir', () async {
     expect((await run('mkdir -p /d/sub')).exitCode, 0);
     expect((await run('touch /d/sub/f.txt')).exitCode, 0);

@@ -15,6 +15,10 @@ on:
       - 'lib/**'
       - 'vendor/**'
       - 'office_addin/**'
+      # gh-182: the ProgramBench results page renders from the committed
+      # ledger — a bench-programbench aggregate push (ledger + README)
+      # must redeploy fa1.dev.
+      - 'bench/leaderboard/**'
       - 'scripts/build_office_addin.sh'
       - 'scripts/build_site.dart'
       - 'scripts/site_markdown.dart'
@@ -152,6 +156,24 @@ jobs:
           fi
           # gh-1684: fa-extension.zip is NOT copied into the Pages artifact
           # anymore — it downloads from the GitHub release (AC1).
+
+      # gh-182: the ProgramBench results page — the same results block as
+      # the README section, rendered from the COMMITTED ledger (updated
+      # by bench-programbench.yml's aggregate; the bench/leaderboard
+      # paths trigger above picks those pushes up). Hermetic: stdlib
+      # renderer, no network — every run/artifact link is already an
+      # absolute URL in the ledger. Deploy-time product (gh-1476): never
+      # committed, generated straight into the deploy root.
+      # gh-182 R2 (review round 2): the homepage Benchmarks section is
+      # spliced from the same ledgers into the BUILT index.html (the
+      # source page carries the markers around a placeholder); the
+      # Terminal-Bench self-reported rows come from the gh-1682 ledger.
+      - name: Render ProgramBench results page (gh-182)
+        run: |
+          python3 bench/leaderboard/pbench_render.py \
+            --ledger bench/leaderboard/pbench_results.json \
+            --html build/pages/root/programbench.html \
+            --homepage build/pages/root/index.html
 
       - name: Cache-bust static assets
         if: steps.web_build.outcome == 'success'

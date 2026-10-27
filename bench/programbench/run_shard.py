@@ -109,6 +109,29 @@ def b64(value: str) -> str:
     return base64.b64encode(value.encode()).decode()
 
 
+def docker_ncpu() -> int:
+    """CPUs the docker daemon can use — the ceiling `docker run --cpus`
+    validates against. programbench's default DOCKER_CPUS is 10, and GH
+    hosted runners expose 4, so every eval container died at `docker run`
+    with "range of CPUs is from 0.01 to 4.00" (gh-1816)."""
+    p = run(["docker", "info", "--format", "{{.NCPU}}"])
+    if p.returncode == 0:
+        try:
+            return max(1, int(p.stdout.strip()))
+        except ValueError:
+            pass
+    return max(1, os.cpu_count() or 1)
+
+
+def eval_env() -> dict[str, str]:
+    """Environment for the programbench eval subprocess: PROGRAMBENCH_DOCKER_CPUS
+    defaults to the daemon's NCPU (an explicit env setting wins)."""
+    env = os.environ.copy()
+    if not env.get("PROGRAMBENCH_DOCKER_CPUS"):
+        env["PROGRAMBENCH_DOCKER_CPUS"] = str(docker_ncpu())
+    return env
+
+
 class Shard:
     def __init__(self) -> None:
         a = sys.argv[1:]
@@ -295,10 +318,25 @@ class Shard:
     def eval_all(self) -> bool:
         proc = run(
             ["programbench", "eval", str(self.run_dir), "--workers", str(self.eval_workers)],
+            env=eval_env(),
         )
-        sys.stdout.write(proc.stdout[-4000:])
+        # gh-1816: the diagnosing traceback (programbench logs it via
+        # log.error(..., exc_info=True)) lands on STDERR and was dropped
+        # entirely, while stdout was tail-capped to 4k — CI kept only the
+        # summary table and could never see the crash. Tee BOTH streams in
+        # full into the run dir (they ride the shard artifact) and surface
+        # a generous stderr tail on failure.
+        (self.run_dir / "eval-stdout.log").write_text(proc.stdout or "")
+        (self.run_dir / "eval-stderr.log").write_text(proc.stderr or "")
+        sys.stdout.write(proc.stdout[-8000:])
         if proc.returncode != 0:
-            print(f"::warning::programbench eval exited {proc.returncode} — eval.json may be missing for some instances (the aggregate verdict catches this)", file=sys.stderr)
+            sys.stdout.write(proc.stderr[-8000:])
+            print(
+                f"::warning::programbench eval exited {proc.returncode} — full output: "
+                f"{self.run_dir}/eval-stdout.log + eval-stderr.log (eval.json may be missing "
+                f"for some instances; the aggregate verdict catches this)",
+                file=sys.stderr,
+            )
             return False
         return True
 

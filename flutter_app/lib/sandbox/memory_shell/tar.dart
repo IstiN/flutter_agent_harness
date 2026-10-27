@@ -29,42 +29,16 @@ TarInvocation parseTarArgs(List<String> args) {
   if (args.isEmpty) {
     return _tarError('tar: no operation specified\n');
   }
-  var index = 0;
-  var flags = '';
-  final first = args.first;
-  if (first.startsWith('-')) {
-    flags = first.substring(1);
-    index = 1;
-  } else if (RegExp(r'^[a-zA-Z]+$').hasMatch(first) &&
-      first.contains(RegExp(r'[ctx]'))) {
-    // Old-style `tar cf ...` without a dash.
-    flags = first;
-    index = 1;
-  }
+  final (flags, index) = _tarLeadingFlags(args);
   final create = flags.contains('c');
   final extract = flags.contains('x');
   final compressed = flags.contains('z');
   if (create == extract) {
     return _tarError('tar: specify exactly one of -c or -x\n');
   }
-
-  String? archiveArg;
-  if (flags.contains('f')) {
-    if (index >= args.length) {
-      return _tarError('tar: option requires an argument -- f\n');
-    }
-    archiveArg = args[index++];
-  }
-  String? changeDir;
-  final members = <String>[];
-  for (; index < args.length; index++) {
-    final arg = args[index];
-    if (arg == '-C' && index + 1 < args.length) {
-      changeDir = args[++index];
-    } else {
-      members.add(arg);
-    }
-  }
+  final (archiveArg, next, archiveError) = _tarArchiveArg(args, index, flags);
+  if (archiveError != null) return _tarError(archiveError);
+  final (changeDir, members) = _tarMembers(args, next);
   if (archiveArg == null) {
     return _tarError('tar: no archive file specified (use -f)\n');
   }
@@ -77,6 +51,52 @@ TarInvocation parseTarArgs(List<String> args) {
     changeDir: changeDir,
     error: null,
   );
+}
+
+/// Extracts the bundled flag cluster from the leading operand (dash form
+/// or old-style `cf` letters); returns the flags and whether the leading
+/// operand was consumed.
+(String, int) _tarLeadingFlags(List<String> args) {
+  final first = args.first;
+  if (first.startsWith('-')) {
+    return (first.substring(1), 1);
+  }
+  if (RegExp(r'^[a-zA-Z]+$').hasMatch(first) &&
+      first.contains(RegExp(r'[ctx]'))) {
+    // Old-style `tar cf ...` without a dash.
+    return (first, 1);
+  }
+  return ('', 0);
+}
+
+/// The `-f` archive operand, the next scan index, and the usage-error
+/// message when the flag's value is missing.
+(String?, int, String?) _tarArchiveArg(
+  List<String> args,
+  int index,
+  String flags,
+) {
+  if (!flags.contains('f')) return (null, index, null);
+  if (index >= args.length) {
+    return (null, index, 'tar: option requires an argument -- f\n');
+  }
+  return (args[index], index + 1, null);
+}
+
+/// Splits trailing operands into the `-C` change-dir and member paths.
+(String?, List<String>) _tarMembers(List<String> args, int index) {
+  String? changeDir;
+  final members = <String>[];
+  for (; index < args.length; index++) {
+    final arg = args[index];
+    if (arg == '-C' && index + 1 < args.length) {
+      changeDir = args[index + 1];
+      index++;
+    } else {
+      members.add(arg);
+    }
+  }
+  return (changeDir, members);
 }
 
 TarInvocation _tarError(String message) => (

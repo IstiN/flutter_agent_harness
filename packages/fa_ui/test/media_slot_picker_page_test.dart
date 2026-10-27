@@ -118,8 +118,10 @@ void main() {
 
       expect(popped, isTrue);
       expect(result, isNotNull);
-      expect(result!.cleared, isTrue);
-      expect(result!.override, isNull);
+      // gh-1844: "Same as main connection" is the explicit opt-in, saved
+      // as an override — not a clear.
+      expect(result!.cleared, isFalse);
+      expect(result!.override!.useMainConnection, isTrue);
     });
 
     testWidgets('a saved model-page result unwinds the whole flow', (

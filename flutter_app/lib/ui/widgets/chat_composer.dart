@@ -34,6 +34,7 @@ class ChatComposer extends StatelessWidget {
     this.leadingBuilder,
     this.hideMicWhenNotEmpty = false,
     this.onSent,
+    this.onSubmit,
     this.onFocusChanged,
     this.autofocus = true,
   });
@@ -74,6 +75,9 @@ class ChatComposer extends StatelessWidget {
 
   /// Fired after a message was sent successfully.
   final VoidCallback? onSent;
+
+  /// Host-owned submit interception (DAP enrollment in the full chat).
+  final fa_ui.FaChatSubmitInterceptor? onSubmit;
 
   /// Fired when the input field's focus changes (the session chat sheet
   /// opens its panel on focus).
@@ -116,6 +120,7 @@ class ChatComposer extends StatelessWidget {
       leadingBuilder: leadingBuilder,
       hideMicWhenNotEmpty: hideMicWhenNotEmpty,
       onSent: onSent,
+      onSubmit: onSubmit,
       onFocusChanged: onFocusChanged,
       autofocus: autofocus,
     );
@@ -147,11 +152,17 @@ class ChatComposer extends StatelessWidget {
     } on Object {
       // Clipboard access is best effort — a failure just means "no image".
     }
-    if (bytes == null || bytes.isEmpty) return null;
+    if (!_hasClipboardImage(bytes)) return null;
     // The issue contract's synthesized paste name (issue #465).
     final name = 'paste-${DateTime.now().millisecondsSinceEpoch}.png';
-    return (name: name, bytes: bytes, mimeType: mimeTypeForUploadName(name));
+    // The guard above proves the bytes non-null; the predicate form just
+    // defeats promotion.
+    return (name: name, bytes: bytes!, mimeType: mimeTypeForUploadName(name));
   }
+
+  /// Null/empty pasteboard — no image to paste (gh-1848 split).
+  static bool _hasClipboardImage(Uint8List? bytes) =>
+      bytes != null && bytes.isNotEmpty;
 }
 
 /// [fa_ui.FaChatVoiceInput] over the app's [AsrApi] + [AsrTranscriber]

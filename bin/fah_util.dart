@@ -60,6 +60,10 @@ var _sigtermSeen = false;
 /// the exit paths.
 Future<int>? _headlessRun;
 
+/// Per-process plugin cleanup installed by `_runApp` after resolution.
+/// Currently removes the hub plugin's runtime plaintext-key overlay.
+Future<void> Function()? _fahPluginTeardown;
+
 /// wire-serve (issue #1103): ends the transport (completing the serve
 /// future) so a signal-driven exit tears down GRACEFULLY — runWireServe's
 /// finally aborts any in-flight run, persists, and the process exits.
@@ -69,7 +73,22 @@ void Function()? _wireServeSettle;
 /// Graceful headless abort shared by SIGINT and SIGTERM (issue #155):
 /// abort the run, wait for it to settle (bounded — a wedged provider
 /// cannot hold the exit), flush the HEP stream, exit 130.
-void _gracefulHeadlessExit(void Function() fireInterrupt) {
+///
+/// gh-1763 AC3: the abort names its signal on stderr — a `SIGTERM` that
+/// reached fa from a child process (a broad `pkill` inside a bash tool
+/// call) must never read as a user Ctrl+C in the post-mortem log. The
+/// exit code stays 130 (the pinned supervisor contract — a second SIGTERM
+/// escalates to 143 in the caller).
+void _gracefulHeadlessExit(
+  void Function() fireInterrupt, {
+  String signal = 'SIGINT',
+}) {
+  if (signal != 'SIGINT') {
+    stderr.writeln(
+      'fa: $signal received — aborting headless run gracefully '
+      '(exit 130; a second $signal forces exit 143)',
+    );
+  }
   fireInterrupt();
   _wireServeSettle?.call();
   final run = _headlessRun;
@@ -77,6 +96,11 @@ void _gracefulHeadlessExit(void Function() fireInterrupt) {
     Future(() async {
       if (run != null) {
         await run.timeout(const Duration(seconds: 10), onTimeout: () => 130);
+      }
+      try {
+        await _fahPluginTeardown?.call();
+      } on Object {
+        // Plugin cleanup is best-effort and must never replace exit 130.
       }
       // gh-1455: drain the serialized line chain instead of a bare flush —
       // a flush racing the in-flight per-line flushes is the exact

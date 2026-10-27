@@ -314,8 +314,27 @@ stage_coverage() {
 }
 
 stage_crap() {
-  if command -v dart >/dev/null 2>&1 && \
-     dart pub global run crap4dart --version >/dev/null 2>&1; then
+  if ! command -v dart >/dev/null 2>&1; then
+    return 2  # caller prints SKIP marker
+  fi
+  # gh-1738: version floor BEFORE running anything — the root config's
+  # gates.similarity block ConfigExceptions on <0.15.0 parsers, which
+  # would surface here mislabeled as "CRAP RATCHET FAILED".
+  local c4d_ver
+  c4d_ver=$(dart pub global list 2>/dev/null | awk '$1=="crap4dart"{print $2}')
+  case "$c4d_ver" in
+    0.1[5-9].*|0.[2-9][0-9].*|[1-9].*) ;;
+    "")
+      return 2  # not activated — caller prints SKIP marker
+      ;;
+    *)
+      echo "⚠️  crap4dart $c4d_ver is too old for this tree (need >= 0.15.0 —" \
+           "gh-1738 similarity keys); skipping — run: dart pub global activate" \
+           "crap4dart '>=0.15.0 <0.16.0'" >&2
+      return 2  # caller prints SKIP marker
+      ;;
+  esac
+  if dart pub global run crap4dart --version >/dev/null 2>&1; then
     echo "🔍 Checking CRAP scores (ratchet pinned in crap4dart.yaml)..."
     # Reuses the fresh coverage/lcov.info produced by the coverage stage.
     # Hook mode scopes the analysis to the STAGED lib/bin files: the

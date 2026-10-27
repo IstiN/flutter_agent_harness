@@ -94,8 +94,9 @@ void main() {
 
     final log = File(logPath).readAsStringSync();
     // The tool row grammar (issue #366) renders the bash COMMAND verbatim
-    // (`echo …` included — only `cd … && …` collapses).
-    expect(log, contains('• bash · echo log-file-proof'));
+    // (`echo …` included — only `cd … && …` collapses). gh-1931: ONE row
+    // per call on the log surface — the end row (start row removed).
+    expect(log, contains('✓ bash · echo log-file-proof'));
     expect(log, contains('log-file-proof'));
   });
 

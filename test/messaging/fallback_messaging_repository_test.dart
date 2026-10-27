@@ -18,10 +18,16 @@ final class _ScriptedRepo
   final resolvable = <String>{};
   bool connected = true;
 
+  /// When true, [resolveTarget] THROWS — the shape of a failed roster
+  /// query (drop/timeout mid-query), as opposed to a roster that answered
+  /// and does not know the recipient.
+  bool failResolves = false;
+
   /// File-fabric mode: sends deposit into the recipient's inbox (a sender
   /// drops mail in the peer's mailbox). Hub mode only logs the delivery.
   bool depositOnSend = false;
   bool failSends = false;
+  Object? sendError;
   bool failDirectory = false;
   var drainCount = 0;
 
@@ -29,15 +35,17 @@ final class _ScriptedRepo
   bool get isConnected => connected;
 
   @override
-  Future<String?> resolveTarget(String toId) async =>
-      resolvable.contains(toId) ? toId : null;
+  Future<String?> resolveTarget(String toId) async {
+    if (failResolves) throw StateError('roster query failed');
+    return resolvable.contains(toId) ? toId : null;
+  }
 
   void receive(String mailbox, AgentMessage message) =>
       inboxes.putIfAbsent(mailbox, () => []).add(message);
 
   @override
   Future<void> send(AgentMessage message) async {
-    if (failSends) throw StateError('transport down');
+    if (failSends) throw sendError ?? StateError('transport down');
     sent.add(message);
     if (depositOnSend) receive(message.toId, message);
   }
@@ -144,6 +152,26 @@ void main() {
     expect(files.sent, isEmpty);
   });
 
+  test('a private-channel key refusal reaches the caller instead of '
+      'becoming a silent file dead drop', () async {
+    hub.resolvable.add('#locked');
+    hub.failSends = true;
+    hub.sendError = ChannelDeliveryException(
+      'private channel #locked has no usable key',
+    );
+
+    await expectLater(
+      fabric.send(_msg('secret', to: '#locked')),
+      throwsA(isA<ChannelDeliveryException>()),
+    );
+    expect(files.sent, isEmpty);
+
+    // Nothing was tracked for a later implicit forward either.
+    hub.failSends = false;
+    await fabric.send(_msg('after', to: 'file-peer'));
+    expect(hub.sent.map((m) => m.id), isNot(contains('secret')));
+  });
+
   test(
     'hub send failure falls back to files and forwards on reconnect',
     () async {
@@ -221,6 +249,34 @@ void main() {
     expect(hub.sent.map((m) => m.id), ['m1']);
     expect(files.inboxes['hub-peer'], isNull);
   });
+
+  test(
+    'a FAILED roster query while connected keeps the queue tracked',
+    () async {
+      hub.resolvable.add('hub-peer');
+      hub.connected = false;
+      await fabric.send(_msg('m1')); // queued while the hub is down
+      expect(files.inboxes['hub-peer'], hasLength(1));
+
+      // The hub comes back but the FIRST roster query fails (the
+      // reconnect-turbulence shape: presence/whois door dropped or timed
+      // out — the routing primary rethrows). A failed query is not a
+      // confirmed roster miss: the queue must stay tracked for the next
+      // connected call (the hostile-env strand, gh-1838 CI run
+      // 401030921 — the mail used to be untracked here and was lost).
+      hub.connected = true;
+      hub.failResolves = true;
+      await fabric.peek('main');
+      expect(hub.sent, isEmpty);
+      expect(files.inboxes['hub-peer'], hasLength(1));
+
+      // The next probe (query healthy again) forwards — at-least-once.
+      hub.failResolves = false;
+      await fabric.peek('main');
+      expect(hub.sent.map((m) => m.id), ['m1']);
+      expect(files.inboxes['hub-peer'], isNull);
+    },
+  );
 
   test(
     're-wrapped hub frames dedupe on sender+time+body, not just id',

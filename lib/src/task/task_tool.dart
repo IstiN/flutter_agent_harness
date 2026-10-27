@@ -29,6 +29,7 @@ import '../agent/agent_loop.dart';
 import '../agent/agent_tool.dart';
 import '../approval/approval.dart';
 import '../compaction/compaction_engine.dart';
+import '../compaction/context_window_registry.dart';
 import '../a2a/a2a_manager.dart';
 import '../cancel_token.dart';
 import '../model.dart';
@@ -126,12 +127,27 @@ String taskAsyncResultNotice(TaskJob job) {
             : output,
       );
   }
+  _renderDeliverables(buffer, result);
   final error = result?.error;
   if (error != null) buffer.write('\nerror: $error');
   buffer
     ..write('\n</task-result>')
     ..write('\n</system-notice>');
   return buffer.toString();
+}
+
+/// The deliverable pointer block shared by the blocking and background
+/// result renderers (issue #1829): every recorded deliverable with its
+/// harness verdict, plus the tier-2 stub fallback notice when present.
+void _renderDeliverables(StringBuffer buffer, TaskSingleResult? result) {
+  if (result == null) return;
+  for (final record in result.deliverables) {
+    buffer.write('\n[${record.render()}]');
+  }
+  final fallback = result.stubFallback;
+  if (fallback != null) {
+    buffer.write('\n[deliverable fallback: $fallback]');
+  }
 }
 
 /// Session-scoped registry of background `task` jobs (reduced port of omp's
@@ -213,7 +229,10 @@ final class TaskToolConfig {
     this.childSessionOpener,
     this.a2aManager,
     this.compactionEngine,
+    this.contextWindowRegistry,
+    this.contextWindowCap,
     this.misuseBreaker = true,
+    this.deliverableRedactor,
   }) : semaphore = Semaphore(normalizeConcurrencyLimit(maxConcurrent)),
        outputs = outputs ?? AgentOutputStore(),
        jobManager = jobManager ?? TaskJobManager();
@@ -286,9 +305,24 @@ final class TaskToolConfig {
   /// host's config choice rides to children — null resolves to structured.
   final CompactionEngine? compactionEngine;
 
+  /// The shared per-model context-window registry (gh-1742 invariant 2):
+  /// children resolve their compaction window and loop-guard basis from
+  /// the same registered values the main agent publishes. Null = carried
+  /// `model.contextWindow` (legacy behavior).
+  final ContextWindowRegistry? contextWindowRegistry;
+
+  /// The owner context-window cap (`agent.contextWindowCap`), honored for
+  /// children too (gh-1742).
+  final int? contextWindowCap;
+
   /// The tool-misuse circuit breaker switch (issue #862, default true):
   /// every spawned child agent gets a breaker wired into its loop.
   final bool misuseBreaker;
+
+  /// Pre-persistence redaction gate for deliverable artifacts (issue
+  /// #1829, I3) — the host's redaction pipeline applied to report text
+  /// before it lands in the output store. Null = no pipeline wired.
+  final String Function(String text)? deliverableRedactor;
 
   /// The session-shared executor (issue #222): the `task` tool runs
   /// through it, and hosts pass [TaskExecutor.resumeChild] to
@@ -308,7 +342,10 @@ final class TaskToolConfig {
     childSessionFactory: childSessionFactory,
     childSessionOpener: childSessionOpener,
     compactionEngine: compactionEngine,
+    contextWindowRegistry: contextWindowRegistry,
+    contextWindowCap: contextWindowCap,
     misuseBreaker: misuseBreaker,
+    deliverableRedactor: deliverableRedactor,
   );
 }
 
@@ -658,37 +695,41 @@ ToolExecutionResult _spawnBackground(
   );
 }
 
+/// Whether a spawn phase is settled — the job reached a terminal state.
+bool _isSettledPhase(TaskSpawnPhase? phase) =>
+    phase == TaskSpawnPhase.completed ||
+    phase == TaskSpawnPhase.failed ||
+    phase == TaskSpawnPhase.aborted;
+
+String _progressMarker(TaskSpawnPhase? phase) => switch (phase) {
+  TaskSpawnPhase.completed => '✓',
+  TaskSpawnPhase.failed || TaskSpawnPhase.aborted => '✗',
+  TaskSpawnPhase.running => '…',
+  null => '·',
+};
+
+String _progressLabel(TaskSpawnPhase? phase) => switch (phase) {
+  TaskSpawnPhase.completed => 'done',
+  TaskSpawnPhase.failed => 'failed',
+  TaskSpawnPhase.aborted => 'aborted',
+  TaskSpawnPhase.running => 'running',
+  null => 'waiting',
+};
+
 String _renderProgress(
   List<TaskItem> items,
   List<TaskSpawnPhase?> phases,
   Map<int, String> ids,
 ) {
-  final settled = phases
-      .where(
-        (phase) =>
-            phase == TaskSpawnPhase.completed ||
-            phase == TaskSpawnPhase.failed ||
-            phase == TaskSpawnPhase.aborted,
-      )
-      .length;
+  final settled = phases.where(_isSettledPhase).length;
   final lines = StringBuffer('task: $settled/${items.length} settled');
   for (var i = 0; i < items.length; i++) {
+    final phase = phases[i];
     final id = ids[i] ?? taskItemNameBase(items[i]);
     final agent = taskItemAgentName(items[i]);
-    final marker = switch (phases[i]) {
-      TaskSpawnPhase.completed => '✓',
-      TaskSpawnPhase.failed || TaskSpawnPhase.aborted => '✗',
-      TaskSpawnPhase.running => '…',
-      null => '·',
-    };
-    final label = switch (phases[i]) {
-      TaskSpawnPhase.completed => 'done',
-      TaskSpawnPhase.failed => 'failed',
-      TaskSpawnPhase.aborted => 'aborted',
-      TaskSpawnPhase.running => 'running',
-      null => 'waiting',
-    };
-    lines.write('\n  $marker $id ($agent) — $label');
+    lines.write(
+      '\n  ${_progressMarker(phase)} $id ($agent) — ${_progressLabel(phase)}',
+    );
   }
   return lines.toString();
 }
@@ -734,6 +775,7 @@ void _renderResult(StringBuffer buffer, TaskSingleResult result) {
     '\n[${result.truncated ? 'Truncated output' : 'Full output'}: '
     'agent://${result.id}]',
   );
+  _renderDeliverables(buffer, result);
 }
 
 String _spawnStatusLabel(TaskSpawnStatus status) {

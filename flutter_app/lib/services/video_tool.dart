@@ -70,23 +70,16 @@ final class VideoReader {
       );
     }
     final endpoint = await _requireVisionEndpoint();
-
-    final labels = [
-      for (var i = 0; i < extracted.length; i++)
-        'frame ${i + 1} at ${_timelineLabel(extracted[i].positionMs)}',
-    ];
-    final trimmedQuestion = question?.trim() ?? '';
-    final prompt =
-        'These ${extracted.length} frames were extracted from one video, '
-        'evenly spaced and in chronological order (${labels.join(', ')}). '
-        '${trimmedQuestion.isEmpty ? 'Describe what happens in the video, in timeline order, referencing the frame timestamps.' : 'Answer this question about the video, referencing the frame timestamps where relevant: $trimmedQuestion'}';
     final body = <String, Object?>{
       'model': endpoint.modelId,
       'messages': [
         {
           'role': 'user',
           'content': [
-            {'type': 'text', 'text': prompt},
+            {
+              'type': 'text',
+              'text': _visionPrompt(extracted, question?.trim() ?? ''),
+            },
             for (final frame in extracted)
               {
                 'type': 'image_url',
@@ -98,7 +91,29 @@ final class VideoReader {
         },
       ],
     };
+    final response = await _postVisionChat(endpoint, body);
+    return _decodeVisionContent(response);
+  }
 
+  /// The single-user-turn vision prompt: the timeline framing (labels
+  /// so the model can reference frame timestamps) plus either the
+  /// default describe instruction or the caller's [question].
+  static String _visionPrompt(List<VideoFrame> extracted, String question) {
+    final labels = [
+      for (var i = 0; i < extracted.length; i++)
+        'frame ${i + 1} at ${_timelineLabel(extracted[i].positionMs)}',
+    ];
+    return 'These ${extracted.length} frames were extracted from one video, '
+        'evenly spaced and in chronological order (${labels.join(', ')}). '
+        '${question.isEmpty ? 'Describe what happens in the video, in timeline order, referencing the frame timestamps.' : 'Answer this question about the video, referencing the frame timestamps where relevant: $question'}';
+  }
+
+  /// Posts the chat/completions request and validates the HTTP status
+  /// (200 expected); closes the self-owned client.
+  Future<http.Response> _postVisionChat(
+    MediaEndpoint endpoint,
+    Map<String, Object?> body,
+  ) async {
     final client = _httpClient ?? http.Client();
     final http.Response response;
     try {
@@ -119,19 +134,18 @@ final class VideoReader {
         '${response.body.trim()}',
       );
     }
+    return response;
+  }
+
+  /// The model's answer from an OpenAI chat response — the first
+  /// choice's non-empty text content. Anything else (unexpected shape,
+  /// malformed JSON) is a failure, never an empty description.
+  String _decodeVisionContent(http.Response response) {
     try {
       final decoded = jsonDecode(response.body);
       if (decoded is Map<String, dynamic>) {
-        final choices = decoded['choices'];
-        if (choices is List &&
-            choices.isNotEmpty &&
-            choices.first is Map &&
-            (choices.first as Map)['message'] is Map) {
-          final content = ((choices.first as Map)['message'] as Map)['content'];
-          if (content is String && content.trim().isNotEmpty) {
-            return content.trim();
-          }
-        }
+        final text = _firstChoiceText(decoded);
+        if (text != null) return text;
       }
     } on FormatException {
       // fall through
@@ -139,9 +153,35 @@ final class VideoReader {
     throw StateError('Video reading returned an unexpected response.');
   }
 
+  /// `choices.first.message.content` when it is a non-empty string.
+  String? _firstChoiceText(Map<String, dynamic> decoded) {
+    final message = _firstChoiceMessage(decoded);
+    if (message == null) return null;
+    final content = message['content'];
+    if (content is String && content.trim().isNotEmpty) return content.trim();
+    return null;
+  }
+
+  /// `choices.first.message` when the response carries the standard
+  /// chat shape, else null.
+  static Map<Object?, Object?>? _firstChoiceMessage(
+    Map<String, dynamic> decoded,
+  ) {
+    final choices = decoded['choices'];
+    if (choices is List &&
+        choices.isNotEmpty &&
+        choices.first is Map &&
+        (choices.first as Map)['message'] is Map) {
+      return (choices.first as Map)['message'] as Map;
+    }
+    return null;
+  }
+
   /// The `vision` slot endpoint: the override when configured (trusted as
-  /// configured), otherwise the main connection — gated on image support so
-  /// a text-only chat model never gets a blind image request.
+  /// configured), or the main connection when the slot explicitly opted in
+  /// via `useMainConnection: true` (gh-1844 — never an implicit fallback) —
+  /// gated on image support so a text-only chat model never gets a blind
+  /// image request.
   Future<MediaEndpoint> _requireVisionEndpoint() async {
     final endpoint = await _gateway.endpointFor(MediaSlot.vision);
     if (endpoint == null) {

@@ -44,6 +44,32 @@ void main() {
       expect(store.configuredSlots, isEmpty);
     });
 
+    test('useMainConnection survives the JSON round-trip', () async {
+      final env = MemoryExecutionEnv();
+      final store = await MediaModelsStore.load(env);
+      await store.setOverride(
+        MediaSlot.videoGeneration,
+        const MediaSlotOverride(
+          providerKind: '',
+          baseUrl: '',
+          modelId: '',
+          useMainConnection: true,
+        ),
+      );
+
+      final reloaded = await MediaModelsStore.load(env);
+      final restored = reloaded.overrideFor(MediaSlot.videoGeneration);
+      expect(restored, isNotNull);
+      expect(restored!.useMainConnection, isTrue);
+      // Absent in the JSON → default false on a plain override.
+      await store.setOverride(MediaSlot.imageGeneration, override);
+      final plain =
+          (await MediaModelsStore.load(env)).overrideFor(
+            MediaSlot.imageGeneration,
+          );
+      expect(plain!.useMainConnection, isFalse);
+    });
+
     test('overrides round-trip through the env filesystem', () async {
       final env = MemoryExecutionEnv();
       final store = await MediaModelsStore.load(env);
@@ -152,42 +178,78 @@ void main() {
     );
   });
 
-  group('MediaModelsStore.resolve', () {
-    test('no override falls back to the main connection with the slot '
-        'default model', () async {
+  group('MediaModelsStore.resolve (gh-1844)', () {
+    test('no override leaves EVERY slot UNCONFIGURED — the main '
+        'connection is never an implicit fallback', () async {
       final store = MediaModelsStore.inMemory();
+      for (final slot in MediaSlot.all) {
+        expect(
+          await store.resolve(slot, fallback),
+          isNull,
+          reason: 'slot $slot must be UNCONFIGURED without an override',
+        );
+      }
+    });
 
-      final image = await store.resolve(MediaSlot.imageGeneration, fallback);
-      expect(image, isNotNull);
-      expect(image!.fromOverride, isFalse);
-      expect(image.baseUrl, 'https://openrouter.ai/api/v1');
-      expect(image.modelId, 'gpt-image-1'); // NOT the chat model id
-      expect(image.apiKey, 'sk-main');
+    test(
+      'useMainConnection: true opts every slot into the main connection',
+      () async {
+        final store = MediaModelsStore.inMemory();
+        for (final slot in MediaSlot.all) {
+          await store.setOverride(
+            slot,
+            const MediaSlotOverride(
+              providerKind: '',
+              baseUrl: '',
+              modelId: '',
+              useMainConnection: true,
+            ),
+          );
+        }
 
-      final tts = await store.resolve(MediaSlot.audioTts, fallback);
-      expect(tts!.modelId, 'tts-1');
+        final image = await store.resolve(MediaSlot.imageGeneration, fallback);
+        expect(image, isNotNull);
+        expect(image!.fromOverride, isFalse);
+        expect(image.baseUrl, 'https://openrouter.ai/api/v1');
+        expect(image.modelId, 'gpt-image-1'); // NOT the chat model id
+        expect(image.apiKey, 'sk-main');
 
-      final transcription = await store.resolve(
-        MediaSlot.transcription,
-        fallback,
+        expect(
+          (await store.resolve(MediaSlot.audioTts, fallback))!.modelId,
+          'tts-1',
+        );
+        expect(
+          (await store.resolve(MediaSlot.transcription, fallback))!.modelId,
+          'whisper-1',
+        );
+        // vision preserves the intentional main-model behavior, opt-in only.
+        expect(
+          (await store.resolve(MediaSlot.vision, fallback))!.modelId,
+          'gpt-5',
+        );
+        // music/video have no OpenAI default: they ride the main model id.
+        expect(
+          (await store.resolve(MediaSlot.musicGeneration, fallback))!.modelId,
+          'gpt-5',
+        );
+        expect(
+          (await store.resolve(MediaSlot.videoGeneration, fallback))!.modelId,
+          'gpt-5',
+        );
+      },
+    );
+
+    test('an on-device main connection is never usable, even opted in', () async {
+      final store = MediaModelsStore.inMemory();
+      await store.setOverride(
+        MediaSlot.imageGeneration,
+        const MediaSlotOverride(
+          providerKind: '',
+          baseUrl: '',
+          modelId: '',
+          useMainConnection: true,
+        ),
       );
-      expect(transcription!.modelId, 'whisper-1');
-    });
-
-    test('the vision slot falls back to the chat model itself', () async {
-      final store = MediaModelsStore.inMemory();
-      final vision = await store.resolve(MediaSlot.vision, fallback);
-      expect(vision!.modelId, 'gpt-5');
-    });
-
-    test('music and video have no main-connection fallback', () async {
-      final store = MediaModelsStore.inMemory();
-      expect(await store.resolve(MediaSlot.musicGeneration, fallback), isNull);
-      expect(await store.resolve(MediaSlot.videoGeneration, fallback), isNull);
-    });
-
-    test('an on-device main connection is never a usable fallback', () async {
-      final store = MediaModelsStore.inMemory();
       final onDevice = await store.resolve(
         MediaSlot.imageGeneration,
         const MediaFallback(
@@ -294,7 +356,16 @@ void main() {
         resolveKey: (name) async => name == 'TTS_KEY' ? 'sk-tts' : null,
       );
       expect(endpoint!.voice, 'af_heart');
-      // The main-connection fallback never invents a voice.
+      // A main-connection opt-in never invents a voice.
+      await store.setOverride(
+        MediaSlot.imageGeneration,
+        const MediaSlotOverride(
+          providerKind: '',
+          baseUrl: '',
+          modelId: '',
+          useMainConnection: true,
+        ),
+      );
       final plain = await store.resolve(MediaSlot.imageGeneration, fallback);
       expect(plain!.voice, isNull);
     });

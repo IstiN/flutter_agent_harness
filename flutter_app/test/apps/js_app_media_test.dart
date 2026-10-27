@@ -45,30 +45,48 @@ void main() {
   })();
   ''';
 
-    MediaGateway fakeGateway(MemoryExecutionEnv env, List<http.Request> seen) =>
-        MediaGateway(
-          env: env,
-          fallback: () => const MediaFallback(
-            providerKind: 'openai-completions',
-            baseUrl: 'https://api.test/v1',
-            modelId: 'gpt-5',
-            apiKey: 'sk-main',
-          ),
-          store: MediaModelsStore.inMemory(),
-          httpClient: http_testing.MockClient((request) async {
-            seen.add(request);
-            return http.Response(
-              jsonEncode({
-                'data': [
-                  {
-                    'b64_json': base64Encode(Uint8List.fromList([1, 2, 3])),
-                  },
-                ],
-              }),
-              200,
-            );
+    /// gh-1844: the main connection serves a slot only through the explicit
+    /// per-slot opt-in — the bridge tests exercise the opted-in main path.
+    Future<MediaModelsStore> optedInStore(String slot) async {
+      final store = MediaModelsStore.inMemory();
+      await store.setOverride(
+        slot,
+        const MediaSlotOverride(
+          providerKind: '',
+          baseUrl: '',
+          modelId: '',
+          useMainConnection: true,
+        ),
+      );
+      return store;
+    }
+
+    Future<MediaGateway> fakeGateway(
+      MemoryExecutionEnv env,
+      List<http.Request> seen,
+    ) async => MediaGateway(
+      env: env,
+      fallback: () => const MediaFallback(
+        providerKind: 'openai-completions',
+        baseUrl: 'https://api.test/v1',
+        modelId: 'gpt-5',
+        apiKey: 'sk-main',
+      ),
+      store: await optedInStore(MediaSlot.imageGeneration),
+      httpClient: http_testing.MockClient((request) async {
+        seen.add(request);
+        return http.Response(
+          jsonEncode({
+            'data': [
+              {
+                'b64_json': base64Encode(Uint8List.fromList([1, 2, 3])),
+              },
+            ],
           }),
+          200,
         );
+      }),
+    );
 
     testWidgets(
       'fa.media.generateImage is denied without the media permission',
@@ -82,7 +100,7 @@ void main() {
             app: app(),
             env: env,
             permissions: const AppPermissions(),
-            mediaGateway: fakeGateway(env, seen),
+            mediaGateway: await fakeGateway(env, seen),
           );
           try {
             await denied.start();
@@ -109,7 +127,7 @@ void main() {
           app: app(),
           env: env,
           permissions: const AppPermissions(media: true),
-          mediaGateway: fakeGateway(env, seen),
+          mediaGateway: await fakeGateway(env, seen),
         );
         try {
           await granted.start();
@@ -152,7 +170,7 @@ void main() {
           app: app(),
           env: env,
           permissions: const AppPermissions(),
-          mediaGateway: fakeGateway(env, seen),
+          mediaGateway: await fakeGateway(env, seen),
         );
         try {
           await denied.start();
@@ -293,33 +311,37 @@ void main() {
   ''';
 
       /// A reader over a fake extractor + a fake vision endpoint answering a
-      /// fixed chat-completions reply.
-      VideoReader fakeReader(MemoryExecutionEnv env, FakeVideoApi video) =>
-          VideoReader(
-            video: video,
-            gateway: MediaGateway(
-              env: env,
-              fallback: () => const MediaFallback(
-                providerKind: 'openai-completions',
-                baseUrl: 'https://api.test/v1',
-                modelId: 'gpt-5',
-                apiKey: 'sk-main',
-              ),
-              store: MediaModelsStore.inMemory(),
-            ),
-            httpClient: http_testing.MockClient((request) async {
-              return http.Response(
-                jsonEncode({
-                  'choices': [
-                    {
-                      'message': {'content': 'A robot dances.'},
-                    },
-                  ],
-                }),
-                200,
-              );
+      /// fixed chat-completions reply. gh-1844: the vision slot opts into the
+      /// main connection explicitly (modelId 'gpt-5' passes the
+      /// modelIdSuggestsVision gate).
+      Future<VideoReader> fakeReader(
+        MemoryExecutionEnv env,
+        FakeVideoApi video,
+      ) async => VideoReader(
+        video: video,
+        gateway: MediaGateway(
+          env: env,
+          fallback: () => const MediaFallback(
+            providerKind: 'openai-completions',
+            baseUrl: 'https://api.test/v1',
+            modelId: 'gpt-5',
+            apiKey: 'sk-main',
+          ),
+          store: await optedInStore(MediaSlot.vision),
+        ),
+        httpClient: http_testing.MockClient((request) async {
+          return http.Response(
+            jsonEncode({
+              'choices': [
+                {
+                  'message': {'content': 'A robot dances.'},
+                },
+              ],
             }),
+            200,
           );
+        }),
+      );
 
       testWidgets('is denied without the media permission', (tester) async {
         await tester.runAsync(() async {
@@ -332,7 +354,7 @@ void main() {
             app: app(),
             env: env,
             permissions: const AppPermissions(),
-            videoReader: fakeReader(env, video),
+            videoReader: await fakeReader(env, video),
           );
           try {
             await denied.start();
@@ -385,7 +407,7 @@ void main() {
             app: app(),
             env: env,
             permissions: const AppPermissions(media: true),
-            videoReader: fakeReader(env, video),
+            videoReader: await fakeReader(env, video),
           );
           try {
             await granted.start();
@@ -410,7 +432,7 @@ void main() {
             app: app(),
             env: env,
             permissions: const AppPermissions(media: true),
-            videoReader: fakeReader(env, FakeVideoApi()),
+            videoReader: await fakeReader(env, FakeVideoApi()),
           );
           try {
             await granted.start();

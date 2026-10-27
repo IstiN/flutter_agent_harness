@@ -1,0 +1,35 @@
+# crap4dart configuration for the fa_ui package.
+# https://github.com/IstiN/crap4dart
+#
+# RATCHET (issue #1848): the threshold is pinned at the CURRENT worst score
+# measured by the SAME pipeline the card mandates — the fa_ui flutter test
+# shard lcov (scripts/faui_test_shards.json, merged by faui-coverage).
+# Pushes may only make the codebase BETTER, never worse; lower the
+# threshold whenever the top offenders are fixed. Only down.
+
+sources: [lib]
+
+exclude:
+  - '**.g.dart'
+  - '**.freezed.dart'
+  - '**.mocks.dart'
+  - 'build/**'
+
+crap:
+  enabled: true
+  # Tier 3 FINAL (issue #1848, fa_ui 24->12 of the 132->48->24->12 ladder):
+  # providerMarkKeyForBaseUrl became a rule table (the _presetMarkKeys
+  # doctrine), _onPointerUp split into finish-right-drag / tap-selection /
+  # dragged-selection pieces, and the trajectory_details raw/timing arms
+  # gained real branch tests. The FINAL measured worst is 12.0 — the
+  # campaign target reached; fa_ui now holds the same 12.0 ratchet as core
+  # and flutter_app. Only down.
+  threshold: 12.0
+
+coverage:
+  # run_tests: false — the merged shard lcov (faui-coverage artifact /
+  # scripts/merge_lcov.py) is the source; never re-run the suite here.
+  run_tests: false
+  lcov_path: coverage/lcov.info
+  required: true
+  branch_coverage: true

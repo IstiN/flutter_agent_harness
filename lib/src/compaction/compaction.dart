@@ -435,23 +435,41 @@ final class CompactionSettings {
 
   /// Creates settings scaled to a model's context [window] (in tokens).
   ///
-  /// pi's fixed defaults ([defaultCompactionSettings]: reserve 16384, keep
-  /// 20000) exceed the whole window of a small on-device model (2048-8192),
-  /// where `shouldCompact` would never (or always) fire. The scaling rule:
+  /// gh-1742 (AC3): PROPORTIONAL headroom above the legacy-parity band.
+  /// The legacy flat reserve (16,384) was tuned for 200k windows — 1.6%
+  /// of a 1M window, which let real input ride 976k–982k for hours on the
+  /// kimi-k3 session before the first auto-compaction. The scaling rule:
   ///
-  /// - `reserveTokens = min(16384, max(1024, window ~/ 4))` — a quarter of
-  ///   the window, clamped into pi's range, covers the summary prompt and
-  ///   its output;
-  /// - `keepRecentTokens = min(20000, max(2048, window ~/ 2))` — half the
-  ///   window, clamped into pi's range, stays as recent context.
+  /// - `reserveTokens = min(65536, max(window ~/ 16, legacyReserve))` —
+  ///   6.25% of the window, clamped to 64Ki, floored by the EXACT legacy
+  ///   curve (`min(16384, max(1024, window ~/ 4))`, degenerate clamps
+  ///   included). The legacy term dominates below 262,144 (where
+  ///   `window/16` would undercut it — the hosted 128k/200k class rides
+  ///   the legacy line exactly, so an estimate-only provider (E1) still
+  ///   compacts no later than before); the proportional term takes over
+  ///   above it, so a 1M window keeps ≥60k headroom at the trigger
+  ///   (enough to absorb one huge tool result plus estimator drift);
+  /// - `keepRecentTokens = min(131072, max(window ~/ 8, legacyKeep))` —
+  ///   the post-compaction floor scales with the window (12.5%, clamped
+  ///   128Ki) above the mirrored legacy curve
+  ///   (`min(20000, max(2048, window ~/ 2))`), so the sawtooth restarts
+  ///   proportional on big windows instead of always ~20k.
   ///
-  /// At 128000+ this reproduces pi's defaults exactly. Degenerate small
-  /// windows relax the floors proportionally so the reserve never eats half
-  /// the window and the kept region never eats all of it (below that,
-  /// compaction could not free anything).
+  /// Monotone in the window: a bigger window reserves (and keeps) as much
+  /// or more (max of two monotone curves under monotone clamps).
+  /// Degenerate small windows relax the floors proportionally so the
+  /// reserve never eats half the window and the kept region never eats
+  /// all of it (below that, compaction could not free anything).
   factory CompactionSettings.forWindow(int window) {
-    var reserveTokens = min(16384, max(1024, window ~/ 4));
-    var keepRecentTokens = min(20000, max(2048, window ~/ 2));
+    // Legacy-parity floors (gh-1742 AC3 + review round 1, comment 1):
+    // the pre-gh-1742 curves, byte-identical. The reserve floor is what
+    // keeps the (16k, 262k) band — most hosted sessions — firing no
+    // later than before; `window/16` alone compacts up to 12,288 tokens
+    // later there.
+    final legacyReserve = min(16384, max(1024, window ~/ 4));
+    final legacyKeep = min(20000, max(2048, window ~/ 2));
+    var reserveTokens = min(65536, max(window ~/ 16, legacyReserve));
+    var keepRecentTokens = min(131072, max(window ~/ 8, legacyKeep));
     if (reserveTokens >= window ~/ 2) {
       reserveTokens = max(128, window ~/ 4);
     }
@@ -482,6 +500,13 @@ const defaultCompactionSettings = CompactionSettings(
   reserveTokens: 16384,
   keepRecentTokens: 20000,
 );
+
+/// Cap for the issue #1914 retry escalation's halved retention budget: a
+/// retry pass must cut deeper than the pass that freed nothing, but it still
+/// retains a viable recent window (mirrors the smallest legacy
+/// `CompactionSettings.forWindow` keep floor). Never INFLATES a configured
+/// keep below this — the floor is `min(this, the configured keep)`.
+const _minRetryKeepRecentTokens = 2048;
 
 /// Whether context usage exceeds the compaction threshold.
 ///
@@ -654,12 +679,25 @@ int _snapBackOverNonMessages(
 /// estimated tokens until the budget is exhausted, then snaps the cut forward
 /// to the next valid cut point (never a tool result) and backwards over
 /// non-message records so configuration entries stay with the kept region.
+///
+/// [minFirstKeptIndex] is the retry-escalation floor (issue #1914): when the
+/// backward walk never reaches [keepRecentTokens] — the estimator's chars/4
+/// tally can stay under the budget across a transcript the provider prices
+/// far higher (dense tokenizers, usage anchors, system/tool overhead the
+/// per-message walk never sees) — the fallback cut lands on the FIRST valid
+/// cut point and keeps essentially the whole branch, so a retry pass with
+/// identical inputs repeats the identical cut and frees nothing again. When
+/// the natural cut lands OLDER than this floor, it advances to the first
+/// valid cut point at/after the floor, guaranteeing a retry cut is strictly
+/// newer than the cut that just failed. A natural cut newer than the floor
+/// is left alone.
 CutPointResult findCutPoint(
   List<SessionRecord> entries,
   int startIndex,
   int endIndex,
-  int keepRecentTokens,
-) {
+  int keepRecentTokens, {
+  int? minFirstKeptIndex,
+}) {
   final cutPoints = _findValidCutPoints(entries, startIndex, endIndex);
 
   if (cutPoints.isEmpty) {
@@ -677,6 +715,13 @@ CutPointResult findCutPoint(
     cutPoints,
   );
   cutIndex = _snapBackOverNonMessages(entries, cutIndex, startIndex);
+  if (minFirstKeptIndex != null && cutIndex < minFirstKeptIndex) {
+    final advanced = cutPoints.firstWhere(
+      (cutPoint) => cutPoint >= minFirstKeptIndex,
+      orElse: () => -1,
+    );
+    if (advanced >= 0) cutIndex = advanced;
+  }
   final cutEntry = entries[cutIndex];
   final isUserMessage =
       cutEntry is MessageRecord && cutEntry.message.role == 'user';
@@ -1197,19 +1242,22 @@ List<Message> _entryToSummarizableMessages(SessionRecord entry) {
 /// negative) into a preparation: its summary for iterative updates, its kept
 /// boundary as the new summarize-region start, and its accumulated file
 /// operations into [fileOps].
-({String? previousSummary, int boundaryStart}) _previousCompactionContext(
+({String? previousSummary, int boundaryStart, int prevKeptIndex})
+_previousCompactionContext(
   List<SessionRecord> pathEntries,
   int prevCompactionIndex,
   FileOperations fileOps,
 ) {
   String? previousSummary;
   var boundaryStart = 0;
+  var prevKeptIndex = -1;
   if (prevCompactionIndex >= 0) {
     final prevCompaction = pathEntries[prevCompactionIndex] as CompactionRecord;
     previousSummary = prevCompaction.summary;
     final firstKeptEntryIndex = pathEntries.indexWhere(
       (entry) => entry.id == prevCompaction.firstKeptEntryId,
     );
+    prevKeptIndex = firstKeptEntryIndex;
     boundaryStart = firstKeptEntryIndex >= 0
         ? firstKeptEntryIndex
         : prevCompactionIndex + 1;
@@ -1227,7 +1275,11 @@ List<Message> _entryToSummarizableMessages(SessionRecord entry) {
       }
     }
   }
-  return (previousSummary: previousSummary, boundaryStart: boundaryStart);
+  return (
+    previousSummary: previousSummary,
+    boundaryStart: boundaryStart,
+    prevKeptIndex: prevKeptIndex,
+  );
 }
 
 /// Index of the last [CompactionRecord] in [pathEntries], or -1 when there
@@ -1257,6 +1309,41 @@ void _accumulateFileOps(List<Message> messages, FileOperations fileOps) {
   for (final message in messages) {
     extractFileOpsFromMessage(message, fileOps);
   }
+}
+
+/// Issue #1914 retry escalation: a retry pass whose cut lands at or older
+/// than the previous fold's kept boundary repeats the identical cut — the
+/// backward chars/4 walk never reached keepRecentTokens over a transcript
+/// the provider prices far higher (dense tokenizers, usage anchors,
+/// system/tool overhead the per-message walk never sees), so the fallback
+/// keeps essentially the whole branch and the retry frees nothing. Detected
+/// directly (not predicted), so a healthy iterative fold — whose natural cut
+/// is always newer than the previous kept boundary — keeps the shipped
+/// parameters byte-for-byte. On a repeat: halve the retention budget (floored
+/// at half the configured keep — a retry still retains a viable recent
+/// window) and advance the cut strictly past the failed boundary, so every
+/// retry makes progress and the chain converges toward a real fold.
+CutPointResult _escalateRepeatedCut({
+  required List<SessionRecord> pathEntries,
+  required int boundaryStart,
+  required int prevCompactionIndex,
+  required int prevKeptIndex,
+  required CompactionSettings settings,
+  required CutPointResult natural,
+}) {
+  if (prevCompactionIndex < 0 || prevKeptIndex < boundaryStart) return natural;
+  if (natural.firstKeptEntryIndex > prevKeptIndex) return natural;
+  final escalatedKeep = max(
+    min(_minRetryKeepRecentTokens, settings.keepRecentTokens),
+    settings.keepRecentTokens >> 1,
+  );
+  return findCutPoint(
+    pathEntries,
+    boundaryStart,
+    pathEntries.length,
+    escalatedKeep,
+    minFirstKeptIndex: prevKeptIndex + 1,
+  );
 }
 
 /// The compaction pipeline over a [Session], mirroring pi's harness-level
@@ -1339,11 +1426,18 @@ final class CompactionManager {
     final previousSummary = prevContext.previousSummary;
     final boundaryStart = prevContext.boundaryStart;
 
-    final cutPoint = findCutPoint(
-      pathEntries,
-      boundaryStart,
-      pathEntries.length,
-      effectiveSettings.keepRecentTokens,
+    final cutPoint = _escalateRepeatedCut(
+      pathEntries: pathEntries,
+      boundaryStart: boundaryStart,
+      prevCompactionIndex: prevCompactionIndex,
+      prevKeptIndex: prevContext.prevKeptIndex,
+      settings: effectiveSettings,
+      natural: findCutPoint(
+        pathEntries,
+        boundaryStart,
+        pathEntries.length,
+        effectiveSettings.keepRecentTokens,
+      ),
     );
     final firstKeptEntryId = pathEntries[cutPoint.firstKeptEntryIndex].id;
 

@@ -13,6 +13,7 @@ import 'dart:typed_data';
 
 import '../cancel_token.dart';
 import '../cube/config/fs_policy.dart';
+import 'bash_guard_io.dart';
 import 'execution_env.dart';
 import 'free_space_io.dart';
 import 'job_log_ceiling.dart';
@@ -541,7 +542,15 @@ final class LocalShell implements Shell, BackgroundShell {
   /// directories (`/opt/homebrew/bin`, `/usr/local/bin` when they exist) —
   /// GUI-launched apps (the packaged macOS app) inherit a minimal PATH that
   /// would otherwise hide user-installed tools (Homebrew python/node).
-  static Map<String, String> _environment(ShellExecOptions? options) {
+  ///
+  /// gh-1763: with a provisioned [guard], the caller-supplied PATH gains
+  /// the bash-guard shim dir at its head and the protected pid chain rides
+  /// [bashGuardPidsEnv] (a caller-supplied value wins — tests inject a
+  /// custom set that way).
+  static Map<String, String> _environment(
+    ShellExecOptions? options, {
+    BashGuardProvision? guard,
+  }) {
     final given = options?.env;
     final base = <String, String>{...Platform.environment, ...?given};
     // Non-interactive tool runs: a git clone against an auth-requiring
@@ -553,15 +562,10 @@ final class LocalShell implements Shell, BackgroundShell {
     // disabled", GIT_ASKPASS=echo keeps GUI credential helpers out of an
     // unattended child (echo returns an empty credential — auth fails
     // immediately instead of prompting).
-    const nonInteractiveDefaults = {
+    _applyIfUnset(base, const {
       'GIT_TERMINAL_PROMPT': '0',
       'GIT_ASKPASS': 'echo',
-    };
-    for (final entry in nonInteractiveDefaults.entries) {
-      if (given == null || !given.containsKey(entry.key)) {
-        base[entry.key] = entry.value;
-      }
-    }
+    }, given);
     var current = base['PATH'] ?? '';
     if (current.isEmpty) {
       // An explicit env without a PATH (or a minimal GUI-app PATH): keep
@@ -574,45 +578,162 @@ final class LocalShell implements Shell, BackgroundShell {
       if (!parts.contains(dir) && Directory(dir).existsSync()) parts.add(dir);
     }
     base['PATH'] = parts.join(':');
+    if (guard != null) {
+      final overlay = guard.environmentOverlay();
+      final shimDir = overlay.remove(bashGuardShimDirEnv);
+      // A caller-supplied pid set wins (tests inject a custom set; hosts
+      // never ship one).
+      _applyIfUnset(base, overlay, given);
+      if (shimDir != null) {
+        base['PATH'] = '$shimDir:${base['PATH'] ?? ''}';
+      }
+    }
     return base;
   }
 
-  static Future<Result<Process, ExecutionError>> _start(
+  /// Copies [overlay] into [base] for every key the caller did not set
+  /// explicitly (a caller's explicit env always wins).
+  static void _applyIfUnset(
+    Map<String, String> base,
+    Map<String, String> overlay,
+    Map<String, String>? given,
+  ) {
+    for (final entry in overlay.entries) {
+      if (given == null || !given.containsKey(entry.key)) {
+        base[entry.key] = entry.value;
+      }
+    }
+  }
+
+  /// The bash-guard provision (gh-1763), built once per process: the
+  /// protected pid chain (harness + ancestors + process group) and the
+  /// `pkill`/`killall` PATH shims. Null on Windows or when provisioning
+  /// fails — the legacy delivery stays.
+  static Future<BashGuardProvision?>? _bashGuardMemo;
+  static Future<BashGuardProvision?> _bashGuard() =>
+      _bashGuardMemo ??= provisionBashGuard();
+
+  /// Writes the bash tool script to a per-exec private temp dir (gh-1763
+  /// AC1): the wrapper argv then carries only `. "$1"` plus the path — the
+  /// script body (with any `pkill -f <pattern>`) never lands in
+  /// `/proc/<pid>/cmdline`, so a broad kill inside the script cannot match
+  /// its own shell. The caller deletes the dir once the process exits.
+  /// Null on any failure → the legacy `sh -c <command>` delivery.
+  static Future<Directory?> _writeGuardedScript(String command) async {
+    Directory dir;
+    try {
+      dir = await Directory.systemTemp.createTemp('fa_sh_cmd_');
+    } on Object {
+      return null;
+    }
+    try {
+      await File(
+        '${dir.path}/cmd.sh',
+      ).writeAsString('${bashGuardPrelude()}\n$command\n');
+      return dir;
+    } on Object {
+      try {
+        dir.deleteSync(recursive: true);
+      } on Object {
+        // Best-effort cleanup of the failed write.
+      }
+      return null;
+    }
+  }
+
+  static Future<(Result<Process, ExecutionError>, Directory?)> _start(
     String command,
     ShellExecOptions? options, {
     bool ownSession = false,
   }) async {
+    // gh-1763 AC1 (POSIX only; Windows `cmd /c` keeps the verbatim
+    // command — it has no pkill to self-match): deliver the script from a
+    // per-exec temp file so the wrapper argv never carries the script
+    // body. `$0` stays `sh`; the prelude's `set --` restores `sh -c`
+    // positional-parameter parity.
+    //
     // ownSession (issue #517): `setsid` makes the job its own session and
     // process-group leader — pgid == pid — so stop() can signal the whole
     // tree and the boot sweep can recognize leftover groups. setsid execs
     // sh in place, so the spawned pid is still the tracked one.
+    final guard = await _bashGuard();
+    final scriptDir = Platform.isWindows
+        ? null
+        : await _writeGuardedScript(command);
+    final (executable, args) = _childCommand(command, scriptDir, ownSession);
+    try {
+      final process = await Process.start(
+        executable,
+        args,
+        workingDirectory: options?.cwd,
+        environment: _environment(options, guard: guard),
+      );
+      _deleteScriptWhenExited(scriptDir, process);
+      return (Ok<Process, ExecutionError>(process), scriptDir);
+    } on Object catch (error) {
+      _deleteScriptNow(scriptDir);
+      return (
+        Err<Process, ExecutionError>(
+          ExecutionError(
+            ExecutionErrorCode.spawnError,
+            error.toString(),
+            cause: error,
+          ),
+        ),
+        null,
+      );
+    }
+  }
+
+  /// The child argv for one tool run. gh-1763 AC1 (POSIX only; Windows
+  /// `cmd /c` keeps the verbatim command — it has no pkill to
+  /// self-match): the script body rides a per-exec temp file so the
+  /// wrapper argv never carries it. `$0` stays `sh`; the prelude's
+  /// `set --` restores `sh -c` positional-parameter parity.
+  ///
+  /// ownSession (issue #517): `setsid` makes the job its own session and
+  /// process-group leader — pgid == pid — so stop() can signal the whole
+  /// tree and the boot sweep can recognize leftover groups. setsid execs
+  /// sh in place, so the spawned pid is still the tracked one.
+  static (String, List<String>) _childCommand(
+    String command,
+    Directory? scriptDir,
+    bool ownSession,
+  ) {
+    final effectiveCommand = scriptDir == null ? command : '. "\$1"';
     final executable = Platform.isWindows
         ? 'cmd'
         : ownSession
         ? 'setsid'
         : 'sh';
-    final args = Platform.isWindows
-        ? ['/c', command]
-        : ownSession
-        ? ['sh', '-c', command]
-        : ['-c', command];
+    final List<String> args;
+    if (Platform.isWindows) {
+      args = ['/c', command];
+    } else if (scriptDir != null) {
+      final scriptPath = '${scriptDir.path}/cmd.sh';
+      args = ownSession
+          ? ['sh', '-c', effectiveCommand, 'sh', scriptPath]
+          : ['-c', effectiveCommand, 'sh', scriptPath];
+    } else {
+      args = ownSession ? ['sh', '-c', command] : ['-c', command];
+    }
+    return (executable, args);
+  }
+
+  /// The script file must outlive the shell that reads it — remove it
+  /// once the child exits (nothing inside can reference the path: `$0`
+  /// is `sh` and the path leaks nowhere else).
+  static void _deleteScriptWhenExited(Directory? scriptDir, Process process) {
+    if (scriptDir == null) return;
+    unawaited(process.exitCode.then((_) => _deleteScriptNow(scriptDir)));
+  }
+
+  static void _deleteScriptNow(Directory? scriptDir) {
+    if (scriptDir == null) return;
     try {
-      return Ok(
-        await Process.start(
-          executable,
-          args,
-          workingDirectory: options?.cwd,
-          environment: _environment(options),
-        ),
-      );
-    } on Object catch (error) {
-      return Err(
-        ExecutionError(
-          ExecutionErrorCode.spawnError,
-          error.toString(),
-          cause: error,
-        ),
-      );
+      scriptDir.deleteSync(recursive: true);
+    } on Object {
+      // Best-effort; a leaked temp dir is reaped by the OS.
     }
   }
 
@@ -710,7 +831,7 @@ final class LocalShell implements Shell, BackgroundShell {
     // cancel paths below then reap the WHOLE tree with one group signal
     // instead of stranding a surviving grandchild on the output pipe.
     final ownGroup = LocalShell.ownProcessGroupAvailable;
-    final started = await _start(command, options, ownSession: ownGroup);
+    final (started, _) = await _start(command, options, ownSession: ownGroup);
     if (started.isErr) return Err(started.errorOrNull!);
     final process = started.valueOrNull!;
 
@@ -891,7 +1012,7 @@ final class LocalShell implements Shell, BackgroundShell {
       );
     }
     final ownGroup = LocalShell.ownProcessGroupAvailable;
-    final started = await _start(command, options, ownSession: ownGroup);
+    final (started, _) = await _start(command, options, ownSession: ownGroup);
     if (started.isErr) return Err(started.errorOrNull!);
     final process = started.valueOrNull!;
     // Feed optional stdin data (bash tool `stdin` param). With a live
@@ -1178,6 +1299,13 @@ final class _LocalShellJob implements ShellJob {
   @override
   bool writeStdin(String data) {
     if (!isRunning) return false;
+    return _tryWriteStdin(data);
+  }
+
+  /// Writes [data] to the live process's stdin; false when the pipe
+  /// rejects the write (the process settled between the [isRunning] check
+  /// and the write — the exit race).
+  bool _tryWriteStdin(String data) {
     try {
       _process.stdin.write(data);
       return true;

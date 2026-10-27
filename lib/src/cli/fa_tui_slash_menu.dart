@@ -67,7 +67,14 @@ extension FaTuiModelSlashMenu on FaTuiModel {
   }
 
   /// Slash-menu edit keys: backspace and typed characters keep editing the
-  /// input so `/models` can be typed in full.
+  /// input so `/models` can be typed in full. Command chords are ignored —
+  /// the decoder puts the BASE LETTER into `text` for control bytes
+  /// (ctrl+s → text 's'), and the catch-all insert below would otherwise
+  /// type that letter into the typed prefix exactly while the menu is open
+  /// (gh-1805: `/memory` picked after a Ctrl+S submit landed as `/smemory`).
+  /// Same guard as the other insert surfaces (_handleCharInsertKey,
+  /// _pickerTypeFilter); shift is deliberately not blocked so shifted
+  /// letters still type.
   (Model, Cmd?) _handleSlashMenuEditKey(KeyMsg msg) {
     switch (msg.key) {
       case 'backspace':
@@ -79,6 +86,7 @@ extension FaTuiModelSlashMenu on FaTuiModel {
         }
         return (this, null);
       default:
+        if (FaTuiModel._isCommandKeystroke(msg.key)) return (this, null);
         final text = msg.keyEvent.text;
         if (text.isNotEmpty && text.length == 1) {
           return (

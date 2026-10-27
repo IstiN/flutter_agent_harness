@@ -322,12 +322,16 @@ void main() {
         200,
         body:
             '[{"id":"m1","class":"owner","displayName":"A",'
-            '"presence":"live"},{"id":"m2","class":"agent",'
-            '"displayName":"B","presence":"offline"}]',
+            '"presence":"live","access":{"scope":"network"}},'
+            '{"id":"m2","class":"agent","displayName":"B",'
+            '"presence":"offline","access":{"scope":"channels",'
+            '"channelIds":["c1","c2"]}}]',
       );
       final members = await client.listMembers('net1');
       expect(members, hasLength(2));
+      expect(members[0].access?.scope, MemberAccessScope.network);
       expect(members[1].memberClass, MemberClass.agent);
+      expect(members[1].access?.channelIds, ['c1', 'c2']);
     });
 
     test('listChannels parses channels', () async {
@@ -447,6 +451,19 @@ void main() {
       expect(agents.single.wakeupRegistered, isTrue);
     });
 
+    test('deleteAgent uses the owner/admin management route', () async {
+      client = build(jwtToken: 'jwt-1', sessionToken: 'sess-1');
+      httpClient.respond(204);
+
+      await client.deleteAgent('net1', 'agent-1');
+
+      final req = httpClient.requests.single;
+      expect(req.method, 'DELETE');
+      expect(req.url.path, '/api/networks/net1/agents/agent-1');
+      expect(req.headers['authorization'], 'Bearer jwt-1');
+      expect(req.body, isEmpty);
+    });
+
     group('enrollAgent', () {
       const enrollBody =
           '{"name":"ops-bot","hubUrl":"wss://hub.fa1.dev/ws",'
@@ -529,6 +546,110 @@ void main() {
         expect(e.statusCode, 503);
         expect(e.code, 'hub_unavailable');
       });
+    });
+
+    test('createAgentCredential posts to enrollments without rotating the '
+        'legacy name credential', () async {
+      client = build(jwtToken: 'jwt-1', sessionToken: 'sess-1');
+      httpClient.respond(
+        201,
+        body:
+            '{"name":"ops-bot","hubUrl":"wss://hub.fa1.dev/ws",'
+            '"clientSecret":"sk_independent_123",'
+            '"enrolledAt":"2026-02-03T04:05:06Z"}',
+      );
+
+      final enrollment = await client.createAgentCredential(
+        'net1',
+        name: 'ops-bot',
+      );
+
+      expect(enrollment.name, 'ops-bot');
+      expect(enrollment.clientSecret, 'sk_independent_123');
+      final req = httpClient.requests.single;
+      expect(req.method, 'POST');
+      expect(req.url.path, '/api/networks/net1/agents/enrollments');
+      expect(jsonDecode(req.body), {'name': 'ops-bot'});
+      expect(req.headers['authorization'], 'Bearer jwt-1');
+    });
+
+    test('createAgentCredential surfaces old-server 405 without a legacy '
+        'rotation fallback', () async {
+      client = build(jwtToken: 'jwt-1');
+      httpClient.respond(405);
+
+      await expectLater(
+        client.createAgentCredential('net1', name: 'ops-bot'),
+        throwsA(
+          isA<FaNetworkException>().having(
+            (e) => e.statusCode,
+            'statusCode',
+            405,
+          ),
+        ),
+      );
+      expect(httpClient.requests, hasLength(1));
+      expect(
+        httpClient.requests.single.url.path,
+        '/api/networks/net1/agents/enrollments',
+      );
+    });
+
+    test('createAgentCredential explains an old hub enroll_create rejection '
+        'without retrying or rotating', () async {
+      client = build(jwtToken: 'jwt-1');
+      httpClient.respond(
+        503,
+        body:
+            '{"error":{"code":"hub_unavailable",'
+            '"message":"hub rejected enroll_create: bad_frame unknown op '
+            'enroll_create: dap: unknown enrollment operation"}}',
+        headers: {'retry-after': '7'},
+      );
+
+      await expectLater(
+        client.createAgentCredential('net1', name: 'ops-bot'),
+        throwsA(
+          isA<FaNetworkException>()
+              .having((e) => e.statusCode, 'statusCode', 503)
+              .having((e) => e.code, 'code', 'enrollment_unsupported')
+              .having(
+                (e) => e.message,
+                'message',
+                allOf(
+                  contains('Update the DAP hub'),
+                  contains('existing agent credentials were not changed'),
+                  isNot(contains('bad_frame')),
+                ),
+              )
+              .having((e) => e.retryAfterSeconds, 'retryAfterSeconds', 7),
+        ),
+      );
+      expect(httpClient.requests, hasLength(1));
+      expect(
+        httpClient.requests.single.url.path,
+        '/api/networks/net1/agents/enrollments',
+      );
+    });
+
+    test('createAgentCredential preserves unrelated hub failures', () async {
+      client = build(jwtToken: 'jwt-1');
+      httpClient.respond(
+        503,
+        body:
+            '{"error":{"code":"hub_unavailable",'
+            '"message":"hub offline"}}',
+      );
+
+      await expectLater(
+        client.createAgentCredential('net1', name: 'ops-bot'),
+        throwsA(
+          isA<FaNetworkException>()
+              .having((e) => e.code, 'code', 'hub_unavailable')
+              .having((e) => e.message, 'message', 'hub offline'),
+        ),
+      );
+      expect(httpClient.requests, hasLength(1));
     });
 
     test('getWakeup parses the registration', () async {

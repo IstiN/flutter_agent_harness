@@ -128,6 +128,10 @@ const rootSpecs = <PromptSpec>[
     requiredToken: '{{cwd}}',
   ),
   PromptSpec(
+    source: 'prompts/context/project_context_read_full.md',
+    constName: 'projectContextReadFullPrompt',
+  ),
+  PromptSpec(
     source: 'prompts/cli/messaging_section.md',
     constName: 'cliMessagingSectionPrompt',
     requiredToken: '{{mailbox}}',
@@ -196,6 +200,11 @@ const rootSpecs = <PromptSpec>[
     constName: 'taskAgentTaskPrompt',
   ),
   PromptSpec(
+    source: 'prompts/task/report_size_contract.md',
+    constName: 'taskReportSizeContractPrompt',
+    requiredToken: '{{budget}}',
+  ),
+  PromptSpec(
     source: 'prompts/task/agent_explore.md',
     constName: 'taskAgentExplorePrompt',
   ),
@@ -235,6 +244,11 @@ const rootSpecs = <PromptSpec>[
     source: 'prompts/ttsr/interrupt.md',
     constName: 'ttsrInterruptPrompt',
     requiredToken: '{{content}}',
+  ),
+  PromptSpec(
+    source: 'prompts/spill/user_read_instruction.md',
+    constName: 'userSpillInstructionPrompt',
+    requiredToken: '{{path}}',
   ),
 ];
 

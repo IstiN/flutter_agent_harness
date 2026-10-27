@@ -53,8 +53,7 @@ class AgentToolAvailability {
     _gate = ToolAvailabilityGate(toolsById: toolsById);
     // Load-mode discovery surface (issue #680): omp keeps the
     // `discover_tools` path live, pi keeps the exact benchmark shape.
-    _gate.discoveryEnabled =
-        discoveryEnabledByLoadMode[_loadMode] ?? false;
+    _gate.discoveryEnabled = discoveryEnabledByLoadMode[_loadMode] ?? false;
     // Tombstones calls to disabled tools even when the model names one.
     agent.toolExecutor = _gate.wrapExecutor(agent.toolExecutor);
     _apply();
@@ -114,23 +113,36 @@ class AgentToolAvailability {
   }
 }
 
-/// Why the app cannot wire [id] — structural facts about this host.
-String _absentToolReason(String id, {required bool onDevice}) => switch (id) {
-  'web_search' ||
-  'transcribe_audio' ||
-  'generate_image' ||
-  'generate_video' when onDevice => 'not available on-device',
-  'sqlite' =>
-    'requires the FFI SQLite engine — not available in the app sandbox',
-  'lsp' => 'language-server process transport is CLI-only',
-  'mcp' => 'MCP servers connect through the CLI harness',
-  'dap' => 'DAP hub transport is CLI-only',
-  'checkpoint' || 'rewind' => 'checkpointing is CLI-only',
-  // Office tools register only inside the Outlook add-in host (issue
-  // #327 AC5): the row says so instead of a generic unwired note.
-  'outlook' => 'available in the Outlook add-in host only',
-  _ => 'not wired by this host',
+/// The media-generation ids that are simply not wired on the on-device
+/// (JS) engine.
+const _onDeviceAbsentTools = {
+  'web_search',
+  'transcribe_audio',
+  'generate_image',
+  'generate_video',
 };
+
+/// Why the app cannot wire [id] — CLI-only transports and desktop-only
+/// engines (exact ids; `checkpoint`/`rewind` share a reason; office
+/// tools register only inside the Outlook add-in host, issue #327 AC5).
+/// An id missing here reads as the generic "not wired by this host".
+const _absentToolReasons = <String, String>{
+  'sqlite': 'requires the FFI SQLite engine — not available in the app sandbox',
+  'lsp': 'language-server process transport is CLI-only',
+  'mcp': 'MCP servers connect through the CLI harness',
+  'dap': 'DAP hub transport is CLI-only',
+  'checkpoint': 'checkpointing is CLI-only',
+  'rewind': 'checkpointing is CLI-only',
+  'outlook': 'available in the Outlook add-in host only',
+};
+
+/// Why the app cannot wire [id] — structural facts about this host.
+String _absentToolReason(String id, {required bool onDevice}) {
+  if (onDevice && _onDeviceAbsentTools.contains(id)) {
+    return 'not available on-device';
+  }
+  return _absentToolReasons[id] ?? 'not wired by this host';
+}
 
 /// Builds the capability floor for every known id from the ACTUAL tool
 /// wiring: an id is present iff at least one of its tools was registered.

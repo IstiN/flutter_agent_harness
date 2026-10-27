@@ -36,6 +36,37 @@
 //       source of a locally resolvable Flutter SDK (env-dependent, named
 //       skip) — the class of drift where Flutter restructures the plugin
 //       file and the action's grep silently yields nothing.
+//
+// gh-1757 — the same failure class returned through the SECOND component
+// the same Gradle configuration provisions: v1.0.619's build-android leg
+// died at `:jni:configureCMakeDebug[arm64-v8a]` ("Failed to install the
+// following SDK components: cmake;3.22.1", caused by
+// java.util.zip.ZipException: Archive is not a ZIP archive). The `:jni`
+// module is the Flutter plugin of the transitive `jni` package (via
+// path_provider_android); its android/build.gradle wires
+// externalNativeBuild.cmake with the version line commented out upstream,
+// so AGP falls back to its default CMake 3.22.1 — which the runner image
+// does not carry under $ANDROID_HOME/cmake/, and AGP auto-installs
+// mid-configuration with NO retry. One corrupt download red'd the leg,
+// the aggregate Quality gate (its only failed input: R_BUILD_ANDROID =
+// failure), and the Advance vpinned marker job (a red release publishes
+// no SHA256SUMS, so pin_release.sh refused to move the marker). The cure
+// is the valve gh-1655 built for the NDK, applied to the sibling
+// component in the same action:
+//  AC6  the action also pre-installs the AGP-default CMake
+//       (cmake;3.22.1 — the `:jni` module pins no cmake version),
+//       skips idempotently when $ANDROID_HOME/cmake/<version>/bin/cmake
+//       already exists, wipes a partially-extracted dir before each
+//       bounded-retry attempt, verifies the binary after the install,
+//       and fails LOUDLY when the component is still missing,
+//  AC7  the CMake pin stays coupled to the pinned AGP version: the
+//       default CMake is what AGP provisions precisely because `:jni`
+//       pins nothing, so the version in the action is a reviewed literal
+//       (AGP's default is not resolvable from disk before Gradle runs)
+//       cross-checked against the AGP pin in
+//       flutter_app/android/settings.gradle.kts via the
+//       agpVersionToDefaultCmake map — an AGP bump fails this guard
+//       until the pin is re-derived TOGETHER.
 import 'dart:io';
 
 import 'package:test/test.dart';
@@ -46,6 +77,16 @@ String read(String path) => File(path).readAsStringSync();
 const preinstallAction = './.github/actions/android-ndk-preinstall';
 const actionPath = '.github/actions/android-ndk-preinstall/action.yml';
 const appGradlePath = 'flutter_app/android/app/build.gradle.kts';
+const appSettingsGradlePath = 'flutter_app/android/settings.gradle.kts';
+
+/// gh-1757: the `:jni` plugin module (transitive `jni` package via
+/// path_provider_android) leaves `externalNativeBuild.cmake` unpinned, so
+/// AGP provisions its DEFAULT CMake. The default is a property of the AGP
+/// version pinned in flutter_app/android/settings.gradle.kts — mapped
+/// here so an AGP bump fails the guard until the action's literal pin is
+/// re-derived (AGP's default is not resolvable from disk before Gradle
+/// runs, so a reviewed literal + this coupling test is the honest pin).
+const agpVersionToDefaultCmake = <String, String>{'9.0.1': '3.22.1'};
 
 /// Every (workflow, job) that builds an Android APK/AAB for the app — the
 /// same class enumeration the flutter_gemma seed guard pins (gh-1310: the
@@ -350,6 +391,119 @@ void main() {
       );
       expect(absent.existsSync(), isFalse);
       expect(() => flutterSdkCandidates(absent), returnsNormally);
+    });
+  });
+
+  group('gh-1757 — Android builds pre-install the AGP-default CMake', () {
+    test('AC6: the action pins the AGP-default CMake version', () {
+      final body = read(actionPath);
+      expect(
+        body,
+        contains('CMAKE_VERSION="3.22.1"'),
+        reason:
+            'the `:jni` module (transitive `jni` package via '
+            'path_provider_android) wires externalNativeBuild.cmake with '
+            'no version, so AGP provisions its default CMake 3.22.1 '
+            '(gh-1757) — the pre-install must request exactly the '
+            'version AGP will look for under '
+            r'$ANDROID_HOME/cmake/<version>',
+      );
+    });
+
+    test('AC6: the action pre-installs CMake through sdkmanager', () {
+      final body = read(actionPath);
+      expect(
+        body,
+        contains(r'--install "cmake;$CMAKE_VERSION"'),
+        reason:
+            'the install must go through sdkmanager — the same channel '
+            "AGP's auto-install uses, so a pre-installed CMake lands "
+            r'exactly where AGP looks ($ANDROID_HOME/cmake/<version>)',
+      );
+      expect(
+        body,
+        contains('installing CMake'),
+        reason:
+            'the CMake attempt must be announced — a silent download '
+            'gives a red leg nothing to triage',
+      );
+    });
+
+    test('AC6: the CMake install is bounded-retried like the NDK', () {
+      final body = read(actionPath);
+      expect(
+        'for attempt in 1 2 3'.allMatches(body).length,
+        greaterThanOrEqualTo(2),
+        reason:
+            'both install blocks (NDK and CMake) must carry the '
+            'bounded-retry shape — a CMake install outside the loop '
+            're-enters the very roulette this action exists to close '
+            '(gh-1757: one corrupt cmake;3.22.1 archive red\'d the leg '
+            "through AGP's unretryable auto-install)",
+      );
+      expect(
+        body,
+        contains(r'rm -rf "$ANDROID_SDK/cmake/$CMAKE_VERSION"'),
+        reason:
+            'a partially-extracted CMake dir must be wiped before each '
+            'retry — sdkmanager does not repair a corrupted extraction '
+            'in place (the NDK block carries the same reset)',
+      );
+    });
+
+    test('AC6: the action skips the CMake pre-install idempotently', () {
+      final body = read(actionPath);
+      expect(
+        body,
+        contains(r'[ -x "$ANDROID_SDK/cmake/$CMAKE_VERSION/bin/cmake" ]'),
+        reason:
+            r'AGP resolves the CMake against $ANDROID_HOME/cmake/<version> '
+            '— a usable bin/cmake means the component is provisioned and '
+            'the pre-install must be a no-op (same idempotence posture '
+            'as the NDK source.properties check)',
+      );
+    });
+
+    test('AC6: the action verifies the CMake binary and fails loudly', () {
+      final body = read(actionPath);
+      expect(
+        body,
+        contains(r'CMake $CMAKE_VERSION install failed after 3 attempts'),
+        reason:
+            'a CMake still missing after the bounded retries must fail '
+            'the step with an ::error:: — the build would otherwise die '
+            "later in AGP's unretryable auto-install with only a Zip "
+            'Exception to triage (the gh-1757 signature)',
+      );
+    });
+
+    test('AC7: the pinned AGP version still maps to the pinned CMake '
+        'default', () {
+      final gradle = read(appSettingsGradlePath);
+      final match = RegExp(
+        r'id\("com\.android\.application"\) version "([^"]+)"',
+      ).firstMatch(gradle);
+      expect(
+        match,
+        isNotNull,
+        reason:
+            'precondition: $appSettingsGradlePath must pin the Android '
+            'Gradle Plugin version, otherwise the CMake coupling has no '
+            'anchor',
+      );
+      final agpVersion = match!.group(1)!;
+      expect(
+        agpVersionToDefaultCmake[agpVersion],
+        '3.22.1',
+        reason:
+            'AGP $agpVersion is pinned in $appSettingsGradlePath but is '
+            'absent from (or remapped in) agpVersionToDefaultCmake — '
+            'AGP\'s default CMake is what `:jni` actually requests (its '
+            'externalNativeBuild.cmake pins no version), so an AGP bump '
+            'must re-derive CMAKE_VERSION in $actionPath and this map '
+            'TOGETHER before the pre-install and the auto-install '
+            'request different versions',
+      );
     });
   });
 }

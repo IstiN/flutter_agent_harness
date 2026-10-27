@@ -164,6 +164,57 @@ int resumeParityBudget({
   return budget > 0 ? budget : 0;
 }
 
+/// The projected token cost of ONE record that actually renders — the
+/// single switch both projection estimators ([projectedBranchBudgetCut],
+/// [estimateProjectedBranchTokens]) price records with.
+int _projectedRecordTokens(SessionRecord record) => switch (record) {
+  MessageRecord(:final message) => estimateTokens(message),
+  CustomMessageRecord(:final content, :final timestamp) => estimateTokens(
+    UserMessage(content: content, timestamp: timestamp),
+  ),
+  CompactionRecord(:final summary) => estimateStringTokens(summary),
+  BranchSummaryRecord(:final summary) => estimateStringTokens(summary),
+  CompactCheckpointRecord(:final text) => estimateStringTokens(text),
+  _ => 0,
+};
+
+/// The backward walk's marker absorption (mirror: the forward estimator
+/// collects markers over the KEPT region only). Returns `true` when
+/// [record] is the branch's last (newest) compaction record — the caller
+/// engages the classic transform, pricing everything OLDER zero.
+bool _absorbProjectionMarkers(
+  SessionRecord record,
+  Set<String> hidden,
+  Set<String> covered,
+) {
+  switch (record) {
+    case HiddenRangeRecord(:final recordIds):
+      hidden.addAll(recordIds);
+    case CompactCheckpointRecord(
+      :final coversRecordIds,
+      :final firstRecordId,
+      :final lastRecordId,
+    ):
+      // Hidden-checkpoint parity (the goal_builder resume class): a
+      // checkpoint the judge itself hid swallows NOTHING and renders
+      // nothing (projection.dart `_coverAt` / the checkpoint case) —
+      // its span prices FULL. The hiding range is always NEWER than the
+      // checkpoint (folds reference older records), so the backward walk
+      // has already collected it here.
+      if (!hidden.contains(record.id)) {
+        covered
+          ..addAll(coversRecordIds)
+          ..add(firstRecordId)
+          ..add(lastRecordId);
+      }
+    case CompactionRecord():
+      return true;
+    default:
+      break;
+  }
+  return false;
+}
+
 /// The index of the OLDEST record of [branch] (root-first) to keep so the
 /// projected estimate of the kept suffix stays within [budget] — walking
 /// from the newest end backward, the record that would push the tally
@@ -192,58 +243,77 @@ int? projectedBranchBudgetCut(List<SessionRecord> branch, int budget) {
         ? 0
         : hidden.contains(record.id)
         ? (record is CompactCheckpointRecord ? 0 : _hiddenMarkerTokens)
-        : switch (record) {
-            MessageRecord(:final message) => estimateTokens(message),
-            CustomMessageRecord(:final content, :final timestamp) =>
-              estimateTokens(
-                UserMessage(content: content, timestamp: timestamp),
-              ),
-            CompactionRecord(:final summary) => estimateStringTokens(summary),
-            BranchSummaryRecord(:final summary) => estimateStringTokens(
-              summary,
-            ),
-            CompactCheckpointRecord(:final text) => estimateStringTokens(text),
-            _ => 0,
-          };
+        : _projectedRecordTokens(record);
     if (tally + contribution > budget && i < branch.length - 1) {
       return i + 1; // stop BEFORE the crossing record
     }
     tally += contribution;
-    // Marker sets grow only from records that project (mirror: the
-    // forward estimator collects markers over the KEPT region only).
-    switch (record) {
-      case HiddenRangeRecord(:final recordIds):
-        hidden.addAll(recordIds);
-      case CompactCheckpointRecord(
-        :final coversRecordIds,
-        :final firstRecordId,
-        :final lastRecordId,
-      ):
-        // Hidden-checkpoint parity (the goal_builder resume class): a
-        // checkpoint the judge itself hid swallows NOTHING and renders
-        // nothing (projection.dart `_coverAt` / the checkpoint case) —
-        // its span prices FULL. The hiding range is always NEWER than
-        // the checkpoint (folds reference older records), so the
-        // backward walk has already collected it here.
-        if (!hidden.contains(record.id)) {
-          covered
-            ..addAll(coversRecordIds)
-            ..add(firstRecordId)
-            ..add(lastRecordId);
-        }
-      case CompactionRecord():
-        // The last (newest) compaction record on the branch: its summary
-        // contributed above; everything OLDER is dropped by the classic
-        // transform and projects zero from here on.
-        belowTransform = true;
-      default:
-        break;
+    if (_absorbProjectionMarkers(record, hidden, covered)) {
+      belowTransform = true;
     }
   }
   return null; // whole branch fits
 }
 
-/// Projection-aware variant of [estimateSessionBranchTokens] (issue #503
+/// The classic-transform KEPT region of [branch]: the last compaction
+/// record replaces its dropped prefix (mirrors
+/// `SessionTree._applyCompactionTransform`: kept = [compaction] +
+/// path[firstKept..compactionIndex) + path(compactionIndex..]). The
+/// summary record itself survives and REPLACES the dropped span.
+List<SessionRecord> _keptAfterClassicTransform(List<SessionRecord> branch) {
+  for (var i = branch.length - 1; i >= 0; i--) {
+    final record = branch[i];
+    if (record is CompactionRecord) {
+      final cut = branch.indexWhere((r) => r.id == record.firstKeptEntryId);
+      final foundKept = cut >= 0 && cut < i;
+      return [
+        record,
+        if (foundKept) ...branch.sublist(cut, i),
+        ...branch.sublist(i + 1),
+      ];
+    }
+  }
+  return branch;
+}
+
+/// Ids any [HiddenRangeRecord] on [kept] renders as one-line markers
+/// (mirrors `buildStructuredViewState`; re-implemented here because
+/// projection.dart already imports this library — importing back would be
+/// circular).
+Set<String> _collectHiddenIds(Iterable<SessionRecord> kept) {
+  final hidden = <String>{};
+  for (final record in kept) {
+    if (record is HiddenRangeRecord) hidden.addAll(record.recordIds);
+  }
+  return hidden;
+}
+
+/// Ids swallowed by a healthy (non-hidden) checkpoint on [kept].
+///
+/// Hidden-checkpoint parity (the goal_builder resume class): a checkpoint
+/// the judge itself hid swallows NOTHING and renders nothing
+/// (projection.dart `_coverAt` — "its checkpoint was itself hidden — then
+/// the range renders as if uncovered"). Collecting its covers anyway
+/// undercounts the real projection by the whole covered span — a resume
+/// walk priced 175k while the request actually carried ~298k, so the
+/// budget trim never fired and the session booted over-window.
+Set<String> _collectCoveredIds(
+  Iterable<SessionRecord> kept,
+  Set<String> hidden,
+) {
+  final covered = <String>{};
+  for (final record in kept) {
+    if (record is CompactCheckpointRecord && !hidden.contains(record.id)) {
+      covered
+        ..addAll(record.coversRecordIds)
+        ..add(record.firstRecordId)
+        ..add(record.lastRecordId);
+    }
+  }
+  return covered;
+}
+
+/// Projection-aware variant of [estimateProjectedBranchTokens] (issue #503
 /// round 3b): counts what `Session.buildContextMessages` would ACTUALLY
 /// project, not the raw branch. Three adjustments over the raw tally:
 ///
@@ -261,47 +331,9 @@ int? projectedBranchBudgetCut(List<SessionRecord> branch, int budget) {
 /// tool results), which tripped the resume walk's token budget far too
 /// early and resumed with a badly under-filled window.
 int estimateProjectedBranchTokens(List<SessionRecord> branch) {
-  // Classic transform: the last compaction drops its prefix (mirrors
-  // SessionTree._applyCompactionTransform: kept = [compaction] +
-  // path[firstKept..compactionIndex) + path(compactionIndex..]). The
-  // summary record itself survives and REPLACES the dropped span.
-  var kept = branch;
-  for (var i = branch.length - 1; i >= 0; i--) {
-    final record = branch[i];
-    if (record is CompactionRecord) {
-      final cut = branch.indexWhere((r) => r.id == record.firstKeptEntryId);
-      final foundKept = cut >= 0 && cut < i;
-      kept = [
-        record,
-        if (foundKept) ...branch.sublist(cut, i),
-        ...branch.sublist(i + 1),
-      ];
-      break;
-    }
-  }
-  // Structured state over the kept region (mirrors buildStructuredViewState;
-  // re-implemented here because projection.dart already imports this
-  // library — importing back would be circular).
-  final hidden = <String>{};
-  for (final record in kept) {
-    if (record is HiddenRangeRecord) hidden.addAll(record.recordIds);
-  }
-  // Hidden-checkpoint parity (the goal_builder resume class): a
-  // checkpoint the judge itself hid swallows NOTHING and renders nothing
-  // (projection.dart `_coverAt` — "its checkpoint was itself hidden —
-  // then the range renders as if uncovered"). Collecting its covers
-  // anyway undercounts the real projection by the whole covered span —
-  // a resume walk priced 175k while the request actually carried ~298k,
-  // so the budget trim never fired and the session booted over-window.
-  final covered = <String>{};
-  for (final record in kept) {
-    if (record is CompactCheckpointRecord && !hidden.contains(record.id)) {
-      covered
-        ..addAll(record.coversRecordIds)
-        ..add(record.firstRecordId)
-        ..add(record.lastRecordId);
-    }
-  }
+  final kept = _keptAfterClassicTransform(branch);
+  final hidden = _collectHiddenIds(kept);
+  final covered = _collectCoveredIds(kept, hidden);
   var tokens = 0;
   for (final record in kept) {
     if (covered.contains(record.id)) continue;
@@ -313,19 +345,7 @@ int estimateProjectedBranchTokens(List<SessionRecord> branch) {
       tokens += _hiddenMarkerTokens;
       continue;
     }
-    tokens += switch (record) {
-      MessageRecord(:final message) => estimateTokens(message),
-      CustomMessageRecord(:final content, :final timestamp) => estimateTokens(
-        UserMessage(content: content, timestamp: timestamp),
-      ),
-      CompactionRecord(:final summary) =>
-        (summary.length / _charsPerToken).ceil(),
-      BranchSummaryRecord(:final summary) =>
-        (summary.length / _charsPerToken).ceil(),
-      CompactCheckpointRecord(:final text) =>
-        (text.length / _charsPerToken).ceil(),
-      _ => 0,
-    };
+    tokens += _projectedRecordTokens(record);
   }
   return tokens;
 }

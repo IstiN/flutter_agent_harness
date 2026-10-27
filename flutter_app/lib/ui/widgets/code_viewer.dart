@@ -10,43 +10,53 @@ import 'package:fa_ui/fa_ui.dart';
 final Highlight _highlight = Highlight()
   ..registerLanguages(builtinAllLanguages);
 
+/// Filename extension (no dot, lowercased) → re_highlight language id.
+/// Data table, not code (issue #1713).
+const Map<String, String> _extensionLanguages = {
+  'dart': 'dart',
+  'py': 'python',
+  'js': 'javascript',
+  'ts': 'typescript',
+  'jsx': 'javascript',
+  'tsx': 'typescript',
+  'json': 'json',
+  'yaml': 'yaml',
+  'yml': 'yaml',
+  'xml': 'xml',
+  'html': 'xml',
+  'htm': 'xml',
+  'css': 'css',
+  'md': 'markdown',
+  'markdown': 'markdown',
+  'sh': 'bash',
+  'bash': 'bash',
+  'go': 'go',
+  'rs': 'rust',
+  'java': 'java',
+  'kt': 'kotlin',
+  'swift': 'swift',
+  'c': 'c',
+  'h': 'c',
+  'cpp': 'cpp',
+  'hpp': 'cpp',
+  'sql': 'sql',
+  'toml': 'ini',
+  'ini': 'ini',
+  'cfg': 'ini',
+  'php': 'php',
+  'rb': 'ruby',
+  'scala': 'scala',
+  'lua': 'lua',
+  'gradle': 'groovy',
+  'dockerfile': 'dockerfile',
+};
+
 /// Maps a filename's extension to a re_highlight language id.
 String detectLanguage(String filename) {
   final ext = filename.contains('.')
-      ? '.${filename.split('.').last.toLowerCase()}'
+      ? filename.split('.').last.toLowerCase()
       : '';
-  return switch (ext) {
-    '.dart' => 'dart',
-    '.py' => 'python',
-    '.js' => 'javascript',
-    '.ts' => 'typescript',
-    '.jsx' => 'javascript',
-    '.tsx' => 'typescript',
-    '.json' => 'json',
-    '.yaml' || '.yml' => 'yaml',
-    '.xml' => 'xml',
-    '.html' || '.htm' => 'xml',
-    '.css' => 'css',
-    '.md' || '.markdown' => 'markdown',
-    '.sh' || '.bash' => 'bash',
-    '.go' => 'go',
-    '.rs' => 'rust',
-    '.java' => 'java',
-    '.kt' => 'kotlin',
-    '.swift' => 'swift',
-    '.c' || '.h' => 'c',
-    '.cpp' || '.hpp' => 'cpp',
-    '.sql' => 'sql',
-    '.toml' => 'ini',
-    '.ini' || '.cfg' => 'ini',
-    '.php' => 'php',
-    '.rb' => 'ruby',
-    '.scala' => 'scala',
-    '.lua' => 'lua',
-    '.gradle' => 'groovy',
-    '.dockerfile' => 'dockerfile',
-    _ => 'plaintext',
-  };
+  return _extensionLanguages[ext] ?? 'plaintext';
 }
 
 /// Read-only syntax-highlighted code view with line numbers.

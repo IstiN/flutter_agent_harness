@@ -302,6 +302,12 @@ void main() {
       final stdoutSub = process.stdout
           .transform(utf8.decoder)
           .listen(stdoutBuffer.write);
+      // gh-1763 AC3: the graceful abort must NAME the signal on stderr —
+      // a child-issued SIGTERM must never read as a user Ctrl+C.
+      final stderrBuffer = StringBuffer();
+      final stderrSub = process.stderr
+          .transform(utf8.decoder)
+          .listen(stderrBuffer.write);
 
       await gotRequest.future.timeout(const Duration(minutes: 2));
       // The request is in flight: kill with SIGTERM.
@@ -311,8 +317,10 @@ void main() {
         const Duration(minutes: 2),
       );
       await stdoutSub.cancel();
+      await stderrSub.cancel();
 
       expect(exitCode, 130);
+      expect(stderrBuffer.toString(), contains('SIGTERM received'));
       final lines = jsonlLines(stdoutBuffer.toString());
       final frames = [
         for (final line in lines) jsonDecode(line) as Map<String, dynamic>,

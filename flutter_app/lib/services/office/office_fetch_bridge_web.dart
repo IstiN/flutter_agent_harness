@@ -267,6 +267,14 @@ final class EmbedHttpClient extends http.BaseClient {
   /// The last resort (non-provider CORS-free traffic). A CORS death — the
   /// only possible outcome for provider hosts — is reworded per the #633
   /// contract: named fix, raw browser phrase demoted to the cause.
+  ///
+  /// gh-1830: the caller's headers ride verbatim. The direct leg used to
+  /// rebuild the fetch headers from scratch (content-type only), so in a
+  /// stock Outlook pane — no extension bridge, no hub bearer — every keyed
+  /// provider request reached the provider keyless: AIN answered
+  /// `401 {"error":"missing bearer token"}`, OpenRouter
+  /// `401 {"error":{"message":"No cookie auth credentials found"}}`, even
+  /// for a key the user had just saved.
   Future<http.StreamedResponse> _directSend(http.BaseRequest request) async {
     try {
       return await _sendViaFetch(
@@ -276,6 +284,7 @@ final class EmbedHttpClient extends http.BaseClient {
             ? utf8.decode(request.bodyBytes)
             : null,
         contentType: request.headers['content-type'],
+        requestHeaders: request.headers,
       );
     } on Object catch (e) {
       throw StateError('$officeRelayDownError (direct fetch failed: $e)');
@@ -289,10 +298,17 @@ final class EmbedHttpClient extends http.BaseClient {
     required String? contentType,
     web.AbortController? controller,
     String? bearer,
+
+    /// The caller's own headers, forwarded verbatim (gh-1830). Only the
+    /// direct leg passes them: the hub leg's outer request authenticates
+    /// to the HUB (bearer below) and carries the provider credential
+    /// inside the envelope body instead, where the hub re-dispatches it.
+    Map<String, String>? requestHeaders,
   }) async {
     final init = <String, Object?>{
       'method': request.method,
       'headers': {
+        ...?requestHeaders,
         'content-type': ?contentType,
         'authorization': ?bearer == null ? null : 'Bearer $bearer',
       },

@@ -57,14 +57,12 @@ bool _isBoundary(String prev, String ch) {
   return isSep || (prevLower && chUpper);
 }
 
-/// Greedy left-to-right subsequence match with a boundary-aware score.
-/// Returns null when [needle] does not fuzzy-match [haystack].
-FuzzyMatch? scoreFuzzy(String haystack, String needle, {int maxIndices = 256}) {
-  if (needle.isEmpty) return FuzzyMatch(0, const [], haystack);
-  final h = haystack.toLowerCase();
-  final n = needle.toLowerCase();
-  if (n.length > h.length) return null;
-
+/// The greedy left-to-right subsequence walk over the case-folded
+/// haystack: the matched indices plus the boundary-aware raw score, or
+/// null when the folded needle is not a subsequence of the folded
+/// haystack. [haystack] is the original-case string (boundary checks and
+/// the carried prev-char read the real casing).
+(List<int>, int)? _matchSubsequence(String haystack, String h, String n) {
   var hi = 0;
   final indices = <int>[];
   var score = 0;
@@ -89,8 +87,21 @@ FuzzyMatch? scoreFuzzy(String haystack, String needle, {int maxIndices = 256}) {
     prevCh = haystack[found];
     hi = found + 1;
   }
+  return (indices, score);
+}
+
+/// Greedy left-to-right subsequence match with a boundary-aware score.
+/// Returns null when [needle] does not fuzzy-match [haystack].
+FuzzyMatch? scoreFuzzy(String haystack, String needle, {int maxIndices = 256}) {
+  if (needle.isEmpty) return FuzzyMatch(0, const [], haystack);
+  final h = haystack.toLowerCase();
+  final n = needle.toLowerCase();
+  if (n.length > h.length) return null;
+  final walk = _matchSubsequence(haystack, h, n);
+  if (walk == null) return null;
+  final (indices, rawScore) = walk;
   // Prefer tight matches: penalize trailing haystack.
-  score -= (haystack.length - needle.length).clamp(0, 16);
+  final score = rawScore - (haystack.length - needle.length).clamp(0, 16);
   if (indices.length > maxIndices) {
     return FuzzyMatch(
       score,

@@ -306,11 +306,22 @@ final class GemmaService implements GemmaEngineApi {
     void Function(String chunk) onChunk,
   ) async {
     await for (final response in chat.generateChatResponseAsync()) {
-      if (response is TextResponse) {
-        if (response.token.isNotEmpty) onChunk(response.token);
-      } else {
-        calls.addAll(_functionCallsFrom(response));
-      }
+      _absorbResponse(response, calls, onChunk);
+    }
+  }
+
+  /// One streamed response (gh-1848 split): text tokens go to [onChunk],
+  /// complete function calls (single or parallel batch) accumulate into
+  /// [calls].
+  void _absorbResponse(
+    ModelResponse response,
+    List<Map<String, dynamic>> calls,
+    void Function(String chunk) onChunk,
+  ) {
+    if (response is TextResponse) {
+      if (response.token.isNotEmpty) onChunk(response.token);
+    } else {
+      calls.addAll(_functionCallsFrom(response));
     }
   }
 
@@ -387,12 +398,20 @@ final class GemmaService implements GemmaEngineApi {
     if (loaded != null && loaded.filenameFor(isWeb: kIsWeb) == filename) {
       await unload();
     }
+    await _clearPersistedIdentityIfActive(filename);
+    await FlutterGemma.uninstallModel(filename);
+  }
+
+  /// The persisted-identity arm of [uninstall] (gh-1848 split): the
+  /// in-memory `_loadedPreset` check above misses a web page reload
+  /// (preset null, persisted identity survives), so the manager check
+  /// runs in addition.
+  Future<void> _clearPersistedIdentityIfActive(String filename) async {
     final manager = FlutterGemmaPlugin.instance.modelManager;
     await manager.ensureInitialized();
     if (manager.activeInferenceModel?.name == _baseName(filename)) {
       await FlutterGemma.clearActiveInferenceIdentity();
     }
-    await FlutterGemma.uninstallModel(filename);
   }
 
   /// The plugin's active-spec name for [filename] — the file name minus its
@@ -433,4 +452,10 @@ final class GemmaService implements GemmaEngineApi {
       _ => Message.text(text: message.content, isUser: true),
     };
   }
+
+  /// gh-1848: test seam — `_toPluginMessage` is otherwise reachable only
+  /// through a loaded model's chat session (real plugin method channels).
+  @visibleForTesting
+  static Message toPluginMessageForTest(GemmaChatMessage message) =>
+      _toPluginMessage(message);
 }

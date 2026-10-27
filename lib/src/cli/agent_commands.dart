@@ -112,16 +112,21 @@ extension AgentCliAgentExt on AgentCli {
     io.writeln('[main]');
     io.writeln('  model: ${model.id} (${model.provider})');
     io.writeln('  messages: ${_agent.state.messages.length}');
-    final session = _session;
-    if (session != null) {
-      final metadata = await session.getMetadata();
-      io.writeln('  session: ${metadata.path}');
-    }
+    await _printMainSessionPath();
     io.writeln('  children: ${_subagentManager.handles.length}');
     final inbox = await _subagentManager.pendingInboxCount(
       _subagentManager.selfId,
     );
     if (inbox > 0) io.writeln('  mail inbox: $inbox pending');
+  }
+
+  /// The `session:` line of the main summary — absent without a live
+  /// session.
+  Future<void> _printMainSessionPath() async {
+    final session = _session;
+    if (session == null) return;
+    final metadata = await session.getMetadata();
+    io.writeln('  session: ${metadata.path}');
   }
 
   /// Text-mode agents tree (line mode or non-TUI fallback).
@@ -239,8 +244,8 @@ extension AgentCliAgentExt on AgentCli {
   /// deliver it to the child.
   Future<void> _askAndSendSubagent(String id) async {
     final message = await _askLine('message for $id: ');
-    if (message == null || message.trim().isEmpty) return;
-    await _sendToSubagent(id, message.trim());
+    if (message?.trim().isNotEmpty != true) return;
+    await _sendToSubagent(id, message!.trim());
   }
 
   /// Delivers a message to a child: live sessions get it appended; the
@@ -252,7 +257,17 @@ extension AgentCliAgentExt on AgentCli {
       io.writeln(guard);
       return;
     }
-    if (await _appendToChildSession(handle!, message)) {
+    await _deliverToSubagent(handle!, id, message);
+  }
+
+  /// Appends [message] to the child's live session — falling back to the
+  /// pending queue — and reports the outcome.
+  Future<void> _deliverToSubagent(
+    SubagentHandle handle,
+    String id,
+    String message,
+  ) async {
+    if (await _appendToChildSession(handle, message)) {
       await _subagentManager.update(id, status: SubagentStatus.running);
       io.writeln('sent to "$id" — agent resumed');
     } else {

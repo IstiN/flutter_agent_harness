@@ -21,6 +21,11 @@ const _documentedExemptions = <String, String>{
       'pre-permission screen — deliberately carries no analytics calls '
       'so nothing about a user\u0027s consent journey is tracked; the '
       'screen reconciles state locally via MobileControlContract.',
+  'lib/ui/screens/settings_flows.dart':
+      'Part file of settings.dart (gh-1848 tier-3): the connect/re-auth '
+      'flow dispatch helpers; the settings analytics (screenOpened and '
+      'the section events, including reset_apps) live in the main file — '
+      'the helpers fire no new user paths of their own.',
   'lib/ui/screens/onboarding_mockups.dart':
       'Part file of onboarding_screen.dart (pure mockup widgets); the '
       'onboarding analytics (started/completed/skipped/screenOpened) live '

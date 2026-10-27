@@ -21,6 +21,10 @@ import 'package:flutter_test/flutter_test.dart';
 /// lib file (relative to flutter_app/) → golden test file covering it.
 const _coverage = <String, String>{
   'lib/main.dart': 'test/golden/setup_golden_test.dart',
+  'lib/ui/network/add_agent_dialog.dart':
+      'test/golden/add_agent_dialog_golden_test.dart',
+  'lib/ui/network/channel_key_import_dialog.dart':
+      'test/golden/channel_key_import_dialog_golden_test.dart',
   'lib/ui/screens/settings.dart': 'test/golden/settings_golden_test.dart',
   'lib/ui/screens/skills_toggles_section.dart':
       'test/golden/settings_golden_test.dart',
@@ -55,6 +59,8 @@ const _coverage = <String, String>{
   'lib/ui/screens/mobile_consent_screen.dart':
       'test/golden/mobile_consent_golden_test.dart',
   'lib/ui/widgets/chat_composer.dart': 'test/golden/composer_golden_test.dart',
+  'lib/ui/widgets/image_drop_notice_chip.dart':
+      'test/golden/image_drop_golden_test.dart',
   'lib/ui/widgets/subagent_mark.dart': 'test/golden/widgets_golden_test.dart',
   'lib/ui/widgets/media_player.dart': 'test/golden/chat_golden_test.dart',
   'lib/ui/widgets/fa_mark.dart': 'test/golden/chat_golden_test.dart',
@@ -121,8 +127,10 @@ const _exempt = <String, String>{
   // #955/#999 fa_network feature widgets merged from main without golden
   // coverage (main's own guard is red for these); goldens belong to the
   // network feature work — waived here so the guard reflects #947 only.
-  'lib/ui/network/add_agent_dialog.dart': 'fa_network #955: no goldens yet',
   'lib/ui/network/channel_rail.dart': 'fa_network #955: no goldens yet',
+  'lib/ui/network/channel_composer.dart':
+      'fa_network #955: no goldens yet (#1888 added the composer; goldens '
+      'belong to the network feature work like its rail/dialog siblings)',
   'lib/ui/network/create_network_dialog.dart':
       'fa_network #955: no goldens yet',
   'lib/ui/network/join_sheet.dart': 'fa_network #955: no goldens yet',

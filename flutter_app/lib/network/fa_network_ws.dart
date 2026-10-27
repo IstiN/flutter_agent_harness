@@ -19,6 +19,13 @@ sealed class WsEvent {
   const WsEvent();
 }
 
+/// The socket just connected (initial connect or reconnect). The server
+/// asserts `network.offline` on its greet only while the hub is down, so
+/// a fresh connection is also the client's stale-offline reset point.
+final class WsConnected extends WsEvent {
+  const WsConnected();
+}
+
 /// `roster.snapshot` — full roster on connect and on roster change.
 final class RosterSnapshot extends WsEvent {
   const RosterSnapshot(this.members);
@@ -35,10 +42,24 @@ final class EnvelopeReceived extends WsEvent {
 
 /// `presence.changed` — one member's presence flipped.
 final class PresenceChanged extends WsEvent {
-  const PresenceChanged(this.memberId, this.presence);
+  const PresenceChanged(
+    this.memberId,
+    this.presence, {
+    this.displayName = '',
+    this.memberClass,
+    this.access,
+  });
 
   final String memberId;
   final Presence presence;
+
+  /// Additive hub-agent fields (fa_network#6): present for DAP agents so
+  /// clients can insert members missing from the roster snapshot.
+  final String displayName;
+  final MemberClass? memberClass;
+
+  /// Additive access metadata; null on frames from older servers.
+  final MemberAccess? access;
 }
 
 /// `network.offline` — the dap hub is unreachable; the server queues
@@ -254,6 +275,7 @@ class FaNetworkWs {
       onDone: _onChannelClosed,
     );
     _startHeartbeat();
+    _emit(const WsConnected());
     // Resubscribe first so flushed envelopes have a destination.
     for (final channelId in _subscriptions) {
       _sendNow({'type': 'subscribe', 'channelId': channelId});
@@ -289,71 +311,107 @@ class FaNetworkWs {
       return;
     }
     try {
-      switch (decoded['type']) {
-        case 'roster.snapshot':
-          final payload = decoded['payload'];
-          final members = payload is List
-              ? payload
-                    .whereType<Map>()
-                    .map((m) => Member.fromJson(m.cast<String, Object?>()))
-                    .toList()
-              : <Member>[];
-          _emit(RosterSnapshot(members));
-        case 'envelope':
-          final payload = decoded['payload'];
-          if (payload is Map) {
-            _emit(
-              EnvelopeReceived(
-                Envelope.fromJson(payload.cast<String, Object?>()),
-              ),
-            );
-          }
-        case 'presence.changed':
-          final payload = decoded['payload'];
-          if (payload is Map) {
-            _emit(
-              PresenceChanged(
-                payload['memberId']?.toString() ?? '',
-                Presence.parse(payload['presence']),
-              ),
-            );
-          }
-        case 'network.offline':
-          final payload = decoded['payload'];
-          _emit(
-            NetworkOffline(
-              payload is Map ? payload['reason']?.toString() ?? '' : '',
-            ),
-          );
-        case 'network.drain':
-          final payload = decoded['payload'];
-          final count = payload is Map ? payload['count'] : null;
-          _emit(NetworkDrain(count is int ? count : 0));
-        case 'wakeup.dispatched':
-          final payload = decoded['payload'];
-          if (payload is Map) {
-            final at = payload['at'];
-            _emit(
-              WakeupDispatched(
-                payload['agentId']?.toString() ?? '',
-                at is String ? DateTime.tryParse(at) : null,
-              ),
-            );
-          }
-        case 'pong':
-          break; // heartbeat ack
-        case 'error':
-          final payload = decoded['payload'];
-          final message = payload is Map
-              ? payload['message']?.toString()
-              : null;
-          _emit(WsError(message ?? decoded['message']?.toString() ?? 'error'));
-        default:
-          break; // forward-compatible: ignore unknown frame types
-      }
+      _dispatchFrame(decoded);
     } catch (e) {
       _emit(WsError('malformed frame: $e'));
     }
+  }
+
+  /// The frame-type switch, split in halves so each stays small; every
+  /// handler either emits an event or ignores the frame (pong ack,
+  /// unknown types — forward-compatible).
+  void _dispatchFrame(Map decoded) {
+    switch (decoded['type']) {
+      case 'roster.snapshot':
+        _emit(RosterSnapshot(_rosterMembers(decoded['payload'])));
+      case 'envelope':
+        _onEnvelopeFrame(decoded['payload']);
+      case 'presence.changed':
+        _onPresenceFrame(decoded['payload']);
+      case 'network.offline':
+        _onNetworkOfflineFrame(decoded['payload']);
+      default:
+        _dispatchFrameTail(decoded);
+    }
+  }
+
+  void _dispatchFrameTail(Map decoded) {
+    switch (decoded['type']) {
+      case 'network.drain':
+        _onNetworkDrainFrame(decoded['payload']);
+      case 'wakeup.dispatched':
+        _onWakeupFrame(decoded['payload']);
+      case 'pong':
+        break; // heartbeat ack
+      case 'error':
+        _onErrorFrame(decoded);
+      default:
+        break; // forward-compatible: ignore unknown frame types
+    }
+  }
+
+  List<Member> _rosterMembers(Object? payload) {
+    // Production wraps the roster in {members: [...]}; tolerate the
+    // legacy bare-list shape too instead of silently emptying the roster.
+    final wire = payload is Map ? payload['members'] : payload;
+    return wire is List
+        ? wire
+              .whereType<Map>()
+              .map((m) => Member.fromJson(m.cast<String, Object?>()))
+              .toList()
+        : <Member>[];
+  }
+
+  void _onEnvelopeFrame(Object? payload) {
+    if (payload is Map) {
+      _emit(
+        EnvelopeReceived(Envelope.fromJson(payload.cast<String, Object?>())),
+      );
+    }
+  }
+
+  void _onPresenceFrame(Object? payload) {
+    if (payload is Map) {
+      _emit(
+        PresenceChanged(
+          payload['memberId']?.toString() ?? '',
+          Presence.parse(payload['presence']),
+          displayName: payload['displayName']?.toString() ?? '',
+          memberClass: payload.containsKey('class')
+              ? MemberClass.parse(payload['class'])
+              : null,
+          access: MemberAccess.parse(payload['access']),
+        ),
+      );
+    }
+  }
+
+  void _onNetworkOfflineFrame(Object? payload) {
+    _emit(
+      NetworkOffline(payload is Map ? payload['reason']?.toString() ?? '' : ''),
+    );
+  }
+
+  void _onNetworkDrainFrame(Object? payload) {
+    final count = payload is Map ? payload['count'] : null;
+    _emit(NetworkDrain(count is int ? count : 0));
+  }
+
+  void _onWakeupFrame(Object? payload) {
+    if (payload is! Map) return;
+    final at = payload['at'];
+    _emit(
+      WakeupDispatched(
+        payload['agentId']?.toString() ?? '',
+        at is String ? DateTime.tryParse(at) : null,
+      ),
+    );
+  }
+
+  void _onErrorFrame(Map decoded) {
+    final payload = decoded['payload'];
+    final message = payload is Map ? payload['message']?.toString() : null;
+    _emit(WsError(message ?? decoded['message']?.toString() ?? 'error'));
   }
 
   void _onChannelError(Object error) => _handleClosed();

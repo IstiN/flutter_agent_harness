@@ -122,33 +122,12 @@ extension AgentServiceWiring on AgentService {
   /// `.github/skills`, `.codex`). Default: [SkillsAccess.granted].
   SkillsAccess get skillsAccess => _skillsAccess;
 
-  /// Switches the third-party skills consent (the settings "Skills access"
-  /// section, the boot dialog), persists it when a
-  /// store is wired (fire-and-forget), then re-discovers skills under the
-  /// new consent and recomposes the system prompt — like
-  /// [_refreshMemorySection], no [reconfigure] needed. Services built from
-  /// a pre-constructed [Agent] (tests) have no config: they record the
-  /// choice but skip the re-discovery.
-  Future<void> setSkillsAccess(SkillsAccess access) async {
-    if (access == _skillsAccess) return;
-    _skillsAccess = access;
-    _notify();
-    final store = _skillsAccessStore;
-    if (store != null) unawaited(store.save(access));
-    final config = _config;
-    if (config == null) return;
-    final (suffix, pinSkills) = await _discoverPromptSuffix(
-      env,
-      access,
-      homeDir: _skillsHomeDir ?? desktopHomeDir(),
-    );
-    // A newer choice made while discovery ran wins — don't clobber it.
-    if (access != _skillsAccess) return;
-    _promptSuffix = suffix;
-    // gh-1409: republish the operative-pin source set (derived state, P2).
-    _agent.operativeSkills = pinSkills;
-    _agent.state.systemPrompt = _composeSystemPrompt(config);
-  }
+  // gh-1848: the extension `setSkillsAccess` twin was DELETED as dead code —
+  // class members always shadow extension members, and `AgentService` declares
+  // its own `setSkillsAccess` (agent_service.dart), so this copy could never
+  // execute (no explicit `AgentServiceWiring(...)` application exists in the
+  // repo; verified with a resolution repro on the standalone SDK). The live
+  // member on the class is the one under test.
 
   /// The base system prompt plus the skills/context suffix (kept as one
   /// place so model/provider switches preserve the sections).
@@ -222,36 +201,6 @@ extension AgentServiceWiring on AgentService {
     final role = _taskRolesResolver?.resolveRole(smolModelRole);
     if (role != null) return role;
     return (model: _agent.state.model, stream: _agent.streamFunction);
-  }
-
-  /// UI hook that opens a JS app for the user — the chat screen installs it
-  /// and pushes the app's `JsAppView`. Setting a non-null launcher registers
-  /// the `open_app` tool (see `open_app_tool.dart`); setting `null`
-  /// unregisters it, the safe headless default.
-  AppLauncher? get appLauncher => _appLauncher;
-
-  set appLauncher(AppLauncher? launcher) {
-    if (launcher == _appLauncher) return;
-    _appLauncher = launcher;
-    final registry = _toolRegistry;
-    if (registry != null) {
-      if (launcher == null) {
-        registry.unregister(openAppToolName);
-      } else {
-        registry.register(openAppTool(env, launcher: launcher));
-      }
-      _agent.state.tools = registry.tools;
-    } else {
-      // Pre-constructed agent (tests): mirror the registration on the
-      // advertised tool list — the tool's execute callback is self-contained.
-      final tools = _agent.state.tools
-          .where((tool) => tool.name != openAppToolName)
-          .toList();
-      if (launcher != null) {
-        tools.add(openAppTool(env, launcher: launcher));
-      }
-      _agent.state.tools = tools;
-    }
   }
 
   /// Routes the ask tool's questions to the installed [askHandler].

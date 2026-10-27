@@ -312,29 +312,36 @@ TrajectoryTimelineSpan _spanFor(
 /// Mirrors the TS `cellRange`: negative recorded durations clamp to zero,
 /// and a start without a duration projects to a zero-width start marker.
 (double, double)? _cellRange(TrajectoryRecord record) {
-  final DateTime? startedAt = switch (record) {
-    final TrajectoryAssistantRecord assistant => assistant.stepStartTime,
-    final TrajectoryToolRecord tool => tool.startedAt,
-    final TrajectoryUserRecord user => user.startedAt,
-    final TrajectoryCompactedRecord compacted => compacted.startedAt,
-    final TrajectorySystemRecord system => system.time,
-    TrajectoryContextRecord() => null,
-  };
+  final DateTime? startedAt = _recordStart(record);
   if (startedAt == null) return null;
-  final durationMs = switch (record) {
-    final TrajectoryAssistantRecord assistant =>
-      assistant.timeSeconds?.inMilliseconds,
-    final TrajectoryToolRecord tool => tool.timeSeconds?.inMilliseconds,
-    final TrajectoryCompactedRecord compacted =>
-      compacted.timeSeconds?.inMilliseconds,
-    _ => null,
-  };
+  final durationMs = _recordDurationMs(record);
   final start = startedAt.millisecondsSinceEpoch.toDouble();
   return (
     start,
     start + (durationMs != null && durationMs > 0 ? durationMs : 0),
   );
 }
+
+/// The record's wall-clock start, null when the kind carries no anchor
+/// (gh-1713 lookup split of [_cellRange]).
+DateTime? _recordStart(TrajectoryRecord record) => switch (record) {
+  final TrajectoryAssistantRecord assistant => assistant.stepStartTime,
+  final TrajectoryToolRecord tool => tool.startedAt,
+  final TrajectoryUserRecord user => user.startedAt,
+  final TrajectoryCompactedRecord compacted => compacted.startedAt,
+  final TrajectorySystemRecord system => system.time,
+  TrajectoryContextRecord() => null,
+};
+
+/// The record's recorded duration in milliseconds, null when untimed.
+int? _recordDurationMs(TrajectoryRecord record) => switch (record) {
+  final TrajectoryAssistantRecord assistant =>
+    assistant.timeSeconds?.inMilliseconds,
+  final TrajectoryToolRecord tool => tool.timeSeconds?.inMilliseconds,
+  final TrajectoryCompactedRecord compacted =>
+    compacted.timeSeconds?.inMilliseconds,
+  _ => null,
+};
 
 bool _isError(TrajectoryRecord record) => switch (record) {
   final TrajectoryAssistantRecord assistant => assistant.isError == true,

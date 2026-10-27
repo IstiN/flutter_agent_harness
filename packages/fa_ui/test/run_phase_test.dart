@@ -126,17 +126,30 @@ void main() {
     );
   });
 
+  test('a transcript of only unmatched starts ends in the batch phase', () {
+    // The user row is gone (compacted away) but the tool batch is still
+    // in flight: the scan runs off the top with starts pending.
+    expect(
+      derive([
+        row('system', '[bash] {"command": "make"}'),
+        row('system', '[rg] {"args": ["err"]}'),
+      ]),
+      const FaRunPhase.tool(first: 'bash', count: 2),
+    );
+    expect(
+      derive([row('system', 'plain prose announcement')]),
+      const FaRunPhase(FaRunPhaseKind.thinking),
+    );
+  });
+
   test('steering mid-run keeps the row up (E2)', () {
     final midTool = [
       row('user', 'go'),
       row('system', '[bash] {"command": "ls"}'),
       row('user', 'also check the logs'),
-      row('system', '[rg] {"args": ["err"]}')
+      row('system', '[rg] {"args": ["err"]}'),
     ];
-    expect(
-      derive(midTool),
-      const FaRunPhase.tool(first: 'rg', count: 1),
-    );
+    expect(derive(midTool), const FaRunPhase.tool(first: 'rg', count: 1));
     // Steer absorbed between steps: still visible, provider wait.
     expect(
       derive([

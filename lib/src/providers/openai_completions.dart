@@ -752,13 +752,7 @@ final class _OpenAICompletionsSession {
     final args = function['arguments'] is String
         ? function['arguments'] as String
         : '';
-    ToolCallStreamingBlock? last;
-    for (final block in blocks.reversed) {
-      if (block is ToolCallStreamingBlock) {
-        last = block;
-        break;
-      }
-    }
+    final last = _lastToolCallBlock(blocks);
     if (last == null || last.name.isEmpty || last.name != name) {
       return null;
     }
@@ -852,6 +846,17 @@ final class _OpenAICompletionsSession {
 
 String _truncate40(String value) {
   return value.length > 40 ? value.substring(0, 40) : value;
+}
+
+/// The last registered [ToolCallStreamingBlock] of [blocks], or null when
+/// the message has none yet.
+ToolCallStreamingBlock? _lastToolCallBlock(List<StreamingBlock> blocks) {
+  for (final block in blocks.reversed) {
+    if (block is ToolCallStreamingBlock) {
+      return block;
+    }
+  }
+  return null;
 }
 
 bool _hasToolHistory(List<Message> messages) {
@@ -1227,7 +1232,8 @@ void _applyReasoningParam(
   // carried level ride as the effort; an explicit options effort wins.
   // Non-reasoning models never carry the field (E3: the gate drops the
   // pin — the resolver notes it, the adapter enforces it).
-  final effort = options?.reasoningEffort ??
+  final effort =
+      options?.reasoningEffort ??
       (model.reasoning ? model.thinkingLevel : null);
   if (model.reasoning && effort != null) {
     if (compat.thinkingFormat == ThinkingFormat.openrouter) {

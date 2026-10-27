@@ -317,30 +317,27 @@ void main() {
   });
 
   group('gh-1643: killed-mid-stream usage (usage_incomplete)', () {
-    test(
-      'a chain killed before the first assistant message folds the known '
-      'request-side input (the evidence-trial shape)',
-      () {
-        // Session + segment marker + the first model_request_summary, then
-        // the external kill — no assistant message ever finalized. The
-        // known request-side volume (systemPromptChars + Σ message chars,
-        // persisted BEFORE the request) must fold as estimated input —
-        // never a silent zero.
-        final ledger = foldChain([
-          sessionHeaderLine('sess-1'),
-          segmentMarkerLine(1),
-          requestSummaryLine(2, messageChars: const [400, 100]),
-        ]);
-        final segment = ledger.segments.single;
-        expect(segment.totals.requests, 1);
-        // ceil((10 system + 500 messages) / 4) = 128.
-        expect(segment.totals.input, 128);
-        expect(segment.totals.output, 0);
-        expect(segment.source, UsageSource.estimated);
-        expect(ledger.usageIncomplete, isTrue);
-        expect(jsonEncode(ledger.toJson()), contains('"usageIncomplete":true'));
-      },
-    );
+    test('a chain killed before the first assistant message folds the known '
+        'request-side input (the evidence-trial shape)', () {
+      // Session + segment marker + the first model_request_summary, then
+      // the external kill — no assistant message ever finalized. The
+      // known request-side volume (systemPromptChars + Σ message chars,
+      // persisted BEFORE the request) must fold as estimated input —
+      // never a silent zero.
+      final ledger = foldChain([
+        sessionHeaderLine('sess-1'),
+        segmentMarkerLine(1),
+        requestSummaryLine(2, messageChars: const [400, 100]),
+      ]);
+      final segment = ledger.segments.single;
+      expect(segment.totals.requests, 1);
+      // ceil((10 system + 500 messages) / 4) = 128.
+      expect(segment.totals.input, 128);
+      expect(segment.totals.output, 0);
+      expect(segment.source, UsageSource.estimated);
+      expect(ledger.usageIncomplete, isTrue);
+      expect(jsonEncode(ledger.toJson()), contains('"usageIncomplete":true'));
+    });
 
     test('two dangling summaries BOTH count (multi-request kill)', () {
       final ledger = foldChain([
@@ -353,6 +350,28 @@ void main() {
       expect(segment.totals.requests, 2);
       // ceil((10+400)/4) = 103, ceil((10+300)/4) = 78.
       expect(segment.totals.input, 103 + 78);
+      expect(ledger.usageIncomplete, isTrue);
+    });
+
+    test('a stripped record folds droppedMessages chars into the estimate '
+        '(issue #1882 AC1)', () {
+      // The #1882 strip keeps only the newest stubs and folds the older
+      // messages into {count, chars} — that aggregate is part of the
+      // KNOWN request-side volume, exactly like per-message chars.
+      final ledger = foldChain([
+        sessionHeaderLine('sess-1'),
+        segmentMarkerLine(1),
+        requestSummaryLine(
+          2,
+          messageChars: const [400, 100],
+          droppedMessages: (count: 730, chars: 365000),
+        ),
+      ]);
+      final segment = ledger.segments.single;
+      // ceil((10 + 500 + 365000) / 4) = 91378.
+      expect(segment.totals.input, 91378);
+      expect(segment.totals.requests, 1);
+      expect(segment.source, UsageSource.estimated);
       expect(ledger.usageIncomplete, isTrue);
     });
 
@@ -372,20 +391,23 @@ void main() {
       expect(scan.usageIncomplete, isTrue);
     });
 
-    test('a segment marker flushes the previous segment\'s dangling request', () {
-      final ledger = foldChain([
-        sessionHeaderLine('sess-1'),
-        segmentMarkerLine(1),
-        requestSummaryLine(2, messageChars: const [400]),
-        segmentMarkerLine(3), // resume: request 1 never finalized
-        requestSummaryLine(4),
-        assistantLine(5, usage: reportedUsage(input: 50, output: 25)),
-      ]);
-      expect(ledger.segments.length, 2);
-      expect(ledger.segments[0].totals.input, 103); // ceil(410/4)
-      expect(ledger.segments[1].totals.input, 50);
-      expect(ledger.usageIncomplete, isTrue);
-    });
+    test(
+      'a segment marker flushes the previous segment\'s dangling request',
+      () {
+        final ledger = foldChain([
+          sessionHeaderLine('sess-1'),
+          segmentMarkerLine(1),
+          requestSummaryLine(2, messageChars: const [400]),
+          segmentMarkerLine(3), // resume: request 1 never finalized
+          requestSummaryLine(4),
+          assistantLine(5, usage: reportedUsage(input: 50, output: 25)),
+        ]);
+        expect(ledger.segments.length, 2);
+        expect(ledger.segments[0].totals.input, 103); // ceil(410/4)
+        expect(ledger.segments[1].totals.input, 50);
+        expect(ledger.usageIncomplete, isTrue);
+      },
+    );
 
     test(
       'completed chains stay byte-identical: no usageIncomplete key, flag false',
@@ -397,10 +419,7 @@ void main() {
           assistantLine(3, usage: reportedUsage(input: 100, output: 50)),
         ]);
         expect(ledger.usageIncomplete, isFalse);
-        expect(
-          jsonEncode(ledger.toJson()),
-          isNot(contains('usageIncomplete')),
-        );
+        expect(jsonEncode(ledger.toJson()), isNot(contains('usageIncomplete')));
       },
     );
 
@@ -411,29 +430,27 @@ void main() {
         requestSummaryLine(2), // dangling
       ]);
       final decoded = UsageLedger.fromJson(
-        (jsonDecode(jsonEncode(ledger.toJson())) as Map).cast<String, dynamic>(),
+        (jsonDecode(jsonEncode(ledger.toJson())) as Map)
+            .cast<String, dynamic>(),
       );
       expect(decoded.usageIncomplete, isTrue);
     });
 
-    test(
-      'a dangling request with NO known chars still marks incomplete — '
-      'the marker fires even when the estimate is zero',
-      () {
-        final chain = [
-          sessionHeaderLine('sess-1'),
-          segmentMarkerLine(1),
-          // Stub/capped summary shape: no messages array at all.
-          '{"type":"custom","id":"r2","timestamp":"2024-01-01T00:02:00.000Z",'
-          '"customType":"model_request_summary","data":{"messageCount":3}}',
-        ];
-        final ledger = foldChain(chain);
-        expect(ledger.total.totals.input, 0);
-        expect(ledger.total.totals.requests, 1);
-        expect(ledger.usageIncomplete, isTrue);
-        expect(jsonEncode(ledger.toJson()), contains('"usageIncomplete":true'));
-      },
-    );
+    test('a dangling request with NO known chars still marks incomplete — '
+        'the marker fires even when the estimate is zero', () {
+      final chain = [
+        sessionHeaderLine('sess-1'),
+        segmentMarkerLine(1),
+        // Stub/capped summary shape: no messages array at all.
+        '{"type":"custom","id":"r2","timestamp":"2024-01-01T00:02:00.000Z",'
+            '"customType":"model_request_summary","data":{"messageCount":3}}',
+      ];
+      final ledger = foldChain(chain);
+      expect(ledger.total.totals.input, 0);
+      expect(ledger.total.totals.requests, 1);
+      expect(ledger.usageIncomplete, isTrue);
+      expect(jsonEncode(ledger.toJson()), contains('"usageIncomplete":true'));
+    });
   });
 
   group('robustness', () {

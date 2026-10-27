@@ -33,7 +33,7 @@ YamlMap jobsOf(String workflowPath) =>
 const ci = '.github/workflows/ci.yml';
 const pubGetAction = './.github/actions/flutter-pub-get';
 final exzoneGrep =
-    r"grep -qE '(^flutter_app/lib/apps/|^lib/src/js_ext/|^flutter_app/test/apps/|^flutter_app/test/native_test_guard\.dart$|^flutter_app/pubspec\.yaml$)'";
+    r"grep -qE '(^flutter_app/lib/apps/|^lib/src/js_ext/|^flutter_app/test/apps/|^flutter_app/test/native_test_guard\.dart$|^flutter_app/pubspec\.yaml$|^flutter_app/lib/services/media_tools\.dart$|^flutter_app/lib/services/video_tool\.dart$|^packages/fa_ui/lib/src/stores/media_models_store\.dart$)'";
 final lockGrep = r"grep -qE '^flutter_app/pubspec\.lock$'";
 
 YamlMap stepById(YamlMap job, String id) => (job['steps'] as YamlList)

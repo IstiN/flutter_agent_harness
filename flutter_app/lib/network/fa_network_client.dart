@@ -13,8 +13,9 @@ import 'models.dart';
 ///
 /// [code] is the server error code (`unauthorized`, `invalid_credentials`,
 /// `forbidden_by_class`, `channel_read_only`, `throttled`, `not_found`,
-/// `conflict`). When the body does not match the Error schema, [code] is
-/// `http_5xx` for server errors and `http_<status>` otherwise.
+/// `conflict`). The client maps a retired hub's unknown `enroll_create` to
+/// `enrollment_unsupported`. When the body does not match the Error schema,
+/// [code] is `http_5xx` for server errors and `http_<status>` otherwise.
 class FaNetworkException implements Exception {
   const FaNetworkException({
     required this.statusCode,
@@ -34,6 +35,28 @@ class FaNetworkException implements Exception {
   String toString() =>
       'FaNetworkException($statusCode, $code): $message'
       '${retryAfterSeconds != null ? ' (retry after ${retryAfterSeconds}s)' : ''}';
+}
+
+/// Turns the retired hub's explicit `enroll_create` rejection into an
+/// actionable compatibility error. Other failures pass through unchanged;
+/// most importantly, this never retries through the legacy rotating route.
+FaNetworkException _independentEnrollmentError(FaNetworkException error) {
+  final message = error.message.toLowerCase();
+  final unsupported =
+      error.statusCode == 503 &&
+      message.contains('enroll_create') &&
+      (message.contains('unknown op') ||
+          message.contains('unknown enrollment operation'));
+  if (!unsupported) return error;
+  return FaNetworkException(
+    statusCode: error.statusCode,
+    code: 'enrollment_unsupported',
+    message:
+        'This DAP hub does not support independent agent enrollment. '
+        'Update the DAP hub and try again; existing agent credentials were '
+        'not changed.',
+    retryAfterSeconds: error.retryAfterSeconds,
+  );
 }
 
 /// REST client for the fa_network edge (fa_network/docs/openapi.yaml).
@@ -408,6 +431,49 @@ class FaNetworkClient {
     return AgentEnrollment.fromJson(_decodeMap(res));
   }
 
+  /// `POST /api/networks/{id}/agents/enrollments` — creates an ADDITIONAL
+  /// independent, name-bound DAP credential (owner/admin). Repeating this
+  /// call for the same name does not rotate earlier credentials, so those
+  /// agents can connect simultaneously. The secret is returned exactly once.
+  Future<AgentEnrollment> createAgentCredential(
+    String networkId, {
+    required String name,
+  }) async {
+    try {
+      final res = await _request(
+        'POST',
+        '/api/networks/$networkId/agents/enrollments',
+        body: {'name': name},
+        management: true,
+        expected: {201},
+      );
+      return AgentEnrollment.fromJson(_decodeMap(res));
+    } on FaNetworkException catch (error) {
+      throw _independentEnrollmentError(error);
+    }
+  }
+
+  /// `DELETE /api/networks/{id}/agents/{agentId}` (owner/admin).
+  ///
+  /// The server treats 204 as idempotent success, including an unknown id.
+  Future<void> deleteAgent(String networkId, String agentId) => _request(
+    'DELETE',
+    '/api/networks/$networkId/agents/$agentId',
+    management: true,
+    expected: {204},
+  ).then((_) {});
+
+  /// `DELETE /api/networks/{id}/members/{memberId}` (owner/admin).
+  ///
+  /// Removes a STORE member (guest/member/agent-class), revokes its
+  /// sessions and pushes a fresh roster.snapshot. 204 is idempotent.
+  Future<void> deleteMember(String networkId, String memberId) => _request(
+    'DELETE',
+    '/api/networks/$networkId/members/$memberId',
+    management: true,
+    expected: {204},
+  ).then((_) {});
+
   // --------------------------------------------------------------- wakeups
 
   /// `GET /api/networks/{id}/agents/{agentId}/wakeups` (owner/admin).
@@ -644,6 +710,34 @@ class FaNetworkClient {
     required Set<int> expected,
   }) async {
     final uri = _uri(path, query, base: authService ? authBaseUrl : null);
+    final request = _buildFaRequest(
+      method: method,
+      uri: uri,
+      requestHeaders: _faHeaders(auth, management, headers),
+      encodedBody: body == null ? null : jsonEncode(body),
+    );
+    final streamed = await _http.send(request);
+    final response = await http.Response.fromStream(streamed);
+    if (!expected.contains(response.statusCode)) {
+      final error = _errorFor(response);
+      AppLog.i(
+        'fa_network',
+        '$method $path → ${response.statusCode} ${error.code} '
+            '(bearer=${_sentTokenClass(auth: auth, management: management)}): '
+            '${error.message}',
+      );
+      throw error;
+    }
+    return response;
+  }
+
+  /// JSON content/accept headers plus the bearer when [auth] is on and
+  /// a matching token exists.
+  Map<String, String> _faHeaders(
+    bool auth,
+    bool management,
+    Map<String, String>? headers,
+  ) {
     final requestHeaders = <String, String>{
       'content-type': 'application/json',
       'accept': 'application/json',
@@ -653,31 +747,35 @@ class FaNetworkClient {
       final token = _token(management: management);
       if (token != null) requestHeaders['authorization'] = 'Bearer $token';
     }
-    final encodedBody = body == null ? null : jsonEncode(body);
+    return requestHeaders;
+  }
+
+  /// The outgoing request with its optional JSON body.
+  http.Request _buildFaRequest({
+    required String method,
+    required Uri uri,
+    required Map<String, String> requestHeaders,
+    required String? encodedBody,
+  }) {
     final request = http.Request(method, uri)..headers.addAll(requestHeaders);
     if (encodedBody != null) request.body = encodedBody;
-    final streamed = await _http.send(request);
-    final response = await http.Response.fromStream(streamed);
-    if (!expected.contains(response.statusCode)) {
-      // Diagnostics without secrets: which token CLASS rode the request
-      // (jwt/session/none), never its value.
-      final sent = auth
-          ? (_token(management: management) != null
-                ? (management
-                      ? (_jwt != null ? 'jwt' : 'session')
-                      : (_session != null ? 'session' : 'jwt'))
-                : 'none')
-          : 'off';
-      final error = _errorFor(response);
-      AppLog.i(
-        'fa_network',
-        '$method $path → ${response.statusCode} ${error.code} '
-            '(bearer=$sent): ${error.message}',
-      );
-      throw error;
-    }
-    return response;
+    return request;
   }
+
+  /// Diagnostics without secrets: which token CLASS rode the request
+  /// (jwt/session/none — or `off`, when auth is disabled), never its
+  /// value.
+  String _sentTokenClass({required bool auth, required bool management}) {
+    if (!auth) return 'off';
+    if (_token(management: management) == null) return 'none';
+    return _sentTokenClassName(management: management);
+  }
+
+  /// The token CLASS a management/member route just sent (see
+  /// [_sentTokenClass]) — which of the two stores won the pick.
+  String _sentTokenClassName({required bool management}) => management
+      ? (_jwt != null ? 'jwt' : 'session')
+      : (_session != null ? 'session' : 'jwt');
 
   FaNetworkException _errorFor(http.Response response) {
     final retryAfter = int.tryParse(response.headers['retry-after'] ?? '');

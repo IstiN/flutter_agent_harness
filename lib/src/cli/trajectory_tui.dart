@@ -468,6 +468,12 @@ void _inspectRequestBlobs(
           : '$wireHash · ${dump.payload.length} chars${dump.truncated ? ' · truncated' : ''}',
     );
   }
+  // gh-1745: the heavy detail (per-message texts, the raw dump) lives in
+  // the session's request-blob dir; the pointer names the file.
+  final spillFile = detail.spillFile;
+  if (spillFile != null) {
+    _inspectSection(lines, 'request blob', spillFile);
+  }
 }
 
 /// The system-prompt blob section for a system row (issue #385 AC9):

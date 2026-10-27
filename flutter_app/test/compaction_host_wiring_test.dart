@@ -89,7 +89,8 @@ void main() {
       'the threshold computes from the effective window, not the fallback',
       () {
         // The compaction trigger for a google-kind connection: 1M window,
-        // reserve 16384 → trips at 1000000-16384, not at 200000-16384.
+        // gh-1742 proportional reserve (window/16 = 62,500, inside the
+        // hosted band) → trips at 1000000-62500, not at 200000-16384.
         final wiring = resolveCompactionHostWiring(
           mainModel: _mainModel(
             contextWindow: resolveAppContextWindow(providerKind: 'google'),
@@ -97,10 +98,10 @@ void main() {
         );
         expect(wiring.window, 1000000);
         expect(wiring.conversationWindow, 1000000);
-        expect(wiring.settings.reserveTokens, 16384);
+        expect(wiring.settings.reserveTokens, 62500);
         expect(
           wiring.conversationWindow - wiring.settings.reserveTokens,
-          1000000 - 16384,
+          1000000 - 62500,
         );
       },
     );

@@ -7,6 +7,8 @@
 /// from CLI flags), so provider defaults live in exactly one place.
 library;
 
+import 'package:http/http.dart' as http;
+
 import '../agent/agent_loop.dart';
 import '../cancel_token.dart';
 import '../context.dart';
@@ -391,8 +393,9 @@ int? resolveModelMaxOutputTokens(String modelId, {required String api}) {
     major = int.parse(after);
     minor = match.group(3) == null ? 0 : int.parse(match.group(3)!);
   } else {
-    final before = RegExp(r'(\d{1,2})(?:[.-](\d{1,2}))?(?=-|$)')
-        .firstMatch(id.substring(0, match.start));
+    final before = RegExp(
+      r'(\d{1,2})(?:[.-](\d{1,2}))?(?=-|$)',
+    ).firstMatch(id.substring(0, match.start));
     if (before == null) return _unknownClaudeOutputCeiling;
     major = int.parse(before.group(1)!);
     minor = before.group(2) == null ? 0 : int.parse(before.group(2)!);
@@ -438,6 +441,13 @@ String? parseAuthHeaderName(Object? value, String where) {
   }
   return name;
 }
+
+/// Measured per-model unique-image caps (issue #1750): only values
+/// actually observed from the provider — invented limits rot. Absent id
+/// = no per-model knowledge, the global `images.maxPerRequest` default
+/// applies. `images.perModel.<modelId>` config beats this (user truth
+/// beats built-ins).
+const catalogMaxImages = <String, int>{'gemini-4-argon': 10};
 
 /// The adapter kinds whose stream function routes through
 /// [streamOpenAICompletions] — the only wire that reads
@@ -546,6 +556,7 @@ Model buildCatalogModel(
     connectTimeout: connectTimeout,
     streamIdleTimeout: streamIdleTimeout,
     timeoutScopeLabel: timeoutScopeLabel,
+    maxImages: catalogMaxImages[modelId],
   );
 }
 
@@ -722,6 +733,7 @@ Model buildCliDefaultModel(
     // The resolver's loud notes ride the model (gh-1426 rework) — the
     // boot notice renders them; never dropped at the build boundary.
     capabilityNotes: caps.notes,
+    maxImages: catalogMaxImages[id],
   );
 }
 
@@ -745,6 +757,7 @@ StreamFunction providerStreamFunction(
   String? dialApiVersion,
   bool? dialCacheMarkersSupported,
   ChatGptCredentialsPersist? onChatGptCredentialsRefreshed,
+  http.Client? httpClient,
 }) {
   if (kind != 'openai-completions' &&
       kind != 'anthropic' &&
@@ -766,12 +779,26 @@ StreamFunction providerStreamFunction(
     dialApiVersion,
     dialCacheMarkersSupported,
     onChatGptCredentialsRefreshed,
+    httpClient,
   );
   // Every provider call (chat turns, compaction summaries, memory
   // extraction, media) rides the transient-network retry: a Wi-Fi switch
   // mid-turn dies with "Connection reset by peer" — sleep, replay.
   return transientRetryStreamFunction(inner.call);
 }
+
+/// The normalized adapter builder of `_CatalogStreamFunction._builders`:
+/// `(self, model, context, cancelToken, sessionId, cacheRetention)` —
+/// routing-resolved values already applied (gh-1713).
+typedef _CatalogStreamBuilder =
+    AssistantMessageEventStream Function(
+      _CatalogStreamFunction self,
+      Model model,
+      Context context,
+      CancelToken? cancelToken,
+      String? sessionId,
+      String? cacheRetention,
+    );
 
 /// The [providerStreamFunction] product: resolves the cache routing at call
 /// time — an active [StreamCacheRouting] override first, then the factory
@@ -785,6 +812,7 @@ final class _CatalogStreamFunction {
     this._dialApiVersion,
     this._dialCacheMarkersSupported,
     this._onChatGptCredentialsRefreshed,
+    this._httpClient,
   );
 
   final String _kind;
@@ -795,6 +823,26 @@ final class _CatalogStreamFunction {
   final bool? _dialCacheMarkersSupported;
   final ChatGptCredentialsPersist? _onChatGptCredentialsRefreshed;
 
+  /// The pre-built HTTP client a bound provider runs on (issue #1921 —
+  /// the per-provider proxy). Null keeps the adapters on the shared
+  /// direct client, byte-identical to the unbound behavior.
+  final http.Client? _httpClient;
+
+  /// Route table: provider kind → adapter builder (gh-1713). The four
+  /// OpenAI-compatible kinds share one builder; each builder keeps CC 1 —
+  /// only its family's options construction.
+  static final Map<String, _CatalogStreamBuilder> _builders = {
+    'openai-completions': _CatalogStreamFunction._streamOpenAi,
+    'minimax': _CatalogStreamFunction._streamOpenAi,
+    'zai': _CatalogStreamFunction._streamOpenAi,
+    'aiin': _CatalogStreamFunction._streamOpenAi,
+    'anthropic': _CatalogStreamFunction._streamAnthropic,
+    'google': _CatalogStreamFunction._streamGoogle,
+    'dial': _CatalogStreamFunction._streamDial,
+    'copilot': _CatalogStreamFunction._streamCopilot,
+    'chatgpt-codex': _CatalogStreamFunction._streamChatGptCodex,
+  };
+
   /// The [StreamFunction] entry point.
   AssistantMessageEventStream call(
     Model model,
@@ -804,65 +852,125 @@ final class _CatalogStreamFunction {
     final routing = StreamCacheRouting.current;
     final effectiveSessionId = routing?.sessionId ?? _sessionId?.call();
     final effectiveRetention = routing?.cacheRetention ?? _cacheRetention;
-    return switch (_kind) {
-      'openai-completions' ||
-      'minimax' ||
-      'zai' ||
-      'aiin' => streamOpenAICompletions(
-        model,
-        context,
-        OpenAICompletionsOptions(
-          apiKey: _apiKey,
-          cancelToken: cancelToken,
-          sessionId: effectiveSessionId,
-          cacheRetention: effectiveRetention,
-        ),
-      ),
-      'anthropic' => streamAnthropic(
-        model,
-        context,
-        AnthropicOptions(
-          apiKey: _apiKey,
-          cancelToken: cancelToken,
-          cacheRetention: effectiveRetention,
-        ),
-      ),
-      'google' => streamGoogle(
-        model,
-        context,
-        GoogleOptions(apiKey: _apiKey, cancelToken: cancelToken),
-      ),
-      'dial' => streamDial(
-        model,
-        context,
-        DialOptions(
-          apiKey: _apiKey,
-          apiVersion: _dialApiVersion,
-          cancelToken: cancelToken,
-          sessionId: effectiveSessionId,
-          cacheRetention: effectiveRetention,
-          cacheMarkersSupported: _dialCacheMarkersSupported,
-        ),
-      ),
-      'copilot' => streamCopilot(
-        model,
-        context,
-        CopilotOptions(
-          githubToken: _apiKey,
-          cancelToken: cancelToken,
-          sessionId: effectiveSessionId,
-          cacheRetention: effectiveRetention,
-        ),
-      ),
-      'chatgpt-codex' => streamChatGptCodex(
-        model,
-        context,
-        credentials: _apiKey,
-        onCredentialsRefreshed: _onChatGptCredentialsRefreshed,
-        cancelToken: cancelToken,
-      ),
+    final builder = _builders[_kind];
+    if (builder == null) {
       // Validated by providerStreamFunction; unreachable.
-      _ => throw ConfigException('Unknown provider kind: $_kind'),
-    };
+      throw ConfigException('Unknown provider kind: $_kind');
+    }
+    return builder(
+      this,
+      model,
+      context,
+      cancelToken,
+      effectiveSessionId,
+      effectiveRetention,
+    );
   }
+
+  static AssistantMessageEventStream _streamOpenAi(
+    _CatalogStreamFunction self,
+    Model model,
+    Context context,
+    CancelToken? cancelToken,
+    String? sessionId,
+    String? cacheRetention,
+  ) => streamOpenAICompletions(
+    model,
+    context,
+    OpenAICompletionsOptions(
+      apiKey: self._apiKey,
+      cancelToken: cancelToken,
+      sessionId: sessionId,
+      cacheRetention: cacheRetention,
+    ),
+    self._httpClient,
+  );
+
+  static AssistantMessageEventStream _streamAnthropic(
+    _CatalogStreamFunction self,
+    Model model,
+    Context context,
+    CancelToken? cancelToken,
+    String? sessionId,
+    String? cacheRetention,
+  ) => streamAnthropic(
+    model,
+    context,
+    AnthropicOptions(
+      apiKey: self._apiKey,
+      cancelToken: cancelToken,
+      cacheRetention: cacheRetention,
+    ),
+    self._httpClient,
+  );
+
+  static AssistantMessageEventStream _streamGoogle(
+    _CatalogStreamFunction self,
+    Model model,
+    Context context,
+    CancelToken? cancelToken,
+    String? sessionId,
+    String? cacheRetention,
+  ) => streamGoogle(
+    model,
+    context,
+    GoogleOptions(apiKey: self._apiKey, cancelToken: cancelToken),
+    self._httpClient,
+  );
+
+  static AssistantMessageEventStream _streamDial(
+    _CatalogStreamFunction self,
+    Model model,
+    Context context,
+    CancelToken? cancelToken,
+    String? sessionId,
+    String? cacheRetention,
+  ) => streamDial(
+    model,
+    context,
+    DialOptions(
+      apiKey: self._apiKey,
+      apiVersion: self._dialApiVersion,
+      cancelToken: cancelToken,
+      sessionId: sessionId,
+      cacheRetention: cacheRetention,
+      cacheMarkersSupported: self._dialCacheMarkersSupported,
+    ),
+    self._httpClient,
+  );
+
+  static AssistantMessageEventStream _streamCopilot(
+    _CatalogStreamFunction self,
+    Model model,
+    Context context,
+    CancelToken? cancelToken,
+    String? sessionId,
+    String? cacheRetention,
+  ) => streamCopilot(
+    model,
+    context,
+    CopilotOptions(
+      githubToken: self._apiKey,
+      cancelToken: cancelToken,
+      sessionId: sessionId,
+      cacheRetention: cacheRetention,
+    ),
+    self._httpClient,
+  );
+
+  static AssistantMessageEventStream _streamChatGptCodex(
+    _CatalogStreamFunction self,
+    Model model,
+    Context context,
+    CancelToken? cancelToken,
+    String? sessionId,
+    String? cacheRetention,
+  ) => streamChatGptCodex(
+    model,
+    context,
+    credentials: self._apiKey,
+    onCredentialsRefreshed: self._onChatGptCredentialsRefreshed,
+    cancelToken: cancelToken,
+    client: self._httpClient,
+  );
 }

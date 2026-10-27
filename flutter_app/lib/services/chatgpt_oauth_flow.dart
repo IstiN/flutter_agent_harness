@@ -142,8 +142,8 @@ Future<ChatGptOAuthCredentials?> _acquireCredentials(
   ChatGptSystemAuthSession? systemSessionFn,
 }) async {
   if (chatGptOAuthFlowFn != null) return chatGptOAuthFlowFn();
-  // iosFn overrides the platform wholesale (the test seam runs iOS hops on
-  // a macOS host) — the two must stay mutually exclusive.
+  // iosFn overrides the platform wholesale (the test seam runs iOS hops
+  // on a macOS host) — the two must stay mutually exclusive.
   final isIos = iosFn?.call() ?? Platform.isIOS;
   final surface = resolveProviderAuthSurface(
     provider: ProviderAuthId.chatgpt,
@@ -151,33 +151,41 @@ Future<ChatGptOAuthCredentials?> _acquireCredentials(
     isIOS: isIos,
     isWeb: kIsWeb,
   );
-  switch (surface.primary) {
-    case ProviderAuthSurfaceKind.systemAuthSession:
-      final session = await (systemSessionFn ?? systemAuthSessionChatGptSignIn)(
-        exchangeFn: exchangeFn,
-        onExchangeError: (message) => _refuse(context, message),
-      );
-      if (!session.sessionUnavailable) return session.credentials;
-      if (!context.mounted) return null;
-      // The session could not start — degrade to the in-app WebView (no
-      // passkeys; the page's notice says so before the page renders).
-      return _acquireIosCredentials(
-        context,
-        pushWebView: pushWebView ?? _pushChatGptOAuthWebView,
-        exchangeFn: exchangeFn,
-      );
-    case ProviderAuthSurfaceKind.embeddedWebView:
-      // Unreachable today (the web build is refused before the matrix is
-      // consulted). Should a surface ever resolve here, run the same
-      // WebView hop — its notice keeps the degradation honest.
-      if (!context.mounted) return null;
-      return _acquireIosCredentials(
-        context,
-        pushWebView: pushWebView ?? _pushChatGptOAuthWebView,
-        exchangeFn: exchangeFn,
-      );
-    case ProviderAuthSurfaceKind.systemBrowserLoopback:
-      break;
+  return _acquireViaResolvedSurface(
+    context,
+    surface.primary,
+    exchangeFn: exchangeFn,
+    pushWebView: pushWebView,
+    systemSessionFn: systemSessionFn,
+  );
+}
+
+/// The hop for the resolved [kind]: the iOS system session (the WebView
+/// fallback lives inside it), the embedded WebView — unreachable today,
+/// the web build is refused before the matrix is consulted, but should a
+/// surface ever resolve here, run the same WebView hop whose notice
+/// keeps the degradation honest — and everything else the CLI flow.
+Future<ChatGptOAuthCredentials?> _acquireViaResolvedSurface(
+  BuildContext context,
+  ProviderAuthSurfaceKind kind, {
+  ChatGptCodeExchange? exchangeFn,
+  Future<String?> Function(BuildContext, Uri, String)? pushWebView,
+  ChatGptSystemAuthSession? systemSessionFn,
+}) async {
+  if (kind == ProviderAuthSurfaceKind.systemAuthSession) {
+    return _acquireViaSystemSession(
+      context,
+      exchangeFn: exchangeFn,
+      pushWebView: pushWebView,
+      systemSessionFn: systemSessionFn,
+    );
+  }
+  if (kind == ProviderAuthSurfaceKind.embeddedWebView) {
+    return _acquireViaEmbeddedWebView(
+      context,
+      pushWebView: pushWebView,
+      exchangeFn: exchangeFn,
+    );
   }
   showFahSnack(
     context,
@@ -195,6 +203,42 @@ Future<ChatGptOAuthCredentials?> _acquireCredentials(
         mode: url_launcher.LaunchMode.externalApplication,
       );
     },
+  );
+}
+
+/// The system-auth-session arm (gh-1848 split): a working session returns
+/// its credentials; a session that could not start degrades to the in-app
+/// WebView (no passkeys; the page's notice says so before it renders).
+Future<ChatGptOAuthCredentials?> _acquireViaSystemSession(
+  BuildContext context, {
+  ChatGptCodeExchange? exchangeFn,
+  Future<String?> Function(BuildContext, Uri, String)? pushWebView,
+  ChatGptSystemAuthSession? systemSessionFn,
+}) async {
+  final session = await (systemSessionFn ?? systemAuthSessionChatGptSignIn)(
+    exchangeFn: exchangeFn,
+    onExchangeError: (message) => _refuse(context, message),
+  );
+  if (!session.sessionUnavailable) return session.credentials;
+  if (!context.mounted) return null;
+  return _acquireIosCredentials(
+    context,
+    pushWebView: pushWebView ?? _pushChatGptOAuthWebView,
+    exchangeFn: exchangeFn,
+  );
+}
+
+/// The embedded-WebView arm (gh-1848 split): same hop, no session first.
+Future<ChatGptOAuthCredentials?> _acquireViaEmbeddedWebView(
+  BuildContext context, {
+  Future<String?> Function(BuildContext, Uri, String)? pushWebView,
+  ChatGptCodeExchange? exchangeFn,
+}) async {
+  if (!context.mounted) return null;
+  return _acquireIosCredentials(
+    context,
+    pushWebView: pushWebView ?? _pushChatGptOAuthWebView,
+    exchangeFn: exchangeFn,
   );
 }
 

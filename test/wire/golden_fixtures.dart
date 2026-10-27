@@ -12,6 +12,7 @@ import 'dart:io';
 
 import 'package:flutter_agent_harness/src/agent/agent_loop.dart';
 import 'package:flutter_agent_harness/src/agent/finalize_gate.dart';
+import 'package:flutter_agent_harness/src/agent/foreground_call_budget.dart';
 import 'package:flutter_agent_harness/src/approval/approval.dart';
 import 'package:flutter_agent_harness/src/tools/ask_tool.dart';
 import 'package:flutter_agent_harness/src/tools/request_secret_tool.dart';
@@ -287,6 +288,19 @@ AgentEvent nativeEventFor(String kind) => switch (kind) {
     elapsed: const Duration(seconds: 3),
     action: StuckFollowUpAction.cancelRetry,
     detail: '300s stuck threshold exceeded',
+    timestamp: DateTime.fromMillisecondsSinceEpoch(fixtureTimestampMs),
+  ),
+  'tool_call_budget' => ToolCallBudgetEvent(
+    toolCallId: 'call_1',
+    toolName: 'bash',
+    args: const {'command': 'sleep 600'},
+    elapsed: const Duration(minutes: 3),
+    rung: ForegroundBudgetRung.watchdog,
+    action: ForegroundBudgetAction.offer,
+    steeringCount: 1,
+    detail:
+        '[foreground-budget] rung 3: bash after 3m00s — accept to move '
+        'it to the background and deliver 1 steering message now',
     timestamp: DateTime.fromMillisecondsSinceEpoch(fixtureTimestampMs),
   ),
   _ => throw StateError('No native event builder pinned for kind "$kind"'),

@@ -35,6 +35,7 @@ import 'dart:math';
 
 import '../agent/agent_loop.dart';
 import '../cancel_token.dart';
+import '../compaction/context_window_registry.dart' show ModelWindowKey;
 import '../context.dart';
 import '../event_stream.dart';
 import '../model.dart';
@@ -360,6 +361,23 @@ final class ChainEntry {
 
   /// The `provider/modelId` display label.
   String get label => '${model.provider}/${model.id}';
+}
+
+/// gh-1742 review round 1, comment 6: the [StreamFunction] contract hands
+/// the chain a caller-chosen model, and the chain used to discard it —
+/// every attempt dialed [ChainEntry.model] verbatim. When a compaction
+/// adapter (or the registry-patched agent model) passes the SAME identity
+/// carrying the registered context window, the stale catalog value must
+/// not ride the dial: the payload budget, `maxTokens` clamps and the
+/// provider-side window checks all read the dialed model. A different
+/// identity keeps the entry's own model — failover semantics are
+/// untouched.
+Model _honorCallerWindow(Model entryModel, Model requested) {
+  if (ModelWindowKey.of(entryModel) != ModelWindowKey.of(requested)) {
+    return entryModel;
+  }
+  if (requested.contextWindow == entryModel.contextWindow) return entryModel;
+  return entryModel.copyWith(contextWindow: requested.contextWindow);
 }
 
 sealed class _AttemptOutcome {
@@ -792,7 +810,7 @@ final class FallbackStreamFunction {
     // adapter's own stream carries the StreamTrace emit mark (once per delta).
     final out = AssistantMessageEventStream(traced: false);
     unawaited(
-      _drive(out, context, cancelToken)
+      _drive(out, context, cancelToken, model)
           .catchError((Object error) {
             // Defensive (providers never throw; a fake in tests might):
             // convert into the errors-as-events contract.
@@ -812,6 +830,7 @@ final class FallbackStreamFunction {
     AssistantMessageEventStream out,
     Context context,
     CancelToken? cancelToken,
+    Model requested,
   ) async {
     final state = _DriveState(_firstAvailableIndex(), _now());
     _activeIndex = state.entryIndex;
@@ -864,6 +883,7 @@ final class FallbackStreamFunction {
         credential,
         context,
         cancelToken,
+        requested,
       )) {
         return;
       }
@@ -880,6 +900,7 @@ final class FallbackStreamFunction {
     ApiKeyCredential credential,
     Context context,
     CancelToken? cancelToken,
+    Model requested,
   ) async {
     final outcome = await _runAttempt(
       out,
@@ -887,6 +908,7 @@ final class FallbackStreamFunction {
       credential,
       context,
       cancelToken,
+      requested,
     );
     switch (outcome) {
       case _Forwarded(:final succeeded, :final death):
@@ -1282,9 +1304,10 @@ final class FallbackStreamFunction {
     ApiKeyCredential credential,
     Context context,
     CancelToken? cancelToken,
+    Model requested,
   ) async {
     final stream = entry.streamForKey(credential.value)(
-      entry.model,
+      _honorCallerWindow(entry.model, requested),
       context,
       cancelToken: cancelToken,
     );

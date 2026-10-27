@@ -142,7 +142,8 @@ Future<AppPreflightOutcome> runSmokeRenderGate(
     } on Object catch (error) {
       return AppPreflightFailed(
         gate: 'smoke-render',
-        excerpt: 'engine boot failed: ${JsAppErrorChannel.capExcerpt('$error')}',
+        excerpt:
+            'engine boot failed: ${JsAppErrorChannel.capExcerpt('$error')}',
       );
     }
     final rendered = await _awaitFirstRender(engine, renderBudget);
@@ -238,6 +239,15 @@ Future<bool> _awaitFirstRender(JsAppEngine engine, Duration budget) {
     engine.tree.removeListener(listener);
   });
 }
+
+/// gh-1848: test seam — the first-render await is otherwise reachable only
+/// through the preflight gate, which boots the engine (native JS runtime:
+/// the engine suite skips on bridge-less hosts, leaving this at 0% there).
+/// The await itself is pure Dart ([ValueNotifier] + [Timer]); the seam
+/// keeps it coverable bridge-free on every host.
+@visibleForTesting
+Future<bool> awaitFirstRenderForTest(JsAppEngine engine, Duration budget) =>
+    _awaitFirstRender(engine, budget);
 
 /// Runs the pre-flight gate for [appId]: the app's standing test when the
 /// host can run it, otherwise the in-engine smoke render (AC10 — the tool

@@ -58,17 +58,32 @@ extension AgentServiceMedia on AgentService {
       _notify();
       return;
     }
-    final content = <ContentBlock>[
-      if (text.isNotEmpty) TextContent(text: text),
-      ImageContent(data: base64Encode(bytes), mimeType: mimeType),
-    ];
-    final message = UserMessage(content: content, timestamp: DateTime.now());
+    final message = UserMessage(
+      content: _imageMessageContent(text, bytes, mimeType),
+      timestamp: DateTime.now(),
+    );
     if (_agent.state.isStreaming) {
-      _agent.steer(message);
-      pendingSteerTexts.add(text.isEmpty ? '[image]' : text);
-      _notify();
+      _steerImageMessage(message, text);
       return;
     }
     _runWithTimeout(() => _agent.promptMessage(message));
+  }
+
+  /// The message blocks: the optional caption then the image.
+  List<ContentBlock> _imageMessageContent(
+    String text,
+    Uint8List bytes,
+    String mimeType,
+  ) => [
+    if (text.isNotEmpty) TextContent(text: text),
+    ImageContent(data: base64Encode(bytes), mimeType: mimeType),
+  ];
+
+  /// The streaming-time path: steer the running prompt with the image
+  /// message and record a placeholder steering label.
+  void _steerImageMessage(UserMessage message, String text) {
+    _agent.steer(message);
+    pendingSteerTexts.add(text.isEmpty ? '[image]' : text);
+    _notify();
   }
 }

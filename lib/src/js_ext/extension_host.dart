@@ -905,27 +905,31 @@ final class JsExtensionHost {
   /// any other throw is an extension error reported to JS as an error result.
   ExtBridgeHandler _bridgeHandler(StoredExtension ext) {
     final caps = ext.manifest.capabilities;
-    return (method, args) => switch (method) {
+    final routes = <String, Future<Object?> Function(Map<String, dynamic>)>{
       // Registration methods are buffered JS-side (validated at commit).
-      ExtBridgeMethods.registerTool ||
-      ExtBridgeMethods.registerHook ||
-      ExtBridgeMethods.registerSlash ||
-      ExtBridgeMethods.registerFlow => Future<Object?>.value(null),
-      ExtBridgeMethods.sessionAppendNote => _noteSink(args),
-      ExtBridgeMethods.sessionEnqueueFollowUp => _followUpSink(ext, args),
-      ExtBridgeMethods.fsReadFile => _fsReadFile(caps, args),
-      ExtBridgeMethods.execRun => _execRun(caps, args),
-      ExtBridgeMethods.ioWrite => _ioSink(onIoWrite, args),
-      ExtBridgeMethods.ioWriteln => _ioSink(onIoWriteln, args),
-      ExtBridgeMethods.keysRequest => _keysReply(caps, args),
-      ExtBridgeMethods.has => Future<Object?>.value(
-        _hasCapability(caps, '${args['capability']}'),
-      ),
-      _ => Future<Object?>.error(
-        ExtBridgeUnavailableException('unknown bridge method: $method'),
-      ),
+      ExtBridgeMethods.registerTool: _nullReply,
+      ExtBridgeMethods.registerHook: _nullReply,
+      ExtBridgeMethods.registerSlash: _nullReply,
+      ExtBridgeMethods.registerFlow: _nullReply,
+      ExtBridgeMethods.sessionAppendNote: _noteSink,
+      ExtBridgeMethods.sessionEnqueueFollowUp: (args) =>
+          _followUpSink(ext, args),
+      ExtBridgeMethods.fsReadFile: (args) => _fsReadFile(caps, args),
+      ExtBridgeMethods.execRun: (args) => _execRun(caps, args),
+      ExtBridgeMethods.ioWrite: (args) => _ioSink(onIoWrite, args),
+      ExtBridgeMethods.ioWriteln: (args) => _ioSink(onIoWriteln, args),
+      ExtBridgeMethods.keysRequest: (args) => _keysReply(caps, args),
+      ExtBridgeMethods.has: (args) =>
+          Future<Object?>.value(_hasCapability(caps, '${args['capability']}')),
     };
+    return (method, args) =>
+        routes[method]?.call(args) ??
+        Future<Object?>.error(
+          ExtBridgeUnavailableException('unknown bridge method: $method'),
+        );
   }
+
+  Future<Object?> _nullReply(Map<String, dynamic> args) async => null;
 
   Future<Object?> _noteSink(Map<String, dynamic> args) async {
     onAppendNote?.call(_requireText(args));
@@ -1003,25 +1007,14 @@ final class JsExtensionHost {
     ExtCapabilities caps,
     Map<String, dynamic> args,
   ) async {
-    final command = args['command'];
-    if (command is! String || command.isEmpty) {
-      throw ArgumentError('exec.run requires string command');
-    }
+    final command = _requireCommand(args);
     final allowed = caps.allowedCommands.any(
       (entry) => command == entry || command.startsWith('$entry '),
     );
     if (!allowed) {
       throw ExtBridgeUnavailableException('exec not allowed: $command');
     }
-    final extra = [
-      for (final argument in (args['args'] as List? ?? const []))
-        if (argument != null) '$argument',
-    ];
-    final full = extra.isEmpty ? command : '$command ${extra.join(' ')}';
-    final timeoutMs = args['timeoutMs'];
-    final timeout = timeoutMs is int && timeoutMs > 0
-        ? Duration(milliseconds: timeoutMs)
-        : null;
+    final (full, timeout) = _execRequest(command, args);
     final stdout = StringBuffer();
     final stderr = StringBuffer();
     final result = await env.exec(
@@ -1032,22 +1025,55 @@ final class JsExtensionHost {
         onStderr: stderr.write,
       ),
     );
-    return switch (result) {
-      Ok(:final value) => {
-        'exitCode': value.exitCode,
-        'stdout': value.stdout,
-        'stderr': value.stderr,
-        'timedOut': false,
-      },
-      Err(:final error) when error.code == ExecutionErrorCode.timeout => {
-        'exitCode': -1,
-        'stdout': stdout.toString(),
-        'stderr': stderr.toString(),
-        'timedOut': true,
-      },
-      Err(:final error) => throw StateError('exec.run failed: $error'),
-    };
+    return _execResult(result, stdout, stderr);
   }
+
+  /// Validates the `exec.run` command argument: a non-empty string.
+  String _requireCommand(Map<String, dynamic> args) {
+    final command = args['command'];
+    if (command is! String || command.isEmpty) {
+      throw ArgumentError('exec.run requires string command');
+    }
+    return command;
+  }
+
+  /// The shell line and optional budget for one `exec.run`: extra
+  /// arguments append to the command, a positive `timeoutMs` becomes a
+  /// [Duration].
+  (String, Duration?) _execRequest(String command, Map<String, dynamic> args) {
+    final extra = [
+      for (final argument in (args['args'] as List? ?? const []))
+        if (argument != null) '$argument',
+    ];
+    final timeoutMs = args['timeoutMs'];
+    final timeout = timeoutMs is int && timeoutMs > 0
+        ? Duration(milliseconds: timeoutMs)
+        : null;
+    return (extra.isEmpty ? command : '$command ${extra.join(' ')}', timeout);
+  }
+
+  /// Maps the shell result onto the `exec.run` reply: a timeout reports
+  /// the captured output with `timedOut: true`; any other failure is an
+  /// extension error.
+  Map<String, Object?> _execResult(
+    Result<ShellExecResult, ExecutionError> result,
+    StringBuffer stdout,
+    StringBuffer stderr,
+  ) => switch (result) {
+    Ok(:final value) => {
+      'exitCode': value.exitCode,
+      'stdout': value.stdout,
+      'stderr': value.stderr,
+      'timedOut': false,
+    },
+    Err(:final error) when error.code == ExecutionErrorCode.timeout => {
+      'exitCode': -1,
+      'stdout': stdout.toString(),
+      'stderr': stderr.toString(),
+      'timedOut': true,
+    },
+    Err(:final error) => throw StateError('exec.run failed: $error'),
+  };
 
   bool _hasCapability(ExtCapabilities caps, String name) => switch (name) {
     'network' => caps.network,

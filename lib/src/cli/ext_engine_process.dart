@@ -109,6 +109,10 @@ final class QjsProcessRuntime implements JsrRuntime, ExtLineSink {
 
   void _checkStartable() {
     if (_process != null) throw StateError('engine already started');
+    _checkNotDisposed();
+  }
+
+  void _checkNotDisposed() {
     if (_disposed) throw StateError('engine disposed');
   }
 
@@ -122,9 +126,13 @@ final class QjsProcessRuntime implements JsrRuntime, ExtLineSink {
 
   /// Throws when the engine cannot accept an invoke right now.
   void _checkRunnable() {
+    _checkNotExited();
+    if (_process == null) throw StateError('engine not started');
+  }
+
+  void _checkNotExited() {
     final exited = _exitCodeValue;
     if (exited != null) throw StateError('engine exited: code $exited');
-    if (_process == null) throw StateError('engine not started');
   }
 
   Future<String> _writeScript(String bootstrapJs, String mainJs) async {
@@ -170,6 +178,10 @@ final class QjsProcessRuntime implements JsrRuntime, ExtLineSink {
   /// SIGTERM, 2s grace, then SIGKILL. Null-safe for double dispose.
   Future<void> _stop(Process? process) async {
     if (process == null) return;
+    await _stopAlive(process);
+  }
+
+  Future<void> _stopAlive(Process process) async {
     _signal(process, ProcessSignal.sigterm);
     try {
       await process.exitCode.timeout(
@@ -185,9 +197,8 @@ final class QjsProcessRuntime implements JsrRuntime, ExtLineSink {
   }
 
   static Future<void> _deleteTempDir(Directory? dir) async {
-    if (dir == null) return;
     try {
-      await dir.delete(recursive: true);
+      await dir?.delete(recursive: true);
     } on Object {
       // Best effort.
     }
@@ -199,12 +210,7 @@ final class QjsProcessRuntime implements JsrRuntime, ExtLineSink {
   /// broken. Used by `fa ext list`.
   static Future<String> engineProbe() async {
     final bin = resolveBinary();
-    final ProcessResult probe;
-    try {
-      probe = await _run(bin, const ['-e', 'print(1)']);
-    } on Object {
-      throw ExtEngineUnavailableException(_installHint);
-    }
+    final probe = await _runProbe(bin);
     final problem = extProbeProblem(
       bin,
       probe.exitCode,
@@ -213,6 +219,16 @@ final class QjsProcessRuntime implements JsrRuntime, ExtLineSink {
     );
     if (problem != null) throw ExtEngineUnavailableException(problem);
     return await _engineVersion(bin) ?? bin;
+  }
+
+  /// Runs the `<bin> -e 'print(1)'` sanity probe, mapping a spawn failure
+  /// (binary missing / not executable) to [ExtEngineUnavailableException].
+  static Future<ProcessResult> _runProbe(String bin) async {
+    try {
+      return await _run(bin, const ['-e', 'print(1)']);
+    } on Object {
+      throw ExtEngineUnavailableException(_installHint);
+    }
   }
 
   /// [Process.run] bounded for probe usage.
@@ -274,11 +290,19 @@ final class QjsProcessRuntime implements JsrRuntime, ExtLineSink {
   ) async {
     final handler = _bridges;
     try {
-      if (handler == null) throw StateError('no bridges handler installed');
-      return extBridgeOk(seq, await handler(method, extBridgeArgs(rawArgs)));
+      return extBridgeOk(seq, await _bridgeValue(handler, method, rawArgs));
     } on Object catch (e) {
       return extBridgeError(seq, '$e');
     }
+  }
+
+  Future<Object?> _bridgeValue(
+    ExtBridgeHandler? handler,
+    String method,
+    Object? rawArgs,
+  ) async {
+    if (handler == null) throw StateError('no bridges handler installed');
+    return handler(method, extBridgeArgs(rawArgs));
   }
 
   /// SIGKILL for an invoke that overstayed its budget.
@@ -295,9 +319,8 @@ final class QjsProcessRuntime implements JsrRuntime, ExtLineSink {
   }
 
   static void _signal(Process? process, ProcessSignal signal) {
-    if (process == null) return;
     try {
-      process.kill(signal);
+      process?.kill(signal);
     } on Object {
       // Already gone.
     }

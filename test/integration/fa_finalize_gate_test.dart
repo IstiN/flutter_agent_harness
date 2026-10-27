@@ -40,6 +40,36 @@ const _parityTaskPrompt =
     "Fixture task: create mean.sh that prints each station's mean "
     'temperature from stations.csv, and verify the output.';
 
+/// The task prompt IT-4 replays (gh-1834): the requirements its scripted
+/// ledger quote verbatim — the happy path AND both rejection rules.
+const _conformanceTaskPrompt =
+    'Fixture task: create tool.sh that uppercases the given file with '
+    '--upper and lowercases it with --lower; the two flags are mutually '
+    'exclusive and MUST be rejected together, and a missing file must '
+    'error. Verify the happy path and both rejections.';
+
+/// Produces the IT-4 fixture: tool.sh (the reference behavior: one of
+/// --upper/--lower; the two are mutually exclusive — both together exit 2
+/// with a refusal error; a missing file exits 3) plus its two-line
+/// dataset. Raw string: the `\n` escapes must reach printf verbatim.
+const _conformanceProduceCommand =
+    r"printf '#!/usr/bin/env sh\n"
+    r'mode=none\nfile=\n'
+    r'for a in "$@"; do\n'
+    r' case "$a" in\n'
+    r'   --upper|--lower)\n'
+    r'     if [ "$mode" != none ] && [ "$mode" != "$a" ]; then echo '
+    r'"incompatible flags" >&2; exit 2; fi\n'
+    r'     mode=$a ;;\n'
+    r'   *) file=$a ;;\n'
+    r' esac\n'
+    r'done\n'
+    r'[ -n "$file" ] || { echo usage >&2; exit 2; }\n'
+    r'[ -f "$file" ] || { echo "missing file" >&2; exit 3; }\n'
+    r'if [ "$mode" = upper ]; then tr "[a-z]" "[A-Z]" < "$file"; else '
+    r'tr "[A-Z]" "[a-z]" < "$file"; fi\n'
+    r"' > tool.sh && chmod +x tool.sh && printf 'Alpha\nbeta\n' > words.txt";
+
 void main() {
   late Directory tempDir;
   late LocalExecutionEnv env;
@@ -258,50 +288,59 @@ void main() {
     // (_parityTaskPrompt) — a requirement/ledger mismatch is exactly
     // what the gate contract forbids.
     final appDir = '${tempDir.path}/app';
-    final lines = await runScripted(ApprovalMode.unattended, [
-      // Turn 1: build the fixture — dataset + stale bundled fallback +
-      // the entry point that resolves the dataset via the CWD. The
-      // fixture is the shared nwbgy7a evidence shape
-      // (test/support/nwbgy7a_fixture.dart) — the REG scenarios in
-      // test/agent/finalize_gate_grader_parity_test.dart write the very
-      // same files from Dart.
-      _Turn.toolCalls([
-        (
-          id: 'call_1',
-          name: 'bash',
-          arguments: 'mkdir -p app && cd app && ${nwbgy7aProduceCommand()}',
+    final lines = await runScripted(
+      ApprovalMode.unattended,
+      [
+        // Turn 1: build the fixture — dataset + stale bundled fallback +
+        // the entry point that resolves the dataset via the CWD. The
+        // fixture is the shared nwbgy7a evidence shape
+        // (test/support/nwbgy7a_fixture.dart) — the REG scenarios in
+        // test/agent/finalize_gate_grader_parity_test.dart write the very
+        // same files from Dart.
+        _Turn.toolCalls([
+          (
+            id: 'call_1',
+            name: 'bash',
+            arguments: 'mkdir -p app && cd app && ${nwbgy7aProduceCommand()}',
+          ),
+        ]),
+        // Turn 2: the in-session verification — looks right (30.3).
+        const _Turn.toolCalls([
+          (id: 'call_2', name: 'bash', arguments: 'cd app && bash mean.sh'),
+        ]),
+        // Turn 3: the grader-parity re-run — neutral cwd, fresh
+        // subprocess: the relative dataset resolves to the stale table.
+        _Turn.toolCalls([
+          (
+            id: 'call_3',
+            name: 'bash',
+            arguments: 'cd / && bash $appDir/mean.sh',
+          ),
+        ]),
+        // Turn 4: the final answer — the parity item reads `fail`, the
+        // run does NOT claim the entry point verified.
+        const _Turn.text(
+          'Ran the parity check: divergence detected.\n'
+          '```task-ledger\n'
+          '- requirement: create mean.sh that prints each station\'s mean '
+          'temperature from stations.csv\n'
+          '  command: cd app && bash mean.sh\n'
+          '  expected: Station 102 mean temperature: 30.3 C\n'
+          '  actual: Station 102 mean temperature: 30.3 C\n'
+          '  status: pass\n'
+          '- requirement: '
+          'grader parity: mean.sh output matches under a fresh cwd + '
+          'clean env\n'
+          '  command: cd / && bash <app>/mean.sh\n'
+          '  expected: Station 102 mean temperature: 30.3 C\n'
+          '  actual: Station 102 mean temperature: 15.5 C\n'
+          '  status: fail\n'
+          '```\n',
         ),
-      ]),
-      // Turn 2: the in-session verification — looks right (30.3).
-      const _Turn.toolCalls([
-        (id: 'call_2', name: 'bash', arguments: 'cd app && bash mean.sh'),
-      ]),
-      // Turn 3: the grader-parity re-run — neutral cwd, fresh
-      // subprocess: the relative dataset resolves to the stale table.
-      _Turn.toolCalls([
-        (id: 'call_3', name: 'bash', arguments: 'cd / && bash $appDir/mean.sh'),
-      ]),
-      // Turn 4: the final answer — the parity item reads `fail`, the
-      // run does NOT claim the entry point verified.
-      const _Turn.text(
-        'Ran the parity check: divergence detected.\n'
-        '```task-ledger\n'
-        '- requirement: create mean.sh that prints each station\'s mean '
-        'temperature from stations.csv\n'
-        '  command: cd app && bash mean.sh\n'
-        '  expected: Station 102 mean temperature: 30.3 C\n'
-        '  actual: Station 102 mean temperature: 30.3 C\n'
-        '  status: pass\n'
-        '- requirement: '
-        'grader parity: mean.sh output matches under a fresh cwd + '
-        'clean env\n'
-        '  command: cd / && bash <app>/mean.sh\n'
-        '  expected: Station 102 mean temperature: 30.3 C\n'
-        '  actual: Station 102 mean temperature: 15.5 C\n'
-        '  status: fail\n'
-        '```\n',
-      ),
-    ], headless: true, prompt: _parityTaskPrompt);
+      ],
+      headless: true,
+      prompt: _parityTaskPrompt,
+    );
     final records = recordsOf(lines);
     final transcript = const JsonEncoder.withIndent(' ').convert(records);
 
@@ -313,8 +352,10 @@ void main() {
     expect(transcript, contains('30.3'));
     expect(transcript, contains('15.5'));
     expect(
-      transcript.contains("prints each station's mean temperature "
-          'from stations.csv'),
+      transcript.contains(
+        "prints each station's mean temperature "
+        'from stations.csv',
+      ),
       isTrue,
       reason: "the ledger quotes IT-3's task requirement verbatim",
     );
@@ -337,6 +378,123 @@ void main() {
       transcript.contains('Station 102 mean temperature: 15.5 C'),
       isTrue,
       reason: 'the ledger records the diverged parity output as actual',
+    );
+  }, timeout: const Timeout(Duration(minutes: 2)));
+
+  test('IT-4: a parity-style run quotes its negative + combination checks '
+      'in the persisted ledger (gh-1834)', () async {
+    // The gh-1834 shape: the task pins reference behavior including
+    // REJECTION rules — the two flags are mutually exclusive and must
+    // be refused together, a missing file must error. The scripted
+    // agent runs the happy path AND the combination/negative probes,
+    // and the final checklist quotes them: the persisted task_ledger
+    // then carries the rejection rows with real commands, not just
+    // happy paths (the gate's step 2.6 conformance coverage).
+    final lines = await runScripted(
+      ApprovalMode.unattended,
+      [
+        // Turn 1: produce the artifact + dataset. tool.sh implements the
+        // reference behavior: --upper / --lower mutually exclusive (both
+        // together exit 2), missing file exits 3.
+        _Turn.toolCalls([
+          (id: 'call_1', name: 'bash', arguments: _conformanceProduceCommand),
+        ]),
+        // Turn 2: the happy path.
+        const _Turn.toolCalls([
+          (
+            id: 'call_2',
+            name: 'bash',
+            arguments: './tool.sh --upper words.txt',
+          ),
+        ]),
+        // Turn 3: the combination probe — both flags must be refused.
+        const _Turn.toolCalls([
+          (
+            id: 'call_3',
+            name: 'bash',
+            arguments: './tool.sh --upper --lower words.txt; echo rc=\$?',
+          ),
+        ]),
+        // Turn 4: the negative probe — a missing file must error.
+        const _Turn.toolCalls([
+          (
+            id: 'call_4',
+            name: 'bash',
+            arguments: './tool.sh --upper nope.txt; echo rc=\$?',
+          ),
+        ]),
+        // Turn 5: the final checklist — the happy path AND both
+        // rejection rows, each quoting its real command and outcome.
+        const _Turn.text(
+          'Happy path and both rejections verified.\n'
+          '```task-ledger\n'
+          '- requirement: create tool.sh that uppercases the given file '
+          'with --upper and lowercases it with --lower\n'
+          '  command: ./tool.sh --upper words.txt\n'
+          '  expected: ALPHA\n'
+          '  actual: ALPHA\n'
+          '  status: pass\n'
+          '- requirement: the two flags are mutually exclusive and MUST '
+          'be rejected together\n'
+          '  command: ./tool.sh --upper --lower words.txt; echo rc=\$?\n'
+          '  expected: non-zero exit, refusal error\n'
+          '  actual: rc=2, incompatible flags\n'
+          '  status: pass\n'
+          '- requirement: a missing file must error\n'
+          '  command: ./tool.sh --upper nope.txt; echo rc=\$?\n'
+          '  expected: non-zero exit\n'
+          '  actual: rc=3, missing file\n'
+          '  status: pass\n'
+          '```\n',
+        ),
+      ],
+      headless: true,
+      prompt: _conformanceTaskPrompt,
+    );
+    final records = recordsOf(lines);
+    final transcript = const JsonEncoder.withIndent(' ').convert(records);
+
+    // The probes ACTUALLY executed — the combination refusal and the
+    // missing-file error are witnessed tool results, not narration.
+    expect(transcript, contains('./tool.sh --upper --lower words.txt'));
+    expect(transcript, contains('./tool.sh --upper nope.txt'));
+    expect(transcript, contains('rc=2'));
+    expect(transcript, contains('rc=3'));
+    expect(transcript, contains('incompatible flags'));
+
+    // The persisted ledger carries the negative + combination rows:
+    // the conformance checklist is not happy-path-only (AC3).
+    final ledgerRecords = records
+        .where(
+          (record) =>
+              record['type'] == 'custom' &&
+              record['customType'] == 'task_ledger',
+        )
+        .toList();
+    expect(ledgerRecords, hasLength(1));
+    final items = (ledgerRecords.single['data'] as Map)['items'] as List;
+    expect(items, hasLength(3));
+    expect(
+      [for (final item in items) (item as Map)['status']],
+      ['pass', 'pass', 'pass'],
+    );
+    expect(
+      ((items[1] as Map)['command'] as String).contains('--upper --lower'),
+      isTrue,
+      reason: 'the combination check rides the persisted ledger',
+    );
+    expect(
+      ((items[2] as Map)['command'] as String).contains('nope.txt'),
+      isTrue,
+      reason: 'the negative check rides the persisted ledger',
+    );
+    expect(
+      transcript.contains(
+        'the two flags are mutually exclusive and MUST be rejected '
+        'together',
+      ),
+      isTrue,
+      reason: 'the ledger quotes the rejection requirement verbatim',
     );
   }, timeout: const Timeout(Duration(minutes: 2)));
 }

@@ -80,6 +80,15 @@ extension on AgentCli {
       ('delete', 'Delete provider', 'remove from the registry'),
     ]);
     if (choice == null) return;
+    await _providerDeleteOrEdit(entry, choice);
+  }
+
+  /// Dispatches the picked action of [_providerEditOrDelete]: delete runs
+  /// its confirmation flow; everything else opens the edit wizard.
+  Future<void> _providerDeleteOrEdit(
+    CustomProviderEntry entry,
+    String choice,
+  ) async {
     if (choice == 'delete') {
       await _deleteProviderWithConfirmation(entry);
       return;
@@ -236,7 +245,11 @@ extension on AgentCli {
     String key,
   ) async {
     if (baseUrl.contains('/code-assistant-api/')) {
-      return fetchCodeMieModels(baseUrl, key, client: config.modelsHttpClient);
+      return fetchCodeMieModels(
+        baseUrl,
+        key,
+        client: modelFetchClient(providerName),
+      );
     }
     if (providerName == 'dial') {
       return _fetchDialModelsAndFeatures(baseUrl, apiKey: key);
@@ -248,14 +261,20 @@ extension on AgentCli {
         baseUrl,
         apiKey: key,
         provider: 'chatgpt',
+        client: modelFetchClient('chatgpt'),
       );
       return ids;
     }
     if (providerName == 'copilot') {
       return _fetchCopilotModelsAndLimits(baseUrl, apiKey: key);
     }
-    final fetch = config.modelsFetcher ?? _fetchOpenAiCompatibleModels;
-    return fetch(baseUrl, apiKey: key);
+    final override = config.modelsFetcher;
+    if (override != null) return override(baseUrl, apiKey: key);
+    return _fetchOpenAiCompatibleModels(
+      baseUrl,
+      apiKey: key,
+      client: modelFetchClient(providerName),
+    );
   }
 
   /// Applies a completed wizard: writes/updates the registry entry (and the
@@ -322,6 +341,9 @@ extension on AgentCli {
         modelId,
         token: switchToken,
         tokenKeyName: keyName,
+        // The just-saved entry IS the identity: the switch must state it
+        // (pin + gate keying) instead of silently meaning "catalog".
+        customName: entry?.name,
       );
       return;
     }
@@ -338,6 +360,7 @@ extension on AgentCli {
         modelId,
         switchToken,
         stored ?? '',
+        providerName: entry?.name ?? 'codemie',
       );
       return;
     }
@@ -347,6 +370,7 @@ extension on AgentCli {
       modelId,
       switchToken,
       stored ?? '',
+      providerName: entry?.name ?? 'codemie',
     );
   }
 
@@ -453,7 +477,6 @@ extension on AgentCli {
     }
     final keyName = entry.keyName;
     final token = keyName != null ? config.secureKeys?.read(keyName) : null;
-    _activeCustomName = entry.name;
     await _switchProvider(
       entry.spec,
       entry.baseUrl,
@@ -461,6 +484,7 @@ extension on AgentCli {
       token: token,
       tokenKeyName: keyName,
       authHeader: entry.authHeader,
+      customName: entry.name,
     );
   }
 
@@ -835,7 +859,7 @@ extension on AgentCli {
       try {
         await fetchCopilotApiToken(
           githubToken: githubToken,
-          client: config.modelsHttpClient,
+          client: modelFetchClient('copilot'),
         );
       } on CopilotAuthException catch (error) {
         io.writeln('warning: ${error.message}');
@@ -1205,7 +1229,12 @@ extension on AgentCli {
     if (isOpenRouterActive) {
       _apiKey = key.key;
       _explicitToken = true;
-      _streamFunction = _catalogStreamFunction(spec.kind, key.key);
+      _streamFunction = _catalogStreamFunction(
+        spec.kind,
+        key.key,
+        // The guard above pinned this to the catalog identity.
+        providerName: spec.name,
+      );
       _agent.streamFunction = _streamFunction;
       io.writeln('OpenRouter key updated for current session');
     } else {
@@ -1582,279 +1611,46 @@ extension on AgentCli {
   /// environment value as its `api-version` query parameter and gates the
   /// manual cache markers on the endpoint-reported `features.cache` set
   /// (unknown models keep the optimistic marker + fallback).
-  StreamFunction _catalogStreamFunction(String kind, String key) =>
-      config.catalogStreamOverride?.call(kind, key) ??
-      providerStreamFunction(
-        kind,
-        key,
-        sessionId: () => _session?.cachedId,
-        dialApiVersion: kind == 'dial'
-            ? config.envVarValue?.call('DIAL_API_VERSION')
-            : null,
-        dialCacheMarkersSupported: kind == 'dial' ? _dialCacheFlag : null,
-        onChatGptCredentialsRefreshed: kind == 'chatgpt-codex'
-            ? _persistChatGptCredentials
-            : null,
-      );
+  ///
+  /// [providerName] keys the `providers:` `network:` proxy binding (issue
+  /// #1921): a named block rides its proxy fail-closed, everything else
+  /// stays byte-identical direct. REQUIRED: the caller states the binding
+  /// identity explicitly — the active custom entry's name where the bind
+  /// IS that entry, the catalog spec name for a catalog bind. A fallback
+  /// to a process-global "active" name here keyed the gate on a STALE
+  /// identity after custom→catalog switches and silently bypassed the
+  /// gate (fail-open, PR #1927 round-2 review).
+  ///
+  /// G2 (gh-178): the result is wrapped in the request-build gate — see
+  /// [_gateCatalogStream] in `provider_model_coherence.dart`.
+  StreamFunction _catalogStreamFunction(
+    String kind,
+    String key, {
+    required String? providerName,
+  }) {
+    final inner =
+        config.catalogStreamOverride?.call(kind, key) ??
+        providerStreamFunction(
+          kind,
+          key,
+          sessionId: () => _session?.cachedId,
+          dialApiVersion: kind == 'dial'
+              ? config.envVarValue?.call('DIAL_API_VERSION')
+              : null,
+          dialCacheMarkersSupported: kind == 'dial' ? _dialCacheFlag : null,
+          onChatGptCredentialsRefreshed: kind == 'chatgpt-codex'
+              ? _persistChatGptCredentials
+              : null,
+          httpClient: proxiedProviderClient(providerName),
+        );
+    return _gateCatalogStream(inner);
+  }
 
   /// The active model's manual-cache support for the dial adapter: true /
   /// false when the models fetch reported the flag, null while unknown.
   bool? get _dialCacheFlag {
     if (_dialCacheModels.isEmpty) return null;
     return _dialCacheModels.contains(_agent.state.model.id);
-  }
-
-  /// Runs the CodeMie SSO flow and applies the resulting credentials.
-  /// [offerName] is true only for the explicit add flows (typed command,
-  /// auth-method picker): the automatic re-authorizations (startup, saved
-  /// entry switch, mid-stream expiry) keep the existing entry's name — or
-  /// the derived default — without interrupting the recovery with a prompt.
-  /// [noBrowser] (the `--no-browser` flag) skips the automatic browser
-  /// launch — the URL prints prominently instead (gh-1450).
-  Future<void> _handleCodeMieSsoCommand(
-    String codeMieUrl, {
-    bool offerName = false,
-    bool noBrowser = false,
-  }) async {
-    if (_providerFlowActive) return;
-    _providerFlowActive = true;
-    try {
-      final authenticate =
-          config.codeMieSsoAuthenticateFn ??
-          (url, onStatus) => runCodeMieSsoCliFlow(
-            codeMieUrl: url,
-            onStatus: onStatus,
-            shouldOpenBrowserFn: () =>
-                shouldLaunchBrowser(noBrowserFlag: noBrowser),
-          );
-      final credentials = await authenticate(codeMieUrl, io.writeln);
-      if (credentials != null) {
-        await _applyCodeMieSsoCredentials(credentials, offerName: offerName);
-      }
-    } catch (e) {
-      io.writeln('CodeMie SSO failed: $e');
-    } finally {
-      _providerFlowActive = false;
-      _promptLineBuffer.clear();
-    }
-  }
-
-  /// Saves the SSO session: the full cookie string becomes the stored "key"
-  /// of a saved custom provider pointing at `<apiUrl>/v1` (re-login replaces
-  /// the key, keeps the last-used model). The model's headers carry a
-  /// `cookie:` entry so the openai-completions adapter sends Cookie-header
-  /// auth instead of the default `authorization: Bearer`. After saving, runs
-  /// the guided project → model selection (matching the CodeMie CLI's setup
-  /// flow) so the user lands on a working connection. [offerName] gates the
-  /// provider-name step (explicit add flows only — see the caller).
-  Future<void> _applyCodeMieSsoCredentials(
-    CodeMieSsoCredentials credentials, {
-    bool offerName = false,
-  }) async {
-    final cookie = credentials.authToken;
-    if (cookie.isEmpty) {
-      io.writeln('CodeMie SSO carried no cookies — aborted');
-      return;
-    }
-    final baseUrl = '${credentials.apiUrl}/v1';
-    final registry = config.customProviders;
-    // Auto re-authorizations (mid-stream / startup / expired-cookie switch)
-    // keep the entry's name silently; an EXPLICIT connect (typed command,
-    // auth-method picker) ALWAYS asks for the provider-name step — Enter
-    // keeps the existing entry (same-account cookie refresh), a new name
-    // creates a separate entry for a second account.
-    final existing = registry != null
-        ? _entryForBaseUrl(registry, baseUrl)
-        : null;
-    final defaultName =
-        existing?.name ?? registry?.deriveName(baseUrl) ?? 'codemie';
-    final name = offerName && registry != null
-        ? (await _askConnectProviderName(defaultName, sameBaseUrl: baseUrl)) ??
-              defaultName
-        : defaultName;
-    final keyName = CustomProviderRegistry.keyNameFor(
-      baseUrl,
-      providerName: name,
-    );
-    final spec = providerCatalog['openai']!;
-    await _storeProviderToken(spec, baseUrl, cookie, keyName: keyName);
-
-    // Guided project → model selection. It runs for a NEW account — no entry
-    // on this endpoint yet, or the user typed a DIFFERENT name (a second
-    // account needs its own project/model pick). A re-login to the SAME
-    // entry (Enter on the name prompt, or an automatic re-authorization)
-    // keeps the existing model choice.
-    final sameAccount = existing != null && name == existing.name;
-    final modelId = sameAccount
-        ? existing.modelId
-        : (await _codemieGuidedSetup(credentials.apiUrl, cookie) ??
-              existing?.modelId ??
-              _agent.state.model.id);
-
-    if (registry != null) {
-      registry.add(
-        CustomProviderEntry(
-          name: name,
-          apiType: 'openai',
-          baseUrl: baseUrl,
-          modelId: modelId,
-          keyName: keyName,
-          authMethod: CustomProviderAuthMethod.sso,
-        ),
-      );
-      _activeCustomName = name;
-      io.writeln('saved provider $name (listed first in /provider)');
-    }
-    await _switchCodeMieProvider(spec, baseUrl, modelId, cookie, keyName);
-    final hours =
-        (credentials.expiresAt - DateTime.now().millisecondsSinceEpoch) ~/
-        3600000;
-    io.writeln(
-      'CodeMie session expires in ~${hours}h — re-run '
-      '/provider codemie sso to renew',
-    );
-  }
-
-  /// Post-SSO guided setup: fetch projects, let the user pick one, then
-  /// fetch and pick a model. Returns the chosen model id, or null on cancel.
-  /// Dispatches to the config-injected guided setup, or the real flow.
-  Future<String?> _codemieGuidedSetup(String apiBase, String cookie) {
-    final override = config.codeMieGuidedSetupFn;
-    if (override != null) {
-      return override(apiBase, cookie, _pickOption, _askLine);
-    }
-    return _codemiePickProjectAndModel(apiBase, cookie);
-  }
-
-  /// Switches to a CodeMie provider using Cookie-header auth instead of the
-  /// default Bearer token. The cookie string is stored as the session key
-  /// (for `/models` fetches and key status display), but the openai-completions
-  /// adapter receives an empty apiKey (so it skips `authorization: Bearer`)
-  /// while the model's `headers` carry `cookie: <full cookie string>`.
-  Future<void> _switchCodeMieProvider(
-    ProviderSpec spec,
-    String baseUrl,
-    String modelId,
-    String cookie,
-    String keyName,
-  ) async {
-    final modelLine = modelId == _agent.state.model.id
-        ? '  model unchanged: $modelId — use /model to change'
-        : '  model: $modelId';
-    _providerKind = spec.kind;
-    // The cookie is the "key" for session/display purposes, but the stream
-    // function gets an empty string so the adapter generates NO authorization
-    // header; the cookie rides in via model.headers instead.
-    _apiKey = cookie;
-    _explicitToken = true;
-    _streamFunction = _catalogStreamFunction(spec.kind, '');
-    _agent.streamFunction = _streamFunction;
-    final builtModel = buildCatalogModel(spec.name, modelId, baseUrl: baseUrl);
-    _agent.state.model = Model(
-      id: builtModel.id,
-      name: builtModel.name,
-      api: builtModel.api,
-      provider: builtModel.provider,
-      baseUrl: builtModel.baseUrl,
-      reasoning: builtModel.reasoning,
-      input: inputModalitiesFor(modelId),
-      cost: builtModel.cost,
-      contextWindow: builtModel.contextWindow,
-      maxTokens: builtModel.maxTokens,
-      // Cookie-header auth: the adapter sees an empty apiKey (no Bearer) and
-      // merges model.headers, adding `cookie: <full cookie jar>`.
-      headers: {'cookie': cookie},
-      compat: builtModel.compat,
-    );
-    _modelCache = const [];
-    _modelContextWindows = const {};
-    _modelMaxTokens = const {};
-    _lastModelList = null;
-    unawaited(_refreshModelCache());
-    await _session?.appendModelChange(
-      provider: spec.name,
-      modelId: modelId,
-      // A LIVE switch records the pin too (gh-1000 AC1, round-3 review).
-      baseUrl: baseUrl,
-      customProvider: _activeCustomName,
-    );
-    io.writeln('switched provider to ${spec.name} (${spec.api})');
-    io.writeln('  endpoint: $baseUrl');
-    io.writeln('  key: SSO cookie (saved as $keyName)');
-    io.writeln(modelLine);
-    _printRoleModelsNote();
-    await config.onProviderChanged?.call(_providerKind, _apiKey);
-  }
-
-  Future<String?> _codemiePickProjectAndModel(
-    String apiBase,
-    String cookie,
-  ) async {
-    await _codemiePickProject(apiBase, cookie);
-    return _codemiePickModel(apiBase, cookie);
-  }
-
-  /// Step 1: fetch and optionally pick a CodeMie project.
-  Future<void> _codemiePickProject(String apiBase, String cookie) async {
-    io.writeln('fetching CodeMie projects...');
-    final projects = await fetchCodeMieProjects(apiBase, cookie).catchError((
-      e,
-    ) {
-      return const <String>[];
-    });
-    if (projects.isEmpty) return;
-    final projectPick = await _pickOption('CodeMie project', [
-      for (final p in projects) (p, p, ''),
-    ]);
-    if (projectPick != null) io.writeln('selected project: $projectPick');
-  }
-
-  /// Step 2: fetch and pick a CodeMie model (or manual entry).
-  Future<String?> _codemiePickModel(String apiBase, String cookie) async {
-    io.writeln('fetching CodeMie models...');
-    final models = await fetchCodeMieModels('$apiBase/v1', cookie).catchError((
-      e,
-    ) {
-      return const <String>[];
-    });
-    if (models.isEmpty) {
-      io.writeln('no models available — set one with /model <id>');
-      return null;
-    }
-    return _pickModelFromList(models);
-  }
-
-  /// Picks a model from the fetched list, falling back to manual entry.
-  Future<String?> _pickModelFromList(
-    List<String> models, {
-    String title = 'CodeMie model',
-  }) async {
-    final modelPick = await _pickOption(title, [
-      for (final id in models) (id, id, visionMarker(id)),
-      ('', '+ enter manually', ''),
-    ]);
-    if (modelPick == null) return null;
-    if (modelPick.isNotEmpty) return modelPick;
-    return _manualModelId();
-  }
-
-  /// Reads a manually entered model id from the user.
-  Future<String?> _manualModelId() async {
-    final manual = await _askLine("model id: ");
-    return manual?.trim().isEmpty == false ? manual!.trim() : null;
-  }
-
-  /// The host-derived provider name for a CodeMie API base URL (the same
-  /// candidate `CustomProviderRegistry.deriveName` builds, WITHOUT the
-  /// dedupe suffix — re-login lookups need the plain name).
-  String _codeMieHostName(String baseUrl) {
-    final uri = Uri.tryParse(baseUrl);
-    var host = uri?.host ?? baseUrl;
-    if (host.isEmpty) return 'codemie';
-    final port = uri?.port;
-    final defaultPort = uri?.scheme == 'https' ? 443 : 80;
-    if (port != null && port != defaultPort) host = '$host:$port';
-    return host;
   }
 
   /// The shared refusal wording for a provider id no enabled catalog entry
@@ -2120,10 +1916,15 @@ extension on AgentCli {
     return keyName;
   }
 
+  /// Whether [dot] (an `id.indexOf('.')` result) splits an id of [length]
+  /// into a usable `<head>.<tail>` pair: the dot is neither leading nor
+  /// trailing.
+  bool _dialDotSplits(int dot, int length) => dot > 0 && dot < length - 1;
+
   /// Short human label for a deployment id in the picker descriptions.
   String _dialDeploymentLabel(String id) {
     final dot = id.indexOf('.');
-    return dot > 0 && dot < id.length - 1 ? id.substring(0, dot) : id;
+    return _dialDotSplits(dot, id.length) ? id.substring(0, dot) : id;
   }
 
   /// Applies a provider/endpoint switch: rebuilds the model and stream
@@ -2141,8 +1942,13 @@ extension on AgentCli {
     String? token,
     String? tokenKeyName,
     String? authHeader,
+    String? customName,
   }) async {
     try {
+      // The switch WRITES the pin: entry.name for a saved-custom switch,
+      // null for a catalog switch. Session records below carry the pin
+      // this switch establishes (gh-1000 AC1).
+      _activeCustomName = customName;
       final modelLine = modelId == _agent.state.model.id
           ? '  model unchanged: $modelId — use /model to change'
           : '  model: $modelId';
@@ -2209,7 +2015,10 @@ extension on AgentCli {
           // per-folder state alone cannot survive an interleaved switch to
           // a twin account (gh-1000 AC1, round-3 review).
           baseUrl: baseUrl,
-          customProvider: _activeCustomName,
+          // The record carries the pin THIS switch establishes — a live
+          // custom switch must re-bind to the switched-to entry on
+          // restore (gh-1000 AC1); a catalog switch records null (unpin).
+          customProvider: customName,
         );
         io.writeln('switched provider to ${spec.name} (endpoint: $baseUrl)');
         io.writeln(modelLine);
@@ -2221,7 +2030,11 @@ extension on AgentCli {
       _providerKind = spec.kind;
       _apiKey = key;
       _explicitToken = token != null;
-      _streamFunction = _catalogStreamFunction(spec.kind, key);
+      _streamFunction = _catalogStreamFunction(
+        spec.kind,
+        key,
+        providerName: customName ?? spec.name,
+      );
       _agent.streamFunction = _streamFunction;
       final builtModel = buildCatalogModel(
         spec.name,
@@ -2244,6 +2057,7 @@ extension on AgentCli {
         headers: builtModel.headers,
         compat: builtModel.compat,
         authHeader: authHeader,
+        maxImages: builtModel.maxImages,
       );
       // The cached model list belongs to the previous provider/endpoint.
       _modelCache = const [];
@@ -2254,9 +2068,11 @@ extension on AgentCli {
       await _session?.appendModelChange(
         provider: spec.name,
         modelId: modelId,
-        // A LIVE switch records the pin too (gh-1000 AC1, round-3 review).
+        // A LIVE switch records the pin this switch establishes (gh-1000
+        // AC1, round-3 review): the entry name for a custom switch, null
+        // (unpin) for a catalog one.
         baseUrl: baseUrl,
-        customProvider: _activeCustomName,
+        customProvider: customName,
       );
       var keyLine = _providerKeyLine(spec, baseUrl, explicit: token != null);
       if (token != null) {
@@ -2435,12 +2251,17 @@ extension on AgentCli {
     String? name,
   }) => _interactiveKeySetOrReport(name, tui);
 
+  /// The secure key store when usable on this host (present and
+  /// available), else null.
+  SecureKeyCache? get _usableSecureKeys =>
+      config.secureKeys?.available == true ? config.secureKeys : null;
+
   Future<void> _interactiveKeySetOrReport(
     String? name,
     FaTuiController tui,
   ) async {
-    final keys = config.secureKeys;
-    if (keys == null || !keys.available) {
+    final keys = _usableSecureKeys;
+    if (keys == null) {
       io.writeln('secure storage unavailable on this host');
       return;
     }
@@ -2466,7 +2287,13 @@ extension on AgentCli {
     } else if (spec != null && spec.apiKeyEnvNames.contains(name)) {
       _apiKey = value;
       _explicitToken = false;
-      _streamFunction = _catalogStreamFunction(spec.kind, value);
+      _streamFunction = _catalogStreamFunction(
+        spec.kind,
+        value,
+        // The ACTIVE identity binds the gate: the custom entry when one
+        // is pinned, else the catalog spec.
+        providerName: _activeCustomName ?? spec.name,
+      );
       _agent.streamFunction = _streamFunction;
       io.writeln('  active provider key updated');
     }

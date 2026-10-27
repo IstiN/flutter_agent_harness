@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
+import 'package:cryptography/cryptography.dart';
 import 'package:fa_hub_client/fa_hub_client.dart'
     hide AgentMessage, MailboxEntry;
 import 'package:flutter_agent_harness/flutter_agent_harness.dart'
@@ -99,6 +101,127 @@ void main() {
     },
     timeout: timeout,
   );
+
+  test('PUBLIC channel: fabric sends the raw base64({"text":…}) contract, '
+      'keyless members decode it, and #channel inboxes drain', () async {
+    final (adapter, plugin) = await newFabric();
+    final fabric = HubFabricRepository(
+      plugin,
+      publicChannelChecker: (_, channel) async => channel == 'room',
+      channelLister: (_) async => ['room'],
+    );
+    // Keyless joins on both ends (the public showcase membership).
+    plugin.repository!.client.join('room', '');
+    sender.join('room', '');
+
+    // Fabric → sender: the payload is the public contract, decoded by
+    // a keyless client (no "undecryptable" placeholder).
+    final arrived = sender.inbound
+        .firstWhere((m) => m.channel == 'room')
+        .timeout(const Duration(seconds: 5));
+    await fabric.send(
+      AgentMessage(
+        id: 'pub1',
+        fromId: 'main',
+        toId: '#room',
+        text: 'hello public',
+        sentAt: DateTime.now().toUtc().toIso8601String(),
+      ),
+    );
+    expect((await arrived).plaintext, 'hello public');
+
+    // Sender → fabric: the #room inbox is drained ALONGSIDE the agent
+    // inbox (drain(agentId) alone drops channel traffic).
+    final received = plugin.repository!.client.inbound
+        .firstWhere((m) => m.channel == 'room')
+        .timeout(const Duration(seconds: 5));
+    await sender.sendChannelEnvelope(
+      'room',
+      (frameId) async => encodePublicChannelText('back at you'),
+    );
+    await received;
+    final drained = await fabric.drain('main');
+    expect(drained, hasLength(1));
+    expect(drained.single.toId, '#room');
+    expect(drained.single.text, 'back at you');
+    expect(drained.single.fromId, sender.agentId);
+  }, timeout: timeout);
+
+  test('a private channel with an UNRESOLVED key refuses loudly instead '
+      'of downgrading to plaintext or auto-keygen (gh-1888 review)', () async {
+    final (adapter, plugin) = await newFabric();
+    final fabric = HubFabricRepository(
+      plugin,
+      privateKeyMissingChecker: (_, channel) async => channel == 'locked',
+    );
+    await expectLater(
+      fabric.send(
+        AgentMessage(
+          id: 'blk1',
+          fromId: 'main',
+          toId: '#locked',
+          text: 'secret payload',
+          sentAt: DateTime.now().toUtc().toIso8601String(),
+        ),
+      ),
+      throwsA(
+        isA<ChannelDeliveryException>().having(
+          (e) => e.message,
+          'message',
+          allOf(contains('refusing to send to #locked'), contains('key')),
+        ),
+      ),
+    );
+    // Nothing reached the wire.
+    await expectLater(
+      sender.inbound
+          .firstWhere((m) => m.channel == 'locked')
+          .timeout(const Duration(milliseconds: 300)),
+      throwsA(anything),
+    );
+  }, timeout: timeout);
+
+  test('PRIVATE channel: fabric sends a fanet1 frame, not RAW dap/1', () async {
+    final (adapter, plugin) = await newFabric();
+    const channel = 'private-room';
+    final keys = await newChannelKeypair();
+    final client = plugin.repository!.client;
+    await client.channelStore!.accept(channel, keys);
+    client.join(channel, keys.pub);
+    sender.join(channel, keys.pub);
+
+    final arrived = sender.inbound
+        .firstWhere((message) => message.channel == channel)
+        .timeout(const Duration(seconds: 5));
+    await adapter.send(
+      AgentMessage(
+        id: 'private1',
+        fromId: 'main',
+        toId: '#$channel',
+        text: 'hello private',
+        sentAt: DateTime.now().toUtc().toIso8601String(),
+      ),
+    );
+    await arrived;
+
+    final wire = hub.relayed.single;
+    final payload = base64Decode(wire['ciphertext'] as String);
+    expect(payload.first, fanet1FrameVersion);
+    expect(payload.sublist(1, 33), client.identity.dhPublicKey.bytes);
+    expect(
+      payload.length,
+      1 + 32 + 12 + 16 + utf8.encode('hello private').length,
+    );
+    final opened = await openFanet1(
+      channelKeyPair: await X25519().newKeyPairFromSeed(
+        base64Decode(keys.priv),
+      ),
+      frameId: wire['id'] as String,
+      channelId: channel,
+      payloadB64: wire['ciphertext'] as String,
+    );
+    expect(opened.plaintext, 'hello private');
+  }, timeout: timeout);
 
   test('resolveTarget answers the roster; channels pass through', () async {
     final (adapter, plugin) = await newFabric();

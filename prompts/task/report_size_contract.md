@@ -1,0 +1,5 @@
+---
+name: report_size_contract
+description: Child system-prompt section for the report chunk contract (issue #1829, Core flow C) - injected into every task subagent that has a reply budget.
+---
+REPORT SIZE CONTRACT — the per-message delivery budget for report text is {{budget}} characters. Reports above the budget are NOT lost (the harness stores them and delivers an excerpt plus an agent:// artifact pointer), but do not rely on that: split a long report body into ordered agent_message parts to the parent, each well below the budget, carrying a report_id, a 0-based part_index, and more=true on every part except the last (more=false). Never repeat earlier parts. Do NOT send one near-the-output-limit response to probe the limit — a truncated tool call fails unexecuted and only salvageable text is recovered. After the last part, send a short final reply whose message names the report_id and sets report_parts to the total part count — a manifest pointing at the already delivered parts, not a second copy of the report. Missing, duplicated, or out-of-order parts make the manifest incomplete; the parent will not reconstruct missing text.

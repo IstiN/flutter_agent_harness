@@ -17,10 +17,13 @@ import '../exceptions.dart';
 import '../mcp/mcp_config.dart';
 import '../model_roles/model_roles.dart';
 import '../prompts/prompt_overrides.dart';
+import '../prompts/project_context.dart' show ProjectContextConfig;
 import '../cube/config/cube_settings.dart';
+import '../session_retention.dart';
 import 'headless_config.dart';
 import 'waiting_heartbeat.dart';
 import '../providers/provider_common.dart';
+import '../providers/proxy_connector.dart';
 import '../spill/spill.dart';
 import '../skills/skill_availability.dart';
 import '../skills/skills_access.dart';
@@ -29,6 +32,7 @@ import '../messaging/fabric_config.dart';
 import '../redact/redaction_types.dart';
 import '../agent/image_registry.dart';
 import '../agent/stuck_tool.dart';
+import '../agent/foreground_call_budget.dart';
 import '../power_config.dart';
 import '../ttsr/ttsr.dart';
 import '../tools/availability.dart';
@@ -100,26 +104,83 @@ ProviderTimeoutsOverride? applyProviderTimeoutEnvOverride(
   );
 }
 
-/// Parses the `trajectory:` section (issue #385): today only the
-/// `wireDump` boolean. Unknown keys are strict errors (a typo must never
-/// silently skip the opt-in).
-bool _parseTrajectorySection(Object? node) {
-  if (node == null) return false;
+/// The parsed `trajectory:` section (issue #385 + gh-1745). Strict like
+/// every section: unknown keys and bad scalars throw [ConfigException] at
+/// boot; the defaults are never written so the file stays minimal.
+final class TrajectorySection {
+  const TrajectorySection({
+    this.wireDump = false,
+    this.requestBlobs = true,
+    this.requestBlobMaxMb = 50,
+    this.requestBlobTtlDays = 30,
+  });
+
+  /// Opt-in raw wire dumps (issue #385 F5).
+  final bool wireDump;
+
+  /// gh-1745: spill heavy request payloads out of the session JSONL into
+  /// `.fah/trajectories/<sid>/requests/`. `false` = legacy inline
+  /// persistence, byte-identical.
+  final bool requestBlobs;
+
+  /// Per-session blob-dir byte budget in MB.
+  final int requestBlobMaxMb;
+
+  /// Blob age bound in days.
+  final int requestBlobTtlDays;
+
+  /// The budget in bytes, as the blob store consumes it.
+  int get requestBlobMaxBytes => requestBlobMaxMb << 20;
+}
+
+/// Parses the `trajectory:` section (issue #385 + gh-1745). Unknown keys
+/// are strict errors (a typo must never silently skip the section).
+TrajectorySection _parseTrajectorySection(Object? node) {
+  if (node == null) return const TrajectorySection();
   if (node is! YamlMap) {
     throw ConfigException('trajectory must be a map, got: $node');
   }
-  var wireDump = false;
+  bool? wireDump;
+  bool? requestBlobs;
+  int? requestBlobMaxMb;
+  int? requestBlobTtlDays;
   for (final key in node.keys) {
-    if (key != 'wireDump') {
-      throw ConfigException('unknown "trajectory" key: $key');
+    switch (key) {
+      case 'wireDump':
+        wireDump = _readTrajectoryBool(node, '$key');
+      case 'requestBlobs':
+        requestBlobs = _readTrajectoryBool(node, '$key');
+      case 'requestBlobMaxMb':
+        requestBlobMaxMb = _readTrajectoryPositiveInt(node, '$key');
+      case 'requestBlobTtlDays':
+        requestBlobTtlDays = _readTrajectoryPositiveInt(node, '$key');
+      default:
+        throw ConfigException('unknown "trajectory" key: $key');
     }
-    final value = node[key];
-    if (value is! bool) {
-      throw ConfigException('"trajectory.wireDump" must be a boolean');
-    }
-    wireDump = value;
   }
-  return wireDump;
+  // Unset keys keep the class defaults; duplicates last-win (as before).
+  return TrajectorySection(
+    wireDump: wireDump ?? false,
+    requestBlobs: requestBlobs ?? true,
+    requestBlobMaxMb: requestBlobMaxMb ?? 50,
+    requestBlobTtlDays: requestBlobTtlDays ?? 30,
+  );
+}
+
+bool _readTrajectoryBool(YamlMap node, String key) {
+  final value = node[key];
+  if (value is! bool) {
+    throw ConfigException('"trajectory.$key" must be a boolean');
+  }
+  return value;
+}
+
+int _readTrajectoryPositiveInt(YamlMap node, String key) {
+  final value = node[key];
+  if (value is! int || value < 1) {
+    throw ConfigException('"trajectory.$key" must be a positive integer');
+  }
+  return value;
 }
 
 /// The parsed `quota:` section (issue #823): the status-line badge opt-in
@@ -290,6 +351,7 @@ int _parseAgentContextWindowCapValue(Object? value) {
   String? agentMode,
   bool? misuseBreaker,
   StuckToolConfig? stuckTool,
+  ForegroundCallBudgetConfig? foregroundCall,
 })?
 _parseAgentSection(Object? node) {
   if (node == null) return null;
@@ -300,6 +362,8 @@ _parseAgentSection(Object? node) {
   String? mode;
   bool? misuseBreaker;
   StuckToolConfig? stuckTool;
+  Object? fgBudgetSeconds;
+  Object? fgAutoConvert;
   for (final key in node.keys) {
     switch (key) {
       case 'contextWindowCap':
@@ -310,16 +374,59 @@ _parseAgentSection(Object? node) {
         misuseBreaker = _parseAgentMisuseBreakerValue(node[key]);
       case 'stuckTool':
         stuckTool = StuckToolConfig.fromYaml(node[key]);
+      // Issue #1786: the two flat leaves are kept raw here and composed
+      // once below — one [ForegroundCallBudgetConfig] per section, strict
+      // like every agent key (a bad schema throws [ConfigException]).
+      case 'foregroundCallBudgetSeconds':
+        fgBudgetSeconds = node[key];
+      case 'foregroundCallAutoConvert':
+        fgAutoConvert = node[key];
       default:
         throw ConfigException('unknown "agent" key: $key');
     }
   }
-  return (
+  return _composeAgentSection(
     contextWindowCap: cap,
+    mode: mode,
+    misuseBreaker: misuseBreaker,
+    stuckTool: stuckTool,
+    budgetSeconds: fgBudgetSeconds,
+    autoConvert: fgAutoConvert,
+  );
+}
+
+/// Composes the parsed `agent:` leaves into the section record. Issue
+/// #1786: both budget leaves absent → null (the loop's defaults apply);
+/// one present keeps the other's default via
+/// [ForegroundCallBudgetConfig.fromLeaves].
+({
+  int? contextWindowCap,
+  String? mode,
+  String? agentMode,
+  bool? misuseBreaker,
+  StuckToolConfig? stuckTool,
+  ForegroundCallBudgetConfig? foregroundCall,
+})
+_composeAgentSection({
+  required int? contextWindowCap,
+  required String? mode,
+  required bool? misuseBreaker,
+  required StuckToolConfig? stuckTool,
+  required Object? budgetSeconds,
+  required Object? autoConvert,
+}) {
+  return (
+    contextWindowCap: contextWindowCap,
     mode: mode,
     agentMode: mode == 'pi' ? 'pi' : null,
     misuseBreaker: misuseBreaker,
     stuckTool: stuckTool,
+    foregroundCall: budgetSeconds == null && autoConvert == null
+        ? null
+        : ForegroundCallBudgetConfig.fromLeaves(
+            budgetSeconds: budgetSeconds,
+            autoConvert: autoConvert,
+          ),
   );
 }
 
@@ -330,49 +437,141 @@ _parseAgentSection(Object? node) {
 bool _isGhostProviderEntry(Object? node) =>
     node is Map && isReservedCustomProviderName('${node['name']}');
 
+/// Parses the `providers:` section (issue #1921): a map of provider name
+/// → per-provider settings whose only key today is `network:` (the proxy
+/// binding). Strict like the rest of the config.
+Map<String, ProviderNetworkConfig> _parseProviderNetworks(Object? node) {
+  if (node == null) return const {};
+  if (node is! YamlMap) {
+    throw ConfigException('providers must be a map, got: $node');
+  }
+  return {
+    // A null value is a user error (the block was started but never
+    // written) — silently dropping it would degrade a binding to direct
+    // egress, which this section's contract forbids.
+    for (final entry in node.entries)
+      ...switch (entry.value) {
+        null => throw ConfigException(
+          'providers.${entry.key} has no value — write the network: block '
+          '(network: { proxy: … }) or remove the entry',
+        ),
+        _ => {
+          '${entry.key}': _parseProviderNetworkEntry(
+            '${entry.key}',
+            entry.value,
+          ),
+        },
+      },
+  };
+}
+
+ProviderNetworkConfig _parseProviderNetworkEntry(String name, Object? node) {
+  if (node is! YamlMap) {
+    throw ConfigException('providers.$name must be a map, got: $node');
+  }
+  for (final key in node.keys) {
+    if ('$key' != 'network') {
+      throw ConfigException(
+        'providers.$name: unknown key "$key" (only "network" is supported)',
+      );
+    }
+  }
+  return ProviderNetworkConfig.fromYaml(
+    node['network'],
+    configLabel: 'providers.$name.network',
+  );
+}
+
 /// Parses the `images:` section (session image registry, issue #171):
-/// `registry` (kill switch) and `maxPerRequest` (per-request unique-image
-/// cap). Strict — a bad schema throws [ConfigException] instead of
-/// silently keeping the defaults. Public so the settings flow's
-/// reload-after-write (issue #395) reuses the same parser the boot runs.
+/// `registry` (kill switch), `maxPerRequest` (per-request unique-image
+/// cap), `maxBytesPerRequest` (per-request image byte budget, issue
+/// #1916) and `perModel` (per-model cap overrides, issue #1750). Strict —
+/// a bad schema throws [ConfigException] instead of silently keeping the
+/// defaults. Public so the settings flow's reload-after-write (issue
+/// #395) reuses the same parser the boot runs.
 ImageRegistryConfig? parseImagesSection(Object? node) {
   if (node == null) return null;
   if (node is! YamlMap) {
     throw ConfigException('images must be a map, got: $node');
   }
-  bool readBool(String key) {
-    final value = node[key];
-    if (value is! bool) {
-      throw ConfigException('"images.$key" must be a boolean');
-    }
-    return value;
+  final (registry, maxPerRequest, maxBytesPerRequest, perModel) =
+      _parseImagesEntries(node);
+  if (registry == null &&
+      maxPerRequest == null &&
+      maxBytesPerRequest == null &&
+      perModel == null) {
+    return null;
   }
+  return ImageRegistryConfig(
+    enabled: registry ?? true,
+    maxPerRequest: maxPerRequest ?? defaultMaxImagesPerRequest,
+    maxBytesPerRequest: maxBytesPerRequest ?? defaultMaxImageBytesPerRequest,
+    perModel: perModel ?? const {},
+  );
+}
 
-  int readPositiveInt(String key) {
-    final value = node[key];
-    if (value is! int || value <= 0) {
-      throw ConfigException('"images.$key" must be a positive integer');
-    }
-    return value;
-  }
-
+/// The four optional images knobs parsed from [node]; unset keys stay
+/// null (gh-1713 split of [parseImagesSection]).
+(bool?, int?, int?, Map<String, int>?) _parseImagesEntries(YamlMap node) {
   bool? registry;
   int? maxPerRequest;
+  int? maxBytesPerRequest;
+  Map<String, int>? perModel;
   for (final key in node.keys) {
     switch (key) {
       case 'registry':
-        registry = readBool('$key');
+        registry = _readImagesBool(node, '$key');
       case 'maxPerRequest':
-        maxPerRequest = readPositiveInt('$key');
+        maxPerRequest = _readImagesPositiveInt(node, '$key');
+      case 'maxBytesPerRequest':
+        maxBytesPerRequest = _readImagesPositiveInt(node, '$key');
+      case 'perModel':
+        perModel = _readImagesPerModel(node);
       default:
         throw ConfigException('unknown "images" key: $key');
     }
   }
-  if (registry == null && maxPerRequest == null) return null;
-  return ImageRegistryConfig(
-    enabled: registry ?? true,
-    maxPerRequest: maxPerRequest ?? defaultMaxImagesPerRequest,
-  );
+  return (registry, maxPerRequest, maxBytesPerRequest, perModel);
+}
+
+bool _readImagesBool(YamlMap node, String key) {
+  final value = node[key];
+  if (value is! bool) {
+    throw ConfigException('"images.$key" must be a boolean');
+  }
+  return value;
+}
+
+int _readImagesPositiveInt(YamlMap node, String key) {
+  final value = node[key];
+  if (value is! int || value <= 0) {
+    throw ConfigException('"images.$key" must be a positive integer');
+  }
+  return value;
+}
+
+/// True when [value] is a JSON integer at or above 1 — the cap shape
+/// shared by `images.maxPerRequest` and the `images.perModel` entries.
+bool _isPositiveInt(Object? value) => value is int && value > 0;
+
+int _readImagesPerModelCap(Object? key, Object? value) {
+  if (!_isPositiveInt(value)) {
+    throw ConfigException('"images.perModel.$key" must be a positive integer');
+  }
+  return value as int;
+}
+
+Map<String, int> _readImagesPerModel(YamlMap node) {
+  final value = node['perModel'];
+  if (value is! YamlMap) {
+    throw ConfigException(
+      '"images.perModel" must be a map of model id → cap, got: $value',
+    );
+  }
+  return {
+    for (final entry in value.entries)
+      '${entry.key}': _readImagesPerModelCap(entry.key, entry.value),
+  };
 }
 
 /// Persisted CLI configuration.
@@ -389,6 +588,7 @@ final class CliConfig {
     this.ttsr,
     this.contextWindowCap,
     this.stuckTool,
+    this.foregroundCall,
     this.agentLoadMode,
     this.customProviders = const [],
     this.models,
@@ -405,9 +605,15 @@ final class CliConfig {
     this.tools,
     this.redact,
     this.spills,
+    this.sessions,
+    this.projectContext,
     this.compactionEngine,
     this.compactionJudgeBudgetSeconds,
     this.wireDump = false,
+    this.trajectoryRequestBlobs = true,
+    this.trajectoryRequestBlobMaxMb = 50,
+    this.trajectoryRequestBlobMaxBytes = 50 << 20,
+    this.trajectoryRequestBlobTtlDays = 30,
     this.images,
     this.agentMode,
     this.misuseBreaker = true,
@@ -425,6 +631,7 @@ final class CliConfig {
     this.links = const LinksConfig(),
     this.streamThinking = false,
     this.autoUpdate = AutoUpdateMode.notify,
+    this.providerNetworks = const {},
   });
 
   factory CliConfig.fromYaml(YamlMap map) {
@@ -438,6 +645,8 @@ final class CliConfig {
     // The tui section (issue #805) is strict: theme, classic kill
     // switch and statusLine parsed once, schema errors throw.
     final tui = parseTuiSection(map['tui']);
+    // The trajectory section (issue #385 + gh-1745) is strict too.
+    final trajectorySection = _parseTrajectorySection(map['trajectory']);
     return CliConfig(
       // Issue #772: the persisted provider identity is the catalog KIND.
       // Old name-shaped values (`chatgpt`, `chatgpt.com`) canonicalize on
@@ -489,6 +698,18 @@ final class CliConfig {
       spills: map['spills'] == null
           ? null
           : SpillsConfig.fromYaml(map['spills']),
+      // The sessions section (gh-1746); tolerant like spills — unknown
+      // keys and mistyped scalars become notes. Absent keeps the
+      // byte-identical legacy boot (AC1).
+      sessions: map['sessions'] == null
+          ? null
+          : SessionsConfig.fromYaml(map['sessions']),
+      // The projectContext section (issue #1761); tolerant by design —
+      // unknown keys and mistyped scalars become notes, never boot
+      // failures.
+      projectContext: map['projectContext'] == null
+          ? null
+          : ProjectContextConfig.fromYaml(map['projectContext']),
       // Saved custom providers; entry-level errors throw [ConfigException].
       // Entries named after a built-in catalog provider are dropped (issue
       // #221's ghost "openai"): they shadow `/provider <name>` routing and
@@ -505,6 +726,10 @@ final class CliConfig {
           'customProviders must be a list, got: $other',
         ),
       },
+      // The providers section (issue #1921): per-provider `network:` proxy
+      // blocks, keyed by provider name. Strict — bad config must surface,
+      // never silently degrade to direct egress.
+      providerNetworks: _parseProviderNetworks(map['providers']),
       // The models section (media slot overrides + custom model
       // definitions) is parsed strictly too.
       models: map['models'] == null
@@ -537,9 +762,14 @@ final class CliConfig {
             : null,
         label: '~/.fah/config.yaml',
       ),
-      // The trajectory section (issue #385) is a plain boolean today:
-      // `wireDump` opts the raw outbound payloads into the session ledger.
-      wireDump: _parseTrajectorySection(map['trajectory']),
+      // The trajectory section (issue #385 + gh-1745): `wireDump` opts the
+      // raw outbound payloads into the session ledger; `requestBlobs` and
+      // its rotation knobs spill the heavy payloads back out of it.
+      wireDump: trajectorySection.wireDump,
+      trajectoryRequestBlobs: trajectorySection.requestBlobs,
+      trajectoryRequestBlobMaxMb: trajectorySection.requestBlobMaxMb,
+      trajectoryRequestBlobMaxBytes: trajectorySection.requestBlobMaxBytes,
+      trajectoryRequestBlobTtlDays: trajectorySection.requestBlobTtlDays,
       images: parseImagesSection(map['images']),
       powerSleepPrevention: powerSection.sleepPrevention,
       powerHold: powerSection.hold,
@@ -549,6 +779,7 @@ final class CliConfig {
       // #273/#679/#680) is strict too.
       contextWindowCap: agentSection?.contextWindowCap,
       stuckTool: agentSection?.stuckTool,
+      foregroundCall: agentSection?.foregroundCall,
       agentMode: agentSection?.agentMode,
       agentLoadMode: agentSection?.mode,
       misuseBreaker: agentSection?.misuseBreaker ?? true,
@@ -681,6 +912,12 @@ final class CliConfig {
   /// wizard. Parsed strictly: a malformed entry throws [ConfigException].
   final List<CustomProviderEntry> customProviders;
 
+  /// Per-provider proxy network config (`providers:` yaml section, issue
+  /// #1921): name → its `network:` block. A provider with a block rides
+  /// that proxy fail-closed; every other provider stays byte-identical
+  /// direct. Parsed strictly: a malformed block throws [ConfigException].
+  final Map<String, ProviderNetworkConfig> providerNetworks;
+
   /// Optional models config (`models:` yaml section): per-slot media model
   /// overrides (managed by `/models set`/`/models remove`) and named custom
   /// model definitions (`/model <name>` targets). Parsed strictly: a schema
@@ -772,6 +1009,26 @@ final class CliConfig {
   /// payloads are never persisted unconditionally.
   final bool wireDump;
 
+  /// gh-1745: spill heavy request payloads (per-message block texts, raw
+  /// wire dumps) out of the session JSONL into
+  /// `.fah/trajectories/<sid>/requests/` under the rotation policy below.
+  /// Default true — the fix; `false` restores the legacy inline
+  /// persistence byte-identically.
+  final bool trajectoryRequestBlobs;
+
+  /// `trajectory.requestBlobMaxMb` — the per-session blob-dir byte budget
+  /// in MB (default 50).
+  final int trajectoryRequestBlobMaxMb;
+
+  /// The same budget in bytes ([TrajectorySection.requestBlobMaxBytes],
+  /// gh-1745 rework): the canonical MB→bytes derivation — hosts pass it
+  /// to the blob store instead of re-shifting inline.
+  final int trajectoryRequestBlobMaxBytes;
+
+  /// `trajectory.requestBlobTtlDays` — blob age bound in days (default
+  /// 30).
+  final int trajectoryRequestBlobTtlDays;
+
   /// Optional `redact:` section — layered secret redaction. `null` means
   /// the section is absent (redaction still runs with default config; the
   /// pipeline assembly happens in the host startup, see
@@ -783,6 +1040,18 @@ final class CliConfig {
   /// absent (the project scope reads live via [loadProjectSpillsConfig]
   /// and wins wholesale, like the other project sections).
   final SpillsConfig? spills;
+
+  /// Optional `sessions:` section (gh-1746) — the opt-in retention
+  /// policy for the sessions root. Tolerant parse (deviations become
+  /// notes, never boot failures); `null` means the section is absent —
+  /// boot never sweeps and never notes (AC1's byte-identical legacy).
+  final SessionsConfig? sessions;
+
+  /// Optional `projectContext:` section (issue #1761) — the merged
+  /// project-context budget (`maxBytes`; `0` disables the section and
+  /// skips every file read). Tolerant parse; `null` means the section is
+  /// absent = the 32KB default.
+  final ProjectContextConfig? projectContext;
 
   /// `registry` kill switch + `maxPerRequest` cap. `null` keeps the
   /// defaults (registry on, [defaultMaxImagesPerRequest]).
@@ -800,6 +1069,13 @@ final class CliConfig {
   /// heartbeats for long-running tool calls plus the autonomous
   /// cancel/retry/convert follow-up. `null` = unsupervised.
   final StuckToolConfig? stuckTool;
+
+  /// Foreground tool-call budget (`agent.foregroundCallBudgetSeconds` +
+  /// `agent.foregroundCallAutoConvert`, issue #1786): bounds the
+  /// wall-clock window a running foreground call can escape steering
+  /// through (offer at B/2, force-escalate at B). Both leaves absent →
+  /// `null` — the loop applies its own defaults (600s, offer).
+  final ForegroundCallBudgetConfig? foregroundCall;
 
   /// The parsed harness mode preset (`agent.mode`, issue #679): `'pi'` or
   /// null (absent or explicit `default`). Resolved against the flag/env
@@ -918,10 +1194,12 @@ final class CliConfig {
     String? approvalMode,
     List<String>? allowedTools,
     Map<String, String>? promptOverrides,
+    Map<String, ProviderNetworkConfig>? providerNetworks,
     ModelRolesConfig? modelRoles,
     TtsrConfig? ttsr,
     int? contextWindowCap,
     StuckToolConfig? stuckTool,
+    ForegroundCallBudgetConfig? foregroundCall,
     String? agentLoadMode,
     List<CustomProviderEntry>? customProviders,
     ModelsConfig? models,
@@ -938,9 +1216,15 @@ final class CliConfig {
     ToolsConfig? tools,
     RedactionConfig? redact,
     SpillsConfig? spills,
+    SessionsConfig? sessions,
+    ProjectContextConfig? projectContext,
     CompactionEngine? compactionEngine,
     int? compactionJudgeBudgetSeconds,
     bool? wireDump,
+    bool? trajectoryRequestBlobs,
+    int? trajectoryRequestBlobMaxMb,
+    int? trajectoryRequestBlobMaxBytes,
+    int? trajectoryRequestBlobTtlDays,
     ImageRegistryConfig? images,
     String? agentMode,
     bool? misuseBreaker,
@@ -971,6 +1255,7 @@ final class CliConfig {
       ttsr: ttsr ?? this.ttsr,
       contextWindowCap: contextWindowCap ?? this.contextWindowCap,
       stuckTool: stuckTool ?? this.stuckTool,
+      foregroundCall: foregroundCall ?? this.foregroundCall,
       agentLoadMode: agentLoadMode ?? this.agentLoadMode,
       customProviders: customProviders ?? this.customProviders,
       models: models ?? this.models,
@@ -983,16 +1268,27 @@ final class CliConfig {
       skillsLiveRediscovery:
           skillsLiveRediscovery ?? this.skillsLiveRediscovery,
       skillToggles: skillToggles ?? this.skillToggles,
+      providerNetworks: providerNetworks ?? this.providerNetworks,
       memory: memory ?? this.memory,
       fabric: fabric ?? this.fabric,
       cube: cube ?? this.cube,
       tools: tools ?? this.tools,
       redact: redact ?? this.redact,
       spills: spills ?? this.spills,
+      sessions: sessions ?? this.sessions,
+      projectContext: projectContext ?? this.projectContext,
       compactionEngine: compactionEngine ?? this.compactionEngine,
       compactionJudgeBudgetSeconds:
           compactionJudgeBudgetSeconds ?? this.compactionJudgeBudgetSeconds,
       wireDump: wireDump ?? this.wireDump,
+      trajectoryRequestBlobs:
+          trajectoryRequestBlobs ?? this.trajectoryRequestBlobs,
+      trajectoryRequestBlobMaxMb:
+          trajectoryRequestBlobMaxMb ?? this.trajectoryRequestBlobMaxMb,
+      trajectoryRequestBlobMaxBytes:
+          trajectoryRequestBlobMaxBytes ?? this.trajectoryRequestBlobMaxBytes,
+      trajectoryRequestBlobTtlDays:
+          trajectoryRequestBlobTtlDays ?? this.trajectoryRequestBlobTtlDays,
       images: images ?? this.images,
       agentMode: agentMode ?? this.agentMode,
       misuseBreaker: misuseBreaker ?? this.misuseBreaker,
@@ -1078,6 +1374,7 @@ final class CliConfig {
     final ttsrConfig = ttsr;
     if (ttsrConfig != null) buffer.write(ttsrConfig.toYaml());
     buffer.write(_customProvidersYaml());
+    buffer.write(_providerNetworksYaml());
     final modelsConfig = models;
     if (modelsConfig != null && !modelsConfig.isEmpty) {
       buffer.write(modelsConfig.toYaml());
@@ -1102,9 +1399,11 @@ final class CliConfig {
     }
     buffer.write(_redactYaml());
     buffer.write(_compactionYaml());
-    if (wireDump) buffer.write('trajectory:\n  wireDump: true\n');
+    buffer.write(_trajectoryYaml());
     if (images != null) buffer.write(_imagesYaml());
     buffer.write(_spillsYaml());
+    buffer.write(_sessionsYaml());
+    buffer.write(_projectContextYaml());
     buffer.write(_agentSectionYaml());
     // The subagents heartbeat section (issue #383), only when explicitly
     // configured; defaults are never written so the file stays minimal.
@@ -1128,14 +1427,17 @@ final class CliConfig {
       streamThinking ? 'output:\n  streamThinking: true\n' : '';
 
   /// The `agent:` section, only when a cap, a load mode, a stuck-tool
-  /// config, or the misuse-breaker kill switch is persisted; defaults are
-  /// never written so the file stays minimal.
+  /// config, the foreground-call budget, or the misuse-breaker kill
+  /// switch is persisted; defaults are never written so the file stays
+  /// minimal.
   String _agentSectionYaml() {
     final stuckYaml = _stuckToolYaml();
+    final fgYaml = _foregroundCallYaml();
     if (contextWindowCap == null &&
         agentLoadMode == null &&
         misuseBreaker &&
-        stuckYaml.isEmpty) {
+        stuckYaml.isEmpty &&
+        fgYaml.isEmpty) {
       return '';
     }
     final section = StringBuffer('agent:\n');
@@ -1149,7 +1451,26 @@ final class CliConfig {
       section.write('  misuseBreaker: false\n');
     }
     section.write(stuckYaml);
+    section.write(fgYaml);
     return section.toString();
+  }
+
+  /// The `agent.foregroundCallBudgetSeconds` / `agent.
+  /// foregroundCallAutoConvert` leaves (issue #1786), only when
+  /// non-default (600 / offer) — defaults are never written so the file
+  /// stays minimal.
+  String _foregroundCallYaml() {
+    final fg = foregroundCall;
+    if (fg == null) return '';
+    final budget = fg.budget.inSeconds;
+    final buffer = StringBuffer();
+    if (budget != defaultForegroundCallBudgetSeconds) {
+      buffer.write('  foregroundCallBudgetSeconds: $budget\n');
+    }
+    if (fg.autoConvert) {
+      buffer.write('  foregroundCallAutoConvert: auto\n');
+    }
+    return buffer.toString();
   }
 
   /// The `agent.stuckTool:` sub-map, only when explicitly configured
@@ -1337,6 +1658,9 @@ final class CliConfig {
     if (config.maxPerRequest != defaultMaxImagesPerRequest) {
       buffer.write('  maxPerRequest: ${config.maxPerRequest}\n');
     }
+    if (config.maxBytesPerRequest != defaultMaxImageBytesPerRequest) {
+      buffer.write('  maxBytesPerRequest: ${config.maxBytesPerRequest}\n');
+    }
     return buffer.toString();
   }
 
@@ -1345,6 +1669,31 @@ final class CliConfig {
   /// (gh-1572: the emitter used to be unable to render the section at
   /// all, so every save dropped it).
   String _spillsYaml() => spills?.toYaml() ?? '';
+
+  /// The `sessions:` section (gh-1746), only when explicitly configured
+  /// (defaults are never written so the file stays minimal).
+  String _sessionsYaml() => sessions?.toYaml() ?? '';
+
+  /// The `projectContext:` section (issue #1761), only when explicitly
+  /// configured; the default budget is never written so the file stays
+  /// minimal (same rule as `_spillsYaml`).
+  String _projectContextYaml() => projectContext?.toYaml() ?? '';
+
+  /// The `trajectory:` section, defaults never written (the file stays
+  /// minimal — same convention as every other section).
+  String _trajectoryYaml() {
+    final lines = <String>[];
+    if (wireDump) lines.add('  wireDump: true');
+    if (!trajectoryRequestBlobs) lines.add('  requestBlobs: false');
+    if (trajectoryRequestBlobMaxMb != 50) {
+      lines.add('  requestBlobMaxMb: $trajectoryRequestBlobMaxMb');
+    }
+    if (trajectoryRequestBlobTtlDays != 30) {
+      lines.add('  requestBlobTtlDays: $trajectoryRequestBlobTtlDays');
+    }
+    if (lines.isEmpty) return '';
+    return 'trajectory:\n${lines.join('\n')}\n';
+  }
 
   String _allowedToolsYaml() {
     if (allowedTools.isEmpty) return 'allowedTools: []\n';
@@ -1362,6 +1711,27 @@ final class CliConfig {
     final buffer = StringBuffer('prompts:\n');
     for (final entry in promptOverrides.entries) {
       buffer.write('  ${entry.key}: ${jsonEncode(entry.value)}\n');
+    }
+    return buffer.toString();
+  }
+
+  /// The `providers:` yaml section (issue #1921) — written back verbatim
+  /// so config edits never drop a user's proxy binding.
+  String _providerNetworksYaml() {
+    if (providerNetworks.isEmpty) return '';
+    final buffer = StringBuffer('providers:\n');
+    for (final MapEntry(key: name, value: network)
+        in providerNetworks.entries) {
+      buffer.write('  ${_yamlScalar(name)}:\n    network:\n');
+      buffer.write('      proxy: ${_yamlScalar(network.proxy.toString())}\n');
+      final username = network.proxyUsername;
+      if (username != null) {
+        buffer.write('      proxyUsername: ${_yamlScalar(username)}\n');
+      }
+      final passwordEnv = network.proxyPasswordEnv;
+      if (passwordEnv != null) {
+        buffer.write('      proxyPasswordEnv: ${_yamlScalar(passwordEnv)}\n');
+      }
     }
     return buffer.toString();
   }
@@ -1590,11 +1960,13 @@ CompactionEngine? loadProjectCompactionEngine(String projectDir) {
   }
 }
 
-/// Loads the PROJECT-level `trajectory:` section's `wireDump` flag from
-/// `<projectDir>/.fah/config.yaml` (issue #385). Null when the file or the
-/// section is absent/unreadable; a present-but-invalid section throws
-/// [ConfigException] (strict, like the user config).
-bool? loadProjectWireDump(String projectDir) {
+/// Loads the PROJECT-level `trajectory:` section from
+/// `<projectDir>/.fah/config.yaml` (issue #385 + gh-1745) — the whole
+/// section travels with the repo, the same way `wireDump` always did.
+/// Null when the file or the section is absent/unreadable; a
+/// present-but-invalid section throws [ConfigException] (strict, like
+/// the user config).
+TrajectorySection? loadProjectTrajectorySection(String projectDir) {
   final file = File('$projectDir/.fah/config.yaml');
   if (!file.existsSync()) return null;
   try {
@@ -1608,6 +1980,13 @@ bool? loadProjectWireDump(String projectDir) {
     return null;
   }
 }
+
+/// Loads the PROJECT-level `trajectory:` section's `wireDump` flag from
+/// `<projectDir>/.fah/config.yaml` (issue #385). Null when the file or the
+/// section is absent/unreadable; a present-but-invalid section throws
+/// [ConfigException] (strict, like the user config).
+bool? loadProjectWireDump(String projectDir) =>
+    loadProjectTrajectorySection(projectDir)?.wireDump;
 
 /// Loads the PROJECT-level `agent.contextWindowCap` from
 /// `<projectDir>/.fah/config.yaml` (gh-1077) — the owner-side effective
@@ -1788,6 +2167,8 @@ const _diskPreservedSections = {
   // is the only faithful form, like `memory:`/`a2a:`); the rest render
   // when the caller carries them — caller wins wherever it rendered.
   'spills',
+  'sessions',
+  'projectContext',
   'subagents',
   'waiting',
   'jobs',

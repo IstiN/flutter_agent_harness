@@ -482,3 +482,35 @@ final class _FaBrowserController implements BrowserController {
   @override
   Future<void> taskEnd() => _dispatch('task_end', const {});
 }
+
+/// `fa session info [<sessionId>] [--json]` (issue #1882 AC5): the
+/// size/records breakdown over one streaming pass. Progress rides
+/// stderr; SIGINT cancels into a partial report (exit 130) instead of a
+/// silent hang. Split out of [_runApp] to keep the dispatcher's
+/// changed-line CRAP footprint flat.
+Future<int> _runSessionInfoVerb({
+  required CliIO io,
+  required LocalExecutionEnv env,
+  required String sessionRoot,
+  required SessionCliCommand command,
+}) async {
+  var canceled = false;
+  final subscription = io.interrupts.listen((_) {
+    canceled = true;
+    stderr.writeln('session info: canceled');
+  });
+  final exitCode = await runSessionInfoCliCommand(
+    writeln: io.writeln,
+    env: env,
+    sessionRoot: sessionRoot,
+    sessionId: command.repairTarget,
+    json: command.json,
+    onProgress: (scanned, total) => stderr.writeln(
+      'session info: ${formatSessionBytes(scanned)} / '
+      '${formatSessionBytes(total)} scanned',
+    ),
+    isCanceled: () async => canceled,
+  );
+  await subscription.cancel();
+  return exitCode;
+}

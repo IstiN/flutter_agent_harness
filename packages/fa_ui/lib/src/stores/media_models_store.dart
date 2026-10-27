@@ -9,9 +9,10 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
 /// The per-modality model slots [MediaModelsStore] manages.
 ///
-/// Each slot may carry an override pointing at a dedicated endpoint; a slot
-/// without an override falls back to the app's main connection (see
-/// [MediaModelsStore.resolve]).
+/// Each slot may carry an override pointing at a dedicated endpoint. A slot
+/// without an override is UNCONFIGURED — the main connection is never an
+/// implicit fallback (gh-1844); it serves a slot only through the explicit
+/// per-slot opt-in `useMainConnection: true` (see [MediaModelsStore.resolve]).
 final class MediaSlot {
   MediaSlot._();
 
@@ -61,6 +62,7 @@ final class MediaSlotOverride {
     this.apiKeyName,
     this.voice,
     this.providerId,
+    this.useMainConnection = false,
   });
 
   /// Restores an override from its JSON form (see [toJson]).
@@ -72,6 +74,7 @@ final class MediaSlotOverride {
         apiKeyName: json['apiKeyName']?.toString(),
         voice: json['voice']?.toString(),
         providerId: json['providerId']?.toString(),
+        useMainConnection: json['useMainConnection'] == true,
       );
 
   /// Provider adapter kind; the media tools speak the OpenAI-compatible
@@ -99,6 +102,12 @@ final class MediaSlotOverride {
   /// default-chat flow keeps the provider's identity through the apply.
   final String? providerId;
 
+  /// Explicit per-slot opt-in to serve the slot from the main connection
+  /// (gh-1844). Default false: without an override the slot is
+  /// UNCONFIGURED and media calls fail with an actionable "configure the
+  /// slot" error — the main connection is never an implicit fallback.
+  final bool useMainConnection;
+
   /// JSON form persisted in the store file; absent fields stay absent.
   Map<String, dynamic> toJson() => {
     'providerKind': providerKind,
@@ -107,6 +116,7 @@ final class MediaSlotOverride {
     if (apiKeyName != null) 'apiKeyName': apiKeyName,
     if (voice != null && voice!.isNotEmpty) 'voice': voice,
     'providerId': providerId,
+    if (useMainConnection) 'useMainConnection': true,
   };
 
   @override
@@ -227,10 +237,13 @@ class MediaModelsStore extends ChangeNotifier {
   /// empty (mirrors the `transcribe_audio` default).
   static const defaultBaseUrl = 'https://api.openai.com/v1';
 
-  /// Default model ids per slot when falling back to the main connection:
-  /// the chat model id is wrong for the media APIs, so the OpenAI defaults
-  /// apply. Slots absent here (music/video — no OpenAI standard) have no
-  /// fallback model and stay unusable without an override.
+  /// Default model ids per slot when the user EXPLICITLY opts the slot
+  /// into the main connection (`useMainConnection: true`): the chat model
+  /// id is wrong for most media APIs, so the OpenAI defaults apply. Slots
+  /// absent here (music/video — no OpenAI standard) ride the main model
+  /// id, matching the CLI's opt-in behavior. Without the opt-in (or an
+  /// override) the slot is UNCONFIGURED — there is no implicit fallback
+  /// anymore (gh-1844).
   static const _fallbackModelIds = {
     MediaSlot.imageGeneration: 'gpt-image-1',
     MediaSlot.audioTts: 'tts-1',
@@ -277,24 +290,30 @@ class MediaModelsStore extends ChangeNotifier {
     await _save();
   }
 
-  /// Resolves the effective endpoint for [slot]: the slot's override when
-  /// one is configured, otherwise the main connection [fallback] (with the
-  /// slot's default model id — the chat model id does not belong on the
-  /// media APIs). Returns null when the result is not a usable
-  /// OpenAI-compatible endpoint (wrong provider kind, or no API key after
-  /// [resolveKey] ran) — callers surface an actionable "configure the slot"
-  /// error.
+  /// Resolves the effective endpoint for [slot].
+  ///
+  /// gh-1844: without an override the slot is UNCONFIGURED (null) — the
+  /// main connection is never an implicit fallback. The main connection
+  /// serves the slot only through the EXPLICIT per-slot opt-in
+  /// (`useMainConnection: true`), which preserves the pre-gh-1844 fallback
+  /// outcome the user already had: the slot's OpenAI default model id (or
+  /// the main model id for `vision` and slots without a standard default),
+  /// on the main connection's endpoint and key.
+  ///
+  /// Returns null when the result is not a usable OpenAI-compatible
+  /// endpoint (wrong provider kind, or no API key after [resolveKey] ran)
+  /// — callers surface an actionable "configure the slot" error.
   Future<MediaEndpoint?> resolve(
     String slot,
     MediaFallback fallback, {
     MediaKeyResolver? resolveKey,
   }) async {
     final override = _slots[slot];
-    if (override == null) {
+    if (override == null) return null; // UNCONFIGURED — never an implicit fallback
+    if (override.useMainConnection) {
       final modelId = slot == MediaSlot.vision
           ? fallback.modelId
-          : _fallbackModelIds[slot];
-      if (modelId == null) return null; // no standard fallback for this slot
+          : _fallbackModelIds[slot] ?? fallback.modelId;
       return _usable(
         MediaEndpoint(
           providerKind: fallback.providerKind,

@@ -77,8 +77,9 @@ concurrency:
 #   guards   → CRAP + jscpd + cross-module dupx              (core/shared/app)
 #   flutter-analyze → flutter_app analyze on ubuntu          (app/core/shared)
 #   flutter-tests → flutter_app tests sharded ×2 on ubuntu   (app/core/shared;
-#                   golden suite stays in build-macos.yml — goldens are
-#                   host-locked, see issue #177 E5 discussion)
+#                   golden suite stays out — baselines are macOS-captured;
+#                   the nightly build-release macOS row guards goldens on
+#                   the pinned-font env, issue #1856 / #177 E5)
 #   flutter-app-exzone → JS-engine exclusion-zone tests on macOS (issue
 #               #1267 N1; PATH-TRIGGERED on pull_request events and SM
 #               validation dispatches alike — the changes classifier
@@ -407,8 +408,13 @@ jobs:
           # macOS — the hole #1309 escaped through (gh-1307). The issue's
           # packages/js_widget_runtime/** is an EXTERNAL repo now, so its
           # bumps arrive via the flutter_app/pubspec.yaml pin.
+          # gh-1863: the JS-engine media bridge resolves its endpoints
+          # through three seams — flutter_app/lib/services/media_tools.dart,
+          # video_tool.dart, and the fa_ui media store — a semantic break in
+          # any of them skips every test that exercises it on ubuntu, so
+          # they gate the leg too (the #1849 break rode exactly this hole).
           if git diff --name-only "$BASE_REF" "$HEAD_REF" |
-              grep -qE '(^flutter_app/lib/apps/|^lib/src/js_ext/|^flutter_app/test/apps/|^flutter_app/test/native_test_guard\.dart$|^flutter_app/pubspec\.yaml$)'; then
+              grep -qE '(^flutter_app/lib/apps/|^lib/src/js_ext/|^flutter_app/test/apps/|^flutter_app/test/native_test_guard\.dart$|^flutter_app/pubspec\.yaml$|^flutter_app/lib/services/media_tools\.dart$|^flutter_app/lib/services/video_tool\.dart$|^packages/fa_ui/lib/src/stores/media_models_store\.dart$)'; then
             echo "exzone=true" >> "$GITHUB_OUTPUT"
           fi
           # Issue #1267 N2 (AC2): the lockfile-refresh vector — resolution
@@ -852,7 +858,15 @@ jobs:
     if: needs.release-pending.outputs.pending == 'true' && needs.release-dedupe.outputs.dedupe != 'true'
     permissions:
       contents: read
-    timeout-minutes: 12
+    # gh-1778: 20 min — sized for the degraded-cache worst case, not just
+    # the warm wall. Warm shards take ~460-525 s (run 39703080550) but the
+    # v1.0.621 release run stalled ~133 s on EACH cache step (degraded
+    # GitHub cache service, keys that existed) and needed ~14 min cold —
+    # cancelled at the 12-min wall with 2535/2761 tests green, reding the
+    # whole release. 20 clears that worst case and sits in the sibling
+    # test-leg band (flutter-tests 20, integration-mock 25, pty 40); a
+    # genuinely hung shard is still killed loudly.
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -870,11 +884,16 @@ jobs:
         with:
           sdk: stable
 
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
         with:
           python-version: '3.x'
 
+      # gh-1778: caches are best-effort — a restore that hangs (degraded
+      # cache service stalled both steps ~133 s on the v1.0.621 release
+      # run) or fails only means slower setup. Step-level 2-min cap bounds
+      # the stall; continue-on-error keeps a dead cache from reding the
+      # shard (unlike the gh-1724 evidence uploads, which stay loud).
       - name: Pub cache
         if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -882,6 +901,8 @@ jobs:
           path: ~/.pub-cache
           key: pub-${{ runner.os }}-${{ hashFiles('pubspec.lock') }}
           restore-keys: pub-${{ runner.os }}-
+        timeout-minutes: 2
+        continue-on-error: true
 
       - run: dart pub get
         if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
@@ -893,6 +914,8 @@ jobs:
           path: .dart_tool/hooks_runner/shared
           key: hooks-shared-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pubspec.lock') }}
           restore-keys: hooks-shared-${{ runner.os }}-${{ runner.arch }}-
+        timeout-minutes: 2
+        continue-on-error: true
 
       # Duration-balanced shards (issue #177 AC3): scripts/test_shards.json
       # maps test FILES to shards (file-level units — test/cli alone was
@@ -1440,7 +1463,7 @@ jobs:
       issues: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: '3.x'
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
@@ -1637,7 +1660,7 @@ jobs:
         with:
           sdk: stable
 
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
         with:
           python-version: '3.x'
@@ -1681,18 +1704,18 @@ jobs:
       contents: read
     steps:
       - name: Scope fastpass (out-of-scope → green in seconds)
-        if: needs.changes.outputs.core != 'true' && needs.changes.outputs.shared != 'true' && needs.changes.outputs.app != 'true'
-        run: echo "no core/shared/app changes — guards green-skipped (required context reported)"
+        if: needs.changes.outputs.core != 'true' && needs.changes.outputs.shared != 'true' && needs.changes.outputs.app != 'true' && needs.changes.outputs.docs != 'true'
+        run: echo "no core/shared/app/docs changes — guards green-skipped (required context reported)"
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true' || needs.changes.outputs.app == 'true'
+        if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true' || needs.changes.outputs.app == 'true' || needs.changes.outputs.docs == 'true'
 
       - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1
-        if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
+        if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true' || needs.changes.outputs.app == 'true' || needs.changes.outputs.docs == 'true'
         with:
           sdk: stable
 
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
         with:
           python-version: '3.x'
@@ -1730,13 +1753,15 @@ jobs:
           mkdir -p coverage
           python3 scripts/merge_lcov.py -o coverage/lcov.info coverage-shards/*/lcov.info
 
-      - name: CRAP ratchet (threshold pinned in crap4dart.yaml)
-        if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
+      # gh-1738: activate is its own step so the Quality gates step below
+      # can run for docs-only / app-zone-only PRs too — the similarity
+      # corpus lives in docs/, prompts/, flutter_app/ and packages/, and
+      # a diff confined there must reach the gate pre-merge (it routes
+      # away from the CRAP ratchet, which needs the merged lcov).
+      - name: Activate crap4dart (pinned)
+        if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true' || needs.changes.outputs.app == 'true' || needs.changes.outputs.docs == 'true'
         run: |
-          # Issue #447: 0.9.5+ carries the gate framework (broken_goldens
-          # et al.); 0.2.1 knew only the CRAP ratchet. Both configs set
-          # coverage.run_tests: false — the merged shard lcov above is the
-          # coverage source; gates must not re-run the suite.
+          # Issue #447: pin bumped 0.2.1 → >=0.9.5 for the gate framework.
           # gh-1061: >=0.10.0 — analyzer 7.3→14.4 refresh + the
           # duplication.sources key (native cross-module scan).
           # gh-1106: >=0.11.0 — Type-2 renamed-clone detection
@@ -1749,11 +1774,25 @@ jobs:
           # detector fixes (checkmark V, yellow-on-dark digits, hollow
           # boxes, solid glyph runs); the configs now rely on 0.14.2
           # behaviour (severity: error, old excludes dropped).
-          dart pub global activate crap4dart ">=0.14.2 <0.15.0"
+          # gh-1738: >=0.15.0 — the similarity gate (file-level
+          # near-duplicates over md+dart), wired into crap4dart.yaml.
+          dart pub global activate crap4dart ">=0.15.0 <0.16.0"
+
+      - name: CRAP ratchet (threshold pinned in crap4dart.yaml)
+        if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
+        run: |
+          # Issue #447: 0.9.5+ carries the gate framework (broken_goldens
+          # et al.); 0.2.1 knew only the CRAP ratchet. Both configs set
+          # coverage.run_tests: false — the merged shard lcov above is the
+          # coverage source; gates must not re-run the suite.
+          # crap4dart activated (pinned) in the step above.
           dart pub global run crap4dart analyze
 
       - name: Quality gates (broken goldens + Type-2 duplication, issue 1106)
-        if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
+        # gh-1738: + docs/app — the similarity gate scans the whole tree
+        # (docs/, prompts/, flutter_app/, packages/ included); no project
+        # pub get needed (global tool, config+file gates only).
+        if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true' || needs.changes.outputs.app == 'true' || needs.changes.outputs.docs == 'true'
         run: dart pub global run crap4dart check --baseline
 
       # Issue #1234 rework: 0.11.0 has no per-gate sources override (a
@@ -1840,6 +1879,45 @@ jobs:
           print(f'AC199 OK: isolate full-open {isolate} ms, '
                 f'list 500 sessions {listed} ms')
           EOF
+
+  # gh-178 merge rule: the REG model-switch coherence suite is its own
+  # leg — a red REG job blocks merge even when all UT/IT legs are green.
+  # Runs the whole model-switch surface (pure decision core + CLI-driven
+  # gates); REG-1/REG-2/REG-3 live in these two files.
+  model-switch-reg:
+    name: REG model-switch coherence (gh-178)
+    runs-on: ubuntu-24.04-arm
+    needs: [release-pending, release-dedupe, changes]
+    if: needs.release-pending.outputs.pending == 'true' && needs.release-dedupe.outputs.dedupe != 'true'
+    timeout-minutes: 6
+    permissions:
+      contents: read
+    steps:
+      - name: Scope fastpass (out-of-scope → green in seconds)
+        if: needs.changes.outputs.core != 'true' && needs.changes.outputs.shared != 'true'
+        run: echo "no core/shared changes — REG green-skipped (required context reported)"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
+
+      - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1
+        if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
+        with:
+          sdk: stable
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
+        with:
+          path: ~/.pub-cache
+          key: pub-${{ runner.os }}-${{ hashFiles('pubspec.lock') }}
+          restore-keys: pub-${{ runner.os }}-
+
+      - run: dart pub get
+        if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
+
+      - name: REG — model-switch coherence gates (red blocks merge)
+        if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
+        run: dart test test/cli/model_switch_coherence_test.dart test/cli/agent_cli_model_coherence_test.dart
 
   # Flutter app analyze split out of the test job (was serial pub get →
   # analyze → test in one 6-min job): analyze runs in parallel with the
@@ -1964,14 +2042,14 @@ jobs:
 
       - uses: ./.github/actions/flutter-pub-get
 
-      # Golden suite is intentionally NOT here: goldens are host-locked
-      # (same macOS host renders them differently across minor SDKs — see the
-      # dynamic_messages saga) and would all redden on ubuntu. Widget/unit
-      # tests run here on a cheap runner; goldens stay guarded by
-      # build-macos.yml and the nightly full matrix (issue #177 E5/OQ3:
-      # pinned-font golden migration is a follow-up, not this card).
+      # Golden suite is intentionally NOT here: this leg runs on ubuntu
+      # and the baselines are macOS-captured. Goldens are guarded by the
+      # pinned-font leg in the nightly build-release macOS row (issue
+      # #1856): the test env renders every glyph from bundled fonts, so a
+      # golden diff fails the same way on any host (#177 E5/OQ3).
       - name: flutter test (shard ${{ matrix.shard }}/2)
-        # Goldens stay out (host-locked, see the golden comment above).
+        # Goldens stay out (macOS-captured baselines, see the golden
+        # comment above).
         # Native-dependent tests (quickjs_c_bridge .so, mic channel) are NOT
         # excluded — issue #184 made them host-portable via the skip guard in
         # flutter_app/test/native_test_guard.dart + the injected-ASR fix.
@@ -2256,7 +2334,43 @@ jobs:
         run: |
           cd office_addin/e2e
           npm ci
-          npx playwright install --with-deps chromium webkit
+          # The browser download is this step's one network-bound leg. A
+          # starved runner can stall it past the job budget without ever
+          # erroring (2026-10-23: the install hung 40m, no test started,
+          # and the same run's pub get reported an unhealthy network), so
+          # each attempt is time-capped and retried — mirrors the pub-get
+          # wrapper's bounded-retry shape.
+          install_ok=false
+          for attempt in 1 2 3; do
+            # The `timeout` below kills the npx wrapper but can orphan its
+            # apt-get child, which keeps /var/lib/dpkg/lock-frontend
+            # (2026-10-26: attempts 2 and 3 died in ~16s on "Could not get
+            # lock ... held by process 4135" — the retry could never
+            # recover from the very kill this loop was built for). Wait,
+            # bounded, for a stale holder: it is doing the same install we
+            # want, so let it finish; kill it only if still wedged; then
+            # clear any half-configured state the kill left.
+            for _ in $(seq 1 24); do
+              pgrep -x apt-get >/dev/null 2>&1 || break
+              sleep 5
+            done
+            if pgrep -x apt-get >/dev/null 2>&1; then
+              echo "::warning::stale apt-get still holds the dpkg lock — stopping it before the retry"
+              sudo pkill -x apt-get || true
+              sleep 3
+            fi
+            sudo dpkg --configure -a || true
+            if timeout 600 npx playwright install --with-deps chromium webkit; then
+              install_ok=true
+              break
+            fi
+            echo "::warning::playwright install failed (attempt $attempt/3) — retrying in 15s"
+            sleep 15
+          done
+          if [ "$install_ok" != "true" ]; then
+            echo "::error::playwright install failed after 3 attempts — the runner's network to the browser CDN/apt is unhealthy"
+            exit 1
+          fi
           npx playwright test --reporter=line
 
       - name: Upload assembled add-in
@@ -2346,7 +2460,7 @@ jobs:
           fetch-depth: 0 # only-down guard diffs thresholds against the base
           # gh-1477: blobless — historical blobs are never read.
           filter: blob:none
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         if: needs.changes.outputs.app == 'true' || needs.changes.outputs.shared == 'true'
         with:
           python-version: '3.x'
@@ -2392,9 +2506,11 @@ jobs:
           # crap4dart#3/#4 (2026-10-15): >=0.14.2 <0.15.0 — same bounded
           # pin as the core job; the broken_goldens detector fixes the
           # flipped configs rely on.
+          # gh-1738: >=0.15.0 — same bounded pin as the core job; the
+          # root config's similarity gate runs under this version.
           # coverage.run_tests: false in both configs — the merged shard
           # lcov above is the source; never re-run the suite here.
-          dart pub global activate crap4dart ">=0.14.2 <0.15.0"
+          dart pub global activate crap4dart ">=0.15.0 <0.16.0"
           cd flutter_app && dart pub global run crap4dart analyze --format json > crap_report.json
 
       # Issue #490 AC2: publish the ranked CRAP JSON even when the ratchet
@@ -2441,7 +2557,7 @@ jobs:
           channel: stable
           cache: true
 
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: '3.x'
 
@@ -2534,7 +2650,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: '3.x'
 
@@ -2927,6 +3043,25 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: read
+    # gh-1814: this job deliberately carries NO SwiftPM lane pin — the
+    # FLUTTER_SWIFT_PACKAGE_MANAGER disable knob the gh-1806 fix set to "0"
+    # here was REMOVED upstream between 3.47.4 and 3.47.7
+    # (flutter/flutter#193978), and this leg pins `flutter-version: 3.47.x` —
+    # a floating stable that already resolves past the removal, so the pin
+    # was a silent no-op. The debug leg rides the SwiftPM lane and is green
+    # that way (run 399572012, SPM pass 77.2s) — the same lane the release
+    # DMG legs adopted in gh-1814 (build-macos.yml; floors asserted
+    # post-config by scripts/assert_macos_min_platform.sh). gh-1806
+    # history for the record: run 39957271246 (v1.0.631) died mid-clone of
+    # GoogleDataTransport ("curl 92 HTTP/2 stream 5 was not closed cleanly:
+    # CANCEL (err 8)") — a single-shot github.com transfer during the SPM
+    # dependency resolution; the identical SHA went green 34 minutes later
+    # (run 399572012), i.e. a transient network flake, and it is the mode
+    # this lane already lives with on 3.47.7. The old "with the feature off
+    # the SPM migration skips cleanly" comment described a knob that no
+    # longer exists — removed instead of left to lie. Pinned by
+    # test/ci_macos_debug_spm_lane_guard_test.dart (AC1/AC2: the knob must
+    # not re-enter the job, at job or step level).
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -3283,7 +3418,7 @@ jobs:
   quality-gate:
     name: Quality gate
     runs-on: ubuntu-latest
-    needs: [release-pending, release-dedupe, changes, static, flutter-analyze, test-core, coverage-gate, guards, flutter-tests, app-crap-gate, test-faui, perf-gate, usage-fold, cli-visual-settings, cube-kernel-live, build-web, build-android, build-ios, build-macos, integration-mock, hostile-env, fa-aot-build, pty-integration-linux, pty-coverage-gate, pty-visual, supply-chain, dep-audit, installer-portability, installer-verify, install-pin-gate, flutter-app-exzone, flutter-app-lock-smoke, office-addin-suite, extension-size-gate]
+    needs: [release-pending, release-dedupe, changes, static, flutter-analyze, test-core, coverage-gate, guards, model-switch-reg, flutter-tests, app-crap-gate, test-faui, perf-gate, usage-fold, cli-visual-settings, cube-kernel-live, build-web, build-android, build-ios, build-macos, integration-mock, hostile-env, fa-aot-build, pty-integration-linux, pty-coverage-gate, pty-visual, supply-chain, dep-audit, installer-portability, installer-verify, install-pin-gate, flutter-app-exzone, flutter-app-lock-smoke, office-addin-suite, extension-size-gate]
     if: always() && needs.release-pending.outputs.pending == 'true' && needs.release-dedupe.outputs.dedupe != 'true'
     timeout-minutes: 5
     permissions:
@@ -3328,6 +3463,7 @@ jobs:
           echo "lock-smoke  = ${{ needs.flutter-app-lock-smoke.result }}"
           echo "office-addin  = ${{ needs.office-addin-suite.result }}"
           echo "ext-size-gate = ${{ needs.extension-size-gate.result }}"
+          echo "model-switch-reg = ${{ needs.model-switch-reg.result }}"
       - name: Fail on any real failure (skipped security = dodge = FAIL)
         id: gate
         env:
@@ -3363,6 +3499,7 @@ jobs:
           R_LOCK_SMOKE: ${{ needs.flutter-app-lock-smoke.result }}
           R_OFFICE_ADDIN: ${{ needs.office-addin-suite.result }}
           R_EXT_SIZE: ${{ needs.extension-size-gate.result }}
+          R_MODEL_SWITCH_REG: ${{ needs.model-switch-reg.result }}
         run: |
           fail() { echo "Quality gate FAILED: $1"; exit 1; }
           # Verdict pass collects blockers WITHOUT exiting, so dart_ok is
@@ -3405,6 +3542,7 @@ jobs:
                     "pty-integration-linux:$R_PTY_LINUX" "pty-coverage-gate:$R_PTY_GATES" "pty-visual:$R_PTY_VISUAL" \
                     "installer-portability:$R_INSTALLER_REG" \
                     "installer-verify:$R_INSTALLER_VERIFY" "install-pin-gate:$R_INSTALL_PIN_GATE" \
+                    "model-switch-reg:$R_MODEL_SWITCH_REG" \
                     "flutter-app-exzone:$R_EXZONE" "flutter-app-lock-smoke:$R_LOCK_SMOKE" "office-addin-suite:$R_OFFICE_ADDIN" "extension-size-gate:$R_EXT_SIZE"; do
             name="${kv%%:*}"; r="${kv#*:}"
             case "$name" in
@@ -3936,6 +4074,16 @@ jobs:
             archive: tar
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Blobless full history: the lazy draft create (gh-1801 rework)
+          # builds the release body via scripts/release_notes.sh, whose
+          # conventional-commit fallback reads commit MESSAGES since the
+          # previous tag — same reason release-macos fetches full
+          # (gh-1477: blobless, never historical file blobs). Whichever
+          # matrix leg wins the create race must be able to produce the
+          # full curated body.
+          fetch-depth: 0
+          filter: blob:none
 
       - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1
         with:
@@ -4019,6 +4167,10 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Matrix legs share GITHUB_JOB=binaries — the leg-suffixed draft
+          # owner identity keeps the failure-path guard scoped to the leg
+          # that created the draft, never a sibling's mid-upload one.
+          RELEASE_DRAFT_IDENTITY: run/${{ github.run_id }}/job/${{ github.job }}-${{ matrix.os }}-${{ matrix.arch }}
         run: |
           archive_name="fa-${{ matrix.os }}-${{ matrix.arch }}"
           if [ "${{ matrix.archive }}" = "zip" ]; then
@@ -4026,14 +4178,28 @@ jobs:
           else
             asset="${archive_name}.tar.gz"
           fi
-          # gh release upload needs the release to exist; create it lazily
-          # (matrix jobs race here, so a duplicate create is tolerated).
-          if ! gh release view "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
-            gh release create "${GITHUB_REF_NAME}" \
-              --title "${GITHUB_REF_NAME}" --generate-notes \
-              --repo "${GITHUB_REPOSITORY}" || true
-          fi
+          # gh-1801 (rework): DRAFT-first, publish is PROVENANCE-OWNED. The
+          # CLI tarball is a `fa update` asset, but servability needs the
+          # SIGNED SHA256SUMS — which only the release-provenance job can
+          # upload (it needs the whole matrix + web-spa). So: create the
+          # draft lazily (curated notes + a draft-owner marker the
+          # lifecycle guard can reclaim), upload THIS leg's
+          # fa-*.tar.gz/zip, and let release-provenance own the
+          # --draft=false --latest flip after the checksums land.
+          bash scripts/release_lazy_draft.sh "${GITHUB_REF_NAME}"
           gh release upload "${GITHUB_REF_NAME}" "$asset" --clobber --repo "${GITHUB_REPOSITORY}"
+
+      # Draft lifecycle invariant (issue #282 / gh-1801): this job creates
+      # release drafts — a failed/cancelled leg must not leave its own
+      # behind. Ownership-scoped (review of #294): deletes only a draft
+      # stamped with THIS leg's RELEASE_DRAFT_IDENTITY; a sibling leg's
+      # mid-upload draft is never touched.
+      - name: Draft lifecycle guard (delete orphaned draft on failure)
+        if: always() && job.status != 'success'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_DRAFT_IDENTITY: run/${{ github.run_id }}/job/${{ github.job }}-${{ matrix.os }}-${{ matrix.arch }}
+        run: bash scripts/release_draft_guard.sh "${GITHUB_REF_NAME}"
 
   # Rehostable web SPA bundle (issue #1100): every release ships
   # fa-web-spa.zip — the release web build with <base href> rewritten to
@@ -4065,6 +4231,12 @@ jobs:
       contents: write # attach fa-web-spa.zip to the GitHub Release
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Blobless full history: the lazy draft create (gh-1801 rework)
+          # builds the release body via scripts/release_notes.sh — same
+          # reason as the binaries job's checkout above.
+          fetch-depth: 0
+          filter: blob:none
 
       # Same pinned SDK as build-web / the release path (#281); EXACT patch
       # pin (#1431): a wildcard re-resolves a new engine build on every
@@ -4124,13 +4296,18 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # gh release upload needs the release to exist; create it lazily
-          # (matrix jobs race here, so a duplicate create is tolerated).
-          if ! gh release view "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
-            gh release create "${GITHUB_REF_NAME}" \
-              --title "${GITHUB_REF_NAME}" --generate-notes \
-              --repo "${GITHUB_REPOSITORY}" || true
-          fi
+          # gh-1801 (rework): DRAFT-first and NEVER publish here. The web
+          # zip is not a `fa update` asset — and even a CLI asset alone
+          # would not make the release servable: the SIGNED SHA256SUMS
+          # only lands in release-provenance, which owns the
+          # --draft=false --latest flip. Create/attach the draft with the
+          # curated notes + a draft-owner marker (guard/sweeper-visible)
+          # and upload.
+          # No guard step here ON PURPOSE: this job is continue-on-error —
+          # on failure the train (binaries → provenance) CONTINUES and
+          # must find the draft alive; a genuinely orphaned draft is
+          # reclaimed by the 24h sweeper (GITHUB_TOKEN-authored → bot).
+          bash scripts/release_lazy_draft.sh "${GITHUB_REF_NAME}"
           gh release upload "${GITHUB_REF_NAME}" fa-web-spa.zip --clobber --repo "${GITHUB_REPOSITORY}"
 
       # continue-on-error keeps the job/check green even on failure — a
@@ -4146,6 +4323,112 @@ jobs:
             echo 'The web SPA bundle job failed (continue-on-error: the release ships without it). See the failed steps above.'
           } >> "$GITHUB_STEP_SUMMARY"
 
+  # gh-1847: the tag train builds fa-extension.zip ITSELF. The leg
+  # mirrors web-spa (additive attach, quality-gate keyed) because the
+  # failure mode it kills is identical in shape: the extension's former
+  # ONLY producer was build-macos.yml build-extension, a once-daily leg
+  # deriving "latest+1 at its own dispatch moment" — any v* tag train
+  # landing after the daily leg published a draft WITHOUT fa-extension.zip
+  # and the gh-1832 required-assets gate correctly stranded it
+  # (v1.0.637/v1.0.638 stuck, 2026-10-24; the manual recovery dispatch
+  # from memory note n_1012 risked becoming the operating mode). With the
+  # train producing the zip, the gate's precondition is met by the train
+  # no matter when the daily leg ran; the daily leg keeps pre-staging the
+  # next-tag draft and stays the n_1012 emergency producer.
+  build-extension:
+    name: Build Chrome extension (release)
+    runs-on: ubuntu-latest
+    needs: quality-gate
+    timeout-minutes: 30
+    # Additive REQUIRED asset, same semantics as web-spa: an SDK flake or
+    # vendor-fetch hiccup must NOT hold CLI provenance hostage — the
+    # release-provenance required-assets gate (gh-1832) is the single
+    # publish blocker and strands the draft loudly on the MISSING asset
+    # (previous release stays latest). continue-on-error keeps the check
+    # green; the failed steps stay visible on the run page.
+    continue-on-error: true
+    if: >-
+      !cancelled() && needs.quality-gate.result == 'success' &&
+      ((github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) ||
+      github.event_name == 'release')
+    permissions:
+      contents: write # attach fa-extension.zip to the GitHub Release
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Blobless full history: the lazy draft create (gh-1801 rework)
+          # builds the release body via scripts/release_notes.sh — same
+          # reason as the web-spa job's checkout (gh-1477).
+          fetch-depth: 0
+          filter: blob:none
+
+      # gh-1684 decision 4 + #1431 exact-patch pin: the SAME pinned SDK
+      # every other fa-extension.zip leg carries (extension-size-gate,
+      # build-macos.yml build-extension) — the rev normalization absorbs
+      # canvaskit/skwasm churn, the pin keeps every build comparable.
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          flutter-version: '3.47.7'
+          channel: stable
+          cache: true
+
+      # browser_ext/dart is a separate package (path dep on this root), so
+      # its pub get must follow the root's — same as the PR-time
+      # extension-size-gate leg and build-macos.yml build-extension.
+      - name: dart pub get (root + browser_ext/dart)
+        run: |
+          dart pub get
+          cd browser_ext/dart && dart pub get
+
+      # Full artifact: SW agent (dart2js) + the Flutter panel app embedded,
+      # exactly what the landing page's releases/latest/download link
+      # serves. Identical invocation as the PR-time gate leg (gh-1684 AC3)
+      # and the build-macos.yml release leg.
+      - name: Build extension zip
+        run: bash scripts/build_browser_ext.sh --with-app
+
+      # AC1 (#1096) + gh-1684 AC5: one baseline, one enforcement rule — the
+      # IDENTICAL invocation the extension-size-gate PR leg and the
+      # build-macos.yml release leg run, gate BEFORE upload (a budget
+      # regression must not reach the release assets). Baseline is
+      # committed — no --init-if-missing here.
+      - name: Size manifest + budget gate (fa-extension.zip)
+        run: python3 scripts/size_manifest.py check build/fa-extension.zip --baseline scripts/size_budget/fa-extension.tsv
+
+      # gh-1801 (rework): DRAFT-first, NEVER publish here. fa-extension.zip
+      # is a gh-1832 REQUIRED asset, but even a complete asset set must not
+      # go live without the SIGNED SHA256SUMS — only the tag-run
+      # release-provenance job owns the --draft=false --latest flip. Create
+      # the draft with the curated notes + the draft-owner marker and
+      # upload; --clobber keeps the stable asset name pointing at the
+      # newest build. No guard step ON PURPOSE (same reasoning as web-spa):
+      # this job is continue-on-error — on failure the train (binaries →
+      # provenance) CONTINUES and must find the draft alive; a genuinely
+      # orphaned draft is reclaimed by the 24h sweeper.
+      - name: Upload extension to the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          asset="fa-extension.zip"
+          cp build/fa-extension.zip "$asset"
+          ls -lh "$asset"
+          bash scripts/release_lazy_draft.sh "${GITHUB_REF_NAME}"
+          gh release upload "${GITHUB_REF_NAME}" "$asset" --clobber --repo "${GITHUB_REPOSITORY}"
+
+      # Mirror of the web-spa summary flag: surface the miss in the run's
+      # step summary (covers build/size-gate/upload flakes); the failed
+      # steps remain visible in the job view. The release-provenance
+      # required-assets gate is what actually blocks the publish.
+      - name: Flag missing extension in step summary
+        if: failure()
+        run: |
+          {
+            echo '## fa-extension.zip NOT shipped this release'
+            echo ''
+            echo 'The extension build job failed (continue-on-error: the gh-1832 gate strands the release without it). See the failed steps above.'
+          } >> "$GITHUB_STEP_SUMMARY"
+
   # SEC-07 (#795): the installer's default trust path is SIGNED checksums.
   # This job aggregates every fa-* asset of the release into SHA256SUMS and
   # signs it with the FA_RELEASE_SIGNING_KEY repo secret (openssl RSA —
@@ -4154,14 +4437,16 @@ jobs:
   # the same compromised source as the binary cannot vouch for itself.
   # Fail-closed: without the secret the release publishes NO provenance and
   # this job goes red — install.sh aborts with E_PROVENANCE_MISSING on it.
-  # Needs web-spa (#1100, continue-on-error) for ordering only: the web
-  # bundle cannot hold CLI provenance hostage. The ordering makes the fa-*
-  # sweep deterministic — web-spa success -> zip signed, web-spa failure ->
-  # zip absent — never a half-updated manifest.
+  # Needs web-spa (#1100, continue-on-error) and build-extension
+  # (gh-1847, continue-on-error) for ordering only: the web bundle and
+  # the extension zip cannot hold CLI provenance hostage. The ordering
+  # makes the fa-* sweep deterministic — web-spa/extension success ->
+  # zip signed, failure -> zip absent — never a half-updated manifest,
+  # and the gh-1832 gate below never races a slow attach.
   release-provenance:
     name: Sign release checksums
     runs-on: ubuntu-latest
-    needs: [binaries, web-spa]
+    needs: [binaries, web-spa, build-extension]
     timeout-minutes: 10
     if: >-
       !cancelled() && needs.binaries.result == 'success' &&
@@ -4182,6 +4467,20 @@ jobs:
           gh release download "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" \
             --dir provenance --pattern 'fa-*'
           ls -l provenance
+
+      # gh-1832: PUBLISH-BLOCKING required-assets gate. The single source of
+      # truth is scripts/release_required_assets.txt, consumed by
+      # scripts/assert_release_assets.sh. v1.0.635 published without
+      # fa-extension.zip because the extension's only producer (the daily
+      # build-macos.yml build-extension leg) attached it to a "latest+1"
+      # draft while this train published the tagged release — every leg
+      # green, nothing asserted the published set. A missing asset here
+      # fails the release run loudly and leaves the release a DRAFT (the
+      # previous release stays latest) instead of publishing a partial one.
+      - name: Assert required release assets (gh-1832 gate)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash scripts/assert_release_assets.sh "${GITHUB_REF_NAME}"
 
       - name: Build and sign SHA256SUMS
         env:
@@ -4222,6 +4521,60 @@ jobs:
           gh release upload "${GITHUB_REF_NAME}" \
             provenance/SHA256SUMS provenance/SHA256SUMS.sig \
             --clobber --repo "${GITHUB_REPOSITORY}"
+          # gh-1801 (rework): THE publish point of the train. The release
+          # now carries every fa-* asset AND the signed SHA256SUMS(.sig) —
+          # the first moment `fa update` can actually serve it (it
+          # hard-fails without the signed checksums, bin/self_manage.dart).
+          # Flip draft=false + latest here and ONLY here: a red provenance
+          # leaves the previous release as latest (safe degradation)
+          # instead of stranding a provenance-less one (the v1.0.630
+          # empty/partial-latest window class).
+          gh release edit "${GITHUB_REF_NAME}" --draft=false --latest --repo "${GITHUB_REPOSITORY}"
+
+      # gh-1899: the flip above publishes exactly ONE release object, but
+      # GitHub does not atomically enforce one release per tag — two train
+      # legs racing the lazy draft create can BOTH succeed (v1.0.641, run
+      # 40163369302: twin drafts 87 ms apart), and the unpicked twin then
+      # rots until the 24h sweeper deletes it and files a recurring sweep
+      # issue. The tag is published and servable now: reclaim this run's
+      # twin drafts. Success-path only — a red provenance keeps the draft
+      # as the rerun --failed recovery vessel.
+      # Best-effort by design (gh-1899 review): the flip above already
+      # published the release — a cleanup-only API blip here must NOT fail
+      # the provenance job (release-asset-smoke gates on its result and
+      # would silently skip for a release that is actually fine). Warn
+      # and stay green; the 24h sweeper remains the backstop.
+      - name: Reclaim orphaned draft twins (gh-1899)
+        if: success()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash scripts/release_draft_dedupe.sh "${GITHUB_REF_NAME}" || echo "::warning::gh-1899 twin-draft dedupe failed — the 24h sweeper remains the backstop"
+
+  # gh-1832 AC3: post-publish smoke. Probes (1) EVERY releases/(latest/)?
+  # download/ URL the fa1.dev landing page exposes (site/index.html) and
+  # (2) the full required set from scripts/release_required_assets.txt via
+  # a 1-byte ranged GET each — red on anything but HTTP 200/206. Rides the
+  # tag train only (PR runs never probe release URLs); a 404 here is the
+  # owner-facing v1.0.635 symptom caught the same hour it appears.
+  release-asset-smoke:
+    name: Release asset smoke (landing links + required set)
+    runs-on: ubuntu-latest
+    needs: release-provenance
+    timeout-minutes: 10
+    if: >-
+      !cancelled() && needs.release-provenance.result == 'success' &&
+      ((github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) ||
+      github.event_name == 'release')
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Probe every landing-page release link
+        run: bash scripts/assert_release_assets.sh --landing site/index.html
+      - name: Probe the full required asset set
+        env:
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: bash scripts/assert_release_assets.sh --smoke "${GITHUB_REF_NAME}"
 
   # Advance the vpinned release marker to the freshly signed tag. PURE
   # RELEASE-ARTIFACT MANIPULATION — no commits, no pushes: pin_release.sh
@@ -4381,7 +4734,9 @@ jobs:
           app-id: ${{ secrets.RELEASE_APP_ID }}
           private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
           # Least privilege (gh-1172 round-2 review): contents:write covers
-          # the tag push + `gh release create`, nothing else.
+          # the tag push, nothing else. gh-1801: auto_release.sh no longer
+          # creates the GitHub Release (an asset-less create publishes an
+          # empty `latest`) — the tag-run binaries job owns creation.
           permissions: contents:write
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -4397,14 +4752,14 @@ jobs:
           # (read-only per the job permissions block).
           token: ${{ steps.app-token.outputs.token || github.token }}
 
-      - name: Cut release tag + GitHub Release
+      - name: Cut release tag
         env:
           RELEASE_DRY_RUN: ${{ github.event.inputs.releaseDryRun == 'true' && '1' || '0' }}
-          # gh release create rides the App token (gh-1172): without an
-          # explicit GH_TOKEN the create || true in auto_release.sh would be
-          # a guaranteed silent no-op and the curated notes would never reach
-          # the release object.
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          # gh-1801 (rework): no GH_TOKEN is exported here anymore —
+          # auto_release.sh no longer calls `gh` at all (the asset-less
+          # create published an empty `latest` and broke `fa update`; the
+          # binaries job owns creation, draft-first). The tag push rides
+          # the checkout App token above (gh-1172).
         run: bash scripts/auto_release.sh
 
   # PR-gate twin of the release `binaries` job: the CLI bundle must compile

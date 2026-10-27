@@ -45,65 +45,106 @@ Future<(AgentService?, _AppBindingResolution)> _resolveAppBinding(
 ) async {
   final active = manager.active?.service;
   if (active == null) return (null, _AppBindingResolution.unopenable);
-  String? boundId;
+  final (boundId, failure) = await _readBoundId(active, appId);
+  if (failure != null) return (null, failure);
+  final open = _alreadyOpen(manager, boundId!);
+  if (open != null) return (open, _AppBindingResolution.bound);
+  return _openBoundSession(manager, active, appId, boundId);
+}
+
+/// Reads and validates `apps/<appId>/session.json`. Returns
+/// `(boundId, null)` on a usable binding, or `(null, resolution)` when
+/// resolution is already decided (gh-1848 split — the resolver was CC7 at
+/// 24.89 and its covering tests are native-gated on CI).
+Future<(String?, _AppBindingResolution?)> _readBoundId(
+  AgentService active,
+  String appId,
+) async {
   try {
     final raw = await active.env.readTextFile('apps/$appId/session.json');
-    if (raw.isErr) {
-      final code = raw.errorOrNull!.code;
-      if (code != FileErrorCode.notFound) {
-        // A real read failure (permission, is-a-directory, IO) is NOT
-        // absence: minting here would rewrite a binding we could not
-        // even read — the per-message proliferation the owner flagged.
-        // Keep the binding; run on the active session (issue #864).
-        AppLog.i(
-          'apps',
-          'binding read failed for $appId (${code.name}) — keeping binding',
-        );
-        return (null, _AppBindingResolution.unopenable);
-      }
-      return (null, _AppBindingResolution.firstContact); // no binding yet
-    }
+    if (raw.isErr) return _bindingReadFailure(raw.errorOrNull!.code, appId);
     // A torn or agent-written file (seen on-device: a fitness-trainer
     // tap silently dead) may hold any JSON shape; only a map with an id
     // binds. Everything else heals by rewriting the binding on the mint.
-    final decoded = jsonDecode(raw.valueOrNull!);
-    boundId = decoded is Map<String, dynamic>
-        ? decoded['sessionId']?.toString()
-        : null;
-  } on Object catch (error) {
-    AppLog.i('apps', 'resolve bound session failed for $appId: $error');
-    return (null, _AppBindingResolution.firstContact);
-  }
-  if (boundId == null || boundId.isEmpty) {
+    final boundId = _decodeBoundId(raw.valueOrNull!);
+    if (boundId != null) return (boundId, null);
     // Issue #864 AC6: a binding that parses but binds nothing (wrong-shape
     // JSON, missing/empty sessionId) heals via the caller's first-contact
     // mint — announce it, never heal silently.
     AppLog.i('apps', 'binding unusable for $appId — healing as first contact');
     return (null, _AppBindingResolution.firstContact);
+  } on Object catch (error) {
+    AppLog.i('apps', 'resolve bound session failed for $appId: $error');
+    return (null, _AppBindingResolution.firstContact);
   }
-  // Already open in this app run?
+}
+
+/// A real read failure (permission, is-a-directory, IO) is NOT absence:
+/// minting here would rewrite a binding we could not even read — the
+/// per-message proliferation the owner flagged. Keep the binding; run on
+/// the active session (issue #864). Absence is the only first contact.
+(String?, _AppBindingResolution?) _bindingReadFailure(
+  FileErrorCode code,
+  String appId,
+) {
+  if (code == FileErrorCode.notFound) {
+    return (null, _AppBindingResolution.firstContact); // no binding yet
+  }
+  AppLog.i(
+    'apps',
+    'binding read failed for $appId (${code.name}) — keeping binding',
+  );
+  return (null, _AppBindingResolution.unopenable);
+}
+
+/// Only a map with a non-empty `sessionId` binds; anything else is null
+/// (the caller heals as first contact).
+String? _decodeBoundId(String raw) {
+  final decoded = jsonDecode(raw);
+  final boundId = decoded is Map<String, dynamic>
+      ? decoded['sessionId']?.toString()
+      : null;
+  if (boundId == null || boundId.isEmpty) return null;
+  return boundId;
+}
+
+/// Already open in this app run? Switches to it and returns its service.
+AgentService? _alreadyOpen(FlutterSessionManager manager, String boundId) {
   for (final session in manager.sessions) {
     if (session.id == boundId) {
       manager.switchTo(boundId);
-      return (session.service, _AppBindingResolution.bound);
+      return session.service;
     }
   }
-  // Open it from disk. A failure here is NOT first contact — the binding
-  // is real — so it must never route into a re-mint (issue #864).
+  return null;
+}
+
+/// The clone config: the active session's resolved config when it has
+/// one, else a blank one for the same provider/model.
+AgentConfig _cloneConfig(AgentService active) =>
+    active.configForClone ??
+    AgentConfig(
+      providerKind: active.providerKind,
+      modelId: active.modelId,
+      baseUrl: '',
+      apiKey: '',
+    );
+
+/// Opens the bound session from disk. A failure here is NOT first contact
+/// — the binding is real — so it must never route into a re-mint
+/// (issue #864).
+Future<(AgentService?, _AppBindingResolution)> _openBoundSession(
+  FlutterSessionManager manager,
+  AgentService active,
+  String appId,
+  String boundId,
+) async {
   try {
-    final all = await active.listSessions();
-    for (final metadata in all) {
+    for (final metadata in await active.listSessions()) {
       if (metadata.id == boundId) {
         final managed = await manager.openSession(
           metadata,
-          config:
-              active.configForClone ??
-              AgentConfig(
-                providerKind: active.providerKind,
-                modelId: active.modelId,
-                baseUrl: '',
-                apiKey: '',
-              ),
+          config: _cloneConfig(active),
           serviceFactory: () => active.clone(),
         );
         return (managed.service, _AppBindingResolution.bound);
@@ -113,15 +154,22 @@ Future<(AgentService?, _AppBindingResolution)> _resolveAppBinding(
     AppLog.i('apps', 'bound session unopenable for $appId: $error');
     return (null, _AppBindingResolution.unopenable);
   }
-  // The store answered without the bound id: a STALE binding (session
-  // deleted) — rewriting it on the mint heals (issue #864 E4). BUT
-  // `listSessions` swallows store failures into an empty list, so
-  // "absent" must be verified before minting over a REAL binding: a
-  // sessions root that cannot even be listed (a file in its place,
-  // permission, IO) means the store is broken — the bound session may
-  // still be recoverable, and minting here would rewrite the binding on
-  // EVERY cold open (the surviving member of the owner's per-open mint
-  // family, issue #1175). Keep the binding; run on the active session.
+  return (null, await _staleBindingResolution(active, appId));
+}
+
+/// The store answered without the bound id: a STALE binding (session
+/// deleted) — rewriting it on the mint heals (issue #864 E4). BUT
+/// `listSessions` swallows store failures into an empty list, so
+/// "absent" must be verified before minting over a REAL binding: a
+/// sessions root that cannot even be listed (a file in its place,
+/// permission, IO) means the store is broken — the bound session may
+/// still be recoverable, and minting here would rewrite the binding on
+/// EVERY cold open (the surviving member of the owner's per-open mint
+/// family, issue #1175). Keep the binding; run on the active session.
+Future<_AppBindingResolution> _staleBindingResolution(
+  AgentService active,
+  String appId,
+) async {
   final probe = await active.env.listDir(active.sessionsRoot);
   if (probe.isErr && probe.errorOrNull!.code != FileErrorCode.notFound) {
     AppLog.i(
@@ -129,11 +177,11 @@ Future<(AgentService?, _AppBindingResolution)> _resolveAppBinding(
       'sessions store unlistable for $appId '
           '(${probe.errorOrNull!.code.name}) — keeping binding',
     );
-    return (null, _AppBindingResolution.unopenable);
+    return _AppBindingResolution.unopenable;
   }
   // notFound = a healthy store with nothing in it: the bound session is
   // truly gone — one heal-mint rewrites the binding (issue #864 E4).
-  return (null, _AppBindingResolution.firstContact);
+  return _AppBindingResolution.firstContact;
 }
 
 /// Creates a fresh session dedicated to [appId] and records the binding.

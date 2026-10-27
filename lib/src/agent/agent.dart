@@ -27,11 +27,14 @@ import '../context.dart';
 import '../model.dart';
 import '../skills/skills.dart' show Skill;
 import '../types.dart';
+import '../providers/payload_stall.dart'
+    show lastOutboundEstimateBytes, payloadStallScaleFor;
 import '../providers/provider_tuning.dart';
 import 'agent_loop.dart';
 import 'message_cap.dart' show MessageCapPolicy;
 import 'misuse_breaker.dart';
 import 'stuck_tool.dart';
+import 'foreground_call_budget.dart';
 import 'tool_registry.dart';
 
 /// Thrown (as [ArgumentError]) when neither a tool executor nor a tool
@@ -145,6 +148,10 @@ final class _PendingMessageQueue {
 
   bool hasItems() => _messages.isNotEmpty;
 
+  /// How many messages are queued (issue #1786: the budget ladder's rung-1
+  /// "steering FIFO non-empty" gate and its announcement counts).
+  int get pendingCount => _messages.length;
+
   List<Message> drain() {
     if (mode == QueueMode.all) {
       final drained = List.of(_messages);
@@ -218,6 +225,7 @@ class Agent {
     this.messageCapRelief,
     this.toolMisuseBreaker,
     this.stuckTool,
+    this.foregroundCall,
     this.finalizeGate = false,
     this.operativeSkills = const [],
     Set<String>? reportedOrphanKeys,
@@ -313,6 +321,11 @@ class Agent {
   Set<String> get reportedOrphanKeys => _reportedOrphanKeys;
   final Set<String> _reportedOrphanKeys;
 
+  /// Issue #1750: run-lifetime learned image caps, keyed by
+  /// [imageCapLatchKey] — the loop latches a provider-refused cap here;
+  /// runtime-only, never persisted.
+  final Map<String, int> _imageCapLatches = {};
+
   /// Provider adapter used for every model call. See [StreamFunction].
   StreamFunction streamFunction;
 
@@ -374,11 +387,30 @@ class Agent {
   /// Only fires when [messageCapPolicy] classified the refusal.
   MessageCapRelief? messageCapRelief;
 
+  /// Observer for output-truncated tool calls (issue #1829, Core flow B),
+  /// threaded into every [AgentLoopConfig]. The task executor wires the
+  /// deliverable capture here so a truncated `reply`/`agent_message` body
+  /// survives as a partial artifact; the calls themselves stay failed
+  /// unexecuted. Mutable like the other late-wirable knobs.
+  void Function(ToolCall call)? onTruncatedToolCall;
+
   /// Stuck-call supervision (gh-1054), threaded into every
   /// [AgentLoopConfig]: liveness heartbeats for long-running tool calls
   /// plus the autonomous cancel/retry/convert follow-up. `null` =
   /// unsupervised.
   final StuckToolConfig? stuckTool;
+
+  /// Foreground tool-call budget (issue #1786), threaded into every
+  /// [AgentLoopConfig]: bounds how long a running foreground tool call can
+  /// keep the agent unreachable by steering. `null` = the 10-minute
+  /// default applies.
+  final ForegroundCallBudgetConfig? foregroundCall;
+
+  /// Late-wirable host controls for the budget ladder's one-key offer and
+  /// the watchdog escalate hook (issue #1786) — set by the interactive host
+  /// after construction, same pattern as [externalSteeringSource]. `null` =
+  /// headless/unattended: rung 1 waits for rung 2 (or auto-converts).
+  ForegroundCallBudgetControls? foregroundBudgetControls;
 
   /// External messages merged into the steering poll at every turn boundary
   /// (before the first turn and after each one) — e.g. the agent's inbox in
@@ -458,6 +490,31 @@ class Agent {
     if (!_steeringArrived.isClosed) _steeringArrived.add(null);
   }
 
+  /// Host-visible notices for the provider-phase steering interrupt
+  /// (issue #1923 AC4). Null keeps the core silent; interactive hosts
+  /// print the lines verbatim (the copy is pinned by the issue).
+  void Function(String line)? onSteeringInterruptNotice;
+
+  /// The mid-stream steering stall window PROVIDER (issue #1923 AC1):
+  /// re-EVALUATED at every steering signal and stall re-arm — never a
+  /// per-run snapshot (bot r2, thread `PRRT_kwDOTXdlLc6wfxlV`: the
+  /// watchdog re-windows on every arm, so the steering interrupt must
+  /// chase the window that is actually armed or a mid-run failover to a
+  /// shorter entry lets the whole-run kill win the race AC1 says steering
+  /// always wins). Prefers [_armedRunIdleInfo] — the window the watchdog
+  /// timer is ACTUALLY armed with — over a fresh derivation, and keeps
+  /// the 30s margin (payload scaling included, since the armed window was
+  /// resolved through [runIdleWindow]). `Duration.zero` when the watchdog
+  /// is disabled: the mid-stream interrupt stays off, the zero-byte
+  /// immediate interrupt is unaffected.
+  Duration get _steeringStallWindowNow {
+    if (runIdleTimeout == Duration.zero) return Duration.zero;
+    final armed = _armedRunIdleInfo.window;
+    final base = armed > Duration.zero ? armed : runIdleWindow.window;
+    final window = base - const Duration(seconds: 30);
+    return window <= Duration.zero ? Duration.zero : window;
+  }
+
   /// Remove all queued steering messages.
   void clearSteeringQueue() => _steeringQueue.clear();
 
@@ -477,6 +534,27 @@ class Agent {
   void clearAllQueues() {
     clearSteeringQueue();
     clearFollowUpQueue();
+  }
+
+  /// Oversized user-message intake guard (issue #1760): hosts install a
+  /// [UserMessageSpillGuard].guard here to bound every incoming user
+  /// message from ONE choke point. Applied at every seam user messages
+  /// enter the loop — the prompt batch, the mid-run steering drain (in-run
+  /// and external-inbox), and the follow-up drain. Null (default) =
+  /// legacy pass-through.
+  Future<UserMessage> Function(UserMessage message)? userMessageGuard;
+
+  /// Runs [userMessageGuard] over the user messages of [messages], in
+  /// order. Null guard = the list verbatim.
+  Future<List<Message>> _guardIncomingUserMessages(
+    List<Message> messages,
+  ) async {
+    final guard = userMessageGuard;
+    if (guard == null) return messages;
+    return [
+      for (final message in messages)
+        message is UserMessage ? await guard(message) : message,
+    ];
   }
 
   /// Returns true when either queue still contains pending messages.
@@ -574,9 +652,39 @@ class Agent {
     List<Message> messages, {
     bool skipInitialSteeringPoll = false,
   }) {
-    return _runWithLifecycle((token) {
-      return runAgentLoop(
-        prompts: messages,
+    // Issue #1760: bound oversized user prompts before they join the
+    // transcript or the first request. The guard runs INSIDE the run
+    // lifecycle: _runWithLifecycle registers _activeRun/_isStreaming
+    // synchronously, so a prompt();abort() sequence — and every host
+    // busy gate reading isStreaming right after send — observes the run
+    // exactly like the unguarded shape, and a token cancelled while the
+    // guard is in flight becomes the loop's aborted terminal
+    // (_streamAssistantResponse's pre-cancelled short-circuit). The
+    // no-guard path keeps the ORIGINAL synchronous executor shape — zero
+    // added microtask hops for hosts without a guard (the CI failure this
+    // guards against: an async executor re-ordered the run start against
+    // same-tick abort() and busy-gate reads).
+    final guard = userMessageGuard;
+    if (guard == null) {
+      return _runWithLifecycle((token, source) {
+        return runAgentLoop(
+          prompts: messages,
+          context: _createContextSnapshot(),
+          config: _createLoopConfig(
+            skipInitialSteeringPoll: skipInitialSteeringPoll,
+          ),
+          emit: _processEvent,
+          streamFunction: streamFunction,
+          toolExecutor: toolExecutor,
+          cancelToken: token,
+          cancelTokenSource: source,
+        );
+      });
+    }
+    return _runWithLifecycle((token, source) async {
+      final guarded = await _guardIncomingUserMessages(messages);
+      await runAgentLoop(
+        prompts: guarded,
         context: _createContextSnapshot(),
         config: _createLoopConfig(
           skipInitialSteeringPoll: skipInitialSteeringPoll,
@@ -585,12 +693,13 @@ class Agent {
         streamFunction: streamFunction,
         toolExecutor: toolExecutor,
         cancelToken: token,
+        cancelTokenSource: source,
       );
     });
   }
 
   Future<void> _runContinuation() {
-    return _runWithLifecycle((token) {
+    return _runWithLifecycle((token, source) {
       return runAgentLoopContinue(
         context: _createContextSnapshot(),
         config: _createLoopConfig(),
@@ -598,6 +707,7 @@ class Agent {
         streamFunction: streamFunction,
         toolExecutor: toolExecutor,
         cancelToken: token,
+        cancelTokenSource: source,
       );
     });
   }
@@ -646,7 +756,11 @@ class Agent {
             },
       messageCapPolicy: messageCapPolicy,
       messageCapRelief: messageCapRelief,
+      onTruncatedToolCall: onTruncatedToolCall,
       stuckTool: stuckTool,
+      foregroundCallBudget: foregroundCall,
+      foregroundBudgetControls: foregroundBudgetControls,
+      pendingSteeringCount: () => _steeringQueue.pendingCount,
       toolExecution: toolExecution,
       finalizeGate: finalizeGate,
       operativeSkills: operativeSkills,
@@ -659,6 +773,7 @@ class Agent {
           : (context) => prepareNextTurn?.call(context),
       toolMisuseBreaker: toolMisuseBreaker,
       reportedOrphanKeys: _reportedOrphanKeys,
+      imageCapLatches: _imageCapLatches,
       getSteeringMessages: () async {
         if (skip) {
           skip = false;
@@ -666,10 +781,33 @@ class Agent {
         }
         final external =
             await externalSteeringSource?.call() ?? const <Message>[];
-        return [...external, ..._steeringQueue.drain()];
+        final drained = [...external, ..._steeringQueue.drain()];
+        // Issue #1760: mid-run steering (in-process queue and external
+        // inbox alike) passes the same intake guard — but only when one is
+        // installed. The no-guard path keeps the original synchronous
+        // drain-to-return shape: an extra await hop here re-ordered the
+        // boundary drains and broke steer-queue/busy-gate consumers.
+        final guard = userMessageGuard;
+        if (guard == null) return drained;
+        return _guardIncomingUserMessages(drained);
       },
-      getFollowUpMessages: _followUpQueue.drain,
+      // Issue #1760: follow-ups drained by the loop at the run boundary
+      // pass the same intake guard — sync tear-off when no guard is
+      // installed (same reason as the steering drain above).
+      getFollowUpMessages: () {
+        final guard = userMessageGuard;
+        if (guard == null) return _followUpQueue.drain();
+        return _guardIncomingUserMessages(_followUpQueue.drain());
+      },
       steeringNotifications: _steeringArrived.stream,
+      // Issue #1923 AC1: the mid-stream steering stall window rides the
+      // SAME window the run-idle watchdog uses, margin'd 30s below it so
+      // the steering interrupt (drain + inject + resubmit) always wins
+      // the race against the watchdog's whole-run kill. Watchdog-disabled
+      // hosts keep `Duration.zero` — the mid-stream interrupt stays off,
+      // the zero-byte immediate interrupt stays armed.
+      steeringStallWindow: () => _steeringStallWindowNow,
+      steeringInterruptNotice: onSteeringInterruptNotice,
       // The in-process queue notifies via [steeringArrived]; the probe is
       // only needed for the external (file-inbox) source, which cannot
       // notify on its own.
@@ -685,7 +823,7 @@ class Agent {
   }
 
   Future<void> _runWithLifecycle(
-    Future<void> Function(CancelToken token) executor,
+    Future<void> Function(CancelToken token, CancelTokenSource source) executor,
   ) async {
     if (_activeRun != null) {
       throw StateError('Agent is already processing.');
@@ -699,7 +837,7 @@ class Agent {
     _armRunWatchdog();
 
     try {
-      await executor(run.source.token);
+      await executor(run.source.token, run.source);
     } catch (error) {
       await _handleRunFailure(error, run.source.token.isCancelled);
     } finally {
@@ -812,18 +950,36 @@ class Agent {
   /// patience — a warming-up model gets exactly the patience its
   /// `providerTimeouts.streamIdleTimeoutMs` declares. `source` names the
   /// precedence layer (`role <role> override` / `provider:<name>` /
-  /// `global`), `raised` is true when a config governs (window > floor).
-  /// Hosts render this on the stall surfaces so a wide configured window
+  /// `global`) and — when payload scaling moved the window — says so,
+  /// because a wide patience must name its real governor (#1916 review:
+  /// `raised`/`source` never silently re-purpose). `raised` is true when
+  /// anything governs above the floor (a configured window OR payload
+  /// scaling). Hosts render this on the stall surfaces so a wide window
   /// never reads as a hang.
+  ///
+  /// Issue #1916 AC3: the resolved window then scales for the outbound
+  /// payload size ([lastOutboundEstimateBytes]) — a multi-MB image upload
+  /// legitimately needs more first-token patience than a text request,
+  /// and starving it produced the submit livelock. Capped at 2x; no
+  /// request build yet (or a text-sized request) keeps the window
+  /// byte-for-byte.
   ({Duration window, String source, bool raised}) get runIdleWindow {
     final explicit = explicitStreamIdleForModel(_state.model);
-    final window = runIdleWatchdogWindow(
+    final resolved = runIdleWatchdogWindow(
       floor: runIdleTimeout,
       explicitIdle: explicit?.$1,
     );
+    final scale = payloadStallScaleFor(lastOutboundEstimateBytes);
+    final window = Duration(
+      milliseconds: (resolved.inMilliseconds * scale).round(),
+    );
+    final payloadNote = scale > 1.0
+        ? ', payload-scaled for a ~${(lastOutboundEstimateBytes / (1024 * 1024)).toStringAsFixed(0)}MB '
+              'request'
+        : '';
     return (
       window: window,
-      source: explicit?.$2 ?? 'default',
+      source: '${explicit?.$2 ?? 'default'}$payloadNote',
       raised: window > runIdleTimeout,
     );
   }

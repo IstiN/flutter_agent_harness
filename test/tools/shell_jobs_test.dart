@@ -65,8 +65,7 @@ final class _FakeShellJob implements ShellJob {
 
   @override
   Future<void> stop() async {
-    _stopReason = 'stopped';
-    complete(143);
+    complete(143, reason: 'stopped');
   }
 }
 
@@ -785,5 +784,44 @@ void main() {
       expect(tail.length, lessThan(micros36.length + 8));
       expect(tail.length, greaterThanOrEqualTo(micros36.length));
     }
+  });
+
+  group('shellJobSettleNoticeText names the timeout (gh-1835 review)', () {
+    late _FakeBackgroundEnv env;
+    late ShellJobRegistry registry;
+
+    setUp(() {
+      env = _FakeBackgroundEnv(MemoryExecutionEnv(cwd: '/work'));
+      registry = ShellJobRegistry(env: env);
+    });
+
+    test('a cap-killed job (stopReason timeout) is not reported as a '
+        'crash', () async {
+      final entry = await registry.start(
+        'make',
+        options: const ShellExecOptions(timeout: Duration(seconds: 120)),
+      );
+      env.jobs.single.complete(-9, reason: 'timeout');
+      await Future<void>.delayed(Duration.zero);
+      await Future<void>.delayed(Duration.zero);
+
+      final notice = shellJobSettleNoticeText(entry);
+      // The carried cap fired: the notice names the timeout (the model's
+      // own cap, not a crash) and the retry guidance.
+      expect(notice, contains('timeout'));
+      expect(notice, contains('120s'));
+      expect(notice, contains('not a crash'));
+    });
+
+    test('a normally exited job carries no timeout line', () async {
+      final entry = await registry.start('echo done');
+      env.jobs.single.complete(0);
+      await Future<void>.delayed(Duration.zero);
+      await Future<void>.delayed(Duration.zero);
+
+      final notice = shellJobSettleNoticeText(entry);
+      expect(notice, contains('finished with exit code 0'));
+      expect(notice, isNot(contains('Stop reason')));
+    });
   });
 }

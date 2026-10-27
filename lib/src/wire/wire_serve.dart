@@ -42,7 +42,8 @@ library;
 
 import 'dart:async';
 
-import '../agent/agent_loop.dart' show AgentEvent, ToolCallStuckEvent;
+import '../agent/agent_loop.dart'
+    show AgentEvent, ToolCallBudgetEvent, ToolCallStuckEvent;
 import '../approval/approval.dart';
 import '../redact/redaction_pipeline.dart';
 import '../tools/ask_tool.dart';
@@ -289,6 +290,23 @@ final class WireServeServer {
         timestamp: event.timestamp,
       );
     }
+    // Same bridge surface, same secret rule: a budget event's detail is a
+    // transcript-grade announcement (and the escalation path can embed
+    // partial output) — masked before the frame leaves for the client.
+    if (event is ToolCallBudgetEvent && redactionPipeline != null) {
+      final pipeline = redactionPipeline!;
+      event = ToolCallBudgetEvent(
+        toolCallId: event.toolCallId,
+        toolName: event.toolName,
+        args: event.args,
+        rung: event.rung,
+        action: event.action,
+        elapsed: event.elapsed,
+        steeringCount: event.steeringCount,
+        detail: pipeline.redact(event.detail),
+        timestamp: event.timestamp,
+      );
+    }
     _sendSafely(_protocol.encodeEvent(event), client);
   }
 
@@ -299,21 +317,7 @@ final class WireServeServer {
   void _dispatch(WireCommand command) {
     switch (command) {
       case WirePromptCommand(:final text):
-        if (_isBusy()) {
-          _send(_error('busy', 'a run is already active; steer or abort it'));
-          return;
-        }
-        // ponytail: one-deep queue via a chained future — a real run queue
-        // is a follow-up if clients ever need it.
-        _promptChain = _promptChain
-            .then((_) => _runPrompt(text))
-            .then(
-              (_) {},
-              onError: (Object error) {
-                _send(_error('run_failed', '$error'));
-              },
-            );
-        unawaited(_promptChain);
+        _dispatchPrompt(text);
       case WireSteerCommand(:final text):
         if (!_isBusy()) {
           _send(_error('not_running', 'steer requires an active run'));
@@ -345,6 +349,26 @@ final class WireServeServer {
       case WireUnknownCommand(:final kind):
         _send(_error('unknown_command', 'no such command kind: "$kind"'));
     }
+  }
+
+  /// Runs a prompt command: refuses with `busy` while a run is active,
+  /// else chains the run onto the single-slot prompt queue.
+  void _dispatchPrompt(String text) {
+    if (_isBusy()) {
+      _send(_error('busy', 'a run is already active; steer or abort it'));
+      return;
+    }
+    // ponytail: one-deep queue via a chained future — a real run queue
+    // is a follow-up if clients ever need it.
+    _promptChain = _promptChain
+        .then((_) => _runPrompt(text))
+        .then(
+          (_) {},
+          onError: (Object error) {
+            _send(_error('run_failed', '$error'));
+          },
+        );
+    unawaited(_promptChain);
   }
 
   void _resolve(String id, String kind, Object? value) {

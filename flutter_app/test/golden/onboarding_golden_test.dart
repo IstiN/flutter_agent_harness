@@ -170,5 +170,27 @@ void main() {
       await tester.pumpAndSettle();
       await expectGolden(tester, 'onboarding_p2_configured_phone');
     });
+
+    // Issue #1824: in the desktop band just above the 920px threshold the
+    // width-flexible slots dip below their fixed-size art (the 128px focus
+    // ring on page 1, the 132px Allow/Later pair on page 3) and used to
+    // paint right-overflow stripes. These pin the band at its tightest
+    // common window size (960x700).
+    testWidgets(
+      'page 1 — idea mockups keep their ratio at small desktop width (#1824)',
+      (tester) async {
+        await _pumpOnboardingPage(tester, page: 0, size: const Size(960, 700));
+        await expectGolden(tester, 'onboarding_p1_dark_desktop_narrow');
+      },
+    );
+
+    testWidgets(
+      'page 3 — Allow/Later row keeps its space at small desktop width '
+      '(#1824)',
+      (tester) async {
+        await _pumpOnboardingPage(tester, page: 2, size: const Size(960, 700));
+        await expectGolden(tester, 'onboarding_p3_dark_desktop_narrow');
+      },
+    );
   });
 }

@@ -101,6 +101,7 @@ Future<PasteboardRead> readPasteboardImage({
   ProcessRunner? runner,
   Directory? tempDir,
   Map<String, String> environment = const {},
+
   /// Pins the platform branch so unit tests can exercise every
   /// platform path (macOS/Windows readers are unreachable on a Linux
   /// CI runner, which would push their CRAP through the roof).
@@ -230,6 +231,7 @@ Future<List<int>?> _convertTiffToPng(
 /// text: an empty paste must never reach the composer.
 Future<PasteboardRead> readPasteboardText({
   ProcessRunner? runner,
+
   /// Pins the platform branch so unit tests can exercise every platform
   /// path (same seam as [readPasteboardImage]).
   String? platform,
@@ -345,14 +347,19 @@ Future<PasteboardRead> _readWindows(ProcessRunner runner, Directory tmp) async {
       'if (\$img -eq \$null) { exit 2 }'
       '\$img.Save("$target", [System.Drawing.Imaging.ImageFormat]::Png)';
   final result = await runner('powershell', ['-NoProfile', '-Command', script]);
-  if (result.exitCode == 0) {
-    try {
-      final bytes = File(target).readAsBytesSync();
-      File(target).deleteSync();
-      return PasteboardImage(bytes);
-    } on Object {
-      // Fall through.
-    }
+  final image = result.exitCode == 0 ? _readSavedPng(target) : null;
+  return image ?? const PasteboardUnavailable('clipboard holds no image');
+}
+
+/// Reads and deletes the PowerShell-saved PNG; null when missing or broken
+/// (the caller reports plain unavailability either way).
+PasteboardRead? _readSavedPng(String target) {
+  try {
+    final bytes = File(target).readAsBytesSync();
+    File(target).deleteSync();
+    return PasteboardImage(bytes);
+  } on Object {
+    // Fall through.
+    return null;
   }
-  return const PasteboardUnavailable('clipboard holds no image');
 }

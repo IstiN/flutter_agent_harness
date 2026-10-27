@@ -21,7 +21,7 @@ void main() {
     io.close();
     transientRetryNotice = null;
     operativePinNotice = null;
-    imageDropNotice = null;
+    imageDropReportNotice = null;
     deliverySloSink = null;
   });
 
@@ -89,7 +89,72 @@ void main() {
     },
   );
 
-  test('the image drop notice prints a dim transcript line', () {
+  test('the image drop report aggregates into ONE latched notice (#1889)', () {
+    final cli = AgentCli(
+      config: AgentCliConfig(
+        model: testModel,
+        apiKey: 'test-key',
+        env: env,
+        sessionRoot: '/sessions',
+        providerKind: 'openai-completions',
+      ),
+      io: io,
+    );
+    cli.wireRunNoticesForTesting();
+    ImageDropEvent drop(int index) => ImageDropEvent(
+      index: index,
+      key: 'content0000$index',
+      fromCurrentMessage: false,
+    );
+    ImageDropReport report(int count) => ImageDropReport(
+      drops: [for (var i = 0; i < count; i++) drop(i)],
+      cap: 20,
+      modelId: testModel.id,
+      currentImageCount: 0,
+      registryCount: 20 + count,
+      ridingCount: 20,
+    );
+
+    // 5 identical requests — the flood case: exactly ONE notice total.
+    for (var i = 0; i < 5; i++) {
+      imageDropReportNotice?.call(report(17));
+    }
+    final lines = io.out
+        .toString()
+        .split('\n')
+        .where((l) => l.contains('[images]'))
+        .toList();
+    expect(lines, hasLength(1));
+    expect(lines.single, contains('17 older images not sent this turn'));
+    expect(lines.single, contains('(cap 20)'));
+    expect(lines.single, contains('/images for details'));
+    // Detail lives on the debug surface, per image per request: fa.log
+    // got 5 × 17 drop events (never silent there).
+    expect(cli.imageDropUx.lastReport, isNotNull);
+
+    // A changed set → exactly one updated notice.
+    io.out.clear();
+    imageDropReportNotice?.call(report(18));
+    expect(
+      io.out.toString().split('\n').where((l) => l.contains('[images]')),
+      hasLength(1),
+    );
+
+    // Same set again → silence.
+    io.out.clear();
+    imageDropReportNotice?.call(report(18));
+    expect(io.out.toString(), isEmpty);
+
+    // Recovery → one all-clear transition, then silence.
+    io.out.clear();
+    imageDropReportNotice?.call(report(0));
+    expect(io.out.toString(), contains('[images] caught up'));
+    io.out.clear();
+    imageDropReportNotice?.call(report(0));
+    expect(io.out.toString(), isEmpty);
+  });
+
+  test('a current-message drop prints the prominent warning (#1889 AC3)', () {
     final cli = AgentCli(
       config: AgentCliConfig(
         model: testModel,
@@ -102,13 +167,27 @@ void main() {
     );
     cli.wireRunNoticesForTesting();
 
-    imageDropNotice?.call(2, 'a1b2c3');
-
-    expect(
-      io.out.toString(),
-      contains('[images] dropping [Image 2] (key a1b2c3…)'),
+    imageDropReportNotice?.call(
+      ImageDropReport(
+        drops: [
+          for (var i = 0; i < 5; i++)
+            ImageDropEvent(
+              index: i,
+              key: 'attach000$i',
+              fromCurrentMessage: true,
+            ),
+        ],
+        cap: 20,
+        modelId: testModel.id,
+        currentImageCount: 25,
+        registryCount: 25,
+        ridingCount: 20,
+      ),
     );
-    expect(io.out.toString(), contains('per-request cap reached'));
+    // Prominent (not dim) and naming counts + remedy.
+    expect(io.out.toString(), contains('5 of 25 attached images'));
+    expect(io.out.toString(), contains('cap is 20/request'));
+    expect(io.out.toString(), contains('images.maxPerRequest'));
   });
 
   test(

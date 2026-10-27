@@ -827,12 +827,18 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
         },
       );
     } on Object catch (e) {
-      if (mounted) {
-        showFahErrorSnack(context, l10n.filesFolderPickerError(e.toString()));
-      }
+      _showMountPickerError(l10n, e);
       return false;
     }
     return picked != null;
+  }
+
+  /// The mount picker's failure snack (picker channel unavailable etc.)
+  /// — only while the shell lives (gh-1848 split).
+  void _showMountPickerError(AppLocalizations l10n, Object error) {
+    if (mounted) {
+      showFahErrorSnack(context, l10n.filesFolderPickerError(error.toString()));
+    }
   }
 
   /// The folder question dialog: the current mount (or the Personal

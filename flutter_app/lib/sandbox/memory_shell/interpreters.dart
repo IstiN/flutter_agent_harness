@@ -30,37 +30,66 @@ typedef SqliteArgs = ({
 });
 
 SqliteArgs parseSqliteArgs(List<String> args, {required String? stdin}) {
-  if (args.contains('--version') || args.contains('-version')) {
+  if (_sqliteWantsVersion(args)) {
     return (wantVersion: true, dbPath: null, sql: '', error: null);
   }
+  final (positionals, error) = _sqlitePositionals(args);
+  if (error != null) {
+    return (wantVersion: false, dbPath: null, sql: '', error: error);
+  }
+  final dbPath = positionals.isNotEmpty ? positionals[0] : null;
+  final sql = _sqliteSql(positionals, stdin);
+  return (wantVersion: false, dbPath: dbPath, sql: sql, error: null);
+}
 
+/// Whether the invocation asks for the sqlite3 version banner.
+bool _sqliteWantsVersion(List<String> args) =>
+    args.contains('--version') || args.contains('-version');
+
+/// Whether [arg] is `-cmd` with its value operand available (accepted and
+/// skipped, value and all).
+bool _isSqliteCmdFlag(List<String> args, int i, String arg) =>
+    arg == '-cmd' && i + 1 < args.length;
+
+/// Whether [arg] is an accepted output-mode no-op flag.
+bool _isSqliteModeFlag(String arg) =>
+    arg == '-csv' || arg == '-list' || arg == '-readonly';
+
+/// The unsupported-option error for a `-`-prefixed operand, or null.
+({String message, int exitCode})? _sqliteOptionError(String arg) {
+  if (arg.startsWith('-') && arg != '-') {
+    return (message: 'sqlite3: unsupported option $arg\n', exitCode: 1);
+  }
+  return null;
+}
+
+/// Walks [args] collecting positional operands, skipping the accepted
+/// no-op flags (`-cmd value` consumes two slots); scanning stops at the
+/// first unsupported option.
+(List<String>, ({String message, int exitCode})?) _sqlitePositionals(
+  List<String> args,
+) {
   final positionals = <String>[];
   for (var i = 0; i < args.length; i++) {
     final arg = args[i];
-    if (arg == '-cmd' && i + 1 < args.length) {
+    if (_isSqliteCmdFlag(args, i, arg)) {
       // Accepted for parity with the WASM sqlite3; init commands are not
       // needed because the full SQL arrives as one argument or via stdin.
       i++;
-    } else if (arg == '-csv' || arg == '-list' || arg == '-readonly') {
+    } else if (_isSqliteModeFlag(arg)) {
       // Output stays in the default `|`-separated list mode.
-    } else if (arg.startsWith('-') && arg != '-') {
-      return (
-        wantVersion: false,
-        dbPath: null,
-        sql: '',
-        error: (message: 'sqlite3: unsupported option $arg\n', exitCode: 1),
-      );
     } else {
+      final error = _sqliteOptionError(arg);
+      if (error != null) return (positionals, error);
       positionals.add(arg);
     }
   }
-
-  final dbPath = positionals.isNotEmpty ? positionals[0] : null;
-  final sql = positionals.length > 1
-      ? positionals.sublist(1).join(' ')
-      : (stdin ?? '');
-  return (wantVersion: false, dbPath: dbPath, sql: sql, error: null);
+  return (positionals, null);
 }
+
+/// The SQL script: trailing operands joined, else the piped stdin.
+String _sqliteSql(List<String> positionals, String? stdin) =>
+    positionals.length > 1 ? positionals.sublist(1).join(' ') : (stdin ?? '');
 
 /// Reads the database file the invocation names (`:memory:` names no file).
 Future<Uint8List?> _readSqliteDb(
@@ -73,6 +102,11 @@ Future<Uint8List?> _readSqliteDb(
   return read.isOk ? read.valueOrNull : null;
 }
 
+/// The `:memory:` database lives in sql.js only — there is no file to
+/// read or persist.
+bool _isMemorySqliteDb(String? dbPath) =>
+    dbPath == null || dbPath == ':memory:';
+
 /// Persists the exported database back after every invocation so it
 /// survives across exec calls (sql.js keeps it in memory only).
 Future<void> _writeBackSqliteDb(
@@ -81,16 +115,28 @@ Future<void> _writeBackSqliteDb(
   String? dbPath,
   Uint8List? dbBytes,
 ) async {
-  if (dbPath == null || dbPath == ':memory:' || dbBytes == null) return;
-  await fs.writeBinaryFile(resolveSandboxPath(dbPath, cwd), dbBytes);
+  final path = _writableSqlitePath(dbPath);
+  if (path == null || dbBytes == null) return;
+  await fs.writeBinaryFile(resolveSandboxPath(path, cwd), dbBytes);
 }
+
+/// The on-disk target for a run's db bytes: null when the run persists no
+/// db (null path) or the db lives in the shell's memory store.
+String? _writableSqlitePath(String? dbPath) =>
+    dbPath == null || _isMemorySqliteDb(dbPath) ? null : dbPath;
+
+/// The stdout shape: sql.js output re-terminated with one newline.
+String _sqliteStdout(String stdout) => stdout.isEmpty ? '' : '$stdout\n';
+
+/// The stderr shape: a SQL error is surfaced as `Error: …`.
+String _sqliteStderr(String stderr) => stderr.isEmpty ? '' : 'Error: $stderr\n';
 
 /// Shapes a sql.js run: a non-empty stderr is a SQL error with exit 1.
 InterpreterOutcome _sqliteOutcome(SqliteRunResult r) {
   final hasError = r.stderr.isNotEmpty;
   return (
-    stdout: r.stdout.isEmpty ? '' : '${r.stdout}\n',
-    stderr: hasError ? 'Error: ${r.stderr}\n' : '',
+    stdout: _sqliteStdout(r.stdout),
+    stderr: _sqliteStderr(r.stderr),
     exitCode: hasError ? 1 : 0,
   );
 }

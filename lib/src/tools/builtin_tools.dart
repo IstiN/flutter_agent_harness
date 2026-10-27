@@ -63,6 +63,7 @@ import '../redact/redaction_types.dart';
 import '../types.dart';
 import '../web_search/web_search.dart';
 import 'archive_reader.dart';
+import 'bash_auto_background.dart';
 import 'job_id_resolution.dart';
 import 'misuse_policy.dart';
 import 'read_selector.dart';
@@ -164,6 +165,9 @@ List<AgentTool> builtinTools(
   PasswordPromptCallback? onPasswordPrompt,
   RedactionConfig? redactionConfig,
   Set<String> Function()? approvedSecretLiterals,
+  Duration shellAutoBackgroundAfter = const Duration(
+    seconds: defaultShellAutoBackgroundSeconds,
+  ),
 }) {
   final store = snapshots ?? HashlineSnapshotStore();
   return [
@@ -177,6 +181,7 @@ List<AgentTool> builtinTools(
       onPasswordPrompt: onPasswordPrompt,
       redactionConfig: redactionConfig,
       approvedSecretLiterals: approvedSecretLiterals,
+      autoBackgroundAfter: shellAutoBackgroundAfter,
     ),
     if (shellJobs != null) bashJobTool(shellJobs),
     if (lsp != null) lspTool(env, config: lsp),

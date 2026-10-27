@@ -13,6 +13,374 @@ block a release again.
 
 ## Unreleased
 
+- fix(gh-1931): one render per tool call on the non-TUI console. Line mode
+  and the headless `-p` log printed every executed call twice — a start row
+  (`• bash · cmd`, no elapsed) followed by the end row (`✓/✗ bash · cmd
+  0s`). The duplicate start-row print is gone from `_onToolExecutionStart`;
+  the end row (command, status glyph, elapsed, failure news) is the single
+  render per call. The TUI keeps its running card + settled card, start
+  bookkeeping stays (`_toolStarts` feeds the end row's detail/elapsed, the
+  waiting coordinator still arms per-call liveness), and persisted
+  artifacts (session JSONL, trajectory records) are untouched —
+  rendering-only change. Long foreground calls keep the gh-1055 liveness
+  reminders past `waiting.toolLivenessSeconds` (default 60s).
+- fix(gh-1929): esc during the pre-flight auto-compaction no longer crashes
+  the CLI. The compaction layer's deliberate abort (#1085) used to escape
+  `_runPrompt` outside its guarded body and reach the root zone handler via
+  an unlistened `whenComplete` chain — `fa crashed: CancelledException` +
+  crash.log + a lost session view. The pre-flight window (submit on an
+  over-window transcript) now translates the cancel into a user-cancel
+  outcome: neutral dim `submission cancelled` receipt (never `error:`), the
+  TUI composer hands the typed text back (`sendInputText`) so a resubmit is
+  one Enter away, headless exits 130 with the same receipt, and the next
+  prompt works (the funnel's local-trim recovery or a retried compaction).
+  Cancels DURING the run — in-flight relief, settle funnel — keep their
+  pinned loud-abort surfaces, and the post-run window keeps its
+  `compaction interrupted` receipt via the shared `_renderUserCancel`
+  helper.
+- feat(1923): stall-proof steering. Steering arriving while the loop awaits
+  an UNPRODUCTIVE provider submit (zero bytes, or silent past the steering
+  stall window) now cancels the attempt via a `SteeringInterruptFire`
+  cancel, injects the pending steering into the rebuilt request, and
+  resubmits — the #1916-class submit stalls can no longer queue user or
+  agent mail invisibly. Productive streams keep next-boundary semantics;
+  the interrupt never consumes a retry attempt, and the run latch re-arms
+  in place so watchdog replays and user aborts keep working. `task_resume`
+  caps its foreground wait (like `task_send`) and continues in the
+  background; video polling honors soft-yield checkpoints (remote render
+  never restarted, honest hand-back text) and media generation honors run
+  cancellation; SLO-breached undelivered child mail surfaces in
+  `task_status` (`UNDELIVERED … past the 2s delivery SLO`); the TUI prints
+  `steering queued — provider stalled Ns, interrupting to deliver` plus the
+  delivered ack.
+- feat(1916): image-heavy submits no longer livelock — byte-based
+  `images.maxBytesPerRequest` (default 8MB, layered onto the count cap;
+  `/images` names both drop reasons), legacy text-embedded data-URL
+  screenshots in history fold into the once-only registry instead of
+  replaying raw forever, stall watchdog windows scale with the outbound
+  payload (capped at 2x; explicit connect clamps untouched), abandoned
+  connect attempts answering during the retry backoff are adopted, and
+  repeated identical-payload stalls fire ONE actionable /compact +
+  image-budget advice. TUI stall banner + docs/images.md carry the
+  image-heavy playbook.
+- fix(gh-1912): Add an agent → DAP now turns a retired hub's unknown
+  `enroll_create` response into an actionable upgrade message instead of
+  exposing `bad_frame`. Independent enrollment never falls back to the
+  legacy same-name credential rotation endpoint, and existing credentials
+  remain untouched on failure.
+
+- fix(gh-1913): Add an agent is usable on narrow phone screens: scope and
+  format choices wrap without per-character labels, enrollment controls
+  stack at full width, and actions remain reachable by scrolling. Desktop
+  keeps the segmented layout; phone/desktop light/dark goldens guard both.
+
+- fix(gh-1825): DAP agent enrollments carry a stable, independent
+  `agentInstance` through app/CLI bundles, persistence, direct boot and
+  reconnect. Independent same-name agents keep distinct identities and stay
+  online together, while legacy bundles retain their project-scoped identity.
+
+- feat(gh-1825): DAP private-channel sends now use self-describing
+  `fanet1` frames (sender X25519 key in the frame, channel-bound AAD) via
+  `fa_hub_client` 0.2.11, so fa_network app members decrypt them without
+  a whois/senderKey round-trip. Inbound channel frames open `fanet1`
+  first and fall back to legacy `dap/1` payloads. Verified live in both
+  directions between a headless DAP agent and the Flutter app.
+- feat(gh-1825): the network offline banner now has a **Reconnect now**
+  action which restarts the socket and reloads the channel/member
+  snapshot. Fresh sockets also clear a stale offline flag (the server
+  sends no historical drain to a socket that was away during recovery).
+  `AgentNetworkController.start` stops after disposal instead of
+  notifying a dead controller.
+
+- feat(gh-1825): the roster sheet shows access-scope badges (whole
+  network vs N channels, decoded additively from Member.access in
+  snapshots and presence.changed) and owner/admins can drop an agent
+  (DELETE /api/networks/{id}/agents/{agentId} with confirmation; the
+  server tombstone keeps it out of future snapshots). Guests and store
+  members are removable too via DELETE /api/networks/{id}/members/{id}
+  (sessions revoked server-side); owner/admin/self rows stay protected.
+
+- feat(gh-1825): channel/network management in the app — rename a channel
+  (PATCH), delete a channel or an owned network (REST DELETE with
+  confirmation and state/navigation cleanup), and unnamed CLI/hub-created
+  channels show a short friendly label instead of the raw 64-char id.
+
+- feat(gh-1825): pasting a DAP invite no longer demands a passphrase on
+  macOS — importing NEW channel secrets auto-provisions a random
+  passphrase into the per-channel Keychain item (decryption of existing
+  envelopes never auto-generates; env/prompt/headless behavior unchanged),
+  and passphrase warnings now name the concrete recovery (re-paste the
+  invite to re-encrypt, or set DAP_KEY_PASSPHRASE).
+
+- feat(gh-1825): the network online counter opens a live-first roster
+  sheet (names, member class, presence), and the channel composer offers
+  roster-filtered @-mention autocomplete — the draft keeps the literal
+  @displayName for DAP agents and the envelope carries the resolved
+  member ids. On the CLI side the DAP channel notice names the agent's
+  own identity (display name + agentId), and inbound channel mail that
+  @-mentions that name (case-insensitive, word-boundary — no email or
+  @name2 false positives) is marked "[mentions you — you are @name]".
+
+- fix(gh-1825): the app's network roster no longer reads as permanently
+  empty ("0 online"): fa_network sends roster.snapshot with an OBJECT
+  payload ({members: [...]}) and the app only accepted a bare list, so
+  every snapshot silently decoded to zero members. Both shapes are now
+  accepted, with a production-shape regression test. The DAP paste hint
+  names web alongside CLI/macOS/iOS (plain-web join is supported).
+
+- fix(gh-1825): resumed CLI sessions rejoin their DAP channels and
+  receive channel mail again — session replay now re-arms membership
+  synchronization (plugin session-ready listeners on boot/resume and
+  in-process switches) and idle channel probes complete deferred joins
+  before inbox peek/drain. The post-replay sync also dials the
+  membership's OWN hub with its enrolled credential before joining:
+  a resumed session-scoped agent used to stay on the zero-config local
+  URL forever, and because a disconnected fabric probe short-circuits
+  before the sync, the remote dial never happened — the session-ready
+  listener now drives it directly (throttled to one attempt per 10 s).
+  App channel history no longer flashes raw
+  payloads on first open: decoding waits for startup's channel listing
+  instead of caching an undecoded guess until a manual switch.
+
+- feat(gh-1825): the fa app consumes the same DAP enrollment block as the
+  CLI — paste it into the agent chat composer (macOS/iOS/Android; the
+  smart-paste .txt chip path included) and the channel join happens
+  without the block ever reaching `sendText`, analytics, or session
+  records. Native joins ride the live agent-fabric hub repository:
+  per-project scoped identity, invite pub/priv import, keyless public
+  channels, reconnect-persisted membership in a dedicated secure
+  enrollment store (Keychain/Keystore where available). Harness additions:
+  `HubMessagingRepository.joinChannel`/`waitForConnection` with
+  rejoin-before-drain on reconnect, keyed channel decrypt
+  (`hubDecryptPayloadWithKeyPair`), public showcase payloads, and
+  `HubBearerTransport` (native `Authorization` header or the browser
+  `?token=` equivalent; authed dials never stringify transport errors
+  into logs). Plain web joins through the browser
+  `WebHubTransport` (`?token=` bearer equivalent, IndexedDB identity);
+  the browser extension rides the service worker's existing DAP client
+  (`hub.join` op), never a panel-local second connection. Add agent now defaults to the
+  DAP tab with a paste-into-chat hint; web gains ai-native provider
+  sign-in through the existing popup/callback OAuth flow.
+
+- fix(fa_network#4): the app inserts hub agents arriving via
+  `presence.changed` into the roster (additive displayName/class fields)
+  instead of dropping them, so the online counter no longer sticks at 0
+  when an agent comes online after `roster.snapshot`; legacy frames
+  without those fields create no phantom members. `roster.snapshot`/REST
+  contents are logged for decisive presence debugging.
+
+- feat(gh-1825): `/network` + scoped DAP channel membership — join by
+  paste (invite url / url+keys / bare channel id / whole `fa dap import`
+  command) with session/project/global scopes, live join without
+  restart, per-scope leave + copy invite, and the composer-paste
+  shortcut into the same wizard. Session scope rides a
+  `dap_channel_membership` custom record (leave tombstones, branch
+  resume); project scope is `.fah/dap.json` (committable, `dapkey1`
+  PBKDF2+ChaCha20-Poly1305 encrypted keys); global keeps the legacy
+  `~/.dap` files. Headless CI: `DAP_CHANNELS_JSON` (+`DAP_HUB_URL`,
+  `DAP_CLIENT_SECRET`, `DAP_KEY_PASSPHRASE`) joins at boot with zero
+  prompts, plaintext or encrypted privs mixed. Passphrase chain:
+  env → per-channel macOS Keychain item → one prompt with save default.
+- feat(gh-1844): media slots never fall back to the main connection
+  implicitly — SDK/CLI, app store, and the JS bridge resolve a slot
+  without an override as UNCONFIGURED with an actionable
+  "configure the slot" error; the main connection serves a slot only via
+  the explicit per-slot `useMainConnection: true` opt-in (YAML
+  `models.slots.<slot>.useMainConnection` / app's "Same as main
+  connection" pick, preserved through `media_models.json`). Image and
+  video generation accept multimodal input (text + reference images:
+  sandbox paths, http(s) URLs, base64) on capability-declaring
+  OpenRouter endpoints (`input_references` + declared/probed
+  `input_modalities` gate; unsupported endpoints fail before any network
+  call); the OpenRouter video job API is a first-class video dialect
+  (submit → poll → mp4). New `decide` tool: structured decisions via
+  OpenRouter's Decisions API (`/v1/systemone`) — bool/choice/score
+  questions with calibrated probabilities, structured error results, no
+  streaming.
+
+- feat(gh-1834): the FinalizeGate contract counts a parity/conformance
+  claim as verified only with negative + combination self-checks — new
+  numbered step 2.6 in `prompts/cli/finalize_gate.md` (refused
+  incompatible/mutually exclusive options, empty/corrupt inputs, boundary
+  values, must-NOT-work cases, alongside happy paths; a blanket
+  "everything matches" is not verified). Universality: abstract example
+  only, no benchmark/task/flag names in the prompt; the step is
+  conditional, so tasks with no conformance claim see no gate change.
+  Ledger/verdict wire formats unchanged; validated end-to-end by the
+  scripted IT-4 replay (real CLI + real bash) whose persisted
+  `task_ledger` carries the rejection rows.
+
+- fix(gh-1832): release v1.0.635 published without `fa-extension.zip` — the
+  landing-page download 404'd. The extension's only producer (the daily
+  `build-macos.yml` build-extension leg) derives its tag as "latest+1 at its
+  own dispatch moment"; on 2026-10-24 the `v1.0.635` tag was cut by
+  `auto_release` before those legs ran, so the extension (and the DMGs)
+  landed on an orphaned `v1.0.636` draft while the tag train published
+  v1.0.635 — every leg green, nothing asserted the published asset set.
+  Now `scripts/release_required_assets.txt` is the single source of truth,
+  `scripts/assert_release_assets.sh` gates the `release-provenance` publish
+  flip (a missing asset leaves the release a draft and fails the run
+  loudly) and a new `release-asset-smoke` ci.yml job post-publish probes
+  every landing-page release link + the full required set (red on non-200).
+  Remediation: the exact-tag `fa-extension.zip` (built from the v1.0.635
+  tree by run 40064876732) was uploaded to release v1.0.635 — the landing
+  link serves 200 again.
+
+- fix(gh-1820): the arm64 DMG leg's stale size floor is reseeded onto the
+  shipped v1.0.634 shape — run 4004758753 (post-#1815 SPM-lane adoption)
+  passed the min-platform gate and the full build, then failed the
+  `size_manifest.py` +5% budget on `App.framework/App` +5.1%
+  (25,020,112 → 26,284,144, the accumulated Dart AOT of #1793/#1794/
+  #1796/#1805/#1806); the committed `scripts/size_budget/fa-macos-arm64.tsv`
+  was still the pre-#1096-diet floor (TOTAL 210.5 MB vs the artifact's
+  116.4 MB), so the documented intentional-growth remediation applies:
+  the floor is now the exact `--reseed` output for the failing run's
+  artifact manifest (26 rows ≥ 64 KiB + TOTAL 116,386,369, from the run
+  log's printed table — the zip never uploaded past the gate), locking in
+  Fa 23.4→18.6 MB, quickjs_bridge 950→844 KB; new
+  `test/ci_1820_macos_arm64_size_floor_test.dart` gates the shape green
+  through the REAL `size_manifest.py check` and pins the committed floor
+  byte-identical to a `--reseed` round-trip.
+
+- fix(gh-1814): the desktop DMG lane ADOPTS the SwiftPM lane — Flutter
+  3.47.7 removed the FLUTTER_SWIFT_PACKAGE_MANAGER disable knob
+  (flutter/flutter#193978), so the gh-180 pure-CocoaPods pin became a no-op
+  and the min-platform gate (which forbade any SwiftPM state) failed both
+  DMG legs on every pinned-3.47.7 run (39991663029, 40022900373); the
+  #1813 escape (pin 3.47.4) is unreachable on the ~60kB/s runner link.
+  `scripts/assert_macos_min_platform.sh` now ASSERTS the SPM lane instead:
+  SwiftPM state expected after `flutter build macos --config-only`,
+  generated package floor ≥ the app floor (the silent bump must not skip —
+  the original gh-180 killer), no SwiftPM product above the app minimum,
+  vendored inappwebview manifest floored at 14.0 if it ever reappears.
+  Floors were audited and need no raising: Runner pbxproj 3×14.0, Podfile
+  `:osx, '14.0'`, generated floor 14.0 on 3.47.7, vendored podspec 14.0
+  (its Package.swift stays deleted — the plugin rides the CocoaPods half of
+  the hybrid lane via Podfile.lock). The dead env pin left the build-macos
+  job env; the SDK pin reverts #1813 back to 3.47.7. The ci.yml macOS debug
+  leg gets the same treatment (gh-1814 review): its
+  FLUTTER_SWIFT_PACKAGE_MANAGER=0 pin — a silent no-op on the floating
+  3.47.x stable it resolves past the knob's removal — is removed and the
+  lane comment corrected; the leg rides SPM enabled as it already has been
+  (run 399572012 green).
+- fix(gh-1805): modifier chords no longer type their base letter into the
+  composer while the slash menu is open — the vendored dart_tui decoder
+  puts the base letter into the keystroke's `text` for control bytes
+  (Ctrl+S → `ctrl+s` with text `s`), and the slash-menu edit cluster was
+  the one insert surface missing the `_isCommandKeystroke` guard, so a
+  chord pressed mid-menu poisoned the typed prefix (`/memory` landed as
+  `/smemory`). Plain letters and Shift+letters still type and filter.
+- feat(1515): ONE model-limits settings surface — the settings hub's
+  standalone "Model parameters" row is retired and bare `/model-edit`
+  (TUI) aliases into `/settings` → Model capabilities, pre-focused on the
+  active model. The caps flow gains the model-edit preset ladders +
+  Custom… free input for context window / max output (a preset pick
+  writes `models.overrides` AND rebuilds the active model on the spot —
+  the old flow's live-mutation semantics, now durable), every field row
+  shows the current EFFECTIVE value with its source layer (`pinned` /
+  `role override` / `catalog`), the thinking row is an omp-style selector
+  (only levels the model supports, per-rung budget metadata, current
+  level preselected), and the hub row describes the effective summary
+  (`200K ctx · 16K out · thinking off`) instead of a pin count. The
+  scripted `/model-edit <field> <n>` form and the line-mode limits print
+  are unchanged.
+- feat(gh-1746): opt-in session disk retention — `sessions.retention` in
+  `~/.fah/config.yaml` caps the sessions root and sweeps whole session
+  units (transcript + sidecars) oldest-last-used-first at boot, exempting
+  live, named, young, and the current session; nothing is EVER
+  auto-deleted without the section (byte-identical legacy boot). Adds
+  `fa session clean [--dry-run]`, the `/sessions` + `fa session list`
+  usage footer under a cap, and header-cwd/path-escape guards so a
+  planted session header can never steer a delete outside any root.
+
+- fix(gh-1763): a `bash` tool command running broad process kills can no
+  longer signal its own shell or the harness. Scripts are delivered from a
+  per-exec private temp file (`sh -c '. "$1"' sh <script>`) so the wrapper
+  argv never carries the script body (`pkill -f <pattern>` cannot
+  self-match its own `sh -c`; `$0`/`$#`/exit codes/`set -e`/stdin stay
+  identical), a PATH shim for `pkill`/`killall` plus a `kill()` prelude
+  guard exempt the harness pid chain + process group (exported as
+  `FA_PROTECTED_PIDS`) and the invoking shell from the child's own kills
+  while legitimate victims (stuck test runners, background servers) are
+  still terminated, and headless `SIGTERM` aborts now log
+  `fa: SIGTERM received …` so a child-issued kill never masquerades as a
+  user Ctrl+C (exit code contract unchanged: 130 graceful, 143 escalate).
+
+- fix(gh-1778): the release gate no longer reds a fully-green shard when
+  GitHub's cache service degrades. v1.0.621's `Core tests (shard 2/4)` was
+  killed by its own `timeout-minutes: 12` with 2535/2761 tests green — both
+  cache steps had stalled ~133 s on keys that existed (degraded service,
+  not eviction), cold `pub get` + native-asset hook builds delayed the
+  first test to ~5 min, and the shard needed ~14 min against a budget
+  sized for the warm ~8.8 min wall. The job budget is now 20 min (sibling
+  test-leg band), and both `test-core` cache steps are best-effort
+  (`timeout-minutes: 2` + `continue-on-error: true`) — a failed restore is
+  slower setup, never a red shard. `test/ci_core_shard_timeout_guard_test.dart`
+  pins the budget and the best-effort cache contract (RED-first on the old
+  YAML).
+
+- feat(#1761): the 32KB project-context budget never cuts silently again.
+  A file truncated to its head excerpt now carries an extended
+  `<!-- From: path — N bytes, only the first M shown -->` marker plus an
+  explicit MUST-read-the-full-file instruction (offset/limit/ranges,
+  prompt copy in `prompts/context/project_context_read_full.md`); a file
+  dropped entirely leaves a one-line tombstone naming its path instead of
+  vanishing; and the user gets a dim boot line per truncated/dropped file
+  (CLI line mode prints directly, TUI re-prints after the banner, the app
+  logs through its AppLog boot-notice seam). New `projectContext:` config
+  section: `maxBytes` (default 32768) — `0` disables the section entirely
+  and reads no files (fast boot); unknown keys are tolerated with a note.
+  Leaf-first allocation is unchanged.
+
+- fix(gh-1757): the Android build no longer re-enters the sdkmanager
+  download roulette for CMake. v1.0.619's `build-android` leg died at
+  `:jni:configureCMakeDebug[arm64-v8a]` — the `:jni` module (transitive
+  `jni` package via path_provider_android) wires externalNativeBuild.cmake
+  with no version, so AGP auto-installed its default `cmake;3.22.1`
+  mid-configuration and one corrupt archive ("Archive is not a ZIP
+  archive") red'd the leg, the aggregate Quality gate, and the
+  Advance-vpinned-marker job. The gh-1655 pre-install action now also
+  pre-installs `cmake;3.22.1` with bounded retry + idempotent skip (same
+  hardening the NDK path already carries); the guard test pins the new
+  AC6 assertions and the AGP-version coupling (AC7).
+- feat(#1750): per-model image caps — the outbound request never carries
+  more unique images than the target model accepts. `Model` gains an
+  optional `maxImages` (catalog-seeded: `gemini-4-argon: 10`, measured);
+  `images.perModel.<modelId>` config overrides it (strict `images:`
+  section, user truth wins); the registry resolves
+  `perModel > catalog > images.maxPerRequest` (first present wins, the
+  issue-#1554 shape). A Google-shaped `too many images … maximum allowed
+  for model <id> is <n>` 400 is classified (`image_overflow.dart`, the
+  overflow.ts twin), latches the learned cap for the (provider, model)
+  pair for the run, and re-sends ONCE through the registry at the
+  smaller cap — current-first-then-newest drops with the existing
+  never-silent notices naming the learned cap; a second refusal
+  surfaces exactly as today. JSONL is never rewritten;
+  `images.registry: false` keeps the byte-identical legacy shape
+  including the recovery-off behavior.
+- feat(gh-1760): oversized user-message intake spills to a file instead of
+  blowing the context window. Any incoming user message — headless
+  `-p`/positional, TUI first/mid-session, steering/follow-up drain,
+  external inbox — whose text passes the new relative threshold (a
+  `spills.userFraction` of the live window budget minus the compaction
+  reserve, floored by `spills.userThreshold` bytes) is redacted and
+  written verbatim to `.fah/spills/<sessionId>/user-<n>.md` (the #678
+  layout) from one choke point (`Agent.userMessageGuard`); the model
+  receives a bounded head+tail preview plus a read-in-parts instruction
+  riding the replacement USER message (copy in
+  `prompts/spill/user_read_instruction.md`). Images stay inline, a
+  refused spill write degrades to today's inline behavior, and
+  `spills.enabled: false` / `userThreshold: 0` / the new
+  `FAH_USER_SPILL_THRESHOLD` env knob (bytes) keep the legacy shapes.
+
+- fix(gh-1743): a structured compaction that hits its total-budget
+  watchdog (the factory's 300s `totalBudget`) no longer aborts the
+  live session. `AutoCompactorFactory.run()` now applies the
+  mechanical local-trim fallback (keepRecentTokens, pairing-repaired,
+  `[context trimmed locally]` marker — the same valve the classic
+  pass ladder ends on) instead of failing fast; the honest
+  both-roles-failed verdict is kept only when nothing is droppable.
+
 - fix(gh-1636): auto-compaction stops dumping the internal checkpoint
   summary into the console — the default report is ONE marker line
   (`● auto-compacted · engine: N → M tokens (F freed · P%)`); the records

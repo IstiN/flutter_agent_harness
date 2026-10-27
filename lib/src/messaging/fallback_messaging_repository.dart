@@ -78,15 +78,8 @@ final class FallbackMessagingRepository
   Future<void> send(AgentMessage message) async {
     await _flushQueued();
     final target = await _safeResolve(message.toId);
-    if (target != null) {
-      try {
-        await _primary.send(_retarget(message, target));
-        return;
-      } on Object {
-        // Hub delivery failed (whois race, evicted socket) — the file
-        // fallback below keeps the message; the forwarder retries later.
-      }
-    } else if (message.toId.startsWith('#')) {
+    if (target != null && await _sendPrimary(message, target)) return;
+    if (target == null && message.toId.startsWith('#')) {
       // Channels exist only on the hub; a file mailbox nobody polls would
       // be a silent dead drop. Honest failure instead.
       throw StateError(
@@ -95,6 +88,22 @@ final class FallbackMessagingRepository
     }
     await _fallback.send(message);
     _trackForForward(message);
+  }
+
+  /// Attempts the live primary. Terminal channel refusals escape; ordinary
+  /// transport failures return false so the caller can queue file fallback.
+  Future<bool> _sendPrimary(AgentMessage message, String target) async {
+    try {
+      await _primary.send(_retarget(message, target));
+      return true;
+    } on ChannelDeliveryException {
+      // Actionable by the caller, not a transient transport failure. Never
+      // hide it in a file mailbox no channel consumer polls.
+      rethrow;
+    } on Object {
+      // Whois race/evicted socket: the forwarder retries after reconnect.
+      return false;
+    }
   }
 
   /// Rewrites [message]'s recipient to the resolved [target], keeping the
@@ -119,6 +128,25 @@ final class FallbackMessagingRepository
     }
   }
 
+  /// Resolves through the routing primary and reports whether the QUERY
+  /// itself failed (drop/timeout mid-query — the primary rethrows, e.g.
+  /// the lib hub router's presence door or bin adapter's roster call).
+  /// `(null, false)` is a CONFIRMED roster miss — the connected primary
+  /// answered and does not know the recipient; `(null, true)` means the
+  /// roster could not be consulted and the answer is unknown. The flush
+  /// may untrack only on a confirmed miss: a failed query keeps the
+  /// queue for the next connected call (gh-1838 hostile-env strand —
+  /// a query failure used to untrack queued hub mail permanently).
+  Future<(String?, bool)> _resolveOrQueryFailure(String toId) async {
+    final router = _router;
+    if (router == null || !router.isConnected) return (null, false);
+    try {
+      return (await router.resolveTarget(toId), false);
+    } on Object {
+      return (null, true);
+    }
+  }
+
   void _trackForForward(AgentMessage message) => _pendingForward
       .putIfAbsent(message.toId, () => <String>{})
       .add(message.id);
@@ -136,11 +164,14 @@ final class FallbackMessagingRepository
     if (router == null || !router.isConnected) return;
     for (final entry in _pendingForward.entries.toList()) {
       final recipient = entry.key;
-      final target = await _safeResolve(recipient);
+      final (target, queryFailed) = await _resolveOrQueryFailure(recipient);
       if (target == null) {
-        // Connected, and the roster does not know this recipient: the file
-        // fabric owns this mail — stop tracking, never forward it.
-        _pendingForward.remove(recipient);
+        if (!queryFailed) {
+          // Connected, and the roster answered without this recipient: the
+          // file fabric owns this mail — stop tracking, never forward it.
+          _pendingForward.remove(recipient);
+        }
+        // A failed roster query is "unknown, retry later" — keep tracking.
         continue;
       }
       final pending = await _safePeek(recipient);

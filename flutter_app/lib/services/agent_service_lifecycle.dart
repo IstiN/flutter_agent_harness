@@ -111,6 +111,20 @@ extension AgentServiceLifecycle on AgentService {
     return persister;
   }
 
+  /// The gh-1745 request-blob store, built lazily over the service's env
+  /// (the session files live on the same filesystem, so the blob dir
+  /// resolves next to the project's `.fah`). Null when spilling is
+  /// disabled — the legacy inline persistence applies.
+  TrajectoryRequestBlobStore? _requestBlobStoreFor() {
+    if (!trajectoryRequestBlobs) return null;
+    return _requestBlobStore ??= TrajectoryRequestBlobStore(
+      env: env,
+      sessionId: () => _session?.cachedId,
+      maxBytes: trajectoryRequestBlobMaxBytes,
+      ttlDays: trajectoryRequestBlobTtlDays,
+    );
+  }
+
   /// Whether a provider add/connect flow is latched (gh-1044 I1/AC6).
   bool get providerAddFlowInProgress => _providerAddFlowDepth > 0;
 
@@ -161,5 +175,13 @@ extension AgentServiceLifecycle on AgentService {
     externalSessionRevision.dispose();
     _trajectory.dispose();
     dynamicMessages.dispose();
+    // Issue #1889 lifecycle: a disposed service must not keep feeding a
+    // dead notifier from the process-wide seam — disarm OUR closure only
+    // (a newer service's arming stays armed), then drop the notifier.
+    if (identical(imageDropReportNotice, _armedImageDropReporter)) {
+      imageDropReportNotice = null;
+    }
+    _armedImageDropReporter = null;
+    chatImageNotice.dispose();
   }
 }

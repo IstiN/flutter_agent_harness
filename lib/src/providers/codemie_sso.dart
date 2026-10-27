@@ -237,12 +237,31 @@ Future<List<String>> fetchCodeMieProjects(
   String apiBase,
   String cookie, {
   http.Client? client,
-}) async {
+}) {
+  return _fetchCodeMieProjects('$apiBase/v1/user', {'cookie': cookie}, client);
+}
+
+/// The JWT Bearer twin of [fetchCodeMieProjects] (`Authorization: Bearer`).
+Future<List<String>> fetchCodeMieProjectsWithJwt(
+  String apiBase,
+  String jwtToken, {
+  http.Client? client,
+}) {
+  return _fetchCodeMieProjects('$apiBase/v1/user', {
+    'authorization': 'Bearer $jwtToken',
+  }, client);
+}
+
+Future<List<String>> _fetchCodeMieProjects(
+  String url,
+  Map<String, String> headers,
+  http.Client? client,
+) async {
   final httpClient = client ?? http.Client();
   final ownsClient = client == null;
   try {
     final response = await httpClient
-        .get(Uri.parse('$apiBase/v1/user'), headers: {'cookie': cookie})
+        .get(Uri.parse(url), headers: headers)
         .timeout(const Duration(seconds: 30));
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw ConfigException(

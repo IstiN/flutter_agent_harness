@@ -41,16 +41,18 @@ final class MethodChannelVideoApi implements VideoApi {
     } on MissingPluginException {
       throw _unsupported();
     }
-    if (raw == null) return const [];
-    return [
-      for (final entry in raw)
-        if (entry is Map)
-          (
-            bytes: base64Decode(entry['bytes']?.toString() ?? ''),
-            positionMs: (entry['positionMs'] as num?)?.toInt() ?? 0,
-          ),
-    ];
+    return _decodeFrames(raw);
   }
+
+  /// Decodes the channel's frame rows; null (nothing produced) is empty.
+  static List<VideoFrame> _decodeFrames(List<dynamic>? raw) => [
+    for (final entry in raw ?? const <dynamic>[])
+      if (entry is Map)
+        (
+          bytes: base64Decode(entry['bytes']?.toString() ?? ''),
+          positionMs: (entry['positionMs'] as num?)?.toInt() ?? 0,
+        ),
+  ];
 
   static StateError _unsupported() =>
       StateError('Video frame extraction is not supported on this platform.');

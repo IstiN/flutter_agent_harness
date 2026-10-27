@@ -12,6 +12,7 @@ import '../env/execution_env.dart';
 import '../session/session_grouping.dart';
 import '../session/session_repo.dart';
 import '../session/session_storage.dart';
+import '../session_retention.dart';
 import 'tui_repl.dart';
 import 'tui_theme.dart';
 
@@ -183,7 +184,10 @@ List<String> formatSessionListLines(
 /// session in the shared root (current folder first, issue #83) without
 /// booting the agent. `--json` writes one compact NDJSON row per session
 /// with the additive `agent`/`parent` fields; text mode prints the tree
-/// (`--flat` prints that single-level view). [write]/[writeln] are the
+/// (`--flat` prints that single-level view). [retention] (gh-1746) adds
+/// the usage footer line under a configured cap — text mode only, never
+/// the machine-pure `--json` rows; absent/null or cap-free keeps the
+/// listing byte-identical legacy (REG-1). [write]/[writeln] are the
 /// host's output channel (a [CliIO] tear-off pair) so this file stays a
 /// standalone library.
 Future<int> runSessionListCliCommand({
@@ -194,6 +198,7 @@ Future<int> runSessionListCliCommand({
   String? cwd,
   required bool json,
   required bool flat,
+  SessionRetentionConfig? retention,
 }) async {
   final repo = JsonlSessionRepo(fs: env, sessionsRoot: sessionRoot);
   final List<SessionMetadata> sessions;
@@ -221,12 +226,27 @@ Future<int> runSessionListCliCommand({
     writeln(line);
   }
   writeln('switch: fa --session <name> · flat view: fa session list --flat');
+  // gh-1746 Visibility: the usage footer, only when a cap is configured
+  // (REG-1 keeps the cap-free listing byte-identical legacy).
+  if (retention != null) {
+    try {
+      final usage = await SessionRetentionSweeper(
+        fs: env,
+        sessionsRoot: sessionRoot,
+      ).usage();
+      final footer = sessionUsageFooterLine(usage, retention);
+      if (footer != null) writeln(footer);
+    } on Object {
+      // The footer is best-effort chrome: a failed walk never fails the
+      // listing.
+    }
+  }
   return 0;
 }
 
 Map<String, Object?> _sessionJsonRow(SessionMetadata m, String? name) => {
   'id': m.id,
-  'name':? name,
+  'name': ?name,
   'cwd': m.cwd,
   'createdAt': m.createdAt.toIso8601String(),
   'lastUpdatedAt': (m.lastUpdatedAt ?? m.createdAt).toIso8601String(),

@@ -67,13 +67,13 @@ extension AgentCliInput on AgentCli {
         // file go straight into the session or vanish"). Steer it with
         // the attachment marker instead.
         if (!trimmed.startsWith('!') && _isPathLedChat(trimmed)) {
-          _steerResolved(trimmed, images: images);
+          await _steerResolved(trimmed, images: images);
           return;
         }
         await _dispatchInput(line, trimmed, images);
         return;
       }
-      _steerResolved(trimmed, images: images);
+      await _steerResolved(trimmed, images: images);
       return;
     }
     await _settled;
@@ -129,6 +129,9 @@ extension AgentCliInput on AgentCli {
       await _handleCommand(trimmed, images: images);
       return;
     }
+    // AC7 (issue #1825): a pasted DAP invite opens the /network join
+    // wizard instead of becoming an agent message.
+    if (await _tryDapInviteIntercept(trimmed)) return;
     await _sendUserMessage(line, images);
   }
 

@@ -34,6 +34,27 @@ Future<void> graduateDynamicWidget(
     context,
     service,
   );
+  await _publishGraduatedIfMounted(
+    context,
+    appId: appId,
+    definition: definition,
+    account: account,
+    ledger: ledger,
+    publish: publish,
+  );
+}
+
+/// Opens the launcher's publish sheet for the freshly graduated app —
+/// only while the originating surface is still mounted (gh-1848 split);
+/// the install itself already happened.
+Future<void> _publishGraduatedIfMounted(
+  BuildContext context, {
+  required String appId,
+  required DynamicMessageDefinition definition,
+  required GithubAccountStore account,
+  required WidgetPublicationStore ledger,
+  required WidgetPublishService publish,
+}) async {
   if (!context.mounted) return;
   await showWidgetPublishSheet(
     context,

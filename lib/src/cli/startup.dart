@@ -534,12 +534,31 @@ bool _refNeedsEndpointSlot(
   return spec != null && !sameEndpoint(baseUrl, spec.defaultBaseUrl);
 }
 
+/// Every key name a resolved queue entry references (gh-1781): its
+/// `apiKeyEnv`, its `refreshTokenEnv` (`chatgpt-codex`, issue #1704),
+/// and the DEFAULT Keychain slot for a `chatgpt-codex` entry that named
+/// no `apiKeyEnv` — the saved-login slot the secure store holds.
+Set<String> queueEntryKeyNames(Iterable<ProviderQueueEntry> entries) => {
+  for (final entry in entries) ...[
+    ?entry.apiKeyEnv,
+    ?entry.refreshTokenEnv,
+    if (entry.apiKeyEnv == null && entry.providerType == 'chatgpt-codex')
+      chatGptOAuthCredentialsEnvName,
+  ],
+};
+
 /// Every provider key name the startup snapshot must preload: each catalog
 /// provider's env names, the endpoint-scoped `FA_KEY_<HOST>` name for every
 /// catalog default endpoint plus the configured endpoint and every saved
-/// custom provider's, the two non-catalog media slots, and the explicit
-/// `apiKeyName`s referenced by the roles config.
-Set<String> secureKeyPreloadNames(CliConfig saved, {required String? baseUrl}) {
+/// custom provider's, the two non-catalog media slots, the explicit
+/// `apiKeyName`s referenced by the roles config, and every key name the
+/// resolved boot queue's entries reference (gh-1781 — a queue-only boot
+/// must resolve its keys from the store on cold starts).
+Set<String> secureKeyPreloadNames(
+  CliConfig saved, {
+  required String? baseUrl,
+  Iterable<ProviderQueueEntry> queueEntries = const [],
+}) {
   return {
     for (final spec in providerCatalog.values) ...[
       ...spec.apiKeyEnvNames,
@@ -556,6 +575,7 @@ Set<String> secureKeyPreloadNames(CliConfig saved, {required String? baseUrl}) {
         saved.modelRoles!,
         customProviders: saved.customProviders,
       ),
+    ...queueEntryKeyNames(queueEntries),
   };
 }
 
@@ -617,9 +637,25 @@ bool freshInstallProviderState({
 
 /// The store-key names the SAVED CONFIG explicitly references (gh-1059):
 /// every custom provider entry's own `keyName` plus the roles config's
-/// `apiKeyName`s. Env-only setups reference nothing — the boot warning
-/// must stay silent for them (a missing env key has its own loud banner).
-Set<String> referencedSecureKeyNames(CliConfig saved) {
+/// `apiKeyName`s. Queue entries resolved from the project/user config join
+/// the set via [queueEntries] (gh-1781) — a stored queue key that never
+/// resolves must say so in the boot diagnostics. Env-only setups reference
+/// nothing — the boot warning must stay silent for them (a missing env key
+/// has its own loud banner). A queue key name the [env] view resolves
+/// (non-empty value — the [freshInstallProviderState] rule) is not
+/// store-referenced either (gh-1781 review: the documented env-keyed
+/// project/user-config queue — the canonical `apiKeyEnv: SOME_ENV` shape
+/// the shipped skill doc recommends — printed a false "resolved NOTHING …
+/// boot keyless" alarm on every boot); [secureKeyPreloadNames] keeps the
+/// UNFILTERED names — preloading a name the env shadows is harmless. The
+/// env check scopes to the queue names only: legacy customProviders/roles
+/// names never env-filter (byte-identical legacy diagnostics).
+Set<String> referencedSecureKeyNames(
+  CliConfig saved, {
+  Iterable<ProviderQueueEntry> queueEntries = const [],
+  Map<String, String>? env,
+}) {
+  final environment = env ?? Platform.environment;
   return {
     for (final entry in saved.customProviders)
       if (entry.keyName != null) entry.keyName!,
@@ -628,6 +664,8 @@ Set<String> referencedSecureKeyNames(CliConfig saved) {
         saved.modelRoles!,
         customProviders: saved.customProviders,
       ),
+    for (final name in queueEntryKeyNames(queueEntries))
+      if ((environment[name] ?? '').isEmpty) name,
   };
 }
 
@@ -793,8 +831,8 @@ List<String> secureKeySaveDegradationLines({
   return [
     for (final name in names)
       'warning: key "$name" did not reach the $label '
-      '(${degraded[name]}) — the provider boots keyless for it; fix the '
-      'store, then /key set $name <value>',
+          '(${degraded[name]}) — the provider boots keyless for it; fix the '
+          'store, then /key set $name <value>',
   ];
 }
 
@@ -879,6 +917,16 @@ Map<String, String> collectRoleSecrets(
 /// gh-1000) resolves BEFORE both — it names the account the session
 /// actually ran on.
 ///
+/// [queueResolved] (gh-1781): an active provider queue replaces the
+/// main-model resolution — the gate degrades from "missing key = hard
+/// startup failure" to an OPTIONAL key lookup (a missing key resolves to
+/// the empty string, never throws). The queue's own entries already
+/// passed their key gates in `ProviderQueueRuntime.build` (an all-keyless
+/// queue failed there with the loud queue error), and the legacy
+/// single-provider key never reaches the queue lane's streams — so the
+/// headless boot stays fail-loud exactly where a missing key still
+/// matters.
+///
 /// Throws [ConfigException] when the key is required and missing — the
 /// executable maps that to its `fa:` usage failure.
 String startupApiKey(
@@ -890,6 +938,7 @@ String startupApiKey(
   required bool interactive,
   Map<String, String>? env,
   String? pinnedKeyName,
+  bool queueResolved = false,
 }) {
   // A base URL other than the catalog default (--base-url or config
   // baseUrl) means a user-configured endpoint: local servers need no key.
@@ -914,7 +963,12 @@ String startupApiKey(
           entry.keyName != null)
         entry.keyName!,
   ];
-  final key = defaultRoleResolved || customEndpoint || interactive
+  // gh-1781: an active provider queue replaces the main-model resolution —
+  // the legacy single-provider key never reaches the queue lane's streams,
+  // so the gate degrades to an optional lookup (the queue's own entries'
+  // gates already ran in ProviderQueueRuntime.build).
+  final key =
+      defaultRoleResolved || customEndpoint || interactive || queueResolved
       ? (optionalProviderApiKey(
               provider,
               keys,
@@ -934,6 +988,26 @@ String startupApiKey(
         );
   return key;
 }
+
+/// Whether an active provider queue owns the boot model identity (gh-1781
+/// I6): the launch pinned none of its own — no explicit `--provider` /
+/// `--model` / `--base-url` flag, no `FA_PROVIDER_*` env preconfig, no
+/// per-folder model restore — so the boot model, the provider kind, and
+/// the capability boot notes name the queue's active head instead of the
+/// unused `CliConfig` default. Any explicit pin keeps the legacy boot
+/// identity byte-identical (I7).
+bool queueOwnsBootModel({
+  required bool modelFlag,
+  required bool providerFlag,
+  required bool baseUrlFlag,
+  required bool hasProviderPreconfig,
+  required bool folderRestoreApplied,
+}) =>
+    !modelFlag &&
+    !providerFlag &&
+    !baseUrlFlag &&
+    !hasProviderPreconfig &&
+    !folderRestoreApplied;
 
 /// The required variant of [optionalProviderApiKey]: identical resolution,
 /// but a missing key is a hard startup failure (headless mode performs one
@@ -975,10 +1049,15 @@ String _requiredProviderApiKey(
 /// into the LLM conversation or the session files. The rotation stacks
 /// collected for the roles resolver and the values preloaded from the
 /// platform secure store (keychain values must never reach the transcript
-/// either) are redacted too. The spawned shell already inherits the process
-/// environment, so no env injection is needed here.
+/// either) are redacted too. [queueSecrets] (gh-1781) registers every
+/// resolved provider-queue credential — queue entries routinely carry
+/// CUSTOM env var names (`COPILOT_EPAM_KEY`, `ZAI_CODE_KEY`, …) that no
+/// catalog list knows, so the values must ride the redaction explicitly.
+/// The spawned shell already inherits the process environment, so no env
+/// injection is needed here.
 SecretRedactor buildSecretRedactor({
   Map<String, String> roleSecrets = const {},
+  Map<String, String> queueSecrets = const {},
   SecureKeyCache? keys,
   Map<String, String>? env,
   RedactionPipeline? pipeline,
@@ -1002,6 +1081,9 @@ SecretRedactor buildSecretRedactor({
     if (value != null) registerBoth(name, value);
   }
   for (final entry in roleSecrets.entries) {
+    registerBoth(entry.key, entry.value);
+  }
+  for (final entry in queueSecrets.entries) {
     registerBoth(entry.key, entry.value);
   }
   if (keys != null) {
@@ -1121,7 +1203,12 @@ ProviderQueueScopeInput? _queueScopeFromFile(
 /// same precedence as the roles snapshot). A `chatgpt-codex` entry that
 /// named no `apiKeyEnv` resolves its DEFAULT Keychain slot
 /// ([chatGptOAuthCredentialsEnvName]) under the same rule, and a
-/// `refreshTokenEnv` name resolves the same way (issue #1704).
+/// `refreshTokenEnv` name resolves the same way (issue #1704). Every
+/// resolved base name also sweeps its ROTATION STACK from the environment
+/// (`NAME_2`, `NAME_3`, … — the same rule [collectRoleSecrets] applies,
+/// gh-1781): `buildProviderQueueChain`'s `collectKeyStack` builds a
+/// multi-credential `ApiKeyRing` from it for in-entry key rotation.
+/// Rotation-stack names stay env-only (the store holds base names only).
 Map<String, String> collectQueueSecrets(
   List<ProviderQueueEntry> entries,
   SecureKeyCache keys, {
@@ -1130,21 +1217,23 @@ Map<String, String> collectQueueSecrets(
   final environment = env ?? Platform.environment;
   final secrets = <String, String>{};
   for (final entry in entries) {
-    final names = [
-      ?entry.apiKeyEnv,
-      ?entry.refreshTokenEnv,
-      if (entry.apiKeyEnv == null && entry.providerType == 'chatgpt-codex')
-        chatGptOAuthCredentialsEnvName,
-    ];
-    for (final name in names) {
+    // gh-1781 review r1: one ladder for "which key names does a queue
+    // entry reference" — [queueEntryKeyNames] is the source of truth.
+    for (final name in queueEntryKeyNames([entry])) {
       if (secrets.containsKey(name)) continue;
       final fromEnv = environment[name];
       if (fromEnv != null && fromEnv.isNotEmpty) {
         secrets[name] = fromEnv;
-        continue;
+      } else {
+        final stored = keys.read(name);
+        if (stored != null) secrets[name] = stored;
       }
-      final stored = keys.read(name);
-      if (stored != null) secrets[name] = stored;
+      final suffix = RegExp('^${RegExp.escape(name)}_\\d+\$');
+      for (final candidate in environment.entries) {
+        if (suffix.hasMatch(candidate.key) && candidate.value.isNotEmpty) {
+          secrets[candidate.key] = candidate.value;
+        }
+      }
     }
   }
   return secrets;

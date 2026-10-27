@@ -496,37 +496,68 @@ final class GitSmartHttp {
       final payload = reader.next();
       // Flush pkts separate the (SSH) ref advertisement from the actual
       // report-status: skip them and keep reading.
-      if (payload == null) continue;
-      if (payload.isEmpty) continue;
-      String text;
-      final channel = payload[0];
-      if (channel >= 1 && channel <= 3) {
-        text = utf8.decode(payload.sublist(1), allowMalformed: true);
-      } else {
-        // Plain (non-side-band) report-status lines.
-        text = utf8.decode(payload, allowMalformed: true);
-      }
-      if (channel == 3) {
-        error = text.trim();
-      } else {
-        status.write(text);
-      }
+      if (payload == null || payload.isEmpty) continue;
+      error = _accumulateReportLine(payload, status, error);
     }
+    _throwReportError(error);
+    final report = status.toString();
+    _checkReportStatus(report);
+    return report.trim();
+  }
+
+  /// Decodes one report-status pkt: side-band-64k framing (channel byte
+  /// 1–3, HTTP) strips the channel byte; plain pkt-lines (SSH) decode
+  /// whole.
+  String _decodeReportLine(Uint8List payload) {
+    final channel = payload[0];
+    if (channel >= 1 && channel <= 3) {
+      return utf8.decode(payload.sublist(1), allowMalformed: true);
+    }
+    // Plain (non-side-band) report-status lines.
+    return utf8.decode(payload, allowMalformed: true);
+  }
+
+  /// Accumulates one non-empty report pkt: an error-channel (3) packet
+  /// replaces [error] (the last one wins), anything else appends to
+  /// [status]. Returns the (possibly unchanged) error text.
+  String? _accumulateReportLine(
+    Uint8List payload,
+    StringBuffer status,
+    String? error,
+  ) {
+    final text = _decodeReportLine(payload);
+    if (payload[0] == 3) return text.trim();
+    status.write(text);
+    return error;
+  }
+
+  /// A side-band channel-3 (error) packet aborts the push immediately.
+  void _throwReportError(String? error) {
     if (error != null) {
       throw StateError('remote error: $error');
     }
-    final report = status.toString();
+  }
+
+  /// Verifies the report: unpack must have succeeded (an empty report
+  /// means none arrived at all) and no per-ref `ng` failure lines may
+  /// remain.
+  void _checkReportStatus(String report) {
     if (!report.contains('unpack ok')) {
       throw StateError(
         'push rejected: ${report.trim().isEmpty ? 'no report-status' : report.trim()}',
       );
     }
+    _throwRejectedRefs(report);
+  }
+
+  /// The per-ref status lines: any `ng <ref> <reason>` line is a
+  /// rejected ref — the push as a whole failed.
+  void _throwRejectedRefs(String report) {
     for (final line in report.split('\n')) {
       if (line.startsWith('ng ')) {
         throw StateError('push rejected: $line');
       }
     }
-    return report.trim();
   }
 
   // ---------------------------------------------------------------------------
@@ -542,13 +573,31 @@ final class GitSmartHttp {
     return _parseRefAdvertisement(body);
   }
 
-  String _pickDefaultBranch(_RefAdvertisement advertisement) {
+  /// The branch to default to for a fresh clone: the remote HEAD's
+  /// symref when advertised, else `main`/`master`, else the
+  /// alphabetically-first advertised branch.
+  String _pickDefaultBranch(_RefAdvertisement advertisement) =>
+      _symrefHeadBranch(advertisement) ??
+      _knownDefaultBranch(advertisement) ??
+      _firstAdvertisedBranch(advertisement);
+
+  /// The branch the remote HEAD points at, when advertised via symref.
+  String? _symrefHeadBranch(_RefAdvertisement advertisement) {
     final symref = advertisement.headSymref;
-    if (symref != null && symref.startsWith('refs/heads/')) {
-      return symref.substring('refs/heads/'.length);
-    }
+    if (symref == null || !symref.startsWith('refs/heads/')) return null;
+    return symref.substring('refs/heads/'.length);
+  }
+
+  /// The well-known branch the remote carries, `main` before `master`.
+  String? _knownDefaultBranch(_RefAdvertisement advertisement) {
     if (advertisement.refs.containsKey('refs/heads/main')) return 'main';
     if (advertisement.refs.containsKey('refs/heads/master')) return 'master';
+    return null;
+  }
+
+  /// The alphabetically-first advertised branch; an empty advertisement
+  /// is a hard error.
+  String _firstAdvertisedBranch(_RefAdvertisement advertisement) {
     final branches = advertisement.refs.keys
         .where((k) => k.startsWith('refs/heads/'))
         .toList();

@@ -24,46 +24,63 @@ extension AgentServiceAssistant on AgentService {
         .map((b) => b.thinking)
         .join();
     final hasToolCalls = message.content.any((block) => block is ToolCall);
-    if (text.trim().isEmpty &&
+    if (_isBlankCompletion(message, text, hasToolCalls)) {
+      text = _blankCompletionText(text);
+    }
+    _applyAssistantRow(message, text, hasToolCalls);
+    _applyThinkingRow(thinking);
+    _reportStopFailure(message);
+    _notify();
+  }
+
+  /// A completed turn with neither text nor tool calls (small on-device
+  /// models do this) — the blank-bubble candidate.
+  bool _isBlankCompletion(
+    AssistantMessage message,
+    String text,
+    bool hasToolCalls,
+  ) {
+    return text.trim().isEmpty &&
         !hasToolCalls &&
         message.stopReason != StopReason.error &&
-        message.stopReason != StopReason.aborted) {
-      // A completed turn with neither text nor tool calls (small on-device
-      // models do this) must not render as a blank bubble.
-      text = emptyResponsePlaceholder;
-      // An empty completion right after an image-bearing prompt usually
-      // means the model silently ignored/rejected image input - say so
-      // instead of a bare retry suggestion.
-      // UserMessage.content is Object: a plain String or a block list.
-      final lastUserContent = _agent.state.messages.reversed
-          .whereType<UserMessage>()
-          .firstOrNull
-          ?.content;
-      final lastUserBlocks = switch (lastUserContent) {
-        final List blocks => blocks,
-        _ => const <Object>[],
-      };
-      final hadImage = lastUserBlocks.any((b) => b is ImageContent);
-      if (hadImage) {
-        text =
-            '$text\n\nThe model returned nothing for a message with '
-            'an image attachment - it likely does not support image input. '
-            'Try a vision-capable model or resend without the attachment.';
-      }
-    }
+        message.stopReason != StopReason.aborted;
+  }
+
+  /// The text rendered for a blank completion: the placeholder, or — an
+  /// empty completion right after an image-bearing prompt usually means
+  /// the model silently ignored/rejected image input — the say-so hint
+  /// instead of a bare retry suggestion. UserMessage.content is Object:
+  /// a plain String or a block list.
+  String _blankCompletionText(String text) {
+    final lastUserContent = _agent.state.messages.reversed
+        .whereType<UserMessage>()
+        .firstOrNull
+        ?.content;
+    final lastUserBlocks = switch (lastUserContent) {
+      final List blocks => blocks,
+      _ => const <Object>[],
+    };
+    final hadImage = lastUserBlocks.any((b) => b is ImageContent);
+    if (!hadImage) return emptyResponsePlaceholder;
+    return '$emptyResponsePlaceholder\n\nThe model returned nothing for a message with '
+        'an image attachment - it likely does not support image input. '
+        'Try a vision-capable model or resend without the attachment.';
+  }
+
+  /// The assistant transcript row (issue #692 F — content-or-error
+  /// invariant: an assistant row with no visible content and no error
+  /// state must be structurally impossible. Tool-call-only rounds (the
+  /// row would be an invisible bubble between tool tiles) and
+  /// error/aborted stops (the error tile below IS the visible answer) add
+  /// NO assistant row at all), updating the streamed row when present.
+  void _applyAssistantRow(
+    AssistantMessage message,
+    String text,
+    bool hasToolCalls,
+  ) {
     final target = _currentAssistantMessage;
-    // Issue #692 F — content-or-error invariant: an assistant row with no
-    // visible content and no error state must be structurally impossible.
-    // Tool-call-only rounds (the row would be an invisible bubble between
-    // tool tiles) and error/aborted stops (the error tile below IS the
-    // visible answer) add NO assistant row at all.
-    final skipAssistantRow =
-        text.trim().isEmpty &&
-        (hasToolCalls ||
-            message.stopReason == StopReason.error ||
-            message.stopReason == StopReason.aborted);
     if (target == null) {
-      if (!skipAssistantRow) {
+      if (!_skipAssistantRow(text, hasToolCalls, message)) {
         messages.add(FahChatMessage(role: 'assistant', content: text));
       }
     } else if (text.trim().isNotEmpty) {
@@ -74,6 +91,23 @@ extension AgentServiceAssistant on AgentService {
       messages.remove(target);
     }
     _currentAssistantMessage = null;
+  }
+
+  /// Whether a null-target completion adds NO assistant row.
+  bool _skipAssistantRow(
+    String text,
+    bool hasToolCalls,
+    AssistantMessage message,
+  ) {
+    return text.trim().isEmpty &&
+        (hasToolCalls ||
+            message.stopReason == StopReason.error ||
+            message.stopReason == StopReason.aborted);
+  }
+
+  /// The thinking transcript row: appended when new, else folded into the
+  /// streamed thinking row (an empty tail keeps the streamed content).
+  void _applyThinkingRow(String thinking) {
     final thinkingTarget = _currentThinkingMessage;
     if (thinkingTarget == null) {
       if (thinking.isNotEmpty) {
@@ -85,25 +119,17 @@ extension AgentServiceAssistant on AgentService {
           : thinkingTarget.content;
     }
     _currentThinkingMessage = null;
+  }
+
+  /// Error/aborted stops surface visibly: a failed run is a VISIBLE error
+  /// tile in the transcript (the shared renderer styles it), not just the
+  /// banner field — otherwise a dead key silently looks like "no answer".
+  void _reportStopFailure(AssistantMessage message) {
     if (message.stopReason == StopReason.error) {
-      // A failed run must be VISIBLE: an error tile in the transcript
-      // (the shared renderer styles it), not just the banner field —
-      // otherwise a dead key silently looks like "no answer".
       // Issue #867: a structured 429 renders the localized human message
       // (plan, server-derived countdown, next step); the raw payload stays
       // on the info and never reaches the bubble.
-      final info = message.rateLimit;
-      final text = info != null
-          ? formatRateLimitMessage(
-              info,
-              // The app's locale decision, not the bare platform value —
-              // empty device locales and overrides resolve like everywhere
-              // else (issue #867 thread).
-              localeCode: resolveAppLocale(
-                WidgetsBinding.instance.platformDispatcher.locale,
-              ).languageCode,
-            )
-          : message.errorMessage ?? 'Run failed (${StopReason.error.name})';
+      final text = _stopFailureText(message);
       error = text;
       messages.add(
         FahChatMessage(
@@ -116,6 +142,22 @@ extension AgentServiceAssistant on AgentService {
     } else if (message.stopReason == StopReason.aborted) {
       error = message.errorMessage ?? 'Run aborted';
     }
-    _notify();
+  }
+
+  /// The visible failure text: the localized rate-limit message for a
+  /// structured 429, else the raw error (or a generic fallback).
+  String _stopFailureText(AssistantMessage message) {
+    final info = message.rateLimit;
+    return info != null
+        ? formatRateLimitMessage(
+            info,
+            // The app's locale decision, not the bare platform value —
+            // empty device locales and overrides resolve like everywhere
+            // else (issue #867 thread).
+            localeCode: resolveAppLocale(
+              WidgetsBinding.instance.platformDispatcher.locale,
+            ).languageCode,
+          )
+        : message.errorMessage ?? 'Run failed (${StopReason.error.name})';
   }
 }

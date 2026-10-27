@@ -10,6 +10,8 @@ import 'dart:convert';
 import 'package:cryptography/cryptography.dart';
 import 'package:fa_hub_client/src/hub/canonical.dart';
 import 'package:fa_hub_client/src/hub/payload_crypto.dart';
+import 'package:flutter_agent_harness/src/messaging/hub_transport.dart'
+    show hubUrlWithBrowserBearer;
 
 /// DAP/1 identity: an Ed25519 signing keypair plus a separate X25519
 /// keypair for payload E2E (no cross-algorithm key reuse).
@@ -29,6 +31,14 @@ String dapWsUrlWithToken(String url, String secret) {
   return uri
       .replace(queryParameters: {...uri.queryParameters, 'dap_token': secret})
       .toString();
+}
+
+/// The enrollment secret uses the same bearer-equivalent `?token=` upgrade
+/// auth as the plain-web app. The returned URL is credential-bearing and
+/// must never be logged or included in an exception.
+String dapWsUrlWithEnrollmentSecret(String url, String secret) {
+  if (secret.isEmpty) return url;
+  return hubUrlWithBrowserBearer(Uri.parse(url), secret).toString();
 }
 
 final class DapIdentity {
@@ -159,9 +169,9 @@ Map<String, dynamic> presenceQueryFrame(String frameId) => {
 /// Unsigned `flush` — drains the hub-side offline mailbox.
 Map<String, dynamic> flushFrame() => {'op': 'flush'};
 
-/// Signed `join`. Kept for wire completeness; the extension carries no
-/// channel key store, so channels v1 stays unimplemented and this builder
-/// has no caller today.
+/// Signed `join`. Public enrollment passes an empty [chanPubkey]; an invited
+/// private channel passes its imported public key (the private key stays
+/// local for payload decryption).
 Future<Map<String, dynamic>> joinFrame({
   required DapIdentity identity,
   required String channel,
@@ -174,6 +184,50 @@ Future<Map<String, dynamic>> joinFrame({
   };
   frame['sig'] = await signFrame(frame, identity.signingKeyPair);
   return frame;
+}
+
+/// PUBLIC channel payload: base64(JSON text), with base64 raw UTF-8 tolerated
+/// for foreign producers. Keyed channels never take this path.
+String decodeDapPublicChannelPayload(String payloadB64) {
+  final raw = utf8.decode(base64Decode(payloadB64));
+  try {
+    final decoded = jsonDecode(raw);
+    if (decoded is Map && decoded['text'] is String) {
+      return decoded['text'] as String;
+    }
+  } on Object {
+    // Raw UTF-8 from a foreign producer.
+  }
+  return raw;
+}
+
+/// Decrypts keyed-channel mail with the invited channel private key and the
+/// sender's advertised DH public key.
+Future<String> decryptDapChannelPayload({
+  required String channelPub,
+  required String channelPriv,
+  required String senderX25519B64,
+  required String frameId,
+  required String channel,
+  required String ciphertextB64,
+}) {
+  return decryptPayload(
+    recipientDhKeyPair: SimpleKeyPairData(
+      base64Decode(channelPriv),
+      publicKey: SimplePublicKey(
+        base64Decode(channelPub),
+        type: KeyPairType.x25519,
+      ),
+      type: KeyPairType.x25519,
+    ),
+    senderDhPubkey: SimplePublicKey(
+      base64Decode(senderX25519B64),
+      type: KeyPairType.x25519,
+    ),
+    frameId: frameId,
+    aadTarget: channel,
+    ciphertextB64: ciphertextB64,
+  );
 }
 
 /// Encrypts a DM payload for the holder of [peerX25519B64]. [to] (the

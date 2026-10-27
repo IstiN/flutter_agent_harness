@@ -8,20 +8,35 @@
 // the step's own `timeout-minutes: 15` (900s). GitHub killed the step
 // mid-attempt and the leg can never go green on a cold cache.
 //
-// These tests pin the invariant the step's comment already promises:
-// the download retry budget must FIT the step cap with correct
-// arithmetic (attempts = loop items; curl's own --retry would MULTIPLY
-// into it and restart+truncate rather than resume — curl ≥7.x/8.x
-// ignores -C - for its internal retries, so retries must live in the
-// bash loop, and each attempt must RESUME the partial zip via -C - so
-// slow links make forward progress). Static lint over the workflow YAML,
-// same style as release_hygiene_test.dart / dispatch_watch_test.dart.
+// gh-1759 (2026-10-21): the gh-1149 budget met a slow-link day. The same
+// link that did ~300KB/s on 10-20 delivered 40–108KB/s on 10-21 (both
+// arch jobs, cold cache — the wasmrun-xcframework-v0.1.0 entry saved on
+// 10-20 was LRU-evicted by the repo's daily cache churn within ~37h).
+// Resume itself worked (`** Resuming transfer from byte position …` in
+// the logs; the shrinking `out of N` totals match the prior attempts'
+// byte counts), but 3 × 240s of wire time banked only 29.5MB (x86_64) /
+// 73% (arm64) of the 97,238,501-byte asset — and the pre-loop
+// `rm -f "$ZIP"` threw each run's partial away, so no slow-link day
+// ever made durable progress and the leg could not self-heal.
 //
-// gh-1149 review hardening pins: PER-ARCH zip path (one self-hosted runner,
-// two matrix archs — the shared arch-less /tmp path races), --fail (HTTP
-// errors must engage the loop, not land an error page in the zip), a pinned
-// sha256 of the asset (unzip CRC32 proves internal consistency only), and
-// the load-bearing `break` on success.
+// These tests pin the invariants the step's comments promise, updated
+// for the gh-1759 design:
+// - the download retry budget fits the (now 20-min) step cap with
+//   correct arithmetic (attempts = loop items; curl's own --retry would
+//   MULTIPLY into it and restart+truncate rather than resume — retries
+//   live in the bash loop, and each attempt RESUMES the partial zip via
+//   -C - so slow links make forward progress);
+// - the partial zip is PER-ARCH (one self-hosted runner, two matrix
+//   archs — the shared arch-less /tmp path races) and now PERSISTS
+//   across runs: no wipe before the loop, a pre-loop digest gate skips
+//   the download when the persisted zip is already complete, an
+//   incomplete download KEEPS the partial (the next daily run resumes
+//   it), and only a wrong-content download is purged (self-heal);
+// - --fail (HTTP errors must engage the loop, not land an error page
+//   in the zip), the load-bearing `break` on success, and the pinned
+//   sha256 + byte size of the asset (unzip CRC32 proves internal
+//   consistency only). Static lint over the workflow YAML, same style
+//   as release_hygiene_test.dart / dispatch_watch_test.dart.
 import 'dart:io';
 
 import 'package:test/test.dart';
@@ -132,7 +147,7 @@ class DownloadLoop {
 }
 
 void main() {
-  group('build-macos.yml WasmRun restore step budget (gh-1149)', () {
+  group('build-macos.yml WasmRun restore step budget (gh-1149, gh-1759)', () {
     test('download retry budget fits inside the step timeout-minutes cap', () {
       final step = restoreStep();
       final timeoutMinutes = step['timeout-minutes'] as int?;
@@ -170,8 +185,11 @@ void main() {
       );
 
       // Worst case: every loop attempt burns its full --max-time, plus the
-      // inter-attempt sleeps. 3 × 240s + 2 × 5s = 730s, leaving ~170s of
-      // the 900s cap for connect + unzip + slack.
+      // inter-attempt sleeps. gh-1759 raised this from gh-1149's
+      // 3 × 240s + 2 × 5s = 730s to 4 × 240s + 3 × 5s = 975s — at the
+      // 10-21-measured ~95KB/s the old budget banked only ~71% of the
+      // 97,238,501-byte asset, the new one ~93% with cross-run resume
+      // covering the tail.
       final worstCaseSeconds =
           loop.attempts * maxTime! + (loop.attempts - 1) * loop.sleepSeconds;
       const reserveSeconds = 60; // one connect timeout + unzip + slack
@@ -198,16 +216,18 @@ void main() {
         isTrue,
         reason:
             'each attempt must RESUME the partial zip from its byte offset '
-            '(GitHub release assets serve Range requests). Without -C - every '
-            '--max-time-capped attempt restarts from byte 0: at the observed '
-            '~300 KB/s the 92.7 MB asset needs ~309 s, which no 240 s attempt '
-            'can deliver — the download could never succeed regardless of the '
-            'retry count (gh-1149)',
+            '(GitHub release assets serve Range requests — proven by the '
+            'gh-1759 logs: `** Resuming transfer from byte position '
+            '45468197`). Without -C - every --max-time-capped attempt '
+            'restarts from byte 0: at the observed 40–108KB/s no 240s '
+            'attempt can deliver the 92.7MB asset — the download could '
+            'never succeed regardless of the retry count (gh-1149, '
+            're-confirmed by gh-1759)',
       );
     });
 
-    test('the download starts from a fresh PER-ARCH zip '
-        '(deterministic -C - seed, no cross-arch race)', () {
+    test('the partial zip is PER-ARCH and PERSISTS across runs '
+        '(deterministic -C - seed, no cross-arch race, gh-1759)', () {
       final run = restoreStep()['run'] as String;
       final loopStart = run.indexOf(
         RegExp(r'^\s*for\s+\w+\s+in\s+', multiLine: true),
@@ -222,16 +242,29 @@ void main() {
             'self-hosted runner and have raced shared runner state before '
             '(the shared build.keychain — see the per-arch keychain comment '
             'in this file). A shared arch-less /tmp zip lets one job\'s '
-            'rm -f unlink the other\'s in-flight partial, then both curls '
+            'cleanup unlink the other\'s in-flight partial, then both curls '
             'interleave bytes into one path (gh-1149 review)',
       );
       expect(
         beforeLoop,
-        contains(r'rm -f "$ZIP"'),
+        isNot(contains(r'rm -f "$ZIP"')),
         reason:
-            'a stale /tmp zip from a previous run must never seed -C - '
-            'with an unknown byte offset — rm -f it before the loop so only '
-            'THIS step\'s own partial bytes are resumed',
+            'the partial must NOT be wiped before the loop (gh-1759): the '
+            'pre-gh-1759 `rm -f` threw away every finished-but-failed run\'s '
+            'bytes, so a slow-link day restarted from byte 0 every daily run '
+            'and the leg could never self-heal. -C - is exactly what makes a '
+            'persisted partial safe to resume; the pinned sha256 gate below '
+            'keeps a stale or wrong-content zip from ever being unzipped',
+      );
+      expect(
+        beforeLoop,
+        contains(r'echo "$ASSET_DIGEST  $ZIP" | shasum -a 256 -c -'),
+        reason:
+            'before the loop the step must digest-check an existing zip: a '
+            'complete, digest-valid persisted zip skips the download (the '
+            'cache entry gets LRU-evicted — saved 10-20 06:02Z, gone by '
+            '10-21 19:03Z) AND avoids the HTTP-416 trap of a -C - attempt '
+            'against an already-complete file (gh-1759)',
       );
       expect(
         run.contains('/tmp/WasmRun.xcframework.zip'),
@@ -252,19 +285,22 @@ void main() {
             'without --fail curl exits 0 on HTTP 404/5xx and writes the error '
             'page into the zip: the loop then never retries, and unzip fails '
             'with a misleading "not a zip" error instead of the loop\'s '
-            'explicit "download failed after 3 attempts" (gh-1149 review)',
+            'explicit "download failed after N attempts" (gh-1149 review)',
       );
     });
 
-    test('the downloaded zip is verified against a pinned sha256', () {
+    test('the downloaded zip is verified against a pinned sha256 + byte '
+        'size, incomplete downloads keep the partial, wrong content is '
+        'purged (gh-1759)', () {
       final run = restoreStep()['run'] as String;
-      // Real digest of the pinned asset (wasm_run-v0.1.0 tag, 97238501 bytes),
-      // computed from the release download.
+      // Real digest + size of the pinned asset (wasm_run-v0.1.0 tag,
+      // 97238501 bytes), from the release download.
       const digest =
           'aca903d732202bcdf9c8d19fbb8a795c3c930762419f852a5ee228468c548a98';
+      const size = 97238501;
       expect(
         run,
-        contains('echo "$digest  \$ZIP" | shasum -a 256 -c -'),
+        contains('ASSET_DIGEST="$digest"'),
         reason:
             'unzip CRC32 only proves the zip is INTERNALLY consistent — a '
             'wrong-content-but-valid-zip (asset re-uploaded under the same '
@@ -272,12 +308,54 @@ void main() {
             'under wasmrun-xcframework-v0.1.0. Pin the digest like the '
             'litertlm download in this same file does (gh-1149 review)',
       );
-      final doneIndex = run.indexOf(RegExp(r'^\s*done$', multiLine: true));
-      final checkIndex = run.indexOf('shasum -a 256 -c -');
+      expect(
+        run,
+        contains('ASSET_BYTES=$size'),
+        reason:
+            'the pinned byte size is what tells a TRUNCATED download (keep '
+            'the partial — the next daily run resumes it, the whole point of '
+            'gh-1759) apart from a complete-but-wrong one (purge it — a '
+            'wrong-content zip must never unzip into the permanent cache)',
+      );
+      final doneIndex = run.lastIndexOf(RegExp(r'^\s*done$', multiLine: true));
+      final checkIndex = run.lastIndexOf('shasum -a 256 -c -');
       final unzipIndex = run.indexOf(r'unzip -q "$ZIP"');
       expect(doneIndex, greaterThan(0));
       expect(checkIndex, greaterThan(doneIndex));
       expect(unzipIndex, greaterThan(checkIndex));
+
+      final keepIndex = run.indexOf('keeping the partial');
+      expect(
+        keepIndex,
+        greaterThan(doneIndex),
+        reason:
+            'an INCOMPLETE download (size < ASSET_BYTES) must keep the '
+            'partial and exit non-zero — the next run resumes from its byte '
+            'offset. Purging here would re-create the gh-1759 treadmill '
+            '(every slow-link daily run restarting from byte 0)',
+      );
+      final purgeIndex = run.indexOf(r'rm -f "$ZIP"');
+      expect(
+        purgeIndex,
+        greaterThan(doneIndex),
+        reason:
+            'the ONLY allowed rm -f of the partial is the self-heal purge '
+            'AFTER the loop: a zip that is complete-but-wrong (digest or '
+            'size mismatch on full bytes) would otherwise fail the same way '
+            'on every future run — purge it so the next run restarts clean',
+      );
+      // The incomplete branch must NOT purge: keep and exit 1.
+      final incompleteBranch = run.substring(
+        keepIndex,
+        run.indexOf('exit 1', keepIndex),
+      );
+      expect(
+        incompleteBranch.contains('rm -f'),
+        isFalse,
+        reason:
+            'the incomplete-download branch exits 1 while KEEPING the '
+            'partial — it must not delete the bytes the next run resumes',
+      );
     });
   });
 }

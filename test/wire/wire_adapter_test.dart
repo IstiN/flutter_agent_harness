@@ -173,4 +173,5 @@ String _kindOf(AgentEvent event) => switch (event) {
   TaskLedgerEvent() => 'task_ledger',
   ToolCallHeartbeatEvent() => 'tool_call_heartbeat',
   ToolCallStuckEvent() => 'tool_call_stuck',
+  ToolCallBudgetEvent() => 'tool_call_budget',
 };

@@ -204,7 +204,22 @@ LedgerEntry? _entryFor(
       toolNames: cached.toolNames,
     );
   }
-  final entry = switch (record) {
+  final entry = _recordEntry(record, seq);
+  if (entry == null) return null;
+  cache?._byId[record.id] = _CachedEntry(
+    seq: seq,
+    kind: entry.kind,
+    tokens: entry.tokens,
+    preview: entry.preview,
+    toolNames: entry.toolNames,
+  );
+  return entry;
+}
+
+/// One projecting record to its ledger line: `null` when the record kind
+/// never projects (the ledger lists only model-visible content).
+LedgerEntry? _recordEntry(SessionRecord record, int seq) {
+  return switch (record) {
     MessageRecord(:final message) => _messageEntry(record, message, seq),
     CustomMessageRecord() => LedgerEntry._(
       seq: seq,
@@ -248,15 +263,6 @@ LedgerEntry? _entryFor(
     ),
     _ => null, // Non-projecting records have no ledger line.
   };
-  if (entry == null) return null;
-  cache?._byId[record.id] = _CachedEntry(
-    seq: seq,
-    kind: entry.kind,
-    tokens: entry.tokens,
-    preview: entry.preview,
-    toolNames: entry.toolNames,
-  );
-  return entry;
 }
 
 /// A message-carrying record to its ledger line, or null when the

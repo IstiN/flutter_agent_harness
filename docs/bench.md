@@ -381,7 +381,12 @@ preflights the provider secret before any spend.
    structural verdict (every attempted instance packed, evaluated, and
    scored — a lost shard fails the run, never a silent score). A partial
    run's headline is dilution-labeled in the table: `submit package`
-   divides by the full official set.
+   divides by the full official set. Verdict wording (gh-1838 AC1):
+   "solved" is the strict score (100% of the instance's scored tests);
+   the ✅ structural verdict states the facts only ("ran, were evaluated,
+   and packaged") and, unless every attempted instance is strictly
+   solved, an adjacent line carries the exact outcome ("Strictly solved
+   0/2 — solved requires 100% of scored tests").
 2. **Artifacts** — per-shard run dirs (`pbench-shard-*`) and
    `programbench-submission`: the packaged, Tier-0-verified folder with
    `submission.yaml`, `_stats/score.json` (the tool's ignored-test-
@@ -392,6 +397,40 @@ preflights the provider secret before any spend.
 3. **Verdict gate** — `programbench submit verify` (Tier-0) must pass in
    CI; a submission that cannot pass the registry's own check never
    leaves the run.
+
+### Pricing resolution (gh-1838)
+
+Costs come from the pinned table `bench/pricing.json` (USD per 1M tokens,
+data only — a model missing from it renders `n/a`, never an invented
+rate, #1123). The summary resolves it loudly and overridably:
+
+- **Loud resolution (AC5)** — a pricing file that fails to load/parse
+  prints a `⚠️ pricing:` warning naming the path and the error; an entry
+  that exists never degrades to a silent `n/a` (`kimi-for-coding`'s
+  explicit `$0` subscription-marginal entry renders `$0.0000`).
+- **`FA_BENCH_PRICING` override (AC6)** — the dispatch input
+  `pricing-override` (or the env var directly) supplies inline JSON or a
+  path to a pricing JSON in the same `usd_per_mtok` shape; it merges OVER
+  `bench/pricing.json` per model key (`input`/`output`/`cache_read`/
+  `cache_write`), so a run can price or correct models without editing
+  the repo. The effective source is logged in the summary's `Pricing`
+  row (`repo default — …` / `env override FA_BENCH_PRICING (file <path>)
+  over repo default …`). A failed override falls back loudly to the repo
+  default. Unknown models still render `n/a`.
+- **Aliases (AC7)** — a pricing doc may carry an `"aliases"` map
+  (`{"plan-id": "api-model-id"}`); an aliased model prices at the target
+  API model's rates and is LABELLED in the summary ("estimate @ <model>
+  rates"). The estimate never mixes with real billing: it is excluded
+  from `_stats/cost.json`. The official Kimi API rate-card entries
+  (`kimi-k2.7-code`, `kimi-k2.7-code-highspeed`, `kimi-k2.6`, `kimi-k3`,
+  `kimi-k3.1-pro`, `kimi-k3.1-pro-highspeed`) are in the repo default,
+  verified against platform.kimi.ai/docs/pricing/chat (2026-10-24);
+  `kimi-for-coding` — the coding PLAN, not an API model — keeps its
+  explicit `$0` entry.
+- **Cache-read visibility (AC8)** — priced runs render a cost split
+  (input + output + cache-read + cache-write) under the table: cached
+  reads dominate API-style cost (reference run ≈211M cacheRead tokens vs
+  ≈1.1M fresh input) and must stay in view.
 
 ### Opening the submission PR (manual, by design)
 

@@ -277,23 +277,95 @@ extension on AgentCli {
     }
     final pipe = key.indexOf('|');
     if (pipe < 0) return _handleModelCommand(key);
-    await _switchCrossProviderModel(key, pipe);
+    await _switchCrossProviderModel(key);
   }
 
   /// Switches to the provider/model encoded as `provider|model`. A failing
   /// switch (key store, SSO mint, dead endpoint) must surface as a notice,
   /// never bubble into the picker command and take the TUI down.
-  Future<void> _switchCrossProviderModel(String key, int pipe) async {
+  ///
+  /// G1 (gh-178): the gate runs FIRST — a cross-provider pick moves the
+  /// whole triple or is refused up front (unknown provider E1, no target
+  /// key E3); the plain same-provider switch below is reached only when the
+  /// pick's provider identity IS the active one (or the flow above already
+  /// moved the triple onto it).
+  Future<void> _switchCrossProviderModel(String key) async {
+    final pipe = key.indexOf('|');
+    if (pipe < 0) return;
     final providerName = key.substring(0, pipe);
     final modelId = key.substring(pipe + 1);
+    final refusal = _crossProviderSwitchGate(providerName);
+    if (refusal != null) {
+      io.writeln(refusal.message);
+      return;
+    }
     try {
       await _maybeSwitchToSavedEntry(providerName);
       if (!await _switchToEnvCatalogProvider(providerName, modelId)) {
-        await _switchModel(modelId);
+        // The pick's provider identity was resolved by the `|` key split
+        // (and the triple already moved onto it, or the pick rides the
+        // active one) — same-provider for the CURRENT triple.
+        await _switchModel(modelId, preResolvedSameProvider: true);
       }
     } on Object catch (e) {
       io.writeln('error: model switch to $providerName/$modelId failed: $e');
     }
+  }
+
+  /// The G1 up-front gate for a cross-provider pick (gh-178): null when
+  /// the whole-triple switch may proceed, else the refusal to print.
+  ///
+  /// - E1: the entry's provider no longer resolves (removed since the list
+  ///   was built) — no partial triple is applied.
+  /// - E3: legacy wiring bakes the key at switch time; when the TARGET
+  ///   provider's own family resolves nothing, the request would leave
+  ///   credential-less — refused with the target's `/key set` repair, the
+  ///   request never built. Roles mode resolves per chain entry at request
+  ///   time (skip notices name the right slot), so it is exempt.
+  ModelCoherenceRefusal? _crossProviderSwitchGate(String providerName) {
+    // The active identity's own rows are same-provider picks — the gate
+    // judges CROSS-provider targets only (the session-only explicit-token
+    // case resolves no store slot yet and must keep switching).
+    if (sameProviderIdentity(
+      providerName,
+      _agent.state.model.provider,
+      _activeCustomName,
+    )) {
+      return null;
+    }
+    final entry = config.customProviders?.find(providerName);
+    final spec = catalogProvider(providerName);
+    final resolvable = entry != null || spec != null;
+    final rolesMode = config.modelRolesResolver != null;
+    String? keySlot;
+    var keyResolved = true;
+    if (resolvable && !rolesMode) {
+      final targetSpec = entry?.spec ?? spec!;
+      final endpoint = entry?.baseUrl ?? spec!.defaultBaseUrl;
+      keySlot = entry?.keyName ?? CustomProviderRegistry.keyNameFor(endpoint);
+      // The key the switch itself will bind: a saved entry's OWN slot
+      // first (two entries can share one endpoint with separate slots —
+      // the shared-endpoint probe would find the OTHER entry's slot or
+      // none), then the spec's env/shared resolution for slot-less
+      // entries and catalog providers.
+      String? key;
+      if (entry != null) {
+        key = config.secureKeys == null
+            ? null
+            : (config.secureKeys?.available ?? false
+                  ? config.secureKeys?.read(keySlot)
+                  : null);
+      }
+      key ??= _providerKeyFor(targetSpec, endpoint);
+      keyResolved = key != null && key.isNotEmpty;
+    }
+    return crossProviderSwitchRefusal(
+      providerName: providerName,
+      targetResolvable: resolvable,
+      rolesMode: rolesMode,
+      targetKeyResolved: keyResolved,
+      targetKeySlot: keySlot,
+    );
   }
 
   /// Lands a cross-provider pick on an env-keyed CATALOG provider (no
@@ -481,8 +553,13 @@ extension on AgentCli {
     String cookieOrKey,
   ) async {
     if (entry.spec.api != 'openai-completions') return const [];
-    final fetch = config.modelsFetcher ?? _fetchOpenAiCompatibleModels;
-    return fetch(entry.baseUrl, apiKey: cookieOrKey);
+    final override = config.modelsFetcher;
+    if (override != null) return override(entry.baseUrl, apiKey: cookieOrKey);
+    return _fetchOpenAiCompatibleModels(
+      entry.baseUrl,
+      apiKey: cookieOrKey,
+      client: modelFetchClient(entry.name),
+    );
   }
 
   /// Returns cross-provider model candidates as `(providerName, modelId)`
@@ -708,7 +785,16 @@ extension on AgentCli {
   /// ([_fetchProviderModelIds]): CodeMie `/llm_models`, DIAL deployments,
   /// everything else OpenAI `/models`.
   Future<List<String>> _fetchActiveProviderModels(Model model) {
-    return _fetchProviderModelIds(model.provider, model.baseUrl, _apiKey);
+    // The SAME identity the stream bind used: for a custom entry the
+    // binding keys the ENTRY name, while `model.provider` carries the
+    // catalog spec name (buildCatalogModel(spec.name, …)) — keying the
+    // fetch on model.provider alone let a bound custom entry's /models
+    // refresh ride direct (PR #1927 round-2 review).
+    return _fetchProviderModelIds(
+      _activeCustomName ?? model.provider,
+      model.baseUrl,
+      _apiKey,
+    );
   }
 
   /// Whether the roles chain pins explicit limits for [model]: a chain
@@ -732,14 +818,37 @@ extension on AgentCli {
     return (window: false, cap: false);
   }
 
-  /// Applies the endpoint-reported context window for [model] when it
-  /// differs from the carried one (called from [_refreshModelCache];
-  /// [_rolesPinnedLimits] keeps user-pinned `roles:` limits winning).
+  /// Applies the endpoint-reported context window for [model] (called
+  /// from [_refreshModelCache]; [_rolesPinnedLimits] keeps user-pinned
+  /// `roles:` limits winning). A DIFFERING report rebuilds the model and
+  /// notes the swap; a CONFIRMING report (the well-catalogued common
+  /// case) leaves the model alone but still publishes the verification
+  /// into the shared registry — gh-1742 review round 1, comment 4: the
+  /// provider just verified the window, so the AC6 badge must not keep
+  /// marking it unverified.
   void _applyDetectedContextWindow(Model model) {
     final detected = _modelContextWindows[model.id];
-    if (detected != null && detected != model.contextWindow) {
-      _replaceModelLimits(contextWindow: detected);
+    if (detected == null) return;
+    if (detected != model.contextWindow) {
+      // Fire-and-forget: the boot's detection is not a settings flow —
+      // the /model-edit submit path is the one that contains callback
+      // throws into the error panel (gh-1787).
+      unawaited(
+        _replaceModelLimits(
+          contextWindow: detected,
+          // gh-1742 invariant 2: the detection publishes into the shared
+          // registry so children spawned afterwards ride the SERVED
+          // window, not the advertised one.
+          windowSource: ContextWindowSource.endpointReport,
+        ),
+      );
       io.writeln(_style.dim('model context window: $detected (from endpoint)'));
+    } else {
+      contextWindowRegistry.publish(
+        model: model,
+        window: detected,
+        source: ContextWindowSource.endpointReport,
+      );
     }
   }
 
@@ -765,7 +874,8 @@ extension on AgentCli {
   void _applyDetectedMaxTokens(Model model) {
     final detectedCap = _modelMaxTokens[model.id];
     if (detectedCap != null && detectedCap != model.maxTokens) {
-      _replaceModelLimits(maxTokens: detectedCap);
+      // Fire-and-forget (gh-1787): detection, not a settings flow.
+      unawaited(_replaceModelLimits(maxTokens: detectedCap));
       io.writeln(_style.dim('model max tokens: $detectedCap (from endpoint)'));
     }
   }
@@ -783,7 +893,7 @@ extension on AgentCli {
     final (ids, cacheSupported, windows, maxTokens) = await fetchDialModelsInfo(
       baseUrl,
       apiKey ?? _apiKey,
-      client: config.modelsHttpClient,
+      client: modelFetchClient('dial'),
     );
     if (cacheSupported.isNotEmpty) _dialCacheModels = cacheSupported;
     if (windows.isNotEmpty) _modelContextWindows = windows;
@@ -804,7 +914,7 @@ extension on AgentCli {
       baseUrl,
       apiKey: apiKey ?? _apiKey,
       provider: 'copilot',
-      client: config.modelsHttpClient,
+      client: modelFetchClient('copilot'),
     );
     if (windows.isNotEmpty) _modelContextWindows = windows;
     if (maxTokens.isNotEmpty) _modelMaxTokens = maxTokens;
@@ -814,15 +924,19 @@ extension on AgentCli {
   Future<List<String>> _fetchOpenAiCompatibleModels(
     String baseUrl, {
     required String apiKey,
+    http.Client? client,
   }) async {
     final normalized = baseUrl.replaceAll(RegExp(r'/+$'), '');
     final uri = Uri.parse('$normalized/models');
     final headers = <String, String>{'Accept': 'application/json'};
     if (apiKey.isNotEmpty) headers['Authorization'] = 'Bearer $apiKey';
     try {
-      final response = await http
-          .get(uri, headers: headers)
-          .timeout(const Duration(seconds: 15));
+      final request = http.Request('GET', uri)..headers.addAll(headers);
+      final response =
+          await (client == null
+                  ? http.get(uri, headers: headers)
+                  : client.send(request).then(http.Response.fromStream))
+              .timeout(const Duration(seconds: 15));
       if (response.statusCode != 200) return const [];
       final (ids, windows, maxTokens) = parseModelsResponse(response.body);
       _modelContextWindows = windows;
@@ -849,16 +963,14 @@ extension on AgentCli {
   }
 
   /// The numbered `(provider, model)` rows of the `/models` listing plus the
-  /// `_lastModelList` snapshot powering `/model <n>`.
+  /// `_lastModelList` snapshot powering `/model <n>` — pairs, so each
+  /// numbered pick keeps its provider identity (gh-178 G1).
   void _printNumberedModels(List<(String, String)> entries) {
     for (var i = 0; i < entries.length; i++) {
       io.writeln('  ${i + 1}) ${entries[i].$1}/${entries[i].$2}');
     }
-    _lastModelList = [for (final e in entries) '${e.$1}/${e.$2}'];
+    _lastModelList = List.of(entries);
   }
-
-  /// Returns the full list of known model ids for the active provider.
-  List<String> _listModelsForMenu() => _modelCandidates('');
 
   /// Returns known model ids for the ACTIVE provider only (used by
   /// `/model <id>` line-mode switches and the number picker). The TUI
@@ -868,13 +980,19 @@ extension on AgentCli {
     final activeName = _activeCustomName ?? provider;
     final all =
         _allProvidersModelCache[activeName] ??
-        (_modelCache.isNotEmpty
-            ? _modelCache
-            : (knownModelPresets[provider] ?? [_agent.state.model.id]));
+        _connectionModelFallbacks(provider);
     if (filter.isEmpty) return all.toList();
     final lower = filter.toLowerCase();
     return all.where((id) => id.toLowerCase().contains(lower)).toList();
   }
+
+  /// The active connection's model list when the cross-provider cache
+  /// misses: the session's fetched models, else the provider's presets
+  /// (else the live model id).
+  List<String> _connectionModelFallbacks(String provider) =>
+      _modelCache.isNotEmpty
+      ? _modelCache
+      : (knownModelPresets[provider] ?? [_agent.state.model.id]);
 
   /// `/models [filter]` | `config` | `set <slot> <model> [baseUrl]` |
   /// `remove <slot>` — a bare or filtered invocation lists the endpoint's
@@ -1032,7 +1150,27 @@ extension on AgentCli {
       await _switchToCustomModel(trimmed, custom);
       return;
     }
-    await _switchModel(trimmed);
+    // G1 switch gate (gh-178): resolve a `provider/model` form BEFORE the
+    // plain switch. A cross-provider prefix moves the WHOLE triple through
+    // the provider-switch flow; the same-provider reuse path below is for
+    // current-triple model ids only.
+    switch (parseTypedModelTarget(
+      trimmed,
+      activeProvider: _agent.state.model.provider,
+      activeCustomName: _activeCustomName,
+      activeModelIds: _modelCandidates('').toSet(),
+      isKnownProvider: _isKnownModelProvider,
+    )) {
+      case SameModelSwitch(:final modelId):
+        // The router resolved this id against the REAL resolver — the
+        // backstop's cache-evidence re-parse is skipped (it judges only
+        // unresolved shapes).
+        await _switchModel(modelId, preResolvedSameProvider: true);
+      case CrossProviderSwitch(:final provider, :final modelId):
+        await _switchCrossProviderModel('$provider|$modelId');
+      case RefusedSwitch(:final refusal):
+        io.writeln(refusal.message);
+    }
   }
 
   /// The `/model N` branch of [_handleModelCommand]: resolves a 1-based
@@ -1041,18 +1179,68 @@ extension on AgentCli {
   Future<bool> _switchModelByNumber(String trimmed) async {
     final number = int.tryParse(trimmed);
     if (number == null) return false;
-    await _switchModelOrReport(number, _lastModelList ?? _listModelsForMenu());
+    await _switchModelOrReport(
+      number,
+      _lastModelList ?? _numberedListFallback(),
+    );
     return true;
   }
 
-  /// Switches to list entry [number] (1-based) or reports the range error.
-  Future<void> _switchModelOrReport(int number, List<String> list) async {
-    if (number >= 1 && number <= list.length) {
-      await _switchModel(list[number - 1]);
-    } else {
-      io.writeln('invalid selection: $number (1-${list.length})');
-    }
+  /// The numbered-list fallback when no `/models` listing ran yet: the
+  /// ACTIVE identity's own ids, each tagged with that identity (gh-178 G1
+  /// — a number is a `(provider, model)` row, never a bare id riding a
+  /// possibly-foreign triple).
+  List<(String, String)> _numberedListFallback() {
+    final identity = _activeModelIdentity;
+    return [for (final id in _modelCandidates('')) (identity, id)];
   }
+
+  /// Switches to list entry [number] (1-based) or reports the range error.
+  Future<void> _switchModelOrReport(
+    int number,
+    List<(String, String)> entries,
+  ) async {
+    if (!_validModelNumber(number, entries.length)) {
+      io.writeln('invalid selection: $number (1-${entries.length})');
+      return;
+    }
+    await _applyModelEntryPick(entries[number - 1]);
+  }
+
+  /// G1 (gh-178): ONE entry point for every `(providerIdentity, modelId)`
+  /// pick — the numbered listing, the typed `provider/model` form, and the
+  /// TUI table rows. The active identity's entries take the plain
+  /// same-provider switch; anything else moves the WHOLE triple through
+  /// the cross-provider flow (or is refused there), never the same-provider
+  /// reuse path.
+  Future<void> _applyModelEntryPick((String, String) entry) async {
+    if (sameProviderIdentity(
+      entry.$1,
+      _agent.state.model.provider,
+      _activeCustomName,
+    )) {
+      // The identity check already judged this pick same-provider with the
+      // routing-layer predicate — skip the backstop's narrower re-parse.
+      await _switchModel(entry.$2, preResolvedSameProvider: true);
+      return;
+    }
+    await _switchCrossProviderModel('${entry.$1}|${entry.$2}');
+  }
+
+  /// The provider identity the active model belongs to: the active saved
+  /// entry's name, else the model's provider name.
+  String get _activeModelIdentity =>
+      _activeCustomName ?? _agent.state.model.provider;
+
+  /// Whether [name] resolves to a switchable provider identity: a saved
+  /// registry entry or a catalog record (E1's "known when listed" test).
+  bool _isKnownModelProvider(String name) =>
+      config.customProviders?.find(name) != null ||
+      catalogProvider(name) != null;
+
+  /// Whether [number] is a valid 1-based index into a list of [length].
+  bool _validModelNumber(int number, int length) =>
+      number >= 1 && number <= length;
 
   /// `/model <name>` where [name] is a custom model definition from the
   /// `models:` config section: switches provider, endpoint, and model in one
@@ -1098,7 +1286,13 @@ extension on AgentCli {
       _providerKind = spec.kind;
       _apiKey = key;
       _explicitToken = false;
-      _streamFunction = _catalogStreamFunction(spec.kind, key);
+      // The catalog identity binds the proxy gate — the PREVIOUSLY active
+      // custom entry's name must not leak into this lookup.
+      _streamFunction = _catalogStreamFunction(
+        spec.kind,
+        key,
+        providerName: spec.name,
+      );
       _agent.streamFunction = _streamFunction;
       final built = buildCatalogModel(
         spec.name,
@@ -1168,13 +1362,41 @@ extension on AgentCli {
     );
   }
 
-  Future<void> _switchModel(String modelId) async {
+  Future<void> _switchModel(
+    String modelId, {
+    bool preResolvedSameProvider = false,
+  }) async {
     final current = _agent.state.model;
     final rolesResolver = config.modelRolesResolver;
     if (modelId.isEmpty) {
       io.writeln('model: ${current.id} (${current.api})');
       if (rolesResolver != null) io.writeln(rolesResolver.describeRoles());
       return;
+    }
+    // G1 backstop (gh-178): EVERY construction site below reuses the
+    // CURRENT triple (`provider: current.provider` / `baseUrl:
+    // current.baseUrl` / `authHeader: current.authHeader`) — that shape is
+    // valid ONLY for a same-provider pick. A cross-provider reference that
+    // reaches here (a flow the routing above should have caught) is
+    // refused loudly instead of silently producing the incident's mixed
+    // triple; the repair routes through the whole-triple flow.
+    //
+    // [preResolvedSameProvider] marks callers whose id the ROUTING LAYER
+    // already resolved same-provider with the real resolver (the
+    // parseTypedModelTarget SameModelSwitch plan, the entry-pick identity
+    // check, the cross-provider `provider|model` key split): the backstop
+    // is skipped for them. Its own predicate is cache-evidence-gated and
+    // NARROWER than the router's — re-parsing a resolved id here would
+    // veto legitimate picks (an active-identity head with a nested
+    // vendor-prefixed id the cold cache does not list resolves
+    // CrossProviderSwitch on cache evidence). Unresolved shapes — a
+    // future caller handing a raw id — are still judged.
+    if (!preResolvedSameProvider) {
+      final refusal = _backstopCrossProviderRefusal(modelId);
+      if (refusal != null) {
+        io.writeln(refusal);
+        return;
+      }
     }
     // An endpoint-reported window/cap beats the carried one (the catalog
     // defaults) when the id is known to /models.
@@ -1256,6 +1478,7 @@ extension on AgentCli {
       headers: current.headers,
       compat: current.compat,
       authHeader: current.authHeader,
+      maxImages: catalogMaxImages[modelId],
     );
     await _session?.appendModelChange(
       provider: current.provider,
@@ -1272,20 +1495,66 @@ extension on AgentCli {
     await _recordCustomModel(modelId);
   }
 
+  /// The G1 backstop verdict (gh-178) for an id reaching [_switchModel]
+  /// UNRESOLVED — no [preResolvedSameProvider] caller vouches for it: null
+  /// when the same-provider reuse shape may apply, the refusal message
+  /// when the shape is a cross-provider reference. Kept as its own
+  /// dispatcher so the switch lives in one cohesive, directly testable
+  /// place (the CRAP ratchet: CC-12 in one body measures above the 12.0
+  /// line at any less-than-perfect coverage).
+  ///
+  /// The predicate is cache-evidence-gated and NARROWER than the router's
+  /// (see the [parseTypedModelTarget] kdoc): with no model list for the
+  /// active endpoint there is nothing to distinguish a cross-provider
+  /// reference from a vendor-prefixed id that endpoint serves (OpenRouter's
+  /// `openai/gpt-4o`), and the coherent legacy pasthrough wins. The
+  /// routing paths above use the real resolver.
+  ///
+  /// The `RefusedSwitch` arm exists for the sealed-class exhaustiveness
+  /// check only — [parseTypedModelTarget] currently never constructs one —
+  /// so it stays a straight passthrough of the carried refusal.
+  String? _backstopCrossProviderRefusal(String modelId) {
+    final current = _agent.state.model;
+    final activeCandidates = _modelCandidates('');
+    switch (parseTypedModelTarget(
+      modelId,
+      activeProvider: current.provider,
+      activeCustomName: _activeCustomName,
+      activeModelIds: activeCandidates.toSet(),
+      isKnownProvider: activeCandidates.isNotEmpty
+          ? _isKnownModelProvider
+          : (_) => false,
+    )) {
+      case SameModelSwitch():
+        return null;
+      case CrossProviderSwitch():
+        return const ModelCoherenceRefusal(
+          problem:
+              '"/model" reuse cannot carry a cross-provider pick — '
+              'model ids never ride a foreign provider/endpoint/key '
+              'triple',
+          fields: ['provider', 'baseUrl', 'key'],
+          repair:
+              '/model <provider>/<id> resolves the whole triple, or '
+              '/provider <provider> first',
+        ).message;
+      case RefusedSwitch(:final refusal):
+        return refusal.message;
+    }
+  }
+
   /// `/model-edit [contextWindow|maxTokens <n>]`: shows or overrides the
   /// active model's token limits for this session (persist per chain via
-  /// roles yaml `contextWindow:`/`maxTokens:`). Bare in TUI mode opens an
-  /// interactive two-step picker (field → preset/custom value).
+  /// roles yaml `contextWindow:`/`maxTokens:`). Bare in TUI mode is the
+  /// ALIAS into the Model capabilities flow, pre-focused on the current
+  /// model (issue #1515 — the standalone Model parameters surface is
+  /// retired); line mode keeps the limits print.
   Future<void> _handleModelEdit(String rest) async {
     final args = _splitCommandArgs(rest);
     if (args.isNotEmpty) return _applyModelEditArg(args);
-    await _showModelEditDefault();
-  }
-
-  /// Bare `/model-edit`: the TUI two-step picker, or the line-mode limits.
-  Future<void> _showModelEditDefault() async {
+    final current = _agent.state.model;
     if (_useTui && _tuiController != null) {
-      await _modelEditInteractive();
+      await _editModelCapsOverride(current.provider, current.id);
     } else {
       _printModelLimits();
     }
@@ -1335,79 +1604,80 @@ extension on AgentCli {
     io.writeln(
       _style.dim('set with /model-edit <contextWindow|maxTokens> <n>'),
     );
-  }
-
-  /// Bare `/model-edit` in TUI mode: a two-step interactive picker —
-  /// Bare `/model-edit` in TUI mode: a two-step interactive picker —
-  /// (1) which field to edit (context window or max output tokens),
-  /// (2) a standard preset list plus a "Custom…" free-text entry. The
-  /// picked value is applied via [_replaceModelLimits]. Cancelling either
-  /// step aborts without changes.
-  /// `/model-edit` TUI interactive: delegates to the pure [interactiveModelEdit]
-  /// with the live controller + model.
-  Future<void> _modelEditInteractive() => interactiveModelEdit(
-    current: _agent.state.model,
-    prompt: (spec) => _openHerdrPrompt(_tuiController!, spec),
-    onResult: io.writeln,
-    onApply: _replaceModelLimitsFromEdit,
-  );
-
-  /// Adapts [interactiveModelEdit]'s apply callback to [_replaceModelLimits].
-  void _replaceModelLimitsFromEdit({
-    required bool isContext,
-    required int value,
-  }) {
-    _replaceModelLimits(
-      contextWindow: isContext ? value : null,
-      maxTokens: isContext ? null : value,
+    // The merge note (issue #1515): the standalone interactive editor and
+    // the hub's "Model parameters" row are retired — the Model
+    // capabilities flow is the one editing surface (presets + custom
+    // input + effective values with source layers live there).
+    io.writeln(
+      _style.dim(
+        'interactive editing: /settings → Model capabilities '
+        '(the Model parameters surface merged there)',
+      ),
     );
   }
 
   /// `/model-edit <contextWindow|maxTokens> <n>`: validates the value and
   /// applies the override.
-  void _applyModelEditArg(List<String> args) {
+  Future<void> _applyModelEditArg(List<String> args) async {
     final value = args.length == 2 ? int.tryParse(args[1]) : null;
     if (args.length != 2 || value == null || value <= 0) {
       io.writeln('usage: /model-edit <contextWindow|maxTokens> <n>');
       return;
     }
-    _applyModelLimitEdit(args[0], value);
+    await _applyModelLimitEdit(args[0], value);
   }
 
   /// Applies a validated `/model-edit` limit override by field name.
-  void _applyModelLimitEdit(String field, int value) {
+  Future<void> _applyModelLimitEdit(String field, int value) async {
     switch (field) {
       case 'contextWindow':
-        _replaceModelLimits(contextWindow: value);
+        await _replaceModelLimits(
+          contextWindow: value,
+          windowSource: ContextWindowSource.userPin,
+        );
         io.writeln('model context window set to $value');
       case 'maxTokens':
-        _replaceModelLimits(maxTokens: value);
+        await _replaceModelLimits(maxTokens: value);
         io.writeln('model max tokens set to $value');
       default:
         io.writeln('usage: /model-edit <contextWindow|maxTokens> <n>');
     }
   }
 
-  /// Rebuilds the active model with new token limits, preserving every other
-  /// field (endpoint detection and `/model-edit`).
-  void _replaceModelLimits({int? contextWindow, int? maxTokens}) {
+  /// Rebuilds the active model with new token limits, preserving every
+  /// other field (endpoint detection and `/model-edit`). The copy rides
+  /// [Model.copyWith] — the one field list (gh-1742 review round 1,
+  /// comment 5) — so the recent fields (thinkingLevel, capabilityNotes,
+  /// the scoped watchdogs) survive the swap.
+  ///
+  /// The host callback is AWAITED, not unawaited (gh-1787 E1): a detached
+  /// callback's throw can only hit the zone (a raw stack in the
+  /// transcript); awaited, it propagates to the caller — the `/model-edit`
+  /// submit path contains it into the clean error panel, while the boot's
+  /// endpoint-detection callers keep the fire-and-forget semantics with
+  /// an explicit `unawaited`.
+  Future<void> _replaceModelLimits({
+    int? contextWindow,
+    int? maxTokens,
+    ContextWindowSource? windowSource,
+  }) async {
     final current = _agent.state.model;
-    _agent.state.model = Model(
-      id: current.id,
-      name: current.name,
-      api: current.api,
-      provider: current.provider,
-      baseUrl: current.baseUrl,
-      reasoning: current.reasoning,
-      input: current.input,
-      cost: current.cost,
-      contextWindow: contextWindow ?? current.contextWindow,
-      maxTokens: maxTokens ?? current.maxTokens,
-      headers: current.headers,
-      compat: current.compat,
-      authHeader: current.authHeader,
+    _agent.state.model = current.copyWith(
+      contextWindow: contextWindow,
+      maxTokens: maxTokens,
     );
-    unawaited(config.onModelChanged?.call(_agent.state.model));
+    // gh-1742 invariant 2: a window write publishes into the shared
+    // registry (endpoint report or user pin — the pin wins by publish
+    // order), so main, children, and the meter resolve ONE window per
+    // model identity.
+    if (contextWindow != null && windowSource != null) {
+      contextWindowRegistry.publish(
+        model: _agent.state.model,
+        window: contextWindow,
+        source: windowSource,
+      );
+    }
+    await config.onModelChanged?.call(_agent.state.model);
   }
 }
 
@@ -1516,99 +1786,4 @@ Future<String?> promptTextTui(
   );
   if (result == null || result is! TextPromptAnswer) return null;
   return result.value.trim();
-}
-
-/// Testable core of the TUI model-edit flow. Prompts for field (context
-/// window vs max tokens), then a preset or custom value, and calls [onApply]
-/// with the result. Reports messages through [onResult].
-Future<void> interactiveModelEdit({
-  required Model current,
-  required Future<TuiPromptAnswer?> Function(TuiPromptSpec) prompt,
-  required void Function(String message) onResult,
-  required void Function({required bool isContext, required int value}) onApply,
-}) async {
-  final isContext = await pickModelEditField(prompt, current);
-  if (isContext == null) return;
-
-  final value = await pickModelEditValue(prompt, isContext, onResult);
-  if (value == null) return;
-
-  onApply(isContext: isContext, value: value);
-  onResult('${isContext ? 'context window' : 'max tokens'} set to $value');
-}
-
-/// Step 1: picks which field to edit (null on cancel).
-Future<bool?> pickModelEditField(
-  Future<TuiPromptAnswer?> Function(TuiPromptSpec) prompt,
-  Model current,
-) async {
-  final result = await prompt(
-    AskPromptSpec(
-      header: 'Model Edit',
-      question: 'Which limit to edit?',
-      index: 0,
-      total: 1,
-      options: [
-        AskOption(
-          label: 'Context Window',
-          description: 'Current: ${current.contextWindow}',
-        ),
-        AskOption(
-          label: 'Max Output Tokens',
-          description: 'Current: ${current.maxTokens}',
-        ),
-      ],
-    ),
-  );
-  if (result == null || result is! AskPromptAnswer) return null;
-  return result.value.selected.first.contains('Context');
-}
-
-/// Step 2: picks a preset value or enters a custom one (null on cancel).
-Future<int?> pickModelEditValue(
-  Future<TuiPromptAnswer?> Function(TuiPromptSpec) prompt,
-  bool isContext,
-  void Function(String message) onResult,
-) async {
-  final presets = isContext
-      ? [4096, 8192, 16384, 32768, 65536, 131072, 204800, 1048576]
-      : [4096, 8192, 16384, 32768, 65536];
-  final result = await prompt(
-    AskPromptSpec(
-      header: 'Model Edit',
-      question: '${isContext ? 'Context window' : 'Max tokens'} size:',
-      index: 0,
-      total: 1,
-      options: [
-        for (final p in presets) AskOption(label: formatTokenPreset(p)),
-        const AskOption(
-          label: 'Custom…',
-          description: 'Enter a number manually',
-        ),
-      ],
-    ),
-  );
-  if (result == null || result is! AskPromptAnswer) return null;
-  final picked = result.value.selected.first;
-  if (picked != 'Custom…') return parseTokenPreset(picked);
-  return _pickCustomTokenValue(prompt, onResult);
-}
-
-Future<int?> _pickCustomTokenValue(
-  Future<TuiPromptAnswer?> Function(TuiPromptSpec) prompt,
-  void Function(String message) onResult,
-) async {
-  final textResult = await prompt(
-    const TextPromptSpec(
-      header: 'Model Edit',
-      question: 'Enter value (tokens):',
-    ),
-  );
-  if (textResult == null || textResult is! TextPromptAnswer) return null;
-  final value = int.tryParse(textResult.value.trim()) ?? 0;
-  if (value <= 0) {
-    onResult('invalid value');
-    return null;
-  }
-  return value;
 }

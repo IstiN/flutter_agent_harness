@@ -41,6 +41,7 @@ final class AgentCliConfig {
     this.herdrSpawn,
     this.modelsFetcher,
     this.modelsHttpClient,
+    this.providerNetworks = const {},
     this.tuiMouseCapture = true,
     this.tuiSyncOutput,
     this.tuiClassic = false,
@@ -67,6 +68,10 @@ final class AgentCliConfig {
     // surfaces in the notice stream — stderr alone is invisible inside the
     // TUI's alternate screen. Null = no drop happened.
     this.rolesDropNotice,
+    // The `sessions:` section (gh-1746): the opt-in retention policy.
+    // Null = the section is absent — boot never sweeps and never notes
+    // (AC1's byte-identical legacy).
+    this.sessionsRetention,
     this.providersQueueRuntime,
     this.providerQueueEnv,
     this.ttsr,
@@ -74,6 +79,7 @@ final class AgentCliConfig {
     this.redactionPipeline,
     this.jobLogDir,
     this.spills,
+    this.projectContext,
     this.modelsConfig,
     this.onModelsConfigChanged,
     this.onModelChanged,
@@ -116,6 +122,7 @@ final class AgentCliConfig {
     this.compactionJudgeBudgetSeconds,
     this.contextWindowCap,
     this.stuckTool,
+    this.foregroundCall,
     // gh-1577: the empty-hiccup retry knobs, threaded next to the loop's
     // maxEmptyRetries so hosts/tests can tune the budget and pin the
     // backoff (tests pass Duration.zero). Defaults match the loop's.
@@ -154,10 +161,15 @@ final class AgentCliConfig {
     this.browserBridgeHandle,
     this.browserController,
     this.hubFabric,
+    this.dapDisplayNameResolver,
     this.agentCapabilities = const [],
     this.machineName,
     this.persistAbortedPartials = false,
     this.wireDump = false,
+    this.trajectoryRequestBlobs = true,
+    this.trajectoryRequestBlobMaxMb = 50,
+    this.trajectoryRequestBlobMaxBytes = 50 << 20,
+    this.trajectoryRequestBlobTtlDays = 30,
     this.updateCommand,
     this.autoUpdate = AutoUpdateMode.notify,
   });
@@ -182,6 +194,27 @@ final class AgentCliConfig {
   /// captured per request, redacted through the active pipeline, capped,
   /// and persisted as a `trajectory_wire_dump` session record.
   final bool wireDump;
+
+  /// gh-1745 request-blob spilling (`trajectory.requestBlobs` yaml,
+  /// default true): the heavy half of every request capture — per-message
+  /// previews/block texts, the raw wire dump — is persisted to
+  /// `.fah/trajectories/<sid>/requests/` instead of the session JSONL,
+  /// whose `model_request_summary` record keeps lightweight metadata plus
+  /// a `spillFile` pointer. `false` restores the legacy inline
+  /// persistence byte-identically.
+  final bool trajectoryRequestBlobs;
+
+  /// `trajectory.requestBlobMaxMb` — the per-session blob-dir byte budget
+  /// (default 50 MB).
+  final int trajectoryRequestBlobMaxMb;
+
+  /// The same budget in bytes ([TrajectorySection.requestBlobMaxBytes]
+  /// threaded through [CliConfig] at boot, gh-1745 rework): the blob
+  /// store consumes this instead of re-shifting MB inline.
+  final int trajectoryRequestBlobMaxBytes;
+
+  /// `trajectory.requestBlobTtlDays` — blob age bound (default 30 days).
+  final int trajectoryRequestBlobTtlDays;
 
   /// The self-update policy (issue #1377, `auto_update` yaml key), plumbed
   /// from [CliConfig.autoUpdate] by the host at boot. Mutable: the
@@ -225,6 +258,13 @@ final class AgentCliConfig {
   /// cancel/retry/convert follow-up. `null` = unsupervised (the loop runs
   /// byte-identically to before).
   final StuckToolConfig? stuckTool;
+
+  /// Foreground tool-call budget (`agent.foregroundCallBudgetSeconds` +
+  /// `agent.foregroundCallAutoConvert`, issue #1786), a pass-through into
+  /// the [Agent] — defaults live in
+  /// [ForegroundCallBudgetConfig.fromLeaves]/the loop. `null` =
+  /// unconfigured (the loop's defaults apply).
+  final ForegroundCallBudgetConfig? foregroundCall;
 
   /// gh-1577: empty-hiccup retry budget (see
   /// [AgentLoopConfig.emptyHiccupRetries]).
@@ -482,6 +522,10 @@ final class AgentCliConfig {
   /// banner), never stderr-only.
   final String? rolesDropNotice;
 
+  /// The `sessions:` section (gh-1746), null when absent. Drives the
+  /// boot retention check: sweep/note only what the user configured.
+  final SessionsConfig? sessionsRetention;
+
   /// The provider-queue runtime (issue #418): when set, the default role
   /// resolves through the queue's stream function — sticky cursor, loud
   /// failover on provider death. Wins over the roles resolver's default
@@ -526,6 +570,11 @@ final class AgentCliConfig {
   /// the user one, wholesale. Null or inactive (`enabled: false` /
   /// `threshold: 0`) = no spill hooks attached, byte-identical legacy.
   final SpillsConfig? spills;
+
+  /// The resolved `projectContext:` section (issue #1761) — the merged
+  /// project-context budget. Null = the 32KB default; `maxBytes: 0`
+  /// disables the section and skips every file read.
+  final ProjectContextConfig? projectContext;
 
   /// The live models config (the `models:` section of `~/.fah/config.yaml`),
   /// shared with the executable: `/models set`/`/models remove` mutate its
@@ -792,6 +841,10 @@ final class AgentCliConfig {
   /// the fetchers create their own client; tests inject a `MockClient`.
   final http.Client? modelsHttpClient;
 
+  /// Per-provider proxy bindings (`providers:` → `network:`, issue #1921),
+  /// carried from the loaded [CliConfig]. Empty = every provider direct.
+  final Map<String, ProviderNetworkConfig> providerNetworks;
+
   /// Whether the TUI captures the mouse for wheel scrolling. Default true:
   /// the session renders in the alternate screen, where the terminal has no
   /// native scrollback — without capture a two-finger scroll does nothing
@@ -931,6 +984,11 @@ final class AgentCliConfig {
   /// implementation is IO-bound (DAP WebSocket) and lives bin-side — hosts
   /// inject it here. Null (default) keeps the pure file fabric.
   final MessagingRepository? hubFabric;
+
+  /// Live DAP display-name lookup for channel @-mention attribution. The
+  /// IO-bound hub owns the identity; this pure callback keeps that layering
+  /// out of the CLI and follows runtime reconnects/name changes.
+  final String? Function()? dapDisplayNameResolver;
 
   /// Capabilities this host announces in the fabric directory (issue #27
   /// phase 2) — from the `fabric.capabilities` config section. Rendered as

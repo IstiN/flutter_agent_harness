@@ -30,6 +30,8 @@ import '../a2a/a2a_client.dart';
 import '../a2a/a2a_manager.dart';
 import '../cancel_token.dart';
 import '../compaction/compaction.dart';
+import '../compaction/context_pressure.dart';
+import '../compaction/context_window_registry.dart';
 import '../compaction/token_estimation.dart';
 import '../context.dart';
 import '../json_parse.dart';
@@ -42,6 +44,7 @@ import '../session/session_tree.dart';
 import '../types.dart';
 import 'agent_registry.dart';
 import 'child_session_io.dart';
+import 'deliverables.dart';
 import 'delivery_slo.dart';
 import 'output_manager.dart';
 import 'parallel.dart';
@@ -86,8 +89,28 @@ final class TaskExecutor {
     this.childSessionFactory,
     this.childSessionOpener,
     this.compactionEngine,
+    this.contextWindowRegistry,
+    this.contextWindowCap,
     this.misuseBreaker = true,
+    this.deliverableRedactor,
   });
+
+  /// Pre-persistence redaction gate for deliverable artifacts (issue
+  /// #1829, I3): the same pipeline tool results pass. Null = the host runs
+  /// no redactor (artifact text passes unredacted, like tool results on
+  /// such a host).
+  final String Function(String text)? deliverableRedactor;
+
+  /// The session's durable-deliverable capture (issue #1829). One instance
+  /// per executor — it owns the chunk ledgers. Null without a
+  /// [subagentManager] — no handles to record on and no budget to honor.
+  late final DeliverableCapture? _capture = subagentManager == null
+      ? null
+      : DeliverableCapture(
+          store: store,
+          manager: subagentManager!,
+          redact: deliverableRedactor,
+        );
 
   /// The tool-misuse circuit breaker switch (issue #862, default true):
   /// every spawned child agent gets a breaker wired into its loop.
@@ -129,6 +152,19 @@ final class TaskExecutor {
   /// child and writes its transcript into it.
   final Future<Session> Function(String parentSessionId, String childId)?
   childSessionFactory;
+
+  /// The shared per-model context-window registry (gh-1742 invariant 2):
+  /// when present, every child resolves its compaction window and its
+  /// loop-guard basis from the SAME registered value the main agent and
+  /// the ctx meter use — a live detection or `/model-edit` published
+  /// after the session booted reaches children spawned afterwards.
+  /// Null = the carried `model.contextWindow` (legacy behavior).
+  final ContextWindowRegistry? contextWindowRegistry;
+
+  /// The owner context-window cap (`agent.contextWindowCap`,
+  /// issues #273/#729) applied to children too (gh-1742): the cap wins in
+  /// whichever direction it points, same as the main agent.
+  final int? contextWindowCap;
 
   /// Optional child-session opener (issue #222): when present, [resumeChild]
   /// reopens a retained child's JSONL session from
@@ -381,11 +417,14 @@ final class TaskExecutor {
       // an idle/at-wall child. When prior + incoming crosses the threshold,
       // compact BEFORE the first request so the guard never hard-fails a
       // deliverable message; then ride every boundary like a fresh spawn.
+      // probe: true (issue #1924) — the resume is the parent's recovery
+      // funnel, so it ignores the failure latch for THIS one pass.
       await _compactChildIfNeeded(
         id,
         child,
         wiring: wiring,
         incomingTokens: estimateRequestTokens([UserMessage.text(promptText)]),
+        probe: true,
       );
       agent.prepareNextTurn = (nextTurn) =>
           _compactChildAtBoundary(id, agent, wiring, nextTurn);
@@ -509,40 +548,200 @@ final class TaskExecutor {
   }
 
   /// The shared compaction core (issue #439): stamps the child's context
-  /// pressure on its handle, and when the estimate (plus [incomingTokens])
-  /// crosses the threshold, flushes the transcript and runs ONE
-  /// [AutoCompactor] pipeline — the same engine the main loop uses.
-  /// Best-effort by contract: a failed pass changes nothing and the
-  /// over-window guard stays the last resort.
+  /// pressure on its handle, and when the pressure crosses the threshold,
+  /// flushes the transcript and runs ONE [AutoCompactor] pipeline — the
+  /// same engine the main loop uses. Best-effort by contract: a failed
+  /// pass changes nothing and the over-window guard stays the last resort.
+  ///
+  /// gh-1742: the pressure is RECONCILED with the provider-reported usage
+  /// (`max(estimate, observed input+cacheRead)` — invariant 1), the
+  /// window resolves from the shared registry (invariant 2), and an
+  /// observed-over-headroom crossing runs the pass FORCED (invariant 4 /
+  /// AC5) so the compactor's own estimate-basis re-check cannot skip it.
   Future<bool> _compactChildIfNeeded(
     String id,
     Agent child, {
     required ({Model model, StreamFunction stream}) wiring,
     int incomingTokens = 0,
+    bool probe = false,
   }) async {
     final manager = subagentManager;
     if (manager == null || childSessionFactory == null) return false;
-    final window = effectiveContextWindow(wiring.model.contextWindow, null);
+    final window = _childContextWindow(wiring.model);
     if (window <= 0) return false;
     final settings = CompactionSettings.forWindow(window);
-    final est =
-        estimateRequestTokens(
-          child.state.messages,
-          systemPrompt: child.state.systemPrompt,
-          tools: child.state.tools,
-        ) +
-        incomingTokens;
-    // Pressure stamp: the transcript-only estimate, what task_status shows.
+    final transcriptEst = estimateRequestTokens(
+      child.state.messages,
+      systemPrompt: child.state.systemPrompt,
+      tools: child.state.tools,
+    );
+    // Provider truth: the last completed request's accepted context
+    // (E1: null without a usable report — estimate-only, legacy shape).
+    final observed = lastObservedContextTokens(child.state.messages);
+    final est = transcriptEst + incomingTokens;
+    final decision = assessContextPressure(
+      estimatedTokens: est,
+      observedTokens: observed,
+      contextWindow: window,
+      settings: settings,
+    );
+    // Pressure stamp: the reconciled transcript-basis pressure (estimate
+    // plus the trailing incoming prompt), what task_status shows.
     manager.notePressure(
       id,
-      estTokens: est - incomingTokens,
+      estTokens: reconcileContextTokens(
+        estimatedTokens: transcriptEst + incomingTokens,
+        observedTokens: observed,
+      ),
       windowTokens: window,
+      observedTokens: observed,
+      windowVerified: contextWindowRegistry?.isVerified(wiring.model) ?? false,
     );
-    if (!shouldCompact(est, window, settings)) return false;
+    if (!decision.triggered) return false;
+    // Issue #1924 bounded-failure latch: after [_maxChildCompactionFailures]
+    // consecutive failed passes, boundary passes stop — every further pass
+    // is a heavy LLM call the broken surface will burn at every boundary
+    // (the #1914-shape silent no-op loop). The parent-visible stamp is on
+    // the handle; pressure stamps keep flowing so the parent watches the
+    // wall approach and can resume (probe: true — the recovery funnel
+    // attempts ONE pass) or respawn the child (a fresh run resets).
+    if (!probe &&
+        (_childCompactionFailures[id] ?? 0) >= _maxChildCompactionFailures) {
+      return false;
+    }
+    final runForced = _updateForcedLatch(
+      id,
+      observed,
+      needsForce: decision.needsForce,
+      observedTriggered: decision.observedTriggered,
+    );
     await _flushChildTranscript(id, child);
     final session = _childSessions[id];
     if (session == null) return false;
     final before = est - incomingTokens;
+    final pass = await _runChildCompactionPass(
+      session: session,
+      child: child,
+      window: window,
+      settings: settings,
+      wiring: wiring,
+      runForced: runForced,
+    );
+    if (!pass.ok) {
+      _noteChildCompactionFailure(id, 'pass failed: ${pass.error}');
+      return false; // The guard remains the last resort.
+    }
+    final after = estimateRequestTokens(
+      child.state.messages,
+      systemPrompt: child.state.systemPrompt,
+      tools: child.state.tools,
+    );
+    if (after < before) {
+      // Post-compaction invariant (#387): the flush cursor restarts at the
+      // projected length so later flushes append only new messages.
+      _childSessionWrites[id] = child.state.messages.length;
+      _childCompactionFailures.remove(id);
+      manager.noteCompactionHealth(id);
+      manager.recordCompaction(id, freedTokens: before - after);
+      return true;
+    }
+    if (pass.attempted) {
+      // An ATTEMPTED pass that freed nothing is the #1914 shape (repeated
+      // cut point): count it as failed. A gate-DECLINED no-op
+      // (`attempted == false` — the engine's own shouldCompact re-check
+      // sees the transcript under the trigger, e.g. the resume probe
+      // where only + incomingTokens crossed it) is healthy: no stamp, no
+      // count, the guard remains the last resort.
+      _noteChildCompactionFailure(
+        id,
+        'pass freed nothing (repeated cut point?)',
+      );
+    }
+    return false;
+  }
+
+  /// Consecutive failed child compaction passes (issue #1924), per child
+  /// id. Reset at the start of every fresh spawn run and on every
+  /// successful pass; survives resumes so a broken surface cannot be
+  /// hammered once per boundary.
+  final _childCompactionFailures = <String, int>{};
+
+  /// The bounded-failure budget (issue #1924): three consecutive failed
+  /// passes latch the child off until its next run.
+  static const int _maxChildCompactionFailures = 3;
+
+  /// Counts one failed pass and stamps the actionable parent-visible error
+  /// on the handle (issue #1924): from the FIRST failure the parent sees
+  /// the running count; at the budget the stamp names the latch.
+  void _noteChildCompactionFailure(String id, String cause) {
+    final failures = (_childCompactionFailures[id] ?? 0) + 1;
+    _childCompactionFailures[id] = failures;
+    subagentManager?.noteCompactionHealth(
+      id,
+      error:
+          'child compaction failed $failures consecutive passes '
+          '($cause)${failures >= _maxChildCompactionFailures ? ' — latched: no further boundary passes this run' : ''}; '
+          'the context keeps growing toward the window; parent: '
+          'task_resume this child (the resume probes one compaction '
+          'pass) or respawn the task',
+    );
+  }
+
+  /// The forced-channel latch (gh-1742): an observation already reacted to
+  /// never re-forces until a strictly higher one arrives — the stale
+  /// pre-compaction anchor rides the kept tail after a fold, and a
+  /// constant over-line observation must not re-run forced passes every
+  /// boundary. An observation back UNDER the line (the honest post-fold
+  /// report) resets the latch — reset = lower the anchor while keeping
+  /// the latch armed, so the next re-crossing must still be
+  /// strictly-greater to fire again. The anchor lives for the child's
+  /// whole retained lifetime (resumable children keep their id, and the
+  /// executor's other per-child maps evict nothing either), so it dies
+  /// with the executor rather than at some child-end event that does
+  /// not exist.
+  ///
+  /// Returns whether the pass must run FORCED (null observations never
+  /// force).
+  bool _updateForcedLatch(
+    String id,
+    int? observed, {
+    required bool needsForce,
+    required bool observedTriggered,
+  }) {
+    if (observed == null) return false;
+    final latch = _forcedObservedAt[id];
+    var runForced = false;
+    if (needsForce && _isNewAnchor(latch, observed, higher: true)) {
+      _forcedObservedAt[id] = observed;
+      runForced = true;
+    } else if (!observedTriggered &&
+        _isNewAnchor(latch, observed, higher: false)) {
+      _forcedObservedAt[id] = observed;
+    }
+    return runForced;
+  }
+
+  /// Whether [observed] clears the latch anchor: strictly higher re-forces,
+  /// strictly lower resets (gh-1742). No anchor admits anything.
+  static bool _isNewAnchor(int? latch, int observed, {required bool higher}) {
+    if (latch == null) return true;
+    return higher ? observed > latch : observed < latch;
+  }
+
+  /// Runs ONE [AutoCompactor] pipeline for the child — the same engine the
+  /// main loop uses. Best-effort by contract: a failed pass reports
+  /// `(ok: false, error: …)` and nothing changes; `attempted` reports
+  /// whether the engine actually attempted a pass (issue #1924 review
+  /// round 1) — a gate-declined no-op is a healthy non-attempt.
+  Future<({bool ok, bool attempted, String? error})> _runChildCompactionPass({
+    required Session session,
+    required Agent child,
+    required int window,
+    required CompactionSettings settings,
+    required ({Model model, StreamFunction stream}) wiring,
+    required bool runForced,
+  }) async {
+    final hooks = _SilentCompactionHooks();
     try {
       final smol = rolesResolver?.resolveRole(smolModelRole);
       await AutoCompactorFactory(
@@ -552,28 +751,39 @@ final class TaskExecutor {
         settings: settings,
         sources: AutoCompactorSources(
           smolStream: smol?.stream,
-          smolModel: smol?.model,
+          // Invariant 2 (gh-1742 review round 1, comment 6): compaction
+          // LLM calls ride the smol model WITH the registered window —
+          // the roles-config Model carries the stale catalog value (the
+          // copilot-1M-vs-256k shape), so the checkpoint payload budget
+          // and summarizer window must come from the registry truth.
+          smolModel: smol == null
+              ? null
+              : withRegisteredContextWindow(smol.model, contextWindowRegistry),
           mainStream: wiring.stream,
           mainModel: wiring.model,
         ),
-        hooks: _SilentCompactionHooks(),
+        hooks: hooks,
         engine: compactionEngine ?? CompactionEngine.structured,
+        force: runForced,
       ).run();
-    } on Object {
-      return false; // The guard remains the last resort.
+    } on Object catch (error) {
+      return (ok: false, attempted: hooks.attempted, error: '$error');
     }
-    // Post-compaction invariant (#387): the flush cursor restarts at the
-    // projected length so later flushes append only new messages.
-    _childSessionWrites[id] = child.state.messages.length;
-    final after = estimateRequestTokens(
-      child.state.messages,
-      systemPrompt: child.state.systemPrompt,
-      tools: child.state.tools,
-    );
-    if (after >= before) return false;
-    manager.recordCompaction(id, freedTokens: before - after);
-    return true;
+    return (ok: true, attempted: hooks.attempted, error: null);
   }
+
+  /// The observed-over-headroom latch per child id (see the forced-channel
+  /// latch in [_compactChildIfNeeded]).
+  final _forcedObservedAt = <String, int>{};
+
+  /// The child's compaction/loop-guard window (gh-1742 invariant 2): the
+  /// shared registry's value for this model identity when one was
+  /// published, else the carried window — then the owner cap applied in
+  /// whichever direction it points (issues #273/#729).
+  int _childContextWindow(Model model) => effectiveContextWindow(
+    contextWindowRegistry?.windowFor(model) ?? model.contextWindow,
+    contextWindowCap,
+  );
 
   /// Resume guards (E4 + a2a): everything resumable must be a local,
   /// non-running, non-aborted child; violations throw named errors so the
@@ -654,11 +864,19 @@ final class TaskExecutor {
     final wiring = _resolveChildWiring(definition);
     final child = Agent(
       model: wiring.model,
+      // gh-1742 review round 1, comment 2: the same owner clamp the spawn
+      // path passes (see _buildChild) — a resumed child's guard basis
+      // stays the capped one too.
+      contextWindowCap: contextWindowCap,
       // The ORIGINAL batch context rides along (persisted on the handle):
       // the transcript does not carry the system prompt, so a resume that
       // rebuilt the prompt without it would silently drop the batch's
       // shared background.
-      systemPrompt: _buildSystemPrompt(definition, handle.context),
+      systemPrompt: _buildSystemPrompt(
+        definition,
+        handle.context,
+        replyBudget: manager.maxReplyChars,
+      ),
       streamFunction: wiring.stream,
       toolRegistry: toolRegistry,
       externalSteeringSource: () => _inboxSteeringMessages(id),
@@ -668,6 +886,9 @@ final class TaskExecutor {
       toolMisuseBreaker: misuseBreaker ? ToolMisuseBreaker() : null,
     );
     final agent = child;
+    // Issue #1829 Core flow B: same truncated-call capture as a fresh
+    // spawn — a resumed child's lost reply is recovered identically.
+    child.onTruncatedToolCall = (call) => _capture?.captureSalvaged(id, call);
     final inboxWakeSub = manager.events.listen((event) {
       if (event.handle.id == id && event.message != null) {
         agent.pokeSteering();
@@ -726,7 +947,11 @@ final class TaskExecutor {
     final childRegistry = _childToolRegistry(definition);
     final (child, inboxWakeSub) = _buildChild(
       id: id,
-      systemPrompt: _buildSystemPrompt(definition, context),
+      systemPrompt: _buildSystemPrompt(
+        definition,
+        context,
+        replyBudget: subagentManager?.maxReplyChars,
+      ),
       toolRegistry: childRegistry,
       wiring: wiring,
       cancelToken: cancelToken,
@@ -736,6 +961,9 @@ final class TaskExecutor {
     // persists a 'running' row that already carries the child's usage, so
     // rehydrate can tell a never-started row from a mid-run one.
     final untrackUsage = _trackChildUsage(id, child);
+    // Issue #1924: a fresh run gets a fresh compaction-failure budget —
+    // the latch is per-run, never per-child-lifetime.
+    _childCompactionFailures.remove(id);
     // Crash-resilient transcript: the real JSONL session is created lazily
     // on the FIRST transcript flush — never at spawn time. Subagents that
     // finish with no transcript leave no session file behind.
@@ -743,71 +971,17 @@ final class TaskExecutor {
       await child.prompt(await _buildUserPrompt(item, id));
       unawaited(_flushChildTranscript(id, child));
       cancelToken?.throwIfCancelled();
-
-      final finalText = _finalAssistantText(child);
-      final (storedContent, structured) = await _applyOutputSchema(
+      return await _completeChildRun(
         child,
-        item,
-        finalText,
-        cancelToken,
-      );
-
-      final capped = _capOutput(storedContent);
-      // Issue #862 review: a duplicate registration in the child surface
-      // (the luna wiring bug) degraded into a note — surface it loudly on
-      // the spawn result instead of letting it sit in the registry. The
-      // warning text is single-sourced in the shared helper so both child
-      // -result paths can't drift.
-      store.put(id, capped.$1);
-      _surfaceDuplicateRegistrationNotes(
-        childRegistry.duplicateNotes,
-        id,
-        existingOutput: capped.$1,
-      );
-      // The stored artifact IS the source of truth for the result output:
-      // base content, or base + the single-sourced warning.
-      final output = store.get(id)!;
-      final usage = _usageStats(child);
-
-      final failed = structured?.status == StructuredValidationStatus.invalid;
-      onProgress?.call(
-        index,
-        id,
-        failed ? TaskSpawnPhase.failed : TaskSpawnPhase.completed,
-      );
-
-      // Phase 3b: the child's explicit reply (if any) rides the result; a
-      // missing reply is surfaced via completedWithoutReply.
-      final reply = subagentManager?[id]?.lastReply;
-
-      // Update the retained-subagent handle with the final status. Usage
-      // was billed incrementally at turn boundaries (plus the final delta
-      // here) — never in one completion lump.
-      if (subagentManager != null) {
-        _billChildUsage(id, child);
-        await subagentManager!.update(
-          id,
-          status: failed ? SubagentStatus.failed : SubagentStatus.completed,
-          modelId: wiring.model.id,
-          error: failed ? 'schema_violation: ${structured!.error}' : null,
-        );
-      }
-
-      return TaskSingleResult(
+        item: item,
         index: index,
         id: id,
-        agent: agentName,
-        task: item.task,
-        status: failed ? TaskSpawnStatus.failed : TaskSpawnStatus.completed,
-        output: output,
-        truncated: capped.$2,
-        duration: stopwatch.elapsed,
-        tokens: usage.tokens,
-        requests: usage.requests,
-        model: wiring.model.id,
-        error: failed ? 'schema_violation: ${structured!.error}' : null,
-        structuredOutput: structured,
-        reply: reply,
+        agentName: agentName,
+        wiring: wiring,
+        childRegistry: childRegistry,
+        stopwatch: stopwatch,
+        onProgress: onProgress,
+        cancelToken: cancelToken,
       );
     } finally {
       // Last-chance usage bill (idempotent — the cursor makes a second
@@ -824,6 +998,128 @@ final class TaskExecutor {
     }
   }
 
+  /// The completion half of [_run], extracted to keep both halves inside
+  /// the CRAP budget: schema application, output capping, deliverable
+  /// out-of-band pointers (issue #1829), the tier-2 stub fallback, and the
+  /// final registry status write.
+  Future<TaskSingleResult> _completeChildRun(
+    Agent child, {
+    required TaskItem item,
+    required int index,
+    required String id,
+    required String agentName,
+    required ({Model model, StreamFunction stream}) wiring,
+    required ToolRegistry childRegistry,
+    required Stopwatch stopwatch,
+    required TaskSpawnProgressCallback? onProgress,
+    required CancelToken? cancelToken,
+  }) async {
+    final finalText = _finalAssistantText(child);
+    final (storedContent, structured) = await _applyOutputSchema(
+      child,
+      item,
+      finalText,
+      cancelToken,
+    );
+
+    final capped = _capOutput(storedContent);
+    // Issue #862 review: a duplicate registration in the child surface
+    // (the luna wiring bug) degraded into a note - surface it loudly on
+    // the spawn result instead of letting it sit in the registry. The
+    // warning text is single-sourced in the shared helper so both child
+    // -result paths can't drift.
+    store.put(id, capped.$1);
+    _surfaceDuplicateRegistrationNotes(
+      childRegistry.duplicateNotes,
+      id,
+      existingOutput: capped.$1,
+    );
+    // The stored artifact IS the source of truth for the result output:
+    // base content, or base + the single-sourced warning.
+    final output = store.get(id)!;
+    final usage = _usageStats(child);
+
+    final failed = structured?.status == StructuredValidationStatus.invalid;
+    onProgress?.call(
+      index,
+      id,
+      failed ? TaskSpawnPhase.failed : TaskSpawnPhase.completed,
+    );
+
+    // Phase 3b: the child's explicit reply (if any) rides the result; a
+    // missing reply is surfaced via completedWithoutReply.
+    final handle = subagentManager?[id];
+    final reply = handle?.lastReply;
+
+    // Issue #1829: deliverable pointers ride the completion OUT OF BAND,
+    // independent of any later model-written recovery stub (I4): a stub
+    // overwrites lastReply, never the recorded artifacts.
+    final deliverables = List<DeliverableRecord>.of(
+      handle?.deliverables ?? const [],
+    );
+    final stubFallback = _stubFallbackNote(
+      handle,
+      reply: reply,
+      deliverables: deliverables,
+    );
+
+    // Update the retained-subagent handle with the final status. Usage
+    // was billed incrementally at turn boundaries (plus the final delta
+    // here) - never in one completion lump.
+    if (subagentManager != null) {
+      _billChildUsage(id, child);
+      await subagentManager!.update(
+        id,
+        status: failed ? SubagentStatus.failed : SubagentStatus.completed,
+        modelId: wiring.model.id,
+        error: failed ? 'schema_violation: ${structured!.error}' : null,
+      );
+    }
+
+    return TaskSingleResult(
+      index: index,
+      id: id,
+      agent: agentName,
+      task: item.task,
+      status: failed ? TaskSpawnStatus.failed : TaskSpawnStatus.completed,
+      output: output,
+      truncated: capped.$2,
+      duration: stopwatch.elapsed,
+      tokens: usage.tokens,
+      requests: usage.requests,
+      model: wiring.model.id,
+      error: failed ? 'schema_violation: ${structured!.error}' : null,
+      structuredOutput: structured,
+      reply: reply,
+      deliverables: deliverables,
+      stubFallback: stubFallback,
+    );
+  }
+
+  /// Tier-2 fallback note (issue #1829, AC11): when a deliverable call was
+  /// recorded truncated and the child finished WITHOUT a usable reply —
+  /// completed-without-reply, schema-invalid, or a hard failure — the
+  /// result names the transcript honestly instead of a silent stub. The
+  /// note references the CHILD ID (stable, resolvable via the registry /
+  /// task_status) rather than [SubagentHandle.sessionId]: the real session
+  /// path attaches asynchronously with the first transcript flush, so at
+  /// result-build time it is usually still the placeholder.
+  String? _stubFallbackNote(
+    SubagentHandle? handle, {
+    required String? reply,
+    required List<DeliverableRecord> deliverables,
+  }) {
+    if (handle == null ||
+        !handle.hadTruncatedDeliverable ||
+        (reply != null && reply.trim().isNotEmpty)) {
+      return null;
+    }
+    return 'the child attempted a report that was cut off by the output '
+        'token limit and finished without a usable reply; its transcript '
+        'is recoverable from the child session (child id: ${handle.id})'
+        '${deliverables.isEmpty ? ' — no salvageable report text was captured' : ''}';
+  }
+
   /// Builds the child agent and attaches its manager wiring: the inbox
   /// wake subscription (event-poked for same-host mail — the fast half of
   /// the #647 delivery SLO, the steering probe is the cross-process
@@ -838,6 +1134,13 @@ final class TaskExecutor {
   }) {
     final child = Agent(
       model: wiring.model,
+      // gh-1742 review round 1, comment 2: the child loop shares the
+      // owner clamp the main loop runs — its over-window guard and the
+      // gh-1409 operative-pin budget measure against
+      // effectiveContextWindow(model.contextWindow, contextWindowCap),
+      // the SAME basis _childContextWindow resolves for compaction. A
+      // registry raise (served > catalog) must not fork the two bases.
+      contextWindowCap: contextWindowCap,
       systemPrompt: systemPrompt,
       streamFunction: wiring.stream,
       toolRegistry: toolRegistry,
@@ -857,6 +1160,10 @@ final class TaskExecutor {
       // parent loop — the luna death was a child.
       toolMisuseBreaker: misuseBreaker ? ToolMisuseBreaker() : null,
     );
+    // Issue #1829 Core flow B: an output-truncated reply/agent_message
+    // call is captured as a partial artifact (never executed — I2); the
+    // pointer rides the child completion out of band.
+    child.onTruncatedToolCall = (call) => _capture?.captureSalvaged(id, call);
     final inboxWakeSub = subagentManager?.events.listen((event) {
       if (event.handle.id == id && event.message != null) {
         child.pokeSteering();
@@ -890,6 +1197,7 @@ final class TaskExecutor {
       for (final tool in subagentMonitoringTools(
         manager: subagentManager,
         currentSubagentId: currentSubagentId,
+        capture: () => _capture,
       ).where((t) => childInjectedToolNames.contains(t.name))) {
         toolRegistry.register(tool);
       }
@@ -1095,12 +1403,24 @@ final class TaskExecutor {
   /// whose rebuilt model would strand the parent's runtime-resolved
   /// output-cap ladder entry (endpoint detection, `/model` edits) behind
   /// a stale catalog default (issue #302).
+  ///
+  /// gh-1742 (invariant 2): the resolved model carries the REGISTERED
+  /// context window for its identity, so the child loop's over-window
+  /// guard and the compaction threshold divide by the same honest number
+  /// the main agent and the ctx meter resolve. The owner cap rides the
+  /// child `Agent` itself (`_buildChild`/`_buildResumeChild` pass
+  /// `contextWindowCap`), so both bases clamp through
+  /// [effectiveContextWindow] by construction — a registry raise cannot
+  /// fork the guard from compaction.
   ({Model model, StreamFunction stream}) _resolveChildWiring(
     TaskAgentDefinition definition,
   ) {
     final rolesResolver = this.rolesResolver;
     if (rolesResolver == null) {
-      return (model: model(), stream: streamFunction());
+      return (
+        model: withRegisteredContextWindow(model(), contextWindowRegistry),
+        stream: streamFunction(),
+      );
     }
     final role = definition.modelRole ?? subagentModelRole;
     // A pinned role always resolves (pinsRole ⇒ chainFor non-null); an
@@ -1114,14 +1434,27 @@ final class TaskExecutor {
         ? rolesResolver.resolveRole(role)
         : null;
     if (resolved != null) {
-      return (model: resolved.model, stream: resolved.stream);
+      return (
+        model: withRegisteredContextWindow(
+          resolved.model,
+          contextWindowRegistry,
+        ),
+        stream: resolved.stream,
+      );
     }
-    return (model: model(), stream: streamFunction());
+    return (
+      model: withRegisteredContextWindow(model(), contextWindowRegistry),
+      stream: streamFunction(),
+    );
   }
 
   /// The child's system prompt: the definition's prompt plus the shared
   /// batch context under a `# CONTEXT` heading.
-  String _buildSystemPrompt(TaskAgentDefinition definition, String context) {
+  String _buildSystemPrompt(
+    TaskAgentDefinition definition,
+    String context, {
+    int? replyBudget,
+  }) {
     final systemPrompt = StringBuffer(definition.systemPrompt.trim());
     if (context.trim().isNotEmpty) {
       systemPrompt
@@ -1129,6 +1462,14 @@ final class TaskExecutor {
         ..writeln()
         ..writeln('# CONTEXT')
         ..write(context.trim());
+    }
+    // Issue #1829 Core flow C: children with the reply/agent_message
+    // surface get the report-size contract with the live budget.
+    if (replyBudget != null) {
+      systemPrompt
+        ..writeln()
+        ..writeln()
+        ..write(deliverableChunkContract(replyBudget));
     }
     return systemPrompt.toString();
   }
@@ -1382,6 +1723,19 @@ final class TaskExecutor {
     String error, {
     bool aborted = false,
   }) {
+    // Capture happens mid-run: a failed run can already carry salvaged
+    // deliverable artifacts and an explicit reply (issue #1829 review —
+    // a failed completion is still a completion; the pointers ride it).
+    final handle = subagentManager?[id];
+    final reply = handle?.lastReply;
+    final deliverables = List<DeliverableRecord>.of(
+      handle?.deliverables ?? const [],
+    );
+    final stubFallback = _stubFallbackNote(
+      handle,
+      reply: reply,
+      deliverables: deliverables,
+    );
     return TaskSingleResult(
       index: index,
       id: id,
@@ -1395,6 +1749,9 @@ final class TaskExecutor {
       requests: 0,
       model: model().id,
       error: error,
+      reply: reply,
+      deliverables: deliverables,
+      stubFallback: stubFallback,
     );
   }
 
@@ -1535,14 +1892,25 @@ final class TaskExecutor {
 final class _SilentCompactionHooks extends AutoCompactorHooks {
   _SilentCompactionHooks();
 
+  /// Whether the engine ATTEMPTED any pass (issue #1924 review round 1):
+  /// a gate-declined no-op (`shouldCompact` re-check declines — e.g. the
+  /// resume probe where only `+ incomingTokens` crossed the trigger while
+  /// the transcript sits under it) fires NO pass and NO attempt — the
+  /// caller must never read that healthy no-op as a failed pass.
+  bool attempted = false;
+
   @override
-  void onPass(AutoCompactorPass pass) {}
+  void onPass(AutoCompactorPass pass) {
+    attempted = true;
+  }
 
   @override
   void onRetry(int attempt, int maxAttempts, Duration backoff, Object error) {}
 
   @override
-  void onDone(int passes, int tokens) {}
+  void onDone(int passes, int tokens) {
+    if (passes > 0) attempted = true;
+  }
 
   @override
   void onBothRolesFailed(Object lastError) {}

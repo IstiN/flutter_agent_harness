@@ -154,14 +154,42 @@ final class MediaGateway {
     final argument = voice?.trim();
     final configured = endpoint.voice?.trim();
     if (_isGoogleEndpoint(endpoint)) {
-      final googleVoice = argument != null && argument.isNotEmpty
-          ? argument
-          : (configured != null && configured.isNotEmpty ? configured : 'Kore');
-      return _speakGoogle(endpoint, trimmed, googleVoice);
+      return _speakGoogle(
+        endpoint,
+        trimmed,
+        _resolveVoice(argument, configured, 'Kore'),
+      );
     }
-    final usedVoice = argument != null && argument.isNotEmpty
-        ? argument
-        : (configured != null && configured.isNotEmpty ? configured : 'alloy');
+    final usedVoice = _resolveVoice(argument, configured, 'alloy');
+    final response = await _postSpeech(endpoint, trimmed, usedVoice);
+    return _save(
+      'speech',
+      'mp3',
+      response.bodyBytes,
+      detail: 'voice "$usedVoice"',
+    );
+  }
+
+  /// Resolves the TTS voice: an explicit [argument], else the slot's
+  /// configured [configured] voice, else [fallback].
+  static String _resolveVoice(
+    String? argument,
+    String? configured,
+    String fallback,
+  ) {
+    if (argument != null && argument.isNotEmpty) return argument;
+    if (configured != null && configured.isNotEmpty) return configured;
+    return fallback;
+  }
+
+  /// Posts the OpenAI-compatible `POST /audio/speech` request for [text]
+  /// with [voice] and validates the HTTP status (200 expected), answering
+  /// the raw mp3 response. Closes the client when it is self-owned.
+  Future<http.Response> _postSpeech(
+    MediaEndpoint endpoint,
+    String text,
+    String voice,
+  ) async {
     final client = _httpClient ?? http.Client();
     final http.Response response;
     try {
@@ -173,8 +201,8 @@ final class MediaGateway {
         },
         body: jsonEncode({
           'model': endpoint.modelId,
-          'input': trimmed,
-          'voice': usedVoice,
+          'input': text,
+          'voice': voice,
           'response_format': 'mp3',
         }),
       );
@@ -187,12 +215,7 @@ final class MediaGateway {
         '${response.body.trim()}',
       );
     }
-    return _save(
-      'speech',
-      'mp3',
-      response.bodyBytes,
-      detail: 'voice "$usedVoice"',
-    );
+    return response;
   }
 
   /// The Google-native speech path (see [speak]): Gemini TTS over
@@ -321,10 +344,7 @@ final class MediaGateway {
         cancelToken: cancelToken,
       );
     }
-    final usedSeconds = seconds != null && seconds > 0 ? seconds : null;
-    final usedSize = size != null && size.trim().isNotEmpty
-        ? size.trim()
-        : null;
+    final (usedSeconds, usedSize) = _normalizedVideoOptions(seconds, size);
     final created = await _postJson(
       endpoint,
       '/videos',
@@ -337,16 +357,8 @@ final class MediaGateway {
       what: 'Video generation',
       okStatuses: const {200, 202},
     );
-    final jobId = created['id']?.toString();
-    if (jobId == null || jobId.isEmpty) {
-      throw StateError('Video generation returned no job id.');
-    }
-    final pollingUrl = created['polling_url']?.toString();
-    final pollUri = Uri.parse(
-      pollingUrl != null && pollingUrl.isNotEmpty
-          ? pollingUrl
-          : '${endpoint.baseUrl}/videos/$jobId',
-    );
+    final jobId = _videoJobId(created);
+    final pollUri = _videoJobPollUri(created, endpoint, jobId);
     final deadline = DateTime.now().add(_videoPollTimeout);
     final job = await _pollVideoJob(
       pollUri,
@@ -356,13 +368,53 @@ final class MediaGateway {
       cancelToken,
     );
     final bytes = await _videoBytes(job, endpoint, jobId);
-    final detail = [if (usedSeconds != null) '${usedSeconds}s', ?usedSize];
     return _save(
       'video',
       'mp4',
       bytes,
-      detail: detail.isEmpty ? 'provider defaults' : detail.join(', '),
+      detail: _videoSaveDetail(usedSeconds, usedSize),
     );
+  }
+
+  /// Normalizes optional video options: `seconds` must be positive and
+  /// `size` non-blank — otherwise both fall back to provider defaults
+  /// (null = omit from the request).
+  static (int?, String?) _normalizedVideoOptions(int? seconds, String? size) =>
+      (
+        seconds != null && seconds > 0 ? seconds : null,
+        size != null && size.trim().isNotEmpty ? size.trim() : null,
+      );
+
+  /// Job id from a video-creation response; errors when absent since the
+  /// poll loop cannot run without it.
+  static String _videoJobId(Map<String, dynamic> created) {
+    final jobId = created['id']?.toString();
+    if (jobId == null || jobId.isEmpty) {
+      throw StateError('Video generation returned no job id.');
+    }
+    return jobId;
+  }
+
+  /// Polling URL for a video job: the job's `polling_url` when present,
+  /// else the default `GET {baseUrl}/videos/{id}`.
+  static Uri _videoJobPollUri(
+    Map<String, dynamic> created,
+    MediaEndpoint endpoint,
+    String jobId,
+  ) {
+    final pollingUrl = created['polling_url']?.toString();
+    return Uri.parse(
+      pollingUrl != null && pollingUrl.isNotEmpty
+          ? pollingUrl
+          : '${endpoint.baseUrl}/videos/$jobId',
+    );
+  }
+
+  /// Human-readable save detail for a generated video, e.g. `10s, 720p`;
+  /// `provider defaults` when no explicit options were requested.
+  static String _videoSaveDetail(int? seconds, String? size) {
+    final detail = [if (seconds != null) '${seconds}s', ?size];
+    return detail.isEmpty ? 'provider defaults' : detail.join(', ');
   }
 
   /// MiniMax V2 async video generation (`POST {base}/video_generation`,
@@ -533,7 +585,6 @@ final class MediaGateway {
     }
     return video.bodyBytes;
   }
-
 
   /// Polls the video job at [pollUri] until it reaches a terminal status,
   /// returning the completed job payload. `failed`/`cancelled`/`expired`
@@ -802,38 +853,61 @@ final class MediaGateway {
   /// content block with `type: "audio"`, or an `output_audio`/`outputAudio`/
   /// `audio`/`inlineData` map carrying a non-empty `data` string.
   static String? _deepFindAudioBase64(Object? node) {
-    if (node is Map) {
-      final b64 = node['b64_json'];
-      if (b64 is String && b64.isNotEmpty) return b64;
-      for (final key in const [
-        'output_audio',
-        'outputAudio',
-        'audio',
-        'inlineData',
-        'inline_data',
-      ]) {
-        final value = node[key];
-        if (value is Map) {
-          final data = value['data'];
-          if (data is String && data.isNotEmpty) return data;
-        }
-      }
-      if (node['type'] == 'audio') {
-        final data = node['data'];
-        if (data is String && data.isNotEmpty) return data;
-      }
-      for (final value in node.values) {
-        final found = _deepFindAudioBase64(value);
-        if (found != null) return found;
-      }
-    } else if (node is List) {
-      for (final value in node) {
-        final found = _deepFindAudioBase64(value);
-        if (found != null) return found;
-      }
+    if (node is Map) return _audioFromMap(node);
+    if (node is List) return _audioFromList(node);
+    return null;
+  }
+
+  /// Checks one decoded JSON map for directly-attached base64 audio
+  /// (see [_deepFindAudioBase64]); recurses into the map's values when
+  /// nothing is attached to the map itself.
+  static String? _audioFromMap(Map node) {
+    final direct = _directAudioBase64(node);
+    if (direct != null) return direct;
+    for (final value in node.values) {
+      final found = _deepFindAudioBase64(value);
+      if (found != null) return found;
     }
     return null;
   }
+
+  /// Scans a decoded JSON list for base64 audio, depth-first in order.
+  static String? _audioFromList(List node) {
+    for (final value in node) {
+      final found = _deepFindAudioBase64(value);
+      if (found != null) return found;
+    }
+    return null;
+  }
+
+  /// Base64 audio attached to [node] itself: `b64_json`, one of the
+  /// audio-carrying fields (`output_audio`/`outputAudio`/`audio`/
+  /// `inlineData`/`inline_data`), or a `{type: "audio", data: …}` block.
+  static String? _directAudioBase64(Map node) {
+    final b64 = _nonEmptyString(node['b64_json']);
+    if (b64 != null) return b64;
+    for (final key in const [
+      'output_audio',
+      'outputAudio',
+      'audio',
+      'inlineData',
+      'inline_data',
+    ]) {
+      final data = _nonEmptyString(_audioFieldData(node[key]));
+      if (data != null) return data;
+    }
+    if (node['type'] == 'audio') return _nonEmptyString(node['data']);
+    return null;
+  }
+
+  /// The `data` entry of an audio-carrying field, or null when [value]
+  /// is not a map.
+  static Object? _audioFieldData(Object? value) =>
+      value is Map ? value['data'] : null;
+
+  /// [value] when it is a non-empty string, null otherwise.
+  static String? _nonEmptyString(Object? value) =>
+      value is String && value.isNotEmpty ? value : null;
 
   /// Wraps raw LINEAR16 PCM (24 kHz mono — the Gemini TTS output format) in
   /// a 44-byte RIFF/WAVE header so the bytes play as a `.wav` file.
@@ -906,9 +980,10 @@ AgentTool generateImageTool(MediaGateway gateway) {
     label: generateImageToolName,
     tier: ApprovalTier.write,
     description:
-        'Generate an image from a text prompt. Uses the configured '
-        'imageGeneration endpoint (media_models.json override, or the '
-        'connected provider when it is OpenAI-compatible). Saves a PNG into '
+        'Generate an image from a text prompt. Requires the configured '
+        'imageGeneration endpoint (a media_models.json override, or '
+        'useMainConnection: true to opt the slot into the connected '
+        'provider explicitly). Saves a PNG into '
         'the sandbox generated/ folder and returns its path — reference it '
         'in your reply as ![alt](<path>) to display it inline in the chat, '
         'or from a JS app.',
@@ -956,12 +1031,12 @@ AgentTool speakTool(MediaGateway gateway) {
     label: speakToolName,
     tier: ApprovalTier.write,
     description:
-        'Convert text to speech. Uses the configured audioTts endpoint '
-        '(media_models.json override, or the connected provider when it is '
-        'OpenAI-compatible; a Google generativelanguage endpoint is called '
-        'with the native Gemini TTS protocol). Saves the audio (mp3, wav on '
-        'the Google provider) into the sandbox generated/ folder and '
-        'returns its path.',
+        'Convert text to speech. Requires the configured audioTts '
+        'endpoint (a media_models.json override, or useMainConnection: true '
+        'to opt the slot into the connected provider explicitly; a Google '
+        'generativelanguage endpoint is called with the native Gemini TTS '
+        'protocol). Saves the audio (mp3, wav on the Google provider) into '
+        'the sandbox generated/ folder and returns its path.',
     parameters: const {
       'type': 'object',
       'properties': {
@@ -1134,10 +1209,7 @@ String _errorText(Object error) =>
   final dims = minimaxVideoDims(size);
   if (dims == null) return null;
   final g = _minimaxGcd(dims.$1, dims.$2);
-  return (
-    dims.$1 >= 1920 ? '2K' : '1080P',
-    '${dims.$1 ~/ g}:${dims.$2 ~/ g}',
-  );
+  return (dims.$1 >= 1920 ? '2K' : '1080P', '${dims.$1 ~/ g}:${dims.$2 ~/ g}');
 }
 
 /// Parses a `WIDTHxHEIGHT` string (case-insensitive) into positive

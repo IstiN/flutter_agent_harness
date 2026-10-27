@@ -23,9 +23,7 @@ extension AgentCliMessagingFlow on AgentCli {
     // wrapped in the standard <system-notice> envelope. Unarmed = nothing.
     final messages = <Message>[
       for (final notice in _deadline.pollNotices())
-        UserMessage.text(
-          '<system-notice>\n${notice.text}\n</system-notice>',
-        ),
+        UserMessage.text('<system-notice>\n${notice.text}\n</system-notice>'),
     ];
     final queued = await _subagentManager.drainMessages(
       _subagentManager.selfId,
@@ -41,12 +39,15 @@ extension AgentCliMessagingFlow on AgentCli {
     // The btw panels: each drained fabric message lands as a bordered
     // panel block at delivery time (issue #277).
     _hubPanelsForInbox(queued);
+    final ownDapName = _ownDapDisplayName;
     messages.addAll([
       for (final message in queued)
         _steeringLine(
           message.fromId,
           message.text,
           userInput: message.isUserInput,
+          channel: message.toId,
+          ownDapName: ownDapName,
         ),
     ]);
     // Plugin inboxes (e.g. the hub) join the same steering flow, after
@@ -79,10 +80,23 @@ extension AgentCliMessagingFlow on AgentCli {
             message.fromId,
             message.text,
             userInput: message.kind == AgentMessageKind.user,
+            channel: message.toId,
+            ownDapName: ownDapName,
           ),
       ]);
     }
     return messages;
+  }
+
+  /// Current DAP name, isolated from transport failures like every other
+  /// inbox probe. A missing name simply disables mention decoration.
+  String? get _ownDapDisplayName {
+    try {
+      final name = config.dapDisplayNameResolver?.call()?.trim();
+      return name == null || name.isEmpty ? null : name;
+    } on Object {
+      return null;
+    }
   }
 
   /// Sender-attributed steering line for one inbox message: user input
@@ -92,9 +106,35 @@ extension AgentCliMessagingFlow on AgentCli {
     String fromId,
     String text, {
     required bool userInput,
-  }) => userInput
-      ? UserMessage.text('[from $fromId] ${text.trim()}')
-      : UserMessage.text('from $fromId: ${text.trim()}');
+    String? channel,
+    String? ownDapName,
+  }) {
+    // Channel mail names its channel AND the reply route: without the
+    // explicit hint agents tend to DM the sender (a dead end for app
+    // members) instead of posting back into the channel (gh-1825).
+    final isChannel = channel != null && channel.startsWith('#');
+    final where = isChannel ? ' in $channel' : '';
+    final hint = isChannel
+        ? '\n[reply into this channel with agent_message to: "$channel"]'
+        : '';
+    final body = text.trim();
+    var mention = '';
+    final name = ownDapName?.trim();
+    if (isChannel && name != null && name.isNotEmpty) {
+      // The left check rejects email-shaped x@name; the right check keeps
+      // @name2 distinct. Punctuation and case variants remain mentions.
+      final pattern = RegExp(
+        '(?:^|[^A-Za-z0-9_])@${RegExp.escape(name)}(?![A-Za-z0-9_])',
+        caseSensitive: false,
+      );
+      if (pattern.hasMatch(body)) {
+        mention = ' [mentions you — you are @$name]';
+      }
+    }
+    return userInput
+        ? UserMessage.text('[from $fromId$where] $body$mention$hint')
+        : UserMessage.text('from $fromId$where: $body$mention$hint');
+  }
 
   /// The steering probe: fabric mail pending, or any plugin inbox
   /// reports unread mail. Never throws — a broken plugin probe counts
@@ -393,6 +433,53 @@ String mailboxWakeCommand({
   String q(String s) => "'${s.replaceAll("'", r"'\''")}'";
   return 'nohup ${q(exe)} --session ${q(address)} '
       '${q(wakePromptText)} >/dev/null 2>&1 & echo woken';
+}
+
+/// Spawns the detached headless wake run of an asleep mailbox in [cwd]
+/// (the command comes from [mailboxWakeCommand]). Returns an error text or
+/// null on success.
+///
+/// gh-1744: a mailbox cwd can name a directory that does not exist (a
+/// legacy lossy slug decode, or a workspace moved away) — spawning there
+/// dies as `ProcessException: No such file or directory` and the asleep
+/// mailbox can never be woken. The working directory is verified first
+/// (existing and not a plain file) and the refusal names the path, so the
+/// tool note explains the wake failure instead of surfacing a raw process
+/// exception.
+///
+/// What is guaranteed is backend kind semantics, not link resolution: the
+/// real IO env stats THROUGH symlinks (`FileStat.stat` — a link to a
+/// directory reports [FileKind.directory], so symlinked workspaces wake),
+/// and [MemoryExecutionEnv] has no symlink model, so no current backend
+/// produces [FileKind.symlink] here. The guard's explicit symlink
+/// allowance is defensive, for a backend honoring pi's documented lstat
+/// contract ("symlinks are not followed automatically"): there a
+/// symlink-kind path naming an existing directory must still wake — the
+/// spawn itself follows the link (pinned by
+/// `test/cli/agent_cli_mailbox_wake_test.dart`). On such a backend a link
+/// to a plain file also passes this check and fails at the spawn; that
+/// hole is accepted while no backend reports the kind.
+Future<String?> launchMailboxWake({
+  required ExecutionEnv env,
+  String? wakeExecutable,
+  required String cwd,
+  required String sessionId,
+  String? sessionName,
+}) async {
+  final info = await env.fileInfo(cwd);
+  final kind = info.valueOrNull?.kind;
+  if (info.isErr || (kind != FileKind.directory && kind != FileKind.symlink)) {
+    return 'working directory does not exist: $cwd';
+  }
+  final command = mailboxWakeCommand(
+    wakeExecutable: wakeExecutable,
+    sessionId: sessionId,
+    sessionName: sessionName,
+  );
+  final result = await env.exec(command, options: ShellExecOptions(cwd: cwd));
+  return result.isOk
+      ? null
+      : 'shell exec failed: ${result.errorOrNull?.message ?? 'unknown error'}';
 }
 
 /// The prompt the headless wake run starts with — the inbox drain delivers

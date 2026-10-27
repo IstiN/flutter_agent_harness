@@ -153,8 +153,8 @@ Future<ExtBridgeOutcome> runExtBridge(
 /// Shapes the `__extDeliver` reply for [seq] (pure).
 Map<String, dynamic> extBridgeReply(int seq, ExtBridgeOutcome outcome) =>
     outcome.ok
-        ? {'seq': seq, 'ok': true, 'value': outcome.value}
-        : {'seq': seq, 'ok': false, 'error': outcome.error};
+    ? {'seq': seq, 'ok': true, 'value': outcome.value}
+    : {'seq': seq, 'ok': false, 'error': outcome.error};
 
 /// Completes every pending invocation with [error], skipping completers
 /// already settled (public so the drain is table-tested without an engine).
@@ -252,10 +252,7 @@ final class FlutterJsExtRuntime implements JsrRuntime {
   }
 
   Future<Object?> _invokeHandle(List<Object?> args, Duration timeout) async {
-    final handle = args.isNotEmpty ? args.first : null;
-    if (handle is! int) {
-      throw ArgumentError('__extInvoke requires an integer handle');
-    }
+    final handle = _invokeHandleArg(args);
     final payload = args.length > 1 ? args[1] : null;
     final completer = Completer<Object?>();
     _pending[handle] = completer;
@@ -280,6 +277,17 @@ final class FlutterJsExtRuntime implements JsrRuntime {
       _pending.remove(handle);
     }
   }
+
+  /// The validated `__extInvoke` handle (gh-1848 split): the first
+  /// argument must be the integer handle the adapter handed the JS side.
+  int _invokeHandleArg(List<Object?> args) {
+    final handle = args.isNotEmpty ? args.first : null;
+    if (handle is! int) {
+      throw ArgumentError('__extInvoke requires an integer handle');
+    }
+    return handle;
+  }
+
   @override
   Future<void> dispose() async {
     if (_disposed) return;
@@ -328,6 +336,7 @@ final class FlutterJsExtRuntime implements JsrRuntime {
       if (_rt.executePendingJob() == 0) break;
     }
   }
+
   /// Routes one `__ext_host` message. flutter_js hands the decoded JSON
   /// over: `{fatal}` (main.js throw), `{invoke}` (adapter invoke reply), or
   /// `{seq}` (bootstrap bridge request).
@@ -337,10 +346,19 @@ final class FlutterJsExtRuntime implements JsrRuntime {
       _failAll('extension fatal: ${routed.message}');
     } else if (routed is ExtHostInvokeReply) {
       _onInvokeReply(routed.handle, routed.ok, routed.reply);
-    } else if (routed is ExtHostBridgeRequest) {
-      unawaited(_onBridgeRequest(routed.seq, routed.method, routed.args));
+    } else {
+      _onBridgeRequestOrIgnore(routed);
     }
-    // ExtHostIgnore: nothing to do.
+  }
+
+  /// The bridge-request arm of [_onHostMessage] (gh-1848 split);
+  /// [ExtHostIgnore] (and any other non-request message) falls through
+  /// with no side effect.
+  void _onBridgeRequestOrIgnore(ExtHostRoute routed) {
+    if (routed is! ExtHostBridgeRequest) {
+      return; // ExtHostIgnore: nothing to do.
+    }
+    unawaited(_onBridgeRequest(routed.seq, routed.method, routed.args));
   }
 
   Future<void> _onBridgeRequest(int seq, dynamic method, dynamic args) async {
@@ -352,13 +370,21 @@ final class FlutterJsExtRuntime implements JsrRuntime {
     if (_disposed) return;
     // jsonEncode output is a valid JS object literal, so the reply can be
     // interpolated straight into the evaluate.
-    final result = _rt.evaluate('__extDeliver(${jsonEncode(extBridgeReply(seq, outcome))})');
+    final result = _rt.evaluate(
+      '__extDeliver(${jsonEncode(extBridgeReply(seq, outcome))})',
+    );
     if (!result.isError) _drainJobs();
   }
 
   void _onInvokeReply(dynamic handle, bool ok, Map message) {
     final completer = _pending.remove(handle);
     if (completer == null || completer.isCompleted) return;
+    _settleInvokeReply(completer, ok, message);
+  }
+
+  /// The settlement arm of one invoke reply (gh-1848 split): the decoded
+  /// `value` completes the pending call, the `error` text rejects it.
+  void _settleInvokeReply(Completer<Object?> completer, bool ok, Map message) {
     if (ok) {
       completer.complete(message['value']);
     } else {
@@ -374,10 +400,10 @@ final class FlutterJsExtRuntime implements JsrRuntime {
     _fatal = null;
     return fatal;
   }
+
   void _failAll(String message) {
     _fatal ??= message;
     failPendingCompleters(_pending.values, ExtProtocolException(message));
     _pending.clear();
   }
-
 }

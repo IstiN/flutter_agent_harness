@@ -22,27 +22,71 @@ NavigationDecision chatGptNavigationDecision(
 }) {
   final uri = Uri.tryParse(url);
   if (uri == null) return NavigationDecision.navigate;
+  if (!_isLoopbackCallback(uri)) return NavigationDecision.navigate;
+  if (_handleOAuthError(uri, onError)) return NavigationDecision.prevent;
+  return _codeDecision(
+    uri,
+    expectedState: expectedState,
+    onCode: onCode,
+    onError: onError,
+  );
+}
+
+/// A loopback host hitting `/auth/callback` is auth.openai.com bouncing
+/// the authorization code back — the callback port is never bound, so
+/// every decision below applies only to that shape.
+bool _isLoopbackCallback(Uri uri) {
   final host = uri.host;
-  if (host != 'localhost' && host != '127.0.0.1') {
-    return NavigationDecision.navigate;
-  }
-  if (uri.path != '/auth/callback') return NavigationDecision.navigate;
+  if (host != 'localhost' && host != '127.0.0.1') return false;
+  return uri.path == '/auth/callback';
+}
+
+/// An OAuth `error` param surfaces a named message via [onError] (the
+/// user can retry through the still-open authorize page) and the
+/// navigation is prevented.
+bool _handleOAuthError(Uri uri, void Function(String message)? onError) {
   final error = uri.queryParameters['error'];
-  if (error != null && error.isNotEmpty) {
-    final description = uri.queryParameters['error_description'];
-    onError?.call(
-      'ChatGPT sign-in failed: $error'
-      '${description == null || description.isEmpty ? '' : ' ($description)'}',
-    );
-    return NavigationDecision.prevent;
-  }
+  if (error == null || error.isEmpty) return false;
+  final description = uri.queryParameters['error_description'];
+  onError?.call(
+    'ChatGPT sign-in failed: $error'
+    '${description == null || description.isEmpty ? '' : ' ($description)'}',
+  );
+  return true;
+}
+
+NavigationDecision _codeDecision(
+  Uri uri, {
+  required String expectedState,
+  void Function(String code)? onCode,
+  void Function(String message)? onError,
+}) {
   final code = uri.queryParameters['code'];
   final state = uri.queryParameters['state'];
-  if (code == null || code.isEmpty || state == null || state.isEmpty) {
+  if (!_usableCallbackParams(code, state)) {
     // Not a callback we can act on; let the WebView show what the host
     // served (an unbound port fails loudly, which is honest).
     return NavigationDecision.navigate;
   }
+  return _matchedCodeDecision(
+    code!,
+    state!,
+    expectedState: expectedState,
+    onCode: onCode,
+    onError: onError,
+  );
+}
+
+bool _usableCallbackParams(String? code, String? state) =>
+    code != null && code.isNotEmpty && state != null && state.isNotEmpty;
+
+NavigationDecision _matchedCodeDecision(
+  String code,
+  String state, {
+  required String expectedState,
+  void Function(String code)? onCode,
+  void Function(String message)? onError,
+}) {
   if (state != expectedState) {
     onError?.call(
       'ChatGPT sign-in failed: state mismatch — this callback does not '

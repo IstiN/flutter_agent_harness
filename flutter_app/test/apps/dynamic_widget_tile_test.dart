@@ -196,6 +196,34 @@ void main() {
       await tester.pump();
       expect(saved?.id, 'dm-1');
     });
+
+    testWidgets(
+      'DynamicWidgetCanvas routes onPanUpdate via dispatchHostEvent(gesture:...) '
+      'instead of callEvent (gh-1784)',
+      (tester) async {
+        final dm = service();
+        final def = definition('dm-1');
+        final fake = _SpyDynamicEngine(def);
+        fake.tree.value = const {
+          'type': 'gestureDetector',
+          'onPanUpdate': 'panDrag',
+          'child': {
+            'type': 'sizedBox',
+            'width': 120,
+            'height': 80,
+            'child': {'type': 'text', 'data': 'CanvasDragZone'},
+          },
+        };
+        dm.debugAdd(def, engine: fake);
+        await pumpTile(tester, dm, 'dm-1');
+        expect(find.text('CanvasDragZone'), findsOneWidget);
+        await tester.drag(find.text('CanvasDragZone'), const Offset(30, 15));
+        await tester.pump();
+        expect(fake.calledEvents, isNot(contains('panDrag')));
+        expect(fake.hostEvents, contains('gesture:panDrag'));
+        expect(fake.hostEvents['gesture:panDrag']!['dx'], isNotNull);
+      },
+    );
     testWidgets('title bar shows the promoted open action, chevron and '
         'overflow (issue #457 AC2)', (tester) async {
       final dm = service();
@@ -549,4 +577,33 @@ void main() {
       );
     });
   });
+}
+
+final class _SpyDynamicEngine extends JsAppEngine {
+  _SpyDynamicEngine(DynamicMessageDefinition def)
+    : super(
+        app: JsAppInfo.fromManifest(
+          {'id': def.id, 'name': def.title, 'version': '1.0.0'},
+          bundled: false,
+          fallbackId: def.id,
+        ),
+        env: MemoryExecutionEnv(),
+        permissions: const AppPermissions(),
+      );
+
+  final calledEvents = <String>[];
+  final hostEvents = <String, Map<String, dynamic>>{};
+
+  @override
+  Future<void> callEvent(
+    String actionId, [
+    Map<String, dynamic>? payload,
+  ]) async {
+    calledEvents.add(actionId);
+  }
+
+  @override
+  void dispatchHostEvent(String target, Map<String, dynamic> payload) {
+    hostEvents[target] = payload;
+  }
 }

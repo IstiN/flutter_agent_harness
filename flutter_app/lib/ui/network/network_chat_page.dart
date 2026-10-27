@@ -15,6 +15,8 @@ import 'package:fa/network/network_session.dart';
 import 'package:fa/network/network_session_manager.dart';
 
 import 'add_agent_dialog.dart';
+import 'channel_composer.dart';
+import 'channel_key_import_dialog.dart';
 
 /// The channel chat surface (issue #955): the shared [FaChatScreen] over a
 /// [ChannelChatService] with `FaChatFeatures.minimal()` — plain text
@@ -91,7 +93,7 @@ class _NetworkChatPageState extends State<NetworkChatPage> {
   }
 
   String _channelLabel(NetworkSession session, String channelId) {
-    return _channel(session, channelId)?.name ?? channelId;
+    return channelDisplayLabel(channelId, _channel(session, channelId)?.name);
   }
 
   Channel? _channel(NetworkSession session, String channelId) {
@@ -104,11 +106,35 @@ class _NetworkChatPageState extends State<NetworkChatPage> {
   /// A showcase (public channel) is read-only for regular members — only
   /// the owner/admins post (the rail's Showcases section).
   bool _isReadOnlyShowcase(NetworkSession session, String channelId) {
+    final channel = _lastChannel(session, channelId);
+    if (channel == null || !channel.isPublic) return false;
+    return _regularMember(session);
+  }
+
+  /// A private channel is writable only when this device's wallet holds its
+  /// E2E key. Network ownership/membership cannot substitute for that key.
+  bool _isMissingPrivateKey(NetworkSession session, String channelId) {
+    final channel = _lastChannel(session, channelId);
+    if (channel == null || channel.isPublic) return false;
+    return widget.manager.wallet.channelKeysFor(
+          widget.controller.networkId!,
+          channelId,
+        ) ==
+        null;
+  }
+
+  /// The channel row for [channelId]; ids are unique per session but the
+  /// scan keeps the LAST match, exactly like the lookup it replaces.
+  Channel? _lastChannel(NetworkSession session, String channelId) {
     Channel? channel;
     for (final c in session.channels) {
       if (c.id == channelId) channel = c;
     }
-    if (channel == null || !channel.isPublic) return false;
+    return channel;
+  }
+
+  /// True unless this wallet's membership is owner/admin.
+  bool _regularMember(NetworkSession session) {
     final memberClass = widget
         .manager
         .wallet
@@ -125,11 +151,11 @@ class _NetworkChatPageState extends State<NetworkChatPage> {
       return Center(child: Text(context.l10n.networkSelectChannel));
     }
     final session = chatFor.$1;
-    final label = _channelLabel(session, chatFor.$2);
     return ListenableBuilder(
       listenable: session,
       builder: (context, _) {
         final channel = _channel(session, chatFor.$2);
+        final label = _channelLabel(session, chatFor.$2);
         return Column(
           children: [
             _ChannelHeader(
@@ -137,7 +163,7 @@ class _NetworkChatPageState extends State<NetworkChatPage> {
               label: label,
               manager: widget.manager,
             ),
-            if (session.networkOffline) const _OfflineBanner(),
+            if (session.networkOffline) _OfflineBanner(session: session),
             Expanded(
               child: FaChatStringsScope(
                 strings: _ChannelChatStrings(
@@ -149,15 +175,29 @@ class _NetworkChatPageState extends State<NetworkChatPage> {
                   features: const FaChatFeatures.minimal(),
                   title: label,
                   showAppBar: false,
-                  // Writable channels get the DEFAULT composer — the same
-                  // ChatComposer chrome as the session surface (single
-                  // style across the app). The showcase read-only note
-                  // replaces it only for members browsing a public
-                  // showcase channel.
+                  // Writable channels keep the shared composer chrome, with
+                  // roster-backed @-completion added for DAP agents. The
+                  // showcase read-only note replaces it only for members
+                  // browsing a public showcase channel.
                   composerBuilder: _isReadOnlyShowcase(session, chatFor.$2)
                       ? (context, service, drop) =>
                             const _ShowcaseReadOnlyNote()
-                      : null,
+                      : _isMissingPrivateKey(session, chatFor.$2)
+                      ? (context, service, drop) => _MissingChannelKeyComposer(
+                          manager: widget.manager,
+                          session: session,
+                          networkId: widget.controller.networkId!,
+                          channelId: chatFor.$2,
+                          // A successful import swaps this composer for
+                          // the real one; rebuild deterministically from
+                          // the dialog result instead of relying on the
+                          // session-notify relay.
+                          onKeyImported: () {
+                            if (mounted) setState(() {});
+                          },
+                        )
+                      : (context, service, drop) =>
+                            ChannelChatComposer(service: chat),
                 ),
               ),
             ),
@@ -171,7 +211,9 @@ class _NetworkChatPageState extends State<NetworkChatPage> {
 /// The offline banner: the socket queues while the relay is unreachable
 /// and flushes once on reconnect (engine contract E1).
 class _OfflineBanner extends StatelessWidget {
-  const _OfflineBanner();
+  const _OfflineBanner({required this.session});
+
+  final NetworkSession session;
 
   @override
   Widget build(BuildContext context) {
@@ -190,7 +232,80 @@ class _OfflineBanner extends StatelessWidget {
               style: TextStyle(fontSize: 12, color: colors.text),
             ),
           ),
+          IconButton(
+            visualDensity: VisualDensity.compact,
+            tooltip: context.l10n.networkReconnectNow,
+            onPressed: session.reconnect,
+            icon: Icon(Icons.refresh, size: 18, color: colors.text),
+          ),
         ],
+      ),
+    );
+  }
+}
+
+/// Composer replacement for a private channel whose E2E key exists only on
+/// another device. The network password grants membership, never this key.
+class _MissingChannelKeyComposer extends StatelessWidget {
+  const _MissingChannelKeyComposer({
+    required this.manager,
+    required this.session,
+    required this.networkId,
+    required this.channelId,
+    required this.onKeyImported,
+  });
+
+  final NetworkSessionManager manager;
+  final NetworkSession session;
+  final String networkId;
+  final String channelId;
+
+  /// Called when the import dialog reported success — the page rebuilds
+  /// so the composer swap does not depend on the session-notify relay.
+  final VoidCallback onKeyImported;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = FahColors.of(context);
+    return SafeArea(
+      top: false,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 6, 12, 12),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.lock_outline, size: 16, color: colors.dim),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    context.l10n.networkChannelKeyMissing,
+                    style: TextStyle(color: colors.dim, fontSize: 12),
+                  ),
+                ),
+              ],
+            ),
+            Align(
+              alignment: Alignment.centerRight,
+              child: TextButton.icon(
+                onPressed: () async {
+                  final imported = await showChannelKeyImportDialog(
+                    context,
+                    wallet: manager.wallet,
+                    session: session,
+                    networkId: networkId,
+                    channelId: channelId,
+                  );
+                  if (imported && context.mounted) onKeyImported();
+                },
+                icon: const Icon(Icons.key_outlined, size: 18),
+                label: Text(context.l10n.networkChannelKeyImport),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -215,7 +330,7 @@ class _ShowcaseReadOnlyNote extends StatelessWidget {
             const SizedBox(width: 8),
             Flexible(
               child: Text(
-                context.l10n.networkShowcaseReadOnly,
+                context.l10n.networkShowcaseMemberReadOnly,
                 textAlign: TextAlign.center,
                 style: TextStyle(fontSize: 12, color: colors.dim),
               ),

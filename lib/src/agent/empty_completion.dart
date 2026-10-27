@@ -120,8 +120,7 @@ bool _turnCarriesPartialContent(
     }
     switch (entry) {
       case AssistantMessage():
-        if (!isEmptyAssistantCompletion(entry)) return true;
-        if (_carriesTruncationSignal(entry)) return true;
+        if (_assistantEntryCarriesPartial(entry)) return true;
       case ToolResultMessage():
         // Tool activity: the turn did real work before going blank.
         return true;
@@ -131,6 +130,11 @@ bool _turnCarriesPartialContent(
   }
   return false;
 }
+
+/// Whether one retained assistant entry in the turn window carries
+/// partial-content evidence: actionable content, or a truncation signal.
+bool _assistantEntryCarriesPartial(AssistantMessage entry) =>
+    !isEmptyAssistantCompletion(entry) || _carriesTruncationSignal(entry);
 
 /// A truncation signal on an assistant message: the token-limit cut, or the
 /// tolerated silent truncation (a provider closed the stream without a

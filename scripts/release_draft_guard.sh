@@ -12,11 +12,17 @@
 # mobile legs concurrently against the same derived tag; a failed leg's
 # guard firing on the SIBLING leg's mid-upload draft would destroy a
 # healthy concurrent release. Draft-capable creates
-# (scripts/release_attach_or_create.sh) stamp the draft body with
+# (scripts/release_attach_or_create.sh, scripts/release_lazy_draft.sh)
+# stamp the draft body with
 #   <!-- release-draft-owner: run/<run_id>/job/<job_id> -->
 # and the guard deletes only on an exact match against GITHUB_RUN_ID /
-# GITHUB_JOB (both GitHub Actions default env). A foreign or unmarked
-# draft is NEVER deleted here — the daily sweeper
+# GITHUB_JOB (both GitHub Actions default env). Matrix jobs share
+# GITHUB_JOB across legs (ci.yml binaries, build-macos.yml
+# build-macos-cli) — those steps stamp a LEG-SUFFIXED identity via
+# RELEASE_DRAFT_IDENTITY (e.g. run/123/job/binaries-linux-x64) and the
+# guard step must export the same value, so a failed leg can never match
+# a sibling's in-flight draft. A foreign or unmarked draft is NEVER
+# deleted here — the daily sweeper
 # (scripts/sweep_stale_drafts.sh) reclaims genuinely orphaned drafts
 # after 24h.
 #
@@ -31,7 +37,13 @@ tag="${1:?usage: release_draft_guard.sh <tag>}"
 repo="${GITHUB_REPOSITORY:?GITHUB_REPOSITORY must be set}"
 : "${GITHUB_RUN_ID:?GITHUB_RUN_ID must be set (GitHub Actions default env)}"
 : "${GITHUB_JOB:?GITHUB_JOB must be set (GitHub Actions default env)}"
-identity="run/$GITHUB_RUN_ID/job/$GITHUB_JOB"
+identity="${RELEASE_DRAFT_IDENTITY:-run/$GITHUB_RUN_ID/job/$GITHUB_JOB}"
+# Validate (mirror of release_lazy_draft.sh): an unmatchable identity
+# would silently orphan the draft forever.
+printf '%s' "$identity" | grep -Eq '^run/[0-9]+/job/[A-Za-z0-9_-]+$' || {
+  echo "::error::RELEASE_DRAFT_IDENTITY '$identity' does not match 'run/<id>/job/<name>' — the marker could never be stamped or matched" >&2
+  exit 1
+}
 
 state=$(gh release view "$tag" --repo "$repo" --json isDraft --jq .isDraft 2>/dev/null || echo missing)
 if [ "$state" != "true" ]; then

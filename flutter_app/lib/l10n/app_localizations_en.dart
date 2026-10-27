@@ -1,5 +1,6 @@
 // ignore: unused_import
 import 'package:intl/intl.dart' as intl;
+
 import 'app_localizations.dart';
 
 // ignore_for_file: type=lint
@@ -2406,6 +2407,9 @@ class AppLocalizationsEn extends AppLocalizations {
       'Reconnecting — messages will send when back.';
 
   @override
+  String get networkReconnectNow => 'Reconnect now';
+
+  @override
   String networkMessageHint(Object channel) {
     return 'Message $channel';
   }
@@ -2419,6 +2423,95 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
+  String get networkRosterTitle => 'Members';
+
+  @override
+  String get networkRosterLoading => 'Loading members…';
+
+  @override
+  String get networkRosterEmpty => 'No members yet.';
+
+  @override
+  String get networkPresenceOnline => 'Online';
+
+  @override
+  String get networkPresenceOffline => 'Offline';
+
+  @override
+  String get networkPresenceBusy => 'Busy';
+
+  @override
+  String get networkMemberOwner => 'Owner';
+
+  @override
+  String get networkMemberAdmin => 'Admin';
+
+  @override
+  String get networkMemberMember => 'Member';
+
+  @override
+  String get networkMemberGuest => 'Guest';
+
+  @override
+  String get networkMemberAgent => 'Agent';
+
+  @override
+  String get networkMemberUnknown => 'Unknown';
+
+  @override
+  String get networkAccessWholeNetwork => 'Whole network';
+
+  @override
+  String networkAccessChannels(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count channels',
+      one: '1 channel',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get networkAccessThisChannelOnly => 'This channel only';
+
+  @override
+  String networkAccessThisChannelAndOthers(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'This channel + $count other channels',
+      one: 'This channel + 1 other channel',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String networkAccessOtherChannels(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count other channels',
+      one: '1 other channel',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get networkDropAgent => 'Drop agent…';
+
+  @override
+  String get networkDropAgentTitle => 'Drop this agent?';
+
+  @override
+  String networkDropAgentBody(String displayName) {
+    return '\"$displayName\" will be removed from this network and lose access. This cannot be undone.';
+  }
+
+  @override
+  String get networkDropAgentConfirm => 'Drop agent';
+
+  @override
   String get networkChannelsSection => 'Channels';
 
   @override
@@ -2429,6 +2522,10 @@ class AppLocalizationsEn extends AppLocalizations {
       'Read-only preview — tap to join the network and write.';
 
   @override
+  String get networkShowcaseMemberReadOnly =>
+      'Only the owner and admins can post in this showcase.';
+
+  @override
   String get networkConnecting => 'Connecting…';
 
   @override
@@ -2436,6 +2533,31 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get networkChannelOptions => 'Channel options';
+
+  @override
+  String get networkRenameChannel => 'Rename channel…';
+
+  @override
+  String get networkRenameChannelTitle => 'Rename channel';
+
+  @override
+  String get networkRename => 'Rename';
+
+  @override
+  String get networkChannelNameRequired => 'Channel name cannot be empty.';
+
+  @override
+  String get networkDeleteChannel => 'Delete channel…';
+
+  @override
+  String get networkDeleteChannelTitle => 'Delete this channel?';
+
+  @override
+  String get networkDeleteChannelBody =>
+      'The channel and all its messages are deleted for everyone. This cannot be undone.';
+
+  @override
+  String get networkChannelDeleted => 'Channel deleted';
 
   @override
   String get networkAddAgent => 'Add agent…';
@@ -2459,6 +2581,35 @@ class AppLocalizationsEn extends AppLocalizations {
       'No channel keys in this wallet — the agent will see channels only after a key invite';
 
   @override
+  String get networkChannelKeyMissing =>
+      'This device needs the private channel key to read and write.';
+
+  @override
+  String get networkChannelKeyImport => 'Import channel key';
+
+  @override
+  String get networkChannelKeyInviteLabel => 'Channel key invite';
+
+  @override
+  String get networkChannelKeyImportHint =>
+      'Paste the private-channel invite from a device that already has the key.';
+
+  @override
+  String get networkChannelKeyWrongChannel =>
+      'This invite is for a different channel.';
+
+  @override
+  String get networkChannelKeyWrongHub => 'This invite is for a different hub.';
+
+  @override
+  String get networkChannelKeyMismatch =>
+      'The invite public and private keys do not match.';
+
+  @override
+  String get networkChannelKeyImportFailed =>
+      'The channel key could not be imported. Try again.';
+
+  @override
   String get networkAddAgentScopeChannel => 'This channel';
 
   @override
@@ -2477,11 +2628,34 @@ class AppLocalizationsEn extends AppLocalizations {
   String get networkAddAgentFormatDap => 'DAP';
 
   @override
+  String get networkAddAgentDapHint =>
+      'Copy this block and paste it into the fa chat (CLI, macOS, iOS or web) — the agent joins the channel automatically.';
+
+  @override
+  String dapEnrollmentJoined(String channel) {
+    return 'Joined DAP channel #$channel. Channel mail now reaches this agent.';
+  }
+
+  @override
+  String dapEnrollmentJoinedPlaintext(String channel) {
+    return 'Joined DAP channel #$channel. Channel mail now reaches this agent. Storage warning: the invite private key and hub credential are stored UNENCRYPTED (plaintext) in this app\'s sandbox (IndexedDB on web).';
+  }
+
+  @override
+  String dapEnrollmentFailed(String channel) {
+    return 'Couldn\'t join DAP channel #$channel. Check the invite and hub connection, then try again.';
+  }
+
+  @override
+  String get dapEnrollmentUnsupported =>
+      'DAP join is not supported on this platform — use a native app or the fa CLI.';
+
+  @override
   String get networkAddAgentEnroll => 'Enroll agent';
 
   @override
   String get networkAddAgentEnrollHint =>
-      'Enrollment mints a unique, revocable credential — the secret is shown ONCE: copy it now. Re-enrolling the same name rotates it.';
+      'Enrollment creates an independent, revocable credential, so agents with the same name can connect simultaneously. The secret is shown ONCE: copy it now.';
 
   @override
   String get networkAddAgentEnrollNeedSignIn =>

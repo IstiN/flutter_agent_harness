@@ -53,5 +53,34 @@ extension AgentCliSpillWiring on AgentCli {
         );
       }
     }
+    attachUserSpillWiring();
+  }
+
+  /// Automatic user-message spilling (issue #1760): installs the intake
+  /// guard on the agent so every user message — headless `-p`/positional,
+  /// TUI first/mid-session, steering, follow-up, external inbox — is
+  /// bounded from the core choke point. Inactive section/env = no install,
+  /// byte-identical legacy. Redaction (the same pipeline the CLI already
+  /// applies to user text at the entry points) runs inside the guard, so
+  /// the bare steering paths that skip the entry redaction still never
+  /// write raw secrets to the spill file.
+  void attachUserSpillWiring() {
+    final section = config.spills;
+    final spills = resolveRunSpillsConfig(section, environment);
+    if (spills == null || !spills.isUserActive) return;
+    final pipeline = config.redactionPipeline;
+    _agent.userMessageGuard = UserMessageSpillGuard(
+      env: _coreToolEnv,
+      config: spills,
+      budgetTokens: () =>
+          _effectiveContextWindow - _effectiveCompactionSettings.reserveTokens,
+      sessionId: () => _session?.cachedId,
+      redact: pipeline == null ? null : (text) => redactPrompt(pipeline, text),
+    ).guard;
+    io.writeln(
+      '[spills] user messages over ${spills.userFraction}x the window '
+      'budget (floor ${spills.userThreshold} bytes) spill to '
+      '.fah/spills/<session>/user-<n>.md',
+    );
   }
 }

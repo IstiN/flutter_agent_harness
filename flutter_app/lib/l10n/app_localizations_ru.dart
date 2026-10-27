@@ -1,5 +1,6 @@
 // ignore: unused_import
 import 'package:intl/intl.dart' as intl;
+
 import 'app_localizations.dart';
 
 // ignore_for_file: type=lint
@@ -2435,6 +2436,9 @@ class AppLocalizationsRu extends AppLocalizations {
       'Переподключение — сообщения будут отправлены после восстановления связи.';
 
   @override
+  String get networkReconnectNow => 'Переподключиться сейчас';
+
+  @override
   String networkMessageHint(Object channel) {
     return 'Написать в $channel';
   }
@@ -2448,6 +2452,101 @@ class AppLocalizationsRu extends AppLocalizations {
   }
 
   @override
+  String get networkRosterTitle => 'Участники';
+
+  @override
+  String get networkRosterLoading => 'Загрузка участников…';
+
+  @override
+  String get networkRosterEmpty => 'Пока нет участников.';
+
+  @override
+  String get networkPresenceOnline => 'В сети';
+
+  @override
+  String get networkPresenceOffline => 'Не в сети';
+
+  @override
+  String get networkPresenceBusy => 'Занят';
+
+  @override
+  String get networkMemberOwner => 'Владелец';
+
+  @override
+  String get networkMemberAdmin => 'Администратор';
+
+  @override
+  String get networkMemberMember => 'Участник';
+
+  @override
+  String get networkMemberGuest => 'Гость';
+
+  @override
+  String get networkMemberAgent => 'Агент';
+
+  @override
+  String get networkMemberUnknown => 'Неизвестно';
+
+  @override
+  String get networkAccessWholeNetwork => 'Вся сеть';
+
+  @override
+  String networkAccessChannels(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count канала',
+      many: '$count каналов',
+      few: '$count канала',
+      one: '$count канал',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get networkAccessThisChannelOnly => 'Только этот канал';
+
+  @override
+  String networkAccessThisChannelAndOthers(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'Этот канал + ещё $count канала',
+      many: 'Этот канал + ещё $count каналов',
+      few: 'Этот канал + ещё $count канала',
+      one: 'Этот канал + ещё $count канал',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String networkAccessOtherChannels(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count других канала',
+      many: '$count других каналов',
+      few: '$count других канала',
+      one: '$count другой канал',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get networkDropAgent => 'Удалить агента…';
+
+  @override
+  String get networkDropAgentTitle => 'Удалить этого агента?';
+
+  @override
+  String networkDropAgentBody(String displayName) {
+    return '\"$displayName\" будет удалён из сети и потеряет доступ. Это действие нельзя отменить.';
+  }
+
+  @override
+  String get networkDropAgentConfirm => 'Удалить агента';
+
+  @override
   String get networkChannelsSection => 'Каналы';
 
   @override
@@ -2458,6 +2557,10 @@ class AppLocalizationsRu extends AppLocalizations {
       'Только чтение — нажмите, чтобы войти в сеть и писать.';
 
   @override
+  String get networkShowcaseMemberReadOnly =>
+      'Писать в эту витрину могут только владелец и администраторы.';
+
+  @override
   String get networkConnecting => 'Подключение…';
 
   @override
@@ -2465,6 +2568,32 @@ class AppLocalizationsRu extends AppLocalizations {
 
   @override
   String get networkChannelOptions => 'Параметры канала';
+
+  @override
+  String get networkRenameChannel => 'Переименовать канал…';
+
+  @override
+  String get networkRenameChannelTitle => 'Переименовать канал';
+
+  @override
+  String get networkRename => 'Переименовать';
+
+  @override
+  String get networkChannelNameRequired =>
+      'Название канала не должно быть пустым.';
+
+  @override
+  String get networkDeleteChannel => 'Удалить канал…';
+
+  @override
+  String get networkDeleteChannelTitle => 'Удалить этот канал?';
+
+  @override
+  String get networkDeleteChannelBody =>
+      'Канал и все его сообщения будут удалены для всех. Это действие нельзя отменить.';
+
+  @override
+  String get networkChannelDeleted => 'Канал удалён';
 
   @override
   String get networkAddAgent => 'Добавить агента…';
@@ -2488,6 +2617,36 @@ class AppLocalizationsRu extends AppLocalizations {
       'В кошельке нет ключей каналов — агент увидит каналы только после инвайта ключа';
 
   @override
+  String get networkChannelKeyMissing =>
+      'Чтобы читать и писать в этом закрытом канале, на устройстве нужен его ключ.';
+
+  @override
+  String get networkChannelKeyImport => 'Импортировать ключ канала';
+
+  @override
+  String get networkChannelKeyInviteLabel => 'Приглашение с ключом канала';
+
+  @override
+  String get networkChannelKeyImportHint =>
+      'Вставьте приглашение в закрытый канал с устройства, где уже есть ключ.';
+
+  @override
+  String get networkChannelKeyWrongChannel =>
+      'Это приглашение относится к другому каналу.';
+
+  @override
+  String get networkChannelKeyWrongHub =>
+      'Это приглашение относится к другому хабу.';
+
+  @override
+  String get networkChannelKeyMismatch =>
+      'Открытый и закрытый ключи приглашения не соответствуют друг другу.';
+
+  @override
+  String get networkChannelKeyImportFailed =>
+      'Не удалось импортировать ключ канала. Повторите попытку.';
+
+  @override
   String get networkAddAgentScopeChannel => 'Этот канал';
 
   @override
@@ -2506,11 +2665,34 @@ class AppLocalizationsRu extends AppLocalizations {
   String get networkAddAgentFormatDap => 'DAP';
 
   @override
+  String get networkAddAgentDapHint =>
+      'Скопируйте этот блок и вставьте его в чат fa (CLI, macOS, iOS или web) — агент автоматически присоединится к каналу.';
+
+  @override
+  String dapEnrollmentJoined(String channel) {
+    return 'Подключились к DAP-каналу #$channel. Сообщения канала теперь поступают этому агенту.';
+  }
+
+  @override
+  String dapEnrollmentJoinedPlaintext(String channel) {
+    return 'Подключились к DAP-каналу #$channel. Сообщения канала теперь поступают этому агенту. Предупреждение о хранении: закрытый ключ приглашения и учётные данные хаба хранятся в ОТКРЫТОМ ВИДЕ (без шифрования) в песочнице приложения (в web — IndexedDB).';
+  }
+
+  @override
+  String dapEnrollmentFailed(String channel) {
+    return 'Не удалось подключиться к DAP-каналу #$channel. Проверьте приглашение и соединение с хабом, затем повторите попытку.';
+  }
+
+  @override
+  String get dapEnrollmentUnsupported =>
+      'Подключение к DAP не поддерживается на этой платформе — используйте нативное приложение или fa CLI.';
+
+  @override
   String get networkAddAgentEnroll => 'Заэнроллить агента';
 
   @override
   String get networkAddAgentEnrollHint =>
-      'Выдача создаёт уникальный отзываемый секрет — он показывается ОДИН раз: скопируйте его сейчас. Повторная выдача с тем же именем меняет секрет.';
+      'Выдача создаёт независимый отзываемый секрет: агенты с одинаковым именем могут подключаться одновременно. Секрет показывается ОДИН раз: скопируйте его сейчас.';
 
   @override
   String get networkAddAgentEnrollNeedSignIn =>

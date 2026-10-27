@@ -47,17 +47,23 @@ extension FaTuiModelBusy on FaTuiModel {
     return (this, null);
   }
 
-  /// The busy↔idle bracket itself. Kick the spinner loop when going busy;
-  /// the loop stops itself on the first tick that finds the model idle
-  /// again. Going idle also unpins the sticky user echo and clears any
-  /// phase, so the next run starts as plain "Working…".
-  (Model, Cmd?) _applyBusyTransition(BusyMsg msg) {
+  /// The bracket's diagnostics line, shared by both directions (source and
+  /// elapsed window stay reported identically on and off).
+  void _logBusyTransition(BusyMsg msg) {
     faTuiBusyDiagnostics?.call(
       msg.busy
           ? 'busy on source=${msg.source ?? '?'}'
           : 'busy off source=${busySource.isEmpty ? '?' : busySource} '
                 'elapsed=${busyStartedAtMs < 0 ? 0 : (DateTime.now().millisecondsSinceEpoch - busyStartedAtMs) ~/ 1000}s',
     );
+  }
+
+  /// The busy↔idle bracket itself. Kick the spinner loop when going busy;
+  /// the loop stops itself on the first tick that finds the model idle
+  /// again. Going idle also unpins the sticky user echo and clears any
+  /// phase, so the next run starts as plain "Working…".
+  (Model, Cmd?) _applyBusyTransition(BusyMsg msg) {
+    _logBusyTransition(msg);
     return (
       copyWith(
         busy: msg.busy,

@@ -4,12 +4,10 @@
 
 import 'dart:async';
 import 'dart:js_interop';
+import 'dart:js_interop_unsafe';
 
 import 'package:fa/sandbox/fs_persistence.dart';
 import 'package:web/web.dart' as web;
-
-@JS()
-external JSBoolean get _fahFsGetAllDefined;
 
 @JS('__fahFsGetAll')
 external JSPromise<JSObject?> _fahFsGetAllJs();
@@ -48,16 +46,36 @@ final class IdbFsSnapshotStore implements FsSnapshotStore {
   /// helper is still missing afterwards.
   static Future<void> _ensureScript() async {
     if (_scriptChecked) return;
-    if (!_fahFsGetAllDefined.toDart) {
+    if (!_helperDefined()) {
       await _injectFsStoreScript();
     }
-    _scriptChecked = _fahFsGetAllDefined.toDart;
+    _scriptChecked = _helperDefined();
     if (!_scriptChecked) {
       throw StateError(
         'fs_store.js is not loaded: add <script src="fs_store.js">'
         ' to index.html',
       );
     }
+  }
+
+  /// True when the page defines the helper surface `web/fs_store.js`
+  /// ships (`__fahFsGetAll`/`__fahFsSet`/`__fahFsRemove`).
+  ///
+  /// The earlier probe read `window._fahFsGetAllDefined`, a global
+  /// fs_store.js has NEVER defined: the check read `undefined` on every
+  /// call, so the loader re-injected the (already loaded) script and then
+  /// STILL concluded "fs_store.js is not loaded" and threw — every save on
+  /// every web host failed with `[fah] sandbox persist failed` while the
+  /// helper sat right there in the page (gh-1831, and the persistence half
+  /// of the Outlook install failure #1830). Probe the functions the
+  /// helper actually defines;
+  /// `flutter_app/test/fs_store_script_gate_guard_test.dart` pins the
+  /// probe/helper pair in sync.
+  static bool _helperDefined() {
+    final w = web.window;
+    return w.hasProperty('__fahFsGetAll'.toJS).toDart &&
+        w.hasProperty('__fahFsSet'.toJS).toDart &&
+        w.hasProperty('__fahFsRemove'.toJS).toDart;
   }
 
   /// Appends `<script src="fs_store.js">` and completes on load/error.

@@ -3,6 +3,7 @@
 // in the LICENSE file.
 
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:fa/apps/app_storage.dart';
 import 'package:fa/apps/apps_store.dart';
@@ -108,27 +109,28 @@ AgentTool appsCatalogWriteTool({
   );
 }
 
-Future<ToolExecutionResult> _list(
-  Map<String, dynamic> arguments,
-  bool isSearch,
-  CatalogService service,
+/// The match predicate for one catalog listing/search run.
+typedef _CatalogMatch =
+    bool Function(String id, String name, String description);
+
+/// Search requires a query; plain listing matches everything.
+_CatalogMatch _catalogMatcher(bool isSearch, String query) =>
+    (id, name, description) =>
+        !isSearch ||
+        id.contains(query) ||
+        name.toLowerCase().contains(query) ||
+        description.toLowerCase().contains(query);
+
+/// The local workspace FIRST (issue #866): apps the agent just wrote
+/// under apps/ exist before the remote catalog ever hears of them — a
+/// fresh creation must be visible to the agent that wrote it.
+Future<void> _scanLocalApps(
   AppsStore store,
+  _CatalogMatch matches,
+  List<String> lines,
+  Map<String, JsAppInfo> localAppById,
+  Map<String, int> localLineByAppId,
 ) async {
-  final query = (arguments['query'] ?? '').toString().trim().toLowerCase();
-  if (isSearch && query.isEmpty) {
-    return ToolExecutionResult.text('Provide a "query" for search.');
-  }
-  bool matches(String id, String name, String description) =>
-      !isSearch ||
-      id.contains(query) ||
-      name.toLowerCase().contains(query) ||
-      description.toLowerCase().contains(query);
-  final lines = <String>[];
-  final localAppById = <String, JsAppInfo>{};
-  final localLineByAppId = <String, int>{};
-  // The local workspace FIRST (issue #866): apps the agent just wrote
-  // under apps/ exist before the remote catalog ever hears of them — a
-  // fresh creation must be visible to the agent that wrote it.
   try {
     for (final app in await store.listApps()) {
       if (!matches(app.id, app.name, app.description)) continue;
@@ -147,45 +149,93 @@ Future<ToolExecutionResult> _list(
     // diagnosable (issue #866 review).
     AppLog.i('apps', 'apps_catalog local scan failed: $e');
   }
+}
+
+/// Remote entries that match; a search also matches tags (pre-#866
+/// behavior, kept).
+List<CatalogEntry> _matchingRemoteEntries(
+  CatalogFetchResult result,
+  _CatalogMatch matches,
+  bool isSearch,
+  String query,
+) {
+  return result.entries.where((e) {
+    if (!matches(e.id, e.name, e.description)) {
+      if (!isSearch) return false;
+      return e.tags.any((tag) => tag.contains(query));
+    }
+    return true;
+  }).toList();
+}
+
+/// Same id locally and remotely is ONE widget, not two (issue #866
+/// review): the local line wins; a newer remote version is surfaced as an
+/// update annotation on it — at most once per id, even if a bad catalog
+/// lists the same id twice (issue #866 review r2).
+void _mergeRemoteEntry(
+  CatalogEntry e,
+  List<String> lines,
+  Map<String, JsAppInfo> localAppById,
+  Map<String, int> localLineByAppId,
+  Set<String> annotated,
+) {
+  final localLine = localLineByAppId[e.id];
+  if (localLine != null) {
+    final local = localAppById[e.id];
+    if (local != null &&
+        semverNewer(local.version, e.version) &&
+        annotated.add(e.id)) {
+      lines[localLine] =
+          '${lines[localLine]} (update available: v${e.version})';
+    }
+    return;
+  }
+  lines.add(
+    '${e.id} v${e.version}'
+    '${e.description.isEmpty ? '' : ' — ${e.description}'}',
+  );
+}
+
+/// The joined listing, or the empty-catalog line; a stale fetch says so.
+ToolExecutionResult _renderCatalogLines(
+  CatalogFetchResult result,
+  List<String> lines,
+) {
+  if (lines.isEmpty) return ToolExecutionResult.text('No widgets found.');
+  final suffix = result.stale ? '\n(offline — cached catalog)' : '';
+  return ToolExecutionResult.text(lines.join('\n') + suffix);
+}
+
+/// Remote unavailable: the local listing still answers.
+ToolExecutionResult _catalogUnavailable(List<String> lines, Object error) {
+  if (lines.isNotEmpty) return ToolExecutionResult.text(lines.join('\n'));
+  return ToolExecutionResult.text('Catalog unavailable: $error');
+}
+
+Future<ToolExecutionResult> _list(
+  Map<String, dynamic> arguments,
+  bool isSearch,
+  CatalogService service,
+  AppsStore store,
+) async {
+  final query = (arguments['query'] ?? '').toString().trim().toLowerCase();
+  if (isSearch && query.isEmpty) {
+    return ToolExecutionResult.text('Provide a "query" for search.');
+  }
+  final matches = _catalogMatcher(isSearch, query);
+  final lines = <String>[];
+  final localAppById = <String, JsAppInfo>{};
+  final localLineByAppId = <String, int>{};
+  await _scanLocalApps(store, matches, lines, localAppById, localLineByAppId);
   final annotated = <String>{};
   try {
     final result = await service.fetchCatalog();
-    final entries = result.entries.where((e) {
-      if (!matches(e.id, e.name, e.description)) {
-        if (!isSearch) return false;
-        // Remote search also matches tags (pre-#866 behavior, kept).
-        return e.tags.any((tag) => tag.contains(query));
-      }
-      return true;
-    }).toList();
-    for (final e in entries) {
-      // Same id locally and remotely is ONE widget, not two (issue #866
-      // review): the local line wins; a newer remote version is surfaced
-      // as an update annotation on it — at most once per id, even if a
-      // bad catalog lists the same id twice (issue #866 review r2).
-      final localLine = localLineByAppId[e.id];
-      if (localLine != null) {
-        final local = localAppById[e.id];
-        if (local != null &&
-            semverNewer(local.version, e.version) &&
-            annotated.add(e.id)) {
-          lines[localLine] =
-              '${lines[localLine]} (update available: v${e.version})';
-        }
-        continue;
-      }
-      lines.add(
-        '${e.id} v${e.version}'
-        '${e.description.isEmpty ? '' : ' — ${e.description}'}',
-      );
+    for (final e in _matchingRemoteEntries(result, matches, isSearch, query)) {
+      _mergeRemoteEntry(e, lines, localAppById, localLineByAppId, annotated);
     }
-    if (lines.isEmpty) return ToolExecutionResult.text('No widgets found.');
-    final suffix = result.stale ? '\n(offline — cached catalog)' : '';
-    return ToolExecutionResult.text(lines.join('\n') + suffix);
+    return _renderCatalogLines(result, lines);
   } on CatalogError catch (error) {
-    // Remote unavailable: the local listing still answers.
-    if (lines.isNotEmpty) return ToolExecutionResult.text(lines.join('\n'));
-    return ToolExecutionResult.text('Catalog unavailable: $error');
+    return _catalogUnavailable(lines, error);
   }
 }
 
@@ -198,34 +248,11 @@ Future<ToolExecutionResult> _mutate(
 ) async {
   final id = (arguments['id'] ?? '').toString().trim();
   if (id.isEmpty) return ToolExecutionResult.text('Provide a widget "id".');
-  if (action == 'remove') {
-    // gh-1614 rework 2 (I1/AC4): the id is agent-supplied — validate it
-    // against the app namespace BEFORE touching storage. A traversal id
-    // would otherwise steer removeWidget's recursive delete outside
-    // `apps/` on hosts whose env normalizes `..`.
-    if (AppStorage.tryAppDir(id) == null) {
-      return ToolExecutionResult.text(
-        '"$id" is not a valid app id — it must be a single plain segment '
-        'under apps/ (no "..", no "/", no absolute form). Nothing removed.',
-      );
-    }
-    final removed = await store.removeWidget(id);
-    return ToolExecutionResult.text(
-      removed
-          ? 'Removed $id (user data in apps/$id/storage.json kept).'
-          : 'Nothing catalog-installed under "$id".',
-    );
-  }
+  if (action == 'remove') return _removeMutate(store, id);
 
   CatalogEntry? entry;
   try {
-    final result = await service.fetchCatalog();
-    for (final candidate in result.entries) {
-      if (candidate.id == id) {
-        entry = candidate;
-        break;
-      }
-    }
+    entry = await _findCatalogEntry(service, id);
   } on CatalogError catch (error) {
     return ToolExecutionResult.text('Catalog unavailable: $error');
   }
@@ -238,17 +265,7 @@ Future<ToolExecutionResult> _mutate(
   try {
     final files = await service.downloadWidgetHealing(entry);
     if (action == 'get-source') {
-      for (final file in files.entries) {
-        await env.writeFile(
-          '$widgetSourcesDir/${entry.id}/${file.key}',
-          utf8.decode(file.value, allowMalformed: true),
-        );
-      }
-      return ToolExecutionResult.text(
-        'Reference sources for ${entry.id} v${entry.version} written to '
-        '$widgetSourcesDir/${entry.id}/ (${files.length} files). Read them '
-        'with the read tool before authoring a similar widget.',
-      );
+      return await _sourceFilesResult(env, entry, files);
     }
     await store.installWidget(
       id: entry.id,
@@ -261,4 +278,55 @@ Future<ToolExecutionResult> _mutate(
   } on CatalogError catch (error) {
     return ToolExecutionResult.text('Failed: $error');
   }
+}
+
+/// `remove`: gh-1614 rework 2 (I1/AC4) — the id is agent-supplied, so it
+/// is validated against the app namespace BEFORE touching storage. A
+/// traversal id would otherwise steer removeWidget's recursive delete
+/// outside `apps/` on hosts whose env normalizes `..` (gh-1848 split).
+Future<ToolExecutionResult> _removeMutate(AppsStore store, String id) async {
+  if (AppStorage.tryAppDir(id) == null) {
+    return ToolExecutionResult.text(
+      '"$id" is not a valid app id — it must be a single plain segment '
+      'under apps/ (no "..", no "/", no absolute form). Nothing removed.',
+    );
+  }
+  final removed = await store.removeWidget(id);
+  return ToolExecutionResult.text(
+    removed
+        ? 'Removed $id (user data in apps/$id/storage.json kept).'
+        : 'Nothing catalog-installed under "$id".',
+  );
+}
+
+/// The catalog entry matching [id], or null when absent (gh-1848 split).
+Future<CatalogEntry?> _findCatalogEntry(
+  CatalogService service,
+  String id,
+) async {
+  final result = await service.fetchCatalog();
+  for (final candidate in result.entries) {
+    if (candidate.id == id) return candidate;
+  }
+  return null;
+}
+
+/// `get-source` outcome: the reference files written under
+/// [widgetSourcesDir] plus the pointer text (gh-1848 split).
+Future<ToolExecutionResult> _sourceFilesResult(
+  ExecutionEnv env,
+  CatalogEntry entry,
+  Map<String, Uint8List> files,
+) async {
+  for (final file in files.entries) {
+    await env.writeFile(
+      '$widgetSourcesDir/${entry.id}/${file.key}',
+      utf8.decode(file.value, allowMalformed: true),
+    );
+  }
+  return ToolExecutionResult.text(
+    'Reference sources for ${entry.id} v${entry.version} written to '
+    '$widgetSourcesDir/${entry.id}/ (${files.length} files). Read them '
+    'with the read tool before authoring a similar widget.',
+  );
 }

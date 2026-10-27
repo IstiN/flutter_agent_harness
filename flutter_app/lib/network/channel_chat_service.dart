@@ -60,7 +60,10 @@ final class ChannelChatService implements FaChatService {
   List<FaChatMessage> get messages => [
     for (final message in _state.messages)
       if (message.isOwn)
-        FaChatMessage(role: 'user', content: message.text ?? '')
+        FaChatMessage(
+          role: 'user',
+          content: message.text ?? '_(unable to decrypt this message)_',
+        )
       else
         FaChatMessage(
           role: 'assistant',
@@ -84,7 +87,7 @@ final class ChannelChatService implements FaChatService {
   String transcriptMarkdown() => _state.messages
       .map(
         (m) => m.isOwn
-            ? '**You**: ${m.text ?? ''}'
+            ? '**You**: ${m.text ?? '(unable to decrypt this message)'}'
             : '**${_senderName(m)}**: ${m.text ?? '(undecryptable)'}',
       )
       .join('\n\n');
@@ -92,7 +95,53 @@ final class ChannelChatService implements FaChatService {
   // ---------------------------------------------------------------- sending
 
   @override
-  Future<void> sendText(String text) => session.sendText(channelId, text);
+  Future<void> sendText(String text) {
+    final mentions = _mentionIds(text);
+    return session.sendText(
+      channelId,
+      text,
+      mentions: mentions.isEmpty ? null : mentions,
+    );
+  }
+
+  /// Resolves only complete, literal `@displayName` tokens against the
+  /// current roster. Unknown names stay ordinary text; an email-like
+  /// `user@example` is not a mention. The envelope carries ids, while [text]
+  /// itself is never rewritten (the DAP channel contract).
+  List<String> _mentionIds(String text) {
+    final ids = <String>{};
+    for (final member in session.roster.values) {
+      if (member.id.isEmpty || member.displayName.isEmpty) continue;
+      final needle = '@${member.displayName}';
+      var searchFrom = 0;
+      while (searchFrom < text.length) {
+        final index = text.indexOf(needle, searchFrom);
+        if (index < 0) break;
+        final end = index + needle.length;
+        if (_mentionStart(text, index) && _mentionEnd(text, end)) {
+          ids.add(member.id);
+          break;
+        }
+        searchFrom = index + 1;
+      }
+    }
+    return ids.toList();
+  }
+
+  static bool _mentionStart(String text, int index) {
+    if (index == 0) return true;
+    final previous = text.substring(index - 1, index);
+    return previous.trim().isEmpty ||
+        '([{<'.contains(previous) ||
+        previous == '"' ||
+        previous == "'";
+  }
+
+  static bool _mentionEnd(String text, int end) {
+    if (end == text.length) return true;
+    final next = text.substring(end, end + 1);
+    return next.trim().isEmpty || '.,!?;:)]}>/\\'.contains(next) || next == '"';
+  }
 
   @override
   Future<void> sendAttachments({

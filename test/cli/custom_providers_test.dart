@@ -67,6 +67,69 @@ void main() {
       expect(plain.toYaml().containsKey('authHeader'), isFalse);
     });
 
+    test('round-trips the CodeMie project (issue #1809)', () {
+      final picked = CustomProviderEntry(
+        name: 'codemie',
+        apiType: 'openai',
+        baseUrl: 'https://codemie.lab.epam.com/code-assistant-api/v1',
+        modelId: 'm',
+        project: 'demo-project',
+      );
+      expect(
+        CustomProviderEntry.fromYaml(picked.toYaml()).project,
+        'demo-project',
+      );
+      // Unset (non-CodeMie or pre-#1809 entries) stays out of the yaml.
+      final plain = CustomProviderEntry(
+        name: 'a',
+        apiType: 'openai',
+        baseUrl: 'https://a.example.com',
+        modelId: 'm',
+      );
+      expect(plain.project, isNull);
+      expect(plain.toYaml().containsKey('project'), isFalse);
+      expect(CustomProviderEntry.fromYaml(plain.toYaml()).project, isNull);
+    });
+
+    test('the edit-wizard merge preserves the picked project '
+        '(issue #1809)', () {
+      final existing = CustomProviderEntry(
+        name: 'codemie',
+        apiType: 'openai',
+        baseUrl: 'https://codemie.lab.epam.com/code-assistant-api/v1',
+        modelId: 'm',
+        authMethod: CustomProviderAuthMethod.sso,
+        project: 'demo-project',
+      );
+      final wizardRebuilt = CustomProviderEntry(
+        name: 'codemie',
+        apiType: 'openai',
+        baseUrl: 'https://codemie.lab.epam.com/code-assistant-api/v1',
+        modelId: 'm2',
+      );
+      final merged = mergeEditedCustomProviderEntry(
+        existing: existing,
+        updated: wizardRebuilt,
+      );
+      expect(merged.project, 'demo-project');
+      expect(merged.authMethod, CustomProviderAuthMethod.sso);
+      expect(merged.modelId, 'm2');
+
+      // A baseUrl edit DROPS the project — endpoint-scoped, a project of
+      // org A means nothing to org B (issue #1809 review r2).
+      final moved = mergeEditedCustomProviderEntry(
+        existing: existing,
+        updated: CustomProviderEntry(
+          name: 'codemie-2',
+          apiType: 'openai',
+          baseUrl: 'https://codemie.other.com/code-assistant-api/v1',
+          modelId: 'm',
+        ),
+      );
+      expect(moved.project, isNull);
+      expect(moved.authMethod, CustomProviderAuthMethod.sso);
+    });
+
     test('rejects invalid authHeader values naming the entry '
         '(issue #964 AC5)', () {
       void expectBadAuth(Object? authHeader) {

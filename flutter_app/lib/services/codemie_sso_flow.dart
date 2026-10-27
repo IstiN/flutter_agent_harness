@@ -146,12 +146,24 @@ Future<CodeMieSsoCredentials?> _authenticate(
     isIOS: Platform.isIOS,
     isWeb: kIsWeb,
   );
-  switch (surface.primary) {
-    case ProviderAuthSurfaceKind.systemBrowserLoopback:
-      return desktopCodeMieSso(context, orgUrl);
+  if (surface.primary == ProviderAuthSurfaceKind.systemBrowserLoopback) {
+    return desktopCodeMieSso(context, orgUrl);
+  }
+  return _nonLoopbackCodeMieSso(context, orgUrl, surface.primary);
+}
+
+/// The two remaining surfaces (gh-1848 split): iOS the system auth
+/// session with the in-app WebView as the fallback, every other platform
+/// the in-app WebView directly.
+Future<CodeMieSsoCredentials?> _nonLoopbackCodeMieSso(
+  BuildContext context,
+  String orgUrl,
+  ProviderAuthSurfaceKind primary,
+) {
+  switch (primary) {
     case ProviderAuthSurfaceKind.systemAuthSession:
       return _iosSso(context, orgUrl);
-    case ProviderAuthSurfaceKind.embeddedWebView:
+    case _:
       return _webViewSso(context, orgUrl);
   }
 }

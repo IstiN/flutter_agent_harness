@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:test/test.dart';
 
 import '../site_test_support.dart';
@@ -144,6 +145,13 @@ void main() {
     expect(llms, contains('`fah`'));
     expect(llms, contains('https://fa1.dev/install.sh'));
     expect(llms, contains('dart pub global activate flutter_agent_harness'));
+  });
+
+  test('llms.txt links the Android APKs (issue #1864)', () {
+    expect(llms, contains('Android: direct APKs'));
+    expect(llms, contains(defaultApkGodUrl));
+    expect(llms, contains(defaultApkStandardUrl));
+    expect(llms, isNot(contains('coming soon')));
   });
 
   test('landing page links both downloadable artifacts and names the hosts', () {

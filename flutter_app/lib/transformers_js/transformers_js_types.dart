@@ -283,43 +283,56 @@ final class TransformersJsProgressAggregator {
   TransformersJsProgress update(TransformersJsDownloadEvent event) {
     final file = event.file;
     if (file != null) {
-      final expected = _expected[file];
-      if (expected != null) {
-        switch (event.status) {
-          case 'initiate':
-            _loaded.putIfAbsent(file, () => 0);
-          case 'progress':
-            _loaded[file] = (event.loaded ?? _loaded[file] ?? 0).clamp(
-              0,
-              expected,
-            );
-          case 'done':
-            _loaded[file] = expected;
-        }
-      }
+      _applyFileProgress(file, event.status, event.loaded);
       _currentFile = file.split('/').last;
     }
-
-    var fraction = switch (event.status) {
-      'ready' => 1.0,
-      _ => _overallFraction(),
-    };
-    // Monotonic: the bar never moves backwards.
-    if (fraction < _maxFraction) {
-      fraction = _maxFraction;
-    } else {
-      _maxFraction = fraction;
-    }
-
+    final fraction = _nextFraction(event.status);
     final percent = (fraction * 100).floor();
-    final text = switch (event.status) {
-      'ready' => 'Model ready',
-      'prepare' => 'Preparing model download…',
-      _ when _currentFile != null => 'Downloading $_currentFile — $percent%',
-      _ => 'Downloading model weights — $percent%',
-    };
-    return TransformersJsProgress(fraction: fraction, text: text);
+    return TransformersJsProgress(
+      fraction: fraction,
+      text: _progressText(event.status, percent),
+    );
   }
+
+  /// Applies one file's raw progress to the per-file ledger: `initiate`
+  /// seeds at zero, `progress` clamps into the expected byte size, `done`
+  /// completes it. Files outside the expected set (none should pass the
+  /// fetch allowlist) never touch the fraction — they only update the
+  /// status line.
+  void _applyFileProgress(String file, String status, int? loaded) {
+    final expected = _expected[file];
+    if (expected == null) return;
+    switch (status) {
+      case 'initiate':
+        _loaded.putIfAbsent(file, () => 0);
+      case 'progress':
+        _loaded[file] = (loaded ?? _loaded[file] ?? 0).clamp(0, expected);
+      case 'done':
+        _loaded[file] = expected;
+    }
+  }
+
+  /// The monotonic overall fraction for [status]: `ready` completes the
+  /// bar; otherwise the byte-weighted fraction across files. Never moves
+  /// backwards, even when events arrive out of order or a file restarts.
+  double _nextFraction(String status) {
+    final fraction = status == 'ready' ? 1.0 : _overallFraction();
+    if (fraction < _maxFraction) return _maxFraction;
+    _maxFraction = fraction;
+    return fraction;
+  }
+
+  /// The status line: ready → done wording, `prepare` → the preparing
+  /// phase, else the in-flight file (basename) — or the generic line
+  /// before the first file event — with the percent.
+  String _progressText(String status, int percent) => switch (status) {
+    'ready' => 'Model ready',
+    'prepare' => 'Preparing model download…',
+    _ =>
+      _currentFile != null
+          ? 'Downloading $_currentFile — $percent%'
+          : 'Downloading model weights — $percent%',
+  };
 
   double _overallFraction() {
     if (_totalBytes <= 0) return 0;

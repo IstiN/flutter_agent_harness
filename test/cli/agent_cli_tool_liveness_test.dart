@@ -18,13 +18,21 @@ import 'agent_cli_test_support.dart';
 
 /// The liveness console records: every single-line reminder/hint the run
 /// printed (the `status.pending` glyph + tool tag is the waiting layer's
-/// grep anchor — derived from the symbol table, gh-1446 AC8).
+/// grep anchor — derived from the symbol table, gh-1446 AC8). The line-mode
+/// REPL's `fa> ` prompt prefix is chrome: the run's first console line rides
+/// the open prompt line (pre-gh-1931 that slot was the tool start row), and
+/// the record comparison below is about the records, not the prompt.
 final RegExp _livenessLine = RegExp(
   '${RegExp.escape(FaThemeController.instance.sym('status.pending'))} \\[',
 );
 
-List<String> livenessLines(String out) =>
-    out.split('\n').where((line) => _livenessLine.hasMatch(line)).toList();
+List<String> livenessLines(String out) => out
+    .split('\n')
+    .map(
+      (line) => line.startsWith('fa> ') ? line.substring('fa> '.length) : line,
+    )
+    .where((line) => _livenessLine.hasMatch(line))
+    .toList();
 
 void main() {
   late MemoryExecutionEnv env;

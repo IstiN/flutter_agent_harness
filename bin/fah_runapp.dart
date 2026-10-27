@@ -172,6 +172,33 @@ Future<void> _runApp(List<String> args) async {
       cwd: parsed.cwd ?? Directory.current.path,
     );
     final sessionRoot = parsed.sessionRoot ?? _defaultSessionRoot();
+    // One presence store shared by the repair and clean verbs (gh-1746
+    // review: the wiring must not drift between the branches).
+    final sessionPresenceStore = FileSessionPresenceStore(
+      env: listEnv,
+      root: sessionRoot,
+      // gh-1660: the sweep deletes a stale presence file only when the
+      // pid probe pronounces its process dead (or past the cleanup grace
+      // without a pid) — wire the POSIX probe so live-but-stale rows are
+      // never swept under a listing run.
+      pidAlive: probePidAlive,
+    );
+    // The user's `sessions.retention` policy (gh-1746), read once for
+    // both verbs: the clean verb enforces it, the list verb prints the
+    // usage footer under a cap (Visibility; REG-1: absent = no footer).
+    SessionRetentionConfig readRetention() {
+      final cleanHome = homeDirectory();
+      if (cleanHome == null || cleanHome.isEmpty) {
+        return const SessionRetentionConfig();
+      }
+      try {
+        return loadCliConfig(cleanHome).sessions?.retention ??
+            const SessionRetentionConfig();
+      } on ConfigException catch (error) {
+        _fail('invalid ~/.fah/config.yaml: ${error.message}');
+      }
+    }
+
     if (sessionList.verb == 'repair') {
       exit(
         await runSessionRepairCliCommand(
@@ -181,15 +208,38 @@ Future<void> _runApp(List<String> args) async {
           sessionRoot: sessionRoot,
           sessionId: sessionList.repairTarget,
           dryRun: sessionList.dryRun,
-          presenceStore: FileSessionPresenceStore(
-            env: listEnv,
-            root: sessionRoot,
-            // gh-1660: the sweep deletes a stale presence file only when
-            // the pid probe pronounces its process dead (or past the
-            // cleanup grace without a pid) — wire the POSIX probe so
-            // live-but-stale rows are never swept under a listing run.
-            pidAlive: probePidAlive,
-          ),
+          presenceStore: sessionPresenceStore,
+        ),
+      );
+    }
+    if (sessionList.verb == 'info') {
+      // issue #1882 AC5: the size/records breakdown over one streaming
+      // pass. Progress rides stderr; SIGINT cancels into a partial
+      // report (exit 130) instead of a silent hang.
+      exit(
+        await _runSessionInfoVerb(
+          io: io,
+          env: listEnv,
+          sessionRoot: sessionRoot,
+          command: sessionList,
+        ),
+      );
+    }
+    if (sessionList.verb == 'clean') {
+      // gh-1746 AC6: `fa session clean [--dry-run]` — one retention sweep
+      // pass, intercepted like repair: no agent boot. The policy comes
+      // from the user config (`sessions.retention`, tolerant parse).
+      // Reuses the enclosing io/env/root + the shared presence store so
+      // the verbs cannot drift (gh-1746 review).
+      exit(
+        await runSessionCleanCliCommand(
+          write: io.write,
+          writeln: io.writeln,
+          env: listEnv,
+          sessionRoot: sessionRoot,
+          retention: readRetention(),
+          dryRun: sessionList.dryRun,
+          presenceStore: sessionPresenceStore,
         ),
       );
     }
@@ -202,6 +252,7 @@ Future<void> _runApp(List<String> args) async {
         cwd: listEnv.cwd,
         json: sessionList.json,
         flat: sessionList.flat,
+        retention: readRetention(),
       ),
     );
   }
@@ -555,7 +606,7 @@ Future<void> _runApp(List<String> args) async {
   }
   final baseUrl = applyFolderModel ? folderState.baseUrl : effective.baseUrl;
 
-  final model = applyFolderModel
+  var model = applyFolderModel
       ? buildCliDefaultModel(
           provider,
           modelId: folderState.modelId,
@@ -621,13 +672,47 @@ Future<void> _runApp(List<String> args) async {
 
   // Raw wire dumps (issue #385 F5): opt-in only — the project
   // `.fah/config.yaml` `trajectory:` section wins over the user one.
-  final wireDump = loadProjectWireDump(cwd) ?? saved.wireDump;
+  // gh-1745: the same section carries the request-blob spill policy
+  // (default ON; a project kill switch wins over the user default too).
+  final trajectorySection = loadProjectTrajectorySection(cwd);
+  final wireDump = trajectorySection?.wireDump ?? saved.wireDump;
+  final trajectoryRequestBlobs =
+      trajectorySection?.requestBlobs ?? saved.trajectoryRequestBlobs;
+  final trajectoryRequestBlobMaxMb =
+      trajectorySection?.requestBlobMaxMb ?? saved.trajectoryRequestBlobMaxMb;
+  final trajectoryRequestBlobMaxBytes =
+      trajectorySection?.requestBlobMaxBytes ??
+      saved.trajectoryRequestBlobMaxBytes;
+  final trajectoryRequestBlobTtlDays =
+      trajectorySection?.requestBlobTtlDays ??
+      saved.trajectoryRequestBlobTtlDays;
 
   // Remote provider catalog (fa1.dev/models-catalog.json): default model
   // ids and per-provider context-window tables for endpoints that don't
   // publish them. Preloaded once, non-blocking (a 10s timeout, never
   // throws) — pickers fall back to the live endpoint + local defaults.
   await remoteCatalogEnrichment.preload(client: sharedProviderHttpClient());
+
+  // Provider queue (issue #418, gh-1781): FA_PROVIDERS_QUEUE env > project
+  // .fah/config.yaml `providersQueue:` > user ~/.fah/config.yaml. A parse
+  // error in a PRESENT scope is a hard startup error (line:col); no queue
+  // set anywhere = zero change (byte-identical legacy boot). The winning
+  // queue REPLACES the main-model resolution; the boot notes name the
+  // winning scope and the shadowed scopes. Resolved BEFORE the secure-store
+  // preload so the queue's key names join the preload set (I4), and before
+  // the legacy key gate so an active queue satisfies it (I1).
+  ProviderQueueResolution? queueResolution;
+  try {
+    final queue = resolveProviderQueueAtBoot(projectDir: cwd, homeDir: home);
+    if (queue.entries.isNotEmpty) {
+      // Queue entries may carry their own watchdog tuning (issue #1398);
+      // they register by baseUrl like every other registry entry.
+      seedProviderTuning(queueEntries: queue.entries);
+      queueResolution = queue;
+    }
+  } on ConfigException catch (error) {
+    _fail(error.message);
+  }
 
   // Platform secure storage (macOS Keychain / Secret Service / Windows
   // Credential Locker): backs up every provider key the environment does
@@ -638,14 +723,27 @@ Future<void> _runApp(List<String> args) async {
   // gh-1059: the preload report feeds the boot diagnostics — every read
   // logged under --debug-secrets / FA_DEBUG_KEYS, and a config that
   // references store keys while NONE resolve prints a warning instead of
-  // the silent keyless boot.
+  // the silent keyless boot. gh-1781: the resolved boot queue's key names
+  // join both sets (preload + the config-referenced diagnostics when the
+  // winning queue comes from the project/user config).
   final keyCache = SecureKeyCache(platformSecureKeyStore());
   final keyPreloadReport = await keyCache.preload(
-    secureKeyPreloadNames(saved, baseUrl: baseUrl),
+    secureKeyPreloadNames(
+      saved,
+      baseUrl: baseUrl,
+      queueEntries: queueResolution?.entries ?? const [],
+    ),
   );
   for (final line in secureKeyBootDiagnostics(
     report: keyPreloadReport,
-    referencedKeyNames: referencedSecureKeyNames(saved),
+    referencedKeyNames: referencedSecureKeyNames(
+      saved,
+      queueEntries:
+          queueResolution != null &&
+              queueResolution.scope != ProviderQueueScope.env
+          ? queueResolution.entries
+          : const [],
+    ),
     debug:
         parsed.debugSecrets ||
         isTruthyEnvValue(Platform.environment['FA_DEBUG_KEYS']),
@@ -834,6 +932,32 @@ Future<void> _runApp(List<String> args) async {
       _fail('invalid model roles config: ${error.message}');
     }
   }
+  // Provider queue runtime (gh-1781): built right after the roles resolver
+  // and BEFORE the legacy key gate — an all-keyless queue fails here with
+  // the loud queue error naming every skipped entry (I3, never the legacy
+  // `missing API key: set OPENROUTER_API_KEY` shape), and the gate below
+  // sees the active queue (`queueResolved`).
+  ProviderQueueRuntime? queueRuntime;
+  final queueNotices = <String>[];
+  // gh-1624 (review r2): queue entries carrying an unverified dialect
+  // mismatch say it on the boot — the queue lane replaces main-model
+  // resolution, its warnings never ride silently.
+  final queueBindingWarnings = <String>[];
+  final queueSecrets = queueResolution == null
+      ? const <String, String>{}
+      : collectQueueSecrets(queueResolution.entries, keyCache);
+  if (queueResolution != null) {
+    try {
+      queueRuntime = ProviderQueueRuntime.build(
+        queueResolution,
+        secrets: queueSecrets,
+        onBindingWarning: queueBindingWarnings.add,
+      );
+      queueNotices.addAll(queueResolution.notices);
+    } on ConfigException catch (error) {
+      _fail(error.message);
+    }
+  }
   late final String apiKey;
   try {
     // The FA_PROVIDER_* declaration carries its own key resolution (the
@@ -854,38 +978,30 @@ Future<void> _runApp(List<String> args) async {
             // own key slot resolves FIRST — the account the session
             // actually ran on, never a same-endpoint twin.
             pinnedKeyName: folderPinnedEntry?.keyName,
+            // gh-1781: an active queue replaces the main-model resolution
+            // — the legacy single-provider key is optional under it (I1).
+            queueResolved: queueRuntime != null,
           );
   } on ConfigException catch (error) {
     _fail(error.message);
   }
 
-  // Provider queue (issue #418): FA_PROVIDERS_QUEUE env > project
-  // .fah/config.yaml `providersQueue:` > user ~/.fah/config.yaml. A parse
-  // error in a PRESENT scope is a hard startup error (line:col); no queue
-  // set anywhere = zero change (byte-identical legacy boot). The winning
-  // queue REPLACES the main-model resolution; the boot notes name the
-  // winning scope and the shadowed scopes.
-  ProviderQueueRuntime? queueRuntime;
-  final queueNotices = <String>[];
-  // gh-1624 (review r2): queue entries carrying an unverified dialect
-  // mismatch say it on the boot — the queue lane replaces main-model
-  // resolution, its warnings never ride silently.
-  final queueBindingWarnings = <String>[];
-  try {
-    final queue = resolveProviderQueueAtBoot(projectDir: cwd, homeDir: home);
-    if (queue.entries.isNotEmpty) {
-      // Queue entries may carry their own watchdog tuning (issue #1398);
-      // they register by baseUrl like every other registry entry.
-      seedProviderTuning(queueEntries: queue.entries);
-      queueRuntime = ProviderQueueRuntime.build(
-        queue,
-        secrets: collectQueueSecrets(queue.entries, keyCache),
-        onBindingWarning: queueBindingWarnings.add,
-      );
-      queueNotices.addAll(queue.notices);
-    }
-  } on ConfigException catch (error) {
-    _fail(error.message);
+  // gh-1781 (I6): an active queue owns the boot model identity when the
+  // launch pinned none of its own — no explicit --provider/--model/
+  // --base-url flag, no FA_PROVIDER_* preconfig, no per-folder restore.
+  // The capability boot notes and the AgentCliConfig then name the active
+  // queue head instead of the unused CliConfig default; the provider kind
+  // is the head's adapter kind.
+  if (queueRuntime != null &&
+      queueOwnsBootModel(
+        modelFlag: parsed.model != null,
+        providerFlag: parsed.providerExplicit,
+        baseUrlFlag: parsed.baseUrl != null,
+        hasProviderPreconfig: faPreconfig != null,
+        folderRestoreApplied: applyFolderModel,
+      )) {
+    model = queueRuntime.streamFunction.currentModel;
+    provider = resolveCliProviderSpec(model.provider)?.kind ?? provider;
   }
   // The per-provider tuning boot notes (issue #1398, review r2): captured
   // AFTER the queue pass above so queue-carried tuning entries are in the
@@ -905,8 +1021,15 @@ Future<void> _runApp(List<String> args) async {
   // one (same merge as the other project sections). Null = absent —
   // no spill hooks, byte-identical legacy boot.
   final spillsConfig = loadProjectSpillsConfig(cwd) ?? saved.spills;
+  // The projectContext budget (issue #1761): user-level `projectContext:`
+  // section only — a global resource knob, not a repo-traveling one.
+  final projectContextConfig = saved.projectContext;
   final redactor = buildSecretRedactor(
     roleSecrets: roleSecrets,
+    // gh-1781 (I5): every resolved queue credential (custom `apiKeyEnv`
+    // names, rotation stacks, refresh tokens) joins the redaction before
+    // any tool or stream executes.
+    queueSecrets: queueSecrets,
     keys: keyCache,
     pipeline: redactionPipeline,
   );
@@ -966,6 +1089,18 @@ Future<void> _runApp(List<String> args) async {
     dapConfig: readDapConfig(defaultDapConfigFile(null, dapEnvironment)),
   );
   final hubPlugin = HubPlugin(environment: dapEnvironment);
+  // gh-1888 review (AC8/AC14): the DAP env contract carries secrets
+  // (plaintext channel privs in DAP_CHANNELS_JSON, the hub credential,
+  // the key passphrase) and every bash child inherits them — register
+  // them with BOTH masking systems BEFORE any tool runs, exactly like
+  // the API keys above. The hub plugin additionally hooks every
+  // runtime-resolved secret (decrypted privs, auto-provisioned
+  // passphrases) into the same registration.
+  registerDapEnvSecrets(
+    dapEnvironment,
+    redactor: redactor,
+    redactionPipeline: redactionPipeline,
+  );
   final resolved = await _resolvePlugins(
     effective,
     cliEnv,
@@ -974,10 +1109,33 @@ Future<void> _runApp(List<String> args) async {
     // `fabric.hub: false` (issue #304 E6) — the legacy kill switch: no
     // hub primary in the messaging fabric, byte-identical directory.
     fabricHubAllowed: saved.fabric?.hub ?? true,
+    secretRedactor: redactor,
+    redactionPipeline: redactionPipeline,
   );
 
+  Future<void> teardownPlugins() async {
+    try {
+      await resolved.hubHost?.dispose();
+    } on Object {
+      // Clean-shutdown hygiene must never replace the intended exit code.
+    }
+  }
+
+  // Signal-driven headless exits live in fah_util.dart; give that seam
+  // the same idempotent cleanup as the normal branch finally blocks.
+  _fahPluginTeardown = teardownPlugins;
+
+  // gh-1895 review: every _fail that runs AFTER plugin resolution must
+  // remove the runtime plaintext-key overlay before the usage exit — the
+  // next boot's guard sweep would reclaim it eventually, but the overlay
+  // must not linger on disk for the whole gap.
+  Future<Never> failAfterPlugins(String message) async {
+    await teardownPlugins();
+    _fail(message);
+  }
+
   if (!const {'code', 'architect', 'review'}.contains(effective.mode)) {
-    _fail('unknown mode: ${effective.mode}');
+    await failAfterPlugins('unknown mode: ${effective.mode}');
   }
   final promptTemplateDirs = <String>[
     '$cwd/.fah/prompts',
@@ -1004,7 +1162,7 @@ Future<void> _runApp(List<String> args) async {
     try {
       tee = File(path).openSync(mode: FileMode.write);
     } on Object catch (error) {
-      _fail('cannot open --log-file "$path": $error');
+      await failAfterPlugins('cannot open --log-file "$path": $error');
     }
     logTeeFile = tee;
     io = TeeCliIO(terminalIo, tee.writeStringSync);
@@ -1116,6 +1274,7 @@ Future<void> _runApp(List<String> args) async {
       mailSink: (envelope) =>
           A2aMailGateway.accept(envelope, fabric: projectFabric),
     );
+    await teardownPlugins();
     exit(0);
   }
   // `fa serve --bridge [--port N] [--token T]` — mount the loopback
@@ -1135,6 +1294,7 @@ Future<void> _runApp(List<String> args) async {
       token: tokenFlag,
       version: packageVersion,
     );
+    await teardownPlugins();
     exit(0);
   }
   // `late` so the onProviderChanged closure can reach the agent (to attach
@@ -1155,7 +1315,7 @@ Future<void> _runApp(List<String> args) async {
         ? flagTools
         : toolsSpecFromEnv(Platform.environment);
   } on ConfigException catch (error) {
-    _fail('invalid --tools/FA_TOOLS spec: ${error.message}');
+    await failAfterPlugins('invalid --tools/FA_TOOLS spec: ${error.message}');
   }
 
   // The tool-load preset (issue #680): `--omp` wins over the
@@ -1170,7 +1330,7 @@ Future<void> _runApp(List<String> args) async {
       configMode: saved.agentLoadMode,
     );
   } on ArgumentError catch (error) {
-    _fail('invalid load mode: ${error.message}');
+    await failAfterPlugins('invalid load mode: ${error.message}');
   }
 
   // Per-folder model memory: mirror the active triple into the folder's
@@ -1237,7 +1397,7 @@ Future<void> _runApp(List<String> args) async {
   for (final attachment in parsed.attachments) {
     final file = File(attachment);
     if (!file.existsSync()) {
-      _fail('--attach: no such file: $attachment');
+      await failAfterPlugins('--attach: no such file: $attachment');
     }
     final bytes = file.readAsBytesSync();
     final mime = _sniffMime(bytes);
@@ -1391,6 +1551,12 @@ Future<void> _runApp(List<String> args) async {
         // runner's $RUNNER_TEMP). Null keeps <cwd>/.fah/bash_jobs.
         jobLogDir: jobLogDirOverride(Platform.environment),
         spills: spillsConfig,
+        // gh-1746: the opt-in sessions retention policy (user config);
+        // null = the section is absent — no sweep, no note (AC1).
+        sessionsRetention: saved.sessions,
+        projectContext: projectContextConfig,
+        // Per-provider proxy bindings (issue #1921) ride the loaded config.
+        providerNetworks: saved.providerNetworks,
         // Shared by the env config and the presence store below.
         env: cliEnv,
         // fa_cube sandbox profile (Phase 1): clamps fs + shell ops to the
@@ -1416,6 +1582,15 @@ Future<void> _runApp(List<String> args) async {
           if (value != null && value.isNotEmpty) return value;
           return keyCache.read(name);
         },
+        // The enumerable env view the provider-queue scope AND its secret
+        // sweep re-resolve through (gh-1781 review r1): the quota-feed
+        // rebind and the queue-edit reload rebuild the runtime from this
+        // view — handing the same map the boot resolved (`Platform.
+        // environment`) keeps the rotation stack (`NAME_2`, `NAME_3`, …)
+        // in the rebuilt `ApiKeyRing`s instead of silently dropping to
+        // single-key rings. Resolution behavior is unchanged (null would
+        // read the same process environment).
+        providerQueueEnv: Platform.environment,
         // herdr pane self-report (issue #1481): the gate reads the pane env
         // herdr exports to every pane process; each report spawns the pane's
         // herdr binary fire-and-forget (reporter-side short timeout, silent
@@ -1517,6 +1692,8 @@ Future<void> _runApp(List<String> args) async {
         plugins: resolved.plugins,
         pluginConfig: resolved.config,
         hubFabric: resolved.hubFabric,
+        dapDisplayNameResolver: () =>
+            HubPluginHost.dapDisplayNameFor(hubPlugin),
         // Fabric discovery (issue #27 phase 2): capabilities from the
         // `fabric:` config section; the OS hostname enables `name@machine`
         // addressing (null when the platform cannot name the host).
@@ -1536,8 +1713,13 @@ Future<void> _runApp(List<String> args) async {
         compactionEngine: compactionEngine,
         compactionJudgeBudgetSeconds: compactionJudgeBudgetSeconds,
         wireDump: wireDump,
+        trajectoryRequestBlobs: trajectoryRequestBlobs,
+        trajectoryRequestBlobMaxMb: trajectoryRequestBlobMaxMb,
+        trajectoryRequestBlobMaxBytes: trajectoryRequestBlobMaxBytes,
+        trajectoryRequestBlobTtlDays: trajectoryRequestBlobTtlDays,
         contextWindowCap: saved.contextWindowCap,
         stuckTool: saved.stuckTool,
+        foregroundCall: saved.foregroundCall,
         subagents: saved.subagents,
         jobs: saved.jobs,
         headless: saved.headless,
@@ -1724,7 +1906,7 @@ Future<void> _runApp(List<String> args) async {
       io: io,
     );
   } on ConfigException catch (error) {
-    _fail(error.message);
+    await failAfterPlugins(error.message);
   }
   if (redactorAttached) attachSecretRedactor(cli.agent, redactor);
 
@@ -1850,6 +2032,7 @@ Future<void> _runApp(List<String> args) async {
       // the in-flight per-line flushes and crashes the exit path.
       await drainStdoutLines();
     } finally {
+      await teardownPlugins();
       exit(130);
     }
   }
@@ -1891,12 +2074,13 @@ Future<void> _runApp(List<String> args) async {
   // exit 130 — instead of dying mid-write. A second SIGTERM escalates
   // (graceful → forced), the usual supervisor contract. [stdout.flush]
   // matters: exit() drops the async write buffer, taking the just-written
-  // `cancelled` frame with it.
+  // `cancelled` frame with it. gh-1763: the abort names SIGTERM (never
+  // masquerades as a user Ctrl+C).
   if (headlessPrompt != null) {
     ProcessSignal.sigterm.watch().listen((_) {
       if (_sigtermSeen) exit(143);
       _sigtermSeen = true;
-      _gracefulHeadlessExit(terminalIo.fireInterrupt);
+      _gracefulHeadlessExit(terminalIo.fireInterrupt, signal: 'SIGTERM');
     });
   }
 
@@ -1913,7 +2097,7 @@ Future<void> _runApp(List<String> args) async {
     final sigtermSub = ProcessSignal.sigterm.watch().listen((_) {
       if (sigtermSeen) exit(143);
       sigtermSeen = true;
-      _gracefulHeadlessExit(terminalIo.fireInterrupt);
+      _gracefulHeadlessExit(terminalIo.fireInterrupt, signal: 'SIGTERM');
     });
     final int code;
     try {
@@ -1926,6 +2110,7 @@ Future<void> _runApp(List<String> args) async {
       await sigtermSub.cancel();
       await sigintSub.cancel();
       await drainStdoutLines();
+      await teardownPlugins();
       logTeeFile?.closeSync();
     }
     exit(code);
@@ -1949,6 +2134,7 @@ Future<void> _runApp(List<String> args) async {
     } finally {
       await sigintSub.cancel();
       await drainStdoutLines();
+      await teardownPlugins();
       logTeeFile?.closeSync();
     }
     exit(code);
@@ -1958,6 +2144,7 @@ Future<void> _runApp(List<String> args) async {
     await cli.run();
   } finally {
     await sigintSub.cancel();
+    await teardownPlugins();
     logTeeFile?.closeSync();
   }
 

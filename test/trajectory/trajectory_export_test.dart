@@ -232,6 +232,47 @@ void main() {
       expect(markdown, contains('### #6 system · modelChange'));
     });
 
+    test('gh-1745: a spilled request summary exports without dangling '
+        'colons', () {
+      // The gh-1745 stub shape: role+chars only (the previews/block texts
+      // rode the request blob), plus the spill pointer.
+      const spilled = TrajectoryRequestDetail(
+        messageCount: 1,
+        systemPromptChars: 40,
+        toolCount: 1,
+        toolNames: ['bash'],
+        spillFile: '.fah/trajectories/s1/requests/1.json',
+        messages: [
+          TrajectoryRequestMessageSummary(role: 'user', chars: 10, preview: ''),
+        ],
+      );
+      final snapshot = TrajectorySnapshot(
+        records: UnmodifiableListView(const [
+          TrajectoryAssistantRecord(
+            index: 1,
+            recordId: 'a1',
+            messageId: 'm1',
+            turn: 1,
+            step: 1,
+            provider: 'anthropic',
+            model: 'claude-test',
+            requestDetail: spilled,
+          ),
+        ]),
+        requests: UnmodifiableListView(const []),
+        callSchemas: const {},
+        partial: null,
+        runningCalls: UnmodifiableListView(const []),
+        recordLocations: const {},
+        revision: 0,
+      );
+      final markdown = exportTrajectoryMarkdown(snapshot);
+      // The role+chars stub stays; no trailing `: ` — the preview is in
+      // the blob, not this record.
+      expect(markdown, contains('- `user` 10 chars\n'));
+      expect(markdown, isNot(contains('chars: ')));
+    });
+
     test('four-backtick fences survive embedded triple backticks', () {
       final snapshot = _snapshot();
       final embedded = TrajectoryAssistantRecord(

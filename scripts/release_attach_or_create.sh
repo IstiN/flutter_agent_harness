@@ -9,14 +9,15 @@
 # would fire the job's draft lifecycle guard against the WINNER's
 # in-flight draft.
 #
-# Ownership-stamped: `gh release create <tag> <assets...>` uploads the
-# assets through a DRAFT first and publishes only after every upload
-# succeeds, so the create stamps the body with
+# Ownership-stamped: the create path makes a DRAFT (gh-1801 rework: the
+# release never goes live from a leg — the tag-run release-provenance job
+# publishes + flags latest once the signed SHA256SUMS is attached). The
+# body stamps
 #   <!-- release-draft-owner: run/<run_id>/job/<job_id> -->
 # and release_draft_guard.sh deletes that draft ONLY on an exact
 # run+job match — never the sibling leg's mid-upload draft (daily-publish
 # runs the mobile and macOS legs concurrently on the same derived tag).
-# The marker is an invisible HTML comment in the published body.
+# The marker is an invisible HTML comment in the body.
 #
 # Usage: release_attach_or_create.sh <tag> <asset> [<asset>...]
 #   reads the release body from release-notes.md in the CWD (a minimal
@@ -30,17 +31,50 @@ repo="${GITHUB_REPOSITORY:?GITHUB_REPOSITORY must be set}"
 shift
 assets=("$@")
 if [ "${#assets[@]}" -eq 0 ]; then
-  echo "::error::no assets to attach for $tag" >&2
+  # gh-1801 hard refusal: creating a release with zero resolved assets is
+  # the `fa update` breaker (an empty `latest` 404s every
+  # fa-<os>-<arch>.tar.gz until backfill — v1.0.630, 2026-10-23). Attaching
+  # is the caller's only honest option when it resolved nothing — fail
+  # loud here, never create empty. Pinned by
+  # test/release_empty_latest_guard_test.dart.
+  echo "::error::no assets to attach for $tag — refusing to create or touch a release with an empty asset list (gh-1801): resolve at least one artifact or skip the release step" >&2
   exit 1
 fi
 
-upload_all() { # exists-path: upload + re-assert the Latest badge (#282)
+upload_all() { # exists-path: upload + (servable-only) publish + latest
   for asset in "${assets[@]}"; do
     gh release upload "$tag" "$asset" --clobber --repo "$repo"
   done
-  # Latest policy (#282): the newest published release carries the badge
-  # explicitly — even when this call lost the create race.
-  gh release edit "$tag" --latest --repo "$repo"
+  # Latest policy (#282 + gh-1801 rework): publish + latest ONLY when the
+  # release can actually serve `fa update` — that means the signed
+  # checksums are already on it (`fa update` hard-fails without
+  # SHA256SUMS(.sig), bin/self_manage.dart provenance gate). A release
+  # carrying them but still draft means provenance ran and its own flip
+  # failed — recover it here. Any other case stays draft/unflipped: the
+  # tag-run release-provenance job (ci.yml) is the single owner of the
+  # --draft=false --latest flip, and a red provenance must leave the
+  # PREVIOUS release as latest instead of stranding a provenance-less one
+  # (the v1.0.630 incident window).
+  if release_serves_fa_update; then
+    gh release edit "$tag" --draft=false --latest --repo "$repo"
+    # gh-1899: same duplicate-tag race as the tag train — a twin draft
+    # minted by a sibling leg of THIS run would otherwise rot until the
+    # 24h sweeper. The tag is published and servable here (the flip is
+    # gated on the signed checksums), so own-run twin drafts are orphans.
+    bash "$(dirname "$0")/release_draft_dedupe.sh" "$tag" \
+      || echo "::warning::gh-1899 twin-draft dedupe failed — the release is published and servable, so this is cleanup noise only; the 24h sweeper remains the backstop"
+  else
+    echo "release $tag is not yet servable (no SHA256SUMS on it) — publish+latest left to the release-provenance step (gh-1801)"
+  fi
+}
+
+# fa-update servability = the signed checksums are on the release. Every
+# fa-* archive alone is NOT enough: `fa update` fetches SHA256SUMS(.sig)
+# and aborts when either is missing (bin/self_manage.dart).
+release_serves_fa_update() {
+  local names
+  names=$(gh release view "$tag" --repo "$repo" --json assets --jq '.assets[].name' 2>/dev/null || true)
+  printf '%s\n' "$names" | grep -qE '^SHA256SUMS(\.sig)?$'
 }
 
 if gh release view "$tag" --repo "$repo" >/dev/null 2>&1; then
@@ -71,6 +105,16 @@ git ls-remote --exit-code origin "refs/tags/$tag" >/dev/null 2>&1
 ls_remote_rc=$?
 set -e
 if [ "$ls_remote_rc" -eq 2 ]; then
+  # Fail fast BEFORE the cryptic crash: the push URL below collapses to ''
+  # when GH_TOKEN is unset, and git's `fatal: bad repository ''` does not
+  # point at the env gap (run 39766453580, v1.0.626 mobile leg). Callers
+  # must export GH_TOKEN=RELEASE_PAT (or a job-scoped App token) — the
+  # workflow GITHUB_TOKEN is not a substitute (GitHub suppresses events it
+  # triggers, so the tag CI would never fire).
+  if [ -z "${GH_TOKEN:-}" ]; then
+    echo "::error::tag $tag is missing but GH_TOKEN is not set — the annotated-tag push would run 'git push \"\"'. Set GH_TOKEN (PAT/App token) on the calling step, or the tag can never be minted here." >&2
+    exit 1
+  fi
   target="${RELEASE_TARGET_SHA:-${GITHUB_SHA:?}}"
   echo "tag $tag missing — creating annotated tag at $target (PAT push, fires tag CI)"
   git fetch origin "$target" --depth=1 2>/dev/null || git fetch origin main --depth=50
@@ -82,16 +126,22 @@ if [ "$ls_remote_rc" -eq 2 ]; then
   git push "${GH_TOKEN:+https://x-access-token:${GH_TOKEN}@github.com/${repo}.git}" "refs/tags/$tag"
 fi
 
-# Bare vX.Y.Z title (#282): matches the tag, matches pub.dev. Assets ride
-# the create command — gh uploads them through a draft first, so the job's
-# draft lifecycle guard owns the failure path.
+# Bare vX.Y.Z title (#282): matches the tag, matches pub.dev. gh-1801
+# rework: the create is DRAFT-ONLY. Whatever this leg resolved
+# (AAB/IPA/store APKs, DMGs/zips) is not the signed provenance `fa update`
+# demands — a leg that arrives first must never publish the release, let
+# alone flag it latest (threads 2/6). The draft is ownership-stamped (the
+# marker below) so this job's draft lifecycle guard reclaims it on
+# failure; the tag-run binaries job attaches the CLI assets into it and
+# release-provenance (ci.yml) publishes + flags latest once SHA256SUMS.sig
+# is on board.
 if gh release create "$tag" \
   --repo "$repo" \
   --title "$tag" \
+  --draft \
   --notes-file "$notes" \
-  --latest \
   "${assets[@]}"; then
-  echo "✅ created release $tag with ${#assets[@]} asset(s)"
+  echo "✅ created draft release $tag with ${#assets[@]} asset(s) — publish is provenance-owned (gh-1801)"
   exit 0
 fi
 

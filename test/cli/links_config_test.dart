@@ -28,6 +28,18 @@ void main() {
       expect(links.testflight, defaultTestFlightUrl);
       expect(links.testflight, 'https://testflight.apple.com/join/En1eC9UK');
       expect(links.play, isNull);
+      expect(links.apkGod, defaultApkGodUrl);
+      expect(
+        links.apkGod,
+        'https://github.com/IstiN/flutter_agent_harness/releases/download/'
+        'v1.0.636/app-god-release.apk',
+      );
+      expect(links.apkStandard, defaultApkStandardUrl);
+      expect(
+        links.apkStandard,
+        'https://github.com/IstiN/flutter_agent_harness/releases/download/'
+        'v1.0.636/app-store-release.apk',
+      );
       expect(links.site, defaultSiteUrl);
       expect(links.site, 'https://fa1.dev');
       expect(links.banner, isTrue);
@@ -133,6 +145,8 @@ void main() {
           '  appstore: https://apps.apple.com/us/app/fa/id1\n'
           '  testflight: https://testflight.apple.com/join/XX\n'
           '  play: https://play.google.com/store/apps/details?id=dev.fa1.app\n'
+          '  apk-god: https://gh.test/god.apk\n'
+          '  apk-standard: https://gh.test/std.apk\n'
           '  site: https://example.com\n',
         ),
       );
@@ -142,7 +156,10 @@ void main() {
         links.play,
         'https://play.google.com/store/apps/details?id=dev.fa1.app',
       );
+      expect(links.apkGod, 'https://gh.test/god.apk');
+      expect(links.apkStandard, 'https://gh.test/std.apk');
       expect(links.site, 'https://example.com');
+      expect(links.isDefault, isFalse);
     });
 
     test('CliConfig.fromYaml carries the section through', () {
@@ -189,6 +206,8 @@ void main() {
           'links:\n'
           '  appstore: https://apps.apple.com/us/app/fa/id4\n'
           '  play: https://play.google.com/store/apps/details?id=dev.fa1.app\n'
+          '  apk-god: https://gh.test/god.apk\n'
+          '  apk-standard: https://gh.test/std.apk\n'
           '  site: https://example.org\n'
           '  banner: false\n',
         ),
@@ -199,6 +218,8 @@ void main() {
       expect(roundTripped.appstore, original.appstore);
       expect(roundTripped.testflight, original.testflight);
       expect(roundTripped.play, original.play);
+      expect(roundTripped.apkGod, original.apkGod);
+      expect(roundTripped.apkStandard, original.apkStandard);
       expect(roundTripped.site, original.site);
       expect(roundTripped.banner, original.banner);
       expect(roundTripped.isDefault, isFalse);
@@ -249,11 +270,20 @@ void main() {
       expect(view.androidLabel, 'Also on Google Play');
     });
 
-    test('the default block keeps the coming-soon Android slot (AC2)', () {
+    test('the default block links the direct APKs (AC2, issue #1864)', () {
       final html = renderAppStoreBlockHtml(const LinksConfig());
       expect(html, contains(defaultAppStoreUrl));
-      expect(html, contains('coming soon'));
+      expect(html, contains('href="$defaultApkGodUrl"'));
+      expect(html, contains('href="$defaultApkStandardUrl"'));
+      expect(html, isNot(contains('coming soon')));
       expect(html, isNot(contains('Get it on Google Play')));
+      // A flipped apk-god propagates (play still unset — the APK slot
+      // shows): one change, every surface.
+      const flipped = LinksConfig(apkGod: 'https://gh.test/god.apk');
+      expect(
+        renderAppStoreBlockHtml(flipped),
+        contains('href="https://gh.test/god.apk"'),
+      );
       expect(
         StoreBannerView.from(const LinksConfig()).androidLabel,
         'Android: coming soon',

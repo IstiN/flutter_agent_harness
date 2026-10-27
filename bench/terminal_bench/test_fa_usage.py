@@ -563,6 +563,22 @@ class KilledTrialUsageTest(unittest.TestCase):
         self.assertEqual(usage.estimated_input_tokens, 125 + 75)
         self.assertTrue(usage.usage_incomplete)
 
+    def test_stripped_record_folds_dropped_messages_chars(self):
+        # issue #1882 AC1: the strip keeps only the newest stubs and folds
+        # older messages into {count, chars} — that aggregate is part of
+        # the KNOWN request-side volume, exactly like per-message chars.
+        text = _jsonl(
+            {"type": "custom", "id": "c1", "customType": "model_request_summary",
+             "data": {"messageCount": 732, "systemPromptChars": 10,
+                      "messages": [{"role": "user", "chars": 400},
+                                   {"role": "user", "chars": 100}],
+                      "droppedMessages": {"count": 730, "chars": 365000}}},
+        )
+        usage = fa_usage.extract_from_text(text)
+        # ceil((10 + 500 + 365000) / 4) = 91378.
+        self.assertEqual(usage.estimated_input_tokens, 91378)
+        self.assertTrue(usage.usage_incomplete)
+
     def test_finalized_request_counts_once_and_stays_complete(self):
         # AC2 guard: a request whose assistant message finalized is counted
         # from the message usage exactly once — the summary must NOT add a

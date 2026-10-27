@@ -144,9 +144,15 @@ String _mdAssistant(TrajectoryAssistantRecord record) {
       )
       ..write(
         [
+          // gh-1745: stub messages carry no preview (the text rides the
+          // request blob) — the `: preview` tail only appears when there
+          // is one, so spilled sessions never export a dangling `: `.
           for (final message in detail.messages)
-            '- `${message.role}` ${message.chars} chars:'
-                ' ${message.preview.replaceAll('\n', ' ')}',
+            if (message.preview.isEmpty)
+              '- `${message.role}` ${message.chars} chars'
+            else
+              '- `${message.role}` ${message.chars} chars:'
+                  ' ${message.preview.replaceAll('\n', ' ')}',
         ].join('\n'),
       );
   }

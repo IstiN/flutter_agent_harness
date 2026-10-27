@@ -97,7 +97,19 @@ final class WasmSshCommands {
       timeout: params.connectTimeout,
     );
     try {
-      final client = SSHClient(
+      return _DartSshConnection(_sshClient(socket, params));
+    } on Object {
+      socket.destroy();
+      rethrow;
+    }
+  }
+
+  /// The dartssh2 client over [socket] (gh-1848 split): identity PEM and
+  /// password are each optional per the connect params. The sandbox has
+  /// no known_hosts store; host key pinning is the caller's
+  /// responsibility (same trade-off as SshGitTransport).
+  SSHClient _sshClient(SSHSocket socket, SandboxSshConnectParams params) =>
+      SSHClient(
         socket,
         username: params.username,
         identities: params.identityPem == null
@@ -106,16 +118,8 @@ final class WasmSshCommands {
         onPasswordRequest: params.password == null
             ? null
             : () => params.password!,
-        // The sandbox has no known_hosts store; host key pinning is the
-        // caller's responsibility (same trade-off as SshGitTransport).
         disableHostkeyVerification: true,
       );
-      return _DartSshConnection(client);
-    } on Object {
-      socket.destroy();
-      rethrow;
-    }
-  }
 }
 
 /// [SandboxSshConnection] over a dartssh2 [SSHClient].

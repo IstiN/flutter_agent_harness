@@ -17,14 +17,45 @@ import 'package:flutter_agent_harness/src/task/child_session_io.dart';
 import 'package:test/test.dart';
 
 /// Tiny window: reserve 1024 → compaction trigger 2976, keep-recent 2048.
-const _model = Model(
+/// The child window: the pre-#1829 calibration 4000t plus the tokens the
+/// report-size contract (issue #1829) adds to every child system prompt.
+/// The compaction-threshold fixtures are calibrated to the original
+/// trajectory; raising the window by the contract's own estimate keeps the
+/// trigger crossings exactly where they were.
+final _model = Model(
   id: 'child-model',
   api: 'test-api',
   provider: 'test-provider',
   baseUrl: 'https://example.test',
-  contextWindow: 4000,
+  contextWindow: 4300 + _contractTokens,
   maxTokens: 4096,
 );
+
+/// The token estimate of the report-size contract's footprint in a child
+/// request (issue #1829): the contract rides the system prompt AND both
+/// injected tool descriptions (reply also carries a manifest paragraph
+/// beyond the contract), so the window carries the full measured growth.
+/// The compaction-threshold fixtures are calibrated to the pre-#1829
+/// trajectory; raising the window by the exact delta keeps the trigger
+/// crossings where they were.
+final int _contractTokens = () {
+  final mgr = SubagentManager(parentSessionId: 'p', maxReplyChars: 8000);
+  final descriptions = [
+    for (final tool in subagentMonitoringTools(
+      manager: mgr,
+      currentSubagentId: () => null,
+    ))
+      if (tool.name == 'reply' || tool.name == 'agent_message')
+        tool.description,
+  ];
+  final contract = deliverableChunkContract(8000).length;
+  final growthChars =
+      contract + // system prompt copy
+      descriptions
+          .map((d) => d.length - contract < 0 ? 0 : d.length - contract)
+          .fold<int>(0, (a, b) => a + b);
+  return (growthChars / 4).ceil();
+}();
 
 final _fakeTime = DateTime.utc(2026, 9, 15, 12, 0, 0);
 
@@ -279,14 +310,13 @@ Context _firstRequest(_ScriptedStream stream, String marker) =>
 
 void main() {
   group('AC1+AC6 IT-child-compaction: proactive compaction on child turns', () {
-    test(
-      'child crossing the threshold mid-task compacts at the turn boundary; '
-      'the next request is under-window and the session gains a compaction '
-      'record',
-      () async {
-        // Five fat tool turns (2400 chars ≈ 600t each) cross the 2976t
-        // trigger mid-run.
-        final w = _Wiring(rules: [
+    test('child crossing the threshold mid-task compacts at the turn boundary; '
+        'the next request is under-window and the session gains a compaction '
+        'record', () async {
+      // Five fat tool turns (2400 chars ≈ 600t each) cross the 2976t
+      // trigger mid-run.
+      final w = _Wiring(
+        rules: [
           (
             match: 'grow',
             turns: [
@@ -298,45 +328,44 @@ void main() {
               _textTurn('finished'),
             ],
           ),
-        ]);
-        final result = await w.spawn('grower', 'grow the context');
-        expect(result.status, TaskSpawnStatus.completed, reason: result.error);
-        final handle = w.manager['grower']!;
-        expect(handle.compactions, greaterThanOrEqualTo(1));
-        expect(handle.lastCompactionFreed, greaterThan(0));
-        expect(handle.lastCompactionAt, _fakeTime.toIso8601String());
+        ],
+      );
+      final result = await w.spawn('grower', 'grow the context');
+      expect(result.status, TaskSpawnStatus.completed, reason: result.error);
+      final handle = w.manager['grower']!;
+      expect(handle.compactions, greaterThanOrEqualTo(1));
+      expect(handle.lastCompactionFreed, greaterThan(0));
+      expect(handle.lastCompactionAt, _fakeTime.toIso8601String());
 
-        // Zero over-window requests; the engine actually ran.
-        expect(w.stream.compactionCalls, greaterThanOrEqualTo(1));
-        expect(w.stream.calls, greaterThanOrEqualTo(6));
-        for (final context in w.stream.contexts) {
-          expect(
-            w.stream.requestTokens(context),
-            lessThanOrEqualTo(_model.contextWindow),
-            reason: 'a request exceeded the child window',
-          );
-        }
-        // The last request rides the compacted projection: under the
-        // trigger, not merely the window.
-        final last = w.stream.contexts.last;
+      // Zero over-window requests; the engine actually ran.
+      expect(w.stream.compactionCalls, greaterThanOrEqualTo(1));
+      expect(w.stream.calls, greaterThanOrEqualTo(6));
+      for (final context in w.stream.contexts) {
         expect(
-          w.stream.requestTokens(last),
-          lessThanOrEqualTo(_model.contextWindow - 1024),
+          w.stream.requestTokens(context),
+          lessThanOrEqualTo(_model.contextWindow),
+          reason: 'a request exceeded the child window',
         );
+      }
+      // The last request rides the compacted projection: under the
+      // trigger, not merely the window.
+      final last = w.stream.contexts.last;
+      expect(
+        w.stream.requestTokens(last),
+        lessThanOrEqualTo(_model.contextWindow - 1024),
+      );
 
-        // The child session file carries the compaction records.
-        final records = await w.sessionRecords('grower');
-        expect(
-          records.any(
-            (record) =>
-                record is HiddenRangeRecord ||
-                record is CompactCheckpointRecord,
-          ),
-          isTrue,
-          reason: 'no compaction record landed in the child session',
-        );
-      },
-    );
+      // The child session file carries the compaction records.
+      final records = await w.sessionRecords('grower');
+      expect(
+        records.any(
+          (record) =>
+              record is HiddenRangeRecord || record is CompactCheckpointRecord,
+        ),
+        isTrue,
+        reason: 'no compaction record landed in the child session',
+      );
+    });
   });
 
   group('AC1-E1: steering races boundary compaction', () {
@@ -396,10 +425,11 @@ void main() {
   group('AC2 IT-task-send-compact-then-deliver', () {
     test('task_send to an at-wall child compacts first, delivers, and '
         'reports the freed tokens', () async {
-      // Three fat turns (~825t each) land the transcript just UNDER the
-      // 2976t trigger — no boundary compaction ran while it lived.
+      // Three fat turns (~705t each, plus the #1829 contract constant the
+      // window calibration carries) land the transcript just UNDER the
+      // trigger — no boundary compaction ran while it lived.
       final w = _Wiring(
-        payloadChars: 3300,
+        payloadChars: 2820,
         rules: [
           (
             match: 'fill',
@@ -441,44 +471,53 @@ void main() {
   });
 
   group('AC3 UT-status-pressure: child pressure in task_status', () {
-    test('detail shows tokens / window % / last compaction; absent is n/a',
-        () async {
-      final w = _Wiring(rules: [
-        (
-          match: 'grow',
-          turns: [
-            _toolTurn('read', 'c1'),
-            _toolTurn('read', 'c2'),
-            _toolTurn('read', 'c3'),
-            _toolTurn('read', 'c4'),
-            _toolTurn('read', 'c5'),
-            _textTurn('finished'),
+    test(
+      'detail shows tokens / window % / last compaction; absent is n/a',
+      () async {
+        final w = _Wiring(
+          rules: [
+            (
+              match: 'grow',
+              turns: [
+                _toolTurn('read', 'c1'),
+                _toolTurn('read', 'c2'),
+                _toolTurn('read', 'c3'),
+                _toolTurn('read', 'c4'),
+                _toolTurn('read', 'c5'),
+                _textTurn('finished'),
+              ],
+            ),
           ],
-        ),
-      ]);
-      await w.spawn('pressured', 'grow the context');
-      final detail = await w.execute('task_status', {'id': 'pressured'});
-      expect(detail, matches(RegExp(r'context: ~\d+/4000 tokens \(\d+%\)')));
-      expect(detail, contains('last compaction: freed'));
-      expect(detail, contains(_fakeTime.toIso8601String()));
-      // The list row carries the window percentage too.
-      final list = await w.execute('task_status', {});
-      expect(list, contains('% ctx'));
+        );
+        await w.spawn('pressured', 'grow the context');
+        final detail = await w.execute('task_status', {'id': 'pressured'});
+        expect(
+          detail,
+          matches(
+            RegExp('context: ~\\d+/${_model.contextWindow} tokens \\(\\d+%\\)'),
+          ),
+        );
+        expect(detail, contains('last compaction: freed'));
+        expect(detail, contains(_fakeTime.toIso8601String()));
+        // The list row carries the window percentage too.
+        final list = await w.execute('task_status', {});
+        expect(list, contains('% ctx'));
 
-      // A child that never made a request renders honest n/a lines.
-      final fresh = _Wiring();
-      await fresh.manager.register(
-        id: 'fresh_child',
-        name: 'fresh_child',
-        agentType: 'worker',
-        task: 'x',
-      );
-      final freshDetail = await fresh.execute('task_status', {
-        'id': 'fresh_child',
-      });
-      expect(freshDetail, contains('context: n/a'));
-      expect(freshDetail, contains('last compaction: n/a'));
-    });
+        // A child that never made a request renders honest n/a lines.
+        final fresh = _Wiring();
+        await fresh.manager.register(
+          id: 'fresh_child',
+          name: 'fresh_child',
+          agentType: 'worker',
+          task: 'x',
+        );
+        final freshDetail = await fresh.execute('task_status', {
+          'id': 'fresh_child',
+        });
+        expect(freshDetail, contains('context: n/a'));
+        expect(freshDetail, contains('last compaction: n/a'));
+      },
+    );
   });
 
   group('AC4 UT-guard-last-resort: un-shrinkable still fails honestly', () {
@@ -536,53 +575,55 @@ void main() {
   });
 
   group('E4: thresholds from the child effective window', () {
-    test("a smol-role child compacts on its OWN window, not the parent's",
-        () async {
-      // Window 2000: reserve 500 → trigger 1500, keep-recent 1000.
-      final smolStream = _ScriptedStream([
-        (
-          match: 'grow',
-          turns: [
-            _toolTurn('read', 'c1'),
-            _toolTurn('read', 'c2'),
-            _toolTurn('read', 'c3'),
-            _toolTurn('read', 'c4'),
-            _textTurn('finished'),
-          ],
-        ),
-      ]);
-      final resolver = ModelRolesResolver(
-        config: ModelRolesConfig(
-          roles: {
-            smolModelRole: [
-              const ModelRef(
-                provider: 'anthropic',
-                modelId: 'test-smol',
-                contextWindow: 2000,
-                maxTokens: 128,
-              ),
+    test(
+      "a smol-role child compacts on its OWN window, not the parent's",
+      () async {
+        // Window 2000: reserve 500 → trigger 1500, keep-recent 1000.
+        final smolStream = _ScriptedStream([
+          (
+            match: 'grow',
+            turns: [
+              _toolTurn('read', 'c1'),
+              _toolTurn('read', 'c2'),
+              _toolTurn('read', 'c3'),
+              _toolTurn('read', 'c4'),
+              _textTurn('finished'),
             ],
-          },
-        ),
-        secrets: const {'ANTHROPIC_API_KEY': 'k'},
-        streamFactory: (kind, apiKey) => smolStream.call,
-      );
-      final w = _Wiring(rolesResolver: resolver);
-      final result = await w.spawn(
-        'smol_child',
-        'grow the context',
-        agent: 'minismol',
-      );
-      expect(result.status, TaskSpawnStatus.completed, reason: result.error);
-      final handle = w.manager['smol_child']!;
-      // The pressure is measured against the CHILD's 2000t window — not
-      // the parent's 100000t one — and the compaction fired on it.
-      expect(handle.windowTokens, 2000);
-      expect(handle.compactions, greaterThanOrEqualTo(1));
-      expect(
-        smolStream.contexts.map(smolStream.requestTokens),
-        everyElement(lessThanOrEqualTo(2000)),
-      );
-    });
+          ),
+        ]);
+        final resolver = ModelRolesResolver(
+          config: ModelRolesConfig(
+            roles: {
+              smolModelRole: [
+                const ModelRef(
+                  provider: 'anthropic',
+                  modelId: 'test-smol',
+                  contextWindow: 2000,
+                  maxTokens: 128,
+                ),
+              ],
+            },
+          ),
+          secrets: const {'ANTHROPIC_API_KEY': 'k'},
+          streamFactory: (kind, apiKey) => smolStream.call,
+        );
+        final w = _Wiring(rolesResolver: resolver);
+        final result = await w.spawn(
+          'smol_child',
+          'grow the context',
+          agent: 'minismol',
+        );
+        expect(result.status, TaskSpawnStatus.completed, reason: result.error);
+        final handle = w.manager['smol_child']!;
+        // The pressure is measured against the CHILD's 2000t window — not
+        // the parent's 100000t one — and the compaction fired on it.
+        expect(handle.windowTokens, 2000);
+        expect(handle.compactions, greaterThanOrEqualTo(1));
+        expect(
+          smolStream.contexts.map(smolStream.requestTokens),
+          everyElement(lessThanOrEqualTo(2000)),
+        );
+      },
+    );
   });
 }

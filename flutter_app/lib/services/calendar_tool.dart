@@ -481,29 +481,48 @@ String _renderEvent(CalendarEvent event, {bool showDate = false}) {
   final buffer = StringBuffer();
   if (showDate) buffer.write('${_dateLabel(event.start)} ');
   buffer.write('$when ${event.title}');
-  final calendar = event.calendar;
-  if (calendar != null && calendar.isNotEmpty) buffer.write(' ($calendar)');
-  final location = event.location;
-  if (location != null && location.isNotEmpty) buffer.write(' @ $location');
-  final recurrence = event.recurrence;
+  _appendSegment(buffer, event.calendar, ' (', ')');
+  _appendSegment(buffer, event.location, ' @ ', '');
+  _appendEventRecurrence(buffer, event.recurrence);
+  _appendEventAlarms(buffer, event.alarms);
+  _appendSegment(buffer, event.url, ' [url: ', ']');
+  _appendEventNotes(buffer, event.notes);
+  return buffer.toString();
+}
+
+/// Appends `prefix value suffix` for a non-empty value; nothing for a
+/// null/empty one (the calendar, location and url fields share the shape).
+void _appendSegment(
+  StringBuffer buffer,
+  String? value,
+  String prefix,
+  String suffix,
+) {
+  if (value != null && value.isNotEmpty) buffer.write('$prefix$value$suffix');
+}
+
+void _appendEventRecurrence(
+  StringBuffer buffer,
+  CalendarRecurrence? recurrence,
+) {
   if (recurrence != null) buffer.write(' [${_renderRecurrence(recurrence)}]');
-  final alarms = event.alarms;
-  if (alarms != null && alarms.isNotEmpty) {
-    final sorted = [...alarms]..sort();
-    final label = sorted.map((minutes) => '${minutes}m').join(', ');
-    buffer.write(
-      sorted.length == 1 ? ' [alarm $label before]' : ' [alarms $label before]',
-    );
-  }
-  final url = event.url;
-  if (url != null && url.isNotEmpty) buffer.write(' [url: $url]');
-  final notes = event.notes;
+}
+
+void _appendEventAlarms(StringBuffer buffer, List<int>? alarms) {
+  if (alarms == null || alarms.isEmpty) return;
+  final sorted = [...alarms]..sort();
+  final label = sorted.map((minutes) => '${minutes}m').join(', ');
+  buffer.write(
+    sorted.length == 1 ? ' [alarm $label before]' : ' [alarms $label before]',
+  );
+}
+
+void _appendEventNotes(StringBuffer buffer, String? notes) {
   if (notes != null && notes.trim().isNotEmpty) {
     var firstLine = notes.trim().split('\n').first;
     if (firstLine.length > 120) firstLine = '${firstLine.substring(0, 120)}…';
     buffer.write(' — $firstLine');
   }
-  return buffer.toString();
 }
 
 /// The recurring-unit phrasing per supported frequency: the plain label

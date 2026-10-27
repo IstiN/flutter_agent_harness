@@ -243,8 +243,13 @@ retry:                         # chain fallback policy
 providerTimeouts:              # GLOBAL fallback: only these two keys
   connectTimeoutMs: 180000
   streamIdleTimeoutMs: 300000
-agent:                         # strict: only contextWindowCap (issue #273)
+agent:                         # strict: contextWindowCap (issue #273) +
+                               # foreground-call budget keys (issue #1786)
   contextWindowCap: 262144     # owner context cap; min 16384 = the compaction reserve
+  foregroundCallBudgetSeconds: 600  # foreground tool-call budget B in seconds;
+                                    # int > 0, default 600 (10 min)
+  foregroundCallAutoConvert: offer  # rung-1 behavior at B/2: offer (default, ask)
+                                    # or auto (convert to background unattended)
 images:                        # session image registry (strict): send-once
   registry: true               # kill switch — false = byte-for-byte legacy
   maxPerRequest: 20            # per-request unique-image cap (default 20)
@@ -279,13 +284,22 @@ Media slot names (exact): `imageGeneration`, `audioTts`, `musicGeneration`,
 `videoGeneration`, `vision`, `transcription`. A slot without an override falls
 back to the main connection.
 
+The `images:` section has no settings-hub editor — the registry is runtime
+state, not a persisted setting: `/images` (CLI) and the app's image-drop
+chip/panel render the shared window/cap/drop projection, and the drop
+notice model is latched (one notice per meaningful change, issue #1889;
+see `docs/images.md`). The three keys above are the whole config surface,
+applied at next boot.
+
 CLI equivalents: `/model <id>` switches the active model (a
 `models.custom.<name>` switches provider+endpoint+model in one step);
 `/models config` displays this section, `/models set <slot> <model>
 [baseUrl]` and `/models remove <slot>` edit `models.slots`;
 `/model-edit [contextWindow|maxTokens <n>]` overrides token limits for the
-session (persist per chain via `roles:` entries instead). Role edits apply at
-next boot; `/model` applies live.
+session (persist per chain via `roles:` entries instead) — bare in the TUI
+it aliases into `/settings` → Model capabilities, the one surface that pins
+`models.overrides` (issue #1515). Role edits apply at next boot; `/model`
+applies live.
 
 ## Provider queue
 
@@ -678,22 +692,75 @@ output:
 
 Applies at next boot (the flag applies to its own run).
 
-## Tool-result spilling
+## Tool-result & user-message spilling
 
 <!-- parity: none (boot config only) -->
 
-Oversized tool results spill to `.fah/spills/<sessionId>/<n>.txt` and the
-session keeps a bounded preview + path + size stats (issue #678). Tolerant
-parse: unknown keys and mistyped scalars surface as `[spills]` notes at
-boot, never boot failures. `enabled: false` or `threshold: 0` = legacy
-behavior (nothing spills):
+Oversized tool results spill to `.fah/spills/<sessionId>/<n>.txt` and
+the session keeps a bounded preview + path + size stats (issue #678).
+An oversized USER message (headless prompt, TUI input, steering) spills
+to `.fah/spills/<sessionId>/user-<n>.md` and the model receives a
+bounded head+tail preview plus a read-in-parts instruction (issue
+#1760). Tolerant parse: unknown keys and mistyped scalars surface as
+`[spills]` notes at boot, never boot failures. `enabled: false` = legacy
+behavior (nothing spills — it beats the `FAH_SPILL_THRESHOLD` /
+`FAH_USER_SPILL_THRESHOLD` env knobs too); `threshold: 0` disables
+tool-result spilling only, `userThreshold: 0` the user path only:
 
 ```yaml
 spills:
   enabled: true # kill switch; false = byte-identical legacy
-  threshold: 8192 # chars above which a tool result spills
+  threshold: 8192 # chars above which a tool result spills; 0 = tools off
   headChars: 2000 # preview head bound (chars)
   tailChars: 2000 # preview tail bound (chars)
+  userThreshold: 16384 # absolute byte floor for the user path; 0 = user off
+  userFraction: 0.5 # spill a user message over this fraction of the live window budget
+```
+
+Applies at next boot.
+
+## Session retention
+
+<!-- parity: none (boot config only) -->
+
+The `sessions:` section (gh-1746) is the opt-in disk hygiene policy for
+the sessions root: when the total on disk crosses `maxTotalBytes`, a
+boot sweep deletes whole session units oldest-last-used-first. Live
+sessions (fresh heartbeats), named sessions, and sessions younger than
+`minAgeDays` are always exempt — and with no `sessions:` section at all
+nothing is EVER auto-deleted (byte-identical legacy boot). Tolerant
+parse: unknown keys become notes, never boot failures. Run
+`fa session clean [--dry-run]` to enforce the policy manually;
+`sweep: off` makes the manual verb the only enforcement path:
+
+```yaml
+sessions:
+  retention:
+    maxTotalBytes: 5368709120 # total cap in bytes (0 = no cap, default)
+    minAgeDays: 14 # never delete sessions used more recently than this
+    keepNamed: true # named sessions (fa --session <name>) are exempt
+    sweep: boot # boot (sweep at startup) | off (manual `fa session clean` only)
+```
+
+Applies at next boot (the sweep runs before the session opens).
+
+## Project context budget
+
+<!-- parity: notices on both surfaces; the byte knob is a config-file setting -->
+
+`AGENTS.md`/`CLAUDE.md`/`GEMINI.md`/`GOAL.md`/`DESIGN.md` + Copilot
+instruction files merge into the system prompt under a byte budget,
+allocated leaf-first (deeper files win, issue #1761). Truncation is never
+silent: the model sees a head excerpt plus an explicit
+read-the-full-file instruction, a dropped file leaves a one-line
+tombstone, and the user gets a boot notice per truncated/dropped file.
+Tolerant parse: unknown keys surface as `[projectContext]` notes at boot,
+never boot failures. `maxBytes: 0` disables the section entirely (no file
+reads, fast boot):
+
+```yaml
+projectContext:
+  maxBytes: 32768 # merged budget; 0 = section off, no file reads
 ```
 
 Applies at next boot.

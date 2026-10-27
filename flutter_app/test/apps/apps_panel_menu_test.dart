@@ -310,4 +310,120 @@ void main() {
 
     expect(find.byType(WidgetPublishSheet), findsOneWidget);
   });
+
+  // ── _filteredApps (gh-1848): the filter switch arms, the trim+lowercase
+  // query match (per-field true sides and the no-match side), and the
+  // empty-query path. Apps are hand-built through _ScriptedListStore so
+  // each matching field is under test control.
+  const sunsetApps = [
+    JsAppInfo(
+      id: 'timer',
+      name: 'Sunset Timer',
+      description: 'pomodoro at dusk',
+      icon: '🌅',
+      declaredPermissions: AppPermissions(),
+      bundled: true,
+    ),
+    JsAppInfo(
+      id: 'sunset-viewer',
+      name: 'Gallery',
+      description: 'photo frames',
+      icon: '🖼️',
+      declaredPermissions: AppPermissions(),
+      bundled: true,
+    ),
+    JsAppInfo(
+      id: 'notes',
+      name: 'Quick Notes',
+      description: 'sunset journaling',
+      icon: '📝',
+      declaredPermissions: AppPermissions(),
+      bundled: false,
+    ),
+    JsAppInfo(
+      id: 'beta',
+      name: 'Beta Demo',
+      description: 'plain demo app',
+      icon: '🅱️',
+      declaredPermissions: AppPermissions(),
+      bundled: true,
+    ),
+  ];
+
+  Future<void> _pumpAppsWith(WidgetTester tester) async {
+    final env = await _seededEnv();
+    await _pumpPanel(
+      tester,
+      store: _ScriptedListStore(env, readAsset: _noAssets, apps: sunsetApps),
+    );
+  }
+
+  testWidgets('empty query keeps the sectioned view across both sources', (
+    tester,
+  ) async {
+    await _pumpAppsWith(tester);
+
+    // The default `all` filter with an empty query: the getter hands back
+    // the whole store and the panel renders its sectioned (unsearched)
+    // layout — demo and custom sections both present.
+    expect(find.text('My widgets'), findsOneWidget);
+    expect(find.text('Demo apps'), findsOneWidget);
+    expect(find.text('Sunset Timer'), findsOneWidget);
+    expect(find.text('Quick Notes'), findsOneWidget);
+  });
+
+  testWidgets('a query matches name, id and description case-insensitively', (
+    tester,
+  ) async {
+    await _pumpAppsWith(tester);
+
+    await tester.enterText(find.byType(TextField), '  SUNSET  ');
+    await tester.pumpAndSettle();
+
+    // name match / id match / description match …
+    expect(find.text('Sunset Timer'), findsOneWidget);
+    expect(find.text('Gallery'), findsOneWidget); // id: sunset-viewer
+    expect(find.text('Quick Notes'), findsOneWidget); // description
+    // … and the non-matching app drops out of the flat search grid.
+    expect(find.text('Beta Demo'), findsNothing);
+    expect(find.text('My widgets'), findsNothing); // search mode: flat grid
+  });
+
+  testWidgets('the created filter narrows the query to custom widgets', (
+    tester,
+  ) async {
+    await _pumpAppsWith(tester);
+
+    await tester.enterText(find.byType(TextField), 'sunset');
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Created with ★'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Quick Notes'), findsOneWidget); // custom → in source
+    expect(find.text('Sunset Timer'), findsNothing); // bundled → out
+    expect(find.text('Gallery'), findsNothing); // bundled → out
+  });
+
+  testWidgets('recent and pinned filters keep the whole store in scope', (
+    tester,
+  ) async {
+    await _pumpAppsWith(tester);
+
+    await tester.tap(find.text('Recent'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), 'beta');
+    await tester.pumpAndSettle();
+    expect(
+      find.text('Beta Demo'),
+      findsOneWidget,
+    ); // a demo app → source is _apps
+
+    await tester.tap(find.text('Pinned'));
+    await tester.pumpAndSettle();
+    expect(
+      find.text('Beta Demo'),
+      findsOneWidget,
+    ); // same scope on the pinned arm
+    expect(find.text('Quick Notes'), findsNothing); // 'beta' misses the custom
+  });
 }

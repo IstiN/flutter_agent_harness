@@ -350,16 +350,35 @@ bool _isAssignmentWord(String word) {
   return _isIdentifierName(word.substring(0, eq));
 }
 
+/// ASCII identifier char class: `[A-Za-z0-9_]`.
+bool _isIdentifierCharCode(int code) =>
+    (code >= 65 && code <= 90) ||
+    (code >= 97 && code <= 122) ||
+    (code >= 48 && code <= 57) ||
+    code == 95;
+
+/// Whether [code] may START a shell identifier: any identifier character
+/// except a digit.
+bool _isIdentifierStartCode(int code) =>
+    _isIdentifierCharCode(code) && !(code >= 48 && code <= 57);
+
+/// Whether the identifier character at index [i] of [name] is valid: digits
+/// are only allowed after the first position.
+bool _isIdentifierCharAt(String name, int i) {
+  if (i == 0) return _isIdentifierStartCode(name.codeUnitAt(i));
+  return _isIdentifierCharCode(name.codeUnitAt(i));
+}
+
 bool _isIdentifierName(String name) {
   if (name.isEmpty) return false;
+  return _allIdentifierChars(name);
+}
+
+/// Every character of [name] is a valid identifier character (digits only
+/// after the first position — gh-1848 tier-3 split).
+bool _allIdentifierChars(String name) {
   for (var i = 0; i < name.length; i++) {
-    final c = name.codeUnitAt(i);
-    final ok =
-        (c >= 65 && c <= 90) ||
-        (c >= 97 && c <= 122) ||
-        (c >= 48 && c <= 57) ||
-        c == 95;
-    if (!ok || (i == 0 && c >= 48 && c <= 57)) return false;
+    if (!_isIdentifierCharAt(name, i)) return false;
   }
   return true;
 }
@@ -463,6 +482,17 @@ int _expandPlainAt(
     buffer.write(ch);
     return i + 1;
   }
+  return _expandDollarAt(input, i, env, buffer);
+}
+
+/// Expands the `$`-reference starting at the `$` at [i]: `$?`, the braced
+/// `${NAME}`, and bare `$NAME`; any other `$` stays literal.
+int _expandDollarAt(
+  String input,
+  int i,
+  Map<String, String> env,
+  StringBuffer buffer,
+) {
   if (i + 1 >= input.length) {
     buffer.write('\$');
     return i + 1;
@@ -475,30 +505,41 @@ int _expandPlainAt(
     return i + 2;
   }
   if (next == '{') {
-    final end = input.indexOf('}', i + 2);
-    if (end == -1) {
-      buffer.write('\${');
-      return i + 2;
-    }
-    buffer.write(env[input.substring(i + 2, end)] ?? '');
-    return end + 1;
+    return _expandBracedAt(input, i, env, buffer);
   }
-  final code = next.codeUnitAt(0);
-  final isVarStart =
-      (code >= 65 && code <= 90) || (code >= 97 && code <= 122) || code == 95;
-  if (!isVarStart) {
+  if (!_isIdentifierStartCode(next.codeUnitAt(0))) {
     buffer.write('\$');
     return i + 1;
   }
+  return _expandVarAt(input, i, env, buffer);
+}
+
+/// Expands `${NAME}` at the `$` at [i]; an unterminated brace keeps the
+/// `\${` text literal.
+int _expandBracedAt(
+  String input,
+  int i,
+  Map<String, String> env,
+  StringBuffer buffer,
+) {
+  final end = input.indexOf('}', i + 2);
+  if (end == -1) {
+    buffer.write('\${');
+    return i + 2;
+  }
+  buffer.write(env[input.substring(i + 2, end)] ?? '');
+  return end + 1;
+}
+
+/// Expands bare `$NAME` at the `$` at [i], consuming the identifier run.
+int _expandVarAt(
+  String input,
+  int i,
+  Map<String, String> env,
+  StringBuffer buffer,
+) {
   var j = i + 1;
-  while (j < input.length) {
-    final c = input.codeUnitAt(j);
-    final isVarChar =
-        (c >= 65 && c <= 90) ||
-        (c >= 97 && c <= 122) ||
-        (c >= 48 && c <= 57) ||
-        c == 95;
-    if (!isVarChar) break;
+  while (j < input.length && _isIdentifierCharCode(input.codeUnitAt(j))) {
     j++;
   }
   buffer.write(env[input.substring(i + 1, j)] ?? '');
@@ -533,6 +574,40 @@ Future<Result<Stage, ExecutionError>> expandShellStage(
   // Per-argv-piece quoting, parallel to [argv]: a quoted (or escaped,
   // non-expandable) word never pathname-expands.
   final quotedFlags = <bool>[];
+  final argvError = await _expandStageArgv(
+    stage,
+    env,
+    substitute,
+    argv,
+    quotedFlags,
+  );
+  if (argvError != null) return Err(argvError);
+  if (expandGlobs != null) {
+    await _expandGlobArgs(argv, quotedFlags, expandGlobs);
+  }
+  if (argv.isEmpty) argv.add(''); // degenerate: substitution ate every word
+  final redirects = <Redirect>[];
+  final redirectError = await _expandStageRedirects(
+    stage,
+    env,
+    substitute,
+    redirects,
+  );
+  if (redirectError != null) return Err(redirectError);
+  return Ok(
+    Stage(command: argv.first, args: argv.sublist(1), redirects: redirects),
+  );
+}
+
+/// Expands [stage.argv] into [argv] with the parallel quoting flags.
+/// Returns the first expansion error, if any.
+Future<ExecutionError?> _expandStageArgv(
+  Stage stage,
+  Map<String, String> env,
+  SubstitutionRunner substitute,
+  List<String> argv,
+  List<bool> quotedFlags,
+) async {
   for (var k = 0; k < stage.argv.length; k++) {
     final word = stage.argv[k];
     if (!stage.isExpandable(k)) {
@@ -541,50 +616,90 @@ Future<Result<Stage, ExecutionError>> expandShellStage(
       continue;
     }
     final expanded = await expandShellWord(word, env, substitute);
-    if (expanded.isErr) return Err(expanded.errorOrNull!);
-    final result = expanded.valueOrNull!;
-    final quoted = stage.isQuoted(k);
-    if (result.hadSubstitution && !quoted) {
-      final pieces = splitSubstitutionFields(result.text);
-      argv.addAll(pieces);
-      quotedFlags.addAll(List<bool>.filled(pieces.length, false));
-    } else {
-      argv.add(result.text);
-      quotedFlags.add(quoted);
-    }
+    if (expanded.isErr) return expanded.errorOrNull;
+    _appendExpandedWord(
+      expanded.valueOrNull!,
+      stage.isQuoted(k),
+      argv,
+      quotedFlags,
+    );
   }
-  if (expandGlobs != null) {
-    await _expandGlobArgs(argv, quotedFlags, expandGlobs);
+  return null;
+}
+
+/// Appends one expanded word to [argv]/[quotedFlags]: an unquoted
+/// substitution is word-split afterwards (every piece unquoted), anything
+/// else keeps its quoting flag.
+void _appendExpandedWord(
+  ExpandedWord result,
+  bool quoted,
+  List<String> argv,
+  List<bool> quotedFlags,
+) {
+  if (result.hadSubstitution && !quoted) {
+    final pieces = splitSubstitutionFields(result.text);
+    argv.addAll(pieces);
+    quotedFlags.addAll(List<bool>.filled(pieces.length, false));
+  } else {
+    argv.add(result.text);
+    quotedFlags.add(quoted);
   }
-  if (argv.isEmpty) argv.add(''); // degenerate: substitution ate every word
-  final redirects = <Redirect>[];
+}
+
+/// Expands a redirect word (target or here-doc body) when [expandable]:
+/// `(text, null)` on success, `(null, error)` on failure, and the input
+/// text unchanged when the redirect is not expandable.
+Future<(String?, ExecutionError?)> _expandRedirectWord(
+  String text,
+  bool expandable,
+  Map<String, String> env,
+  SubstitutionRunner substitute,
+) async {
+  if (!expandable) return (text, null);
+  final expanded = await expandShellWord(text, env, substitute);
+  if (expanded.isErr) return (null, expanded.errorOrNull);
+  return (expanded.valueOrNull!.text, null);
+}
+
+/// Expands redirect targets and here-doc bodies into [out]. Returns the
+/// first expansion error, if any.
+Future<ExecutionError?> _expandStageRedirects(
+  Stage stage,
+  Map<String, String> env,
+  SubstitutionRunner substitute,
+  List<Redirect> out,
+) async {
   for (final redirect in stage.redirects) {
-    var target = redirect.target;
-    if (redirect.expandable) {
-      final expanded = await expandShellWord(target, env, substitute);
-      if (expanded.isErr) return Err(expanded.errorOrNull!);
-      target = expanded.valueOrNull!.text;
-    }
+    final (target, targetError) = await _expandRedirectWord(
+      redirect.target,
+      redirect.expandable,
+      env,
+      substitute,
+    );
+    if (targetError != null) return targetError;
     // Here-document bodies expand `$VAR`/`$(...)` when the delimiter was
     // unquoted (POSIX); the result is never word-split (gh-1086).
     var body = redirect.body;
-    if (body != null && redirect.expandable) {
-      final expanded = await expandShellWord(body, env, substitute);
-      if (expanded.isErr) return Err(expanded.errorOrNull!);
-      body = expanded.valueOrNull!.text;
+    if (body != null) {
+      final (expandedBody, bodyError) = await _expandRedirectWord(
+        body,
+        redirect.expandable,
+        env,
+        substitute,
+      );
+      if (bodyError != null) return bodyError;
+      body = expandedBody;
     }
-    redirects.add(
+    out.add(
       Redirect(
         kind: redirect.kind,
         fd: redirect.fd,
-        target: target,
+        target: target!,
         body: body,
       ),
     );
   }
-  return Ok(
-    Stage(command: argv.first, args: argv.sublist(1), redirects: redirects),
-  );
+  return null;
 }
 
 /// Assignment-shaped words never pathname-expand when the command is an
@@ -593,6 +708,30 @@ Future<Result<Stage, ExecutionError>> expandShellStage(
 /// looks like an assignment still expands, as in bash.
 final RegExp _assignmentWordShape = RegExp(r'^[A-Za-z_][A-Za-z0-9_]*=');
 
+/// Whether glob words pass through literally for this invocation: the
+/// command is an assignment builtin (`export A=*` keeps the literal —
+/// bash skips globbing in assignment context).
+bool _globLiteralsForAssignments(List<String> argv) =>
+    argv.isNotEmpty &&
+    (argv.first == 'export' ||
+        argv.first == 'unset' ||
+        argv.first == 'declare' ||
+        argv.first == 'local');
+
+/// Whether [word] must stay literal: it is quoted, not a glob word, or an
+/// assignment operand while assignment words are literal (a glob word as
+/// a plain ARGUMENT that merely looks like an assignment still expands,
+/// as in bash).
+bool _globWordLiteral(
+  String word,
+  int i,
+  bool quoted,
+  bool assignmentsAreLiteral,
+) {
+  if (quoted || !isGlobWord(word)) return true;
+  return assignmentsAreLiteral && i > 0 && _assignmentWordShape.hasMatch(word);
+}
+
 /// In-place pathname expansion of the unquoted argv words (gh-1393 WS-1).
 /// No-match words keep the literal text — never an error.
 Future<void> _expandGlobArgs(
@@ -600,29 +739,14 @@ Future<void> _expandGlobArgs(
   List<bool> quotedFlags,
   GlobExpander expandGlobs,
 ) async {
-  final assignmentsAreLiteral =
-      argv.isNotEmpty &&
-      (argv.first == 'export' ||
-          argv.first == 'unset' ||
-          argv.first == 'declare' ||
-          argv.first == 'local');
+  final assignmentsAreLiteral = _globLiteralsForAssignments(argv);
   final expanded = <String>[];
   for (var i = 0; i < argv.length; i++) {
-    final word = argv[i];
-    if (quotedFlags[i] || !isGlobWord(word)) {
-      expanded.add(word);
+    if (_globWordLiteral(argv[i], i, quotedFlags[i], assignmentsAreLiteral)) {
+      expanded.add(argv[i]);
       continue;
     }
-    if (assignmentsAreLiteral && i > 0 && _assignmentWordShape.hasMatch(word)) {
-      expanded.add(word);
-      continue;
-    }
-    final matches = await expandGlobs(word);
-    if (matches == null) {
-      expanded.add(word);
-    } else {
-      expanded.addAll(matches);
-    }
+    expanded.addAll(await expandGlobs(argv[i]) ?? [argv[i]]);
   }
   argv
     ..clear()
