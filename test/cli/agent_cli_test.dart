@@ -3,6 +3,8 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
+import 'package:flutter_agent_harness/src/cli/tool_row_content.dart'
+    show transcriptExpandDetails;
 import 'package:test/test.dart';
 
 import 'agent_cli_test_support.dart';
@@ -82,6 +84,33 @@ void main() {
     }
     fail('timed out waiting for async condition');
   }
+
+  test('/transcript expand toggles the collapsed-detail state (gh-1933)',
+      () async {
+    // Session-start memory maintenance is due on a fresh env (no stamp);
+    // its consolidate() would consume a scripted turn on a slow runner.
+    await env.writeFile('/work/.fah/memory/.last_maintenance', '');
+    addTearDown(() => transcriptExpandDetails = false);
+    final cli = cliFor(FakeStreamFunction([textTurn('ok')]).call);
+    final run = cli.run();
+    io.sendLine('/transcript');
+    io.sendLine('/transcript expand all');
+    io.sendLine('/transcript expand bogus');
+    io.sendLine('/transcript expand none');
+    io.sendLine('/exit');
+    await run;
+    final out = io.out.toString();
+    expect(
+      out,
+      contains('transcript rows are collapsed'),
+      reason: 'bare /transcript reports the state',
+    );
+    expect(out, contains('transcript: expanded'));
+    expect(out, contains('usage: /transcript expand all|none'));
+    expect(out, contains('transcript: collapsed (default)'));
+    expect(transcriptExpandDetails, isFalse, reason: 'none restored it');
+    expect(cli.isBusy, isFalse);
+  });
 
   test('an untouched session leaves no file behind on exit', () async {
     // Session-start memory maintenance is due on a fresh env (no stamp);

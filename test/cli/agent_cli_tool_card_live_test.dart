@@ -118,12 +118,22 @@ void main() {
         cwd: '/work',
         home: config.homeDir,
       );
+      final oracleHeader = oracle.first;
+      final oraclePreview = oracle.last;
       expect(
         _normalize(frames.text),
-        contains(_normalize(oracle.join('\n'))),
+        contains(_normalize(oracleHeader)),
         reason: 'the live edge must feed the shared derivation its exact '
             'material (name, args, result, phase, width, elapsed) — '
             'frames=${frames.text}',
+      );
+      // The dim command preview renders as its own row (the frame
+      // renderer separates rows with cursor moves, so rows assert one by
+      // one).
+      expect(
+        _normalize(frames.text),
+        contains(_normalize(oraclePreview)),
+        reason: 'frames=${frames.text}',
       );
       // The command really executed through the env (the card describes a
       // real run, not a synthetic event).
@@ -136,4 +146,91 @@ void main() {
       await keys.close();
     }
   }, timeout: const Timeout(Duration(seconds: 60)));
+
+  test('live thinking collapses to ONE `> Thought for Ns` row in the TUI '
+      '(gh-1933 AC4) — the per-delta stream is gone; expand all renders '
+      'the persisted text', () async {
+    // A thinking turn that streams reasoning deltas, then answers.
+    List<AssistantMessageEvent> thinkingTurn(String think, String answer) {
+      final empty = testAssistant();
+      final thought = testAssistant(
+        content: [ThinkingContent(thinking: think)],
+      );
+      final partial = testAssistant(
+        content: [ThinkingContent(thinking: think), TextContent(text: answer)],
+      );
+      return [
+        StartEvent(partial: empty),
+        ThinkingStartEvent(contentIndex: 0, partial: empty),
+        ThinkingDeltaEvent(contentIndex: 0, delta: think, partial: thought),
+        TextStartEvent(contentIndex: 1, partial: thought),
+        TextDeltaEvent(contentIndex: 1, delta: answer, partial: partial),
+        DoneEvent(reason: StopReason.stop, message: partial),
+      ];
+    }
+
+    Future<String> runTurn({required bool expanded}) async {
+      final frames = _FrameSink();
+      final keys = StreamController<List<int>>();
+      addTearDown(keys.close);
+      transcriptExpandDetails = expanded;
+      addTearDown(() => transcriptExpandDetails = false);
+      final env = MemoryExecutionEnv(cwd: '/work', shell: FakeShell());
+      final io = FakeCliIO();
+      final config = AgentCliConfig(
+        model: testModel,
+        apiKey: 'k',
+        env: env,
+        sessionRoot: '/sessions',
+        approvalMode: ApprovalMode.yolo,
+        skillsAccess: SkillsAccess.granted,
+        tuiProgramHooks: TuiProgramHooks(
+          input: keys.stream,
+          output: frames,
+          width: 80,
+          height: 24,
+        ),
+      );
+      final cli = AgentCli(
+        config: config,
+        io: io,
+        useTui: true,
+        streamFunction: FakeStreamFunction([
+          thinkingTurn('reasoning deeply about the problem', 'the answer'),
+        ]).call,
+      );
+      final run = cli.run();
+      try {
+        await waitForIt(
+          () => frames.text.contains('\x1b[?1049h'),
+          reason: 'the TUI boot reached the frame renderer',
+        );
+        keys.add(utf8.encode('hi'));
+        keys.add([0x0d]);
+        await waitForIt(
+          () => _normalize(frames.text).contains('the answer'),
+          reason: 'the turn settled with the final text',
+        );
+        return _normalize(frames.text);
+      } finally {
+        keys.add([0x03]);
+        keys.add([0x03]);
+        await run.timeout(const Duration(seconds: 10), onTimeout: () {});
+        await io.close();
+        await keys.close();
+      }
+    }
+
+    final collapsed = await runTurn(expanded: false);
+    expect(collapsed, contains('Thought for'), reason: collapsed);
+    expect(collapsed, contains('0s'), reason: 'the streamed window duration');
+    // The raw thinking text stays OUT of the collapsed transcript.
+    expect(collapsed, isNot(contains('reasoning deeply')), reason: collapsed);
+
+    // `/transcript expand all`: the persisted thinking text renders dim
+    // under the label row (AC5 — nothing is lost, only folded).
+    final expanded = await runTurn(expanded: true);
+    expect(expanded, contains('Thought for'));
+    expect(expanded, contains('reasoning deeply'), reason: expanded);
+  }, timeout: const Timeout(Duration(seconds: 90)));
 }

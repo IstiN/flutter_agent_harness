@@ -81,6 +81,9 @@ const _nonSettingsCommands = <String, String>{
   '/terminal-setup': 'prints per-terminal Shift+Enter guidance',
   '/stats': 'read-only token/cost totals',
   '/tasks': 'lists/cancels background jobs',
+  '/transcript':
+      'session-scoped transcript detail expansion (gh-1933) — render '
+      'state only, no config.yaml setting',
   '/reset': 'starts a new session (no persisted setting)',
   '/restart': 'aborts a run and re-runs its steering, nothing persisted',
   '/compact': 'manual compaction (no persisted setting)',

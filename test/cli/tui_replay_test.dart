@@ -8,6 +8,7 @@ import 'package:flutter_agent_harness/src/cli/tool_rows.dart';
 import 'package:flutter_agent_harness/src/cli/tui_chrome.dart'
     show tuiChromeEnabled;
 import 'package:flutter_agent_harness/src/cli/tui_replay.dart';
+import 'package:flutter_agent_harness/src/cli/tui_text_width.dart';
 import 'package:flutter_agent_harness/src/cli/tui_theme.dart';
 import 'package:flutter_agent_harness/src/context.dart';
 import 'package:flutter_agent_harness/src/session/session_tree.dart'
@@ -615,6 +616,157 @@ void main() {
       expect(entries.join('\n'), isNot(contains('old answer')));
       expect(entries.join('\n'), isNot(contains('new question')));
       expect(firstIndex, 3);
+    });
+  });
+
+  group('gh-1933 v2 content on replayed rows (AC1/AC2/AC3)', () {
+    String strip(String s) => s.replaceAll(AnsiMarkdown.ansiSgrPattern, '');
+
+    test('AC1: a replayed read row shows path + selector + lines-read', () {
+      final call = ToolCall(
+        id: 'r1',
+        name: 'read',
+        arguments: {'path': 'sm.yml:90-140'},
+      );
+      final row = strip(
+        replayToolRow(
+          call,
+          okResult('r1', 'a\nb\nc'),
+          width: 100,
+        ),
+      );
+      expect(row, contains('sm.yml:90-140'));
+      expect(row, contains('3 lines read'));
+      expect(row, contains('—'), reason: 'the honest replay duration');
+    });
+
+    test('AC2: a replayed edit row shows the applied diffstat +N −M', () {
+      final call = ToolCall(
+        id: 'e1',
+        name: 'edit',
+        arguments: {
+          'path': 'a.yml',
+          'oldText': 'x: 1\ny: 2',
+          'newText': 'x: 9',
+        },
+      );
+      final row = strip(
+        replayToolRow(
+          call,
+          okResult('e1', 'Edited a.yml.'),
+          width: 100,
+        ),
+      );
+      expect(row, contains('a.yml'));
+      expect(row, contains('+1 −2'));
+    });
+
+    test('AC2: a rejected hashline patch renders the error summary, not a '
+        'diffstat', () {
+      final call = ToolCall(
+        id: 'e2',
+        name: 'edit',
+        arguments: {
+          'patch': '[a.yml#DEAD]\nSWAP 1.=1:\n+nope',
+        },
+      );
+      final row = strip(
+        replayToolRow(
+          call,
+          ToolResultMessage(
+            toolCallId: 'e2',
+            toolName: 'edit',
+            content: [
+              TextContent(
+                text: 'tag DEAD does not match a.yml (drifted lines 1-3)',
+              ),
+            ],
+            isError: true,
+            timestamp: DateTime.utc(2026),
+          ),
+          width: 100,
+        ),
+      );
+      expect(row, contains('✘'));
+      expect(row, contains('does not match a.yml'));
+      expect(row, isNot(contains('+')));
+    });
+
+    test('AC3: a replayed bash row shows intent label, output-lines count, '
+        'RIGHT-ALIGNED elapsed zone, and the dim command preview row', () {
+      final call = ToolCall(
+        id: 'b1',
+        name: 'bash',
+        arguments: {'command': 'cd /work && flutter test --coverage'},
+      );
+      final rows = replayToolRow(
+        call,
+        okResult('b1', 'line1\nline2\nline3'),
+        width: 60,
+      ).split('\n');
+      final header = strip(rows.first);
+      expect(rows, hasLength(2), reason: 'the preview rides its own row');
+      expect(header, contains('flutter test --coverage'));
+      expect(header, contains('3 lines'));
+      // Right-aligned: the `—` zone ends at the row edge.
+      expect(header.trim(), endsWith('—'));
+      expect(tuiTextWidth(header), lessThanOrEqualTo(60));
+      // The preview row: dim-painted (the toolOutput role), padded to the
+      // width by the card band.
+      final preview = strip(rows.last).trim();
+      expect(preview, 'flutter test --coverage');
+      expect(rows.last, contains('\x1b['));
+    });
+
+    test('AC3 failure branch: an error bash row leads with the failure '
+        'line and carries no counts', () {
+      final call = ToolCall(
+        id: 'b2',
+        name: 'bash',
+        arguments: {'command': 'cargo build'},
+      );
+      final row = strip(
+        replayToolRow(
+          call,
+          ToolResultMessage(
+            toolCallId: 'b2',
+            toolName: 'bash',
+            content: [
+              TextContent(text: 'Command exited with code 101\npartial'),
+            ],
+            isError: true,
+            timestamp: DateTime.utc(2026),
+          ),
+          width: 100,
+        ),
+      );
+      expect(row, contains('✘'));
+      expect(row, contains('Command exited with code 101'));
+      expect(row, isNot(contains('lines')));
+    });
+
+    test('AC5 REG: line mode renders thinking NEVER — the #36 legacy row '
+        'and the plain text stream stay byte-shaped', () {
+      final call = ToolCall(
+        id: 'l1',
+        name: 'bash',
+        arguments: {'command': 'echo hi'},
+      );
+      final lines = replayLines(
+        assistant([
+          ThinkingContent(thinking: 'secret reasoning'),
+          TextContent(text: 'answer'),
+          call,
+        ]),
+        maxRows: 0,
+        results: {'l1': okResult('l1', 'hi')},
+      );
+      final joined = lines.join('\n');
+      expect(joined, isNot(contains('secret reasoning')));
+      expect(joined, contains('answer'));
+      expect(joined, contains('✓ bash · echo hi —'));
+      // Headless stdout contract (#1931 AC3): one full single-copy line.
+      expect(lines.where((l) => l.contains('echo hi')), hasLength(1));
     });
   });
 
