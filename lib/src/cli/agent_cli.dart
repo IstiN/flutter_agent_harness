@@ -306,6 +306,7 @@ export 'model_presets.dart' show bundledCatalogModelIds, knownModelPresets;
 
 part 'provider_flow_helpers.dart';
 part 'provider_commands.dart';
+part 'provider_codemie_sso.dart';
 part 'provider_proxy_gate.dart';
 part 'provider_key_persist.dart';
 part 'provider_export_command.dart';
