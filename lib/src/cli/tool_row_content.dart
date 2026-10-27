@@ -227,7 +227,7 @@ List<String> thinkingCollapsedRows({
   bool expanded = false,
 }) =>
     [
-      thinkingRowLabel(seconds),
+      '> ${thinkingRowLabel(seconds)}',
       if (expanded) ...text.split('\n'),
     ];
 
@@ -438,7 +438,7 @@ List<String> settledBashCardRows({
     successDetail: intent,
     isError: false,
     width: width,
-    meta: [if (outputMeta != null) outputMeta],
+    meta: [?outputMeta],
     rightElapsed: elapsed ?? '',
     previewLines: [commandPreview],
   );

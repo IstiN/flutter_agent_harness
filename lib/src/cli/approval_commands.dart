@@ -1300,7 +1300,7 @@ extension ApprovalCommands on AgentCli {
       cwd: _env.cwd,
       home: config.homeDir,
     );
-    _toolStarts[toolCallId] = (DateTime.now(), detail);
+    _toolStarts[toolCallId] = (DateTime.now(), detail, args);
     // Per-call liveness (gh-1055): headless/line mode watch the foreground
     // call and speak up when it runs long. TUI mode is skipped inside —
     // its waiting row already covers it.
@@ -1684,7 +1684,8 @@ extension ApprovalCommands on AgentCli {
     ToolExecutionResult result, {
     required bool isError,
   }) {
-    final (started, startDetail) = _toolStarts.remove(toolCallId) ?? (null, '');
+    final (started, startDetail, startArgs) =
+        _toolStarts.remove(toolCallId) ?? (null, '', const {});
     _waiting.toolCallEnded(toolCallId);
     // No offer may outlive its call (issue #1786): the call ending is the
     // last chance to clear a stale outstanding `b` affordance.
@@ -1693,21 +1694,24 @@ extension ApprovalCommands on AgentCli {
         ? ''
         : '${DateTime.now().difference(started).inSeconds}s';
     final state = isError ? ToolRowState.failed : ToolRowState.done;
-    // TUI chrome (issue #807): the settled card carries the phase tint
-    // (success/error), the elapsed meta, and — on failure — the bright
-    // first line of the failure text as the news. The SAME builder the
-    // replay paints ([settledToolCardRows], issue #916) — parity by
-    // construction. Line mode and headless keep the legacy row
-    // byte-identically.
+    // TUI chrome (issue #807): the settled card carries the phase tint,
+    // the RIGHT-ALIGNED elapsed zone, and the gh-1933 v2 content (read
+    // lines-read, edit/write diffstat, bash intent + output count + dim
+    // command preview) — the SAME derivation the replay paints
+    // ([settledCallCardRows], parity by construction). Line mode,
+    // headless, and the chrome kill switch keep the legacy row
+    // byte-identically (AC5).
     if (_useTui && tuiChromeEnabled) {
       io.writeln(
-        settledToolCardRows(
+        settledCallCardRows(
           toolName: toolName,
-          successDetail: startDetail,
+          args: startArgs,
+          resultContent: result.content,
           isError: isError,
           width: _rowWidth,
-          resultContent: result.content,
-          meta: [elapsed],
+          elapsed: elapsed.isEmpty ? null : elapsed,
+          cwd: _env.cwd,
+          home: config.homeDir,
         ).join('\n'),
       );
       return;

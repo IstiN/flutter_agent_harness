@@ -1522,6 +1522,13 @@ class AgentCli {
   /// message buffers here and renders once, whole, at message end.
   final StringBuffer _assistantText = StringBuffer();
 
+  /// The open THINKING window (gh-1933 AC4): on the TUI chrome face the
+  /// per-delta dim stream is replaced by ONE collapsed `> Thought for Ns`
+  /// row — the deltas buffer here, the window opens at the first thinking
+  /// delta and closes (emitting the row, duration = the streamed window)
+  /// at the first answer/tool-call delta or message end. Null = closed.
+  ({DateTime startedAt, StringBuffer buffer})? _thinkingWindow;
+
   /// The AC3 post-tool_use narration holds (gh-1433): once the current
   /// message streams a tool-call block, its later text deltas are
   /// post-call narration — each tool-call block opens a segment, deltas
@@ -1884,10 +1891,13 @@ class AgentCli {
   /// skills (`paths:` frontmatter) enter the prompt once their globs match.
   final Set<String> _touchedPaths = {};
 
-  /// Start wall-clock + rendered detail per in-flight tool call (keyed by
-  /// toolCallId) — the end row repeats the detail and adds the elapsed zone
-  /// (issue #366). Unpaired ends render neither.
-  final Map<String, (DateTime, String)> _toolStarts = {};
+  /// Start wall-clock + rendered detail + args per in-flight tool call
+  /// (keyed by toolCallId) — the end row repeats the detail and adds the
+  /// elapsed zone (issue #366); gh-1933 also re-derives the row's v2
+  /// content (counts, diffstat, preview) from the stashed args. Unpaired
+  /// ends render neither.
+  final Map<String, (DateTime, String, Map<String, dynamic>)> _toolStarts =
+      {};
 
   /// The MCP wiring (manager + re-registration) — see agent_cli_mcp.dart.
   late AgentCliMcpWiring _mcp;

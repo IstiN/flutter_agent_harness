@@ -1,5 +1,7 @@
 import 'package:flutter_agent_harness/src/cli/ansi_markdown.dart';
 import 'package:flutter_agent_harness/src/cli/tool_row_content.dart';
+import 'package:flutter_agent_harness/src/cli/tui_chrome.dart'
+    show paintDiffstat;
 import 'package:flutter_agent_harness/src/cli/tui_text_width.dart';
 import 'package:flutter_agent_harness/src/cli/tui_theme.dart';
 import 'package:flutter_agent_harness/src/types.dart';
@@ -319,7 +321,7 @@ void main() {
       );
       final header = card.first;
       expect(cells(header), lessThanOrEqualTo(40));
-      expect(cells(header), contains('12s'));
+      expect(header, contains('12s'));
       // Preview survives as its own row, inside the budget.
       expect(card, hasLength(2));
       expect(cells(card[1]), lessThanOrEqualTo(40));
@@ -359,9 +361,11 @@ void main() {
           isNotNull,
           reason: '${entry.key}: toolOutput (dim preview)',
         );
+        // The right-zone role exists everywhere; the default palette
+        // renders it dim-only by design (its muted carries no fg).
         expect(
-          t.muted.foregroundRgb,
-          isNotNull,
+          t.muted.isDim == true || t.muted.foregroundRgb != null,
+          isTrue,
           reason: '${entry.key}: muted (right-zone elapsed)',
         );
       }
