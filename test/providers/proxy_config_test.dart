@@ -121,10 +121,50 @@ void main() {
     });
   });
 
+  group('credential half-validation', () {
+    test('proxyUsername without proxyPasswordEnv is rejected', () {
+      expect(
+        () => parse(yamlOf('proxy: socks5://h:1080\nproxyUsername: kimi')),
+        throwsA(
+          isA<ConfigException>().having(
+            (e) => e.message,
+            'message',
+            contains('"proxyUsername" without "proxyPasswordEnv"'),
+          ),
+        ),
+      );
+    });
+
+    test(
+      'proxyPasswordEnv without proxyUsername is rejected (dead config)',
+      () {
+        expect(
+          () => parse(
+            yamlOf('proxy: socks5://h:1080\nproxyPasswordEnv: KIMI_PW'),
+          ),
+          throwsA(
+            isA<ConfigException>().having(
+              (e) => e.message,
+              'message',
+              allOf(
+                contains('"proxyPasswordEnv" without "proxyUsername"'),
+                contains('set proxyUsername next to proxyPasswordEnv'),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  });
+
   group('proxyPasswordEnv resolution', () {
     test('resolves via the lookup when set', () {
       final config = parse(
-        yamlOf('proxy: socks5://h:1080\nproxyPasswordEnv: KIMI_PW'),
+        yamlOf(
+          'proxy: socks5://h:1080\n'
+          'proxyUsername: kimi\n'
+          'proxyPasswordEnv: KIMI_PW',
+        ),
       );
       expect(config.resolvePasswordVia((name) => 's3cret'), 's3cret');
     });
@@ -138,7 +178,11 @@ void main() {
       'missing env → actionable error naming proxyPasswordEnv + request_secret',
       () {
         final config = parse(
-          yamlOf('proxy: socks5://h:1080\nproxyPasswordEnv: KIMI_PW'),
+          yamlOf(
+            'proxy: socks5://h:1080\n'
+            'proxyUsername: kimi\n'
+            'proxyPasswordEnv: KIMI_PW',
+          ),
           label: 'providers.kimi_me.network',
         );
         expect(
@@ -225,6 +269,23 @@ void main() {
       expect(network.proxyUsername, 'user');
       expect(network.proxyPasswordEnv, 'KIMI_PROXY_PASSWORD');
       expect(config.providerNetworks.length, 1);
+    });
+
+    test('a null-valued entry is rejected, not silently dropped', () {
+      expect(
+        () =>
+            CliConfig.fromYaml(loadYaml('providers:\n  kimi_me:\n') as YamlMap),
+        throwsA(
+          isA<ConfigException>().having(
+            (e) => e.message,
+            'message',
+            allOf(
+              contains('providers.kimi_me has no value'),
+              contains('or remove the entry'),
+            ),
+          ),
+        ),
+      );
     });
 
     test('absent section parses to an empty map', () {

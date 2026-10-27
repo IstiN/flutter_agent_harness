@@ -463,7 +463,13 @@ class AgentCli {
     _streamFunction =
         streamFunction ??
         scriptedTestStreamFunction() ??
-        _catalogStreamFunction(config.providerKind, config.apiKey);
+        _catalogStreamFunction(
+          config.providerKind,
+          config.apiKey,
+          providerName:
+              config.activeCustomName ??
+              resolveCliProviderSpec(config.providerKind)?.name,
+        );
     // MCP servers connect lazily in the background; their tools land in
     // the registry via _onMcpChanged (registered after the agent exists).
     _mcp = AgentCliMcpWiring(config: config.mcpConfig, cwd: _env.cwd);

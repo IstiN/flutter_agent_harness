@@ -218,6 +218,7 @@ extension on AgentCli {
       jwtToken: jwtToken,
       currentProject: currentProject,
       currentModelId: currentModelId,
+      providerName: _codeMieGateIdentity(apiBase),
     );
     if (project == _codeMieKeepCurrent) {
       return (currentProject, currentModelId);
@@ -227,7 +228,12 @@ extension on AgentCli {
         await fetchCodeMieModelsWithJwt(
           '$apiBase/v1',
           jwtToken,
-          client: modelFetchClient('codemie'),
+          // The best-known identity at fetch time: the existing entry's
+          // name (re-login/refresh), else the CodeMie default. First-add
+          // cannot know the user-chosen name yet (the name step runs
+          // after this fetch) — documented one-shot exception in
+          // docs/proxy.md.
+          client: modelFetchClient(_codeMieGateIdentity(apiBase)),
         ).catchError((_) {
           return const <String>[];
         });
@@ -244,6 +250,21 @@ extension on AgentCli {
     if (modelPick.isNotEmpty) return modelPick;
     final manual = await _askLine('model id: ');
     return manual?.trim().isNotEmpty == true ? manual!.trim() : null;
+  }
+
+  /// The best-known `providers:` `network:` binding identity for a
+  /// CodeMie fetch against [baseUrl] (issue #1921): the existing entry's
+  /// user-chosen name when one is already saved (re-login / credential
+  /// refresh — its binding, if any, applies), else the CodeMie default.
+  /// A FIRST-add flow asks for the name only after the guided fetch, so
+  /// the fetch cannot know the final name yet — the documented one-shot
+  /// first-add exception in docs/proxy.md.
+  String _codeMieGateIdentity(String baseUrl) {
+    final registry = config.customProviders;
+    final existing = registry != null
+        ? _entryForBaseUrl(registry, baseUrl)
+        : null;
+    return existing?.name ?? 'codemie';
   }
 
   /// Saves a CodeMie JWT Bearer provider entry and switches to it. A first
@@ -327,7 +348,11 @@ extension on AgentCli {
     _providerKind = spec.kind;
     _apiKey = jwtToken;
     _explicitToken = true;
-    _streamFunction = _catalogStreamFunction(spec.kind, jwtToken);
+    _streamFunction = _catalogStreamFunction(
+      spec.kind,
+      jwtToken,
+      providerName: spec.name,
+    );
     _agent.streamFunction = _streamFunction;
     final builtModel = buildCatalogModel(spec.name, modelId, baseUrl: baseUrl);
     _agent.state.model = Model(
@@ -474,7 +499,11 @@ extension on AgentCli {
     final model = _agent.state.model;
     _apiKey = cookie;
     _explicitToken = true;
-    _streamFunction = _catalogStreamFunction(entry.spec.kind, '');
+    _streamFunction = _catalogStreamFunction(
+      entry.spec.kind,
+      '',
+      providerName: entry.name,
+    );
     _agent.streamFunction = _streamFunction;
     _agent.state.model = Model(
       id: model.id,
@@ -503,17 +532,22 @@ extension on AgentCli {
     String cookie, {
     String? currentProject,
     String? currentModelId,
+    required String providerName,
   }) async {
     final project = await _codemiePickProject(
       apiBase,
       cookie: cookie,
       currentProject: currentProject,
       currentModelId: currentModelId,
+      providerName: providerName,
     );
     if (project == _codeMieKeepCurrent) {
       return (currentProject, currentModelId);
     }
-    return (project, await _codemiePickModel(apiBase, cookie));
+    return (
+      project,
+      await _codemiePickModel(apiBase, cookie, providerName: providerName),
+    );
   }
 
   /// Step 1 of the guided setup: fetch and pick a CodeMie project. Auth is
@@ -527,7 +561,10 @@ extension on AgentCli {
     String? jwtToken,
     String? currentProject,
     String? currentModelId,
+    required String providerName,
   }) async {
+    // [providerName] keys the `providers:` `network:` proxy gate (issue
+    // #1921) — the fetch rides the same bound client as the chat stream.
     io.writeln('fetching CodeMie projects...');
     final List<String> projects;
     try {
@@ -535,12 +572,12 @@ extension on AgentCli {
           ? await fetchCodeMieProjectsWithJwt(
               apiBase,
               jwtToken,
-              client: modelFetchClient('codemie'),
+              client: modelFetchClient(providerName),
             )
           : await fetchCodeMieProjects(
               apiBase,
               cookie!,
-              client: modelFetchClient('codemie'),
+              client: modelFetchClient(providerName),
             );
     } catch (e) {
       io.writeln(

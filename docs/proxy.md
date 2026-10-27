@@ -75,6 +75,16 @@ config writer, so `/provider` edits never drop a binding.
    default) — a bound provider's `/models` fetches and quota adapters ride
    the same proxied client.
 
+## CodeMie first-add fetch exception
+
+A CodeMie connect runs a guided project/model fetch. On a re-login or a
+credential refresh the fetch keys the existing entry's name and rides its
+binding. On a **first add** the user-chosen entry name is only asked for
+AFTER that fetch, so the very first project/model discovery of a brand-new
+entry rides direct (one-shot; the saved chat stream, `/models` refreshes,
+and every later fetch all honor the binding). Every other fetch path is
+gated.
+
 ## No VPN clients, ever
 
 fa does not manage VPN clients, tunnels, or system routes. To reuse an

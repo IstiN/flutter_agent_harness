@@ -249,18 +249,22 @@ final class _Socks5ProxyConnector implements ProxyConnector {
   }
 }
 
-/// RFC1928 reply codes.
-String socks5ReplyText(int code) => switch (code) {
-  0x01 => 'general SOCKS server failure',
-  0x02 => 'connection not allowed by ruleset',
-  0x03 => 'network unreachable (through proxy)',
-  0x04 => 'host unreachable (through proxy)',
-  0x05 => 'connection refused (through proxy)',
-  0x06 => 'TTL expired (through proxy)',
-  0x07 => 'command not supported',
-  0x08 => 'address type not supported',
-  _ => 'reply code 0x${code.toRadixString(16)}',
+/// RFC1928 reply-code → human text (RFC1962 errata: the through-proxy
+/// qualifiers keep the operator pointed at the PROXY, not the target).
+const _socks5ReplyTexts = <int, String>{
+  0x01: 'general SOCKS server failure',
+  0x02: 'connection not allowed by ruleset',
+  0x03: 'network unreachable (through proxy)',
+  0x04: 'host unreachable (through proxy)',
+  0x05: 'connection refused (through proxy)',
+  0x06: 'TTL expired (through proxy)',
+  0x07: 'command not supported',
+  0x08: 'address type not supported',
 };
+
+/// The RFC1928 reply code's text, or a hex render of an unknown code.
+String socks5ReplyText(int code) =>
+    _socks5ReplyTexts[code] ?? 'reply code 0x${code.toRadixString(16)}';
 
 /// Exact-byte reader over a SOCKS5 handshake socket owned end-to-end by
 /// the connector. The underlying [iterator] stays attached for the
@@ -268,12 +272,21 @@ String socks5ReplyText(int code) => switch (code) {
 /// stream can never be listened twice, so the reader and the pipe MUST
 /// share it.
 final class Socks5HandshakeReader {
-  Socks5HandshakeReader(this.socket) : iterator = StreamIterator(socket);
+  Socks5HandshakeReader(Socket socket)
+    : _write = socket.add,
+      iterator = StreamIterator(socket);
 
-  /// The handshake socket (write side; [iterator] owns the reads).
-  final Socket socket;
+  /// Scripted constructor: reads ride [bytes], writes land in [sink] —
+  /// the unit suite drives full handshakes with no sockets.
+  Socks5HandshakeReader.scripted(Stream<Uint8List> bytes, this._write)
+    : iterator = StreamIterator(bytes);
+
+  final void Function(List<int> bytes) _write;
 
   final StreamIterator<Uint8List> iterator;
+
+  /// The write side (the handshake socket's add in production).
+  void add(List<int> bytes) => _write(bytes);
   Uint8List _buffer = Uint8List(0);
 
   /// Unread buffered bytes (early target data racing the handshake tail).
@@ -298,22 +311,26 @@ final class Socks5HandshakeReader {
   }
 }
 
-/// Performs the full SOCKS5 handshake via [reader] and binds its socket
-/// to `targetHost:targetPort`. The hostname is sent UNRESOLVED
-/// (ATYP 0x03) unless it is already an IP literal (ATYP 0x01/0x04).
-Future<void> socks5Bind(
+/// The greeting offering [username]'s presence: version 5, methods
+/// [no-auth] (+ [user/pass] when credentials are configured).
+List<int> socks5GreetingBytes({required bool useAuth}) => [
+  0x05,
+  useAuth ? 2 : 1,
+  0x00,
+  if (useAuth) 0x02,
+];
+
+/// Negotiates the method-selection + optional RFC1929 user/pass leg
+/// against [reader], writing through [sink]. Public and socket-free so
+/// the unit suite drives it with a scripted byte stream.
+Future<void> socks5NegotiateAuth(
   Socks5HandshakeReader reader,
-  String targetHost,
-  int targetPort, {
+  void Function(List<int> bytes) sink, {
   String? username,
   String? password,
 }) async {
-  final socket = reader.socket;
   final useAuth = username != null;
-
-  // Greeting: version 5, methods [no-auth] (+ [user/pass] when
-  // credentials are configured). The server picks one.
-  socket.add([0x05, useAuth ? 2 : 1, 0x00, if (useAuth) 0x02]);
+  sink(socks5GreetingBytes(useAuth: useAuth));
   final greeting = await reader.readExactly(2);
   if (greeting[0] != 0x05) {
     throw const SocketException('SOCKS5 proxy sent a non-v5 greeting');
@@ -322,9 +339,7 @@ Future<void> socks5Bind(
     case 0x00:
       break;
     case 0x02 when useAuth:
-      final user = ascii.encode(username);
-      final pass = ascii.encode(password ?? '');
-      socket.add([0x01, user.length, ...user, pass.length, ...pass]);
+      sink(_rfc1929AuthBytes(username: username, password: password));
       final verdict = await reader.readExactly(2);
       if (verdict[1] != 0x00) {
         throw const SocketException(
@@ -342,10 +357,24 @@ Future<void> socks5Bind(
         '${greeting[1].toRadixString(16)}',
       );
   }
+}
 
-  // CONNECT with the target hostname unresolved (remote DNS).
+/// The RFC1929 subnegotiation: ver 1, ulen user, plen pass.
+List<int> _rfc1929AuthBytes({
+  required String username,
+  required String? password,
+}) {
+  final user = ascii.encode(username);
+  final pass = ascii.encode(password ?? '');
+  return [0x01, user.length, ...user, pass.length, ...pass];
+}
+
+/// The CONNECT request for `targetHost:targetPort`: the hostname rides
+/// UNRESOLVED (ATYP 0x03, remote DNS at the proxy) unless it is already
+/// an IP literal (ATYP 0x01/0x04).
+List<int> socks5ConnectRequestBytes(String targetHost, int targetPort) {
   final address = InternetAddress.tryParse(targetHost);
-  socket.add([
+  return [
     0x05,
     0x01, // CONNECT
     0x00,
@@ -360,8 +389,12 @@ Future<void> socks5Bind(
     else ...[0x03, targetHost.length, ...ascii.encode(targetHost)],
     targetPort >> 8,
     targetPort & 0xFF,
-  ]);
-  // Reply: VER REP RSV ATYP BND.ADDR BND.PORT.
+  ];
+}
+
+/// Consumes the CONNECT reply (VER REP RSV ATYP BND.ADDR BND.PORT):
+/// throws on a malformed VER, a failure REP, or an unknown ATYP.
+Future<void> socks5ConsumeReply(Socks5HandshakeReader reader) async {
   final head = await reader.readExactly(4);
   if (head[0] != 0x05) {
     throw const SocketException('SOCKS5 proxy sent a malformed reply');
@@ -384,6 +417,107 @@ Future<void> socks5Bind(
   if (remaining > 0) {
     await reader.readExactly(remaining);
   }
+}
+
+/// Performs the full SOCKS5 handshake via [reader] and binds its socket
+/// to `targetHost:targetPort`. The hostname is sent UNRESOLVED
+/// (ATYP 0x03) unless it is already an IP literal (ATYP 0x01/0x04).
+Future<void> socks5Bind(
+  Socks5HandshakeReader reader,
+  String targetHost,
+  int targetPort, {
+  String? username,
+  String? password,
+}) async {
+  await socks5NegotiateAuth(
+    reader,
+    reader.add,
+    username: username,
+    password: password,
+  );
+  reader.add(socks5ConnectRequestBytes(targetHost, targetPort));
+  await socks5ConsumeReply(reader);
+}
+
+/// The request-line target of a CONNECT (an authority) — its second
+/// space-separated token, or '' when malformed.
+String _connectAuthority(String requestLine) {
+  final parts = requestLine.split(' ');
+  return parts.length > 1 ? parts[1] : '';
+}
+
+/// The absolute-form http(s) target of a plain proxied request line, or
+/// null when the line does not carry a parseable absolute URL.
+(String, int)? _absoluteFormTarget(String requestLine) {
+  final parts = requestLine.split(' ');
+  if (parts.length < 2) return null;
+  final uri = Uri.tryParse(parts[1]);
+  if (uri == null || uri.host.isEmpty) return null;
+  return (uri.host, uri.port == 0 ? 80 : uri.port);
+}
+
+/// The authority (host[:port]) of the request head's Host header, or ''
+/// when the head carries none.
+String _hostHeaderAuthority(String head) {
+  final hostLine = head
+      .split('\r\n')
+      .skip(1)
+      .firstWhere(
+        (line) => line.toLowerCase().startsWith('host:'),
+        orElse: () => '',
+      );
+  if (hostLine.isEmpty) return '';
+  return hostLine.substring(hostLine.indexOf(':') + 1).trim();
+}
+
+/// Strips the [brackets] of an IPv6 literal.
+String _unwrapIpv6(String rawHost) =>
+    rawHost.startsWith('[') && rawHost.endsWith(']')
+    ? rawHost.substring(1, rawHost.length - 1)
+    : rawHost;
+
+/// Splits an authority into host + port (defaulting to [fallbackPort]
+/// when the port text is empty). Throws [SocketException] on an
+/// unparsable authority; the host part keeps IPv6 brackets stripped.
+(String, int) _splitAuthority(
+  String authority,
+  String requestLine, {
+  required int fallbackPort,
+}) {
+  final colon = authority.lastIndexOf(':');
+  if (colon <= 0) {
+    throw SocketException('relay inbound named no target: $requestLine');
+  }
+  final rawHost = authority.substring(0, colon);
+  final portText = authority.substring(colon + 1);
+  final port = portText.isEmpty ? fallbackPort : int.tryParse(portText);
+  if (port == null) {
+    throw SocketException('relay inbound named a bad port: $requestLine');
+  }
+  return (_unwrapIpv6(rawHost), port);
+}
+
+/// CONNECT host:port from the request line, else the Host header — the
+/// relay target every accepted inbound is bound through. Public and
+/// socket-free so the unit suite drives the parse paths directly.
+(String, int) relayTargetOf(String requestLine, String head) {
+  if (requestLine.startsWith('CONNECT')) {
+    // CONNECT carries no scheme — the tunnel target is https by
+    // convention; an explicit port in the authority wins.
+    return _splitAuthority(
+      _connectAuthority(requestLine),
+      requestLine,
+      fallbackPort: 443,
+    );
+  }
+  final absolute = _absoluteFormTarget(requestLine);
+  if (absolute != null) return absolute;
+  // Plain origin-form fell through to the Host header: http's default.
+  return _splitAuthority(
+    _hostHeaderAuthority(head),
+    requestLine,
+    fallbackPort: 80,
+  );
 }
 
 /// The loopback CONNECT→SOCKS5 relay: dart:io's native CONNECT machinery
@@ -519,43 +653,8 @@ final class _ProxyRelay {
   }
 
   /// CONNECT host:port from the request line, else the Host header.
-  (String, int) _targetOf(String requestLine, String head) {
-    final parts = requestLine.split(' ');
-    final target = parts.length > 1 ? parts[1] : '';
-    final String authority;
-    if (requestLine.startsWith('CONNECT')) {
-      authority = target;
-    } else {
-      final uri = Uri.tryParse(target);
-      if (uri != null && uri.host.isNotEmpty) {
-        return (uri.host, uri.port == 0 ? 80 : uri.port);
-      }
-      final hostLine = head
-          .split('\r\n')
-          .skip(1)
-          .firstWhere(
-            (line) => line.toLowerCase().startsWith('host:'),
-            orElse: () => '',
-          );
-      authority = hostLine.substring(hostLine.indexOf(':') + 1).trim();
-    }
-    final colon = authority.lastIndexOf(':');
-    if (colon <= 0) {
-      throw SocketException('relay inbound named no target: $requestLine');
-    }
-    final rawHost = authority.substring(0, colon);
-    final portText = authority.substring(colon + 1);
-    final port = portText.isEmpty ? 443 : int.tryParse(portText);
-    if (port == null) {
-      throw SocketException('relay inbound named a bad port: $requestLine');
-    }
-    return (
-      rawHost.startsWith('[') && rawHost.endsWith(']')
-          ? rawHost.substring(1, rawHost.length - 1)
-          : rawHost,
-      port,
-    );
-  }
+  (String, int) _targetOf(String requestLine, String head) =>
+      relayTargetOf(requestLine, head);
 
   /// Pipes the already-attached [iterator] into [to]. A clean end just
   /// stops piping — the socket pair is torn down by [_serve] once BOTH

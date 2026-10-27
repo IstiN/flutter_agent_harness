@@ -113,6 +113,16 @@ final class ProviderNetworkConfig {
         'password must be referenced by env name, never inline',
       );
     }
+    // The mirror direction is dead config, not a partial feature: both
+    // HTTP Basic and RFC1929 need user AND password, so a passwordEnv
+    // without a username would silently never be sent. Fail loudly.
+    if (passwordEnv != null && username == null) {
+      throw ConfigException(
+        '$configLabel: "proxyPasswordEnv" without "proxyUsername" — the '
+        'proxy credential needs both halves (HTTP Basic / RFC1929 '
+        'user+pass); set proxyUsername next to proxyPasswordEnv',
+      );
+    }
     return ProviderNetworkConfig(
       proxy: uri,
       proxyUsername: username,

@@ -446,9 +446,22 @@ Map<String, ProviderNetworkConfig> _parseProviderNetworks(Object? node) {
     throw ConfigException('providers must be a map, got: $node');
   }
   return {
+    // A null value is a user error (the block was started but never
+    // written) — silently dropping it would degrade a binding to direct
+    // egress, which this section's contract forbids.
     for (final entry in node.entries)
-      if (entry.value != null)
-        '${entry.key}': _parseProviderNetworkEntry('${entry.key}', entry.value),
+      ...switch (entry.value) {
+        null => throw ConfigException(
+          'providers.${entry.key} has no value — write the network: block '
+          '(network: { proxy: … }) or remove the entry',
+        ),
+        _ => {
+          '${entry.key}': _parseProviderNetworkEntry(
+            '${entry.key}',
+            entry.value,
+          ),
+        },
+      },
   };
 }
 

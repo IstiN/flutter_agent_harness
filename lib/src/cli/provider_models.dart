@@ -785,7 +785,16 @@ extension on AgentCli {
   /// ([_fetchProviderModelIds]): CodeMie `/llm_models`, DIAL deployments,
   /// everything else OpenAI `/models`.
   Future<List<String>> _fetchActiveProviderModels(Model model) {
-    return _fetchProviderModelIds(model.provider, model.baseUrl, _apiKey);
+    // The SAME identity the stream bind used: for a custom entry the
+    // binding keys the ENTRY name, while `model.provider` carries the
+    // catalog spec name (buildCatalogModel(spec.name, …)) — keying the
+    // fetch on model.provider alone let a bound custom entry's /models
+    // refresh ride direct (PR #1927 round-2 review).
+    return _fetchProviderModelIds(
+      _activeCustomName ?? model.provider,
+      model.baseUrl,
+      _apiKey,
+    );
   }
 
   /// Whether the roles chain pins explicit limits for [model]: a chain

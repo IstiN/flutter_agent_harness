@@ -472,7 +472,6 @@ extension on AgentCli {
     }
     final keyName = entry.keyName;
     final token = keyName != null ? config.secureKeys?.read(keyName) : null;
-    _activeCustomName = entry.name;
     await _switchProvider(
       entry.spec,
       entry.baseUrl,
@@ -480,6 +479,7 @@ extension on AgentCli {
       token: token,
       tokenKeyName: keyName,
       authHeader: entry.authHeader,
+      customName: entry.name,
     );
   }
 
@@ -1224,7 +1224,12 @@ extension on AgentCli {
     if (isOpenRouterActive) {
       _apiKey = key.key;
       _explicitToken = true;
-      _streamFunction = _catalogStreamFunction(spec.kind, key.key);
+      _streamFunction = _catalogStreamFunction(
+        spec.kind,
+        key.key,
+        // The guard above pinned this to the catalog identity.
+        providerName: spec.name,
+      );
       _agent.streamFunction = _streamFunction;
       io.writeln('OpenRouter key updated for current session');
     } else {
@@ -1604,16 +1609,19 @@ extension on AgentCli {
   ///
   /// [providerName] keys the `providers:` `network:` proxy binding (issue
   /// #1921): a named block rides its proxy fail-closed, everything else
-  /// stays byte-identical direct. The saved custom entry's own name wins
-  /// over the catalog spec name (the config keys the entry name, e.g.
-  /// `kimi_me`).
+  /// stays byte-identical direct. REQUIRED: the caller states the binding
+  /// identity explicitly — the active custom entry's name where the bind
+  /// IS that entry, the catalog spec name for a catalog bind. A fallback
+  /// to a process-global "active" name here keyed the gate on a STALE
+  /// identity after custom→catalog switches and silently bypassed the
+  /// gate (fail-open, PR #1927 round-2 review).
   ///
   /// G2 (gh-178): the result is wrapped in the request-build gate — see
   /// [_gateCatalogStream] in `provider_model_coherence.dart`.
   StreamFunction _catalogStreamFunction(
     String kind,
     String key, {
-    String? providerName,
+    required String? providerName,
   }) {
     final inner =
         config.catalogStreamOverride?.call(kind, key) ??
@@ -1628,11 +1636,7 @@ extension on AgentCli {
           onChatGptCredentialsRefreshed: kind == 'chatgpt-codex'
               ? _persistChatGptCredentials
               : null,
-          httpClient: proxiedProviderClient(
-            providerName ??
-                _activeCustomName ??
-                resolveCliProviderSpec(kind)?.name,
-          ),
+          httpClient: proxiedProviderClient(providerName),
         );
     return _gateCatalogStream(inner);
   }
@@ -1732,6 +1736,9 @@ extension on AgentCli {
       cookie,
       currentProject: sameAccount ? existing.project : null,
       currentModelId: sameAccount ? existing.modelId : null,
+      // The name step already ran above — the fetch rides the final
+      // (possibly user-chosen) identity's binding.
+      providerName: name,
     );
     final project = guided.$1 ?? (sameAccount ? existing.project : null);
     final modelId = guided.$2 ?? existing?.modelId ?? _agent.state.model.id;
@@ -1779,6 +1786,7 @@ extension on AgentCli {
     String cookie, {
     String? currentProject,
     String? currentModelId,
+    required String providerName,
   }) async {
     final override = config.codeMieGuidedSetupFn;
     if (override != null) {
@@ -1790,6 +1798,7 @@ extension on AgentCli {
       cookie,
       currentProject: currentProject,
       currentModelId: currentModelId,
+      providerName: providerName,
     );
   }
 
@@ -1816,7 +1825,11 @@ extension on AgentCli {
     // header; the cookie rides in via model.headers instead.
     _apiKey = cookie;
     _explicitToken = true;
-    _streamFunction = _catalogStreamFunction(spec.kind, '');
+    _streamFunction = _catalogStreamFunction(
+      spec.kind,
+      '',
+      providerName: spec.name,
+    );
     _agent.streamFunction = _streamFunction;
     final builtModel = buildCatalogModel(spec.name, modelId, baseUrl: baseUrl);
     _agent.state.model = Model(
@@ -1858,13 +1871,19 @@ extension on AgentCli {
   }
 
   /// Step 2: fetch and pick a CodeMie model (or manual entry).
-  Future<String?> _codemiePickModel(String apiBase, String cookie) async {
+  /// [providerName] keys the `providers:` `network:` proxy gate (issue
+  /// #1921) — the fetch rides the same bound client as the chat stream.
+  Future<String?> _codemiePickModel(
+    String apiBase,
+    String cookie, {
+    required String providerName,
+  }) async {
     io.writeln('fetching CodeMie models...');
     final models =
         await fetchCodeMieModels(
           '$apiBase/v1',
           cookie,
-          client: modelFetchClient('codemie'),
+          client: modelFetchClient(providerName),
         ).catchError((e) {
           return const <String>[];
         });
@@ -2197,8 +2216,13 @@ extension on AgentCli {
     String? token,
     String? tokenKeyName,
     String? authHeader,
+    String? customName,
   }) async {
     try {
+      // The switch WRITES the pin: entry.name for a saved-custom switch,
+      // null for a catalog switch. Session records below carry the pin
+      // this switch establishes (gh-1000 AC1).
+      _activeCustomName = customName;
       final modelLine = modelId == _agent.state.model.id
           ? '  model unchanged: $modelId — use /model to change'
           : '  model: $modelId';
@@ -2265,7 +2289,10 @@ extension on AgentCli {
           // per-folder state alone cannot survive an interleaved switch to
           // a twin account (gh-1000 AC1, round-3 review).
           baseUrl: baseUrl,
-          customProvider: _activeCustomName,
+          // The record carries the pin THIS switch establishes — a live
+          // custom switch must re-bind to the switched-to entry on
+          // restore (gh-1000 AC1); a catalog switch records null (unpin).
+          customProvider: customName,
         );
         io.writeln('switched provider to ${spec.name} (endpoint: $baseUrl)');
         io.writeln(modelLine);
@@ -2277,7 +2304,11 @@ extension on AgentCli {
       _providerKind = spec.kind;
       _apiKey = key;
       _explicitToken = token != null;
-      _streamFunction = _catalogStreamFunction(spec.kind, key);
+      _streamFunction = _catalogStreamFunction(
+        spec.kind,
+        key,
+        providerName: customName ?? spec.name,
+      );
       _agent.streamFunction = _streamFunction;
       final builtModel = buildCatalogModel(
         spec.name,
@@ -2311,9 +2342,11 @@ extension on AgentCli {
       await _session?.appendModelChange(
         provider: spec.name,
         modelId: modelId,
-        // A LIVE switch records the pin too (gh-1000 AC1, round-3 review).
+        // A LIVE switch records the pin this switch establishes (gh-1000
+        // AC1, round-3 review): the entry name for a custom switch, null
+        // (unpin) for a catalog one.
         baseUrl: baseUrl,
-        customProvider: _activeCustomName,
+        customProvider: customName,
       );
       var keyLine = _providerKeyLine(spec, baseUrl, explicit: token != null);
       if (token != null) {
@@ -2528,7 +2561,13 @@ extension on AgentCli {
     } else if (spec != null && spec.apiKeyEnvNames.contains(name)) {
       _apiKey = value;
       _explicitToken = false;
-      _streamFunction = _catalogStreamFunction(spec.kind, value);
+      _streamFunction = _catalogStreamFunction(
+        spec.kind,
+        value,
+        // The ACTIVE identity binds the gate: the custom entry when one
+        // is pinned, else the catalog spec.
+        providerName: _activeCustomName ?? spec.name,
+      );
       _agent.streamFunction = _streamFunction;
       io.writeln('  active provider key updated');
     }
