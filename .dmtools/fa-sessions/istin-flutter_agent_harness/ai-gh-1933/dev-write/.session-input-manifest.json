@@ -1,0 +1,321 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-28T01:15:45.550Z",
+  "ticketKey": "pr-1936",
+  "headSha": "b93d825b7956a5c01f3cc77773b950c7fa9fa1e8",
+  "baseBranch": "main",
+  "reviewDecision": "NONE",
+  "labels": [],
+  "files": {
+    "ci_failures.md": {
+      "hash": "fnv1a64:826b23198aeb92af",
+      "size": 96939
+    },
+    "ci_failures_full.log": {
+      "hash": "fnv1a64:3514b456ef8d9a54",
+      "size": 2030764
+    },
+    "ci_violations.json": {
+      "hash": "fnv1a64:c502de327d7273f1",
+      "size": 708
+    },
+    "pr_diff.txt": {
+      "hash": "fnv1a64:c9833aca78fd7e0e",
+      "size": 12304
+    },
+    "pr_discussions.md": {
+      "hash": "fnv1a64:842d1591c20917aa",
+      "size": 39694
+    },
+    "pr_discussions_raw.json": {
+      "hash": "fnv1a64:edfb8a87be69215f",
+      "size": 113
+    },
+    "pr_info.md": {
+      "hash": "fnv1a64:9297893e937ca7f1",
+      "size": 3245
+    },
+    "request.md": {
+      "hash": "fnv1a64:f2a4524262d63ae4",
+      "size": 2905
+    },
+    "review_state.md": {
+      "hash": "fnv1a64:7eed40bef4b17114",
+      "size": 517
+    },
+    "rework_base_head.txt": {
+      "hash": "fnv1a64:24a810acc9f427bd",
+      "size": 40
+    },
+    "ticket.json": {
+      "hash": "fnv1a64:aa5fb903de32d23e",
+      "size": 2981
+    },
+    "ticket.md": {
+      "hash": "fnv1a64:f2a4524262d63ae4",
+      "size": 2905
+    }
+  },
+  "comments": [
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-27:b670ad3a",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-27",
+      "updatedAt": "2026-10-27",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: garbled doc on [DiffStat.label]**\n\nThe comment reads \"U+2122-free: a plain ASCII `+`, a thin-space free ` −`\" — U+2122 is the trade-mark sign (™), and \"thin-space free\" does not describe anything in the label. The actual label is `+$added −$removed` where `−` is **U+212 MINUS SIGN** (0x2212, verified in the source) between regular spaces — exactly what `paintDiffstat`'s regex `^\\+(\\d+) −(\\d+)$` matches.\n\nSuggested wording:\n\n```dart\n/// The RAW `+N −M` label: an ASCII `+`, then U+212 MINUS SIGN before the\n/// removal count — matching the ticket grammar (and [paintDiffstat]) verbatim.\n```"
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-27:bfbf2aef",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-27",
+      "updatedAt": "2026-10-27",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: [readOutcomeMeta] matches the truncation notice anywhere in the result**\n\n`RegExp(r'\\[Showing lines (\\d+)-(\\d+) of (\\d+)\\.').firstMatch(trimmed)` scans the WHOLE result text, not just its tail. The read tool appends the notice at the end, but a read whose CONTENT quotes the pattern — session JSONLs, harness logs, docs about this very harness — misreports the row as `N of M lines read` (agents read session files regularly in this repo, and those embed past notices).\n\nTwo cheap tightenings:\n\n```dart\n// anchor to the tail: the notice is always the last line of a truncated read\nfinal notice = trimmed.split('\\n').last;\nfinal match = RegExp(r'^\\[Showing lines (\\d+)-(\\d+) of (\\d+)\\.').firstMatch(notice);\n```\n\nor drop the special case entirely and always count the shown text's lines. Cosmetic either way (a dim meta fragment), so no rush."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-27:2dcd969e",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-27",
+      "updatedAt": "2026-10-27",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: doc overstates what [transcriptExpandDetails] toggles**\n\nThe doc says \"collapsed thinking rows **and previews** by default; `all` renders the persisted detail under each collapsed row\" — but the flag only gates the THINKING detail. The bash command preview (`previewLines` in `tuiToolCard`) renders unconditionally in both states, and nothing re-renders already-emitted rows (rows after the switch only). Also worth stating: the state is process-scoped — a restarted `fa` replays collapsed again (`/transcript` is not a persisted setting, per the cli_parity entry).\n\nSuggested wording:\n\n```dart\n/// The expanded/collapsed transcript state (`/transcript expand all|none`,\n/// gh-193 interaction): thinking rows render collapsed (`> Thought for Ns`)\n/// by default; `all` renders their persisted text under the label. Affects\n/// rows emitted after the switch and the in-process `/resume` replay; bash\n/// previews always render. Process-scoped: a restart replays collapsed.\n```"
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-27:6228bb83",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-27",
+      "updatedAt": "2026-10-27",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: [thinkingExpanded] is a test-only second mechanism for the same bit**\n\nNo production caller passes `thinkingExpanded` — `buildReplayEntries` is called from `session_commands.dart` (`_replayRestoredHistory`) without it, and `replayLinesTui` additionally reads the global `transcriptExpandDetails`. So the expansion state flows through two parallel channels: the always-present global (which the `/transcript` command and tests set) and this parameter (only tests set it).\n\nIf the parameter exists to let a future boot flag seed the replay, fine — but then `session_commands.dart` should be the one passing it (`thinkingExpanded: transcriptExpandDetails` would be a no-op duplication). Otherwise drop it and let the global carry the state, like `tuiChromeEnabled` does for the chrome kill switch."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-27:d0eab59e",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-27",
+      "updatedAt": "2026-10-27",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: `/transcript` silently does nothing outside the TUI chrome face**\n\n`_handleTranscriptCommand` is dispatched in both the TUI REPL and the line-mode/headless REPL, and it confirms `transcript: expanded` — but on the non-TUI faces nothing observable changes: line mode never collapses thinking (it streams dim per-delta or not at all, `_streamsThinking`), line-mode replay renders thinking NEVER (the AC5 REG pins it), and the closed thinking window only opens under `_useTui && tuiChromeEnabled`.\n\nConsider having the reply say so, e.g.:\n\n```dart\nif (!_useTui || !tuiChromeEnabled) {\n  io.writeln('transcript expand only affects the TUI chrome transcript');\n  return;\n}\n```\n\n(or gate the command case on `_useTui` and fall through to the usage line). Purely informational — the state flag itself is harmless elsewhere."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-27:3e8ef526",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-27",
+      "updatedAt": "2026-10-27",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: doc placement — the diffstat is composed/painted BEFORE the meta, not after**\n\n`ToolCardSegments.diffstat`'s doc says \"squeezed in **after** the meta\", but both the composition (`'$descRaw$badgeRaw$diffRaw$metaRaw'` in `_squeezeCardTail`) and the paint order (`desc, badge, diff, meta` in `_paintCardTail`) place it BEFORE the meta; the squeeze order (meta drops first, then the diffstat) is documented correctly on `_squeezeCardTail` itself. One word fix so the next reader doesn't chase the wrong visual order:\n\n```dart\n/// ... painted in the `toolDiffAdded`/`toolDiffRemoved` roles, squeezed in\n/// before the meta (meta drops first when the row is tight).\n```"
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-27:6a377d6e",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-27",
+      "updatedAt": "2026-10-27",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# `settledBashCardRows` has no production caller — removed\n\nFixed on this head.\n\n- Deleted `settledBashCardRows` from `lib/src/cli/tool_row_content.dart` — `lib/`, `bin/`, `bench/` and `tools/` now contain no second bash-card builder; the settled card comes only from `settledCallCardRows` → `settledToolCardRows` (the #916 live/replay parity surface stays single-source).\n- The UT-width group in `test/cli/tool_row_content_test.dart` now feeds its oracles through the real derivation, per the suggestion:\n\n```dart\nfinal card = settledCallCardRows(\n  toolName: 'bash',\n  args: {'command': 'dart analyze && dart test'},\n  resultContent: [const TextContent(text: 'x\\nx\\nx')],\n  elapsed: '12s',\n  width: 40,\n);\n```\n\n- `grep -rn settledBashCardRows lib/ bin/ bench/ tools/ test/` → zero hits on this head. Both width tests stay green (same fit/squeeze path, one builder)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-27:71e6a7e0",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-27",
+      "updatedAt": "2026-10-27",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Garbled doc on `DiffStat.label` — reworded\n\nFixed on this head (`lib/src/cli/tool_row_content.dart`, `DiffStat.label`):\n\n```dart\n/// The RAW `+N −M` label: an ASCII `+`, then U+212 MINUS SIGN before\n/// the removal count, between regular spaces — matching the ticket\n/// grammar (and [paintDiffstat]'s `^\\+(\\d+) −(\\d+)$`) verbatim.\nString get label => isEmpty ? '' : '+$added −$removed';\n```\n\nThe ™/“thin-space free” wording is gone; the doc now names the actual characters (ASCII `+`, U+212 MINUS SIGN, plain spaces) and points at the `paintDiffstat` regex that consumes the label."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-27:60682e2d",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-27",
+      "updatedAt": "2026-10-27",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# `readOutcomeMeta` matched the truncation notice anywhere — anchored to the tail\n\nFixed on this head (`lib/src/cli/tool_row_content.dart`), using the reviewer's first tightening:\n\n```dart\nfinal notice = trimmed.split('\\n').last;\nfinal match = RegExp(r'^\\[Showing lines (\\d+)-(\\d+) of (\\d+)\\.').firstMatch(notice);\n```\n\nThe notice is only honored when it is the result's **last** line (the read tool appends it there); a read whose CONTENT quotes a past notice — session JSONLs, harness logs — now counts its shown lines instead of misreporting `N of M lines read`.\n\nNew regression tests in `test/cli/tool_row_content_test.dart` (UT-read-outcome):\n- `a notice QUOTED mid-content is not an outcome meta` — content embedding `[Showing lines 1-10 of 500. …]` mid-text + a trailing line → `'2 lines read'` (failed before the fix, red-then-green).\n- `the notice is recognized as the last line even after blank padding` — trailing-whitespace-padded notice → `'51 of 500 lines read'`."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-27:c3bb4a38",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-27",
+      "updatedAt": "2026-10-27",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# `transcriptExpandDetails` doc overstated its scope — corrected\n\nFixed on this head (`lib/src/cli/tool_row_content.dart`), adopting the suggested wording:\n\n```dart\n/// The expanded/collapsed transcript state (`/transcript expand all|none`,\n/// gh-1933 interaction): thinking rows render collapsed (`> Thought for\n/// Ns`) by default; `all` renders their persisted text under the label.\n/// Affects rows emitted after the switch and the in-process `/resume`\n/// replay; bash previews always render. Process-scoped: a restart replays\n/// collapsed (review thread PRRT_kwDOTXdlLc6w5WCs — `/transcript` is not a\n/// persisted setting).\n```\n\nThe “and previews” claim is gone, the rows-after-the-switch semantics and the process-scoped lifetime are stated. The matching `test/skills/cli_parity_test.dart` entry now says process-scoped + TUI-chrome-only as well."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-27:d5fe5308",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-27",
+      "updatedAt": "2026-10-27",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# `thinkingExpanded` was a test-only second channel — dropped\n\nFixed on this head: the parameter is removed from **both** `replayLinesTui` and `buildReplayEntries` (`lib/src/cli/tui_replay.dart`). The `/transcript expand all` global (`transcriptExpandDetails`) is the ONE expansion channel, exactly like `tuiChromeEnabled` carries the chrome kill switch.\n\n- No production caller ever passed it (`session_commands.dart` `_replayRestoredHistory` doesn't), so this is a pure API narrowing — replay output is unchanged.\n- `test/cli/tui_replay_test.dart` now flips the global instead: the expanded-thinking test sets `transcriptExpandDetails = true` and additionally pins that clearing it collapses back to the single `> Thought for —` row.\n- `grep -rn thinkingExpanded lib/ test/` → zero hits on this head."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-27:fb9b61a4",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-27",
+      "updatedAt": "2026-10-27",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# `/transcript` silently did nothing outside the TUI chrome face — it now says so\n\nFixed on this head (`lib/src/cli/agent_cli_commands.dart`, `_handleTranscriptCommand`), per the suggested guard:\n\n```dart\ncase 'expand all' || 'expand none' || 'collapse':\n  if (!_useTui || !tuiChromeEnabled) {\n    io.writeln('transcript expand only affects the TUI chrome transcript');\n    return;\n  }\n```\n\nThe mutating arms answer the informational line on line-mode/headless faces and **leave the render state alone** (no hidden `transcriptExpandDetails` flip that could never render there). Bare `/transcript` still reports the state + usage anywhere.\n\nPinned by the updated `/transcript expand toggles the collapsed-detail state` test in `test/cli/agent_cli_test.dart`, which runs on the line-mode face and now asserts the informational reply and that the flag stays `false`."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-27:020fb276",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-27",
+      "updatedAt": "2026-10-27",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# `ToolCardSegments.diffstat` doc placement — corrected to “before the meta”\n\nFixed on this head (`lib/src/cli/tui_chrome.dart:107`):\n\n```dart\n/// The applied-change diffstat (`+N −M`, gh-1933 AC2) — painted in the\n/// `toolDiffAdded`/`toolDiffRemoved` roles, squeezed in BEFORE the meta\n/// (review thread PRRT_kwDOTXdlLc6w5WJc: meta drops first when the row\n/// is tight — see [_squeezeCardTail]).\n```\n\nNow matches both the composition order (`desc, badge, diff, meta` in `_squeezeCardTail`) and the paint order in `_paintCardTail`; the squeeze precedence (meta drops first, then the diffstat) is cross-referenced."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-27:affaf3f1",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-27",
+      "updatedAt": "2026-10-27",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — APPROVE (with suggestions)\n\n**Summary**: gh-1933 compact transcript v2 is well-built — the new `tool_row_content.dart` keeps live/replay parity by construction through `settledCallCardRows`, diffstat/hashline accounting is per-line correct (SWAP hunks arrive pre-lowered to inserts+deletes), AC1–AC7 are each pinned by tests, and line-mode/headless stay byte-identical. No blocking findings: 0 🚨, 1 ⚠️, 6 💡. Verified locally: `dart analyze` clean on all changed files; the PR's four named test files + `agent_cli_test.dart` = 217 tests green.\n\n**Key Issues**:\n- ⚠️ `settledBashCardRows` (tool_row_content.dart:432) is a test-only oracle in `lib/` — no production caller; fold into the tests or drop it.\n- 💡 PR description names theme roles `toolPreview`/`toolElapsed` that do not exist anywhere in the repo — the dim preview reuses `toolOutput` and the right zone reuses `muted`; also the three `toolDiff*` roles are not new (ohmypi palettes already carried them) — this PR extends them to default/catppuccin/nord/dracula/pi (AC7 itself is satisfied: all 7 shipped themes define the tokens, tests pin it).\n- 💡 `readOutcomeMeta` matches the read-truncation notice anywhere in the result text — a read whose content quotes the notice misreports \"N of M lines read\".\n- 💡 `transcriptExpandDetails` doc overstates its scope (previews always render; state is process-scoped); `thinkingExpanded` param is a test-only second channel for the same bit; `/transcript` silently no-ops outside TUI chrome; two doc wording nits.\n\n**Next Steps**:\n1. Drop or relocate `settledBashCardRows` (⚠️ the only should-fix).\n2. Correct the PR description's theme-role claim (`toolPreview`/`toolElapsed` → reused `toolOutput`/`muted`).\n3. Optional polish per inline threads: notice-anchored read meta, `/transcript` no-op note on non-TUI faces, doc wording."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-27:9ca319db",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-27",
+      "updatedAt": "2026-10-27",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT: `settledBashCardRows` has no production caller**\n\n`grep -rn settledBashCardRows lib/ bin/ bench/ tools/` finds zero call sites outside `test/cli/tool_row_content_test.dart` — it is a test-only oracle living in `lib/`, and it duplicates the real derivation: `settledCallCardRows(toolName: 'bash', args: …, …)` already produces exactly this card shape (intent → `successDetail`, meta → `[?outputMeta]`, `previewLines: [commandPreview]`).\n\nTwo ways to build a bash card is the drift surface #916 closed for live/replay — the width tests (UT-width) can keep their oracle without a second public wrapper:\n\n```dart\n// test-side helper, or call settledCallCardRows directly:\nfinal card = settledCallCardRows(\n  toolName: 'bash',\n  args: {'command': commandPreview},\n  resultContent: [TextContent(text: outputMeta == null ? '' : 'x\\n' * n)],\n  width: width,\n  elapsed: elapsed,\n);\n```\n\nEither move it next to the tests (or inline it there), or delete it and feed the UT-width group through `settledCallCardRows`/`toolRowContent`."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-27:87a73347",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-27",
+      "updatedAt": "2026-10-27",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ Validation CI went red on the head — merge aborted, rework re-queued. (linked issue #1933 re-armed) (approval latch kept — no re-review after fixes)\n🔴 red head 68b345677141d95d422523f045a3bd19037fae43 — red 1/3 (owner directive 2026-10-04: red yields the slot — after 3 reds on the same head, validation waits for a NEW head)"
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-27:7218e17a",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-27",
+      "updatedAt": "2026-10-27",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🧵 Unresolved review threads — rework armed. This machine-authored PR is reviewed (ai_pr_reviewed) but still has open review threads. The rework leg owns open threads: agent:rework is armed on this PR and the rework runner will work through the threads and push. Validation re-runs automatically afterwards, and once the threads are resolved a fresh re-review is armed (review-threads-resolved)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-27:501c5a01",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-27",
+      "updatedAt": "2026-10-27",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "✅ Rework finished. `pr_approved` is sticky (approved once — never re-reviewed): the new head re-validates and merges directly."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-27:13d5b1d7",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-27",
+      "updatedAt": "2026-10-27",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## 🔧 Rework Complete — gh-1933\n\nAll PR review comments have been addressed. See fix summary below."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-27:343a5dc2",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-27",
+      "updatedAt": "2026-10-27",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ Validation CI went red on the head — merge aborted, rework re-queued. (linked issue #1933 re-armed) (approval latch kept — no re-review after fixes)\nFailed run: https://github.com/IstiN/flutter_agent_harness/actions/runs/40600957923\n🔴 red head 0a02be39af9bba01efced34de4e4bcd254869a85 — red 1/3 (owner directive 2026-10-04: red yields the slot — after 3 reds on the same head, validation waits for a NEW head)"
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-28:b4705725",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-28",
+      "updatedAt": "2026-10-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ Validation CI went red on the head — merge aborted, rework re-queued. (linked issue #1933 re-armed) (approval latch kept — no re-review after fixes)\nFailed run: https://github.com/IstiN/flutter_agent_harness/actions/runs/40605619524\n🔴 red head 0cbf5953d849bd6ce84c9f047b35e1c401b89d90 — red 1/3 (owner directive 2026-10-04: red yields the slot — after 3 reds on the same head, validation waits for a NEW head)"
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-28:13d5b1d7",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-28",
+      "updatedAt": "2026-10-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## 🔧 Rework Complete — gh-1933\n\nAll PR review comments have been addressed. See fix summary below."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-28:501c5a01",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-28",
+      "updatedAt": "2026-10-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "✅ Rework finished. `pr_approved` is sticky (approved once — never re-reviewed): the new head re-validates and merges directly."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-28:f10692aa",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-28",
+      "updatedAt": "2026-10-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ Validation CI went red on the head — merge aborted, rework re-queued. (linked issue #1933 re-armed) (approval latch kept — no re-review after fixes)\nFailed run: https://github.com/IstiN/flutter_agent_harness/actions/runs/40609619884\n🔴 red head b93d825b7956a5c01f3cc77773b950c7fa9fa1e8 — red 1/3 (owner directive 2026-10-04: red yields the slot — after 3 reds on the same head, validation waits for a NEW head)"
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-28:99f2bed1",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-28",
+      "updatedAt": "2026-10-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🔴 red head b93d825b7956a5c01f3cc77773b950c7fa9fa1e8 — red 2/3 (owner directive 2026-10-04: red yields the slot — after 3 reds on the same head, validation waits for a NEW head)\n🔴 Red pre-merge gate on the head with no armed validation — rework armed (gh-917: first validation included, review or no review). The rework runner pushes a fix and validation re-runs on the new head (validate-fresh). After 3 red arming attempts on the SAME head the arm is withheld and a human is escalated (no infinite retry)."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-27:5a1f2b7d",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-27",
+      "updatedAt": "2026-10-27",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ Validation CI went red on the head — merge aborted, rework re-queued. (linked issue #1933 re-armed) (approval latch kept — no re-review after fixes)\nFailed run: https://github.com/IstiN/flutter_agent_harness/actions/runs/40595744007\n🔴 red head 70fcd1fcc944d29fbf41a07a0899f244bd5189b2 — red 1/3 (owner directive 2026-10-04: red yields the slot — after 3 reds on the same head, validation waits for a NEW head)"
+    }
+  ]
+}
