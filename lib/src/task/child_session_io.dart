@@ -86,9 +86,19 @@ Future<List<Map<String, dynamic>>> subagentRegistryRows({
 /// A [ChildMessageReader] over plain JSONL session files: reads the active
 /// branch's conversation messages and returns the last [tail] as
 /// `(role, text)` pairs (`user` / `assistant` / `toolResult`).
-ChildMessageReader jsonlChildMessageReader(FileSystem fs) {
+///
+/// [ioRetry] wires the transient-ENOENT retry of the open (issue #427):
+/// observing a child's transcript rides the same brief file disappearance
+/// every other session open does (gh-1948 reads run while the executor
+/// appends to the same file).
+ChildMessageReader jsonlChildMessageReader(
+  FileSystem fs, {
+  SessionIoRetryConfig ioRetry = const SessionIoRetryConfig(),
+}) {
   return (sessionId, {tail = 10}) async {
-    final session = Session(await JsonlSessionStorage.open(fs, sessionId));
+    final session = Session(
+      await JsonlSessionStorage.open(fs, sessionId, ioRetry: ioRetry),
+    );
     final branch = await session.getBranch();
     final messages = <(String, String)>[
       for (final record in branch)
@@ -98,6 +108,29 @@ ChildMessageReader jsonlChildMessageReader(FileSystem fs) {
     if (messages.length <= tail) return messages;
     return messages.sublist(messages.length - tail);
   };
+}
+
+/// Resolves a child's REAL session JSONL path from the sessions tree
+/// (gh-1948): scans the parent's project directory for a child session
+/// whose header carries `agent: subagent`, `parent: [parent.id]` and
+/// `id: [childId]` — the same header contract [subagentRegistryRows]
+/// adopts missing registry rows from at boot. Returns the newest match,
+/// or null when the child has no transcript yet (a RUNNING child before
+/// its first turn-boundary flush).
+Future<String?> resolveChildSessionPath({
+  required JsonlSessionRepo repo,
+  required SessionMetadata parent,
+  required String childId,
+}) async {
+  for (final meta in await repo.list(cwd: parent.cwd)) {
+    final header = meta.metadata;
+    if (header == null || header['agent'] != 'subagent') continue;
+    if (header['parent'] != parent.id) continue;
+    if (header['id'] != childId) continue;
+    if (meta.path == parent.path) continue;
+    return meta.path;
+  }
+  return null;
 }
 
 /// Plain-text projection of one conversation message for `task_observe`:

@@ -1,9 +1,9 @@
 @TestOn('vm')
 library;
 
-import 'package:flutter_agent_harness/src/context.dart';
 import 'package:flutter_agent_harness/src/env/memory_execution_env.dart';
 import 'package:flutter_agent_harness/src/session/session_repo.dart';
+import 'package:flutter_agent_harness/src/session/session_tree.dart';
 import 'package:flutter_agent_harness/src/task/child_session_io.dart';
 import 'package:test/test.dart';
 
@@ -22,31 +22,25 @@ void main() {
     repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
   });
 
-  Future<Session> createChildSession(
-    String childId, {
-    String parent = 'parent-1',
-  }) {
-    return repo.create(
-      JsonlSessionCreateOptions(
-        cwd: '/work',
-        metadata: {
-          'agent': 'subagent',
-          'id': childId,
-          'parent': parent,
-          'model': 'm',
-        },
-      ),
-    );
-  }
-
   test('resolves the real session file by (parent, child id)', () async {
     final parent = await repo.create(
       JsonlSessionCreateOptions(cwd: '/work'),
     );
-    final child = await createChildSession('a1');
+    final parentMeta = await parent.getMetadata();
+    final child = await repo.create(
+      JsonlSessionCreateOptions(
+        cwd: '/work',
+        metadata: {
+          'agent': 'subagent',
+          'id': 'a1',
+          'parent': parentMeta.id,
+          'model': 'm',
+        },
+      ),
+    );
     final resolved = await resolveChildSessionPath(
       repo: repo,
-      parent: await parent.getMetadata(),
+      parent: parentMeta,
       childId: 'a1',
     );
     expect(resolved, (await child.getMetadata()).path);
