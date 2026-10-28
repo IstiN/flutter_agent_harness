@@ -163,7 +163,6 @@ Future<List<Message>> _run(
   _CappedProvider provider, {
   List<Message>? history,
   ImagePayloadRecoveryState? recovery,
-  ImageRegistryConfig? config,
   bool always413 = false,
   List<AgentEvent>? events,
 }) => runAgentLoop(
