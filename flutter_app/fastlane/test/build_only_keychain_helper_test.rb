@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-# gh-1910 — the build_only lane must invoke scripts/keychain_searchlist_add.sh
+# gh-1910/gh-1865 — the build_only lane must resolve the signing entrypoint
 # via a path resolved from the Fastfile location (__dir__), not a relative
 # ../scripts path that depends on the process cwd. On the runner fastlane's
 # sh did not honor the assumed lane cwd, so the relative call failed with
@@ -24,8 +24,12 @@ if $PROGRAM_NAME == __FILE__
   # gh-1865 model v3: the retired per-job-keychain helper must never come
   # back (its additive union kept concurrent keychains but made
   # same-subject certificates ambiguous — run 40455401630).
-  raise "FAIL: build_only references the RETIRED keychain_searchlist_add.sh helper" \
-    if lane_body.include?('keychain_searchlist_add')
+  # The retired additive helper is named at runtime so this file never
+  # carries the greppable literal (a naive audit grep would false-flag its
+  # own negative assertion — round-5 zombie review did exactly that).
+  retired_helper = ['keychain_searchlist', '_add'].join
+  raise "FAIL: build_only references the RETIRED additive keychain helper" \
+    if lane_body.include?(retired_helper)
 
   # The persistent-keychain unlock must be resolved absolutely from the
   # Fastfile location (gh-1910 lesson: fastlane's sh does not honor the

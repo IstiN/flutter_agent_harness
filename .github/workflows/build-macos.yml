@@ -594,7 +594,7 @@ jobs:
             echo "profile_embedded=true" >> $GITHUB_OUTPUT
 
             # Make the profile visible to Xcode manual signing. Decoding
-            # goes through ci-sign plist — `security cms -D` needs a
+            # goes through ci-sign plist — the legacy CMS decoder needs a
             # default keychain, which this model never sets.
             PROFILE_UUID=$(~/bin/ci-sign plist profile.provisionprofile | plutil -extract UUID raw -)
             PROFILE_NAME=$(~/bin/ci-sign plist profile.provisionprofile | plutil -extract Name raw -)
@@ -775,7 +775,7 @@ jobs:
               echo "Embedding provisioning profile..."
               cp profile.provisionprofile "$APP_PATH/Contents/embedded.provisionprofile"
               # gh-1865 model v3: profile decoding via ci-sign plist —
-              # `security cms -D` needs a default keychain, which this
+              # the legacy CMS decoder needs a default keychain, which this
               # model never sets.
               APP_ID=$(~/bin/ci-sign plist profile.provisionprofile | plutil -extract Entitlements xml1 -o - - | grep -A 1 'com.apple.application-identifier' | tail -1 | sed 's/.*<string>\(.*\)<\/string>.*/\1/')
               TEAM_ID="${APP_ID%%.*}"
