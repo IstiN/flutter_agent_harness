@@ -142,8 +142,10 @@ Map<String, String> renderInstallers() {
     _shOut: sh,
     _batOut: bat,
     _shSetupOut: shSetup,
-    // .ps1 content arrives WITHOUT the BOM; main() adds it at write time
-    // (see below) and the golden test asserts the BOM bytes separately.
+    // gh-1945: the .ps1 content is committed BOM-less — the piped
+    // `irm | iex` path decodes the served bytes as ISO-8859-1, where a BOM
+    // becomes literal `ï»¿` text. The golden test asserts bytes 0-2 are NOT
+    // a BOM (see test/site/installer_golden_test.dart).
     _psOut: ps,
     _psSetupOut: psSetup,
   };
@@ -711,9 +713,17 @@ String _psSetupRecipe(YamlMap install) {
     '-Command "irm $setupUrl | iex"\'',
   );
   b.writeln(r'    Write-Host ""');
-  b.writeln(r'    Write-Host "  Or set an environment variable manually (cmd):"');
+  b.writeln(
+    r'    Write-Host "  Or set an environment variable manually (cmd):"',
+  );
   b.writeln(r'    Write-Host ""');
-  b.writeln("    Write-Host '    set $firstVar=<your-key>   # or $restVars'");
+  // gh-1945 review: cmd has no comment syntax, so the printed `set` line
+  // must be paste-safe verbatim — the `# or …` tail would be silently
+  // included in the value. The alternatives move to their own hint line
+  // (the PowerShell/sh recipes keep the tail; there it is a real comment).
+  b.writeln("    Write-Host '    set $firstVar=<your-key>'");
+  b.writeln(r'    Write-Host ""');
+  b.writeln("    Write-Host '    (or: set $restVars)'");
   b.writeln(r'    Write-Host ""');
   b.writeln("    Write-Host '  (from PowerShell: irm $setupUrl | iex)'");
   b.writeln(r'} else {');

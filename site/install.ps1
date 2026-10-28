@@ -180,7 +180,9 @@ if ($env:FA_INSTALL_VIA -eq "cmd") {
     Write-Host ""
     Write-Host "  Or set an environment variable manually (cmd):"
     Write-Host ""
-    Write-Host '    set OPENROUTER_API_KEY=<your-key>   # or ANTHROPIC_API_KEY / GOOGLE_API_KEY / OPENAI_API_KEY'
+    Write-Host '    set OPENROUTER_API_KEY=<your-key>'
+    Write-Host ""
+    Write-Host '    (or: set ANTHROPIC_API_KEY / GOOGLE_API_KEY / OPENAI_API_KEY)'
     Write-Host ""
     Write-Host '  (from PowerShell: irm https://fa1.dev/setup.ps1 | iex)'
 } else {

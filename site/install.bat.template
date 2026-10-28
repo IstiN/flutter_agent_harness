@@ -23,12 +23,17 @@ chcp 65001 >nul
 :: gh-1945: tell the PowerShell installer it is running on behalf of
 :: cmd.exe, so its completion recipe prints cmd-compatible commands
 :: (`irm` and `$env:` do not exist in cmd). Batch files run in-process,
-:: so the flag is cleared again after the run.
+:: so the flag is scoped with setlocal/endlocal: if the user interrupts
+:: the install with Ctrl+C, the batch aborts before the explicit clear
+:: below runs — cmd still discards the local frame, leaving the user's
+:: session clean.
+setlocal
 set "FA_INSTALL_VIA=cmd"
 
 powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://fa1.dev/install.ps1 | iex"
 
 set "FA_INSTALL_VIA="
+endlocal
 
 :: Make fa usable in THIS console too: the user-PATH update above only takes
 :: effect in NEW windows, and the child PowerShell's session refresh dies
