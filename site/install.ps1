@@ -1,4 +1,4 @@
-﻿# install.ps1 — non-interactive one-line installer for the Fa CLI on Windows.
+# install.ps1 — non-interactive one-line installer for the Fa CLI on Windows.
 #                 Works when piped from PowerShell:
 #                   irm https://fa1.dev/install.ps1 | iex
 #
@@ -108,6 +108,13 @@ try {
         }
         Copy-Item "$srcLib\*" $libDir -Force -Recurse
     }
+    # Copy version.txt next to the binary so `fa --version` reports the real
+    # release (gh-1945: without it the CLI falls back to a hardcoded 0.1.0 —
+    # the installer layout probe reads <exe_dir>\version.txt).
+    $srcVersion = Join-Path $bundleDir "version.txt"
+    if (Test-Path $srcVersion) {
+        Copy-Item $srcVersion (Join-Path $binDir "version.txt") -Force
+    }
     Remove-Item -Recurse -Force $extractDir -ErrorAction SilentlyContinue
     Remove-Item $archivePath -ErrorAction SilentlyContinue
     Write-Ok "Downloaded and installed $target"
@@ -168,11 +175,23 @@ Write-Ok "Installation complete."
 Write-Host ""
 Write-Host "  Configure a provider and API key interactively:"
 Write-Host ""
-Write-Host "    irm https://fa1.dev/setup.ps1 | iex"
-Write-Host ""
-Write-Host "  Or set an environment variable manually:"
-Write-Host ""
-Write-Host "    `$env:OPENROUTER_API_KEY = '<your-key>'   # or ANTHROPIC_API_KEY / GOOGLE_API_KEY / OPENAI_API_KEY"
+if ($env:FA_INSTALL_VIA -eq "cmd") {
+    Write-Host '    powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://fa1.dev/setup.ps1 | iex"'
+    Write-Host ""
+    Write-Host "  Or set an environment variable manually (cmd):"
+    Write-Host ""
+    Write-Host '    set OPENROUTER_API_KEY=<your-key>'
+    Write-Host ""
+    Write-Host '    (or: set ANTHROPIC_API_KEY / GOOGLE_API_KEY / OPENAI_API_KEY)'
+    Write-Host ""
+    Write-Host '  (from PowerShell: irm https://fa1.dev/setup.ps1 | iex)'
+} else {
+    Write-Host "    irm https://fa1.dev/setup.ps1 | iex"
+    Write-Host ""
+    Write-Host "  Or set an environment variable manually:"
+    Write-Host ""
+    Write-Host "    `$env:OPENROUTER_API_KEY = '<your-key>'   # or ANTHROPIC_API_KEY / GOOGLE_API_KEY / OPENAI_API_KEY"
+}
 Write-Host ""
 Write-Host "  Then start the agent:"
 Write-Host ""
