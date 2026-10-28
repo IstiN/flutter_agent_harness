@@ -4,11 +4,7 @@ library;
 import 'dart:async';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
-import 'package:flutter_agent_harness/src/env/memory_execution_env.dart';
-import 'package:flutter_agent_harness/src/session/session_repo.dart';
 import 'package:flutter_agent_harness/src/task/child_session_io.dart';
-import 'package:flutter_agent_harness/src/task/subagent.dart';
-import 'package:flutter_agent_harness/src/task/subagent_manager.dart';
 import 'package:test/test.dart';
 
 /// gh-1948: a RUNNING background child had no session file at all — the
@@ -213,7 +209,10 @@ void main() {
 
     childStream.openGate('job one');
     await spawn;
-    expect(manager['Slow']!.status, SubagentStatus.completed);
+    await _waitFor(
+      () => manager['Slow']!.status == SubagentStatus.completed,
+      timeoutMessage: 'child never settled completed',
+    );
   });
 
   test('two running children flush independently (per-child isolation)',
@@ -267,7 +266,10 @@ void main() {
     childStream.openGate('job one');
     childStream.openGate('job two');
     await spawn;
-    expect(manager['One']!.status, SubagentStatus.completed);
-    expect(manager['Two']!.status, SubagentStatus.completed);
+    await _waitFor(
+      () => manager['One']!.status == SubagentStatus.completed &&
+          manager['Two']!.status == SubagentStatus.completed,
+      timeoutMessage: 'children never settled completed',
+    );
   });
 }

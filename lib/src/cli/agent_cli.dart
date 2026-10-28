@@ -660,6 +660,20 @@ class AgentCli {
               parent: await session.getMetadata(),
             );
           },
+          // gh-1948: task_observe resolves a RUNNING child's real session
+          // file from the sessions tree — the registry handle still carries
+          // the `<parentSessionId>/<id>` placeholder until the first
+          // transcript flush. Same foreign-repo degradation as above.
+          resolveChildSessionPath: (childId) async {
+            final session = _session;
+            final repo = _repo;
+            if (session == null || repo is! JsonlSessionRepo) return null;
+            return resolveChildSessionPath(
+              repo: repo,
+              parent: await session.getMetadata(),
+              childId: childId,
+            );
+          },
           // Issue #383: the heartbeat rides the steering channel — the
           // getters consult the config EVERY tick, so a config rewrite
           // applies at the next digest without a restart (E6).

@@ -1094,16 +1094,18 @@ AgentTool _taskObserveTool(
       // path — a RUNNING background child may not have flushed yet (and a
       // rehydrated row can still carry the placeholder). Observing the
       // placeholder used to escape as an uncaught SessionException.
-      // Resolve the real file from the sessions tree first; when none
-      // exists yet, say so cleanly.
+      // Resolve the real file from the sessions tree first; when the
+      // resolver runs and finds none, say so cleanly. Hosts without a
+      // resolver keep the pass-through: their reader owns the session id
+      // shape, and read failures degrade to the structured error below.
       var sessionPath = handle.sessionId;
       final isPlaceholder =
           sessionPath.isEmpty ||
           sessionPath == '${manager.parentSessionId}/${handle.id}';
-      if (isPlaceholder) {
+      if (isPlaceholder && resolveSessionPath != null) {
         String? resolved;
         try {
-          resolved = await resolveSessionPath?.call(handle.id);
+          resolved = await resolveSessionPath(handle.id);
         } on Object {
           // Resolution is best-effort — the read below reports honestly.
         }

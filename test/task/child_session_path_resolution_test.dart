@@ -50,7 +50,17 @@ void main() {
     final parent = await repo.create(
       JsonlSessionCreateOptions(cwd: '/work'),
     );
-    await createChildSession('a1');
+    await repo.create(
+      JsonlSessionCreateOptions(
+        cwd: '/work',
+        metadata: {
+          'agent': 'subagent',
+          'id': 'a1',
+          'parent': (await parent.getMetadata()).id,
+          'model': 'm',
+        },
+      ),
+    );
     final resolved = await resolveChildSessionPath(
       repo: repo,
       parent: await parent.getMetadata(),
@@ -63,7 +73,17 @@ void main() {
     final parent = await repo.create(
       JsonlSessionCreateOptions(cwd: '/work'),
     );
-    await createChildSession('a1', parent: 'other-parent');
+    await repo.create(
+      JsonlSessionCreateOptions(
+        cwd: '/work',
+        metadata: {
+          'agent': 'subagent',
+          'id': 'a1',
+          'parent': 'other-parent',
+          'model': 'm',
+        },
+      ),
+    );
     final resolved = await resolveChildSessionPath(
       repo: repo,
       parent: await parent.getMetadata(),
@@ -89,8 +109,20 @@ void main() {
     final parent = await repo.create(
       JsonlSessionCreateOptions(cwd: '/work'),
     );
-    await createChildSession('a1');
-    final newest = await createChildSession('a1');
+    final parentId = (await parent.getMetadata()).id;
+    Future<Session> child() => repo.create(
+      JsonlSessionCreateOptions(
+        cwd: '/work',
+        metadata: {
+          'agent': 'subagent',
+          'id': 'a1',
+          'parent': parentId,
+          'model': 'm',
+        },
+      ),
+    );
+    await child();
+    final newest = await child();
     final resolved = await resolveChildSessionPath(
       repo: repo,
       parent: await parent.getMetadata(),

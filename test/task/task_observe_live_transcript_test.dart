@@ -2,7 +2,6 @@
 library;
 
 import 'package:flutter_agent_harness/src/context.dart';
-import 'package:flutter_agent_harness/src/context.dart';
 import 'package:flutter_agent_harness/src/env/memory_execution_env.dart';
 import 'package:flutter_agent_harness/src/exceptions.dart';
 import 'package:flutter_agent_harness/src/session/session_repo.dart';
@@ -47,7 +46,7 @@ void main() {
         metadata: {
           'agent': 'subagent',
           'id': childId,
-          'parent': 'parent-1',
+          'parent': parentMeta.id,
           'model': 'm',
         },
       ),
@@ -114,6 +113,7 @@ void main() {
   test('unreadable transcript degrades to a structured error', () async {
     await mgr.register(id: 'a1', name: 'worker', agentType: 'task', task: 'x');
     await mgr.update('a1', status: SubagentStatus.running);
+    await createChildTranscript('a1', messages: ['on disk']);
     final text = await observeText(
       args: {'id': 'a1'},
       readMessages: (_, {tail = 10}) =>

@@ -114,6 +114,54 @@ void main() {
     expect(fake.calls, 4);
   });
 
+  test('gh-1948: task_observe resolves a placeholder-handle child through '
+      'the REAL CLI wiring (sessions-tree scan + heal)', () async {
+    final fake = FakeStreamFunction([
+      // 1. The parent delegates a BLOCKING child (real transcript flush).
+      toolTurn([
+        taskCall('t1', {
+          'context': 'repo state',
+          'tasks': [
+            {'name': 'scout', 'task': 'survey the repo'},
+          ],
+        }),
+      ]),
+      // 2. The child's turn.
+      textTurn('scout says: all quiet'),
+      // 3. The parent wraps up.
+      textTurn('delegated'),
+    ]);
+    final cli = cliFor(fake.call);
+    final run = cli.run();
+    io.sendLine('delegate it');
+    await waitForIt(() => fake.calls == 3 && !cli.isBusy);
+    await waitForIt(() {
+      final handle = cli.subagentManager['scout'];
+      return handle != null && handle.sessionId != '/scout';
+    });
+
+    // Regress the handle to the ticket's mid-run state: the row carries
+    // the `<parentSessionId>/<id>` placeholder (the pre-attach shape a
+    // RUNNING child — or a stale snapshot — exposes to task_observe).
+    final realPath = cli.subagentManager['scout']!.sessionId;
+    cli.subagentManager['scout']!.sessionId =
+        '${cli.subagentManager.mailboxPrefix}/scout';
+
+    final tools = cli.agent.state.tools.whereType<AgentTool>().toList();
+    final observe = tools.firstWhere((t) => t.name == 'task_observe');
+    final observed = textOf(await observe.execute({'id': 'scout'}, null, null));
+    expect(
+      observed,
+      contains('scout says: all quiet'),
+      reason: 'the resolver must find the real transcript from the tree',
+    );
+    // The scan healed the handle back onto the real path.
+    expect(cli.subagentManager['scout']!.sessionId, realPath);
+
+    io.sendLine('/exit');
+    await run;
+  });
+
   test(
     '/tasks folds a supersedes chain into ONE logical entry (AC5 CLI half)',
     () async {
