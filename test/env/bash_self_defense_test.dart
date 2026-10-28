@@ -41,6 +41,52 @@ void main() {
   final bool hostHasSetsid =
       !Platform.isWindows &&
       Process.runSync('sh', <String>['-c', 'command -v setsid']).exitCode == 0;
+  // gh-1934 rework (CI red on a867a562): some images ship `killall` as a
+  // coreutils multicall dispatcher that cannot kill by comm name
+  // (`coreutils: unknown program '<name>'`, rc=1) — `command -v killall`
+  // still resolves there, so the presence probe above is not enough for
+  // the kill-by-comm leg. Probe functionally: a live victim with a unique
+  // comm name must be findable by `killall -0` (signal 0: existence
+  // check, kills nothing). A copy of `sh` (never a multicall binary)
+  // keeps the comm stable — a copied `sleep` would itself dispatch on its
+  // new basename and die on these images (the same coreutils dispatcher).
+  final bool hostHasFunctionalKillall = !Platform.isWindows && (() {
+    Directory? probeDir;
+    Process? victim;
+    try {
+      probeDir = Directory.systemTemp.createTempSync('fa-killall-probe-');
+      final shBin = Process.runSync(
+        'sh',
+        <String>['-c', 'command -v sh'],
+      ).stdout.trim();
+      if (shBin.isEmpty) return false;
+      final victimPath = '${probeDir.path}/fa_kl_p1';
+      File(shBin).copySync(victimPath);
+      Process.runSync('chmod', <String>['755', victimPath]);
+      // The busy-wait loop keeps the interpreter in the foreground: an
+      // `sh -c 'sleep N'` shape tail-execs into `sleep` and the comm
+      // changes under the probe.
+      victim = Process.startSync(victimPath, const [
+        '-c',
+        'while :; do sleep 1; done',
+      ]);
+      try {
+        return Process.runSync('sh', <String>[
+          '-c',
+          'command -v killall >/dev/null 2>&1 && killall -0 fa_kl_p1',
+        ]).exitCode == 0;
+      } finally {
+        victim!.kill();
+      }
+    } catch (_) {
+      return false;
+    } finally {
+      try {
+        probeDir?.deleteSync(recursive: true);
+      } catch (_) {}
+    }
+    }
+  })();
 
   /// Polls whether [pid] is still in the process table (~3s budget) so the
   /// assertions stay load-independent (signal delivery lags the killer).
@@ -492,22 +538,32 @@ void main() {
 
     test(
       'killall --signal TERM reaps its victim (unique comm name)',
-      skip: Platform.isWindows || !hostHasPgrep
-          ? 'POSIX procps process semantics only'
+      skip: Platform.isWindows || !hostHasPgrep || !hostHasFunctionalKillall
+          ? 'POSIX process semantics only: needs a killall that can '
+              'actually kill by comm name (gh-1934: some CI images ship '
+              'a multicall coreutils stub that cannot)'
           : false,
       () async {
         // killall matches the comm name (15-char cap on Linux): give the
-        // victim a unique name by copying the sleep binary.
+        // victim a unique name by copying a binary that survives a rename
+        // — `sh`, never the multicall-dispatched `sleep` (a copy of sleep
+        // dies on dispatch: `coreutils: unknown program 'fa_kl_271'`,
+        // gh-1934). The loop keeps the interpreter in the foreground so
+        // the comm does not tail-exec into `sleep`.
         final binDir = Directory.systemTemp.createTempSync('fa-killall-');
         addTearDown(() => binDir.deleteSync(recursive: true));
-        final sleepBin = Process.runSync(
+        final shBin = Process.runSync(
           'sh',
-          <String>['-c', 'command -v sleep'],
+          <String>['-c', 'command -v sh'],
         ).stdout.trim();
         final victimPath = '${binDir.path}/fa_kl_271';
-        File(sleepBin).copySync(victimPath);
+        File(shBin).copySync(victimPath);
         Process.runSync('chmod', <String>['755', victimPath]);
-        final victim = await Process.start(victimPath, const ['271']);
+        final victim = await Process.start(victimPath, const [
+          '-c',
+          'while :; do sleep 1; done',
+        ]);
+        addTearDown(victim.kill);
         addTearDown(victim.kill);
         final result = await const LocalShell().exec(
           'killall --signal TERM fa_kl_271; echo "rc=\$?"',
