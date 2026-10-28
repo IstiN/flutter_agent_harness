@@ -174,6 +174,7 @@ final class ImageDropReport {
     this.maxBytes = 0,
     this.strippedCount = 0,
     this.evictedCount = 0,
+    this.evictedKeys = const {},
   });
 
   /// Every dropped image of the request, in drop order.
@@ -198,6 +199,10 @@ final class ImageDropReport {
   /// The byte budget the request was built under (#1916 AC1); 0 = no
   /// budget info (legacy constructors) — surfaces omit byte mentions.
   final int maxBytes;
+
+  /// The content keys this build EVICTED to placeholders (gh-1934) —
+  /// boundary evictions and strip-all; hosts latch them session-wide.
+  final Set<String> evictedKeys;
 
   /// gh-1934: unique images replaced by placeholders under the 413
   /// recovery strip-all in this build (0 = no strip ran).
@@ -355,6 +360,10 @@ List<Message> rewriteRequestImages(
             .length,
         stripped: report.strippedCount,
       );
+      // Once-evicted keys never ride again this session (E4): boundary
+      // evictions re-derive from the persisted boundary anyway, the latch
+      // covers the window where that boundary is no longer visible.
+      recovery?.evictedKeys.addAll(report.evictedKeys);
       imageDropReportNotice?.call(report);
     },
     stripAll: recovery?.stripAll ?? false,
@@ -508,6 +517,7 @@ List<Message> rewriteHistoryImages(
       maxBytes: maxBytes,
       strippedCount: riding.strippedCount,
       evictedCount: riding.evictedCount,
+      evictedKeys: riding.evictedKeys,
     ),
   );
   return rewritten;
