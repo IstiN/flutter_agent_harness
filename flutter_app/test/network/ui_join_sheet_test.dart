@@ -94,7 +94,7 @@ void main() {
       );
 
       await tester.enterText(
-        find.widgetWithText(TextField, 'Network id'),
+        find.widgetWithText(TextField, 'Network id or name'),
         'net1',
       );
       await tester.enterText(
@@ -142,7 +142,7 @@ void main() {
       );
 
       await tester.enterText(
-        find.widgetWithText(TextField, 'Network id'),
+        find.widgetWithText(TextField, 'Network id or name'),
         'net1',
       );
       await tester.enterText(
@@ -178,7 +178,9 @@ void main() {
 
       expect(
         tester
-            .widget<TextField>(find.widgetWithText(TextField, 'Network id'))
+            .widget<TextField>(
+              find.widgetWithText(TextField, 'Network id or name'),
+            )
             .controller
             ?.text,
         'net9',
@@ -190,6 +192,26 @@ void main() {
             ?.text,
         'link-secret',
       );
+    });
+
+    testWidgets('the manual field accepts a network id OR name (copy)', (
+      tester,
+    ) async {
+      final wallet = await KeyWallet.load(MemoryWalletBackend());
+      await _pumpHost(tester, httpClient: FakeHttpClient(), wallet: wallet);
+
+      // The field hint says both spellings are accepted...
+      expect(find.text('Network id or name'), findsOneWidget);
+
+      // ...and the required-field error mentions both too.
+      await tester.tap(find.text('Join'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      final error = tester.widget<Text>(
+        find.byKey(const ValueKey('joinError')),
+      );
+      expect(error.data, 'Network id or name and password are required.');
     });
   });
 }

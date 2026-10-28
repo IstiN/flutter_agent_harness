@@ -224,6 +224,37 @@ class FaNetworkClient {
     }
   }
 
+  /// `GET /api/networks/mine` — the signed-in account's memberships
+  /// (management route: the ai-native JWT; newest network first, order
+  /// preserved). The server returns NO password — a synced membership
+  /// has no locally stored password until the user joins once. Unlike
+  /// [listPublicNetworks] this is NOT tolerant here: an error (including
+  /// the 404 of an older backend without the route) throws
+  /// [FaNetworkException] and the caller decides to ignore it.
+  Future<List<AccountNetworkInfo>> listAccountNetworks() async {
+    final res = await _request(
+      'GET',
+      '/api/networks/mine',
+      management: true,
+      expected: {200},
+    );
+    final json = _decodeMap(res);
+    final rawItems = json['items'] is List ? json['items']! as List : null;
+    if (rawItems == null) return <AccountNetworkInfo>[];
+    final items = <AccountNetworkInfo>[];
+    for (final row in rawItems) {
+      if (row is! Map) continue;
+      try {
+        items.add(AccountNetworkInfo.fromJson(row.cast<String, Object?>()));
+      } on FormatException catch (e) {
+        // One malformed row must not cost the user every other
+        // membership — skip it, keep the server order of the rest.
+        AppLog.i('fa_network', 'skipping malformed account network: $e');
+      }
+    }
+    return items;
+  }
+
   // ---------------------------------------------------------------- admins
 
   /// `POST /api/networks/{id}/admins` — appoint an admin (owner only).

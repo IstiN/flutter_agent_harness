@@ -154,6 +154,7 @@ final class NetworkSessionManager extends ChangeNotifier {
     _jwt = tokens.accessToken;
     _sessionExpired = false;
     notifyListeners();
+    await syncAccountNetworks();
   }
 
   /// Restores the wallet account on app start/resume: an unexpired
@@ -174,6 +175,7 @@ final class NetworkSessionManager extends ChangeNotifier {
         'account restored from wallet (access token fresh)',
       );
       notifyListeners();
+      await syncAccountNetworks();
       return;
     }
     final refreshExpiry = account.refreshExpiresAt;
@@ -191,11 +193,42 @@ final class NetworkSessionManager extends ChangeNotifier {
       _jwt = tokens.accessToken;
       _sessionExpired = false;
       AppLog.i('fa_network', 'account restored via refresh');
+      notifyListeners();
+      await syncAccountNetworks();
     } on Object catch (e) {
       _sessionExpired = true;
       AppLog.i('fa_network', 'account refresh FAILED: $e');
+      notifyListeners();
+      return;
     }
     notifyListeners();
+  }
+
+  /// Syncs the signed-in account's fa_network memberships
+  /// (`GET /api/networks/mine`) into the wallet — networks created via
+  /// curl/API outside the app surface as memberships after sign-in.
+  /// Public for tests and a manual refresh. Requires a JWT (a guest call
+  /// is a silent no-op). Best-effort by design: ANY failure — notably the
+  /// 404 of an older backend without the route — logs via [AppLog] and
+  /// leaves the wallet and UI untouched; a merge that changed something
+  /// persists (once, inside [KeyWallet.syncAccountNetworks]) and notifies
+  /// listeners.
+  Future<void> syncAccountNetworks() async {
+    final jwt = _jwt;
+    if (jwt == null || jwt.isEmpty) return;
+    try {
+      final items = await _newClient().listAccountNetworks();
+      final changed = await _wallet.syncAccountNetworks(items);
+      AppLog.i(
+        'fa_network',
+        changed
+            ? 'account networks synced: ${items.length} membership(s)'
+            : 'account networks already in sync (${items.length})',
+      );
+      if (changed) notifyListeners();
+    } on Object catch (e) {
+      AppLog.i('fa_network', 'account network sync skipped: $e');
+    }
   }
 
   /// Signs in with the network account: `POST /api/dev/login` (the dev
@@ -212,6 +245,7 @@ final class NetworkSessionManager extends ChangeNotifier {
     _accountLogin = login;
     _sessionExpired = false;
     notifyListeners();
+    await syncAccountNetworks();
   }
 
   /// Drops the JWT and the stored wallet account (live member sessions
@@ -285,19 +319,34 @@ final class NetworkSessionManager extends ChangeNotifier {
       password: password,
       displayName: displayName,
     );
+    // The id field accepts a network id OR name (the join route resolves
+    // both) — key the wallet membership and the session by the server's
+    // canonical id so member routes and later syncs match.
+    final canonicalId = (result.network?.id.isNotEmpty ?? false)
+        ? result.network!.id
+        : networkId;
+    // The join input may have been a network name while the wallet still
+    // holds the pre-contract name-keyed row — migrate it (password +
+    // channel keys) to the canonical id before recording the membership.
+    // The name==key check keeps an unrelated id-keyed membership whose id
+    // happens to equal this network's name from being swallowed.
+    final legacy = _wallet.networks[networkId];
+    if (legacy != null && legacy.name == networkId) {
+      await _wallet.rekeyNetwork(from: networkId, to: canonicalId);
+    }
     await _wallet.addNetwork(
-      networkId: networkId,
-      name: result.network?.name ?? networkId,
+      networkId: canonicalId,
+      name: result.network?.name ?? canonicalId,
       memberClass: result.identity.memberClass.name,
       displayName: result.identity.displayName,
       password: password,
     );
     AppLog.i(
       'fa_network',
-      'join $networkId OK as ${result.identity.memberClass.name} '
+      'join $canonicalId OK as ${result.identity.memberClass.name} '
           '"${result.identity.displayName}"',
     );
-    return _startSession(networkId, result, client);
+    return _startSession(canonicalId, result, client);
   }
 
   /// Silently re-joins a known membership using the password stored in

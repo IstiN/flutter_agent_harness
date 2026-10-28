@@ -40,6 +40,13 @@ Future<KeyWallet> _wallet() async {
   return wallet;
 }
 
+/// A canned `POST /api/networks/net2/join` echo — the wallet keys the
+/// membership by the echoed (canonical) network id.
+const joinBodyOkNet2 =
+    '{"sessionToken":"st-2","identity":{"id":"me-2","class":"guest",'
+    '"displayName":"Me"},"network":{"id":"net2","name":"side-project",'
+    '"ownerId":"u1","publicChannels":[]}}';
+
 Widget _wrap({
   required NetworkModeController controller,
   required NetworkSessionManager manager,
@@ -113,7 +120,7 @@ void main() {
           networkId: 'net2',
         );
         final httpClient = FakeHttpClient()
-          ..respond(200, body: joinBodyOk)
+          ..respond(200, body: joinBodyOkNet2)
           ..respond(200, body: channelsBody)
           ..respond(200, body: membersBody);
         final manager = await _manager(
@@ -206,13 +213,40 @@ void main() {
     );
 
     testWidgets(
+      '⌘3 on an account-synced membership without a password opens the '
+      'join sheet instead of failing to resume',
+      (tester) => onPlatform(TargetPlatform.macOS, () async {
+        final controller = NetworkModeController.inMemory(
+          mode: AppMode.network,
+        );
+        final wallet = await KeyWallet.load(MemoryWalletBackend());
+        await wallet.createIfMissing(displayName: 'Me');
+        await wallet.addNetwork(networkId: 'net1', name: 'curl-made');
+        final manager = await _manager(wallet: wallet);
+
+        await tester.pumpWidget(
+          _wrap(controller: controller, manager: manager),
+        );
+        await tester.pump();
+
+        await pressMeta(tester, LogicalKeyboardKey.digit3);
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 300));
+
+        expect(controller.networkId, isNull);
+        expect(manager.sessions, isEmpty);
+        expect(find.byType(JoinSheet), findsOneWidget);
+      }),
+    );
+
+    testWidgets(
       'tapping a recent row switches the network',
       (tester) => onPlatform(TargetPlatform.macOS, () async {
         final controller = NetworkModeController.inMemory(
           mode: AppMode.network,
         );
         final httpClient = FakeHttpClient()
-          ..respond(200, body: joinBodyOk)
+          ..respond(200, body: joinBodyOkNet2)
           ..respond(200, body: channelsBody)
           ..respond(200, body: membersBody);
         final manager = await _manager(
