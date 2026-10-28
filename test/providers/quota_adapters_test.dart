@@ -78,7 +78,9 @@ void main() {
 
     test('null limit means prepaid no cap, usage preserved', () async {
       final client = mockClient(
-        (request) => {'data': {'usage': 12.5, 'limit': null}},
+        (request) => {
+          'data': {'usage': 12.5, 'limit': null},
+        },
       );
       final adapter = OpenRouterQuotaAdapter(
         client: client,
@@ -95,7 +97,9 @@ void main() {
 
     test('null usage and null limit render unlimited', () async {
       final client = mockClient(
-        (request) => {'data': {'usage': null, 'limit': null}},
+        (request) => {
+          'data': {'usage': null, 'limit': null},
+        },
       );
       final adapter = OpenRouterQuotaAdapter(
         client: client,
@@ -169,20 +173,24 @@ void main() {
       expect(result.reason, contains('invalid response'));
     });
 
-    test('non-numeric usage degrades to unknown, never renders null (E2)',
-        () async {
-      final client = mockClient(
-        (request) => {'data': {'usage': 'lots', 'limit': 100}},
-      );
-      final adapter = OpenRouterQuotaAdapter(
-        client: client,
-        resolveApiKey: keyResolver,
-        now: () => now,
-      );
-      final result = await adapter.fetch();
-      expect(result.quota, isNull);
-      expect(result.reason, isNotNull);
-    });
+    test(
+      'non-numeric usage degrades to unknown, never renders null (E2)',
+      () async {
+        final client = mockClient(
+          (request) => {
+            'data': {'usage': 'lots', 'limit': 100},
+          },
+        );
+        final adapter = OpenRouterQuotaAdapter(
+          client: client,
+          resolveApiKey: keyResolver,
+          now: () => now,
+        );
+        final result = await adapter.fetch();
+        expect(result.quota, isNull);
+        expect(result.reason, isNotNull);
+      },
+    );
 
     test('missing api key skips the endpoint entirely', () async {
       final adapter = OpenRouterQuotaAdapter(
@@ -213,17 +221,20 @@ void main() {
   group('IT-2 CodeMie adapter (dark until pinned, OQ1 lean b)', () {
     setUp(captured.clear);
 
-    test('ships dark: null endpoint reports unknown, zero HTTP calls', () async {
-      final adapter = CodeMieQuotaAdapter(
-        client: mockClient((request) => <String, Object?>{}),
-        resolveSessionCookie: () async => 'sso=cookie',
-        now: () => now,
-      );
-      final result = await adapter.fetch();
-      expect(result.quota, isNull);
-      expect(result.reason, contains('not pinned'));
-      expect(captured, isEmpty);
-    });
+    test(
+      'ships dark: null endpoint reports unknown, zero HTTP calls',
+      () async {
+        final adapter = CodeMieQuotaAdapter(
+          client: mockClient((request) => <String, Object?>{}),
+          resolveSessionCookie: () async => 'sso=cookie',
+          now: () => now,
+        );
+        final result = await adapter.fetch();
+        expect(result.quota, isNull);
+        expect(result.reason, contains('not pinned'));
+        expect(captured, isEmpty);
+      },
+    );
 
     test('provisional parse: usage/limit/resetsAt payload shape', () async {
       final client = mockClient(
@@ -250,20 +261,55 @@ void main() {
       expect(captured.single.headers['Cookie'], 'sso=cookie');
     });
 
-    test('null/absent payload fields degrade to unknown, never crash (E2)',
-        () async {
-      final adapter = CodeMieQuotaAdapter(
-        client: http_testing.MockClient(
-          (request) async => http.Response('<html>gateway</html>', 200),
-        ),
-        resolveSessionCookie: () async => 'sso=cookie',
-        limitsEndpoint: Uri.parse('https://codemie.example/quota'),
-        now: () => now,
-      );
-      final result = await adapter.fetch();
-      expect(result.quota, isNull);
-      expect(result.reason, isNotNull);
-    });
+    test(
+      'the resolved project rides the quota fetch (issue #1941 AC3)',
+      () async {
+        final client = mockClient((request) => {'usage': 1, 'limit': 10});
+        final adapter = CodeMieQuotaAdapter(
+          client: client,
+          resolveSessionCookie: () async => 'sso=cookie',
+          // The SAME project the model requests bill — display and billing
+          // must never diverge.
+          resolveProject: () => 'demo-project',
+          limitsEndpoint: Uri.parse(
+            'https://codemie.lab.epam.com/code-assistant-api/v1/quota',
+          ),
+          now: () => now,
+        );
+        await adapter.fetch();
+        expect(captured.single.headers['x-codemie-project'], 'demo-project');
+        // A null project sends no header (default-project semantics, same
+        // as the chat path).
+        final unscoped = CodeMieQuotaAdapter(
+          client: mockClient((request) => {'usage': 1, 'limit': 10}),
+          resolveSessionCookie: () async => 'sso=cookie',
+          resolveProject: () => null,
+          limitsEndpoint: Uri.parse(
+            'https://codemie.lab.epam.com/code-assistant-api/v1/quota',
+          ),
+          now: () => now,
+        );
+        await unscoped.fetch();
+        expect(captured.last.headers.containsKey('x-codemie-project'), isFalse);
+      },
+    );
+
+    test(
+      'null/absent payload fields degrade to unknown, never crash (E2)',
+      () async {
+        final adapter = CodeMieQuotaAdapter(
+          client: http_testing.MockClient(
+            (request) async => http.Response('<html>gateway</html>', 200),
+          ),
+          resolveSessionCookie: () async => 'sso=cookie',
+          limitsEndpoint: Uri.parse('https://codemie.example/quota'),
+          now: () => now,
+        );
+        final result = await adapter.fetch();
+        expect(result.quota, isNull);
+        expect(result.reason, isNotNull);
+      },
+    );
 
     test('missing session cookie skips the endpoint', () async {
       final adapter = CodeMieQuotaAdapter(
@@ -316,7 +362,9 @@ void main() {
 
       final openrouter = OpenRouterQuotaAdapter(
         client: mockClient(
-          (request) => {'data': {'usage': 1, 'limit': 2}},
+          (request) => {
+            'data': {'usage': 1, 'limit': 2},
+          },
         ),
         resolveApiKey: keyResolver,
         now: () => now,

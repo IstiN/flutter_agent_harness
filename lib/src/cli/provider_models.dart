@@ -516,7 +516,12 @@ extension on AgentCli {
     String cookieOrKey,
   ) async {
     if (entry.baseUrl.contains('/code-assistant-api/')) {
-      return fetchCodeMieModels(entry.baseUrl, cookieOrKey);
+      // The saved entry's project scopes the list (issue #1941).
+      return fetchCodeMieModels(
+        entry.baseUrl,
+        cookieOrKey,
+        project: entry.project,
+      );
     }
     if (entry.spec.kind == 'dial') {
       return fetchDialModels(entry.baseUrl, cookieOrKey);
@@ -1439,6 +1444,10 @@ extension on AgentCli {
           // A saved entry's authHeader must survive /model switches
           // (issue #964) — the pin rebuilds the model.
           authHeader: current.authHeader,
+          // Same for the CodeMie project (issue #1941): the JWT path
+          // (no cookie header) rides the roles chain, and a header-less
+          // pin bills the DEFAULT project.
+          project: current.codeMieProject,
         ),
       ]);
       rolesResolver.applyToAgent(_agent);

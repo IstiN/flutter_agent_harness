@@ -617,6 +617,15 @@ Future<void> _runApp(List<String> args) async {
             saved.customProviders,
             folderState.baseUrl,
           ),
+          // Same for the CodeMie project (issue #1941): a boot restore
+          // without the header bills the DEFAULT project — the pinned
+          // entry's pick first, then the endpoint scan.
+          projectHeader:
+              folderPinnedEntry?.project ??
+              projectHeaderForBaseUrl(
+                saved.customProviders,
+                folderState.baseUrl,
+              ),
           thinkingLevel: faPreconfig?.thinkingLevel,
         )
       : _buildModel(

@@ -99,6 +99,34 @@ void main() {
       );
     });
 
+    test('projectHeader rides the built model (issue #1941)', () {
+      final model = buildCatalogModel(
+        'openai',
+        'codemie-model',
+        baseUrl: 'https://codemie.lab.epam.com/code-assistant-api/v1',
+        projectHeader: 'demo-project',
+      );
+      expect(model.headers?['x-codemie-project'], 'demo-project');
+      // Absent keeps the headers NULL (byte-identical non-CodeMie builds).
+      final plain = buildCatalogModel('openai', 'plain-model');
+      expect(plain.headers, isNull);
+    });
+
+    test('buildCliDefaultModel carries projectHeader (issue #1941)', () {
+      final model = buildCliDefaultModel(
+        'openai-completions',
+        modelId: 'codemie-model',
+        baseUrl: 'https://codemie.lab.epam.com/code-assistant-api/v1',
+        projectHeader: 'demo-project',
+      );
+      expect(model.headers?['x-codemie-project'], 'demo-project');
+      final plain = buildCliDefaultModel(
+        'openai-completions',
+        modelId: 'plain-model',
+      );
+      expect(plain.headers, isNull);
+    });
+
     test('buildCliDefaultModel builds only from an explicit model id', () {
       // Providers carry NO default model (silent defaults picked paid
       // flagships behind the user's back): every provider without
@@ -231,6 +259,85 @@ void main() {
       );
       final model = resolver.chainFor('default')!.single.model;
       expect(model.authHeader, 'x-api-key');
+    });
+
+    test('a chain entry project reaches the built model (issue #1941 '
+        'IT-1)', () {
+      final resolver = ModelRolesResolver(
+        config: ModelRolesConfig(
+          roles: {
+            'default': [
+              ModelRef(
+                provider: 'openai',
+                modelId: 'codemie-model',
+                baseUrl: 'https://codemie.lab.epam.com/code-assistant-api/v1',
+                project: 'demo-project',
+              ),
+            ],
+          },
+        ),
+        secrets: const {'OPENAI_API_KEY': 'cm-key'},
+        streamFactory: _neverStream,
+      );
+      final model = resolver.chainFor('default')!.single.model;
+      // The chain SERVES from this entry — without the header every
+      // failover request bills the user's DEFAULT project.
+      expect(model.headers?['x-codemie-project'], 'demo-project');
+      // Absence stays byte-identical: no header on a plain ref.
+      final plain = ModelRolesResolver(
+        config: ModelRolesConfig(
+          roles: const {
+            'default': [ModelRef(provider: 'openai', modelId: 'plain')],
+          },
+        ),
+        secrets: const {'OPENAI_API_KEY': 'k'},
+        streamFactory: _neverStream,
+      ).chainFor('default')!.single.model;
+      expect(plain.headers, isNull);
+    });
+
+    test('the registry leg inherits the saved entry’s project (issue '
+        '#1941 review)', () {
+      final entry = CustomProviderEntry(
+        name: 'codemie.lab.epam.com',
+        apiType: 'openai',
+        baseUrl: 'https://codemie.lab.epam.com/code-assistant-api/v1',
+        modelId: 'codemie-model',
+        project: 'demo-project',
+      );
+      // A ref naming the ENTRY (registry leg) with no explicit project
+      // inherits the entry's pick — the rebuild must not drop it.
+      final inherited = ModelRolesResolver(
+        config: ModelRolesConfig(
+          roles: {
+            'default': [
+              ModelRef(provider: 'codemie.lab.epam.com', modelId: 'm'),
+            ],
+          },
+        ),
+        secrets: const {'OPENAI_API_KEY': 'k'},
+        customProviders: [entry],
+        streamFactory: _neverStream,
+      ).chainFor('default')!.single.model;
+      expect(inherited.headers?['x-codemie-project'], 'demo-project');
+      // An explicit ref project wins over the entry's.
+      final explicit = ModelRolesResolver(
+        config: ModelRolesConfig(
+          roles: {
+            'default': [
+              ModelRef(
+                provider: 'codemie.lab.epam.com',
+                modelId: 'm',
+                project: 'other-project',
+              ),
+            ],
+          },
+        ),
+        secrets: const {'OPENAI_API_KEY': 'k'},
+        customProviders: [entry],
+        streamFactory: _neverStream,
+      ).chainFor('default')!.single.model;
+      expect(explicit.headers?['x-codemie-project'], 'other-project');
     });
 
     test('1554/AC1 — chain entry timeout fields ride the built model, '

@@ -209,6 +209,9 @@ extension SettingsFlow on AgentCli {
             token: token,
             tokenKeyName: keyName,
             authHeader: entry.authHeader,
+            // The saved entry's project rides the rebuilt model (issue
+            // #1941) — a settings-flow switch must not drop the selection.
+            project: entry.project,
             // The switch WRITES the pin: the saved entry binds the gate
             // (issue #1921) and stays the active custom name after it.
             customName: entry.name,
@@ -308,6 +311,10 @@ extension SettingsFlow on AgentCli {
               ? choice.baseUrl
               : null,
           apiKeyName: entry?.keyName,
+          // The role chain SERVES from this pin: the saved entry's CodeMie
+          // project must ride it (issue #1941) or role traffic bills the
+          // user's DEFAULT project.
+          project: entry?.project,
         );
         _ensureRolesResolver().setRoleChain(roleId, [ref]);
         config.onModelsConfigChanged?.call();
