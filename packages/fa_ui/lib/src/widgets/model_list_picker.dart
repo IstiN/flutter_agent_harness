@@ -108,7 +108,13 @@ class _FaModelListPickerState extends State<FaModelListPicker> {
           focusNode: widget.focusNode,
           decoration: InputDecoration(
             labelText: widget.label ?? strings.settingsModelIdLabel,
-            helperText: widget.loading ? strings.settingsModelsFetching : null,
+            prefixIcon: const Icon(Icons.search, size: 20),
+            helperText: widget.loading
+                ? strings.settingsModelsFetching
+                : widget.models.isNotEmpty
+                ? strings.modelPickerSearchHelper
+                : null,
+            helperMaxLines: 2,
             suffixIcon: widget.loading
                 ? const Padding(
                     padding: EdgeInsets.all(12),
