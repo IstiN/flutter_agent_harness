@@ -115,6 +115,11 @@ String _stripOneNewline(String s) {
 /// READ-BACK and DELETE of a throwaway item ([account]/[password] under
 /// [service], `-U` update — the same invocation `_MacosKeychainStore.write`
 /// uses). Returns whether the host can run the real-keychain leg.
+/// Async and bounded: [runSecurity] is the leg's own `SecureKeyRunner`
+/// shape, so a helper HANGING on a system keychain modal reads as the
+/// library's timeout verdict (exitCode -1, `timedOut`) — the probe skips
+/// instead of wedging the test file. (`Process.runSync` here would hang
+/// forever on exactly the host shape this gate exists for.)
 ///
 /// Why functional: the legacy gate probed only `security default-keychain`,
 /// which a locked/unusable login keychain still passes — self-hosted runner
@@ -124,19 +129,19 @@ String _stripOneNewline(String s) {
 /// round-trip can tell the two hosts apart. The probe item is deleted even
 /// when the read-back fails, and a failed delete also reads as "cannot run"
 /// — no stray secret may survive the probe.
-bool functionalKeychainRoundTrip(
-  SecureKeyRunResult Function(List<String> args) runSecurity, {
+Future<bool> functionalKeychainRoundTrip(
+  Future<SecureKeyRunResult> Function(List<String> args) runSecurity, {
   required String service,
   required String account,
   required String password,
-}) {
+}) async {
   // Quiet preflight first: with no default keychain `add-generic-password`
   // pops the system "Keychain Not Found" dialog before failing — the same
   // order _MacosKeychainStore.write uses.
-  if (runSecurity(const ['default-keychain']).exitCode != 0) {
+  if ((await runSecurity(const ['default-keychain'])).exitCode != 0) {
     return false;
   }
-  if (runSecurity([
+  if ((await runSecurity([
         'add-generic-password',
         '-s',
         service,
@@ -145,14 +150,14 @@ bool functionalKeychainRoundTrip(
         '-w',
         password,
         '-U',
-      ]).exitCode !=
+      ])).exitCode !=
       0) {
     return false;
   }
   var wrote = false;
   var deleted = false;
   try {
-    final find = runSecurity([
+    final find = await runSecurity([
       'find-generic-password',
       '-s',
       service,
@@ -164,13 +169,13 @@ bool functionalKeychainRoundTrip(
   } finally {
     // Attempted even when the read-back failed — cleanup is unconditional.
     deleted =
-        runSecurity([
+        (await runSecurity([
           'delete-generic-password',
           '-s',
           service,
           '-a',
           account,
-        ]).exitCode ==
+        ])).exitCode ==
         0;
   }
   // The full leg contract is write+read+delete: a failed delete means the
@@ -180,7 +185,7 @@ bool functionalKeychainRoundTrip(
   return wrote && deleted;
 }
 
-void main() {
+Future<void> main() async {
   group('macOS Keychain backend', () {
     test(
       'read returns the stored value without the trailing newline',
@@ -723,23 +728,27 @@ void main() {
   // the leg FUNCTIONALLY instead: rehearse the exact write→read→delete
   // contract on a throwaway probe item (the same shape as the accepted
   // `hostHasFunctionalKillall` gate from the round-2 fix).
-  final bool hostHasFunctionalKeychainWrite = !Platform.isMacOS
-      ? false
-      : (() {
-          try {
-            return functionalKeychainRoundTrip(
-              (args) {
-                final r = Process.runSync('security', args);
-                return SecureKeyRunResult(r.exitCode, '${r.stdout}');
-              },
-              service: secureKeyServiceName,
-              account: keychainProbeAccount,
-              password: keychainProbePassword,
-            );
-          } catch (_) {
-            return false;
-          }
-        })();
+  Future<bool> functionalGate() async {
+    if (!Platform.isMacOS) return false;
+    // Bounded runner (secureKeyProcessTimeout): a helper stuck on a system
+    // modal reports the timeout verdict (exit -1) and the leg skips — the
+    // probe can never hang CI. On a healthy macOS host the probe performs
+    // one real write→read→delete of the throwaway FA_KEY_SELFTEST_PROBE
+    // item at file load (deleted immediately, distinct from the leg's own
+    // FA_KEY_SELFTEST_GH1059 item).
+    try {
+      return await functionalKeychainRoundTrip(
+        (args) => secureKeyProcessRunner('security', args),
+        service: secureKeyServiceName,
+        account: keychainProbeAccount,
+        password: keychainProbePassword,
+      );
+    } on Object {
+      return false;
+    }
+  }
+
+  final bool hostHasFunctionalKeychainWrite = await functionalGate();
 
   // gh-1934 rework-3: the keychain leg's skip gate is a FUNCTIONAL
   // round-trip probe, decided by the same pure logic these side-effect-free
@@ -750,7 +759,11 @@ void main() {
   // keychain — the leg must SKIP that shape, not fail.
   group('functional keychain round-trip probe (gh-1934 rework-3)', () {
     // Scripted `security` CLI: answers per first argument, records calls.
-    ({SecureKeyRunResult Function(List<String> args) run, List<String> calls})
+    // Scripted `security` CLI: answers per first argument, records calls.
+    ({
+      Future<SecureKeyRunResult> Function(List<String> args) run,
+      List<String> calls,
+    })
     script({
       int defaultKeychain = 0,
       int add = 0,
@@ -759,7 +772,7 @@ void main() {
       int delete = 0,
     }) {
       final calls = <String>[];
-      SecureKeyRunResult run(List<String> args) {
+      Future<SecureKeyRunResult> run(List<String> args) async {
         calls.add(args.first);
         return switch (args.first) {
           'default-keychain' => SecureKeyRunResult(defaultKeychain, ''),
@@ -776,11 +789,11 @@ void main() {
       return (run: run, calls: calls);
     }
 
-    bool probeOf(Object scripted) {
+    Future<bool> probeOf(Object scripted) async {
       final s =
           scripted
               as ({
-                SecureKeyRunResult Function(List<String> args) run,
+                Future<SecureKeyRunResult> Function(List<String> args) run,
                 List<String> calls,
               });
       return functionalKeychainRoundTrip(
@@ -791,9 +804,9 @@ void main() {
       );
     }
 
-    test('a real write→read→delete round-trip makes the leg usable', () {
+    test('a real write→read→delete round-trip makes the leg usable', () async {
       final s = script();
-      expect(probeOf(s), isTrue);
+      expect(await probeOf(s), isTrue);
       expect(s.calls, [
         'default-keychain',
         'add-generic-password',
@@ -804,30 +817,60 @@ void main() {
 
     test(
       'a locked keychain — preflight ok, the WRITE fails — skips the leg',
-      () {
+      () async {
         // The fa-m5-3 CI shape: default-keychain exits 0, the real
         // add-generic-password write fails (exit -1).
-        expect(probeOf(script(add: -1)), isFalse);
+        expect(await probeOf(script(add: -1)), isFalse);
       },
     );
 
-    test('a missing default keychain skips the leg and never writes', () {
+    test('a missing default keychain skips the leg and never writes', () async {
       final s = script(defaultKeychain: 36);
-      expect(probeOf(s), isFalse);
+      expect(await probeOf(s), isFalse);
       expect(s.calls, ['default-keychain']);
     });
 
     test(
       'a read-back that returns a different secret skips the leg and still deletes the probe item',
-      () {
+      () async {
         final s = script(findPassword: 'a-different-secret');
-        expect(probeOf(s), isFalse);
+        expect(await probeOf(s), isFalse);
         expect(s.calls.last, 'delete-generic-password');
       },
     );
 
-    test('a failed delete skips the leg — the probe item must not survive', () {
-      expect(probeOf(script(delete: 1)), isFalse);
+    test(
+      'a failed delete skips the leg — the probe item must not survive',
+      () async {
+        expect(await probeOf(script(delete: 1)), isFalse);
+      },
+    );
+
+    test('a helper hung on a system modal — the bounded timeout verdict '
+        '(exit -1, timedOut) — skips the leg instead of wedging it', () async {
+      // secureKeyProcessTimeout kills a helper stuck on the macOS
+      // "Keychain Not Found" modal and reports exitCode -1 + timedOut —
+      // the CI red's exact `exit -1` signature. The probe must read that
+      // as "cannot run" (skip), never as a hang or a retryable failure.
+      Future<SecureKeyRunResult> run(List<String> args) async =>
+          switch (args.first) {
+            'default-keychain' => const SecureKeyRunResult(0, ''),
+            'add-generic-password' => const SecureKeyRunResult(
+              -1,
+              '',
+              timedOut: true,
+            ),
+            _ => const SecureKeyRunResult(64, ''),
+          };
+      expect(
+        await functionalKeychainRoundTrip(
+          run,
+          service: secureKeyServiceName,
+          account: keychainProbeAccount,
+          password: keychainProbePassword,
+        ),
+        isFalse,
+      );
     });
   });
 
