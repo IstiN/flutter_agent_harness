@@ -174,10 +174,28 @@ extension AgentCliMessagingFlow on AgentCli {
   /// the main agent (gh-970). `schedule_message` resolves "your own
   /// mailbox" through this — the queue's `selfMailbox` always names MAIN,
   /// so without it every child self-reminder landed in main's inbox.
+  ///
+  /// gh-1947 guard: a zone value can OUTLIVE the child's run — a settle
+  /// continuation registered inside a child's scope (its background shell
+  /// job) used to start MAIN's wake run still carrying the finished
+  /// child's id. The scope is therefore trusted only while that child is
+  /// genuinely in flight on the session executor; otherwise the caller is
+  /// MAIN and its self-reminders must default to MAIN's mailbox.
   String? _childSenderMailbox() {
     final id = activeSubagentId();
-    return id == null ? null : _subagentManager.mailboxOf(id);
+    if (id == null) return null;
+    if (!_taskConfig.executor.isInFlight(id)) return null;
+    return _subagentManager.mailboxOf(id);
   }
+
+  /// Test seam (gh-1947 review): the wired `scheduleSenderMailbox`
+  /// resolver — exactly the callback the `schedule_message` tool consults
+  /// — driven directly so the `isInFlight` guard's BOTH branches are
+  /// unit-pinned (a stale zone scope with no matching in-flight child must
+  /// resolve null → MAIN's mailbox; a live child keeps its own) without
+  /// driving a full settle-wake e2e per branch.
+  @visibleForTesting
+  String? scheduleSenderMailboxForTest() => _childSenderMailbox();
 
   /// Namespaces this instance's mailboxes with the active session id: two
   /// Fa instances sharing the messaging root never drain each other's
