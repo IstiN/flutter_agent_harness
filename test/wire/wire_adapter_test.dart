@@ -174,4 +174,5 @@ String _kindOf(AgentEvent event) => switch (event) {
   ToolCallHeartbeatEvent() => 'tool_call_heartbeat',
   ToolCallStuckEvent() => 'tool_call_stuck',
   ToolCallBudgetEvent() => 'tool_call_budget',
+  ImagePayloadRecoveryEvent() => 'image_payload_recovery',
 };
