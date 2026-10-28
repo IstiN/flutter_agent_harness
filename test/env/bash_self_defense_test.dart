@@ -50,45 +50,51 @@ void main() {
   // check, kills nothing). A copy of `sh` (never a multicall binary)
   // keeps the comm stable — a copied `sleep` would itself dispatch on its
   // new basename and die on these images (the same coreutils dispatcher).
-  final bool hostHasFunctionalKillall = !Platform.isWindows && (() {
-    Directory? probeDir;
-    String? victimPid;
-    try {
-      probeDir = Directory.systemTemp.createTempSync('fa-killall-probe-');
-      final shBin = Process.runSync(
-        'sh',
-        <String>['-c', 'command -v sh'],
-      ).stdout.trim();
-      if (shBin.isEmpty) return false;
-      final victimPath = '${probeDir.path}/fa_kl_p1';
-      File(shBin).copySync(victimPath);
-      Process.runSync('chmod', <String>['755', victimPath]);
-      // The busy-wait loop keeps the interpreter in the foreground: an
-      // `sh -c 'sleep N'` shape tail-execs into `sleep` and the comm
-      // changes under the probe. The victim is backgrounded by its own
-      // shell (Dart has no synchronous Process.start) and reaped below.
-      victimPid = Process.runSync('sh', <String>[
-        '-c',
-        // The redirections detach the victim from runSync's stdout pipe —
-        // without them the probe blocks until EOF, i.e. until the victim
-        // dies (it never does).
-        "'$victimPath' -c 'while :; do sleep 1; done' >/dev/null 2>&1 & echo \$!",
-      ]).stdout.trim();
-      return Process.runSync('sh', <String>[
-        '-c',
-        'command -v killall >/dev/null 2>&1 && killall -0 fa_kl_p1',
-      ]).exitCode == 0;
-    } catch (_) {
-      return false;
-    } finally {
-      if (victimPid != null) {
-        Process.runSync('sh', <String>['-c', 'kill $victimPid 2>/dev/null']);
-      }
-      try {
-        probeDir?.deleteSync(recursive: true);
-      } catch (_) {}
-    }
-  })();
+  final bool hostHasFunctionalKillall =
+      !Platform.isWindows &&
+      (() {
+        Directory? probeDir;
+        String? victimPid;
+        try {
+          probeDir = Directory.systemTemp.createTempSync('fa-killall-probe-');
+          final shBin = Process.runSync('sh', <String>[
+            '-c',
+            'command -v sh',
+          ]).stdout.trim();
+          if (shBin.isEmpty) return false;
+          final victimPath = '${probeDir.path}/fa_kl_p1';
+          File(shBin).copySync(victimPath);
+          Process.runSync('chmod', <String>['755', victimPath]);
+          // The busy-wait loop keeps the interpreter in the foreground: an
+          // `sh -c 'sleep N'` shape tail-execs into `sleep` and the comm
+          // changes under the probe. The victim is backgrounded by its own
+          // shell (Dart has no synchronous Process.start) and reaped below.
+          victimPid = Process.runSync('sh', <String>[
+            '-c',
+            // The redirections detach the victim from runSync's stdout pipe —
+            // without them the probe blocks until EOF, i.e. until the victim
+            // dies (it never does).
+            "'$victimPath' -c 'while :; do sleep 1; done' >/dev/null 2>&1 & echo \$!",
+          ]).stdout.trim();
+          return Process.runSync('sh', <String>[
+                '-c',
+                'command -v killall >/dev/null 2>&1 && killall -0 fa_kl_p1',
+              ]).exitCode ==
+              0;
+        } catch (_) {
+          return false;
+        } finally {
+          if (victimPid != null) {
+            Process.runSync('sh', <String>[
+              '-c',
+              'kill $victimPid 2>/dev/null',
+            ]);
+          }
+          try {
+            probeDir?.deleteSync(recursive: true);
+          } catch (_) {}
+        }
+      })();
 
   /// Polls whether [pid] is still in the process table (~3s budget) so the
   /// assertions stay load-independent (signal delivery lags the killer).
@@ -542,8 +548,8 @@ void main() {
       'killall --signal TERM reaps its victim (unique comm name)',
       skip: Platform.isWindows || !hostHasPgrep || !hostHasFunctionalKillall
           ? 'POSIX process semantics only: needs a killall that can '
-              'actually kill by comm name (gh-1934: some CI images ship '
-              'a multicall coreutils stub that cannot)'
+                'actually kill by comm name (gh-1934: some CI images ship '
+                'a multicall coreutils stub that cannot)'
           : false,
       () async {
         // killall matches the comm name (15-char cap on Linux): give the
@@ -554,10 +560,10 @@ void main() {
         // the comm does not tail-exec into `sleep`.
         final binDir = Directory.systemTemp.createTempSync('fa-killall-');
         addTearDown(() => binDir.deleteSync(recursive: true));
-        final shBin = Process.runSync(
-          'sh',
-          <String>['-c', 'command -v sh'],
-        ).stdout.trim();
+        final shBin = Process.runSync('sh', <String>[
+          '-c',
+          'command -v sh',
+        ]).stdout.trim();
         final victimPath = '${binDir.path}/fa_kl_271';
         File(shBin).copySync(victimPath);
         Process.runSync('chmod', <String>['755', victimPath]);
@@ -604,7 +610,8 @@ void main() {
           expect(
             r.exitCode,
             isNot(124),
-            reason: '$tool --signal hung: the dangling --signal arm '
+            reason:
+                '$tool --signal hung: the dangling --signal arm '
                 'repeats `shift 2` forever under bash-as-sh',
           );
           // The honest outcome: whatever the real binary does with a
@@ -617,7 +624,8 @@ void main() {
           expect(
             r.exitCode,
             real.exitCode,
-            reason: '$tool --signal (dangling) must exit like the real '
+            reason:
+                '$tool --signal (dangling) must exit like the real '
                 'binary',
           );
         }
