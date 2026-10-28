@@ -82,10 +82,11 @@ AgentTool scheduleMessageTool(
         );
       }
       final sender = senderMailbox?.call();
+      final to = (args['to'] as String?) ?? sender;
       final id = await queue.schedule(
         text: text.trim(),
         delay: delay,
-        to: (args['to'] as String?) ?? sender,
+        to: to,
         from: sender,
       );
       final due = DateTime.now().add(delay).toIso8601String();
@@ -94,9 +95,13 @@ AgentTool scheduleMessageTool(
       // of this line's `scheduled <id> for ` prefix — keep it stable or
       // update both sides together (pinned by
       // test/cli/agent_cli_persist_pending_wait_test.dart).
+      // The suffix names the RECIPIENT the record carries (gh-1947): an
+      // explicit `to:` used to be shadowed here by the sender's mailbox,
+      // which read as "the override was ignored" even when it was
+      // honored.
       return ToolExecutionResult.text(
         'scheduled $id for $due — it will arrive as [scheduled] mail'
-        '${sender == null ? '' : ' in $sender'}',
+        '${to == null ? '' : ' in $to'}',
       );
     },
   );

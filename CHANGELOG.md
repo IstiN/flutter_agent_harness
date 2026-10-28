@@ -13,6 +13,25 @@ block a release again.
 
 ## Unreleased
 
+- fix(#1947): `schedule_message` from the orchestrator no longer misroutes
+  into a finished subagent's mailbox. A background shell job started by a
+  CHILD registered its settle continuation inside the child's subagent
+  zone; when the job settled after the child's run ended, the CLI's
+  settle-wake (`_onShellJobSettled` → `_startRun`) started MAIN's reaction
+  run still carrying the finished child's `activeSubagentId()`, and every
+  identity consumer of that run misattributed it — the reported shape was
+  a self-reminder scheduled "in <session>/<child>" that auto-resumed the
+  completed child (duplicate-release risk). Three layers: the
+  `ShellJobRegistry` now binds its settle continuation to the
+  construction-time (boot) zone (`_bootZone.run`), both hosts'
+  `scheduleSenderMailbox` wiring trusts the zone scope only while the
+  child is genuinely in flight on the session executor
+  (`TaskExecutor.isInFlight`), and the tool response names the RECIPIENT
+  the record carries — an explicit `to:` used to be shadowed in the reply
+  by the sender's mailbox, which read as "the override was ignored" even
+  when it was honored. E2E repro drives the real AgentCli
+  (test/cli/agent_cli_schedule_recipient_test.dart) plus a registry-level
+  zone pin (test/tools/shell_job_settle_zone_test.dart).
 - fix(#1941): the selected CodeMie project now rides EVERY model request.
   The header is baked into `Model.headers` only by the connect-time
   switches (gh-1809), so every other rebuild silently dropped
