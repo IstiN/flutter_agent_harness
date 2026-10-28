@@ -165,10 +165,15 @@ Future<List<Message>> _run(
   ImagePayloadRecoveryState? recovery,
   bool always413 = false,
   List<AgentEvent>? events,
+  TransformContextHook? transformContext,
 }) => runAgentLoop(
   prompts: [UserMessage.text('continue')],
   context: Context(messages: history ?? _poisonedHistory()),
-  config: AgentLoopConfig(model: _model(), imageRecovery: recovery),
+  config: AgentLoopConfig(
+    model: _model(),
+    imageRecovery: recovery,
+    transformContext: transformContext,
+  ),
   streamFunction: always413 ? _always413(provider) : provider.call,
   toolExecutor: (_, _, _) async => const ToolExecutionResult(content: []),
   emit: events == null ? (_) {} : events.add,
@@ -241,6 +246,16 @@ void main() {
     expect(recoveryEvents.single.dropped, 7);
     expect(recoveryEvents.single.stripped, 0);
     expect(recoveryEvents.single.failed, isFalse);
+    // The loop-level event rides the pass retry with the SAME real
+    // counts the rebuilt request rode (review: not dead zeroed fields).
+    final passEvents = events!
+        .whereType<ImagePayloadRecoveryEvent>()
+        .where((e) => !e.failed)
+        .toList();
+    expect(passEvents, hasLength(1));
+    expect(passEvents.single.pass, 1);
+    expect(passEvents.single.dropped, 7);
+    expect(passEvents.single.stripped, 0);
   });
 
   test(
@@ -446,5 +461,97 @@ void main() {
     final assistant = messages.whereType<AssistantMessage>().last;
     expect(assistant.stopReason, StopReason.error);
     expect(recoveryEvents, isEmpty);
+  });
+
+  test('IT-4b (review: AC6 gate): a strip-all-latched session with image '
+      'history never re-runs the ladder on a later 413', () async {
+    // The reviewer's probe: strip-all latched + a well-formed image
+    // call/result still in the transcript + an always-413 provider. The
+    // transcript keeps image bytes forever (payload-only rewrite), so a
+    // transcript-shaped gate re-engages the ladder (2 wasted sends +
+    // false recovery copy) on every later 413. The gate must evaluate
+    // the REQUEST that was refused — image-free after the latch — and
+    // stand down.
+    final recovery = ImagePayloadRecoveryState()..stripAll = true;
+    final provider = _CappedProvider(5 * 1000 * 1000);
+    final events = <AgentEvent>[];
+    final messages = await _run(
+      provider,
+      history: _poisonedHistory(count: 2),
+      recovery: recovery,
+      always413: true,
+      events: events,
+    );
+
+    // ONE send: the refusal surfaces directly, no ladder passes.
+    expect(provider.contexts, hasLength(1));
+    final assistant = messages.whereType<AssistantMessage>().last;
+    expect(assistant.stopReason, StopReason.error);
+    expect(assistant.errorMessage, contains('413'));
+    // No pass notices, no false "recovered" copy, no failure event.
+    expect(recoveryEvents, isEmpty);
+    expect(events.whereType<ImagePayloadRecoveryEvent>(), isEmpty);
+    expect(
+      _texts(provider.contexts.single.messages),
+      isNot(contains('recovered from 413')),
+    );
+    // The latch invariant holds: the refused payload rode zero bytes.
+    expect(_imageBytes(provider.contexts.single.messages), 0);
+  });
+
+  test('IT-4c (review: AC6 gate): a text-only 413 with a small inline icon '
+      'never engages the ladder', () async {
+    // Sub-threshold data-URLs are legitimate inline content, not payload
+    // weight — the payload gate must not mistake them for shedable image
+    // bytes (the old transcript check counted any `data:image/` text).
+    final icon =
+        'data:image/png;base64,${'i' * 128}'; // tiny — far below the fold
+    final recovery = ImagePayloadRecoveryState();
+    final provider = _CappedProvider(5 * 1000 * 1000);
+    final events = <AgentEvent>[];
+    final messages = await _run(
+      provider,
+      history: [UserMessage.text('icon: $icon — plain text around it')],
+      recovery: recovery,
+      always413: true,
+      events: events,
+    );
+
+    expect(provider.contexts, hasLength(1));
+    expect(messages.whereType<AssistantMessage>().last.stopReason,
+        StopReason.error);
+    expect(recoveryEvents, isEmpty);
+    expect(events.whereType<ImagePayloadRecoveryEvent>(), isEmpty);
+  });
+
+  test('IT-6 (review: armed note): an armed recovery note never rides an '
+      'unrelated later request when the retry never streams', () async {
+    // The ladder armed its pass-1 note, then the retry build died
+    // (cancel/abort racing the rebuild — modeled as a throwing
+    // transformContext on the second build). The stale one-shot claim
+    // must be disarmed, not ride the NEXT request of the session.
+    final recovery = ImagePayloadRecoveryState();
+    var builds = 0;
+    var armedDuringRun = false;
+    Future<List<Message>> dieOnRetry(List<Message> messages, CancelToken? _) {
+      builds++;
+      if (builds >= 2) {
+        // The arm happened in the heal, before this retry build — probe
+        // the precondition at the exact failure point.
+        armedDuringRun = recovery.noteArmed;
+        throw StateError('cancel raced the retry build');
+      }
+      return messages;
+    }
+
+    final provider = _CappedProvider(5 * 1000 * 1000);
+    await expectLater(
+      _run(provider, recovery: recovery, transformContext: dieOnRetry),
+      throwsA(isA<StateError>()),
+    );
+    expect(armedDuringRun, isTrue, reason: 'precondition: note armed');
+    // The loop disarms on the way out — the next request of the session
+    // (a fresh, unrelated turn) must not carry the stale note.
+    expect(recovery.noteArmed, isFalse, reason: 'disarmed after the run');
   });
 }
