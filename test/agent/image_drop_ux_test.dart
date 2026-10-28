@@ -418,4 +418,82 @@ void main() {
       expect(joined, isNot(contains('learned from a provider refusal')));
     });
   });
+
+  group('gh-1934 — evictions in notices and the surface', () {
+    ImageDropReport evictedReport({int evicted = 3, int stripped = 0}) =>
+        ImageDropReport(
+          drops: [
+            for (var i = 0; i < evicted; i++)
+              ImageDropEvent(
+                index: i,
+                key: 'evict-key-$i',
+                fromCurrentMessage: false,
+                reason: ImageDropReason.evicted,
+              ),
+          ],
+          cap: 20,
+          modelId: 'test-model',
+          currentImageCount: 0,
+          registryCount: evicted,
+          ridingCount: 0,
+          evictedCount: evicted,
+          strippedCount: stripped,
+        );
+
+    test('an eviction-only history names the cause, never a cap', () {
+      final ux = ImageDropUx();
+      final view = ux.observe(evictedReport())!;
+      expect(view.prominent, isFalse);
+      expect(view.line, contains('3 older images evicted'));
+      expect(view.line, contains('compaction boundary / 413 recovery'));
+      expect(view.line.contains('cap '), isFalse);
+    });
+
+    test('the eviction notice latches like every drop situation', () {
+      final ux = ImageDropUx();
+      expect(ux.observe(evictedReport()), isNotNull);
+      expect(ux.observe(evictedReport()), isNull, reason: 'same set — silence');
+    });
+
+    test('mixed capped + evicted drops keep the cap line and append', () {
+      final ux = ImageDropUx();
+      final report = ImageDropReport(
+        drops: const [
+          ImageDropEvent(
+            index: 0,
+            key: 'hist-key-0',
+            fromCurrentMessage: false,
+            reason: ImageDropReason.bytes,
+          ),
+          ImageDropEvent(
+            index: 1,
+            key: 'evict-key-1',
+            fromCurrentMessage: false,
+            reason: ImageDropReason.evicted,
+          ),
+        ],
+        cap: 20,
+        modelId: 'test-model',
+        currentImageCount: 0,
+        registryCount: 4,
+        ridingCount: 2,
+        maxBytes: 8 * 1024 * 1024,
+      );
+      final view = ux.observe(report)!;
+      expect(view.line, contains('1 older images not sent'));
+      expect(view.line, contains('(+1 evicted)'));
+    });
+
+    test('/images renders the evicted dropWhy and the placeholder summary',
+        () {
+      final lines = imageSurfaceLines(
+        lastReport: evictedReport(evicted: 2, stripped: 5),
+        config: const ImageRegistryConfig(),
+        modelId: 'test-model',
+      );
+      final joined = lines.join('\n');
+      expect(joined, contains('(evicted: compaction boundary / 413 recovery)'));
+      expect(joined, contains('evicted: 7 image(s) replaced by placeholders'));
+    });
+  });
 }

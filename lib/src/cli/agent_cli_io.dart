@@ -165,6 +165,7 @@ extension AgentCliRunNotices on AgentCli {
     _wireTransientRetryNotice();
     _wireImageDropNotice();
     _wireImageCapLearnedNotice();
+    _wireImageRecoveryNotice();
     _wireTextOnlyImageDropNotice();
     _wirePayloadStallAdvice();
     _wireDeliverySloNotice();
@@ -308,6 +309,37 @@ extension AgentCliRunNotices on AgentCli {
         ),
       );
       _logDiagnostic('image cap learned sid=$_logSid model=$modelId cap=$cap');
+    };
+  }
+
+  /// gh-1934: the 413 image-payload recovery ladder's voice — the same
+  /// dim transcript line + fa.log entry shape as the other image notices.
+  /// Pass notices print `[images] recovered from 413: dropped N, stripped
+  /// M` once per pass; the exhaustion event prints the actionable failure
+  /// (switch provider / lower the budget) exactly once.
+  void _wireImageRecoveryNotice() {
+    imageRecoveryNotice = (event) {
+      if (event.failed) {
+        final line = imageRecoveryFailedText(event.providerError ?? 'unknown');
+        io.writeln(_style.dim(line));
+        _logDiagnostic(
+          'image 413 recovery failed sid=$_logSid '
+          'error=${event.providerError}',
+        );
+        return;
+      }
+      io.writeln(
+        _style.dim(
+          imageRecoveryNoticeText(
+            dropped: event.dropped,
+            stripped: event.stripped,
+          ),
+        ),
+      );
+      _logDiagnostic(
+        'image 413 recovery pass=${event.pass} sid=$_logSid '
+        'dropped=${event.dropped} stripped=${event.stripped}',
+      );
     };
   }
 

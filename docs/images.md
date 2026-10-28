@@ -76,6 +76,46 @@ The **debug surface stays per-image per-request** (never silent): the CLI
 logs every drop event with index + key preview to `fa.log`; the app logs
 the same detail to `AppLog` (`logs/app.log`).
 
+## 413 recovery and compaction eviction (gh-1934)
+
+A provider rejecting a request for **size** (`413`-class — `Request
+Entity Too Large`, `request_too_large`, payload-too-large wordings) never
+ends in an unusable session. The loop runs a bounded recovery ladder:
+
+1. **Pass 1 — drop**: the session's adaptive image budget halves (from
+   the configured `images.maxBytesPerRequest`; the halved value is
+   learned for the rest of the session) and the request is rebuilt — the
+   oldest images drop first until the payload fits, and the request is
+   retried.
+2. **Pass 2 — strip**: on a second 413 the budget halves again and
+   **every** image block — the current message included — is replaced by
+   an `[image dropped: <key preview>]` text placeholder, and the request
+   is retried. The strip latches for the session: later requests ride
+   placeholders and cannot re-trigger the refusal.
+3. **Exhausted**: a third 413 yields ONE actionable notice
+   (`switch provider or lower images.maxBytesPerRequest`) and the
+   provider error surfaces as before. No loops — at most two recovery
+   passes per response, and a text-only session never engages the
+   ladder.
+
+Each pass prints one `[images] recovered from 413: dropped N, stripped
+M` line (headless prints the same line once per pass), and the retried
+request carries a model-visible recovery note so the assistant answer
+can mention it. The learned budget is session-scoped v1 (runtime-only);
+a lower configured `images.maxBytesPerRequest` always wins over it.
+
+**Compaction eviction** is the structural fix behind `/compact always
+restores sendability`: once a renumbering boundary (a compaction
+summary, a structured marker, or the local-trim note) sits in the
+window, every HISTORY image block outside the current user message
+rides as the `[image dropped: …]` placeholder instead of re-carrying its
+bytes. The session JSONL keeps the original bytes (payload-only
+rewrite), token accounting counts the placeholders, and remaining
+`[Image N]` citations degrade to `(image no longer available)` — the
+number could rebind to different bytes, and a silent rebind is never
+allowed (#195 F2). `/images` names evictions explicitly
+(`(evicted: compaction boundary / 413 recovery)`).
+
 ## The details surface: `/images` (CLI) and the chat chip + panel (app)
 
 Both hosts render the **same shared projection** (`imageSurfaceLines` in
@@ -124,8 +164,9 @@ Symptoms: `connect stall: no response bytes` (attempts 2/3, 3/3),
 of zero-byte request`, a busy row stuck at `Stalled… · submit` — while
 the same model works fine in text-only sessions.
 
-1. **`/compact`** — compaction rewrites history to summaries; image data
-   leaves the kept window, so the next submit carries far fewer bytes.
+1. **`/compact`** — compaction evicts every history image to a
+   placeholder (gh-1934), so the next submit carries zero image bytes
+   from the folded region.
 2. **Lower the image budget** — `images.maxBytesPerRequest` (default
    8MB) in `~/.fah/config.yaml` or via `/settings → Images`; `/images`
    shows what the last request actually sent and dropped.

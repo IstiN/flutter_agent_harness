@@ -108,7 +108,11 @@ List<Message> _poisonedHistory({int count = 8, int bytes = 3 * 1000 * 1000}) => 
     ToolResultMessage(
       toolCallId: 'call$i',
       toolName: 'read',
-      content: [ImageContent(data: 'x' * bytes, mimeType: 'image/png')],
+      // Distinct payloads — identical bytes would dedup to one registry
+      // entry and never reproduce the 8-image weight.
+      content: [
+        ImageContent(data: '$i-${'x' * (bytes - 3)}', mimeType: 'image/png'),
+      ],
       isError: false,
       timestamp: DateTime.utc(2026, 1, 1, 0, 0, 0, i * 1000 + 500),
     ),
@@ -289,10 +293,10 @@ void main() {
     expect(assistant.stopReason, StopReason.error);
     expect(assistant.errorMessage, contains('413'));
 
-    // Each 413 halved the budget: 8MB → 4MB → 2MB.
+    // Each 413 halved the budget: 8MiB → 4MiB → 2MiB.
     expect(
       recovery.effectiveByteBudget(imageRegistryConfig.maxBytesPerRequest),
-      2 * 1000 * 1000,
+      2 * 1024 * 1024,
     );
     // Pass 2 latched the strip-all.
     expect(recovery.stripAll, isTrue);
@@ -330,10 +334,10 @@ void main() {
     final provider = _CappedProvider(5 * 1000 * 1000);
     final recovery = ImagePayloadRecoveryState();
     await _run(provider, recovery: recovery);
-    // Learned: half of the configured 8MB.
+    // Learned: half of the configured 8MiB.
     expect(
       recovery.effectiveByteBudget(imageRegistryConfig.maxBytesPerRequest),
-      4 * 1000 * 1000,
+      4 * 1024 * 1024,
     );
 
     // A later request with a heavier image than the learned budget drops
@@ -377,13 +381,13 @@ void main() {
       imageDropReportNotice = saved;
     }
     expect(_imageBytes(later.contexts.single.messages),
-        lessThanOrEqualTo(4 * 1000 * 1000));
+        lessThanOrEqualTo(4 * 1024 * 1024));
     expect(drops.map((d) => d.reason), everyElement(ImageDropReason.bytes));
 
     // A LOWER configured value wins over the learned budget (AC5).
     expect(recovery.effectiveByteBudget(1024), 1024);
     // A disabled (0) configured budget cannot raise the learned one.
-    expect(recovery.effectiveByteBudget(0), 4 * 1000 * 1000);
+    expect(recovery.effectiveByteBudget(0), 4 * 1024 * 1024);
   });
 
   test('IT-6 (AC6): a text-only session never engages the ladder', () async {
