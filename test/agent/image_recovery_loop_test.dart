@@ -92,7 +92,10 @@ AssistantMessage _assistant({
 /// base64 each — the original repro's shape), riding as tool results the
 /// way `read` delivers screenshots — each preceded by its assistant
 /// tool-call message so the pairing repair never touches them.
-List<Message> _poisonedHistory({int count = 8, int bytes = 3 * 1000 * 1000}) => [
+List<Message> _poisonedHistory({
+  int count = 8,
+  int bytes = 3 * 1000 * 1000,
+}) => [
   for (var i = 0; i < count; i++) ...[
     AssistantMessage(
       content: [
@@ -123,8 +126,7 @@ int _imageBytes(List<Message> messages) {
   var total = 0;
   for (final message in messages) {
     final blocks = switch (message) {
-      UserMessage(:final content) when content is List<ContentBlock> =>
-        content,
+      UserMessage(:final content) when content is List<ContentBlock> => content,
       ToolResultMessage(:final content) => content,
       _ => const <ContentBlock>[],
     };
@@ -167,10 +169,7 @@ Future<List<Message>> _run(
 }) => runAgentLoop(
   prompts: [UserMessage.text('continue')],
   context: Context(messages: history ?? _poisonedHistory()),
-  config: AgentLoopConfig(
-    model: _model(),
-    imageRecovery: recovery,
-  ),
+  config: AgentLoopConfig(model: _model(), imageRecovery: recovery),
   streamFunction: always413 ? _always413(provider) : provider.call,
   toolExecutor: (_, _, _) async => const ToolExecutionResult(content: []),
   emit: events == null ? (_) {} : events.add,
@@ -226,7 +225,10 @@ void main() {
     }
     // Pass 1 halved 8MB → 4MB; one ~3MB image still fits.
     expect(provider.contexts, hasLength(2));
-    expect(_imageBytes(provider.contexts.last.messages), lessThanOrEqualTo(4 * 1000 * 1000));
+    expect(
+      _imageBytes(provider.contexts.last.messages),
+      lessThanOrEqualTo(4 * 1000 * 1000),
+    );
 
     // The recovery note rode the retry payload (AC1: the assistant answer
     // can note the recovery).
@@ -242,44 +244,56 @@ void main() {
     expect(recoveryEvents.single.failed, isFalse);
   });
 
-  test('IT-2 (AC2): a compacted poisoned session sends ZERO image bytes',
-      () async {
-    final provider = _CappedProvider(5 * 1000 * 1000);
-    final boundary = '$compactionSummaryPrefix'
-        'Old work.$compactionSummarySuffix';
-    // The flood precedes the boundary — outside the kept region, the
-    // compacted-away region's remnants still riding in the window.
-    final history = [
-      ..._poisonedHistory(),
-      UserMessage.text(boundary),
-      UserMessage.text('post-compaction question'),
-    ];
-    await _run(provider, history: history);
+  test(
+    'IT-2 (AC2): a compacted poisoned session sends ZERO image bytes',
+    () async {
+      final provider = _CappedProvider(5 * 1000 * 1000);
+      final boundary =
+          '$compactionSummaryPrefix'
+          'Old work.$compactionSummarySuffix';
+      // The flood precedes the boundary — outside the kept region, the
+      // compacted-away region's remnants still riding in the window.
+      final history = [
+        ..._poisonedHistory(),
+        UserMessage.text(boundary),
+        UserMessage.text('post-compaction question'),
+      ];
+      await _run(provider, history: history);
 
-    expect(provider.contexts, hasLength(1));
-    expect(
-      _imageBytes(provider.contexts.single.messages),
-      0,
-      reason: 'images outside the kept region never ride the payload',
-    );
-    expect(
-      _texts(provider.contexts.single.messages),
-      contains('[image dropped: '),
-      reason: 'placeholders replace the bytes',
-    );
-  });
+      expect(provider.contexts, hasLength(1));
+      expect(
+        _imageBytes(provider.contexts.single.messages),
+        0,
+        reason: 'images outside the kept region never ride the payload',
+      );
+      expect(
+        _texts(provider.contexts.single.messages),
+        contains('[image dropped: '),
+        reason: 'placeholders replace the bytes',
+      );
+    },
+  );
 
-  test('IT-3 (AC3): the transcript messages are never mutated by recovery',
-      () async {
-    final provider = _CappedProvider(5 * 1000 * 1000);
-    final history = _poisonedHistory();
-    final imageCount = _imageBytes(history);
+  test(
+    'IT-3 (AC3): the transcript messages are never mutated by recovery',
+    () async {
+      final provider = _CappedProvider(5 * 1000 * 1000);
+      final history = _poisonedHistory();
+      final imageCount = _imageBytes(history);
 
-    await _run(provider, history: history, recovery: ImagePayloadRecoveryState());
+      await _run(
+        provider,
+        history: history,
+        recovery: ImagePayloadRecoveryState(),
+      );
 
-    expect(_imageBytes(history), imageCount,
-        reason: 'the live transcript keeps the bytes (session JSONL invariant)');
-  });
+      expect(
+        _imageBytes(history),
+        imageCount,
+        reason: 'the live transcript keeps the bytes (session JSONL invariant)',
+      );
+    },
+  );
 
   test('IT-4 (AC4): the ladder is bounded — 2 passes, halved budget, ONE '
       'actionable failure, then a latched image-free session', () async {
@@ -313,13 +327,12 @@ void main() {
     final failed = recoveryEvents.where((e) => e.failed).toList();
     expect(failed, hasLength(1));
     expect(failed.single.providerError, contains('413'));
-    expect(
-      recoveryEvents.where((e) => !e.failed).map((e) => e.pass),
-      [1, 2],
-    );
+    expect(recoveryEvents.where((e) => !e.failed).map((e) => e.pass), [1, 2]);
     // The loop-level audit trail carries the same failure exactly once.
-    final recoveryLoopEvents = events.whereType<ImagePayloadRecoveryEvent>()
-        .where((e) => e.failed).toList();
+    final recoveryLoopEvents = events
+        .whereType<ImagePayloadRecoveryEvent>()
+        .where((e) => e.failed)
+        .toList();
     expect(recoveryLoopEvents, hasLength(1));
     expect(recoveryLoopEvents.single.providerError, contains('413'));
 
@@ -380,7 +393,10 @@ void main() {
             toolCallId: 'call0',
             toolName: 'read',
             content: [
-              ImageContent(data: 'y' * (5 * 1000 * 1000), mimeType: 'image/png'),
+              ImageContent(
+                data: 'y' * (5 * 1000 * 1000),
+                mimeType: 'image/png',
+              ),
             ],
             isError: false,
             timestamp: DateTime.utc(2026, 1, 1),
@@ -391,8 +407,10 @@ void main() {
     } finally {
       imageDropReportNotice = saved;
     }
-    expect(_imageBytes(later.contexts.single.messages),
-        lessThanOrEqualTo(4 * 1024 * 1024));
+    expect(
+      _imageBytes(later.contexts.single.messages),
+      lessThanOrEqualTo(4 * 1024 * 1024),
+    );
     expect(drops.map((d) => d.reason), everyElement(ImageDropReason.bytes));
 
     // A LOWER configured value wins over the learned budget (AC5).

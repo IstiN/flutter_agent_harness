@@ -781,7 +781,12 @@ _RidingSelection _selectRiding(
     for (final key in currentOrdered)
       if (!evicted.contains(key)) key,
   ];
-  final current = _claimCurrentBatch(currentRideable, entryByKey, cap, maxBytes);
+  final current = _claimCurrentBatch(
+    currentRideable,
+    entryByKey,
+    cap,
+    maxBytes,
+  );
   final historyKeys = _recencyOrderedHistoryKeys(
     entryByKey,
     occurrences,
@@ -1002,8 +1007,12 @@ List<Message> _emitRewritten(
     final message = messages[i];
     if (i == currentIdx) {
       out.add(
-        _labelCurrentImages(message, riding.indexByKey, riding.ridingKeys,
-            evicted),
+        _labelCurrentImages(
+          message,
+          riding.indexByKey,
+          riding.ridingKeys,
+          evicted,
+        ),
       );
     } else if (message is UserMessage) {
       final content = message.content;
@@ -1120,7 +1129,11 @@ ToolResultMessage _rewriteResultBlocks(
   return ToolResultMessage(
     toolCallId: message.toolCallId,
     toolName: message.toolName,
-    content: _replaceImageBlocks(message.content, ridingIndexByKey, evictedKeys),
+    content: _replaceImageBlocks(
+      message.content,
+      ridingIndexByKey,
+      evictedKeys,
+    ),
     isError: message.isError,
     timestamp: message.timestamp,
   );
