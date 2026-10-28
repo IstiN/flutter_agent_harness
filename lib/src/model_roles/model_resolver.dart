@@ -413,8 +413,9 @@ final class ModelRolesResolver {
   }
 
   /// Defaults [ref]'s pin fields from the custom entry the ref named
-  /// (issue #1552): the entry supplies `baseUrl` and `keyName` where the
-  /// ref omits them; explicit ref fields always win. Every other field
+  /// (issue #1552): the entry supplies `baseUrl`, `keyName` and the CodeMie
+  /// project (issue #1941) where the ref omits them; explicit ref fields
+  /// always win. Every other field
   /// (model, window/token/modality/thinking/auth-header/tuning overrides)
   /// is the ref's own, exactly as for a kind+baseUrl entry.
   ModelRef _throughCustomEntry(ModelRef ref, CustomProviderEntry entry) {
@@ -429,6 +430,10 @@ final class ModelRolesResolver {
       input: ref.input,
       thinkingLevel: ref.thinkingLevel,
       authHeader: ref.authHeader,
+      // The registry leg must not drop the project (issue #1941): a ref
+      // naming the saved entry inherits its pick — a header-less rebuild
+      // here re-attributed chain traffic to the DEFAULT project.
+      project: ref.project ?? entry.project,
       connectTimeout: ref.connectTimeout,
       streamIdleTimeout: ref.streamIdleTimeout,
       // gh-1570 (AC8): a keyless ref routed through a custom entry keeps

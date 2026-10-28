@@ -122,6 +122,18 @@ final class ModelRef {
             'model chain entry${role == null ? '' : ' in role "$role"'}';
         final authHeader = parseAuthHeaderName(entry['authHeader'], where);
         validateAuthHeaderDialect(authHeader, catalogProvider(provider), where);
+        // The project rides the wire RAW (issue #1941): a non-Latin-1 value
+        // makes Dart reject the header MID-CHAT — refuse it at parse time
+        // (the codemie-code daemon omits the header instead; a chain ref
+        // explicitly DEMANDS the project, so loud beats silent).
+        final project = _optionalString(entry, 'project', role);
+        if (project != null &&
+            !RegExp(r'^[\x20-\x7E\xA0-\xFF]*$').hasMatch(project)) {
+          throw ConfigException(
+            '$where: "project" must be a Latin-1 '
+            'header value (0x20-0x7E, 0xA0-0xFF), got: $project',
+          );
+        }
         final keyless = _optionalBool(entry, 'keyless', role);
         final keyName = _optionalString(entry, 'apiKeyName', role);
         if (keyless && keyName != null) {
@@ -144,7 +156,7 @@ final class ModelRef {
           // The CodeMie project the chain bills (issue #1941): a pin
           // without it serves from the chain and bills the user's DEFAULT
           // project — the selected one is silently ignored.
-          project: _optionalString(entry, 'project', role),
+          project: project,
           // Per-provider stall-recovery tuning (issue #1398): the watchdog
           // knobs ride the chain entry, same place baseUrl/keys live.
           connectTimeout: parseProviderTimeoutMs(

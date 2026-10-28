@@ -297,15 +297,15 @@ extension SlashCommandDispatch on AgentCli {
     return entry == null ? null : _resolveCodeMieCookie(entry.keyName);
   }
 
-  /// The selected CodeMie project of the first saved entry that carries one
-  /// (issue #1941): the quota fetch must name the SAME project the model
-  /// requests bill.
-  String? _resolveCodeMieProject() {
-    for (final entry in config.customProviders?.entries ?? const []) {
-      if (entry.project != null) return entry.project;
-    }
-    return null;
-  }
+  /// The CodeMie project of the saved entry serving the LIVE model's
+  /// endpoint (issue #1941): the quota fetch must name the SAME project
+  /// the model requests bill — resolved through the ONE resolver
+  /// ([projectHeaderForBaseUrl]), never a first-match-with-project scan
+  /// that can name a different account's pick.
+  String? _resolveCodeMieProject() => projectHeaderForBaseUrl(
+    config.customProviders?.entries ?? const [],
+    _agent.state.model.baseUrl,
+  );
 
   /// The `/quota` table (AC4): one row per configured provider, rendered
   /// cache-only. Cold rows show `…`; unknown rows carry the adapter's

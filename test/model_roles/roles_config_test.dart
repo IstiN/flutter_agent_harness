@@ -117,6 +117,20 @@ maxTokens: 4096
         ModelRef.fromYaml(_yaml('provider: openai\nmodel: gpt-4o\n')).project,
         isNull,
       );
+      // The project rides the wire RAW — a non-Latin-1 value is refused at
+      // parse time instead of killing the request mid-chat (issue #1941).
+      expect(
+        () => ModelRef.fromYaml(
+          _yaml('provider: openai\nmodel: gpt-4o\nproject: репо\n'),
+        ),
+        throwsA(
+          isA<ConfigException>().having(
+            (e) => e.message,
+            'message',
+            allOf(contains('"project"'), contains('Latin-1')),
+          ),
+        ),
+      );
     });
 
     test('parses and round-trips keyless (gh-1570 AC8)', () {

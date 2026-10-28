@@ -296,6 +296,50 @@ void main() {
       expect(plain.headers, isNull);
     });
 
+    test('the registry leg inherits the saved entry’s project (issue '
+        '#1941 review)', () {
+      final entry = CustomProviderEntry(
+        name: 'codemie.lab.epam.com',
+        apiType: 'openai',
+        baseUrl: 'https://codemie.lab.epam.com/code-assistant-api/v1',
+        modelId: 'codemie-model',
+        project: 'demo-project',
+      );
+      // A ref naming the ENTRY (registry leg) with no explicit project
+      // inherits the entry's pick — the rebuild must not drop it.
+      final inherited = ModelRolesResolver(
+        config: ModelRolesConfig(
+          roles: {
+            'default': [
+              ModelRef(provider: 'codemie.lab.epam.com', modelId: 'm'),
+            ],
+          },
+        ),
+        secrets: const {'OPENAI_API_KEY': 'k'},
+        customProviders: [entry],
+        streamFactory: _neverStream,
+      ).chainFor('default')!.single.model;
+      expect(inherited.headers?['x-codemie-project'], 'demo-project');
+      // An explicit ref project wins over the entry's.
+      final explicit = ModelRolesResolver(
+        config: ModelRolesConfig(
+          roles: {
+            'default': [
+              ModelRef(
+                provider: 'codemie.lab.epam.com',
+                modelId: 'm',
+                project: 'other-project',
+              ),
+            ],
+          },
+        ),
+        secrets: const {'OPENAI_API_KEY': 'k'},
+        customProviders: [entry],
+        streamFactory: _neverStream,
+      ).chainFor('default')!.single.model;
+      expect(explicit.headers?['x-codemie-project'], 'other-project');
+    });
+
     test('1554/AC1 — chain entry timeout fields ride the built model, '
         'labeled with the role; per-field absence stays null', () {
       final resolver = ModelRolesResolver(

@@ -249,9 +249,11 @@ extension on AgentCli {
         baseUrl,
         key,
         // The active entry's project scopes the list (issue #1941) — only
-        // when the fetch targets the endpoint the live model serves, so a
-        // setup-time fetch of ANOTHER endpoint stays unscoped.
-        project: _agent.state.model.baseUrl == baseUrl
+        // when the fetch targets the endpoint the live model serves (the
+        // shared sameEndpoint rule, so a trailing-slash twin still
+        // matches), and a setup-time fetch of ANOTHER endpoint stays
+        // unscoped.
+        project: sameEndpoint(_agent.state.model.baseUrl, baseUrl)
             ? _agent.state.model.codeMieProject
             : null,
         client: modelFetchClient(providerName),
