@@ -472,10 +472,6 @@ List<Message> rewriteHistoryImages(
   final occurrences = <String, List<int>>{};
   _scanImages(degraded, entryByKey, occurrences);
   final currentIdx = _lastUserMessageIndex(degraded);
-  // gh-1934: the eviction scope — a renumbering boundary in the window
-  // evicts every history image (AC2); strip-all extends that to the
-  // current message.
-  final evictHistory = stripAll || degraded.any(_isRenumberingBoundary);
   final riding = _selectRiding(
     degraded,
     entryByKey,
@@ -483,7 +479,6 @@ List<Message> rewriteHistoryImages(
     currentIdx,
     cap,
     maxBytes,
-    evictHistory: evictHistory,
     stripAll: stripAll,
     latchedEvicted: evictedKeys,
   );
@@ -641,6 +636,16 @@ int _lastUserMessageIndex(List<Message> messages) {
   return -1;
 }
 
+/// The LAST renumbering boundary in the window — the kept region starts
+/// after it (gh-1934 AC2 eviction scope). -1 when the window was never
+/// renumbered.
+int _lastRenumberingBoundaryIndex(List<Message> messages) {
+  for (var i = messages.length - 1; i >= 0; i--) {
+    if (_isRenumberingBoundary(messages[i])) return i;
+  }
+  return -1;
+}
+
 /// The riding-set selection result.
 final class _RidingSelection {
   const _RidingSelection(
@@ -693,9 +698,10 @@ final class _RidingSelection {
 /// below; this orchestrator only sequences them.
 ///
 /// gh-1934 eviction runs BEFORE the caps: [stripAll] evicts every key
-/// period; [evictHistory] evicts every key outside the current message;
-/// [latchedEvicted] pins individual keys. Evicted keys never ride, never
-/// re-claim cap slots — they are payload placeholders from here on.
+/// period; keys first seen before the LAST renumbering boundary (outside
+/// the kept region) evict too; [latchedEvicted] pins individual keys.
+/// Evicted keys never ride, never re-claim cap slots — they are payload
+/// placeholders from here on.
 _RidingSelection _selectRiding(
   List<Message> messages,
   Map<String, ImageRegistryEntry> entryByKey,
@@ -703,7 +709,6 @@ _RidingSelection _selectRiding(
   int currentIdx,
   int cap,
   int maxBytes, {
-  required bool evictHistory,
   required bool stripAll,
   Set<String>? latchedEvicted,
 }) {
@@ -756,13 +761,19 @@ _RidingSelection _selectRiding(
     }
   }
 
-  // Compaction boundary eviction (AC2): every image outside the current
-  // message — the boundary redraws image identity (F2), so old bytes
-  // never re-carriage.
-  if (evictHistory) {
+  // Compaction boundary eviction (AC2): images OUTSIDE the kept region —
+  // first seen in a message before the LAST renumbering boundary marker —
+  // evict to placeholders. Kept-region images ride under the normal caps:
+  // gh-195 F2 pins that post-boundary history keeps riding with trusted
+  // recency selection, so the eviction cuts only what the boundary
+  // already redrew.
+  final lastBoundary = _lastRenumberingBoundaryIndex(messages);
+  if (lastBoundary >= 0) {
     for (final key in entryByKey.keys) {
       if (currentSet.contains(key)) continue;
-      evict(key, fromCurrent: false, strip: false);
+      if (occurrences[key]!.first < lastBoundary) {
+        evict(key, fromCurrent: false, strip: false);
+      }
     }
   }
 

@@ -1,11 +1,13 @@
 // gh-1934 — compaction image eviction + 413 strip, the payload-only
 // rewrite pieces of the request build:
 //
-// - a renumbering boundary (compaction summary / structured marker) in the
-//   window evicts every HISTORY image block to an
-//   `[image dropped: <key preview>]` text placeholder (AC2) — /compact
-//   provably restores sendability on a poisoned session; the current user
-//   message keeps riding its images in place (I3);
+// - image blocks OUTSIDE the kept region — first seen before the LAST
+//   renumbering boundary (compaction summary / branch summary / trim
+//   valve / structured marker) — evict to an
+//   `[image dropped: <key preview>]` text placeholder (AC2). Kept-region
+//   images ride on under the normal caps (gh-195 F2 pins their recency
+//   selection); the current user message keeps riding its images in
+//   place (I3);
 // - the recovery strip-all (413 ladder pass 2) evicts EVERY image block
 //   period, current message included;
 // - session-latched evicted keys never ride again;
