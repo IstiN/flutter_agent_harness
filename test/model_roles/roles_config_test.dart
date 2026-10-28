@@ -133,6 +133,31 @@ maxTokens: 4096
       );
     });
 
+    test('round-trips the watchdog windows and the input list', () {
+      final ref = ModelRef.fromYaml(
+        _yaml(
+          'provider: openai-completions\nmodel: qwen3\n'
+          'baseUrl: http://localhost:8080/v1\n'
+          'input: [text, image]\n'
+          'connectTimeoutMs: 2500\nstreamIdleTimeoutMs: 4000\n',
+        ),
+      );
+      expect(ref.connectTimeout, const Duration(milliseconds: 2500));
+      expect(ref.streamIdleTimeout, const Duration(milliseconds: 4000));
+      expect(ref.input, ['text', 'image']);
+      final round = ModelRef.fromYaml(_yaml(ref.toYaml()));
+      expect(round.connectTimeout, ref.connectTimeout);
+      expect(round.streamIdleTimeout, ref.streamIdleTimeout);
+      expect(round.input, ref.input);
+      // Absent windows stay absent through the round-trip.
+      final bare = ModelRef.fromYaml(
+        _yaml('provider: openai\nmodel: gpt-4o\n'),
+      );
+      expect(bare.toYaml(), isNot(contains('connectTimeoutMs')));
+      expect(bare.toYaml(), isNot(contains('streamIdleTimeoutMs')));
+      expect(bare.toYaml(), isNot(contains('input:')));
+    });
+
     test('parses and round-trips keyless (gh-1570 AC8)', () {
       final ref = ModelRef.fromYaml(
         _yaml(
