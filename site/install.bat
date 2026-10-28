@@ -23,7 +23,15 @@
 :: cmd.exe does not print them as mojibake.
 chcp 65001 >nul
 
+:: gh-1945: tell the PowerShell installer it is running on behalf of
+:: cmd.exe, so its completion recipe prints cmd-compatible commands
+:: (`irm` and `$env:` do not exist in cmd). Batch files run in-process,
+:: so the flag is cleared again after the run.
+set "FA_INSTALL_VIA=cmd"
+
 powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://fa1.dev/install.ps1 | iex"
+
+set "FA_INSTALL_VIA="
 
 :: Make fa usable in THIS console too: the user-PATH update above only takes
 :: effect in NEW windows, and the child PowerShell's session refresh dies

@@ -95,6 +95,13 @@ try {
         }
         Copy-Item "$srcLib\*" $libDir -Force -Recurse
     }
+    # Copy version.txt next to the binary so `fa --version` reports the real
+    # release (gh-1945: without it the CLI falls back to a hardcoded 0.1.0 —
+    # the installer layout probe reads <exe_dir>\version.txt).
+    $srcVersion = Join-Path $bundleDir "version.txt"
+    if (Test-Path $srcVersion) {
+        Copy-Item $srcVersion (Join-Path $binDir "version.txt") -Force
+    }
     Remove-Item -Recurse -Force $extractDir -ErrorAction SilentlyContinue
     Remove-Item $archivePath -ErrorAction SilentlyContinue
     Write-Ok "Downloaded and installed $target"
