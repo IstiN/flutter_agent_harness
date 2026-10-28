@@ -300,6 +300,10 @@ final class ModelRolesResolver {
         input: ref.input,
         thinkingLevel: ref.thinkingLevel,
         authHeader: ref.authHeader,
+        // The chain SERVES from this entry — the CodeMie project must ride
+        // it or every chain request bills the DEFAULT project (issue
+        // #1941; same shape as the authHeader leg, issue #964).
+        projectHeader: ref.project,
         // Request-scoped watchdog windows (issue #1554): the chain
         // entry's own fields are the TOP precedence layer, riding the
         // model — the streams of this role (and only this role) watch

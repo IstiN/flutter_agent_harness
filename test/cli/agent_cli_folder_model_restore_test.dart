@@ -1,6 +1,9 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart' as http_testing;
 import 'package:test/test.dart';
 
 import 'agent_cli_test_support.dart';
@@ -154,6 +157,103 @@ void main() {
 
       expect(second.agent.state.model.id, 'bedrock-model');
       expect(second.agent.state.model.authHeader, 'x-api-key');
+    },
+  );
+
+  test(
+    'a folder-state restore adopts the saved entry’s CodeMie project '
+    '(issue #1941)',
+    timeout: const Timeout(Duration(seconds: 60)),
+    () async {
+      // Boot 1: create the session on the launch default.
+      final first = cliFactory(sessionName: 'codemie-project');
+      final firstIo = ios.single;
+      final run1 = first.run();
+      firstIo.sendLine('hi');
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+      firstIo.sendLine('/exit');
+      await run1;
+
+      // The folder last used a CodeMie endpoint whose saved entry carries
+      // the selected project: the restore must ride it — a header-less
+      // restore bills the user's DEFAULT project (the reported bug: the
+      // UI shows the picked project while requests hit the exhausted
+      // default one).
+      await saveFolderModelState(
+        env,
+        sessionsRoot: '/sessions',
+        cwd: '/work',
+        providerKind: 'openai-completions',
+        modelId: 'codemie-model',
+        baseUrl: 'https://codemie.lab.epam.com/code-assistant-api/v1',
+      );
+
+      final second = AgentCli(
+        config: AgentCliConfig(
+          model: Model(
+            id: 'other-model',
+            api: 'test-api',
+            provider: 'test-provider',
+            baseUrl: 'https://example.test',
+            contextWindow: 100000,
+            maxTokens: 4096,
+          ),
+          apiKey: 'test-key',
+          env: env,
+          sessionRoot: '/sessions',
+          sessionName: 'codemie-project',
+          customProviders: CustomProviderRegistry([
+            CustomProviderEntry(
+              name: 'codemie.lab.epam.com',
+              apiType: 'openai',
+              baseUrl: 'https://codemie.lab.epam.com/code-assistant-api/v1',
+              modelId: 'codemie-model',
+              project: 'demo-project',
+            ),
+          ]),
+        ),
+        io: freshIo(),
+        streamFunction: _singleTextResponse('ok'),
+      );
+      final secondIo = ios.last;
+      final run2 = second.run();
+      secondIo.sendLine('/exit');
+      await run2;
+
+      expect(second.agent.state.model.id, 'codemie-model');
+      expect(
+        second.agent.state.model.headers?['x-codemie-project'],
+        'demo-project',
+      );
+
+      // AC5: the restored header reaches the WIRE through the REAL
+      // adapter — a fake endpoint asserts the header VALUE.
+      http.BaseRequest? seen;
+      final client = http_testing.MockClient.streaming((request, body) async {
+        seen = request;
+        return http.StreamedResponse(
+          Stream.value(
+            utf8.encode(
+              'data: {"id":"1","choices":[{"delta":{"content":"ok"}}]}\n\n'
+              'data: {"id":"1","choices":[{"delta":{},'
+              '"finish_reason":"stop"}]}\n\n'
+              'data: [DONE]\n\n',
+            ),
+          ),
+          200,
+          headers: {'content-type': 'text/event-stream'},
+        );
+      });
+      final stream = streamOpenAICompletions(
+        second.agent.state.model,
+        Context(
+          messages: [UserMessage.text('hi', timestamp: DateTime.utc(2026))],
+        ),
+        const OpenAICompletionsOptions(apiKey: 'k'),
+        client,
+      );
+      await stream.toList();
+      expect(seen!.headers['x-codemie-project'], 'demo-project');
     },
   );
 

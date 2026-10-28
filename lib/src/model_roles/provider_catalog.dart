@@ -506,6 +506,7 @@ Model buildCatalogModel(
   List<String>? input,
   String? thinkingLevel,
   String? authHeader,
+  String? projectHeader,
   Duration? connectTimeout,
   Duration? streamIdleTimeout,
   String? timeoutScopeLabel,
@@ -541,6 +542,12 @@ Model buildCatalogModel(
     contextWindow: caps.contextWindow,
     maxTokens: caps.maxTokens,
     authHeader: authHeader,
+    // The CodeMie project the model bills (issue #1941): the selected
+    // project rides EVERY request — a header-less model falls back to the
+    // user's DEFAULT project on the backend.
+    headers: projectHeader == null
+        ? null
+        : {codeMieProjectHeader: projectHeader},
     // The omit-compat flag rides the model compat (AC7); every other
     // compat field stays null so the adapter's auto-detection applies.
     compat: caps.omitMaxOutputTokens
@@ -672,6 +679,7 @@ Model buildCliDefaultModel(
   List<String>? input,
   String? thinkingLevel,
   String? authHeader,
+  String? projectHeader,
   int? contextWindow,
   int? maxTokens,
 }) {
@@ -726,6 +734,12 @@ Model buildCliDefaultModel(
     // Folder-state restores adopt the matching saved entry's authHeader
     // (issue #964) — a restored gateway endpoint without its header 401s.
     authHeader: authHeader,
+    // Restores adopt the matching saved entry's CodeMie project (issue
+    // #1941) — a restored CodeMie endpoint without its project header
+    // bills the user's DEFAULT project, not the selected one.
+    headers: projectHeader == null
+        ? null
+        : {codeMieProjectHeader: projectHeader},
     // The omit-compat flag rides the model compat (AC7, gh-1426).
     compat: caps.omitMaxOutputTokens
         ? const OpenAICompletionsCompat(omitMaxOutputTokens: true)

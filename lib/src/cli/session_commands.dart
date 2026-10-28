@@ -1258,6 +1258,15 @@ extension on AgentCli {
               config.customProviders?.entries ?? const [],
               baseUrl,
             ),
+        // The same precedence for the CodeMie project (issue #1941): a
+        // restored CodeMie endpoint without its header bills the user's
+        // DEFAULT project, not the selected one.
+        projectHeader:
+            entry?.project ??
+            projectHeaderForBaseUrl(
+              config.customProviders?.entries ?? const [],
+              baseUrl,
+            ),
       );
     } on ConfigException {
       io.writeln(
@@ -1333,6 +1342,10 @@ extension on AgentCli {
           // from the CHAIN entry, so a header-less ModelRef 401s even
           // though the agent state's model carries the header.
           authHeader: built.authHeader,
+          // Same for the CodeMie project (issue #1941): a header-less
+          // ModelRef silently re-attributes every chain request to the
+          // user's DEFAULT project.
+          project: built.codeMieProject,
         ),
       ]);
       resolver.applyToAgent(_agent);

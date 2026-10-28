@@ -89,7 +89,32 @@ maxTokens: 4096
       expect(ModelRef.fromYaml(_yaml(ref.toYaml())).authHeader, 'x-api-key');
       // Unset stays unset.
       expect(
-        ModelRef.fromYaml(_yaml('provider: openai\nmodel: gpt-4o\n')).authHeader,
+        ModelRef.fromYaml(
+          _yaml('provider: openai\nmodel: gpt-4o\n'),
+        ).authHeader,
+        isNull,
+      );
+    });
+
+    test('parses and round-trips project (issue #1941)', () {
+      final ref = ModelRef.fromYaml(
+        _yaml(
+          'provider: openai\nmodel: gpt-4o\n'
+          'project: demo-project\n',
+        ),
+      );
+      expect(ref.project, 'demo-project');
+      // JSON-quoted: a project name with a yaml special (`#`) must not
+      // round-trip as a comment (same rule as authHeader).
+      expect(ref.toYaml(), contains('project: "demo-project"'));
+      expect(
+        ModelRef.fromYaml(_yaml(ref.toYaml())).project,
+        'demo-project',
+        reason: 'round-trip',
+      );
+      // Unset stays unset.
+      expect(
+        ModelRef.fromYaml(_yaml('provider: openai\nmodel: gpt-4o\n')).project,
         isNull,
       );
     });
@@ -179,9 +204,7 @@ maxTokens: 4096
       // An unknown provider passes parse (the resolver skips it later).
       expect(
         ModelRef.fromYaml(
-          _yaml(
-            'provider: bogus\nmodel: x\nauthHeader: x-api-key\n',
-          ),
+          _yaml('provider: bogus\nmodel: x\nauthHeader: x-api-key\n'),
         ).authHeader,
         'x-api-key',
       );

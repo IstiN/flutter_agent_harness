@@ -449,6 +449,69 @@ void main() {
       expect(cli.agent.state.model.headers?['cookie'], isNotNull);
     });
 
+    test(
+      'the models list rides the picked project (issue #1941 AC1)',
+      () async {
+        final fake = FakeStreamFunction([textTurn('ok')]);
+        final registry = CustomProviderRegistry([]);
+        final modelFetchProjects = <String?>[];
+        final cli = cliFor(
+          fake.call,
+          envVarValue: (_) => null,
+          customProviders: registry,
+          modelsHttpClient: http_testing.MockClient((request) async {
+            final path = request.url.path;
+            if (path == '/code-assistant-api/v1/user') {
+              return http.Response(
+                jsonEncode({
+                  'applications': ['demo-project'],
+                }),
+                200,
+              );
+            }
+            if (path == '/code-assistant-api/v1/llm_models') {
+              modelFetchProjects.add(request.headers['x-codemie-project']);
+              return http.Response(
+                jsonEncode([
+                  {'id': 'codemie-model-1'},
+                ]),
+                200,
+              );
+            }
+            return http.Response('Not found: ${request.url}', 404);
+          }),
+          codeMieSsoAuthenticateFn: (url, onStatus) async {
+            return const CodeMieSsoCredentials(
+              cookies: {'_oauth2_proxy': 'proxy-val'},
+              apiUrl: 'https://codemie.lab.epam.com/code-assistant-api',
+              expiresAt: 9999999999999,
+            );
+          },
+        );
+        final run = cli.run();
+
+        io.sendLine('/provider codemie sso');
+        await waitForIt(
+          () => io.out.toString().contains(
+            'provider name [codemie.lab.epam.com]',
+          ),
+        );
+        io.sendLine('');
+        await waitForIt(() => io.out.toString().contains('CodeMie project'));
+        io.sendLine('1'); // demo-project (the only fetched project)
+        await waitForIt(() => io.out.toString().contains('CodeMie model'));
+        io.sendLine('1'); // pick codemie-model-1
+        await waitForIt(() => io.out.toString().contains('saved provider'));
+        io.sendLine('/exit');
+        await run;
+
+        // Every llm_models fetch (the guided pick AND the post-switch cache
+        // refresh) scopes to the selected project — never the default one.
+        expect(modelFetchProjects, isNotEmpty);
+        expect(modelFetchProjects, everyElement('demo-project'));
+      },
+    );
+
     test('/provider codemie sso rejects a bad org URL', () async {
       final fake = FakeStreamFunction([textTurn('ok')]);
       final cli = cliFor(fake.call);

@@ -16,7 +16,9 @@
 library;
 
 import '../exceptions.dart';
+import '../model.dart';
 import '../model_roles/provider_catalog.dart';
+import '../providers/codemie_sso.dart' show codeMieProjectHeader;
 import '../providers/provider_tuning.dart' show parseProviderTimeoutMs;
 
 /// The api types a custom provider can take (the adapter dialect), mapping
@@ -343,6 +345,31 @@ String? authHeaderForBaseUrl(
     if (sameEndpoint(entry.baseUrl, baseUrl)) return entry.authHeader;
   }
   return null;
+}
+
+/// The CodeMie project of the saved entry serving [baseUrl] — the ONE
+/// resolver every project-header rebuild goes through (issue #1941): boot
+/// restore, session re-apply, and the generic switch all ask the registry
+/// here instead of re-deriving the value per site. Null when [baseUrl] is
+/// null (catalog default), no saved entry matches it, or the match predates
+/// issue #1809 (no project recorded).
+String? projectHeaderForBaseUrl(
+  List<CustomProviderEntry> entries,
+  String? baseUrl,
+) {
+  if (baseUrl == null) return null;
+  for (final entry in entries) {
+    if (sameEndpoint(entry.baseUrl, baseUrl)) return entry.project;
+  }
+  return null;
+}
+
+/// The CodeMie project this live model bills (null when the model carries
+/// no project header — non-CodeMie models and pre-#1809 connects). The
+/// source for roles-chain pins: the chain serves from the ModelRef entry,
+/// so the live model's header must be COPIED onto the pin (issue #1941).
+extension CodeMieProjectOnModel on Model {
+  String? get codeMieProject => headers?[codeMieProjectHeader];
 }
 
 /// The live list of saved custom providers (shared by the CLI, which

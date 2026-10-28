@@ -248,6 +248,12 @@ extension on AgentCli {
       return fetchCodeMieModels(
         baseUrl,
         key,
+        // The active entry's project scopes the list (issue #1941) — only
+        // when the fetch targets the endpoint the live model serves, so a
+        // setup-time fetch of ANOTHER endpoint stays unscoped.
+        project: _agent.state.model.baseUrl == baseUrl
+            ? _agent.state.model.codeMieProject
+            : null,
         client: modelFetchClient(providerName),
       );
     }
@@ -360,6 +366,10 @@ extension on AgentCli {
         modelId,
         switchToken,
         stored ?? '',
+        // The saved entry's project rides the rebuilt model (issue #1941):
+        // an edit-mode re-save must not silently drop the selection and
+        // fall back to the user's DEFAULT project.
+        project: entry?.project,
         providerName: entry?.name ?? 'codemie',
       );
       return;
@@ -370,6 +380,8 @@ extension on AgentCli {
       modelId,
       switchToken,
       stored ?? '',
+      // Same project parity on the JWT leg (issue #1941).
+      project: entry?.project,
       providerName: entry?.name ?? 'codemie',
     );
   }
@@ -1942,6 +1954,7 @@ extension on AgentCli {
     String? token,
     String? tokenKeyName,
     String? authHeader,
+    String? project,
     String? customName,
   }) async {
     try {
@@ -1995,6 +2008,10 @@ extension on AgentCli {
               baseUrl: baseUrl,
               apiKeyName: pinnedKeyName,
               authHeader: authHeader,
+              // The chain serves from the pin: the CodeMie project must
+              // ride it or the pin bills the DEFAULT project (issue
+              // #1941).
+              project: project,
             ),
           ]);
           rolesResolver.applyToAgent(_agent);
@@ -2054,7 +2071,10 @@ extension on AgentCli {
         cost: builtModel.cost,
         contextWindow: builtModel.contextWindow,
         maxTokens: builtModel.maxTokens,
-        headers: builtModel.headers,
+        // The selected CodeMie project rides the rebuilt model (issue
+        // #1941): a switch without it silently re-attributes every
+        // request to the user's DEFAULT project.
+        headers: {...?builtModel.headers, codeMieProjectHeader: ?project},
         compat: builtModel.compat,
         authHeader: authHeader,
         maxImages: builtModel.maxImages,

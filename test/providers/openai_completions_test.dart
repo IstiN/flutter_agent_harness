@@ -333,7 +333,10 @@ void main() {
                 {
                   'delta': {
                     'tool_calls': [
-                      {'index': 0, 'function': {'arguments': '":"ls"}'}},
+                      {
+                        'index': 0,
+                        'function': {'arguments': '":"ls"}'},
+                      },
                     ],
                   },
                 },
@@ -432,25 +435,31 @@ void main() {
       expect(await thinkingOf(['let me ', 'think']), 'let me think');
     });
 
-    test('a 1-char punctuation stutter in reasoning deltas is trimmed', () async {
-      // gh-1655: stuttering relays re-send standalone punctuation tokens —
-      // a 1-char overlap below the old k >= 2 floor survived the dedupe,
-      // doubling every sentence-punctuation char in the thinking text.
-      expect(
-        await reasoningThinkingOf(['greeting', '.', '.', ' I should']),
-        'greeting. I should',
-      );
-      expect(await reasoningThinkingOf(["I'm Fa", ',', ',']), "I'm Fa,");
-    });
+    test(
+      'a 1-char punctuation stutter in reasoning deltas is trimmed',
+      () async {
+        // gh-1655: stuttering relays re-send standalone punctuation tokens —
+        // a 1-char overlap below the old k >= 2 floor survived the dedupe,
+        // doubling every sentence-punctuation char in the thinking text.
+        expect(
+          await reasoningThinkingOf(['greeting', '.', '.', ' I should']),
+          'greeting. I should',
+        );
+        expect(await reasoningThinkingOf(["I'm Fa", ',', ',']), "I'm Fa,");
+      },
+    );
 
-    test('an ellipsis split across reasoning deltas survives untrimmed', () async {
-      // The second delta repeats the tail char INSIDE itself — a legit "…"
-      // continuation, not a seam, so the 1-char trim must not fire.
-      expect(
-        await reasoningThinkingOf(['hmm', '.', '..', ' done']),
-        'hmm... done',
-      );
-    });
+    test(
+      'an ellipsis split across reasoning deltas survives untrimmed',
+      () async {
+        // The second delta repeats the tail char INSIDE itself — a legit "…"
+        // continuation, not a seam, so the 1-char trim must not fire.
+        expect(
+          await reasoningThinkingOf(['hmm', '.', '..', ' done']),
+          'hmm... done',
+        );
+      },
+    );
 
     test('streams reasoning deltas as thinking blocks', () async {
       final client = sseClient(
@@ -909,8 +918,10 @@ void main() {
       expect(message, contains('429'));
       expect(message, contains('Rate limit reached'));
       expect(message.contains('{'), isFalse);
-      expect(error.error.rateLimit?.rawBody,
-          '{"error":{"message":"Rate limit exceeded"}}');
+      expect(
+        error.error.rateLimit?.rawBody,
+        '{"error":{"message":"Rate limit exceeded"}}',
+      );
       expect(error.retryAfter, isNull);
       expect(await stream.result, same(error.error));
     });
@@ -958,6 +969,47 @@ void main() {
         expect(authExpiredProvider(error.error.errorMessage ?? ''), 'codemie');
       },
     );
+
+    test('the CodeMie project header rides the wire from model.headers '
+        '(issue #1941)', () async {
+      final requests = <http.BaseRequest>[];
+      final client = http_testing.MockClient.streaming((request, body) async {
+        requests.add(request);
+        return http.StreamedResponse(
+          Stream.value(utf8.encode(okSse)),
+          200,
+          headers: {'content-type': 'text/event-stream'},
+        );
+      });
+
+      final codemieModel = Model(
+        id: 'gpt-4o',
+        api: 'openai-completions',
+        provider: 'codemie',
+        baseUrl: 'https://codemie.lab.epam.com/code-assistant-api/v1',
+        contextWindow: 128000,
+        maxTokens: 8192,
+        headers: {'x-codemie-project': 'demo-project'},
+      );
+      await streamOpenAICompletions(
+        codemieModel,
+        simpleContext(),
+        const OpenAICompletionsOptions(),
+        client,
+      ).toList();
+      expect(requests.single.headers['x-codemie-project'], 'demo-project');
+
+      // A model WITHOUT the project header sends none — the backend's
+      // default-project fallback is the ABSENCE semantics, never an empty
+      // value.
+      await streamOpenAICompletions(
+        testModel,
+        simpleContext(),
+        const OpenAICompletionsOptions(apiKey: 'k'),
+        client,
+      ).toList();
+      expect(requests.last.headers.containsKey('x-codemie-project'), isFalse);
+    });
 
     test(
       '200 with a JSON body (gateway error object) surfaces the body',
@@ -1497,44 +1549,38 @@ void main() {
         expect(message.errorMessage, contains('unexpected_state'));
       });
 
-      test(
-        'E1: unexpected_state after completed text resumes within the '
-        'budget (issue #1168)',
-        () async {
-          const postContentSse =
-              'data: {"id":"chatcmpl-1","choices":[{"delta":{"content":"par'
-              'tial"}}]}\n\n'
-              'data: {"id":"chatcmpl-1","choices":[{"delta":{},'
-              '"finish_reason":"unexpected_state"}]}\n\n'
-              'data: [DONE]\n\n';
-          var calls = 0;
-          final client = http_testing.MockClient.streaming((
-            request,
-            body,
-          ) async {
-            calls++;
-            return http.StreamedResponse(
-              Stream.value(utf8.encode(postContentSse)),
-              200,
-              headers: {'content-type': 'text/event-stream'},
-            );
-          });
+      test('E1: unexpected_state after completed text resumes within the '
+          'budget (issue #1168)', () async {
+        const postContentSse =
+            'data: {"id":"chatcmpl-1","choices":[{"delta":{"content":"par'
+            'tial"}}]}\n\n'
+            'data: {"id":"chatcmpl-1","choices":[{"delta":{},'
+            '"finish_reason":"unexpected_state"}]}\n\n'
+            'data: [DONE]\n\n';
+        var calls = 0;
+        final client = http_testing.MockClient.streaming((request, body) async {
+          calls++;
+          return http.StreamedResponse(
+            Stream.value(utf8.encode(postContentSse)),
+            200,
+            headers: {'content-type': 'text/event-stream'},
+          );
+        });
 
-          final events = await wrappedCall(client).toList();
-          final error = events.last as ErrorEvent;
+        final events = await wrappedCall(client).toList();
+        final error = events.last as ErrorEvent;
 
-          // Issue #1168: the adapter finalizes the open text block when
-          // the finish_reason arrives, so the failure lands AFTER a
-          // completed block - the vendor-transient class resumes from
-          // that prefix under the standard budget instead of standing
-          // (#312 AC4's unconditional stand-rule is retired for
-          // resumable failures).
-          expect(calls, 3, reason: 'the default attempt budget');
-          expect(error.reason, StopReason.error);
-          expect(error.error.rawStopReason, 'unexpected_state');
-          expect(error.error.errorMessage, contains('unexpected_state'));
-        },
-      );
+        // Issue #1168: the adapter finalizes the open text block when
+        // the finish_reason arrives, so the failure lands AFTER a
+        // completed block - the vendor-transient class resumes from
+        // that prefix under the standard budget instead of standing
+        // (#312 AC4's unconditional stand-rule is retired for
+        // resumable failures).
+        expect(calls, 3, reason: 'the default attempt budget');
+        expect(error.reason, StopReason.error);
+        expect(error.error.rawStopReason, 'unexpected_state');
+        expect(error.error.errorMessage, contains('unexpected_state'));
+      });
     });
 
     test(
@@ -1809,67 +1855,71 @@ void main() {
       expect(capturedHeaders!.containsKey('authorization'), isFalse);
     });
 
-    test('authHeader sends the raw named header, no Bearer (issue #964)',
-        () async {
-      Map<String, String>? capturedHeaders;
-      final client = http_testing.MockClient.streaming((request, body) async {
-        capturedHeaders = request.headers;
-        return http.StreamedResponse(Stream.value(utf8.encode(okSse)), 200);
-      });
+    test(
+      'authHeader sends the raw named header, no Bearer (issue #964)',
+      () async {
+        Map<String, String>? capturedHeaders;
+        final client = http_testing.MockClient.streaming((request, body) async {
+          capturedHeaders = request.headers;
+          return http.StreamedResponse(Stream.value(utf8.encode(okSse)), 200);
+        });
 
-      // An AWS API Gateway fronting Bedrock rejects `Authorization: Bearer`
-      // and requires `x-api-key` (issue #964).
-      final model = Model(
-        id: 'gpt-4o-mini',
-        api: 'openai-completions',
-        provider: 'openai',
-        baseUrl: 'https://gateway.example.com/v1',
-        contextWindow: 128000,
-        maxTokens: 16384,
-        authHeader: 'x-api-key',
-      );
+        // An AWS API Gateway fronting Bedrock rejects `Authorization: Bearer`
+        // and requires `x-api-key` (issue #964).
+        final model = Model(
+          id: 'gpt-4o-mini',
+          api: 'openai-completions',
+          provider: 'openai',
+          baseUrl: 'https://gateway.example.com/v1',
+          contextWindow: 128000,
+          maxTokens: 16384,
+          authHeader: 'x-api-key',
+        );
 
-      final stream = streamOpenAICompletions(
-        model,
-        simpleContext(),
-        const OpenAICompletionsOptions(apiKey: 'gw-key'),
-        client,
-      );
-      await stream.result;
+        final stream = streamOpenAICompletions(
+          model,
+          simpleContext(),
+          const OpenAICompletionsOptions(apiKey: 'gw-key'),
+          client,
+        );
+        await stream.result;
 
-      expect(capturedHeaders!['x-api-key'], 'gw-key');
-      expect(capturedHeaders!.containsKey('authorization'), isFalse);
-    });
+        expect(capturedHeaders!['x-api-key'], 'gw-key');
+        expect(capturedHeaders!.containsKey('authorization'), isFalse);
+      },
+    );
 
-    test('authHeader without a key still sends no auth header (issue #964)',
-        () async {
-      Map<String, String>? capturedHeaders;
-      final client = http_testing.MockClient.streaming((request, body) async {
-        capturedHeaders = request.headers;
-        return http.StreamedResponse(Stream.value(utf8.encode(okSse)), 200);
-      });
+    test(
+      'authHeader without a key still sends no auth header (issue #964)',
+      () async {
+        Map<String, String>? capturedHeaders;
+        final client = http_testing.MockClient.streaming((request, body) async {
+          capturedHeaders = request.headers;
+          return http.StreamedResponse(Stream.value(utf8.encode(okSse)), 200);
+        });
 
-      final model = Model(
-        id: 'gpt-4o-mini',
-        api: 'openai-completions',
-        provider: 'openai',
-        baseUrl: 'https://gateway.example.com/v1',
-        contextWindow: 128000,
-        maxTokens: 16384,
-        authHeader: 'x-api-key',
-      );
+        final model = Model(
+          id: 'gpt-4o-mini',
+          api: 'openai-completions',
+          provider: 'openai',
+          baseUrl: 'https://gateway.example.com/v1',
+          contextWindow: 128000,
+          maxTokens: 16384,
+          authHeader: 'x-api-key',
+        );
 
-      final stream = streamOpenAICompletions(
-        model,
-        simpleContext(),
-        const OpenAICompletionsOptions(),
-        client,
-      );
-      await stream.result;
+        final stream = streamOpenAICompletions(
+          model,
+          simpleContext(),
+          const OpenAICompletionsOptions(),
+          client,
+        );
+        await stream.result;
 
-      expect(capturedHeaders!.containsKey('x-api-key'), isFalse);
-      expect(capturedHeaders!.containsKey('authorization'), isFalse);
-    });
+        expect(capturedHeaders!.containsKey('x-api-key'), isFalse);
+        expect(capturedHeaders!.containsKey('authorization'), isFalse);
+      },
+    );
 
     test(
       'an explicit authorization header applies without an API key',

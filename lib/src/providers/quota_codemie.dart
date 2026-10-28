@@ -14,6 +14,7 @@ import 'dart:convert';
 
 import 'package:http/http.dart' as http;
 
+import 'codemie_sso.dart' show codeMieProjectHeader;
 import 'quota.dart';
 
 class CodeMieQuotaAdapter implements QuotaAdapter, QuotaAwareProvider {
@@ -22,6 +23,7 @@ class CodeMieQuotaAdapter implements QuotaAdapter, QuotaAwareProvider {
     required this.resolveSessionCookie,
     DateTime Function()? now,
     this.limitsEndpoint,
+    this.resolveProject,
   }) : now = now ?? _defaultNow;
 
   /// Null (default) => dark: no request is ever made, reason says why.
@@ -29,6 +31,13 @@ class CodeMieQuotaAdapter implements QuotaAdapter, QuotaAwareProvider {
 
   final http.Client client;
   final Future<String?> Function() resolveSessionCookie;
+
+  /// Resolves the selected CodeMie project for the quota fetch (issue
+  /// #1941): the SAME project the model requests bill. Null (or a null
+  /// result) keeps the request unscoped — display and billing must never
+  /// diverge once the endpoint is wired.
+  final String? Function()? resolveProject;
+
   final DateTime Function() now;
 
   static DateTime _defaultNow() => DateTime.now().toUtc();
@@ -45,11 +54,16 @@ class CodeMieQuotaAdapter implements QuotaAdapter, QuotaAwareProvider {
     if (cookie == null || cookie.isEmpty) {
       return const QuotaFetchResult.unknown('no session');
     }
+    final project = resolveProject?.call();
     final http.Response response;
     try {
       response = await client.get(
         endpoint,
-        headers: {'Cookie': cookie, 'Accept': 'application/json'},
+        headers: {
+          'Cookie': cookie,
+          'Accept': 'application/json',
+          codeMieProjectHeader: ?project,
+        },
       );
     } on http.ClientException catch (e) {
       return QuotaFetchResult.unknown('request failed: ${e.message}');
@@ -67,7 +81,9 @@ class CodeMieQuotaAdapter implements QuotaAdapter, QuotaAwareProvider {
     }
     final quota = parseCodeMieQuota(body, now: now());
     if (quota == null) {
-      return const QuotaFetchResult.unknown('invalid response: unexpected shape');
+      return const QuotaFetchResult.unknown(
+        'invalid response: unexpected shape',
+      );
     }
     return QuotaFetchResult.ok(quota);
   }

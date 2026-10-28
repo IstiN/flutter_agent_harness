@@ -69,6 +69,7 @@ final class ModelRef {
     this.input,
     this.thinkingLevel,
     this.authHeader,
+    this.project,
     this.connectTimeout,
     this.streamIdleTimeout,
     this.keyless = false,
@@ -140,6 +141,10 @@ final class ModelRef {
           input: _optionalInput(entry, role),
           thinkingLevel: _optionalThinkingLevel(entry, role),
           authHeader: authHeader,
+          // The CodeMie project the chain bills (issue #1941): a pin
+          // without it serves from the chain and bills the user's DEFAULT
+          // project — the selected one is silently ignored.
+          project: _optionalString(entry, 'project', role),
           // Per-provider stall-recovery tuning (issue #1398): the watchdog
           // knobs ride the chain entry, same place baseUrl/keys live.
           connectTimeout: parseProviderTimeoutMs(
@@ -283,6 +288,11 @@ final class ModelRef {
   /// Null keeps the Bearer default.
   final String? authHeader;
 
+  /// The CodeMie project the entry's requests bill (`project:`, issue
+  /// #1941) — rides the chain model as the `x-codemie-project` header. Null
+  /// keeps the backend's default-project fallback.
+  final String? project;
+
   /// Per-provider connect/first-headers watchdog override
   /// (`connectTimeoutMs`, issue #1398). Null keeps the global
   /// `providerTimeouts:` value, then the 180 s default.
@@ -322,6 +332,11 @@ final class ModelRef {
       // scalar would round-trip as a comment/alias. JSON quoting keeps the
       // round-trip lossless (issue #964 review).
       buffer.write('authHeader: ${jsonEncode(authHeader)}\n');
+    }
+    if (project != null) {
+      // Project names are free text too (a `#` would comment the line) —
+      // same JSON-quoting as authHeader above.
+      buffer.write('project: ${jsonEncode(project)}\n');
     }
     if (connectTimeout != null) {
       buffer.write('connectTimeoutMs: ${connectTimeout!.inMilliseconds}\n');

@@ -13,6 +13,24 @@ block a release again.
 
 ## Unreleased
 
+- fix(#1941): the selected CodeMie project now rides EVERY model request.
+  The header is baked into `Model.headers` only by the connect-time
+  switches (gh-1809), so every other rebuild silently dropped
+  `x-codemie-project` — and the backend bills a header-less request against
+  the user's DEFAULT project (codemie-code `header-injection.plugin.ts`
+  contract): the reported symptom is limit-exhausted from the exhausted
+  default project despite picking a budgeted one. Rebuilds now re-resolve
+  the project from the saved entry through one helper
+  (`projectHeaderForBaseUrl`): the boot folder-state restore (JWT entries
+  previously booted header-less — the SSO cookie patch was the only boot
+  carrier), the session-resume re-apply (`_buildRestoredModel`), the
+  roles-chain failover (`ModelRef.project`, mirroring the #964 authHeader
+  leg), the roles-mode `/model` + settings-flow pins, and the generic
+  `/provider` switch. The models list (`/llm_models`, SSO + JWT + guided
+  setup + entry dispatch) and the quota adapter (dark until pinned) scope
+  themselves to the same project, so display and billing can never diverge.
+  Tests pin the header VALUE on the wire (real adapter over a fake
+  endpoint) for the restored and failed-over models.
 - fix(gh-1931): one render per tool call on the non-TUI console. Line mode
   and the headless `-p` log printed every executed call twice — a start row
   (`• bash · cmd`, no elapsed) followed by the end row (`✓/✗ bash · cmd

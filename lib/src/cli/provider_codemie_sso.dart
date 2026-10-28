@@ -211,7 +211,7 @@ extension ProviderCodeMieSso on AgentCli {
       // Cookie-header auth: the adapter sees an empty apiKey (no Bearer) and
       // merges model.headers, adding `cookie: <full cookie jar>` — plus the
       // picked project (issue #1809 AC4).
-      headers: {'cookie': cookie, 'x-codemie-project': ?project},
+      headers: {'cookie': cookie, codeMieProjectHeader: ?project},
       compat: builtModel.compat,
       maxImages: builtModel.maxImages,
     );
@@ -238,16 +238,19 @@ extension ProviderCodeMieSso on AgentCli {
   /// Step 2: fetch and pick a CodeMie model (or manual entry).
   /// [providerName] keys the `providers:` `network:` proxy gate (issue
   /// #1921) — the fetch rides the same bound client as the chat stream.
+  /// [project] rides the `x-codemie-project` header (issue #1941).
   Future<String?> _codemiePickModel(
     String apiBase,
     String cookie, {
     required String providerName,
+    String? project,
   }) async {
     io.writeln('fetching CodeMie models...');
     final models =
         await fetchCodeMieModels(
           '$apiBase/v1',
           cookie,
+          project: project,
           client: modelFetchClient(providerName),
         ).catchError((e) {
           return const <String>[];
