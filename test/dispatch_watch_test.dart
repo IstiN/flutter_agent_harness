@@ -391,12 +391,24 @@ class DwLive {
     );
   }
 
-  Future<int> finish({Duration timeout = const Duration(seconds: 15)}) =>
+  /// Waits for the watcher to exit. The default budget is deliberately
+  /// generous: a trap fires only after the foreground child it was
+  /// deferred behind completes (bash semantics — the stub gh/sleep chain
+  /// between polls), and on a starved runner that handoff has outlived
+  /// 15s (hostile ambient env red on commit b93d825b: `Bad state: process
+  /// did not exit after signal` in the INT orphan-cancel test). On
+  /// timeout the watcher is SIGKILLed and the error carries [diagnostics]
+  /// — a bare state error here is undebuggable on CI, the same rule the
+  /// #1924 hardening applied to the exit-code expectations.
+  Future<int> finish({Duration timeout = const Duration(seconds: 30)}) =>
       process.exitCode.timeout(
         timeout,
         onTimeout: () {
           process.kill(ProcessSignal.sigkill);
-          throw StateError('process did not exit after signal');
+          throw StateError(
+            'process did not exit after signal — diagnostics:\n'
+            '${diagnostics()}',
+          );
         },
       );
 }
@@ -954,6 +966,55 @@ void main() {
         reason: 'exactly one targeted cancel',
       );
     });
+  });
+
+  // ── DwLive.finish — the wedged signal handoff must self-identify ────────
+  // Hostile ambient env red on commit b93d825b (CI job 122558113139): the
+  // INT orphan-cancel test above died with the BARE
+  // `Bad state: process did not exit after signal` — finish()'s budget
+  // fired, SIGKILLed the watcher and threw WITHOUT DwLive.diagnostics(),
+  // so the wedge was undebuggable on CI (the last failure surface the
+  // #1924 hardening had not covered: the exit-code expectations carry
+  // diagnostics, the timeout path did not). The deferral itself is real
+  // bash semantics — SIGINT landing while the script sits in a FOREGROUND
+  // child (stub gh, sleep) waits for it before running the trap — and
+  // under runner-scale fork/exec starvation that handoff outlived 15s.
+  group('DwLive.finish — wedged signal handoff self-identifies', () {
+    test(
+      'the timeout failure carries the diagnostics, not a bare state error',
+      () async {
+        final dir = _fixtureDir('finish-wedge-diagnostics');
+        _seed(dir, const {});
+        // The exact deferral shape CI starved past the budget: the signal
+        // lands while bash sits in a foreground child; the installed trap
+        // waits for it, so the process outlives finish()'s patience. The
+        // `ready` handshake mirrors the signal tests' poll anchor (#1924):
+        // INT must land AFTER the trap line ran, never inside the startup
+        // window.
+        final process = await Process.start('bash', [
+          '-c',
+          'trap "exit 130" INT; echo ready; sleep 5',
+        ]);
+        final live = DwLive(process, dir, '${dir.path}/log');
+        await process.stdout
+            .transform(utf8.decoder)
+            .firstWhere((chunk) => chunk.contains('ready'));
+        process.kill(ProcessSignal.sigint);
+        await expectLater(
+          live.finish(timeout: const Duration(milliseconds: 300)),
+          throwsA(
+            isA<StateError>().having(
+              (e) => e.message,
+              'message',
+              allOf(
+                contains('process did not exit after signal'),
+                contains('--- stub gh log (tail) ---'),
+              ),
+            ),
+          ),
+        );
+      },
+    );
   });
 
   // ── workflow structural lint ───────────────────────────────────────────
