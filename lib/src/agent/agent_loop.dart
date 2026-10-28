@@ -39,8 +39,11 @@ import 'dart:convert';
 
 import '../cancel_token.dart';
 import '../compaction/token_estimation.dart' show estimateRequestTokens;
-import '../image_overflow.dart' show classifyImageCapError;
+import '../image_overflow.dart'
+    show classifyImageCapError, isPayloadTooLargeError;
 import '../overflow.dart' show classifyMessageCapError;
+import 'image_recovery.dart'
+    show ImagePayloadRecoveryState, ImageRecoveryEvent, imageRecoveryNotice;
 // The supervisor's cancel marker + the soft-yield hand-back marker live in
 // the pure-data stuck_tool module (gh-1054 review) so the tool layer can
 // recognize a supervisor-driven yield; re-exported for the loop's
@@ -82,6 +85,7 @@ part 'agent_loop_foreground_budget.dart';
 part 'agent_loop_empty_completion.dart';
 part 'agent_loop_finalize_gate.dart';
 part 'agent_loop_message_cap.dart';
+part 'agent_loop_image_recovery.dart';
 part 'agent_loop_steering_yield.dart';
 
 /// The default stall-window provider: minutes-class patience for
@@ -448,6 +452,7 @@ final class AgentLoopConfig {
     this.reportedOrphanKeys,
     this.budgetLineProvider,
     this.imageCapLatches,
+    this.imageRecovery,
     this.onTruncatedToolCall,
     this.steeringStallWindow = _defaultSteeringStallWindow,
     this.steeringInterruptNotice,
@@ -651,6 +656,11 @@ final class AgentLoopConfig {
   /// not remembered across turns.
   final Map<String, int>? imageCapLatches;
 
+  /// gh-1934: session-scoped 413 image-payload recovery state (learned
+  /// budget, strip-all latch, evicted-key latch, armed note; full contract
+  /// in `image_recovery.dart`). Hosts own it (as [imageCapLatches]).
+  final ImagePayloadRecoveryState? imageRecovery;
+
   /// Returns a copy with [model] replaced (used by [prepareNextTurn]).
   AgentLoopConfig copyWith({Model? model}) {
     return AgentLoopConfig(
@@ -682,6 +692,7 @@ final class AgentLoopConfig {
       reportedOrphanKeys: reportedOrphanKeys,
       budgetLineProvider: budgetLineProvider,
       imageCapLatches: imageCapLatches,
+      imageRecovery: imageRecovery,
       onTruncatedToolCall: onTruncatedToolCall,
       steeringStallWindow: steeringStallWindow,
       steeringInterruptNotice: steeringInterruptNotice,
@@ -1715,6 +1726,7 @@ Future<(Context, ToolPairingRepairReport)> _buildRequestContext(
   String? misuseNote,
   int? capCoalesceTarget,
   int? imageCapOverride,
+  ImagePayloadRecoveryState? recovery,
 }) async {
   // pi applies transformContext (then convertToLlm) before each provider
   // call; only the request payload is rewritten, never the transcript.
@@ -1743,6 +1755,7 @@ Future<(Context, ToolPairingRepairReport)> _buildRequestContext(
     modelId: config.model.id,
     catalogMaxImages: config.model.maxImages,
     capOverride: imageCapOverride,
+    recovery: recovery,
   );
   if (!identical(rewritten, requestContext.messages)) {
     requestContext = Context(
@@ -1751,6 +1764,7 @@ Future<(Context, ToolPairingRepairReport)> _buildRequestContext(
       tools: requestContext.tools,
     );
   }
+  requestContext = _appendRecoveryNote(requestContext, recovery);
   // gh-1409: compaction-pinned skill operative lines ride every
   // post-boundary request as the verbatim carrier (AC2) — payload-only,
   // the transcript is never touched; the kill switch

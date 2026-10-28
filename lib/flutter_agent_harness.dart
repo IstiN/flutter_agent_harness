@@ -13,6 +13,7 @@ export 'src/agent/empty_completion.dart';
 export 'src/agent/misuse_breaker.dart';
 export 'src/agent/image_registry.dart';
 export 'src/agent/image_drop_ux.dart';
+export 'src/agent/image_recovery.dart';
 export 'src/agent/message_cap.dart';
 export 'src/agent/stuck_tool.dart';
 export 'src/agent/foreground_call_budget.dart';

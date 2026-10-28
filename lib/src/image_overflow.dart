@@ -57,3 +57,54 @@ ImageCapRefusal? classifyImageCapError(String? errorMessage) {
   }
   return null;
 }
+
+/// gh-1934: payload-size (413-class) refusal patterns — the recovery
+/// ladder's trigger family, the image-byte twin of the image-count table
+/// above. Deliberately conservative shapes only: a false positive burns
+/// two bounded recovery passes on an unrelated failure, so a bare `413`
+/// digit never matches without HTTP/error-code context (a number inside
+/// prose — `line 413`, `41305 tokens` — is not a refusal).
+final _payloadTooLargePatterns = [
+  // The original repro's shape (GitHub Copilot API): `413: Request
+  // Entity Too Large`.
+  RegExp(r'request entity too large', caseSensitive: false),
+  RegExp(r'payload too large', caseSensitive: false),
+  RegExp(r'request body too large', caseSensitive: false),
+  RegExp(r'request too large', caseSensitive: false),
+  // Anthropic HTTP 413 body.
+  RegExp(r'request_too_large', caseSensitive: false),
+  // A message LEADING with the status code (`413: …`, `413 (no body)` —
+  // the Cerebras shape).
+  RegExp(r'^\s*413\s*[:(]'),
+  // HTTP-context spellings: `HTTP 413`, `HTTP/1.1 413`, `status code: 413`,
+  // `{"error":{"code":413}}`.
+  RegExp(r'\bhttps?/?\d*\.?\d*\s*413\b', caseSensitive: false),
+  RegExp(r'\bstatus( code)?\s*[:=]\s*"?413\b', caseSensitive: false),
+  RegExp(r'\bcode"\]?\s*[:=]\s*413\b', caseSensitive: false),
+];
+
+/// gh-1934: rate-limit/throttling wordings that own a message — the same
+/// guard set `overflow.dart` applies, mirrored locally (the file stays
+/// import-free). A `413` digit inside one never classifies.
+final _rateLimitGuardPatterns = [
+  RegExp(r'^(Throttling error|Service unavailable):', caseSensitive: false),
+  RegExp(r'rate limit', caseSensitive: false),
+  RegExp(r'too many requests', caseSensitive: false),
+];
+
+/// gh-1934: whether [errorMessage] is a payload-size (413-class) refusal —
+/// the provider rejected the REQUEST SIZE (not the token count and not the
+/// image count; those classify in `overflow.dart` /
+/// [classifyImageCapError]). The 413 recovery ladder's trigger; rate-limit
+/// and throttling wordings own the message (same guard as the tables
+/// above), so a `413` digit inside one never classifies.
+bool isPayloadTooLargeError(String? errorMessage) {
+  if (errorMessage == null || errorMessage.isEmpty) return false;
+  final isNonOverflow = _rateLimitGuardPatterns.any(
+    (pattern) => pattern.hasMatch(errorMessage),
+  );
+  if (isNonOverflow) return false;
+  return _payloadTooLargePatterns.any(
+    (pattern) => pattern.hasMatch(errorMessage),
+  );
+}
