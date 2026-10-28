@@ -366,15 +366,6 @@
   ],
   "issue-1602": [
     {
-      "leg": "dev",
-      "at": "2026-10-14T12:39:56Z",
-      "prompt": 369732,
-      "completion": 60274,
-      "total": 430006,
-      "cacheRead": 17190592,
-      "model": "glm-5.3-flash"
-    },
-    {
       "leg": "review",
       "at": "2026-10-14T15:12:38Z",
       "prompt": 90805,
@@ -4428,6 +4419,15 @@
       "completion": 8334,
       "total": 94788,
       "cacheRead": 1111104,
+      "model": "glm-5.3-flash"
+    },
+    {
+      "leg": "rework",
+      "at": "2026-10-28T13:09:46Z",
+      "prompt": 342042,
+      "completion": 30865,
+      "total": 372907,
+      "cacheRead": 16301952,
       "model": "glm-5.3-flash"
     }
   ]
