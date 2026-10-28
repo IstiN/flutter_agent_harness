@@ -1029,6 +1029,11 @@ jobs:
           # ~24-minute archive (run 40455519923: gym rejected the cert on
           # BOTH targets, Runner and FaLiveActivity, after ~24 min) — now
           # the mismatch aborts in seconds, BEFORE flutter build.
+          # gh-1937: the extractor dropped every cert of a REAL Apple
+          # profile — the portal serializes each <data> element on ONE
+          # line, and the opening rule consumed the trailing </data> with
+          # `next` so the closing rule never printed. Handle the
+          # single-line shape (print immediately) alongside the wrapped one.
           IOS_CERT_SERIAL=$(security find-certificate -c "$IOS_CERT_NAME" -p build.keychain \
             | openssl x509 -noout -serial | sed 's/^serial=//')
           profile_contains_identity() {
@@ -1036,7 +1041,8 @@ jobs:
             serials=$(security cms -D -i "$profile" \
               | awk '/<key>DeveloperCertificates<\/key>/{grab=1; next}
                      grab && /<\/array>/{grab=0; next}
-                     grab && /<data>/{indata=1; buf=""; sub(/.*<data>/, ""); if ($0 != "") {gsub(/[ \t\r]/, ""); buf=$0}; next}
+                     grab && /<data>/{line=$0; sub(/.*<data>/, "", line); sub(/<\/data>.*/, "", line); gsub(/[ \t\r]/, "", line);
+                       if ($0 ~ /<\/data>/) {if (line != "") print line; indata=0} else {indata=1; buf=line}; next}
                      grab && indata && /<\/data>/{sub(/<\/data>.*/, ""); gsub(/[ \t\r]/, ""); print buf $0; indata=0; next}
                      grab && indata {gsub(/[ \t\r]/, ""); buf = buf $0}' \
               | while IFS= read -r der; do
