@@ -276,6 +276,9 @@ extension SlashCommandDispatch on AgentCli {
             // OQ1 lean (b): no pinned limits endpoint — the adapter stays
             // dark until the endpoint is confirmed, and renders its reason.
             resolveSessionCookie: _resolveCodeMieSessionCookie,
+            // The selected project scopes the fetch too (issue #1941) —
+            // display and billing must name the same project.
+            resolveProject: _resolveCodeMieProject,
           ),
         },
         // DIAL-class endpoints carry no per-key billing surface.
@@ -293,6 +296,16 @@ extension SlashCommandDispatch on AgentCli {
         .firstOrNull;
     return entry == null ? null : _resolveCodeMieCookie(entry.keyName);
   }
+
+  /// The CodeMie project of the saved entry serving the LIVE model's
+  /// endpoint (issue #1941): the quota fetch must name the SAME project
+  /// the model requests bill — resolved through the ONE resolver
+  /// ([projectHeaderForBaseUrl]), never a first-match-with-project scan
+  /// that can name a different account's pick.
+  String? _resolveCodeMieProject() => projectHeaderForBaseUrl(
+    config.customProviders?.entries ?? const [],
+    _agent.state.model.baseUrl,
+  );
 
   /// The `/quota` table (AC4): one row per configured provider, rendered
   /// cache-only. Cold rows show `…`; unknown rows carry the adapter's

@@ -89,9 +89,73 @@ maxTokens: 4096
       expect(ModelRef.fromYaml(_yaml(ref.toYaml())).authHeader, 'x-api-key');
       // Unset stays unset.
       expect(
-        ModelRef.fromYaml(_yaml('provider: openai\nmodel: gpt-4o\n')).authHeader,
+        ModelRef.fromYaml(
+          _yaml('provider: openai\nmodel: gpt-4o\n'),
+        ).authHeader,
         isNull,
       );
+    });
+
+    test('parses and round-trips project (issue #1941)', () {
+      final ref = ModelRef.fromYaml(
+        _yaml(
+          'provider: openai\nmodel: gpt-4o\n'
+          'project: demo-project\n',
+        ),
+      );
+      expect(ref.project, 'demo-project');
+      // JSON-quoted: a project name with a yaml special (`#`) must not
+      // round-trip as a comment (same rule as authHeader).
+      expect(ref.toYaml(), contains('project: "demo-project"'));
+      expect(
+        ModelRef.fromYaml(_yaml(ref.toYaml())).project,
+        'demo-project',
+        reason: 'round-trip',
+      );
+      // Unset stays unset.
+      expect(
+        ModelRef.fromYaml(_yaml('provider: openai\nmodel: gpt-4o\n')).project,
+        isNull,
+      );
+      // The project rides the wire RAW — a non-Latin-1 value is refused at
+      // parse time instead of killing the request mid-chat (issue #1941).
+      expect(
+        () => ModelRef.fromYaml(
+          _yaml('provider: openai\nmodel: gpt-4o\nproject: репо\n'),
+        ),
+        throwsA(
+          isA<ConfigException>().having(
+            (e) => e.message,
+            'message',
+            allOf(contains('"project"'), contains('Latin-1')),
+          ),
+        ),
+      );
+    });
+
+    test('round-trips the watchdog windows and the input list', () {
+      final ref = ModelRef.fromYaml(
+        _yaml(
+          'provider: openai-completions\nmodel: qwen3\n'
+          'baseUrl: http://localhost:8080/v1\n'
+          'input: [text, image]\n'
+          'connectTimeoutMs: 2500\nstreamIdleTimeoutMs: 4000\n',
+        ),
+      );
+      expect(ref.connectTimeout, const Duration(milliseconds: 2500));
+      expect(ref.streamIdleTimeout, const Duration(milliseconds: 4000));
+      expect(ref.input, ['text', 'image']);
+      final round = ModelRef.fromYaml(_yaml(ref.toYaml()));
+      expect(round.connectTimeout, ref.connectTimeout);
+      expect(round.streamIdleTimeout, ref.streamIdleTimeout);
+      expect(round.input, ref.input);
+      // Absent windows stay absent through the round-trip.
+      final bare = ModelRef.fromYaml(
+        _yaml('provider: openai\nmodel: gpt-4o\n'),
+      );
+      expect(bare.toYaml(), isNot(contains('connectTimeoutMs')));
+      expect(bare.toYaml(), isNot(contains('streamIdleTimeoutMs')));
+      expect(bare.toYaml(), isNot(contains('input:')));
     });
 
     test('parses and round-trips keyless (gh-1570 AC8)', () {
@@ -179,9 +243,7 @@ maxTokens: 4096
       // An unknown provider passes parse (the resolver skips it later).
       expect(
         ModelRef.fromYaml(
-          _yaml(
-            'provider: bogus\nmodel: x\nauthHeader: x-api-key\n',
-          ),
+          _yaml('provider: bogus\nmodel: x\nauthHeader: x-api-key\n'),
         ).authHeader,
         'x-api-key',
       );

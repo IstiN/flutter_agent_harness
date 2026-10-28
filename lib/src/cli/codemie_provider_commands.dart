@@ -228,6 +228,8 @@ extension on AgentCli {
         await fetchCodeMieModelsWithJwt(
           '$apiBase/v1',
           jwtToken,
+          // The just-picked project scopes the list (issue #1941).
+          project: project,
           // The best-known identity at fetch time: the existing entry's
           // name (re-login/refresh), else the CodeMie default. First-add
           // cannot know the user-chosen name yet (the name step runs
@@ -371,7 +373,7 @@ extension on AgentCli {
       cost: builtModel.cost,
       contextWindow: builtModel.contextWindow,
       maxTokens: builtModel.maxTokens,
-      headers: {...?builtModel.headers, 'x-codemie-project': ?project},
+      headers: {...?builtModel.headers, codeMieProjectHeader: ?project},
       compat: builtModel.compat,
       maxImages: builtModel.maxImages,
     );
@@ -532,7 +534,7 @@ extension on AgentCli {
       cost: model.cost,
       contextWindow: model.contextWindow,
       maxTokens: model.maxTokens,
-      headers: {'cookie': cookie, 'x-codemie-project': ?entry.project},
+      headers: {'cookie': cookie, codeMieProjectHeader: ?entry.project},
       compat: model.compat,
       maxImages: model.maxImages,
     );
@@ -562,7 +564,13 @@ extension on AgentCli {
     }
     return (
       project,
-      await _codemiePickModel(apiBase, cookie, providerName: providerName),
+      await _codemiePickModel(
+        apiBase,
+        cookie,
+        providerName: providerName,
+        // The just-picked project scopes the list (issue #1941).
+        project: project,
+      ),
     );
   }
 
