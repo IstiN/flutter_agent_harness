@@ -10,6 +10,21 @@ import 'package:fa/network/models.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+/// A backend that counts writes — the sync merge must persist ONCE.
+class _CountingBackend implements WalletBackend {
+  int writes = 0;
+  String? stored;
+
+  @override
+  Future<String?> read() async => stored;
+
+  @override
+  Future<void> write(String json) async {
+    writes++;
+    stored = json;
+  }
+}
+
 void main() {
   group('KeyWallet', () {
     test('createIfMissing generates identity and persists', () async {
@@ -194,6 +209,130 @@ void main() {
         expect(reloaded.networks['net9']!.name, 'File Net');
       },
     );
+  });
+
+  group('syncAccountNetworks (account-scoped membership merge)', () {
+    AccountNetworkInfo net(String id, String name, MemberClass memberClass) =>
+        AccountNetworkInfo(
+          id: id,
+          name: name,
+          isPublic: false,
+          memberClass: memberClass,
+        );
+
+    test('merges new and known memberships in ONE persist', () async {
+      final backend = _CountingBackend();
+      final wallet = await KeyWallet.load(backend);
+      await wallet.createIfMissing(displayName: 'Me');
+      await wallet.addNetwork(
+        networkId: 'net1',
+        name: 'stale-name',
+        memberClass: 'member',
+        displayName: 'Me',
+        password: 'keep-me',
+      );
+      backend.writes = 0; // ignore the setup writes
+
+      final changed = await wallet.syncAccountNetworks([
+        net('net2', 'fa-network', MemberClass.owner),
+        net('net1', 'renamed', MemberClass.admin),
+      ]);
+
+      expect(changed, isTrue);
+      expect(backend.writes, 1);
+      final persisted = await KeyWallet.load(backend);
+      // Known id: name + class updated, local password/displayName kept.
+      final known = persisted.networks['net1']!;
+      expect(known.name, 'renamed');
+      expect(known.memberClass, 'admin');
+      expect(known.password, 'keep-me');
+      expect(known.displayName, 'Me');
+      // New id: inserted with NO password (join supplies it later).
+      final added = persisted.networks['net2']!;
+      expect(added.name, 'fa-network');
+      expect(added.memberClass, 'owner');
+      expect(added.password, isNull);
+      expect(added.joinedAt, isNotEmpty);
+    });
+
+    test('rekeys a legacy name-keyed membership to the canonical id '
+        'instead of duplicating it', () async {
+      final backend = MemoryWalletBackend();
+      final wallet = await KeyWallet.load(backend);
+      await wallet.createIfMissing(displayName: 'Me');
+      await wallet.addNetwork(
+        networkId: 'fa-team',
+        name: 'fa-team',
+        memberClass: 'member',
+        displayName: 'Me',
+        password: 'legacy-pw',
+      );
+      await wallet.addChannelKeys(
+        networkId: 'fa-team',
+        channel: 'c1',
+        pub: 'ch-pub',
+        priv: 'ch-priv',
+      );
+
+      await wallet.syncAccountNetworks([
+        net('net1', 'fa-team', MemberClass.admin),
+      ]);
+
+      // ONE membership, keyed by the id the server (and member routes)
+      // speak — the pre-contract name key must not survive as a second,
+      // passwordless row.
+      expect(wallet.networks.keys.toList(), ['net1']);
+      final migrated = wallet.networks['net1']!;
+      expect(migrated.name, 'fa-team');
+      expect(migrated.memberClass, 'admin');
+      expect(migrated.password, 'legacy-pw');
+      expect(migrated.displayName, 'Me');
+      expect(wallet.channelKeysFor('net1', 'c1'), (
+        pub: 'ch-pub',
+        priv: 'ch-priv',
+      ));
+      expect(wallet.channelKeysFor('fa-team', 'c1'), isNull);
+    });
+
+    test('keeps a locally-joined network the account list omits', () async {
+      final backend = MemoryWalletBackend();
+      final wallet = await KeyWallet.load(backend);
+      await wallet.addNetwork(networkId: 'guest-net', name: 'G', password: 'p');
+
+      await wallet.syncAccountNetworks([
+        net('net1', 'One', MemberClass.member),
+      ]);
+
+      expect(wallet.networks['guest-net']?.password, 'p');
+      expect(wallet.networks['net1'], isNotNull);
+    });
+
+    test('an unchanged merge persists nothing', () async {
+      final backend = _CountingBackend();
+      final wallet = await KeyWallet.load(backend);
+      await wallet.syncAccountNetworks([
+        net('net1', 'One', MemberClass.member),
+      ]);
+      final firstWrite = backend.writes;
+      expect(firstWrite, 1);
+
+      final changed = await wallet.syncAccountNetworks([
+        net('net1', 'One', MemberClass.member),
+      ]);
+
+      expect(changed, isFalse);
+      expect(backend.writes, firstWrite);
+    });
+
+    test('new entries land in server order', () async {
+      final backend = MemoryWalletBackend();
+      final wallet = await KeyWallet.load(backend);
+      await wallet.syncAccountNetworks([
+        net('newest', 'Newest', MemberClass.owner),
+        net('oldest', 'Oldest', MemberClass.member),
+      ]);
+      expect(wallet.networks.keys.toList(), ['newest', 'oldest']);
+    });
   });
 
   group('account (OAuth tokens, issue #955 iteration 3)', () {

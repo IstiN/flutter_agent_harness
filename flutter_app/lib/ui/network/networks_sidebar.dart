@@ -108,6 +108,14 @@ class _NetworksSidebarState extends State<NetworksSidebar> {
   }
 
   Future<void> _openNetwork(String networkId) async {
+    // An account-synced membership with no stored password (the server
+    // never returns one) cannot resume: route it into the join sheet
+    // prefilled with the network id instead of a resume error or an
+    // endless spinner — the user supplies the password once.
+    if (widget.manager.wallet.networks[networkId]?.password == null) {
+      await _openJoinSheet(networkId: networkId);
+      return;
+    }
     unawaited(widget.controller.enterNetwork(networkId));
     try {
       await widget.manager.resume(networkId);

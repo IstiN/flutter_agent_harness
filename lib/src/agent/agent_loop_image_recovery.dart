@@ -28,6 +28,10 @@ part of 'agent_loop.dart';
 /// exhaustion event, its counts describing the last refused build, after
 /// which nothing more could be shed). Repairs are never silent: per-pass
 /// counts also ride the host notice seam.
+///
+/// Mirrors `ImageRecoveryEvent` (the notice-seam type in
+/// `image_recovery.dart` — kept loop-layer-free), which is converted
+/// into this type at each emission site; keep the five fields in sync.
 final class ImagePayloadRecoveryEvent extends AgentEvent {
   const ImagePayloadRecoveryEvent({
     required this.pass,

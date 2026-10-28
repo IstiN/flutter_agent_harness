@@ -4052,6 +4052,18 @@ abstract class AppLocalizations {
   /// **'Join an existing network or create your own — channels and showcases open here.'**
   String get networkWelcomeBody;
 
+  /// Selected membership synced from the account without a stored password
+  ///
+  /// In en, this message translates to:
+  /// **'This network needs your password'**
+  String get networkNeedsPasswordTitle;
+
+  /// Body under networkNeedsPasswordTitle; the join button follows
+  ///
+  /// In en, this message translates to:
+  /// **'Account sync listed this network, but its password is stored only after you join once. Enter it to open the network.'**
+  String get networkNeedsPasswordBody;
+
   /// Network picker header / sidebar title
   ///
   /// In en, this message translates to:
@@ -4208,10 +4220,10 @@ abstract class AppLocalizations {
   /// **'Fill'**
   String get networkJoinFill;
 
-  /// Join sheet: network id field label
+  /// Join sheet: network id-or-name field label
   ///
   /// In en, this message translates to:
-  /// **'Network id'**
+  /// **'Network id or name'**
   String get networkIdLabel;
 
   /// Display name field label
@@ -4229,7 +4241,7 @@ abstract class AppLocalizations {
   /// Join sheet validation error
   ///
   /// In en, this message translates to:
-  /// **'Network id and password are required.'**
+  /// **'Network id or name and password are required.'**
   String get networkJoinRequired;
 
   /// Join sheet error when the server rejects the credentials

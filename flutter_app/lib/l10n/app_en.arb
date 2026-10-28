@@ -1066,6 +1066,14 @@
   "@networkWelcomeBody": {
     "description": "Network mode welcome body (wide empty state)"
   },
+  "networkNeedsPasswordTitle": "This network needs your password",
+  "@networkNeedsPasswordTitle": {
+    "description": "Selected membership synced from the account without a stored password"
+  },
+  "networkNeedsPasswordBody": "Account sync listed this network, but its password is stored only after you join once. Enter it to open the network.",
+  "@networkNeedsPasswordBody": {
+    "description": "Body under networkNeedsPasswordTitle; the join button follows"
+  },
   "networkNetworksTitle": "Networks",
   "@networkNetworksTitle": {
     "description": "Network picker header / sidebar title"
@@ -1176,9 +1184,9 @@
   "@networkJoinFill": {
     "description": "Join sheet: fill form from pasted link"
   },
-  "networkIdLabel": "Network id",
+  "networkIdLabel": "Network id or name",
   "@networkIdLabel": {
-    "description": "Join sheet: network id field label"
+    "description": "Join sheet: network id-or-name field label"
   },
   "networkDisplayNameLabel": "Display name",
   "@networkDisplayNameLabel": {
@@ -1188,7 +1196,7 @@
   "@networkDisplayNameLocked": {
     "description": "Join sheet note when a JWT pins the display name"
   },
-  "networkJoinRequired": "Network id and password are required.",
+  "networkJoinRequired": "Network id or name and password are required.",
   "@networkJoinRequired": {
     "description": "Join sheet validation error"
   },

@@ -1,6 +1,5 @@
 // ignore: unused_import
 import 'package:intl/intl.dart' as intl;
-
 import 'app_localizations.dart';
 
 // ignore_for_file: type=lint
@@ -2291,6 +2290,13 @@ class AppLocalizationsEn extends AppLocalizations {
       'Join an existing network or create your own — channels and showcases open here.';
 
   @override
+  String get networkNeedsPasswordTitle => 'This network needs your password';
+
+  @override
+  String get networkNeedsPasswordBody =>
+      'Account sync listed this network, but its password is stored only after you join once. Enter it to open the network.';
+
+  @override
   String get networkNetworksTitle => 'Networks';
 
   @override
@@ -2375,7 +2381,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String get networkJoinFill => 'Fill';
 
   @override
-  String get networkIdLabel => 'Network id';
+  String get networkIdLabel => 'Network id or name';
 
   @override
   String get networkDisplayNameLabel => 'Display name';
@@ -2384,7 +2390,8 @@ class AppLocalizationsEn extends AppLocalizations {
   String get networkDisplayNameLocked => 'Display name locked to your account.';
 
   @override
-  String get networkJoinRequired => 'Network id and password are required.';
+  String get networkJoinRequired =>
+      'Network id or name and password are required.';
 
   @override
   String networkJoinInvalidCredentials(Object message) {

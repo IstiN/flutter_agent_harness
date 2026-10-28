@@ -1,6 +1,5 @@
 // ignore: unused_import
 import 'package:intl/intl.dart' as intl;
-
 import 'app_localizations.dart';
 
 // ignore_for_file: type=lint
@@ -2319,6 +2318,13 @@ class AppLocalizationsRu extends AppLocalizations {
       'Присоединитесь к существующей сети или создайте свою — каналы и витрины откроются здесь.';
 
   @override
+  String get networkNeedsPasswordTitle => 'Этой сети нужен ваш пароль';
+
+  @override
+  String get networkNeedsPasswordBody =>
+      'Синхронизация аккаунта нашла эту сеть, но её пароль сохранится только после первого входа. Введите его, чтобы открыть сеть.';
+
+  @override
   String get networkNetworksTitle => 'Сети';
 
   @override
@@ -2403,7 +2409,7 @@ class AppLocalizationsRu extends AppLocalizations {
   String get networkJoinFill => 'Заполнить';
 
   @override
-  String get networkIdLabel => 'Идентификатор сети';
+  String get networkIdLabel => 'Идентификатор или название сети';
 
   @override
   String get networkDisplayNameLabel => 'Отображаемое имя';
@@ -2413,7 +2419,8 @@ class AppLocalizationsRu extends AppLocalizations {
       'Отображаемое имя привязано к вашему аккаунту.';
 
   @override
-  String get networkJoinRequired => 'Укажите идентификатор сети и пароль.';
+  String get networkJoinRequired =>
+      'Укажите идентификатор или название сети и пароль.';
 
   @override
   String networkJoinInvalidCredentials(Object message) {

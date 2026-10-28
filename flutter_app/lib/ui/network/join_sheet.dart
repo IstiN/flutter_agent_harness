@@ -141,12 +141,14 @@ class _JoinSheetState extends State<JoinSheet> {
       if (!widget.manager.wallet.hasIdentity) {
         await widget.manager.ensureIdentity(displayName: displayName);
       }
-      await widget.manager.join(
+      final session = await widget.manager.join(
         networkId: networkId,
         password: password,
         displayName: widget.manager.hasJwt ? null : displayName,
       );
-      await widget.controller.enterNetwork(networkId);
+      // The id field accepts a network id OR name — enter the network
+      // under the server's canonical id the session was keyed by.
+      await widget.controller.enterNetwork(session.networkId);
       if (mounted) Navigator.of(context).pop();
     } on FaNetworkException catch (e) {
       final retry = e.retryAfterSeconds;

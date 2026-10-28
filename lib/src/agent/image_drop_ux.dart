@@ -111,8 +111,8 @@ final class ImageDropUx {
       if (currentCapped == 0) {
         var evictedLine =
             '$currentEvicted of ${report.currentImageCount} attached images '
-            'replaced by placeholders (413 recovery) — lower '
-            'images.maxBytesPerRequest or switch provider';
+            'replaced by placeholders (compaction boundary / 413 recovery) '
+            '— lower images.maxBytesPerRequest or switch provider';
         if (historyDrops > 0) evictedLine += ' (+$historyDrops older images)';
         return ImageDropNoticeView._(evictedLine, true);
       }

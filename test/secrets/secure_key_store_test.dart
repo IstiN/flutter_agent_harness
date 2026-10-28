@@ -759,7 +759,6 @@ Future<void> main() async {
   // keychain — the leg must SKIP that shape, not fail.
   group('functional keychain round-trip probe (gh-1934 rework-3)', () {
     // Scripted `security` CLI: answers per first argument, records calls.
-    // Scripted `security` CLI: answers per first argument, records calls.
     ({
       Future<SecureKeyRunResult> Function(List<String> args) run,
       List<String> calls,

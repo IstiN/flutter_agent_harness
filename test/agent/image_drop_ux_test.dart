@@ -529,7 +529,10 @@ void main() {
           'placeholders',
         ),
       );
-      expect(view.line, contains('413 recovery'));
+      // gh-1934 review round 4: the cause names BOTH eviction causes —
+      // a current image can be re-evicted by the compaction-boundary
+      // latch too, and blaming only 413 recovery is the wrong cause.
+      expect(view.line, contains('compaction boundary / 413 recovery'));
       expect(view.line, contains('images.maxBytesPerRequest'));
       expect(view.line.contains('cap is'), isFalse);
       expect(view.line.contains('images.maxPerRequest'), isFalse);

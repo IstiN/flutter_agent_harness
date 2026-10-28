@@ -290,6 +290,81 @@ void main() {
       },
     );
 
+    test('listAccountNetworks sends the JWT and parses items in server '
+        'order', () async {
+      client = build(jwtToken: 'jwt-tok', sessionToken: 'sess-tok');
+      httpClient.respond(
+        200,
+        body:
+            '{"items":['
+            '{"id":"n2","name":"fa-network","public":false,'
+            '"memberClass":"owner"},'
+            '{"id":"n1","name":"old-hub","public":true,'
+            '"memberClass":"guest"}]}',
+      );
+      final items = await client.listAccountNetworks();
+      expect(items, hasLength(2));
+      expect(items.first.id, 'n2'); // newest first — server order kept
+      expect(items.first.name, 'fa-network');
+      expect(items.first.isPublic, isFalse);
+      expect(items.first.memberClass, MemberClass.owner);
+      expect(items[1].id, 'n1');
+      expect(items[1].isPublic, isTrue);
+      expect(items[1].memberClass, MemberClass.guest);
+      final req = httpClient.requests.single;
+      expect(req.method, 'GET');
+      expect(req.url.path, '/api/networks/mine');
+      expect(req.url.query, isEmpty);
+      // Management route: the JWT wins even when a session token is set.
+      expect(req.headers['authorization'], 'Bearer jwt-tok');
+    });
+
+    test(
+      'listAccountNetworks: absent/empty items parse to an empty list',
+      () async {
+        httpClient.respond(200, body: '{"items":[]}');
+        expect(await client.listAccountNetworks(), isEmpty);
+        httpClient.respond(200, body: '{}');
+        expect(await client.listAccountNetworks(), isEmpty);
+      },
+    );
+
+    test(
+      'listAccountNetworks skips a malformed row, not the whole list',
+      () async {
+        client = build(jwtToken: 'jwt-tok');
+        httpClient.respond(
+          200,
+          body:
+              '{"items":['
+              '{"id":"n2","name":"fa-network","memberClass":"owner"},'
+              '{"name":"broken-row"},'
+              '{"id":"n1","name":"old-hub","memberClass":"guest"}]}',
+        );
+
+        final items = await client.listAccountNetworks();
+
+        expect(items.map((n) => n.id), ['n2', 'n1']);
+      },
+    );
+
+    test('listAccountNetworks surfaces non-200 as FaNetworkException '
+        '(the manager owns the 404 tolerance)', () async {
+      client = build(jwtToken: 'jwt-tok');
+      httpClient.respond(
+        404,
+        body: '{"error":{"code":"not_found","message":"no route"}}',
+      );
+      await expectLater(
+        client.listAccountNetworks(),
+        throwsA(
+          isA<FaNetworkException>()
+              .having((e) => e.statusCode, 'statusCode', 404)
+              .having((e) => e.code, 'code', 'not_found'),
+        ),
+      );
+    });
+
     test('deleteNetwork accepts 204', () async {
       httpClient.respond(204);
       await client.deleteNetwork('net1');

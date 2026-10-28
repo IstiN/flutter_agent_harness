@@ -114,6 +114,26 @@ void main() {
     return alive;
   }
 
+  /// Polls `pgrep` (the exact matcher the guard shims delegate to) until
+  /// it lists [pid], so the killer below never races the victim's
+  /// fork→exec window — `Process.start` can return while /proc still
+  /// carries the pre-exec comm/cmdline, and a matching killer would then
+  /// honestly report rc=1 ("no processes matched"; live red 2026-10-28,
+  /// validation run 40690203051). ~5s budget, then fail loudly.
+  Future<void> waitUntilPgrepMatches(
+    List<String> args, {
+    required int pid,
+  }) async {
+    for (var i = 0; i < 50; i++) {
+      final probe = await Process.run('pgrep', args);
+      if (probe.stdout.trim().split(RegExp(r'\s+')).contains(pid.toString())) {
+        return;
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+    }
+    fail('pgrep ${args.join(' ')} never listed the victim pid $pid');
+  }
+
   final Object posixSkip = (Platform.isWindows || !hostHasPgrep)
       ? 'POSIX procps process semantics only'
       : false;
@@ -504,6 +524,7 @@ void main() {
       () async {
         final victim = await Process.start('sleep', const ['271']);
         addTearDown(victim.kill);
+        await waitUntilPgrepMatches(const ['-f', 'sleep 271'], pid: victim.pid);
         final result = await const LocalShell().exec(
           'pkill --signal=KILL -f "sleep 271"; echo "rc=\$?"',
         );
@@ -532,6 +553,7 @@ void main() {
       () async {
         final victim = await Process.start('sleep', const ['271']);
         addTearDown(victim.kill);
+        await waitUntilPgrepMatches(const ['-f', 'sleep 271'], pid: victim.pid);
         final result = await const LocalShell().exec(
           'pkill --signal TERM -f "sleep 271"; echo "rc=\$?"',
         );
@@ -553,11 +575,14 @@ void main() {
           : false,
       () async {
         // killall matches the comm name (15-char cap on Linux): give the
-        // victim a unique name by copying a binary that survives a rename
-        // — `sh`, never the multicall-dispatched `sleep` (a copy of sleep
-        // dies on dispatch: `coreutils: unknown program 'fa_kl_271'`,
-        // gh-1934). The loop keeps the interpreter in the foreground so
-        // the comm does not tail-exec into `sleep`.
+        // victim a unique name by copying a shell binary. NOT the sleep
+        // binary: uutils-coreutils (the 2025+ runner default) is a
+        // multi-call binary that dispatches on argv[0], so a renamed copy
+        // dies instantly with "unknown program" (live red 2026-10-28,
+        // validation run 40690203051) and every killall honestly reports
+        // rc=1. dash/bash are argv0-agnostic; `-c read _` blocks on the
+        // never-written stdin pipe, giving the same long-lived victim a
+        // `sleep 271` used to provide.
         final binDir = Directory.systemTemp.createTempSync('fa-killall-');
         addTearDown(() => binDir.deleteSync(recursive: true));
         final shBin = Process.runSync('sh', <String>[
@@ -567,12 +592,9 @@ void main() {
         final victimPath = '${binDir.path}/fa_kl_271';
         File(shBin).copySync(victimPath);
         Process.runSync('chmod', <String>['755', victimPath]);
-        final victim = await Process.start(victimPath, const [
-          '-c',
-          'while :; do sleep 1; done',
-        ]);
+        final victim = await Process.start(victimPath, const ['-c', 'read _']);
         addTearDown(victim.kill);
-        addTearDown(victim.kill);
+        await waitUntilPgrepMatches(const ['-x', 'fa_kl_271'], pid: victim.pid);
         final result = await const LocalShell().exec(
           'killall --signal TERM fa_kl_271; echo "rc=\$?"',
         );

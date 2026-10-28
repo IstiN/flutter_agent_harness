@@ -152,4 +152,47 @@ void main() {
       expect(wallet.networks['net1'], isNotNull);
     });
   });
+
+  group('NetworkSessionManager join', () {
+    test('join by name rekeys a legacy name-keyed membership to the '
+        'echoed canonical id', () async {
+      final wallet = await KeyWallet.load(MemoryWalletBackend());
+      await wallet.createIfMissing(displayName: 'Me');
+      await wallet.addNetwork(
+        networkId: 'fa-team',
+        name: 'fa-team',
+        memberClass: 'member',
+        displayName: 'Me',
+        password: 'legacy-pw',
+      );
+      await wallet.addChannelKeys(
+        networkId: 'fa-team',
+        channel: 'c1',
+        pub: 'ch-pub',
+        priv: 'ch-priv',
+      );
+      final httpClient = FakeHttpClient()
+        ..respond(200, body: joinBodyOk)
+        ..respond(200, body: channelsBody)
+        ..respond(200, body: membersBody);
+      final manager = _manager(wallet: wallet, httpClient: httpClient);
+
+      final session = await manager.join(
+        networkId: 'fa-team',
+        password: 'legacy-pw',
+        displayName: 'Me',
+      );
+      addTearDown(manager.disconnectAll);
+
+      expect(session.networkId, 'net1');
+      expect(manager.sessions.containsKey('fa-team'), isFalse);
+      expect(wallet.networks.keys.toList(), ['net1']);
+      expect(wallet.networks['net1']!.password, 'legacy-pw');
+      expect(wallet.channelKeysFor('net1', 'c1'), (
+        pub: 'ch-pub',
+        priv: 'ch-priv',
+      ));
+      expect(wallet.channelKeysFor('fa-team', 'c1'), isNull);
+    });
+  });
 }

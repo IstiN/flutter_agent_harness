@@ -39,6 +39,10 @@ String imageRecoveryFailedText(String providerError) =>
 /// One recovery pass, surfaced to hosts through the notice seam. [pass]
 /// is the ladder step (1 = budget drop, 2 = strip-all); [failed] marks
 /// the single actionable exhaustion event.
+///
+/// Mirrors `ImagePayloadRecoveryEvent` (the loop/wire event in
+/// `agent_loop_image_recovery.dart`), which is converted from this type
+/// at each emission site; keep the five fields in sync.
 final class ImageRecoveryEvent {
   const ImageRecoveryEvent({
     required this.pass,

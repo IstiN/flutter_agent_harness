@@ -539,6 +539,53 @@ class PublicNetworkInfo {
   }
 }
 
+/// One membership row of `GET /api/networks/mine` — the signed-in
+/// account's fa_network memberships, account-scoped discovery: networks
+/// created via curl/API outside the app surface here after sign-in.
+/// The endpoint returns NO password, so a synced membership may have no
+/// locally stored password until the user joins once (the join sheet
+/// collects it). Order is server-chosen (newest first) and preserved by
+/// the client.
+final class AccountNetworkInfo {
+  const AccountNetworkInfo({
+    required this.id,
+    required this.name,
+    required this.memberClass,
+    this.isPublic = false,
+  });
+
+  /// The network id (also accepted by the join route).
+  final String id;
+
+  /// The network's display name.
+  final String name;
+
+  /// Listed in the public-networks directory.
+  final bool isPublic;
+
+  /// The signed-in account's class in this network.
+  final MemberClass memberClass;
+
+  /// Tolerant parse: [id] and [name] are required (a membership without
+  /// them is meaningless and throws [FormatException]); [memberClass]
+  /// degrades to [MemberClass.unknown] via [MemberClass.parse].
+  factory AccountNetworkInfo.fromJson(Map<String, Object?> json) {
+    final id = json['id'];
+    final name = json['name'];
+    if (id is! String || id.isEmpty || name is! String) {
+      throw const FormatException(
+        'AccountNetworkInfo: "id" and "name" are required strings',
+      );
+    }
+    return AccountNetworkInfo(
+      id: id,
+      name: name,
+      isPublic: json['public'] == true,
+      memberClass: MemberClass.parse(json['memberClass']),
+    );
+  }
+}
+
 /// An OAuth token set from the ai-native auth endpoints (issue #955,
 /// iteration 3): `POST /api/oauth-proxy/exchange` and
 /// `POST /api/auth/refresh` answer in the dmtools form
