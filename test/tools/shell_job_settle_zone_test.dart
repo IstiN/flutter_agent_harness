@@ -14,76 +14,7 @@ import 'dart:async';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:test/test.dart';
 
-/// A detached job the test settles manually.
-final class _ManualJob implements ShellJob {
-  _ManualJob({required this.id});
-
-  @override
-  final String id;
-  @override
-  final String command = 'sleep 1';
-  @override
-  final String logPath = '/jobs/log';
-  @override
-  int? get pid => null;
-
-  var _stopped = false;
-  final _settled = Completer<void>();
-
-  @override
-  bool get isRunning => !_stopped;
-  @override
-  int? get exitCode => _stopped ? 0 : null;
-  @override
-  Future<void> get settled => _settled.future;
-  @override
-  String? get stopReason => _stopped ? 'finished' : null;
-  @override
-  Stream<String> get output => const Stream.empty();
-  @override
-  bool writeStdin(String data) => false;
-
-  void settle() {
-    if (_stopped) return;
-    _stopped = true;
-    _settled.complete();
-  }
-
-  @override
-  Future<void> stop() async => settle();
-}
-
-final class _ManualJobShell implements Shell, BackgroundShell {
-  final jobs = <_ManualJob>[];
-
-  @override
-  bool get backgroundJobsSupported => true;
-
-  @override
-  Future<Result<ShellExecResult, ExecutionError>> exec(
-    String command, {
-    ShellExecOptions? options,
-  }) async {
-    return const Err(
-      ExecutionError(
-        ExecutionErrorCode.shellUnavailable,
-        'no foreground shell in this test',
-      ),
-    );
-  }
-
-  @override
-  Future<Result<ShellJob, ExecutionError>> startShellJob(
-    String command, {
-    required String id,
-    required String logPath,
-    ShellExecOptions? options,
-  }) async {
-    final job = _ManualJob(id: id);
-    jobs.add(job);
-    return Ok(job);
-  }
-}
+import '../support/manual_settle_job.dart';
 
 void main() {
   test(
@@ -91,7 +22,7 @@ void main() {
     () async {
       final bootMarkers = <Object?>[];
       const bootMarker = 'boot-zone';
-      final shell = _ManualJobShell();
+      final shell = ManualSettleJobShell();
       late ShellJobRegistry registry;
 
       // The host constructs the registry at boot (its own zone value).
@@ -128,7 +59,7 @@ void main() {
   );
 
   test('settle bookkeeping (settledAt, GC) still runs on every exit', () async {
-    final shell = _ManualJobShell();
+    final shell = ManualSettleJobShell();
     var settles = 0;
     final registry = ShellJobRegistry(
       env: MemoryExecutionEnv(cwd: '/work', shell: shell),

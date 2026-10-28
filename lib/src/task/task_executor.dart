@@ -426,8 +426,12 @@ final class TaskExecutor {
         incomingTokens: estimateRequestTokens([UserMessage.text(promptText)]),
         probe: true,
       );
-      agent.prepareNextTurn = (nextTurn) =>
-          _compactChildAtBoundary(id, agent, wiring, nextTurn);
+      agent.prepareNextTurn = (nextTurn) async {
+        // gh-1948: resumed children ride the same per-boundary transcript
+        // flush as fresh spawns (see _buildChild).
+        unawaited(_flushChildTranscript(id, agent));
+        return _compactChildAtBoundary(id, agent, wiring, nextTurn);
+      };
       // The resume run's tool calls resolve the child identity through the
       // same scope a fresh spawn publishes (gh-970) — reply/agent_message
       // and schedule_message attribute to THIS child, never a concurrent
@@ -1178,8 +1182,15 @@ final class TaskExecutor {
     // children, so the over-window guard stays the last resort. The loop
     // runs the hook BEFORE the steering poll, so a queued `task_send` is
     // delivered on the compacted context, in-order (E1/E2).
-    child.prepareNextTurn = (nextTurn) =>
-        _compactChildAtBoundary(id, child, wiring, nextTurn);
+    // gh-1948: the hook also flushes the transcript incrementally, so a
+    // RUNNING background child's JSONL exists and grows mid-flight —
+    // `task_observe` resolves and reads it instead of crashing on the
+    // placeholder path. Fire-and-forget: the flush is serialized per child
+    // and must never block the next provider request.
+    child.prepareNextTurn = (nextTurn) async {
+      unawaited(_flushChildTranscript(id, child));
+      return _compactChildAtBoundary(id, child, wiring, nextTurn);
+    };
     if (cancelToken != null) {
       unawaited(cancelToken.onCancel.then((_) => child.abort()));
     }

@@ -32,6 +32,19 @@ block a release again.
   when it was honored. E2E repro drives the real AgentCli
   (test/cli/agent_cli_schedule_recipient_test.dart) plus a registry-level
   zone pin (test/tools/shell_job_settle_zone_test.dart).
+- fix(gh-1948): `task_observe` works on a RUNNING background subagent
+  instead of crashing with an uncaught `SessionException` on the
+  `<parentSessionId>/<agentName>` placeholder. Three legs: the executor
+  flushes each child's transcript incrementally at every turn boundary
+  (the JSONL exists and grows mid-run — also crash-resilience for
+  aborted children), `task_observe` resolves a placeholder handle's real
+  session file from the sessions tree (the same `agent: subagent` /
+  `parent:` / `id:` header scan the boot adoption uses) and heals the
+  handle onto the found path, and every read failure degrades to a
+  structured "transcript unavailable" / "no transcript available yet"
+  message instead of an uncaught tool error. The child-transcript reader
+  rides the transient-ENOENT retry (issue #427) — it reads while the
+  executor appends.
 - fix(#1941): the selected CodeMie project now rides EVERY model request.
   The header is baked into `Model.headers` only by the connect-time
   switches (gh-1809), so every other rebuild silently dropped

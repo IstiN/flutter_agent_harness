@@ -188,6 +188,15 @@ extension AgentCliMessagingFlow on AgentCli {
     return _subagentManager.mailboxOf(id);
   }
 
+  /// Test seam (gh-1947 review): the wired `scheduleSenderMailbox`
+  /// resolver — exactly the callback the `schedule_message` tool consults
+  /// — driven directly so the `isInFlight` guard's BOTH branches are
+  /// unit-pinned (a stale zone scope with no matching in-flight child must
+  /// resolve null → MAIN's mailbox; a live child keeps its own) without
+  /// driving a full settle-wake e2e per branch.
+  @visibleForTesting
+  String? scheduleSenderMailboxForTest() => _childSenderMailbox();
+
   /// Namespaces this instance's mailboxes with the active session id: two
   /// Fa instances sharing the messaging root never drain each other's
   /// inboxes. Called after every session init/switch.

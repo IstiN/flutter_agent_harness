@@ -25,114 +25,8 @@ import 'dart:convert';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:test/test.dart';
 
+import '../support/manual_settle_job.dart';
 import 'agent_cli_test_support.dart';
-
-String messageText(Object message) {
-  final content = switch (message) {
-    UserMessage() => message.content,
-    AssistantMessage() => message.content,
-    ToolResultMessage() => message.content,
-    AgentMessage() => message.text,
-    _ => '',
-  };
-  return content is String
-      ? content
-      : content is List<ContentBlock>
-      ? [
-          for (final block in content)
-            if (block is TextContent) block.text,
-        ].join('\n')
-      : '';
-}
-
-/// Polls [condition] until it holds or the budget expires.
-Future<void> waitForIt(
-  bool Function() condition, {
-  String? reason,
-  int seconds = 20,
-}) async {
-  for (var i = 0; i < seconds * 200; i++) {
-    if (condition()) return;
-    await Future<void>.delayed(const Duration(milliseconds: 5));
-  }
-  fail('timed out waiting: ${reason ?? 'condition'}');
-}
-
-/// A [Shell] whose background jobs settle only when the test releases
-/// them — so a job started by a child outlives the child's run.
-final class _SettleableJobShell implements Shell, BackgroundShell {
-  final jobs = <_SettleableJob>[];
-
-  @override
-  bool get backgroundJobsSupported => true;
-
-  @override
-  Future<Result<ShellExecResult, ExecutionError>> exec(
-    String command, {
-    ShellExecOptions? options,
-  }) async {
-    return const Err(
-      ExecutionError(
-        ExecutionErrorCode.shellUnavailable,
-        'No foreground shell in this test',
-      ),
-    );
-  }
-
-  @override
-  Future<Result<ShellJob, ExecutionError>> startShellJob(
-    String command, {
-    required String id,
-    required String logPath,
-    ShellExecOptions? options,
-  }) async {
-    final job = _SettleableJob(id: id, command: command, logPath: logPath);
-    jobs.add(job);
-    return Ok(job);
-  }
-}
-
-final class _SettleableJob implements ShellJob {
-  _SettleableJob({
-    required this.id,
-    required this.command,
-    required this.logPath,
-  });
-
-  @override
-  final String id;
-  @override
-  final String command;
-  @override
-  final String logPath;
-  @override
-  int? get pid => null;
-
-  var _stopped = false;
-  final _settled = Completer<void>();
-
-  @override
-  bool get isRunning => !_stopped;
-  @override
-  int? get exitCode => _stopped ? 0 : null;
-  @override
-  Future<void> get settled => _settled.future;
-  @override
-  String? get stopReason => _stopped ? 'finished' : null;
-  @override
-  Stream<String> get output => const Stream.empty();
-  @override
-  bool writeStdin(String data) => false;
-
-  void settle() {
-    if (_stopped) return;
-    _stopped = true;
-    _settled.complete();
-  }
-
-  @override
-  Future<void> stop() async => settle();
-}
 
 /// Routes every model call by its last non-empty message:
 /// - child assignments (`Complete the assignment below`) replay
@@ -157,6 +51,11 @@ class _Router {
   final List<List<AssistantMessageEvent>> _shellSettleTurns;
   final contexts = <Context>[];
 
+  /// When set, a CHILD run's turn does not start until the gate completes
+  /// — the child stays genuinely IN FLIGHT on the executor while the test
+  /// drives the schedule-sender seam against the live executor state.
+  Completer<void>? childHold;
+
   AssistantMessageEventStream call(
     Model model,
     Context context, {
@@ -173,6 +72,19 @@ class _Router {
         .map(messageText)
         .firstWhere((t) => t.isNotEmpty, orElse: () => '');
     final stream = AssistantMessageEventStream();
+    final hold = childHold;
+    if (hold != null && text.contains('Complete the assignment below')) {
+      // The child's model call hangs on the gate: events are pushed (and
+      // the stream ends) only when the test releases it.
+      unawaited(() async {
+        await hold.future;
+        for (final event in _route(text)) {
+          stream.push(event);
+        }
+        stream.end();
+      }());
+      return stream;
+    }
     for (final event in _route(text)) {
       stream.push(event);
     }
@@ -298,7 +210,7 @@ void main() {
           textTurn('scheduled the follow-up'),
         ],
       );
-      final shell = _SettleableJobShell();
+      final shell = ManualSettleJobShell();
       final (cli, run) = await bootedCli(router.call, shell: shell);
 
       io.sendLine('spawn qjs_race');
@@ -476,6 +388,84 @@ void main() {
         reason:
             'gh-970: a LIVE child’s self-reminder must still default to '
             'its own mailbox — got $to',
+      );
+      io.sendLine('/exit');
+      await run;
+    },
+  );
+
+  test(
+    'gh-1947 review: the in-flight guard rejects a STALE zone scope and '
+    'keeps a LIVE child’s mailbox',
+    timeout: const Timeout(Duration(seconds: 180)),
+    () async {
+      const childTask = 'child-task: gated race run';
+      final childGate = Completer<void>();
+      final router = _Router(
+        leadTurns: [
+          toolTurn([
+            ToolCall(
+              id: 't1',
+              name: 'task',
+              arguments: const {
+                'context': 'ctx',
+                'background': true,
+                'tasks': [
+                  {'name': 'qjs_race', 'agent': 'task', 'task': childTask},
+                ],
+              },
+            ),
+          ]),
+          textTurn('spawned qjs_race in the background'),
+        ],
+        childTurns: [textTurn('child done')],
+        taskResultTurns: [textTurn('noted')],
+      )..childHold = childGate;
+      final (cli, run) = await bootedCli(router.call);
+      final executor = cli.taskConfig.executor;
+
+      // Reject branch, no child anywhere: a zone scope naming an id the
+      // executor never ran must degrade to null (→ MAIN's mailbox).
+      expect(
+        runWithSubagentScope('child-x', cli.scheduleSenderMailboxForTest),
+        isNull,
+        reason:
+            'a zone scope without a matching in-flight child must not '
+            'address MAIN’s self-reminders into a (dead) child’s mailbox',
+      );
+
+      io.sendLine('spawn qjs_race');
+      await waitForIt(
+        () => executor.isInFlight('qjs_race'),
+        reason: 'the child is in flight',
+      );
+
+      // In-flight twin: the SAME scope while the child genuinely runs
+      // keeps the child mailbox (gh-970's live-child case survives).
+      expect(
+        runWithSubagentScope('qjs_race', cli.scheduleSenderMailboxForTest),
+        cli.subagentManagerForTest.mailboxOf('qjs_race'),
+        reason: 'a LIVE child’s scope must still resolve its own mailbox',
+      );
+
+      // Finish the child; its task-result reaction run settles.
+      childGate.complete();
+      await waitForIt(
+        () => !executor.isInFlight('qjs_race'),
+        reason: 'the child run ends',
+      );
+      await waitForIt(() => !cli.isBusy, reason: 'the reaction settles');
+
+      // THE gh-1947 shape: the finished child's zone scope survives (a
+      // settle continuation outliving the run) while the executor no
+      // longer has the child in flight — the guard must degrade to null.
+      expect(
+        runWithSubagentScope('qjs_race', cli.scheduleSenderMailboxForTest),
+        isNull,
+        reason:
+            'gh-1947: a STALE zone scope (settle continuation outliving '
+            'the child’s run) must never re-address MAIN’s schedule_message '
+            'into the finished child’s mailbox',
       );
       io.sendLine('/exit');
       await run;
