@@ -290,6 +290,16 @@ final class ShellJobRegistry {
   /// options — the size ceiling and the low-disk warning channel; null
   /// bytes means the shells' built-in default. A caller's own options
   /// values take precedence over these session defaults.
+  ///
+  /// The settle continuation is bound to the zone this registry was
+  /// CONSTRUCTED in (host boot), never to the zone of the `bash` call that
+  /// happened to start the job (gh-1947): a job started by a subagent used
+  /// to carry its `onSettled` into the child's subagent zone, so a job
+  /// settling after the child's run ended fired the host's settle path —
+  /// including the idle settle-wake that starts a fresh MAIN run — with
+  /// `activeSubagentId()` still naming the long-finished child. Every
+  /// identity consumer of that run (schedule_message's self-mailbox
+  /// resolution among them) then attributed MAIN's work to the child.
   ShellJobRegistry({
     required this.env,
     this.onStart,
@@ -301,7 +311,8 @@ final class ShellJobRegistry {
     this.jobLogRedactor,
     this.maxRetainedExitedJobs = defaultMaxRetainedExitedJobs,
     DateTime? bootTime,
-  }) : _bootTime = bootTime ?? DateTime.now();
+  }) : _bootTime = bootTime ?? DateTime.now(),
+       _bootZone = Zone.current;
 
   /// How many exited jobs the registry retains (gh-1438 second tier).
   /// Production monitor sessions ran thousands of short-lived jobs and the
@@ -357,6 +368,10 @@ final class ShellJobRegistry {
   /// Registry creation time; old-format logs modified before it are
   /// historical debris, not a live stale instance.
   final DateTime _bootTime;
+
+  /// The zone the host constructed this registry in (host boot). Settle
+  /// continuations run there — see the constructor doc (gh-1947).
+  final Zone _bootZone;
   var _staleJobLogWarned = false;
   final _jobs = <ShellJobEntry>[];
   var _nextId = 1;
@@ -458,19 +473,27 @@ final class ShellJobRegistry {
       timeout: options?.timeout,
     );
     _jobs.add(entry);
+    // Registered inside [_bootZone], so the settle callback — and the
+    // host's [onSettled] bookkeeping and settle-wake with it — runs in the
+    // boot zone regardless of which agent's `bash` call started the job
+    // (gh-1947: a child-started job used to drag its settle, and the
+    // MAIN reaction run it could start, into the finished child's
+    // subagent zone).
     unawaited(
-      entry.settled.then((_) async {
-        // An inline consumer (foreground bash that awaited this same settle)
-        // resumes on the same microtask train AFTER this listener was
-        // registered — give it one event-loop turn to clear the model
-        // notice. The bookkeeping callback fires regardless: gating it on
-        // the flag left settled jobs counted as running forever on the
-        // board (issue #562).
-        await Future<void>.delayed(Duration.zero);
-        entry._settledAt ??= DateTime.now();
-        _gcExitedJobs();
-        onSettled?.call(entry);
-      }),
+      _bootZone.run(
+        () => entry.settled.then((_) async {
+          // An inline consumer (foreground bash that awaited this same
+          // settle) resumes on the same microtask train AFTER this listener
+          // was registered — give it one event-loop turn to clear the model
+          // notice. The bookkeeping callback fires regardless: gating it on
+          // the flag left settled jobs counted as running forever on the
+          // board (issue #562).
+          await Future<void>.delayed(Duration.zero);
+          entry._settledAt ??= DateTime.now();
+          _gcExitedJobs();
+          onSettled?.call(entry);
+        }),
+      ),
     );
     onStart?.call(entry);
     return entry;

@@ -50,10 +50,16 @@ extension AgentServiceHostBuilder on AgentService {
     scheduledMessages: _scheduledMessages,
     scheduleSenderMailbox: () {
       // Inside a subagent run "your own mailbox" is the CHILD's — the
-      // queue's selfMailbox always resolves main (gh-970).
+      // queue's selfMailbox always resolves main (gh-970). gh-1947 guard:
+      // the scope is trusted only while the child is genuinely in flight —
+      // a stale zone value (a settle continuation outliving the child's
+      // run) must never re-address MAIN's self-reminders into the
+      // finished child's mailbox.
       final id = activeSubagentId();
       final manager = _subagentManager;
       if (id == null || manager == null) return null;
+      final executor = _taskConfig?.executor;
+      if (executor != null && !executor.isInFlight(id)) return null;
       return manager.mailboxOf(id);
     },
     onAsk: (questions) => _answerAskQuestions(questions),

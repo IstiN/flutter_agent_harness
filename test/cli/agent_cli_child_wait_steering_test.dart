@@ -23,25 +23,6 @@ import 'package:test/test.dart';
 
 import 'agent_cli_test_support.dart';
 
-/// The text carried by a transcript message or a fabric mail record.
-String messageText(Object message) {
-  final content = switch (message) {
-    UserMessage() => message.content,
-    AssistantMessage() => message.content,
-    ToolResultMessage() => message.content,
-    AgentMessage() => message.text,
-    _ => '',
-  };
-  return content is String
-      ? content
-      : content is List<ContentBlock>
-      ? [
-          for (final block in content)
-            if (block is TextContent) block.text,
-        ].join('\n')
-      : '';
-}
-
 /// A [StreamFunction] routing every run by its last user message:
 /// - a CHILD run (the assignment wraps [childTask]) hangs until its
 ///   cancel token fires — the live background job being awaited;
@@ -172,18 +153,6 @@ final class _HangJob implements ShellJob {
     _stopped = true;
     _settled.complete();
   }
-}
-
-Future<void> waitForIt(
-  bool Function() condition, {
-  String? reason,
-  int seconds = 20,
-}) async {
-  for (var i = 0; i < seconds * 200; i++) {
-    if (condition()) return;
-    await Future<void>.delayed(const Duration(milliseconds: 5));
-  }
-  fail('timed out waiting: ${reason ?? 'condition'}');
 }
 
 void main() {
