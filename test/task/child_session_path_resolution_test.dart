@@ -1,0 +1,122 @@
+@TestOn('vm')
+library;
+
+import 'package:flutter_agent_harness/src/context.dart';
+import 'package:flutter_agent_harness/src/env/memory_execution_env.dart';
+import 'package:flutter_agent_harness/src/session/session_repo.dart';
+import 'package:flutter_agent_harness/src/task/child_session_io.dart';
+import 'package:test/test.dart';
+
+/// gh-1948: `task_observe` on a RUNNING background child resolved the
+/// handle's synthetic `<parentSessionId>/<childId>` placeholder as a file
+/// path and crashed with an uncaught SessionException. The resolver scans
+/// the sessions tree for the child's real JSONL (the same header contract
+/// `subagentRegistryRows` adopts on boot: `agent: subagent`, `parent:`,
+/// `id:`).
+void main() {
+  late MemoryExecutionEnv env;
+  late JsonlSessionRepo repo;
+
+  setUp(() {
+    env = MemoryExecutionEnv(cwd: '/work');
+    repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
+  });
+
+  Future<Session> createChildSession(
+    String childId, {
+    String parent = 'parent-1',
+  }) {
+    return repo.create(
+      JsonlSessionCreateOptions(
+        cwd: '/work',
+        metadata: {
+          'agent': 'subagent',
+          'id': childId,
+          'parent': parent,
+          'model': 'm',
+        },
+      ),
+    );
+  }
+
+  test('resolves the real session file by (parent, child id)', () async {
+    final parent = await repo.create(
+      JsonlSessionCreateOptions(cwd: '/work'),
+    );
+    final child = await createChildSession('a1');
+    final resolved = await resolveChildSessionPath(
+      repo: repo,
+      parent: await parent.getMetadata(),
+      childId: 'a1',
+    );
+    expect(resolved, (await child.getMetadata()).path);
+  });
+
+  test('returns null for an unknown child id (no transcript yet)', () async {
+    final parent = await repo.create(
+      JsonlSessionCreateOptions(cwd: '/work'),
+    );
+    await createChildSession('a1');
+    final resolved = await resolveChildSessionPath(
+      repo: repo,
+      parent: await parent.getMetadata(),
+      childId: 'never-started',
+    );
+    expect(resolved, isNull);
+  });
+
+  test('ignores child sessions of OTHER parents', () async {
+    final parent = await repo.create(
+      JsonlSessionCreateOptions(cwd: '/work'),
+    );
+    await createChildSession('a1', parent: 'other-parent');
+    final resolved = await resolveChildSessionPath(
+      repo: repo,
+      parent: await parent.getMetadata(),
+      childId: 'a1',
+    );
+    expect(resolved, isNull);
+  });
+
+  test('ignores non-subagent sessions (the parent itself, forks, …)',
+      () async {
+    final parent = await repo.create(
+      JsonlSessionCreateOptions(cwd: '/work', metadata: {'id': 'a1'}),
+    );
+    final resolved = await resolveChildSessionPath(
+      repo: repo,
+      parent: await parent.getMetadata(),
+      childId: 'a1',
+    );
+    expect(resolved, isNull);
+  });
+
+  test('multiple matches resolve to the NEWEST file', () async {
+    final parent = await repo.create(
+      JsonlSessionCreateOptions(cwd: '/work'),
+    );
+    await createChildSession('a1');
+    final newest = await createChildSession('a1');
+    final resolved = await resolveChildSessionPath(
+      repo: repo,
+      parent: await parent.getMetadata(),
+      childId: 'a1',
+    );
+    expect(resolved, (await newest.getMetadata()).path);
+  });
+
+  test('never resolves to the parent session file itself', () async {
+    final parent = await repo.create(
+      JsonlSessionCreateOptions(
+        cwd: '/work',
+        metadata: {'agent': 'subagent', 'id': 'a1', 'parent': 'parent-1'},
+      ),
+    );
+    final resolved = await resolveChildSessionPath(
+      repo: repo,
+      parent: await parent.getMetadata(),
+      childId: 'a1',
+    );
+    expect(resolved, isNull);
+  });
+}
