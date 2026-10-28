@@ -100,6 +100,54 @@ void main() {
     });
   });
 
+  group('AccountNetworkInfo.fromJson (GET /api/networks/mine)', () {
+    test('membership item with class and public flag', () {
+      final a = AccountNetworkInfo.fromJson(
+        jsonDecode(
+              '{"id":"net1","name":"fa-network","public":false,'
+              '"memberClass":"owner"}',
+            )
+            as Map<String, Object?>,
+      );
+      expect(a.id, 'net1');
+      expect(a.name, 'fa-network');
+      expect(a.isPublic, isFalse);
+      expect(a.memberClass, MemberClass.owner);
+    });
+
+    test('every known class parses; unknown classes degrade to .unknown', () {
+      for (final entry in {
+        'owner': MemberClass.owner,
+        'admin': MemberClass.admin,
+        'member': MemberClass.member,
+        'guest': MemberClass.guest,
+        'agent': MemberClass.agent,
+        'superuser': MemberClass.unknown,
+      }.entries) {
+        expect(
+          AccountNetworkInfo.fromJson(
+            jsonDecode('{"id":"n","name":"x","memberClass":"${entry.key}"}')
+                as Map<String, Object?>,
+          ).memberClass,
+          entry.value,
+        );
+      }
+    });
+
+    test('id + name are required; public defaults to false', () {
+      final a = AccountNetworkInfo.fromJson(
+        jsonDecode('{"id":"n","name":"x"}') as Map<String, Object?>,
+      );
+      expect(a.isPublic, isFalse);
+      expect(
+        () => AccountNetworkInfo.fromJson(
+          jsonDecode('{"name":"x"}') as Map<String, Object?>,
+        ),
+        throwsFormatException,
+      );
+    });
+  });
+
   group('Member.fromJson', () {
     test('full payload', () {
       final m = Member.fromJson(

@@ -74,8 +74,11 @@ void main() {
       expect(account.accessToken, 'at-1');
       expect(account.refreshToken, 'rt-1');
       // The profile was fetched with the fresh bearer token, not the
-      // manager JWT.
-      expect(httpClient.requests.last.url.path, '/api/auth/user');
+      // manager JWT; the post-sign-in account-networks sync follows it.
+      expect(httpClient.requests.map((r) => r.url.path).skip(2).toList(), [
+        '/api/auth/user',
+        '/api/networks/mine',
+      ]);
     });
 
     test('signInWithProvider tolerates a profile fetch failure', () async {
@@ -110,7 +113,11 @@ void main() {
 
       expect(manager.hasJwt, isTrue);
       expect(manager.sessionExpired, isFalse);
-      expect(httpClient.requests, isEmpty);
+      // No auth traffic — only the best-effort account-networks sync
+      // probe fires (a 404 on an older backend stays silent).
+      expect(httpClient.requests.map((r) => r.url.path), [
+        '/api/networks/mine',
+      ]);
     });
 
     test('restoreAccount: an expired access token is refreshed silently '

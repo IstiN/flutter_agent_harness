@@ -114,6 +114,35 @@ void main() {
       expect(find.byKey(const ValueKey('networkCenterCreate')), findsNothing);
     });
 
+    testWidgets('a selected membership without a stored password offers '
+        'join instead of an endless spinner', (tester) async {
+      final wallet = await KeyWallet.load(MemoryWalletBackend());
+      await wallet.createIfMissing(displayName: 'Me');
+      await wallet.addNetwork(networkId: 'net1', name: 'fa-team');
+      final controller = NetworkModeController.inMemory(
+        mode: AppMode.network,
+        networkId: 'net1',
+      );
+      final manager = NetworkSessionManager(
+        baseUrl: testBase,
+        wallet: wallet,
+        httpClient: FakeHttpClient(),
+        wsConnector: FakeWsConnector(),
+        jwtToken: 'jwt-1',
+      );
+      addTearDown(manager.disconnectAll);
+      await _pumpWideHome(tester, controller: controller, manager: manager);
+
+      expect(find.byType(CircularProgressIndicator), findsNothing);
+      final join = find.byKey(const ValueKey('networkNeedsPasswordJoin'));
+      expect(join, findsOneWidget);
+
+      await tester.tap(join);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.byType(JoinSheet), findsOneWidget);
+    });
+
     testWidgets('a selected network renders the channel rail + the '
         'select-a-channel pane in the center', (tester) async {
       final channelKeys = await EnvelopeCodec.newX25519KeyPair();

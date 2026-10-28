@@ -495,6 +495,98 @@ final class KeyWallet {
     await _persist();
   }
 
+  /// Batch-merges account-scoped memberships (`GET /api/networks/mine`)
+  /// into the wallet and persists ONCE at the end:
+  ///
+  /// - a NEW id is inserted in server order with the server's name +
+  ///   member class and NO password (the endpoint never returns one —
+  ///   the join sheet collects it on first entry);
+  /// - a KNOWN id keeps its stored `password`, `joinedAt` and local
+  ///   `displayName` (join-time facts the sync cannot know better),
+  ///   while the server's network name and member class win;
+  /// - local memberships the account list omits (guest joins, other
+  ///   accounts) are never removed.
+  ///
+  /// Returns whether anything changed (callers skip persistence work and
+  /// notifications on a no-op merge).
+  Future<bool> syncAccountNetworks(
+    Iterable<AccountNetworkInfo> networks,
+  ) async {
+    var changed = false;
+    for (final network in networks) {
+      var existing = _networks[network.id];
+      // Pre-contract wallets keyed memberships by network NAME. When the
+      // account list names that same network, migrate the legacy row
+      // (password + channel keys) to the canonical id instead of leaving
+      // a second, passwordless duplicate behind.
+      if (existing == null &&
+          network.id != network.name &&
+          _networks[network.name]?.name == network.name) {
+        changed = _rekeyNetworkInMemory(from: network.name, to: network.id);
+        existing = _networks[network.id];
+      }
+      if (existing == null) {
+        _networks[network.id] = NetworkEntry(
+          name: network.name,
+          joinedAt: DateTime.now().toUtc().toIso8601String(),
+          memberClass: network.memberClass.name,
+          displayName: _identity?.displayName ?? '',
+        );
+        changed = true;
+      } else if (existing.name != network.name ||
+          existing.memberClass != network.memberClass.name) {
+        _networks[network.id] = NetworkEntry(
+          name: network.name,
+          joinedAt: existing.joinedAt,
+          memberClass: network.memberClass.name,
+          displayName: existing.displayName,
+          password: existing.password,
+        );
+        changed = true;
+      }
+    }
+    if (changed) await _persist();
+    return changed;
+  }
+
+  /// Re-keys a membership (and its `<networkId>/<channel>` channel keys)
+  /// from [from] to [to] and persists. Returns whether anything moved.
+  /// A no-op when [from] is absent or equals [to].
+  Future<bool> rekeyNetwork({required String from, required String to}) async {
+    final changed = _rekeyNetworkInMemory(from: from, to: to);
+    if (changed) await _persist();
+    return changed;
+  }
+
+  /// The in-memory half of [rekeyNetwork] — moves the membership and its
+  /// channel-key prefix without touching the backend, so batch merges can
+  /// fold any number of migrations into ONE persist.
+  bool _rekeyNetworkInMemory({required String from, required String to}) {
+    if (from == to) return false;
+    final legacy = _networks.remove(from);
+    if (legacy == null) return false;
+    final target = _networks[to];
+    _networks[to] = target == null
+        ? legacy
+        : NetworkEntry(
+            name: target.name,
+            joinedAt: target.joinedAt,
+            memberClass: target.memberClass,
+            displayName: target.displayName,
+            password: target.password ?? legacy.password,
+          );
+    final prefix = '$from/';
+    final legacyChannelEntries = {
+      for (final key in _channels.keys.where((k) => k.startsWith(prefix)))
+        key.substring(prefix.length): _channels[key]!,
+    };
+    for (final entry in legacyChannelEntries.entries) {
+      _channels.putIfAbsent('$to/${entry.key}', () => entry.value);
+    }
+    _channels.removeWhere((key, _) => key.startsWith(prefix));
+    return true;
+  }
+
   /// Stores channel keys under `<networkId>/<channel>` and persists.
   Future<void> addChannelKeys({
     required String networkId,
