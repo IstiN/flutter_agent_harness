@@ -142,4 +142,30 @@ void main() {
     expect(controller.text, 'my-private-endpoint/v1');
     expect(find.text('my-private-endpoint/v1').first, findsOneWidget);
   });
+
+  testWidgets('the shared list picker shows its search affordance and '
+      'multi-line helper', (tester) async {
+    final controller = TextEditingController();
+    addTearDown(controller.dispose);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: FaModelListPicker(
+            controller: controller,
+            models: models,
+            loading: false,
+          ),
+        ),
+      ),
+    );
+
+    expect(find.byIcon(Icons.search), findsOneWidget);
+    expect(tester.widget<Icon>(find.byIcon(Icons.search)).size, 20);
+    expect(
+      find.text('Type to filter models by name, or enter any model id'),
+      findsOneWidget,
+    );
+    final modelField = tester.widget<TextField>(find.byType(TextField));
+    expect(modelField.decoration?.helperMaxLines, 2);
+  });
 }
