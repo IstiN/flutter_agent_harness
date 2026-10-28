@@ -496,7 +496,15 @@ factual: paths, commands, invariants — no essays.
   addressable: real JSONL child sessions, `task_status`/`task_observe`/
   `task_send`/`task_cancel` (model-facing job abort), child-only `reply` +
   sibling `agent_message` (pending-queue + hop-capped),
-  `completed_without_reply` notice. Child IDENTITY for tool calls is
+  `completed_without_reply` notice. gh-1948: the executor flushes each
+  child's transcript at every turn boundary (the JSONL exists and grows
+  mid-run), and `task_observe` resolves a placeholder-handle child
+  (`<parentSessionId>/<id>` until the first flush) through
+  `resolveChildSessionPath` (`child_session_io.dart` — the sessions-tree
+  header scan) wired by the CLI via `SubagentServices.resolveChildSessionPath`,
+  healing the handle onto the real path; read failures degrade to a
+  structured "no transcript available yet"/"transcript unavailable"
+  message, never an uncaught exception. Child IDENTITY for tool calls is
   zone-scoped (`subagent_scope.dart`, gh-970): `runSpawn`/`resumeChild`
   publish the running child's id via `runWithSubagentScope`, and
   `TaskExecutor.currentSubagentId` reads the zone FIRST — the executor's

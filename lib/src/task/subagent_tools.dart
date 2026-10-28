@@ -32,6 +32,14 @@ typedef ChildMessageReader =
       int tail,
     });
 
+/// Callback resolving a child's REAL session JSONL path from its id
+/// (gh-1948): the handle's `sessionId` is a synthetic
+/// `<parentSessionId>/<id>` placeholder until the first transcript flush
+/// attaches the real file, so a live child is otherwise unobservable.
+/// Null on hosts without a sessions tree — observe then reports the
+/// placeholder cleanly instead of resolving.
+typedef ChildSessionPathResolver = Future<String?> Function(String childId);
+
 /// Callback to resume a child IN ITS OWN SESSION with a follow-up message
 /// (issue #222): the run appends to the same JSONL transcript, keeping the
 /// same mailbox id and display name. Backs `task_resume` (failed children)
@@ -68,6 +76,7 @@ const childInjectedToolNames = <String>{'reply', 'agent_message'};
 List<AgentTool> subagentMonitoringTools({
   required SubagentManager? manager,
   ChildMessageReader? readMessages,
+  ChildSessionPathResolver? resolveSessionPath,
   ChildResumeRunner? resumeChild,
   CurrentSubagentIdProvider? currentSubagentId,
   TaskJobManager? jobs,
@@ -85,7 +94,7 @@ List<AgentTool> subagentMonitoringTools({
   if (manager == null) return const [];
   return [
     _taskStatusTool(manager),
-    _taskObserveTool(manager, readMessages),
+    _taskObserveTool(manager, readMessages, resolveSessionPath),
     _taskSendTool(manager, resumeChild, taskSendWaitCap),
     _taskResumeTool(manager, resumeChild, taskSendWaitCap),
     if (jobs != null) _taskCancelTool(jobs, manager, executor),
@@ -1048,6 +1057,7 @@ AgentTool _taskStatusTool(SubagentManager manager) {
 AgentTool _taskObserveTool(
   SubagentManager manager,
   ChildMessageReader? readMessages,
+  ChildSessionPathResolver? resolveSessionPath,
 ) {
   return AgentTool(
     name: 'task_observe',
@@ -1079,12 +1089,58 @@ AgentTool _taskObserveTool(
           'status: ${handle.status.name}',
         );
       }
-      final messages = await readMessages(handle.sessionId, tail: tail);
-      if (messages.isEmpty) {
-        return ToolExecutionResult.text('no messages in session for "$id"');
+      // gh-1948: the handle's sessionId is a `<parentSessionId>/<id>`
+      // PLACEHOLDER until the first transcript flush attaches the real
+      // path — a RUNNING background child may not have flushed yet (and a
+      // rehydrated row can still carry the placeholder). Observing the
+      // placeholder used to escape as an uncaught SessionException.
+      // Resolve the real file from the sessions tree first; when the
+      // resolver runs and finds none, say so cleanly. Hosts without a
+      // resolver keep the pass-through: their reader owns the session id
+      // shape, and read failures degrade to the structured error below.
+      var sessionPath = handle.sessionId;
+      final isPlaceholder =
+          sessionPath.isEmpty ||
+          sessionPath == '${manager.parentSessionId}/${handle.id}';
+      if (isPlaceholder && resolveSessionPath != null) {
+        String? resolved;
+        try {
+          resolved = await resolveSessionPath(handle.id);
+        } on Object {
+          // Resolution is best-effort — the read below reports honestly.
+        }
+        if (resolved != null) {
+          sessionPath = resolved;
+          // Heal the handle so later observes (and task_status /
+          // task_send reopen paths) skip the scan — the same attach the
+          // executor performs at flush time, idempotent on the path.
+          if (handle.sessionId != resolved) {
+            await manager.attachSession(handle.id, resolved);
+          }
+        } else {
+          return ToolExecutionResult.text(
+            'no transcript available yet for "$id" (status: '
+            '${handle.status.name}) — the child session file appears at '
+            'its first turn boundary; try again shortly',
+          );
+        }
       }
-      final lines = [for (final m in messages) '${m.$1}: ${m.$2}'];
-      return ToolExecutionResult.text(lines.join('\n'));
+      try {
+        final messages = await readMessages(sessionPath, tail: tail);
+        if (messages.isEmpty) {
+          return ToolExecutionResult.text('no messages in session for "$id"');
+        }
+        final lines = [for (final m in messages) '${m.$1}: ${m.$2}'];
+        return ToolExecutionResult.text(lines.join('\n'));
+      } on Object catch (error) {
+        // gh-1948: a read-only observation must degrade to a structured
+        // error — an uncaught exception here surfaces as a harness bug,
+        // not as something the parent agent can act on.
+        return ToolExecutionResult.text(
+          'transcript unavailable for "$id" (status: '
+          '${handle.status.name}): $error',
+        );
+      }
     },
   );
 }

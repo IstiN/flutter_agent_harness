@@ -85,7 +85,8 @@ import '../task/subagent_manager.dart'
         SubagentRegistrySink,
         SubagentRegistrySource,
         childInboxWakePrompt;
-import '../task/subagent_tools.dart' show subagentMonitoringTools;
+import '../task/subagent_tools.dart'
+    show ChildSessionPathResolver, subagentMonitoringTools;
 import '../task/task_tool.dart' show TaskToolConfig, taskTool;
 import '../telemetry/agent_telemetry.dart';
 import '../tools/ask_tool.dart';
@@ -223,6 +224,14 @@ final class SubagentServices {
   final Future<Session> Function(String parentId, String childId)?
   childSessionFactory;
 
+  /// Resolves a child's REAL session JSONL path from its id (gh-1948):
+  /// the registry handle carries a `<parentSessionId>/<id>` placeholder
+  /// until the first transcript flush, so `task_observe` on a live child
+  /// needs the sessions-tree scan to find the file. Null keeps observe's
+  /// honest "no transcript available yet" answer on hosts without the
+  /// scan.
+  final ChildSessionPathResolver? resolveChildSessionPath;
+
   /// Transient-ENOENT retry for the child-session reopen (issue #427);
   /// the builder derives the JSONL opener from it.
   final SessionIoRetryConfig? sessionIoRetry;
@@ -244,6 +253,7 @@ final class SubagentServices {
     this.misuseBreaker = true,
     this.deliverableRedactor,
     this.childSessionFactory,
+    this.resolveChildSessionPath,
     this.sessionIoRetry,
   });
 }
@@ -1042,7 +1052,15 @@ _WiredTaskSurface? _wireTaskSurface({
     ...subagentMonitoringTools(
       manager: manager,
       jobs: taskConfig.jobManager,
-      readMessages: jsonlChildMessageReader(services.baseEnv),
+      // gh-1948: observe resolves a RUNNING child's real JSONL (the
+      // registry handle still carries the `<parentId>/<id>` placeholder
+      // mid-run) and reads ride the transient-ENOENT retry — the file is
+      // being appended to while it is read.
+      readMessages: jsonlChildMessageReader(
+        services.baseEnv,
+        ioRetry: bundle.sessionIoRetry ?? const SessionIoRetryConfig(),
+      ),
+      resolveSessionPath: bundle.resolveChildSessionPath,
       resumeChild: taskConfig.executor.resumeChild,
       executor: taskConfig.executor,
     ),
