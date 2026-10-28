@@ -105,14 +105,15 @@ jobs:
       # gh-1852: serialize the matrix. Both legs sign with a per-arch
       # keychain but mutate the PER-USER GLOBAL keychain search list
       # (`security default-keychain -s` / `list-keychains -d user -s`) —
-      # and the fa-m5 pool is ONE host under ONE user account, so two
-      # concurrent legs evict each other's keychain from the search list
-      # and the loser's codesign dies with "No certificate for team
-      # YP9HC3USZ3 matching ... found" (6/7 red runs over 48h; autopsy:
-      # run 40117288269, x86_64 evicted arm64's keychain 67s after
-      # import). Pinned by
-      # test/ci_macos_keychain_serialization_guard_test.dart.
-      max-parallel: 1
+      # gh-1865 model v3: the matrix runs PARALLEL again. The gh-1852
+      # serialization (max-parallel: 1) existed only because the legs
+      # carried per-job keychains whose search-list writes evicted each
+      # other (run 40117288269: x86_64 evicted arm64's keychain 67s after
+      # import). Signing now goes through ~/bin/ci-sign against the
+      # persistent host keychain — no per-job keychain lifecycle, no
+      # search-list writes — so the eviction class is structurally gone
+      # and the pool's parallelism (#359) is restored. Pinned by
+      # test/ci_macos_keychain_serialization_guard_test.dart AC1.
       matrix:
         arch: [arm64, x86_64]
     permissions:
@@ -552,78 +553,32 @@ jobs:
       # runner; a shared build.keychain raced (one job's delete+create
       # emptied it under the other's codesign — errSecInternalComponent /
       # "No certificate found", builds 86).
-      - name: Import macOS signing certificate
+      - name: Provision signing via ci-sign (persistent host keychain)
         id: signing
         env:
           MACOS_CERTIFICATE_P12_BASE64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
           MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
-          MACOS_KEYCHAIN_PASSWORD: ${{ secrets.MACOS_KEYCHAIN_PASSWORD }}
+          CI_SIGN_P12_B64_ENV: MACOS_CERTIFICATE_P12_BASE64
+          CI_SIGN_P12_PASSWORD_ENV: MACOS_CERTIFICATE_PASSWORD
           MACOS_PROVISIONING_PROFILE_BASE64: ${{ secrets.MACOS_PROVISIONING_PROFILE_BASE64 }}
         run: |
           if [ -z "$MACOS_CERTIFICATE_P12_BASE64" ]; then
             echo "⚠️  No signing certificate found — building unsigned (development only)"
             echo "signed=false" >> $GITHUB_OUTPUT
           else
-            echo "✅ Signing certificate found — importing..."
-            security delete-keychain build-${{ matrix.arch }}.keychain 2>/dev/null || true
-            security create-keychain -p "$MACOS_KEYCHAIN_PASSWORD" build-${{ matrix.arch }}.keychain
-            security default-keychain -s build-${{ matrix.arch }}.keychain
-            security unlock-keychain -p "$MACOS_KEYCHAIN_PASSWORD" build-${{ matrix.arch }}.keychain
-            # gh-1798: the window must cover the WHOLE job, not the
-            # import→build gap. On the first Xcode 27 run the tool's
-            # "Adding Swift Package Manager integration" pass alone took
-            # 3365s (56 min) + 443s pod install, putting the first codesign
-            # evaluation 73+ min after unlock — the 1h window auto-locked
-            # the keychain mid-build and codesign lost the identity
-            # ("No certificate for team ... matching ... found"). 4h ≥ the
-            # 150-min job ceiling with slack. Pinned by
-            # test/ci_macos_signing_window_guard_test.dart.
-            security set-keychain-settings -t 14400 -u build-${{ matrix.arch }}.keychain
-            # gh-1866: publish the search list ADDITIVELY, never with a fixed
-            # list — the daily TestFlight leg's build-mobile iOS job runs
-            # CONCURRENTLY on this host/user (the fa-m5 registrations share
-            # one account) and its fixed-list write evicted this keychain
-            # 75 s after import, killing the release build's first codesign
-            # ("No certificate for team YP9HC3USZ3 matching ... found", run
-            # 40165498619). The helper unions the current list and verifies
-            # this keychain survived the write. gh-1852's max-parallel: 1
-            # above serializes only THIS workflow's own matrix.
-            bash scripts/keychain_searchlist_add.sh \
-              "$HOME/Library/Keychains/build-${{ matrix.arch }}.keychain-db"
-
-            echo "$MACOS_CERTIFICATE_P12_BASE64" | base64 --decode > certificate.p12
-            security import certificate.p12 -k build-${{ matrix.arch }}.keychain \
-              -P "$MACOS_CERTIFICATE_PASSWORD" \
-              -T /usr/bin/codesign \
-              -T /usr/bin/productbuild
-            security set-key-partition-list -S apple-tool:,apple: -s -k "$MACOS_KEYCHAIN_PASSWORD" build-${{ matrix.arch }}.keychain
-
-            # gh-1865: pin the signing identity by SHA-1, never by name.
-            # MACOS_CERTIFICATE_ID is name-based and the per-user keychain
-            # search list is ADDITIVE by design (gh-1866) — the concurrent
-            # iOS leg (or the sibling matrix arch) legitimately keeps its
-            # same-CN "Apple Distribution: ... (team)" cert visible in the
-            # shared list, so a name lookup is a lottery between two certs
-            # with different serials (owner-verified gh-1865 timeline, run
-            # 40455401630: the iOS leg resolved xcodebuild's identity to
-            # THIS cert class at 05:56:14Z and the archive died). Resolve
-            # the fingerprint from THIS job's OWN keychain right after
-            # import and sign every step below by fingerprint.
-            # r2 (v1.0.659 regression): match the distribution CLASS set —
-            # the iOS p12 carries the legacy "iPhone Distribution:" CN,
-            # macOS certs the modern "Apple Distribution:" CN (job log
-            # 122648235984: exactly that identity, SHA-1 43AEC254…).
-            # Exactly-1 still refuses ambiguous keychains loudly.
-            IDENT_LINE=$(security find-identity -v -p codesigning build-${{ matrix.arch }}.keychain \
-              | grep -E 'Apple Distribution|iPhone Distribution|3rd Party Mac Developer Application' || true)
-            IDENT_COUNT=$(printf '%s\n' "$IDENT_LINE" | grep -c . || true)
-            if [ "$IDENT_COUNT" -ne 1 ]; then
-              echo "::error::gh-1865: expected exactly 1 distribution-class (Apple/iPhone) codesigning identity in build-${{ matrix.arch }}.keychain, found $IDENT_COUNT. Refusing to pick silently:"
-              security find-identity -v -p codesigning build-${{ matrix.arch }}.keychain || true
-              exit 1
-            fi
-            CERT_SHA1=$(printf '%s\n' "$IDENT_LINE" | awk '{print $2}')
-            CERT_NAME=$(printf '%s\n' "$IDENT_LINE" | sed -E 's/^[^"]*"([^"]+)".*/\1/')
+            echo "✅ Signing certificate found — provisioning via ci-sign..."
+            # gh-1865 model v3 (owner decision 2026-10-28): NO per-arch
+            # temporary keychains, NO search-list writes, NO default-keychain
+            # flips. ~/bin/ci-sign keeps the PERSISTENT ci-signing.keychain-db
+            # provisioned (idempotent — concurrent matrix legs re-verify in
+            # milliseconds) and pins the identity by SHA-1, so a concurrent
+            # leg's same-subject certificate (gh-1865, run 40455401630)
+            # cannot shadow resolution. The old per-arch keychain
+            # delete+create race was gh-1852; the eviction race was gh-1866;
+            # both classes are structurally gone.
+            ~/bin/ci-sign install fa-macos
+            CERT_SHA1=$(~/bin/ci-sign sha1 fa-macos)
+            CERT_NAME=$(~/bin/ci-sign name fa-macos)
             echo "identity_sha1=$CERT_SHA1" >> $GITHUB_OUTPUT
             echo "identity_name=$CERT_NAME" >> $GITHUB_OUTPUT
             echo "gh-1865: signing identity pinned by SHA-1: $CERT_NAME ($CERT_SHA1)"
@@ -634,10 +589,12 @@ jobs:
             echo "$MACOS_PROVISIONING_PROFILE_BASE64" | base64 --decode > profile.provisionprofile
             echo "profile_embedded=true" >> $GITHUB_OUTPUT
 
-            # Make the profile visible to Xcode manual signing.
-            PROFILE_UUID=$(security cms -D -i profile.provisionprofile | plutil -extract UUID raw -)
-            PROFILE_NAME=$(security cms -D -i profile.provisionprofile | plutil -extract Name raw -)
-            PROFILE_TEAM=$(security cms -D -i profile.provisionprofile | plutil -extract TeamIdentifier.0 raw - 2>/dev/null || true)
+            # Make the profile visible to Xcode manual signing. Decoding
+            # goes through ci-sign plist — `security cms -D` needs a
+            # default keychain, which this model never sets.
+            PROFILE_UUID=$(~/bin/ci-sign plist profile.provisionprofile | plutil -extract UUID raw -)
+            PROFILE_NAME=$(~/bin/ci-sign plist profile.provisionprofile | plutil -extract Name raw -)
+            PROFILE_TEAM=$(~/bin/ci-sign plist profile.provisionprofile | plutil -extract TeamIdentifier.0 raw - 2>/dev/null || true)
             echo "Profile: $PROFILE_NAME / UUID: $PROFILE_UUID / team: $PROFILE_TEAM"
             mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
             cp profile.provisionprofile "$HOME/Library/MobileDevice/Provisioning Profiles/${PROFILE_UUID}.provisionprofile"
@@ -645,41 +602,11 @@ jobs:
             echo "profile_team=$PROFILE_TEAM" >> $GITHUB_OUTPUT
 
             # gh-1865 fail-fast precheck (owner option B): the profile must
-            # embed the certificate we JUST imported — a mismatch used to
-            # surface only as a dead archive after the full build. Abort
-            # here instead. Skipped on unsigned runs (no imported cert).
-            # gh-1937: the extractor dropped every cert of a REAL Apple
-            # profile — the portal serializes each <data> element on ONE
-            # line, and the opening rule consumed the trailing </data> with
-            # `next` so the closing rule never printed. The #1939 awk patch
-            # handled that single-line shape; the plistlib stanza below
-            # (gh-1865 r2) supersedes it and covers every plist encoding —
-            # single-line, wrapped, AND binary.
-            if [ -n "${CERT_NAME:-}" ]; then
-              CERT_SERIAL=$(security find-certificate -c "$CERT_NAME" -p build-${{ matrix.arch }}.keychain \
-                | openssl x509 -noout -serial | sed 's/^serial=//')
-              # r2: parse with plistlib, not a text scan — security cms -D
-              # output may be a BINARY plist or carry inline <data> blobs
-              # (v1.0.659 run 40637547009: the awk scan saw zero
-              # DeveloperCertificates entries on this very profile and the
-              # precheck aborted a healthy build). plistlib handles every
-              # plist encoding; the base64/openssl tail is unchanged.
-              PROFILE_SERIALS=$(security cms -D -i profile.provisionprofile \
-                | python3 -c 'import plistlib, sys, base64; certs = plistlib.loads(sys.stdin.buffer.read()).get("DeveloperCertificates", []); [print(base64.b64encode(bytes(c)).decode()) for c in certs]' \
-                | while IFS= read -r der; do
-                    printf '%s' "$der" | base64 --decode \
-                      | openssl x509 -inform DER -noout -serial 2>/dev/null \
-                      | sed 's/^serial=//' || true
-                  done)
-              if [ -z "$PROFILE_SERIALS" ]; then
-                echo "::error::gh-1865 GUARD ERROR: extracted 0 certificate serials from the macOS provisioning profile (plist parse found no DeveloperCertificates entries). This is an EXTRACTION FAILURE, not a profile mismatch; refusing to compare against an empty list. Aborting."
-                exit 1
-              fi
-              if ! printf '%s\n' "$PROFILE_SERIALS" | grep -qxF "$CERT_SERIAL"; then
-                echo "::error::gh-1865 fail-fast: the macOS provisioning profile ($PROFILE_NAME) does not contain the imported signing certificate (profile cert serials: $(printf '%s' "$PROFILE_SERIALS" | tr '\n' ' ')— imported identity serial: $CERT_SERIAL). Re-issue the profile under the current distribution certificate and update MACOS_PROVISIONING_PROFILE_BASE64. Aborting BEFORE the build."
-                exit 1
-              fi
-              echo "gh-1865 precheck OK: profile contains identity serial $CERT_SERIAL"
+            # embed the provisioned certificate — a mismatch aborts here in
+            # seconds instead of surfacing as a dead archive after the full
+            # build. Skipped on unsigned runs (no provisioned cert).
+            if [ -n "${CERT_SHA1:-}" ]; then
+              ~/bin/ci-sign doctor profile.provisionprofile fa-macos
             fi
           else
             echo "⚠️  No provisioning profile found — TestFlight will warn"
@@ -994,8 +921,9 @@ jobs:
         env:
           MACOS_INSTALLER_P12_BASE64: ${{ secrets.MACOS_INSTALLER_P12_BASE64 }}
           MACOS_INSTALLER_P12_PASSWORD: ${{ secrets.MACOS_INSTALLER_P12_PASSWORD }}
+          CI_SIGN_P12_B64_ENV: MACOS_INSTALLER_P12_BASE64
+          CI_SIGN_P12_PASSWORD_ENV: MACOS_INSTALLER_P12_PASSWORD
           MACOS_INSTALLER_CERT_ID: ${{ secrets.MACOS_INSTALLER_CERT_ID }}
-          MACOS_KEYCHAIN_PASSWORD: ${{ secrets.MACOS_KEYCHAIN_PASSWORD }}
           VERSION: ${{ needs.version.outputs.version }}
         run: |
           set -euo pipefail
@@ -1003,34 +931,19 @@ jobs:
             echo "::notice::Mac Installer Distribution cert not configured — skipping TestFlight PKG (the DMG path is unaffected)."
             exit 0
           fi
-          # The installer cert goes into the same build-${{ matrix.arch }}.keychain (it exists
-          # from the signing step when SIGNED=true; create it otherwise).
-          KEYCHAIN_PASS="${MACOS_KEYCHAIN_PASSWORD:-}"
-          if ! security list-keychains | grep -q build-${{ matrix.arch }}.keychain; then
-            # create-keychain fails with "already exists" when the keychain
-            # exists but is not in the search list (grep above missed it) —
-            # tolerate that and just add it to the search list.
-            security create-keychain -p "$KEYCHAIN_PASS" build-${{ matrix.arch }}.keychain || true
-            security default-keychain -s build-${{ matrix.arch }}.keychain
-            security unlock-keychain -p "$KEYCHAIN_PASS" build-${{ matrix.arch }}.keychain
-            # gh-1866: additive re-assert (same rationale as the signing
-            # step) — a fixed-list write here would evict a concurrent
-            # signing job's keychain from the shared user search list.
-            bash scripts/keychain_searchlist_add.sh \
-              "$HOME/Library/Keychains/build-${{ matrix.arch }}.keychain-db"
-          fi
-          echo "$MACOS_INSTALLER_P12_BASE64" | base64 --decode > installer.p12
-          security import installer.p12 -k build-${{ matrix.arch }}.keychain \
-            -P "$MACOS_INSTALLER_P12_PASSWORD" \
-            -T /usr/bin/productbuild -T /usr/bin/xcodebuild
-          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASS" build-${{ matrix.arch }}.keychain
-          rm -f installer.p12
+          # gh-1865 model v3: the installer cert lives in the PERSISTENT
+          # ci-signing keychain under its own label (idempotent install —
+          # the old lazy keychain re-create + search-list re-assert here
+          # was gh-1866 exposure #2). productbuild signs by the SHA-1
+          # fingerprint, immune to same-subject name shadowing.
+          ~/bin/ci-sign install fa-macos-installer
+          INSTALLER_SHA1=$(~/bin/ci-sign sha1 fa-macos-installer)
 
           APP_PATH="flutter_app/build/macos/Build/Products/Release/Fa.app"
           PKG_NAME="fa-macos-arm64-${VERSION}.pkg"
           echo "Building TestFlight package: $APP_PATH → $PKG_NAME"
           productbuild --component "$APP_PATH" /Applications "$PKG_NAME" \
-            --sign "$MACOS_INSTALLER_CERT_ID"
+            --sign "$INSTALLER_SHA1"
           echo "pkg_name=$PKG_NAME" >> $GITHUB_OUTPUT
 
       - name: Notarize DMG
@@ -1158,10 +1071,11 @@ jobs:
             flutter_app/${{ steps.package_nosandbox.outputs.zip_name }}
           retention-days: 14
 
-      - name: Cleanup keychain
+      - name: Cleanup
         if: always()
         run: |
-          security delete-keychain build-${{ matrix.arch }}.keychain 2>/dev/null || true
+          # gh-1865 model v3: no per-job keychain to delete — the persistent
+          # ci-signing keychain is host state, never removed from jobs.
           rm -f certificate.p12 installer.p12
 
   build-macos-cli:
