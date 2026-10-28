@@ -22,11 +22,12 @@
 part of 'agent_loop.dart';
 
 /// Emitted when the gh-1934 recovery ladder ran: the request was refused
-/// for SIZE, the adaptive budget was halved (and — pass 2 — every image
-/// stripped to a placeholder), and the payload was rebuilt through the
-/// registry. Repairs are never silent: [dropped]/[stripped] carry the
-/// counts the rebuilt request rode, and [failed] marks the single
-/// actionable exhaustion event.
+/// for SIZE and a pass rebuilt the payload through the registry (pass
+/// events carry the real dropped/stripped counts the rebuilt request
+/// rode), or the ladder exhausted ([failed] — the single actionable
+/// exhaustion event, its counts describing the last refused build, after
+/// which nothing more could be shed). Repairs are never silent: per-pass
+/// counts also ride the host notice seam.
 final class ImagePayloadRecoveryEvent extends AgentEvent {
   const ImagePayloadRecoveryEvent({
     required this.pass,
@@ -53,42 +54,21 @@ final class ImagePayloadRecoveryEvent extends AgentEvent {
   final String? providerError;
 }
 
-/// Whether the request window carries image bytes the ladder could shed —
-/// ImageContent blocks, plus the text-embedded data-URL shapes the
-/// #1916 fold lifts into blocks at rewrite time (a legacy 413 session
-/// must reach the ladder too). A text-only window never engages the
-/// ladder (AC6).
-bool _windowHasImages(List<Message> messages) {
-  bool blocksHaveImages(List<ContentBlock> blocks) => blocks.any(
-    (block) =>
-        block is ImageContent ||
-        (block is TextContent && block.text.contains('data:image/')),
-  );
-  for (final message in messages) {
-    switch (message) {
-      case UserMessage(:final content):
-        if (content is String) {
-          if (content.contains('data:image/')) return true;
-        } else if (blocksHaveImages(content as List<ContentBlock>)) {
-          return true;
-        }
-      case ToolResultMessage(:final content):
-        if (blocksHaveImages(content)) return true;
-      default:
-    }
-  }
-  return false;
-}
-
 /// Whether a finished turn needs the gh-1934 413 recovery ladder: a
 /// classified payload-size refusal on an error stop, with the recovery
 /// state attached and the registry alive, before the ladder exhausted —
-/// and only when the window actually carries image bytes (a text-only
-/// 413 belongs to the provider, not to images).
+/// and only when the REQUEST that was refused actually carried image
+/// bytes the ladder could shed. The gate evaluates the request payload
+/// recorded by the last build (`lastPayloadCariedImages`), never the
+/// transcript: the payload-only rewrite keeps every image byte in the
+/// transcript forever, so a transcript-shaped gate would re-run the
+/// ladder — two wasted sends plus false recovery copy — on EVERY later
+/// 413 of a strip-all-latched session (gh-1934 review). A latched
+/// session's payload is image-free and a text-only 413 belongs to the
+/// provider (AC6), so both stand down.
 bool _needsImage413Recovery(
   bool exhausted,
   AssistantMessage finished,
-  Context context,
   AgentLoopConfig config,
 ) =>
     !exhausted &&
@@ -96,7 +76,8 @@ bool _needsImage413Recovery(
     imageRegistryConfig.enabled &&
     config.imageRecovery != null &&
     isPayloadTooLargeError(finished.errorMessage) &&
-    _windowHasImages(context.messages);
+    config.imageRecovery!.lastPayloadCariedImages &&
+    !config.imageRecovery!.stripAll;
 
 /// The mutable gh-1934 ladder state of one streamed response: whether the
 /// ladder exhausted (no more passes) and how many passes ran. Mirrors how
@@ -109,33 +90,35 @@ final class _Image413RecoveryState {
 
   /// Runs the ladder step when [finished] is a classified 413. Returns
   /// the retry instruction, or null when the error must surface (no
-  /// recovery configured, text-only window, ladder exhausted — after
-  /// emitting the ONE actionable failure event, AC4).
+  /// recovery configured, an image-free refused payload, the strip-all
+  /// latch already set, ladder exhausted — after emitting the ONE
+  /// actionable failure event, AC4).
   Future<_AttemptResult?> healIfNeeded(
     AssistantMessage finished,
     Context context,
     AgentLoopConfig config,
     AgentEventSink emit,
   ) async {
-    if (!_needsImage413Recovery(exhausted, finished, context, config)) {
+    if (!_needsImage413Recovery(exhausted, finished, config)) {
       return null;
     }
     final recovery = config.imageRecovery!;
     if (passes >= 2) {
       exhausted = true;
-      final event = ImageRecoveryEvent(
-        pass: 2,
-        dropped: 0,
-        stripped: 0,
-        failed: true,
-        providerError: finished.errorMessage,
-      );
-      imageRecoveryNotice?.call(event);
       await emit(
         ImagePayloadRecoveryEvent(
           pass: 2,
-          dropped: 0,
-          stripped: 0,
+          dropped: recovery.lastDropped,
+          stripped: recovery.lastStripped,
+          failed: true,
+          providerError: finished.errorMessage,
+        ),
+      );
+      imageRecoveryNotice?.call(
+        ImageRecoveryEvent(
+          pass: 2,
+          dropped: recovery.lastDropped,
+          stripped: recovery.lastStripped,
           failed: true,
           providerError: finished.errorMessage,
         ),

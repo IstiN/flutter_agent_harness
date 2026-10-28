@@ -82,10 +82,28 @@ final class ImagePayloadRecoveryState {
   int _armedPass = 0;
   int _lastDropped = 0;
   int _lastStripped = 0;
+  int? _consumedPass;
+
+  /// Whether the LAST observed request build carried image bytes the
+  /// ladder could shed (gh-1934 review — the AC6 gate evaluates the
+  /// REQUEST that was refused, never the transcript: the transcript keeps
+  /// image bytes forever under the payload-only rewrite, so a
+  /// transcript-shaped gate would re-run the ladder on every later 413 of
+  /// a latched session). Conservative default `true`: until the first
+  /// build is observed the ladder engages exactly as before; every real
+  /// request build records the fact (`rewriteRequestImages`).
+  bool lastPayloadCariedImages = true;
 
   /// The adaptive budget the session learned from 413 refusals
   /// (halving); null before the first 413.
   int? get learnedByteBudget => _learnedByteBudget;
+
+  /// Image blocks the last observed build dropped by the adaptive byte
+  /// budget (the counts the pass events and notices render).
+  int get lastDropped => _lastDropped;
+
+  /// Image blocks the last observed build stripped to placeholders.
+  int get lastStripped => _lastStripped;
 
   /// Pass-2 latch: every image block — current message included — rides
   /// as a placeholder from now on. Once set it never clears for the
@@ -105,8 +123,9 @@ final class ImagePayloadRecoveryState {
   int effectiveByteBudget(int configured) {
     final learned = _learnedByteBudget;
     if (learned == null) return configured;
-    var effective =
-        learned < imageRecoveryBudgetFloor ? imageRecoveryBudgetFloor : learned;
+    var effective = learned < imageRecoveryBudgetFloor
+        ? imageRecoveryBudgetFloor
+        : learned;
     if (configured > 0 && configured < effective) effective = configured;
     return effective;
   }
@@ -116,7 +135,8 @@ final class ImagePayloadRecoveryState {
   /// (0) seeds from the package default: the provider proved a cap
   /// exists, so the ladder must have something to halve.
   void halveBudget(int configured) {
-    final base = _learnedByteBudget ??
+    final base =
+        _learnedByteBudget ??
         (configured > 0 ? configured : defaultMaxImageBytesPerRequest);
     final halved = (base / 2).floor();
     _learnedByteBudget = halved < imageRecoveryBudgetFloor
@@ -125,11 +145,19 @@ final class ImagePayloadRecoveryState {
   }
 
   /// Records what one request build did with the images (called from the
-  /// rewrite path on every build while the state is attached), so an
-  /// armed note renders with the CURRENT build's counts.
-  void observeBuild({required int dropped, required int stripped}) {
+  /// rewrite path on EVERY build while the state is attached — the
+  /// image-free fast path included, so a text-only 413 can never read a
+  /// stale image-carrying observation), so an armed note renders with the
+  /// CURRENT build's counts and the 413 gate knows whether the refused
+  /// payload carried image bytes at all.
+  void observeBuild({
+    required int dropped,
+    required int stripped,
+    bool carriedImages = true,
+  }) {
     _lastDropped = dropped;
     _lastStripped = stripped;
+    lastPayloadCariedImages = carriedImages;
   }
 
   /// Arms the model-visible recovery note for the NEXT request build —
@@ -148,10 +176,13 @@ final class ImagePayloadRecoveryState {
 
   /// Renders + disarms the armed note (null when nothing is armed).
   /// Fires the host notice seam exactly once per pass with the same
-  /// counts the payload note carries.
+  /// counts the payload note carries, and leaves the pass pending for
+  /// [takeLoopEvent] (the loop-level event rides the same build with the
+  /// same counts).
   String? consumeNote() {
     if (!_noteArmed) return null;
     _noteArmed = false;
+    _consumedPass = _armedPass;
     imageRecoveryNotice?.call(
       ImageRecoveryEvent(
         pass: _armedPass,
@@ -159,11 +190,31 @@ final class ImagePayloadRecoveryState {
         stripped: _lastStripped,
       ),
     );
-    return '${imageRecoveryNoticeText(
-      dropped: _lastDropped,
-      stripped: _lastStripped,
-    )} — the request exceeded the provider size limit; the dropped images '
+    return '${imageRecoveryNoticeText(dropped: _lastDropped, stripped: _lastStripped)} — the request exceeded the provider size limit; the dropped images '
         'are gone from this and later requests. Continue without them and '
         'treat them as unavailable.';
+  }
+
+  /// Disarms an armed recovery note WITHOUT consuming it (gh-1934
+  /// review): the retry that would have carried it never streamed (the
+  /// run aborted or was cancelled between the arm and the retry build),
+  /// so a later unrelated request of the session must not ride the stale
+  /// one-shot claim. Called when a streamed response ends — a note the
+  /// retry consumed makes this a no-op.
+  void disarmNote() {
+    _noteArmed = false;
+  }
+
+  /// The loop-level event payload for the build that just consumed a pass
+  /// note: `(pass, dropped, stripped)` — the real counts the rebuilt
+  /// request rode. One-shot per build; null when no note was consumed
+  /// (nothing armed, or already taken). The loop emits this as an
+  /// [ImagePayloadRecoveryEvent] so the wire kind carries real per-pass
+  /// data instead of only the zeroed exhaustion event (gh-1934 review).
+  (int, int, int)? takeLoopEvent() {
+    final pass = _consumedPass;
+    if (pass == null) return null;
+    _consumedPass = null;
+    return (pass, _lastDropped, _lastStripped);
   }
 }

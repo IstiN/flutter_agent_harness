@@ -345,7 +345,8 @@ List<Message> rewriteRequestImages(
   noteOutboundEstimate(messages);
   if (!imageRegistryConfig.enabled) return messages;
   final configuredBytes = imageRegistryConfig.maxBytesPerRequest;
-  return rewriteHistoryImages(
+  ImageDropReport? report;
+  final rewritten = rewriteHistoryImages(
     messages,
     maxPerRequest:
         capOverride ??
@@ -353,22 +354,70 @@ List<Message> rewriteRequestImages(
     maxBytesPerRequest:
         recovery?.effectiveByteBudget(configuredBytes) ?? configuredBytes,
     modelId: modelId,
-    onReport: (report) {
-      recovery?.observeBuild(
-        dropped: report.drops
-            .where((drop) => drop.reason == ImageDropReason.bytes)
-            .length,
-        stripped: report.strippedCount,
-      );
+    onReport: (r) {
+      report = r;
       // Once-evicted keys never ride again this session (E4): boundary
       // evictions re-derive from the persisted boundary anyway, the latch
       // covers the window where that boundary is no longer visible.
-      recovery?.evictedKeys.addAll(report.evictedKeys);
-      imageDropReportNotice?.call(report);
+      recovery?.evictedKeys.addAll(r.evictedKeys);
+      imageDropReportNotice?.call(r);
     },
     stripAll: recovery?.stripAll ?? false,
     evictedKeys: recovery?.evictedKeys,
   );
+  // gh-1934 review: EVERY build records what the payload rode — the
+  // image-free fast path included (it reports no drops by the #1889
+  // contract, but the recovery gate must still learn the image-free
+  // fact). The 413 gate evaluates the REQUEST that was refused, never
+  // the transcript: the transcript keeps image bytes forever under the
+  // payload-only rewrite, so a stale observation would re-run the ladder
+  // on every later 413 of a latched session.
+  recovery?.observeBuild(
+    dropped:
+        report?.drops
+            .where((drop) => drop.reason == ImageDropReason.bytes)
+            .length ??
+        0,
+    stripped: report?.strippedCount ?? 0,
+    carriedImages: payloadCariesImageBytes(rewritten),
+  );
+  return rewritten;
+}
+
+/// Whether a request payload still carries image bytes the 413 ladder
+/// could shed (gh-1934 review): riding [ImageContent] blocks, plus the
+/// current message's text-embedded `data:image/` payloads at the fold
+/// threshold (the #1916 fold never touches the current message, so a
+/// giant inline screenshot there stays text and stays real payload
+/// weight). Sub-threshold inline icons are legitimate text and never
+/// count — a text-only session must not engage the ladder (AC6).
+bool payloadCariesImageBytes(List<Message> messages) {
+  bool blocksCarry(List<ContentBlock> blocks) => blocks.any(
+    (block) =>
+        block is ImageContent ||
+        (block is TextContent &&
+            block.text.length >= embeddedImageMinChars &&
+            block.text.contains('data:image/')),
+  );
+  for (final message in messages) {
+    switch (message) {
+      case UserMessage(:final content):
+        if (content is String) {
+          if (content.length >= embeddedImageMinChars &&
+              content.contains('data:image/')) {
+            return true;
+          }
+        } else if (blocksCarry(content as List<ContentBlock>)) {
+          return true;
+        }
+      case ToolResultMessage(:final content):
+        if (blocksCarry(content)) return true;
+      case AssistantMessage(:final content):
+        if (blocksCarry(content)) return true;
+      default:
+    }
+  }
+  return false;
 }
 
 /// A short, stable preview of a content key for drop notices.

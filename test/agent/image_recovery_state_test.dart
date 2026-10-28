@@ -22,8 +22,11 @@ void main() {
         1 * 1024 * 1024,
         reason: 'config still honored when lower',
       );
-      expect(state.effectiveByteBudget(0), 4 * 1024 * 1024,
-          reason: 'a disabled config budget cannot raise the learned one');
+      expect(
+        state.effectiveByteBudget(0),
+        4 * 1024 * 1024,
+        reason: 'a disabled config budget cannot raise the learned one',
+      );
     });
 
     test('halving compounds — each 413 halves again (AC4)', () {
@@ -51,7 +54,8 @@ void main() {
       expect(
         state.learnedByteBudget,
         defaultMaxImageBytesPerRequest ~/ 2,
-        reason: 'the provider proved a cap — the ladder learns from the '
+        reason:
+            'the provider proved a cap — the ladder learns from the '
             'default, not from a disabled budget',
       );
     });
@@ -92,5 +96,58 @@ void main() {
       imageRecoveryFailedText('413: still too large'),
       contains('switch provider or lower images.maxBytesPerRequest'),
     );
+  });
+
+  group('review — the disarm + loop-event seam', () {
+    test('disarmNote kills an armed note without consuming it', () {
+      final state = ImagePayloadRecoveryState();
+      state.armNote(pass: 1);
+      expect(state.noteArmed, isTrue);
+      state.disarmNote();
+      expect(state.noteArmed, isFalse);
+      expect(state.consumeNote(), isNull, reason: 'disarmed — never rides');
+    });
+
+    test('disarmNote without an armed note is a no-op', () {
+      final state = ImagePayloadRecoveryState()..disarmNote();
+      expect(state.noteArmed, isFalse);
+      expect(state.consumeNote(), isNull);
+    });
+
+    test(
+      'takeLoopEvent rides the consumed note once, with the build counts',
+      () {
+        final state = ImagePayloadRecoveryState();
+        expect(state.takeLoopEvent(), isNull, reason: 'nothing consumed yet');
+
+        state.armNote(pass: 2);
+        state.observeBuild(dropped: 0, stripped: 8);
+        expect(state.consumeNote(), isNotNull);
+        final event = state.takeLoopEvent();
+        expect(event, isNotNull);
+        expect(event!.$1, 2, reason: 'the pass the consumed note belonged to');
+        expect(event.$2, 0);
+        expect(event.$3, 8);
+        expect(state.takeLoopEvent(), isNull, reason: 'one-shot per build');
+      },
+    );
+
+    test('observeBuild records whether the payload carried image bytes', () {
+      final state = ImagePayloadRecoveryState();
+      // No build observed yet — conservative default engages the ladder
+      // exactly like the pre-review gate.
+      expect(state.lastPayloadCariedImages, isTrue);
+      state.observeBuild(dropped: 0, stripped: 0, carriedImages: false);
+      expect(state.lastPayloadCariedImages, isFalse);
+      state.observeBuild(dropped: 1, stripped: 0, carriedImages: true);
+      expect(state.lastPayloadCariedImages, isTrue);
+    });
+
+    test('lastDropped/lastStripped expose the observed build counts', () {
+      final state = ImagePayloadRecoveryState();
+      state.observeBuild(dropped: 7, stripped: 0);
+      expect(state.lastDropped, 7);
+      expect(state.lastStripped, 0);
+    });
   });
 }

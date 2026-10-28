@@ -391,6 +391,20 @@ Future<_AttemptResult> _streamAttempt(
     imageCapOverride: imageCapState.overrideFor(config),
     recovery: config.imageRecovery,
   );
+  // gh-1934 review: the loop-level recovery event rides the build that
+  // consumed the pass note — the real dropped/stripped counts the rebuilt
+  // request rode, once per pass, so the wire kind never carries only the
+  // zeroed exhaustion event.
+  final recoveryPass = config.imageRecovery?.takeLoopEvent();
+  if (recoveryPass != null) {
+    await emit(
+      ImagePayloadRecoveryEvent(
+        pass: recoveryPass.$1,
+        dropped: recoveryPass.$2,
+        stripped: recoveryPass.$3,
+      ),
+    );
+  }
   // Pairing repairs are always surfaced (issue #85): hosts see exactly
   // what was dropped/synthesized/renamed before the request went out.
   if (repairReport.isNotEmpty) {

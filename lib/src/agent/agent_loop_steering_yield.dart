@@ -377,6 +377,52 @@ Future<(AssistantMessage, Context)> _streamAssistantResponse(
   if (_isCancelRequested(cancelToken)) {
     return await _abortedTurn(context, config, emit);
   }
+  try {
+    return await _streamAssistantResponseInner(
+      context,
+      config,
+      emit,
+      streamFunction,
+      cancelToken,
+      newMessages: newMessages,
+      drainSteering: drainSteering,
+      cancelTokenSource: cancelTokenSource,
+      misuseNote: misuseNote,
+    );
+  } finally {
+    // gh-1934 review: a ladder pass arms its retry note right before the
+    // retry build; if that build never streams (the run aborted or threw
+    // between the arm and the rebuild), the stale one-shot claim must not
+    // ride an unrelated later request of the session. Every consumed
+    // note makes this a no-op.
+    config.imageRecovery?.disarmNote();
+  }
+}
+
+/// The attempt loop proper, beneath the recovery-note disarm guard.
+Future<(AssistantMessage, Context)> _streamAssistantResponseInner(
+  Context context,
+  AgentLoopConfig config,
+  AgentEventSink emit,
+  StreamFunction streamFunction,
+  CancelToken? cancelToken, {
+  required List<Message> newMessages,
+  required Future<List<Message>> Function() drainSteering,
+  CancelTokenSource? cancelTokenSource,
+  required String? misuseNote,
+}) async {
+  var reliefUsed = false;
+  var pairingHealed = false;
+  // gh-1680: one-shot message-cap heal state; when armed, the next
+  // rebuilt payload coalesces toward its target.
+  final capState = _CapHealState();
+  // Issue #1750: one-shot image-cap heal state; the learned cap rides
+  // the retried request build and latches for the run.
+  final imageCapState = _ImageCapHealState();
+  // gh-1934: the bounded 413 image-payload recovery ladder; pass 1
+  // halves the session's adaptive budget, pass 2 strips all images, and
+  // the session-level consequences ride config.imageRecovery.
+  final image413State = _Image413RecoveryState();
   for (var attempt = 0; ; attempt++) {
     final steer = _SteeringYieldWatch(
       config: config,

@@ -216,7 +216,8 @@ void main() {
       'note rides the retry', () async {
     final provider = _CappedProvider(5 * 1000 * 1000);
     final recovery = ImagePayloadRecoveryState();
-    final messages = await _run(provider, recovery: recovery);
+    final events = <AgentEvent>[];
+    final messages = await _run(provider, recovery: recovery, events: events);
 
     // Converged: the turn completed.
     final assistant = messages.whereType<AssistantMessage>().last;
@@ -248,7 +249,7 @@ void main() {
     expect(recoveryEvents.single.failed, isFalse);
     // The loop-level event rides the pass retry with the SAME real
     // counts the rebuilt request rode (review: not dead zeroed fields).
-    final passEvents = events!
+    final passEvents = events
         .whereType<ImagePayloadRecoveryEvent>()
         .where((e) => !e.failed)
         .toList();
@@ -349,6 +350,18 @@ void main() {
         .toList();
     expect(recoveryLoopEvents, hasLength(1));
     expect(recoveryLoopEvents.single.providerError, contains('413'));
+    // Each pass ALSO emits the loop-level event with the real counts the
+    // rebuilt request rode (review: the wire kind never carries dead
+    // zeroed fields — pass 1 dropped 7, pass 2 stripped all 8).
+    final passLoopEvents = events
+        .whereType<ImagePayloadRecoveryEvent>()
+        .where((e) => !e.failed)
+        .toList();
+    expect(passLoopEvents.map((e) => e.pass), [1, 2]);
+    expect(passLoopEvents.first.dropped, 7);
+    expect(passLoopEvents.first.stripped, 0);
+    expect(passLoopEvents.last.dropped, 0);
+    expect(passLoopEvents.last.stripped, 8);
 
     // A follow-up turn in the SAME session state rides the latch: no
     // images on the wire, no ladder, no new failure notice (no
@@ -518,8 +531,10 @@ void main() {
     );
 
     expect(provider.contexts, hasLength(1));
-    expect(messages.whereType<AssistantMessage>().last.stopReason,
-        StopReason.error);
+    expect(
+      messages.whereType<AssistantMessage>().last.stopReason,
+      StopReason.error,
+    );
     expect(recoveryEvents, isEmpty);
     expect(events.whereType<ImagePayloadRecoveryEvent>(), isEmpty);
   });
@@ -533,7 +548,10 @@ void main() {
     final recovery = ImagePayloadRecoveryState();
     var builds = 0;
     var armedDuringRun = false;
-    Future<List<Message>> dieOnRetry(List<Message> messages, CancelToken? _) {
+    Future<List<Message>> dieOnRetry(
+      List<Message> messages,
+      CancelToken? _,
+    ) async {
       builds++;
       if (builds >= 2) {
         // The arm happened in the heal, before this retry build — probe

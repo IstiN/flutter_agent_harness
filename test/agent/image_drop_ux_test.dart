@@ -484,8 +484,7 @@ void main() {
       expect(view.line, contains('(+1 evicted)'));
     });
 
-    test('/images renders the evicted dropWhy and the placeholder summary',
-        () {
+    test('/images renders the evicted dropWhy and the placeholder summary', () {
       final lines = imageSurfaceLines(
         lastReport: evictedReport(evicted: 2, stripped: 5),
         config: const ImageRegistryConfig(),
@@ -494,6 +493,145 @@ void main() {
       final joined = lines.join('\n');
       expect(joined, contains('(evicted: compaction boundary / 413 recovery)'));
       expect(joined, contains('evicted: 7 image(s) replaced by placeholders'));
+    });
+
+    test('review — pass-2 eviction of CURRENT-message images: prominent, '
+        'eviction wording, the right knob', () {
+      // The 413 strip-all evicts the just-attached images too. Prominence
+      // stays (actionable), but the line must name the eviction cause and
+      // images.maxBytesPerRequest — never a cap that did not bind, never
+      // images.maxPerRequest.
+      final ux = ImageDropUx();
+      final report = ImageDropReport(
+        drops: const [
+          ImageDropEvent(
+            index: 0,
+            key: 'cur-key-0',
+            fromCurrentMessage: true,
+            reason: ImageDropReason.evicted,
+          ),
+        ],
+        cap: 20,
+        modelId: 'test-model',
+        currentImageCount: 1,
+        registryCount: 1,
+        ridingCount: 0,
+        maxBytes: 8 * 1024 * 1024,
+        strippedCount: 1,
+        evictedKeys: const {'cur-key-0'},
+      );
+      final view = ux.observe(report)!;
+      expect(view.prominent, isTrue, reason: 'just-attached = actionable');
+      expect(
+        view.line,
+        contains(
+          '1 of 1 attached images replaced by '
+          'placeholders',
+        ),
+      );
+      expect(view.line, contains('413 recovery'));
+      expect(view.line, contains('images.maxBytesPerRequest'));
+      expect(view.line.contains('cap is'), isFalse);
+      expect(view.line.contains('images.maxPerRequest'), isFalse);
+    });
+
+    test('review — mixed current capped + current evicted: cap line counts '
+        'only capped, eviction appended', () {
+      final ux = ImageDropUx();
+      final report = ImageDropReport(
+        drops: const [
+          ImageDropEvent(
+            index: 0,
+            key: 'cur-key-0',
+            fromCurrentMessage: true,
+            reason: ImageDropReason.count,
+          ),
+          ImageDropEvent(
+            index: 1,
+            key: 'cur-key-1',
+            fromCurrentMessage: true,
+            reason: ImageDropReason.evicted,
+          ),
+        ],
+        cap: 20,
+        modelId: 'test-model',
+        currentImageCount: 5,
+        registryCount: 5,
+        ridingCount: 3,
+      );
+      final view = ux.observe(report)!;
+      expect(view.prominent, isTrue);
+      expect(view.line, contains('1 of 5 attached images'));
+      expect(view.line, contains('cap is 20/request'));
+      expect(view.line, contains('+1 attached replaced by placeholders'));
+    });
+
+    test('review — the latch is reason-aware: a cap→evicted transition of '
+        'the SAME key set re-notices', () {
+      // Request N dropped keys as byte-cap drops; request N+1 evicts the
+      // identical set (compaction boundary / 413 latch). The latch key
+      // must partition by reason, or the materially-different "these
+      // bytes never ride again" situation is silenced.
+      final ux = ImageDropUx();
+      final capReport = ImageDropReport(
+        drops: const [
+          ImageDropEvent(
+            index: 0,
+            key: 'hist-key-0',
+            fromCurrentMessage: false,
+            reason: ImageDropReason.bytes,
+          ),
+          ImageDropEvent(
+            index: 1,
+            key: 'hist-key-1',
+            fromCurrentMessage: false,
+            reason: ImageDropReason.bytes,
+          ),
+        ],
+        cap: 20,
+        modelId: 'test-model',
+        currentImageCount: 0,
+        registryCount: 4,
+        ridingCount: 2,
+        maxBytes: 8 * 1024 * 1024,
+      );
+      expect(ux.observe(capReport), isNotNull);
+      expect(
+        ux.observe(capReport),
+        isNull,
+        reason: 'same set + same reason — silence',
+      );
+      final evictedReport = ImageDropReport(
+        drops: const [
+          ImageDropEvent(
+            index: 0,
+            key: 'hist-key-0',
+            fromCurrentMessage: false,
+            reason: ImageDropReason.evicted,
+          ),
+          ImageDropEvent(
+            index: 1,
+            key: 'hist-key-1',
+            fromCurrentMessage: false,
+            reason: ImageDropReason.evicted,
+          ),
+        ],
+        cap: 20,
+        modelId: 'test-model',
+        currentImageCount: 0,
+        registryCount: 4,
+        ridingCount: 0,
+        evictedCount: 2,
+        evictedKeys: const {'hist-key-0', 'hist-key-1'},
+      );
+      final updated = ux.observe(evictedReport);
+      expect(updated, isNotNull, reason: 'cap→evicted is a new situation');
+      expect(updated!.line, contains('2 older images evicted'));
+      expect(
+        ux.observe(evictedReport),
+        isNull,
+        reason: 'the evicted set latches too — exactly one updated notice',
+      );
     });
   });
 }
