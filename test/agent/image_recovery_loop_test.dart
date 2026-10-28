@@ -90,16 +90,29 @@ AssistantMessage _assistant({
 
 /// 8 synthetic inline PNG blocks with realistic byte counts (~3MB of
 /// base64 each — the original repro's shape), riding as tool results the
-/// way `read` delivers screenshots.
+/// way `read` delivers screenshots — each preceded by its assistant
+/// tool-call message so the pairing repair never touches them.
 List<Message> _poisonedHistory({int count = 8, int bytes = 3 * 1000 * 1000}) => [
-  for (var i = 0; i < count; i++)
+  for (var i = 0; i < count; i++) ...[
+    AssistantMessage(
+      content: [
+        ToolCall(id: 'call$i', name: 'read', arguments: {'path': '/tmp/i.png'}),
+      ],
+      api: 'test-api',
+      provider: 'copilot',
+      model: 'vision',
+      usage: Usage.zero,
+      stopReason: StopReason.toolUse,
+      timestamp: DateTime.utc(2026, 1, 1, 0, 0, 0, i * 1000),
+    ),
     ToolResultMessage(
-      toolCallId: 't$i',
+      toolCallId: 'call$i',
       toolName: 'read',
       content: [ImageContent(data: 'x' * bytes, mimeType: 'image/png')],
       isError: false,
-      timestamp: DateTime.utc(2026, 1, 1, 0, 0, 0, i * 1000),
+      timestamp: DateTime.utc(2026, 1, 1, 0, 0, 0, i * 1000 + 500),
     ),
+  ],
 ];
 
 int _imageBytes(List<Message> messages) {
@@ -227,8 +240,8 @@ void main() {
   test('IT-2 (AC2): a compacted poisoned session sends ZERO image bytes',
       () async {
     final provider = _CappedProvider(5 * 1000 * 1000);
-    final boundary = '\$compactionSummaryPrefix'
-        'Old work.\$compactionSummarySuffix';
+    final boundary = '$compactionSummaryPrefix'
+        'Old work.$compactionSummarySuffix';
     final history = [
       UserMessage.text(boundary),
       ..._poisonedHistory(),
@@ -333,8 +346,23 @@ void main() {
       await _run(
         later,
         history: [
+          AssistantMessage(
+            content: [
+              const ToolCall(
+                id: 'call0',
+                name: 'read',
+                arguments: {'path': '/tmp/big.png'},
+              ),
+            ],
+            api: 'test-api',
+            provider: 'copilot',
+            model: 'vision',
+            usage: Usage.zero,
+            stopReason: StopReason.toolUse,
+            timestamp: DateTime.utc(2026, 1, 1),
+          ),
           ToolResultMessage(
-            toolCallId: 't0',
+            toolCallId: 'call0',
             toolName: 'read',
             content: [
               ImageContent(data: 'y' * (5 * 1000 * 1000), mimeType: 'image/png'),
