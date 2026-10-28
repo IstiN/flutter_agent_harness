@@ -82,10 +82,10 @@ void main() {
       'handle) and heals the handle path', () async {
     await mgr.register(id: 'a1', name: 'worker', agentType: 'task', task: 'x');
     await mgr.update('a1', status: SubagentStatus.running);
-    final session = await createChildTranscript('a1', messages: [
-      'turn one',
-      'turn two',
-    ]);
+    final session = await createChildTranscript(
+      'a1',
+      messages: ['turn one', 'turn two'],
+    );
     final realPath = (await session.getMetadata()).path;
     expect(mgr['a1']!.sessionId, 'parent-1/a1', reason: 'placeholder shape');
 
@@ -98,8 +98,7 @@ void main() {
     expect(mgr['a1']!.sessionId, realPath);
   });
 
-  test('no transcript yet → clean structured message, never a throw',
-      () async {
+  test('no transcript yet → clean structured message, never a throw', () async {
     await mgr.register(id: 'a1', name: 'worker', agentType: 'task', task: 'x');
     await mgr.update('a1', status: SubagentStatus.running);
 
@@ -152,12 +151,7 @@ void main() {
 
   test('tail still bounds the returned window after resolution', () async {
     await mgr.register(id: 'a1', name: 'worker', agentType: 'task', task: 'x');
-    await createChildTranscript('a1', messages: [
-      'm1',
-      'm2',
-      'm3',
-      'm4',
-    ]);
+    await createChildTranscript('a1', messages: ['m1', 'm2', 'm3', 'm4']);
 
     final text = await observeText(args: {'id': 'a1', 'tail': 2});
 

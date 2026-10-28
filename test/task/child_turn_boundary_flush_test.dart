@@ -163,8 +163,7 @@ Future<void> _waitFor(
 }
 
 void main() {
-  test('a running child flushes its transcript at the turn boundary',
-      () async {
+  test('a running child flushes its transcript at the turn boundary', () async {
     final env = MemoryExecutionEnv(cwd: '/work');
     final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
     final manager = SubagentManager(parentSessionId: 'parent-1');
@@ -215,61 +214,66 @@ void main() {
     );
   });
 
-  test('two running children flush independently (per-child isolation)',
-      () async {
-    final env = MemoryExecutionEnv(cwd: '/work');
-    final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
-    final manager = SubagentManager(parentSessionId: 'parent-1');
-    final childStream = _GatedMultiTurnStream()
-      ..registerFragment('job one')
-      ..registerFragment('job two');
-    final config = _buildConfig(
-      manager: manager,
-      env: env,
-      repo: repo,
-      childStream: childStream,
-    );
-    final tool = taskTool(config: config);
-
-    final spawn = tool.execute(
-      {
-        'context': 'ctx',
-        'background': true,
-        'tasks': [
-          {'name': 'One', 'task': 'job one'},
-          {'name': 'Two', 'task': 'job two'},
-        ],
-      },
-      null,
-      null,
-    );
-    await _waitFor(
-      () => childStream.turn2Entered('job one') &&
-          childStream.turn2Entered('job two'),
-      timeoutMessage: 'children never reached their second turns',
-    );
-    await _waitFor(
-      () => manager['One']!.sessionId != 'parent-1/One' &&
-          manager['Two']!.sessionId != 'parent-1/Two',
-      timeoutMessage: 'turn-boundary flush never attached both sessions',
-    );
-
-    expect(manager['One']!.sessionId, isNot(manager['Two']!.sessionId));
-    for (final id in ['One', 'Two']) {
-      final messages = await jsonlChildMessageReader(env)(
-        manager[id]!.sessionId,
-        tail: 10,
+  test(
+    'two running children flush independently (per-child isolation)',
+    () async {
+      final env = MemoryExecutionEnv(cwd: '/work');
+      final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
+      final manager = SubagentManager(parentSessionId: 'parent-1');
+      final childStream = _GatedMultiTurnStream()
+        ..registerFragment('job one')
+        ..registerFragment('job two');
+      final config = _buildConfig(
+        manager: manager,
+        env: env,
+        repo: repo,
+        childStream: childStream,
       );
-      expect(messages, isNotEmpty);
-    }
+      final tool = taskTool(config: config);
 
-    childStream.openGate('job one');
-    childStream.openGate('job two');
-    await spawn;
-    await _waitFor(
-      () => manager['One']!.status == SubagentStatus.completed &&
-          manager['Two']!.status == SubagentStatus.completed,
-      timeoutMessage: 'children never settled completed',
-    );
-  });
+      final spawn = tool.execute(
+        {
+          'context': 'ctx',
+          'background': true,
+          'tasks': [
+            {'name': 'One', 'task': 'job one'},
+            {'name': 'Two', 'task': 'job two'},
+          ],
+        },
+        null,
+        null,
+      );
+      await _waitFor(
+        () =>
+            childStream.turn2Entered('job one') &&
+            childStream.turn2Entered('job two'),
+        timeoutMessage: 'children never reached their second turns',
+      );
+      await _waitFor(
+        () =>
+            manager['One']!.sessionId != 'parent-1/One' &&
+            manager['Two']!.sessionId != 'parent-1/Two',
+        timeoutMessage: 'turn-boundary flush never attached both sessions',
+      );
+
+      expect(manager['One']!.sessionId, isNot(manager['Two']!.sessionId));
+      for (final id in ['One', 'Two']) {
+        final messages = await jsonlChildMessageReader(env)(
+          manager[id]!.sessionId,
+          tail: 10,
+        );
+        expect(messages, isNotEmpty);
+      }
+
+      childStream.openGate('job one');
+      childStream.openGate('job two');
+      await spawn;
+      await _waitFor(
+        () =>
+            manager['One']!.status == SubagentStatus.completed &&
+            manager['Two']!.status == SubagentStatus.completed,
+        timeoutMessage: 'children never settled completed',
+      );
+    },
+  );
 }

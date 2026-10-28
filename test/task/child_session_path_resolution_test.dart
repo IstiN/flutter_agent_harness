@@ -23,9 +23,7 @@ void main() {
   });
 
   test('resolves the real session file by (parent, child id)', () async {
-    final parent = await repo.create(
-      JsonlSessionCreateOptions(cwd: '/work'),
-    );
+    final parent = await repo.create(JsonlSessionCreateOptions(cwd: '/work'));
     final parentMeta = await parent.getMetadata();
     final child = await repo.create(
       JsonlSessionCreateOptions(
@@ -47,9 +45,7 @@ void main() {
   });
 
   test('returns null for an unknown child id (no transcript yet)', () async {
-    final parent = await repo.create(
-      JsonlSessionCreateOptions(cwd: '/work'),
-    );
+    final parent = await repo.create(JsonlSessionCreateOptions(cwd: '/work'));
     await repo.create(
       JsonlSessionCreateOptions(
         cwd: '/work',
@@ -70,9 +66,7 @@ void main() {
   });
 
   test('ignores child sessions of OTHER parents', () async {
-    final parent = await repo.create(
-      JsonlSessionCreateOptions(cwd: '/work'),
-    );
+    final parent = await repo.create(JsonlSessionCreateOptions(cwd: '/work'));
     await repo.create(
       JsonlSessionCreateOptions(
         cwd: '/work',
@@ -92,8 +86,7 @@ void main() {
     expect(resolved, isNull);
   });
 
-  test('ignores non-subagent sessions (the parent itself, forks, …)',
-      () async {
+  test('ignores non-subagent sessions (the parent itself, forks, …)', () async {
     final parent = await repo.create(
       JsonlSessionCreateOptions(cwd: '/work', metadata: {'id': 'a1'}),
     );
@@ -106,9 +99,7 @@ void main() {
   });
 
   test('multiple matches resolve to the NEWEST file', () async {
-    final parent = await repo.create(
-      JsonlSessionCreateOptions(cwd: '/work'),
-    );
+    final parent = await repo.create(JsonlSessionCreateOptions(cwd: '/work'));
     final parentId = (await parent.getMetadata()).id;
     Future<Session> child() => repo.create(
       JsonlSessionCreateOptions(

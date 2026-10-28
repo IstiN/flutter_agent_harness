@@ -165,10 +165,7 @@ import '../providers/models_endpoint.dart';
 import '../providers/openrouter_oauth.dart';
 import '../providers/thinking.dart';
 import '../agent/image_recovery.dart'
-    show
-        imageRecoveryFailedText,
-        imageRecoveryNotice,
-        imageRecoveryNoticeText;
+    show imageRecoveryFailedText, imageRecoveryNotice, imageRecoveryNoticeText;
 import '../agent/image_registry.dart'
     show
         ImageRegistryConfig,
@@ -1916,8 +1913,7 @@ class AgentCli {
   /// elapsed zone (issue #366); gh-1933 also re-derives the row's v2
   /// content (counts, diffstat, preview) from the stashed args. Unpaired
   /// ends render neither.
-  final Map<String, (DateTime, String, Map<String, dynamic>)> _toolStarts =
-      {};
+  final Map<String, (DateTime, String, Map<String, dynamic>)> _toolStarts = {};
 
   /// The MCP wiring (manager + re-registration) — see agent_cli_mcp.dart.
   late AgentCliMcpWiring _mcp;
