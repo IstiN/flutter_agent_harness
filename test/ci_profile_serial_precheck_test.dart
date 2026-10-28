@@ -144,7 +144,7 @@ Map<String, String> _env() => <String, String>{
 }
 
 String _derBase64(String pemPath) {
-  final der = '${pemPath.replaceAll('.pem', '.der')}';
+  final der = pemPath.replaceAll('.pem', '.der');
   Process.runSync('openssl', [
     'x509',
     '-in',
@@ -164,14 +164,16 @@ String _derBase64(String pemPath) {
 
 /// Runs the workflow's real downstream pipeline (the `| while IFS= read -r
 /// der; do … done` arm, verbatim) with the extracted awk fed the profile on
-/// stdin — exactly what `security cms -D -i profile | awk '<program>' | while
-/// …` does on the runner, minus the macOS-only `security` invocation.
+/// stdin — exactly what `security cms -D -i profile | awk '<program>'` plus
+/// the while loop does on the runner, minus the macOS-only `security`
+/// invocation.
 String runPipeline(String awkProgram, String plist) {
   final dir = Directory.systemTemp.createTempSync('profile-precheck-');
   try {
     final awkFile = File('${dir.path}/extract.awk')
       ..writeAsStringSync(awkProgram);
-    final plistFile = File('${dir.path}/profile.plist')..writeAsStringSync(plist);
+    final plistFile = File('${dir.path}/profile.plist')
+      ..writeAsStringSync(plist);
     // The pipeline arm, verbatim from both workflows; the plist rides stdin
     // like `security cms -D`'s output does.
     final script = File('${dir.path}/pipeline.sh')
