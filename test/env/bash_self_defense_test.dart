@@ -69,7 +69,10 @@ void main() {
       // shell (Dart has no synchronous Process.start) and reaped below.
       victimPid = Process.runSync('sh', <String>[
         '-c',
-        "'$victimPath' -c 'while :; do sleep 1; done' & echo \$!",
+        // The redirections detach the victim from runSync's stdout pipe —
+        // without them the probe blocks until EOF, i.e. until the victim
+        // dies (it never does).
+        "'$victimPath' -c 'while :; do sleep 1; done' >/dev/null 2>&1 & echo \$!",
       ]).stdout.trim();
       return Process.runSync('sh', <String>[
         '-c',
