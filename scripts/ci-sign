@@ -1,0 +1,366 @@
+#!/usr/bin/env bash
+# ci-sign — host-level signing mediator for self-hosted macOS runners.
+#
+# WHY THIS EXISTS (gh-1865 / gh-1866, owner decision 2026-10-28)
+#
+# The fa-m5 pool is ONE Mac under ONE user account hosting several runner
+# registrations (fa-m5-1/2/3, plus the yoloit / learn.ai / yoclip runners).
+# Every signing job used to create its OWN temporary keychain and publish it
+# through the PER-USER GLOBAL keychain search list. Two failure classes came
+# out of that:
+#
+#   1. Eviction (gh-1866, runs 40165497544 → 40165498619): a fixed-list
+#      writer replaced the whole search list and evicted a concurrent job's
+#      keychain → "No certificate for team ... found".
+#   2. Ambiguity (gh-1865, run 40455401630): the additive union helper fixed
+#      (1) but left TWO same-subject certificates ("Apple Distribution:
+#      Uladzimir Klyshevich (YP9HC3USZ3)", different serials — the iOS and
+#      the macOS distribution certs) in one list; xcodebuild resolved the
+#      generic name to the WRONG cert and the iOS archive died after ~24 min
+#      ("Provisioning profile doesn't include signing certificate").
+#   3. Interactive GUI keychain-password prompts on the owner's desktop:
+#      runners live in the user's Aqua launchd session, and a leftover or
+#      locked per-job keychain (empty password) makes SecurityAgent pop a
+#      dialog mid-CI.
+#
+# THE MODEL: ONE persistent per-host keychain (ci-signing.keychain-db),
+# provisioned ONCE and idempotently re-verified, holding every distribution
+# identity. Signing jobs NEVER create or delete keychains and NEVER write
+# the search list for signing purposes. Identity resolution is pinned by
+# SHA-1 everywhere (xcodebuild CODE_SIGN_IDENTITY / codesign -s SHA1
+# --keychain), so same-named certificates can coexist and legs stay
+# parallel. `doctor` fail-fasts on profile/identity mismatches in seconds
+# instead of after a dead archive.
+#
+# USAGE
+#   ci-sign install <label>            import/refresh identity from env
+#       reads CI_SIGN_<LABEL>_P12_B64 + CI_SIGN_<LABEL>_P12_PASSWORD, or
+#       CI_SIGN_P12_B64_ENV / CI_SIGN_P12_PASSWORD_ENV naming the env vars
+#       that hold them (legacy workflow secret names). Idempotent: a
+#       re-run with the SAME certificate is a no-op; a DIFFERENT cert
+#       replaces the previous one for the label. --force re-imports even
+#       if the fingerprint matches.
+#   ci-sign sha1 <label>               print the pinned SHA-1 fingerprint
+#   ci-sign serial <label>             print the certificate serial (hex)
+#   ci-sign name <label>               print the certificate common name
+#   ci-sign codesign <label> [args…]   exec codesign --keychain <kc> -s <SHA1> args…
+#   ci-sign doctor <profile>[ <label>] fail fast: every cert embedded in the
+#                                      provisioning profile must match an
+#                                      identity in the signing keychain
+#   ci-sign unlock                     unlock the keychain non-interactively
+#   ci-sign list                       list valid codesigning identities
+#   ci-sign cleanup-legacy             best-effort delete known per-job
+#                                      keychains left by older workflows
+#   ci-sign path                       print the keychain path
+#
+# EXIT CODES: 0 ok; 1 operational failure (mismatch, missing identity);
+# 2 usage error. When GITHUB_ACTIONS is set, failures emit ::error lines.
+set -euo pipefail
+
+# The keychain path is overridable for tests (CI_SIGN_KEYCHAIN) — the
+# default is the persistent host keychain. CI_SIGN_KEYCHAIN_PASSWORD
+# already overrides the stored password the same way.
+KC="${CI_SIGN_KEYCHAIN:-$HOME/Library/Keychains/ci-signing.keychain-db}"
+CFG="$HOME/.config/ci-sign"
+KCPASS_FILE="$CFG/keychain-password"
+LABELS_DIR="$CFG/labels"
+
+err() { if [ -n "${GITHUB_ACTIONS:-}" ]; then echo "::error::ci-sign: $*"; else echo "ci-sign: $*" >&2; fi; }
+die() { err "$*"; exit 1; }
+usage() { echo "usage: ci-sign <install|sha1|serial|name|codesign|doctor|unlock|list|cleanup-legacy|path> ..." >&2; exit 2; }
+
+[ $# -ge 1 ] || usage
+CMD="$1"; shift
+
+kc_password() {
+  # Keychain password: CI_SIGN_KEYCHAIN_PASSWORD if provided, else a stored
+  # random one (created on first use). 0600 user-only file — it protects a
+  # CI-only keychain whose certificates are already provisioned from repo
+  # secrets by a trusted workflow.
+  if [ -n "${CI_SIGN_KEYCHAIN_PASSWORD:-}" ]; then
+    printf '%s' "$CI_SIGN_KEYCHAIN_PASSWORD"
+    return 0
+  fi
+  if [ ! -s "$KCPASS_FILE" ]; then
+    mkdir -p "$CFG"
+    umask 077
+    openssl rand -base64 32 > "$KCPASS_FILE"
+  fi
+  cat "$KCPASS_FILE"
+}
+
+ensure_keychain() {
+  local kcpass
+  kcpass="$(kc_password)"
+  if [ ! -f "$KC" ]; then
+    mkdir -p "$CFG"
+    security create-keychain -p "$kcpass" "$KC"
+  fi
+  # Explicit settings (reviewer: bare-flag semantics are easy to get
+  # wrong): -l = lock when the machine sleeps, -t 86400 = 24h inactivity
+  # backstop. Every ci-sign entry point unlocks non-interactively anyway,
+  # so an archive never hits a locked keychain mid-job (gh-1798 class).
+  security set-keychain-settings -l -t 86400 "$KC" 2>/dev/null || true
+  # Idempotent, additive, self-verifying search-list membership (gh-1866
+  # logic, applied ONCE for a persistent entry — never per job). Skipped
+  # for test keychains (CI_SIGN_KEYCHAIN override) — they never leave the
+  # test sandbox.
+  if [ -z "${CI_SIGN_KEYCHAIN:-}" ] && ! security list-keychains | sed 's/[[:space:]]//g; s/"//g' | grep -qxF "$KC"; then
+    local current
+    current="$(security list-keychains | sed 's/[[:space:]]//g; s/"//g' | grep -v '^$' | grep -vxF "$KC" | tr '\n' ' ')"
+    security list-keychains -d user -s $current "$KC"
+    security list-keychains | sed 's/[[:space:]]//g; s/"//g' | grep -qxF "$KC" || die "failed to add keychain to search list"
+  fi
+  security unlock-keychain -p "$kcpass" "$KC"
+}
+
+do_unlock() {
+  [ -f "$KC" ] || die "no signing keychain at $KC — run 'ci-sign install <label>' first (host provisioning)"
+  security unlock-keychain -p "$(kc_password)" "$KC"
+}
+
+p12_env_value() { # p12_env_value <VARNAME>
+  local var="$1"
+  [ -n "${!var:-}" ] || die "env $var is not set"
+  printf '%s' "${!var}"
+}
+
+label_env() { # label_env <label> <SUFFIX> -> prints resolved env var VALUE
+  local label="$1" suffix="$2"
+  local upper="${label^^}"
+  upper="${upper//-/_}"
+  if [ -n "${CI_SIGN_P12_B64_ENV:-}" ] || [ -n "${CI_SIGN_P12_PASSWORD_ENV:-}" ]; then
+    # Legacy secret names, mapped explicitly by the caller.
+    case "$suffix" in
+      P12_B64)      [ -n "${CI_SIGN_P12_B64_ENV:-}" ]      && p12_env_value "$CI_SIGN_P12_B64_ENV"      && return 0 ;;
+      P12_PASSWORD) [ -n "${CI_SIGN_P12_PASSWORD_ENV:-}" ] && p12_env_value "$CI_SIGN_P12_PASSWORD_ENV" && return 0 ;;
+    esac
+  fi
+  p12_env_value "CI_SIGN_${upper}_${suffix}"
+}
+
+import_fingerprint() { # import_fingerprint <p12file> <password>; prints SHA1 (no colons)
+  local tmp
+  tmp="$(mktemp -d)"
+  # shellcheck disable=SC2064
+  trap "rm -rf '$tmp'" RETURN
+  openssl pkcs12 -passin "pass:$2" -in "$1" -clcerts -nokeys -out "$tmp/c.pem" 2>/dev/null \
+    || openssl pkcs12 -passin "pass:" -in "$1" -clcerts -nokeys -out "$tmp/c.pem" 2>/dev/null \
+    || return 1
+  openssl x509 -in "$tmp/c.pem" -noout -fingerprint -sha1 2>/dev/null \
+    | sed 's/^.*=//; s/://g'
+}
+
+verify_label_identity() { # verify_label_identity <label>; echoes sha1
+  local label="$1"
+  local mf="$LABELS_DIR/$label"
+  local sha1
+  [ -f "$mf" ] || die "label '$label' is not provisioned (no $mf) — run 'ci-sign install $label' first (host provisioning)"
+  sha1="$(sed -n 's/^sha1=//p' "$mf")"
+  [ -n "$sha1" ] || die "corrupt manifest for '$label'"
+  do_unlock
+  if ! security find-identity -v -p codesigning "$KC" | grep -qi "$sha1"; then
+    die "identity $sha1 (label '$label') is not a VALID codesigning identity in the signing keychain — re-run 'ci-sign install $label --force'"
+  fi
+  printf '%s' "$sha1"
+}
+
+case "$CMD" in
+  path)
+    echo "$KC"
+    ;;
+
+  unlock)
+    do_unlock
+    echo "unlocked $KC"
+    ;;
+
+  list)
+    do_unlock
+    security find-identity -v -p codesigning "$KC"
+    ;;
+
+  install)
+    LABEL="${1:-}"; [ -n "$LABEL" ] || usage
+    # Labels become file paths under $LABELS_DIR — refuse anything that
+    # could escape it (../foo, a/b, empty).
+    case "$LABEL" in
+      ''|*[!A-Za-z0-9_-]*) die "invalid label '$LABEL' (allowed: [A-Za-z0-9_-])" ;;
+    esac
+    FORCE=0; [ "${2:-}" = "--force" ] && FORCE=1
+    # Concurrent installs (two matrix legs re-verifying on the same host)
+    # serialize on a lock dir — create-keychain/import are not idempotent
+    # under race; the happy path after first provisioning is a no-op that
+    # holds the lock for milliseconds.
+    LOCK="$CFG/install.lock"
+    mkdir -p "$CFG"
+    ACQUIRED=0
+    for _ in $(seq 1 60); do
+      if mkdir "$LOCK" 2>/dev/null; then ACQUIRED=1; break; fi
+      # Stale-lock recovery: a SIGKILLed holder would wedge host signing
+      # forever. The happy path holds the lock for seconds; a lock older
+      # than 30 min cannot be alive — steal it.
+      if [ -d "$LOCK" ]; then
+        LOCK_AGE=$(( $(date +%s) - $(stat -f %m "$LOCK" 2>/dev/null || echo 0) ))
+        if [ "$LOCK_AGE" -gt 1800 ]; then
+          err "stealing stale install lock (age ${LOCK_AGE}s > 1800s)"
+          rmdir "$LOCK" 2>/dev/null || true
+        fi
+      fi
+      sleep 2
+    done
+    [ "$ACQUIRED" -eq 1 ] || die "another ci-sign install holds the lock ($LOCK)"
+    trap 'rmdir "$LOCK" 2>/dev/null || true' EXIT
+    P12_B64="$(label_env "$LABEL" P12_B64)"
+    P12_PW="$(label_env "$LABEL" P12_PASSWORD)"
+    [ -n "$P12_B64" ] || die "empty P12 payload for label '$LABEL'"
+
+    ensure_keychain
+    TMP="$(mktemp -d)"
+    # One consolidated EXIT trap (a second `trap ... EXIT` would REPLACE
+    # the lock-release trap above, leaking the lock dir).
+    trap 'rm -rf "$TMP"; rmdir "$LOCK" 2>/dev/null || true' EXIT
+    printf '%s' "$P12_B64" | base64 --decode > "$TMP/cert.p12" 2>/dev/null || die "P12 payload for '$LABEL' is not valid base64"
+
+    NEW_FP="$(import_fingerprint "$TMP/cert.p12" "$P12_PW")" || die "cannot read P12 for '$LABEL' (wrong password or corrupt payload?)"
+    [ -n "$NEW_FP" ] || die "cannot read P12 for '$LABEL' (wrong password or corrupt payload?)"
+
+    OLD_FP="$( [ -f "$LABELS_DIR/$LABEL" ] && sed -n 's/^sha1=//p' "$LABELS_DIR/$LABEL" || true )"
+    if [ "$FORCE" -eq 0 ] && [ "$NEW_FP" = "$OLD_FP" ]; then
+      # Same certificate as the manifest claims — make sure it is REALLY a
+      # valid identity (covers partial imports), then we are done.
+      if security find-identity -v -p codesigning "$KC" | grep -qi "$NEW_FP"; then
+        echo "ci-sign: identity for '$LABEL' is up to date ($NEW_FP)"
+        exit 0
+      fi
+      echo "ci-sign: manifest matches but identity invalid — re-importing"
+    fi
+
+    if [ -n "$OLD_FP" ] && [ "$OLD_FP" != "$NEW_FP" ]; then
+      security delete-identity -Z "$OLD_FP" "$KC" 2>/dev/null \
+        || err "could not remove previous identity $OLD_FP for '$LABEL' (continuing; stale identity remains)"
+    fi
+
+    security import "$TMP/cert.p12" -k "$KC" -P "$P12_PW" -T /usr/bin/codesign
+    # Partition the private key so codesign never needs interactive auth
+    # (this is what prevents GUI keychain prompts).
+    security set-key-partition-list -S apple-tool:,apple: -s -k "$(kc_password)" "$KC" >/dev/null
+
+    if ! security find-identity -v -p codesigning "$KC" | grep -qi "$NEW_FP"; then
+      die "imported P12 for '$LABEL' but it is not a valid codesigning identity (expired, revoked, or key/cert mismatch). Try 'ci-sign install $LABEL --force', then check the certificate in Apple Developer Portal."
+    fi
+
+    mkdir -p "$LABELS_DIR"
+    CERT_PEM="$TMP/c.pem"
+    openssl pkcs12 -passin "pass:$P12_PW" -in "$TMP/cert.p12" -clcerts -nokeys -out "$CERT_PEM" 2>/dev/null \
+      || openssl pkcs12 -passin "pass:" -in "$TMP/cert.p12" -clcerts -nokeys -out "$CERT_PEM" 2>/dev/null || true
+    SERIAL="$(openssl x509 -in "$CERT_PEM" -noout -serial | sed 's/^serial=//')"
+    NAME="$(openssl x509 -in "$CERT_PEM" -noout -subject -nameopt multiline 2>/dev/null | sed -n 's/.*commonName[^:]*://p' | head -1)"
+    umask 077
+    { echo "sha1=$NEW_FP"; echo "serial=$SERIAL"; echo "name=$NAME"; echo "updated=$(date -u +%Y-%m-%dT%H:%M:%SZ)"; } > "$LABELS_DIR/$LABEL"
+
+    echo "ci-sign: installed identity for '$LABEL': $NAME"
+    echo "  sha1=$NEW_FP serial=$SERIAL"
+    ;;
+
+  sha1|serial|name)
+    LABEL="${1:-}"; [ -n "$LABEL" ] || usage
+    MF="$LABELS_DIR/$LABEL"
+    case "$CMD" in
+      sha1)   verify_label_identity "$LABEL"; echo ;;
+      serial) sed -n 's/^serial=//p' "$MF" ;;
+      name)   sed -n 's/^name=//p' "$MF" ;;
+    esac
+    ;;
+
+  codesign)
+    LABEL="${1:-}"; [ -n "$LABEL" ] || usage
+    shift
+    SHA1="$(verify_label_identity "$LABEL")"
+    exec codesign --keychain "$KC" -s "$SHA1" "$@"
+    ;;
+
+  plist)
+    # Decode a provisioning profile to a plist on stdout WITHOUT touching
+    # keychain state: `security cms -D` requires a default keychain (none
+    # exists on this host by design — default-keychain writes are part of
+    # the old race), openssl cms does not.
+    PROFILE="${1:-}"
+    [ -n "$PROFILE" ] && [ -f "$PROFILE" ] || die "profile not found: ${PROFILE:-<none>}"
+    openssl cms -inform DER -verify -noverify -in "$PROFILE" -out /dev/stdout 2>/dev/null
+    ;;
+
+  doctor)
+    PROFILE="${1:-}"; LABEL="${2:-}"
+    [ -n "$PROFILE" ] || usage
+    [ -f "$PROFILE" ] || die "profile not found: $PROFILE"
+    do_unlock
+
+    # The extraction must fail CLEAN on garbage input (a traceback here is
+    # exactly the "guard error" obscurity the precheck exists to avoid).
+    PROFILE_SERIALS="$(python3 - "$PROFILE" <<'PYEOF'
+import plistlib, subprocess, sys
+try:
+    raw = subprocess.run(["openssl", "cms", "-inform", "DER", "-verify", "-noverify",
+                          "-in", sys.argv[1], "-out", "/dev/stdout"],
+                         capture_output=True)
+    d = plistlib.loads(raw.stdout)
+except Exception:
+    sys.exit(3)
+for c in d.get("DeveloperCertificates", []):
+    r = subprocess.run(["openssl", "x509", "-inform", "DER", "-noout", "-serial"],
+                       input=c, capture_output=True)
+    s = r.stdout.decode().strip()
+    if s.startswith("serial="):
+        print(s[len("serial="):])
+PYEOF
+)" || true
+    [ -n "$PROFILE_SERIALS" ] || die "could not extract certificates from profile $PROFILE (not a valid mobileprovision?)"
+
+    KC_SERIALS="$(security find-certificate -a -p "$KC" 2>/dev/null | python3 -c '
+import sys, re, subprocess
+pem = sys.stdin.read()
+for m in re.finditer(r"-----BEGIN CERTIFICATE-----.*?-----END CERTIFICATE-----", pem, re.S):
+    r = subprocess.run(["openssl", "x509", "-noout", "-serial"], input=m.group(0).encode(), capture_output=True)
+    s = r.stdout.decode().strip()
+    if s.startswith("serial="):
+        print(s[len("serial="):])
+')"
+    [ -n "$KC_SERIALS" ] || die "signing keychain has no readable identities — run 'ci-sign install <label>'"
+
+    MISSING=0
+    while IFS= read -r s; do
+      [ -n "$s" ] || continue
+      if ! printf '%s\n' "$KC_SERIALS" | grep -qxF "$s"; then
+        err "profile $(basename "$PROFILE") embeds certificate serial $s which is NOT in the signing keychain — re-issue the profile under the current distribution certificate or run 'ci-sign install'"
+        MISSING=1
+      fi
+    done <<EOF
+$PROFILE_SERIALS
+EOF
+    [ "$MISSING" -eq 0 ] || exit 1
+
+    if [ -n "$LABEL" ]; then
+      WANT="$(sed -n 's/^serial=//p' "$LABELS_DIR/$LABEL" 2>/dev/null || true)"
+      if [ -n "$WANT" ] && ! printf '%s\n' "$PROFILE_SERIALS" | grep -qxF "$WANT"; then
+        err "profile $(basename "$PROFILE") does not contain the '$LABEL' identity (serial $WANT) — wrong profile secret for this certificate?"
+        exit 1
+      fi
+    fi
+    echo "ci-sign: doctor OK — $(basename "$PROFILE") certificates all present in signing keychain"
+    ;;
+
+  cleanup-legacy)
+    # Best-effort removal of per-job keychains created by pre-ci-sign
+    # workflows (they cause locked-keychain GUI prompts when orphaned).
+    for name in build.keychain build-arm64.keychain build-x86_64.keychain build-macos.keychain; do
+      security delete-keychain "$name" 2>/dev/null && echo "ci-sign: removed legacy keychain $name" || true
+    done
+    find "$HOME/Library/Keychains" -maxdepth 1 -name 'build*.keychain-db' -delete 2>/dev/null || true
+    echo "ci-sign: legacy keychain cleanup done"
+    ;;
+
+  *)
+    usage
+    ;;
+esac

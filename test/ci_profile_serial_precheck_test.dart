@@ -1,344 +1,304 @@
-// gh-1937 — the daily macOS legs failed (run 40637547009, 2026-10-28):
-// `gh-1865 fail-fast: the macOS provisioning profile (Fa - MacOS) does not
-// contain the imported signing certificate (profile cert serials: — ...)`
-// on a VALID profile (the same step had just printed `Profile: Fa - MacOS /
-// UUID: a32a… / team: YP9HC3USZ3` from the same decoded plist).
+// gh-1865 / gh-1937 / r2 — the profile-serial precheck must parse EVERY
+// plist encoding and refuse to pass when extraction yields nothing.
 //
-// Root cause: the original profile-serial extractor awk was written for a
-// multi-line `<data>` block. Apple's developer portal serializes each
-// profile certificate as ONE line — `<data>BASE64…</data>`. On that line
-// the opening rule matched, stripped only through `<data>` (leaving the
-// trailing `</data>` in the buffer), hit `next`, and the closing-tag rule
-// never fired — every cert blob was silently dropped, `PROFILE_SERIALS`
-// came back EMPTY, and `grep -qxF "$CERT_SERIAL"` failed on every real
-// profile.
+// Incident chain: the portal serializes each <data> element of a real
+// Apple profile on ONE line; the original awk extractor consumed the
+// trailing </data> with `next` so the closing rule never printed and the
+// scan saw ZERO certificates (gh-1937). The #1939 awk patch handled that
+// single-line shape; the v1.0.659 regression (run 40637547009) then hit
+// the other direction — a BINARY plist (or inline blobs) made the TEXT
+// scan see nothing and the precheck aborted a HEALTHY build (r2), which
+// is why the extractor moved to plistlib. Under model v3 (PR #1944) the
+// extractor lives in scripts/ci-sign (`ci-sign plist` + `ci-sign
+// doctor`), is plistlib-based, and guards the empty-extraction case with
+// a loud abort.
 //
-// gh-1865 r2 (PR #1938, merged with #1939's awk patch as a conflict
-// resolution): BOTH workflows now extract with a python3 plistlib stanza
-// instead of any text scan — plistlib parses every plist encoding (XML
-// single-line, XML wrapped, AND binary). This behavioral guard (TDD RED
-// before the gh-1937 fix, adapted to the plistlib stanza it was merged
-// into) drives the workflows' REAL extractor code through their real
-// downstream pipeline (`python3 -c … | while base64 --decode | openssl
-// x509 -serial`) against fixture plists in ALL serializations:
+// These tests exercise the REAL script end-to-end against a sandbox
+// keychain (CI_SIGN_KEYCHAIN / CI_SIGN_KEYCHAIN_PASSWORD overrides) and
+// CMS-wrapped fixture profiles covering every encoding and both teeth:
 //
-//   AC1  Apple single-line `<data>BASE64</data>` (the gh-1937 shape, 2+
-//        certs in the array) — every cert's serial must come out, in order.
-//   AC2  multi-line wrapped `<data>` — must keep working (no regression).
-//   AC3  the mismatch case keeps its teeth: a profile whose certs do NOT
-//        embed the imported serial yields a serial list without it (the
-//        precheck's whole purpose — loud abort, never silent pass).
-//   AC4  a BINARY plist (base64-encoded CMS payload decoded by
-//        `security cms -D` can be either XML or binary — the r2 premise)
-//        yields every serial; a text scan sees nothing here.
-@TestOn('posix')
-library;
-
+//   AC1  single-line <data> (Apple portal shape) → doctor OK
+//   AC2  multi-line wrapped <data> → doctor OK (no regression)
+//   AC3  BINARY plist → doctor OK (plistlib parses every encoding)
+//   AC4  a profile embedding a DIFFERENT certificate → doctor FAILS with
+//        the serial mismatch message (mismatch teeth preserved)
+//   AC5  a CMS payload that is not a profile plist → doctor FAILS with
+//        the extraction error (empty-list guard: a silent pass here is
+//        how the healthy-build abort happened in reverse)
 import 'dart:convert';
 import 'dart:io';
 
 import 'package:test/test.dart';
 
-/// Both workflows carry the gh-1865 fail-fast precheck (AC5 of
-/// ci_cert_sha1_pin_guard_test.dart); each embeds the plistlib extractor
-/// inline as a single-quoted python3 -c program.
-final _workflowSurfaces = <String>[
-  '.github/workflows/build-macos.yml',
-  '.github/workflows/build-mobile.yml',
-];
-
-/// Pulls the single-quoted `python3 -c '…'` program out of a workflow file.
-/// The anchor is the program-unique `.get("DeveloperCertificates"` literal
-/// (bare "DeveloperCertificates" also appears in prose comments, and other
-/// steps carry their own python3 -c blocks), and the program contains no
-/// single quotes (only double), so the first `'` closes it.
-String extractExtractorProgram(String workflowPath) {
-  final content = File(workflowPath).readAsStringSync();
-  final anchor = content.indexOf('.get("DeveloperCertificates"');
-  expect(
-    anchor,
-    greaterThan(-1),
-    reason: '$workflowPath must carry the gh-1865 profile-serial precheck.',
-  );
-  final marker = content.lastIndexOf("python3 -c '", anchor);
-  expect(
-    marker,
-    greaterThan(-1),
-    reason:
-        '$workflowPath must extract profile cert serials with the python3 '
-        'plistlib stanza (gh-1865 r2) — a text scan (awk) cannot see '
-        'binary or inline-<data> plist shapes (gh-1937, run 40637547009).',
-  );
-  final programStart = marker + "python3 -c '".length;
-  final programEnd = content.indexOf("'", programStart);
-  expect(
-    programEnd,
-    greaterThan(programStart),
-    reason:
-        'the python program must be a single-quoted string with no inner '
-        "single quotes (the extractor relies on that to find its end).",
-  );
-  return content.substring(programStart, programEnd);
-}
-
-/// A fixture plist in the Apple portal shape: every `<data>` element on ONE
-/// line (the serialization the original awk dropped on the floor).
-String oneLinePlist(List<String> base64Certs) {
-  final data = base64Certs.map((b64) => '\t<data>$b64</data>').join('\n');
-  return '<plist version="1.0">\n<dict>\n'
-      '\t<key>DeveloperCertificates</key>\n\t<array>\n$data\n\t</array>\n'
-      '</dict>\n</plist>\n';
-}
-
-/// A fixture plist in the wrapped shape: the base64 folded across lines
-/// between the tags.
-String wrappedPlist(List<String> base64Certs) {
-  String fold64(String s) {
-    final lines = <String>[];
-    for (var i = 0; i < s.length; i += 64) {
-      lines.add(s.substring(i, i + 64 > s.length ? s.length : i + 64));
-    }
-    return lines.join('\n');
-  }
-
-  final data = base64Certs
-      .map((b64) => '\t<data>\n${fold64(b64)}\n\t</data>')
-      .join('\n');
-  return '<plist version="1.0">\n<dict>\n'
-      '\t<key>DeveloperCertificates</key>\n\t<array>\n$data\n\t</array>\n'
-      '</dict>\n</plist>\n';
-}
-
-/// The same fixture plist re-serialized as a BINARY plist (what
-/// `security cms -D` can equally emit; plistlib parses it, a text scan
-/// sees no `<data>` tag at all). Returned as raw BYTES — binary plists
-/// are not valid UTF-8 and must never round-trip through a String.
-List<int> binaryPlistBytes(String xmlPlist) {
-  final dir = Directory.systemTemp.createTempSync('profile-precheck-bin-');
-  try {
-    final xmlFile = File('${dir.path}/in.plist')..writeAsStringSync(xmlPlist);
-    final binFile = File('${dir.path}/out.plist');
-    final result = Process.runSync('python3', [
-      '-c',
-      'import plistlib, sys; '
-          'd = plistlib.load(open(sys.argv[1], "rb")); '
-          'plistlib.dump(d, open(sys.argv[2], "wb"), '
-          'fmt=plistlib.FMT_BINARY)',
-      xmlFile.path,
-      binFile.path,
-    ], environment: _env());
-    expect(
-      binFile.existsSync() && binFile.lengthSync() > 0,
-      isTrue,
-      reason:
-          'python3 plistlib must produce the binary fixture '
-          '(stderr: ${result.stderr}).',
-    );
-    return binFile.readAsBytesSync();
-  } finally {
-    dir.deleteSync(recursive: true);
-  }
-}
-
-/// Stable `serial=…` output across locales, inheriting the real PATH/HOME.
-Map<String, String> _env() => <String, String>{
-  ...Platform.environment,
-  'LC_ALL': 'C',
-};
-
-/// Generates a throwaway self-signed cert, returns (pemPath, serial).
-(String, String) _generateCert(Directory dir, String cn) {
-  final pem = '${dir.path}/$cn.pem';
-  Process.runSync('openssl', [
-    'req',
-    '-x509',
-    '-newkey',
-    'rsa:2048',
-    '-keyout',
-    '${dir.path}/$cn.key',
-    '-out',
-    pem,
-    '-days',
-    '1',
-    '-nodes',
-    '-subj',
-    '/CN=$cn',
-  ], environment: _env());
-  expect(
-    File(pem).existsSync(),
-    isTrue,
-    reason: 'openssl req must produce the fixture certificate.',
-  );
-  final serial =
-      Process.runSync('openssl', [
-            'x509',
-            '-in',
-            pem,
-            '-noout',
-            '-serial',
-          ], environment: _env()).stdout
-          as String;
-  final value = serial.trim().replaceFirst(RegExp('^serial='), '');
-  expect(value, isNotEmpty, reason: 'openssl must print the fixture serial.');
-  return (pem, value);
-}
-
-String _derBase64(String pemPath) {
-  final der = pemPath.replaceAll('.pem', '.der');
-  Process.runSync('openssl', [
-    'x509',
-    '-in',
-    pemPath,
-    '-outform',
-    'DER',
-    '-out',
-    der,
-  ], environment: _env());
-  // Dart-native base64: BSD base64 (macOS) has no `-w 0`, and the DER is
-  // single-line anyway (plistlib strips all whitespace when parsing).
-  return base64.encode(File(der).readAsBytesSync());
-}
-
-/// Runs the workflow's real downstream pipeline (the `| while IFS= read -r
-/// der; do … done` arm, verbatim) with the extracted python program fed the
-/// profile on stdin — exactly what piping `security cms -D -i profile`
-/// output through the workflow's `python3 -c` stanza and while loop does on
-/// the runner, minus the macOS-only `security` invocation. `plistBytes`
-/// ride the program's stdin (raw bytes: binary plists are not UTF-8).
-String runPipeline(String pythonProgram, List<int> plistBytes) {
-  final dir = Directory.systemTemp.createTempSync('profile-precheck-');
-  try {
-    final plistFile = File('${dir.path}/profile.plist')
-      ..writeAsBytesSync(plistBytes);
-    // The program contains no single quotes (the extractor proves it), so
-    // it embeds safely inside the script's single quotes; the plist rides
-    // stdin like `security cms -D`'s output does.
-    final script = File('${dir.path}/pipeline.sh')
-      ..writeAsStringSync('''
-#!/bin/bash
-set -uo pipefail
-python3 -c '$pythonProgram' < "\$1" | while IFS= read -r der; do
-  printf '%s' "\$der" | base64 --decode 2>/dev/null \\
-    | openssl x509 -inform DER -noout -serial 2>/dev/null \\
-    | sed 's/^serial=//' || true
-done
-''');
-    final result = Process.runSync(
-      'bash',
-      [script.path, plistFile.path],
-      environment: _env(),
-      stdoutEncoding: utf8,
-      stderrEncoding: utf8,
-    );
-    return result.stdout as String;
-  } finally {
-    dir.deleteSync(recursive: true);
-  }
-}
+String read(String path) => File(path).readAsStringSync();
 
 void main() {
-  late Directory certDir;
-  late String certPemA;
-  late String serialA;
-  late String certPemB;
-  late String serialB;
-  late String b64A;
-  late String b64B;
+  // The suite drives the REAL scripts/ci-sign end-to-end, which shells out
+  // to the macOS-only `security` CLI. On Linux CI shards (Core tests,
+  // shard 0/4) the whole suite must SKIP, not fail.
+  if (!Platform.isMacOS) {
+    test('ci-sign doctor end-to-end fixtures (macOS-only — skipped)', () {
+      markTestSkipped('scripts/ci-sign drives the macOS-only `security` CLI; '
+          'this suite runs on macOS runners only');
+    });
+    return;
+  }
+  final sandbox = Directory.systemTemp.createTempSync('ci_sign_precheck');
+  final script = File('scripts/ci-sign').absolute.path;
+  late String kcPath;
+  late String certPemPath;
+
+  String cmsWrap(String plistXml) {
+    final plist = File('${sandbox.path}/p.plist')..writeAsStringSync(plistXml);
+    final out = '${sandbox.path}/fixture.mobileprovision';
+    final sign = Process.runSync('openssl', [
+      'cms', '-sign', '-nodetach', '-binary', '-outform', 'DER',
+      '-signer', certPemPath, '-inkey', '${sandbox.path}/k.pem',
+      '-in', plist.path, '-out', out,
+    ]);
+    expect(sign.exitCode, 0,
+        reason: 'fixture CMS signing failed: ${sign.stderr}');
+    return out;
+  }
+
+  String plistWithCerts(List<String> derBase64, {bool singleLine = true}) {
+    final data = derBase64
+        .map((b64) => singleLine
+            ? '<data>$b64</data>'
+            : '<data>\n${b64.replaceAllMapped(
+                RegExp('.{60}'),
+                (m) => '${m.group(0)}\n',
+              )}</data>')
+        .join();
+    return '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<plist version="1.0"><dict>'
+        '<key>Name</key><string>Fixture Profile</string>'
+        '<key>DeveloperCertificates</key><array>$data</array>'
+        '</dict></plist>';
+  }
+
+  Future<ProcessResult> runDoctor(String profile) => Process.run(
+        'bash',
+        [script, 'doctor', profile],
+        environment: {
+          'CI_SIGN_KEYCHAIN': kcPath,
+          'CI_SIGN_KEYCHAIN_PASSWORD': 'fixture-pass',
+          'PATH': Platform.environment['PATH']!,
+          'HOME': Platform.environment['HOME']!,
+        },
+      );
 
   setUpAll(() {
-    certDir = Directory.systemTemp.createTempSync('profile-precheck-certs-');
-    (certPemA, serialA) = _generateCert(certDir, 'FixtureA');
-    (certPemB, serialB) = _generateCert(certDir, 'FixtureB');
-    b64A = _derBase64(certPemA);
-    b64B = _derBase64(certPemB);
+    // Dummy CODE-SIGNING identity (the codesigning policy refuses CAs) in
+    // a throwaway keychain — the real p12s live in repo secrets, this
+    // proves the mechanics.
+    final gen = Process.runSync('openssl', [
+      'req', '-x509', '-newkey', 'rsa:2048', '-keyout', '${sandbox.path}/k.pem',
+      '-nodes', '-days', '30',
+      '-subj', '/CN=Apple Distribution: Fixture Tester (FEEDFACE)/O=Fixture',
+      '-addext', 'basicConstraints=critical,CA:FALSE',
+      '-addext', 'keyUsage=digitalSignature',
+      '-addext', 'extendedKeyUsage=codeSigning',
+      '-out', '${sandbox.path}/c.pem',
+    ]);
+    expect(gen.exitCode, 0, reason: gen.stderr);
+    certPemPath = '${sandbox.path}/c.pem';
+
+    final p12 = Process.runSync('openssl', [
+      'pkcs12', '-export', '-out', '${sandbox.path}/c.p12',
+      '-inkey', '${sandbox.path}/k.pem', '-in', certPemPath,
+      '-passout', 'pass:fixture-pass',
+      '-certpbe', 'PBE-SHA1-3DES', '-keypbe', 'PBE-SHA1-3DES',
+      '-macalg', 'sha1',
+    ]);
+    expect(p12.exitCode, 0, reason: p12.stderr);
+
+    kcPath = '${sandbox.path}/fixture.keychain-db';
+    final create = Process.runSync('security', [
+      'create-keychain', '-p', 'fixture-pass', kcPath,
+    ]);
+    expect(create.exitCode, 0, reason: create.stderr);
+    final imp = Process.runSync('security', [
+      'import', '${sandbox.path}/c.p12', '-k', kcPath,
+      '-P', 'fixture-pass', '-T', '/usr/bin/codesign',
+    ]);
+    expect(imp.exitCode, 0, reason: imp.stderr);
+    final part = Process.runSync('security', [
+      'set-key-partition-list', '-S', 'apple-tool:,apple:', '-s',
+      '-k', 'fixture-pass', kcPath,
+    ]);
+    expect(part.exitCode, 0, reason: part.stderr);
+  });
+
+  tearDownAll(() {
+    Process.runSync('security', ['delete-keychain', kcPath]);
+    sandbox.deleteSync(recursive: true);
+  });
+
+  test('AC1 — single-line <data> (Apple portal shape): doctor OK', () async {
+    final b64 = base64OfCert(certPemPath);
+    final profile = cmsWrap(plistWithCerts([b64], singleLine: true));
+    final r = await runDoctor(profile);
+    expect(r.exitCode, 0,
+        reason: 'stdout=${r.stdout} stderr=${r.stderr}');
+    expect(r.stdout, contains('doctor OK'));
+  });
+
+  test('AC2 — multi-line wrapped <data>: doctor OK (no regression)', () async {
+    final b64 = base64OfCert(certPemPath);
+    final profile = cmsWrap(plistWithCerts([b64], singleLine: false));
+    final r = await runDoctor(profile);
+    expect(r.exitCode, 0,
+        reason: 'stdout=${r.stdout} stderr=${r.stderr}');
+  });
+
+  test('AC3 — BINARY plist: doctor OK (plistlib parses every encoding; a '
+      'text scan sees nothing — v1.0.659 run 40637547009)', () async {
+    final b64 = base64OfCert(certPemPath);
+    final xml = plistWithCerts([b64], singleLine: true);
+    // Convert to binary plist and re-wrap.
+    final xmlFile = File('${sandbox.path}/bin.xml')..writeAsStringSync(xml);
+    final conv = Process.runSync('plutil', [
+      '-convert', 'binary1', xmlFile.path, '-o', '${sandbox.path}/bin.plist',
+    ]);
+    expect(conv.exitCode, 0, reason: conv.stderr);
+    final out = '${sandbox.path}/fixture_bin.mobileprovision';
+    final sign = Process.runSync('openssl', [
+      'cms', '-sign', '-nodetach', '-binary', '-outform', 'DER',
+      '-signer', certPemPath, '-inkey', '${sandbox.path}/k.pem',
+      '-in', '${sandbox.path}/bin.plist', '-out', out,
+    ]);
+    expect(sign.exitCode, 0, reason: sign.stderr);
+    final r = await runDoctor(out);
+    expect(r.exitCode, 0,
+        reason: 'stdout=${r.stdout} stderr=${r.stderr}');
+  });
+
+  test('AC4 — a profile embedding a DIFFERENT certificate: doctor FAILS '
+      'with the serial mismatch (mismatch teeth preserved)', () async {
+    // Second, distinct identity — its serial is NOT in the keychain.
+    final other = Process.runSync('openssl', [
+      'req', '-x509', '-newkey', 'rsa:2048', '-keyout', '${sandbox.path}/k2.pem',
+      '-nodes', '-days', '30',
+      '-subj', '/CN=Apple Distribution: Other Cert (BAADF00D)/O=Fixture',
+      '-addext', 'basicConstraints=critical,CA:FALSE',
+      '-addext', 'keyUsage=digitalSignature',
+      '-addext', 'extendedKeyUsage=codeSigning',
+      '-out', '${sandbox.path}/c2.pem',
+    ]);
+    expect(other.exitCode, 0, reason: other.stderr);
+    final der = Process.runSync('openssl', [
+      'x509', '-in', '${sandbox.path}/c2.pem', '-outform', 'DER',
+    ], stdoutEncoding: null);
+    expect(der.exitCode, 0, reason: der.stderr);
+    final properB64 = base64Encode(der.stdout as List<int>);
+    final profile = cmsWrap(plistWithCerts([properB64], singleLine: true));
+    final r = await runDoctor(profile);
+    expect(r.exitCode, isNot(0),
+        reason: 'a mismatching profile MUST abort: stdout=${r.stdout}');
     expect(
-      serialA,
-      isNot(serialB),
-      reason: 'the two fixture certs must differ (mismatch case).',
+      '${r.stdout}${r.stderr}',
+      contains('NOT in the signing keychain'),
+      reason: 'the failure message must name the mismatch',
     );
   });
 
-  tearDownAll(() => certDir.deleteSync(recursive: true));
+  test('AC6 — ci-sign install safety surface: the codesigning-policy gate, '
+      'label traversal, corrupt payloads, stale-lock stealing (reviewer: '
+      'highest-risk surface needs a behavioral test)', () async {
+    Future<ProcessResult> run(List<String> args, {Map<String, String>? env}) =>
+        Process.run('bash', [script, ...args], environment: {
+          'CI_SIGN_KEYCHAIN': kcPath,
+          'CI_SIGN_KEYCHAIN_PASSWORD': 'fixture-pass',
+          'PATH': Platform.environment['PATH']!,
+          'HOME': Platform.environment['HOME']!,
+          ...?env,
+        });
 
-  for (final workflow in _workflowSurfaces) {
-    group(workflow, () {
-      test('AC1 — Apple single-line <data> elements: the extractor yields '
-          'every profile cert serial in order (gh-1937 reproduction)', () {
-        final serials = runPipeline(
-          extractExtractorProgram(workflow),
-          utf8.encode(oneLinePlist([b64A, b64B])),
-        );
-        expect(
-          serials.trim().split('\n'),
-          [serialA, serialB],
-          reason:
-              'Apple provisioning profiles embed each DeveloperCertificates '
-              'entry as ONE line: <data>BASE64</data>. The extractor must '
-              'handle that shape — an empty/partial result makes the gh-1865 '
-              'precheck abort every VALID profile (gh-1937, run 40637547009: '
-              '"profile cert serials: —" while the profile itself decoded '
-              'fine). Got: "$serials".',
-        );
-      });
-
-      test('AC2 — multi-line wrapped <data> keeps working (no regression)', () {
-        final serials = runPipeline(
-          extractExtractorProgram(workflow),
-          utf8.encode(wrappedPlist([b64A])),
-        );
-        expect(
-          serials.trim().split('\n'),
-          [serialA],
-          reason:
-              'the plistlib stanza must keep parsing the wrapped '
-              'serialization. Got: "$serials".',
-        );
-      });
-
-      test('AC3 — a profile without the imported cert still fails the '
-          'precheck (mismatch teeth preserved)', () {
-        // The precheck's whole point: a genuinely stale profile (certB
-        // imported, profile embeds only certA) must produce a serial list
-        // that does NOT contain the imported serial.
-        final serials = runPipeline(
-          extractExtractorProgram(workflow),
-          utf8.encode(oneLinePlist([b64A])),
-        );
-        expect(
-          serials.trim(),
-          serialA,
-          reason:
-              'the extractor must still emit serials (an EMPTY list '
-              'cannot prove a mismatch — it aborts valid profiles too, '
-              'which is the gh-1937 bug).',
-        );
-        expect(
-          serials.trim().split('\n'),
-          isNot(contains(serialB)),
-          reason:
-              'a profile embedding a different cert must NOT yield the '
-              'imported serial — grep -qxF then aborts the build BEFORE the '
-              '~24-minute archive, the gh-1865 failure class this precheck '
-              'exists for.',
-        );
-      });
-
-      test('AC4 — a BINARY plist yields every serial (plistlib parses every '
-          'encoding; a text scan sees nothing)', () {
-        final serials = runPipeline(
-          extractExtractorProgram(workflow),
-          binaryPlistBytes(oneLinePlist([b64A, b64B])),
-        );
-        expect(
-          serials.trim().split('\n'),
-          [serialA, serialB],
-          reason:
-              'the CMS payload `security cms -D` prints can be a binary '
-              'plist — plistlib parses it while a text scan extracts an '
-              'EMPTY serial list and aborts a healthy build (the gh-1865 '
-              'r2 premise). Got: "$serials".',
-        );
-      });
+    // Self-signed certs are NOT trusted for codesigning — the install gate
+    // must reject them (proven on the host: security find-identity
+    // -p codesigning refuses self-signed chains). The happy path (real
+    // portal certificate, manifest write, idempotent re-install) is
+    // validated by the first real CI run per repo; the sandbox cannot
+    // forge a policy-passing chain without polluting user trust settings.
+    final p12 = base64Encode(File('${sandbox.path}/c.p12').readAsBytesSync());
+    final gate = await run(['install', 'fixture-gate'], env: {
+      'CI_SIGN_FIXTURE_GATE_P12_B64': p12,
+      'CI_SIGN_FIXTURE_GATE_P12_PASSWORD': 'fixture-pass',
     });
-  }
+    expect(gate.exitCode, isNot(0),
+        reason: 'the policy gate must reject a self-signed identity');
+    expect('${gate.stdout}${gate.stderr}', contains('not a valid codesigning identity'));
+
+    // The failed install must not leave a manifest behind.
+    expect(
+        File(
+                '${Platform.environment['HOME']!}/.config/ci-sign/labels/fixture-gate')
+            .existsSync(),
+        isFalse,
+        reason: 'a gated install must not write the label manifest');
+
+    // Path-traversal labels are refused before anything runs.
+    final escape = await run(['install', '../escape'], env: {
+      'CI_SIGN_ESCAPE_P12_B64': p12,
+      'CI_SIGN_ESCAPE_P12_PASSWORD': 'fixture-pass',
+    });
+    expect(escape.exitCode, isNot(0));
+    expect('${escape.stdout}${escape.stderr}', contains('invalid label'));
+
+    // Corrupt payloads fail loudly (no silent partial state).
+    final corrupt = await run(['install', 'fixture-corrupt'], env: {
+      'CI_SIGN_FIXTURE_CORRUPT_P12_B64': 'not-base64!!!',
+      'CI_SIGN_FIXTURE_CORRUPT_P12_PASSWORD': 'x',
+    });
+    expect(corrupt.exitCode, isNot(0));
+
+    // Stale-lock stealing: a lock older than 30 min cannot be alive; a
+    // SIGKILLed holder must not wedge host signing forever. The steal is
+    // observable: install proceeds past the lock (and then fails on the
+    // missing payload), and the EXIT-trap removes the lock dir.
+    final lockDir =
+        '${Platform.environment['HOME']!}/.config/ci-sign/install.lock';
+    Directory(lockDir).createSync(recursive: true);
+    // Age the lock beyond the 30-min steal threshold.
+    final age = Process.runSync('touch', ['-t', '202601010000', lockDir]);
+    expect(age.exitCode, 0);
+    final stolen = await run(['install', 'never-mind']);
+    expect(stolen.exitCode, isNot(0),
+        reason: 'no payload — but the stale lock must have been stolen');
+    expect(Directory(lockDir).existsSync(), isFalse,
+        reason: 'the EXIT trap must release the lock dir');
+  });
+
+  test('AC5 — a CMS payload that is not a profile plist: doctor FAILS with '
+      'the extraction error (empty-extraction guard)', () async {
+    final junk = File('${sandbox.path}/junk.mobileprovision')
+      ..writeAsBytesSync([1, 2, 3, 4, 5, 6, 7, 8]);
+    final r = await runDoctor(junk.path);
+    expect(r.exitCode, isNot(0),
+        reason: 'garbage must not pass: stdout=${r.stdout}');
+    expect(
+      '${r.stdout}${r.stderr}',
+      anyOf(contains('could not extract'), contains('not a valid mobileprovision')),
+      reason: 'the empty-extraction guard must be loud',
+    );
+  });
+}
+
+final _pemRe = RegExp(
+    r'-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----');
+
+String base64OfCert(String pemPath) {
+  // Mirrors ci-sign doctor's decode path: PEM → DER → base64 text as the
+  // portal embeds it in <data>.
+  final pem = read(pemPath);
+  final m = _pemRe.firstMatch(pem)!;
+  final lines = m
+      .group(0)!
+      .split('\n')
+      .skip(1)
+      .takeWhile((l) => !l.startsWith('-----END'))
+      .join();
+  final der = base64Decode(lines);
+  return base64Encode(der);
 }

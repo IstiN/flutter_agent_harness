@@ -440,26 +440,18 @@ platform :ios do
 
   desc "Build iOS IPA only (for CI split build/submit pattern)"
   lane :build_only do
-    # The CI workflow creates and unlocks build.keychain before calling this
-    # lane. gh-1866: both branches publish the keychain search list
-    # ADDITIVELY via scripts/keychain_searchlist_add.sh — the old
-    # fixed-list `security list-keychains -d user -s ...` writes REPLACED
-    # the per-user list and evicted the concurrent build-macos leg's
-    # keychain on the shared fa-m5 host/user (run 40165498619: "No
-    # certificate for team 'YP9HC3USZ3' matching ... found"). The helper
-    # unions the current list and verifies the keychain survived.
-    # gh-1910: resolve the helper absolutely from the Fastfile location
-    # (__dir__ = flutter_app/fastlane → repo/scripts) — fastlane's sh does
-    # not honor the assumed lane cwd, so the old relative ../scripts path
-    # failed with exit 127 on the runner.
-    keychain_helper = File.expand_path("../../scripts/keychain_searchlist_add.sh", __dir__)
-    if File.exist?(File.expand_path("~/Library/Keychains/build.keychain-db"))
-      sh("bash", keychain_helper, "#{Dir.home}/Library/Keychains/build.keychain-db")
-      sh("security unlock-keychain -p '' #{Dir.home}/Library/Keychains/build.keychain-db")
-      sh("security default-keychain -d user -s #{Dir.home}/Library/Keychains/login.keychain-db")
-    else
-      sh("bash", keychain_helper, "#{Dir.home}/Library/Keychains/login.keychain-db")
-    end
+    # gh-1865 model v3: the signing identity lives in the PERSISTENT host
+    # keychain (ci-signing.keychain-db), provisioned by the workflow via
+    # ~/bin/ci-sign. No per-job keychain, no search-list writes here (the
+    # additive-helper dance retired with per-job keychains — gh-1866/
+    # gh-1865). Point-of-use unlock right before the archive: hours can
+    # pass between the workflow's provision step and gym, and an explicit
+    # unlock is immune to any gap length (the gh-1798 auto-lock window
+    # hack is retired). gh-1910 lesson kept: resolve the script absolutely
+    # from the Fastfile location (__dir__ = flutter_app/fastlane →
+    # repo/scripts) — fastlane's sh does not honor the assumed lane cwd.
+    ci_sign = File.expand_path("../../scripts/ci-sign", __dir__)
+    sh(ci_sign, "unlock")
 
     team_id = ENV["IOS_TEAM_ID"] || "YP9HC3USZ3"
     bundle_id = ENV["IOS_BUNDLE_ID"] || "dev.fa1.app"

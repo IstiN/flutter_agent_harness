@@ -952,67 +952,36 @@ jobs:
           fi
           echo "All required iOS secrets are present"
 
-      - name: Import certificates and provisioning profile
+      - name: Provision signing via ci-sign (persistent host keychain)
         id: ios_signing
         env:
           IOS_P12_BASE64: ${{ secrets.IOS_P12_BASE64 }}
           IOS_P12_PASSWORD: ${{ secrets.IOS_P12_PASSWORD }}
+          CI_SIGN_P12_B64_ENV: IOS_P12_BASE64
+          CI_SIGN_P12_PASSWORD_ENV: IOS_P12_PASSWORD
           IOS_PROVISIONING_PROFILE_BASE64: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
           IOS_LIVE_ACTIVITY_PROFILE_BASE64: ${{ secrets.IOS_LIVE_ACTIVITY_PROFILE_BASE64 }}
         run: |
           set -euo pipefail
-          # Create a temporary keychain for this run (same pattern as learn.ai).
-          security delete-keychain build.keychain 2>/dev/null || true
-          security create-keychain -p "" build.keychain
-          security default-keychain -s build.keychain
-          security unlock-keychain -p "" build.keychain
-          security set-keychain-settings -t 3600 -u build.keychain
-          # gh-1866: publish the search list ADDITIVELY, never with a fixed
-          # list — this job runs CONCURRENTLY with the daily cli leg's
-          # build-macos legs on the same host/user (fa-m5 registrations
-          # share one account), and this exact fixed-list write evicted
-          # build-arm64.keychain 75 s after its import on 2026-10-25
-          # (runs 40165497544 → 40165498619, "No certificate for team
-          # YP9HC3USZ3 matching ... found"). The helper unions the current
-          # list and verifies this keychain survived the write.
-          bash scripts/keychain_searchlist_add.sh \
-            "$HOME/Library/Keychains/build.keychain-db"
-
-          echo "$IOS_P12_BASE64" | base64 --decode > certificate.p12
-          security import certificate.p12 -k build.keychain -P "$IOS_P12_PASSWORD" -T /usr/bin/codesign
-          security set-key-partition-list -S apple-tool:,apple: -s -k "" build.keychain
-
-          # gh-1865: pin the signing identity by SHA-1, never by name. The
-          # per-user keychain search list is ADDITIVE by design (gh-1866),
-          # so it can legitimately hold BOTH this job's cert and a
-          # concurrent signing leg's cert with the SAME common name ("Apple
-          # Distribution: Uladzimir Klyshevich (YP9HC3USZ3)") but a
-          # DIFFERENT serial (owner-verified gh-1865 timeline, run
-          # 40455401630: the build-macos arm64 leg imported its macOS cert
-          # 05:31:23Z, this job's union write landed 05:31:35Z, and
-          # xcodebuild resolved the generic name to the WRONG cert at
-          # 05:56:14Z — its serial is not in the iOS profile, the archive
-          # is dead). Resolve the fingerprint from THIS job's OWN keychain
-          # right after import and thread it into every signing call, so
-          # resolution stays deterministic even with same-named duplicates
-          # in the search list.
-          # r2 (v1.0.659 regression, runs 40637547059/40637547009): the
-          # distribution cert CLASS varies by issuance era — the iOS p12
-          # carries the legacy "iPhone Distribution:" CN, macOS legs the
-          # modern "Apple Distribution:" CN. Match the class set, never
-          # one literal name; the exactly-1 guard below still refuses
-          # ambiguous keychains (two classes in one keychain = 2 matches
-          # = loud abort, which is correct: that IS ambiguous).
-          IDENT_LINE=$(security find-identity -v -p codesigning build.keychain \
-            | grep -E 'Apple Distribution|iPhone Distribution|3rd Party Mac Developer Application' || true)
-          IDENT_COUNT=$(printf '%s\n' "$IDENT_LINE" | grep -c . || true)
-          if [ "$IDENT_COUNT" -ne 1 ]; then
-            echo "::error::gh-1865: expected exactly 1 distribution-class (Apple/iPhone) codesigning identity in build.keychain, found $IDENT_COUNT. Refusing to pick silently:"
-            security find-identity -v -p codesigning build.keychain || true
+          # gh-1865: the repo copy of ci-sign is authoritative —
+          # re-install it to the host PATH on every signing job so
+          # ~/bin/ci-sign can never drift from the reviewed source.
+          install -m 755 scripts/ci-sign "$HOME/bin/ci-sign"
+          # gh-1865 model v3 (owner decision 2026-10-28): NO per-job
+          # keychains and NO user-global keychain writes. ~/bin/ci-sign
+          # provisions the PERSISTENT ci-signing.keychain-db (idempotent —
+          # a re-run with the same certificate is a no-op), resolves the
+          # identity by SHA-1 (never the generic name — the additive
+          # search list can hold a concurrent leg's same-subject
+          # certificate, run 40455401630), and never triggers interactive
+          # keychain prompts (partition list set at install).
+          if [ -z "$IOS_P12_BASE64" ]; then
+            echo "::error::IOS_P12_BASE64 secret is not set — cannot sign"
             exit 1
           fi
-          IOS_CERT_SHA1=$(printf '%s\n' "$IDENT_LINE" | awk '{print $2}')
-          IOS_CERT_NAME=$(printf '%s\n' "$IDENT_LINE" | sed -E 's/^[^"]*"([^"]+)".*/\1/')
+          ~/bin/ci-sign install fa-ios
+          IOS_CERT_SHA1=$(~/bin/ci-sign sha1 fa-ios)
+          IOS_CERT_NAME=$(~/bin/ci-sign name fa-ios)
           echo "identity_sha1=$IOS_CERT_SHA1" >> $GITHUB_OUTPUT
           echo "identity_name=$IOS_CERT_NAME" >> $GITHUB_OUTPUT
           echo "gh-1865: signing identity pinned by SHA-1: $IOS_CERT_NAME ($IOS_CERT_SHA1)"
@@ -1030,50 +999,15 @@ jobs:
             exit 1
           fi
 
-          # gh-1865 fail-fast precheck (owner option B): every profile must
-          # embed the certificate we JUST imported. A profile issued under
-          # a stale/revoked/different cert used to surface only after a
-          # ~24-minute archive (run 40455519923: gym rejected the cert on
-          # BOTH targets, Runner and FaLiveActivity, after ~24 min) — now
-          # the mismatch aborts in seconds, BEFORE flutter build.
-          # gh-1937: the extractor dropped every cert of a REAL Apple
-          # profile — the portal serializes each <data> element on ONE
-          # line, and the opening rule consumed the trailing </data> with
-          # `next` so the closing rule never printed. The #1939 awk patch
-          # handled that single-line shape; the plistlib stanza below
-          # (gh-1865 r2) supersedes it and covers every plist encoding —
-          # single-line, wrapped, AND binary.
-          IOS_CERT_SERIAL=$(security find-certificate -c "$IOS_CERT_NAME" -p build.keychain \
-            | openssl x509 -noout -serial | sed 's/^serial=//')
-          profile_contains_identity() {
-            local label="$1" profile="$2" serials=""
-            # r2: parse with plistlib, not a text scan — security cms -D
-            # output may be a BINARY plist or carry inline <data> blobs
-            # (v1.0.659 run 40637547009: the awk scan saw zero
-            # DeveloperCertificates entries on the macOS profile and the
-            # precheck aborted a healthy build). plistlib handles every
-            # plist encoding; the base64/openssl tail is unchanged.
-            serials=$(security cms -D -i "$profile" \
-              | python3 -c 'import plistlib, sys, base64; certs = plistlib.loads(sys.stdin.buffer.read()).get("DeveloperCertificates", []); [print(base64.b64encode(bytes(c)).decode()) for c in certs]' \
-              | while IFS= read -r der; do
-                  printf '%s' "$der" | base64 --decode \
-                    | openssl x509 -inform DER -noout -serial 2>/dev/null \
-                    | sed 's/^serial=//' || true
-                done)
-            if [ -z "$serials" ]; then
-              echo "::error::gh-1865 GUARD ERROR: $label — extracted 0 certificate serials (plist parse found no DeveloperCertificates entries). This is an EXTRACTION FAILURE, not a profile mismatch; refusing to compare against an empty list. Aborting."
-              exit 1
-            fi
-            if ! printf '%s\n' "$serials" | grep -qxF "$IOS_CERT_SERIAL"; then
-              echo "::error::gh-1865 fail-fast: $label does not contain the imported signing certificate (profile cert serials: $(printf '%s' "$serials" | tr '\n' ' ')— imported identity serial: $IOS_CERT_SERIAL). Re-issue the profile under the current distribution certificate in the Apple Developer Portal and update the profile secret. Aborting BEFORE the archive (the ~24-minute gym failure class, gh-1865)."
-              exit 1
-            fi
-            echo "gh-1865 precheck OK: $label contains identity serial $IOS_CERT_SERIAL"
-          }
-          profile_contains_identity "Fa Profile (profile.mobileprovision)" \
-            "$HOME/Library/MobileDevice/Provisioning Profiles/profile.mobileprovision"
-          profile_contains_identity "FaLiveActivity Profile (liveactivity.mobileprovision)" \
-            "$HOME/Library/MobileDevice/Provisioning Profiles/liveactivity.mobileprovision"
+          # gh-1865 fail-fast precheck (option B): every profile must embed
+          # the provisioned certificate. A mismatch aborts in seconds,
+          # BEFORE the ~24-minute archive (run 40455519923 died at gym on
+          # BOTH targets). Decoding goes through ci-sign plist —
+          # `security cms -D` needs a default keychain, which the
+          # persistent-keychain model does not set (default-keychain
+          # writes are user-global state, part of the retired model).
+          ~/bin/ci-sign doctor ~/Library/MobileDevice/Provisioning\ Profiles/profile.mobileprovision fa-ios
+          ~/bin/ci-sign doctor ~/Library/MobileDevice/Provisioning\ Profiles/liveactivity.mobileprovision fa-ios
 
       - name: Ensure iOS device SDK is available
         run: |
@@ -1136,14 +1070,18 @@ jobs:
           bundle install
 
           PROFILE=~/Library/MobileDevice/Provisioning\ Profiles/profile.mobileprovision
-          UUID=$(security cms -D -i "$PROFILE" 2>/dev/null | plutil -extract UUID raw -)
-          TEAM_ID=$(security cms -D -i "$PROFILE" 2>/dev/null | plutil -extract TeamIdentifier.0 raw -)
-          BUNDLE_ID=$(security cms -D -i "$PROFILE" 2>/dev/null | plutil -extract Entitlements.application-identifier raw - | sed "s/^$TEAM_ID.//")
-          PROFILE_NAME=$(security cms -D -i "$PROFILE" 2>/dev/null | plutil -extract Name raw -)
+          # gh-1865 model v3: profile decoding via ci-sign plist —
+          # `security cms -D` requires a default keychain and the
+          # persistent-keychain model never sets one (default-keychain
+          # writes are user-global state, part of the retired model).
+          UUID=$(~/bin/ci-sign plist "$PROFILE" | plutil -extract UUID raw -)
+          TEAM_ID=$(~/bin/ci-sign plist "$PROFILE" | plutil -extract TeamIdentifier.0 raw -)
+          BUNDLE_ID=$(~/bin/ci-sign plist "$PROFILE" | plutil -extract Entitlements.application-identifier raw - | sed "s/^$TEAM_ID.//")
+          PROFILE_NAME=$(~/bin/ci-sign plist "$PROFILE" | plutil -extract Name raw -)
           echo "PROFILE_NAME=$PROFILE_NAME"
 
           LA_PROFILE=~/Library/MobileDevice/Provisioning\ Profiles/liveactivity.mobileprovision
-          LA_PROFILE_NAME=$(security cms -D -i "$LA_PROFILE" 2>/dev/null | plutil -extract Name raw -)
+          LA_PROFILE_NAME=$(~/bin/ci-sign plist "$LA_PROFILE" | plutil -extract Name raw -)
           echo "LA_PROFILE_NAME=$LA_PROFILE_NAME"
 
           IOS_TEAM_ID="$TEAM_ID" \
@@ -1299,7 +1237,9 @@ jobs:
       - name: Cleanup
         if: always()
         run: |
-          security delete-keychain build.keychain || true
+          # gh-1865 model v3: no per-job keychain to clean up — the
+          # persistent ci-signing keychain is host state, never deleted
+          # from jobs. Only the decoded p12 scratch file goes.
           rm -f certificate.p12
 
   submit-ios:
