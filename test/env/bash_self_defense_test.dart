@@ -529,17 +529,16 @@ void main() {
         // `sleep 271` used to provide.
         final binDir = Directory.systemTemp.createTempSync('fa-killall-');
         addTearDown(() => binDir.deleteSync(recursive: true));
-        final shBin = Process.runSync('sh', <String>[
-          '-c',
-          'command -v sh',
-        ]).stdout.trim();
+        final shBin = Process.runSync(
+          'sh',
+          <String>['-c', 'command -v sh'],
+        ).stdout.trim();
         final victimPath = '${binDir.path}/fa_kl_271';
         File(shBin).copySync(victimPath);
         Process.runSync('chmod', <String>['755', victimPath]);
         final victim = await Process.start(victimPath, const ['-c', 'read _']);
         addTearDown(victim.kill);
         await waitUntilPgrepMatches(const ['-x', 'fa_kl_271'], pid: victim.pid);
-        addTearDown(victim.kill);
         final result = await const LocalShell().exec(
           'killall --signal TERM fa_kl_271; echo "rc=\$?"',
         );
@@ -577,8 +576,7 @@ void main() {
           expect(
             r.exitCode,
             isNot(124),
-            reason:
-                '$tool --signal hung: the dangling --signal arm '
+            reason: '$tool --signal hung: the dangling --signal arm '
                 'repeats `shift 2` forever under bash-as-sh',
           );
           // The honest outcome: whatever the real binary does with a
@@ -591,8 +589,7 @@ void main() {
           expect(
             r.exitCode,
             real.exitCode,
-            reason:
-                '$tool --signal (dangling) must exit like the real '
+            reason: '$tool --signal (dangling) must exit like the real '
                 'binary',
           );
         }
