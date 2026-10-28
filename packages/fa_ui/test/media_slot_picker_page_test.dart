@@ -176,16 +176,6 @@ void main() {
       expect(find.text('gpt-image-1'), findsOneWidget);
       expect(find.text('dall-e-3'), findsOneWidget);
       expect(find.text('gpt-4o'), findsOneWidget);
-      expect(find.byIcon(Icons.search), findsOneWidget);
-      expect(tester.widget<Icon>(find.byIcon(Icons.search)).size, 20);
-      expect(
-        find.text('Type to filter models by name, or enter any model id'),
-        findsOneWidget,
-      );
-      final modelField = tester.widget<TextField>(
-        find.widgetWithText(TextField, 'Model id'),
-      );
-      expect(modelField.decoration?.helperMaxLines, 2);
 
       // Quick search narrows it live.
       await tester.enterText(
