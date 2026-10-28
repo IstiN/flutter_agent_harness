@@ -98,12 +98,25 @@ final class ImageDropUx {
       return ImageDropNoticeView._(line, true);
     }
     // Low-key aggregated history line, no content keys (R2/AC1). A
-    // byte-budget drop names the budget, not just the count cap (#1916).
-    return ImageDropNoticeView._(
-      '$historyDrops older images not sent this turn '
-      '(cap ${report.cap}$budget) — /images for details',
-      false,
-    );
+    // byte-budget drop names the budget, not just the count cap (#1916);
+    // an eviction names the cause (gh-1934 — compaction boundary / 413
+    // recovery), not a cap.
+    final evicted = report.drops
+        .where((d) => d.reason == ImageDropReason.evicted)
+        .length;
+    final capped = historyDrops - evicted;
+    if (capped == 0 && evicted > 0) {
+      return ImageDropNoticeView._(
+        '$evicted older images evicted from the request '
+        '(compaction boundary / 413 recovery) — /images for details',
+        false,
+      );
+    }
+    var line =
+        '$capped older images not sent this turn '
+        '(cap ${report.cap}$budget) — /images for details';
+    if (evicted > 0) line += ' (+$evicted evicted)';
+    return ImageDropNoticeView._(line, false);
   }
 }
 
@@ -144,6 +157,9 @@ List<String> imageSurfaceLines({
       drop.fromCurrentMessage
           ? '(this message — over the cap)'
           : '(older history — cap $cap)',
+    // gh-1934: compaction-boundary eviction or the 413 recovery strip —
+    // the bytes are gone from the payload by design, never a cap.
+    ImageDropReason.evicted => '(evicted: compaction boundary / 413 recovery)',
   };
   final lines = <String>[
     if (lastReport == null)
@@ -157,6 +173,12 @@ List<String> imageSurfaceLines({
         '  dropped [Image ${drop.index}] '
             '${drop.keyPreview}… '
             '${dropWhy(drop)}',
+      // gh-1934: the payload-only eviction summary — placeholders rode
+      // instead of bytes on the last request.
+      if (lastReport.strippedCount > 0 || lastReport.evictedCount > 0)
+        'evicted: ${lastReport.strippedCount + lastReport.evictedCount} '
+            'image(s) replaced by placeholders (compaction boundary / '
+            '413 recovery)',
     ],
     'cap: $cap per request for $modelId'
         '${config.perModel[modelId] != null ? ' (images.perModel override)' : ''}'

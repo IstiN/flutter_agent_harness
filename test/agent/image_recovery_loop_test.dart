@@ -97,6 +97,8 @@ List<Message> _poisonedHistory({int count = 8, int bytes = 3 * 1000 * 1000}) => 
       toolCallId: 't$i',
       toolName: 'read',
       content: [ImageContent(data: 'x' * bytes, mimeType: 'image/png')],
+      isError: false,
+      timestamp: DateTime.utc(2026, 1, 1, 0, 0, 0, i * 1000),
     ),
 ];
 
@@ -336,6 +338,8 @@ void main() {
             content: [
               ImageContent(data: 'y' * (5 * 1000 * 1000), mimeType: 'image/png'),
             ],
+            isError: false,
+            timestamp: DateTime.utc(2026, 1, 1),
           ),
         ],
         recovery: recovery,

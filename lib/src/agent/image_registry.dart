@@ -48,6 +48,7 @@ import 'package:crypto/crypto.dart';
 
 import '../context.dart';
 import '../providers/payload_stall.dart' show noteOutboundEstimate;
+import 'image_recovery.dart' show ImagePayloadRecoveryState;
 import '../skills/operative_pins.dart' show isPinRenumberingBoundary;
 import '../types.dart';
 
@@ -471,6 +472,10 @@ List<Message> rewriteHistoryImages(
   final occurrences = <String, List<int>>{};
   _scanImages(degraded, entryByKey, occurrences);
   final currentIdx = _lastUserMessageIndex(degraded);
+  // gh-1934: the eviction scope — a renumbering boundary in the window
+  // evicts every history image (AC2); strip-all extends that to the
+  // current message.
+  final evictHistory = stripAll || degraded.any(_isRenumberingBoundary);
   final riding = _selectRiding(
     degraded,
     entryByKey,
@@ -478,12 +483,15 @@ List<Message> rewriteHistoryImages(
     currentIdx,
     cap,
     maxBytes,
+    evictHistory: evictHistory,
+    stripAll: stripAll,
+    latchedEvicted: evictedKeys,
   );
   final carriers = _planCarriers(degraded, entryByKey, occurrences, riding);
 
-  // Emit: rewritten history (image blocks → refs/notes), the current
-  // message in place with fresh `[Image N]` labels (F3), carriers at
-  // their anchors.
+  // Emit: rewritten history (image blocks → refs/notes/placeholders), the
+  // current message in place with fresh `[Image N]` labels (F3), carriers
+  // at their anchors.
   final out = _emitRewritten(degraded, currentIdx, riding, carriers);
 
   // Mention pass (I4): every remaining `[Image N]` in text that does not
@@ -503,6 +511,8 @@ List<Message> rewriteHistoryImages(
       registryCount: entryByKey.length,
       ridingCount: riding.ridingKeys.length,
       maxBytes: maxBytes,
+      strippedCount: riding.strippedCount,
+      evictedCount: riding.evictedCount,
     ),
   );
   return rewritten;
@@ -638,8 +648,11 @@ final class _RidingSelection {
     this.ridingKeys,
     this.indexByKey,
     this.drops,
-    this.currentImageCount,
-  );
+    this.currentImageCount, {
+    this.evictedKeys = const {},
+    this.strippedCount = 0,
+    this.evictedCount = 0,
+  });
 
   /// Keys occurring in the current message (ride in place, up to the cap).
   final Set<String> currentKeys;
@@ -650,11 +663,21 @@ final class _RidingSelection {
   /// `{key → [Image N] index}` for riding keys.
   final Map<String, int> indexByKey;
 
-  /// Every cap drop of the request, current-message drops first.
+  /// Every cap drop AND eviction of the request, evictions first.
   final List<ImageDropEvent> drops;
 
   /// Unique images the current message carried (rode or dropped).
   final int currentImageCount;
+
+  /// gh-1934: every key replaced by the `[image dropped: …]` placeholder
+  /// in this build (eviction + strip-all).
+  final Set<String> evictedKeys;
+
+  /// Of those, how many were stripped by the recovery strip-all.
+  final int strippedCount;
+
+  /// Of those, how many were evicted by the boundary rule or the latch.
+  final int evictedCount;
 }
 
 /// Riding set. The caps apply to the whole request (#1889 R2 + #1916
@@ -668,22 +691,91 @@ final class _RidingSelection {
 /// byte-drop never stops the scan (a smaller older image still fits).
 /// Every drop is reported — never silent. Phases live in the helpers
 /// below; this orchestrator only sequences them.
+///
+/// gh-1934 eviction runs BEFORE the caps: [stripAll] evicts every key
+/// period; [evictHistory] evicts every key outside the current message;
+/// [latchedEvicted] pins individual keys. Evicted keys never ride, never
+/// re-claim cap slots — they are payload placeholders from here on.
 _RidingSelection _selectRiding(
   List<Message> messages,
   Map<String, ImageRegistryEntry> entryByKey,
   Map<String, List<int>> occurrences,
   int currentIdx,
   int cap,
-  int maxBytes,
-) {
+  int maxBytes, {
+  required bool evictHistory,
+  required bool stripAll,
+  Set<String>? latchedEvicted,
+}) {
   // Current-message keys in first-seen (document) order, deduped.
   final currentOrdered = _currentKeysInOrder(messages, currentIdx);
-  final current = _claimCurrentBatch(currentOrdered, entryByKey, cap, maxBytes);
+  final currentSet = currentOrdered.toSet();
+  final evicted = <String>{};
+  final evictedDrops = <ImageDropEvent>[];
+  var strippedCount = 0;
+  var evictedCount = 0;
+
+  void evict(String key, {required bool fromCurrent, required bool strip}) {
+    if (!evicted.add(key)) return;
+    evictedDrops.add(
+      ImageDropEvent(
+        index: entryByKey[key]!.index,
+        key: key,
+        fromCurrentMessage: fromCurrent,
+        reason: ImageDropReason.evicted,
+      ),
+    );
+    if (strip) {
+      strippedCount++;
+    } else {
+      evictedCount++;
+    }
+  }
+
+  // Strip-all (pass 2): every unique key period, current included.
+  if (stripAll) {
+    for (final key in entryByKey.keys) {
+      evict(key, fromCurrent: currentSet.contains(key), strip: true);
+    }
+    return _RidingSelection(
+      const {},
+      const {},
+      const {},
+      evictedDrops,
+      currentOrdered.length,
+      evictedKeys: evicted,
+      strippedCount: strippedCount,
+      evictedCount: evictedCount,
+    );
+  }
+
+  // Session-latched evicted keys never ride again (any position).
+  for (final key in entryByKey.keys) {
+    if (latchedEvicted != null && latchedEvicted.contains(key)) {
+      evict(key, fromCurrent: currentSet.contains(key), strip: false);
+    }
+  }
+
+  // Compaction boundary eviction (AC2): every image outside the current
+  // message — the boundary redraws image identity (F2), so old bytes
+  // never re-carriage.
+  if (evictHistory) {
+    for (final key in entryByKey.keys) {
+      if (currentSet.contains(key)) continue;
+      evict(key, fromCurrent: false, strip: false);
+    }
+  }
+
+  final currentRideable = [
+    for (final key in currentOrdered)
+      if (!evicted.contains(key)) key,
+  ];
+  final current = _claimCurrentBatch(currentRideable, entryByKey, cap, maxBytes);
   final historyKeys = _recencyOrderedHistoryKeys(
     entryByKey,
     occurrences,
-    exclude: {...current.ride, ...current.droppedKeys},
-  );
+    exclude: {...current.ride, ...current.droppedKeys, ...evicted},
+  ).where((key) => !evicted.contains(key)).toList();
   final history = _fillHistorySlots(
     historyKeys,
     entryByKey,
@@ -691,7 +783,7 @@ _RidingSelection _selectRiding(
     remainingBytes: current.remainingBytes,
     maxBytes: maxBytes,
   );
-  final drops = [...current.drops, ...history.drops];
+  final drops = [...evictedDrops, ...current.drops, ...history.drops];
   final ridingKeys = {...current.ride, ...history.ride};
   return _RidingSelection(
     current.ride,
@@ -699,6 +791,9 @@ _RidingSelection _selectRiding(
     {for (final key in ridingKeys) key: entryByKey[key]!.index},
     drops,
     currentOrdered.length,
+    evictedKeys: evicted,
+    strippedCount: strippedCount,
+    evictedCount: evictedCount,
   );
 }
 
@@ -879,8 +974,9 @@ _CarrierPlan _planCarriers(
   return _CarrierPlan(before, after);
 }
 
-/// Emit pass: rewritten history (image blocks → refs/notes), the current
-/// message with its RIDING images in place (over-cap extras → the note),
+/// Emit pass: rewritten history (image blocks → refs/notes/placeholders),
+/// the current message with its RIDING images in place (evicted → the
+/// `[image dropped: …]` placeholder, over-cap extras → the note),
 /// carriers at their anchors.
 List<Message> _emitRewritten(
   List<Message> messages,
@@ -888,23 +984,25 @@ List<Message> _emitRewritten(
   _RidingSelection riding,
   _CarrierPlan carriers,
 ) {
+  final evicted = riding.evictedKeys;
   final out = <Message>[];
   for (var i = 0; i < messages.length; i++) {
     out.addAll(carriers.before[i] ?? const <Message>[]);
     final message = messages[i];
     if (i == currentIdx) {
       out.add(
-        _labelCurrentImages(message, riding.indexByKey, riding.ridingKeys),
+        _labelCurrentImages(message, riding.indexByKey, riding.ridingKeys,
+            evicted),
       );
     } else if (message is UserMessage) {
       final content = message.content;
       out.add(
         content is List<ContentBlock>
-            ? _rewriteUserBlocks(message, content, riding.indexByKey)
+            ? _rewriteUserBlocks(message, content, riding.indexByKey, evicted)
             : message,
       );
     } else if (message is ToolResultMessage) {
-      out.add(_rewriteResultBlocks(message, riding.indexByKey));
+      out.add(_rewriteResultBlocks(message, riding.indexByKey, evicted));
     } else {
       out.add(message);
     }
@@ -916,12 +1014,15 @@ List<Message> _emitRewritten(
 /// F3: the current message's RIDING images stay in place AND carry their
 /// `[Image N]` label as a preceding text block — the model can cite the
 /// image it is looking at with the number the registry will honor.
-/// Over-cap current images (issue #1889 R2) resolve to the unavailable
-/// note, exactly like dropped history occurrences.
+/// Strip-all-evicted current images (gh-1934 pass 2) resolve to the
+/// `[image dropped: …]` placeholder; over-cap current images (issue
+/// #1889 R2) resolve to the unavailable note, exactly like dropped
+/// history occurrences.
 Message _labelCurrentImages(
   Message message,
   Map<String, int> indexByKey,
   Set<String> ridingKeys,
+  Set<String> evictedKeys,
 ) {
   if (message is! UserMessage) return message;
   final content = message.content;
@@ -936,7 +1037,10 @@ Message _labelCurrentImages(
             text: imageRefLabel(indexByKey[imageContentKey(block)] ?? 0),
           ),
           block,
-        ] else if (block is ImageContent)
+        ] else if (block is ImageContent &&
+            evictedKeys.contains(imageContentKey(block)))
+          TextContent(text: imageDroppedPlaceholder(imageContentKey(block)))
+        else if (block is ImageContent)
           TextContent(text: unavailableImageNote)
         else
           block,
@@ -987,10 +1091,11 @@ UserMessage _rewriteUserBlocks(
   UserMessage message,
   List<ContentBlock> content,
   Map<String, int> ridingIndexByKey,
+  Set<String> evictedKeys,
 ) {
   if (!content.any((block) => block is ImageContent)) return message;
   return UserMessage(
-    content: _replaceImageBlocks(content, ridingIndexByKey),
+    content: _replaceImageBlocks(content, ridingIndexByKey, evictedKeys),
     timestamp: message.timestamp,
   );
 }
@@ -998,27 +1103,33 @@ UserMessage _rewriteUserBlocks(
 ToolResultMessage _rewriteResultBlocks(
   ToolResultMessage message,
   Map<String, int> ridingIndexByKey,
+  Set<String> evictedKeys,
 ) {
   if (!message.content.any((block) => block is ImageContent)) return message;
   return ToolResultMessage(
     toolCallId: message.toolCallId,
     toolName: message.toolName,
-    content: _replaceImageBlocks(message.content, ridingIndexByKey),
+    content: _replaceImageBlocks(message.content, ridingIndexByKey, evictedKeys),
     isError: message.isError,
     timestamp: message.timestamp,
   );
 }
 
-/// Swaps image blocks for refs (riding) or the unavailable note (dropped).
+/// Swaps image blocks for refs (riding), the `[image dropped: …]`
+/// placeholder (gh-1934 evicted), or the unavailable note (dropped).
 List<ContentBlock> _replaceImageBlocks(
   List<ContentBlock> content,
   Map<String, int> ridingIndexByKey,
+  Set<String> evictedKeys,
 ) {
   return [
     for (final block in content)
       switch (block) {
         ImageContent() => switch (ridingIndexByKey[imageContentKey(block)]) {
           final index? => TextContent(text: imageRefLabel(index)),
+          null when evictedKeys.contains(imageContentKey(block)) => TextContent(
+            text: imageDroppedPlaceholder(imageContentKey(block)),
+          ),
           null => const TextContent(text: unavailableImageNote),
         },
         _ => block,

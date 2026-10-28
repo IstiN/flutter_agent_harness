@@ -17,8 +17,8 @@
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:test/test.dart';
 
-const _boundaryText =
-    '$compactionSummaryPrefixEarlier work happened.$compactionSummarySuffix';
+const _boundaryText = '$compactionSummaryPrefix'
+    'Earlier work happened.$compactionSummarySuffix';
 
 UserMessage _imageUser(String data, {DateTime? timestamp}) => UserMessage(
   content: [ImageContent(data: data, mimeType: 'image/png')],
@@ -29,6 +29,8 @@ ToolResultMessage _imageResult(String id, String data) => ToolResultMessage(
   toolCallId: id,
   toolName: 'read',
   content: [ImageContent(data: data, mimeType: 'image/png')],
+  isError: false,
+  timestamp: DateTime.utc(2026, 1, 1),
 );
 
 /// Every text payload of the request, joined (Message has no
@@ -123,11 +125,12 @@ void main() {
         'current-image',
       );
       // The history occurrence of the same payload would be evicted; the
-      // current one carries its fresh [Image N] label (F3).
+      // current one carries its fresh [Image N] label (F3) — first-seen
+      // order makes the current image index 1 (the evicted one is 0).
       expect(
         (last.content as List<ContentBlock>)
             .whereType<TextContent>()
-            .any((b) => b.text == '[Image 0]'),
+            .any((b) => b.text == '[Image 1]'),
         isTrue,
       );
     });
@@ -160,7 +163,7 @@ void main() {
 
     test('structured markers and local-trim notes evict too', () {
       for (final boundary in [
-        const UserMessage.text("[context trimmed locally: tokens]"),
+        UserMessage.text('[context trimmed locally: tokens]'),
         UserMessage.text(
           '$branchSummaryPrefix branch work$branchSummarySuffix',
         ),
