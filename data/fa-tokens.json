@@ -104,15 +104,6 @@
   "issue-1575": [
     {
       "leg": "rework",
-      "at": "2026-10-14T18:02:40Z",
-      "prompt": 124303,
-      "completion": 6993,
-      "total": 131296,
-      "cacheRead": 4124928,
-      "model": "glm-5.3-flash"
-    },
-    {
-      "leg": "rework",
       "at": "2026-10-14T19:46:56Z",
       "prompt": 141891,
       "completion": 8992,
@@ -122,15 +113,6 @@
     }
   ],
   "issue-1572": [
-    {
-      "leg": "rework",
-      "at": "2026-10-14T18:59:37Z",
-      "prompt": 286747,
-      "completion": 36043,
-      "total": 322790,
-      "cacheRead": 125009664,
-      "model": "glm-5.3-flash"
-    },
     {
       "leg": "rework",
       "at": "2026-10-14T21:42:41Z",
@@ -237,15 +219,6 @@
   ],
   "issue-1602": [
     {
-      "leg": "review",
-      "at": "2026-10-14T18:44:59Z",
-      "prompt": 149265,
-      "completion": 18355,
-      "total": 167620,
-      "cacheRead": 7252800,
-      "model": "glm-5.3-flash"
-    },
-    {
       "leg": "rework",
       "at": "2026-10-14T20:03:30Z",
       "prompt": 170477,
@@ -274,15 +247,6 @@
     }
   ],
   "issue-1596": [
-    {
-      "leg": "review",
-      "at": "2026-10-14T18:22:54Z",
-      "prompt": 112292,
-      "completion": 30227,
-      "total": 142519,
-      "cacheRead": 3486784,
-      "model": "glm-5.3-flash"
-    },
     {
       "leg": "rework",
       "at": "2026-10-14T22:28:44Z",
@@ -351,27 +315,7 @@
       "model": "glm-5.3-flash"
     }
   ],
-  "pr-1615": [
-    {
-      "leg": "review",
-      "at": "2026-10-14T17:56:29Z",
-      "prompt": 61605,
-      "completion": 22556,
-      "total": 84161,
-      "cacheRead": 2350144,
-      "model": "glm-5.3-flash"
-    }
-  ],
   "pr-1612": [
-    {
-      "leg": "rework",
-      "at": "2026-10-14T18:30:51Z",
-      "prompt": 142185,
-      "completion": 56013,
-      "total": 198198,
-      "cacheRead": 19631616,
-      "model": "glm-5.3-flash"
-    },
     {
       "leg": "rework",
       "at": "2026-10-14T21:38:29Z",
@@ -4330,6 +4274,15 @@
       "completion": 26451,
       "total": 185049,
       "cacheRead": 6792640,
+      "model": "glm-5.3-flash"
+    },
+    {
+      "leg": "review",
+      "at": "2026-10-28T19:01:24Z",
+      "prompt": 194495,
+      "completion": 17282,
+      "total": 211777,
+      "cacheRead": 6643392,
       "model": "glm-5.3-flash"
     }
   ],
