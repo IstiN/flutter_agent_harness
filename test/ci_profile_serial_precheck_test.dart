@@ -33,6 +33,16 @@ import 'package:test/test.dart';
 String read(String path) => File(path).readAsStringSync();
 
 void main() {
+  // The suite drives the REAL scripts/ci-sign end-to-end, which shells out
+  // to the macOS-only `security` CLI. On Linux CI shards (Core tests,
+  // shard 0/4) the whole suite must SKIP, not fail.
+  if (!Platform.isMacOS) {
+    test('ci-sign doctor end-to-end fixtures (macOS-only — skipped)', () {
+      markTestSkipped('scripts/ci-sign drives the macOS-only `security` CLI; '
+          'this suite runs on macOS runners only');
+    });
+    return;
+  }
   final sandbox = Directory.systemTemp.createTempSync('ci_sign_precheck');
   final script = File('scripts/ci-sign').absolute.path;
   late String kcPath;
@@ -191,6 +201,73 @@ void main() {
       contains('NOT in the signing keychain'),
       reason: 'the failure message must name the mismatch',
     );
+  });
+
+  test('AC6 — ci-sign install safety surface: the codesigning-policy gate, '
+      'label traversal, corrupt payloads, stale-lock stealing (reviewer: '
+      'highest-risk surface needs a behavioral test)', () async {
+    Future<ProcessResult> run(List<String> args, {Map<String, String>? env}) =>
+        Process.run('bash', [script, ...args], environment: {
+          'CI_SIGN_KEYCHAIN': kcPath,
+          'CI_SIGN_KEYCHAIN_PASSWORD': 'fixture-pass',
+          'PATH': Platform.environment['PATH']!,
+          'HOME': Platform.environment['HOME']!,
+          ...?env,
+        });
+
+    // Self-signed certs are NOT trusted for codesigning — the install gate
+    // must reject them (proven on the host: security find-identity
+    // -p codesigning refuses self-signed chains). The happy path (real
+    // portal certificate, manifest write, idempotent re-install) is
+    // validated by the first real CI run per repo; the sandbox cannot
+    // forge a policy-passing chain without polluting user trust settings.
+    final p12 = base64Encode(File('${sandbox.path}/c.p12').readAsBytesSync());
+    final gate = await run(['install', 'fixture-gate'], env: {
+      'CI_SIGN_FIXTURE_GATE_P12_B64': p12,
+      'CI_SIGN_FIXTURE_GATE_P12_PASSWORD': 'fixture-pass',
+    });
+    expect(gate.exitCode, isNot(0),
+        reason: 'the policy gate must reject a self-signed identity');
+    expect('${gate.stdout}${gate.stderr}', contains('not a valid codesigning identity'));
+
+    // The failed install must not leave a manifest behind.
+    expect(
+        File(
+                '${Platform.environment['HOME']!}/.config/ci-sign/labels/fixture-gate')
+            .existsSync(),
+        isFalse,
+        reason: 'a gated install must not write the label manifest');
+
+    // Path-traversal labels are refused before anything runs.
+    final escape = await run(['install', '../escape'], env: {
+      'CI_SIGN_ESCAPE_P12_B64': p12,
+      'CI_SIGN_ESCAPE_P12_PASSWORD': 'fixture-pass',
+    });
+    expect(escape.exitCode, isNot(0));
+    expect('${escape.stdout}${escape.stderr}', contains('invalid label'));
+
+    // Corrupt payloads fail loudly (no silent partial state).
+    final corrupt = await run(['install', 'fixture-corrupt'], env: {
+      'CI_SIGN_FIXTURE_CORRUPT_P12_B64': 'not-base64!!!',
+      'CI_SIGN_FIXTURE_CORRUPT_P12_PASSWORD': 'x',
+    });
+    expect(corrupt.exitCode, isNot(0));
+
+    // Stale-lock stealing: a lock older than 30 min cannot be alive; a
+    // SIGKILLed holder must not wedge host signing forever. The steal is
+    // observable: install proceeds past the lock (and then fails on the
+    // missing payload), and the EXIT-trap removes the lock dir.
+    final lockDir =
+        '${Platform.environment['HOME']!}/.config/ci-sign/install.lock';
+    Directory(lockDir).createSync(recursive: true);
+    // Age the lock beyond the 30-min steal threshold.
+    final age = Process.runSync('touch', ['-t', '202601010000', lockDir]);
+    expect(age.exitCode, 0);
+    final stolen = await run(['install', 'never-mind']);
+    expect(stolen.exitCode, isNot(0),
+        reason: 'no payload — but the stale lock must have been stolen');
+    expect(Directory(lockDir).existsSync(), isFalse,
+        reason: 'the EXIT trap must release the lock dir');
   });
 
   test('AC5 — a CMS payload that is not a profile plist: doctor FAILS with '

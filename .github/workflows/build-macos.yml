@@ -63,6 +63,10 @@ jobs:
         id: version
         run: |
           set -euo pipefail
+          # gh-1865: the repo copy of ci-sign is authoritative —
+          # re-install it to the host PATH on every signing job so
+          # ~/bin/ci-sign can never drift from the reviewed source.
+          install -m 755 scripts/ci-sign "$HOME/bin/ci-sign"
           INPUT="${{ inputs.version }}"
           if [ -z "$INPUT" ] || [ "$INPUT" = "auto" ]; then
             LATEST=$(git tag --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1 || echo "")
@@ -770,7 +774,10 @@ jobs:
             if [ "$PROFILE_EMBEDDED" = "true" ] && [ -f "profile.provisionprofile" ]; then
               echo "Embedding provisioning profile..."
               cp profile.provisionprofile "$APP_PATH/Contents/embedded.provisionprofile"
-              APP_ID=$(security cms -D -i profile.provisionprofile | plutil -extract Entitlements xml1 -o - - | grep -A 1 'com.apple.application-identifier' | tail -1 | sed 's/.*<string>\(.*\)<\/string>.*/\1/')
+              # gh-1865 model v3: profile decoding via ci-sign plist —
+              # `security cms -D` needs a default keychain, which this
+              # model never sets.
+              APP_ID=$(~/bin/ci-sign plist profile.provisionprofile | plutil -extract Entitlements xml1 -o - - | grep -A 1 'com.apple.application-identifier' | tail -1 | sed 's/.*<string>\(.*\)<\/string>.*/\1/')
               TEAM_ID="${APP_ID%%.*}"
               # Start from Release.entitlements (network client+server, file
               # bookmarks, calendar, contacts, health, homekit, audio input)
@@ -798,7 +805,7 @@ jobs:
               # NOTE: `plutil -extract ... -o -` (stdout form) is not
               # supported on every macOS the runner may have; use real temp
               # files so the extraction can't silently produce nothing.
-              security cms -D -i profile.provisionprofile -o profile_decoded.plist
+              ~/bin/ci-sign plist profile.provisionprofile > profile_decoded.plist
               plutil -extract Entitlements json profile_decoded.plist -o profile_ents.json
               for KEY in $(plutil -convert xml1 entitlements.plist -o - | grep -o '<key>[^<]*</key>' | sed 's/<[^>]*>//g'); do
                 case "$KEY" in

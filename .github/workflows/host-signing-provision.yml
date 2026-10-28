@@ -34,7 +34,7 @@ jobs:
     runs-on: [self-hosted, macos-m5]
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@8e8c483db84b4bed9817f72c0f3cd5f5aef4e7ee # v6.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install ci-sign onto the host PATH
         run: |

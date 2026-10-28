@@ -963,6 +963,10 @@ jobs:
           IOS_LIVE_ACTIVITY_PROFILE_BASE64: ${{ secrets.IOS_LIVE_ACTIVITY_PROFILE_BASE64 }}
         run: |
           set -euo pipefail
+          # gh-1865: the repo copy of ci-sign is authoritative —
+          # re-install it to the host PATH on every signing job so
+          # ~/bin/ci-sign can never drift from the reviewed source.
+          install -m 755 scripts/ci-sign "$HOME/bin/ci-sign"
           # gh-1865 model v3 (owner decision 2026-10-28): NO per-job
           # keychains and NO user-global keychain writes. ~/bin/ci-sign
           # provisions the PERSISTENT ci-signing.keychain-db (idempotent —

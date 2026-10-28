@@ -16,35 +16,27 @@ if $PROGRAM_NAME == __FILE__
   fastfile = File.expand_path("../Fastfile", __dir__)
   source = File.read(fastfile)
 
-  # Extract the build_only lane body (up to the next `lane` or top-level
-  # `end` at the same indent).
   lane_match = source.match(/^  lane :build_only do\n(.*?)^  end$/m)
   raise "FAIL: could not locate lane :build_only in Fastfile" unless lane_match
 
   lane_body = lane_match[1]
 
-  raise "FAIL: build_only still calls the helper via relative ../scripts path (cwd-dependent)" \
-    if lane_body.include?('sh("bash", "../scripts/keychain_searchlist_add.sh"')
+  # gh-1865 model v3: the retired per-job-keychain helper must never come
+  # back (its additive union kept concurrent keychains but made
+  # same-subject certificates ambiguous — run 40455401630).
+  raise "FAIL: build_only references the RETIRED keychain_searchlist_add.sh helper" \
+    if lane_body.include?('keychain_searchlist_add')
 
-  helper_expr = 'File.expand_path("../../scripts/keychain_searchlist_add.sh", __dir__)'
-  raise "FAIL: build_only does not resolve the helper from the Fastfile location (#{helper_expr})" \
-    unless lane_body.include?(helper_expr)
+  # The persistent-keychain unlock must be resolved absolutely from the
+  # Fastfile location (gh-1910 lesson: fastlane's sh does not honor the
+  # assumed lane cwd; a relative ../scripts path failed with exit 127,
+  # run 4032679374).
+  ci_sign_expr = 'File.expand_path("../../scripts/ci-sign", __dir__)'
+  raise "FAIL: build_only does not resolve scripts/ci-sign from the Fastfile location (#{ci_sign_expr})" \
+    unless lane_body.include?(ci_sign_expr)
 
-  # Both keychain branches (build.keychain-db and login.keychain-db) must use
-  # the resolved helper, and the resolved file must actually exist. Resolve
-  # from the Fastfile's directory (flutter_app/fastlane), not this test's.
-  fastfile_dir = File.expand_path("..", __dir__)
-  resolved = File.expand_path("../../scripts/keychain_searchlist_add.sh", fastfile_dir)
-  raise "FAIL: resolved helper #{resolved} does not exist" unless File.exist?(resolved)
+  raise "FAIL: build_only does not unlock the persistent signing keychain via ci-sign" \
+    unless lane_body.include?('sh(ci_sign, "unlock")')
 
-  raise "FAIL: build.keychain-db branch does not use the resolved helper" \
-    unless lane_body.include?('sh("bash", keychain_helper, "#{Dir.home}/Library/Keychains/build.keychain-db")')
-  raise "FAIL: login.keychain-db branch does not use the resolved helper" \
-    unless lane_body.include?('sh("bash", keychain_helper, "#{Dir.home}/Library/Keychains/login.keychain-db")')
-
-  # Regression guard: no relative ../scripts sh call anywhere in the file.
-  raise "FAIL: another relative ../scripts sh call exists in the Fastfile" \
-    if source.match?(/^\s*sh\(.*"\.\.\/scripts\//)
-
-  puts "gh-1910: build_only keychain helper resolved via __dir__ — all checks passed"
+  puts "PASS: build_only resolves ci-sign from __dir__ and unlocks the persistent keychain"
 end

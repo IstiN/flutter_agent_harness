@@ -96,15 +96,17 @@ ensure_keychain() {
     mkdir -p "$CFG"
     security create-keychain -p "$kcpass" "$KC"
   fi
-  # No inactivity auto-lock; explicit unlock per operation keeps it honest.
-  security set-keychain-settings -u "$KC" 2>/dev/null || true
+  # Explicit settings (reviewer: bare-flag semantics are easy to get
+  # wrong): -l = lock when the machine sleeps, -t 86400 = 24h inactivity
+  # backstop. Every ci-sign entry point unlocks non-interactively anyway,
+  # so an archive never hits a locked keychain mid-job (gh-1798 class).
+  security set-keychain-settings -l -t 86400 "$KC" 2>/dev/null || true
   # Idempotent, additive, self-verifying search-list membership (gh-1866
   # logic, applied ONCE for a persistent entry — never per job). Skipped
   # for test keychains (CI_SIGN_KEYCHAIN override) — they never leave the
   # test sandbox.
   if [ -z "${CI_SIGN_KEYCHAIN:-}" ] && ! security list-keychains | sed 's/[[:space:]]//g; s/"//g' | grep -qxF "$KC"; then
-    local want current
-    want="$KC $HOME/Library/Keychains/login.keychain-db"
+    local current
     current="$(security list-keychains | sed 's/[[:space:]]//g; s/"//g' | grep -v '^$' | grep -vxF "$KC" | tr '\n' ' ')"
     security list-keychains -d user -s $current "$KC"
     security list-keychains | sed 's/[[:space:]]//g; s/"//g' | grep -qxF "$KC" || die "failed to add keychain to search list"
@@ -180,6 +182,11 @@ case "$CMD" in
 
   install)
     LABEL="${1:-}"; [ -n "$LABEL" ] || usage
+    # Labels become file paths under $LABELS_DIR — refuse anything that
+    # could escape it (../foo, a/b, empty).
+    case "$LABEL" in
+      ''|*[!A-Za-z0-9_-]*) die "invalid label '$LABEL' (allowed: [A-Za-z0-9_-])" ;;
+    esac
     FORCE=0; [ "${2:-}" = "--force" ] && FORCE=1
     # Concurrent installs (two matrix legs re-verifying on the same host)
     # serialize on a lock dir — create-keychain/import are not idempotent
@@ -190,6 +197,16 @@ case "$CMD" in
     ACQUIRED=0
     for _ in $(seq 1 60); do
       if mkdir "$LOCK" 2>/dev/null; then ACQUIRED=1; break; fi
+      # Stale-lock recovery: a SIGKILLed holder would wedge host signing
+      # forever. The happy path holds the lock for seconds; a lock older
+      # than 30 min cannot be alive — steal it.
+      if [ -d "$LOCK" ]; then
+        LOCK_AGE=$(( $(date +%s) - $(stat -f %m "$LOCK" 2>/dev/null || echo 0) ))
+        if [ "$LOCK_AGE" -gt 1800 ]; then
+          err "stealing stale install lock (age ${LOCK_AGE}s > 1800s)"
+          rmdir "$LOCK" 2>/dev/null || true
+        fi
+      fi
       sleep 2
     done
     [ "$ACQUIRED" -eq 1 ] || die "another ci-sign install holds the lock ($LOCK)"
