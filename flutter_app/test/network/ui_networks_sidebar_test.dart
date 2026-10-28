@@ -3,6 +3,7 @@
 // in the LICENSE file.
 
 import 'package:fa/network/key_wallet.dart';
+import 'package:fa/network/models.dart' show AccountNetworkInfo, MemberClass;
 import 'package:fa/network/network_mode.dart';
 import 'package:fa/network/network_session_manager.dart';
 import 'package:fa/ui/app_theme.dart';
@@ -14,6 +15,13 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 
 import 'fakes.dart';
+
+/// A canned `POST /api/networks/<id>/join` response for [networkId] —
+/// the join echo's network id is the canonical key the wallet records.
+String joinBodyOkFor(String networkId) =>
+    '{"sessionToken":"st-1","identity":{"id":"me-1","class":"guest",'
+    '"displayName":"Me"},"network":{"id":"$networkId","name":"joined",'
+    '"ownerId":"u1","publicChannels":[]}}';
 
 Future<NetworkSessionManager> _manager({
   required KeyWallet wallet,
@@ -279,6 +287,86 @@ void main() {
       await manager.disconnectAll();
     });
 
+    testWidgets(
+      'an account-synced membership with NO stored password opens the '
+      'join sheet prefilled with the id (no resume, no error)',
+      (tester) async {
+        final wallet = await KeyWallet.load(MemoryWalletBackend());
+        // The account-sync shape: membership present, password absent
+        // (the server never returns one).
+        await wallet.syncAccountNetworks([
+          AccountNetworkInfo(
+            id: 'net7',
+            name: 'curl-made',
+            isPublic: false,
+            memberClass: MemberClass.owner,
+          ),
+        ]);
+        final controller = NetworkModeController.inMemory(
+          mode: AppMode.network,
+        );
+        final manager = await _manager(wallet: wallet);
+
+        await tester.pumpWidget(
+          _wrap(NetworksSidebar(controller: controller, manager: manager)),
+        );
+        await tester.pump();
+
+        // It renders as a normal membership row, not an error state.
+        final tile = find.byKey(const ValueKey('membership:net7'));
+        expect(tile, findsOneWidget);
+        expect(
+          find.descendant(of: tile, matching: find.text('curl-made')),
+          findsOneWidget,
+        );
+
+        await tester.tap(find.text('curl-made'));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 300));
+
+        // The join sheet opens prefilled with the network id instead of
+        // a resume error — the user supplies the password once.
+        expect(find.byType(JoinSheet), findsOneWidget);
+        expect(find.text('net7'), findsOneWidget);
+        expect(manager.sessions, isEmpty);
+        expect(controller.networkId, isNull);
+        expect(find.byKey(const ValueKey('joinError')), findsNothing);
+      },
+    );
+
+    testWidgets('a membership with a stored password keeps the resume path', (
+      tester,
+    ) async {
+      // Pins the branch boundary next to the no-password test above: a
+      // stored-password row never opens the sheet.
+      final wallet = await KeyWallet.load(MemoryWalletBackend());
+      await wallet.addNetwork(
+        networkId: 'net1',
+        name: 'fa-team',
+        password: 'secret-pw',
+      );
+      final controller = NetworkModeController.inMemory(mode: AppMode.network);
+      final httpClient = FakeHttpClient()
+        ..respond(200, body: joinBodyOk)
+        ..respond(200, body: channelsBody)
+        ..respond(200, body: membersBody);
+      final manager = await _manager(wallet: wallet, httpClient: httpClient);
+      addTearDown(manager.disconnectAll);
+
+      await tester.pumpWidget(
+        _wrap(NetworksSidebar(controller: controller, manager: manager)),
+      );
+      await tester.pump();
+
+      await tester.tap(find.text('fa-team'));
+      await tester.pump();
+      await tester.pump();
+
+      expect(find.byType(JoinSheet), findsNothing);
+      expect(manager.sessions.containsKey('net1'), isTrue);
+      await manager.disconnectAll();
+    });
+
     testWidgets('+ Join opens the join sheet', (tester) async {
       final wallet = await KeyWallet.load(MemoryWalletBackend());
       final controller = NetworkModeController.inMemory(mode: AppMode.network);
@@ -391,7 +479,7 @@ void main() {
       );
       final controller = NetworkModeController.inMemory(mode: AppMode.network);
       final httpClient = FakeHttpClient()
-        ..respond(200, body: joinBodyOk)
+        ..respond(200, body: joinBodyOkFor('net2'))
         ..respond(200, body: channelsBody)
         ..respond(200, body: membersBody);
       final manager = await _manager(wallet: wallet, httpClient: httpClient);

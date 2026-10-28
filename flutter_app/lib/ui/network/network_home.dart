@@ -169,8 +169,17 @@ class _NetworkHomePageState extends State<NetworkHomePage> {
     }
     final session = widget.manager.sessions[networkId];
     if (session == null) {
-      // A restored selection waiting for the silent resume (or a failed
-      // one — the snackbar already said why).
+      // A restored selection waiting for the silent resume — or an
+      // account-synced membership without a stored password (join once),
+      // which routes through the shared pane instead of a dead-end
+      // spinner.
+      if (widget.manager.wallet.networks[networkId]?.password == null) {
+        return NetworkNeedsPasswordPane(
+          controller: widget.controller,
+          manager: widget.manager,
+          networkId: networkId,
+        );
+      }
       return const Center(child: CircularProgressIndicator());
     }
     return channelId == null
