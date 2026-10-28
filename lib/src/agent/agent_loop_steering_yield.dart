@@ -357,18 +357,6 @@ Future<(AssistantMessage, Context)> _streamAssistantResponse(
   required Future<List<Message>> Function() drainSteering,
   CancelTokenSource? cancelTokenSource,
 }) async {
-  var reliefUsed = false;
-  var pairingHealed = false;
-  // gh-1680: one-shot message-cap heal state; when armed, the next
-  // rebuilt payload coalesces toward its target.
-  final capState = _CapHealState();
-  // Issue #1750: one-shot image-cap heal state; the learned cap rides
-  // the retried request build and latches for the run.
-  final imageCapState = _ImageCapHealState();
-  // gh-1934: the bounded 413 image-payload recovery ladder; pass 1
-  // halves the session's adaptive budget, pass 2 strips all images, and
-  // the session-level consequences ride config.imageRecovery.
-  final image413State = _Image413RecoveryState();
   // Issue #862: drain the armed corrective note once per streamed response
   // (not per built context) so a mid-turn retry re-attaches it.
   final misuseNote = config.toolMisuseBreaker?.drainPendingNote();

@@ -73,15 +73,23 @@ final class ImageDropUx {
 
   /// Content-keyed latch identity: the dropped keys partitioned by
   /// current-vs-history (a swap between the two severities is a real
-  /// change), plus the effective cap and the model id (R1, R4 — a
-  /// #1750 learned-cap change is a new situation).
+  /// change), by REASON (gh-1934 review — a cap→evicted transition of the
+  /// same key set is a materially different situation: those bytes now
+  /// never ride again; latching it to silence would hide the change),
+  /// plus the effective cap and the model id (R1, R4 — a #1750
+  /// learned-cap change is a new situation).
   String _latchKey(ImageDropReport report) {
     List<String> keys(bool fromCurrent) => [
       for (final drop in report.drops)
         if (drop.fromCurrentMessage == fromCurrent) drop.key,
     ]..sort();
+    final evicted = [
+      for (final drop in report.drops)
+        if (drop.reason == ImageDropReason.evicted) drop.key,
+    ]..sort();
     return '${report.modelId}|${report.cap}'
-        '|current:${keys(true)}|history:${keys(false)}';
+        '|current:${keys(true)}|history:${keys(false)}'
+        '|evicted:$evicted';
   }
 
   ImageDropNoticeView _noticeFor(ImageDropReport report) {
@@ -89,11 +97,33 @@ final class ImageDropUx {
     final historyDrops = report.drops.length - currentDrops;
     final budget = _budgetLabel(report);
     if (currentDrops > 0) {
+      // gh-1934 review: partition by reason the way the history branch
+      // does — an eviction names the cause and the RIGHT knob (the byte
+      // budget or the provider), never a cap that did not bind and never
+      // images.maxPerRequest. Prominence stays: just-attached images not
+      // sent is actionable either way.
+      final currentEvicted = report.drops
+          .where(
+            (d) => d.fromCurrentMessage && d.reason == ImageDropReason.evicted,
+          )
+          .length;
+      final currentCapped = currentDrops - currentEvicted;
+      if (currentCapped == 0) {
+        var evictedLine =
+            '$currentEvicted of ${report.currentImageCount} attached images '
+            'replaced by placeholders (413 recovery) — lower '
+            'images.maxBytesPerRequest or switch provider';
+        if (historyDrops > 0) evictedLine += ' (+$historyDrops older images)';
+        return ImageDropNoticeView._(evictedLine, true);
+      }
       // Prominent per-batch warning with counts + remedy (R2/AC3).
       var line =
-          '$currentDrops of ${report.currentImageCount} attached images '
+          '$currentCapped of ${report.currentImageCount} attached images '
           'were not sent to the model — cap is ${report.cap}/request'
           '$budget; see /images or images.maxPerRequest';
+      if (currentEvicted > 0) {
+        line += ' (+$currentEvicted attached replaced by placeholders)';
+      }
       if (historyDrops > 0) line += ' (+$historyDrops older images)';
       return ImageDropNoticeView._(line, true);
     }

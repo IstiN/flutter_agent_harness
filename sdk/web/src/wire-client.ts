@@ -45,6 +45,7 @@ export const KNOWN_EVENT_KINDS: readonly string[] = [
   'model_request',
   'tool_pairing_repair',
   'task_ledger',
+  'image_payload_recovery',
   'tool_call_heartbeat',
   'tool_call_stuck',
   'tool_call_budget',

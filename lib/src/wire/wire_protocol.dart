@@ -491,6 +491,19 @@ class AgentWireProtocol {
         'providerError': ?e.providerError,
       };
     },
+    // gh-1934: the 413 image-payload recovery ladder — per-pass events
+    // carry the real dropped/stripped counts; `failed` marks the single
+    // actionable exhaustion event (the refusal that ended the ladder).
+    ImagePayloadRecoveryEvent: (event) {
+      final e = event as ImagePayloadRecoveryEvent;
+      return {
+        'pass': e.pass,
+        'dropped': e.dropped,
+        'stripped': e.stripped,
+        'failed': e.failed,
+        'providerError': ?e.providerError,
+      };
+    },
     TaskLedgerEvent: (event) => {
       'ledger': (event as TaskLedgerEvent).ledger.toJson(),
     },
@@ -655,6 +668,7 @@ class AgentWireProtocol {
     'model_request': _decodeModelRequest,
     'tool_pairing_repair': _decodeToolPairingRepair,
     'message_cap_repair': _decodeMessageCapRepair,
+    'image_payload_recovery': _decodeImagePayloadRecovery,
     'task_ledger': _decodeTaskLedger,
     'tool_call_heartbeat': _decodeToolCallHeartbeat,
     'tool_call_stuck': _decodeToolCallStuck,
@@ -965,6 +979,22 @@ class AgentWireProtocol {
             ? frame['learnedCap'] as int
             : null,
         compacted: frame['compacted'] == true,
+        providerError: frame['providerError'] as String?,
+      ),
+      frame,
+    );
+  }
+
+  static KnownWireEvent _decodeImagePayloadRecovery(
+    Map<String, dynamic> frame,
+  ) {
+    _requireKind(frame, 'image_payload_recovery');
+    return KnownWireEvent(
+      ImagePayloadRecoveryEvent(
+        pass: _requireInt(frame['pass'], 'pass'),
+        dropped: _requireInt(frame['dropped'], 'dropped'),
+        stripped: _requireInt(frame['stripped'], 'stripped'),
+        failed: frame['failed'] == true,
         providerError: frame['providerError'] as String?,
       ),
       frame,
@@ -1291,6 +1321,7 @@ class AgentWireProtocol {
     ModelRequestEvent: 'model_request',
     ToolPairingRepairEvent: 'tool_pairing_repair',
     MessageCapRepairEvent: 'message_cap_repair',
+    ImagePayloadRecoveryEvent: 'image_payload_recovery',
     TaskLedgerEvent: 'task_ledger',
     ToolCallHeartbeatEvent: 'tool_call_heartbeat',
     ToolCallStuckEvent: 'tool_call_stuck',
