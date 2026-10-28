@@ -152,3 +152,17 @@ final class _Image413RecoveryState {
     return _AttemptRetry(context);
   }
 }
+
+/// gh-1934: an armed 413 recovery note rides the NEXT request payload as a
+/// trailing user message — the model sees why its images vanished and the
+/// assistant answer can note the recovery (AC1). Payload-only; the note is
+/// one-shot (consumed by this build, re-armed by the next pass).
+Context _appendRecoveryNote(Context context, ImagePayloadRecoveryState? rec) {
+  final note = rec?.consumeNote();
+  if (note == null) return context;
+  return Context(
+    systemPrompt: context.systemPrompt,
+    messages: [...context.messages, UserMessage.text(note)],
+    tools: context.tools,
+  );
+}

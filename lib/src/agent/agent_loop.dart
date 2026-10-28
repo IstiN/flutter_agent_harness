@@ -656,13 +656,10 @@ final class AgentLoopConfig {
   /// not remembered across turns.
   final Map<String, int>? imageCapLatches;
 
-  /// gh-1934: the session-scoped 413 image-payload recovery state (the
-  /// learned byte budget, the strip-all latch, the evicted-key latch and
-  /// the armed recovery note). A classified 413 refusal adapts the
-  /// payload through the bounded ladder and every later request build of
-  /// the session rides the recovered state. Hosts own the instance (same
-  /// pattern as [imageCapLatches]); `null` keeps the legacy behavior — a
-  /// 413 surfaces the error turn exactly as before.
+  /// gh-1934: the session-scoped 413 image-payload recovery state —
+  /// learned byte budget, strip-all latch, evicted-key latch, armed note
+  /// (full contract: `image_recovery.dart`). Hosts own the instance (same
+  /// pattern as [imageCapLatches]); `null` keeps the legacy behavior.
   final ImagePayloadRecoveryState? imageRecovery;
 
   /// Returns a copy with [model] replaced (used by [prepareNextTurn]).
@@ -1768,18 +1765,7 @@ Future<(Context, ToolPairingRepairReport)> _buildRequestContext(
       tools: requestContext.tools,
     );
   }
-  // gh-1934: an armed 413 recovery note rides the NEXT request payload as
-  // a trailing user message — the model sees why its images vanished and
-  // the assistant answer can note the recovery (AC1). Payload-only; the
-  // note is one-shot (consumed by this build, re-armed by the next pass).
-  final recoveryNote = recovery?.consumeNote();
-  if (recoveryNote != null) {
-    requestContext = Context(
-      systemPrompt: requestContext.systemPrompt,
-      messages: [...requestContext.messages, UserMessage.text(recoveryNote)],
-      tools: requestContext.tools,
-    );
-  }
+  requestContext = _appendRecoveryNote(requestContext, recovery);
   // gh-1409: compaction-pinned skill operative lines ride every
   // post-boundary request as the verbatim carrier (AC2) — payload-only,
   // the transcript is never touched; the kill switch
