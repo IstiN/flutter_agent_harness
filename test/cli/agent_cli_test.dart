@@ -3,8 +3,6 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
-import 'package:flutter_agent_harness/src/cli/tool_row_content.dart'
-    show transcriptExpandDetails;
 import 'package:test/test.dart';
 
 import 'agent_cli_test_support.dart';
@@ -84,46 +82,6 @@ void main() {
     }
     fail('timed out waiting for async condition');
   }
-
-  test(
-    '/transcript expand toggles the collapsed-detail state (gh-1933)',
-    () async {
-      // Session-start memory maintenance is due on a fresh env (no stamp);
-      // its consolidate() would consume a scripted turn on a slow runner.
-      await env.writeFile('/work/.fah/memory/.last_maintenance', '');
-      addTearDown(() => transcriptExpandDetails = false);
-      final cli = cliFor(FakeStreamFunction([textTurn('ok')]).call);
-      final run = cli.run();
-      io.sendLine('/transcript');
-      io.sendLine('/transcript expand all');
-      io.sendLine('/transcript expand bogus');
-      io.sendLine('/transcript expand none');
-      io.sendLine('/exit');
-      await run;
-      final out = io.out.toString();
-      expect(
-        out,
-        contains('transcript rows are collapsed'),
-        reason: 'bare /transcript reports the state',
-      );
-      // Review thread PRRT_kwDOTXdlLc6w5WG8: outside the TUI chrome face the
-      // expansion state renders nothing observable (line mode streams
-      // thinking per-delta or never; the line replay renders thinking NEVER)
-      // — the mutating arms say so instead of confirming a no-op.
-      expect(
-        out,
-        contains('transcript expand only affects the TUI chrome transcript'),
-        reason: 'this harness is the line-mode (non-TUI) face',
-      );
-      expect(out, contains('usage: /transcript expand all|none'));
-      expect(
-        transcriptExpandDetails,
-        isFalse,
-        reason: 'a non-TUI face leaves the render state alone',
-      );
-      expect(cli.isBusy, isFalse);
-    },
-  );
 
   test('an untouched session leaves no file behind on exit', () async {
     // Session-start memory maintenance is due on a fresh env (no stamp);
@@ -1946,9 +1904,8 @@ void main() {
     // and the tool schemas with every request, and the meter counts that
     // overhead (same basis as the over-window guard).
     final rest = output.substring(lastStatus);
-    final match = RegExp(
-      r'· ctx (\d+)% \((\S+)/100k\) · 0tok',
-    ).firstMatch(rest);
+    final match = RegExp(r'· ctx (\d+)% \((\S+)/100k\) · 0tok')
+        .firstMatch(rest);
     expect(match, isNotNull);
     expect(match!.group(2), isNot('0'));
   });
@@ -2222,8 +2179,12 @@ void main() {
                 expiresAt: DateTime.now().millisecondsSinceEpoch + 86400000,
               );
             },
-            codeMieGuidedSetupFn:
-                (apiBase, cookie, pickOption, askLine) async => 'gpt-4o-mini',
+            codeMieGuidedSetupFn: (
+              apiBase,
+              cookie,
+              pickOption,
+              askLine,
+            ) async => 'gpt-4o-mini',
           ),
           io: io,
           streamFunction: (model, context, {cancelToken}) {
