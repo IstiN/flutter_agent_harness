@@ -14,6 +14,6 @@
 [38;2;249;226;175mretrying in 2s[0m [38;2;243;139;168mdenied: write outside workspace[0m
 · snooze· minimal· low· medium· high· xhigh
 final theme = 'omp'; // parity
-+ added - removed ~ context
+[38;2;166;227;161m+ added[0m[38;2;243;139;168m - removed[0m[38;2;108;112;134m ~ context[0m
 glm-5.3-flash · ~/work/harness · ✓ · 42% · $1.24
   default       [1m[38;2;94;234;212m███[0m[1m[38;2;129;140;248m███[0m[38;2;74;222;128m███[0m[38;2;250;204;21m███[0m[38;2;248;113;113m███[0m[48;2;30;34;42m███[0m

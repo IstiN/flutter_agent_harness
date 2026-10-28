@@ -1904,9 +1904,8 @@ void main() {
     // and the tool schemas with every request, and the meter counts that
     // overhead (same basis as the over-window guard).
     final rest = output.substring(lastStatus);
-    final match = RegExp(
-      r'· ctx (\d+)% \((\S+)/100k\) · 0tok',
-    ).firstMatch(rest);
+    final match = RegExp(r'· ctx (\d+)% \((\S+)/100k\) · 0tok')
+        .firstMatch(rest);
     expect(match, isNotNull);
     expect(match!.group(2), isNot('0'));
   });
@@ -2180,8 +2179,12 @@ void main() {
                 expiresAt: DateTime.now().millisecondsSinceEpoch + 86400000,
               );
             },
-            codeMieGuidedSetupFn:
-                (apiBase, cookie, pickOption, askLine) async => 'gpt-4o-mini',
+            codeMieGuidedSetupFn: (
+              apiBase,
+              cookie,
+              pickOption,
+              askLine,
+            ) async => 'gpt-4o-mini',
           ),
           io: io,
           streamFunction: (model, context, {cancelToken}) {

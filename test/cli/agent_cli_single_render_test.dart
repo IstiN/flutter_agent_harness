@@ -32,6 +32,7 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 // LocalExecutionEnv is a VM-only surface (dart:io-backed) — it ships via
 // the io.dart barrel, not the platform-neutral one.
 import 'package:flutter_agent_harness/io.dart';
+import 'package:flutter_agent_harness/src/cli/tool_row_content.dart';
 import 'package:flutter_agent_harness/src/cli/tool_rows.dart';
 import 'package:flutter_agent_harness/src/cli/tui_chrome.dart';
 import 'package:flutter_agent_harness/src/cli/tui_repl.dart';
@@ -518,25 +519,30 @@ void main() {
           reason: 'the TUI keeps its running card — frames=${frames.text}',
         );
         // ...and the settled card still lands on the end edge — the SAME
-        // shared builder the live edge feeds (start detail, success phase,
-        // pinned width, elapsed meta).
-        final startDetail = toolRowDetail(
-          'bash',
-          const {'command': 'echo hi'},
+        // shared builder the live edge feeds, fed through the gh-1933 v2
+        // derivation ([settledCallCardRows]: bash intent detail, output
+        // lines meta, right elapsed zone, dim command preview) so the
+        // golden can never drift from the real call site.
+        final settled = settledCallCardRows(
+          toolName: 'bash',
+          args: const {'command': 'echo hi'},
+          resultContent: [const TextContent(text: 'hi\n')],
+          isError: false,
+          width: 80,
+          elapsed: '0s',
           cwd: '/work',
           home: config.homeDir,
         );
-        final settled = settledToolCardRows(
-          toolName: 'bash',
-          successDetail: startDetail,
-          isError: false,
-          width: 80,
-          meta: const ['0s'],
-        );
-        expect(
-          _normalize(frames.text),
-          contains(_normalize(settled.join('\n'))),
-        );
+        // The frame capture carries the rows joined by cursor-positioning
+        // (diff paint) — no literal newline survives _normalize, so the
+        // multi-row v2 card is asserted row-by-row.
+        for (final row in settled) {
+          expect(
+            _normalize(frames.text),
+            contains(_normalize(row)),
+            reason: 'the settled card row landed — frames=${frames.text}',
+          );
+        }
         expect(shell.commands, contains('echo hi'));
       } finally {
         keys.add([0x03]);
