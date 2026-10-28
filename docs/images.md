@@ -164,9 +164,9 @@ Symptoms: `connect stall: no response bytes` (attempts 2/3, 3/3),
 of zero-byte request`, a busy row stuck at `Stalled… · submit` — while
 the same model works fine in text-only sessions.
 
-1. **`/compact`** — compaction evicts every history image to a
-   placeholder (gh-1934), so the next submit carries zero image bytes
-   from the folded region.
+1. **`/compact`** — compaction evicts images outside the kept region to
+   placeholders (gh-1934), so bytes from the folded region never ride
+   again; a still-oversized payload recovers via the 413 ladder.
 2. **Lower the image budget** — `images.maxBytesPerRequest` (default
    8MB) in `~/.fah/config.yaml` or via `/settings → Images`; `/images`
    shows what the last request actually sent and dropped.

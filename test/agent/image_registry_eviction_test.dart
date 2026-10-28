@@ -19,7 +19,8 @@
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:test/test.dart';
 
-const _boundaryText = '$compactionSummaryPrefix'
+const _boundaryText =
+    '$compactionSummaryPrefix'
     'Earlier work happened.$compactionSummarySuffix';
 
 UserMessage _imageUser(String data, {DateTime? timestamp}) => UserMessage(
@@ -65,31 +66,31 @@ List<ImageContent> _imagesOf(List<Message> messages) => [
 
 void main() {
   group('gh-1934 AC2: compaction boundary eviction', () {
-    test('a compaction summary evicts every history image to placeholders',
-        () {
-      final history = [
+    test('images outside the kept region evict to placeholders', () {
+      // The flood precedes the boundary — the compacted-away region's
+      // remnants still riding in the window.
+      final window = [
         UserMessage.text('look at this'),
         _imageResult('t1', 'a' * 1000),
         _imageUser('b' * 1000),
-      ];
-      final window = [
         UserMessage.text(_boundaryText),
-        ...history,
         UserMessage.text('now summarize'),
       ];
 
       final out = rewriteHistoryImages(window);
 
-      expect(_imagesOf(out), isEmpty,
-          reason: 'ZERO image bytes ride after compaction (AC2)');
+      expect(
+        _imagesOf(out),
+        isEmpty,
+        reason: 'ZERO image bytes from evicted blocks ride (AC2)',
+      );
       expect(
         out.any(
           (m) =>
               m is ToolResultMessage &&
               m.content.any(
                 (b) =>
-                    b is TextContent &&
-                    b.text.startsWith('[image dropped: '),
+                    b is TextContent && b.text.startsWith('[image dropped: '),
               ),
         ),
         isTrue,
@@ -105,7 +106,9 @@ void main() {
               (m.content as List<ContentBlock>).any(
                 (b) =>
                     b is TextContent &&
-                    RegExp(r'^\[image dropped: [0-9a-f]{8}\]$').hasMatch(b.text),
+                    RegExp(
+                      r'^\[image dropped: [0-9a-f]{8}\]$',
+                    ).hasMatch(b.text),
               ),
         ),
         isTrue,
@@ -114,8 +117,8 @@ void main() {
 
     test('the current user message still rides its images in place (I3)', () {
       final window = [
-        UserMessage.text(_boundaryText),
         _imageResult('t1', 'a' * 1000),
+        UserMessage.text(_boundaryText),
         _imageUser('current-image'),
       ];
 
@@ -123,16 +126,17 @@ void main() {
 
       final last = out.whereType<UserMessage>().last;
       expect(
-        (last.content as List<ContentBlock>).whereType<ImageContent>().single.data,
+        (last.content as List<ContentBlock>)
+            .whereType<ImageContent>()
+            .single
+            .data,
         'current-image',
       );
-      // The history occurrence of the same payload would be evicted; the
-      // current one carries its fresh [Image N] label (F3) — first-seen
-      // order makes the current image index 1 (the evicted one is 0).
+      // The current image carries its fresh F3 label.
       expect(
-        (last.content as List<ContentBlock>)
-            .whereType<TextContent>()
-            .any((b) => b.text == '[Image 1]'),
+        (last.content as List<ContentBlock>).whereType<TextContent>().any(
+          (b) => b.text == imageRefLabel(1),
+        ),
         isTrue,
       );
     });
@@ -150,8 +154,8 @@ void main() {
 
     test('eviction is reported, never silent (evicted reason)', () {
       final window = [
-        UserMessage.text(_boundaryText),
         _imageResult('t1', 'a' * 1000),
+        UserMessage.text(_boundaryText),
         UserMessage.text('go'),
       ];
       ImageDropReport? report;
@@ -171,12 +175,16 @@ void main() {
         ),
       ]) {
         final window = [
-          boundary,
           _imageUser('a' * 1000),
+          boundary,
           UserMessage.text('go'),
         ];
         final out = rewriteHistoryImages(window);
-        expect(_imagesOf(out), isEmpty, reason: 'boundary: ${boundary.content}');
+        expect(
+          _imagesOf(out),
+          isEmpty,
+          reason: 'boundary: ${boundary.content}',
+        );
       }
     });
   });
@@ -228,7 +236,9 @@ void main() {
 
   group('gh-1934: session-latched evicted keys', () {
     test('an evicted key never rides again, boundary or not', () {
-      final key = imageContentKey(ImageContent(data: 'a' * 1000, mimeType: 'image/png'));
+      final key = imageContentKey(
+        ImageContent(data: 'a' * 1000, mimeType: 'image/png'),
+      );
       final window = [
         _imageUser('a' * 1000, timestamp: DateTime.utc(2026, 1, 1)),
         _imageUser('b' * 1000, timestamp: DateTime.utc(2026, 1, 2)),
@@ -253,8 +263,10 @@ void main() {
       final snapshot = [
         for (final m in window)
           switch (m) {
-            UserMessage(:final content, :final timestamp) =>
-              UserMessage(content: content, timestamp: timestamp),
+            UserMessage(:final content, :final timestamp) => UserMessage(
+              content: content,
+              timestamp: timestamp,
+            ),
             ToolResultMessage(
               :final toolCallId,
               :final toolName,
@@ -289,25 +301,27 @@ void main() {
   });
 
   group('gh-1934 AC2: token accounting counts the placeholder', () {
-    test('the rewritten payload estimates far lighter than the raw window',
-        () {
+    test('the rewritten payload estimates far lighter than the raw window', () {
       final big = 'x' * 400000; // ~100k tokens of base64 per image at chars/4
       final poisoned = [
-        for (var i = 0; i < 8; i++)
-          _imageResult('t$i', big),
+        for (var i = 0; i < 8; i++) _imageResult('t$i', big),
         UserMessage.text('plain text question'),
       ];
       final boundaryWindow = [
-        UserMessage.text(_boundaryText),
         ...poisoned,
+        UserMessage.text(_boundaryText),
+        UserMessage.text('plain text question'),
       ];
 
       final rewritten = rewriteHistoryImages(boundaryWindow);
       final after = estimateRequestTokens(rewritten);
       final before = estimateRequestTokens(boundaryWindow);
 
-      expect(after, lessThan(before ~/ 10),
-          reason: 'placeholders cost text tokens, not image bytes');
+      expect(
+        after,
+        lessThan(before ~/ 10),
+        reason: 'placeholders cost text tokens, not image bytes',
+      );
     });
   });
 }

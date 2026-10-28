@@ -143,10 +143,10 @@ factual: paths, commands, invariants — no essays.
   citations degrade to that note too — after renumbering an `[Image N]`
   may name a different image, so silent rebinding is never allowed
   (issue #195 F2; generated refs/labels stay content-keyed and fresh).
-  gh-1934 (413-proof sessions): a renumbering boundary in the window
-  ALSO evicts every history image block to `[image dropped: <key8>]`
-  placeholders (payload-only, JSONL byte-identical) — /compact provably
-  restores sendability on a poisoned session; the 413 recovery ladder
+  gh-1934 (413-proof sessions): image blocks OUTSIDE the kept region —
+  first seen before the LAST renumbering boundary — evict to
+  `[image dropped: <key8>]` placeholders (payload-only, JSONL
+  byte-identical); kept-region images ride on under the normal caps; the 413 recovery ladder
   (`agent_loop_image_recovery.dart` + `image_recovery.dart`, bounded at
   2 passes per response, each 413 halving the session's adaptive
   `images.maxBytesPerRequest`) drops the oldest images (pass 1), then

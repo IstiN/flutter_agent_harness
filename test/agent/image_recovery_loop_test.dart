@@ -247,9 +247,12 @@ void main() {
     final provider = _CappedProvider(5 * 1000 * 1000);
     final boundary = '$compactionSummaryPrefix'
         'Old work.$compactionSummarySuffix';
+    // The flood precedes the boundary — outside the kept region, the
+    // compacted-away region's remnants still riding in the window.
     final history = [
-      UserMessage.text(boundary),
       ..._poisonedHistory(),
+      UserMessage.text(boundary),
+      UserMessage.text('post-compaction question'),
     ];
     await _run(provider, history: history);
 
@@ -257,7 +260,7 @@ void main() {
     expect(
       _imageBytes(provider.contexts.single.messages),
       0,
-      reason: 'the boundary evicts every history image from the payload',
+      reason: 'images outside the kept region never ride the payload',
     );
     expect(
       _texts(provider.contexts.single.messages),
