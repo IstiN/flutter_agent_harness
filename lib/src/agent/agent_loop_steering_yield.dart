@@ -365,6 +365,10 @@ Future<(AssistantMessage, Context)> _streamAssistantResponse(
   // Issue #1750: one-shot image-cap heal state; the learned cap rides
   // the retried request build and latches for the run.
   final imageCapState = _ImageCapHealState();
+  // gh-1934: the bounded 413 image-payload recovery ladder; pass 1
+  // halves the session's adaptive budget, pass 2 strips all images, and
+  // the session-level consequences ride config.imageRecovery.
+  final image413State = _Image413RecoveryState();
   // Issue #862: drain the armed corrective note once per streamed response
   // (not per built context) so a mid-turn retry re-attaches it.
   final misuseNote = config.toolMisuseBreaker?.drainPendingNote();
@@ -391,6 +395,7 @@ Future<(AssistantMessage, Context)> _streamAssistantResponse(
         misuseNote: misuseNote,
         capState: capState,
         imageCapState: imageCapState,
+        image413State: image413State,
         reliefUsed: reliefUsed,
         pairingHealed: pairingHealed,
         progress: progress,

@@ -158,20 +158,21 @@ Future<List<Message>> _run(
   emit: (_) {},
 );
 
-AssistantMessageEventStream Function(Model, Context, {CancelToken?})
-_always413(_CappedProvider provider) => (model, context, {cancelToken}) {
-  final stream = AssistantMessageEventStream();
-  provider.contexts.add(context);
-  final msg = _assistant(
-    stopReason: StopReason.error,
-    errorMessage: _tooLarge,
-  );
-  stream
-    ..push(StartEvent(partial: msg))
-    ..push(ErrorEvent(reason: StopReason.error, error: msg));
-  stream.end();
-  return stream;
-};
+StreamFunction _always413(_CappedProvider provider) {
+  return (Model model, Context context, {CancelToken? cancelToken}) {
+    final stream = AssistantMessageEventStream();
+    provider.contexts.add(context);
+    final msg = _assistant(
+      stopReason: StopReason.error,
+      errorMessage: _tooLarge,
+    );
+    stream
+      ..push(StartEvent(partial: msg))
+      ..push(ErrorEvent(reason: StopReason.error, error: msg));
+    stream.end();
+    return stream;
+  };
+}
 
 void main() {
   var savedConfig = const ImageRegistryConfig();
@@ -226,8 +227,8 @@ void main() {
   test('IT-2 (AC2): a compacted poisoned session sends ZERO image bytes',
       () async {
     final provider = _CappedProvider(5 * 1000 * 1000);
-    final boundary =
-        '$compactionSummaryPrefixOld work.$compactionSummarySuffix';
+    final boundary = '\$compactionSummaryPrefix'
+        'Old work.\$compactionSummarySuffix';
     final history = [
       UserMessage.text(boundary),
       ..._poisonedHistory(),

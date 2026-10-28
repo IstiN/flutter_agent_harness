@@ -31,6 +31,7 @@ import '../providers/payload_stall.dart'
     show lastOutboundEstimateBytes, payloadStallScaleFor;
 import '../providers/provider_tuning.dart';
 import 'agent_loop.dart';
+import 'image_recovery.dart' show ImagePayloadRecoveryState;
 import 'message_cap.dart' show MessageCapPolicy;
 import 'misuse_breaker.dart';
 import 'stuck_tool.dart';
@@ -325,6 +326,13 @@ class Agent {
   /// [imageCapLatchKey] — the loop latches a provider-refused cap here;
   /// runtime-only, never persisted.
   final Map<String, int> _imageCapLatches = {};
+
+  /// gh-1934: the session-scoped 413 image-payload recovery state — the
+  /// loop's ladder halves the adaptive budget and latches the strip-all
+  /// here on a payload-size refusal; every later request build of the
+  /// session rides the recovered state (runtime-only, never persisted —
+  /// session-scoped v1 per the ticket's open question 1).
+  final ImagePayloadRecoveryState imageRecovery = ImagePayloadRecoveryState();
 
   /// Provider adapter used for every model call. See [StreamFunction].
   StreamFunction streamFunction;
@@ -774,6 +782,7 @@ class Agent {
       toolMisuseBreaker: toolMisuseBreaker,
       reportedOrphanKeys: _reportedOrphanKeys,
       imageCapLatches: _imageCapLatches,
+      imageRecovery: imageRecovery,
       getSteeringMessages: () async {
         if (skip) {
           skip = false;

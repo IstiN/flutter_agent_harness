@@ -308,6 +308,7 @@ Future<_AttemptResult?> _finishedTurnResult(
   CancelToken? cancelToken,
   _CapHealState capState,
   _ImageCapHealState imageCapState,
+  _Image413RecoveryState image413State,
   bool pairingHealed,
   int refusedCount,
 ) async {
@@ -319,6 +320,17 @@ Future<_AttemptResult?> _finishedTurnResult(
   if (imageCapState.healIfNeeded(finished, config)) {
     return _AttemptRetry(context);
   }
+  // gh-1934 self-healing ladder: a 413 payload-size refusal means the
+  // request's image bytes exceeded the provider's real cap — halve the
+  // session's adaptive budget (pass 1), then strip ALL images (pass 2),
+  // retrying through the registry; bounded, never a bricked session.
+  final image413 = await image413State.healIfNeeded(
+    finished,
+    context,
+    config,
+    emit,
+  );
+  if (image413 != null) return image413;
   // gh-1680 self-healing retry: a message-cap 400 means the message
   // ARRAY passed the model's per-request cap — learn, compact +
   // coalesce, retry ONCE (a second refusal is terminal; see the part).
@@ -365,6 +377,7 @@ Future<_AttemptResult> _streamAttempt(
   required String? misuseNote,
   required _CapHealState capState,
   required _ImageCapHealState imageCapState,
+  required _Image413RecoveryState image413State,
   required bool reliefUsed,
   required bool pairingHealed,
   required _StreamProgress progress,
@@ -376,6 +389,7 @@ Future<_AttemptResult> _streamAttempt(
     misuseNote: misuseNote,
     capCoalesceTarget: capState.coalesceTarget,
     imageCapOverride: imageCapState.overrideFor(config),
+    recovery: config.imageRecovery,
   );
   // Pairing repairs are always surfaced (issue #85): hosts see exactly
   // what was dropped/synthesized/renamed before the request went out.
@@ -450,6 +464,7 @@ Future<_AttemptResult> _streamAttempt(
       cancelToken,
       capState,
       imageCapState,
+      image413State,
       pairingHealed,
       requestMessageCount,
     );

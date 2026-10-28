@@ -39,8 +39,11 @@ import 'dart:convert';
 
 import '../cancel_token.dart';
 import '../compaction/token_estimation.dart' show estimateRequestTokens;
-import '../image_overflow.dart' show classifyImageCapError;
+import '../image_overflow.dart'
+    show classifyImageCapError, isPayloadTooLargeError;
 import '../overflow.dart' show classifyMessageCapError;
+import 'image_recovery.dart'
+    show ImagePayloadRecoveryState, ImageRecoveryEvent, imageRecoveryNotice;
 // The supervisor's cancel marker + the soft-yield hand-back marker live in
 // the pure-data stuck_tool module (gh-1054 review) so the tool layer can
 // recognize a supervisor-driven yield; re-exported for the loop's
@@ -82,6 +85,7 @@ part 'agent_loop_foreground_budget.dart';
 part 'agent_loop_empty_completion.dart';
 part 'agent_loop_finalize_gate.dart';
 part 'agent_loop_message_cap.dart';
+part 'agent_loop_image_recovery.dart';
 part 'agent_loop_steering_yield.dart';
 
 /// The default stall-window provider: minutes-class patience for
@@ -448,6 +452,7 @@ final class AgentLoopConfig {
     this.reportedOrphanKeys,
     this.budgetLineProvider,
     this.imageCapLatches,
+    this.imageRecovery,
     this.onTruncatedToolCall,
     this.steeringStallWindow = _defaultSteeringStallWindow,
     this.steeringInterruptNotice,
@@ -651,6 +656,15 @@ final class AgentLoopConfig {
   /// not remembered across turns.
   final Map<String, int>? imageCapLatches;
 
+  /// gh-1934: the session-scoped 413 image-payload recovery state (the
+  /// learned byte budget, the strip-all latch, the evicted-key latch and
+  /// the armed recovery note). A classified 413 refusal adapts the
+  /// payload through the bounded ladder and every later request build of
+  /// the session rides the recovered state. Hosts own the instance (same
+  /// pattern as [imageCapLatches]); `null` keeps the legacy behavior — a
+  /// 413 surfaces the error turn exactly as before.
+  final ImagePayloadRecoveryState? imageRecovery;
+
   /// Returns a copy with [model] replaced (used by [prepareNextTurn]).
   AgentLoopConfig copyWith({Model? model}) {
     return AgentLoopConfig(
@@ -682,6 +696,7 @@ final class AgentLoopConfig {
       reportedOrphanKeys: reportedOrphanKeys,
       budgetLineProvider: budgetLineProvider,
       imageCapLatches: imageCapLatches,
+      imageRecovery: imageRecovery,
       onTruncatedToolCall: onTruncatedToolCall,
       steeringStallWindow: steeringStallWindow,
       steeringInterruptNotice: steeringInterruptNotice,
@@ -1715,6 +1730,7 @@ Future<(Context, ToolPairingRepairReport)> _buildRequestContext(
   String? misuseNote,
   int? capCoalesceTarget,
   int? imageCapOverride,
+  ImagePayloadRecoveryState? recovery,
 }) async {
   // pi applies transformContext (then convertToLlm) before each provider
   // call; only the request payload is rewritten, never the transcript.
@@ -1743,11 +1759,24 @@ Future<(Context, ToolPairingRepairReport)> _buildRequestContext(
     modelId: config.model.id,
     catalogMaxImages: config.model.maxImages,
     capOverride: imageCapOverride,
+    recovery: recovery,
   );
   if (!identical(rewritten, requestContext.messages)) {
     requestContext = Context(
       systemPrompt: requestContext.systemPrompt,
       messages: rewritten,
+      tools: requestContext.tools,
+    );
+  }
+  // gh-1934: an armed 413 recovery note rides the NEXT request payload as
+  // a trailing user message — the model sees why its images vanished and
+  // the assistant answer can note the recovery (AC1). Payload-only; the
+  // note is one-shot (consumed by this build, re-armed by the next pass).
+  final recoveryNote = recovery?.consumeNote();
+  if (recoveryNote != null) {
+    requestContext = Context(
+      systemPrompt: requestContext.systemPrompt,
+      messages: [...requestContext.messages, UserMessage.text(recoveryNote)],
       tools: requestContext.tools,
     );
   }
