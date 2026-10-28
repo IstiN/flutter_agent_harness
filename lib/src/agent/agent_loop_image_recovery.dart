@@ -60,7 +60,7 @@ final class ImagePayloadRecoveryEvent extends AgentEvent {
 /// and (no pass yet in flight for this response) only when the REQUEST
 /// that was refused actually carried image bytes the ladder could shed.
 /// The gate evaluates the request payload recorded by the last build
-/// (`lastPayloadCariedImages`), never the transcript: the payload-only
+/// (`lastPayloadCarriedImages`), never the transcript: the payload-only
 /// rewrite keeps every image byte in the transcript forever, so a
 /// transcript-shaped gate would re-run the ladder — two wasted sends
 /// plus false recovery copy — on EVERY later 413 of a strip-all-latched
@@ -80,7 +80,7 @@ bool _needsImage413Recovery(
     config.imageRecovery != null &&
     isPayloadTooLargeError(finished.errorMessage) &&
     (passes > 0 ||
-        (config.imageRecovery!.lastPayloadCariedImages &&
+        (config.imageRecovery!.lastPayloadCarriedImages &&
             !config.imageRecovery!.stripAll));
 
 /// The mutable gh-1934 ladder state of one streamed response: whether the

@@ -379,7 +379,7 @@ List<Message> rewriteRequestImages(
             .length ??
         0,
     stripped: report?.strippedCount ?? 0,
-    carriedImages: payloadCariesImageBytes(rewritten),
+    carriedImages: payloadCarriesImageBytes(rewritten),
   );
   return rewritten;
 }
@@ -391,7 +391,7 @@ List<Message> rewriteRequestImages(
 /// giant inline screenshot there stays text and stays real payload
 /// weight). Sub-threshold inline icons are legitimate text and never
 /// count — a text-only session must not engage the ladder (AC6).
-bool payloadCariesImageBytes(List<Message> messages) {
+bool payloadCarriesImageBytes(List<Message> messages) {
   bool blocksCarry(List<ContentBlock> blocks) => blocks.any(
     (block) =>
         block is ImageContent ||

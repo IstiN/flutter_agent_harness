@@ -136,11 +136,11 @@ void main() {
       final state = ImagePayloadRecoveryState();
       // No build observed yet — conservative default engages the ladder
       // exactly like the pre-review gate.
-      expect(state.lastPayloadCariedImages, isTrue);
+      expect(state.lastPayloadCarriedImages, isTrue);
       state.observeBuild(dropped: 0, stripped: 0, carriedImages: false);
-      expect(state.lastPayloadCariedImages, isFalse);
+      expect(state.lastPayloadCarriedImages, isFalse);
       state.observeBuild(dropped: 1, stripped: 0, carriedImages: true);
-      expect(state.lastPayloadCariedImages, isTrue);
+      expect(state.lastPayloadCarriedImages, isTrue);
     });
 
     test('lastDropped/lastStripped expose the observed build counts', () {

@@ -92,7 +92,7 @@ final class ImagePayloadRecoveryState {
   /// a latched session). Conservative default `true`: until the first
   /// build is observed the ladder engages exactly as before; every real
   /// request build records the fact (`rewriteRequestImages`).
-  bool lastPayloadCariedImages = true;
+  bool lastPayloadCarriedImages = true;
 
   /// The adaptive budget the session learned from 413 refusals
   /// (halving); null before the first 413.
@@ -157,7 +157,7 @@ final class ImagePayloadRecoveryState {
   }) {
     _lastDropped = dropped;
     _lastStripped = stripped;
-    lastPayloadCariedImages = carriedImages;
+    lastPayloadCarriedImages = carriedImages;
   }
 
   /// Arms the model-visible recovery note for the NEXT request build —

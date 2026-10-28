@@ -52,7 +52,7 @@ void main() {
   // new basename and die on these images (the same coreutils dispatcher).
   final bool hostHasFunctionalKillall = !Platform.isWindows && (() {
     Directory? probeDir;
-    Process? victim;
+    String? victimPid;
     try {
       probeDir = Directory.systemTemp.createTempSync('fa-killall-probe-');
       final shBin = Process.runSync(
@@ -65,26 +65,25 @@ void main() {
       Process.runSync('chmod', <String>['755', victimPath]);
       // The busy-wait loop keeps the interpreter in the foreground: an
       // `sh -c 'sleep N'` shape tail-execs into `sleep` and the comm
-      // changes under the probe.
-      victim = Process.startSync(victimPath, const [
+      // changes under the probe. The victim is backgrounded by its own
+      // shell (Dart has no synchronous Process.start) and reaped below.
+      victimPid = Process.runSync('sh', <String>[
         '-c',
-        'while :; do sleep 1; done',
-      ]);
-      try {
-        return Process.runSync('sh', <String>[
-          '-c',
-          'command -v killall >/dev/null 2>&1 && killall -0 fa_kl_p1',
-        ]).exitCode == 0;
-      } finally {
-        victim!.kill();
-      }
+        "'$victimPath' -c 'while :; do sleep 1; done' & echo \$!",
+      ]).stdout.trim();
+      return Process.runSync('sh', <String>[
+        '-c',
+        'command -v killall >/dev/null 2>&1 && killall -0 fa_kl_p1',
+      ]).exitCode == 0;
     } catch (_) {
       return false;
     } finally {
+      if (victimPid != null) {
+        Process.runSync('sh', <String>['-c', 'kill $victimPid 2>/dev/null']);
+      }
       try {
         probeDir?.deleteSync(recursive: true);
       } catch (_) {}
-    }
     }
   })();
 
