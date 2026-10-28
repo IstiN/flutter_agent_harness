@@ -224,24 +224,6 @@
   "pr-1595": [
     {
       "leg": "review",
-      "at": "2026-10-14T09:08:07Z",
-      "prompt": 61905,
-      "completion": 12342,
-      "total": 74247,
-      "cacheRead": 1071488,
-      "model": "glm-5.3-flash"
-    },
-    {
-      "leg": "review",
-      "at": "2026-10-14T10:19:58Z",
-      "prompt": 84896,
-      "completion": 7147,
-      "total": 92043,
-      "cacheRead": 777728,
-      "model": "glm-5.3-flash"
-    },
-    {
-      "leg": "review",
       "at": "2026-10-14T11:05:57Z",
       "prompt": 90257,
       "completion": 3746,
@@ -4437,6 +4419,15 @@
       "completion": 133600,
       "total": 1679135,
       "cacheRead": 46646720,
+      "model": "glm-5.3-flash"
+    },
+    {
+      "leg": "rework",
+      "at": "2026-10-28T10:31:08Z",
+      "prompt": 3360724,
+      "completion": 79040,
+      "total": 3439764,
+      "cacheRead": 87407168,
       "model": "glm-5.3-flash"
     }
   ],
