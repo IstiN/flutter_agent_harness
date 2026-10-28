@@ -163,6 +163,7 @@ Future<List<Message>> _run(
   ImagePayloadRecoveryState? recovery,
   ImageRegistryConfig? config,
   bool always413 = false,
+  List<AgentEvent>? events,
 }) => runAgentLoop(
   prompts: [UserMessage.text('continue')],
   context: Context(messages: history ?? _poisonedHistory()),
@@ -172,7 +173,7 @@ Future<List<Message>> _run(
   ),
   streamFunction: always413 ? _always413(provider) : provider.call,
   toolExecutor: (_, _, _) async => const ToolExecutionResult(content: []),
-  emit: (_) {},
+  emit: events == null ? (_) {} : events.add,
 );
 
 StreamFunction _always413(_CappedProvider provider) {
@@ -281,10 +282,12 @@ void main() {
       'actionable failure, then a latched image-free session', () async {
     final provider = _CappedProvider(5 * 1000 * 1000);
     final recovery = ImagePayloadRecoveryState();
+    final events = <AgentEvent>[];
     final messages = await _run(
       provider,
       recovery: recovery,
       always413: true,
+      events: events,
     );
 
     // Original + pass 1 + pass 2 = 3 sends, never a fourth.
@@ -311,6 +314,11 @@ void main() {
       recoveryEvents.where((e) => !e.failed).map((e) => e.pass),
       [1, 2],
     );
+    // The loop-level audit trail carries the same failure exactly once.
+    final recoveryLoopEvents = events.whereType<ImagePayloadRecoveryEvent>()
+        .where((e) => e.failed).toList();
+    expect(recoveryLoopEvents, hasLength(1));
+    expect(recoveryLoopEvents.single.providerError, contains('413'));
 
     // A follow-up turn in the SAME session state rides the latch: no
     // images on the wire, no ladder, no new failure notice (no

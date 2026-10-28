@@ -143,10 +143,23 @@ factual: paths, commands, invariants — no essays.
   citations degrade to that note too — after renumbering an `[Image N]`
   may name a different image, so silent rebinding is never allowed
   (issue #195 F2; generated refs/labels stay content-keyed and fresh).
+  gh-1934 (413-proof sessions): a renumbering boundary in the window
+  ALSO evicts every history image block to `[image dropped: <key8>]`
+  placeholders (payload-only, JSONL byte-identical) — /compact provably
+  restores sendability on a poisoned session; the 413 recovery ladder
+  (`agent_loop_image_recovery.dart` + `image_recovery.dart`, bounded at
+  2 passes per response, each 413 halving the session's adaptive
+  `images.maxBytesPerRequest`) drops the oldest images (pass 1), then
+  strips ALL images including the current message (pass 2, latched
+  session-wide), carrying the `[images] recovered from 413:` notice +
+  model-visible note; classification lives in `image_overflow.dart`
+  (`isPayloadTooLargeError`), surface wording in `image_drop_ux.dart`
+  (`ImageDropReason.evicted`).
   Stateless per-request rebuild — determinism, compaction eviction and
   resume come free. Kill switch `images.registry: false` → byte-for-byte
-  legacy shape. `agent_loop.dart` applies it in `_buildRequestContext`
-  after `transformContext`, before tool-pairing repair.
+  legacy shape (no eviction, no ladder). `agent_loop.dart` applies it in
+  `_buildRequestContext` after `transformContext`, before tool-pairing
+  repair.
 - `lib/src/trajectory/` — the trajectory ledger core (issue #10): finalized
   session records project into an immutable `TrajectorySnapshot` through
   `TrajectorySnapshotBuilder.append`/`applyEvent` — streamed agent events
