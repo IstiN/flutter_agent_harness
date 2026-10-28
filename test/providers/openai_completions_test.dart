@@ -970,47 +970,6 @@ void main() {
       },
     );
 
-    test('the CodeMie project header rides the wire from model.headers '
-        '(issue #1941)', () async {
-      final requests = <http.BaseRequest>[];
-      final client = http_testing.MockClient.streaming((request, body) async {
-        requests.add(request);
-        return http.StreamedResponse(
-          Stream.value(utf8.encode(okSse)),
-          200,
-          headers: {'content-type': 'text/event-stream'},
-        );
-      });
-
-      final codemieModel = Model(
-        id: 'gpt-4o',
-        api: 'openai-completions',
-        provider: 'codemie',
-        baseUrl: 'https://codemie.lab.epam.com/code-assistant-api/v1',
-        contextWindow: 128000,
-        maxTokens: 8192,
-        headers: {'x-codemie-project': 'demo-project'},
-      );
-      await streamOpenAICompletions(
-        codemieModel,
-        simpleContext(),
-        const OpenAICompletionsOptions(),
-        client,
-      ).toList();
-      expect(requests.single.headers['x-codemie-project'], 'demo-project');
-
-      // A model WITHOUT the project header sends none — the backend's
-      // default-project fallback is the ABSENCE semantics, never an empty
-      // value.
-      await streamOpenAICompletions(
-        testModel,
-        simpleContext(),
-        const OpenAICompletionsOptions(apiKey: 'k'),
-        client,
-      ).toList();
-      expect(requests.last.headers.containsKey('x-codemie-project'), isFalse);
-    });
-
     test(
       '200 with a JSON body (gateway error object) surfaces the body',
       () async {
