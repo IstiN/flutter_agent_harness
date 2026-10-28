@@ -1,0 +1,147 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-28T20:51:55.106Z",
+  "ticketKey": "gh-1947",
+  "headSha": "5f05ba29af985e3d5f62039053949253945b64b2",
+  "baseBranch": "main",
+  "reviewDecision": "NONE",
+  "labels": [],
+  "files": {
+    "ci_failures.md": {
+      "hash": "fnv1a64:322b878d3c3c2465",
+      "size": 288
+    },
+    "merge_conflicts.md": {
+      "hash": "fnv1a64:56b1b9af884fc8fd",
+      "size": 476
+    },
+    "pr_diff.txt": {
+      "hash": "fnv1a64:2febe29959ab13e9",
+      "size": 12302
+    },
+    "pr_discussions.md": {
+      "hash": "fnv1a64:513f56fbf75b41ad",
+      "size": 9060
+    },
+    "pr_discussions_raw.json": {
+      "hash": "fnv1a64:c1523dae236f0e2d",
+      "size": 3860
+    },
+    "pr_info.md": {
+      "hash": "fnv1a64:ef5e1e3059ea96fa",
+      "size": 3103
+    },
+    "request.md": {
+      "hash": "fnv1a64:e0d51faf76aab5b8",
+      "size": 2375
+    },
+    "review_state.md": {
+      "hash": "fnv1a64:ede597937e16054b",
+      "size": 1151
+    },
+    "rework_base_head.txt": {
+      "hash": "fnv1a64:af8f3923c9f427bd",
+      "size": 40
+    },
+    "ticket.json": {
+      "hash": "fnv1a64:c6d8f56695d61fca",
+      "size": 2454
+    },
+    "ticket.md": {
+      "hash": "fnv1a64:e0d51faf76aab5b8",
+      "size": 2375
+    }
+  },
+  "comments": [
+    {
+      "id": "PRRT_kwDOTXdlLc6xT1ls",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "lib/src/cli/agent_cli_inbox.dart:187",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT: the new `isInFlight` guard's reject branch is not pinned by any test**\n\nThe PR description names the `_childSenderMailbox` guard (and its app twin at `flutter_app/lib/services/agent_service_host_builder.dart:62`) as the \"defense in depth\" layer: a stale zone value must degrade to MAIN's mailbox. As shipped, that layer is dead code in every test:\n\n- AC1 reaches `schedule_message` through the settle-wake run, which after the `_bootZone` root fix already executes with `activeSubagentId() == null` — the `id == null` early return fires before `isInFlight` is ever consulted.\n- AC3 (gh-970) pins only the **positive** branch (live child → child mailbox).\n- No test constructs the failure the guard exists for: a zone scope that is still set while the named child is NOT in flight on the executor.\n\nConsequence: reverting just this guard (or the app-host twin) keeps all 5 new tests green, so a future refactor can silently remove the safety net the PR promises.\n\nPlease add a focused unit test that drives `_childSenderMailbox` (or `scheduleSenderMailbox` through the wired host) inside `runWithSubagentScope('child-x', ...)` while the session executor has no `child-x` in flight, asserting the sender resolves to null (→ main's mailbox), plus its in-flight twin asserting the child mailbox survives. That pins both branches of the guard instead of only the happy one."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6xT1pE",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "test/cli/agent_cli_schedule_recipient_test.dart:49",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: local `waitForIt`/`messageText` duplicate helpers that already exist**\n\nThis file imports `agent_cli_test_support.dart`, which already exports `waitForIt` (line 199) — the local copy shadows it with a slightly different signature (`bool Function()` vs `FutureOr<bool> Function()`, plus a `seconds` budget). `messageText` (line 30) is a verbatim copy of the helper in `agent_cli_child_wait_steering_test.dart:27`.\n\nTo stop the copy pattern from spreading, consider extending the shared `waitForIt` with an optional budget parameter (e.g. `int seconds = 25`) and hoisting `messageText` into `agent_cli_test_support.dart` — both are already generic and neither test uses a file-private twist that blocks hoisting."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6xT1r8",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "test/tools/shell_job_settle_zone_test.dart:56",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: `_ManualJob`/`_ManualJobShell` duplicate the e2e test's `_SettleableJob`/`_SettleableJobShell`**\n\nThe two new test files in this PR carry near-identical fakes: a manually-settled `ShellJob` (id/command/logPath, `_stopped` flag, `Completer<void>` settle gate, empty output stream) and a `Shell, BackgroundShell` wrapper whose `exec` returns `shellUnavailable` and whose `startShellJob` hands out those jobs. The only real difference is whether `command`/`logPath` are constructor parameters or hardcoded.\n\nA shared fixture (e.g. in `test/tools/` next to the registry tests, or in the CLI test support) would keep the \"job that settles only when the test releases it\" model in one place, so a future `ShellJob`/`BackgroundShell` interface change updates one fake instead of three (this pair plus the e2e pair in `agent_cli_schedule_recipient_test.dart`)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-28:dccd38ed",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-28",
+      "updatedAt": "2026-10-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT: the new `isInFlight` guard's reject branch is not pinned by any test**\n\nThe PR description names the `_childSenderMailbox` guard (and its app twin at `flutter_app/lib/services/agent_service_host_builder.dart:62`) as the \"defense in depth\" layer: a stale zone value must degrade to MAIN's mailbox. As shipped, that layer is dead code in every test:\n\n- AC1 reaches `schedule_message` through the settle-wake run, which after the `_bootZone` root fix already executes with `activeSubagentId() == null` — the `id == null` early return fires before `isInFlight` is ever consulted.\n- AC3 (gh-970) pins only the **positive** branch (live child → child mailbox).\n- No test constructs the failure the guard exists for: a zone scope that is still set while the named child is NOT in flight on the executor.\n\nConsequence: reverting just this guard (or the app-host twin) keeps all 5 new tests green, so a future refactor can silently remove the safety net the PR promises.\n\nPlease add a focused unit test that drives `_childSenderMailbox` (or `scheduleSenderMailbox` through the wired host) inside `runWithSubagentScope('child-x', ...)` while the session executor has no `child-x` in flight, asserting the sender resolves to null (→ main's mailbox), plus its in-flight twin asserting the child mailbox survives. That pins both branches of the guard instead of only the happy one."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-28:97868abe",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-28",
+      "updatedAt": "2026-10-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: local `waitForIt`/`messageText` duplicate helpers that already exist**\n\nThis file imports `agent_cli_test_support.dart`, which already exports `waitForIt` (line 199) — the local copy shadows it with a slightly different signature (`bool Function()` vs `FutureOr<bool> Function()`, plus a `seconds` budget). `messageText` (line 30) is a verbatim copy of the helper in `agent_cli_child_wait_steering_test.dart:27`.\n\nTo stop the copy pattern from spreading, consider extending the shared `waitForIt` with an optional budget parameter (e.g. `int seconds = 25`) and hoisting `messageText` into `agent_cli_test_support.dart` — both are already generic and neither test uses a file-private twist that blocks hoisting."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-28:327bf0f5",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-28",
+      "updatedAt": "2026-10-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: `_ManualJob`/`_ManualJobShell` duplicate the e2e test's `_SettleableJob`/`_SettleableJobShell`**\n\nThe two new test files in this PR carry near-identical fakes: a manually-settled `ShellJob` (id/command/logPath, `_stopped` flag, `Completer<void>` settle gate, empty output stream) and a `Shell, BackgroundShell` wrapper whose `exec` returns `shellUnavailable` and whose `startShellJob` hands out those jobs. The only real difference is whether `command`/`logPath` are constructor parameters or hardcoded.\n\nA shared fixture (e.g. in `test/tools/` next to the registry tests, or in the CLI test support) would keep the \"job that settles only when the test releases it\" model in one place, so a future `ShellJob`/`BackgroundShell` interface change updates one fake instead of three (this pair plus the e2e pair in `agent_cli_schedule_recipient_test.dart`)."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-28:c0dfbe88",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-28",
+      "updatedAt": "2026-10-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ Merge conflict with main — the silent branch update could not merge main (conflict). (head `5f05ba29af985e3d5f62039053949253945b64b2`) Rework re-queued (linked issue #1947 re-armed): resolve the conflicts and push — validation re-runs automatically. (approval latch kept — no re-review after the fix)"
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-28:5a0c37b1",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-28",
+      "updatedAt": "2026-10-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — APPROVE\n\n**Summary**: gh-1947 fix is correct and well-layered: the `ShellJobRegistry` settle continuation is now bound to the boot zone (root cause), both hosts' `scheduleSenderMailbox` wiring degrades stale zone scopes to MAIN via `TaskExecutor.isInFlight`, and the tool response names the record's actual recipient. Verified in this review: all 5 new tests pass, `dart test test/messaging/ test/task/ test/tools/` = 1335 passed, analyzer clean in both packages, formatting clean, the obligations-ledger `scheduled <id> for ` prefix stays byte-stable (prefix-pin test green), and the gh-970 live-child case is preserved.\n\n**Key Issues**:\n- ⚠️ IMPORTANT (1): the new `isInFlight` guard's reject branch is untested — reverting the guard alone keeps every test green (comment1)\n- 💡 SUGGESTION (2): duplicated `waitForIt`/`messageText` helpers; duplicated settle-manual shell fakes across the two new test files (comments 2–3)\n\n**Next Steps**:\n1. Add a unit test pinning the guard's negative branch (stale zone scope + child not in flight → main's mailbox) and its positive twin\n2. Optional: hoist shared test helpers instead of copying them"
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-28:7218e17a",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-28",
+      "updatedAt": "2026-10-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🧵 Unresolved review threads — rework armed. This machine-authored PR is reviewed (ai_pr_reviewed) but still has open review threads. The rework leg owns open threads: agent:rework is armed on this PR and the rework runner will work through the threads and push. Validation re-runs automatically afterwards, and once the threads are resolved a fresh re-review is armed (review-threads-resolved)."
+    }
+  ]
+}
