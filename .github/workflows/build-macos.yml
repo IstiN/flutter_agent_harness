@@ -648,6 +648,13 @@ jobs:
             # embed the certificate we JUST imported — a mismatch used to
             # surface only as a dead archive after the full build. Abort
             # here instead. Skipped on unsigned runs (no imported cert).
+            # gh-1937: the extractor dropped every cert of a REAL Apple
+            # profile — the portal serializes each <data> element on ONE
+            # line, and the opening rule consumed the trailing </data> with
+            # `next` so the closing rule never printed. The #1939 awk patch
+            # handled that single-line shape; the plistlib stanza below
+            # (gh-1865 r2) supersedes it and covers every plist encoding —
+            # single-line, wrapped, AND binary.
             if [ -n "${CERT_NAME:-}" ]; then
               CERT_SERIAL=$(security find-certificate -c "$CERT_NAME" -p build-${{ matrix.arch }}.keychain \
                 | openssl x509 -noout -serial | sed 's/^serial=//')

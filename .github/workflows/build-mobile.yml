@@ -1036,6 +1036,13 @@ jobs:
           # ~24-minute archive (run 40455519923: gym rejected the cert on
           # BOTH targets, Runner and FaLiveActivity, after ~24 min) — now
           # the mismatch aborts in seconds, BEFORE flutter build.
+          # gh-1937: the extractor dropped every cert of a REAL Apple
+          # profile — the portal serializes each <data> element on ONE
+          # line, and the opening rule consumed the trailing </data> with
+          # `next` so the closing rule never printed. The #1939 awk patch
+          # handled that single-line shape; the plistlib stanza below
+          # (gh-1865 r2) supersedes it and covers every plist encoding —
+          # single-line, wrapped, AND binary.
           IOS_CERT_SERIAL=$(security find-certificate -c "$IOS_CERT_NAME" -p build.keychain \
             | openssl x509 -noout -serial | sed 's/^serial=//')
           profile_contains_identity() {
