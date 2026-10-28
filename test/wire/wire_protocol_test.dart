@@ -123,6 +123,39 @@ void main() {
       });
     }
 
+    test('gh-1934 rework: the ladder failure event encodes — no missing '
+        'encoder crash on the wire', () {
+      // The reviewer's repro: encodeEvent used to throw
+      // "Null check operator used on a null value" because
+      // ImagePayloadRecoveryEvent had no entry in the protocol tables —
+      // exactly on the ladder-exhaustion path, where fa serve / SDK
+      // clients would break instead of receiving the actionable failure.
+      final protocol = AgentWireProtocol();
+      const failure = ImagePayloadRecoveryEvent(
+        pass: 2,
+        dropped: 0,
+        stripped: 0,
+        failed: true,
+        providerError: 'error: 413: Request Entity Too Large',
+      );
+      final frame = protocol.encodeEvent(failure);
+      expect(frame['kind'], 'image_payload_recovery');
+      expect(frame['pass'], 2);
+      expect(frame['failed'], true);
+      expect(frame['providerError'], contains('413'));
+      expect(
+        frame,
+        fixtureFor(eventFixturesDir, 'image_payload_recovery').frame,
+      );
+      // …and the frame decodes back to the same event.
+      final decoded = protocol.decodeEvent(frame);
+      expect(decoded, isA<KnownWireEvent>());
+      expect(
+        (decoded as KnownWireEvent).event,
+        isA<ImagePayloadRecoveryEvent>(),
+      );
+    });
+
     test('natively-built events encode to their golden frames', () {
       final protocol = AgentWireProtocol();
       // Request frames are pinned through their native payload builders

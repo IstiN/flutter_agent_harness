@@ -303,6 +303,13 @@ AgentEvent nativeEventFor(String kind) => switch (kind) {
         'it to the background and deliver 1 steering message now',
     timestamp: DateTime.fromMillisecondsSinceEpoch(fixtureTimestampMs),
   ),
+  'image_payload_recovery' => const ImagePayloadRecoveryEvent(
+    pass: 2,
+    dropped: 0,
+    stripped: 0,
+    failed: true,
+    providerError: 'error: 413: Request Entity Too Large',
+  ),
   _ => throw StateError('No native event builder pinned for kind "$kind"'),
 };
 
