@@ -128,8 +128,12 @@ scenarios:
       // (#920 PTY legs). gh-1049: anchor BOTH asserted rows on the screen
       // — the tool row and the finish line land a frame apart — and assert
       // on the captured screen instead of a fresh mid-render read.
+      // gh-1933 v2 grammar: the settled task row leads with the CHILD NAME
+      // (capability table: `child name + state transition`), so the anchor
+      // is `✔ task: explorer1` — the context text stays in the running
+      // card above, the child's first task summary follows the name.
       await harness.waitForScreen(
-        '✔ task: Prove the task loop',
+        '✔ task: explorer1',
         timeout: const Duration(seconds: 30),
       );
       // `subagent finished: …` is a pure-ASCII streamed row — the one row
@@ -144,7 +148,7 @@ scenarios:
         timeout: const Duration(seconds: 30),
       );
       expect(screen, matches(finishMarker));
-      expect(screen, contains('✔ task: Prove the task loop'));
+      expect(screen, contains('✔ task: explorer1'));
       // >= 3 chat round-trips: parent tool-call turn, subagent turn, parent
       // reply turn (session title/summary calls may add more).
       expect(server.chatBodies.length, greaterThanOrEqualTo(3));

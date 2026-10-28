@@ -18,9 +18,13 @@
 ///   100 ms from submit to the final marker, stays far below the
 ///   minutes-long dead air of the regression (bound: 8 s — the busy-row
 ///   heartbeat alone repaints about once a second through a silent tool).
-/// - **AC2** — thinking deltas paint DURING streaming: when the first
-///   answer marker becomes visible, the reasoning text is already in the
-///   painted transcript (not buffered for a teardown burst).
+/// - **AC2** — the reasoning reaches the painted transcript DURING the
+///   run: when the first answer marker becomes visible, the thinking
+///   text is already painted (never buffered for a teardown burst).
+///   Since gh-1933 the window paints collapsed by default and this suite
+///   runs with `/transcript expand all` so the persisted text itself is
+///   on the glass — above the answer (the window closes on the first
+///   text delta).
 /// - **AC4** — last paint ≈ last event: the final scripted text is on
 ///   screen within seconds of the stream ending (bound: 4 s ≈ the AC's
 ///   2 s lag + coalescer/poll margin), so nothing waits for a teardown
@@ -121,6 +125,21 @@ void main() {
 
     await harness.waitForBoot();
 
+    // gh-1933 AC4/AC5: the TUI face folds thinking into a `> Thought for
+    // Ns` window by default; with `/transcript expand all` the persisted
+    // text renders dim under the label when the window closes (the first
+    // answer delta). The flag keeps THIS suite's gh-1197 AC2 pin exact —
+    // the reasoning text must reach the painted transcript MID-RUN,
+    // before the answer, never as a teardown burst. The collapsed default
+    // (no raw reasoning text, run stays live) is pinned by the
+    // thinking-livestream suite.
+    harness.sendText('/transcript expand all');
+    harness.sendEnter();
+    await harness.waitForText(
+      'transcript: expanded',
+      timeout: const Duration(seconds: 10),
+    );
+
     // ── submit, then sample raw-output liveness for the whole run ──────
     final samples = <(int ms, int bytes)>[];
     final clock = Stopwatch()..start();
@@ -164,14 +183,28 @@ void main() {
     );
 
     // ── AC2: thinking painted BEFORE/DURING the answer, not at teardown ─
-    // Part one's marker is in the painted transcript together with the
-    // reasoning text — the transcript streamed in order.
+    // With the expansion state on, the window's persisted reasoning text
+    // is in the painted transcript together with part one — and the text
+    // lands ABOVE the answer half: the window closed before the first
+    // text delta streamed (gh-1933 row order, live face).
     expect(
       finalScreen.contains(_thinkMarker),
       isTrue,
       reason:
           'the reasoning text must be part of the painted transcript:\n'
           '$finalScreen',
+    );
+    expect(
+      finalScreen.indexOf(_thinkMarker),
+      lessThan(finalScreen.indexOf(_partOneMarker)),
+      reason:
+          'the reasoning text must paint BEFORE the answer half (the '
+          'window closes on the first text delta):\n$finalScreen',
+    );
+    expect(
+      finalScreen.contains('Thought for'),
+      isTrue,
+      reason: 'the folded label row paints above the expanded text',
     );
     expect(
       finalScreen.contains(_partOneMarker),
