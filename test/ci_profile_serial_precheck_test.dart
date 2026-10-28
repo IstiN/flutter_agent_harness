@@ -4,20 +4,23 @@
 // on a VALID profile (the same step had just printed `Profile: Fa - MacOS /
 // UUID: a32a… / team: YP9HC3USZ3` from the same decoded plist).
 //
-// Root cause: the profile-serial extractor awk was written for a multi-line
-// `<data>` block. Apple's developer portal serializes each profile
-// certificate as ONE line — `<data>BASE64…</data>`. On that line the opening
-// rule matched, stripped only through `<data>` (leaving the trailing
-// `</data>` in the buffer), hit `next`, and the closing-tag rule never fired
-// — every cert blob was silently dropped, `PROFILE_SERIALS` came back EMPTY,
-// and `grep -qxF "$CERT_SERIAL"` failed on every real profile. The identical
-// awk lives in build-mobile.yml's `profile_contains_identity()` — the iOS leg
-// would fail the same way.
+// Root cause: the original profile-serial extractor awk was written for a
+// multi-line `<data>` block. Apple's developer portal serializes each
+// profile certificate as ONE line — `<data>BASE64…</data>`. On that line
+// the opening rule matched, stripped only through `<data>` (leaving the
+// trailing `</data>` in the buffer), hit `next`, and the closing-tag rule
+// never fired — every cert blob was silently dropped, `PROFILE_SERIALS`
+// came back EMPTY, and `grep -qxF "$CERT_SERIAL"` failed on every real
+// profile.
 //
-// Behavioral guard (TDD RED before the fix): the EXACT awk program is
-// extracted from both workflow files and driven through the workflows' real
-// downstream pipeline (`awk | while base64 --decode | openssl x509 -serial`)
-// against fixture plists in BOTH serializations:
+// gh-1865 r2 (PR #1938, merged with #1939's awk patch as a conflict
+// resolution): BOTH workflows now extract with a python3 plistlib stanza
+// instead of any text scan — plistlib parses every plist encoding (XML
+// single-line, XML wrapped, AND binary). This behavioral guard (TDD RED
+// before the gh-1937 fix, adapted to the plistlib stanza it was merged
+// into) drives the workflows' REAL extractor code through their real
+// downstream pipeline (`python3 -c … | while base64 --decode | openssl
+// x509 -serial`) against fixture plists in ALL serializations:
 //
 //   AC1  Apple single-line `<data>BASE64</data>` (the gh-1937 shape, 2+
 //        certs in the array) — every cert's serial must come out, in order.
@@ -25,6 +28,9 @@
 //   AC3  the mismatch case keeps its teeth: a profile whose certs do NOT
 //        embed the imported serial yields a serial list without it (the
 //        precheck's whole purpose — loud abort, never silent pass).
+//   AC4  a BINARY plist (base64-encoded CMS payload decoded by
+//        `security cms -D` can be either XML or binary — the r2 premise)
+//        yields every serial; a text scan sees nothing here.
 @TestOn('posix')
 library;
 
@@ -34,46 +40,49 @@ import 'dart:io';
 import 'package:test/test.dart';
 
 /// Both workflows carry the gh-1865 fail-fast precheck (AC5 of
-/// ci_cert_sha1_pin_guard_test.dart); each embeds the extractor awk inline.
+/// ci_cert_sha1_pin_guard_test.dart); each embeds the plistlib extractor
+/// inline as a single-quoted python3 -c program.
 final _workflowSurfaces = <String>[
   '.github/workflows/build-macos.yml',
   '.github/workflows/build-mobile.yml',
 ];
 
-/// Pulls the single-quoted awk program that follows the
-/// `DeveloperCertificates` anchor out of a workflow file. The program
-/// contains no single quotes (only double), so the first `'` closes it.
-String extractAwkProgram(String workflowPath) {
+/// Pulls the single-quoted `python3 -c '…'` program out of a workflow file.
+/// The anchor is the program-unique `.get("DeveloperCertificates"` literal
+/// (bare "DeveloperCertificates" also appears in prose comments, and other
+/// steps carry their own python3 -c blocks), and the program contains no
+/// single quotes (only double), so the first `'` closes it.
+String extractExtractorProgram(String workflowPath) {
   final content = File(workflowPath).readAsStringSync();
-  // The workflow's awk regex escapes the slash (`DeveloperCertificates<\/key>`).
-  final anchor = content.indexOf('DeveloperCertificates');
+  final anchor = content.indexOf('.get("DeveloperCertificates"');
   expect(
     anchor,
     greaterThan(-1),
     reason: '$workflowPath must carry the gh-1865 profile-serial precheck.',
   );
-  final awkMarker = content.lastIndexOf("awk '", anchor);
+  final marker = content.lastIndexOf("python3 -c '", anchor);
   expect(
-    awkMarker,
+    marker,
     greaterThan(-1),
     reason:
-        '$workflowPath must extract profile cert serials with awk (the '
-        'anchor sits inside the awk program, so the marker precedes it).',
+        '$workflowPath must extract profile cert serials with the python3 '
+        'plistlib stanza (gh-1865 r2) — a text scan (awk) cannot see '
+        'binary or inline-<data> plist shapes (gh-1937, run 40637547009).',
   );
-  final programStart = awkMarker + "awk '".length;
+  final programStart = marker + "python3 -c '".length;
   final programEnd = content.indexOf("'", programStart);
   expect(
     programEnd,
     greaterThan(programStart),
     reason:
-        'the awk program must be a single-quoted string with no inner '
+        'the python program must be a single-quoted string with no inner '
         "single quotes (the extractor relies on that to find its end).",
   );
   return content.substring(programStart, programEnd);
 }
 
 /// A fixture plist in the Apple portal shape: every `<data>` element on ONE
-/// line (the serialization the old awk dropped on the floor).
+/// line (the serialization the original awk dropped on the floor).
 String oneLinePlist(List<String> base64Certs) {
   final data = base64Certs.map((b64) => '\t<data>$b64</data>').join('\n');
   return '<plist version="1.0">\n<dict>\n'
@@ -81,8 +90,8 @@ String oneLinePlist(List<String> base64Certs) {
       '</dict>\n</plist>\n';
 }
 
-/// A fixture plist in the wrapped shape the old awk was written for: the
-/// base64 folded across lines between the tags.
+/// A fixture plist in the wrapped shape: the base64 folded across lines
+/// between the tags.
 String wrappedPlist(List<String> base64Certs) {
   String fold64(String s) {
     final lines = <String>[];
@@ -98,6 +107,37 @@ String wrappedPlist(List<String> base64Certs) {
   return '<plist version="1.0">\n<dict>\n'
       '\t<key>DeveloperCertificates</key>\n\t<array>\n$data\n\t</array>\n'
       '</dict>\n</plist>\n';
+}
+
+/// The same fixture plist re-serialized as a BINARY plist (what
+/// `security cms -D` can equally emit; plistlib parses it, a text scan
+/// sees no `<data>` tag at all). Returned as raw BYTES — binary plists
+/// are not valid UTF-8 and must never round-trip through a String.
+List<int> binaryPlistBytes(String xmlPlist) {
+  final dir = Directory.systemTemp.createTempSync('profile-precheck-bin-');
+  try {
+    final xmlFile = File('${dir.path}/in.plist')..writeAsStringSync(xmlPlist);
+    final binFile = File('${dir.path}/out.plist');
+    final result = Process.runSync('python3', [
+      '-c',
+      'import plistlib, sys; '
+          'd = plistlib.load(open(sys.argv[1], "rb")); '
+          'plistlib.dump(d, open(sys.argv[2], "wb"), '
+          'fmt=plistlib.FMT_BINARY)',
+      xmlFile.path,
+      binFile.path,
+    ], environment: _env());
+    expect(
+      binFile.existsSync() && binFile.lengthSync() > 0,
+      isTrue,
+      reason:
+          'python3 plistlib must produce the binary fixture '
+          '(stderr: ${result.stderr}).',
+    );
+    return binFile.readAsBytesSync();
+  } finally {
+    dir.deleteSync(recursive: true);
+  }
 }
 
 /// Stable `serial=…` output across locales, inheriting the real PATH/HOME.
@@ -154,33 +194,30 @@ String _derBase64(String pemPath) {
     '-out',
     der,
   ], environment: _env());
-  final result = Process.runSync('base64', [
-    '-w',
-    '0',
-    der,
-  ], environment: _env());
-  return (result.stdout as String).trim();
+  // Dart-native base64: BSD base64 (macOS) has no `-w 0`, and the DER is
+  // single-line anyway (plistlib strips all whitespace when parsing).
+  return base64.encode(File(der).readAsBytesSync());
 }
 
 /// Runs the workflow's real downstream pipeline (the `| while IFS= read -r
-/// der; do … done` arm, verbatim) with the extracted awk fed the profile on
-/// stdin — exactly what `security cms -D -i profile | awk '<program>'` plus
-/// the while loop does on the runner, minus the macOS-only `security`
-/// invocation.
-String runPipeline(String awkProgram, String plist) {
+/// der; do … done` arm, verbatim) with the extracted python program fed the
+/// profile on stdin — exactly what piping `security cms -D -i profile`
+/// output through the workflow's `python3 -c` stanza and while loop does on
+/// the runner, minus the macOS-only `security` invocation. `plistBytes`
+/// ride the program's stdin (raw bytes: binary plists are not UTF-8).
+String runPipeline(String pythonProgram, List<int> plistBytes) {
   final dir = Directory.systemTemp.createTempSync('profile-precheck-');
   try {
-    final awkFile = File('${dir.path}/extract.awk')
-      ..writeAsStringSync(awkProgram);
     final plistFile = File('${dir.path}/profile.plist')
-      ..writeAsStringSync(plist);
-    // The pipeline arm, verbatim from both workflows; the plist rides stdin
-    // like `security cms -D`'s output does.
+      ..writeAsBytesSync(plistBytes);
+    // The program contains no single quotes (the extractor proves it), so
+    // it embeds safely inside the script's single quotes; the plist rides
+    // stdin like `security cms -D`'s output does.
     final script = File('${dir.path}/pipeline.sh')
       ..writeAsStringSync('''
 #!/bin/bash
 set -uo pipefail
-awk -f "\$1" < "\$2" | while IFS= read -r der; do
+python3 -c '$pythonProgram' < "\$1" | while IFS= read -r der; do
   printf '%s' "\$der" | base64 --decode 2>/dev/null \\
     | openssl x509 -inform DER -noout -serial 2>/dev/null \\
     | sed 's/^serial=//' || true
@@ -188,7 +225,7 @@ done
 ''');
     final result = Process.runSync(
       'bash',
-      [script.path, awkFile.path, plistFile.path],
+      [script.path, plistFile.path],
       environment: _env(),
       stdoutEncoding: utf8,
       stderrEncoding: utf8,
@@ -228,8 +265,8 @@ void main() {
       test('AC1 — Apple single-line <data> elements: the extractor yields '
           'every profile cert serial in order (gh-1937 reproduction)', () {
         final serials = runPipeline(
-          extractAwkProgram(workflow),
-          oneLinePlist([b64A, b64B]),
+          extractExtractorProgram(workflow),
+          utf8.encode(oneLinePlist([b64A, b64B])),
         );
         expect(
           serials.trim().split('\n'),
@@ -246,15 +283,15 @@ void main() {
 
       test('AC2 — multi-line wrapped <data> keeps working (no regression)', () {
         final serials = runPipeline(
-          extractAwkProgram(workflow),
-          wrappedPlist([b64A]),
+          extractExtractorProgram(workflow),
+          utf8.encode(wrappedPlist([b64A])),
         );
         expect(
           serials.trim().split('\n'),
           [serialA],
           reason:
-              'the single-line fix must not break the wrapped serialization '
-              'the extractor was originally written for. Got: "$serials".',
+              'the plistlib stanza must keep parsing the wrapped '
+              'serialization. Got: "$serials".',
         );
       });
 
@@ -264,8 +301,8 @@ void main() {
         // imported, profile embeds only certA) must produce a serial list
         // that does NOT contain the imported serial.
         final serials = runPipeline(
-          extractAwkProgram(workflow),
-          oneLinePlist([b64A]),
+          extractExtractorProgram(workflow),
+          utf8.encode(oneLinePlist([b64A])),
         );
         expect(
           serials.trim(),
@@ -283,6 +320,23 @@ void main() {
               'imported serial — grep -qxF then aborts the build BEFORE the '
               '~24-minute archive, the gh-1865 failure class this precheck '
               'exists for.',
+        );
+      });
+
+      test('AC4 — a BINARY plist yields every serial (plistlib parses every '
+          'encoding; a text scan sees nothing)', () {
+        final serials = runPipeline(
+          extractExtractorProgram(workflow),
+          binaryPlistBytes(oneLinePlist([b64A, b64B])),
+        );
+        expect(
+          serials.trim().split('\n'),
+          [serialA, serialB],
+          reason:
+              'the CMS payload `security cms -D` prints can be a binary '
+              'plist — plistlib parses it while a text scan extracts an '
+              'EMPTY serial list and aborts a healthy build (the gh-1865 '
+              'r2 premise). Got: "$serials".',
         );
       });
     });
