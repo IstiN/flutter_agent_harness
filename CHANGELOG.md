@@ -31,6 +31,18 @@ block a release again.
   themselves to the same project, so display and billing can never diverge.
   Tests pin the header VALUE on the wire (real adapter over a fake
   endpoint) for the restored and failed-over models.
+- feat(network): private networks created outside the app surface after
+  sign-in. `GET /api/networks/mine` (fa_network#16) is synced into the
+  wallet after OAuth/dev sign-in and both restore paths — best-effort,
+  silent on older backends (404) and any failure, and never destructive.
+  Synced memberships keep the server's name/class, preserve local
+  passwords/join facts, and land without a password (the endpoint never
+  returns one) until the first join. Entering such a network — sidebar,
+  ⌘K/⌘3-9, or a restored selection — opens the join sheet prefilled with
+  the network id instead of a resume error or endless spinner; joining by
+  name now keys the wallet/session by the echoed canonical id and migrates
+  legacy name-keyed rows (password + channel keys) instead of duplicating
+  them. A malformed `/mine` row is skipped, not the whole list.
 - fix(gh-1931): one render per tool call on the non-TUI console. Line mode
   and the headless `-p` log printed every executed call twice — a start row
   (`• bash · cmd`, no elapsed) followed by the end row (`✓/✗ bash · cmd

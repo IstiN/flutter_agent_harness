@@ -75,6 +75,12 @@ class FakeHttpClient extends http.BaseClient {
   /// set, otherwise a 404 that drives the dialog's known-four fallback.
   http.Response? oauthProvidersResponse;
 
+  /// Out-of-band response for `GET /api/networks/mine` (the manager
+  /// syncs account memberships after every sign-in/restore) —
+  /// [accountNetworksResponse] when set, otherwise the "older backend"
+  /// 404 the sync must tolerate silently.
+  http.Response? accountNetworksResponse;
+
   /// Queues the next response.
   void respond(
     int status, {
@@ -98,6 +104,8 @@ class FakeHttpClient extends http.BaseClient {
       res = publicNetworksResponse ?? http.Response('{"error":{}}', 404);
     } else if (request.url.path == '/api/oauth-proxy/providers') {
       res = oauthProvidersResponse ?? http.Response('{"error":{}}', 404);
+    } else if (request.url.path == '/api/networks/mine') {
+      res = accountNetworksResponse ?? http.Response('{"error":{}}', 404);
     } else {
       if (res == null) {
         throw StateError(

@@ -131,10 +131,15 @@ void main() {
     await tester.pump();
 
     // The helper's password guard returns before the manager is touched —
-    // no join, and no "no stored credentials" snack from a resume throw.
+    // no join, no "no stored credentials" snack, and the shared pane
+    // offers the prefilled join sheet instead of a dead-end spinner.
     expect(_joinCount(httpClient), 0);
     expect(find.textContaining('no stored credentials'), findsNothing);
-    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+    expect(
+      find.byKey(const ValueKey('networkNeedsPasswordJoin')),
+      findsOneWidget,
+    );
   });
 
   testWidgets('a failed resume shows the snack; the picker stays reachable', (

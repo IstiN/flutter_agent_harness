@@ -88,8 +88,22 @@ class NetworkQuickSwitcher extends StatelessWidget {
   );
 
   /// The same path as tapping a sidebar row: enter the network in the
-  /// mode store, resume the session through the manager.
+  /// mode store, resume the session through the manager. An
+  /// account-synced membership with no stored password routes into the
+  /// join sheet prefilled with the network id (the resume path cannot
+  /// work without it).
   void _switchTo(BuildContext context, String networkId) {
+    if (manager.wallet.networks[networkId]?.password == null) {
+      unawaited(
+        showJoinSheet(
+          context,
+          controller: controller,
+          manager: manager,
+          initialNetworkId: networkId,
+        ),
+      );
+      return;
+    }
     unawaited(controller.enterNetwork(networkId));
     unawaited(_resumeSwitchedNetwork(context, networkId));
   }
@@ -101,6 +115,7 @@ class NetworkQuickSwitcher extends StatelessWidget {
     try {
       await manager.resume(networkId);
     } on Object catch (e) {
+      if (!context.mounted) return;
       _showResumeError(context, _resumeErrorMessage(e));
     }
   }
