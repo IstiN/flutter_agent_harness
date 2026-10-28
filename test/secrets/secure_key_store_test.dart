@@ -93,6 +93,93 @@ final class _ThrowingStore implements SecureKeyStore {
   Future<void> delete(String name) async {}
 }
 
+/// The throwaway probe item's account name — distinct from the leg's own
+/// [testName] item so a probe can never collide with (or be mistaken for)
+/// the real self-test secret. Written under the real [secureKeyServiceName]
+/// and deleted before the probe returns.
+const keychainProbeAccount = 'FA_KEY_SELFTEST_PROBE';
+
+/// The probe's throwaway secret value (no real credential ever rides it).
+const keychainProbePassword = 'fa-keychain-probe-throwaway';
+
+/// Strips exactly one trailing newline — `security find-generic-password
+/// -w` prints the password plus a newline (the lib's `_output` rule).
+String _stripOneNewline(String s) {
+  if (s.endsWith('\r\n')) return s.substring(0, s.length - 2);
+  if (s.endsWith('\n')) return s.substring(0, s.length - 1);
+  return s;
+}
+
+/// Rehearses the gh-1059 AC4 leg's exact contract through [runSecurity]
+/// (`security <args>` → recorded result): a REAL generic-password WRITE,
+/// READ-BACK and DELETE of a throwaway item ([account]/[password] under
+/// [service], `-U` update — the same invocation `_MacosKeychainStore.write`
+/// uses). Returns whether the host can run the real-keychain leg.
+///
+/// Why functional: the legacy gate probed only `security default-keychain`,
+/// which a locked/unusable login keychain still passes — self-hosted runner
+/// fa-m5-3 exited 0 on the preflight while the actual
+/// `add-generic-password` write failed (exit -1), reddening the macOS
+/// cube-kernel-live leg (gh-1934 rework-3 CI red on 23a279b8). Only a real
+/// round-trip can tell the two hosts apart. The probe item is deleted even
+/// when the read-back fails, and a failed delete also reads as "cannot run"
+/// — no stray secret may survive the probe.
+bool functionalKeychainRoundTrip(
+  SecureKeyRunResult Function(List<String> args) runSecurity, {
+  required String service,
+  required String account,
+  required String password,
+}) {
+  // Quiet preflight first: with no default keychain `add-generic-password`
+  // pops the system "Keychain Not Found" dialog before failing — the same
+  // order _MacosKeychainStore.write uses.
+  if (runSecurity(const ['default-keychain']).exitCode != 0) {
+    return false;
+  }
+  if (runSecurity([
+        'add-generic-password',
+        '-s',
+        service,
+        '-a',
+        account,
+        '-w',
+        password,
+        '-U',
+      ]).exitCode !=
+      0) {
+    return false;
+  }
+  var wrote = false;
+  var deleted = false;
+  try {
+    final find = runSecurity([
+      'find-generic-password',
+      '-s',
+      service,
+      '-a',
+      account,
+      '-w',
+    ]);
+    wrote = find.exitCode == 0 && _stripOneNewline(find.stdout) == password;
+  } finally {
+    // Attempted even when the read-back failed — cleanup is unconditional.
+    deleted =
+        runSecurity([
+          'delete-generic-password',
+          '-s',
+          service,
+          '-a',
+          account,
+        ]).exitCode ==
+        0;
+  }
+  // The full leg contract is write+read+delete: a failed delete means the
+  // keychain state is not one the leg can rely on — skip is the honest
+  // verdict (and the delete failure itself is diagnosable from the leg's
+  // own store call if a host ever hits the split).
+  return wrote && deleted;
+}
+
 void main() {
   group('macOS Keychain backend', () {
     test(
@@ -160,35 +247,38 @@ void main() {
       );
     });
 
-    test('write surfaces the helper stderr tail on a failing add (gh-1679 '
-        'review: the canceled-authorization shape must be classifiable)',
-        () async {
-      final runner = _FakeRunner()
-        ..queue.add(const SecureKeyRunResult(0, ''))
-        ..queue.add(
-          const SecureKeyRunResult(
-            154,
-            '',
-            stderr: 'SecKeychainItemCreateFromContent (<default>): The '
-                'authorization was canceled by the user',
+    test(
+      'write surfaces the helper stderr tail on a failing add (gh-1679 '
+      'review: the canceled-authorization shape must be classifiable)',
+      () async {
+        final runner = _FakeRunner()
+          ..queue.add(const SecureKeyRunResult(0, ''))
+          ..queue.add(
+            const SecureKeyRunResult(
+              154,
+              '',
+              stderr:
+                  'SecKeychainItemCreateFromContent (<default>): The '
+                  'authorization was canceled by the user',
+            ),
+          );
+        final store = platformSecureKeyStore(
+          runner: runner.call,
+          platform: 'macos',
+        );
+
+        await expectLater(
+          store.write('OPENAI_API_KEY', 'sk-secret-123'),
+          throwsA(
+            isA<StateError>().having(
+              (error) => error.message,
+              'message',
+              contains('authorization was canceled'),
+            ),
           ),
         );
-      final store = platformSecureKeyStore(
-        runner: runner.call,
-        platform: 'macos',
-      );
-
-      await expectLater(
-        store.write('OPENAI_API_KEY', 'sk-secret-123'),
-        throwsA(
-          isA<StateError>().having(
-            (error) => error.message,
-            'message',
-            contains('authorization was canceled'),
-          ),
-        ),
-      );
-    });
+      },
+    );
 
     test('write without a default keychain fails before the add (no system '
         'dialog)', () async {
@@ -626,6 +716,121 @@ void main() {
     });
   });
 
+  // gh-1934 rework-3: the legacy gate (a `security default-keychain`
+  // probe) cannot see a locked/unusable login keychain — on self-hosted
+  // runner fa-m5-3 it exits 0 while the actual `add-generic-password`
+  // write fails (exit -1), reddening the macOS cube-kernel-live leg. Gate
+  // the leg FUNCTIONALLY instead: rehearse the exact write→read→delete
+  // contract on a throwaway probe item (the same shape as the accepted
+  // `hostHasFunctionalKillall` gate from the round-2 fix).
+  final bool hostHasFunctionalKeychainWrite = !Platform.isMacOS
+      ? false
+      : (() {
+          try {
+            return functionalKeychainRoundTrip(
+              (args) {
+                final r = Process.runSync('security', args);
+                return SecureKeyRunResult(r.exitCode, '${r.stdout}');
+              },
+              service: secureKeyServiceName,
+              account: keychainProbeAccount,
+              password: keychainProbePassword,
+            );
+          } catch (_) {
+            return false;
+          }
+        })();
+
+  // gh-1934 rework-3: the keychain leg's skip gate is a FUNCTIONAL
+  // round-trip probe, decided by the same pure logic these side-effect-free
+  // tests pin (fake `security` runners — nothing here touches a real
+  // keychain). The CI red this gate replaces: runner fa-m5-3 passed the
+  // old `security default-keychain` preflight, then the actual
+  // `add-generic-password` write failed (exit -1) on its locked login
+  // keychain — the leg must SKIP that shape, not fail.
+  group('functional keychain round-trip probe (gh-1934 rework-3)', () {
+    // Scripted `security` CLI: answers per first argument, records calls.
+    ({SecureKeyRunResult Function(List<String> args) run, List<String> calls})
+    script({
+      int defaultKeychain = 0,
+      int add = 0,
+      int find = 0,
+      String findPassword = keychainProbePassword,
+      int delete = 0,
+    }) {
+      final calls = <String>[];
+      SecureKeyRunResult run(List<String> args) {
+        calls.add(args.first);
+        return switch (args.first) {
+          'default-keychain' => SecureKeyRunResult(defaultKeychain, ''),
+          'add-generic-password' => SecureKeyRunResult(add, ''),
+          'find-generic-password' => SecureKeyRunResult(
+            find,
+            '$findPassword\n',
+          ),
+          'delete-generic-password' => SecureKeyRunResult(delete, ''),
+          _ => SecureKeyRunResult(64, ''),
+        };
+      }
+
+      return (run: run, calls: calls);
+    }
+
+    bool probeOf(Object scripted) {
+      final s =
+          scripted
+              as ({
+                SecureKeyRunResult Function(List<String> args) run,
+                List<String> calls,
+              });
+      return functionalKeychainRoundTrip(
+        s.run,
+        service: secureKeyServiceName,
+        account: keychainProbeAccount,
+        password: keychainProbePassword,
+      );
+    }
+
+    test('a real write→read→delete round-trip makes the leg usable', () {
+      final s = script();
+      expect(probeOf(s), isTrue);
+      expect(s.calls, [
+        'default-keychain',
+        'add-generic-password',
+        'find-generic-password',
+        'delete-generic-password',
+      ]);
+    });
+
+    test(
+      'a locked keychain — preflight ok, the WRITE fails — skips the leg',
+      () {
+        // The fa-m5-3 CI shape: default-keychain exits 0, the real
+        // add-generic-password write fails (exit -1).
+        expect(probeOf(script(add: -1)), isFalse);
+      },
+    );
+
+    test('a missing default keychain skips the leg and never writes', () {
+      final s = script(defaultKeychain: 36);
+      expect(probeOf(s), isFalse);
+      expect(s.calls, ['default-keychain']);
+    });
+
+    test(
+      'a read-back that returns a different secret skips the leg and still deletes the probe item',
+      () {
+        final s = script(findPassword: 'a-different-secret');
+        expect(probeOf(s), isFalse);
+        expect(s.calls.last, 'delete-generic-password');
+      },
+    );
+
+    test('a failed delete skips the leg — the probe item must not survive', () {
+      expect(probeOf(script(delete: 1)), isFalse);
+    });
+  });
+
   // `tags: integration` (gh-1059 review): this group performs a REAL
   // `security add-generic-password` against the developer's default
   // keychain — excluded from the pre-commit gate and the plain per-PR
@@ -638,23 +843,19 @@ void main() {
   group('real keychain runner (gh-1059 AC4, macOS only)', () {
     const testName = 'FA_KEY_SELFTEST_GH1059';
 
-    bool securityUsable = false;
-    setUpAll(() async {
-      if (!Platform.isMacOS) return;
-      // "Skip when no interactive keychain": a default keychain must exist
-      // (the same preflight the write path runs before add-generic-password).
-      final probe = await secureKeyProcessRunner('security', const [
-        'default-keychain',
-      ]);
-      securityUsable = probe.exitCode == 0;
-    });
-
     test(
       'the bounded runner writes, reads and deletes a real keychain item',
+      // CI guard, not an assumption: the functional probe above decides —
+      // and the skip reason names the remedy for a host that wants the
+      // coverage back (unlock/fix the runner keychain).
+      skip: Platform.isMacOS && hostHasFunctionalKeychainWrite
+          ? false
+          : 'macOS keychain only: needs a `security` CLI whose default '
+                'keychain completes a real generic-password write→read→delete '
+                'round-trip (gh-1934 rework-3: headless runner keychains can '
+                'pass the default-keychain preflight yet fail the write — '
+                'unlock/fix the keychain to run this leg)',
       () async {
-        if (!Platform.isMacOS) return;
-        // CI guard, not an assumption: the setUpAll probe decides.
-        if (!securityUsable) return;
         final store = platformSecureKeyStore();
 
         await store.write(testName, 'sk-gh1059-selftest');
