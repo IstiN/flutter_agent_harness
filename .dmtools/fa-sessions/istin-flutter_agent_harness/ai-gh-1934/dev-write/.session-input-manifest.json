@@ -1,0 +1,443 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-28T15:24:40.142Z",
+  "ticketKey": "gh-1934",
+  "headSha": "8961bd1beeb91f0948f0ccdaf0d151d11e123c8d",
+  "baseBranch": "main",
+  "reviewDecision": "NONE",
+  "labels": [],
+  "files": {
+    "ci_failures.md": {
+      "hash": "fnv1a64:322b878d3c3c2465",
+      "size": 288
+    },
+    "pr_diff.txt": {
+      "hash": "fnv1a64:8efd60e34f900f7b",
+      "size": 12304
+    },
+    "pr_discussions.md": {
+      "hash": "fnv1a64:9c3b07d6236ba88d",
+      "size": 55851
+    },
+    "pr_discussions_raw.json": {
+      "hash": "fnv1a64:fa2e01cced7f3b6a",
+      "size": 114
+    },
+    "pr_info.md": {
+      "hash": "fnv1a64:7061bb5ec424b2a0",
+      "size": 3721
+    },
+    "request.md": {
+      "hash": "fnv1a64:941c0cf78d0688e5",
+      "size": 9366
+    },
+    "review_state.md": {
+      "hash": "fnv1a64:7eed40bef4b17114",
+      "size": 517
+    },
+    "rework_base_head.txt": {
+      "hash": "fnv1a64:db5362e5c9f427bd",
+      "size": 40
+    },
+    "ticket.json": {
+      "hash": "fnv1a64:17170accefb672e5",
+      "size": 9487
+    },
+    "ticket.md": {
+      "hash": "fnv1a64:941c0cf78d0688e5",
+      "size": 9366
+    }
+  },
+  "comments": [
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-28:9dfbfcb5",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-28",
+      "updatedAt": "2026-10-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — REQUEST_CHANGES\n\n**Summary**: 1 blocking, 3 important, 2 suggestion findings. The ladder/eviction core is well-built (stateless payload-only rewrite, bounded ladder, strong IT coverage — all 64 PR tests + neighboring suites green), but the new `ImagePayloadRecoveryEvent` has no wire-protocol encoder entry, so `encodeEvent` throws (`Null check operator used on a null value`) on any `fa serve`/SDK client at the exact moment the 413 ladder exhausts (verified by repro).\n\n**Key Issues**:\n- 🚨 BLOCKING: `ImagePayloadRecoveryEvent` missing from `_eventEncoders`/`_eventKinds` (+ golden fixture, + TS `KNOWN_EVENT_KINDS`) — crash on the recovery path (comment1).\n- ⚠️ The AC6 gate checks the transcript instead of the refused payload: a strip-all-latched session re-runs the ladder (2 wasted sends + false recovery notes) on every later 413, verified by probe (comment2).\n- ⚠️ Prominent drop notice names a cap and `images.maxPerRequest` for pass-2 evictions of current-message images — wrong cause, wrong knob (comment3).\n- ⚠️ `ImageDropUx._latchKey` ignores the drop reason: cap→evicted transitions latch to silence (comment4).\n\n**Next Steps**:\n1. Add the wire encoder + kind mapping, golden fixture, and TS client kind; round-trip-test the failure event.\n2. Gate the ladder on the refused request window (not the transcript).\n3. Reason-aware prominent notice + reason-aware latch key in `image_drop_ux.dart`."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-28:9514acd2",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-28",
+      "updatedAt": "2026-10-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT: the AC6 gate checks the transcript, not the request payload — a latched session re-runs the ladder on every later 413**\n\n`_needsImage413Recovery` gates on `_windowHasImages(context.messages)`, but `healIfNeeded` receives the loop's TRANSCRIPT context (`_streamAttempt` passes `context`, not the built `requestContext`). Because the rewrite is payload-only, the transcript keeps every image byte forever — so once the strip-all latch is set, the gate can never go false for a session that ever saw an image, and ANY later 413-class refusal (including a pure text-overflow one the comment says \"belongs to the provider\") re-engages the ladder.\n\nVerified on this branch: strip-all latched + a well-formed image call/result in the transcript + an always-413 provider ⇒ **3 sends** (original + 2 ladder retries that cannot help — the payload is already image-free), 2 pass notices reading `recovered from 413: dropped 0, stripped N`, 2 false \"recovered\" notes injected as model-visible user messages, then the failure event + error. This repeats on every subsequent 413-shaped response for the rest of the session. IT-4's follow-up assertion (\"latched image-free session … no ladder, no new failure notice\") passes only because its follow-up history is text-only — a shape real post-image sessions never have.\n\nNot blocking (bounded per response, the error still surfaces), but it contradicts the documented latch invariant (\"later requests … cannot re-trigger the refusal\") and burns 2 provider round-trips + emits misleading recovery copy per 413.\n\n**Fix**: evaluate the gate against the request window that was actually refused — e.g. thread `requestContext` into `_finishedTurnResult`, or have `ImagePayloadRecoveryState` record whether the last build carried image bytes (`observeBuild` already sees the rewrite report) and stand the ladder down when the payload is image-free."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-28:ccedc226",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-28",
+      "updatedAt": "2026-10-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT: pass-2 evictions of current-message images print the cap wording and the wrong knob**\n\n`_noticeFor` branches on `currentDrops > 0` before the reason is consulted, so a strip-all eviction of the CURRENT message's images (`fromCurrentMessage: true`, `reason: ImageDropReason.evicted` — exactly what pass 2 produces) lands in the prominent cap branch. Verified on this branch:\n\n```\nprominent: true\nline: 1 of 1 attached images were not sent to the model — cap is 20/request\n      or ~8MB image budget; see /images or images.maxPerRequest\ndrops: (cur=true reason=ImageDropReason.evicted)\n```\n\nThe PR's own principle for this enum is \"an eviction names the cause … not a cap\" (the history branch below does it right), but the prominent branch names a cap that never bound and points the user at `images.maxPerRequest`, the wrong knob — the remedy here is `images.maxBytesPerRequest` or a smaller-payload provider. Prominence itself is correct (just-attached images not sent is actionable); only the copy is wrong.\n\n**Fix**: in the `currentDrops > 0` branch, partition by reason the way the history branch does — evicted current images get an eviction-worded prominent line (`N attached images replaced by placeholders (413 recovery) — lower images.maxBytesPerRequest or switch provider`)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-28:a744482f",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-28",
+      "updatedAt": "2026-10-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT: the drop-notice latch is reason-blind — a cap→evicted transition is silenced**\n\n`ImageDropUx._latchKey` (unchanged, just below) is `modelId|cap|current:<keys>|history:<keys>` — it does not include `ImageDropReason`. A set of keys that latched as byte/count drops in request N can become `evicted` in request N+1 (e.g. `/compact` after a byte-cap drop, or the 413 session latch) with the identical latch key, so `observe` returns null and the user never learns that those bytes now *never ride again* — a materially different situation per this layer's own contract (\"a changed set … is exactly one updated notice\"). The new mixed-line branch (`(+N evicted)`) only helps when the report's key changes for some other reason.\n\n**Fix**: partition the latch key by reason, e.g. append `|evicted:<sorted evicted keys>` (or reset the latch when `evictedCount` transitions 0→>0), so the first eviction of an already-latched set still produces the one updated notice."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-28:d3771c96",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-28",
+      "updatedAt": "2026-10-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: the armed recovery note can ride an unrelated later request**\n\n`armNote` (called from `healIfNeeded` before the retry) is only ever consumed by the next request build via `consumeNote`. If the retry never happens — the user cancels, the run aborts, a steering resubmit is abandoned — the note stays armed and the NEXT build of the session (possibly minutes later, for an unrelated user message) rides the one-shot `[images] recovered from 413: …` user message and fires the host notice then, with no recovery immediately behind it. Counts stay accurate (refreshed by that build's rewrite), but the claim is stale.\n\nConsider disarming the note when the streamed response ends without the retry consuming it (the response-local `_Image413RecoveryState` knows it armed it and can clear it on the exhaustion/abort paths)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-28:31eb5906",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-28",
+      "updatedAt": "2026-10-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: `dropped`/`stripped` on the loop-level event are dead fields, and the doc overpromises**\n\nThe doc here says \"[dropped]/[stripped] carry the counts the rebuilt request rode\", but the only emission in the entire PR is the exhaustion event with hardcoded `dropped: 0, stripped: 0` (`healIfNeeded`'s `passes >= 2` branch). Pass 1/2 surface through the host notice seam (`consumeNote`) only and never emit this event, so the wire kind `image_payload_recovery` can only ever carry a zeroed failure. Either emit the loop event on the pass retries with the real counts (IT-4's `recoveryLoopEvents` machinery is already in place to assert it), or trim the doc to \"zeroed on the exhaustion event; per-pass counts ride the host notice seam\" so the wire contract doesn't promise data it never carries."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-28:b60d2651",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-28",
+      "updatedAt": "2026-10-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread `PRRT_kwDOTXdlLc6xDC7W` — wire encoder crash (BLOCKING)\n\nFixed on this head.\n\n- **Encoder + kind**: `ImagePayloadRecoveryEvent` now has entries in `AgentWireProtocol`'s tables — `_eventEncoders` (`lib/src/wire/wire_protocol.dart:497`, fields `pass`/`dropped`/`stripped`/`failed`/`providerError`, null-aware `providerError`), `_eventKinds` → `'image_payload_recovery'` (`wire_protocol.dart:1324`), plus a symmetric decoder (`wire_protocol.dart:671`, `:988`) so the frame round-trips.\n- **Golden fixture**: `test/wire/fixtures/v1/events/image_payload_recovery.json` pins the failure frame (the `task_ledger` precedent); `nativeEventFor` builds it in `test/wire/golden_fixtures.dart`, so the existing corpus tests (`wire_protocol_test.dart` round-trip + native-encode, `wire_adapter_test.dart` toWire) exercise it automatically.\n- **TS client**: `'image_payload_recovery'` added to `KNOWN_EVENT_KINDS` (`sdk/web/src/wire-client.ts`) — the node conformance suite (`sdk/web/test/conformance.test.mjs`, via `test/wire/web_client_conformance_test.dart`) now classifies the fixture as `known` instead of unknown-passthrough.\n- **Regression test**: `wire_protocol_test.dart` \"gh-1934 rework: the ladder failure event encodes\" runs the reviewer's exact repro — `encodeEvent` on the failure event no longer throws `Null check operator used on a null value`; it emits the golden frame and decodes back. Before the fix this test failed with precisely that null-check crash; `dart test test/wire/` is green now (137 tests, including the web conformance run)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-28:b9371525",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-28",
+      "updatedAt": "2026-10-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread `PRRT_kwDOTXdlLc6xDC-V` — gate must evaluate the refused payload\n\nFixed, via the reviewer's second suggested mechanism (`ImagePayloadRecoveryState` records whether the last build carried image bytes).\n\n- `rewriteRequestImages` now feeds the recovery state on EVERY build (`lib/src/agent/image_registry.dart:382`) — the #1889 image-free fast path included — via `observeBuild(..., carriedImages: payloadCariesImageBytes(rewritten))`. `payloadCariesImageBytes` (`image_registry.dart:394`) checks the REWRITTEN payload: riding `ImageContent` blocks plus current-message text-embedded `data:image/` payloads at the #1916 fold threshold (sub-threshold inline icons are legitimate text and never count).\n- The gate (`lib/src/agent/agent_loop_image_recovery.dart:83`) evaluates `lastPayloadCariedImages && !stripAll` instead of the transcript — the transcript-shaped `_windowHasImages` check is deleted. A strip-all-latched session's payload is image-free, so a later 413 stands down: **1 send**, no pass notices, no false \"recovered\" notes, no failure event. The documented latch invariant (\"later requests cannot re-trigger the refusal\") now actually holds.\n- In-flight exception: once a pass already ran for the streamed response (`passes > 0`), the ladder keeps ownership of its retry's refusal, so pass 2 and the ONE exhaustion event still fire (AC4) — otherwise the payload gate would have swallowed the exhaustion event on pass-2's own image-free retry.\n- Tests: `image_recovery_loop_test.dart` IT-4b reproduces the reviewer's probe verbatim (strip-all latched + image call/result in transcript + always-413 ⇒ was 3 sends + 2 false notices, now 1 send, zero notices); IT-4c pins the text-only/icon shape; IT-4/IT-1 still assert the bounded ladder and the exhaustion event."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-28:6aef8996",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-28",
+      "updatedAt": "2026-10-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread `PRRT_kwDOTXdlLc6xDDBd` — prominent notice for pass-2 evictions\n\nFixed — the `currentDrops > 0` branch in `_noticeFor` now partitions by reason the way the history branch does (`lib/src/agent/image_drop_ux.dart:105-127`).\n\n- Evicted-only current drops (exactly what pass 2 produces: `fromCurrentMessage: true`, `reason: evicted`) get the eviction-worded prominent line:\n  `N of M attached images replaced by placeholders (413 recovery) — lower images.maxBytesPerRequest or switch provider`\n  — the right knob, no cap mention (`prominent` stays true: just-attached images not sent is actionable either way).\n- Mixed current batches (some capped, some evicted) keep the cap line but count only the capped images (`currentCapped`) and append `(+N attached replaced by placeholders)`; the history fragment is unchanged.\n- Tests: `image_drop_ux_test.dart` \"review — pass-2 eviction of CURRENT-message images\" fails on the old code with the reviewer's exact output (cap wording + `images.maxPerRequest`) and passes now; a second test pins the mixed capped+evicted partition."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-28:8d6fc2e0",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-28",
+      "updatedAt": "2026-10-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread `PRRT_kwDOTXdlLc6xDDEG` — reason-blind latch key\n\nFixed with the reviewer's first suggested shape: the latch key partitions by reason (`lib/src/agent/image_drop_ux.dart:92`).\n\n- `_latchKey` now appends `|evicted:<sorted evicted keys>`, so a set of keys that latched as byte/count drops in request N and becomes `evicted` in request N+1 (compaction eviction after a byte-cap drop, or the 413 session latch) produces a NEW key — the first eviction still yields the one updated notice (\"those bytes never ride again\"), and the evicted set latches from there (no repeat flood).\n- Tests: `image_drop_ux_test.dart` \"review — the latch is reason-aware\" — byte-drop report notices once, identical repeat is silence, the same key set flipping to `evicted` re-notices with the eviction wording, and the evicted set then latches too. The first and third assertions failed on the old code (silenced transition)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-28:3c7fd38a",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-28",
+      "updatedAt": "2026-10-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread `PRRT_kwDOTXdlLc6xDDGq` — armed note riding an unrelated request\n\nFixed as suggested: the streamed-response wrapper disarms any note the ladder left armed when the response ends (`lib/src/agent/agent_loop_steering_yield.dart:386`).\n\n- `_streamAssistantResponse` now wraps the attempt loop in a `try/finally` that calls `ImagePayloadRecoveryState.disarmNote()` — new one-shot clear (`image_recovery.dart:204`, no host notice, no consume). Every path that ends the response without the retry consuming the note (cancel, abort, an exception between the arm and the retry build) runs it; a note the retry build already consumed makes it a no-op, so normal recovery copy is untouched.\n- Test: `image_recovery_loop_test.dart` IT-6 models the gap the reviewer described — the ladder arms its pass-1 note, then the retry build dies (throwing `transformContext`, the cancel-races-the-rebuild shape). Precondition probed at the failure point (`noteArmed == true` mid-run); after the run `noteArmed == false`, so the session's next, unrelated request cannot ride the stale `[images] recovered from 413` claim. This assertion failed before the fix (the note stayed armed)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-28:d8b91e04",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-28",
+      "updatedAt": "2026-10-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread `PRRT_kwDOTXdlLc6xDDI0` — dead event fields / overpromising doc\n\nFixed via the reviewer's first option — the loop event is now emitted on every pass retry with the real counts, so the doc's claim is true and the wire kind never carries only a zeroed failure.\n\n- The build that consumes a pass note records the pass for the loop seam (`ImagePayloadRecoveryState.consumeNote`/`takeLoopEvent`, `lib/src/agent/image_recovery.dart`), and `_streamAttempt` emits `ImagePayloadRecoveryEvent(pass, dropped, stripped)` right after that build (`lib/src/agent/agent_loop_message_cap.dart:398`) — the same real counts the rebuilt request rode and the host notice carries (`observeBuild` refreshes them during the same build).\n- The exhaustion event now reports the last refused build's actual counts (`recovery.lastDropped`/`lastStripped`) instead of hardcoded zeros, and the class doc was rewritten to state exactly that: pass events carry the dropped/stripped counts the rebuilt request rode; the failed event describes the last refused build, after which nothing more could be shed.\n- Tests: IT-1 asserts the pass-1 loop event carries `dropped: 7, stripped: 0`; IT-4 asserts the pass sequence `[1, 2]` with pass 1 `7/0` and pass 2 `0/8` plus the single failure event. Both failed on the old code (no pass events existed; only the zeroed failure event)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-28:9941a531",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-28",
+      "updatedAt": "2026-10-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: two misspelled public identifiers ship in barrel-exported API**\n\nThe rework introduced two public names with the same typo — \"caries/caried\"\ninstead of \"carries/carried\":\n\n- `payloadCariesImageBytes` — `lib/src/agent/image_registry.dart:394`\n  (top-level function; `image_registry.dart` is exported from\n  `lib/flutter_agent_harness.dart`, so this is package-public API).\n- `ImagePayloadRecoveryState.lastPayloadCariedImages` —\n  `lib/src/agent/image_recovery.dart:95` (public field the 413 gate reads,\n  `agent_loop_image_recovery.dart:83`).\n\nNote the private parameter feeding them is spelled correctly\n(`observeBuild({… bool carriedImages})`), which makes the public\nmisspellings stand out. No behavior impact, but public-API renames only\nget more expensive after merge — rename both (`payloadCarriesImageBytes`,\n`lastPayloadCarriedImages`) plus the doc references before this lands."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-28:416ee573",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-28",
+      "updatedAt": "2026-10-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread `PRRT_kwDOTXdlLc6xFrSr` — misspelled public identifiers\n\nRenamed both on this head:\n\n- `payloadCariesImageBytes` → **`payloadCarriesImageBytes`** (`lib/src/agent/image_registry.dart:394`, callers updated — the `rewriteRequestImages` feed at `image_registry.dart:382`).\n- `ImagePayloadRecoveryState.lastPayloadCariedImages` → **`lastPayloadCarriedImages`** (`lib/src/agent/image_recovery.dart:95`; the 413 gate read at `agent_loop_image_recovery.dart:83` and the state tests at `image_recovery_state_test.dart` follow the rename).\n\nThe doc-comment reference in `agent_loop_image_recovery.dart` was updated too, and `grep -rn 'Caries\\|Caried' lib/ test/` now returns nothing. Both names were pre-merge so no deprecation aliasing is needed."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-28:e5106f49",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-28",
+      "updatedAt": "2026-10-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: duplicated doc comment in the probe helper**\n\n`test/secrets/secure_key_store_test.dart:761-762` — the same comment line is pasted twice in a row:\n\n```dart\n// Scripted `security` CLI: answers per first argument, records calls.\n// Scripted `security` CLI: answers per first argument, records calls.\n```\n\nDrop one of the two lines. Test-only, cosmetic."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-28:05da0f28",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-28",
+      "updatedAt": "2026-10-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: duplicated `addTearDown(victim.kill)`**\n\n`test/env/bash_self_defense_test.dart:574-575` — this rework adds a second identical `addTearDown(victim.kill);` directly under the existing one (line 575 was already there; line 574 is new):\n\n```dart\naddTearDown(victim.kill);\naddTearDown(victim.kill);\n```\n\nHarmless (the kill is idempotent) but redundant — keep one. Test-only, cosmetic."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-28:a733870a",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-28",
+      "updatedAt": "2026-10-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: the prominent eviction line can name the wrong cause**\n\n`_noticeFor`'s evicted-current branch hardcodes the cause as `413 recovery`:\n\n```dart\nvar evictedLine =\n    '$currentEvicted of ${report.currentImageCount} attached images '\n    'replaced by placeholders (413 recovery) — lower '\n    'images.maxBytesPerRequest or switch provider';\n```\n\nPass-2 strip evictions (`strip: true`) are indeed 413 recovery — correct. But a current-message image can also be evicted by the session-latched `evictedKeys` (`fromCurrent: true, strip: false`): a compaction boundary evicts a key, and later the same bytes are re-attached as the current image — the latch re-evicts it, and this prominent line blames 413 recovery. The `/images` surface gets this right by naming both causes (`image_drop_ux.dart:192`: `(evicted: compaction boundary / 413 recovery)`); the prominent line names only one.\n\nSuggested wording: use the same both-causes phrasing, e.g. `replaced by placeholders (compaction boundary / 413 recovery) — lower images.maxBytesPerRequest or switch provider`. The remedy text stays as-is: for the compaction-latch cause the honest remedy is a new session (`/new`), but that's the pre-existing boundary-latch contract, and the byte-budget remedy is right for the dominant 413 shape.\n\nEdge-case copy precision only; the notice still fires (the reason-aware latch key guarantees it) and never blocks."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-28:9ebb9735",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-28",
+      "updatedAt": "2026-10-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: two field-identical event types mapped by hand in three places**\n\n`ImageRecoveryEvent` (`image_recovery.dart:42` — the host notice seam) and `ImagePayloadRecoveryEvent` (`agent_loop_image_recovery.dart:22` — the loop/wire event) carry the exact same five fields (`pass`, `dropped`, `stripped`, `failed`, `providerError`), and the mapping between them is re-typed by hand at each conversion site:\n\n- `healIfNeeded`'s exhaustion branch builds both (`agent_loop_image_recovery.dart:118-136`),\n- `_streamAttempt` maps `takeLoopEvent()`'s record → `ImagePayloadRecoveryEvent` (`agent_loop_message_cap.dart:397`),\n- `_wireImageRecoveryNotice` maps `ImageRecoveryEvent` → the printed lines (`agent_cli_io.dart:324`).\n\nThe split is justified (the notice-seam type keeps `image_recovery.dart` — imported by `image_registry.dart` — free of the loop layer), but a short doc cross-reference on each class (\"mirrors `ImagePayloadRecoveryEvent`; keep fields in sync\") would keep the pairing from drifting. Optional polish."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-28:91924353",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-28",
+      "updatedAt": "2026-10-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "Dropped the duplicated line — the comment now appears once, directly above the probe group's `script` helper. `dart test test/secrets/secure_key_store_test.dart` re-run green over the fix tree."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-28:0a496eaa",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-28",
+      "updatedAt": "2026-10-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "Kept exactly one `addTearDown(victim.kill);`. The duplicate surfaced in this leg's merge with main (both sides rewrote the same killall victim-spawn body): the conflict was resolved by taking main's newer body (`sh -c 'read _'`, validation run 40690203051) with a single kill teardown, keeping the functional-killall skip gate both sides share. `dart test test/env/bash_self_defense_test.dart` green (the killall legs run/skip per the host probes)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-28:e7d9306d",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-28",
+      "updatedAt": "2026-10-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "Adopted the suggested wording verbatim: the evicted-current prominent line now reads \"N of M attached images replaced by placeholders (compaction boundary / 413 recovery) — lower images.maxBytesPerRequest or switch provider\". TDD: the pass-2 eviction test in `image_drop_ux_test.dart` now asserts `contains('compaction boundary / 413 recovery')` — it failed on the old single-cause line with exactly the reviewer's diagnosis (`'1 of 1 attached images replaced by placeholders (413 recovery) — …'`), then went green; the full image_drop_ux suite (31 tests) passes."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-28:99ba61e7",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-28",
+      "updatedAt": "2026-10-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "Added the two-way doc cross-reference. `ImageRecoveryEvent` now carries \"Mirrors `ImagePayloadRecoveryEvent` (the loop/wire event in `agent_loop_image_recovery.dart`), which is converted from this type at each emission site; keep the five fields in sync\", and `ImagePayloadRecoveryEvent` carries the mirror note naming `ImageRecoveryEvent` in `image_recovery.dart` and the layer-split rationale (the notice-seam type keeps `image_recovery.dart` loop-layer-free). Doc-only; analyzer clean."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-28:7856057e",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-28",
+      "updatedAt": "2026-10-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ Validation CI went red on the head — merge aborted, rework re-queued. (linked issue #1934 re-armed) (approval latch kept — no re-review after fixes)\nFailed run: https://github.com/IstiN/flutter_agent_harness/actions/runs/40655748360\n🔴 red head 58727a48c214d9a73eab78497bd71caa52c37481 — red 1/3 (owner directive 2026-10-04: red yields the slot — after 3 reds on the same head, validation waits for a NEW head)"
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-28:5290c9f9",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-28",
+      "updatedAt": "2026-10-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🚨 **BLOCKING: the ladder's failure event crashes every wire client — no encoder entry**\n\n`ImagePayloadRecoveryEvent` is missing from `AgentWireProtocol`'s encoding tables. `encodeEvent` does `_eventEncoders[event.runtimeType]!(event)` and `_kindOf` does `_eventKinds[event.runtimeType]!` (`lib/src/wire/wire_protocol.dart:397-398`, `:1300`), and neither map has an entry for this event. Verified by repro on this branch:\n\n```\nAgentWireProtocol(version: 1)\n    .encodeEvent(ImagePayloadRecoveryEvent(\n        pass: 2, dropped: 0, stripped: 0, failed: true,\n        providerError: 'error: 413: Request Entity Too Large'));\n// → throws: Null check operator used on a null value\n```\n\nBlast radius: `WireServer.handleAgentEvent` calls `_sendSafely(_protocol.encodeEvent(event), client)` (`lib/src/wire/wire_serve.dart:310`) — the `encodeEvent` argument is evaluated OUTSIDE `_sendSafely`'s try/catch, so the throw propagates into the CLI's event pump (`_agent.subscribe(... server.handleAgentEvent(event))`, `agent_cli_wire_serve.dart:75`). The event is emitted EXACTLY on the ladder-exhaustion path (the AC4 \"one actionable failure\" moment, `healIfNeeded`'s `passes >= 2` branch), so for any `fa serve` / SDK / attach client the run breaks with an internal error at the precise moment this PR promises a clean, actionable failure.\n\nAlso missing for the new wire kind (the `task_ledger` precedent):\n- golden fixture `test/wire/fixtures/v1/events/image_payload_recovery.json` (the conformance corpus pins \"every live event kind\"),\n- `image_payload_recovery` in `KNOWN_EVENT_KINDS` (`sdk/web/src/wire-client.ts`) — today the TS client degrades it to unknown-passthrough.\n\nNote the PR's own `test/wire/wire_adapter_test.dart` change only extends a test-local `_kindOf` switch — it never routes the event through `protocol.encodeEvent`, which is why this slipped through.\n\n**Fix**: add `ImagePayloadRecoveryEvent` to `_eventKinds` (`'image_payload_recovery'`) and to `_eventEncoders` (`pass`, `dropped`, `stripped`, `failed`, `providerError`), add the golden fixture + the TS kind, and extend the wire round-trip test to encode the failure event."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-28:6bcf6af3",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-28",
+      "updatedAt": "2026-10-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🔴 red head 58727a48c214d9a73eab78497bd71caa52c37481 — red 2/3 (owner directive 2026-10-04: red yields the slot — after 3 reds on the same head, validation waits for a NEW head)\n🔴 Red pre-merge gate on the head with no armed validation — rework armed (gh-917: first validation included, review or no review). The rework runner pushes a fix and validation re-runs on the new head (validate-fresh). After 3 red arming attempts on the SAME head the arm is withheld and a human is escalated (no infinite retry)."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-28:7218e17a",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-28",
+      "updatedAt": "2026-10-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🧵 Unresolved review threads — rework armed. This machine-authored PR is reviewed (ai_pr_reviewed) but still has open review threads. The rework leg owns open threads: agent:rework is armed on this PR and the rework runner will work through the threads and push. Validation re-runs automatically afterwards, and once the threads are resolved a fresh re-review is armed (review-threads-resolved)."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-28:5cb4c75c",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-28",
+      "updatedAt": "2026-10-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ Validation CI went red on the head — merge aborted, rework re-queued. (linked issue #1934 re-armed) (approval latch kept — no re-review after fixes)\nFailed run: https://github.com/IstiN/flutter_agent_harness/actions/runs/40667155334\n🔴 red head a867a5629a016484b845223aabfce7a6e55761ef — red 1/3 (owner directive 2026-10-04: red yields the slot — after 3 reds on the same head, validation waits for a NEW head)"
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-28:a8b1ac46",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-28",
+      "updatedAt": "2026-10-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — REQUEST_CHANGES (round 2)\n\n**Summary**: All 6 round-1 threads are verified fixed on head `a867a562` (each repro re-run green: wire encode round-trips, latched session sends once, notice names the eviction cause + right knob; 292 tests across the PR suites, wire suite + conformance, and the neighboring loop suites pass; analyzer clean). The round is blocked by one thing only: the validation gate is red on this head — `test/env/bash_self_defense_test.dart` \"killall --signal TERM reaps its victim (unique comm name)\" fails (`Expected: 'rc=0' / Actual: 'rc=1'`).\n\n🚨 **BLOCKING (red CI, 5 checks on `a867a562`)**: the failing test is pre-existing and PR-unrelated — it also fails on `origin/main` (verified 2/2 runs there and 3/3 locally), the PR touches zero shell-layer files, and the root cause is the host image: `killall` here is a coreutils multicall stub (`coreutils: unknown program 'fa_kl_271'`, rc=1), so the gh-1763 shim's exec-real-binary path cannot kill by comm name. Remedy for this PR: gate the killall leg behind a functional-killall probe (same pattern as the existing `hostHasPgrep` skip) — test-only change. Two other red jobs (\"Binaries smoke gate\", \"JS engine integration (quickjs-ng)\") have 404'd logs — unattributable, please re-check.\n\n**Next Steps**:\n1. Skip-gate the environment-broken killall leg (or fix the CI image) so validation goes green on a new head.\n2. Rename the misspelled public API (`payloadCariesImageBytes` → `payloadCarriesImageBytes`, `lastPayloadCariedImages` → `lastPayloadCarriedImages`) — inline comment."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-28:8a668145",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-28",
+      "updatedAt": "2026-10-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🔴 red head a867a5629a016484b845223aabfce7a6e55761ef — red 2/3 (owner directive 2026-10-04: red yields the slot — after 3 reds on the same head, validation waits for a NEW head)\n🔴 Red pre-merge gate on the head with no armed validation — rework armed (gh-917: first validation included, review or no review). The rework runner pushes a fix and validation re-runs on the new head (validate-fresh). After 3 red arming attempts on the SAME head the arm is withheld and a human is escalated (no infinite retry)."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-28:604b49f0",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-28",
+      "updatedAt": "2026-10-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🔄 zombie re-dispatch 23a279b8e0e1d28b4a88cb3db9f263fa860b49c1 — zombie 1/3 at 2026-10-28T12:27:23.604Z\n\nThis head carried no dispatched validation run at all — the dispatch was lost (gh-821). CI was re-dispatched automatically (bounded: 1 per head per hour; 3 in a row on the same head park the PR validation_failed)."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-28:4c1556bd",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-28",
+      "updatedAt": "2026-10-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🔴 red head 23a279b8e0e1d28b4a88cb3db9f263fa860b49c1 — red 1/3 (owner directive 2026-10-04: red yields the slot — after 3 reds on the same head, validation waits for a NEW head)\n🔴 Red pre-merge gate on the head with no armed validation — rework armed (gh-917: first validation included, review or no review). The rework runner pushes a fix and validation re-runs on the new head (validate-fresh). After 3 red arming attempts on the SAME head the arm is withheld and a human is escalated (no infinite retry)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-28:47bda3c2",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-28",
+      "updatedAt": "2026-10-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — REQUEST_CHANGES (round 3)\n\n**Summary**: Every round-2 item is verified fixed on head `23a279b8`: the killall leg is gated behind a new functional `hostHasFunctionalKillall` probe (Ubuntu full-suite + quality gates now green), and both public names are renamed (`payloadCarriesImageBytes`, `lastPayloadCarriedImages`; zero `Caries|Caried` hits). 253 tests across the PR, wire, shell-self-defense and cap suites pass; analyzer clean; all round-1 repros still green.\n\n🚨 **BLOCKING (red CI, 1 check on `23a279b8`)**: \"Cube kernel live (macOS)\" — `test/secrets/secure_key_store_test.dart` \"real keychain runner (gh-1059 AC4)\" fails with `Bad state: security add-generic-password failed (exit -1)` (`secure_key_store_io.dart:302`) on self-hosted runner `fa-m5-3`. Verified PR-unrelated: the PR touches zero `secrets/` files and this test/store last changed on `origin/main` before the branch point (`ad359e4c78`, gh-1679). The leg's preflight (`security default-keychain`) passed but the item WRITE failed — the preflight cannot detect a locked/unusable login keychain (the likely headless-runner state). Remedy: unlock/fix the keychain for the runner session, or mirror this PR's own round-2 pattern — make the preflight probe a functional write+delete of a throwaway item so a locked keychain skips the leg.\n\n**Next Steps**:\n1. Make the macOS keychain leg pass (runner unlock, or the functional-write preflight) so validation goes green on a new head."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-28:97735f24",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-28",
+      "updatedAt": "2026-10-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🔴 red head 23a279b8e0e1d28b4a88cb3db9f263fa860b49c1 — red 2/3 (owner directive 2026-10-04: red yields the slot — after 3 reds on the same head, validation waits for a NEW head)\n🔴 Red pre-merge gate on the head with no armed validation — rework armed (gh-917: first validation included, review or no review). The rework runner pushes a fix and validation re-runs on the new head (validate-fresh). After 3 red arming attempts on the SAME head the arm is withheld and a human is escalated (no infinite retry)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-28:e48439c6",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-28",
+      "updatedAt": "2026-10-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## 🔧 Rework Complete — pr-1940\n\nAll PR review comments have been addressed. See fix summary below."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-28:7fc2c8d6",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-28",
+      "updatedAt": "2026-10-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## 🔧 Rework Complete — gh-1934\n\nAll PR review comments have been addressed. See fix summary below."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-28:4720f7da",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-28",
+      "updatedAt": "2026-10-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — APPROVE\n\n**Summary**: All three prior rounds' blockers are verified fixed on head `ec6e714d0`: the wire encoder/kind/decoder + golden fixture + TS kind round-trip (round 1), the payload-shaped 413 gate, reason-aware notice/latch, note disarm and per-pass loop events (round 1 rework), the functional killall probe (round 2), and the functional keychain write→read→delete probe (round 3 — the leg now skips cleanly on a locked-keychain host). Local verification on this head: 277 PR/wire/shell/secrets tests passed (1 documented skip), 111 wire-protocol + web-conformance tests passed, analyzer clean, `dart format` clean; all 11 CI checks are green.\n\n**Key Issues**: none blocking. 4 suggestions (test-only duplication ×2, edge-case notice wording, doc cross-ref for twin event types).\n\n**Next Steps**:\n1. Optional polish only — see the four inline suggestions; none block the merge."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-28:6af2b2bf",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-28",
+      "updatedAt": "2026-10-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — REQUEST_CHANGES (round 4)\n\n**Summary**: The round-3 keychain fix is verified on head `ec6e714d` — the macOS leg now gates on a bounded functional write→read→delete probe (`SecureKeyRunner`-timeout aware, skip reason names the remedy); `dart test test/secrets/` passes 70 + 1 documented skip locally, matching the rework claim. The delta since the last reviewed head is exactly one file (`test/secrets/secure_key_store_test.dart`); all 212 PR/wire tests re-run green.\n\n🚨 **BLOCKING (red CI, 1 check on `ec6e714d`)**: \"Flutter app tests (shard 1/2)\" — `flutter_app/test/agent_service_windowed_test.dart` \"mid-run jump keeps the streaming bubble live (#1159 AC1)\" fails in the FIXTURE TEARDOWN, not an assertion: `FileSystemException: Deletion failed … (OS Error: Directory not empty, errno = 39)` at `tmp.delete(recursive: true)` (`agent_service_windowed_test.dart:285`) — pending streaming I/O re-created a file mid-delete, i.e. the mid-run scenario wasn't quiesced at teardown. Verified PR-unrelated: the PR touches zero `flutter_app` files, this test last changed on `origin/main` before the branch point (`cf703b3cf4`, `360d17f2ee`), and the same shard was green on both prior heads. Local repro attempted but blocked by an unrelated `flutter_inappwebview` windows-plugin resolution failure (Flutter 3.47.8 on this host). Remedy: quiesce/dispose the service before the fixture's recursive delete (register `service.dispose()` teardown before the delete teardown — LIFO), or make the teardown delete retry-tolerant; the owner may also treat this as a pure load flake and re-run.\n\n**Next Steps**:\n1. Stabilize the windowed-test teardown (quiesce before delete, or retry-tolerant delete) so the Flutter shard goes green on a new head."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-28:b4f74316",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-28",
+      "updatedAt": "2026-10-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚖️ Verdict reconciliation (gh-807): two review verdicts on head `ec6e714d0238971d0a932e32a319186377cdeed8` —\n- APPROVE at 2026-10-28T14:08:37.027Z (source: pr_review.json)\n- REQUEST_CHANGES at 2026-10-28T14:26:03.347Z (source: pr_review.json)\n\nNewest wins: **REQUEST_CHANGES** — removing `pr_approved` until re-review (approval-gated paths blocked, gh-807)."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-28:e5fdbab2",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-28",
+      "updatedAt": "2026-10-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ Validation CI went red on the head — merge aborted, rework re-queued. (linked issue #1934 re-armed) (approval latch kept — no re-review after fixes)\nFailed run: https://github.com/IstiN/flutter_agent_harness/actions/runs/40703576156\n🔴 red head ec6e714d0238971d0a932e32a319186377cdeed8 — red 1/3 (owner directive 2026-10-04: red yields the slot — after 3 reds on the same head, validation waits for a NEW head)"
+    }
+  ]
+}
