@@ -109,13 +109,22 @@ ImageRegistryConfig imageRegistryConfig = const ImageRegistryConfig();
 
 /// Why a request dropped an image (issue #1916 AC1): the count cap
 /// (`images.maxPerRequest`) or the byte budget
-/// (`images.maxBytesPerRequest`) — surfaces name which.
+/// (`images.maxBytesPerRequest`) — surfaces name which. gh-1934 adds the
+/// eviction class: images replaced by placeholders because the payload
+/// was evicted (compaction boundary / 413 recovery), not because a cap
+/// bound.
 enum ImageDropReason {
   /// The per-request unique-image count cap bound first.
   count,
 
   /// The per-request base64 byte budget bound first.
   bytes,
+
+  /// gh-1934: the image was EVICTED to a placeholder — every image block
+  /// outside the current message once a renumbering boundary sits in the
+  /// window (compaction eviction, AC2), every image block period under
+  /// the 413 recovery strip-all, or a session-latched evicted key.
+  evicted,
 }
 
 /// One image dropped by the per-request cap (issue #1889): the registry
@@ -162,6 +171,8 @@ final class ImageDropReport {
     required this.registryCount,
     required this.ridingCount,
     this.maxBytes = 0,
+    this.strippedCount = 0,
+    this.evictedCount = 0,
   });
 
   /// Every dropped image of the request, in drop order.
@@ -186,6 +197,14 @@ final class ImageDropReport {
   /// The byte budget the request was built under (#1916 AC1); 0 = no
   /// budget info (legacy constructors) — surfaces omit byte mentions.
   final int maxBytes;
+
+  /// gh-1934: unique images replaced by placeholders under the 413
+  /// recovery strip-all in this build (0 = no strip ran).
+  final int strippedCount;
+
+  /// gh-1934: unique images evicted to placeholders by the compaction
+  /// boundary rule or a session-latched evicted key (0 = none).
+  final int evictedCount;
 }
 
 /// Set by hosts that surface drops (the CLI aggregates + latches into one
@@ -297,37 +316,59 @@ String imageContentKey(ImageContent image) => sha256
     .convert(utf8.encode('data:${image.mimeType};base64,${image.data}'))
     .toString();
 
-/// The agent loop's request-payload image rewrite (#171 + #1889 + #1916):
-/// the kill switch skips it entirely (byte-identical legacy — no rewrite,
-/// no reports), the cap resolves per model (`#1750` learned latch >
-/// `perModel` config > catalog maxImages > the global maxPerRequest),
-/// the byte budget rides the global `images.maxBytesPerRequest`, and the
-/// host-facing seam is the per-request [ImageDropReport] (one call per
-/// build, zero drops included). Also publishes the outbound-size estimate
-/// for the payload-aware stall watchdogs ([noteOutboundEstimate] — every
-/// provider call funnels through here, so the estimate never goes stale).
-/// Lives beside the seam it fans out to so the loop's call site stays one
-/// expression.
+/// The agent loop's request-payload image rewrite (#171 + #1889 + #1916 +
+/// gh-1934): the kill switch skips it entirely (byte-identical legacy — no
+/// rewrite, no reports), the cap resolves per model (`#1750` learned latch >
+/// `perModel` config > catalog maxImages > the global maxPerRequest), the
+/// byte budget resolves per session (`images.maxBytesPerRequest`, lowered
+/// by the 413 recovery state's learned budget), and the host-facing seam is
+/// the per-request [ImageDropReport] (one call per build, zero drops
+/// included). Also publishes the outbound-size estimate for the
+/// payload-aware stall watchdogs ([noteOutboundEstimate] — every provider
+/// call funnels through here, so the estimate never goes stale). Lives
+/// beside the seam it fans out to so the loop's call site stays one
+/// expression. [recovery] (gh-1934) arms the compaction/413 eviction rules
+/// and feeds the build's drop/strip counts back to the recovery state.
 List<Message> rewriteRequestImages(
   List<Message> messages, {
   required String modelId,
   required int? catalogMaxImages,
   required int? capOverride,
+  ImagePayloadRecoveryState? recovery,
 }) {
   noteOutboundEstimate(messages);
   if (!imageRegistryConfig.enabled) return messages;
+  final configuredBytes = imageRegistryConfig.maxBytesPerRequest;
   return rewriteHistoryImages(
     messages,
     maxPerRequest:
         capOverride ??
         resolveImageCap(modelId: modelId, catalogMaxImages: catalogMaxImages),
+    maxBytesPerRequest:
+        recovery?.effectiveByteBudget(configuredBytes) ?? configuredBytes,
     modelId: modelId,
-    onReport: imageDropReportNotice,
+    onReport: (report) {
+      recovery?.observeBuild(
+        dropped: report.drops
+            .where((drop) => drop.reason == ImageDropReason.bytes)
+            .length,
+        stripped: report.strippedCount,
+      );
+      imageDropReportNotice?.call(report);
+    },
+    stripAll: recovery?.stripAll ?? false,
+    evictedKeys: recovery?.evictedKeys,
   );
 }
 
 /// A short, stable preview of a content key for drop notices.
 String imageKeyPreview(String key) => key.substring(0, 8);
+
+/// The placeholder replacing an evicted image block (gh-1934): names the
+/// same 8-hex content-key preview the drop notices and `/images` carry —
+/// an honest label, never a silent rebinding of `[Image N]` numbers (AC7).
+String imageDroppedPlaceholder(String key) =>
+    '[image dropped: ${imageKeyPreview(key)}]';
 
 /// The text-embedded image shape (issue #1916 AC2): legacy session
 /// records, pre-#171 transcripts and hosts that paste screenshots as
@@ -355,6 +396,19 @@ const int embeddedImageMinChars = 64 * 1024;
 /// fast path (nothing to rewrite) skips it: an image-free session pays
 /// nothing and never registers as a drop-situation change.
 ///
+/// gh-1934 eviction rules (payload-only — the transcript keeps the bytes):
+/// - [stripAll] (the 413 ladder's pass 2) replaces EVERY image block
+///   period — current message included — with the
+///   `[image dropped: <key preview>]` placeholder.
+/// - When the window carries a renumbering boundary (compaction summary /
+///   structured marker / local-trim note), every HISTORY image block
+///   outside the current user message is evicted the same way (AC2):
+///   /compact provably restores sendability on a poisoned session, the
+///   placeholders ride token accounting, and no boundary can re-carriage
+///   old image bytes.
+/// - [evictedKeys] pins additional content keys to the placeholder (the
+///   session recovery latch).
+///
 /// Returns the SAME list instance when there is nothing to rewrite (no
 /// images and no `[Image N]` mentions), so image-free sessions pay
 /// nothing.
@@ -364,6 +418,8 @@ List<Message> rewriteHistoryImages(
   int? maxBytesPerRequest,
   String? modelId,
   void Function(ImageDropReport report)? onReport,
+  bool stripAll = false,
+  Set<String>? evictedKeys,
 }) {
   final currentIdx0 = _lastUserMessageIndex(messages);
   // #1916 AC2 pre-pass: fold text-embedded data-URL images into real
