@@ -1,0 +1,143 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-28T17:35:16.050Z",
+  "ticketKey": "pr-1946",
+  "headSha": "8c3ef41d9c81f85fc9481c47a6127d060282c019",
+  "baseBranch": "main",
+  "reviewDecision": "NONE",
+  "labels": [],
+  "files": {
+    "ci_failures.md": {
+      "hash": "fnv1a64:322b878d3c3c2465",
+      "size": 288
+    },
+    "pr_diff.txt": {
+      "hash": "fnv1a64:237eb7cfd742ad09",
+      "size": 12300
+    },
+    "pr_discussions.md": {
+      "hash": "fnv1a64:3aae0c60bb4b881b",
+      "size": 11288
+    },
+    "pr_discussions_raw.json": {
+      "hash": "fnv1a64:aaa34d0b0b90e298",
+      "size": 4529
+    },
+    "pr_info.md": {
+      "hash": "fnv1a64:d562b1290ee5230e",
+      "size": 3188
+    },
+    "request.md": {
+      "hash": "fnv1a64:c066c787cba64d8c",
+      "size": 2851
+    },
+    "review_state.md": {
+      "hash": "fnv1a64:579aa76c72a41248",
+      "size": 1073
+    },
+    "rework_base_head.txt": {
+      "hash": "fnv1a64:9f68f4e0c9f427bd",
+      "size": 40
+    },
+    "ticket.json": {
+      "hash": "fnv1a64:cebb05520d576eb5",
+      "size": 2928
+    },
+    "ticket.md": {
+      "hash": "fnv1a64:c066c787cba64d8c",
+      "size": 2851
+    }
+  },
+  "comments": [
+    {
+      "id": "PRRT_kwDOTXdlLc6xO1jb",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "scripts/gen_installers.dart:53",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT: Stale BOM comment inside `renderInstallers()` contradicts the new write path**\n\nThe docstring hunk here now correctly says the `.ps1` entries are BOM-less, but the inline comment on the return map ~90 lines below (`scripts/gen_installers.dart:145-146`) was missed and still describes the **old** behavior:\n\n```dart\n    // .ps1 content arrives WITHOUT the BOM; main() adds it at write time\n    // (see below) and the golden test asserts the BOM bytes separately.\n```\n\nBoth halves are now false: `main()` writes `entry.value` verbatim (no BOM added), and the golden test asserts the BOM bytes are **absent** (`isNot([0xEF, 0xBB, 0xBF])`, `test/site/installer_golden_test.dart:83-92`) — the opposite of \"asserts the BOM bytes separately\". The next maintainer reading the map will conclude the BOM is added downstream and that stripping it in an editor is harmless.\n\nSuggested fix (while the context is fresh):\n\n```dart\n    // gh-1945: the .ps1 content is committed BOM-less — the piped\n    // `irm | iex` path decodes the served bytes as ISO-8859-1, where a BOM\n    // becomes literal `ï»¿` text. The golden test asserts bytes 0-2 are NOT\n    // a BOM (see test/site/installer_golden_test.dart).\n```"
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6xO1oB",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "site/install.ps1:183",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT: cmd has no `#` comments — the pasted `set` line silently sets a corrupted value**\n\nThe new cmd branch prints:\n\n```powershell\nWrite-Host '    set OPENROUTER_API_KEY=<your-key>   # or ANTHROPIC_API_KEY / GOOGLE_API_KEY / OPENAI_API_KEY'\n```\n\nIn PowerShell and sh (the other two branches) the trailing `# or …` is a real comment, so pasting the printed line verbatim works. **cmd.exe has no comment syntax** — a user who substitutes their key and pastes the whole line gets:\n\n```cmd\nset OPENROUTER_API_KEY=sk-xxx   # or ANTHROPIC_API_KEY / GOOGLE_API_KEY / OPENAI_API_KEY\n```\n\n→ `OPENROUTER_API_KEY` is silently set to `sk-xxx   # or ANTHROPIC_API_KEY / …` (trailing spaces + the annotation). No error is printed; auth just fails later, non-obviously. This is the same \"recipe must speak the host shell\" bug class this PR fixes — the tail is sh/PS-valid but not cmd-valid.\n\nSuggested fix — move the alternatives onto their own hint line:\n\n```powershell\nb.writeln(\"    Write-Host '    set $firstVar=<your-key>'\");\nb.writeln(r'    Write-Host \"\"');\nb.writeln(\"    Write-Host '    (or: set ANTHROPIC_API_KEY / GOOGLE_API_KEY / OPENAI_API_KEY)'\");\n```\n\n…then update `site/install.ps1.template`, regenerate the committed artifacts (`dart run scripts/gen_installers.dart`), and update the `set OPENROUTER_API_KEY=<your-key>` expectation in `test/site/installer_golden_test.dart:107`. Same shape applies to the `install.ps1.template` copy of this line."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6xO1rs",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "site/install.bat:34",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: `FA_INSTALL_VIA` leaks into the user's cmd session on Ctrl+C**\n\n`set \"FA_INSTALL_VIA=cmd\"` runs before the delegated PowerShell install, and this clear only executes on the happy path. If the user interrupts the install with Ctrl+C (or closes the console mid-download), batch execution stops here and `FA_INSTALL_VIA=cmd` stays set in that cmd session for its lifetime.\n\nConsequence is cosmetic, not functional: a later manual `powershell -NoProfile -ExecutionPolicy Bypass -Command \"irm https://fa1.dev/install.ps1 | iex\"` launched from that same console inherits the flag and prints the cmd-flavored recipe inside a PowerShell host (the `set X=…` line would be wrong there). It self-heals in any new window.\n\nIf you want belt-and-braces, clear it inside the PowerShell run instead — e.g. the installer script could read the flag and `Remove-Item Env:FA_INSTALL_VIA` after it renders the Done block, so the wrapper's clear becomes a mere backstop. Not worth a rework round on its own."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-28:c017f335",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-28",
+      "updatedAt": "2026-10-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT: Stale BOM comment inside `renderInstallers()` contradicts the new write path**\n\nThe docstring hunk here now correctly says the `.ps1` entries are BOM-less, but the inline comment on the return map ~90 lines below (`scripts/gen_installers.dart:145-146`) was missed and still describes the **old** behavior:\n\n```dart\n    // .ps1 content arrives WITHOUT the BOM; main() adds it at write time\n    // (see below) and the golden test asserts the BOM bytes separately.\n```\n\nBoth halves are now false: `main()` writes `entry.value` verbatim (no BOM added), and the golden test asserts the BOM bytes are **absent** (`isNot([0xEF, 0xBB, 0xBF])`, `test/site/installer_golden_test.dart:83-92`) — the opposite of \"asserts the BOM bytes separately\". The next maintainer reading the map will conclude the BOM is added downstream and that stripping it in an editor is harmless.\n\nSuggested fix (while the context is fresh):\n\n```dart\n    // gh-1945: the .ps1 content is committed BOM-less — the piped\n    // `irm | iex` path decodes the served bytes as ISO-8859-1, where a BOM\n    // becomes literal `ï»¿` text. The golden test asserts bytes 0-2 are NOT\n    // a BOM (see test/site/installer_golden_test.dart).\n```"
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-28:ece21f1b",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-28",
+      "updatedAt": "2026-10-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT: cmd has no `#` comments — the pasted `set` line silently sets a corrupted value**\n\nThe new cmd branch prints:\n\n```powershell\nWrite-Host '    set OPENROUTER_API_KEY=<your-key>   # or ANTHROPIC_API_KEY / GOOGLE_API_KEY / OPENAI_API_KEY'\n```\n\nIn PowerShell and sh (the other two branches) the trailing `# or …` is a real comment, so pasting the printed line verbatim works. **cmd.exe has no comment syntax** — a user who substitutes their key and pastes the whole line gets:\n\n```cmd\nset OPENROUTER_API_KEY=sk-xxx   # or ANTHROPIC_API_KEY / GOOGLE_API_KEY / OPENAI_API_KEY\n```\n\n→ `OPENROUTER_API_KEY` is silently set to `sk-xxx   # or ANTHROPIC_API_KEY / …` (trailing spaces + the annotation). No error is printed; auth just fails later, non-obviously. This is the same \"recipe must speak the host shell\" bug class this PR fixes — the tail is sh/PS-valid but not cmd-valid.\n\nSuggested fix — move the alternatives onto their own hint line:\n\n```powershell\nb.writeln(\"    Write-Host '    set $firstVar=<your-key>'\");\nb.writeln(r'    Write-Host \"\"');\nb.writeln(\"    Write-Host '    (or: set ANTHROPIC_API_KEY / GOOGLE_API_KEY / OPENAI_API_KEY)'\");\n```\n\n…then update `site/install.ps1.template`, regenerate the committed artifacts (`dart run scripts/gen_installers.dart`), and update the `set OPENROUTER_API_KEY=<your-key>` expectation in `test/site/installer_golden_test.dart:107`. Same shape applies to the `install.ps1.template` copy of this line."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-28:0a7ea870",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-28",
+      "updatedAt": "2026-10-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: `FA_INSTALL_VIA` leaks into the user's cmd session on Ctrl+C**\n\n`set \"FA_INSTALL_VIA=cmd\"` runs before the delegated PowerShell install, and this clear only executes on the happy path. If the user interrupts the install with Ctrl+C (or closes the console mid-download), batch execution stops here and `FA_INSTALL_VIA=cmd` stays set in that cmd session for its lifetime.\n\nConsequence is cosmetic, not functional: a later manual `powershell -NoProfile -ExecutionPolicy Bypass -Command \"irm https://fa1.dev/install.ps1 | iex\"` launched from that same console inherits the flag and prints the cmd-flavored recipe inside a PowerShell host (the `set X=…` line would be wrong there). It self-heals in any new window.\n\nIf you want belt-and-braces, clear it inside the PowerShell run instead — e.g. the installer script could read the flag and `Remove-Item Env:FA_INSTALL_VIA` after it renders the Done block, so the wrapper's clear becomes a mere backstop. Not worth a rework round on its own."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-28:66ead23e",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-28",
+      "updatedAt": "2026-10-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — APPROVE (with suggestions)\n\n**Summary**: All three gh-1945 Windows install failures are correctly addressed (version.txt copy mirrors `install.sh` and lands next to `fa.exe` where `_packageVersion()` probes; BOM removal is byte-verified; cmd recipe works). Verified: the PR's two test files pass (24/24), both committed `.ps1` artifacts are BOM-less and byte-identical to a fresh regeneration, GitHub Pages really serves `install.ps1` as `application/octet-stream` with no charset (live `curl -sI https://fa1.dev/install.ps1`), and the current release zips ship `bundle/version.txt` (stamped since gh-152) — no blocking issues.\n\n**Key Issues**:\n- ⚠️ IMPORTANT: stale comment at `scripts/gen_installers.dart:145` still claims `main()` adds a BOM and that the golden test asserts BOM bytes — both now false.\n- ⚠️ IMPORTANT: the cmd-branch hint `set OPENROUTER_API_KEY=<your-key>   # or …` carries a `#` tail, but cmd has no comments — pasting the printed line verbatim silently corrupts the variable.\n- 💡 SUGGESTION: `FA_INSTALL_VIA` stays set in the user's cmd session if the install is Ctrl+C'd (cosmetic residue, self-heals in a new window).\n\n**Next Steps**:\n1. Fix the stale BOM comment in `renderInstallers()` (2-line doc change).\n2. Move the `# or …` alternatives out of the printed cmd `set` line; regenerate installers + update the golden test expectation.\n3. Optionally clear `FA_INSTALL_VIA` inside the PowerShell run so the wrapper clear is a backstop."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-28:c77675d1",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-28",
+      "updatedAt": "2026-10-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🛑 stale-cancel 6488b723a5fa3776c9192f3dcb97591f6b04d89b — stale base at 2026-10-28T17:06:02.339Z\n\nCancelled 1 validation run(s) dispatched on a superseded head of this PR — the silent refresh moved the base and their results would be discarded anyway (gh-846). `cancelled` is not a verdict (gh-755): no fail-validation, no zombie re-dispatch, no red-head count is recorded for these heads — validation re-dispatches only on the current head."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-28:7218e17a",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-28",
+      "updatedAt": "2026-10-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🧵 Unresolved review threads — rework armed. This machine-authored PR is reviewed (ai_pr_reviewed) but still has open review threads. The rework leg owns open threads: agent:rework is armed on this PR and the rework runner will work through the threads and push. Validation re-runs automatically afterwards, and once the threads are resolved a fresh re-review is armed (review-threads-resolved)."
+    }
+  ]
+}
