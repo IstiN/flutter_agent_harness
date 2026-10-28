@@ -195,15 +195,6 @@
   "issue-1572": [
     {
       "leg": "rework",
-      "at": "2026-10-14T13:33:52Z",
-      "prompt": 294525,
-      "completion": 29438,
-      "total": 323963,
-      "cacheRead": 100502464,
-      "model": "glm-5.3-flash"
-    },
-    {
-      "leg": "rework",
       "at": "2026-10-14T18:59:37Z",
       "prompt": 286747,
       "completion": 36043,
@@ -4381,6 +4372,15 @@
       "completion": 38038,
       "total": 1046735,
       "cacheRead": 34014784,
+      "model": "glm-5.3-flash"
+    },
+    {
+      "leg": "rework",
+      "at": "2026-10-28T13:45:47Z",
+      "prompt": 97904,
+      "completion": 25160,
+      "total": 123064,
+      "cacheRead": 2206720,
       "model": "glm-5.3-flash"
     }
   ],
