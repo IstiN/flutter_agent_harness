@@ -26,6 +26,16 @@
 // option B: a fail-fast precheck that decodes each provisioning profile
 // and asserts it embeds the imported cert's serial BEFORE the build.
 //
+// r2 (2026-10-28, v1.0.659 regression — runs 40637547009 macOS +
+// 40637547059 iOS): the first cut of these guards aborted HEALTHY
+// builds. Lesson one: the distribution cert CLASS varies by issuance
+// era (the iOS p12 carries "iPhone Distribution:", macOS certs the
+// modern "Apple Distribution:") — the extraction must match the class
+// set, never one literal CN. Lesson two: security cms -D output may be
+// a BINARY plist or carry inline <data> blobs — plistlib parses every
+// encoding, a text scan sees nothing; and an EMPTY extraction is a
+// GUARD ERROR (extraction failure), never compared against.
+//
 // Static workflow-shape asserts (the "workflow-shape test never-again"
 // pattern of ci_keychain_searchlist_union_guard_test.dart):
 //
@@ -141,6 +151,25 @@ void main() {
           'to a concurrent leg\'s same-CN cert. Thread the SHA-1 extracted '
           'from the job\'s own keychain instead.',
     );
+
+    // r2 (v1.0.659 regression, run 40637547059): the extraction must
+    // match the distribution CLASS set — the iOS p12 carries the legacy
+    // "iPhone Distribution:" CN, so an "Apple Distribution"-only grep
+    // found 0 identities and aborted a healthy build.
+    expect(
+      mobile,
+      contains(
+        r"grep -E 'Apple Distribution|iPhone Distribution|3rd Party Mac Developer Application'",
+      ),
+      reason:
+          'build-mobile.yml must match the distribution CLASS set (Apple '
+          'Distribution | iPhone Distribution | 3rd Party Mac Developer '
+          'Application), not one literal CN class — the p12 cert class '
+          'varies by issuance era and a single-literal grep aborts healthy '
+          'builds (v1.0.659 run 40637547059: "expected exactly 1 … found '
+          '0" against a valid iPhone Distribution identity). The '
+          'exactly-1 guard still refuses ambiguous keychains.',
+    );
   });
 
   test('AC2 — build-macos.yml pins every macOS signing site by SHA-1 '
@@ -222,6 +251,40 @@ void main() {
           'MACOS_CERTIFICATE_ID. gh-1865: name resolution is a lottery '
           'under the additive search list — sign by the SHA-1 read from '
           "the job's own keychain.",
+    );
+
+    // r2 (v1.0.659 regression): class-set extraction, shape-proof plist
+    // parse, and the empty-extraction guard on the macOS leg too.
+    expect(
+      macos,
+      contains(
+        r"grep -E 'Apple Distribution|iPhone Distribution|3rd Party Mac Developer Application'",
+      ),
+      reason:
+          'build-macos.yml must match the distribution CLASS set (Apple '
+          'Distribution | iPhone Distribution | 3rd Party Mac Developer '
+          'Application), not one literal CN class — a single-literal grep '
+          'aborts healthy builds when the cert carries the other era\'s CN '
+          '(v1.0.659: the iOS leg died on exactly this).',
+    );
+    expect(
+      macos,
+      contains('plistlib'),
+      reason:
+          'build-macos.yml must parse the profile with python3 plistlib, '
+          'not a text scan — security cms -D output may be a BINARY plist '
+          'or carry inline <data> blobs, and the v1.0.659 awk scan saw '
+          'zero DeveloperCertificates entries on a healthy profile (run '
+          '40637547009 aborted pre-build with an empty serial list).',
+    );
+    expect(
+      macos,
+      contains('GUARD ERROR'),
+      reason:
+          'build-macos.yml must treat an EMPTY serial extraction as a '
+          'GUARD ERROR (extraction failure), never compare against an '
+          'empty list — an empty list would silently "mismatch" a healthy '
+          'profile (v1.0.659 regression class).',
     );
   });
 
@@ -320,6 +383,24 @@ void main() {
           'build-mobile.yml must compare profile serials to the imported '
           'serial with an exact fixed-string match (gh-1865 option B) — '
           'a loose match would defeat the precheck.',
+    );
+    // r2: shape-proof parse + empty-extraction guard (iOS leg).
+    expect(
+      mobile,
+      contains('plistlib'),
+      reason:
+          'build-mobile.yml must parse the profiles with python3 plistlib, '
+          'not a text scan — security cms -D output may be a BINARY plist '
+          'or carry inline <data> blobs (v1.0.659 regression class, run '
+          '40637547009: the awk scan extracted an empty serial list).',
+    );
+    expect(
+      mobile,
+      contains('GUARD ERROR'),
+      reason:
+          'build-mobile.yml must treat an EMPTY serial extraction as a '
+          'GUARD ERROR (extraction failure), never compare against an '
+          'empty list (v1.0.659 regression class).',
     );
     final precheckIdx = mobile.indexOf('DeveloperCertificates');
     final buildIdx = mobile.indexOf('bundle exec fastlane ios build_only');

@@ -609,11 +609,16 @@ jobs:
             # THIS cert class at 05:56:14Z and the archive died). Resolve
             # the fingerprint from THIS job's OWN keychain right after
             # import and sign every step below by fingerprint.
+            # r2 (v1.0.659 regression): match the distribution CLASS set —
+            # the iOS p12 carries the legacy "iPhone Distribution:" CN,
+            # macOS certs the modern "Apple Distribution:" CN (job log
+            # 122648235984: exactly that identity, SHA-1 43AEC254…).
+            # Exactly-1 still refuses ambiguous keychains loudly.
             IDENT_LINE=$(security find-identity -v -p codesigning build-${{ matrix.arch }}.keychain \
-              | grep 'Apple Distribution' || true)
+              | grep -E 'Apple Distribution|iPhone Distribution|3rd Party Mac Developer Application' || true)
             IDENT_COUNT=$(printf '%s\n' "$IDENT_LINE" | grep -c . || true)
             if [ "$IDENT_COUNT" -ne 1 ]; then
-              echo "::error::gh-1865: expected exactly 1 'Apple Distribution' codesigning identity in build-${{ matrix.arch }}.keychain, found $IDENT_COUNT. Refusing to pick silently:"
+              echo "::error::gh-1865: expected exactly 1 distribution-class (Apple/iPhone) codesigning identity in build-${{ matrix.arch }}.keychain, found $IDENT_COUNT. Refusing to pick silently:"
               security find-identity -v -p codesigning build-${{ matrix.arch }}.keychain || true
               exit 1
             fi
@@ -646,17 +651,23 @@ jobs:
             if [ -n "${CERT_NAME:-}" ]; then
               CERT_SERIAL=$(security find-certificate -c "$CERT_NAME" -p build-${{ matrix.arch }}.keychain \
                 | openssl x509 -noout -serial | sed 's/^serial=//')
+              # r2: parse with plistlib, not a text scan — security cms -D
+              # output may be a BINARY plist or carry inline <data> blobs
+              # (v1.0.659 run 40637547009: the awk scan saw zero
+              # DeveloperCertificates entries on this very profile and the
+              # precheck aborted a healthy build). plistlib handles every
+              # plist encoding; the base64/openssl tail is unchanged.
               PROFILE_SERIALS=$(security cms -D -i profile.provisionprofile \
-                | awk '/<key>DeveloperCertificates<\/key>/{grab=1; next}
-                       grab && /<\/array>/{grab=0; next}
-                       grab && /<data>/{indata=1; buf=""; sub(/.*<data>/, ""); if ($0 != "") {gsub(/[ \t\r]/, ""); buf=$0}; next}
-                       grab && indata && /<\/data>/{sub(/<\/data>.*/, ""); gsub(/[ \t\r]/, ""); print buf $0; indata=0; next}
-                       grab && indata {gsub(/[ \t\r]/, ""); buf = buf $0}' \
+                | python3 -c 'import plistlib, sys, base64; certs = plistlib.loads(sys.stdin.buffer.read()).get("DeveloperCertificates", []); [print(base64.b64encode(bytes(c)).decode()) for c in certs]' \
                 | while IFS= read -r der; do
                     printf '%s' "$der" | base64 --decode \
                       | openssl x509 -inform DER -noout -serial 2>/dev/null \
                       | sed 's/^serial=//' || true
                   done)
+              if [ -z "$PROFILE_SERIALS" ]; then
+                echo "::error::gh-1865 GUARD ERROR: extracted 0 certificate serials from the macOS provisioning profile (plist parse found no DeveloperCertificates entries). This is an EXTRACTION FAILURE, not a profile mismatch; refusing to compare against an empty list. Aborting."
+                exit 1
+              fi
               if ! printf '%s\n' "$PROFILE_SERIALS" | grep -qxF "$CERT_SERIAL"; then
                 echo "::error::gh-1865 fail-fast: the macOS provisioning profile ($PROFILE_NAME) does not contain the imported signing certificate (profile cert serials: $(printf '%s' "$PROFILE_SERIALS" | tr '\n' ' ')— imported identity serial: $CERT_SERIAL). Re-issue the profile under the current distribution certificate and update MACOS_PROVISIONING_PROFILE_BASE64. Aborting BEFORE the build."
                 exit 1

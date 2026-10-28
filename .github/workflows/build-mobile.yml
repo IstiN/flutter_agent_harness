@@ -996,11 +996,18 @@ jobs:
           # right after import and thread it into every signing call, so
           # resolution stays deterministic even with same-named duplicates
           # in the search list.
+          # r2 (v1.0.659 regression, runs 40637547059/40637547009): the
+          # distribution cert CLASS varies by issuance era — the iOS p12
+          # carries the legacy "iPhone Distribution:" CN, macOS legs the
+          # modern "Apple Distribution:" CN. Match the class set, never
+          # one literal name; the exactly-1 guard below still refuses
+          # ambiguous keychains (two classes in one keychain = 2 matches
+          # = loud abort, which is correct: that IS ambiguous).
           IDENT_LINE=$(security find-identity -v -p codesigning build.keychain \
-            | grep 'Apple Distribution' || true)
+            | grep -E 'Apple Distribution|iPhone Distribution|3rd Party Mac Developer Application' || true)
           IDENT_COUNT=$(printf '%s\n' "$IDENT_LINE" | grep -c . || true)
           if [ "$IDENT_COUNT" -ne 1 ]; then
-            echo "::error::gh-1865: expected exactly 1 'Apple Distribution' codesigning identity in build.keychain, found $IDENT_COUNT. Refusing to pick silently:"
+            echo "::error::gh-1865: expected exactly 1 distribution-class (Apple/iPhone) codesigning identity in build.keychain, found $IDENT_COUNT. Refusing to pick silently:"
             security find-identity -v -p codesigning build.keychain || true
             exit 1
           fi
@@ -1033,17 +1040,23 @@ jobs:
             | openssl x509 -noout -serial | sed 's/^serial=//')
           profile_contains_identity() {
             local label="$1" profile="$2" serials=""
+            # r2: parse with plistlib, not a text scan — security cms -D
+            # output may be a BINARY plist or carry inline <data> blobs
+            # (v1.0.659 run 40637547009: the awk scan saw zero
+            # DeveloperCertificates entries on the macOS profile and the
+            # precheck aborted a healthy build). plistlib handles every
+            # plist encoding; the base64/openssl tail is unchanged.
             serials=$(security cms -D -i "$profile" \
-              | awk '/<key>DeveloperCertificates<\/key>/{grab=1; next}
-                     grab && /<\/array>/{grab=0; next}
-                     grab && /<data>/{indata=1; buf=""; sub(/.*<data>/, ""); if ($0 != "") {gsub(/[ \t\r]/, ""); buf=$0}; next}
-                     grab && indata && /<\/data>/{sub(/<\/data>.*/, ""); gsub(/[ \t\r]/, ""); print buf $0; indata=0; next}
-                     grab && indata {gsub(/[ \t\r]/, ""); buf = buf $0}' \
+              | python3 -c 'import plistlib, sys, base64; certs = plistlib.loads(sys.stdin.buffer.read()).get("DeveloperCertificates", []); [print(base64.b64encode(bytes(c)).decode()) for c in certs]' \
               | while IFS= read -r der; do
                   printf '%s' "$der" | base64 --decode \
                     | openssl x509 -inform DER -noout -serial 2>/dev/null \
                     | sed 's/^serial=//' || true
                 done)
+            if [ -z "$serials" ]; then
+              echo "::error::gh-1865 GUARD ERROR: $label — extracted 0 certificate serials (plist parse found no DeveloperCertificates entries). This is an EXTRACTION FAILURE, not a profile mismatch; refusing to compare against an empty list. Aborting."
+              exit 1
+            fi
             if ! printf '%s\n' "$serials" | grep -qxF "$IOS_CERT_SERIAL"; then
               echo "::error::gh-1865 fail-fast: $label does not contain the imported signing certificate (profile cert serials: $(printf '%s' "$serials" | tr '\n' ' ')— imported identity serial: $IOS_CERT_SERIAL). Re-issue the profile under the current distribution certificate in the Apple Developer Portal and update the profile secret. Aborting BEFORE the archive (the ~24-minute gym failure class, gh-1865)."
               exit 1
