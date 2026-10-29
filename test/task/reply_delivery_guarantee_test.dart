@@ -284,6 +284,69 @@ void main() {
     });
 
     test(
+      'documented budget: 7999/8000 verbatim, 8001 envelope (AC1)',
+      () async {
+        // AC1 pins the boundary at the DOCUMENTED budget (8000), the exact
+        // shape of the incident (a 7909-char report under an 8000 budget).
+        for (final entry in const [
+          (n: 7999, overCap: false),
+          (n: 8000, overCap: false),
+          (n: 8001, overCap: true),
+        ]) {
+          final body = 'INCIDENT-${entry.n} ${_payload(entry.n)}'.substring(
+            0,
+            entry.n,
+          );
+          final h = await _harness(
+            rules: [
+              (
+                match: 'job',
+                turns: [
+                  _toolTurn('reply', {'message': body}),
+                  _textTurn('done'),
+                ],
+              ),
+            ],
+            maxReplyChars: 8000,
+          );
+          final result = await h.tool.execute(
+            {
+              'context': 'ctx',
+              'tasks': [
+                {'name': 'Big', 'task': 'job ${entry.n}'},
+              ],
+            },
+            null,
+            null,
+          );
+          final text = _text(result);
+          if (entry.overCap) {
+            expect(
+              text,
+              contains('deliverable complete'),
+              reason: '${entry.n} chars goes through the envelope',
+            );
+            expect(text, contains('agent://'));
+            final record = h.manager['Big']!.deliverables.single;
+            expect(h.outputs.get(record.outputId!), body);
+          } else {
+            expect(
+              text,
+              contains(body),
+              reason: '${entry.n} chars rides verbatim under the 8000 budget',
+            );
+            expect(h.manager['Big']!.deliverables, isEmpty);
+            expect(
+              h.manager['Big']!.lastReply,
+              body,
+              reason: 'the parent-visible record is byte-identical',
+            );
+          }
+        }
+      },
+    );
+
+    test(
       'no reply: the completed_without_reply notice names the final text',
       () async {
         final h = await _harness(
