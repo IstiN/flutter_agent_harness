@@ -2350,9 +2350,9 @@ void main() {
         request,
         requestBody,
       ) async {
-        body = jsonDecode(
-          await requestBody.bytesToString(),
-        ) as Map<String, dynamic>;
+        body =
+            jsonDecode(await requestBody.bytesToString())
+                as Map<String, dynamic>;
         return http.StreamedResponse(Stream.value(utf8.encode(okSse)), 200);
       });
       final stream = streamOpenAICompletions(
