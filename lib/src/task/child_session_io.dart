@@ -14,7 +14,7 @@ import '../session/session_repo.dart';
 import '../session/session_tree.dart';
 import '../session_io_retry.dart';
 import '../types.dart';
-import 'deliverables.dart' show deliverableToolNames;
+import 'deliverables.dart' show deliverableArtifactRecordType, deliverableToolNames;
 import 'subagent_manager.dart' show subagentRegistryRecordType;
 import 'subagent_tools.dart' show ChildMessageReader;
 
@@ -82,6 +82,26 @@ Future<List<Map<String, dynamic>>> subagentRegistryRows({
     });
   }
   return rows;
+}
+
+/// The durable deliverable artifact rows of a parent session (gh-1956,
+/// AC6): every spilled artifact persisted one `deliverable_artifact`
+/// custom record per row, read back by RAW file scan (the windowed boot
+/// open drops side-leaf custom records out of `getEntries` — the same
+/// restart-time loss the registry healed in issue #488). Rows restore in
+/// order; the capture's first-write-wins rule keeps a live spill newer.
+Future<List<Map<String, dynamic>>> deliverableArtifactRows({
+  required JsonlSessionRepo repo,
+  required SessionMetadata parent,
+}) async {
+  final records = await repo.readCustomRecordsOfType(parent, {
+    deliverableArtifactRecordType,
+  });
+  return [
+    for (final record in records)
+      if (record.data is Map<String, dynamic>)
+        record.data as Map<String, dynamic>,
+  ];
 }
 
 /// A [ChildMessageReader] over plain JSONL session files: reads the active

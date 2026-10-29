@@ -28,7 +28,11 @@
 /// (I6/E11).
 library;
 
-import '../prompts/prompts.g.dart' show taskReportSizeContractPrompt;
+import 'dart:async';
+import 'dart:convert';
+
+import '../prompts/prompts.g.dart'
+    show taskReportSizeContractPrompt, taskPureChunkContractPrompt;
 import '../types.dart' show ToolCall;
 import 'output_manager.dart';
 import 'subagent_manager.dart';
@@ -42,6 +46,20 @@ import 'subagent_manager.dart';
 /// inspected, persisted, or delivered by this path.
 const Set<String> deliverableToolNames = {'reply', 'agent_message'};
 
+/// The parent-session custom record type carrying one durable spilled
+/// artifact per record (gh-1956, AC6): a resumed session re-seeds its
+/// store from these rows, so an `agent://` pointer survives restart.
+const String deliverableArtifactRecordType = 'deliverable_artifact';
+
+/// Host sink for durability diagnostics (gh-1956 review): one line per
+/// failed best-effort artifact row (sink error, dropped row) so the AC6
+/// degradation is diagnosable post-mortem instead of discovered at a
+/// restart that fails to resolve a pointer. Null keeps the core silent
+/// (tests, embedders); hosts install it at the composition root — the CLI
+/// routes to fa.log + a dim console line, the app to AppLog (the
+/// `deliverySloSink` convention).
+void Function(String line)? deliverableDurabilityLog;
+
 /// What a recorded deliverable is: a stored artifact (over-cap body or
 /// salvaged partial text), an observed report chunk, or a final-manifest
 /// verdict.
@@ -51,6 +69,11 @@ enum DeliverableRecordKind { artifact, chunk, manifest }
 /// Rendered onto the parent's task result so the recipient sees explicit
 /// completeness and resolvable pointers.
 final class DeliverableRecord {
+  /// Creates an artifact record. [bytes] is optional for backward
+  /// compatibility: [DeliverableRecord] is barrel-exported public API of
+  /// a published package, and gh-1956 must not break external
+  /// constructors (gh-1956 review) — the harness-owned spill path always
+  /// supplies it, legacy callers render chars-only.
   DeliverableRecord.artifact({
     required this.childId,
     required this.outputId,
@@ -58,6 +81,7 @@ final class DeliverableRecord {
     this.reportId,
     this.partIndex,
     required this.chars,
+    this.bytes,
   }) : kind = DeliverableRecordKind.artifact,
        partCount = null,
        missingParts = const [],
@@ -73,6 +97,7 @@ final class DeliverableRecord {
     required this.chars,
   }) : kind = DeliverableRecordKind.chunk,
        status = null,
+       bytes = null,
        partCount = null,
        missingParts = const [],
        verdictNote = '',
@@ -92,6 +117,7 @@ final class DeliverableRecord {
        status = null,
        outputId = null,
        partIndex = null,
+       bytes = null,
        manifestVerdict = complete;
 
   final DeliverableRecordKind kind;
@@ -129,6 +155,12 @@ final class DeliverableRecord {
   /// chunk/manifest body.
   final int chars;
 
+  /// UTF-8 byte count of the stored artifact text (artifacts, gh-1956
+  /// completeness marker); null for chunk/manifest records and for
+  /// legacy external constructors built before gh-1956 (the field stays
+  /// optional — backward compatibility for the published API).
+  final int? bytes;
+
   /// Whether a manifest record ruled the report complete (all declared
   /// parts observed, none duplicated, none out of order).
   bool get manifestComplete => manifestVerdict ?? false;
@@ -149,11 +181,13 @@ final class DeliverableRecord {
   String _renderArtifact() {
     if (partIndex != null) {
       return 'report ${reportId!} part ${partIndex!} stored '
-          '(over budget): agent://$outputId ($chars chars)';
+          '(over budget): agent://$outputId '
+          '($chars chars${bytes == null ? '' : ', $bytes bytes'})';
     }
     return 'deliverable ${status!.name}'
         '${reportId == null ? '' : ' (report $reportId)'}: '
-        'agent://$outputId ($chars chars)';
+        'agent://$outputId '
+        '($chars chars${bytes == null ? '' : ', $bytes bytes'})';
   }
 
   String _renderChunk() =>
@@ -206,18 +240,37 @@ final class _ChunkLedger {
 /// `agent_message` tool descriptions and the child system prompt (Core
 /// flow C, AC5). [budget] is the live per-message character cap.
 ///
+/// With auto-spill on (the default, gh-1956) the contract teaches the
+/// automatic path — send one complete reply, the harness spills oversized
+/// reports to an `agent://` artifact — and demotes manual chunking to the
+/// fallback. With auto-spill off (`subagents.replyAutoSpill: false`) the
+/// pure-chunk contract restores the manual protocol as the ONLY path.
+///
 /// The LM-facing text lives in `prompts/task/report_size_contract.md`
+/// (spill on) and `prompts/task/pure_chunk_contract.md` (kill switch)
 /// (AGENTS.md: prompts live outside Dart code; edits regenerate
 /// `prompts.g.dart` and are drift-gated by `prompts_sync_test`). This
 /// wrapper is the single substitution seam for the dynamic budget.
-String deliverableChunkContract(int budget) =>
-    taskReportSizeContractPrompt.replaceAll('{{budget}}', '$budget');
+String deliverableChunkContract(int budget, {bool autoSpill = true}) =>
+    (autoSpill ? taskReportSizeContractPrompt : taskPureChunkContractPrompt)
+        .replaceAll('{{budget}}', '$budget');
 
 /// Harness-owned capture + redacting artifact writer + envelope builder
 /// for one session (issue #1829). Bound to the session's existing
 /// [AgentOutputStore] and [SubagentManager] (the `maxReplyChars` budget);
 /// wired by the task executor into the child tool surface and the agent
 /// loop's truncated-call hook.
+///
+/// gh-1956 (reply auto-spill): the spill path is the DEFAULT delivery for
+/// oversized reports — a child may call `reply` with whatever it has and
+/// the harness persists + refers. [autoSpill] is the kill-switch getter
+/// (`subagents.replyAutoSpill`; default on): when it returns false the
+/// capture stops spilling and manual chunking degrades to the fallback
+/// (pure-chunk behavior). [persistArtifact] / [restoreArtifacts] are the
+/// durable-artifact seam: every spill appends one restorable row through
+/// the sink (best-effort — a failed row never corrupts the in-session
+/// delivery), and [ensureRestored] re-seeds a resumed session's store so
+/// spilled artifacts survive parent resume and stay resolvable (AC6).
 final class DeliverableCapture {
   /// Creates a capture. [redact] is the pre-persistence gate (I3) — the
   /// same redaction pipeline tool results pass; null means the host runs
@@ -226,7 +279,13 @@ final class DeliverableCapture {
     required this.store,
     required this.manager,
     String Function(String text)? redact,
-  }) : _redact = redact;
+    bool Function()? autoSpill,
+    Future<void> Function(Map<String, dynamic> artifact)? persistArtifact,
+    Future<List<Map<String, dynamic>>> Function()? restoreArtifacts,
+  }) : _redact = redact,
+       _autoSpill = autoSpill,
+       _persistArtifact = persistArtifact,
+       _restoreArtifacts = restoreArtifacts;
 
   /// The session output store backing `agent://` resolution.
   final AgentOutputStore store;
@@ -236,6 +295,103 @@ final class DeliverableCapture {
   final SubagentManager manager;
 
   final String Function(String text)? _redact;
+
+  /// The kill-switch getter (gh-1956): null or true = auto-spill on (the
+  /// default); false = pure-chunk behavior restored.
+  final bool Function()? _autoSpill;
+
+  /// The durable-artifact sink: one append row per spill (best-effort).
+  final Future<void> Function(Map<String, dynamic> artifact)? _persistArtifact;
+
+  /// The durable-artifact source backing [ensureRestored] after a resume.
+  final Future<List<Map<String, dynamic>>> Function()? _restoreArtifacts;
+
+  /// Whether oversized replies auto-spill (the default path, gh-1956).
+  bool get spillEnabled => _autoSpill?.call() ?? true;
+
+  /// Whether [target] is a recipient an `agent://` spill pointer can
+  /// reach (a same-session handle or the parent inbox) — the E11 gate
+  /// the tools reuse to shape their fallback notices.
+  bool spillAppliesTo(String target) => _isSameSession(target);
+
+  /// Memoized restore (AC6): re-seeds the store from the durable rows
+  /// BEFORE the first spill or tool-driven delivery, so a resumed
+  /// session's ids stay reserved (a new spill can never clobber a
+  /// restored artifact). Idempotent; a failed source degrades to an
+  /// empty restore without breaking the capture.
+  Future<void>? _restoreFuture;
+
+  Future<void> ensureRestored() {
+    final source = _restoreArtifacts;
+    return _restoreFuture ??= source == null
+        ? Future<void>.value()
+        : _runRestore(source);
+  }
+
+  Future<void> _runRestore(
+    Future<List<Map<String, dynamic>>> Function() source,
+  ) async {
+    final List<Map<String, dynamic>> rows;
+    try {
+      rows = await source();
+    } on Object {
+      return; // Durability is best-effort (E5); the store stays usable.
+    }
+    for (final row in rows) {
+      final id = row['id'];
+      final content = row['content'];
+      if (id is! String || id.isEmpty || content is! String) continue;
+      final status = row['status'] == 'partial'
+          ? AgentArtifactStatus.partial
+          : AgentArtifactStatus.complete;
+      final childId = row['childId'];
+      final chars = row['chars'];
+      store.restoreOutput(
+        id,
+        content,
+        meta: AgentArtifactMeta(
+          status: status,
+          childId: childId is String ? childId : '',
+          reportId: row['reportId'] is String
+              ? row['reportId'] as String
+              : null,
+          chars: chars is int ? chars : content.length,
+          bytes: utf8.encode(content).length,
+        ),
+      );
+    }
+  }
+
+  /// Appends one durable row for a completed spill (best-effort: a
+  /// failed write is swallowed — the in-session artifact and its pointer
+  /// are already live; only the post-resume lifetime was lost).
+  void _persistRow(
+    String id,
+    String redacted,
+    AgentArtifactStatus status,
+    String childId,
+    String? reportId,
+  ) {
+    final sink = _persistArtifact;
+    if (sink == null) return;
+    unawaited(
+      sink({
+        'id': id,
+        'content': redacted,
+        'status': status.name,
+        'childId': childId,
+        'reportId': ?reportId,
+        'chars': redacted.length,
+      }).catchError((Object error) {
+        // Best-effort stays best-effort (the in-session artifact and its
+        // pointer are already live — AC3), but the durability loss is
+        // diagnosable post-mortem (gh-1956 review): one host line.
+        deliverableDurabilityLog?.call(
+          '[deliverables] artifact persist failed: $error',
+        );
+      }),
+    );
+  }
 
   /// The delivery budget (pointer and status overhead count toward it).
   int get cap => manager.maxReplyChars;
@@ -265,8 +421,14 @@ final class DeliverableCapture {
     bool checkEnvelopeFit = true,
   }) {
     final id = store.allocateId('$childId-$idBase');
+    // The UTF-8 byte count is computed ONCE here and threaded through
+    // every consumer (gh-1956 review): the fit check, the artifact meta,
+    // the record, and the status line all reuse it — never a second full
+    // O(n) encode of a 100 KB+ report per delivery.
+    final bytes = utf8.encode(redacted).length;
     if (checkEnvelopeFit) {
-      final overhead = _statusLine(status, id, redacted.length).length + 2;
+      final overhead =
+          _statusLine(status, id, redacted.length, bytes).length + 2;
       if (overhead >= cap) {
         throw StateError(
           'maxReplyChars ($cap) cannot hold a deliverable envelope '
@@ -276,15 +438,17 @@ final class DeliverableCapture {
       }
     }
     store.put(id, redacted);
-    store.recordArtifact(
-      id,
-      AgentArtifactMeta(
-        status: status,
-        childId: childId,
-        chars: redacted.length,
-        reportId: reportId,
-      ),
+    final meta = AgentArtifactMeta(
+      status: status,
+      childId: childId,
+      chars: redacted.length,
+      bytes: bytes,
+      reportId: reportId,
     );
+    store.recordArtifact(id, meta);
+    // gh-1956 AC6: one durable row per spill — best-effort, after the
+    // in-session artifact is live.
+    _persistRow(id, redacted, status, childId, reportId);
     return DeliverableRecord.artifact(
       childId: childId,
       outputId: id,
@@ -292,19 +456,27 @@ final class DeliverableCapture {
       reportId: reportId,
       partIndex: partIndex,
       chars: redacted.length,
+      bytes: bytes,
     );
   }
 
   /// The envelope status line for a stored deliverable (deterministic, so
-  /// the fit check can run BEFORE anything is persisted).
-  String _statusLine(AgentArtifactStatus status, String id, int chars) =>
-      switch (status) {
-        AgentArtifactStatus.complete =>
-          '[deliverable complete: agent://$id ($chars chars)]',
-        AgentArtifactStatus.partial =>
-          '[deliverable PARTIAL — salvaged from an output-truncated call: '
-              'agent://$id ($chars chars)]',
-      };
+  /// the fit check can run BEFORE anything is persisted). Carries the
+  /// completeness marker with the char AND byte count (gh-1956); [bytes]
+  /// arrives precomputed by the caller (gh-1956 review — one encode per
+  /// spill, not one per line).
+  String _statusLine(
+    AgentArtifactStatus status,
+    String id,
+    int chars,
+    int bytes,
+  ) => switch (status) {
+    AgentArtifactStatus.complete =>
+      '[deliverable complete: agent://$id ($chars chars, $bytes bytes)]',
+    AgentArtifactStatus.partial =>
+      '[deliverable PARTIAL — salvaged from an output-truncated call: '
+          'agent://$id ($chars chars, $bytes bytes)]',
+  };
 
   /// Core flow A for the `reply` channel: when [body] fits the budget,
   /// returns null (direct delivery, byte-identical, no artifact — AC1);
@@ -329,6 +501,10 @@ final class DeliverableCapture {
       reportId: cleanReportId,
       reportParts: reportParts,
     );
+    // gh-1956: spill gating happens BEFORE the size check — the kill
+    // switch (or a missing spill capability) falls through to the
+    // caller's legacy delivery with the chunk protocol as the fallback.
+    if (!spillEnabled) return null;
     if (body.length <= cap) return null;
     final redacted = _redactOrThrow(body);
     final record = _persist(
@@ -369,6 +545,10 @@ final class DeliverableCapture {
         return record;
       }
     }
+    // gh-1956: the spill gate sits before the size check — under the
+    // kill switch an over-cap part keeps the legacy bare cap and the
+    // tools teach the chunk fallback.
+    if (!spillEnabled) return null;
     if (body.length <= cap) return null;
     final redacted = _redactOrThrow(body);
     final record = _persist(
@@ -389,15 +569,25 @@ final class DeliverableCapture {
   /// field holds usable text (E2: empty/absent/malformed fields create no
   /// artifact). The failure itself always stands.
   ///
+  /// The loop awaits this hook, and it awaits the memoized
+  /// [ensureRestored] BEFORE the id-allocating persist (gh-1956 review):
+  /// every spill path — `reply`, `agent_message`, and the salvage hook
+  /// alike — re-seeds a resumed session's ids first, so a restored row can
+  /// never be shadowed by a same-id allocation racing the boot kick.
+  ///
   /// AC11 scope: [SubagentHandle.hadTruncatedDeliverable] means "an
   /// output-truncated DELIVERABLE call was recorded" — the flag is set
   /// only past the allowlist check, so a truncated `bash`/`read` call
   /// never produces a report-attempt claim in the tier-2 note.
-  void captureSalvaged(String childId, ToolCall call) {
+  Future<void> captureSalvaged(String childId, ToolCall call) async {
     if (!deliverableToolNames.contains(call.name)) return;
     manager[childId]?.hadTruncatedDeliverable = true;
     final text = call.arguments['message'];
     if (text is! String || text.trim().isEmpty) return;
+    // Restore-before-delivery covers the salvage path too (gh-1956
+    // review): await the memoized restore so the id allocator already
+    // holds the resumed ids when the partial artifact is persisted.
+    await ensureRestored();
     try {
       final redacted = _redactOrThrow(text);
       // No envelope fit check: a partial artifact is delivered via the
@@ -522,14 +712,46 @@ final class DeliverableCapture {
   /// surface, envelope included.
   String envelopeText(DeliverableRecord record) {
     final stored = store.get(record.outputId!)!;
+    // The byte count rides the record when the capture produced it (the
+    // only in-harness case); a legacy externally-built record falls back
+    // to one encode here.
+    final bytes = record.bytes ?? utf8.encode(stored).length;
     final statusLine = _statusLine(
       record.status!,
       record.outputId!,
       record.chars,
+      bytes,
     );
-    final excerptEnd = _safeExcerptEnd(stored, cap - statusLine.length - 2);
+    final excerptEnd = _naturalExcerptEnd(stored, cap - statusLine.length - 2);
     final excerpt = stored.substring(0, excerptEnd);
     return '$excerpt…\n$statusLine';
+  }
+
+  /// The excerpt end for the envelope: surrogate-pair safe (never a cut
+  /// mid-rune) and, when the text continues past the cut, ending at a
+  /// NATURAL boundary when one is nearby (gh-1956 edge case) — a
+  /// paragraph break (blank line) within a quarter of the budget, else
+  /// any line break within an eighth, else the bounded raw cut. The
+  /// windows guarantee at least 3/4 of the excerpt budget survives.
+  static int _naturalExcerptEnd(String text, int max) {
+    final hardEnd = _safeExcerptEnd(text, max);
+    if (hardEnd >= text.length) return hardEnd;
+    const paragraph = '\n\n';
+    const line = '\n';
+    final paragraphWindow = max >= 4 ? max >> 2 : 1;
+    final lineWindow = max >= 8 ? max >> 3 : 1;
+    // Paragraph first (the wider window), then any line break.
+    final paragraphAt = text.lastIndexOf(paragraph, hardEnd - 1);
+    if (paragraphAt > 0 && paragraphAt >= hardEnd - paragraphWindow) {
+      // End right after the paragraph's own newline: a complete
+      // paragraph, the blank line dropped from the excerpt.
+      return _safeExcerptEnd(text, paragraphAt + 1);
+    }
+    final lineAt = text.lastIndexOf(line, hardEnd - 1);
+    if (lineAt > 0 && lineAt >= hardEnd - lineWindow) {
+      return _safeExcerptEnd(text, lineAt);
+    }
+    return hardEnd;
   }
 
   /// The largest excerpt end ≤ [max] that does not split a surrogate pair.

@@ -13,6 +13,19 @@ block a release again.
 
 ## Unreleased
 
+- feat(gh-1956): reply auto-spill — oversized child `reply` / `agent_message`
+  payloads spill to an `agent://` artifact automatically; the parent receives a
+  bounded excerpt + pointer + completeness marker with char AND byte counts.
+  Manual chunking degrades to a documented fallback, restorable across parent
+  resume via durable `deliverable_artifact` records, behind the
+  `subagents.replyAutoSpill` kill switch (default on; honored on the CLI and
+  the app host alike). Rework round: the salvage hook (output-truncated
+  deliverable calls) restores the durable ids before allocating its own
+  (no post-resume pointer shadowing), durability losses emit a
+  `[deliverables]` diagnostic line, the app host honors the kill switch, the
+  spill-reach gate is renamed `spillAppliesTo` (was `spillApliesTo`), byte
+  counts are encoded once per spill, and `DeliverableRecord.artifact(bytes)`
+  is optional again so external constructors keep compiling.
 - fix(#1947): `schedule_message` from the orchestrator no longer misroutes
   into a finished subagent's mailbox. A background shell job started by a
   CHILD registered its settle continuation inside the child's subagent

@@ -205,6 +205,11 @@ const rootSpecs = <PromptSpec>[
     requiredToken: '{{budget}}',
   ),
   PromptSpec(
+    source: 'prompts/task/pure_chunk_contract.md',
+    constName: 'taskPureChunkContractPrompt',
+    requiredToken: '{{budget}}',
+  ),
+  PromptSpec(
     source: 'prompts/task/agent_explore.md',
     constName: 'taskAgentExplorePrompt',
   ),

@@ -1405,11 +1405,13 @@ final class CliConfig {
     buffer.write(_sessionsYaml());
     buffer.write(_projectContextYaml());
     buffer.write(_agentSectionYaml());
-    // The subagents heartbeat section (issue #383), only when explicitly
-    // configured; defaults are never written so the file stays minimal.
+    // The subagents section (issue #383 heartbeat, gh-1956 spill
+    // switch), only when explicitly configured; defaults are never
+    // written so the file stays minimal.
     final subagentsConfig = subagents;
     if (subagentsConfig.heartbeatMinutes != defaultSubagentHeartbeatMinutes ||
-        subagentsConfig.stallMinutes != defaultSubagentStallMinutes) {
+        subagentsConfig.stallMinutes != defaultSubagentStallMinutes ||
+        subagentsConfig.replyAutoSpill != defaultReplyAutoSpill) {
       buffer.write(subagentsConfig.toYaml());
     }
     buffer.write(_jobsYaml());

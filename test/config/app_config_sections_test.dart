@@ -18,8 +18,9 @@ import 'package:yaml/yaml.dart';
 YamlMap _doc(String text) => loadYaml(text) as YamlMap;
 
 const _allPresent = ToolCapability.available();
-Map<String, ToolCapability> _caps() =>
-    {for (final id in knownToolIds) id: _allPresent};
+Map<String, ToolCapability> _caps() => {
+  for (final id in knownToolIds) id: _allPresent,
+};
 
 void main() {
   group('UT-1 tools scope stack', () {
@@ -49,9 +50,12 @@ void main() {
           'web_search': const ToolCapability.absent('not wired'),
         },
         scopes: [
-          (ToolScope.global, parseAppConfigSections(
-            userDoc: _doc('tools:\n  web_search: true\n'),
-          ).userTools),
+          (
+            ToolScope.global,
+            parseAppConfigSections(
+              userDoc: _doc('tools:\n  web_search: true\n'),
+            ).userTools,
+          ),
         ],
       );
       expect(floored.byId['web_search']!.enabled, isFalse);
@@ -110,7 +114,9 @@ void main() {
       // Everything enabled beyond the base is demoted (and discovery is
       // off in pi, so the gate mounts exactly the benchmark base).
       expect(
-        enabled.difference(piEssential).every(resolution.discoverableIds.contains),
+        enabled
+            .difference(piEssential)
+            .every(resolution.discoverableIds.contains),
         isTrue,
       );
       expect(discoveryEnabledByLoadMode[AgentLoadMode.pi], isFalse);
@@ -236,8 +242,7 @@ void main() {
       expect(app.warnings, isEmpty);
     });
 
-    test('a non-string agent.mode warns and keeps the default (round-1)',
-        () {
+    test('a non-string agent.mode warns and keeps the default (round-1)', () {
       final app = parseAppConfigSections(userDoc: _doc('agent:\n  mode: 42\n'));
       expect(app.loadMode, AgentLoadMode.defaultMode);
       expect(app.warnings.single, contains('agent.mode'));
@@ -257,6 +262,56 @@ void main() {
       expect(app.roles, isNull);
       expect(app.warnings.single, contains('expected a map'));
       expect(app.warnings.single, contains('~/.fah/config.yaml'));
+    });
+  });
+
+  group('subagents section (gh-1956 kill switch, review round 1)', () {
+    test('a present section parses through the CLI parser', () {
+      final app = parseAppConfigSections(
+        userDoc: _doc(
+          'subagents:\n'
+          '  heartbeatMinutes: 0\n'
+          '  stallMinutes: 45\n'
+          '  replyAutoSpill: false\n',
+        ),
+      );
+      expect(app.subagents, isNotNull);
+      expect(app.subagents!.heartbeatMinutes, 0);
+      expect(app.subagents!.stallMinutes, 45);
+      // THE kill switch: false must survive the parse — the app host
+      // consults it, exactly like the CLI (the review's config-honesty
+      // gap: `subagents.replyAutoSpill: false` silently no-op'd here).
+      expect(app.subagents!.replyAutoSpill, isFalse);
+      expect(app.warnings, isEmpty);
+    });
+
+    test('an absent section reads as absent (defaults)', () {
+      final app = parseAppConfigSections(userDoc: _doc('provider: x\n'));
+      expect(app.subagents, isNull);
+      expect(app.warnings, isEmpty);
+    });
+
+    test('a non-map section warns and falls back to defaults (AC7)', () {
+      final app = parseAppConfigSections(userDoc: _doc('subagents: 42\n'));
+      expect(app.subagents, isNull);
+      expect(app.warnings.single, contains('subagents'));
+      expect(app.warnings.single, contains('~/.fah/config.yaml'));
+    });
+
+    test('an unknown key warns and falls back to defaults (AC7)', () {
+      final app = parseAppConfigSections(
+        userDoc: _doc('subagents:\n  heartbeats: 5\n'),
+      );
+      expect(app.subagents, isNull);
+      expect(app.warnings.single, contains('subagents'));
+    });
+
+    test('a bad value type warns and falls back to defaults (AC7)', () {
+      final app = parseAppConfigSections(
+        userDoc: _doc('subagents:\n  replyAutoSpill: "yes"\n'),
+      );
+      expect(app.subagents, isNull);
+      expect(app.warnings.single, contains('replyAutoSpill'));
     });
   });
 }
