@@ -510,7 +510,9 @@ factual: paths, commands, invariants — no essays.
   (`TaskExecutor.resultPublisher` → `publishResumed`): the resumed final
   answer replaces the stored `agent://<id>` output, and a reply acked in
   a killed previous life is carried onto the resume as a resolvable
-  artifact (`carryPendingReply` + `DeliverableCapture.persistCarriedReply`)
+  artifact (`peekPendingReply` → `DeliverableCapture.persistCarriedReply`
+  → `clearPendingReply` — the handle clears only after the artifact is
+  durable, so a failed carry leaves the reply resumable)
   — never silence. gh-1948: the executor flushes each
   child's transcript at every turn boundary (the JSONL exists and grows
   mid-run), and `task_observe` resolves a placeholder-handle child

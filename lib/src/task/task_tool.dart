@@ -219,10 +219,13 @@ final RegExp _envelopeMarkerLine = RegExp(
 /// best-effort sanitizing of model-facing text, not a security boundary
 /// (the child's final message rides the same-trust channel raw).
 String _defuseEnvelopeMarkers(String body) {
-  return body.split('\n').map((line) {
-    if (!_envelopeMarkerLine.hasMatch(line)) return line;
-    return line.replaceAll('[', '').replaceAll(']', '');
-  }).join('\n');
+  return body
+      .split('\n')
+      .map((line) {
+        if (!_envelopeMarkerLine.hasMatch(line)) return line;
+        return line.replaceAll('[', '').replaceAll(']', '');
+      })
+      .join('\n');
 }
 
 /// The deliverable pointer block shared by the blocking and background

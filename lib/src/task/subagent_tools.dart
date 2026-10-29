@@ -603,8 +603,8 @@ AgentTool _replyTool(
               id,
               envelope,
               'reply delivered to the parent via artifact '
-                  'agent://${record.outputId} (${record.status!.name}, '
-                  '${record.chars} chars)',
+              'agent://${record.outputId} (${record.status!.name}, '
+              '${record.chars} chars)',
             );
           }
         } on StateError catch (error) {
