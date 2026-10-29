@@ -1075,12 +1075,15 @@ factual: paths, commands, invariants — no essays.
   secret-request sheets, the
   transcript message tile (`chat_message_tile.dart`), the composer
   (`chat_composer.dart` — file/gallery/camera picking through the
-  `FaChatHost.uploadPicker`/`galleryPicker`/`cameraPicker` hooks, voice
+  `FaChatHost.uploadPicker`/`galleryPicker`/`cameraPicker` hooks — the
+  upload hook is the any-type multi-select system picker on every platform
+  (issue #1979), voice
   input through `FaChatHost.voiceInput`; desktop keys: Enter sends and
   Shift+Enter inserts a newline (issue #973 — the Focus ancestor swallows
   plain Enter before the IME turns it into a break; the touch return key
-  keeps its IME newline path), Cmd/Ctrl+V is smart paste — a clipboard image
-  (via the `FaChatHost.clipboardImageReader` hook) or long/multi-line text
+  keeps its IME newline path), Cmd/Ctrl+V is smart paste — clipboard FILES
+  (type-aware via the `FaChatHost.clipboardReader` hook: copied file refs,
+  audio/video, images — issue #1979) or long/multi-line text
   is staged as an `uploads/` attachment chip, short single-line text pastes
   inline), and the single-service chat
   screen (`fa_chat_screen.dart` — `FaChatScreen(service:, features:,
@@ -1195,14 +1198,17 @@ factual: paths, commands, invariants — no essays.
 - `flutter_app/lib/ui/widgets/chat_composer.dart` (ADAPTER over
   `packages/fa_ui/lib/src/chat/chat_composer.dart`) — keeps the app's
   constructor surface (`AgentService` + injectable `uploadPicker`/`asr`/
-  `asrTranscriber`/`clipboardImageReader` test fakes) and bridges it to the
-  shared composer's hooks: the `UploadPicker` becomes a `FaChatUploadPicker`,
+  `asrTranscriber`/`clipboardReader` test fakes) and bridges it to the
+  shared composer's hooks: the `UploadPicker` becomes a `FaChatUploadPicker`
+  (native any-type multi-select chooser via `file_selector` on iOS/Android/
+  desktop, the `<input type=file multiple>` on web — issue #1979),
   gallery/camera come from `image_picker`, the ASR stack is wrapped in a
   `FaChatVoiceInput` (transcriber resolved per take via the session's
   media gateway, falling back to the active provider), and the smart-paste
-  clipboard image probe rides `pasteboard` (`Pasteboard.image` → PNG bytes;
-  native plugin — the desktop/mobile apps need a REBUILD, not a hot reload,
-  to register it).
+  clipboard probe is type-aware via `super_clipboard`
+  (`services/clipboard_uploads.dart`: file refs > audio/video/pdf >
+  images; native plugin — the desktop/mobile apps need a REBUILD, not a hot
+  reload, to register it).
 - `flutter_app/lib/ui/screens/app_launcher_screen.dart` — THE app home on
   every layout (`faHomeScreen` in main.dart always returns it; the classic
   sidebar chat home is legacy and `session_sidebar.dart` no longer exists —

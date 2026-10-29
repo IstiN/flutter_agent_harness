@@ -6,12 +6,13 @@ import 'package:fa_ui/fa_ui.dart' as fa_ui;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:pasteboard/pasteboard.dart';
 
 import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/asr_service.dart';
+import 'package:fa/services/clipboard_uploads.dart';
 import 'package:fa/services/upload.dart';
 import 'package:fa/services/upload_picker_stub.dart'
+    if (dart.library.io) 'package:fa/services/upload_picker_io.dart'
     if (dart.library.html) 'package:fa/services/upload_picker_web.dart';
 
 /// The chat composer: attachment chips + staging into the sandbox `uploads/`
@@ -29,7 +30,7 @@ class ChatComposer extends StatelessWidget {
     this.uploadPicker,
     this.asr,
     this.asrTranscriber,
-    this.clipboardImageReader = _readClipboardImage,
+    this.clipboardReader = readClipboardUploads,
     this.dropBridge,
     this.leadingBuilder,
     this.hideMicWhenNotEmpty = false,
@@ -56,9 +57,10 @@ class ChatComposer extends StatelessWidget {
   /// inject a fake.
   final AsrTranscriber? asrTranscriber;
 
-  /// Clipboard image probe for smart paste (Cmd/Ctrl+V). Defaults to the
-  /// super_clipboard-backed reader; tests inject a fake or null.
-  final fa_ui.FaClipboardImageReader? clipboardImageReader;
+  /// Clipboard file reader for smart paste (files / audio / video /
+  /// images — issue #1979). Defaults to the super_clipboard-backed
+  /// [readClipboardUploads]; tests inject a fake or null.
+  final fa_ui.FaClipboardReader? clipboardReader;
 
   /// OS drag-and-drop over the chat surface (issue #465): the screen's
   /// [fa_ui.FaChatDropBridge] lands here so dropped files stage as the
@@ -115,7 +117,7 @@ class ChatComposer extends StatelessWidget {
         asr: asr,
         transcriber: asrTranscriber,
       ),
-      clipboardImageReader: clipboardImageReader,
+      clipboardReader: clipboardReader,
       dropBridge: dropBridge,
       leadingBuilder: leadingBuilder,
       hideMicWhenNotEmpty: hideMicWhenNotEmpty,
@@ -126,6 +128,9 @@ class ChatComposer extends StatelessWidget {
     );
   }
 
+  /// The picker for gallery/camera images stays [ImagePicker] (existing
+  /// REG surface — issue #1979 AC6); arbitrary files ride the native
+  /// [UploadPicker] above.
   static Future<List<fa_ui.FaChatUploadFile>> _pickImage(
     ImageSource source,
   ) async {
@@ -140,29 +145,6 @@ class ChatComposer extends StatelessWidget {
       ),
     ];
   }
-
-  /// Smart paste's image probe (the YoLoIT ClipboardFileService pattern):
-  /// reads image bytes off the system pasteboard, null when it holds no
-  /// image. Returns a generated name — the composer's staging turns it into
-  /// an `uploads/` chip.
-  static Future<fa_ui.FaChatUploadFile?> _readClipboardImage() async {
-    Uint8List? bytes;
-    try {
-      bytes = await Pasteboard.image;
-    } on Object {
-      // Clipboard access is best effort — a failure just means "no image".
-    }
-    if (!_hasClipboardImage(bytes)) return null;
-    // The issue contract's synthesized paste name (issue #465).
-    final name = 'paste-${DateTime.now().millisecondsSinceEpoch}.png';
-    // The guard above proves the bytes non-null; the predicate form just
-    // defeats promotion.
-    return (name: name, bytes: bytes!, mimeType: mimeTypeForUploadName(name));
-  }
-
-  /// Null/empty pasteboard — no image to paste (gh-1848 split).
-  static bool _hasClipboardImage(Uint8List? bytes) =>
-      bytes != null && bytes.isNotEmpty;
 }
 
 /// [fa_ui.FaChatVoiceInput] over the app's [AsrApi] + [AsrTranscriber]

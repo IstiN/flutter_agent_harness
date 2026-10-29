@@ -11,6 +11,7 @@ PODS:
     - FlutterMacOS
   - desktop_drop (0.0.1):
     - FlutterMacOS
+  - device_info_plus (0.0.1)
   - file_selector_macos (0.0.1):
     - FlutterMacOS
   - Firebase/CoreOnly (12.15.0):
@@ -139,6 +140,7 @@ PODS:
     - GoogleUtilities/Privacy
   - GoogleUtilities/UserDefaults (8.1.2):
     - GoogleUtilities/Logger
+  - irondash_engine_context (0.0.1)
     - GoogleUtilities/Privacy
   - large_file_handler (0.5.0):
     - FlutterMacOS
@@ -148,14 +150,13 @@ PODS:
   - nanopb/decode (3.30910.0)
   - nanopb/encode (3.30910.0)
   - OrderedSet (6.0.3)
-  - pasteboard (0.0.1):
-    - FlutterMacOS
   - PromisesObjC (2.4.1)
   - PromisesSwift (2.4.1):
     - PromisesObjC (= 2.4.1)
   - shared_preferences_foundation (0.0.1):
     - Flutter
     - FlutterMacOS
+  - super_native_extensions (0.0.1)
   - url_launcher_macos (0.0.1):
     - FlutterMacOS
   - video_player_avfoundation (0.0.1):
@@ -172,6 +173,7 @@ DEPENDENCIES:
   - connectivity_plus (from `Flutter/ephemeral/.symlinks/plugins/connectivity_plus/macos`)
   - cupertino_http (from `Flutter/ephemeral/.symlinks/plugins/cupertino_http/darwin`)
   - desktop_drop (from `Flutter/ephemeral/.symlinks/plugins/desktop_drop/macos`)
+  - device_info_plus (from `Flutter/ephemeral/.symlinks/plugins/device_info_plus/macos`)
   - file_selector_macos (from `Flutter/ephemeral/.symlinks/plugins/file_selector_macos/macos`)
   - firebase_analytics (from `Flutter/ephemeral/.symlinks/plugins/firebase_analytics/macos`)
   - firebase_core (from `Flutter/ephemeral/.symlinks/plugins/firebase_core/macos`)
@@ -179,10 +181,11 @@ DEPENDENCIES:
   - flutter_gemma (from `Flutter/ephemeral/.symlinks/plugins/flutter_gemma/macos`)
   - flutter_inappwebview_macos (from `Flutter/ephemeral/.symlinks/plugins/flutter_inappwebview_macos/macos`)
   - flutter_js (from `Flutter/ephemeral/.symlinks/plugins/flutter_js/macos`)
+  - irondash_engine_context (from `Flutter/ephemeral/.symlinks/plugins/irondash_engine_context/macos`)
   - FlutterMacOS (from `Flutter/ephemeral`)
   - large_file_handler (from `Flutter/ephemeral/.symlinks/plugins/large_file_handler/macos`)
-  - pasteboard (from `Flutter/ephemeral/.symlinks/plugins/pasteboard/macos`)
   - shared_preferences_foundation (from `Flutter/ephemeral/.symlinks/plugins/shared_preferences_foundation/darwin`)
+  - super_native_extensions (from `Flutter/ephemeral/.symlinks/plugins/super_native_extensions/macos`)
   - url_launcher_macos (from `Flutter/ephemeral/.symlinks/plugins/url_launcher_macos/macos`)
   - video_player_avfoundation (from `Flutter/ephemeral/.symlinks/plugins/video_player_avfoundation/darwin`)
   - wasm_run_flutter (from `Flutter/ephemeral/.symlinks/plugins/wasm_run_flutter/macos`)
@@ -218,6 +221,8 @@ EXTERNAL SOURCES:
     :path: Flutter/ephemeral/.symlinks/plugins/cupertino_http/darwin
   desktop_drop:
     :path: Flutter/ephemeral/.symlinks/plugins/desktop_drop/macos
+  device_info_plus:
+    :path: Flutter/ephemeral/.symlinks/plugins/device_info_plus/macos
   file_selector_macos:
     :path: Flutter/ephemeral/.symlinks/plugins/file_selector_macos/macos
   firebase_analytics:
@@ -232,14 +237,16 @@ EXTERNAL SOURCES:
     :path: Flutter/ephemeral/.symlinks/plugins/flutter_inappwebview_macos/macos
   flutter_js:
     :path: Flutter/ephemeral/.symlinks/plugins/flutter_js/macos
+  irondash_engine_context:
+    :path: Flutter/ephemeral/.symlinks/plugins/irondash_engine_context/macos
   FlutterMacOS:
     :path: Flutter/ephemeral
   large_file_handler:
     :path: Flutter/ephemeral/.symlinks/plugins/large_file_handler/macos
-  pasteboard:
-    :path: Flutter/ephemeral/.symlinks/plugins/pasteboard/macos
   shared_preferences_foundation:
     :path: Flutter/ephemeral/.symlinks/plugins/shared_preferences_foundation/darwin
+  super_native_extensions:
+    :path: Flutter/ephemeral/.symlinks/plugins/super_native_extensions/macos
   url_launcher_macos:
     :path: Flutter/ephemeral/.symlinks/plugins/url_launcher_macos/macos
   video_player_avfoundation:
@@ -255,6 +262,7 @@ SPEC CHECKSUMS:
   connectivity_plus: 4adf20a405e25b42b9c9f87feff8f4b6fde18a4e
   cupertino_http: 94ac07f5ff090b8effa6c5e2c47871d48ab7c86c
   desktop_drop: 10a3e6a7fa9dbe350541f2574092fecfa345a07b
+  device_info_plus: 151d28eae369ff96afc51735969dfeba67753105
   file_selector_macos: 9e9e068e90ebee155097d00e89ae91edb2374db7
   Firebase: a8539b633d474fbeb654c7043f9c1649e274045b
   firebase_analytics: 1383420e89f6889446bf5431bbe3d6a10eabe478
@@ -270,6 +278,7 @@ SPEC CHECKSUMS:
   FirebaseSessions: acfe7eadca47cda94ac86592737204581bb1abf6
   flutter_gemma: d80c502d5c56e4e11fb8d8fd9a8b77a69f1d3377
   flutter_inappwebview_macos: 1645dd2c15c336b608f55b58b7ba6c864a915aef
+  irondash_engine_context: 9001e6242851e626882191d37fad4147e69aca91
   flutter_js: 79c3c70d33ba464c67d8eb88639a61aa718cd8b8
   FlutterMacOS: c232990155153907050900a2e175c7773903ba4e
   GoogleAppMeasurement: a6d37949071d456e9147dac6789c4342e0e7a8c5
@@ -278,9 +287,9 @@ SPEC CHECKSUMS:
   large_file_handler: b337fef756ae925be9c28112a81c7c4275d91c45
   nanopb: fad817b59e0457d11a5dfbde799381cd727c1275
   OrderedSet: e539b66b644ff081c73a262d24ad552a69be3a94
-  pasteboard: b594eaf838d930b276d7a35a44a32b4f489170cb
   PromisesObjC: 752c3227f599e3467650e47ea36f433eeb10c273
   PromisesSwift: 217dea0fd5d2ad65222a109c48698add13cc1c5b
+  super_native_extensions: 442ca8de1f41f7368aa007ed5892059e0af25563
   shared_preferences_foundation: 7036424c3d8ec98dfe75ff1667cb0cd531ec82bb
   url_launcher_macos: f87a979182d112f911de6820aefddaf56ee9fbfd
   video_player_avfoundation: 3453f792138786248960ca029747fcd9f318ef52

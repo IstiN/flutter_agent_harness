@@ -44,8 +44,7 @@ AgentService _fakeService(ExecutionEnv env) {
       ),
       systemPrompt: 'You are Fa.',
       streamFunction: (model, context, {cancelToken}) {
-        final stream = AssistantMessageEventStream()
-          ..end();
+        final stream = AssistantMessageEventStream()..end();
         return stream;
       },
       toolRegistry: ToolRegistry(const []),
@@ -99,9 +98,10 @@ void main() {
       theme: light ? buildFahThemeLight() : null,
       wrap: (child) => child,
     );
-    final text = List.generate(lines, (i) => 'composer line ${i + 1}').join(
-      '\n',
-    );
+    final text = List.generate(
+      lines,
+      (i) => 'composer line ${i + 1}',
+    ).join('\n');
     await tester.enterText(find.byType(TextField), text);
     // The mic↔send swap runs through an AnimatedSwitcher; settle it.
     await tester.pumpAndSettle();
@@ -164,10 +164,12 @@ void main() {
 
     // A deterministic 1x1 red PNG (valid IHDR/IDAT, decodes to fixed
     // pixels, no host/network involved).
-    final png = Uint8List.fromList(base64Decode(
-      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4'
-      'z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC',
-    ));
+    final png = Uint8List.fromList(
+      base64Decode(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4'
+        'z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC',
+      ),
+    );
     // AC5 contract: paste-staged and picker-staged chips are the same
     // widget fed by the same pending-attachment state.
     Future<void> pumpChipState(
@@ -181,12 +183,14 @@ void main() {
           body: app.ChatComposer(
             service: _fakeService(MemoryExecutionEnv()),
             uploadPicker: viaPaste ? null : _FixedPicker(png),
-            clipboardImageReader: viaPaste
-                ? () async => (
-                    name: 'pasted.png',
-                    bytes: Uint8List.fromList(png),
-                    mimeType: 'image/png',
-                  )
+            clipboardReader: viaPaste
+                ? () async => [
+                    (
+                      name: 'pasted.png',
+                      bytes: Uint8List.fromList(png),
+                      mimeType: 'image/png',
+                    ),
+                  ]
                 : null,
           ),
         ),
