@@ -399,8 +399,11 @@ class Agent {
   /// threaded into every [AgentLoopConfig]. The task executor wires the
   /// deliverable capture here so a truncated `reply`/`agent_message` body
   /// survives as a partial artifact; the calls themselves stay failed
-  /// unexecuted. Mutable like the other late-wirable knobs.
-  void Function(ToolCall call)? onTruncatedToolCall;
+  /// unexecuted. Mutable like the other late-wirable knobs. The loop
+  /// awaits the observer (gh-1956 review): the capture's salvage persist
+  /// must finish its restore-before-id-allocation dance before the
+  /// failure result is emitted.
+  Future<void> Function(ToolCall call)? onTruncatedToolCall;
 
   /// Stuck-call supervision (gh-1054), threaded into every
   /// [AgentLoopConfig]: liveness heartbeats for long-running tool calls
