@@ -352,8 +352,11 @@ void main() {
       final compactedAt = w.stream.contexts.indexWhere(
         (c) => _ScriptedStream.lastUserText(c).contains('ckpt'),
       );
-      expect(compactedAt, greaterThanOrEqualTo(1),
-          reason: 'the compaction fired at the very first boundary');
+      expect(
+        compactedAt,
+        greaterThanOrEqualTo(1),
+        reason: 'the compaction fired at the very first boundary',
+      );
       expect(
         w.stream.calls,
         greaterThanOrEqualTo(compactedAt + 1),

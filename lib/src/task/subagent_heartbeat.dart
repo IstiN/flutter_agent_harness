@@ -80,9 +80,11 @@ final class SubagentsConfig {
       throw ConfigException('"subagents.replyAutoSpill" must be a boolean');
     }
     for (final key in node.keys) {
-      if (!{'heartbeatMinutes', 'stallMinutes', 'replyAutoSpill'}.contains(
-        '$key',
-      )) {
+      if (!{
+        'heartbeatMinutes',
+        'stallMinutes',
+        'replyAutoSpill',
+      }.contains('$key')) {
         throw ConfigException('unknown "subagents" key: $key');
       }
     }
@@ -92,8 +94,7 @@ final class SubagentsConfig {
         defaultSubagentHeartbeatMinutes,
       ),
       stallMinutes: parse('stallMinutes', defaultSubagentStallMinutes),
-      replyAutoSpill:
-          spillValue as bool? ?? defaultReplyAutoSpill,
+      replyAutoSpill: spillValue as bool? ?? defaultReplyAutoSpill,
     );
   }
 

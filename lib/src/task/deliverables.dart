@@ -235,9 +235,7 @@ final class _ChunkLedger {
 /// `prompts.g.dart` and are drift-gated by `prompts_sync_test`). This
 /// wrapper is the single substitution seam for the dynamic budget.
 String deliverableChunkContract(int budget, {bool autoSpill = true}) =>
-    (autoSpill
-            ? taskReportSizeContractPrompt
-            : taskPureChunkContractPrompt)
+    (autoSpill ? taskReportSizeContractPrompt : taskPureChunkContractPrompt)
         .replaceAll('{{budget}}', '$budget');
 
 /// Harness-owned capture + redacting artifact writer + envelope builder
@@ -286,8 +284,7 @@ final class DeliverableCapture {
   final bool Function()? _autoSpill;
 
   /// The durable-artifact sink: one append row per spill (best-effort).
-  final Future<void> Function(Map<String, dynamic> artifact)?
-  _persistArtifact;
+  final Future<void> Function(Map<String, dynamic> artifact)? _persistArtifact;
 
   /// The durable-artifact source backing [ensureRestored] after a resume.
   final Future<List<Map<String, dynamic>>> Function()? _restoreArtifacts;
@@ -309,10 +306,9 @@ final class DeliverableCapture {
 
   Future<void> ensureRestored() {
     final source = _restoreArtifacts;
-    return _restoreFuture ??=
-        source == null
-            ? Future<void>.value()
-            : _runRestore(source);
+    return _restoreFuture ??= source == null
+        ? Future<void>.value()
+        : _runRestore(source);
   }
 
   Future<void> _runRestore(
@@ -339,7 +335,9 @@ final class DeliverableCapture {
         meta: AgentArtifactMeta(
           status: status,
           childId: childId is String ? childId : '',
-          reportId: row['reportId'] is String ? row['reportId'] as String : null,
+          reportId: row['reportId'] is String
+              ? row['reportId'] as String
+              : null,
           chars: chars is int ? chars : content.length,
           bytes: utf8.encode(content).length,
         ),
@@ -400,9 +398,8 @@ final class DeliverableCapture {
   }) {
     final id = store.allocateId('$childId-$idBase');
     if (checkEnvelopeFit) {
-      final overhead = _statusLine(status, id, redacted.length, redacted)
-          .length +
-          2;
+      final overhead =
+          _statusLine(status, id, redacted.length, redacted).length + 2;
       if (overhead >= cap) {
         throw StateError(
           'maxReplyChars ($cap) cannot hold a deliverable envelope '

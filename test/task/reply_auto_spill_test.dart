@@ -78,7 +78,11 @@ final class _FakeFabric implements MessagingRepository {
   Future<List<MailboxEntry>> directory() async => const [];
 }
 
-({SubagentManager manager, AgentOutputStore store, Map<String, AgentTool> tools})
+({
+  SubagentManager manager,
+  AgentOutputStore store,
+  Map<String, AgentTool> tools,
+})
 _toolsRig({
   int cap = 200,
   bool Function()? autoSpill,
@@ -153,46 +157,52 @@ void main() {
   });
 
   group('reply tool — graceful chunk fallback without artifact storage', () {
-    test('over-cap reply with the kill switch delivers truncated + notice', () async {
-      final rig = _toolsRig(cap: 100, autoSpill: () => false);
-      final result = await rig.tools['reply']!.execute(
-        {'message': 'z' * 500},
-        null,
-        null,
-      );
-      final ack = _text(result);
-      // Truthful: names the truncation, never claims artifact delivery.
-      expect(ack, contains('truncated'));
-      expect(ack, contains('100'));
-      expect(ack, isNot(contains('agent://')));
-      expect(ack, contains('agent_message'));
-      // Legacy bare cap applies to the recorded reply (pure-chunk restore).
-      expect(rig.manager['kid']!.lastReply, startsWith('z' * 100));
-      expect(rig.manager['kid']!.lastReply, contains('…[truncated]'));
-      expect(rig.store.availableIds, isEmpty);
-    });
+    test(
+      'over-cap reply with the kill switch delivers truncated + notice',
+      () async {
+        final rig = _toolsRig(cap: 100, autoSpill: () => false);
+        final result = await rig.tools['reply']!.execute(
+          {'message': 'z' * 500},
+          null,
+          null,
+        );
+        final ack = _text(result);
+        // Truthful: names the truncation, never claims artifact delivery.
+        expect(ack, contains('truncated'));
+        expect(ack, contains('100'));
+        expect(ack, isNot(contains('agent://')));
+        expect(ack, contains('agent_message'));
+        // Legacy bare cap applies to the recorded reply (pure-chunk restore).
+        expect(rig.manager['kid']!.lastReply, startsWith('z' * 100));
+        expect(rig.manager['kid']!.lastReply, contains('…[truncated]'));
+        expect(rig.store.availableIds, isEmpty);
+      },
+    );
 
-    test('over-cap reply without a capture degrades to the same notice', () async {
-      final bare = SubagentManager(parentSessionId: 'p', maxReplyChars: 100);
-      bare.register(id: 'kid', name: 'kid', agentType: 'task', task: 't');
-      // Host without artifact storage: no capture provider wired at all.
-      final tools = {
-        for (final t in subagentMonitoringTools(
-          manager: bare,
-          currentSubagentId: () => 'kid',
-        ))
-          t.name: t,
-      };
-      final result = await tools['reply']!.execute(
-        {'message': 'z' * 500},
-        null,
-        null,
-      );
-      final ack = _text(result);
-      expect(ack, contains('truncated'));
-      expect(ack, contains('agent_message'));
-      expect(ack, isNot(contains('agent://')));
-    });
+    test(
+      'over-cap reply without a capture degrades to the same notice',
+      () async {
+        final bare = SubagentManager(parentSessionId: 'p', maxReplyChars: 100);
+        bare.register(id: 'kid', name: 'kid', agentType: 'task', task: 't');
+        // Host without artifact storage: no capture provider wired at all.
+        final tools = {
+          for (final t in subagentMonitoringTools(
+            manager: bare,
+            currentSubagentId: () => 'kid',
+          ))
+            t.name: t,
+        };
+        final result = await tools['reply']!.execute(
+          {'message': 'z' * 500},
+          null,
+          null,
+        );
+        final ack = _text(result);
+        expect(ack, contains('truncated'));
+        expect(ack, contains('agent_message'));
+        expect(ack, isNot(contains('agent://')));
+      },
+    );
 
     test('in-budget reply stays verbatim under the kill switch', () async {
       final rig = _toolsRig(cap: 100, autoSpill: () => false);
@@ -208,10 +218,11 @@ void main() {
     test('over-cap same-session agent_message gets the chunk notice', () async {
       final fabric = _FakeFabric();
       final rig = _toolsRig(cap: 100, autoSpill: () => false, fabric: fabric);
-      final result = await rig.tools['agent_message']!.execute({
-        'to': 'main',
-        'message': 'b' * 500,
-      }, null, null);
+      final result = await rig.tools['agent_message']!.execute(
+        {'to': 'main', 'message': 'b' * 500},
+        null,
+        null,
+      );
       final ack = _text(result);
       expect(ack, contains('message queued for "main"'));
       expect(ack, contains('exceeds the 100-char budget'));
@@ -258,10 +269,7 @@ void main() {
       final rig = _rig(cap: 100);
       final body = 'plain ascii body ' * 40;
       final record = rig.capture.deliverReply('kid', body)!;
-      expect(
-        utf8.encode(rig.store.get(record.outputId!)!),
-        utf8.encode(body),
-      );
+      expect(utf8.encode(rig.store.get(record.outputId!)!), utf8.encode(body));
     });
 
     test('multi-byte content counts UTF-8 bytes, never splits a rune', () {
@@ -293,10 +301,7 @@ void main() {
         null,
       );
       final record = rig.manager['kid']!.deliverables.single;
-      expect(
-        _text(result),
-        contains('agent://${record.outputId}'),
-      );
+      expect(_text(result), contains('agent://${record.outputId}'));
       expect(_text(result), contains('${record.bytes} bytes'));
     });
 
@@ -337,21 +342,24 @@ void main() {
   });
 
   group('durable artifacts — spilled report survives parent resume (AC6)', () {
-    test('a spill persists a restorable artifact row through the sink', () async {
-      final rows = <Map<String, dynamic>>[];
-      final rig = _rig(
-        cap: 100,
-        persistArtifact: (row) async => rows.add(row),
-      );
-      final record = rig.capture.deliverReply('kid', 'r' * 500)!;
-      await Future<void>.delayed(Duration.zero);
-      expect(rows, hasLength(1));
-      expect(rows.single['id'], record.outputId);
-      expect(rows.single['content'], 'r' * 500);
-      expect(rows.single['status'], 'complete');
-      expect(rows.single['childId'], 'kid');
-      expect(rows.single['chars'], 500);
-    });
+    test(
+      'a spill persists a restorable artifact row through the sink',
+      () async {
+        final rows = <Map<String, dynamic>>[];
+        final rig = _rig(
+          cap: 100,
+          persistArtifact: (row) async => rows.add(row),
+        );
+        final record = rig.capture.deliverReply('kid', 'r' * 500)!;
+        await Future<void>.delayed(Duration.zero);
+        expect(rows, hasLength(1));
+        expect(rows.single['id'], record.outputId);
+        expect(rows.single['content'], 'r' * 500);
+        expect(rows.single['status'], 'complete');
+        expect(rows.single['childId'], 'kid');
+        expect(rows.single['chars'], 500);
+      },
+    );
 
     test('the pointer resolves from a fresh store after restore', () async {
       final record = _rig(cap: 100).capture.deliverReply('kid', 'r' * 500)!;
@@ -366,10 +374,7 @@ void main() {
           'chars': 500,
         },
       ];
-      final rig = _rig(
-        cap: 100,
-        restoreArtifacts: () async => restoredRows,
-      );
+      final rig = _rig(cap: 100, restoreArtifacts: () async => restoredRows);
       await rig.capture.ensureRestored();
       final resolution = resolveAgentUrl(
         'agent://${record.outputId}',
@@ -379,47 +384,53 @@ void main() {
       expect(resolution.notes.single, contains('deliverable: complete'));
     });
 
-    test('a restored id stays reserved — a new reply gets a new artifact', () async {
-      final old = _rig(cap: 100).capture.deliverReply('kid', 'old' * 200)!;
-      final rig = _rig(
-        cap: 100,
-        restoreArtifacts: () async => [
-          {
-            'id': old.outputId,
-            'content': 'old' * 200,
-            'status': 'complete',
-            'childId': 'kid',
-            'chars': 600,
-          },
-        ],
-      );
-      await rig.capture.ensureRestored();
-      final fresh = rig.capture.deliverReply('kid', 'new' * 200)!;
-      // Distinct artifact, no interleaving with the immutable old one.
-      expect(fresh.outputId, isNot(old.outputId));
-      expect(rig.store.get(old.outputId!), 'old' * 200);
-      expect(rig.store.get(fresh.outputId!), 'new' * 200);
-    });
+    test(
+      'a restored id stays reserved — a new reply gets a new artifact',
+      () async {
+        final old = _rig(cap: 100).capture.deliverReply('kid', 'old' * 200)!;
+        final rig = _rig(
+          cap: 100,
+          restoreArtifacts: () async => [
+            {
+              'id': old.outputId,
+              'content': 'old' * 200,
+              'status': 'complete',
+              'childId': 'kid',
+              'chars': 600,
+            },
+          ],
+        );
+        await rig.capture.ensureRestored();
+        final fresh = rig.capture.deliverReply('kid', 'new' * 200)!;
+        // Distinct artifact, no interleaving with the immutable old one.
+        expect(fresh.outputId, isNot(old.outputId));
+        expect(rig.store.get(old.outputId!), 'old' * 200);
+        expect(rig.store.get(fresh.outputId!), 'new' * 200);
+      },
+    );
 
-    test('a live artifact wins over a stale restore row with the same id', () async {
-      final rig = _rig(
-        cap: 100,
-        restoreArtifacts: () async => [
-          {
-            'id': 'kid-report',
-            'content': 'stale',
-            'status': 'complete',
-            'childId': 'kid',
-            'chars': 5,
-          },
-        ],
-      );
-      // Live spill FIRST: allocate + put under the plain id.
-      final live = rig.capture.deliverReply('kid', 'live' * 100)!;
-      await rig.capture.ensureRestored();
-      expect(live.outputId, 'kid-report');
-      expect(rig.store.get('kid-report'), 'live' * 100);
-    });
+    test(
+      'a live artifact wins over a stale restore row with the same id',
+      () async {
+        final rig = _rig(
+          cap: 100,
+          restoreArtifacts: () async => [
+            {
+              'id': 'kid-report',
+              'content': 'stale',
+              'status': 'complete',
+              'childId': 'kid',
+              'chars': 5,
+            },
+          ],
+        );
+        // Live spill FIRST: allocate + put under the plain id.
+        final live = rig.capture.deliverReply('kid', 'live' * 100)!;
+        await rig.capture.ensureRestored();
+        expect(live.outputId, 'kid-report');
+        expect(rig.store.get('kid-report'), 'live' * 100);
+      },
+    );
 
     test('a failed restore degrades without breaking the capture', () async {
       final rig = _rig(
