@@ -359,4 +359,64 @@ void main() {
           'pin is a visibility window, not a permanent global change',
     );
   });
+
+  test('AC11 — ci-sign keychain never auto-locks; FORCE recreates fresh '
+      '(gh-1954: gym xcodebuild -showBuildSettings hung on a locked '
+      'keychain GUI prompt, run 40849468765)', () {
+    final cisign = File('scripts/ci-sign').readAsStringSync();
+    expect(
+      cisign,
+      contains('set-keychain-settings -t 0'),
+      reason: 'the signing keychain must NEVER auto-lock: gym runs '
+          'xcodebuild -showBuildSettings ~15 min after ci-sign unlock; a '
+          'locked keychain means a headless GUI password prompt = timeout',
+    );
+    expect(
+      cisign,
+      isNot(contains('set-keychain-settings -l ')),
+      reason: '-l (lock on system sleep) locks the keychain mid-build '
+          'when the host dozes during long SPM/CocoaPods phases',
+    );
+    expect(
+      cisign,
+      contains('delete-keychain'),
+      reason: '--force must DELETE and recreate the keychain: '
+          'set-keychain-settings only works non-interactively on a '
+          'freshly created keychain (existing one prompts via GUI)',
+    );
+  });
+
+  test('AC12 — print_gym_log_tail ignores stale gym logs (gh-1954: the '
+      'Oct-27 log printed a phantom profile error while the REAL failure '
+      'was -showBuildSettings timeout, run 40849468765)', () {
+    final fastfile = File('flutter_app/fastlane/Fastfile').readAsStringSync();
+    final helperStart = fastfile.indexOf('def print_gym_log_tail');
+    final helperEnd = fastfile.indexOf('\nend', helperStart);
+    final helper = fastfile.substring(helperStart, helperEnd);
+    expect(
+      helper,
+      contains('since'),
+      reason: 'the helper must accept a lane-start timestamp',
+    );
+    expect(
+      helper,
+      contains('mtime'),
+      reason: 'a gym log older than the lane start is STALE — printing it '
+          'attributes a previous build error to the current failure',
+    );
+  });
+
+  test('AC13 — build_only re-unlocks the keychain immediately before gym '
+      '(gh-1954: point-of-use unlock after the long pod phase)', () {
+    final fastfile = File('flutter_app/fastlane/Fastfile').readAsStringSync();
+    final laneStart = fastfile.indexOf('lane :build_only do');
+    final laneEnd = fastfile.indexOf('lane :', laneStart + 10);
+    final lane = fastfile.substring(laneStart, laneEnd);
+    final gymPos = lane.indexOf('build_app(');
+    final beforeGym = lane.substring(0, gymPos);
+    final unlockPos = beforeGym.lastIndexOf('"unlock"');
+    expect(unlockPos, greaterThan(beforeGym.indexOf('cocoapods')),
+        reason: 'an unlock at lane start goes stale during the 15-minute '
+            'CocoaPods/SPM phase — re-unlock right before build_app');
+  });
 }
