@@ -295,4 +295,44 @@ void main() {
       }
     }
   });
+
+  test('AC8 — every openssl pkcs12 call carries the conditional legacy '
+      'provider flag (gh-1954: RC2-40-CBC P12 payloads, run 40840166571)', () {
+    final script = File('scripts/ci-sign').readAsStringSync();
+    expect(
+      script,
+      contains('OpenSSL\\ 3*'),
+      reason: 'the legacy flag must be conditional on OpenSSL 3.x — '
+          'LibreSSL (macOS /usr/bin/openssl) does not know -legacy',
+    );
+    final lines = script.split('\n');
+    for (var i = 0; i < lines.length; i++) {
+      if (lines[i].contains('openssl pkcs12')) {
+        expect(
+          lines[i],
+          contains('\$OSS_LEGACY'),
+          reason: 'scripts/ci-sign:${i + 1} — RC2-40-CBC-encrypted P12 '
+              '(standard for older Apple exports) is unreadable by '
+              'OpenSSL 3.x without the legacy provider: '
+              '"inner_evp_generic_fetch:unsupported ... Algorithm '
+              '(RC2-40-CBC : 0)" (run 40840166571 probe)',
+        );
+      }
+    }
+  });
+
+  test('AC9 — err() writes to stderr in CI too (gh-1954: diagnostics '
+      'swallowed by \$(...) capture)', () {
+    final script = File('scripts/ci-sign').readAsStringSync();
+    final errLine = script
+        .split('\n')
+        .firstWhere((l) => l.startsWith('err() {'));
+    expect(
+      errLine,
+      contains('::error::ci-sign: \$*" >&2'),
+      reason: 'import_fingerprint runs inside NEW_FP="\$(...)" — err() on '
+          'stdout is captured into the variable and never reaches the '
+          'Actions log (three diagnostic runs printed nothing)',
+    );
+  });
 }

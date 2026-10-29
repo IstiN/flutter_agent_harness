@@ -65,7 +65,7 @@ CFG="$HOME/.config/ci-sign"
 KCPASS_FILE="$CFG/keychain-password"
 LABELS_DIR="$CFG/labels"
 
-err() { if [ -n "${GITHUB_ACTIONS:-}" ]; then echo "::error::ci-sign: $*"; else echo "ci-sign: $*" >&2; fi; }
+err() { if [ -n "${GITHUB_ACTIONS:-}" ]; then echo "::error::ci-sign: $*" >&2; else echo "ci-sign: $*" >&2; fi; }
 die() { err "$*"; exit 1; }
 usage() { echo "usage: ci-sign <install|sha1|serial|name|codesign|doctor|unlock|list|cleanup-legacy|path> ..." >&2; exit 2; }
 
@@ -139,6 +139,17 @@ label_env() { # label_env <label> <SUFFIX> -> prints resolved env var VALUE
   p12_env_value "CI_SIGN_${upper}_${suffix}"
 }
 
+# gh-1954: OpenSSL 3.x refuses RC2-40-CBC-encrypted P12 payloads without
+# the legacy provider ("inner_evp_generic_fetch:unsupported ... Algorithm
+# (RC2-40-CBC : 0)", run 40840166571 probe). Older Apple distribution
+# exports use exactly RC2-40-CBC; the pre-v3 pipeline never noticed because
+# security(1) handles RC2 natively. LibreSSL does not know -legacy — add it
+# only for OpenSSL 3.x.
+OSS_LEGACY=""
+case "$(openssl version 2>/dev/null)" in
+  OpenSSL\ 3*) OSS_LEGACY="-legacy";;
+esac
+
 import_fingerprint() { # import_fingerprint <p12file> <password>; prints SHA1 (no colons)
   local tmp
   tmp="$(mktemp -d)"
@@ -147,8 +158,8 @@ import_fingerprint() { # import_fingerprint <p12file> <password>; prints SHA1 (n
   # gh-1954 signature B: when the payload cannot be read, the previous
   # "cannot read P12" gave zero diagnostics. Log the openssl error and
   # the payload shape (both non-secret) so the failure is actionable.
-  if ! openssl pkcs12 -passin "pass:$2" -in "$1" -clcerts -nokeys -out "$tmp/c.pem" 2>"$tmp/err1"; then
-    if ! openssl pkcs12 -passin "pass:" -in "$1" -clcerts -nokeys -out "$tmp/c.pem" 2>"$tmp/err2"; then
+  if ! openssl pkcs12 $OSS_LEGACY -passin "pass:$2" -in "$1" -clcerts -nokeys -out "$tmp/c.pem" 2>"$tmp/err1"; then
+    if ! openssl pkcs12 $OSS_LEGACY -passin "pass:" -in "$1" -clcerts -nokeys -out "$tmp/c.pem" 2>"$tmp/err2"; then
       err "pkcs12 with secret password: $(tail -2 "$tmp/err1" | tr '\n' ' ')"
       err "pkcs12 with empty password:  $(tail -2 "$tmp/err2" | tr '\n' ' ')"
       err "payload: $(wc -c < "$1" | tr -d ' ') bytes, head: $(head -c 24 "$1" | od -An -tx1 | tr -s ' ' | cut -c1-40)"
@@ -241,8 +252,8 @@ case "$CMD" in
       if head -c 11 "$TMP/cert.p12" | grep -q -- '-----BEGIN'; then
         err "  payload is PEM TEXT (base64-of-PEM in the secret, not base64-of-p12!)"
       fi
-      err "  pkcs12 cert inventory: $(openssl pkcs12 -passin "pass:$P12_PW" -in "$TMP/cert.p12" -nokeys 2>&1 | grep -cE 'subject=|friendlyName' || true) entries"
-      err "  pkcs12 no-cert probe: $(openssl pkcs12 -passin "pass:$P12_PW" -in "$TMP/cert.p12" -nocerts -nodes 2>&1 | tail -1 || true)"
+      err "  pkcs12 cert inventory: $(openssl pkcs12 $OSS_LEGACY -passin "pass:$P12_PW" -in "$TMP/cert.p12" -nokeys 2>&1 | grep -cE 'subject=|friendlyName' || true) entries"
+      err "  pkcs12 no-cert probe: $(openssl pkcs12 $OSS_LEGACY -passin "pass:$P12_PW" -in "$TMP/cert.p12" -nocerts -nodes 2>&1 | tail -1 || true)"
       die "cannot read P12 for '$LABEL' (parsed but no client certificate)"
     fi
 
@@ -273,8 +284,8 @@ case "$CMD" in
 
     mkdir -p "$LABELS_DIR"
     CERT_PEM="$TMP/c.pem"
-    openssl pkcs12 -passin "pass:$P12_PW" -in "$TMP/cert.p12" -clcerts -nokeys -out "$CERT_PEM" 2>/dev/null \
-      || openssl pkcs12 -passin "pass:" -in "$TMP/cert.p12" -clcerts -nokeys -out "$CERT_PEM" 2>/dev/null || true
+    openssl pkcs12 $OSS_LEGACY -passin "pass:$P12_PW" -in "$TMP/cert.p12" -clcerts -nokeys -out "$CERT_PEM" 2>/dev/null \
+      || openssl pkcs12 $OSS_LEGACY -passin "pass:" -in "$TMP/cert.p12" -clcerts -nokeys -out "$CERT_PEM" 2>/dev/null || true
     SERIAL="$(openssl x509 -in "$CERT_PEM" -noout -serial | sed 's/^serial=//')"
     NAME="$(openssl x509 -in "$CERT_PEM" -noout -subject -nameopt multiline 2>/dev/null | sed -n 's/.*commonName[^:]*://p' | head -1)"
     umask 077
