@@ -758,9 +758,9 @@ void main() {
         final notice = taskAsyncResultNotice(notices.single);
         // Fresh reply rides the verbatim slot.
         expect(notice, contains('fresh resumed answer'));
-        // Carried reply rides the artifact slot, not clobbered, not dropped.
-        expect(notice, contains('carried report body'));
-        expect(notice, contains('agent://'));
+        // Carried reply rides the artifact slot: pointer in the notice,
+        // body resolvable — NOT clobbered by the fresh reply, not dropped.
+        expect(notice, contains('deliverable complete: agent://'));
         final record = wiring.manager['Watcher']!.deliverables.single;
         expect(wiring.outputs.get(record.outputId!), 'carried report body');
         expect(notice, contains(record.pointer!));
