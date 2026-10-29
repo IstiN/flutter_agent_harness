@@ -159,4 +159,34 @@ void main() {
       expect(layerEntropy('x $arg y', _cfg), hasLength(1));
     });
   });
+  group('carve-out must not silence the entropy net (gh-1952 review)', () {
+    // Review of the first cut: the bare `K=V` exemption branch matched
+    // ANY token containing `=`, so the two most common secret encodings
+    // lost their last-resort net — this layer also runs on the display/
+    // persistence pipeline where tool OUTPUT flows through.
+    test('a padded-base64 secret is still entropy-masked', () {
+      // 37 chars, alphabet > 8, entropy ~5.1, ends in `=` padding: the
+      // run up to the first `=` parses as a "key" only for an unbounded
+      // assignment match. Masked before the carve-out, must stay masked.
+      // (The literal is pieced together so no single source line carries
+      // a secret-shaped token — adjacent literals concatenate in Dart.)
+      const b64 =
+          'ZmIoNyph' 'ZDlQcUByWi' 'VmbzhTZXQz' 'djVyITA9' '=';
+      final matches = layerEntropy('token $b64 end', _cfg);
+      expect(matches, hasLength(1), reason: 'padded base64 must stay masked');
+      expect(matches.single.kindLabel, highEntropyLabel);
+    });
+
+    test('a KEY=<random> assignment in tool output is still masked', () {
+      // `printenv`/CI-log/config lines: an arbitrary key with a random
+      // value (SESSION_KEY is NOT in the context layer's fixed anchor
+      // list, so the entropy layer was — and stays — the only net for
+      // this class). Pieced literal, same reason as the base64 test.
+      const line =
+          'SESSION_' 'KEY=' 'xJ8f2kQz' '7Lp3vN5w' 'R9tY2uM4' 'bC6dE1';
+      final matches = layerEntropy('out $line tail', _cfg);
+      expect(matches, hasLength(1), reason: 'KEY=<random> must stay masked');
+      expect(matches.single.kindLabel, highEntropyLabel);
+    });
+  });
 }
