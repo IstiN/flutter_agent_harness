@@ -732,6 +732,40 @@ void main() {
         expect(notice, contains('silent resume'));
       },
     );
+
+    test(
+      'carried reply + fresh reply combine: carried rides the artifact slot, '
+      'the fresh answer rides verbatim (IT: pending x fresh)',
+      () async {
+        final wiring = _ResumeWiring(
+          resumeTurns: [
+            _toolTurn('reply', {'message': 'fresh resumed answer'}),
+            _textTurn('resume done'),
+          ],
+        );
+        addTearDown(wiring.dispose);
+        await wiring.spawn('Watcher', 'batch-work');
+        // The carried reply: acked in a previous life, never surfaced.
+        await wiring.manager.recordReply('Watcher', 'carried report body');
+
+        final notices = <TaskJob>[];
+        final sub = wiring.jobs.completions.listen(notices.add);
+        addTearDown(() => sub.cancel);
+
+        await wiring.executor.resumeChild('Watcher', 'RESUME-MARKER combine');
+        await wiring.drainMicrotasks();
+
+        final notice = taskAsyncResultNotice(notices.single);
+        // Fresh reply rides the verbatim slot.
+        expect(notice, contains('fresh resumed answer'));
+        // Carried reply rides the artifact slot, not clobbered, not dropped.
+        expect(notice, contains('carried report body'));
+        expect(notice, contains('agent://'));
+        final record = wiring.manager['Watcher']!.deliverables.single;
+        expect(wiring.outputs.get(record.outputId!), 'carried report body');
+        expect(notice, contains(record.pointer!));
+      },
+    );
   });
 }
 
