@@ -427,7 +427,7 @@ void main() {
       // is unchanged).
       expect(text, startsWith('[bash interceptor rewrote 1 secret-shaped'));
       expect(text, contains('Started background job'));
-      expect(env.jobs.single.command, contains('[REDACTED:GitHub Token]'));
+      expect(env.jobs.single.command, contains('[REDACTED:GitHub-Token]'));
       env.jobs.single.complete(0);
     });
   });

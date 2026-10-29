@@ -109,7 +109,7 @@ void main() {
       const token = 'ghp_Aa1Bb2Cc3Dd4Ee5Ff6Gg7Hh8Ii9Jj0Kk1Ll2';
       expect(
         pipe().redact('tok $token end'),
-        'tok [REDACTED:GitHub Token] end',
+        'tok [REDACTED:GitHub-Token] end',
       );
     });
 
@@ -117,14 +117,14 @@ void main() {
       const token = 'ghp_Aa1Bb2Cc3Dd4Ee5Ff6Gg7Hh8Ii9Jj0Kk1Ll2';
       expect(
         pipe().redact('password: $token done'),
-        'password: [REDACTED:GitHub Token] done',
+        'password: [REDACTED:GitHub-Token] done',
       );
     });
 
     test('slices are applied by concat, not global replace', () {
       const token = 'ghp_Aa1Bb2Cc3Dd4Ee5Ff6Gg7Hh8Ii9Jj0Kk1Ll2';
       final out = pipe().redact('$token ... $token');
-      expect(out, '[REDACTED:GitHub Token] ... [REDACTED:GitHub Token]');
+      expect(out, '[REDACTED:GitHub-Token] ... [REDACTED:GitHub-Token]');
     });
 
     test('idempotent: redact(redact(x)) == redact(x)', () {
@@ -141,7 +141,7 @@ void main() {
       const sneaky = 'sup3rsec[REDACTED:x]ret';
       final p = pipe([sneaky]);
       final out = p.redact('tok $sneaky end');
-      expect(out, 'tok [REDACTED:Registered Secret] end');
+      expect(out, 'tok [REDACTED:Registered-Secret] end');
       expect(p.redact(out), out);
     });
 
@@ -158,7 +158,7 @@ void main() {
       final pem = pemBlockOfLines(30);
       final out = pipe().redact(pem);
       expect(out.split('\n'), hasLength(30));
-      expect(out.startsWith('[REDACTED:PEM PRIVATE KEY]'), isTrue);
+      expect(out.startsWith('[REDACTED:PEM-PRIVATE-KEY]'), isTrue);
     });
 
     test('E4: CRLF line count is preserved', () {
@@ -178,7 +178,7 @@ void main() {
           'data:image/png;base64,qZ3mK8vB2nR7xW4cJ9fT5gL0dP1sH6yUqZ3mK8';
       final out = pipe().redact('img $dataUrl password=hunter2');
       expect(out.contains(dataUrl), isTrue);
-      expect(out.contains('[REDACTED:Sensitive Value]'), isTrue);
+      expect(out.contains('[REDACTED:Sensitive-Value]'), isTrue);
     });
 
     test('E10: scan finds nothing inside a data URL', () {
@@ -226,7 +226,7 @@ void main() {
       expect(matches, hasLength(1));
       expect(matches.single.kindLabel, 'Credential File');
       final out = p.redact(dump, pathHint: '.env');
-      expect(out, '[REDACTED:Credential File]\n\n\n');
+      expect(out, '[REDACTED:Credential-File]\n\n\n');
       // Idempotent: re-redacting the masked dump does not grow markers.
       expect(p.redact(out, pathHint: '.env'), out);
     });
@@ -243,7 +243,7 @@ void main() {
         isEmpty,
       );
       p.config = const RedactionConfig();
-      expect(p.redact(text), 'tok [REDACTED:GitHub Token] end');
+      expect(p.redact(text), 'tok [REDACTED:GitHub-Token] end');
     });
 
     test('registerSecret enforces the 8-char minimum (parity)', () {
@@ -258,7 +258,7 @@ void main() {
       final p = pipe(['topsecretvalue']);
       expect(
         p.redact('x topsecretvalue y'),
-        'x [REDACTED:Registered Secret] y',
+        'x [REDACTED:Registered-Secret] y',
       );
       p.unregisterSecret('topsecretvalue');
       expect(p.redact('x topsecretvalue y'), 'x topsecretvalue y');

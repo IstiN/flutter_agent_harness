@@ -323,7 +323,7 @@ Future<_LivenessHarness> _livenessShape({
   final cli = AgentCli(
     config: AgentCliConfig(
       model: testModel,
-      apiKey: '[REDACTED:Sensitive Value]',
+      apiKey: '[REDACTED:Sensitive-Value]',
       env: env,
       sessionRoot: '/sessions',
       approvalMode: ApprovalMode.yolo,

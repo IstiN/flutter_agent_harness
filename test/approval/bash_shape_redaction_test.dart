@@ -75,7 +75,7 @@ void main() {
 
       expect(
         rewrite.command,
-        'aws configure set aws_access_key_id [REDACTED:AWS Access Key]',
+        'aws configure set aws_access_key_id [REDACTED:AWS-Access-Key]',
       );
       expect(rewrite.changes, hasLength(1));
       expect(rewrite.changes.single.label, 'AWS Access Key');
@@ -89,7 +89,7 @@ void main() {
       final rewrite = redactBashCommandSecretShapes(
         'export GH_TOKEN=ghp_${'A' * 36}',
       )!;
-      expect(rewrite.command, 'export GH_TOKEN=[REDACTED:GitHub Token]');
+      expect(rewrite.command, 'export GH_TOKEN=[REDACTED:GitHub-Token]');
       expect(rewrite.notice, contains('GitHub Token'));
     });
 
@@ -101,8 +101,8 @@ void main() {
         'AWS Access Key',
         'GitHub Token',
       ]);
-      expect(rewrite.command, contains('[REDACTED:AWS Access Key]'));
-      expect(rewrite.command, contains('[REDACTED:GitHub Token]'));
+      expect(rewrite.command, contains('[REDACTED:AWS-Access-Key]'));
+      expect(rewrite.command, contains('[REDACTED:GitHub-Token]'));
     });
 
     test('null for a command without any secret shape', () {
@@ -169,7 +169,7 @@ void main() {
       // to remain in the command).
       expect(
         rewrite.command,
-        'use $token and [REDACTED:GitHub Token]',
+        'use $token and [REDACTED:GitHub-Token]',
       );
       expect(rewrite.changes.single.label, 'GitHub Token');
     });
@@ -190,7 +190,7 @@ void main() {
       // The executed command is the REWRITTEN one: the raw secret never
       // reaches the shell, the job logs, or the session record.
       expect(shell.lastCommand, isNotNull);
-      expect(shell.lastCommand, contains('[REDACTED:AWS Access Key]'));
+      expect(shell.lastCommand, contains('[REDACTED:AWS-Access-Key]'));
       expect(shell.lastCommand, isNot(contains('AKIAIOSFODNN7EXAMPLE')));
       // The tool result NAMES what changed.
       final text = _textOf(result);

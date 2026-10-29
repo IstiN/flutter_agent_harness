@@ -1,11 +1,20 @@
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
+import 'package:flutter_agent_harness/src/redact/layer_vendor.dart'
+    show
+        awsAccessKeyLabel,
+        gitLabTokenLabel,
+        googleApiKeyLabel,
+        jwtLabel,
+        npmTokenLabel,
+        openAIKeyLabel,
+        slackTokenLabel;
 import 'package:test/test.dart';
 
 /// gh-1952 (I2 / AC2): every `[REDACTED:<kind>]` marker is ONE shell
 /// token.
 ///
 /// The incident: a masked define reached a child process as the literal
-/// `[REDACTED:High Entropy String]` — with SPACES — and the shell split
+/// `[REDACTED:High-Entropy-String]` — with SPACES — and the shell split
 /// it into 3 argv items (`[REDACTED:High`, `Entropy`, `String]`), which
 /// the Flutter test loader tried to open as paths. Redaction is a mask
 /// over what is SEEN, never a rewrite of what is EXECUTED: even when a
@@ -90,7 +99,7 @@ void main() {
         'password=correcthorsebatterystaple', // context
         '/home/u/.env', // path
         'MII${'a' * 64}', // asn1
-        'mysql://user:[REDACTED:Sensitive Value]@db.example.test/x', // connection
+        'mysql://user:[REDACTED:Sensitive-Value]@db.example.test/x', // connection
         'hash ${'qZ3mR7kW9pX2vB5nT8yC4jF6hD1sG0aL7eM3uQ9i'} end', // entropy
       ];
       for (final text in texts) {
@@ -109,7 +118,7 @@ void main() {
 
     test('re-redaction stays idempotent on hyphenated markers', () {
       final pipeline = RedactionPipeline(registeredSecrets: const []);
-      const src = 'key ghp_${'A' * 36} end';
+      final src = 'key ghp_${'A' * 36} end';
       final once = pipeline.redact(src);
       final twice = pipeline.redact(once);
       expect(twice, once);

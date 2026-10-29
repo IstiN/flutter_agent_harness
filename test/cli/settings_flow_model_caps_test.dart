@@ -34,7 +34,7 @@ void main() {
     return AgentCli(
       config: AgentCliConfig(
         model: model ?? testModel,
-        apiKey: '[REDACTED:Sensitive Value]',
+        apiKey: '[REDACTED:Sensitive-Value]',
         env: env,
         homeDir: homeDir,
         sessionRoot: '/sessions',
