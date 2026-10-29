@@ -233,6 +233,9 @@ final class TaskToolConfig {
     this.contextWindowCap,
     this.misuseBreaker = true,
     this.deliverableRedactor,
+    this.replyAutoSpill,
+    this.deliverableArtifactSink,
+    this.deliverableArtifactSource,
   }) : semaphore = Semaphore(normalizeConcurrencyLimit(maxConcurrent)),
        outputs = outputs ?? AgentOutputStore(),
        jobManager = jobManager ?? TaskJobManager();
@@ -324,6 +327,19 @@ final class TaskToolConfig {
   /// before it lands in the output store. Null = no pipeline wired.
   final String Function(String text)? deliverableRedactor;
 
+  /// The auto-spill kill switch (gh-1956, `subagents.replyAutoSpill`):
+  /// live getter; null/true = auto-spill on (default), false = pure-chunk.
+  final bool Function()? replyAutoSpill;
+
+  /// The durable-artifact sink (gh-1956, AC6): one append row per spill.
+  final Future<void> Function(Map<String, dynamic> artifact)?
+  deliverableArtifactSink;
+
+  /// The durable-artifact source backing resume-time restore (gh-1956,
+  /// AC6). Null keeps artifacts session-lifetime only.
+  final Future<List<Map<String, dynamic>>> Function()?
+  deliverableArtifactSource;
+
   /// The session-shared executor (issue #222): the `task` tool runs
   /// through it, and hosts pass [TaskExecutor.resumeChild] to
   /// `subagentMonitoringTools` so `task_resume`/`task_send` continue
@@ -346,6 +362,9 @@ final class TaskToolConfig {
     contextWindowCap: contextWindowCap,
     misuseBreaker: misuseBreaker,
     deliverableRedactor: deliverableRedactor,
+    replyAutoSpill: replyAutoSpill,
+    deliverableArtifactSink: deliverableArtifactSink,
+    deliverableArtifactSource: deliverableArtifactSource,
   );
 }
 
