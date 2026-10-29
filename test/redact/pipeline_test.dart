@@ -290,10 +290,10 @@ void main() {
   });
 
   group('define carve-out at the pipeline level (gh-1952 I3 / AC3)', () {
-    test('a non-secret define survives a full pipeline scan untouched',
-        () {
+    test('a non-secret define survives a full pipeline scan untouched', () {
       final pipeline = RedactionPipeline(registeredSecrets: const []);
-      const command = 'flutter test '
+      const command =
+          'flutter test '
           '--dart-define=JSR_THREE_EXAMPLE=webgl_geometry_colors';
       expect(pipeline.scan(command), isEmpty);
       expect(pipeline.redact(command), command);
@@ -307,19 +307,14 @@ void main() {
       final matches = pipeline.scan(command);
       expect(matches, hasLength(1));
       expect(matches.single.layer, RedactionLayer.vendor);
-      expect(
-        pipeline.redact(command),
-        isNot(contains('ghp_${'D' * 36}')),
-      );
+      expect(pipeline.redact(command), isNot(contains('ghp_${'D' * 36}')));
     });
 
     test('a registered secret inside a define still matches', () {
       // Registered exact values outrank the carve-out (I3): the define
       // value the host registered stays masked in display paths.
       const defineValue = 'Q7zRaBc9DeF2gHi4jKl5mNo6pQrS8tUvWxYz0123';
-      final pipeline = RedactionPipeline(
-        registeredSecrets: [defineValue],
-      );
+      final pipeline = RedactionPipeline(registeredSecrets: [defineValue]);
       final command = 'flutter test --dart-define=API_KEY=$defineValue';
       final matches = pipeline.scan(command);
       expect(matches, hasLength(1));

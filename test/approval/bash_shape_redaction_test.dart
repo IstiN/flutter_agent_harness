@@ -55,13 +55,15 @@ void main() {
       expect(redactBashCommandSecretShapes(command), isNull);
     });
 
-    test('a high-entropy token that is not a vendor shape is NOT rewritten',
-        () {
-      const command =
-          'curl -s -H "X-Api-Key: 9f86d081882c48665fd555eb3f2f4e73" '
-          'https://api.example.test';
-      expect(redactBashCommandSecretShapes(command), isNull);
-    });
+    test(
+      'a high-entropy token that is not a vendor shape is NOT rewritten',
+      () {
+        const command =
+            'curl -s -H "X-Api-Key: 9f86d081882c48665fd555eb3f2f4e73" '
+            'https://api.example.test';
+        expect(redactBashCommandSecretShapes(command), isNull);
+      },
+    );
 
     test('a truncated AWS-shaped token (wrong length) is NOT rewritten', () {
       const command = 'touch AKIA1234.pem';
@@ -148,10 +150,7 @@ void main() {
       const token = 'AKIAIOSFODNN7EXAMPLE';
       const command = 'aws configure set aws_access_key_id $token';
       expect(
-        redactBashCommandSecretShapes(
-          command,
-          approvedLiterals: {token},
-        ),
+        redactBashCommandSecretShapes(command, approvedLiterals: {token}),
         isNull,
       );
     });
@@ -167,65 +166,76 @@ void main() {
       // 37783963871 — the previous isNot(contains('$token and'))
       // assertion contradicted the hatch: the approved value is SUPPOSED
       // to remain in the command).
-      expect(
-        rewrite.command,
-        'use $token and [REDACTED:GitHub-Token]',
-      );
+      expect(rewrite.command, 'use $token and [REDACTED:GitHub-Token]');
       expect(rewrite.changes.single.label, 'GitHub Token');
     });
   });
 
   group('bash tool applies the shape interceptor (issue #1408 AC3)', () {
-    test('a true shape executes rewritten and the result carries the notice',
-        () async {
-      final shell = _RecordingShell();
-      final tool = bt.shellTool(
-        MemoryExecutionEnv(cwd: '/work', shell: shell),
-        retryBackoff: Duration.zero,
-      );
-      final result = await tool.execute({
-        'command': 'aws configure set aws_access_key_id AKIAIOSFODNN7EXAMPLE',
-      }, null, null);
+    test(
+      'a true shape executes rewritten and the result carries the notice',
+      () async {
+        final shell = _RecordingShell();
+        final tool = bt.shellTool(
+          MemoryExecutionEnv(cwd: '/work', shell: shell),
+          retryBackoff: Duration.zero,
+        );
+        final result = await tool.execute(
+          {
+            'command':
+                'aws configure set aws_access_key_id AKIAIOSFODNN7EXAMPLE',
+          },
+          null,
+          null,
+        );
 
-      // The executed command is the REWRITTEN one: the raw secret never
-      // reaches the shell, the job logs, or the session record.
-      expect(shell.lastCommand, isNotNull);
-      expect(shell.lastCommand, contains('[REDACTED:AWS-Access-Key]'));
-      expect(shell.lastCommand, isNot(contains('AKIAIOSFODNN7EXAMPLE')));
-      // The tool result NAMES what changed.
-      final text = _textOf(result);
-      expect(text, contains('[bash interceptor rewrote 1 secret-shaped value'));
-      expect(text, contains('AWS Access Key'));
-    });
+        // The executed command is the REWRITTEN one: the raw secret never
+        // reaches the shell, the job logs, or the session record.
+        expect(shell.lastCommand, isNotNull);
+        expect(shell.lastCommand, contains('[REDACTED:AWS-Access-Key]'));
+        expect(shell.lastCommand, isNot(contains('AKIAIOSFODNN7EXAMPLE')));
+        // The tool result NAMES what changed.
+        final text = _textOf(result);
+        expect(
+          text,
+          contains('[bash interceptor rewrote 1 secret-shaped value'),
+        );
+        expect(text, contains('AWS Access Key'));
+      },
+    );
 
-    test('a key-like filename command runs byte-identically, no notice',
-        () async {
-      final shell = _RecordingShell();
-      final tool = bt.shellTool(
-        MemoryExecutionEnv(cwd: '/work', shell: shell),
-        retryBackoff: Duration.zero,
-      );
-      const command = 'ssh-keygen -t ed25519 -f id_ed25519_9f86d081882c48d6';
-      final result = await tool.execute({'command': command}, null, null);
+    test(
+      'a key-like filename command runs byte-identically, no notice',
+      () async {
+        final shell = _RecordingShell();
+        final tool = bt.shellTool(
+          MemoryExecutionEnv(cwd: '/work', shell: shell),
+          retryBackoff: Duration.zero,
+        );
+        const command = 'ssh-keygen -t ed25519 -f id_ed25519_9f86d081882c48d6';
+        final result = await tool.execute({'command': command}, null, null);
 
-      expect(shell.lastCommand, command);
-      expect(_textOf(result), isNot(contains('[bash interceptor rewrote')));
-    });
+        expect(shell.lastCommand, command);
+        expect(_textOf(result), isNot(contains('[bash interceptor rewrote')));
+      },
+    );
 
-    test('shellTool honors redactionConfig: disabled executes verbatim',
-        () async {
-      final shell = _RecordingShell();
-      final tool = bt.shellTool(
-        MemoryExecutionEnv(cwd: '/work', shell: shell),
-        retryBackoff: Duration.zero,
-        redactionConfig: const RedactionConfig(enabled: false),
-      );
-      const command =
-          'aws configure set aws_access_key_id AKIAIOSFODNN7EXAMPLE';
-      await tool.execute({'command': command}, null, null);
+    test(
+      'shellTool honors redactionConfig: disabled executes verbatim',
+      () async {
+        final shell = _RecordingShell();
+        final tool = bt.shellTool(
+          MemoryExecutionEnv(cwd: '/work', shell: shell),
+          retryBackoff: Duration.zero,
+          redactionConfig: const RedactionConfig(enabled: false),
+        );
+        const command =
+            'aws configure set aws_access_key_id AKIAIOSFODNN7EXAMPLE';
+        await tool.execute({'command': command}, null, null);
 
-      expect(shell.lastCommand, command);
-    });
+        expect(shell.lastCommand, command);
+      },
+    );
 
     test('shellTool exempts host-registered secret literals', () async {
       final shell = _RecordingShell();
@@ -238,6 +248,74 @@ void main() {
       await tool.execute({'command': 'echo $token'}, null, null);
 
       expect(shell.lastCommand, 'echo $token');
+    });
+  });
+
+  group('gh-1952: display-only redaction at the bash path', () {
+    test('define-shaped high-entropy commands are never rewritten', () {
+      // The gh-1952 incident corpus: non-secret compile-time defines.
+      // The shape interceptor matches vendor SHAPES only — it has no
+      // entropy layer — so these must stay byte-identical (null rewrite,
+      // no notice, no marker anywhere in the executed text).
+      const commands = <String>[
+        'flutter test test/sel_test.dart '
+            '--dart-define=JSR_THREE_EXAMPLE=webgl_geometry_colors',
+        'flutter build apk -DJSR_THREE_EXAMPLE=webgl_geometry_colors',
+        'DEF=webgl_geometry_colors_lightsphysicallycorrect flutter test',
+        'flutter run --dart-define=flutter.inspector.structuredErrors=trueX',
+      ];
+      for (final command in commands) {
+        expect(
+          redactBashCommandSecretShapes(command),
+          isNull,
+          reason: 'define command must execute byte-identical: $command',
+        );
+      }
+    });
+
+    test('a rewritten secret marker is always ONE shell token', () {
+      // gh-1952 I2: even when a rewrite is forced, the marker that
+      // replaces the secret must not carry whitespace into the executed
+      // command — the old spaced `[REDACTED:High-Entropy-String]`-style
+      // markers split into three argv items under the shell.
+      final rewrite = redactBashCommandSecretShapes(
+        'aws configure set aws_access_key_id AKIAIOSFODNN7EXAMPLE',
+      )!;
+      expect(
+        rewrite.command,
+        isNot(contains(RegExp(r'\[REDACTED:[^\]]*\s[^\]]*\]'))),
+      );
+      expect(rewrite.command, contains('[REDACTED:AWS-Access-Key]'));
+    });
+
+    test('a vendor-shaped secret inside a define still rewrites', () {
+      // gh-1952 edge: the define carve-out belongs to the ENTROPY layer;
+      // a real vendor shape inside a define is still a secret and is
+      // still rewritten (with its notice) — the carve-out opens no hole.
+      final rewrite = redactBashCommandSecretShapes(
+        'flutter test --dart-define=GH_TOKEN=ghp_${'E' * 36}',
+      )!;
+      expect(
+        rewrite.command,
+        'flutter test --dart-define=GH_TOKEN=[REDACTED:GitHub-Token]',
+      );
+      expect(rewrite.notice, contains('GitHub Token'));
+    });
+
+    test('bash tool executes a define command byte-identically under '
+        'redaction', () async {
+      final shell = _RecordingShell();
+      final tool = bt.shellTool(
+        MemoryExecutionEnv(cwd: '/work', shell: shell),
+        retryBackoff: Duration.zero,
+      );
+      const command =
+          'flutter test '
+          '--dart-define=JSR_THREE_EXAMPLE=webgl_geometry_colors';
+      final result = await tool.execute({'command': command}, null, null);
+
+      expect(shell.lastCommand, command);
+      expect(_textOf(result), isNot(contains('[REDACTED:')));
     });
   });
 }

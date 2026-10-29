@@ -67,15 +67,19 @@ void main() {
     });
 
     test('whitespace runs inside a label become single hyphens', () {
-      expect(redactionMarker('High Entropy String'),
-          '[REDACTED:High-Entropy-String]');
+      expect(
+        redactionMarker('High Entropy String'),
+        '[REDACTED:High-Entropy-String]',
+      );
       expect(redactionMarker('GitHub Token'), '[REDACTED:GitHub-Token]');
       expect(
         redactionMarker('Connection String Password'),
         '[REDACTED:Connection-String-Password]',
       );
-      expect(redactionMarker('PEM RSA PRIVATE KEY'),
-          '[REDACTED:PEM-RSA-PRIVATE-KEY]');
+      expect(
+        redactionMarker('PEM RSA PRIVATE KEY'),
+        '[REDACTED:PEM-RSA-PRIVATE-KEY]',
+      );
       expect(redactionMarker('Credit Card'), '[REDACTED:Credit-Card]');
     });
 
@@ -98,7 +102,7 @@ void main() {
         '-----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----', // pem
         'password=correcthorsebatterystaple', // context
         '/home/u/.env', // path
-        'MII${'a' * 64}', // asn1
+        'MII${'a' * 200}', // asn1 (DER runs need 197+ base64 chars)
         'mysql://user:[REDACTED:Sensitive-Value]@db.example.test/x', // connection
         'hash ${'qZ3mR7kW9pX2vB5nT8yC4jF6hD1sG0aL7eM3uQ9i'} end', // entropy
       ];
@@ -109,7 +113,8 @@ void main() {
           expect(
             marker.group(0),
             isNot(contains(RegExp(r'\s'))),
-            reason: 'output of ${text.length > 30 ? '${text.substring(0, 30)}…' : text} '
+            reason:
+                'output of ${text.length > 30 ? '${text.substring(0, 30)}…' : text} '
                 'must carry single-token markers, got ${marker.group(0)}',
           );
         }
