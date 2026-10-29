@@ -528,8 +528,7 @@ final class TaskExecutor {
       if (child != null) unawaited(_flushChildTranscript(id, child));
       // A cancelled resume settles failed-resumable (NOT aborted): the
       // child keeps its progress and a later task_resume can continue it.
-      final cancelError =
-          'resume cancelled: ${error.reason ?? 'cancelled'}';
+      final cancelError = 'resume cancelled: ${error.reason ?? 'cancelled'}';
       await _updateSubagentStatus(
         id,
         SubagentStatus.failed,

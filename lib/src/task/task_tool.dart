@@ -840,11 +840,7 @@ void _renderResult(StringBuffer buffer, TaskSingleResult result) {
   if (error != null) {
     buffer.write('\nerror: $error');
   }
-  _renderResultBody(
-    buffer,
-    result,
-    outputPreviewChars: taskOutputPreviewChars,
-  );
+  _renderResultBody(buffer, result, outputPreviewChars: taskOutputPreviewChars);
   buffer.write(
     '\n[${result.truncated ? 'Truncated output' : 'Full output'}: '
     'agent://${result.id}]',

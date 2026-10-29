@@ -26,11 +26,7 @@ void reportDeliveryStage(String line) {
 /// One delivery stage line for [childId]: elapsed anchored at [since] (the
 /// send) when given; [stage] names where the message is. A stage past the
 /// SLO is marked as a breach so the diagnostic names the stalled stage.
-void deliveryStage(
-  String childId,
-  String stage, {
-  DateTime? since,
-}) {
+void deliveryStage(String childId, String stage, {DateTime? since}) {
   final elapsed = since == null ? null : DateTime.now().difference(since);
   final breach = elapsed != null && elapsed > deliverySlo;
   reportDeliveryStage(

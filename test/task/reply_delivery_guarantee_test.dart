@@ -74,8 +74,10 @@ List<AssistantMessageEvent> _toolTurn(
 /// A scripted fake [StreamFunction]: routes by last user message and
 /// records every context.
 final class _ScriptedStream {
-  _ScriptedStream([List<({String match, List<List<AssistantMessageEvent>> turns})> rules = const []])
-    : _rules = List.of(rules);
+  _ScriptedStream([
+    List<({String match, List<List<AssistantMessageEvent>> turns})> rules =
+        const [],
+  ]) : _rules = List.of(rules);
 
   final List<({String match, List<List<AssistantMessageEvent>> turns})> _rules;
   final contexts = <Context>[];
@@ -137,7 +139,7 @@ final class _Harness {
 
 Future<_Harness> _harness({
   List<({String match, List<List<AssistantMessageEvent>> turns})> rules =
-  const [],
+      const [],
   int maxReplyChars = 800,
 }) async {
   final s = _ScriptedStream(rules);
@@ -232,10 +234,18 @@ void main() {
           null,
         );
         final text = _text(result);
-        expect(text, contains(body), reason: 'cap boundary $n must ride '
-            'verbatim');
-        expect(text, isNot(contains('[deliverable complete')), reason:
-            'an in-budget reply never becomes an artifact (n=$n)');
+        expect(
+          text,
+          contains(body),
+          reason:
+              'cap boundary $n must ride '
+              'verbatim',
+        );
+        expect(
+          text,
+          isNot(contains('[deliverable complete')),
+          reason: 'an in-budget reply never becomes an artifact (n=$n)',
+        );
       }
     });
 
@@ -273,27 +283,29 @@ void main() {
       expect(h.outputs.get(record.outputId!), body);
     });
 
-    test('no reply: the completed_without_reply notice names the final text',
-        () async {
-      final h = await _harness(
-        rules: [
-          (match: 'job', turns: [_textTurn('bare final message')]),
-        ],
-      );
-      final result = await h.tool.execute(
-        {
-          'context': 'ctx',
-          'tasks': [
-            {'name': 'Kid', 'task': 'job'},
+    test(
+      'no reply: the completed_without_reply notice names the final text',
+      () async {
+        final h = await _harness(
+          rules: [
+            (match: 'job', turns: [_textTurn('bare final message')]),
           ],
-        },
-        null,
-        null,
-      );
-      final text = _text(result);
-      expect(text, contains('completed_without_reply'));
-      expect(text, contains('bare final message'));
-    });
+        );
+        final result = await h.tool.execute(
+          {
+            'context': 'ctx',
+            'tasks': [
+              {'name': 'Kid', 'task': 'job'},
+            ],
+          },
+          null,
+          null,
+        );
+        final text = _text(result);
+        expect(text, contains('completed_without_reply'));
+        expect(text, contains('bare final message'));
+      },
+    );
 
     test('background settle notice carries the reply verbatim', () async {
       const reply = 'background findings, delivered verbatim';
@@ -346,37 +358,49 @@ void main() {
           ))
             t.name: t,
         };
-        final result = await tools['reply']!.execute({
-          'message': 'nobody is listening',
-        }, null, null);
+        final result = await tools['reply']!.execute(
+          {'message': 'nobody is listening'},
+          null,
+          null,
+        );
         expect(_text(result), startsWith('error:'));
         expect(_text(result), isNot(contains('reply delivered')));
       },
     );
 
-    test('recordReply reports whether the parent-visible record landed', ()
-        async {
-      final manager = SubagentManager(parentSessionId: 'p')
-        ..mailboxPrefix = 'p';
-      await manager.register(id: 'kid', name: 'kid', agentType: 'task',
-          task: 't');
-      expect(
-        await manager.recordReply('kid', 'first'),
-        ReplyRecordOutcome.recorded,
-      );
-      expect(manager['kid']!.lastReply, 'first');
-      // Unknown child: nothing recorded, caller must not ack.
-      expect(
-        await manager.recordReply('ghost', 'x'),
-        ReplyRecordOutcome.noHandle,
-      );
-    });
+    test(
+      'recordReply reports whether the parent-visible record landed',
+      () async {
+        final manager = SubagentManager(parentSessionId: 'p')
+          ..mailboxPrefix = 'p';
+        await manager.register(
+          id: 'kid',
+          name: 'kid',
+          agentType: 'task',
+          task: 't',
+        );
+        expect(
+          await manager.recordReply('kid', 'first'),
+          ReplyRecordOutcome.recorded,
+        );
+        expect(manager['kid']!.lastReply, 'first');
+        // Unknown child: nothing recorded, caller must not ack.
+        expect(
+          await manager.recordReply('ghost', 'x'),
+          ReplyRecordOutcome.noHandle,
+        );
+      },
+    );
 
     test('double reply is idempotent: first wins, second noted', () async {
       final manager = SubagentManager(parentSessionId: 'p')
         ..mailboxPrefix = 'p';
-      await manager.register(id: 'kid', name: 'kid', agentType: 'task',
-          task: 't');
+      await manager.register(
+        id: 'kid',
+        name: 'kid',
+        agentType: 'task',
+        task: 't',
+      );
       final store = AgentOutputStore();
       final capture = DeliverableCapture(store: store, manager: manager);
       final tools = {
@@ -404,8 +428,12 @@ void main() {
     test('empty reply message is rejected at the tool, not dropped', () async {
       final manager = SubagentManager(parentSessionId: 'p')
         ..mailboxPrefix = 'p';
-      await manager.register(id: 'kid', name: 'kid', agentType: 'task',
-          task: 't');
+      await manager.register(
+        id: 'kid',
+        name: 'kid',
+        agentType: 'task',
+        task: 't',
+      );
       final store = AgentOutputStore();
       final capture = DeliverableCapture(store: store, manager: manager);
       final tools = {
@@ -416,43 +444,57 @@ void main() {
         ))
           t.name: t,
       };
-      final result = await tools['reply']!.execute({'message': '   '}, null,
-          null);
+      final result = await tools['reply']!.execute(
+        {'message': '   '},
+        null,
+        null,
+      );
       expect(_text(result), contains('error:'));
       expect(manager['kid']!.lastReply, isNull);
     });
 
-    test('the ack rides only after the durable snapshot chain flushes',
-        () async {
-      final manager = SubagentManager(parentSessionId: 'p')
-        ..mailboxPrefix = 'p';
-      await manager.register(id: 'kid', name: 'kid', agentType: 'task',
-          task: 't');
-      final store = AgentOutputStore();
-      final capture = DeliverableCapture(store: store, manager: manager);
-      final tools = {
-        for (final t in subagentMonitoringTools(
-          manager: manager,
-          currentSubagentId: () => 'kid',
-          capture: () => capture,
-        ))
-          t.name: t,
-      };
-      final result = await tools['reply']!.execute({'message': 'acked'}, null,
-          null);
-      expect(_text(result), contains('reply delivered'));
-      // The reply tool awaited persistNow() before acking: the chain has
-      // fully drained.
-      await manager.persistNow();
-      expect(manager['kid']!.lastReply, 'acked');
-    });
+    test(
+      'the ack rides only after the durable snapshot chain flushes',
+      () async {
+        final manager = SubagentManager(parentSessionId: 'p')
+          ..mailboxPrefix = 'p';
+        await manager.register(
+          id: 'kid',
+          name: 'kid',
+          agentType: 'task',
+          task: 't',
+        );
+        final store = AgentOutputStore();
+        final capture = DeliverableCapture(store: store, manager: manager);
+        final tools = {
+          for (final t in subagentMonitoringTools(
+            manager: manager,
+            currentSubagentId: () => 'kid',
+            capture: () => capture,
+          ))
+            t.name: t,
+        };
+        final result = await tools['reply']!.execute(
+          {'message': 'acked'},
+          null,
+          null,
+        );
+        expect(_text(result), contains('reply delivered'));
+        // The reply tool awaited persistNow() before acking: the chain has
+        // fully drained.
+        await manager.persistNow();
+        expect(manager['kid']!.lastReply, 'acked');
+      },
+    );
   });
 
   group('AC1 observe: the reply payload is visible from the parent side', () {
     test('childMessageText echoes the reply/agent_message payload', () {
-      final call = ToolCall(id: 'c1', name: 'reply', arguments: {
-        'message': 'the observed report payload',
-      });
+      final call = ToolCall(
+        id: 'c1',
+        name: 'reply',
+        arguments: {'message': 'the observed report payload'},
+      );
       final assistant = AssistantMessage(
         content: [call],
         api: 'test-api',
@@ -468,9 +510,11 @@ void main() {
     });
 
     test('a non-deliverable tool call does not echo arguments', () {
-      final call = ToolCall(id: 'c1', name: 'bash', arguments: {
-        'command': 'echo secret-sauce',
-      });
+      final call = ToolCall(
+        id: 'c1',
+        name: 'bash',
+        arguments: {'command': 'echo secret-sauce'},
+      );
       final assistant = AssistantMessage(
         content: [call],
         api: 'test-api',
@@ -487,35 +531,39 @@ void main() {
   });
 
   group('AC3: a resumed child\'s final answer rides the completion notice', () {
-    test(
-      'task_send on a completed child publishes the resumed final message '
-      'through the job completions stream',
-      () async {
-        final wiring = _ResumeWiring(
-          resumeTurns: [_textTurn('RESUMED-FINAL-ANSWER')],
-        );
-        addTearDown(wiring.dispose);
-        // First life: a bare completion (no explicit reply).
-        await wiring.spawn('Watcher', 'batch-work');
-        expect(wiring.manager['Watcher']!.lastReply, isNull);
+    test('task_send on a completed child publishes the resumed final message '
+        'through the job completions stream', () async {
+      final wiring = _ResumeWiring(
+        resumeTurns: [_textTurn('RESUMED-FINAL-ANSWER')],
+      );
+      addTearDown(wiring.dispose);
+      // First life: a bare completion (no explicit reply).
+      await wiring.spawn('Watcher', 'batch-work');
+      expect(wiring.manager['Watcher']!.lastReply, isNull);
 
-        final notices = <TaskJob>[];
-        final sub = wiring.jobs.completions.listen(notices.add);
-        addTearDown(() => sub.cancel());
+      final notices = <TaskJob>[];
+      final sub = wiring.jobs.completions.listen(notices.add);
+      addTearDown(() => sub.cancel());
 
-        await wiring.executor.resumeChild('Watcher', 'RESUME-MARKER return the findings');
-        await wiring.drainMicrotasks();
+      await wiring.executor.resumeChild(
+        'Watcher',
+        'RESUME-MARKER return the findings',
+      );
+      await wiring.drainMicrotasks();
 
-        expect(notices, hasLength(1), reason:
+      expect(
+        notices,
+        hasLength(1),
+        reason:
             'the resumed run must publish a completion through the SAME '
-            'stream every host already consumes');
-        final notice = taskAsyncResultNotice(notices.single);
-        expect(notice, contains('RESUMED-FINAL-ANSWER'));
-        expect(notices.single.status, TaskJobStatus.completed);
-        // The latest final text is addressable under the child id.
-        expect(wiring.outputs.get('Watcher'), 'RESUMED-FINAL-ANSWER');
-      },
-    );
+            'stream every host already consumes',
+      );
+      final notice = taskAsyncResultNotice(notices.single);
+      expect(notice, contains('RESUMED-FINAL-ANSWER'));
+      expect(notices.single.status, TaskJobStatus.completed);
+      // The latest final text is addressable under the child id.
+      expect(wiring.outputs.get('Watcher'), 'RESUMED-FINAL-ANSWER');
+    });
 
     test('a resumed run\'s own reply rides the notice verbatim', () async {
       final wiring = _ResumeWiring(
@@ -531,7 +579,10 @@ void main() {
       final sub = wiring.jobs.completions.listen(notices.add);
       addTearDown(() => sub.cancel());
 
-      await wiring.executor.resumeChild('Watcher', 'RESUME-MARKER again, with the reply');
+      await wiring.executor.resumeChild(
+        'Watcher',
+        'RESUME-MARKER again, with the reply',
+      );
       await wiring.drainMicrotasks();
 
       final notice = taskAsyncResultNotice(notices.single);
@@ -539,10 +590,11 @@ void main() {
       expect(notice, contains('[explicit reply]'));
     });
 
-    test('a failed resume publishes its named error — never silence',
-        () async {
-      final wiring = _ResumeWiring(resumeTurns: const [], failResume:
-          'provider quota exhausted');
+    test('a failed resume publishes its named error — never silence', () async {
+      final wiring = _ResumeWiring(
+        resumeTurns: const [],
+        failResume: 'provider quota exhausted',
+      );
       addTearDown(wiring.dispose);
       await wiring.spawn('Watcher', 'batch-work');
 
@@ -583,25 +635,25 @@ void main() {
         await wiring.drainMicrotasks();
 
         final notice = taskAsyncResultNotice(notices.single);
-        // The pending reply is discoverable: pointer line on the notice…
+        // The pending reply rides the reply slot VERBATIM — the parent
+        // sees the acked text inline.
+        expect(notice, contains('THE-PENDING-REPORT'));
+        // …AND it is durable as a resolvable carried artifact…
         expect(notice, contains('agent://'));
         expect(notice, contains('deliverable complete'));
-        // …and the artifact resolves to the pending text.
         final record = wiring.manager['Watcher']!.deliverables.last;
         expect(wiring.outputs.get(record.outputId!), 'THE-PENDING-REPORT');
         expect(record.pointer, isNotNull);
         expect(notice, contains(record.pointer!));
-        // The resumed run's own answer rides too.
-        expect(notice, contains('resumed, nothing more to add'));
+        // …while the resumed run's own answer resolves under the child id.
+        expect(wiring.outputs.get('Watcher'), 'resumed, nothing more to add');
       },
     );
 
     test(
       'a resumed run WITHOUT any reply anywhere still names the gap',
       () async {
-        final wiring = _ResumeWiring(
-          resumeTurns: [_textTurn('silent resume')],
-        );
+        final wiring = _ResumeWiring(resumeTurns: [_textTurn('silent resume')]);
         addTearDown(wiring.dispose);
         await wiring.spawn('Watcher', 'batch-work');
 
@@ -622,14 +674,15 @@ void main() {
 
 /// Resume-path wiring with REAL JSONL child sessions (mirrors the CLI
 /// host wiring): MemoryExecutionEnv-backed repo, factory + opener wired.
-/// The scripted stream routes on markers: prompts naming [resumeMarker]
-/// (the steering text of a resume) replay [_resumeTurns]; every other
-/// call (the first-life spawn) answers 'done'.
+/// The scripted stream routes on markers: prompts naming the resume
+/// marker (the steering text of a resume) replay [_resumeTurns]; every
+/// other call (the first-life spawn) answers 'done'.
 final class _ResumeWiring {
+  static const resumeMarker = 'RESUME-MARKER';
+
   _ResumeWiring({
     List<List<AssistantMessageEvent>> resumeTurns = const [],
     this.failResume,
-    this.resumeMarker = 'RESUME-MARKER',
   }) : _resumeTurns = List.of(resumeTurns) {
     env = MemoryExecutionEnv(cwd: '/work');
     repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
@@ -669,7 +722,6 @@ final class _ResumeWiring {
   final outputs = AgentOutputStore();
   final List<List<AssistantMessageEvent>> _resumeTurns;
   final String? failResume;
-  final String resumeMarker;
 
   AssistantMessageEventStream _stream(
     Model model,
@@ -707,9 +759,11 @@ final class _ResumeWiring {
     return stream;
   }
 
-  Future<TaskSingleResult> spawn(String name, String task) =>
-      executor.runSpawn(item: TaskItem(name: name, task: task), index: 0,
-          context: '');
+  Future<TaskSingleResult> spawn(String name, String task) => executor.runSpawn(
+    item: TaskItem(name: name, task: task),
+    index: 0,
+    context: '',
+  );
 
   /// Lets broadcast-stream deliveries (async microtasks) land.
   Future<void> drainMicrotasks() async {

@@ -485,8 +485,7 @@ ToolExecutionResult _replyNotRecorded(String id) => ToolExecutionResult.text(
 /// The child-facing result for a double `reply` (gh-1951 edge case:
 /// idempotent — the first reply stays the deliverable, this call was
 /// noted but did not replace it).
-ToolExecutionResult _replyDuplicateNoted(String id) => ToolExecutionResult
-    .text(
+ToolExecutionResult _replyDuplicateNoted(String id) => ToolExecutionResult.text(
   'a reply was already recorded for subagent "$id" — the FIRST reply '
   'stays the deliverable and this reply was noted but did not replace '
   'it; no further replies are needed',
