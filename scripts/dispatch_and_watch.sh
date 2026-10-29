@@ -83,6 +83,11 @@ if [ "${1:-}" = "--dw-orphan-backstop" ]; then
   backstop_repo="$5"
   backstop_workflow="$6"
   while kill -0 "$backstop_parent" 2>/dev/null; do
+    # The state dir is the watcher's side of the contract: it is removed on
+    # every deliberate stop (stop_orphan_backstop). If it is gone while the
+    # PID still answers (recycled PID), stop anyway — never a leaked
+    # process on the shared pool (#1001 hygiene).
+    [ -e "$backstop_state" ] || exit 0
     sleep "${DW_BACKSTOP_POLL_SECONDS:-1}"
   done
   if [ -e "$backstop_state/handler-ran" ]; then
