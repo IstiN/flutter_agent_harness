@@ -39,6 +39,9 @@ final RegExp _integrityHash = RegExp(r'^sha(256|384|512)-');
 /// heuristic only; the real secret layers (registered, vendor, pem,
 /// context, ...) outrank the entropy layer and still match inside
 /// defines.
+/// The bare-assignment exemption is value-gated (see
+/// [_isDefineOrAssignmentToken]) so it cannot silence the net for
+/// `KEY=<random>` secrets or padded base64.
 final RegExp _dartDefineFlag = RegExp(r'^--dart-define=');
 final RegExp _dartDefineShortFlag = RegExp(r'^-D[A-Za-z_][A-Za-z0-9_.]*=');
 final RegExp _envAssignment = RegExp(r'^[A-Za-z_][A-Za-z0-9_.]{0,63}=');

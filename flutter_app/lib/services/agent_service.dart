@@ -241,10 +241,7 @@ class AgentService extends ChangeNotifier
           // Resume diagnostics: session-open timings as `resume_timing`
           // lines in the app debug log (logs/app.log).
           timingLog: (line) => AppLog.i('resume', line),
-          presenceStore: FileSessionPresenceStore(
-            env: env,
-            root: sessionsRoot,
-          ),
+          presenceStore: FileSessionPresenceStore(env: env, root: sessionsRoot),
           persistTransform: _persistTransform,
         );
     _responseTimeout = responseTimeout ?? const Duration(seconds: 90);
@@ -1314,6 +1311,7 @@ class AgentService extends ChangeNotifier
   /// shaders; Gemma loads multi-GB weights), 90 s otherwise.
   /// Reassigned by [reconfigure] when the backend kind changes.
   late Duration _responseTimeout;
+
   /// gh-1952 review: the record-write mask over every appended message —
   /// tool-call arguments carry masked secrets, never raw bytes (the live
   /// message and the provider context stay untouched). The pipeline

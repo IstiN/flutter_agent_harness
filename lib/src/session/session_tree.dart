@@ -133,7 +133,7 @@ final class Session {
   /// it (direct constructions in tools/tests) — consumers then degrade to
   /// the resident view only.
   final Future<List<CustomRecord>> Function(Set<String> types)?
-      customRecordScan;
+  customRecordScan;
 
   /// Cached result of the one-time obligations scan fallback (null =
   /// not scanned yet; a scanned-empty result is cached too). Resident

@@ -171,7 +171,11 @@ void main() {
       // (The literal is pieced together so no single source line carries
       // a secret-shaped token — adjacent literals concatenate in Dart.)
       const b64 =
-          'ZmIoNyph' 'ZDlQcUByWi' 'VmbzhTZXQz' 'djVyITA9' '=';
+          'ZmIoNyph'
+          'ZDlQcUByWi'
+          'VmbzhTZXQz'
+          'djVyITA9'
+          '=';
       final matches = layerEntropy('token $b64 end', _cfg);
       expect(matches, hasLength(1), reason: 'padded base64 must stay masked');
       expect(matches.single.kindLabel, highEntropyLabel);
@@ -183,7 +187,12 @@ void main() {
       // list, so the entropy layer was — and stays — the only net for
       // this class). Pieced literal, same reason as the base64 test.
       const line =
-          'SESSION_' 'KEY=' 'xJ8f2kQz' '7Lp3vN5w' 'R9tY2uM4' 'bC6dE1';
+          'SESSION_'
+          'KEY='
+          'xJ8f2kQz'
+          '7Lp3vN5w'
+          'R9tY2uM4'
+          'bC6dE1';
       final matches = layerEntropy('out $line tail', _cfg);
       expect(matches, hasLength(1), reason: 'KEY=<random> must stay masked');
       expect(matches.single.kindLabel, highEntropyLabel);

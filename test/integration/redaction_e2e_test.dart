@@ -406,8 +406,7 @@ void main() {
       final repo = JsonlSessionRepo(
         fs: env,
         sessionsRoot: '/sessions',
-        persistTransform: (message) =>
-            persistRedactMessage(pipeline, message),
+        persistTransform: (message) => persistRedactMessage(pipeline, message),
       );
       final session = await repo.create(
         JsonlSessionCreateOptions(cwd: '/work'),

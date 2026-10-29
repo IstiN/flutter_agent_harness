@@ -225,8 +225,10 @@ void main() {
 
     test('legacy escape-free slugs decode as before (compat)', () {
       // Existing on-disk folders keep decoding through the legacy split.
-      expect(decodeSessionCwd('--Users-Uladzimir_Klyshevich-git-dm.ai--'),
-          '/Users/Uladzimir_Klyshevich/git/dm.ai');
+      expect(
+        decodeSessionCwd('--Users-Uladzimir_Klyshevich-git-dm.ai--'),
+        '/Users/Uladzimir_Klyshevich/git/dm.ai',
+      );
       expect(decodeSessionCwd('--tmp-a-b--'), '/tmp/a/b');
     });
 
@@ -942,7 +944,9 @@ void main() {
       final message = assistantWithCall({'command': 'echo $secret'});
       await session.appendMessage(message);
 
-      final record = (await session.getEntries()).whereType<MessageRecord>().single;
+      final record = (await session.getEntries())
+          .whereType<MessageRecord>()
+          .single;
       final persisted = record.message as AssistantMessage;
       final call = persisted.content.single as ToolCall;
       expect(
@@ -968,9 +972,11 @@ void main() {
       );
       final message = assistantWithCall({'command': 'echo $secret'});
       await session.appendMessage(message);
-      final record = (await session.getEntries()).whereType<MessageRecord>().single;
-      final call = (record.message as AssistantMessage).content.single
-          as ToolCall;
+      final record = (await session.getEntries())
+          .whereType<MessageRecord>()
+          .single;
+      final call =
+          (record.message as AssistantMessage).content.single as ToolCall;
       expect(call.arguments['command'], 'echo $secret');
     });
   });

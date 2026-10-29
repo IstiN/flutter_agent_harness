@@ -276,8 +276,9 @@ void main() {
     test('a rewritten secret marker is always ONE shell token', () {
       // gh-1952 I2: even when a rewrite is forced, the marker that
       // replaces the secret must not carry whitespace into the executed
-      // command — the old spaced `[REDACTED:High-Entropy-String]`-style
-      // markers split into three argv items under the shell.
+      // command — the old spaced `[REDACTED:High Entropy String]`-style
+      // markers split into three argv items under the shell; today's
+      // hyphenated rendering cannot.
       final rewrite = redactBashCommandSecretShapes(
         'aws configure set aws_access_key_id AKIAIOSFODNN7EXAMPLE',
       )!;

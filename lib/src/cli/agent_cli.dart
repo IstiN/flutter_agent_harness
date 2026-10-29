@@ -1727,8 +1727,7 @@ class AgentCli {
     // and the provider context stay untouched).
     persistTransform: config.redactionPipeline == null
         ? null
-        : (message) =>
-              persistRedactMessage(config.redactionPipeline!, message),
+        : (message) => persistRedactMessage(config.redactionPipeline!, message),
   );
   Session? _session;
 

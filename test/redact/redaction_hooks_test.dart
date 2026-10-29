@@ -417,13 +417,15 @@ void main() {
   group('persisted tool-call arguments (gh-1952 review)', () {
     test('masks a registered secret in a bash call argument', () {
       final pipeline = _pipeline();
-      final message = _assistant(content: [
-        _call('bash', {'command': 'curl -H "Authorization: Bearer $_ghp"'}),
-      ]);
-      final persisted = persistRedactMessage(pipeline, message)
-          as AssistantMessage;
-      final command = (persisted.content.single as ToolCall).arguments['command']
-          as String;
+      final message = _assistant(
+        content: [
+          _call('bash', {'command': 'curl -H "Authorization: Bearer $_ghp"'}),
+        ],
+      );
+      final persisted =
+          persistRedactMessage(pipeline, message) as AssistantMessage;
+      final command =
+          (persisted.content.single as ToolCall).arguments['command'] as String;
       expect(command, contains(redactionMarker('Registered Secret')));
       expect(command.contains(_ghp), isFalse);
     });
@@ -432,7 +434,9 @@ void main() {
       final pipeline = _pipeline();
       final command = 'echo $_ghp';
       final message = _assistant(
-        content: [_call('bash', {'command': command})],
+        content: [
+          _call('bash', {'command': command}),
+        ],
       );
       persistRedactMessage(pipeline, message);
       // The executed/live call keeps its raw arguments: execution and the
@@ -446,25 +450,31 @@ void main() {
 
     test('write-tool arguments stay byte-identical (AC7)', () {
       final pipeline = _pipeline();
-      final message = _assistant(content: [
-        _call('write', {'path': '/tmp/out.txt', 'content': 'token=$_ghp'}),
-      ]);
+      final message = _assistant(
+        content: [
+          _call('write', {'path': '/tmp/out.txt', 'content': 'token=$_ghp'}),
+        ],
+      );
       // The model-authored deliverable must persist exactly as written —
       // the same write-side exemption the result hooks honor.
-      expect(identical(persistRedactMessage(pipeline, message), message),
-          isTrue);
+      expect(
+        identical(persistRedactMessage(pipeline, message), message),
+        isTrue,
+      );
     });
 
     test('masks inside nested argument structures', () {
       final pipeline = _pipeline();
-      final message = _assistant(content: [
-        _call('bash', {
-          'env': {'AUTH': _ghp},
-          'flags': ['--verbose', 'token=$_ghp'],
-        }),
-      ]);
-      final persisted = persistRedactMessage(pipeline, message)
-          as AssistantMessage;
+      final message = _assistant(
+        content: [
+          _call('bash', {
+            'env': {'AUTH': _ghp},
+            'flags': ['--verbose', 'token=$_ghp'],
+          }),
+        ],
+      );
+      final persisted =
+          persistRedactMessage(pipeline, message) as AssistantMessage;
       final call = persisted.content.single as ToolCall;
       final env = call.arguments['env'] as Map<String, dynamic>;
       expect(env['AUTH'], contains('[REDACTED:'));
@@ -488,7 +498,11 @@ void main() {
         identical(persistRedactMessage(pipeline, toolResult), toolResult),
         isTrue,
       );
-      final clean = _assistant(content: [_call('bash', {'command': 'ls'})]);
+      final clean = _assistant(
+        content: [
+          _call('bash', {'command': 'ls'}),
+        ],
+      );
       expect(identical(persistRedactMessage(pipeline, clean), clean), isTrue);
     });
   });
