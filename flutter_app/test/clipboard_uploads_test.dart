@@ -130,6 +130,91 @@ void main() {
       );
       expect(files, isEmpty);
     });
+
+    test(
+      'non-file and nameless URIs are skipped, real refs still stage',
+      () async {
+        final dir = await Directory.systemTemp.createTemp('fa_clip_test');
+        addTearDown(() => dir.delete(recursive: true));
+        final a = File('${dir.path}/real.txt');
+        await a.writeAsString('ok');
+
+        final files = await readClipboardUploads(
+          source: ClipboardReader([
+            _FakeItem(
+              values: {Formats.fileUri: Uri.parse('https://example.com/x')},
+            ),
+            _FakeItem(values: {Formats.fileUri: Uri.file('/')}), // no segment
+            _FakeItem(
+              values: {Formats.fileUri: Uri.file('${dir.path}/gone.txt')},
+              platformFormats: const ['public.file-url'],
+            ),
+            _FakeItem(
+              values: {Formats.fileUri: Uri.file(a.path)},
+              platformFormats: const ['public.file-url'],
+            ),
+          ]),
+        );
+
+        expect(files.map((f) => f.name).toList(), ['real.txt']);
+      },
+    );
+
+    test('an advertised-but-undeliverable flavor falls through to the next '
+        'flavor and to text', () async {
+      // canProvide(mp3) is optimistic: no payload behind it. The walk
+      // continues to the deliverable png and stages that.
+      final files = await readClipboardUploads(
+        source: ClipboardReader([
+          _FakeItem(
+            advertised: {Formats.mp3, Formats.png},
+            files: {
+              Formats.png: ([7, 8], null),
+            },
+            platformFormats: const ['public.png'],
+          ),
+        ]),
+      );
+      expect(files, hasLength(1));
+      expect(files.single.mimeType, 'image/png');
+
+      // Undeliverable everything + no text → the unsupported hint.
+      await expectLater(
+        readClipboardUploads(
+          source: ClipboardReader([
+            _FakeItem(
+              advertised: {Formats.png},
+              platformFormats: const ['public.png'],
+            ),
+          ]),
+        ),
+        throwsA(isA<FaClipboardUnsupportedException>()),
+      );
+    });
+
+    test('a flavor payload that fails to read falls through instead of '
+        'throwing', () async {
+      final files = await readClipboardUploads(
+        source: ClipboardReader([
+          _FakeItem(
+            advertised: {Formats.png, Formats.plainText},
+            files: {Formats.png: (const _FailingBytes(), 'broken.png')},
+            values: {Formats.plainText: 'text stays'},
+            platformFormats: const ['public.png'],
+          ),
+        ]),
+      );
+      expect(files, isEmpty); // text-paste rules take over, no throw
+    });
+
+    test('no source probes the system clipboard and stays silent when it '
+        'is unavailable (VM test frame)', () async {
+      // On the VM test frame the super_clipboard plugin is unregistered:
+      // the probe either reports no API or fails to read — both must land
+      // as a silent empty result.
+      final files = await readClipboardUploads();
+      expect(files, isEmpty);
+    });
   });
 }
 
@@ -147,7 +232,7 @@ class _FakeItem extends ClipboardDataReader {
 
   final Set<DataFormat> advertised;
   final Map<ValueFormat<Object>, Object> values;
-  final Map<FileFormat, (List<int>, String?)> files;
+  final Map<FileFormat, (Object, String?)> files;
   @override
   final List<String> platformFormats;
 
@@ -183,9 +268,11 @@ class _FakeItem extends ClipboardDataReader {
   }) {
     final file = files[format];
     if (file == null) return null;
-    scheduleMicrotask(
-      () => onFile(_FakeFile(Uint8List.fromList(file.$1), file.$2)),
-    );
+    final (payload, fileName) = file;
+    final dataReaderFile = payload is _FailingBytes
+        ? _FakeFile.failing(fileName)
+        : _FakeFile(Uint8List.fromList(payload as List<int>), fileName);
+    scheduleMicrotask(() => onFile(dataReaderFile));
     return _FakeProgress();
   }
 
@@ -203,25 +290,38 @@ class _FakeItem extends ClipboardDataReader {
       Future.value(null);
 }
 
+/// Marker payload: the flavor "delivers" a file whose read fails.
+class _FailingBytes {
+  const _FailingBytes();
+}
+
 class _FakeFile implements DataReaderFile {
   _FakeFile(this.bytes, this.fileName);
 
-  final Uint8List bytes;
+  _FakeFile.failing(this.fileName) : bytes = null;
+
+  final Uint8List? bytes;
 
   @override
   final String? fileName;
 
   @override
-  int? get fileSize => bytes.length;
+  int? get fileSize => bytes?.length;
 
   @override
-  Stream<Uint8List> getStream() => Stream.value(bytes);
+  Stream<Uint8List> getStream() => Stream.value(bytes!);
 
   @override
   void close() {}
 
   @override
-  Future<Uint8List> readAll() async => bytes;
+  Future<Uint8List> readAll() async {
+    final b = bytes;
+    if (b == null) {
+      throw StateError('payload unavailable');
+    }
+    return b;
+  }
 }
 
 class _FakeProgress implements ReadProgress {
