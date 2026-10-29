@@ -513,6 +513,21 @@ platform :ios do
     sh("xcrun simctl boot 'iPhone 16' 2>/dev/null || xcrun simctl boot 'iPhone 15' 2>/dev/null || true")
     sh("flutter", "build", "ios", "--release", "--no-codesign", *build_name_args)
 
+    # gh-1954: xcodebuild resolves signing identities ONLY through the
+    # user keychain search list — and on the shared host a concurrent
+    # signing leg rewrites that list mid-build (run 40843155381: doctor OK
+    # at 08:38, then gym at 08:53 resolved a same-team "Apple Distribution"
+    # from a DIFFERENT keychain instead of the pinned 9007ED87 from
+    # ci-signing.keychain-db — profile/cert mismatch). Pin the search list
+    # for the duration of gym and restore it in ensure. This is NOT the
+    # retired per-job keychain model: the keychain itself stays persistent;
+    # only xcodebuild's visibility window is pinned.
+    saved_search_list = `security list-keychains -d user`.strip
+    sh("security", "list-keychains", "-d", "user", "-s",
+       File.expand_path("~/Library/Keychains/login.keychain-db"),
+       "/Library/Keychains/System.keychain",
+       File.expand_path("~/Library/Keychains/ci-signing.keychain-db"))
+
     # gh-1692: xcbeautify, never xcpretty (xcpretty swallowed the archive
     # error — silent `** ARCHIVE FAILED **`), and on failure the newest
     # gym log tail lands in the job log via print_gym_log_tail.
@@ -549,6 +564,14 @@ platform :ios do
     rescue StandardError => e
       print_gym_log_tail
       raise e
+    ensure
+      # gh-1954: restore the pre-gym search list (best effort — never mask
+      # the gym result with a restore failure).
+      begin
+        entries = saved_search_list.scan(/"([^"]+)"/).flatten
+        sh("security", "list-keychains", "-d", "user", "-s", *entries) unless entries.empty?
+      rescue StandardError
+      end
     end
   end
 
