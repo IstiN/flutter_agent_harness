@@ -1,0 +1,293 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-29T12:18:25.509Z",
+  "ticketKey": "gh-1956",
+  "headSha": "2d79506a5b8a0a8121193bc0d1a715d0d264e25e",
+  "baseBranch": "main",
+  "reviewDecision": "NONE",
+  "labels": [],
+  "files": {
+    "ci_failures.md": {
+      "hash": "fnv1a64:322b878d3c3c2465",
+      "size": 288
+    },
+    "pr_diff.txt": {
+      "hash": "fnv1a64:b842ea1022f4e2be",
+      "size": 12304
+    },
+    "pr_discussions.md": {
+      "hash": "fnv1a64:19782cfbda81663b",
+      "size": 24227
+    },
+    "pr_discussions_raw.json": {
+      "hash": "fnv1a64:8c26755abe69215f",
+      "size": 113
+    },
+    "pr_info.md": {
+      "hash": "fnv1a64:41be9047c1efe99a",
+      "size": 2659
+    },
+    "request.md": {
+      "hash": "fnv1a64:d5f75be072111d46",
+      "size": 4128
+    },
+    "review_state.md": {
+      "hash": "fnv1a64:7eed40bef4b17114",
+      "size": 517
+    },
+    "rework_base_head.txt": {
+      "hash": "fnv1a64:b98c1b06c9f427bd",
+      "size": 40
+    },
+    "ticket.json": {
+      "hash": "fnv1a64:d4fb620f211a51f5",
+      "size": 4218
+    },
+    "ticket.md": {
+      "hash": "fnv1a64:d5f75be072111d46",
+      "size": 4128
+    }
+  },
+  "comments": [
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-29:9725838b",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-29",
+      "updatedAt": "2026-10-29",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT: the truncated-call salvage hook skips the restore, so the \"restore before any delivery decision\" invariant has a hole**\n\nThe new invariant documented here — the store is re-seeded from durable rows \"BEFORE the first spill or tool-driven delivery\" — is enforced in `reply` and `agent_message` (`await deliverable.ensureRestored()`), but NOT in `captureSalvaged` (`lib/src/task/deliverables.dart` → called from `TaskExecutor` at `task_executor.dart:925` and `:1200` via `child.onTruncatedToolCall`). That hook calls `_persist` directly, which allocates an id without any restore having run.\n\nConcrete failure shape after a resume: the boot kick (`unawaited(executor.ensureDeliverablesRestored())`) is racing; the first post-resume deliverable-path event is an output-truncated `reply`/`agent_message` call (Core flow B); `_persist` allocates `'<childId>-report'` before the restored row reserved it → `store.put` shadows the durable content → the restore's first-write-wins then silently drops the restored artifact. The resumed parent history's `agent://<id>` pointer now resolves to NEW content, and because the new spill also appends a `deliverable_artifact` row with the same id, the NEXT restart's restore applies rows in order and flips the pointer back to the OLD content — pointer resolution becomes restart-order dependent.\n\nThe practical window is small (a local-JSONL restore vs. at least one provider round trip before a truncation can happen), but the fix is cheap and makes the stated invariant true: await the memoized `ensureRestored()` at the top of the truncation hook (or make `captureSalvaged` fire it before `_persist`), so every id-allocating path is covered."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-29:a1797275",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-29",
+      "updatedAt": "2026-10-29",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT: the kill switch is not honored on non-CLI hosts — `subagents.replyAutoSpill: false` is silently ignored in the app**\n\nThe field is documented as the kill-switch getter, but the chain terminates here: the only host that populates it is the CLI (`agent_cli.dart:632`). The app host constructs `SubagentServices` without it (`flutter_app/lib/services/agent_service_host_builder.dart:76`) — so `replyAutoSpill` stays null → spill is permanently ON in the app, and an explicit `subagents.replyAutoSpill: false` in `~/.fah/config.yaml` silently does nothing there.\n\nThis is a config-honesty gap: the self-settings skill (`prompts/skills/self-settings/SKILL.md`, updated by this PR) documents the key as a user-file section and is served on \"any host (CLI headless, REPL, app)\" — an agent asked to disable auto-spill on the app host will report success while behavior is unchanged. The sink/source seams are likewise app-null, so app spills are also session-lifetime only (pointers die at restart) — acceptable as a documented degraded mode, but the kill-switch miss is a user-visible discrepancy.\n\nSuggested fix (one line each): wire `replyAutoSpill: () => config.subagents.replyAutoSpill` into the app builder (the app already loads CLI config), or scope the skill section to state the key applies to the CLI host only."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-29:8404bfe7",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-29",
+      "updatedAt": "2026-10-29",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT: durable-row failures are swallowed with zero observability**\n\n```dart\nunawaited(\n  sink({...}).catchError((Object _) {}),\n);\n```\n\nThe best-effort design is right (a failed row must never corrupt in-session delivery — AC3), but the failure is completely silent: no stderr line, no `AppLog`, no receipt. The CLI sink (`agent_cli.dart:633`) is equally quiet — it `return`s when `_session == null` and lets `appendCustomEntry` errors bubble into the same empty `catchError`. A user only discovers the durability loss after a restart fails to resolve an `agent://` pointer, with nothing in the logs to explain it.\n\nThis deviates from the repo's own convention for best-effort writes: `ScheduledReceiptLog` \"logs via `onError` and never breaks scheduling\", the subagent registry persist surfaces failures — every other swallow in this codebase at least emits one diagnostic line. Please add a minimal `stderr`/host-log line (e.g. `[deliverables] artifact persist failed: <error>`) in the `catchError` and in the CLI sink's null-session early return, so AC6 degradation is diagnosable post-mortem."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-29:25415bab",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-29",
+      "updatedAt": "2026-10-29",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: typo in the new public API — `spillApliesTo` → `spillAppliesTo`**\n\n`DeliverableCapture` is barrel-exported (`lib/src/task.dart` → `export 'deliverables.dart'`), so this misspelled method ships as public package API (`spillApliesTo`). Renaming after release is a breaking change; renaming now costs one line plus the two call sites in `subagent_tools.dart`. Same class of nit: the doc above it says \"the E11 gate the tools reuse\" — fine — but the method name will outlive this PR in the public surface."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-29:9c1f5564",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-29",
+      "updatedAt": "2026-10-29",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: the byte count is re-encoded up to 4× per spill**\n\nEach spill runs `utf8.encode(...)` over the full artifact text multiple times: once here in `_statusLine` for the fit check inside `_persist`, again in `_persist` for `AgentArtifactMeta.bytes`, again in `envelopeText`'s `_statusLine`, and again on restore in `_runRestore`. For a 100 KB+ report (exactly the payload class auto-spill targets) that is ~4 full O(n) encodes per delivery.\n\nCompute it once at the `_persist` boundary and thread it through: pass `bytes` into `_statusLine` (it already takes `chars`) and reuse `meta.bytes` in the record instead of re-encoding. Pure refactor, no behavior change — `_persist` already computes `meta.bytes` from the same string."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-29:50eda87e",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-29",
+      "updatedAt": "2026-10-29",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: dead conditional in the test rig**\n\n```dart\ncapture: () => capture ?? (autoSpill == null ? effective : effective),\n```\n\nBoth ternary branches are `effective`, so the conditional is a no-op — this is exactly `capture ?? effective`. As written it reads as if the spill flag were meant to select a different capture, which is misleading. Simplify to `capture: () => capture ?? effective`."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-29:57aead74",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-29",
+      "updatedAt": "2026-10-29",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: hand-pinned calibration constants will re-break this test on the next prompt copy change**\n\n```dart\nconst gh1956BaselineChars = 2339;\n...\nreturn 237 + ((footprintChars - gh1956BaselineChars) / 4).ceil();\n```\n\nThe refactor correctly replaces the old `length - contract` approximation with the true request-footprint delta, but the two magic constants (`237` offset and the `2339` baseline) are calibrated to gh-1956's exact prompt char counts — the same brittleness this change documents in its own comment (\"boundary-sensitive to the child prompt footprint\"). The next PR that edits `report_size_contract.md` or a tool description lands here again.\n\nTwo cheap hardenings: (1) derive the baseline from the shipped prompt constants in the same expression (`taskReportSizeContractPrompt.length + <pre-gh-1956 delta>`), or (2) at least name the constants' provenance in a comment pointing at the gh-1956 prompt sizes so the next calibration is a one-line diff. Also consider asserting the baseline itself (`expect(footprintChars, greaterThan(gh1956BaselineChars))`) so a drift below baseline fails loudly instead of silently shrinking the window."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-29:191e9e24",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-29",
+      "updatedAt": "2026-10-29",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: newly `required` `bytes` is a breaking constructor change for external consumers**\n\n`DeliverableRecord` is barrel-exported (`lib/src/task.dart`), and this hunk adds `required this.bytes` to the `DeliverableRecord.artifact` constructor. Any out-of-repo caller constructing `DeliverableRecord.artifact(...)` (the package is published) stops compiling until it passes the new required field. In-repo this is fine (the only construction site is `_persist`), but per the repo's backward-compatibility bar for barrel-exported types, consider making the parameter optional (`this.bytes`), or note the breaking change in the CHANGELOG entry (see general comment — none is present in this PR)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-29:ac870a9c",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-29",
+      "updatedAt": "2026-10-29",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Re: ⚠️ IMPORTANT — the truncated-call salvage hook skips the restore\n\n**Fixed** — the invariant is now true for every id-allocating path.\n\n`captureSalvaged` (`lib/src/task/deliverables.dart`) is now `Future<void>` and awaits the memoized `ensureRestored()` BEFORE the `_persist` id allocation, exactly as suggested. Since the hook is now awaited end-to-end, the plumbing changed type:\n\n- `Agent.onTruncatedToolCall` and `AgentLoopConfig.onTruncatedToolCall` are `Future<void> Function(ToolCall call)?`.\n- The loop (`agent_loop.dart`, `_failToolCallsFromTruncatedMessage`) awaits the hook before emitting the truncation failure — a nice side effect: the salvage artifact is persisted before the failure tool-result (and any tier-2 pointer note) is emitted.\n- `TaskExecutor`'s two wiring sites (`task_executor.dart:925` / `:1200`) await `_capture?.captureSalvaged(...)` in the closure.\n\nThe race shape from the thread is covered by a regression test: `test/task/reply_auto_spill_test.dart` → *\"the salvage hook restores durable rows before allocating an id\"* — a pending `restoreArtifacts` future holding the `kid-report` row races a truncated `reply` salvage; with the fix the salvaged partial artifact gets a distinct id and the durable content survives `store.get('kid-report')` unchanged (before the fix the salvage allocated `kid-report` first and the first-write-wins restore silently dropped the durable row — the test reproduces exactly that ordering)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-29:fd100f19",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-29",
+      "updatedAt": "2026-10-29",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Re: ⚠️ IMPORTANT — the kill switch is not honored on non-CLI hosts\n\n**Fixed** — wired, not doc-scoped (the first suggested option, so the skill doc stays truthful for \"any host\").\n\n- `parseAppConfigSections` (`lib/src/config/app_config_sections.dart`) now also parses the `subagents:` section through the CLI's own strict parser (`SubagentsConfig.fromYaml`) into the new `AppFahSections.subagents` field; a malformed section degrades to a named AC7 warning + defaults, like every other section.\n- `AgentService` passes `appConfig?.subagents` into `_appHostServices` (`flutter_app/lib/services/agent_service.dart`), and the app builder wires it (`flutter_app/lib/services/agent_service_host_builder.dart`):\n\n  ```dart\n  replyAutoSpill: () => subagentsConfig?.replyAutoSpill ?? defaultReplyAutoSpill,\n  ```\n\n  so `subagents.replyAutoSpill: false` in `~/.fah/config.yaml` now stops spilling on the app host too — same live-getter semantics as the CLI (`agent_cli.dart:632`). Absent section = default (spill on). The sink/source seams remain app-null (the documented session-lifetime degraded mode you marked acceptable).\n\nTests: `test/config/app_config_sections_test.dart` gains a `subagents section (gh-1956 kill switch)` group (present → parsed incl. `replyAutoSpill: false`; absent → null; non-map / unknown key / bad value type → warning + defaults). The parity guard `test/config/app_cli_config_parity_test.dart` now pins CLI vs app equality on all three `subagents:` fields from one yaml doc (\"subagents: the reply auto-spill kill switch matches\")."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-29:58d9016d",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-29",
+      "updatedAt": "2026-10-29",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Re: ⚠️ IMPORTANT — durable-row failures are swallowed with zero observability\n\n**Fixed** — best-effort stays best-effort, but it is no longer silent.\n\nCore (`lib/src/task/deliverables.dart`): a new host sink seam follows the repo's established convention (`deliverySloSink`, `connTraceStderrSink` — a nullable top-level `void Function(String line)?` hosts install at the composition root):\n\n```dart\nvoid Function(String line)? deliverableDurabilityLog;\n```\n\n`_persistRow`'s `catchError` now names the failure instead of swallowing it:\n\n```dart\n.catchError((Object error) {\n  deliverableDurabilityLog?.call('[deliverables] artifact persist failed: $error');\n})\n```\n\nCLI sink (`agent_cli.dart`): the null-session early return emits `[deliverables] artifact row dropped: no open parent session`; `appendCustomEntry` errors still propagate into `_persistRow`'s catchError, which now reports them.\n\nCLI composition root (`agent_cli_io.dart`): `_wireDeliverableDurabilityLog()` (wired at boot and in `wireRunNoticesForTesting`) routes every line to fa.log (`_logDiagnostic`) AND a dim transcript line — a durability loss is rare and important, so unlike the SLO sink (breach-only) every line surfaces.\n\nTests: `test/task/reply_auto_spill_test.dart` → *\"a failed persist emits a durability diagnostic through the host sink\"* (throwing sink → exactly one line containing `[deliverables]`, `artifact persist failed`, the error text; AC3 delivery still intact) and *\"a failed persist stays silent when no host sink is wired\"*. `test/cli/agent_cli_run_notices_test.dart` → *\"the deliverable durability log is wired and surfaces every line\"*."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-29:90a8ad21",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-29",
+      "updatedAt": "2026-10-29",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Re: 💡 SUGGESTION — typo in the new public API: `spillApliesTo` → `spillAppliesTo`\n\n**Fixed** — renamed before release, exactly as the cost analysis suggested.\n\n- `DeliverableCapture.spillApliesTo` → `spillAppliesTo` (`lib/src/task/deliverables.dart:315`), doc comment unchanged in meaning.\n- The call site in `subagent_tools.dart` (the over-cap agent_message fallback notice) updated; `grep -r spillApliesTo lib/ test/ flutter_app/lib/` is now empty.\n\nThe method ships through the `lib/src/task.dart` barrel as public package API, so this was the last window to rename without a breaking change. Pinned by `test/task/reply_auto_spill_test.dart` → *\"the spill-reach gate answers under its public name\"* (same-session handle and parent inbox answer true; `@`/`/` targets answer false — the E11 gate exercised through the corrected public name)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-29:ca490c45",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-29",
+      "updatedAt": "2026-10-29",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Re: 💡 SUGGESTION — the byte count is re-encoded up to 4× per spill\n\n**Fixed** — computed once at the `_persist` boundary and threaded through, as suggested. Pure refactor; all byte-count and envelope tests pass unchanged.\n\n`lib/src/task/deliverables.dart`:\n\n- `_persist` computes `final bytes = utf8.encode(redacted).length` once, directly after the id allocation, and reuses it for the fit-check overhead, `AgentArtifactMeta.bytes`, the returned `DeliverableRecord`, and the durable row's implicit content — no other full encode of the artifact text remains on the spill path.\n- `_statusLine` now takes the precomputed `int bytes` instead of the `String stored` body (its per-branch `utf8.encode(stored).length` encodes are gone); both the `_persist` fit check and `envelopeText` pass it in.\n- `envelopeText` reads `record.bytes` (the capture always supplies it) with a single-encode fallback for a legacy externally-built record.\n- On the restore path `_runRestore` already encoded once per row — unchanged.\n\nNet effect for the 100 KB+ payload class this feature targets: ~3–4 O(n) encodes per delivery → 1 (plus 1 on restore)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-29:b5c418ef",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-29",
+      "updatedAt": "2026-10-29",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Re: 💡 SUGGESTION — dead conditional in the test rig\n\n**Fixed** — simplified exactly as suggested.\n\n`test/task/reply_auto_spill_test.dart` (`_toolsRig`):\n\n```dart\n// before\ncapture: () => capture ?? (autoSpill == null ? effective : effective),\n// after\ncapture: () => capture ?? effective,\n```\n\nThe misleading both-branches-identical ternary is gone; the rig reads as what it always did — an explicit capture overrides, otherwise the rig builds the default one. All 32 tests in the file pass unchanged, confirming the simplification is behavior-neutral."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-29:c2bd2a85",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-29",
+      "updatedAt": "2026-10-29",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Re: 💡 SUGGESTION — hand-pinned calibration constants will re-break this test\n\n**Fixed** — both suggested hardenings applied in `test/task/subagent_compaction_test.dart`, with one deliberate deviation on the guard operator (explained below).\n\n**Derivation split (suggestion 1, adapted):** the baseline can't be fully derived from `taskReportSizeContractPrompt.length` because the two tool-description sizes are hand-written Dart literals in `subagent_tools.dart`, not generated constants — deriving them would just move the pin. So the baseline is SPLIT so the brittle half self-heals:\n\n- the CONTRACT term derives from the shipped prompt constant (`deliverableChunkContract(8000).length`; gh-1956 measured 948 at budget 800) — a future edit to `report_size_contract.md` re-baselines itself and no longer needs a recalibration here;\n- the gh-1956 tool-description sizes stay PINNED with provenance in the `_gh1956BaselineChars` doc (reply 592 + agent_message 799, pointing at the REPORT SIZE paragraphs in `_replyTool`/`_agentMessageTool`), so a description edit lands as a one-line diff.\n\n**Baseline assertion (suggestion 2):** a new calibration guard group asserts `expect(_childFootprintChars, greaterThanOrEqualTo(_gh1956BaselineChars))` — the footprint computation is hoisted into a named `_childFootprintChars` getter shared by `_contractTokens` and the guard, so the two can't drift apart. I used `greaterThanOrEqualTo` rather than the suggested `greaterThan` because exact equality IS the calibrated gh-1956 point (today's footprint equals the baseline); `greaterThan` would fail on the very commit that pins the baseline. The guard catches the dangerous direction — a shrink below baseline, which would push the delta term negative and silently widen the fixture windows.\n\nThe provenance comment in `_contractTokens` now also names the 237 offset as the pre-gh-1956 contract footprint in tokens."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-29:ad0d7a21",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-29",
+      "updatedAt": "2026-10-29",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Re: 💡 SUGGESTION — newly `required` `bytes` is a breaking constructor change\n\n**Fixed** — the parameter is optional again; external constructors keep compiling.\n\n`DeliverableRecord.artifact` (`lib/src/task/deliverables.dart`): `required this.bytes` → `this.bytes`. The doc now states the compatibility contract explicitly: the barrel-exported type is published package API, so gh-1956 must not break out-of-repo constructors; the harness-owned spill path (`_persist`) always supplies the byte count, legacy external callers simply render chars-only.\n\n`_renderArtifact` handles the null gracefully — `(N chars)` without the byte segment, for both the per-part and plain artifact render forms; spill-produced records are byte-identical to before (`(N chars, M bytes)`).\n\nPinned by `test/task/reply_auto_spill_test.dart` → *\"a legacy external constructor without bytes still compiles and renders chars-only\"*, which constructs `DeliverableRecord.artifact(...)` without `bytes` (a compile error before this change) and asserts both the legacy render and the unchanged spill-path render with bytes.\n\nThe repo-conventional CHANGELOG entry is also in place now (the general review round flagged its absence): `CHANGELOG.md` → `## Unreleased` → `feat(gh-1956):` describing the auto-spill feature plus this rework round's items (salvage-restore ordering, durability diagnostics, app-host kill switch, the `spillAppliesTo` rename, single-encode byte counts, and this compatibility restore)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-29:0b10c116",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-29",
+      "updatedAt": "2026-10-29",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — APPROVE (with suggestions)\n\n**Summary**: gh-1956 reply auto-spill is well built — spill gate in `DeliverableCapture`, truthful kill-switch degradation (verified against `recordReply`/`_capMessage` capping), redaction-before-persistence preserved (I3), AC1–AC6 covered by 27 meaningful new tests; all stated verification commands pass (`reply_auto_spill_test`, `deliverables_test`, `subagent_compaction_test` — 60/60) plus prompts-sync, self-config-accuracy, deliverable executor/tools, heartbeat and output-manager suites (61/61); analyzer clean on all changed files. No blocking findings; three important items (truncated-call hook skips `ensureRestored`, app host ignores `subagents.replyAutoSpill: false`, silent durability-failure swallow) and five suggestions.\n\n**Key Issues**:\n- ⚠️ IMPORTANT: `captureSalvaged` (Core flow B hook) bypasses the restore-before-delivery invariant — post-resume id shadowing can flip `agent://` pointer content across restarts (comment1)\n- ⚠️ IMPORTANT: kill switch wired CLI-only — the app host never populates `replyAutoSpill`, so the documented config key silently no-ops there (comment2)\n- ⚠️ IMPORTANT: `_persistRow` swallows durable-row failures with zero logging — AC6 degradation is undiagnosable (comment3)\n- 💡 SUGGESTION: `spillApliesTo` typo in barrel-exported public API; ≤4 redundant `utf8.encode` passes per spill; dead ternary in the test rig; hand-pinned compaction-test calibration constants; newly-`required` `bytes` breaks external constructors\n\n**Next Steps**:\n1. Await `ensureRestored()` in the `onTruncatedToolCall` salvage path (one line, closes the invariant hole)\n2. Wire the `replyAutoSpill` getter into `flutter_app/lib/services/agent_service_host_builder.dart` or scope the self-settings doc to the CLI\n3. Add one log line in `_persistRow`'s `catchError` and the CLI sink's null-session branch\n4. (Optional, non-blocking) apply the five suggestions; add the repo-conventional CHANGELOG entry"
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-29:7218e17a",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-29",
+      "updatedAt": "2026-10-29",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🧵 Unresolved review threads — rework armed. This machine-authored PR is reviewed (ai_pr_reviewed) but still has open review threads. The rework leg owns open threads: agent:rework is armed on this PR and the rework runner will work through the threads and push. Validation re-runs automatically afterwards, and once the threads are resolved a fresh re-review is armed (review-threads-resolved)."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-29:581a27f4",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-29",
+      "updatedAt": "2026-10-29",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🔄 zombie re-dispatch e219d53b9e1de0e96400dd4a33f8389bdd901c59 — zombie 1/3 at 2026-10-29T09:57:52.207Z\n\nThis head carried no dispatched validation run at all — the dispatch was lost (gh-821). CI was re-dispatched automatically (bounded: 1 per head per hour; 3 in a row on the same head park the PR validation_failed)."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-29:71d501cb",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-29",
+      "updatedAt": "2026-10-29",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🔄 zombie re-dispatch 74b67540d2c96f05df6dc2c1b5dc127f0166e937 — zombie 1/3 at 2026-10-29T10:00:24.321Z\n\nThis head carried no dispatched validation run at all — the dispatch was lost (gh-821). CI was re-dispatched automatically (bounded: 1 per head per hour; 3 in a row on the same head park the PR validation_failed)."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-29:ace51962",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-29",
+      "updatedAt": "2026-10-29",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🛑 stale-cancel 95a977a4494a5c62c8c23af98acf01b57f62d33b — stale base at 2026-10-29T10:31:52.927Z\n\nCancelled 1 validation run(s) dispatched on a superseded head of this PR — the silent refresh moved the base and their results would be discarded anyway (gh-846). `cancelled` is not a verdict (gh-755): no fail-validation, no zombie re-dispatch, no red-head count is recorded for these heads — validation re-dispatches only on the current head."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-29:501c5a01",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-29",
+      "updatedAt": "2026-10-29",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "✅ Rework finished. `pr_approved` is sticky (approved once — never re-reviewed): the new head re-validates and merges directly."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-29:8a98252c",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-29",
+      "updatedAt": "2026-10-29",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ Validation CI went red on the head — merge aborted, rework re-queued. (linked issue #1956 re-armed) (approval latch kept — no re-review after fixes)\n🔴 red head abe6366483f02706adc1e0b10c68e8754379d42e — red 1/3 (owner directive 2026-10-04: red yields the slot — after 3 reds on the same head, validation waits for a NEW head)"
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-29:d74bbc97",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-29",
+      "updatedAt": "2026-10-29",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ Validation CI went red on the head — merge aborted, rework re-queued. (linked issue #1956 re-armed) (approval latch kept — no re-review after fixes)\nFailed run: https://github.com/IstiN/flutter_agent_harness/actions/runs/40862678772\n🔴 red head 40cab79e27db148ce17d77e11017bf0981c8bf15 — red 1/3 (owner directive 2026-10-04: red yields the slot — after 3 reds on the same head, validation waits for a NEW head)"
+    }
+  ]
+}
