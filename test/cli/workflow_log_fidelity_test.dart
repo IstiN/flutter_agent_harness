@@ -43,7 +43,7 @@ AgentCli cliFor(
 }) => AgentCli(
   config: AgentCliConfig(
     model: testModel,
-    apiKey: '[REDACTED:Sensitive Value]',
+    apiKey: '[REDACTED:Sensitive-Value]',
     env: MemoryExecutionEnv(
       cwd: '/work',
       shell: FakeShell(stdout: 'ok'),
@@ -410,7 +410,7 @@ void main() {
       final cli = AgentCli(
         config: AgentCliConfig(
           model: testModel,
-          apiKey: '[REDACTED:Sensitive Value]',
+          apiKey: '[REDACTED:Sensitive-Value]',
           env: MemoryExecutionEnv(
             cwd: '/work',
             shell: FakeShell(stdout: 'ok'),
@@ -622,7 +622,7 @@ void main() {
       final cli = AgentCli(
         config: AgentCliConfig(
           model: testModel,
-          apiKey: '[REDACTED:Sensitive Value]',
+          apiKey: '[REDACTED:Sensitive-Value]',
           env: MemoryExecutionEnv(
             cwd: '/work',
             shell: FakeShell(stdout: 'ok'),
@@ -690,7 +690,7 @@ void main() {
       final cli = AgentCli(
         config: AgentCliConfig(
           model: testModel,
-          apiKey: '[REDACTED:Sensitive Value]',
+          apiKey: '[REDACTED:Sensitive-Value]',
           env: MemoryExecutionEnv(
             cwd: '/work',
             shell: FakeShell(stdout: 'ok'),
@@ -837,7 +837,7 @@ void main() {
       final cli = AgentCli(
         config: AgentCliConfig(
           model: testModel,
-          apiKey: '[REDACTED:Sensitive Value]',
+          apiKey: '[REDACTED:Sensitive-Value]',
           env: MemoryExecutionEnv(
             cwd: '/work',
             shell: FakeShell(stdout: 'ok'),
@@ -890,7 +890,7 @@ void main() {
       return AgentCli(
         config: AgentCliConfig(
           model: window32k,
-          apiKey: '[REDACTED:Sensitive Value]',
+          apiKey: '[REDACTED:Sensitive-Value]',
           env: env,
           sessionRoot: '/sessions',
           providerKind: 'openai-completions',
@@ -1269,7 +1269,7 @@ void main() {
         final cli = AgentCli(
           config: AgentCliConfig(
             model: testModel,
-            apiKey: '[REDACTED:Sensitive Value]',
+            apiKey: '[REDACTED:Sensitive-Value]',
             env: MemoryExecutionEnv(
               cwd: '/work',
               shell: FakeShell(stdout: 'ok'),
@@ -1316,7 +1316,7 @@ void main() {
       final cli = AgentCli(
         config: AgentCliConfig(
           model: testModel,
-          apiKey: '[REDACTED:Sensitive Value]',
+          apiKey: '[REDACTED:Sensitive-Value]',
           env: MemoryExecutionEnv(
             cwd: '/work',
             shell: FakeShell(stdout: 'ok'),

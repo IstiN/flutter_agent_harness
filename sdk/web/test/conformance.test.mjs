@@ -211,6 +211,28 @@ test('E4: secret fields are redactable, live frames keep their values', () => {
   );
 });
 
+test('gh-1952: rendered markers are ONE shell token in both runtimes', () => {
+  // The Dart side enforces this through `redactionMarker`
+  // (test/redact/marker_single_token_test.dart, over the full layer
+  // label surface). The web client builds its own markers here, so the
+  // same invariant is pinned on this side too: a whitespace label must
+  // render hyphenated — identical to the Dart rendering — never spaced
+  // (the gh-1952 incident marker split into 3 argv items).
+  const spaced = redactForLog({
+    v: 1,
+    kind: 'High Entropy String',
+    rawBody: 'LIVE',
+  });
+  assert.equal(spaced.rawBody, '[REDACTED:High-Entropy-String]');
+  assert.doesNotMatch(String(spaced.rawBody), /\s/);
+
+  // Every wire kind label in use renders whitespace-free.
+  for (const kind of ['secret_response', 'model_request', 'unknown']) {
+    const frame = redactForLog({ v: 1, kind, rawBody: 'LIVE' });
+    assert.ok(!/\s/.test(String(frame.rawBody)), kind);
+  }
+});
+
 test('unknown_event passthrough frames are emittable', () => {
   assert.deepEqual(encodeUnknownEvent('future_widget', { size: 3 }), {
     v: 1,

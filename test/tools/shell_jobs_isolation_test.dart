@@ -107,7 +107,7 @@ void main() {
       // The fixture AWS access key never reaches the disk; the redaction
       // marker does.
       expect(log, isNot(contains('AKIAIOSFODNN7EXAMPLE')));
-      expect(log, contains('[REDACTED:AWS Access Key]'));
+      expect(log, contains('[REDACTED:AWS-Access-Key]'));
     });
 
     test('registered (non-vendor-shaped) secrets are redacted too', () async {
@@ -123,7 +123,7 @@ void main() {
 
       final log = File('${logDir.path}/${entry.id}.log').readAsStringSync();
       expect(log, isNot(contains('Zm9vQkFQQkFSU0VDUkVU')));
-      expect(log, contains('[REDACTED:Registered Secret]'));
+      expect(log, contains('[REDACTED:Registered-Secret]'));
     });
 
     test('without a redactor the log keeps the raw bytes (compat)', () async {

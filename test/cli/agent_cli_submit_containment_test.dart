@@ -196,7 +196,7 @@ void main() {
     final cli = AgentCli(
       config: AgentCliConfig(
         model: _copilotModel,
-        apiKey: '[REDACTED:Sensitive Value]',
+        apiKey: '[REDACTED:Sensitive-Value]',
         env: throwingEnv ?? env,
         homeDir: '/home/u',
         sessionRoot: '/sessions',

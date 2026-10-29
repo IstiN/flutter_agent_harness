@@ -179,7 +179,7 @@ void main() {
         final events = await streamAnthropic(
           testModel,
           simpleContext(),
-          const AnthropicOptions(apiKey: '[REDACTED:Sensitive Value]'),
+          const AnthropicOptions(apiKey: '[REDACTED:Sensitive-Value]'),
           client,
         ).toList();
 
@@ -212,7 +212,7 @@ void main() {
         final events = await streamAnthropic(
           testModel,
           simpleContext(),
-          const AnthropicOptions(apiKey: '[REDACTED:Sensitive Value]'),
+          const AnthropicOptions(apiKey: '[REDACTED:Sensitive-Value]'),
           client,
         ).toList();
 

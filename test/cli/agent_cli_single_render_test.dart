@@ -66,7 +66,7 @@ AgentCli _cli(
   return AgentCli(
     config: AgentCliConfig(
       model: testModel,
-      apiKey: '[REDACTED:Sensitive Value]',
+      apiKey: '[REDACTED:Sensitive-Value]',
       env: env ?? MemoryExecutionEnv(cwd: '/work', shell: FakeShell()),
       sessionRoot: '/sessions',
       approvalMode: ApprovalMode.yolo,
@@ -363,7 +363,7 @@ void main() {
       final cli = AgentCli(
         config: AgentCliConfig(
           model: testModel,
-          apiKey: '[REDACTED:Sensitive Value]',
+          apiKey: '[REDACTED:Sensitive-Value]',
           env: LocalExecutionEnv(cwd: taskDir.path),
           sessionRoot: '${artifactsDir.path}/sessions',
           approvalMode: ApprovalMode.yolo,
@@ -421,7 +421,7 @@ void main() {
       final cli = AgentCli(
         config: AgentCliConfig(
           model: testModel,
-          apiKey: '[REDACTED:Sensitive Value]',
+          apiKey: '[REDACTED:Sensitive-Value]',
           env: LocalExecutionEnv(cwd: taskDir.path),
           sessionRoot: '${artifactsDir.path}/sessions',
           approvalMode: ApprovalMode.yolo,
@@ -466,7 +466,7 @@ void main() {
       final io = FakeCliIO();
       final config = AgentCliConfig(
         model: testModel,
-        apiKey: '[REDACTED:Sensitive Value]',
+        apiKey: '[REDACTED:Sensitive-Value]',
         env: env,
         sessionRoot: '/sessions',
         approvalMode: ApprovalMode.yolo,

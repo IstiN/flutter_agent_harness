@@ -118,9 +118,9 @@ void main() {
           'MIIBVAIBADANBgkqhkiG9w0BAQEFAASCAT4wggE6AgEAAkEA0\n'
           '-----END PRIVATE KEY-----\n';
       final out = RedactionPipeline(registeredSecrets: const []).redact(page);
-      expect(out, contains('[REDACTED:OpenAI Key]'));
-      expect(out, contains('[REDACTED:Sensitive Value]'));
-      expect(out, contains('[REDACTED:PEM PRIVATE KEY]'));
+      expect(out, contains('[REDACTED:OpenAI-Key]'));
+      expect(out, contains('[REDACTED:Sensitive-Value]'));
+      expect(out, contains('[REDACTED:PEM-PRIVATE-KEY]'));
       expect(out, isNot(contains(openaiKey)));
     });
   });
