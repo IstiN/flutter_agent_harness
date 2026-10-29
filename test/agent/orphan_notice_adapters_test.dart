@@ -211,7 +211,7 @@ void main() {
       (client) => streamAnthropic(
         _anthropicModel,
         _repairedContext(),
-        const AnthropicOptions(apiKey: '[REDACTED:Sensitive Value]'),
+        const AnthropicOptions(apiKey: '[REDACTED:Sensitive-Value]'),
         client,
       ),
       _anthropicSse(),
@@ -225,7 +225,7 @@ void main() {
       (client) => streamOpenAICompletions(
         _openAiModel,
         _repairedContext(),
-        const OpenAICompletionsOptions(apiKey: '[REDACTED:Sensitive Value]'),
+        const OpenAICompletionsOptions(apiKey: '[REDACTED:Sensitive-Value]'),
         client,
       ),
       _openAiSse(),
@@ -238,7 +238,7 @@ void main() {
       (client) => streamGoogle(
         _googleModel,
         _repairedContext(),
-        const GoogleOptions(apiKey: '[REDACTED:Sensitive Value]'),
+        const GoogleOptions(apiKey: '[REDACTED:Sensitive-Value]'),
         client,
       ),
       _googleSse(),

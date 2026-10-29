@@ -179,7 +179,7 @@ void main() {
   }) => AgentCli(
     config: AgentCliConfig(
       model: _model,
-      apiKey: '[REDACTED:Sensitive Value]',
+      apiKey: '[REDACTED:Sensitive-Value]',
       env: env,
       sessionRoot: '/sessions',
       sessionName: 'bench-trigger-target',
@@ -356,7 +356,7 @@ void main() {
     }) => AgentCli(
       config: AgentCliConfig(
         model: _model,
-        apiKey: '[REDACTED:Sensitive Value]',
+        apiKey: '[REDACTED:Sensitive-Value]',
         env: MemoryExecutionEnv(cwd: '/work', shell: FakeShell()),
         sessionRoot: '/sessions',
         sessionName: 'bench-trigger-target',

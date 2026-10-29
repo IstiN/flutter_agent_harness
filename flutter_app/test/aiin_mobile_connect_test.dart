@@ -47,8 +47,8 @@ MockClient _mockBackend() => MockClient((request) async {
   final path = request.url.path;
   if (path == '/api/oauth-proxy/exchange') {
     return _json(const {
-      'access_token': '[REDACTED:Sensitive Value]',
-      'refresh_token': '[REDACTED:Sensitive Value]',
+      'access_token': '[REDACTED:Sensitive-Value]',
+      'refresh_token': '[REDACTED:Sensitive-Value]',
       'token_type': 'Bearer',
       'expires_in': 3600,
     });
@@ -511,13 +511,13 @@ void main() {
       providerKind: 'openai-completions',
       modelId: 'codemie-model',
       baseUrl: 'https://codemie.lab.epam.com/code-assistant-api/v1',
-      apiKey: '[REDACTED:Sensitive Value]',
+      apiKey: '[REDACTED:Sensitive-Value]',
     );
     final aiinConfig = AgentConfig(
       providerKind: 'aiin',
       modelId: 'moonshotai/kimi-k2',
       baseUrl: aiinDefaultChatBaseUrl,
-      apiKey: '[REDACTED:Sensitive Value]',
+      apiKey: '[REDACTED:Sensitive-Value]',
     );
     final service = AgentService(
       agent: Agent(

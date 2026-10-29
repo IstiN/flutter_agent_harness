@@ -63,7 +63,7 @@ void main() {
     final sw = Stopwatch()..start();
     final out = pipeline.redact(loaded);
     sw.stop();
-    expect(out.contains('[REDACTED:High Entropy String]'), isTrue);
+    expect(out.contains('[REDACTED:High-Entropy-String]'), isTrue);
     expect(
       sw.elapsedMilliseconds,
       lessThan(150),

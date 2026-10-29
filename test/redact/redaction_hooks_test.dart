@@ -413,4 +413,97 @@ void main() {
       expect(text, 'prefixed');
     });
   });
+
+  group('persisted tool-call arguments (gh-1952 review)', () {
+    test('masks a registered secret in a bash call argument', () {
+      final pipeline = _pipeline();
+      final message = _assistant(
+        content: [
+          _call('bash', {'command': 'curl -H "Authorization: Bearer $_ghp"'}),
+        ],
+      );
+      final persisted =
+          persistRedactMessage(pipeline, message) as AssistantMessage;
+      final command =
+          (persisted.content.single as ToolCall).arguments['command'] as String;
+      expect(command, contains(redactionMarker('Registered Secret')));
+      expect(command.contains(_ghp), isFalse);
+    });
+
+    test('leaves the LIVE message untouched — persist-path only', () {
+      final pipeline = _pipeline();
+      final command = 'echo $_ghp';
+      final message = _assistant(
+        content: [
+          _call('bash', {'command': command}),
+        ],
+      );
+      persistRedactMessage(pipeline, message);
+      // The executed/live call keeps its raw arguments: execution and the
+      // provider context must never see the masked form (gh-1952 I1/AC1 —
+      // argv byte-identity; only the record-write path masks).
+      expect(
+        (message.content.single as ToolCall).arguments['command'],
+        command,
+      );
+    });
+
+    test('write-tool arguments stay byte-identical (AC7)', () {
+      final pipeline = _pipeline();
+      final message = _assistant(
+        content: [
+          _call('write', {'path': '/tmp/out.txt', 'content': 'token=$_ghp'}),
+        ],
+      );
+      // The model-authored deliverable must persist exactly as written —
+      // the same write-side exemption the result hooks honor.
+      expect(
+        identical(persistRedactMessage(pipeline, message), message),
+        isTrue,
+      );
+    });
+
+    test('masks inside nested argument structures', () {
+      final pipeline = _pipeline();
+      final message = _assistant(
+        content: [
+          _call('bash', {
+            'env': {'AUTH': _ghp},
+            'flags': ['--verbose', 'token=$_ghp'],
+          }),
+        ],
+      );
+      final persisted =
+          persistRedactMessage(pipeline, message) as AssistantMessage;
+      final call = persisted.content.single as ToolCall;
+      final env = call.arguments['env'] as Map<String, dynamic>;
+      expect(env['AUTH'], contains('[REDACTED:'));
+      final flags = call.arguments['flags'] as List<dynamic>;
+      expect(flags.first, '--verbose');
+      expect(flags.last, contains('[REDACTED:'));
+    });
+
+    test('non-call messages pass through unchanged', () {
+      final pipeline = _pipeline();
+      final toolResult = ToolResultMessage(
+        toolCallId: 'call-1',
+        toolName: 'bash',
+        content: [TextContent(text: 'token=$_ghp')],
+        isError: false,
+        timestamp: DateTime.utc(2026),
+      );
+      // Tool results are already masked by afterToolCall; the persist
+      // pass must not re-shape them.
+      expect(
+        identical(persistRedactMessage(pipeline, toolResult), toolResult),
+        isTrue,
+      );
+      final clean = _assistant(
+        content: [
+          _call('bash', {'command': 'ls'}),
+        ],
+      );
+      expect(identical(persistRedactMessage(pipeline, clean), clean), isTrue);
+    });
+  });
 }

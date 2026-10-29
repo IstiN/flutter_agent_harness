@@ -9,6 +9,7 @@ library;
 import 'dart:async';
 
 import '../agent/agent.dart';
+import '../types.dart' show Message;
 import '../env/execution_env.dart';
 import 'session_repo.dart';
 import 'session_storage.dart';
@@ -54,6 +55,7 @@ final class AgentSessionManager {
     String? cwd,
     JsonlSessionRepo? repo,
     SessionPresenceStore? presenceStore,
+    Message Function(Message message)? persistTransform,
   }) : _repo =
            repo ??
            // Issue #522: hosts that own live-session heartbeats pass the
@@ -62,6 +64,9 @@ final class AgentSessionManager {
              fs: env,
              sessionsRoot: sessionsRoot,
              presenceStore: presenceStore,
+             // gh-1952 review: the record-write mask for hosts without
+             // their own repo (a host-built repo carries its own).
+             persistTransform: persistTransform,
            ),
        _cwd = cwd ?? env.cwd;
 

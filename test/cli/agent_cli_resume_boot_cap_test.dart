@@ -93,7 +93,7 @@ void main() {
   }) => AgentCli(
     config: AgentCliConfig(
       model: model ?? _model,
-      apiKey: '[REDACTED:Sensitive Value]',
+      apiKey: '[REDACTED:Sensitive-Value]',
       env: env,
       sessionRoot: '/sessions',
       sessionName: 'boot-cap-target',
@@ -244,7 +244,7 @@ void main() {
       final agent = AgentCli(
         config: AgentCliConfig(
           model: _bigModel,
-          apiKey: '[REDACTED:Sensitive Value]',
+          apiKey: '[REDACTED:Sensitive-Value]',
           env: env,
           sessionRoot: '/sessions',
           sessionName: 'boot-cap-target',
@@ -328,7 +328,7 @@ void main() {
       final agent = AgentCli(
         config: AgentCliConfig(
           model: _bigModel,
-          apiKey: '[REDACTED:Sensitive Value]',
+          apiKey: '[REDACTED:Sensitive-Value]',
           env: env,
           sessionRoot: '/sessions',
           sessionName: 'small-boot',
@@ -479,7 +479,7 @@ void main() {
       final agent = AgentCli(
         config: AgentCliConfig(
           model: _bigModel,
-          apiKey: '[REDACTED:Sensitive Value]',
+          apiKey: '[REDACTED:Sensitive-Value]',
           env: env,
           sessionRoot: '/sessions',
           sessionName: 'small-boot',
