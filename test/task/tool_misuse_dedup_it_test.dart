@@ -19,7 +19,6 @@ import 'package:test/test.dart';
 
 import '../support/scripted_stream_harness.dart';
 
-
 AssistantMessageEventStream _immediate(List<AssistantMessageEvent> events) {
   final stream = AssistantMessageEventStream();
   for (final event in events) {
@@ -115,67 +114,79 @@ void main() {
     expect(result.output, contains('reply'));
   });
 
-  test('resume re-wires the leak loudly and keeps the stored output', () async {
-    // Round-3 review: the resume-path warning must READ-MODIFY-WRITE the
-    // output artifact — `put` replaces, and a clobbering resume would
-    // erase the child's spawn-time output from `agent://<id>`.
-    final env = MemoryExecutionEnv(cwd: '/work');
-    final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
-    final manager = SubagentManager(
-      parentSessionId: 'sess',
-      messaging: _FakeFabric(),
-    )..mailboxPrefix = 'sess';
-    final store = AgentOutputStore();
-    TaskExecutor buildExecutor() => TaskExecutor(
-      childTools: [_replyLeakTool(), _fakeTool('read')],
-      streamFunction: () => (model, context, {cancelToken}) {
-        return _immediate(textTurn('child finished the work'));
-      },
-      model: () => testModel,
-      registry: TaskAgentRegistry(const []),
-      semaphore: Semaphore(2),
-      store: store,
-      subagentManager: manager,
-      childSessionFactory: (parentId, childId) => repo.create(
-        JsonlSessionCreateOptions(
-          cwd: '/work',
-          metadata: {
-            'agent': 'subagent',
-            'id': childId,
-            'parent': parentId,
-            'model': testModel.id,
-          },
+  test(
+    'resume re-wires the leak loudly on the latest output (gh-1951)',
+    () async {
+      // Round-3 review (issue #862): the resume-path warning must be an
+      // APPEND to whatever the stored output is — never a silent clobber of
+      // the warning itself. gh-1951 AC3 changes WHAT that output is: the
+      // resumed run's final answer REPLACES the spawn-time content, so
+      // `agent://<id>` resolves the answer the resume completion notice
+      // points at; the warning appends to THAT text.
+      final env = MemoryExecutionEnv(cwd: '/work');
+      final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
+      final manager = SubagentManager(
+        parentSessionId: 'sess',
+        messaging: _FakeFabric(),
+      )..mailboxPrefix = 'sess';
+      final store = AgentOutputStore();
+      TaskExecutor buildExecutor() => TaskExecutor(
+        childTools: [_replyLeakTool(), _fakeTool('read')],
+        streamFunction: () => (model, context, {cancelToken}) {
+          return _immediate(textTurn('child finished the work'));
+        },
+        model: () => testModel,
+        registry: TaskAgentRegistry(const []),
+        semaphore: Semaphore(2),
+        store: store,
+        subagentManager: manager,
+        childSessionFactory: (parentId, childId) => repo.create(
+          JsonlSessionCreateOptions(
+            cwd: '/work',
+            metadata: {
+              'agent': 'subagent',
+              'id': childId,
+              'parent': parentId,
+              'model': testModel.id,
+            },
+          ),
         ),
-      ),
-      childSessionOpener: jsonlChildSessionOpener(env),
-    );
+        childSessionOpener: jsonlChildSessionOpener(env),
+      );
 
-    final executor = buildExecutor();
-    final result = await executor.runSpawn(
-      item: const TaskItem(name: 'scout', task: 'luna mini-app job'),
-      index: 0,
-      context: 'ctx',
-    );
-    expect(result.status, TaskSpawnStatus.completed);
+      final executor = buildExecutor();
+      final result = await executor.runSpawn(
+        item: const TaskItem(name: 'scout', task: 'luna mini-app job'),
+        index: 0,
+        context: 'ctx',
+      );
+      expect(result.status, TaskSpawnStatus.completed);
 
-    // The spawn stored the child's output with its warning.
-    final afterSpawn = store.get(result.id);
-    expect(afterSpawn, isNotNull);
-    expect(afterSpawn, contains('child finished the work'));
-    expect(afterSpawn, contains('warning: duplicate tool registration'));
+      // The spawn stored the child's output with its warning.
+      final afterSpawn = store.get(result.id);
+      expect(afterSpawn, isNotNull);
+      expect(afterSpawn, contains('child finished the work'));
+      expect(afterSpawn, contains('warning: duplicate tool registration'));
 
-    // A FRESH executor over the same manager — the process-restart shape
-    // the round-1 thread called out. The resume re-fires the duplicate
-    // registration; the stored output must survive it.
-    await buildExecutor().resumeChild(result.id, 'continue now');
+      // A FRESH executor over the same manager — the process-restart shape
+      // the round-1 thread called out. The resume re-fires the duplicate
+      // registration; the stored output must survive it.
+      await buildExecutor().resumeChild(result.id, 'continue now');
 
-    final afterResume = store.get(result.id)!;
-    expect(afterResume, contains('child finished the work'));
-    // Append-not-replace: the spawn's warning AND the resume's warning are
-    // both present (a clobbering write leaves exactly one).
-    expect(
-      'warning: duplicate tool registration'.allMatches(afterResume).length,
-      2,
-    );
-  });
+      final afterResume = store.get(result.id)!;
+      expect(afterResume, contains('child finished the work'));
+      // gh-1951 AC3: the resume REPLACED the stored output with the resumed
+      // run's final answer (the spawn-time content is superseded — the
+      // spawn notice already delivered it to the parent).
+      expect(afterResume, contains('warning: duplicate tool registration'));
+      // The resume's warning was appended to the RESUMED text (exactly one
+      // warning: the spawn's superseded copy went with the replaced
+      // content; a clobbering write of the warning itself would leave zero
+      // on a later replace).
+      expect(
+        'warning: duplicate tool registration'.allMatches(afterResume).length,
+        1,
+      );
+    },
+  );
 }

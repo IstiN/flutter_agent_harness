@@ -114,7 +114,20 @@ class RedactionToolPolicy {
 /// the pipeline and the bash shape rewriter (issue #1408 AC3) must never
 /// diverge — a divergent marker would slip past the pipeline's
 /// re-redaction skip logic.
-String redactionMarker(String kindLabel) => '[REDACTED:$kindLabel]';
+///
+/// gh-1952 (I2): the rendered marker is always ONE shell token — every
+/// whitespace run in [kindLabel] becomes a single `-`. A marker that
+/// leaks into a shell string (`[REDACTED:GitHub-Token]`) can then never
+/// split into several argv items the way the spaced
+/// `[REDACTED:High Entropy String]` of the gh-1952 incident did (the
+/// shell split it into three and the child tried to open each as a
+/// path — this hyphenated rendering is the FIXED output, which cannot
+/// split). Labels keep their human-readable form for notices and stats;
+/// only the MARKER rendering is normalized, and the pipeline's
+/// re-redaction skip regex is label-shape agnostic, so old transcripts
+/// with spaced markers stay idempotent.
+String redactionMarker(String kindLabel) =>
+    '[REDACTED:${kindLabel.replaceAll(RegExp(r'\s+'), '-')}]';
 
 final class RedactionConfig {
   /// Creates a configuration; see each field for its default.

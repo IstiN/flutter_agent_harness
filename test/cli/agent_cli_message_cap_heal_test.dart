@@ -148,7 +148,7 @@ void main() {
   AgentCli cli(MemoryExecutionEnv env, _CapAwareStream stream) => AgentCli(
     config: AgentCliConfig(
       model: _model,
-      apiKey: '[REDACTED:Sensitive Value]',
+      apiKey: '[REDACTED:Sensitive-Value]',
       env: env,
       sessionRoot: '/sessions',
       providerKind: 'openai-completions',

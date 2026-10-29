@@ -622,6 +622,41 @@ class AgentCli {
           deliverableRedactor: config.redactionPipeline == null
               ? null
               : (String text) => config.redactionPipeline!.redact(text),
+          // gh-1956: reply auto-spill is the default delivery; the
+          // kill-switch getter consults the config live, and spilled
+          // artifacts persist as `deliverable_artifact` custom records so
+          // a resumed session re-seeds them (AC6 — pointer survives
+          // restart). The source rides the same RAW file scan as the
+          // registry (side-leaf custom records are invisible to the
+          // windowed boot open).
+          replyAutoSpill: () => config.subagents.replyAutoSpill,
+          deliverableArtifactSink: (artifact) async {
+            final session = _session;
+            if (session == null) {
+              // Best-effort (AC3) — but never silent (gh-1956 review): a
+              // dropped row is discoverable after the fact.
+              deliverableDurabilityLog?.call(
+                '[deliverables] artifact row dropped: '
+                'no open parent session',
+              );
+              return;
+            }
+            await session.appendCustomEntry(
+              customType: deliverableArtifactRecordType,
+              data: artifact,
+            );
+          },
+          deliverableArtifactSource: () async {
+            final session = _session;
+            final repo = _repo;
+            if (session == null || repo is! JsonlSessionRepo) {
+              return const [];
+            }
+            return deliverableArtifactRows(
+              repo: repo,
+              parent: await session.getMetadata(),
+            );
+          },
           homeDir: config.homeDir,
           machineName: config.machineName,
           a2a: config.a2aConfig,
@@ -1722,6 +1757,12 @@ class AgentCli {
     presenceStore: config.presenceStore,
     processId: config.processId,
     parseExecutor: config.parseExecutor,
+    // gh-1952 review: the record-write mask — appended tool-call
+    // arguments carry masked secrets, never raw bytes (the live message
+    // and the provider context stay untouched).
+    persistTransform: config.redactionPipeline == null
+        ? null
+        : (message) => persistRedactMessage(config.redactionPipeline!, message),
   );
   Session? _session;
 
@@ -2068,6 +2109,7 @@ class AgentCli {
     _logDiagnostic('fa boot sid=$_logSid version=$_version');
     _wireTransientRetryNotice();
     _wireDeliverySloNotice();
+    _wireDeliverableDurabilityLog();
     _wireImageDropNotice();
     _wirePayloadStallAdvice();
     _wireOperativePinNotice();
@@ -2083,6 +2125,10 @@ class AgentCli {
     // would clobber the live row). [SubagentManager.rehydrate] also skips
     // ids already registered by this process, so the race stays closed.
     await _subagentManager.rehydrate();
+    // gh-1956 AC6: kick the durable-artifact restore so an early
+    // parent-side agent:// resolution already sees the re-seeded store
+    // (the capture also restores lazily before any delivery decision).
+    unawaited(_taskConfig.executor.ensureDeliverablesRestored());
     // Phase 2: session-start maintenance trigger — fire-and-forget when the
     // last run is >24h old; never blocks the first turn.
     unawaited(
@@ -2288,6 +2334,9 @@ class AgentCli {
     // before the prompt: any spawn the run triggers must see the loaded
     // registry instead of racing it.
     await _subagentManager.rehydrate();
+    // gh-1956 AC6: same durable-artifact restore kick as the interactive
+    // boot — a headless run may resolve a resumed spill immediately.
+    unawaited(_taskConfig.executor.ensureDeliverablesRestored());
     // Session scope (tools.yaml next to the session file) is live now.
     unawaited(AgentCliTools(this).rebuildToolAvailability());
     // Transient retry voice (issue #1168 review): the interactive boot

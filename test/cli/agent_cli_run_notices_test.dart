@@ -23,6 +23,7 @@ void main() {
     operativePinNotice = null;
     imageDropReportNotice = null;
     deliverySloSink = null;
+    deliverableDurabilityLog = null;
   });
 
   test('the transient retry notice prints a dim transcript line', () {
@@ -241,12 +242,43 @@ void main() {
     expect(io.out.toString(), isNot(contains('stage=enqueued')));
   });
 
+  test('the deliverable durability log is wired and surfaces every line '
+      '(gh-1956 review)', () {
+    final cli = AgentCli(
+      config: AgentCliConfig(
+        model: testModel,
+        apiKey: '[REDACTED:Sensitive Value]',
+        env: env,
+        sessionRoot: '/sessions',
+        providerKind: 'openai-completions',
+      ),
+      io: io,
+    );
+    cli.wireRunNoticesForTesting();
+    expect(
+      deliverableDurabilityLog,
+      isNotNull,
+      reason: 'the boot wires the sink',
+    );
+
+    deliverableDurabilityLog?.call(
+      '[deliverables] artifact persist failed: StateError(disk full)',
+    );
+
+    // A durability loss is rare and important: EVERY line surfaces on the
+    // transcript channel (stderr in headless mode), not just a class of it.
+    expect(
+      io.out.toString(),
+      contains('[deliverables] artifact persist failed'),
+    );
+  });
+
   test('the skill-pin notice prints a dim transcript line (gh-1409 '
       'P4/P5/P6, review round 2)', () {
     final cli = AgentCli(
       config: AgentCliConfig(
         model: testModel,
-        apiKey: '[REDACTED:Sensitive Value]',
+        apiKey: '[REDACTED:Sensitive-Value]',
         env: env,
         sessionRoot: '/sessions',
         providerKind: 'openai-completions',

@@ -496,7 +496,24 @@ factual: paths, commands, invariants — no essays.
   addressable: real JSONL child sessions, `task_status`/`task_observe`/
   `task_send`/`task_cancel` (model-facing job abort), child-only `reply` +
   sibling `agent_message` (pending-queue + hop-capped),
-  `completed_without_reply` notice. gh-1948: the executor flushes each
+  `completed_without_reply` notice. gh-1951 (deliverable guarantee): the
+  explicit reply rides BOTH parent-visible renders verbatim when in
+  budget (`_renderResultBody` — the #1829 envelope when over); the
+  `completed_without_reply` notice actually renders when no reply was
+  recorded; the `reply` ack is truthful (`ReplyRecordOutcome` — a missing
+  handle or a duplicate reply is an error/`duplicateNoted` result, never
+  a false "delivered"; the ack waits out `persistNow`), double reply is
+  idempotent (first wins), `task_observe` echoes the deliverable payload
+  (`childMessageText`, bounded at the report budget), and a resumed
+  child's completion is PUBLISHED through the same
+  `TaskJobManager.completions` async-result envelope every host consumes
+  (`TaskExecutor.resultPublisher` → `publishResumed`): the resumed final
+  answer replaces the stored `agent://<id>` output, and a reply acked in
+  a killed previous life is carried onto the resume as a resolvable
+  artifact (`peekPendingReply` → `DeliverableCapture.persistCarriedReply`
+  → `clearPendingReply` — the handle clears only after the artifact is
+  durable, so a failed carry leaves the reply resumable)
+  — never silence. gh-1948: the executor flushes each
   child's transcript at every turn boundary (the JSONL exists and grows
   mid-run), and `task_observe` resolves a placeholder-handle child
   (`<parentSessionId>/<id>` until the first flush) through

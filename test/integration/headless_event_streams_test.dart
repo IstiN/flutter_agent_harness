@@ -41,7 +41,7 @@ const _model = Model(
 AgentCli _cliFor(StreamFunction streamFunction) => AgentCli(
   config: AgentCliConfig(
     model: _model,
-    apiKey: '[REDACTED:Sensitive Value]',
+    apiKey: '[REDACTED:Sensitive-Value]',
     env: MemoryExecutionEnv(cwd: '/work'),
     sessionRoot: '/sessions',
   ),

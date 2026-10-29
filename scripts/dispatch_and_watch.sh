@@ -61,6 +61,56 @@
 # has not started; 0 = every poll).
 set -euo pipefail
 
+# ─ gh-1903 orphan backstop (re-invocation mode) ────────────────────────────
+# The watcher installs a detached BACKSTOP once its child run is correlated.
+# Rationale (bash 5.3 / ubuntu-26.04, 2026-10-29 CI reds on main b54f324c
+# and PR #1958 6a49b3ec): run_pending_traps can fire while the shell's
+# parser holds a half-read construct (input.c's read loop and eval.c's
+# parse_command both call it), and the trap ACTION STRING is then parsed in
+# that poisoned state — bash prints `trap: line 2: unexpected EOF while
+# looking for matching ')'` and exits 2 WITHOUT running orphan_cleanup. The
+# trap handler parse is therefore not a containment guarantee, so the
+# backstop owns the same decision independently: if the watcher dies without
+# the handler having marked "$2/handler-ran" (poisoned parse, SIGKILL after
+# a wedged signal handoff, any death mode), cancel the never-started child
+# exactly like the handler would — gh-1903 contract verbatim: never-started
+# children only, exactly one cancel (the handler marks itself BEFORE its own
+# gh call, so backstop and handler can never double-cancel).
+if [ "${1:-}" = "--dw-orphan-backstop" ]; then
+  backstop_parent="$2"
+  backstop_state="$3"
+  backstop_run_id="$4"
+  backstop_repo="$5"
+  backstop_workflow="$6"
+  while kill -0 "$backstop_parent" 2>/dev/null; do
+    # The state dir is the watcher's side of the contract: it is removed on
+    # every deliberate stop (stop_orphan_backstop). If it is gone while the
+    # PID still answers (recycled PID), stop anyway — never a leaked
+    # process on the shared pool (#1001 hygiene).
+    [ -e "$backstop_state" ] || exit 0
+    sleep "${DW_BACKSTOP_POLL_SECONDS:-1}"
+  done
+  if [ -e "$backstop_state/handler-ran" ]; then
+    rm -rf "$backstop_state" 2>/dev/null || true
+    exit 0
+  fi
+  if [ -e "$backstop_state/child-started" ]; then
+    rm -rf "$backstop_state" 2>/dev/null || true
+    exit 0
+  fi
+  backstop_status="$(gh run view "$backstop_run_id" --repo "$backstop_repo" \
+    --json status --jq .status 2>/dev/null)" || backstop_status=""
+  if [ "$backstop_status" = "completed" ]; then
+    rm -rf "$backstop_state" 2>/dev/null || true
+    exit 0
+  fi
+  echo "::error::dispatch_and_watch: watcher died without running the orphan-cleanup handler (trap-action parse loss?) — backstop cancelling never-started child $backstop_workflow run $backstop_run_id (gh-1903 containment)" >&2
+  gh run cancel "$backstop_run_id" --repo "$backstop_repo" \
+    || echo "::warning::backstop orphan cancel of run $backstop_run_id failed (already gone?)" >&2
+  rm -rf "$backstop_state" 2>/dev/null || true
+  exit 0
+fi
+
 workflow=""
 repo="${GITHUB_REPOSITORY:-}"
 ref="main"
@@ -133,15 +183,26 @@ wait_for_run() {
 # child, its last observed state, and the observed pool activity. A child
 # that ever started — even if it is between jobs right now — is left
 # alone: its own per-job server-side timeouts (#344) bound it.
+#
+# The handler marks "$dw_state/handler-ran" BEFORE its first gh call so the
+# detached backstop (spawned at the correlation site below) can tell a
+# handled death from a lost handler and never double-cancel. DW_TRAP_PARSE_
+# DEATH=1 (test shim) installs a deliberately unparseable trap action,
+# reproducing the bash-5.3 poisoned-parse death (exit 2, handler never runs)
+# that lost the orphan-cancel on CI reds main b54f324c / PR #1958 6a49b3ec.
 run_id=0
 child_started=0
 watch_started=0
 last_state="(never polled)"
 pool_note="no pool observation yet"
+dw_state=""
 
 orphan_cleanup() {
   local sig="$1" ec=143 now
   [ "$sig" = "INT" ] && ec=130
+  if [ -n "$dw_state" ]; then
+    : > "$dw_state/handler-ran" 2>/dev/null || true
+  fi
   now=$(date +%s)
   if [ "$run_id" -gt 0 ] 2>/dev/null \
       && [ "$child_started" -eq 0 ] \
@@ -154,8 +215,15 @@ orphan_cleanup() {
   fi
   exit "$ec"
 }
-trap 'orphan_cleanup TERM' TERM
-trap 'orphan_cleanup INT' INT
+if [ "${DW_TRAP_PARSE_DEATH:-0}" = "1" ]; then
+  # Test shim: the action string the bash-5.3 poisoned parser dies on
+  # (unbalanced `(` — parser_error → exit 2, orphan_cleanup never runs).
+  trap 'orphan_cleanup TERM ( ' TERM
+  trap 'orphan_cleanup INT ( ' INT
+else
+  trap 'orphan_cleanup TERM' TERM
+  trap 'orphan_cleanup INT' INT
+fi
 
 dispatch
 epoch=$(date +%s)
@@ -165,6 +233,34 @@ if ! run_id=$(wait_for_run "$((epoch - 30))"); then
 fi
 echo "watching $workflow run $run_id${title:+ (\"$title\")} — https://github.com/$repo/actions/runs/$run_id — read-only wait, no stall timer, no re-dispatch (gh-1903)"
 if [ -n "$out_run_id" ]; then printf '%s\n' "$run_id" > "$out_run_id"; fi
+
+# ─ gh-1903 orphan backstop: the cancel must not depend on the trap parse ───
+# Spawned AFTER correlation (a run id exists to cancel) and detached via
+# setsid where available, so a leg-timeout tree-kill cannot take it down
+# with the watcher. Stopped explicitly on every NORMAL exit; on a handler
+# exit it self-terminates after seeing the handler-ran marker.
+dw_backstop_pid=""
+dw_state="$(mktemp -d "${TMPDIR:-/tmp}/dw-orphan-XXXXXX" 2>/dev/null)" || dw_state=""
+stop_orphan_backstop() {
+  if [ -n "$dw_backstop_pid" ]; then
+    kill "$dw_backstop_pid" 2>/dev/null || true
+    wait "$dw_backstop_pid" 2>/dev/null || true
+    dw_backstop_pid=""
+  fi
+  if [ -n "$dw_state" ]; then
+    rm -rf "$dw_state" 2>/dev/null || true
+    dw_state=""
+  fi
+}
+if [ -n "$dw_state" ]; then
+  printf '%s\n' "$run_id" > "$dw_state/run-id"
+  if command -v setsid >/dev/null 2>&1; then
+    setsid bash "$0" --dw-orphan-backstop "$$" "$dw_state" "$run_id" "$repo" "$workflow" >/dev/null 2>&1 &
+  else
+    bash "$0" --dw-orphan-backstop "$$" "$dw_state" "$run_id" "$repo" "$workflow" >/dev/null 2>&1 &
+  fi
+  dw_backstop_pid=$!
+fi
 
 watch_started=$(date +%s)
 last_diag=0
@@ -188,6 +284,10 @@ while :; do
     last_state="$status"
     if [ -n "$running" ] && [ "$running" -gt 0 ] 2>/dev/null; then
       child_started=1
+      # The backstop reads the flag from disk (it outlives this shell).
+      if [ -n "$dw_state" ]; then
+        printf '1\n' > "$dw_state/child-started" 2>/dev/null || true
+      fi
     fi
     echo "child $run_id: $status running_jobs=${running:-unknown} elapsed=$(( $(date +%s) - watch_started ))s (started: $([ "$child_started" -eq 1 ] && echo yes || echo 'not yet — queued is healthy, gh-1903'))"
   fi
@@ -219,6 +319,9 @@ while :; do
   sleep "$poll"
 done
 
+# Normal exits stop the backstop first — the child is done; a surviving
+# backstop here could only misread the state dir and double-act.
+stop_orphan_backstop
 conclusion="${status#*/}"
 echo "$workflow run $run_id conclusion: $conclusion"
 if [ "$conclusion" = "success" ]; then exit 0; fi

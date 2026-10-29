@@ -19,6 +19,7 @@ import 'package:flutter_agent_harness/src/messaging/messaging_repository.dart';
 import '../agent/agent_loop.dart';
 import '../agent/agent_tool.dart';
 import '../approval/approval.dart';
+import '../session/ledger_caps.dart' show capLedgerText;
 import 'deliverables.dart';
 import 'subagent.dart';
 import 'subagent_manager.dart';
@@ -471,12 +472,61 @@ String _shortCwd(String cwd, String? homeDir) {
   return cwd;
 }
 
+/// The honest child-facing result when the parent-visible record could
+/// NOT be written (gh-1951 AC2): an error, never a false "delivered" —
+/// the child knows to retry or fall back to agent_message chunks.
+ToolExecutionResult _replyNotRecorded(String id) => ToolExecutionResult.text(
+  'error: reply NOT delivered — no retained record for subagent "$id" '
+  '(a parent-visible record must exist before a reply can be acked); '
+  'retry the reply, or deliver the content via agent_message chunks to '
+  'main',
+);
+
+/// The child-facing result for a double `reply` (gh-1951 edge case:
+/// idempotent — the first reply stays the deliverable, this call was
+/// noted but did not replace it).
+ToolExecutionResult _replyDuplicateNoted(String id) => ToolExecutionResult.text(
+  'a reply was already recorded for subagent "$id" — the FIRST reply '
+  'stays the deliverable and this reply was noted but did not replace '
+  'it; no further replies are needed',
+);
+
+/// The truthful ack for a recorded reply body (gh-1951 AC2): maps the
+/// [ReplyRecordOutcome] to the child-facing result — an error when nothing
+/// was recorded, a noted-not-replaced result for a duplicate, and the
+/// [ack] "delivered" text only after the parent-visible record is durable
+/// ([SubagentManager.persistNow]). Shared by the artifact-envelope and
+/// plain-reply paths of the `reply` tool (extracted so the tool closure
+/// stays under the CRAP ratchet — review round 2).
+Future<ToolExecutionResult> _ackRecordedReply(
+  SubagentManager manager,
+  String id,
+  String body,
+  String ack,
+) async {
+  final outcome = await manager.recordReply(id, body);
+  switch (outcome) {
+    case ReplyRecordOutcome.noHandle:
+      return _replyNotRecorded(id);
+    case ReplyRecordOutcome.duplicateNoted:
+      return _replyDuplicateNoted(id);
+    case ReplyRecordOutcome.recorded:
+      // AC2 ordering: the ack rides only after the parent-visible record
+      // is durable.
+      await manager.persistNow();
+      return ToolExecutionResult.text(ack);
+  }
+}
+
 /// `reply` — the CHILD-only tool: delivers the child's explicit answer to
 /// the parent (prime-agent's `reply`). A reply replaces the default
 /// completed_without_reply notice: the parent event/envelope carries the
-/// reply text verbatim. Over-cap replies go through the durable deliverable
-/// path (issue #1829): the full redacted report is stored as an `agent://`
-/// artifact and a bounded envelope is delivered in its place.
+/// reply text verbatim. Oversized replies auto-spill (gh-1956): the full
+/// redacted report is stored as an `agent://` artifact and a bounded
+/// envelope is delivered in its place. When auto-spill is unavailable
+/// (the `subagents.replyAutoSpill` kill switch, or a host without
+/// artifact storage) the legacy budget cap applies and the tool result
+/// teaches the chunk fallback — never a false "delivered".
 AgentTool _replyTool(
   SubagentManager manager,
   CurrentSubagentIdProvider? currentSubagentId,
@@ -491,11 +541,15 @@ AgentTool _replyTool(
         'message as a completion notice, but an explicit reply is the '
         'reliable channel.\n\n'
         'REPORT SIZE: per-message budget ${manager.maxReplyChars} chars — '
-        'split longer reports into ordered agent_message parts '
-        '(report_id, 0-based part_index, more=false on the last), then a '
-        'short final manifest reply (report_id + report_parts); the '
-        'harness validates it. See REPORT SIZE CONTRACT in your system '
-        'prompt. Never probe the output limit.',
+        'you may send one complete reply even when it is larger: the '
+        'harness auto-spills it (the full text is stored as an agent:// '
+        'artifact; the parent gets an excerpt + pointer + completeness, '
+        'and this tool result names the reference). Manual chunking '
+        '(ordered agent_message parts with report_id + 0-based '
+        'part_index, more=false on the last, then a final manifest reply '
+        'carrying report_id + report_parts) is the FALLBACK for when '
+        'auto-spill is unavailable. See REPORT SIZE CONTRACT in your '
+        'system prompt. Never probe the output limit.',
     parameters: {
       'type': 'object',
       'properties': {
@@ -539,6 +593,9 @@ AgentTool _replyTool(
         );
       }
       final deliverable = capture?.call();
+      // gh-1956 AC6: restore the durable artifacts before any delivery
+      // decision so resumed ids stay reserved (no post-resume clobber).
+      if (deliverable != null) await deliverable.ensureRestored();
       if (deliverable != null) {
         try {
           final record = deliverable.deliverReply(
@@ -548,14 +605,17 @@ AgentTool _replyTool(
             reportParts: reportParts,
           );
           if (record != null) {
-            // Core flow A: the envelope — bounded excerpt + pointer +
-            // explicit completeness — replaces the bare body.
+            // Auto-spill (the default): the envelope — bounded excerpt +
+            // pointer + explicit completeness — replaces the bare body;
+            // the ack names the reference and the byte count.
             final envelope = deliverable.envelopeText(record);
-            await manager.recordReply(id, envelope);
-            return ToolExecutionResult.text(
+            return await _ackRecordedReply(
+              manager,
+              id,
+              envelope,
               'reply delivered to the parent via artifact '
               'agent://${record.outputId} (${record.status!.name}, '
-              '${record.chars} chars)',
+              '${record.chars} chars, ${record.bytes} bytes)',
             );
           }
         } on StateError catch (error) {
@@ -571,8 +631,31 @@ AgentTool _replyTool(
           );
         }
       }
-      await manager.recordReply(id, message);
-      return ToolExecutionResult.text('reply delivered to the parent');
+      // Over budget with no spill available (kill switch or a host
+      // without artifact storage): the legacy bare cap applies and the
+      // result truthfully names it — never a false "delivered" — and
+      // teaches the chunk fallback (gh-1956 graceful degradation). The
+      // ack still rides gh-1951's truthful outcome mapping (a duplicate
+      // is noted-not-replaced, a missing handle is an error) and the
+      // AC2 durability ordering.
+      if (message.length > manager.maxReplyChars) {
+        return _ackRecordedReply(
+          manager,
+          id,
+          message,
+          'reply delivered truncated to the ${manager.maxReplyChars}-char '
+          'delivery budget (auto-spill unavailable here) — send the full '
+          'text as ordered agent_message parts to the parent (shared '
+          'report_id + 0-based part_index, more=false on the last), then '
+          'a final manifest reply',
+        );
+      }
+      return _ackRecordedReply(
+        manager,
+        id,
+        message,
+        'reply delivered to the parent',
+      );
     },
   );
 }
@@ -604,9 +687,12 @@ AgentTool _agentMessageTool(
         'live mailbox. The recipient sees the message in its inbox on its '
         'next turn; completed siblings are resumed. Unknown ids and full '
         'queues are rejected.\n\n'
-        'REPORT SIZE: budget ${manager.maxReplyChars} chars — split long '
-        'report bodies into ordered parts (report_id + 0-based '
-        'part_index). See REPORT SIZE CONTRACT in your system prompt.',
+        'REPORT SIZE: budget ${manager.maxReplyChars} chars — oversized '
+        'same-session bodies auto-spill (stored as an agent:// artifact '
+        'and delivered as a bounded envelope). Manual chunking (ordered '
+        'report_id + part_index parts) is the FALLBACK for when '
+        'auto-spill is unavailable. See REPORT SIZE CONTRACT in your '
+        'system prompt.',
     parameters: {
       'type': 'object',
       'properties': {
@@ -665,8 +751,12 @@ AgentTool _agentMessageTool(
       }
       final reportId = args['report_id'] as String?;
       final partIndex = args['part_index'] as int?;
+      final deliverable = capture?.call();
+      // gh-1956 AC6: restore before any delivery decision so resumed ids
+      // stay reserved.
+      if (deliverable != null) await deliverable.ensureRestored();
       final (body, artifactNote, deliverError) = _applyDeliverableEnvelope(
-        capture?.call(),
+        deliverable,
         manager: manager,
         childId: fromId,
         target: target,
@@ -745,7 +835,21 @@ String? _validateMessageSend(
       return (
         deliverable.envelopeText(record),
         ' Report body stored as agent://${record.outputId} '
-            '(${record.chars} chars).',
+            '(${record.chars} chars, ${record.bytes} bytes).',
+        null,
+      );
+    }
+    // gh-1956: an over-cap same-session body with spill unavailable
+    // (kill switch) keeps the legacy bare cap at delivery and gets the
+    // graceful chunk-fallback notice — never a silent loss.
+    if (message.length > manager.maxReplyChars &&
+        !deliverable.spillEnabled &&
+        deliverable.spillAppliesTo(target)) {
+      return (
+        message,
+        ' Note: the body exceeds the ${manager.maxReplyChars}-char budget '
+            'and auto-spill is unavailable — delivery caps it. Split long '
+            'bodies into ordered report parts (report_id + part_index).',
         null,
       );
     }
@@ -1596,6 +1700,11 @@ Future<String> _formatHandleDetail(
     if (h.compactionError != null) 'compaction: ${h.compactionError}',
     if (h.modelId != null) 'model: ${h.modelId}',
     if (h.error != null) 'error: ${h.error}',
+    // gh-1951 AC5: the recorded reply is discoverable from every parent
+    // surface — task_status detail previews it (full text rides the task
+    // result; the transcript carries the call itself).
+    if (h.lastReply != null)
+      'last reply: ${capLedgerText(h.lastReply, maxChars: subagentRegistryReplyCapChars)}',
   ];
   // Issue #1923 AC3: pending mail sitting past the delivery SLO escalates
   // to a visible UNDELIVERED line — no silent queues (shared formatter).

@@ -63,7 +63,7 @@ void main() {
   AgentCli cli(FakeStreamFunction stream) => AgentCli(
     config: AgentCliConfig(
       model: _model,
-      apiKey: '[REDACTED:Sensitive Value]',
+      apiKey: '[REDACTED:Sensitive-Value]',
       env: env,
       sessionRoot: '/sessions',
       sessionName: 'restore-budget-target',

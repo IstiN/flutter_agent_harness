@@ -110,7 +110,7 @@ final class _Rig {
   late final AgentOutputStore store;
   late final DeliverableCapture capture;
 
-  void hook(ToolCall call) => capture.captureSalvaged('kid', call);
+  Future<void> hook(ToolCall call) => capture.captureSalvaged('kid', call);
 }
 
 void main() {
@@ -295,7 +295,7 @@ void main() {
 
   group('config plumbing (review regression)', () {
     test('copyWith preserves onTruncatedToolCall across model swaps', () {
-      void hook(ToolCall call) {}
+      Future<void> hook(ToolCall call) async {}
       final config = AgentLoopConfig(model: _model, onTruncatedToolCall: hook);
       // prepareNextTurn's model-swap path rebuilds the config via
       // copyWith — a dropped hook would silently disable salvage capture

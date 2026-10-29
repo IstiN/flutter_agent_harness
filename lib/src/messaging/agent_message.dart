@@ -15,6 +15,7 @@ final class AgentMessage {
     required this.sentAt,
     this.hops = 0,
     this.kind = AgentMessageKind.agent,
+    this.fromName,
   });
 
   /// Unique message id (assigned by the repository at send time).
@@ -39,6 +40,12 @@ final class AgentMessage {
   /// input handed over by an attached client (the Fa app's attach view).
   final AgentMessageKind kind;
 
+  /// The sender's human-readable name when the transport knows it: hub
+  /// channel mail relayed for an app member names the HUMAN author here
+  /// (the wire `fromId` is the relay's hub agent id — bare ids make
+  /// agents greet relays instead of people). Absent on legacy payloads.
+  final String? fromName;
+
   Map<String, dynamic> toJson() => {
     'id': id,
     'fromId': fromId,
@@ -47,6 +54,7 @@ final class AgentMessage {
     'sentAt': sentAt,
     'hops': hops,
     if (kind != AgentMessageKind.agent) 'kind': kind.name,
+    if (fromName != null && fromName!.isNotEmpty) 'fromName': fromName,
   };
 
   factory AgentMessage.fromJson(Map<String, dynamic> json) => AgentMessage(
@@ -60,6 +68,9 @@ final class AgentMessage {
       'user' => AgentMessageKind.user,
       _ => AgentMessageKind.agent,
     },
+    fromName: (json['fromName'] as String?)?.trim() == ''
+        ? null
+        : json['fromName'] as String?,
   );
 }
 

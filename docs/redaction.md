@@ -26,6 +26,30 @@ default). Output markers are `[REDACTED:<kind>]`, idempotent, and
 line-count preserving. Allowlisted shapes (Git SHAs, UUIDs) and
 `data:` base64 URLs survive.
 
+Markers are single shell tokens (gh-1952): every whitespace run in a
+kind label renders as `-` (`[REDACTED:GitHub-Token]`), so a marker that
+leaks into a shell string can never split into several argv items.
+
+## Redaction is display-only (gh-1952)
+
+Turning redaction on never changes what a child process receives: the
+`bash` tool's argv is byte-identical with redaction ON vs OFF for every
+non-secret value. The only execution rewrite is the approval-layer
+shape interceptor (issue #1408), bounded to recognized vendor token
+shapes — ordinary compile-time defines (`--dart-define=K=V`, `-DK=V`,
+and the quoted/space-spelled forms) are exempt from the entropy
+heuristic altogether; registered and vendor-shaped secrets still match
+inside defines (the carve-out never outranks a real layer).
+
+The carve-out is bound so it cannot silence the entropy net (gh-1952
+review): the FLAG forms are exempt unconditionally, but a bare `K=V`
+token is exempt only when its value side is not itself entropy-class —
+a `KEY=<random>` assignment (`printenv`/CI-log output) and a
+padded-base64 token (`…==`) stay masked. Appended tool-call arguments
+are masked on the record-write path too: the session JSONL never
+carries raw secrets in `toolCalls[].arguments`, while the executed argv
+and the provider context keep the original bytes.
+
 ## Config (`redact:` in `~/.fah/config.yaml` or project `.fah/config.yaml`)
 
 ```yaml
