@@ -27,6 +27,23 @@ final class SubagentEvent {
   final SubagentMessage? message;
 }
 
+/// The outcome of recording a child's explicit `reply` (gh-1951 AC2):
+/// the `reply` tool acks delivery ONLY on [recorded] — a parent-visible
+/// record must exist before the child is told "delivered".
+enum ReplyRecordOutcome {
+  /// The parent-visible record was written (the handle's `lastReply`).
+  recorded,
+
+  /// A reply was already recorded this run — the FIRST stays the
+  /// deliverable; this call was noted on [SubagentHandle.duplicateReplies]
+  /// and did not replace it.
+  duplicateNoted,
+
+  /// No live handle for the child — nothing was recorded; the caller
+  /// must return an error, never a false ack.
+  noHandle,
+}
+
 typedef ChildSessionFactory =
     Future<String> Function(String parentSessionId, String childId);
 
@@ -741,16 +758,70 @@ final class SubagentManager {
   }
 
   /// Records the child's explicit `reply` (Phase 3b) on its handle.
-  Future<void> recordReply(String id, String text) async {
+  ///
+  /// gh-1951: the outcome is explicit because the ack must be truthful —
+  /// [ReplyRecordOutcome.noHandle] means NOTHING was recorded and the
+  /// caller (the `reply` tool) must return an error, never a false
+  /// "delivered". A double reply is idempotent (edge case): the FIRST
+  /// reply stays the deliverable; later calls are counted as
+  /// [SubagentHandle.duplicateReplies] and never overwrite it.
+  Future<ReplyRecordOutcome> recordReply(String id, String text) async {
     final handle = _handles[id];
-    if (handle == null) return;
+    if (handle == null) return ReplyRecordOutcome.noHandle;
+    if (handle.lastReply != null) {
+      handle.duplicateReplies++;
+      handle.lastActivity = clock().toIso8601String();
+      _events.add(SubagentEvent(handle: handle));
+      _persist();
+      return ReplyRecordOutcome.duplicateNoted;
+    }
     handle.lastReply = text.length > maxReplyChars
         ? '${text.substring(0, maxReplyChars)}…[truncated]'
         : text;
     handle.lastActivity = clock().toIso8601String();
     _events.add(SubagentEvent(handle: handle));
-    // gh-1590: coalesced — the full reply already reached the parent as
-    // its own message; the registry row only carries the preview.
+    // gh-1590: coalesced — the parent-visible record lives on the handle
+    // (read by every result build); the registry row carries the preview.
+    _persist();
+    return ReplyRecordOutcome.recorded;
+  }
+
+  /// Awaits the serialized durable registry snapshot (gh-1951 AC2
+  /// ordering): the `reply` tool acks only after the parent-visible
+  /// record is durable. Unlike [flushPersist] this never disposes the
+  /// persist throttle — teardown keeps using it.
+  Future<void> persistNow() {
+    _persist(force: true);
+    return _persistChain;
+  }
+
+  /// gh-1951 AC6, called at RESUME start: snapshots any undelivered reply
+  /// left by a previous child life WITHOUT mutating the handle. The
+  /// executor persists the snapshot as a carried artifact FIRST (so the
+  /// resume completion surfaces the pointer) and only calls
+  /// [clearPendingReply] after that persist succeeded — review round 2:
+  /// clearing before the persist meant a throwing host redactor left the
+  /// handle AND the durable snapshot cleared with no artifact written, so
+  /// a retry resume found nothing and the acked reply was silently gone.
+  /// Returns the carried reply, or null.
+  String? peekPendingReply(String id) {
+    final handle = _handles[id];
+    if (handle == null) return null;
+    final pending = handle.lastReply;
+    if (pending == null && handle.duplicateReplies == 0) return null;
+    return pending;
+  }
+
+  /// gh-1951 AC6: clears a pending reply AFTER its carried artifact is
+  /// durable (see [peekPendingReply]) — a failed persist leaves the reply
+  /// on the handle, so a retry resume carries it again (at-least-once;
+  /// never a silent loss).
+  void clearPendingReply(String id) {
+    final handle = _handles[id];
+    if (handle == null) return;
+    handle.lastReply = null;
+    handle.duplicateReplies = 0;
+    _events.add(SubagentEvent(handle: handle));
     _persist();
   }
 

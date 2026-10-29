@@ -14,7 +14,7 @@ import '../session/session_repo.dart';
 import '../session/session_tree.dart';
 import '../session_io_retry.dart';
 import '../types.dart';
-import 'deliverables.dart' show deliverableArtifactRecordType;
+import 'deliverables.dart' show deliverableArtifactRecordType, deliverableToolNames;
 import 'subagent_manager.dart' show subagentRegistryRecordType;
 import 'subagent_tools.dart' show ChildMessageReader;
 
@@ -156,6 +156,11 @@ Future<String?> resolveChildSessionPath({
 
 /// Plain-text projection of one conversation message for `task_observe`:
 /// text blocks joined, tool calls named, everything else skipped.
+///
+/// gh-1951 AC1: a deliverable call (`reply` / `agent_message`) echoes its
+/// bounded `message` payload — the parent can see the reply payload (or
+/// its head) from the transcript too, not just the completion notice.
+/// Non-deliverable tool arguments are NEVER echoed.
 String childMessageText(Message message) {
   final buffer = StringBuffer();
   void writeBlock(ContentBlock block) {
@@ -165,6 +170,8 @@ String childMessageText(Message message) {
     } else if (block is ToolCall) {
       if (buffer.isNotEmpty) buffer.write('\n');
       buffer.write('[tool call: ${block.name}]');
+      final echo = _deliverableEcho(block);
+      if (echo != null) buffer.write('\n$echo');
     }
   }
 
@@ -181,4 +188,24 @@ String childMessageText(Message message) {
       content.forEach(writeBlock);
   }
   return buffer.toString();
+}
+
+/// Char cap of the echoed deliverable payload in a `task_observe` line
+/// (gh-1951): the default report budget — a budget-sized reply echoes
+/// whole; anything longer shows the head + an explicit truncation marker.
+const int childObserveDeliverableEchoChars = 800;
+
+/// The bounded payload echo for a deliverable tool call (gh-1951), or
+/// null for any other tool — non-deliverable arguments are never echoed
+/// into the observe surface.
+String? _deliverableEcho(ToolCall call) {
+  if (!deliverableToolNames.contains(call.name)) return null;
+  final message = call.arguments['message'];
+  if (message is! String || message.isEmpty) return null;
+  final echo = message.length > childObserveDeliverableEchoChars
+      ? '${message.substring(0, childObserveDeliverableEchoChars)}…'
+            '[truncated ${message.length - childObserveDeliverableEchoChars} '
+            'chars]'
+      : message;
+  return '[${call.name} message] $echo';
 }
