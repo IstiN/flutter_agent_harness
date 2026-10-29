@@ -113,10 +113,23 @@ Map<String, String> renderInstallers() {
       .replaceFirst('{{APPROVAL_MENU}}', _psApprovalMenu(approvalModes))
       .replaceFirst('{{APPROVAL_SWITCH}}', _psApprovalSwitch(approvalModes));
 
-  final bat = File(_batTemplatePath).readAsStringSync().replaceFirst(
-    ':: {{GENERATED_HEADER}}',
-    _generatedHeader.replaceAll('# ', ':: '),
-  );
+  // cmd.exe parses a .bat by BYTE offset and re-reads it as it executes. An
+  // LF-only file makes it resume mid-line, so it runs fragments of the next
+  // comment -- the wrapper dies with `'. was unexpected at this time.'`
+  // before PowerShell ever starts. `.gitattributes` pins the checkout to
+  // CRLF, but the renderer must not depend on that: force CRLF here so the
+  // artifact is cmd-safe however it was produced. Multi-byte UTF-8 glyphs
+  // are what turn the mis-seek into command fragments, so the body stays
+  // ASCII-only too -- the banner box in [_generatedHeader] becomes plain `=`
+  // in this flavour. Verified by test/site/installer_golden_test.dart.
+  final batHeader = _generatedHeader
+      .replaceAll('# ', ':: ')
+      .replaceAll('\u2550', '=');
+  final bat = File(_batTemplatePath)
+      .readAsStringSync()
+      .replaceFirst(':: {{GENERATED_HEADER}}', batHeader)
+      .replaceAll('\r\n', '\n')
+      .replaceAll('\n', '\r\n');
 
   final shSetup = File(_shSetupTemplatePath)
       .readAsStringSync()
