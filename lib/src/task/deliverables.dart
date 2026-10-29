@@ -51,6 +51,15 @@ const Set<String> deliverableToolNames = {'reply', 'agent_message'};
 /// store from these rows, so an `agent://` pointer survives restart.
 const String deliverableArtifactRecordType = 'deliverable_artifact';
 
+/// Host sink for durability diagnostics (gh-1956 review): one line per
+/// failed best-effort artifact row (sink error, dropped row) so the AC6
+/// degradation is diagnosable post-mortem instead of discovered at a
+/// restart that fails to resolve a pointer. Null keeps the core silent
+/// (tests, embedders); hosts install it at the composition root — the CLI
+/// routes to fa.log + a dim console line, the app to AppLog (the
+/// `deliverySloSink` convention).
+void Function(String line)? deliverableDurabilityLog;
+
 /// What a recorded deliverable is: a stored artifact (over-cap body or
 /// salvaged partial text), an observed report chunk, or a final-manifest
 /// verdict.
@@ -60,6 +69,11 @@ enum DeliverableRecordKind { artifact, chunk, manifest }
 /// Rendered onto the parent's task result so the recipient sees explicit
 /// completeness and resolvable pointers.
 final class DeliverableRecord {
+  /// Creates an artifact record. [bytes] is optional for backward
+  /// compatibility: [DeliverableRecord] is barrel-exported public API of
+  /// a published package, and gh-1956 must not break external
+  /// constructors (gh-1956 review) — the harness-owned spill path always
+  /// supplies it, legacy callers render chars-only.
   DeliverableRecord.artifact({
     required this.childId,
     required this.outputId,
@@ -67,7 +81,7 @@ final class DeliverableRecord {
     this.reportId,
     this.partIndex,
     required this.chars,
-    required this.bytes,
+    this.bytes,
   }) : kind = DeliverableRecordKind.artifact,
        partCount = null,
        missingParts = const [],
@@ -141,8 +155,10 @@ final class DeliverableRecord {
   /// chunk/manifest body.
   final int chars;
 
-  /// UTF-8 byte count of the stored artifact text (artifacts only, gh-1956
-  /// completeness marker); null for chunk/manifest records.
+  /// UTF-8 byte count of the stored artifact text (artifacts, gh-1956
+  /// completeness marker); null for chunk/manifest records and for
+  /// legacy external constructors built before gh-1956 (the field stays
+  /// optional — backward compatibility for the published API).
   final int? bytes;
 
   /// Whether a manifest record ruled the report complete (all declared
@@ -166,11 +182,12 @@ final class DeliverableRecord {
     if (partIndex != null) {
       return 'report ${reportId!} part ${partIndex!} stored '
           '(over budget): agent://$outputId '
-          '($chars chars, $bytes bytes)';
+          '($chars chars${bytes == null ? '' : ', $bytes bytes'})';
     }
     return 'deliverable ${status!.name}'
         '${reportId == null ? '' : ' (report $reportId)'}: '
-        'agent://$outputId ($chars chars, $bytes bytes)';
+        'agent://$outputId '
+        '($chars chars${bytes == null ? '' : ', $bytes bytes'})';
   }
 
   String _renderChunk() =>
@@ -295,7 +312,7 @@ final class DeliverableCapture {
   /// Whether [target] is a recipient an `agent://` spill pointer can
   /// reach (a same-session handle or the parent inbox) — the E11 gate
   /// the tools reuse to shape their fallback notices.
-  bool spillApliesTo(String target) => _isSameSession(target);
+  bool spillAppliesTo(String target) => _isSameSession(target);
 
   /// Memoized restore (AC6): re-seeds the store from the durable rows
   /// BEFORE the first spill or tool-driven delivery, so a resumed
@@ -365,7 +382,14 @@ final class DeliverableCapture {
         'childId': childId,
         'reportId': ?reportId,
         'chars': redacted.length,
-      }).catchError((Object _) {}),
+      }).catchError((Object error) {
+        // Best-effort stays best-effort (the in-session artifact and its
+        // pointer are already live — AC3), but the durability loss is
+        // diagnosable post-mortem (gh-1956 review): one host line.
+        deliverableDurabilityLog?.call(
+          '[deliverables] artifact persist failed: $error',
+        );
+      }),
     );
   }
 
@@ -397,9 +421,14 @@ final class DeliverableCapture {
     bool checkEnvelopeFit = true,
   }) {
     final id = store.allocateId('$childId-$idBase');
+    // The UTF-8 byte count is computed ONCE here and threaded through
+    // every consumer (gh-1956 review): the fit check, the artifact meta,
+    // the record, and the status line all reuse it — never a second full
+    // O(n) encode of a 100 KB+ report per delivery.
+    final bytes = utf8.encode(redacted).length;
     if (checkEnvelopeFit) {
       final overhead =
-          _statusLine(status, id, redacted.length, redacted).length + 2;
+          _statusLine(status, id, redacted.length, bytes).length + 2;
       if (overhead >= cap) {
         throw StateError(
           'maxReplyChars ($cap) cannot hold a deliverable envelope '
@@ -413,7 +442,7 @@ final class DeliverableCapture {
       status: status,
       childId: childId,
       chars: redacted.length,
-      bytes: utf8.encode(redacted).length,
+      bytes: bytes,
       reportId: reportId,
     );
     store.recordArtifact(id, meta);
@@ -427,25 +456,26 @@ final class DeliverableCapture {
       reportId: reportId,
       partIndex: partIndex,
       chars: redacted.length,
-      bytes: meta.bytes!,
+      bytes: bytes,
     );
   }
 
   /// The envelope status line for a stored deliverable (deterministic, so
   /// the fit check can run BEFORE anything is persisted). Carries the
-  /// completeness marker with the char AND byte count (gh-1956).
+  /// completeness marker with the char AND byte count (gh-1956); [bytes]
+  /// arrives precomputed by the caller (gh-1956 review — one encode per
+  /// spill, not one per line).
   String _statusLine(
     AgentArtifactStatus status,
     String id,
     int chars,
-    String stored,
+    int bytes,
   ) => switch (status) {
     AgentArtifactStatus.complete =>
-      '[deliverable complete: agent://$id '
-          '($chars chars, ${utf8.encode(stored).length} bytes)]',
+      '[deliverable complete: agent://$id ($chars chars, $bytes bytes)]',
     AgentArtifactStatus.partial =>
       '[deliverable PARTIAL — salvaged from an output-truncated call: '
-          'agent://$id ($chars chars, ${utf8.encode(stored).length} bytes)]',
+          'agent://$id ($chars chars, $bytes bytes)]',
   };
 
   /// Core flow A for the `reply` channel: when [body] fits the budget,
@@ -539,15 +569,25 @@ final class DeliverableCapture {
   /// field holds usable text (E2: empty/absent/malformed fields create no
   /// artifact). The failure itself always stands.
   ///
+  /// The loop awaits this hook, and it awaits the memoized
+  /// [ensureRestored] BEFORE the id-allocating persist (gh-1956 review):
+  /// every spill path — `reply`, `agent_message`, and the salvage hook
+  /// alike — re-seeds a resumed session's ids first, so a restored row can
+  /// never be shadowed by a same-id allocation racing the boot kick.
+  ///
   /// AC11 scope: [SubagentHandle.hadTruncatedDeliverable] means "an
   /// output-truncated DELIVERABLE call was recorded" — the flag is set
   /// only past the allowlist check, so a truncated `bash`/`read` call
   /// never produces a report-attempt claim in the tier-2 note.
-  void captureSalvaged(String childId, ToolCall call) {
+  Future<void> captureSalvaged(String childId, ToolCall call) async {
     if (!deliverableToolNames.contains(call.name)) return;
     manager[childId]?.hadTruncatedDeliverable = true;
     final text = call.arguments['message'];
     if (text is! String || text.trim().isEmpty) return;
+    // Restore-before-delivery covers the salvage path too (gh-1956
+    // review): await the memoized restore so the id allocator already
+    // holds the resumed ids when the partial artifact is persisted.
+    await ensureRestored();
     try {
       final redacted = _redactOrThrow(text);
       // No envelope fit check: a partial artifact is delivered via the
@@ -653,11 +693,15 @@ final class DeliverableCapture {
   /// surface, envelope included.
   String envelopeText(DeliverableRecord record) {
     final stored = store.get(record.outputId!)!;
+    // The byte count rides the record when the capture produced it (the
+    // only in-harness case); a legacy externally-built record falls back
+    // to one encode here.
+    final bytes = record.bytes ?? utf8.encode(stored).length;
     final statusLine = _statusLine(
       record.status!,
       record.outputId!,
       record.chars,
-      stored,
+      bytes,
     );
     final excerptEnd = _naturalExcerptEnd(stored, cap - statusLine.length - 2);
     final excerpt = stored.substring(0, excerptEnd);
