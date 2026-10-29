@@ -35,7 +35,7 @@ AgentConfig _config() => AgentConfig(
   providerKind: 'openai-completions',
   modelId: 'test-model',
   baseUrl: 'https://example.test',
-  apiKey: '[REDACTED:Sensitive Value]',
+  apiKey: '[REDACTED:Sensitive-Value]',
 );
 
 void main() {

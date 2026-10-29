@@ -93,7 +93,35 @@ final class TaskExecutor {
     this.contextWindowCap,
     this.misuseBreaker = true,
     this.deliverableRedactor,
+    this.resultPublisher,
+    this.replyAutoSpill,
+    this.deliverableArtifactSink,
+    this.deliverableArtifactSource,
   });
+
+  /// Publishes a resumed child's settled result through the session's
+  /// async-result channel (gh-1951 AC3/AC6): the same envelope a
+  /// background spawn gets, wired by `TaskToolConfig` from the job
+  /// registry. Null = no publish (bare executor constructions keep
+  /// today's behavior; the resumed run's answer is still stored under the
+  /// child id and the registry row still settles).
+  final TaskResultPublisher? resultPublisher;
+
+  /// The auto-spill kill switch (gh-1956, `subagents.replyAutoSpill`):
+  /// live getter consulted per delivery and per child-prompt build. Null
+  /// or true = auto-spill on (the default); false = pure-chunk behavior.
+  final bool Function()? replyAutoSpill;
+
+  /// The durable-artifact sink (gh-1956, AC6): one append row per spill.
+  /// Best-effort — a failed row never corrupts the in-session delivery.
+  final Future<void> Function(Map<String, dynamic> artifact)?
+  deliverableArtifactSink;
+
+  /// The durable-artifact source backing resume-time restore (gh-1956,
+  /// AC6): the spilled artifacts of the parent session, read back by the
+  /// host before the first post-resume delivery.
+  final Future<List<Map<String, dynamic>>> Function()?
+  deliverableArtifactSource;
 
   /// Pre-persistence redaction gate for deliverable artifacts (issue
   /// #1829, I3): the same pipeline tool results pass. Null = the host runs
@@ -110,6 +138,9 @@ final class TaskExecutor {
           store: store,
           manager: subagentManager!,
           redact: deliverableRedactor,
+          autoSpill: replyAutoSpill,
+          persistArtifact: deliverableArtifactSink,
+          restoreArtifacts: deliverableArtifactSource,
         );
 
   /// The tool-misuse circuit breaker switch (issue #862, default true):
@@ -312,6 +343,14 @@ final class TaskExecutor {
       _resumesInFlight.contains(id) ||
       _inFlightCancels.containsKey(id);
 
+  /// Eagerly restores the durable deliverable artifacts of the parent
+  /// session (gh-1956, AC6). The capture also restores lazily before its
+  /// first delivery decision; hosts may kick this at boot so an early
+  /// parent-side `agent://` resolution already sees the re-seeded
+  /// artifacts. No-op without a capture.
+  Future<void> ensureDeliverablesRestored() =>
+      _capture?.ensureRestored() ?? Future<void>.value();
+
   /// Requests the in-flight child [id] to abort: its run settles through
   /// the NORMAL path (aborted for a spawn, failed-resumable for a resume),
   /// so the registry row always ends up telling the truth. Returns false
@@ -339,6 +378,7 @@ final class TaskExecutor {
       managerOrNull,
       managerOrNull?[id],
     );
+    final stopwatch = Stopwatch()..start();
     // Issue #332: a resume runs inline (no TaskJob), so it gets a cancel
     // source like a blocking spawn — `task_cancel` / `/tasks cancel` abort
     // the live resume instead of tombstoning the row over it. Registered
@@ -354,7 +394,29 @@ final class TaskExecutor {
     StreamSubscription<void>? inboxWakeSub;
     var semaphoreAcquired = false;
     List<SubagentMessage> mail = const [];
+    // gh-1951 AC6: a reply acked in a PREVIOUS life whose completion never
+    // surfaced it (kill mid-run) is carried onto this resume — persisted
+    // as a complete artifact so the completion surfaces it out of band
+    // (I4), and snapshotted as the result's reply when this run records
+    // none of its own. Inside the try: a persist failure fails the resume
+    // with a NAMED error — never a silent loss.
+    String? pendingReply;
     try {
+      // gh-1951 AC6 + review round 2: PEEK the carried reply BEFORE the
+      // handle is mutated — the carried artifact persists from the
+      // snapshot FIRST, and the handle clears only after that persist
+      // succeeded. A throwing host redactor fails the resume with the
+      // reply still on the handle AND durably recorded, so a retry
+      // task_resume finds it again (at-least-once; never a silent loss).
+      // The single running update below is the pre-existing call: the
+      // first cut added an identical duplicate above it, doubling the
+      // SubagentEvent and appending two distinct (re-stamped)
+      // registry snapshots per resume.
+      pendingReply = manager.peekPendingReply(id);
+      if (pendingReply != null) {
+        _capture?.persistCarriedReply(id, pendingReply);
+        manager.clearPendingReply(id);
+      }
       await manager.update(
         id,
         status: SubagentStatus.running,
@@ -441,11 +503,21 @@ final class TaskExecutor {
       resumeCancel.token.throwIfCancelled();
       // The agent loop surfaces provider failures as an error-tagged final
       // assistant message, not a throw — the same check `_run` relies on.
-      _finalAssistantText(child);
+      final finalText = _finalAssistantText(child);
+      // gh-1951 AC3: the resumed run's final answer IS the child's latest
+      // result — it replaces the spawn-time output under the child id, so
+      // `agent://<id>` resolves the answer the parent's completion notice
+      // points at.
+      final (cappedText, cappedTruncated) = _capOutput(finalText);
+      store.put(id, cappedText);
       // Issue #862 review (round 2): the resume output carries the same
       // loud duplicate-registration warning as a fresh spawn — a resumed
       // child's second life must not re-wire the leak silently.
-      _surfaceDuplicateRegistrationNotes(resumeRegistry.duplicateNotes, id);
+      _surfaceDuplicateRegistrationNotes(
+        resumeRegistry.duplicateNotes,
+        id,
+        existingOutput: cappedText,
+      );
       await _flushChildTranscript(id, child);
       // Turn-boundary billing already added each finished turn (issue
       // #332); the completion update bills only what is left and settles
@@ -457,22 +529,66 @@ final class TaskExecutor {
         status: SubagentStatus.completed,
         modelId: wiring.model.id,
       );
+      // gh-1951 AC3: the resumed completion rides the SAME async-result
+      // envelope a background spawn gets — the final answer (or the
+      // run's explicit reply), the deliverable pointers, and — AC6 — a
+      // pending reply carried over from a killed previous life.
+      final usage = _usageStats(child, from: prior.length);
+      final reply = handle.lastReply ?? pendingReply;
+      final deliverables = List<DeliverableRecord>.of(handle.deliverables);
+      resultPublisher?.call(
+        TaskSingleResult(
+          index: 0,
+          id: id,
+          agent: handle.agentType,
+          task: handle.task,
+          status: TaskSpawnStatus.completed,
+          output: store.get(id) ?? cappedText,
+          truncated: cappedTruncated,
+          duration: stopwatch.elapsed,
+          tokens: usage.tokens,
+          requests: usage.requests,
+          model: wiring.model.id,
+          reply: reply,
+          deliverables: deliverables,
+          stubFallback: _stubFallbackNote(
+            handle,
+            reply: reply,
+            deliverables: deliverables,
+          ),
+        ),
+      );
     } on CancelledException catch (error) {
+      stopwatch.stop();
       await _requeueResumeMail(id, manager, mail);
       if (child != null) unawaited(_flushChildTranscript(id, child));
       // A cancelled resume settles failed-resumable (NOT aborted): the
       // child keeps its progress and a later task_resume can continue it.
+      final cancelError = 'resume cancelled: ${error.reason ?? 'cancelled'}';
       await _updateSubagentStatus(
         id,
         SubagentStatus.failed,
-        error: 'resume cancelled: ${error.reason ?? 'cancelled'}',
+        error: cancelError,
+      );
+      _publishFailedResume(
+        handle,
+        pendingReply: pendingReply,
+        stopwatch: stopwatch,
+        error: cancelError,
       );
       throw StateError('resume of "$id" cancelled');
     } on Object catch (error) {
+      stopwatch.stop();
       await _requeueResumeMail(id, manager, mail);
       if (child != null) unawaited(_flushChildTranscript(id, child));
       if (child != null) _billChildUsage(id, child);
       await _updateSubagentStatus(id, SubagentStatus.failed, error: '$error');
+      _publishFailedResume(
+        handle,
+        pendingReply: pendingReply,
+        stopwatch: stopwatch,
+        error: '$error',
+      );
       throw StateError('$error');
     } finally {
       if (child != null) _billChildUsage(id, child);
@@ -484,6 +600,41 @@ final class TaskExecutor {
       _currentSubagentIds.remove(id);
       _inFlightCancels.remove(id);
     }
+  }
+
+  /// The FAILED resume completion (gh-1951 AC5/AC6): the parent's notice
+  /// names the error and carries any pending reply — a resume that dies
+  /// mid-flight never settles silently on the parent side.
+  void _publishFailedResume(
+    SubagentHandle handle, {
+    required String? pendingReply,
+    required Stopwatch stopwatch,
+    required String error,
+  }) {
+    final deliverables = List<DeliverableRecord>.of(handle.deliverables);
+    resultPublisher?.call(
+      TaskSingleResult(
+        index: 0,
+        id: handle.id,
+        agent: handle.agentType,
+        task: handle.task,
+        status: TaskSpawnStatus.failed,
+        output: '',
+        truncated: false,
+        duration: stopwatch.elapsed,
+        tokens: 0,
+        requests: 0,
+        model: handle.modelId ?? model().id,
+        error: error,
+        reply: handle.lastReply ?? pendingReply,
+        deliverables: deliverables,
+        stubFallback: _stubFallbackNote(
+          handle,
+          reply: handle.lastReply ?? pendingReply,
+          deliverables: deliverables,
+        ),
+      ),
+    );
   }
 
   /// Appends the loud duplicate-registration warning to the child's stored
@@ -892,7 +1043,11 @@ final class TaskExecutor {
     final agent = child;
     // Issue #1829 Core flow B: same truncated-call capture as a fresh
     // spawn — a resumed child's lost reply is recovered identically.
-    child.onTruncatedToolCall = (call) => _capture?.captureSalvaged(id, call);
+    child.onTruncatedToolCall = (call) async {
+      // gh-1956 review: awaited by the loop — the salvage persist
+      // re-seeds the durable ids before its own id allocation.
+      await _capture?.captureSalvaged(id, call);
+    };
     final inboxWakeSub = manager.events.listen((event) {
       if (event.handle.id == id && event.message != null) {
         agent.pokeSteering();
@@ -1167,7 +1322,11 @@ final class TaskExecutor {
     // Issue #1829 Core flow B: an output-truncated reply/agent_message
     // call is captured as a partial artifact (never executed — I2); the
     // pointer rides the child completion out of band.
-    child.onTruncatedToolCall = (call) => _capture?.captureSalvaged(id, call);
+    child.onTruncatedToolCall = (call) async {
+      // gh-1956 review: awaited by the loop — the salvage persist
+      // re-seeds the durable ids before its own id allocation.
+      await _capture?.captureSalvaged(id, call);
+    };
     final inboxWakeSub = subagentManager?.events.listen((event) {
       if (event.handle.id == id && event.message != null) {
         child.pokeSteering();
@@ -1474,13 +1633,20 @@ final class TaskExecutor {
         ..writeln('# CONTEXT')
         ..write(context.trim());
     }
-    // Issue #1829 Core flow C: children with the reply/agent_message
-    // surface get the report-size contract with the live budget.
+    // Issue #1829 Core flow C + gh-1956: children with the
+    // reply/agent_message surface get the report-size contract with the
+    // live budget — the auto-spill contract by default, the pure-chunk
+    // contract under the kill switch.
     if (replyBudget != null) {
       systemPrompt
         ..writeln()
         ..writeln()
-        ..write(deliverableChunkContract(replyBudget));
+        ..write(
+          deliverableChunkContract(
+            replyBudget,
+            autoSpill: replyAutoSpill?.call() ?? true,
+          ),
+        );
     }
     return systemPrompt.toString();
   }

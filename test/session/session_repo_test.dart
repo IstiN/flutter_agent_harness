@@ -225,8 +225,10 @@ void main() {
 
     test('legacy escape-free slugs decode as before (compat)', () {
       // Existing on-disk folders keep decoding through the legacy split.
-      expect(decodeSessionCwd('--Users-Uladzimir_Klyshevich-git-dm.ai--'),
-          '/Users/Uladzimir_Klyshevich/git/dm.ai');
+      expect(
+        decodeSessionCwd('--Users-Uladzimir_Klyshevich-git-dm.ai--'),
+        '/Users/Uladzimir_Klyshevich/git/dm.ai',
+      );
       expect(decodeSessionCwd('--tmp-a-b--'), '/tmp/a/b');
     });
 
@@ -912,6 +914,70 @@ void main() {
         '${fillerLine(padChars)}\n$crafted${fillerLine(2 * mb)}\n',
       );
       expect(await repo.sessionNameQuick(metadata), 'headedge');
+    });
+  });
+
+  group('persistTransform — record-write mask (gh-1952 review)', () {
+    const secret = 'opensesame-registered-secret-value';
+
+    AssistantMessage assistantWithCall(Map<String, dynamic> arguments) =>
+        AssistantMessage(
+          content: [ToolCall(id: 'c1', name: 'bash', arguments: arguments)],
+          api: 'test-api',
+          provider: 'test-provider',
+          model: 'test-model',
+          usage: Usage.zero,
+          stopReason: StopReason.stop,
+          timestamp: DateTime.utc(2026),
+        );
+
+    test('appended records carry masked tool-call arguments', () async {
+      final pipeline = RedactionPipeline(registeredSecrets: [secret]);
+      final maskingRepo = JsonlSessionRepo(
+        fs: fs,
+        sessionsRoot: '/sessions',
+        persistTransform: (message) => persistRedactMessage(pipeline, message),
+      );
+      final session = await maskingRepo.create(
+        JsonlSessionCreateOptions(cwd: '/work'),
+      );
+      final message = assistantWithCall({'command': 'echo $secret'});
+      await session.appendMessage(message);
+
+      final record = (await session.getEntries())
+          .whereType<MessageRecord>()
+          .single;
+      final persisted = record.message as AssistantMessage;
+      final call = persisted.content.single as ToolCall;
+      expect(
+        call.arguments['command'],
+        contains('[REDACTED:Registered-Secret]'),
+      );
+      expect(
+        call.arguments['command'],
+        isNot(contains(secret)),
+        reason: 'the session JSONL must not carry the raw secret',
+      );
+      // The CALLER's message object stays untouched — the mask runs on
+      // the record copy only (execution/provider context keep raw bytes).
+      expect(
+        (message.content.single as ToolCall).arguments['command'],
+        contains(secret),
+      );
+    });
+
+    test('a repo without a transform persists byte-identically', () async {
+      final session = await repo.create(
+        JsonlSessionCreateOptions(cwd: '/work'),
+      );
+      final message = assistantWithCall({'command': 'echo $secret'});
+      await session.appendMessage(message);
+      final record = (await session.getEntries())
+          .whereType<MessageRecord>()
+          .single;
+      final call =
+          (record.message as AssistantMessage).content.single as ToolCall;
+      expect(call.arguments['command'], 'echo $secret');
     });
   });
 }

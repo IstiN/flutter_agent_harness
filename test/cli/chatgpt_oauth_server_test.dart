@@ -378,8 +378,8 @@ void main() {
             }) async {
               seenVerifiers.add(verifier);
               return const ChatGptOAuthCredentials(
-                accessToken: '[REDACTED:Sensitive Value]',
-                refreshToken: '[REDACTED:Sensitive Value]',
+                accessToken: '[REDACTED:Sensitive-Value]',
+                refreshToken: '[REDACTED:Sensitive-Value]',
                 idToken: 'i',
               );
             },

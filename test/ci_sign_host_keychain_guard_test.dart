@@ -452,4 +452,17 @@ void main() {
         reason: 'the watchdog must be killed in ensure so it cannot '
             'outlive the lane');
   });
+
+  test('AC16 — ci-sign install waits on the lock up to 600s (gh-1964: '
+      'concurrent waves on the shared host; 120s was shorter than a real '
+      'import, so the later wave died with exit 1, run 40857285170)', () {
+    final cisign = File('scripts/ci-sign').readAsStringSync();
+    expect(
+      cisign,
+      contains('seq 1 300'),
+      reason: 'a real re-import (delete + create + import + partition) '
+          'takes ~2 min on the shared host; the concurrent wave must WAIT '
+          '(600s), not fail — the lock holder always finishes',
+    );
+  });
 }

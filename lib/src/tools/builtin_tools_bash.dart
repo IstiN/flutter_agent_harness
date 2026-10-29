@@ -338,6 +338,16 @@ Future<ToolExecutionResult> _executeShellCall(
 /// names every rewrite so the agent sees what changed instead of
 /// discovering corruption by I/O error. Returns the effective command and
 /// the rewrite notice (null when nothing matched).
+///
+/// gh-1952 display-only contract (I1 / AC5): this helper is the single
+/// execution-feed seam — the foreground path, the yield-aware job path and
+/// the `background: true` path all receive [command] from it, so ONE
+/// argv-preservation property test over the tool pins all of them (see
+/// `test/approval/bash_shape_redaction_test.dart` and the redaction e2e's
+/// gh-1952 group). Redaction ON vs OFF is byte-identical for every
+/// non-secret value; persisted-call replay (records reload as context,
+/// never re-executed) and steering rewrites (soft-yield hands the SAME
+/// process to a background job, gh-1835) cannot re-author argv.
 (String, String?) _rewriteShellCommand(
   String command, {
   required RedactionConfig? redactionConfig,

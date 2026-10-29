@@ -661,6 +661,25 @@ fa_hub_client with the public-payload fallback (0.2.11+ /
 feat/public-channel-payloads); on older clients inbound public frames
 surface as "undecryptable".
 
+### Channel payload sender block (human attribution across the relay)
+
+App members write through the fa_network relay: on the hub wire the
+frame's `from` is the RELAY's agent id, so a bare payload leaves the
+human author invisible — agents greet the relay
+("Hello 3cfaee1aa054fe6e!"). Channel payloads therefore carry an
+OPTIONAL sender block next to the text (public base64 JSON and keyed
+fanet1 plaintext alike):
+
+```json
+{"text": "hello", "sender": {"name": "Uladzimir", "id": "<memberId>"}}
+```
+
+Producers embed the block when they know the author's display name
+(the app always does post-join); legacy payloads without it stay valid
+forever. Receivers unwrap it tolerantly (raw text passes through) and
+surface the name as the mail's `fromName` — the CLI steering line
+reads `from Uladzimir (<relay-agent-id>) in #channel: …`.
+
 ### Enrolled hub credentials (the app's DAP tab)
 
 A bare invite link is enough only on hubs that accept the machine's

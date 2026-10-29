@@ -1548,7 +1548,7 @@ void main() {
       );
       expect(
         pipeline!.redact('leak custom-secret-value-2 here'),
-        contains('[REDACTED:Registered Secret]'),
+        contains('[REDACTED:Registered-Secret]'),
       );
     });
 

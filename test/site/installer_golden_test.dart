@@ -127,6 +127,143 @@ void main() {
     },
   );
 
+  test('install.bat stays cmd.exe-safe: CRLF endings, ASCII body (gh-1945)', () {
+    final renderedBat = rendered['site/install.bat']!;
+    // cmd.exe seeks a .bat by BYTE offset and re-reads it as it executes, so
+    // LF-only endings make it resume mid-line and run fragments of the next
+    // comment (`'. was unexpected at this time.'`) — PowerShell is never
+    // reached. A Linux checkout regenerates from LF sources, so the renderer
+    // must force CRLF itself instead of inheriting it from the checkout.
+    expect(
+      RegExp(r'(?<!\r)\n').hasMatch(renderedBat),
+      isFalse,
+      reason:
+          'the rendered install.bat carries a lone LF — cmd.exe loses its '
+          'byte offset and executes fragments of the next line',
+    );
+
+    final committed = String.fromCharCodes(
+      File('$root/site/install.bat').readAsBytesSync(),
+    );
+    expect(
+      RegExp(r'(?<!\r)\n').hasMatch(committed),
+      isFalse,
+      reason:
+          'site/install.bat is committed with a lone LF — commit it with CRLF '
+          '(the renderer normalises, and .gitattributes pins the checkout)',
+    );
+    // Multi-byte UTF-8 glyphs are what turn the mis-seek into executable
+    // command fragments, so the batch body must stay pure ASCII.
+    expect(
+      File('$root/site/install.bat')
+          .readAsBytesSync()
+          .where((b) => b >= 0x80),
+      isEmpty,
+      reason:
+          'site/install.bat must be ASCII-only — box drawing / em dashes in a '
+          'batch file reach cmd.exe as command fragments under LF endings',
+    );
+  });
+
+  test('install.bat reports a failed install instead of success (gh-1945)', () {
+    final bat = rendered['site/install.bat']!;
+    // The wrapper used to print "fa is ready" even when PowerShell aborted
+    // before downloading anything — the failure must be fatal and visible.
+    expect(bat, contains('if errorlevel 1 goto :fa_install_failed'));
+    expect(bat, contains(':fa_install_failed'));
+    expect(bat, contains('exit /b 1'));
+    expect(
+      bat.indexOf('if errorlevel 1 goto :fa_install_failed'),
+      lessThan(bat.indexOf('fa is ready in THIS console')),
+      reason: 'the success banner must only be reachable on the success path',
+    );
+  });
+
+  test('install.ps1 resolves LOCALAPPDATA in a shell without one (gh-1945)', () {
+    final ps = rendered['site/install.ps1']!;
+    // LOCALAPPDATA / APPDATA come from the per-logon volatile environment, not
+    // from HKCU\Environment: a process spawned by a service, a scheduled task
+    // or a supervisor app can inherit neither, and `Join-Path
+    // $env:LOCALAPPDATA "Fa"` then throws under $ErrorActionPreference = Stop
+    // before anything is downloaded.
+    expect(
+      ps,
+      contains(
+        r"$env:LOCALAPPDATA = [Environment]::GetFolderPath"
+        "('LocalApplicationData')",
+      ),
+    );
+    expect(ps, contains(r'if (-not $env:LOCALAPPDATA -and $env:USERPROFILE) {'));
+    expect(ps, contains(r"if (-not $env:APPDATA -and $env:USERPROFILE) {"));
+    expect(ps, contains('cannot resolve LOCALAPPDATA'));
+    // TEMP is the same class of hazard: archive + extraction paths hang off it.
+    expect(ps, contains(r'if (-not $env:TEMP) {'));
+    // The install directory must be resolved after the fallbacks, never before.
+    expect(
+      ps.indexOf(r"GetFolderPath('LocalApplicationData')"),
+      lessThan(ps.indexOf(r'$installDir = Join-Path $env:LOCALAPPDATA "Fa"')),
+      reason: 'the fallback must run before the install dir is computed',
+    );
+  });
+
+  test('install.ps1 retries the published x64 bundle on ARM64 (gh-1945)', () {
+    final ps = rendered['site/install.ps1']!;
+    // Only fa-windows-x64.zip is published (scripts/release_required_assets.txt):
+    // an arm64 lookup 404s, and the installer used to drop straight to the
+    // Dart fallback even though the x64 build runs under Windows' emulation.
+    expect(
+      ps,
+      contains(
+        r"$candidates = if ($arch -eq 'arm64') { @('arm64', 'x64') } else { @($arch) }",
+      ),
+    );
+    expect(ps, contains('runs under x64 emulation'));
+    // A non-404 failure (TLS, disk, truncated zip) must not be masked by
+    // retrying another asset.
+    expect(ps, contains(r'if ($status -ne 404) { break }'));
+  });
+
+  test('install.ps1 fails hard on an unexpected bundle layout (gh-1945)', () {
+    final ps = rendered['site/install.ps1']!;
+    // Copying lib/ and reporting success with no executable is exactly how an
+    // install "succeeds" while `fa` is still missing on PATH.
+    expect(ps, contains('the downloaded bundle has no bin\\fa.exe'));
+    expect(ps, contains(r'function Install-FaBundle([string]$archName)'));
+  });
+
+  test('the piped installers never call exit (gh-1945)', () {
+    // Both scripts are documented as `irm ... | iex`; `exit` there closes the
+    // caller's console instead of merely failing the script.
+    for (final artifact in ['site/install.ps1', 'site/setup.ps1']) {
+      final text = rendered[artifact]!;
+      expect(
+        RegExp(r'^\s*exit\b', multiLine: true).hasMatch(text),
+        isFalse,
+        reason:
+            '$artifact calls exit - under `irm | iex` that closes the '
+            'user console window; use throw/return instead',
+      );
+    }
+  });
+
+  test('install.ps1 refuses to overwrite a running Fa (gh-1945)', () {
+    final ps = rendered['site/install.ps1']!;
+    // Windows locks a running executable: an in-place upgrade over an open TUI
+    // failed with a bare "being used by another process" and then slid into
+    // the Dart fallback, telling the user no binary had been published.
+    expect(ps, contains(r'Get-Process -Name fa, fah'));
+    expect(ps, contains('Close every Fa window, then run the installer again.'));
+    expect(ps, contains('catch [System.IO.IOException]'));
+  });
+
+  test('setup.ps1 finds a just-installed CLI before PATH refreshes (gh-1945)', () {
+    final ps = rendered['site/setup.ps1']!;
+    // The installer writes the *user* PATH, which only new logons read: run
+    // right after it, the wizard used to report "fa is not installed".
+    expect(ps, contains(r"$faBin = Join-Path $faLocalRoot 'Fa\bin'"));
+    expect(ps, contains('PATH is refreshed for new windows only'));
+  });
+
   test(
     'cmd set hint is paste-safe — no # tail on the printed line (gh-1945)',
     () {

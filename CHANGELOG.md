@@ -13,6 +13,30 @@ block a release again.
 
 ## Unreleased
 
+- feat(network): channel payload sender block — app members' channel
+  messages carry `{"text": …, "sender": {"name": …, "id": …}}` (public
+  base64 JSON and keyed fanet1 plaintext alike), so DAP agents can
+  attribute the HUMAN author behind the fa_network relay's hub id. The
+  harness unwraps it tolerantly (raw text passes through), rides the
+  name as `AgentMessage.fromName` through the fabric, and the CLI
+  steering line greets people again: `from Uladzimir (<relay id>) in
+  #channel: hello` instead of `from 3cfaee1aa054fe6e…`. The app falls
+  back to the payload sender for bubble names when the envelope carries
+  none; DMs also name hub peers from the whois cache. Legacy payloads
+  without the block decode exactly as before.
+- feat(gh-1956): reply auto-spill — oversized child `reply` / `agent_message`
+  payloads spill to an `agent://` artifact automatically; the parent receives a
+  bounded excerpt + pointer + completeness marker with char AND byte counts.
+  Manual chunking degrades to a documented fallback, restorable across parent
+  resume via durable `deliverable_artifact` records, behind the
+  `subagents.replyAutoSpill` kill switch (default on; honored on the CLI and
+  the app host alike). Rework round: the salvage hook (output-truncated
+  deliverable calls) restores the durable ids before allocating its own
+  (no post-resume pointer shadowing), durability losses emit a
+  `[deliverables]` diagnostic line, the app host honors the kill switch, the
+  spill-reach gate is renamed `spillAppliesTo` (was `spillApliesTo`), byte
+  counts are encoded once per spill, and `DeliverableRecord.artifact(bytes)`
+  is optional again so external constructors keep compiling.
 - fix(#1947): `schedule_message` from the orchestrator no longer misroutes
   into a finished subagent's mailbox. A background shell job started by a
   CHILD registered its settle continuation inside the child's subagent

@@ -48,7 +48,7 @@ Future<AgentService> _createService(
       providerKind: 'openai-completions',
       modelId: 'test-model',
       baseUrl: 'https://example.test',
-      apiKey: '[REDACTED:Sensitive Value]',
+      apiKey: '[REDACTED:Sensitive-Value]',
     ),
     env: env,
     streamFunction: _singleTextResponse('ok'),

@@ -66,6 +66,36 @@ void main() {
     test('garbage → null (placeholder upstream, never a crash)', () {
       expect(decodePublicChannelPayload('!!not-base64!!'), isNull);
     });
+
+    test('sender identity rides the payload, legacy payloads stay clean', () {
+      final encoded = encodePublicChannelText(
+        'hello from the app',
+        senderName: 'Uladzimir',
+        senderId: 'm-7',
+      );
+      expect(decodePublicChannelPayload(encoded), 'hello from the app');
+      final sender = decodePublicChannelSender(encoded);
+      expect(sender, isNotNull);
+      expect(sender!.name, 'Uladzimir');
+      expect(sender.id, 'm-7');
+
+      // Legacy convention (no sender block) decodes with no sender.
+      final legacy = encodePublicChannelText('legacy hello');
+      expect(decodePublicChannelPayload(legacy), 'legacy hello');
+      expect(decodePublicChannelSender(legacy), isNull);
+      // An empty name carries nothing — never an anonymous sender block.
+      final anonymous = encodePublicChannelText(
+        'x',
+        senderName: '',
+        senderId: 'm-8',
+      );
+      expect(decodePublicChannelSender(anonymous), isNull);
+      // Raw foreign payloads have no sender either.
+      expect(
+        decodePublicChannelSender(base64Encode(utf8.encode('raw text'))),
+        isNull,
+      );
+    });
   });
 
   group('ShowcaseViewer', () {

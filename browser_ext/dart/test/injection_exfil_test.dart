@@ -441,7 +441,7 @@ void main() {
         'expression': 'document.body.innerText',
       });
       expect(out, contains('[REDACTED:credential]'));
-      expect(out, contains('[REDACTED:OpenAI Key]'));
+      expect(out, contains('[REDACTED:OpenAI-Key]'));
       expect(out, isNot(contains('hunter2')));
       expect(out, isNot(contains('sk-abcdefghijklmnopqrstuv')));
       expect(out, contains('<<<UNTRUSTED PAGE CONTENT source=cdp_eval'));
@@ -457,7 +457,7 @@ void main() {
           title: 'sk-abcdefghijklmnopqrstuv notes',
         );
         final out = await _run(reg, 'history_search', {'text': 'notes'});
-        expect(out, contains('[REDACTED:OpenAI Key]'));
+        expect(out, contains('[REDACTED:OpenAI-Key]'));
         expect(out, isNot(contains('sk-abcdefghijklmnopqrstuv')));
         expect(out, contains('<<<UNTRUSTED PAGE CONTENT source=history'));
       },

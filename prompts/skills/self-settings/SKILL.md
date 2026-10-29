@@ -528,10 +528,17 @@ escalates to `⚠⚠` at twice the threshold:
 subagents:
   heartbeatMinutes: 10 # digests cadence; 0 disables the heartbeat
   stallMinutes: 20 # quiet window before a stall flag; 0 disables flags
+  replyAutoSpill: true # oversized child replies auto-spill to an artifact
 ```
 
 Zero running children → no digest; completion notices are unchanged.
 Config changes apply at the next digest tick — no restart required.
+
+`subagents.replyAutoSpill` (gh-1956, default `true`): an oversized child
+`reply` spills to an artifact automatically — the parent receives a bounded
+excerpt + `agent://` pointer + completeness marker instead of raw bytes, and
+manual chunking degrades to a fallback. Set it to `false` to restore the
+pure-chunk behavior (the child must chunk long reports manually).
 
 ## Mode
 

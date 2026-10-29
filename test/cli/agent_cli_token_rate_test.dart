@@ -93,7 +93,7 @@ AgentCli _cliFor(_ScriptClock clock, _GatedRateStream script, FakeCliIO io) =>
     AgentCli(
       config: AgentCliConfig(
         model: testModel,
-        apiKey: '[REDACTED:Sensitive Value]',
+        apiKey: '[REDACTED:Sensitive-Value]',
         env: MemoryExecutionEnv(cwd: '/work'),
         sessionRoot: '/sessions',
         homeDir: '/home',
