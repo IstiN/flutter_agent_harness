@@ -66,6 +66,10 @@ jobs:
           # gh-1865: the repo copy of ci-sign is authoritative —
           # re-install it to the host PATH on every signing job so
           # ~/bin/ci-sign can never drift from the reviewed source.
+          # gh-1954: install(1) does not create parent directories —
+          # on a fresh runner $HOME/bin does not exist (run 40822964468,
+          # "install: invalid target .../bin/ci-sign: No such file").
+          mkdir -p "$HOME/bin"
           install -m 755 scripts/ci-sign "$HOME/bin/ci-sign"
           INPUT="${{ inputs.version }}"
           if [ -z "$INPUT" ] || [ "$INPUT" = "auto" ]; then
