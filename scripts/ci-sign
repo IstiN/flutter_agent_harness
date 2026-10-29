@@ -104,7 +104,11 @@ ensure_keychain() {
   # fastlane timeout, run 40849468765). Settings only apply
   # non-interactively on a FRESH keychain; on an existing one the command
   # prompts (GUI session) or fails silently (headless, masked by || true).
-  security set-keychain-settings -t 0 "$KC" 2>/dev/null || true
+  # Bounded: set-keychain-settings prompts via GUI SecurityAgent on this
+  # host (screenshot-confirmed) — unbounded it wedges install forever.
+  # Best-effort only; the REAL anti-lock mechanism is the Fastfile's
+  # unlock watchdog (unlock-keychain -p never prompts).
+  perl -e 'alarm 5; exec @ARGV' security set-keychain-settings -t 0 "$KC" 2>/dev/null || true
   # Idempotent, additive, self-verifying search-list membership (gh-1866
   # logic, applied ONCE for a persistent entry — never per job). Skipped
   # for test keychains (CI_SIGN_KEYCHAIN override) — they never leave the
@@ -286,6 +290,12 @@ case "$CMD" in
         || err "could not remove previous identity $OLD_FP for '$LABEL' (continuing; stale identity remains)"
     fi
 
+    # gh-1954: unlock BEFORE import — a locked (freshly recreated)
+    # keychain makes security import raise a GUI password prompt; on the
+    # headless runner that hangs, and a user Cancel aborts the import
+    # ("SecKeychainItemImport: User canceled the operation", run
+    # 40857357741). unlock-keychain -p never prompts.
+    security unlock-keychain -p "$(kc_password)" "$KC"
     security import "$TMP/cert.p12" -k "$KC" -P "$P12_PW" -T /usr/bin/codesign
     # Partition the private key so codesign never needs interactive auth
     # (this is what prevents GUI keychain prompts).
