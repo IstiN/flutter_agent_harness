@@ -1301,6 +1301,28 @@ String _normalizeToolCallId(String id, Model model) {
   return id;
 }
 
+/// Audio MIME type → OpenAI `input_audio.format` tag. mp3/wav are the
+/// OpenAI-documented ones; OpenRouter's Gemini route additionally accepts
+/// m4a/aac/flac/ogg (verified against AIIN). Unknown mime types fall back
+/// to `mp3` — a table keeps the lookup O(1) and the complexity gate green
+/// (a 13-case switch measured CRAP 21.91 against the 12.0 ratchet).
+const _openAiAudioFormats = <String, String>{
+  'audio/mpeg': 'mp3',
+  'audio/mp3': 'mp3',
+  'audio/wav': 'wav',
+  'audio/x-wav': 'wav',
+  'audio/mp4': 'm4a',
+  'audio/x-m4a': 'm4a',
+  'audio/m4a': 'm4a',
+  'audio/aac': 'aac',
+  'audio/x-aac': 'aac',
+  'audio/flac': 'flac',
+  'audio/ogg': 'ogg',
+};
+
+String _openAiAudioFormat(String mimeType) =>
+    _openAiAudioFormats[mimeType.toLowerCase()] ?? 'mp3';
+
 Map<String, dynamic>? _convertUserMessage(UserMessage message) {
   final content = message.content;
   if (content is String) {
@@ -1315,6 +1337,17 @@ Map<String, dynamic>? _convertUserMessage(UserMessage message) {
         parts.add({
           'type': 'image_url',
           'image_url': {'url': 'data:${item.mimeType};base64,${item.data}'},
+        });
+      case AudioContent():
+        // OpenAI/OpenRouter audio input (AIIN routes Gemini through this
+        // dialect too). Senders attach audio only for audio-capable
+        // models; mime type reduces to the wire `format` tag.
+        parts.add({
+          'type': 'input_audio',
+          'input_audio': {
+            'data': item.data,
+            'format': _openAiAudioFormat(item.mimeType),
+          },
         });
       case ThinkingContent() || ToolCall():
         // Not valid in user messages; skip defensively.

@@ -14,15 +14,25 @@ void main() {
     return repo.create(JsonlSessionCreateOptions(cwd: cwd));
   }
 
-  AssistantMessage assistant(String text) => AssistantMessage(
-    content: [TextContent(text: text)],
-    api: 'openai-completions',
-    provider: 'openrouter',
-    model: 'm1',
-    usage: Usage.zero,
-    stopReason: StopReason.stop,
-    timestamp: DateTime.utc(2026),
-  );
+  AssistantMessage assistant(String text, {int usageTokens = 0}) =>
+      AssistantMessage(
+        content: [TextContent(text: text)],
+        api: 'openai-completions',
+        provider: 'openrouter',
+        model: 'm1',
+        usage: usageTokens == 0
+            ? Usage.zero
+            : Usage(
+                input: usageTokens,
+                output: 0,
+                cacheRead: 0,
+                cacheWrite: 0,
+                totalTokens: usageTokens,
+                cost: const UsageCost(),
+              ),
+        stopReason: StopReason.stop,
+        timestamp: DateTime.utc(2026),
+      );
 
   group('Session append and navigation', () {
     test('appendMessage chains parent ids along the leaf', () async {
@@ -145,6 +155,62 @@ void main() {
       final messages = await session.buildContextMessages();
       expect(messages.map((m) => m.role), ['user', 'assistant', 'user']);
       expect((messages.first as UserMessage).content, 'one');
+    });
+
+    test(
+      'buildContextMessages drops stale structured-compaction usage anchors',
+      () async {
+        final session = await newSession();
+        final old = await session.appendMessage(UserMessage.text('old'));
+        await session.appendMessage(assistant('kept', usageTokens: 201798));
+        await session.appendHiddenRange(recordIds: [old]);
+        await session.appendMessage(UserMessage.text('after'));
+
+        final messages = (await session.buildContext()).messages;
+        final kept = messages.whereType<AssistantMessage>().single;
+
+        // The real projected context is tiny. The retained assistant's
+        // generation-time usage must not resurrect its 201k-token past.
+        expect(kept.usage.totalTokens, 0);
+        expect(estimateContextTokens(messages).tokens, lessThan(1000));
+      },
+    );
+
+    test(
+      'context rebuild resets classic-cut anchors but preserves fresh usage',
+      () async {
+        final session = await newSession();
+        await session.appendMessage(UserMessage.text('old'));
+        final kept = await session.appendMessage(
+          assistant('kept', usageTokens: 201798),
+        );
+        await session.appendCompaction(
+          summary: 'summary',
+          firstKeptEntryId: kept,
+          tokensBefore: 201798,
+        );
+        await session.appendMessage(assistant('fresh', usageTokens: 50));
+
+        final messages = await session.buildContextMessages();
+        final assistants = messages.whereType<AssistantMessage>().toList();
+
+        expect(assistants[0].usage.totalTokens, 0);
+        expect(assistants[1].usage.totalTokens, 50);
+        expect(estimateContextTokens(messages).tokens, 50);
+      },
+    );
+
+    test('context rebuild preserves live usage without compaction', () async {
+      final session = await newSession();
+      await session.appendMessage(assistant('live', usageTokens: 1234));
+
+      final messages = await session.buildContextMessages();
+
+      expect(
+        messages.whereType<AssistantMessage>().single.usage.totalTokens,
+        1234,
+      );
+      expect(estimateContextTokens(messages).tokens, 1234);
     });
 
     test('context follows the active branch after moveTo', () async {

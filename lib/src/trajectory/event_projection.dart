@@ -79,6 +79,11 @@ TrajectorySourceBlock trajectorySourceBlock(ContentBlock block) {
       content: '',
       attachmentName: mimeType,
     ),
+    AudioContent(:final mimeType) => TrajectorySourceBlock(
+      type: 'audio',
+      content: '',
+      attachmentName: mimeType,
+    ),
   };
 }
 

@@ -287,6 +287,57 @@ void main() {
     expect(registry.keyFor(provider.id), 'sk-aiin-xyz');
   });
 
+  testWidgets('connectAiin quick-filters fetched models case-insensitively '
+      'before picking', (tester) async {
+    final registry = ProviderRegistry.inMemory();
+    final sso = FaUiSso(
+      registry: registry,
+      aiinConnectFn: (onStatus) async => const AiinConnectResult(
+        apiKey: AiinApiKey(
+          raw: 'sk-aiin-xyz',
+          id: '42',
+          prefix: 'sk-aiin',
+          createdAt: '2026-10-06',
+        ),
+        tokens: AiinOAuthTokens(
+          accessToken: 'a',
+          refreshToken: 'r',
+          tokenType: 'Bearer',
+          expiresIn: 3600,
+          refreshExpiresIn: 7200,
+        ),
+        email: 'u@aiin.by',
+      ),
+      modelsFetcher: (baseUrl, {required apiKey}) async => (
+        ['gpt-4o', 'GLM-4.6', 'claude-sonnet'],
+        <String, int>{},
+        <String, int>{},
+      ),
+    );
+    final connected = await _run(
+      tester,
+      (context) => sso.connectAiin(context),
+      onPickPage: (tester) async {
+        expect(find.text('gpt-4o'), findsOneWidget);
+        expect(find.text('GLM-4.6'), findsOneWidget);
+        expect(find.text('claude-sonnet'), findsOneWidget);
+
+        await tester.enterText(find.byType(TextField), 'gLm-4.6');
+        await tester.pump();
+
+        expect(find.text('gpt-4o'), findsNothing);
+        expect(find.text('claude-sonnet'), findsNothing);
+        expect(find.text('GLM-4.6'), findsOneWidget);
+      },
+      thenTap: find.text('GLM-4.6'),
+    );
+
+    expect(connected, isTrue);
+    expect(registry.providers, hasLength(1));
+    expect(registry.providers.single.modelId, 'GLM-4.6');
+    expect(registry.keyFor(registry.providers.single.id), 'sk-aiin-xyz');
+  });
+
   testWidgets('the default desktop hops refuse LOUDLY on mobile — no '
       'silent hang', (tester) async {
     // dart.library.io is true on iOS/Android too; without the gate the
@@ -624,10 +675,12 @@ Future<void> _pumpUntilFound(WidgetTester tester, Finder finder) async {
 }
 
 /// Runs [flow] from a live context under a MaterialApp (snacks and pushed
-/// pages resolve), optionally tapping [thenTap] on the pushed pick page.
+/// pages resolve), optionally interacting through [onPickPage] and tapping
+/// [thenTap] on the pushed pick page.
 Future<bool> _run(
   WidgetTester tester,
   Future<bool> Function(BuildContext) flow, {
+  Future<void> Function(WidgetTester)? onPickPage,
   Finder? thenTap,
 }) async {
   var result = false;
@@ -649,6 +702,7 @@ Future<bool> _run(
   // flow's synchronous refusal land and the snack animate in.
   await tester.pump();
   await tester.pump(const Duration(seconds: 1));
+  if (onPickPage != null) await onPickPage(tester);
   if (thenTap != null) {
     await tester.tap(thenTap);
     await tester.pump();
