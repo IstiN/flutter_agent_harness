@@ -239,7 +239,16 @@ resolveEffectiveCliArgs(
 }) {
   final faPreconfig = faProviderPreconfig(parsed, saved, env: env);
   final restore = _judgeSavedRestore(saved);
-  final restoredKind = restore.endpointConflict ? null : restore.spec?.kind;
+  // issue #1973: while the saved slot is the untouched factory triple, the
+  // first custom provider is the boot default — a config that only ever
+  // gained custom providers must not start new folders on a provider the
+  // user never configured. Explicit flags and FA_PROVIDER_* preconfigs keep
+  // winning below; the fresh-install wizard needs NO custom provider, so it
+  // can never be short-circuited by this branch.
+  final customDefault = _customProviderBootDefault(saved);
+  final restoredKind = restore.endpointConflict
+      ? null
+      : (customDefault?.kind ?? restore.spec?.kind);
   final provider = _bootProvider(
     parsed: parsed,
     faPreconfig: faPreconfig,
@@ -263,8 +272,16 @@ resolveEffectiveCliArgs(
   final degraded = restore.endpointConflict && !explicitOverride;
   final degradedDefault = resolveCliProviderSpec(provider)?.defaultBaseUrl;
   final keepSavedPair = !degraded || _degradedPairResolves(provider, saved);
-  final modelId = parsed.model ?? faPreconfig?.modelId ?? saved.modelId;
-  final baseUrl = parsed.baseUrl ?? faPreconfig?.baseUrl ?? saved.baseUrl;
+  final modelId =
+      parsed.model ??
+      faPreconfig?.modelId ??
+      customDefault?.modelId ??
+      saved.modelId;
+  final baseUrl =
+      parsed.baseUrl ??
+      faPreconfig?.baseUrl ??
+      customDefault?.baseUrl ??
+      saved.baseUrl;
   final effective = CliArgs(
     model: keepSavedPair ? modelId : (parsed.model ?? faPreconfig?.modelId),
     provider: provider,
@@ -308,6 +325,44 @@ resolveEffectiveCliArgs(
     incompatibleSavedEndpoint: reports.incompatibleSavedEndpoint,
     bindingWarnings: bindingWarnings,
   );
+}
+
+/// The provider triple [CliConfig] ships as field defaults: every fresh
+/// config persists it until the user actually picks a provider/model, so the
+/// saved slot is indistinguishable from a deliberate choice (issue #1973).
+const _factoryProviderKind = 'openai-completions';
+const _factoryModelId = 'openai/gpt-4o-mini';
+const _factoryBaseUrl = 'https://openrouter.ai/api/v1';
+
+/// The first custom provider as the boot default, when the saved slot is
+/// still the untouched factory triple (issue #1973).
+///
+/// A config that only ever gained custom providers kept the factory slot at
+/// the top level, so every NEW folder booted into a provider the user never
+/// configured — a keyless OPENROUTER banner, then a coherence refusal blaming
+/// the user's own provider ("no key resolved ... (mismatched: key)") for a
+/// secret that was sitting in the keychain. The first custom provider is the
+/// honest default there.
+///
+/// Null — i.e. the factory slot restores as before — when the slot was set,
+/// when no custom provider exists, or when an entry's `apiType` has no
+/// catalog spec. Deliberate selection is indistinguishable from factory
+/// state, so the guard is "still exactly the factory triple".
+({String kind, String modelId, String baseUrl})? _customProviderBootDefault(
+  CliConfig saved,
+) {
+  if (saved.providerKind.trim() != _factoryProviderKind ||
+      saved.modelId != _factoryModelId ||
+      saved.baseUrl != _factoryBaseUrl) {
+    return null;
+  }
+  for (final entry in saved.customProviders) {
+    if (entry.modelId.trim().isEmpty || entry.baseUrl.trim().isEmpty) continue;
+    final spec = resolveCliProviderSpec(entry.apiType);
+    if (spec == null) continue;
+    return (kind: spec.kind, modelId: entry.modelId, baseUrl: entry.baseUrl);
+  }
+  return null;
 }
 
 /// The saved-restore judgement (gh-760 review): the saved id trimmed and
