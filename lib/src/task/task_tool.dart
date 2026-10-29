@@ -185,14 +185,6 @@ void _renderResultBody(
     buffer.write('\n[Full output: agent://${result.id}]');
   }
 }
-  _renderDeliverables(buffer, result);
-  final error = result?.error;
-  if (error != null) buffer.write('\nerror: $error');
-  buffer
-    ..write('\n</task-result>')
-    ..write('\n</system-notice>');
-  return buffer.toString();
-}
 
 /// The deliverable pointer block shared by the blocking and background
 /// result renderers (issue #1829): every recorded deliverable with its
@@ -429,7 +421,6 @@ final class TaskToolConfig {
     // serve, app) surfaces them with zero per-host changes.
     resultPublisher: (result) => jobManager.publishResumed(result),
   );
-}
 }
 
 /// Creates the `task` tool bound to [config] (omp's `TaskTool`).

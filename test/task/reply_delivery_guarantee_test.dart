@@ -191,12 +191,13 @@ void main() {
           null,
         );
         final text = _text(result);
-        // The reply message is in the parent-visible text byte-identical…
+        // The reply message is in the parent-visible text byte-identical,
+        // labeled as the explicit reply…
         expect(text, contains(reply));
-        // …labeled as the explicit reply, distinct from the final text…
         expect(text, contains('[explicit reply]'));
         expect(text, contains('[explicit reply end]'));
-        expect(text.indexOf(reply), lessThan(text.indexOf('Report delivered')));
+        // …the content-free final-message stub does NOT stand in for it…
+        expect(text, isNot(contains('Report delivered')));
         // …and the final-message output stays addressable.
         expect(text, contains('[Full output: agent://Kid]'));
         // No completed_without_reply marker when a reply exists.
@@ -318,7 +319,7 @@ void main() {
         null,
         null,
       );
-      expect(_text(result), contains('agent://Bg'));
+      expect(_text(result), contains('job `Bg`'));
       await h.jobs.settled;
       final notice = taskAsyncResultNotice(h.jobs.job('Bg')!);
       expect(notice, contains(reply));
@@ -359,10 +360,16 @@ void main() {
         ..mailboxPrefix = 'p';
       await manager.register(id: 'kid', name: 'kid', agentType: 'task',
           task: 't');
-      expect(await manager.recordReply('kid', 'first'), isTrue);
+      expect(
+        await manager.recordReply('kid', 'first'),
+        ReplyRecordOutcome.recorded,
+      );
       expect(manager['kid']!.lastReply, 'first');
       // Unknown child: nothing recorded, caller must not ack.
-      expect(await manager.recordReply('ghost', 'x'), isFalse);
+      expect(
+        await manager.recordReply('ghost', 'x'),
+        ReplyRecordOutcome.noHandle,
+      );
     });
 
     test('double reply is idempotent: first wins, second noted', () async {
@@ -484,7 +491,7 @@ void main() {
       'task_send on a completed child publishes the resumed final message '
       'through the job completions stream',
       () async {
-        final wiring = await _ResumeWiring(
+        final wiring = _ResumeWiring(
           resumeTurns: [_textTurn('RESUMED-FINAL-ANSWER')],
         );
         addTearDown(wiring.dispose);
@@ -496,7 +503,7 @@ void main() {
         final sub = wiring.jobs.completions.listen(notices.add);
         addTearDown(() => sub.cancel());
 
-        await wiring.executor.resumeChild('Watcher', 'return the findings');
+        await wiring.executor.resumeChild('Watcher', 'RESUME-MARKER return the findings');
         await wiring.drainMicrotasks();
 
         expect(notices, hasLength(1), reason:
@@ -511,7 +518,7 @@ void main() {
     );
 
     test('a resumed run\'s own reply rides the notice verbatim', () async {
-      final wiring = await _ResumeWiring(
+      final wiring = _ResumeWiring(
         resumeTurns: [
           _toolTurn('reply', {'message': 'fresh resumed reply'}),
           _textTurn('done'),
@@ -524,7 +531,7 @@ void main() {
       final sub = wiring.jobs.completions.listen(notices.add);
       addTearDown(() => sub.cancel());
 
-      await wiring.executor.resumeChild('Watcher', 'again, with the reply');
+      await wiring.executor.resumeChild('Watcher', 'RESUME-MARKER again, with the reply');
       await wiring.drainMicrotasks();
 
       final notice = taskAsyncResultNotice(notices.single);
@@ -534,7 +541,7 @@ void main() {
 
     test('a failed resume publishes its named error — never silence',
         () async {
-      final wiring = await _ResumeWiring(resumeTurns: const [], failResume:
+      final wiring = _ResumeWiring(resumeTurns: const [], failResume:
           'provider quota exhausted');
       addTearDown(wiring.dispose);
       await wiring.spawn('Watcher', 'batch-work');
@@ -544,7 +551,7 @@ void main() {
       addTearDown(() => sub.cancel());
 
       await expectLater(
-        wiring.executor.resumeChild('Watcher', 'try again'),
+        wiring.executor.resumeChild('Watcher', 'RESUME-MARKER try again'),
         throwsA(isA<StateError>()),
       );
       await wiring.drainMicrotasks();
@@ -559,7 +566,7 @@ void main() {
     test(
       'pending reply rides the resume completion as a resolvable artifact',
       () async {
-        final wiring = await _ResumeWiring(
+        final wiring = _ResumeWiring(
           resumeTurns: [_textTurn('resumed, nothing more to add')],
         );
         addTearDown(wiring.dispose);
@@ -572,7 +579,7 @@ void main() {
         final sub = wiring.jobs.completions.listen(notices.add);
         addTearDown(() => sub.cancel());
 
-        await wiring.executor.resumeChild('Watcher', 'wrap up');
+        await wiring.executor.resumeChild('Watcher', 'RESUME-MARKER wrap up');
         await wiring.drainMicrotasks();
 
         final notice = taskAsyncResultNotice(notices.single);
@@ -592,7 +599,7 @@ void main() {
     test(
       'a resumed run WITHOUT any reply anywhere still names the gap',
       () async {
-        final wiring = await _ResumeWiring(
+        final wiring = _ResumeWiring(
           resumeTurns: [_textTurn('silent resume')],
         );
         addTearDown(wiring.dispose);
@@ -602,7 +609,7 @@ void main() {
         final sub = wiring.jobs.completions.listen(notices.add);
         addTearDown(() => sub.cancel());
 
-        await wiring.executor.resumeChild('Watcher', 'again');
+        await wiring.executor.resumeChild('Watcher', 'RESUME-MARKER again');
         await wiring.drainMicrotasks();
 
         final notice = taskAsyncResultNotice(notices.single);
@@ -615,10 +622,14 @@ void main() {
 
 /// Resume-path wiring with REAL JSONL child sessions (mirrors the CLI
 /// host wiring): MemoryExecutionEnv-backed repo, factory + opener wired.
+/// The scripted stream routes on markers: prompts naming [resumeMarker]
+/// (the steering text of a resume) replay [_resumeTurns]; every other
+/// call (the first-life spawn) answers 'done'.
 final class _ResumeWiring {
   _ResumeWiring({
     List<List<AssistantMessageEvent>> resumeTurns = const [],
     this.failResume,
+    this.resumeMarker = 'RESUME-MARKER',
   }) : _resumeTurns = List.of(resumeTurns) {
     env = MemoryExecutionEnv(cwd: '/work');
     repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
@@ -658,13 +669,15 @@ final class _ResumeWiring {
   final outputs = AgentOutputStore();
   final List<List<AssistantMessageEvent>> _resumeTurns;
   final String? failResume;
+  final String resumeMarker;
 
   AssistantMessageEventStream _stream(
     Model model,
     Context context, {
     CancelToken? cancelToken,
   }) {
-    if (failResume != null) {
+    final prompt = _ScriptedStream.lastUserText(context);
+    if (failResume != null && prompt.contains(resumeMarker)) {
       final empty = _assistant();
       return _streamOf([
         StartEvent(partial: empty),
@@ -677,7 +690,7 @@ final class _ResumeWiring {
         ),
       ]);
     }
-    if (_resumeTurns.isNotEmpty) {
+    if (prompt.contains(resumeMarker) && _resumeTurns.isNotEmpty) {
       return _streamOf(_resumeTurns.removeAt(0));
     }
     return _streamOf(_textTurn('done'));

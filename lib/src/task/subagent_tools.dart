@@ -19,6 +19,7 @@ import 'package:flutter_agent_harness/src/messaging/messaging_repository.dart';
 import '../agent/agent_loop.dart';
 import '../agent/agent_tool.dart';
 import '../approval/approval.dart';
+import '../session/ledger_caps.dart' show capLedgerText;
 import 'deliverables.dart';
 import 'subagent.dart';
 import 'subagent_manager.dart';
@@ -471,6 +472,26 @@ String _shortCwd(String cwd, String? homeDir) {
   return cwd;
 }
 
+/// The honest child-facing result when the parent-visible record could
+/// NOT be written (gh-1951 AC2): an error, never a false "delivered" —
+/// the child knows to retry or fall back to agent_message chunks.
+ToolExecutionResult _replyNotRecorded(String id) => ToolExecutionResult.text(
+  'error: reply NOT delivered — no retained record for subagent "$id" '
+  '(a parent-visible record must exist before a reply can be acked); '
+  'retry the reply, or deliver the content via agent_message chunks to '
+  'main',
+);
+
+/// The child-facing result for a double `reply` (gh-1951 edge case:
+/// idempotent — the first reply stays the deliverable, this call was
+/// noted but did not replace it).
+ToolExecutionResult _replyDuplicateNoted(String id) => ToolExecutionResult
+    .text(
+  'a reply was already recorded for subagent "$id" — the FIRST reply '
+  'stays the deliverable and this reply was noted but did not replace '
+  'it; no further replies are needed',
+);
+
 /// `reply` — the CHILD-only tool: delivers the child's explicit answer to
 /// the parent (prime-agent's `reply`). A reply replaces the default
 /// completed_without_reply notice: the parent event/envelope carries the
@@ -551,7 +572,16 @@ AgentTool _replyTool(
             // Core flow A: the envelope — bounded excerpt + pointer +
             // explicit completeness — replaces the bare body.
             final envelope = deliverable.envelopeText(record);
-            await manager.recordReply(id, envelope);
+            final outcome = await manager.recordReply(id, envelope);
+            if (outcome == ReplyRecordOutcome.noHandle) {
+              return _replyNotRecorded(id);
+            }
+            if (outcome == ReplyRecordOutcome.duplicateNoted) {
+              return _replyDuplicateNoted(id);
+            }
+            // AC2 ordering: the ack rides only after the parent-visible
+            // record is durable.
+            await manager.persistNow();
             return ToolExecutionResult.text(
               'reply delivered to the parent via artifact '
               'agent://${record.outputId} (${record.status!.name}, '
@@ -571,7 +601,16 @@ AgentTool _replyTool(
           );
         }
       }
-      await manager.recordReply(id, message);
+      final outcome = await manager.recordReply(id, message);
+      if (outcome == ReplyRecordOutcome.noHandle) {
+        return _replyNotRecorded(id);
+      }
+      if (outcome == ReplyRecordOutcome.duplicateNoted) {
+        return _replyDuplicateNoted(id);
+      }
+      // AC2 ordering: the ack rides only after the parent-visible record
+      // is durable.
+      await manager.persistNow();
       return ToolExecutionResult.text('reply delivered to the parent');
     },
   );
@@ -1596,6 +1635,11 @@ Future<String> _formatHandleDetail(
     if (h.compactionError != null) 'compaction: ${h.compactionError}',
     if (h.modelId != null) 'model: ${h.modelId}',
     if (h.error != null) 'error: ${h.error}',
+    // gh-1951 AC5: the recorded reply is discoverable from every parent
+    // surface — task_status detail previews it (full text rides the task
+    // result; the transcript carries the call itself).
+    if (h.lastReply != null)
+      'last reply: ${capLedgerText(h.lastReply, maxChars: subagentRegistryReplyCapChars)}',
   ];
   // Issue #1923 AC3: pending mail sitting past the delivery SLO escalates
   // to a visible UNDELIVERED line — no silent queues (shared formatter).
