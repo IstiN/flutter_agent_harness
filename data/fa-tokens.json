@@ -50,15 +50,6 @@
   ],
   "issue-1632": [
     {
-      "leg": "review",
-      "at": "2026-10-15T16:49:08Z",
-      "prompt": 70034,
-      "completion": 22341,
-      "total": 92375,
-      "cacheRead": 1721536,
-      "model": "glm-5.3-flash"
-    },
-    {
       "leg": "rework",
       "at": "2026-10-16T01:29:01Z",
       "prompt": 132522,
@@ -3929,6 +3920,17 @@
       "completion": 24391,
       "total": 103443,
       "cacheRead": 2794176,
+      "model": "glm-5.3-flash"
+    }
+  ],
+  "pr-1972": [
+    {
+      "leg": "review",
+      "at": "2026-10-29T17:14:51Z",
+      "prompt": 160086,
+      "completion": 27652,
+      "total": 187738,
+      "cacheRead": 2721536,
       "model": "glm-5.3-flash"
     }
   ]
