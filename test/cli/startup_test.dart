@@ -245,6 +245,109 @@ void main() {
   });
 
   group('resolveEffectiveCliArgs', () {
+    // issue #1973: CliConfig's own defaults ARE the factory openrouter slot,
+    // so a config that only ever gained custom providers looked "explicit" —
+    // every new folder booted into a provider the user never configured and
+    // the coherence gate then blamed their own provider for a key that was
+    // stored all along.
+    CliConfig onlyCustomProviders() => CliConfig(
+      customProviders: [
+        CustomProviderEntry(
+          name: 'z.ai',
+          apiType: 'openai',
+          baseUrl: 'https://api.z.ai/api/coding/paas/v4',
+          modelId: 'glm-5.3-flash',
+          keyName: 'FA_KEY_API_Z_AI',
+        ),
+        CustomProviderEntry(
+          name: 'api.aiin.by',
+          apiType: 'aiin',
+          baseUrl: 'https://api.aiin.by/v1',
+          modelId: 'anthropic/claude-haiku-5.5',
+          keyName: 'FA_KEY_API_AIIN_BY',
+        ),
+      ],
+    );
+
+    test('the first custom provider is the default while the factory slot is '
+        'untouched (issue #1973)', () {
+      final resolved = resolveEffectiveCliArgs(
+        const CliArgs(),
+        onlyCustomProviders(),
+        env: const {},
+      );
+
+      expect(resolved.provider, resolveCliProviderSpec('openai')!.kind);
+      expect(resolved.args.model, 'glm-5.3-flash');
+      expect(resolved.args.baseUrl, 'https://api.z.ai/api/coding/paas/v4');
+    });
+
+    test('a chosen saved slot is never overridden by a custom provider '
+        '(issue #1973)', () {
+      final config = onlyCustomProviders();
+      final resolved = resolveEffectiveCliArgs(
+        const CliArgs(),
+        CliConfig(
+          providerKind: 'google',
+          modelId: 'gemini-2.5-pro',
+          baseUrl: 'https://generativelanguage.googleapis.com',
+          customProviders: config.customProviders,
+        ),
+        env: const {},
+      );
+
+      expect(resolved.provider, 'google');
+      expect(resolved.args.model, 'gemini-2.5-pro');
+      expect(resolved.args.baseUrl, 'https://generativelanguage.googleapis.com');
+    });
+
+    test('explicit flags still beat the custom-provider default '
+        '(issue #1973)', () {
+      final resolved = resolveEffectiveCliArgs(
+        const CliArgs(model: 'cli/model', baseUrl: 'https://cli.example/v1'),
+        onlyCustomProviders(),
+        env: const {},
+      );
+
+      expect(resolved.args.model, 'cli/model');
+      expect(resolved.args.baseUrl, 'https://cli.example/v1');
+    });
+
+    test('the factory slot alone still restores verbatim (issue #1973)', () {
+      // The documented OPENROUTER_API_KEY-in-env flow: with no custom
+      // provider there is nothing to prefer, so nothing changes.
+      final resolved = resolveEffectiveCliArgs(
+        const CliArgs(),
+        CliConfig(),
+        env: const {},
+      );
+
+      expect(resolved.args.model, 'openai/gpt-4o-mini');
+      expect(resolved.args.baseUrl, 'https://openrouter.ai/api/v1');
+      expect(resolved.unknownSavedProvider, isNull);
+      expect(resolved.incompatibleSavedEndpoint, isNull);
+    });
+
+    test('a custom provider without a usable entry keeps the factory slot '
+        '(issue #1973)', () {
+      final resolved = resolveEffectiveCliArgs(
+        const CliArgs(),
+        CliConfig(
+          customProviders: [
+            CustomProviderEntry(
+              name: 'broken',
+              apiType: 'openai',
+              baseUrl: '  ',
+              modelId: 'glm-5.3-flash',
+            ),
+          ],
+        ),
+        env: const {},
+      );
+
+      expect(resolved.args.model, 'openai/gpt-4o-mini');
+    });
+
     test('an explicit --provider wins over the saved kind', () {
       final resolved = resolveEffectiveCliArgs(
         const CliArgs(provider: 'anthropic', providerExplicit: true),
