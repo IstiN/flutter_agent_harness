@@ -6,6 +6,7 @@
 // parameters cannot be initializing formals in Dart.
 
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:uuid/uuid.dart';
@@ -370,9 +371,52 @@ final class NetworkSession extends ChangeNotifier {
     orElse: () => Channel(id: channelId, networkId: networkId, isPublic: false),
   );
 
+  /// Plaintext shape for channel payloads: the text plus, when the member
+  /// has a display name, the sender block that lets DAP agents attribute
+  /// the HUMAN author (the wire sender of a relayed frame is the relay's
+  /// hub agent id). Legacy consumers read `text` and ignore the rest;
+  /// decoders here accept raw payloads from producers without a name.
+  String _channelPlaintext(String text) {
+    final name = identity.displayName.trim();
+    if (name.isEmpty) return text;
+    return jsonEncode({
+      'text': text,
+      'sender': {'name': name, 'id': identity.id},
+    });
+  }
+
+  /// Unwraps an inbound channel plaintext: app members send the
+  /// `{"text": …, "sender": {…}}` envelope (see [_channelPlaintext]);
+  /// raw text from pure-DAP agents or older producers passes through.
+  ({String text, String? senderName}) _unwrapChannelPlaintext(
+    String plaintext,
+  ) {
+    if (!plaintext.startsWith('{')) return (text: plaintext, senderName: null);
+    try {
+      final decoded = jsonDecode(plaintext);
+      if (decoded is Map && decoded['text'] is String) {
+        final sender = decoded['sender'];
+        final name = sender is Map ? sender['name'] : null;
+        return (
+          text: decoded['text'] as String,
+          senderName: name is String && name.trim().isNotEmpty ? name : null,
+        );
+      }
+    } on Object {
+      // Raw text that happens to start with '{' — fall through.
+    }
+    return (text: plaintext, senderName: null);
+  }
+
   Future<String> _encrypt(Channel channel, String text, String frameId) async {
     // Public showcase channels have no chankey: raw payload by contract.
-    if (channel.isPublic) return encodePublicChannelText(text);
+    if (channel.isPublic) {
+      return encodePublicChannelText(
+        text,
+        senderName: identity.displayName,
+        senderId: identity.id,
+      );
+    }
     final senderIdentity = await _wallet.identityKeyPair();
     final channelKeys = _wallet.channelKeysFor(networkId, channel.id);
     if (channelKeys == null) {
@@ -387,7 +431,7 @@ final class NetworkSession extends ChangeNotifier {
       // AAD binds to the channel id (the hub-side name) — pure-DAP agents
       // cannot know the display name (#1002).
       aadTarget: channel.id,
-      plaintext: text,
+      plaintext: _channelPlaintext(text),
     );
   }
 
@@ -405,11 +449,14 @@ final class NetworkSession extends ChangeNotifier {
     // Public showcase channels have no chankey at all: the payload is
     // base64(raw message) (fa_network showcase contract).
     if (known.isNotEmpty && known.first.isPublic) {
+      final payloadSender = decodePublicChannelSender(envelope.payload);
       return ChannelMessage(
         envelopeId: envelope.id,
         senderId: envelope.senderId,
         senderPub: '',
-        senderName: envelope.senderName,
+        senderName: (envelope.senderName?.isNotEmpty ?? false)
+            ? envelope.senderName
+            : payloadSender?.name,
         text: decodePublicChannelPayload(envelope.payload),
         isOwn: isOwn,
         createdAt: envelope.createdAt,
@@ -439,12 +486,17 @@ final class NetworkSession extends ChangeNotifier {
         legacyAadTarget: channel.name,
         payloadB64: envelope.payload,
       );
+      // App members wrap the text with a sender block (human attribution
+      // across the relay); pure-DAP agents send raw text — both render.
+      final unwrapped = _unwrapChannelPlaintext(decoded.plaintext);
       return ChannelMessage(
         envelopeId: envelope.id,
         senderId: envelope.senderId,
         senderPub: decoded.senderPub,
-        senderName: envelope.senderName,
-        text: decoded.plaintext,
+        senderName: (envelope.senderName?.isNotEmpty ?? false)
+            ? envelope.senderName
+            : unwrapped.senderName,
+        text: unwrapped.text,
         isOwn: isOwn,
         createdAt: envelope.createdAt,
       );
