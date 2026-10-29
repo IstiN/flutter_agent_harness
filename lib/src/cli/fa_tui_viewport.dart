@@ -11,6 +11,13 @@ extension _TuiViewport on FaTuiModel {
   /// the model file under the repo's ≤2800-line gate — the scroll math
   /// lives here with the rest of the viewport machinery.
   (Model, Cmd?) _handleWindowSize(WindowSizeMsg msg) {
+    // Same-size report is a no-op (issue #1977 edge case): re-clamping an
+    // unchanged layout plus the ClearScreenMsg below would burn a full
+    // repaint for zero geometry change. The program already skips its
+    // renderer invalidate on an unchanged size — match that here.
+    if (msg.width == termWidth && msg.height == termHeight) {
+      return (this, null);
+    }
     // Live size tracking (gh-1433 E8): the controller's width seam
     // updates with every resize the program processes.
     onResized?.call(msg.width, msg.height);
