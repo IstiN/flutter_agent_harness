@@ -267,4 +267,32 @@ void main() {
       );
     }
   });
+
+  test('AC7 — every ci-sign self-provision creates \$HOME/bin first '
+      '(gh-1954: install(1) does not mkdir parents, run 40822964468)', () {
+    final workflows = <String>[
+      '.github/workflows/build-mobile.yml',
+      '.github/workflows/build-macos.yml',
+      '.github/workflows/host-signing-provision.yml',
+    ];
+    for (final wf in workflows) {
+      final f = File(wf);
+      if (!f.existsSync()) continue;
+      final lines = f.readAsLinesSync();
+      for (var i = 0; i < lines.length; i++) {
+        if (lines[i].contains('install -m 755 scripts/ci-sign')) {
+          final context = lines
+              .sublist(i > 4 ? i - 4 : 0, i)
+              .join('\n');
+          expect(
+            context,
+            contains('mkdir -p "\$HOME/bin"'),
+            reason: '$wf:${i + 1} installs ci-sign into \$HOME/bin — the '
+                'parent directory must be created first (install(1) never '
+                'mkdirs parents; on a fresh runner \$HOME/bin is absent)',
+          );
+        }
+      }
+    }
+  });
 }
