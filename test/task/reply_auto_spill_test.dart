@@ -487,6 +487,48 @@ void main() {
       },
     );
 
+    test(
+      'a failed persist emits a durability diagnostic through the host sink',
+      () async {
+        final lines = <String>[];
+        final previous = deliverableDurabilityLog;
+        deliverableDurabilityLog = lines.add;
+        try {
+          final rig = _rig(
+            cap: 100,
+            persistArtifact: (row) async => throw StateError('disk full'),
+          );
+          final record = rig.capture.deliverReply('kid', 'x' * 500)!;
+          await Future<void>.delayed(Duration.zero);
+          // AC3 stands (in-session delivery is uncorrupted), but the loss
+          // is no longer silent: one diagnosable line names the failure.
+          expect(rig.store.get(record.outputId!), 'x' * 500);
+          expect(lines, hasLength(1));
+          expect(lines.single, contains('[deliverables]'));
+          expect(lines.single, contains('artifact persist failed'));
+          expect(lines.single, contains('disk full'));
+        } finally {
+          deliverableDurabilityLog = previous;
+        }
+      },
+    );
+
+    test('a failed persist stays silent when no host sink is wired', () async {
+      final previous = deliverableDurabilityLog;
+      deliverableDurabilityLog = null;
+      try {
+        final rig = _rig(
+          cap: 100,
+          persistArtifact: (row) async => throw StateError('disk full'),
+        );
+        final record = rig.capture.deliverReply('kid', 'x' * 500)!;
+        await Future<void>.delayed(Duration.zero);
+        expect(rig.store.get(record.outputId!), 'x' * 500);
+      } finally {
+        deliverableDurabilityLog = previous;
+      }
+    });
+
     test('a failed artifact persist does not corrupt the delivery', () async {
       final rig = _rig(
         cap: 100,

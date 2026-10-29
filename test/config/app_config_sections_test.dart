@@ -259,4 +259,54 @@ void main() {
       expect(app.warnings.single, contains('~/.fah/config.yaml'));
     });
   });
+
+  group('subagents section (gh-1956 kill switch, review round 1)', () {
+    test('a present section parses through the CLI parser', () {
+      final app = parseAppConfigSections(
+        userDoc: _doc(
+          'subagents:\n'
+          '  heartbeatMinutes: 0\n'
+          '  stallMinutes: 45\n'
+          '  replyAutoSpill: false\n',
+        ),
+      );
+      expect(app.subagents, isNotNull);
+      expect(app.subagents!.heartbeatMinutes, 0);
+      expect(app.subagents!.stallMinutes, 45);
+      // THE kill switch: false must survive the parse — the app host
+      // consults it, exactly like the CLI (the review's config-honesty
+      // gap: `subagents.replyAutoSpill: false` silently no-op'd here).
+      expect(app.subagents!.replyAutoSpill, isFalse);
+      expect(app.warnings, isEmpty);
+    });
+
+    test('an absent section reads as absent (defaults)', () {
+      final app = parseAppConfigSections(userDoc: _doc('provider: x\n'));
+      expect(app.subagents, isNull);
+      expect(app.warnings, isEmpty);
+    });
+
+    test('a non-map section warns and falls back to defaults (AC7)', () {
+      final app = parseAppConfigSections(userDoc: _doc('subagents: 42\n'));
+      expect(app.subagents, isNull);
+      expect(app.warnings.single, contains('subagents'));
+      expect(app.warnings.single, contains('~/.fah/config.yaml'));
+    });
+
+    test('an unknown key warns and falls back to defaults (AC7)', () {
+      final app = parseAppConfigSections(
+        userDoc: _doc('subagents:\n  heartbeats: 5\n'),
+      );
+      expect(app.subagents, isNull);
+      expect(app.warnings.single, contains('subagents'));
+    });
+
+    test('a bad value type warns and falls back to defaults (AC7)', () {
+      final app = parseAppConfigSections(
+        userDoc: _doc('subagents:\n  replyAutoSpill: "yes"\n'),
+      );
+      expect(app.subagents, isNull);
+      expect(app.warnings.single, contains('replyAutoSpill'));
+    });
+  });
 }

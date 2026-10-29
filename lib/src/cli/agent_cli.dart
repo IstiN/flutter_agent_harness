@@ -632,7 +632,14 @@ class AgentCli {
           replyAutoSpill: () => config.subagents.replyAutoSpill,
           deliverableArtifactSink: (artifact) async {
             final session = _session;
-            if (session == null) return;
+            if (session == null) {
+              // Best-effort (AC3) — but never silent (gh-1956 review): a
+              // dropped row is discoverable after the fact.
+              deliverableDurabilityLog
+                  ?.call('[deliverables] artifact row dropped: '
+                      'no open parent session');
+              return;
+            }
             await session.appendCustomEntry(
               customType: deliverableArtifactRecordType,
               data: artifact,
@@ -2095,6 +2102,7 @@ class AgentCli {
     _logDiagnostic('fa boot sid=$_logSid version=$_version');
     _wireTransientRetryNotice();
     _wireDeliverySloNotice();
+    _wireDeliverableDurabilityLog();
     _wireImageDropNotice();
     _wirePayloadStallAdvice();
     _wireOperativePinNotice();

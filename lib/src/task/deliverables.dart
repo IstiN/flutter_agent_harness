@@ -51,6 +51,15 @@ const Set<String> deliverableToolNames = {'reply', 'agent_message'};
 /// store from these rows, so an `agent://` pointer survives restart.
 const String deliverableArtifactRecordType = 'deliverable_artifact';
 
+/// Host sink for durability diagnostics (gh-1956 review): one line per
+/// failed best-effort artifact row (sink error, dropped row) so the AC6
+/// degradation is diagnosable post-mortem instead of discovered at a
+/// restart that fails to resolve a pointer. Null keeps the core silent
+/// (tests, embedders); hosts install it at the composition root — the CLI
+/// routes to fa.log + a dim console line, the app to AppLog (the
+/// `deliverySloSink` convention).
+void Function(String line)? deliverableDurabilityLog;
+
 /// What a recorded deliverable is: a stored artifact (over-cap body or
 /// salvaged partial text), an observed report chunk, or a final-manifest
 /// verdict.
@@ -365,7 +374,13 @@ final class DeliverableCapture {
         'childId': childId,
         'reportId': ?reportId,
         'chars': redacted.length,
-      }).catchError((Object _) {}),
+      }).catchError((Object error) {
+        // Best-effort stays best-effort (the in-session artifact and its
+        // pointer are already live — AC3), but the durability loss is
+        // diagnosable post-mortem (gh-1956 review): one host line.
+        deliverableDurabilityLog
+            ?.call('[deliverables] artifact persist failed: $error');
+      }),
     );
   }
 

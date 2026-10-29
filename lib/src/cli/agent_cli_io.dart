@@ -169,6 +169,7 @@ extension AgentCliRunNotices on AgentCli {
     _wireTextOnlyImageDropNotice();
     _wirePayloadStallAdvice();
     _wireDeliverySloNotice();
+    _wireDeliverableDurabilityLog();
     _wireOperativePinNotice();
   }
 
@@ -375,6 +376,17 @@ extension AgentCliRunNotices on AgentCli {
     deliverySloSink = (line) {
       _logDiagnostic('delivery slo sid=$_logSid $line');
       if (line.contains('BREACH')) io.writeln(_style.dim(line));
+    };
+  }
+
+  /// Deliverable durability visibility (gh-1956 review): a failed or
+  /// dropped best-effort artifact row lands in fa.log AND surfaces as a
+  /// dim transcript line — the degradation is otherwise only discovered
+  /// when a post-resume pointer fails to resolve.
+  void _wireDeliverableDurabilityLog() {
+    deliverableDurabilityLog = (line) {
+      _logDiagnostic('deliverable durability sid=$_logSid $line');
+      io.writeln(_style.dim(line));
     };
   }
 }
