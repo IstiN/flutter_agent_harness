@@ -419,4 +419,37 @@ void main() {
         reason: 'an unlock at lane start goes stale during the 15-minute '
             'CocoaPods/SPM phase — re-unlock right before build_app');
   });
+
+  test('AC14 — set-keychain-settings is bounded (gh-1954: the command '
+      'hangs on a GUI SecurityAgent prompt on this host — screenshot '
+      'evidence; an unbounded call wedges install forever)', () {
+    final cisign = File('scripts/ci-sign').readAsStringSync();
+    final settingsLines = cisign
+        .split('\n')
+        .where((l) => l.contains('set-keychain-settings') && !l.trimLeft().startsWith('#'))
+        .join('\n');
+    expect(
+      settingsLines,
+      contains('alarm'),
+      reason: 'every set-keychain-settings invocation must be wrapped in '
+          'a bounded alarm (perl) — the GUI prompt must never be able to '
+          'hang ci-sign install',
+    );
+  });
+
+  test('AC15 — build_only runs a keychain re-unlock watchdog during gym '
+      '(gh-1954: the keychain auto-locks after ~5 min; re-unlock every '
+      '60 s via unlock-keychain -p which never prompts)', () {
+    final fastfile = File('flutter_app/fastlane/Fastfile').readAsStringSync();
+    final laneStart = fastfile.indexOf('lane :build_only do');
+    final laneEnd = fastfile.indexOf('lane :', laneStart + 10);
+    final lane = fastfile.substring(laneStart, laneEnd);
+    expect(lane, contains('unlock_watchdog'),
+        reason: 'a background thread must re-unlock the keychain for the '
+            'whole gym window — the only prompt-free anti-lock mechanism '
+            'on this host');
+    expect(lane, contains('unlock_watchdog.kill'),
+        reason: 'the watchdog must be killed in ensure so it cannot '
+            'outlive the lane');
+  });
 }
