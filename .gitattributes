@@ -1,0 +1,7 @@
+# cmd.exe parses a .bat by BYTE offset. With LF-only line endings it loses
+# that offset and starts executing fragments of the following line, so the
+# wrapper dies with `'. was unexpected at this time.'` before any real work
+# happens. A Linux checkout (CI, the site publisher) yields LF unless git is
+# told otherwise -- pin the endings for every checkout.
+*.bat   text eol=crlf
+*.cmd   text eol=crlf
