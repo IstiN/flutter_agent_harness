@@ -96,11 +96,15 @@ ensure_keychain() {
     mkdir -p "$CFG"
     security create-keychain -p "$kcpass" "$KC"
   fi
-  # Explicit settings (reviewer: bare-flag semantics are easy to get
-  # wrong): -l = lock when the machine sleeps, -t 86400 = 24h inactivity
-  # backstop. Every ci-sign entry point unlocks non-interactively anyway,
-  # so an archive never hits a locked keychain mid-job (gh-1798 class).
-  security set-keychain-settings -l -t 86400 "$KC" 2>/dev/null || true
+  # gh-1954: NEVER auto-lock (-t 0, no -l). The retired "-l -t 86400"
+  # (lock on sleep + 24h backstop) assumed "every ci-sign entry point
+  # unlocks anyway" — but gym's `xcodebuild -showBuildSettings` is NOT a
+  # ci-sign entry point: it runs ~15 min after the unlock and hit a locked
+  # keychain's GUI password prompt on the headless runner (4 retries,
+  # fastlane timeout, run 40849468765). Settings only apply
+  # non-interactively on a FRESH keychain; on an existing one the command
+  # prompts (GUI session) or fails silently (headless, masked by || true).
+  security set-keychain-settings -t 0 "$KC" 2>/dev/null || true
   # Idempotent, additive, self-verifying search-list membership (gh-1866
   # logic, applied ONCE for a persistent entry — never per job). Skipped
   # for test keychains (CI_SIGN_KEYCHAIN override) — they never leave the
@@ -237,6 +241,15 @@ case "$CMD" in
     P12_PW="$(label_env "$LABEL" P12_PASSWORD)"
     [ -n "$P12_B64" ] || die "empty P12 payload for label '$LABEL'"
 
+    if [ "$FORCE" = "1" ] && [ -f "$KC" ]; then
+      # gh-1954: --force recreates the keychain from scratch — the only
+      # non-interactive way to change keychain settings (auto-lock) on an
+      # existing keychain is impossible (GUI prompt); a fresh keychain
+      # accepts set-keychain-settings right after create-keychain. The
+      # identity is re-imported from the repo-secret P12 below.
+      err "--force: deleting existing keychain $KC for fresh re-provision"
+      security delete-keychain "$KC" 2>/dev/null || rm -f "$KC"
+    fi
     ensure_keychain
     TMP="$(mktemp -d)"
     # One consolidated EXIT trap (a second `trap ... EXIT` would REPLACE
