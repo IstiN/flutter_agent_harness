@@ -203,6 +203,12 @@ final class SubagentHandle {
   /// preview instead (prime-agent semantics).
   String? lastReply;
 
+  /// Duplicate `reply` calls observed after the first (gh-1951 edge case:
+  /// double reply is idempotent — the first reply stays the deliverable,
+  /// later ones are noted here and never overwrite it). Reset per run at
+  /// resume start. In-memory like [deliverables].
+  int duplicateReplies = 0;
+
   /// The id of the previous same-named handle this child supersedes
   /// (issue #222): an explicit fresh respawn after a failure links back to
   /// the old child so UIs can collapse the chain into one logical entry.
