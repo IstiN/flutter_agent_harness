@@ -126,6 +126,10 @@ void main() {
       final src = 'key ghp_${'A' * 36} end';
       final once = pipeline.redact(src);
       final twice = pipeline.redact(once);
+      // Old transcripts carry SPACED markers; the pipeline's marker-skip
+      // regex is label-shape agnostic, so they are never re-processed.
+      const legacy = 'tok [REDACTED:GitHub Token] end';
+      expect(pipeline.redact(legacy), legacy);
       expect(twice, once);
     });
   });
