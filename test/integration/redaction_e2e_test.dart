@@ -399,8 +399,16 @@ void main() {
 
       // The persisted transcript (session JSONL): the tool RESULT
       // record carries the masked form, the non-secret define survives
-      // unmasked, and no rewrite notice ever fired.
-      final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
+      // unmasked, and no rewrite notice ever fired. The repo is built
+      // with the production persist transform (gh-1952 review: the
+      // record-write mask over tool-call arguments) — the CLI wires the
+      // same closure into its `JsonlSessionRepo`.
+      final repo = JsonlSessionRepo(
+        fs: env,
+        sessionsRoot: '/sessions',
+        persistTransform: (message) =>
+            persistRedactMessage(pipeline, message),
+      );
       final session = await repo.create(
         JsonlSessionCreateOptions(cwd: '/work'),
       );
@@ -410,6 +418,10 @@ void main() {
       final jsonl = await _dumpSessionJsonl(env);
       expect(jsonl, contains('[REDACTED:Registered-Secret]'));
       expect(jsonl, contains(defineCommand));
+      // The call record must not leak the registered secret either: the
+      // persist transform masks it in `toolCalls[].arguments` while the
+      // executed argv stayed byte-identical (asserted above).
+      expect(jsonl.contains(defineSecret), isFalse);
       expect(jsonl.contains('[bash interceptor rewrote'), isFalse);
     });
   });

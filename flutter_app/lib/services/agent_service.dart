@@ -589,8 +589,7 @@ class AgentService extends ChangeNotifier
                    name: 'Outlook always-prompt guard',
                },
        ),
-       sessionsRoot = sessionsRoot
-   ) {
+       sessionsRoot = sessionsRoot {
     maybeCurrent = this;
     // Issue #522: deletions refuse sessions with a live CLI heartbeat.
     _repo = JsonlSessionRepo(
