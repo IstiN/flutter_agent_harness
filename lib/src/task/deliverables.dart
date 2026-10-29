@@ -539,15 +539,25 @@ final class DeliverableCapture {
   /// field holds usable text (E2: empty/absent/malformed fields create no
   /// artifact). The failure itself always stands.
   ///
+  /// The loop awaits this hook, and it awaits the memoized
+  /// [ensureRestored] BEFORE the id-allocating persist (gh-1956 review):
+  /// every spill path — `reply`, `agent_message`, and the salvage hook
+  /// alike — re-seeds a resumed session's ids first, so a restored row can
+  /// never be shadowed by a same-id allocation racing the boot kick.
+  ///
   /// AC11 scope: [SubagentHandle.hadTruncatedDeliverable] means "an
   /// output-truncated DELIVERABLE call was recorded" — the flag is set
   /// only past the allowlist check, so a truncated `bash`/`read` call
   /// never produces a report-attempt claim in the tier-2 note.
-  void captureSalvaged(String childId, ToolCall call) {
+  Future<void> captureSalvaged(String childId, ToolCall call) async {
     if (!deliverableToolNames.contains(call.name)) return;
     manager[childId]?.hadTruncatedDeliverable = true;
     final text = call.arguments['message'];
     if (text is! String || text.trim().isEmpty) return;
+    // Restore-before-delivery covers the salvage path too (gh-1956
+    // review): await the memoized restore so the id allocator already
+    // holds the resumed ids when the partial artifact is persisted.
+    await ensureRestored();
     try {
       final redacted = _redactOrThrow(text);
       // No envelope fit check: a partial artifact is delivered via the

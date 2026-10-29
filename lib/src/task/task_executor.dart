@@ -922,7 +922,11 @@ final class TaskExecutor {
     final agent = child;
     // Issue #1829 Core flow B: same truncated-call capture as a fresh
     // spawn — a resumed child's lost reply is recovered identically.
-    child.onTruncatedToolCall = (call) => _capture?.captureSalvaged(id, call);
+    child.onTruncatedToolCall = (call) async {
+      // gh-1956 review: awaited by the loop — the salvage persist
+      // re-seeds the durable ids before its own id allocation.
+      await _capture?.captureSalvaged(id, call);
+    };
     final inboxWakeSub = manager.events.listen((event) {
       if (event.handle.id == id && event.message != null) {
         agent.pokeSteering();
@@ -1197,7 +1201,11 @@ final class TaskExecutor {
     // Issue #1829 Core flow B: an output-truncated reply/agent_message
     // call is captured as a partial artifact (never executed — I2); the
     // pointer rides the child completion out of band.
-    child.onTruncatedToolCall = (call) => _capture?.captureSalvaged(id, call);
+    child.onTruncatedToolCall = (call) async {
+      // gh-1956 review: awaited by the loop — the salvage persist
+      // re-seeds the durable ids before its own id allocation.
+      await _capture?.captureSalvaged(id, call);
+    };
     final inboxWakeSub = subagentManager?.events.listen((event) {
       if (event.handle.id == id && event.message != null) {
         child.pokeSteering();

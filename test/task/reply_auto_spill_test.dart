@@ -8,6 +8,7 @@
 /// `deliverable_artifact` records).
 library;
 
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
@@ -442,6 +443,49 @@ void main() {
       expect(record, isNotNull);
       expect(rig.store.get(record!.outputId!), 'x' * 500);
     });
+
+    test(
+      'the salvage hook restores durable rows before allocating an id',
+      () async {
+        // The post-resume race (review, gh-1956): the boot kick's restore
+        // is still in flight when the first deliverable-path event is an
+        // OUTPUT-TRUNCATED call — flow B's salvage persist allocates an
+        // id, and an un-restored allocator hands out the restored row's
+        // id, shadowing the durable content (first-write-wins then drops
+        // the restored artifact; the pointer flips across restarts).
+        final durable = {
+          'id': 'kid-report',
+          'content': 'durable text',
+          'status': 'complete',
+          'childId': 'kid',
+          'chars': 'durable text'.length,
+        };
+        var release = Completer<void>();
+        final rig = _rig(
+          cap: 100,
+          restoreArtifacts: () => release.future.then((_) => [durable]),
+        );
+        final salvage = rig.capture.captureSalvaged(
+          'kid',
+          ToolCall(
+            id: 'c1',
+            name: 'reply',
+            arguments: {'message': 'salvaged ' * 30},
+          ),
+        );
+        // The salvage must not allocate until the restore lands.
+        expect(rig.store.availableIds, isEmpty);
+        release.complete();
+        await salvage;
+        // The durable row kept its id and its content — the salvaged
+        // partial artifact got a DISTINCT id.
+        expect(rig.store.get('kid-report'), 'durable text');
+        final record = rig.manager['kid']!.deliverables.single;
+        expect(record.status, AgentArtifactStatus.partial);
+        expect(record.outputId, isNot('kid-report'));
+        expect(rig.store.get(record.outputId!), contains('salvaged'));
+      },
+    );
 
     test('a failed artifact persist does not corrupt the delivery', () async {
       final rig = _rig(

@@ -584,8 +584,11 @@ final class AgentLoopConfig {
   /// harness-owned capture can persist deliverable TEXT (reply /
   /// agent_message bodies) as a partial artifact. Capture-only — the call
   /// is still failed unexecuted (the fail-closed boundary is unchanged),
-  /// and the callback must never execute anything.
-  final void Function(ToolCall call)? onTruncatedToolCall;
+  /// and the callback must never execute anything. Awaited before the
+  /// failure result is emitted (gh-1956 review): the salvage persist
+  /// re-seeds the durable ids first, so a resumed session's pointers stay
+  /// restart-order independent.
+  final Future<void> Function(ToolCall call)? onTruncatedToolCall;
 
   /// The tool-misuse circuit breaker (issue #862): N consecutive identical
   /// rejections of the same tool arm a corrective note for the next request
@@ -2150,8 +2153,9 @@ Future<_ExecutedToolCallBatch> _failToolCallsFromTruncatedMessage(
     // Issue #1829 Core flow B: a non-executing capture side path may
     // persist salvage-parsed deliverable text BEFORE the failure is
     // reported. The fail-closed boundary is unchanged — every call below
-    // is still failed unexecuted.
-    config?.onTruncatedToolCall?.call(toolCall);
+    // is still failed unexecuted. Awaited (gh-1956 review): the capture
+    // restores the durable ids before its id-allocating persist.
+    await config?.onTruncatedToolCall?.call(toolCall);
     await emit(
       ToolExecutionStartEvent(
         toolCallId: toolCall.id,
