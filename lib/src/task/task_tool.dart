@@ -140,9 +140,17 @@ String taskAsyncResultNotice(TaskJob job) {
 /// With no reply at all, the documented `completed_without_reply` notice
 /// names the bare completion text for what it is.
 ///
+/// The reply body is UNTRUSTED child text inside a structured envelope
+/// (review round 2): line-leading envelope markers inside the body are
+/// defused (best-effort — see `_defuseEnvelopeMarkers`) so the body
+/// cannot close the block early or forge verdict/pointer lines.
+///
 /// [leadWithPointer] appends the `agent://` pointer line for the
 /// full final-message output when the body was not already pointer-tailed
-/// (the async envelope only pointers a truncated preview).
+/// (the async envelope only pointers a truncated preview). The blocking
+/// renderer (default `false`) owns its tail pointer — the body never
+/// adds a second one for the same id (review round 2: the contradictory
+/// `[Full output: …]` + `[Truncated output: …]` label pair).
 void _renderResultBody(
   StringBuffer buffer,
   TaskSingleResult? result, {
@@ -156,7 +164,7 @@ void _renderResultBody(
     buffer
       ..writeln()
       ..writeln('[explicit reply]')
-      ..write(reply)
+      ..write(_defuseEnvelopeMarkers(reply))
       ..write('\n[explicit reply end]');
   } else {
     if (result.completedWithoutReply) {
@@ -171,9 +179,15 @@ void _renderResultBody(
         buffer
           ..writeln()
           ..writeln(output.substring(0, outputPreviewChars))
-          ..writeln('…')
-          ..write('[Full output: agent://${result.id}]');
-        pointerTailed = true;
+          ..writeln('…');
+        if (leadWithPointer) {
+          // The async envelope owns the pointer (no caller tail follows).
+          buffer.write('[Full output: agent://${result.id}]');
+          pointerTailed = true;
+        }
+        // leadWithPointer == false: the BLOCKING renderer appends its own
+        // (truncation-aware) tail pointer — a body-side pointer would
+        // double it with a contradictory label.
       } else {
         buffer
           ..writeln()
@@ -184,6 +198,31 @@ void _renderResultBody(
   if (leadWithPointer && !pointerTailed) {
     buffer.write('\n[Full output: agent://${result.id}]');
   }
+}
+
+/// Line-leading envelope markers (review round 2): the reply body is
+/// untrusted child text — a line-leading structural marker could close
+/// the `[explicit reply]` block early or forge deliverable verdict /
+/// output-pointer lines the parent model reads as harness output (the
+/// same synthetic-line-injection class the #1829 id sanitizer
+/// (`_cleanReportId` in deliverables.dart) defuses for child-chosen ids).
+final RegExp _envelopeMarkerLine = RegExp(
+  r'^\s*\[(?:explicit reply(?: end)?|deliverable[ :]|'
+  r'completed_without_reply|Full output:|Truncated output:)',
+);
+
+/// Defuses line-leading envelope markers in untrusted child text: the
+/// brackets of a marker-shaped line are stripped (the same
+/// structural-character strip the #1829 id sanitizer applies to ids) so the
+/// rendered envelope cannot be closed early or acquire forged
+/// verdict/pointer lines. The text content itself is preserved — this is
+/// best-effort sanitizing of model-facing text, not a security boundary
+/// (the child's final message rides the same-trust channel raw).
+String _defuseEnvelopeMarkers(String body) {
+  return body.split('\n').map((line) {
+    if (!_envelopeMarkerLine.hasMatch(line)) return line;
+    return line.replaceAll('[', '').replaceAll(']', '');
+  }).join('\n');
 }
 
 /// The deliverable pointer block shared by the blocking and background

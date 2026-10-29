@@ -491,6 +491,33 @@ ToolExecutionResult _replyDuplicateNoted(String id) => ToolExecutionResult.text(
   'it; no further replies are needed',
 );
 
+/// The truthful ack for a recorded reply body (gh-1951 AC2): maps the
+/// [ReplyRecordOutcome] to the child-facing result — an error when nothing
+/// was recorded, a noted-not-replaced result for a duplicate, and the
+/// [ack] "delivered" text only after the parent-visible record is durable
+/// ([SubagentManager.persistNow]). Shared by the artifact-envelope and
+/// plain-reply paths of the `reply` tool (extracted so the tool closure
+/// stays under the CRAP ratchet — review round 2).
+Future<ToolExecutionResult> _ackRecordedReply(
+  SubagentManager manager,
+  String id,
+  String body,
+  String ack,
+) async {
+  final outcome = await manager.recordReply(id, body);
+  switch (outcome) {
+    case ReplyRecordOutcome.noHandle:
+      return _replyNotRecorded(id);
+    case ReplyRecordOutcome.duplicateNoted:
+      return _replyDuplicateNoted(id);
+    case ReplyRecordOutcome.recorded:
+      // AC2 ordering: the ack rides only after the parent-visible record
+      // is durable.
+      await manager.persistNow();
+      return ToolExecutionResult.text(ack);
+  }
+}
+
 /// `reply` — the CHILD-only tool: delivers the child's explicit answer to
 /// the parent (prime-agent's `reply`). A reply replaces the default
 /// completed_without_reply notice: the parent event/envelope carries the
@@ -571,20 +598,13 @@ AgentTool _replyTool(
             // Core flow A: the envelope — bounded excerpt + pointer +
             // explicit completeness — replaces the bare body.
             final envelope = deliverable.envelopeText(record);
-            final outcome = await manager.recordReply(id, envelope);
-            if (outcome == ReplyRecordOutcome.noHandle) {
-              return _replyNotRecorded(id);
-            }
-            if (outcome == ReplyRecordOutcome.duplicateNoted) {
-              return _replyDuplicateNoted(id);
-            }
-            // AC2 ordering: the ack rides only after the parent-visible
-            // record is durable.
-            await manager.persistNow();
-            return ToolExecutionResult.text(
+            return await _ackRecordedReply(
+              manager,
+              id,
+              envelope,
               'reply delivered to the parent via artifact '
-              'agent://${record.outputId} (${record.status!.name}, '
-              '${record.chars} chars)',
+                  'agent://${record.outputId} (${record.status!.name}, '
+                  '${record.chars} chars)',
             );
           }
         } on StateError catch (error) {
@@ -600,17 +620,12 @@ AgentTool _replyTool(
           );
         }
       }
-      final outcome = await manager.recordReply(id, message);
-      if (outcome == ReplyRecordOutcome.noHandle) {
-        return _replyNotRecorded(id);
-      }
-      if (outcome == ReplyRecordOutcome.duplicateNoted) {
-        return _replyDuplicateNoted(id);
-      }
-      // AC2 ordering: the ack rides only after the parent-visible record
-      // is durable.
-      await manager.persistNow();
-      return ToolExecutionResult.text('reply delivered to the parent');
+      return _ackRecordedReply(
+        manager,
+        id,
+        message,
+        'reply delivered to the parent',
+      );
     },
   );
 }

@@ -795,21 +795,34 @@ final class SubagentManager {
     return _persistChain;
   }
 
-  /// gh-1951 AC6, called at RESUME start: snapshots and clears any
-  /// undelivered reply left by a previous child life. The executor
-  /// persists the snapshot as a carried artifact (so the resume completion
-  /// surfaces the pointer) and falls back to it when the resumed run
-  /// records no reply of its own. Returns the carried reply, or null.
-  String? carryPendingReply(String id) {
+  /// gh-1951 AC6, called at RESUME start: snapshots any undelivered reply
+  /// left by a previous child life WITHOUT mutating the handle. The
+  /// executor persists the snapshot as a carried artifact FIRST (so the
+  /// resume completion surfaces the pointer) and only calls
+  /// [clearPendingReply] after that persist succeeded — review round 2:
+  /// clearing before the persist meant a throwing host redactor left the
+  /// handle AND the durable snapshot cleared with no artifact written, so
+  /// a retry resume found nothing and the acked reply was silently gone.
+  /// Returns the carried reply, or null.
+  String? peekPendingReply(String id) {
     final handle = _handles[id];
     if (handle == null) return null;
     final pending = handle.lastReply;
     if (pending == null && handle.duplicateReplies == 0) return null;
+    return pending;
+  }
+
+  /// gh-1951 AC6: clears a pending reply AFTER its carried artifact is
+  /// durable (see [peekPendingReply]) — a failed persist leaves the reply
+  /// on the handle, so a retry resume carries it again (at-least-once;
+  /// never a silent loss).
+  void clearPendingReply(String id) {
+    final handle = _handles[id];
+    if (handle == null) return;
     handle.lastReply = null;
     handle.duplicateReplies = 0;
     _events.add(SubagentEvent(handle: handle));
     _persist();
-    return pending;
   }
 
   /// Attaches the child's real session file to its handle (called by the

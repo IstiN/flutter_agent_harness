@@ -372,15 +372,21 @@ final class TaskExecutor {
     // with a NAMED error — never a silent loss.
     String? pendingReply;
     try {
-      pendingReply = manager.carryPendingReply(id);
+      // gh-1951 AC6 + review round 2: PEEK the carried reply BEFORE the
+      // handle is mutated — the carried artifact persists from the
+      // snapshot FIRST, and the handle clears only after that persist
+      // succeeded. A throwing host redactor fails the resume with the
+      // reply still on the handle AND durably recorded, so a retry
+      // task_resume finds it again (at-least-once; never a silent loss).
+      // The single running update below is the pre-existing call: the
+      // first cut added an identical duplicate above it, doubling the
+      // SubagentEvent and appending two distinct (re-stamped)
+      // registry snapshots per resume.
+      pendingReply = manager.peekPendingReply(id);
       if (pendingReply != null) {
         _capture?.persistCarriedReply(id, pendingReply);
+        manager.clearPendingReply(id);
       }
-      await manager.update(
-        id,
-        status: SubagentStatus.running,
-        clearError: true,
-      );
       await manager.update(
         id,
         status: SubagentStatus.running,

@@ -13,6 +13,7 @@
 library;
 
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_agent_harness/src/task/child_session_io.dart';
@@ -770,54 +771,41 @@ void main() {
 
   group('Review round 2 rework: resume ordering + envelope hygiene', () {
     test(
-      'resume marks the child running exactly ONCE — no duplicate '
-      'running update before the warm-wake',
+      'resume appends the running registry snapshot exactly once — the '
+      'duplicate update re-stamps lastActivity and defeats the deduper',
       () async {
-        final wiring = _ResumeWiring(resumeTurns: [_textTurn('resumed once')]);
+        final appends = <List<Map<String, dynamic>>>[];
+        final wiring = _ResumeWiring(
+          resumeTurns: [_textTurn('resumed once')],
+          registrySink: (snapshot) async => appends.add(snapshot),
+        );
         addTearDown(wiring.dispose);
         await wiring.spawn('Watcher', 'batch-work');
-
-        // The resume's warm-wake enqueue (message != null) is a stable
-        // ORDER MARKER: it emits after the running update(s), before the
-        // session boot. The events before it must carry exactly ONE
-        // running-status update — the duplicated manager.update(running)
-        // emitted two.
-        final seen = <SubagentEvent>[];
-        final sub = wiring.manager.events.listen(seen.add);
-        addTearDown(() => sub.cancel());
+        appends.clear();
 
         await wiring.executor.resumeChild('Watcher', 'RESUME-MARKER once');
         await wiring.drainMicrotasks();
 
-        // ignore: avoid_print
-        for (final e in seen.indexed) {
-          // ignore: avoid_print
-          print(
-            'DBG[$e] status=${e.$2.handle.status.name} '
-            'msg=${e.$2.message != null}',
-          );
+        // Two CONSECUTIVE snapshots identical except the volatile
+        // lastActivity stamp = the duplicated manager.update(running): the
+        // re-stamp defeats the registry deduper, so BOTH appends landed in
+        // the session ledger (the reviewer's exact finding).
+        String stable(List<Map<String, dynamic>> snapshot) => jsonEncode([
+          for (final row in snapshot) (Map.of(row)..remove('lastActivity')),
+        ]);
+        var duplicateRestamps = 0;
+        String? previous;
+        for (final append in appends) {
+          final stableJson = stable(append);
+          if (previous == stableJson) duplicateRestamps++;
+          previous = stableJson;
         }
-        final wakeIndex = seen.indexWhere((event) => event.message != null);
-        // ignore: avoid_print
-        print('DBG wakeIndex=$wakeIndex');
+        expect(appends, isNotEmpty, reason: 'the resume persists snapshots');
         expect(
-          wakeIndex,
-          greaterThan(0),
-          reason: 'the resume warm-wake enqueue must emit its event',
-        );
-        final runningBeforeWake = seen
-            .take(wakeIndex)
-            .where(
-              (event) =>
-                  event.message == null &&
-                  event.handle.status == SubagentStatus.running,
-            )
-            .length;
-        expect(
-          runningBeforeWake,
-          1,
+          duplicateRestamps,
+          0,
           reason:
-              'resumeChild must emit a single running-status update — a '
+              'resumeChild must run a single manager.update(running) — a '
               'duplicate doubles the SubagentEvent stream noise and appends '
               'two distinct (re-stamped lastActivity) registry snapshots to '
               'the session ledger per resume',
@@ -1043,6 +1031,7 @@ final class _ResumeWiring {
     List<List<AssistantMessageEvent>> resumeTurns = const [],
     this.failResume,
     this.redactor,
+    this.registrySink,
     MemoryExecutionEnv? sharedEnv,
     JsonlSessionRepo? sharedRepo,
     SubagentManager? sharedManager,
@@ -1050,8 +1039,10 @@ final class _ResumeWiring {
     env = sharedEnv ?? MemoryExecutionEnv(cwd: '/work');
     repo = sharedRepo ?? JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
     manager = sharedManager ??
-        (SubagentManager(parentSessionId: 'parent-session')
-          ..mailboxPrefix = 'parent-session');
+        (SubagentManager(
+          parentSessionId: 'parent-session',
+          sink: registrySink,
+        )..mailboxPrefix = 'parent-session');
     jobs = TaskJobManager();
     executor = TaskExecutor(
       childTools: const [],
@@ -1092,6 +1083,10 @@ final class _ResumeWiring {
   /// (review round 2: a THROWING redactor exercises the carried-reply
   /// persist failure at resume start).
   final String Function(String text)? redactor;
+
+  /// The registry snapshot sink (review round 2: counts the appends a
+  /// resume forces into the parent session ledger).
+  final SubagentRegistrySink? registrySink;
 
   /// How many times the scripted stream was invoked — the provider-call
   /// gate for events-before-first-provider-call assertions.
