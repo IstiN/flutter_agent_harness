@@ -46,6 +46,12 @@ final class AgentOutputManager {
     _taken.add(candidate);
     return _parentPrefix == null ? candidate : '$_parentPrefix.$candidate';
   }
+
+  /// Marks [id] as already handed out WITHOUT allocating it (gh-1956):
+  /// restored durable artifacts re-seed their original ids so a fresh
+  /// allocator after a resume cannot re-issue them and clobber the
+  /// restored content with a same-id spill.
+  void reserve(String id) => _taken.add(id);
 }
 
 /// Session-scoped store of subagent outputs addressable via `agent://`.
@@ -91,6 +97,18 @@ final class AgentOutputStore {
 
   /// The artifact metadata for [id], or null (a plain stored output).
   AgentArtifactMeta? artifactMeta(String id) => _artifacts[id];
+
+  /// Re-seeds a durable artifact after a parent resume (gh-1956, AC6):
+  /// reserves the id against re-allocation and restores content +
+  /// metadata. FIRST WRITE WINS — a live artifact already stored under
+  /// [id] (a spill that beat the restore) is never overwritten, so both
+  /// restore/spill orderings converge on the newest content.
+  void restoreOutput(String id, String content, {AgentArtifactMeta? meta}) {
+    if (_outputs.containsKey(id)) return;
+    ids.reserve(id);
+    _outputs[id] = content;
+    if (meta != null) _artifacts[id] = meta;
+  }
 }
 
 /// Completeness metadata of a stored deliverable artifact (issue #1829):
@@ -108,6 +126,7 @@ final class AgentArtifactMeta {
     required this.childId,
     this.reportId,
     required this.chars,
+    this.bytes,
   });
 
   /// Whether the artifact is the complete report or salvaged partial text.
@@ -121,6 +140,11 @@ final class AgentArtifactMeta {
 
   /// Character count of the stored (redacted) text.
   final int chars;
+
+  /// UTF-8 byte count of the stored (redacted) text (gh-1956 completeness
+  /// marker). Null only in legacy positions where callers have not been
+  /// migrated; the capture always supplies it.
+  final int? bytes;
 }
 
 /// Thrown when an `agent://` URL cannot be resolved (port of omp's
@@ -191,7 +215,8 @@ AgentUrlResolution resolveAgentUrl(String url, AgentOutputStore store) {
       contentType: 'text/markdown',
       notes: [
         if (meta != null)
-          'deliverable: ${meta.status.name} (${meta.chars} chars, '
+          'deliverable: ${meta.status.name} '
+              '(${meta.chars} chars${meta.bytes == null ? '' : ', ${meta.bytes} bytes'}, '
               'child ${meta.childId}${meta.reportId == null ? '' : ', report ${meta.reportId}'})',
       ],
     );
