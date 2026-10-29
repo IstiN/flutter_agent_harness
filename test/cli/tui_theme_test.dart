@@ -863,8 +863,9 @@ void main() {
         r'|statusLineCost|statusLineSubagents)\b',
       );
       final violations = <String>[];
-      for (final entity
-          in io.Directory('lib/src/cli').listSync(recursive: true)) {
+      for (final entity in io.Directory(
+        'lib/src/cli',
+      ).listSync(recursive: true)) {
         if (entity is! io.File || !entity.path.endsWith('.dart')) continue;
         if (entity.path.endsWith('tui_theme.dart') ||
             entity.path.endsWith('tui_theme_palette.dart')) {
@@ -896,7 +897,9 @@ void main() {
     // are pinned to their exact ported values so they can never drift
     // silently either.
     Map<String, dynamic> fixtureOf(String name) {
-      final raw = io.File('test/fixtures/tui_omp/$name.json').readAsStringSync();
+      final raw = io.File(
+        'test/fixtures/tui_omp/$name.json',
+      ).readAsStringSync();
       return (jsonDecode(raw) as Map).cast<String, dynamic>();
     }
 
@@ -1035,31 +1038,17 @@ void main() {
         'ohmypi-dark': RgbColor(0x86, 0x8d, 0x99),
         'ohmypi-light': RgbColor(0x56, 0x56, 0x56),
       },
-      'thinkingText': {
-        'ohmypi-dark': RgbColor(0x86, 0x8d, 0x99),
-      },
+      'thinkingText': {'ohmypi-dark': RgbColor(0x86, 0x8d, 0x99)},
       'thinkingOff': {
         'ohmypi-dark': RgbColor(0x77, 0x7d, 0x88),
         'ohmypi-light': RgbColor(0x8c, 0x8c, 0x8c),
       },
-      'thinkingMinimal': {
-        'ohmypi-dark': RgbColor(0x86, 0x8d, 0x99),
-      },
-      'mdLinkUrl': {
-        'ohmypi-dark': RgbColor(0x86, 0x8d, 0x99),
-      },
-      'statusLineSep': {
-        'ohmypi-light': RgbColor(0x6c, 0x6c, 0x6c),
-      },
-      'statusLineStaged': {
-        'ohmypi-light': RgbColor(0x58, 0x84, 0x58),
-      },
-      'statusLineDirty': {
-        'ohmypi-light': RgbColor(0x9a, 0x73, 0x26),
-      },
-      'statusLineUntracked': {
-        'ohmypi-light': RgbColor(0x5a, 0x80, 0x80),
-      },
+      'thinkingMinimal': {'ohmypi-dark': RgbColor(0x86, 0x8d, 0x99)},
+      'mdLinkUrl': {'ohmypi-dark': RgbColor(0x86, 0x8d, 0x99)},
+      'statusLineSep': {'ohmypi-light': RgbColor(0x6c, 0x6c, 0x6c)},
+      'statusLineStaged': {'ohmypi-light': RgbColor(0x58, 0x84, 0x58)},
+      'statusLineDirty': {'ohmypi-light': RgbColor(0x9a, 0x73, 0x26)},
+      'statusLineUntracked': {'ohmypi-light': RgbColor(0x5a, 0x80, 0x80)},
     };
 
     /// Bold/dim flags fa keeps on ported roles (omp ships none).
@@ -1081,10 +1070,8 @@ void main() {
         final fixture = fixtureOf(fixtureName);
         final themeName = 'ohmypi-$fixtureName';
         final theme = kBuiltInTuiThemes[themeName]!;
-        final vars =
-            (fixture['vars'] as Map).cast<String, dynamic>();
-        final colors =
-            (fixture['colors'] as Map).cast<String, dynamic>();
+        final vars = (fixture['vars'] as Map).cast<String, dynamic>();
+        final colors = (fixture['colors'] as Map).cast<String, dynamic>();
         expect(colors, isNotEmpty);
         final mappedKeys = <String>{};
         colors.forEach((key, value) {
@@ -1121,10 +1108,7 @@ void main() {
         // Walker completeness, both directions: every fixture token maps
         // to a fa field (except the terminal-default `text`), and the
         // walker stops covering nothing.
-        expect(
-          mappedKeys,
-          equals(colors.keys.toSet()..remove('text')),
-        );
+        expect(mappedKeys, equals(colors.keys.toSet()..remove('text')));
       });
     }
   });
@@ -1150,16 +1134,10 @@ void main() {
     });
 
     test('COLORFGBG: bg >= 8 is light, bg < 8 dark, unparseable dark', () {
-      expect(
-        FaThemeController.prefersLightTheme(colorfgbg: '0;15'),
-        isTrue,
-      );
+      expect(FaThemeController.prefersLightTheme(colorfgbg: '0;15'), isTrue);
       expect(FaThemeController.prefersLightTheme(colorfgbg: '15;7'), isFalse);
       expect(FaThemeController.prefersLightTheme(colorfgbg: '15'), isFalse);
-      expect(
-        FaThemeController.prefersLightTheme(colorfgbg: '15;x'),
-        isFalse,
-      );
+      expect(FaThemeController.prefersLightTheme(colorfgbg: '15;x'), isFalse);
       expect(FaThemeController.prefersLightTheme(), isFalse);
     });
 
@@ -1295,8 +1273,7 @@ void main() {
           greaterThanOrEqualTo(kThemeBodyTextFloor),
           reason:
               '${entry.key}.thinkingText is '
-              '${themeColorContrast(fgOf(t.thinkingText)!, terminalBg)
-                  .toStringAsFixed(2)}:1 on the reference terminal',
+              '${themeColorContrast(fgOf(t.thinkingText)!, terminalBg).toStringAsFixed(2)}:1 on the reference terminal',
         );
         for (final (name, style) in [
           ('thinkingOff', t.thinkingOff),
@@ -1311,8 +1288,7 @@ void main() {
             greaterThanOrEqualTo(kThemeSecondaryTextFloor),
             reason:
                 '${entry.key}.$name is '
-                '${themeColorContrast(fgOf(style)!, terminalBg)
-                    .toStringAsFixed(2)}:1 on the reference terminal',
+                '${themeColorContrast(fgOf(style)!, terminalBg).toStringAsFixed(2)}:1 on the reference terminal',
           );
         }
       }
@@ -1399,7 +1375,8 @@ void main() {
       final loaded = loadUserThemes(
         '/home',
         (dir) => const ['/home/.fah/themes/alias.json'],
-        (path) => '{"roles": {"toolSuccessBg": "#101010", '
+        (path) =>
+            '{"roles": {"toolSuccessBg": "#101010", '
             '"toolErrorBg": "#101010"}}',
       );
       expect(loaded.errors, isEmpty);
@@ -1409,10 +1386,7 @@ void main() {
       expect(c.preStyledRole(aliased), isNull);
       // Unambiguous tints still resolve (default bubble band).
       c.reset();
-      expect(
-        c.preStyledRole(c.sgrPrefix(c.current.userMessageBg)),
-        'bubble',
-      );
+      expect(c.preStyledRole(c.sgrPrefix(c.current.userMessageBg)), 'bubble');
     });
   });
 }

@@ -84,13 +84,10 @@ void main() {
 
     test('follows the FA_PROVIDERS filter like every picker surface', () {
       providerFilterEnvOverride = 'dial,codemie';
-      expect(
-        bundledCatalogEndpoints,
-        {
-          providerCatalog['codemie']!.defaultBaseUrl,
-          providerCatalog['dial']!.defaultBaseUrl,
-        },
-      );
+      expect(bundledCatalogEndpoints, {
+        providerCatalog['codemie']!.defaultBaseUrl,
+        providerCatalog['dial']!.defaultBaseUrl,
+      });
     });
   });
- }
+}

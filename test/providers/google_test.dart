@@ -422,8 +422,10 @@ void main() {
       expect(message, contains('429'));
       expect(message, contains('Rate limit reached'));
       expect(message.contains('{'), isFalse);
-      expect(error.error.rateLimit?.rawBody,
-          '{"error":{"message":"Resource has been exhausted"}}');
+      expect(
+        error.error.rateLimit?.rawBody,
+        '{"error":{"message":"Resource has been exhausted"}}',
+      );
       expect(error.retryAfter, isNull);
       expect(await stream.result, same(error.error));
     });

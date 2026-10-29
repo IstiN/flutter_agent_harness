@@ -1474,9 +1474,10 @@ extension ApprovalCommands on AgentCli {
   /// other faces keep today's byte shape.
   void _onThinkingDelta(ThinkingDeltaEvent assistantMessageEvent) {
     if (_useTui && tuiChromeEnabled) {
-      final window =
-          _thinkingWindow ??=
-              (startedAt: DateTime.now(), buffer: StringBuffer());
+      final window = _thinkingWindow ??= (
+        startedAt: DateTime.now(),
+        buffer: StringBuffer(),
+      );
       window.buffer.write(_redactRendered(assistantMessageEvent.delta));
       return;
     }
@@ -1730,8 +1731,7 @@ extension ApprovalCommands on AgentCli {
     required bool isError,
   }) {
     final (started, startDetail, startArgs) =
-        _toolStarts.remove(toolCallId) ??
-        (null, '', const <String, dynamic>{});
+        _toolStarts.remove(toolCallId) ?? (null, '', const <String, dynamic>{});
     _waiting.toolCallEnded(toolCallId);
     // No offer may outlive its call (issue #1786): the call ending is the
     // last chance to clear a stale outstanding `b` affordance.

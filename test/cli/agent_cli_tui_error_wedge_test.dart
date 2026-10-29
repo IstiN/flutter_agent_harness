@@ -107,14 +107,20 @@ void main() {
             await Future<void>.delayed(const Duration(milliseconds: 5));
           }
         }
-        expect(painted, isTrue,
-            reason: 'the provider error must reach the TUI (#355)');
+        expect(
+          painted,
+          isTrue,
+          reason: 'the provider error must reach the TUI (#355)',
+        );
         // The app must still be alive: the run future not completed.
         var exited = false;
         run.then((_) => exited = true);
         await Future<void>.delayed(const Duration(milliseconds: 200));
-        expect(exited, isFalse,
-            reason: 'a run error must never exit the TUI app (#355)');
+        expect(
+          exited,
+          isFalse,
+          reason: 'a run error must never exit the TUI app (#355)',
+        );
         // Ctrl+C must still quit cleanly — no wedge (double-press, #830).
         keys.add([0x03]);
         keys.add([0x03]);

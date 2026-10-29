@@ -160,13 +160,12 @@ void main() {
       expect(
         checkoutWith?['filter'].toString(),
         'blob:none',
-        reason: 'blobless (gh-1477 convention) — the check never reads '
+        reason:
+            'blobless (gh-1477 convention) — the check never reads '
             'blobs, only the gh run list API',
       );
       final checkoutAt = stepMaps.indexOf(checkout);
-      final check = stepMaps.singleWhere(
-        (s) => s['id']?.toString() == 'check',
-      );
+      final check = stepMaps.singleWhere((s) => s['id']?.toString() == 'check');
       expect(
         checkoutAt,
         lessThan(stepMaps.indexOf(check)),
@@ -550,7 +549,8 @@ void main() {
       expect(
         smokeIf,
         isNot(contains('release-dedupe')),
-        reason: 'no dedupe clause — installer-smoke runs on the deduped '
+        reason:
+            'no dedupe clause — installer-smoke runs on the deduped '
             'twin exactly as on the push twin',
       );
     });

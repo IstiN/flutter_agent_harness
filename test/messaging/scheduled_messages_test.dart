@@ -1533,71 +1533,68 @@ void main() {
       },
     );
 
-    test(
-      'gh-1180 review: a scan failure inside a DELIVERY pass is receipted '
-      'too — the arming path and the delivery pass leave the identical '
-      'scan_failed trail (AC4)',
-      () async {
-        const root = '/sessions/--work--/messages';
-        final env = _GatedScanEnv(MemoryExecutionEnv(cwd: '/work'));
-        final repo = FileMessagingRepository(
+    test('gh-1180 review: a scan failure inside a DELIVERY pass is receipted '
+        'too — the arming path and the delivery pass leave the identical '
+        'scan_failed trail (AC4)', () async {
+      const root = '/sessions/--work--/messages';
+      final env = _GatedScanEnv(MemoryExecutionEnv(cwd: '/work'));
+      final repo = FileMessagingRepository(
+        env: env,
+        root: root,
+        homeDir: '/home/user',
+        decodeSessionCwd: decodeSessionCwd,
+      );
+      final clock = _FakeClock();
+      final errors = <String>[];
+      final queue = ScheduledMessageQueue(
+        env: env,
+        repo: () => repo,
+        root: () => root,
+        selfMailbox: () => 'sid-1/main',
+        clock: () => clock.now,
+        failureBackoff: const Duration(milliseconds: 40),
+        onError: errors.add,
+        receipts: ScheduledReceiptLog(
           env: env,
-          root: root,
-          homeDir: '/home/user',
-          decodeSessionCwd: decodeSessionCwd,
-        );
-        final clock = _FakeClock();
-        final errors = <String>[];
-        final queue = ScheduledMessageQueue(
-          env: env,
-          repo: () => repo,
-          root: () => root,
-          selfMailbox: () => 'sid-1/main',
-          clock: () => clock.now,
-          failureBackoff: const Duration(milliseconds: 40),
-          onError: errors.add,
-          receipts: ScheduledReceiptLog(
-            env: env,
-            path: () => '$root/_scheduled/receipts.jsonl',
-          ),
-        );
-        await repo.register('sid-1/main');
-        // The arming scan runs first (it succeeds, the timer arms for the
-        // due time); gate ONLY the next listDir — the timer tick's
-        // delivery-pass scan. The failure is transient: the re-arm scan
-        // right after succeeds, so the arming-path catch never runs.
-        await queue.schedule(
-          text: 'delayed reminder',
-          delay: const Duration(milliseconds: 30),
-        );
-        // The arming scan is fire-and-forget: flush microtasks so it has
-        // fully completed, then gate exactly the NEXT listDir — the
-        // timer tick's delivery-pass scan. The failure is transient: the
-        // re-arm scan right after succeeds, so the arming-path catch
-        // never runs.
-        await pumpEventQueue();
-        env.failNext = 1;
-        clock.jump(const Duration(milliseconds: 30));
-        // The recovered heartbeat delivers the record once the re-armed
-        // leg fires.
-        await waitForTrue(
-          () async => (await repo.peek(
-            'sid-1/main',
-          )).any((m) => m.text.contains('delayed reminder')),
-        );
-        final events = await receiptEvents(env, root);
-        expect(
-          events.any((e) => e['event'] == 'scan_failed'),
-          isTrue,
-          reason:
-              'a TRANSIENT delivery-pass scan failure must still leave a '
-              'scan_failed receipt — pre-fix the re-arm scan recovered '
-              'silently and the post-mortem saw nothing between the last '
-              'scheduled line and the delivered one (AC4)',
-        );
-        queue.dispose();
-      },
-    );
+          path: () => '$root/_scheduled/receipts.jsonl',
+        ),
+      );
+      await repo.register('sid-1/main');
+      // The arming scan runs first (it succeeds, the timer arms for the
+      // due time); gate ONLY the next listDir — the timer tick's
+      // delivery-pass scan. The failure is transient: the re-arm scan
+      // right after succeeds, so the arming-path catch never runs.
+      await queue.schedule(
+        text: 'delayed reminder',
+        delay: const Duration(milliseconds: 30),
+      );
+      // The arming scan is fire-and-forget: flush microtasks so it has
+      // fully completed, then gate exactly the NEXT listDir — the
+      // timer tick's delivery-pass scan. The failure is transient: the
+      // re-arm scan right after succeeds, so the arming-path catch
+      // never runs.
+      await pumpEventQueue();
+      env.failNext = 1;
+      clock.jump(const Duration(milliseconds: 30));
+      // The recovered heartbeat delivers the record once the re-armed
+      // leg fires.
+      await waitForTrue(
+        () async => (await repo.peek(
+          'sid-1/main',
+        )).any((m) => m.text.contains('delayed reminder')),
+      );
+      final events = await receiptEvents(env, root);
+      expect(
+        events.any((e) => e['event'] == 'scan_failed'),
+        isTrue,
+        reason:
+            'a TRANSIENT delivery-pass scan failure must still leave a '
+            'scan_failed receipt — pre-fix the re-arm scan recovered '
+            'silently and the post-mortem saw nothing between the last '
+            'scheduled line and the delivered one (AC4)',
+      );
+      queue.dispose();
+    });
 
     test('AC4: the queue receipts the whole lifecycle — scheduled, '
         'delivery_failed (isolated), delivered with lag', () async {

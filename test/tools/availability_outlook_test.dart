@@ -52,10 +52,7 @@ void main() {
       final off = resolveToolAvailability(
         capabilities: {'outlook': const ToolCapability.available()},
         scopes: [
-          (
-            ToolScope.runtime,
-            ToolsConfig(tools: {'outlook': false}),
-          ),
+          (ToolScope.runtime, ToolsConfig(tools: {'outlook': false})),
         ],
       );
       expect(off.byId['outlook']!.enabled, isFalse);

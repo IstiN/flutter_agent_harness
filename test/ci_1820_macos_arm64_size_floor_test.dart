@@ -135,10 +135,7 @@ const artifactManifest = [
     844112,
     'Fa.app/Contents/Frameworks/quickjs_bridge.framework/Versions/A/quickjs_bridge',
   ],
-  [
-    1671040,
-    'Fa.app/Contents/Frameworks/sqlite3.framework/Versions/A/sqlite3',
-  ],
+  [1671040, 'Fa.app/Contents/Frameworks/sqlite3.framework/Versions/A/sqlite3'],
   [18611696, 'Fa.app/Contents/MacOS/Fa'],
   [93640, 'Fa.app/Contents/Resources/Assets.car'],
 ];
@@ -151,15 +148,11 @@ Directory buildArtifactFixture() {
   final dir = Directory.systemTemp.createTempSync('gh1820_arm64_artifact');
   addTearDown(() => dir.deleteSync(recursive: true));
   for (final row in artifactManifest) {
-    writeSparseFile(
-      File('${dir.path}/${row[1] as String}'),
-      row[0] as int,
-    );
+    writeSparseFile(File('${dir.path}/${row[1] as String}'), row[0] as int);
   }
   // Sub-floor payload: TOTAL − Σ(tracked rows), spread over files each
   // below the 64 KiB manifest floor (62,183 < 65,536 bytes).
-  final trackedSum = artifactManifest
-      .fold<int>(0, (s, r) => s + (r[0] as int));
+  final trackedSum = artifactManifest.fold<int>(0, (s, r) => s + (r[0] as int));
   final fillerBytes = artifactTotalBytes - trackedSum;
   expect(fillerBytes, greaterThanOrEqualTo(0));
   const fillerChunk = 62183;
@@ -193,20 +186,19 @@ ProcessResult runGate({
   required Directory artifact,
   required String baselinePath,
   bool reseed = false,
-}) =>
-    Process.runSync(
-      'python3',
-      [
-        'scripts/size_manifest.py',
-        'check',
-        artifact.path,
-        '--baseline',
-        baselinePath,
-        if (reseed) '--reseed',
-      ],
-      stdoutEncoding: utf8,
-      stderrEncoding: utf8,
-    );
+}) => Process.runSync(
+  'python3',
+  [
+    'scripts/size_manifest.py',
+    'check',
+    artifact.path,
+    '--baseline',
+    baselinePath,
+    if (reseed) '--reseed',
+  ],
+  stdoutEncoding: utf8,
+  stderrEncoding: utf8,
+);
 
 void main() {
   test(
@@ -228,34 +220,31 @@ void main() {
     },
   );
 
-  test(
-    'committed floor is the byte-exact --reseed output for that shape '
-    '(gh-1820)',
-    () {
-      final artifact = buildArtifactFixture();
-      final reseeded =
-          '${Directory.systemTemp.createTempSync('gh1820_reseed').path}/'
-          'reseed.tsv';
-      addTearDown(() => File(reseeded).parent.deleteSync(recursive: true));
-      // --reseed requires an EXISTING baseline file to overwrite; the old
-      // content is irrelevant (it rewrites from the artifact manifest).
-      File(reseeded).parent.createSync(recursive: true);
-      File(reseeded).writeAsStringSync('0\tseed\n0\tTOTAL\n');
-      final result = runGate(
-        artifact: artifact,
-        baselinePath: reseeded,
-        reseed: true,
-      );
-      expect(result.exitCode, 0, reason: '${result.stdout}');
-      expect(
-        File(reseeded).readAsBytesSync(),
-        File(baseline).readAsBytesSync(),
-        reason:
-            'the committed $baseline must be the byte-exact `--reseed` '
-            'output for the shipped v1.0.634 shape (26 rows ≥ 64 KiB + '
-            'TOTAL, path-sorted) — any hand-edit drift desyncs the floor '
-            'from what the gate would have seeded',
-      );
-    },
-  );
+  test('committed floor is the byte-exact --reseed output for that shape '
+      '(gh-1820)', () {
+    final artifact = buildArtifactFixture();
+    final reseeded =
+        '${Directory.systemTemp.createTempSync('gh1820_reseed').path}/'
+        'reseed.tsv';
+    addTearDown(() => File(reseeded).parent.deleteSync(recursive: true));
+    // --reseed requires an EXISTING baseline file to overwrite; the old
+    // content is irrelevant (it rewrites from the artifact manifest).
+    File(reseeded).parent.createSync(recursive: true);
+    File(reseeded).writeAsStringSync('0\tseed\n0\tTOTAL\n');
+    final result = runGate(
+      artifact: artifact,
+      baselinePath: reseeded,
+      reseed: true,
+    );
+    expect(result.exitCode, 0, reason: '${result.stdout}');
+    expect(
+      File(reseeded).readAsBytesSync(),
+      File(baseline).readAsBytesSync(),
+      reason:
+          'the committed $baseline must be the byte-exact `--reseed` '
+          'output for the shipped v1.0.634 shape (26 rows ≥ 64 KiB + '
+          'TOTAL, path-sorted) — any hand-edit drift desyncs the floor '
+          'from what the gate would have seeded',
+    );
+  });
 }

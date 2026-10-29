@@ -185,8 +185,7 @@ void main() {
       );
     });
 
-    test('env beats auto-detect (env set on an interactive session: skip)',
-        () {
+    test('env beats auto-detect (env set on an interactive session: skip)', () {
       expect(
         shouldLaunchBrowser(
           environment: const {'FA_NO_BROWSER': 'yes', 'DISPLAY': ':0'},
@@ -200,10 +199,7 @@ void main() {
     test('auto-detect fires when flag and env are clear', () {
       for (final (label, env, terminal) in const [
         ('no display', <String, String>{}, true),
-        ('ssh marker', {
-          'DISPLAY': ':0',
-          'SSH_TTY': '/dev/pts/0',
-        }, true),
+        ('ssh marker', {'DISPLAY': ':0', 'SSH_TTY': '/dev/pts/0'}, true),
         ('piped stdout', {'DISPLAY': ':0'}, false),
       ]) {
         expect(

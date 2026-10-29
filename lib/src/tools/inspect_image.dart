@@ -30,10 +30,10 @@ import '../types.dart';
 /// has no vision wire. One constant so the two refuse sites (default
 /// endpoint pick and the explicit-baseUrl stream route) cannot drift.
 StateError _codexVisionRefusal() => StateError(
-      'inspect_image: provider kind "chatgpt-codex" (ChatGPT Codex) has no '
-      'vision adapter — configure inspect_image with an openai-completions '
-      'or copilot vision model',
-    );
+  'inspect_image: provider kind "chatgpt-codex" (ChatGPT Codex) has no '
+  'vision adapter — configure inspect_image with an openai-completions '
+  'or copilot vision model',
+);
 
 /// Configuration for the [inspectImageTool] vision model.
 final class InspectImageConfig {

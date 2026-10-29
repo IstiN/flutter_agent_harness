@@ -219,13 +219,10 @@ void main() {
         for (var trial = 0; trial < 200; trial++) {
           final wordCount = 1 + next() % 12;
           final parts = <String>[
-            for (var w = 0; w < wordCount; w++)
-              words[next() % words.length],
+            for (var w = 0; w < wordCount; w++) words[next() % words.length],
           ];
           // Sprinkle multi-space runs every few trials.
-          final text = parts
-              .join(trial % 5 == 0 ? '  ' : ' ')
-              .trimRight();
+          final text = parts.join(trial % 5 == 0 ? '  ' : ' ').trimRight();
           final width = 3 + next() % 30;
           final rows = wrapAnsiLine(text, width);
           for (final row in rows) {
@@ -503,7 +500,8 @@ void main() {
     });
 
     test('plain mode strips non-SGR escapes too (OSC hyperlinks)', () {
-      const noisy = 'see \x1b]8;;https://x.example\x1b\\docs\x1b]8;;\x1b\\ '
+      const noisy =
+          'see \x1b]8;;https://x.example\x1b\\docs\x1b]8;;\x1b\\ '
           'and \x1b[?25lraw';
       final out = surface.render(noisy);
       expect(out.contains('\x1b'), isFalse);
@@ -529,9 +527,7 @@ void main() {
         '```dart\nvar x = 1;\n```\n';
 
     test('ansi mode renders every pinned construct', () {
-      final out = MarkdownSurface(
-        mode: MarkdownSurfaceMode.ansi,
-      ).render(repro);
+      final out = MarkdownSurface(mode: MarkdownSurfaceMode.ansi).render(repro);
       expect(out, contains('\x1b[4mPlan')); // h1: bold+underline, # stripped
       expect(out, isNot(contains('# Plan')));
       expect(out, contains('•')); // bullet list

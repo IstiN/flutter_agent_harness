@@ -84,16 +84,17 @@ void main() {
       await env.exec('env');
       final roster = delegate.calls.single?.env?[secretPresenceEnvVar];
       expect(roster, 'FA_GITHUB_TOKEN');
-      expect(delegate.calls.single?.env?['FA_GITHUB_TOKEN'],
-          'ghp_supersecretvalue99');
+      expect(
+        delegate.calls.single?.env?['FA_GITHUB_TOKEN'],
+        'ghp_supersecretvalue99',
+      );
     });
 
     test('registered known-names ride the roster without values', () async {
       env.registerSecretNames(['ANTHROPIC_API_KEY']);
       await env.exec('env');
       final roster =
-          (delegate.calls.single?.env?[secretPresenceEnvVar] ?? '')
-              .split(' ')
+          (delegate.calls.single?.env?[secretPresenceEnvVar] ?? '').split(' ')
             ..sort();
       expect(roster, ['ANTHROPIC_API_KEY', 'FA_GITHUB_TOKEN']);
       expect(
@@ -122,15 +123,19 @@ void main() {
       expect(listing.contains('ghp_supersecretvalue99'), isFalse);
     });
 
-    test('per-call env still wins over injected values; roster is fixed',
-        () async {
-      await env.exec('env', options: const ShellExecOptions(env: {
-        'FA_GITHUB_TOKEN': 'percall',
-        secretPresenceEnvVar: 'FAKE',
-      }));
-      final merged = delegate.calls.single?.env ?? const {};
-      expect(merged['FA_GITHUB_TOKEN'], 'percall');
-      expect(merged[secretPresenceEnvVar], 'FA_GITHUB_TOKEN');
-    });
+    test(
+      'per-call env still wins over injected values; roster is fixed',
+      () async {
+        await env.exec(
+          'env',
+          options: const ShellExecOptions(
+            env: {'FA_GITHUB_TOKEN': 'percall', secretPresenceEnvVar: 'FAKE'},
+          ),
+        );
+        final merged = delegate.calls.single?.env ?? const {};
+        expect(merged['FA_GITHUB_TOKEN'], 'percall');
+        expect(merged[secretPresenceEnvVar], 'FA_GITHUB_TOKEN');
+      },
+    );
   });
 }

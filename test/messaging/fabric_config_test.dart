@@ -80,10 +80,7 @@ fabric:
       });
 
       test('rejects a non-boolean hub value', () {
-        expect(
-          () => parse('fabric: {hub: "nope"}'),
-          throwsConfigException,
-        );
+        expect(() => parse('fabric: {hub: "nope"}'), throwsConfigException);
         expect(() => parse('fabric: {hub: 0}'), throwsConfigException);
       });
     });

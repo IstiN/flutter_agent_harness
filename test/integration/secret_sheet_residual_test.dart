@@ -250,11 +250,11 @@ void main() {
           .where((l) => l.contains('•') && l.trimRight().endsWith('│'))
           .map((l) => l.split('•').length - 1)
           .toList();
-      expect(
-        maskedRows,
-        [19, 6, 17],
-        reason: 'every pasted char must be masked (one row per line)',
-      );
+      expect(maskedRows, [
+        19,
+        6,
+        17,
+      ], reason: 'every pasted char must be masked (one row per line)');
       await harness.waitForOutput(settleMs: 500);
       expectFrameIntact();
       // Masked mode: no byte of the secret may reach the screen or the raw

@@ -59,20 +59,23 @@ void main() {
       server.enqueueText('all 30 cycles done');
       addTearDown(server.stop);
 
-      final command = faCliCommand([
-        '--provider',
-        'openai-completions',
-        '--base-url',
-        server.baseUrl,
-        '--model',
-        'mock-model',
-        '--cwd',
-        workspace.path,
-        '--output',
-        'events',
-        '-p',
-        'run the loop',
-      ], jitPrefix: const ['dart', 'run', 'bin/fah.dart']);
+      final command = faCliCommand(
+        [
+          '--provider',
+          'openai-completions',
+          '--base-url',
+          server.baseUrl,
+          '--model',
+          'mock-model',
+          '--cwd',
+          workspace.path,
+          '--output',
+          'events',
+          '-p',
+          'run the loop',
+        ],
+        jitPrefix: const ['dart', 'run', 'bin/fah.dart'],
+      );
       final result = await Process.run(
         command.first,
         command.sublist(1),
@@ -123,12 +126,14 @@ void main() {
       // through the writer.
       expect(lines.length, greaterThan(60));
       for (final frame in lines) {
-        expect(frame.containsKey('type') || frame.containsKey('event'), isTrue,
-            reason: 'malformed frame: $frame');
+        expect(
+          frame.containsKey('type') || frame.containsKey('event'),
+          isTrue,
+          reason: 'malformed frame: $frame',
+        );
       }
       final types = [
-        for (final frame in lines)
-          (frame['type'] ?? frame['event']) as String,
+        for (final frame in lines) (frame['type'] ?? frame['event']) as String,
       ];
       expect(types.where((t) => t.contains('tool')), isNotEmpty);
       expect(types, anyElement(contains('turn')));

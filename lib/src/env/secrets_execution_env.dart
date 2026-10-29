@@ -50,9 +50,7 @@ final class SecretsExecutionEnv
   /// Extends the announced secret-name roster (names only). Hosts pass the
   /// system-prompt "Available secret env vars" list here so `env` can show
   /// `NAME: ABSENT` for a not-currently-granted name.
-  void registerSecretNames(Iterable<String> names) => _knownNames.addAll(
-    names,
-  );
+  void registerSecretNames(Iterable<String> names) => _knownNames.addAll(names);
 
   /// Merges [secrets] into the injected map at runtime; later [exec] calls
   /// see them. Per-call [ShellExecOptions.env] entries still win over the

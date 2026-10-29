@@ -51,8 +51,7 @@ void main() {
   /// handed out a port another parallel-gate test could take between close
   /// and start — the hosted "Hostile ambient env" leg's green-on-retry
   /// flake. Nothing here needs the port BEFORE the hub starts.
-  LocalHub ephemeralHub() =>
-      LocalHub(port: 0, stateFile: stateFileFor());
+  LocalHub ephemeralHub() => LocalHub(port: 0, stateFile: stateFileFor());
 
   group('parseFlagValues / parseHubServeSpec', () {
     test('collapses --flag value pairs; later duplicates win', () {

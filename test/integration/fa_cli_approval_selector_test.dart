@@ -109,8 +109,7 @@ void main() {
       );
       // The tool result message carries the denial, not the echo's
       // stdout.
-      final secondRequest =
-          jsonDecode(mock.bodies[1]) as Map<String, dynamic>;
+      final secondRequest = jsonDecode(mock.bodies[1]) as Map<String, dynamic>;
       final toolResults = (secondRequest['messages'] as List)
           .whereType<Map<String, dynamic>>()
           .where((m) => m['role'] == 'tool')

@@ -94,25 +94,27 @@ void main() {
       expect(resolved.skillName, 'create-goal');
     });
 
-    test('every compiled-in builtin skill resolves through its pointer',
-        () async {
-      for (final skill in builtinSkills()) {
-        final result = await followSkillPointer(
-          '/ws/.fah/skills/${skill.name}/SKILL.md',
-          (pointerPath) async => '${builtinSkillPath(skill.name)}\n',
-        );
-        expect(
-          result,
-          isA<SkillPointerResolved>(),
-          reason: 'pointer for ${skill.name} must resolve',
-        );
-        expect(
-          (result as SkillPointerResolved).text,
-          skill.embeddedText,
-          reason: '${skill.name} bytes must equal the builtin body',
-        );
-      }
-    });
+    test(
+      'every compiled-in builtin skill resolves through its pointer',
+      () async {
+        for (final skill in builtinSkills()) {
+          final result = await followSkillPointer(
+            '/ws/.fah/skills/${skill.name}/SKILL.md',
+            (pointerPath) async => '${builtinSkillPath(skill.name)}\n',
+          );
+          expect(
+            result,
+            isA<SkillPointerResolved>(),
+            reason: 'pointer for ${skill.name} must resolve',
+          );
+          expect(
+            (result as SkillPointerResolved).text,
+            skill.embeddedText,
+            reason: '${skill.name} bytes must equal the builtin body',
+          );
+        }
+      },
+    );
 
     test('a foreign-target pointer is refused loudly (E1)', () async {
       final result = await followSkillPointer(

@@ -41,22 +41,16 @@ void main() {
       );
     }
     // mtime pins liveness: age=0 is a live owner, >15s is a dead one.
-    env.setMtime(
-      sidecar,
-      base.millisecondsSinceEpoch - age.inMilliseconds,
-    );
+    env.setMtime(sidecar, base.millisecondsSinceEpoch - age.inMilliseconds);
   }
 
   setUp(() async {
     env = MemoryExecutionEnv(cwd: '/work');
     store = FileSessionLeaseStore(env: env, now: () => base);
     final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
-    final session = await repo.create(
-      JsonlSessionCreateOptions(cwd: '/work'),
-    );
+    final session = await repo.create(JsonlSessionCreateOptions(cwd: '/work'));
     sessionPath = (await session.getMetadata()).path;
   });
-
 
   Future<LeaseAcquire> attempt({
     String bootId = 'mine',
@@ -71,27 +65,30 @@ void main() {
   );
 
   group('lease lifecycle (AC1)', () {
-    test('free lease acquires and the sidecar carries the full shape',
-        () async {
-      final result = await attempt(bootId: 'mine', pid: 1000);
-      expect(result, isA<LeaseAcquired>());
-      final sidecar = store.sidecarPath(sessionPath);
-      final json =
-          jsonDecode((await env.readTextFile(sidecar)).valueOrNull!)
-              as Map<String, dynamic>;
-      expect(json['host'], 'cli');
-      expect(json['sessionId'], 'sess-1');
-      expect(json['pid'], 1000);
-      expect(json['bootId'], 'mine');
-      expect(json['acquiredAt'], base.toIso8601String());
-      expect(json['heartbeatAt'], base.toIso8601String());
-      // No temp files survive a publish.
-      expect(
-        (await env.listDir('/sessions')).valueOrNull!
-            .where((f) => f.path.endsWith('.tmp')),
-        isEmpty,
-      );
-    });
+    test(
+      'free lease acquires and the sidecar carries the full shape',
+      () async {
+        final result = await attempt(bootId: 'mine', pid: 1000);
+        expect(result, isA<LeaseAcquired>());
+        final sidecar = store.sidecarPath(sessionPath);
+        final json =
+            jsonDecode((await env.readTextFile(sidecar)).valueOrNull!)
+                as Map<String, dynamic>;
+        expect(json['host'], 'cli');
+        expect(json['sessionId'], 'sess-1');
+        expect(json['pid'], 1000);
+        expect(json['bootId'], 'mine');
+        expect(json['acquiredAt'], base.toIso8601String());
+        expect(json['heartbeatAt'], base.toIso8601String());
+        // No temp files survive a publish.
+        expect(
+          (await env.listDir(
+            '/sessions',
+          )).valueOrNull!.where((f) => f.path.endsWith('.tmp')),
+          isEmpty,
+        );
+      },
+    );
 
     test('heartbeat refreshes liveness only for the owner (E3)', () async {
       await attempt(bootId: 'mine');
@@ -124,10 +121,7 @@ void main() {
       expect(blocked.lease.pid, 999);
       expect(blocked.lease.bootId, 'owner-boot');
       // The owner's sidecar is untouched.
-      expect(
-        (await store.inspect(sessionPath)).lease!.bootId,
-        'owner-boot',
-      );
+      expect((await store.inspect(sessionPath)).lease!.bootId, 'owner-boot');
     });
 
     test('property: no interleaving beats a fresh heartbeat (AC7)', () async {

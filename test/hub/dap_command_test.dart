@@ -572,35 +572,23 @@ void main() {
     test('hubFabricWired mirrors the images.registry pattern', () {
       // All three on: the composite fabric is wired.
       expect(
-        hubFabricWired(
-          hubPluginEnabled: true,
-          fabricHubAllowed: true,
-        ),
+        hubFabricWired(hubPluginEnabled: true, fabricHubAllowed: true),
         isTrue,
       );
       // fabric.hub: false — byte-identical legacy behavior.
       expect(
-        hubFabricWired(
-          hubPluginEnabled: true,
-          fabricHubAllowed: false,
-        ),
+        hubFabricWired(hubPluginEnabled: true, fabricHubAllowed: false),
         isFalse,
       );
       // gh-1825: no DAP_MASTER_SECRET needed anymore — enrolled scoped
       // credentials also drive the hub (the layer resolves lazily).
       expect(
-        hubFabricWired(
-          hubPluginEnabled: true,
-          fabricHubAllowed: true,
-        ),
+        hubFabricWired(hubPluginEnabled: true, fabricHubAllowed: true),
         isTrue,
       );
       // Plugin not enabled: no hub layer at all.
       expect(
-        hubFabricWired(
-          hubPluginEnabled: false,
-          fabricHubAllowed: true,
-        ),
+        hubFabricWired(hubPluginEnabled: false, fabricHubAllowed: true),
         isFalse,
       );
     });

@@ -492,17 +492,13 @@ void main() {
       // 37783963871: the original expectation was doubly wrong — it
       // assumed 'key ' had already been emitted AND 'done' included).
       expect(redactor.ingest('key AKIA'), isEmpty);
-      expect(
-        redactor.ingest('IOSFODNN7EXAMPLE\ndone'),
-        'key [REDACTED]\n',
-      );
+      expect(redactor.ingest('IOSFODNN7EXAMPLE\ndone'), 'key [REDACTED]\n');
       // The trailing partial line ('done') is not trapped: flush() emits
       // it sanitized at settle.
       expect(redactor.flush(), 'done');
     });
 
-    test('a token split at ANY chunk offset stays redacted (parametrized)',
-        () {
+    test('a token split at ANY chunk offset stays redacted (parametrized)', () {
       // The reviewer-facing invariant, pinned at every boundary offset —
       // not one lucky split: whatever the cut, no emitted byte sequence
       // ever contains the raw token, and the assembled log carries the
@@ -512,7 +508,8 @@ void main() {
         final redactor = JobLogRedactor(
           (text) => text.replaceAll(token, '[REDACTED]'),
         );
-        final rested = redactor.ingest('key ${token.substring(0, cut)}') +
+        final rested =
+            redactor.ingest('key ${token.substring(0, cut)}') +
             redactor.ingest('${token.substring(cut)} tail\n') +
             redactor.flush();
         expect(
@@ -548,8 +545,7 @@ void main() {
       expect(redactor.flush(), isEmpty);
     });
 
-    test('an oversized buffered partial line keeps best-effort redaction',
-        () {
+    test('an oversized buffered partial line keeps best-effort redaction', () {
       final redactor = JobLogRedactor(
         (text) => text.replaceAll('AKIAIOSFODNN7EXAMPLE', '[REDACTED]'),
       );

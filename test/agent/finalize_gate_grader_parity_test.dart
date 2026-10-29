@@ -58,10 +58,7 @@ void main() {
     // (the exact hole this REG pins).
     includeParentEnvironment: false,
     environment: {
-      for (final entry in {
-        ...Platform.environment,
-        ...sessionExports,
-      }.entries)
+      for (final entry in {...Platform.environment, ...sessionExports}.entries)
         if (!_sessionExports.contains(entry.key)) entry.key: entry.value,
     },
   );

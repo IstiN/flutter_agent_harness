@@ -72,7 +72,10 @@ Agent _agent(ToolRegistry registry) => Agent(
 void main() {
   group('mobile availability families', () {
     test('the three ids are known with their member tools', () {
-      expect(knownToolIds, containsAll(['mobile', 'mobile_automation', 'mobile_shell']));
+      expect(
+        knownToolIds,
+        containsAll(['mobile', 'mobile_automation', 'mobile_shell']),
+      );
       expect(coreToolFamilies['mobile'], {'mobile.launch', 'mobile.logs'});
       expect(coreToolFamilies['mobile_automation'], {
         'mobile.hierarchy',
@@ -101,28 +104,28 @@ void main() {
 
     test('god floor: everything present', () {
       final floor = mobileCapabilityFloor(tier: MobileTier.god);
-      expect(
-        floor.values.every((capability) => capability.present),
-        isTrue,
-      );
+      expect(floor.values.every((capability) => capability.present), isTrue);
     });
 
-    test('store: mobile.* gated names absent from registry and prompt list', () {
-      final registry = ToolRegistry();
-      final agent = _agent(registry);
-      final gate = _mobileGate();
-      gate.apply(
-        _resolve(mobileCapabilityFloor(tier: MobileTier.store)),
-        registry,
-        agent,
-        rebuildPrompt: () {},
-      );
-      final advertised = agent.state.tools.map((tool) => tool.name).toSet();
-      expect(advertised.intersection(_godOnlyNames), isEmpty);
-      expect(advertised, containsAll(['mobile.launch', 'mobile.logs']));
-      // Registry agrees with the advertised list, byte-wise as a set.
-      expect(registry.tools.map((tool) => tool.name).toSet(), advertised);
-    });
+    test(
+      'store: mobile.* gated names absent from registry and prompt list',
+      () {
+        final registry = ToolRegistry();
+        final agent = _agent(registry);
+        final gate = _mobileGate();
+        gate.apply(
+          _resolve(mobileCapabilityFloor(tier: MobileTier.store)),
+          registry,
+          agent,
+          rebuildPrompt: () {},
+        );
+        final advertised = agent.state.tools.map((tool) => tool.name).toSet();
+        expect(advertised.intersection(_godOnlyNames), isEmpty);
+        expect(advertised, containsAll(['mobile.launch', 'mobile.logs']));
+        // Registry agrees with the advertised list, byte-wise as a set.
+        expect(registry.tools.map((tool) => tool.name).toSet(), advertised);
+      },
+    );
 
     test('god: the whole mobile set is advertised', () {
       final registry = ToolRegistry();
@@ -141,34 +144,44 @@ void main() {
   });
 
   group('UT-floor-2: gated call tombstone', () {
-    test('tombstone names the tier and the sideload link (reason golden)',
-        () async {
-      final registry = ToolRegistry();
-      final agent = _agent(registry);
-      final gate = _mobileGate();
-      final executor = gate.wrapExecutor((toolCall, cancelToken, onUpdate) async {
-        return ToolExecutionResult.text('should never run');
-      });
-      gate.apply(
-        _resolve(mobileCapabilityFloor(tier: MobileTier.store)),
-        registry,
-        agent,
-        rebuildPrompt: () {},
-      );
-      final result = await executor(
-        ToolCall(id: 't1', name: 'mobile.tap', arguments: const {'x': 1, 'y': 2}),
-        null,
-        null,
-      );
-      final text = result.content.whereType<TextContent>().single.text;
-      // Golden: the honest reason names the tier and the sideload link.
-      expect(
-        text,
-        contains(
-          'requires the god tier (sideload build) — get it at '
-          'https://fa1.dev/android',
-        ),
-      );
-    });
+    test(
+      'tombstone names the tier and the sideload link (reason golden)',
+      () async {
+        final registry = ToolRegistry();
+        final agent = _agent(registry);
+        final gate = _mobileGate();
+        final executor = gate.wrapExecutor((
+          toolCall,
+          cancelToken,
+          onUpdate,
+        ) async {
+          return ToolExecutionResult.text('should never run');
+        });
+        gate.apply(
+          _resolve(mobileCapabilityFloor(tier: MobileTier.store)),
+          registry,
+          agent,
+          rebuildPrompt: () {},
+        );
+        final result = await executor(
+          ToolCall(
+            id: 't1',
+            name: 'mobile.tap',
+            arguments: const {'x': 1, 'y': 2},
+          ),
+          null,
+          null,
+        );
+        final text = result.content.whereType<TextContent>().single.text;
+        // Golden: the honest reason names the tier and the sideload link.
+        expect(
+          text,
+          contains(
+            'requires the god tier (sideload build) — get it at '
+            'https://fa1.dev/android',
+          ),
+        );
+      },
+    );
   });
 }

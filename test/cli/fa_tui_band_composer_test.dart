@@ -49,17 +49,16 @@ final _engine = TuiStatusLine(spec: resolveStatusLineSpec(null));
 FaTuiCallbacks _callbacks({
   StatusLineSnapshot Function()? snapshot,
   TuiStatusLine? engine,
-}) =>
-    FaTuiCallbacks(
-      onSubmit: (_, {images = const []}) async {},
-      onModelSelected: (_) async {},
-      buildSlashMenu: (_) => const [],
-      buildModelMenu: (_, _) => const [],
-      statusLine: () => 'cwd · ctx 42% · legacy footer',
-      prompt: '',
-      statusSnapshot: snapshot,
-      statusLineEngine: snapshot == null ? null : (engine ?? _engine),
-    );
+}) => FaTuiCallbacks(
+  onSubmit: (_, {images = const []}) async {},
+  onModelSelected: (_) async {},
+  buildSlashMenu: (_) => const [],
+  buildModelMenu: (_, _) => const [],
+  statusLine: () => 'cwd · ctx 42% · legacy footer',
+  prompt: '',
+  statusSnapshot: snapshot,
+  statusLineEngine: snapshot == null ? null : (engine ?? _engine),
+);
 
 /// Band-attached callbacks (the host default without `tui.classic`).
 FaTuiCallbacks _bandCallbacks() => _callbacks(snapshot: _snapshot);
@@ -179,7 +178,14 @@ void main() {
       for (final frame in const ['⠙', '⠹', '⠸']) {
         final band = plain(bandOf(idle: false, frame: frame));
         expect(band.indexOf('Fa'), idleBand.indexOf('Fa'), reason: band);
-        expect(band, contains('>_$frame' 'Fa'), reason: band);
+        expect(
+          band,
+          contains(
+            '>_$frame'
+            'Fa',
+          ),
+          reason: band,
+        );
       }
       // Frames arrive verbatim from the compile-time activity ring —
       // the frames the preset ships are the frames the zone shows.
@@ -231,9 +237,9 @@ void main() {
       expect(send(m, at(5, inputY)).cursor, 2);
       // A classic model clicks unchanged (no gutter offset).
       final classic = _type(_model(_classicCallbacks()), 'hello world');
-      final classicY = _plainRows(classic).indexWhere(
-        (row) => row.contains('hello world'),
-      );
+      final classicY = _plainRows(
+        classic,
+      ).indexWhere((row) => row.contains('hello world'));
       expect(send(classic, at(1, classicY)).cursor, 1);
     });
 

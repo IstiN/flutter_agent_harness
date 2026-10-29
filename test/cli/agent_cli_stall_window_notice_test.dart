@@ -87,8 +87,10 @@ void main() {
     );
     final run = cli.run();
     final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
-    await waitForIt(() async => (await repo.list(cwd: '/work')).isNotEmpty,
-        reason: 'session persisted');
+    await waitForIt(
+      () async => (await repo.list(cwd: '/work')).isNotEmpty,
+      reason: 'session persisted',
+    );
     io.sendLine('start');
     await waitForIt(() => cli.isBusy, reason: 'run started');
     // Cleanup even when an assertion fails mid-test: a dangling wedged

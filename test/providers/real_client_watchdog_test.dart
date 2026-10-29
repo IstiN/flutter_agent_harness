@@ -75,8 +75,7 @@ void main() {
   // connection (distinct client port), the zero-byte socket stays
   // quarantined (its abandoned request never answers to pool it).
   test('a watchdog-cancelled zero-byte send replays on a FRESH connection '
-      'of the SAME shared client — the dead socket is never re-used',
-      () async {
+      'of the SAME shared client — the dead socket is never re-used', () async {
     final seenClientPorts = <int>[];
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     final serverSub = server.listen((request) async {

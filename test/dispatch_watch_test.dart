@@ -376,11 +376,8 @@ class DwLive {
     final deadline = DateTime.now().add(timeout);
     while (DateTime.now().isBefore(deadline)) {
       if (File(logFile).existsSync() &&
-          '${File(logFile).readAsStringSync()} '
-              .split(needle)
-              .length -
-              1 >=
-          occurrences) {
+          '${File(logFile).readAsStringSync()} '.split(needle).length - 1 >=
+              occurrences) {
         return;
       }
       await Future<void>.delayed(const Duration(milliseconds: 20));

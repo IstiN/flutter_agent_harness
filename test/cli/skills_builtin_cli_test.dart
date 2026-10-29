@@ -219,7 +219,7 @@ void main() {
     await env.writeFile(
       '/work/.fah/skills/pinny/SKILL.md',
       '---\nname: pinny\ndescription: pin owner\n'
-      'operative:\n  - "always cite sources"\n---\nBody.\n',
+          'operative:\n  - "always cite sources"\n---\nBody.\n',
     );
     final fake = FakeStreamFunction([textTurn('ok')]);
     final cli = cliFor(fake.call);

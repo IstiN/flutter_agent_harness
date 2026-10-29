@@ -71,8 +71,9 @@ Set<String> _gateClosure(YamlMap jobs) {
 /// always()/ungated satellites that also run on schedule ticks
 /// (step-timings is `if: always()`, js-ext-integration has no job-level
 /// condition, release arms on the schedule).
-Set<String> _guardedJobs(YamlMap jobs) => _gateClosure(jobs)
-  ..addAll(['step-timings', 'release', 'js-ext-integration']);
+Set<String> _guardedJobs(YamlMap jobs) =>
+    _gateClosure(jobs)
+      ..addAll(['step-timings', 'release', 'js-ext-integration']);
 
 /// gh-1625: the pre-check jobs are guards, not gate legs (see the closure
 /// walk above).
@@ -134,17 +135,20 @@ void main() {
       final checkout = steps
           .map((s) => s as YamlMap)
           .firstWhere(
-            (s) => s['uses']?.toString().startsWith('actions/checkout') ??
-                false,
-            orElse: () => throw TestFailure('release-pending must check out '
-                'the repo (tag math needs the full tag graph)'),
+            (s) =>
+                s['uses']?.toString().startsWith('actions/checkout') ?? false,
+            orElse: () => throw TestFailure(
+              'release-pending must check out '
+              'the repo (tag math needs the full tag graph)',
+            ),
           );
       // AC3 half: the fetch is schedule-only — tag/dispatch arms must not
       // even pay the checkout.
       expect(
         checkout['if'].toString(),
         "github.event_name == 'schedule'",
-        reason: 'gh-1551 AC3: non-schedule events short-circuit in the '
+        reason:
+            'gh-1551 AC3: non-schedule events short-circuit in the '
             'script and never fetch',
       );
       final check = steps
@@ -155,10 +159,16 @@ void main() {
                 throw TestFailure('release-pending must have a check step'),
           );
       final script = check['run'].toString();
-      expect(script, contains('git tag --sort=-v:refname'),
-          reason: 'the latest v* tag drives the comparison');
-      expect(script, contains('git rev-list'),
-          reason: 'commits-since-tag = rev-list count (the cheap pre-check)');
+      expect(
+        script,
+        contains('git tag --sort=-v:refname'),
+        reason: 'the latest v* tag drives the comparison',
+      );
+      expect(
+        script,
+        contains('git rev-list'),
+        reason: 'commits-since-tag = rev-list count (the cheap pre-check)',
+      );
     });
 
     test('every schedule-reachable gate job requires release-pending and '
@@ -169,7 +179,8 @@ void main() {
         expect(
           _needsOf(job),
           contains('release-pending'),
-          reason: 'gh-1551: `$id` runs on schedule ticks — without the '
+          reason:
+              'gh-1551: `$id` runs on schedule ticks — without the '
               'needs edge the guard expression reads an empty output and '
               'the leg would run on empty ticks anyway',
         );
@@ -177,7 +188,8 @@ void main() {
         expect(
           ifText,
           contains("needs.release-pending.outputs.pending == 'true'"),
-          reason: 'gh-1551: `$id` must skip explicitly (visible SKIPPED) '
+          reason:
+              'gh-1551: `$id` must skip explicitly (visible SKIPPED) '
               'when the tick has nothing to release — an empty tick must '
               'not burn the full gate',
         );
@@ -185,7 +197,8 @@ void main() {
           expect(
             ifText,
             contains(RegExp(r"needs\.changes\.outputs\.[a-z0-9-]+")),
-            reason: 'gh-1551: the guard must be ANDed ON TOP of `$id`\'s '
+            reason:
+                'gh-1551: the guard must be ANDed ON TOP of `$id`\'s '
                 'changes-keyed condition, not replace it — a replacement '
                 'edit would pass the presence pin while silently killing '
                 'path classification (every dispatch run pays the full '
@@ -197,9 +210,13 @@ void main() {
       // ANDed, not replace always(), or leg results would stop being
       // collected on real runs.
       final gateIf = (jobs['quality-gate'] as YamlMap)['if'].toString();
-      expect(gateIf, startsWith('always()'),
-          reason: 'gh-1551 AC2: the aggregate keeps collecting leg results '
-              'on every real run');
+      expect(
+        gateIf,
+        startsWith('always()'),
+        reason:
+            'gh-1551 AC2: the aggregate keeps collecting leg results '
+            'on every real run',
+      );
     });
   });
 
@@ -212,10 +229,16 @@ void main() {
           .map((s) => s as YamlMap)
           .firstWhere((s) => s['id']?.toString() == 'check');
       final script = check['run'].toString();
-      expect(script, contains(r'[ "$EVENT_NAME" = "schedule" ]'),
-          reason: 'gh-1551: only the schedule arm performs the comparison');
-      expect(script, contains('else'),
-          reason: 'the non-schedule arm must exist and short-circuit');
+      expect(
+        script,
+        contains(r'[ "$EVENT_NAME" = "schedule" ]'),
+        reason: 'gh-1551: only the schedule arm performs the comparison',
+      );
+      expect(
+        script,
+        contains('else'),
+        reason: 'the non-schedule arm must exist and short-circuit',
+      );
     });
 
     test('the tag/release chain and PR-only satellites carry ZERO '
@@ -243,7 +266,8 @@ void main() {
         expect(
           _needsOf(job),
           isNot(contains('release-pending')),
-          reason: 'gh-1551 AC3: `$id` is never schedule-reachable — it '
+          reason:
+              'gh-1551 AC3: `$id` is never schedule-reachable — it '
               'must stay untouched',
         );
         expect(
@@ -263,9 +287,13 @@ void main() {
       expect(ifText, contains("github.event_name == 'schedule'"));
       expect(ifText, contains('inputs.releaseDryRun'));
       expect(ifText, contains('inputs.releaseDispatch'));
-      expect(ifText, contains("needs.release-pending.outputs.pending == 'true'"),
-          reason: 'gh-1551 AC1: the empty tick skips the release '
-              'explicitly (visible SKIPPED, not silently absent)');
+      expect(
+        ifText,
+        contains("needs.release-pending.outputs.pending == 'true'"),
+        reason:
+            'gh-1551 AC1: the empty tick skips the release '
+            'explicitly (visible SKIPPED, not silently absent)',
+      );
     });
   });
 
@@ -278,27 +306,42 @@ void main() {
           .map((s) => s as YamlMap)
           .firstWhere((s) => s['id']?.toString() == 'check');
       final script = check['run'].toString();
-      final trueDefault = RegExp(r'pending=true\s*(#.*)?$',
-              multiLine: true)
-          .allMatches(script)
-          .length;
-      expect(trueDefault, greaterThanOrEqualTo(1),
-          reason: 'fail-open default: a check error must never silently '
-              'suppress a release — the full gate decides');
-      expect(script, contains('pending=false'),
-          reason: 'the zero-commits branch must be able to skip the gate');
+      final trueDefault = RegExp(
+        r'pending=true\s*(#.*)?$',
+        multiLine: true,
+      ).allMatches(script).length;
+      expect(
+        trueDefault,
+        greaterThanOrEqualTo(1),
+        reason:
+            'fail-open default: a check error must never silently '
+            'suppress a release — the full gate decides',
+      );
+      expect(
+        script,
+        contains('pending=false'),
+        reason: 'the zero-commits branch must be able to skip the gate',
+      );
       // The false assignment must live INSIDE the schedule/zero-commits
       // arm: assert it appears after the schedule branch opens and there
       // is no unconditional assignment to false.
       final scheduleAt = script.indexOf(r'[ "$EVENT_NAME" = "schedule" ]');
       final falseAt = script.indexOf('pending=false');
       expect(scheduleAt, greaterThanOrEqualTo(0));
-      expect(falseAt, greaterThan(scheduleAt),
-          reason: 'gh-1551 AC4: pending=false may only be reached on the '
-              'schedule arm');
-      expect(script, isNot(contains('exit 1')),
-          reason: 'gh-1551 AC4: the pre-check never reddens the run on a '
-              'check error — fail-open with a warning instead');
+      expect(
+        falseAt,
+        greaterThan(scheduleAt),
+        reason:
+            'gh-1551 AC4: pending=false may only be reached on the '
+            'schedule arm',
+      );
+      expect(
+        script,
+        isNot(contains('exit 1')),
+        reason:
+            'gh-1551 AC4: the pre-check never reddens the run on a '
+            'check error — fail-open with a warning instead',
+      );
     });
   });
 
@@ -314,9 +357,13 @@ void main() {
       // unclamped `scheduleAt - 1200` would throw a confusing RangeError
       // instead of the real failure ("the comment moved/shrank").
       final comment = ci.substring(math.max(0, scheduleAt - 1200), scheduleAt);
-      expect(comment, contains('gh-1551'),
-          reason: 'gh-1551 AC5: the schedule trigger comment must document '
-              'that empty ticks short-circuit via release-pending');
+      expect(
+        comment,
+        contains('gh-1551'),
+        reason:
+            'gh-1551 AC5: the schedule trigger comment must document '
+            'that empty ticks short-circuit via release-pending',
+      );
       expect(
         ci.indexOf('release-pending'),
         greaterThanOrEqualTo(0),

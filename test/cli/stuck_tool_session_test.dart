@@ -261,9 +261,7 @@ void main() {
         apiKey: 'k',
         env: MemoryExecutionEnv(cwd: '/work'),
         sessionRoot: '/sessions',
-        stuckTool: const StuckToolConfig(
-          followUp: StuckFollowUpMode.advisory,
-        ),
+        stuckTool: const StuckToolConfig(followUp: StuckFollowUpMode.advisory),
       ),
       io: FakeCliIO(),
       streamFunction: FakeStreamFunction(const []).call,

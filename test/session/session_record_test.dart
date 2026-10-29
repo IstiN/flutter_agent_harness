@@ -95,19 +95,16 @@ void main() {
       expect(restored.customProvider, 'kimi_me');
     });
 
-    test('ModelChangeRecord without the pin fields restores nulls (REG-5)',
-        () {
+    test('ModelChangeRecord without the pin fields restores nulls (REG-5)', () {
       final restored =
-          SessionRecord.fromJson(
-                {
-                  'type': 'model_change',
-                  'id': 'e4',
-                  'parentId': 'e3',
-                  'timestamp': ts.toIso8601String(),
-                  'provider': 'openai',
-                  'modelId': 'k3-256k',
-                },
-              )
+          SessionRecord.fromJson({
+                'type': 'model_change',
+                'id': 'e4',
+                'parentId': 'e3',
+                'timestamp': ts.toIso8601String(),
+                'provider': 'openai',
+                'modelId': 'k3-256k',
+              })
               as ModelChangeRecord;
       expect(restored.baseUrl, isNull);
       expect(restored.customProvider, isNull);

@@ -5,7 +5,6 @@
 // stale status digits like the `20 6 1` residue on 111_paste_sent.png).
 library;
 
-
 import 'package:flutter_agent_harness/src/cli/fa_tui.dart';
 import 'package:flutter_agent_harness/src/cli/paste_image.dart';
 import 'package:test/test.dart';
@@ -63,16 +62,30 @@ void main() {
     // The frame fills exactly the terminal: no row can land outside the
     // screen, so no bottom-chrome cell can survive a rewrite as residue.
     expect(bareRows.length, 12, reason: 'bare frame height');
-    expect(chipRows.length, 12,
-        reason: 'chip rows must carve out of the viewport, not add rows');
-    expect(sentRows.length, 12, reason: 'removing the chip restores, never '
-        'shrinks, the frame');
+    expect(
+      chipRows.length,
+      12,
+      reason: 'chip rows must carve out of the viewport, not add rows',
+    );
+    expect(
+      sentRows.length,
+      12,
+      reason:
+          'removing the chip restores, never '
+          'shrinks, the frame',
+    );
 
     // The composer zone sits at the same absolute row with or without the
     // chip — "поехавший инпут" is the shift this forbids.
-    expect(_inputRow(chipRows), _inputRow(bareRows),
-        reason: 'input row must not shift when a chip appears');
-    expect(_inputRow(sentRows), _inputRow(bareRows),
-        reason: 'input row must return to its bare position after the send');
+    expect(
+      _inputRow(chipRows),
+      _inputRow(bareRows),
+      reason: 'input row must not shift when a chip appears',
+    );
+    expect(
+      _inputRow(sentRows),
+      _inputRow(bareRows),
+      reason: 'input row must return to its bare position after the send',
+    );
   });
 }

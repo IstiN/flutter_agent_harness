@@ -48,36 +48,38 @@ void main() {
       expect(logs[1], contains('attempt=3/4'));
     });
 
-    test('a non-ENOENT failure is returned immediately (never retried)',
-        () async {
-      final logs = <String>[];
-      final delays = <Duration>[];
-      var calls = 0;
-      final result = await retryTransientSessionFileIo<String>(
-        () async {
-          calls++;
-          return const Err(
-            FileError(
-              FileErrorCode.permissionDenied,
-              'permission denied',
-              path: '/s.jsonl',
-            ),
-          );
-        },
-        op: 'append',
-        path: '/s.jsonl',
-        config: SessionIoRetryConfig(
-          logger: logs.add,
-          delay: (d) async => delays.add(d),
-        ),
-      );
+    test(
+      'a non-ENOENT failure is returned immediately (never retried)',
+      () async {
+        final logs = <String>[];
+        final delays = <Duration>[];
+        var calls = 0;
+        final result = await retryTransientSessionFileIo<String>(
+          () async {
+            calls++;
+            return const Err(
+              FileError(
+                FileErrorCode.permissionDenied,
+                'permission denied',
+                path: '/s.jsonl',
+              ),
+            );
+          },
+          op: 'append',
+          path: '/s.jsonl',
+          config: SessionIoRetryConfig(
+            logger: logs.add,
+            delay: (d) async => delays.add(d),
+          ),
+        );
 
-      expect(calls, 1);
-      expect(delays, isEmpty);
-      expect(logs, isEmpty);
-      expect(result.isErr, isTrue);
-      expect(result.errorOrNull!.code, FileErrorCode.permissionDenied);
-    });
+        expect(calls, 1);
+        expect(delays, isEmpty);
+        expect(logs, isEmpty);
+        expect(result.isErr, isTrue);
+        expect(result.errorOrNull!.code, FileErrorCode.permissionDenied);
+      },
+    );
 
     test('exhausting the cap returns the last error inside the total-wait '
         'budget (no wedge)', () async {

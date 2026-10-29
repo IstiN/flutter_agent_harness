@@ -47,10 +47,7 @@ StreamFunction _neverStream(String kind, String apiKey) {
 ModelRolesResolver _resolverFor(Map<String, List<ModelRef>> roles) {
   return ModelRolesResolver(
     config: ModelRolesConfig(roles: roles),
-    secrets: const {
-      'ANTHROPIC_API_KEY': 'a-key',
-      'OPENAI_API_KEY': 'o-key',
-    },
+    secrets: const {'ANTHROPIC_API_KEY': 'a-key', 'OPENAI_API_KEY': 'o-key'},
     streamFactory: _neverStream,
   );
 }
@@ -103,8 +100,7 @@ void main() {
       }
     });
 
-    test('system overhead shrinks the conversation window, not the window',
-        () {
+    test('system overhead shrinks the conversation window, not the window', () {
       final wiring = resolveCompactionHostWiring(
         mainModel: _main,
         systemOverheadTokens: 4000,
@@ -114,8 +110,7 @@ void main() {
       _expectSettingsForWindow(wiring.settings, 196000);
     });
 
-    test('overhead larger than the window clamps the conversation to 0',
-        () {
+    test('overhead larger than the window clamps the conversation to 0', () {
       final wiring = resolveCompactionHostWiring(
         mainModel: _main,
         systemOverheadTokens: 300000,
@@ -162,8 +157,7 @@ void main() {
       expect(wiring.smolModel, isNull);
     });
 
-    test('enabled defaults to the shared ON constant and can be disabled',
-        () {
+    test('enabled defaults to the shared ON constant and can be disabled', () {
       expect(
         resolveCompactionHostWiring(mainModel: _main).enabled,
         compactionEnabledByDefault,
@@ -186,8 +180,7 @@ void main() {
       expect(wiring.window, 200000);
     });
 
-    test('a resolver without a smol role keeps the main-model fallback',
-        () {
+    test('a resolver without a smol role keeps the main-model fallback', () {
       final wiring = resolveCliCompactionWiring(
         mainModel: _main,
         rolesResolver: _resolverFor(const {}),
@@ -209,8 +202,7 @@ void main() {
       expect(wiring.window, 128000);
     });
 
-    test('a smol chain resolving to the main model normalizes to null',
-        () {
+    test('a smol chain resolving to the main model normalizes to null', () {
       final wiring = resolveCliCompactionWiring(
         mainModel: _main,
         rolesResolver: _resolverFor(const {
@@ -243,13 +235,15 @@ void main() {
   });
 
   group('resolveAppContextWindow', () {
-    test('a stored window different from the fallback wins (picker/endpoint)',
-        () {
-      expect(
-        resolveAppContextWindow(providerKind: 'google', storedWindow: 264000),
-        264000,
-      );
-    });
+    test(
+      'a stored window different from the fallback wins (picker/endpoint)',
+      () {
+        expect(
+          resolveAppContextWindow(providerKind: 'google', storedWindow: 264000),
+          264000,
+        );
+      },
+    );
 
     test('a stored value equal to the fallback means "unknown" — catalog '
         'wins', () {
@@ -380,8 +374,7 @@ void main() {
       );
     });
 
-    test('smol null-vs-set asymmetry fails the parity; both-null passes',
-        () {
+    test('smol null-vs-set asymmetry fails the parity; both-null passes', () {
       final base = wiring();
       expect(base.sameResolutionAs(wiring(smol: _smol)), isFalse);
       expect(wiring(smol: _smol).sameResolutionAs(base), isFalse);
@@ -409,8 +402,10 @@ void main() {
         contextWindow: 200000,
         maxTokens: 4096,
       );
-      expect(wiring(smol: _smol).sameResolutionAs(wiring(smol: otherId)),
-          isFalse);
+      expect(
+        wiring(smol: _smol).sameResolutionAs(wiring(smol: otherId)),
+        isFalse,
+      );
       expect(
         wiring(smol: _smol).sameResolutionAs(wiring(smol: _smolOtherProvider)),
         isFalse,

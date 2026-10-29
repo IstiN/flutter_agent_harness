@@ -112,9 +112,8 @@ BashCommandRewrite? redactBashCommandSecretShapes(
   matches.sort((a, b) => a.start.compareTo(b.start));
   if (approvedLiterals.isNotEmpty) {
     matches.removeWhere(
-      (match) => approvedLiterals.contains(
-        command.substring(match.start, match.end),
-      ),
+      (match) =>
+          approvedLiterals.contains(command.substring(match.start, match.end)),
     );
     if (matches.isEmpty) return null;
   }

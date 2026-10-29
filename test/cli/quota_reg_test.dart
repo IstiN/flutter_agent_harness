@@ -118,8 +118,7 @@ void main() {
   });
 
   group('REG-2 /quota shape snapshot', () {
-    test('header, row-per-provider, and column alignment are pinned',
-        () async {
+    test('header, row-per-provider, and column alignment are pinned', () async {
       final endpoint = FakeOpenRouterQuotaEndpoint();
       final fake = FakeStreamFunction([textTurn('ok')]);
       final cli = quotaCli(
@@ -144,9 +143,8 @@ void main() {
       });
 
       final lines = out.split('\n');
-      String? lineStartingWith(String prefix) => lines
-          .where((l) => l.startsWith(prefix))
-          .firstOrNull;
+      String? lineStartingWith(String prefix) =>
+          lines.where((l) => l.startsWith(prefix)).firstOrNull;
 
       // Header: exact columns, exact order. The header follows the `fa> `
       // prompt on the same line, so the match is not line-start anchored;
@@ -164,17 +162,12 @@ void main() {
           .firstOrNull;
       expect(
         measured,
-        matches(
-          RegExp(r'^openrouter\s+\$48\.20/\$150\s+usd\s+\S*\s*\S+$'),
-        ),
+        matches(RegExp(r'^openrouter\s+\$48\.20/\$150\s+usd\s+\S*\s*\S+$')),
         reason: 'measured row: used/limit, unit, reset, updated',
       );
 
       // Unmetered row: a single cell.
-      expect(
-        lineStartingWith('dial'),
-        matches(RegExp(r'^dial\s+unmetered$')),
-      );
+      expect(lineStartingWith('dial'), matches(RegExp(r'^dial\s+unmetered$')));
 
       // Unknown row: the one-line reason inline.
       expect(

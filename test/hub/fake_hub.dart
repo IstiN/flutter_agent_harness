@@ -14,5 +14,5 @@ export 'package:flutter_agent_harness/src/hub/local_hub.dart' show HubJoin;
 /// password connect and may enroll).
 class FakeHub extends LocalHub {
   FakeHub({String? masterSecret, int port = 0, String bind = 'loopback'})
-      : super(masterSecret: masterSecret, port: port, bind: bind);
+    : super(masterSecret: masterSecret, port: port, bind: bind);
 }

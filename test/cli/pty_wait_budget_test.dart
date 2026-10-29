@@ -37,12 +37,14 @@ void main() {
       expect(resolvePtyWaitBudgetScale(envValue: ' 2.5 '), 2.5);
     });
 
-    test('values below 1 clamp UP to 1.0 — the scale never shrinks a budget',
-        () {
-      expect(resolvePtyWaitBudgetScale(envValue: '0.25'), 1.0);
-      expect(resolvePtyWaitBudgetScale(envValue: '-3'), 1.0);
-      expect(resolvePtyWaitBudgetScale(envValue: '0'), 1.0);
-    });
+    test(
+      'values below 1 clamp UP to 1.0 — the scale never shrinks a budget',
+      () {
+        expect(resolvePtyWaitBudgetScale(envValue: '0.25'), 1.0);
+        expect(resolvePtyWaitBudgetScale(envValue: '-3'), 1.0);
+        expect(resolvePtyWaitBudgetScale(envValue: '0'), 1.0);
+      },
+    );
 
     test('values above the ceiling clamp DOWN to 10.0 — bounded stretch', () {
       expect(resolvePtyWaitBudgetScale(envValue: '50'), 10.0);
@@ -62,22 +64,23 @@ void main() {
       );
     });
 
-    test('fractional scales round to whole microseconds without losing money',
-        () {
-      // 300 ms at 2.5x = 750 ms exactly.
-      expect(
-        scalePtyWaitBudget(const Duration(milliseconds: 300), 2.5),
-        const Duration(milliseconds: 750),
-      );
-    });
+    test(
+      'fractional scales round to whole microseconds without losing money',
+      () {
+        // 300 ms at 2.5x = 750 ms exactly.
+        expect(
+          scalePtyWaitBudget(const Duration(milliseconds: 300), 2.5),
+          const Duration(milliseconds: 750),
+        );
+      },
+    );
 
     test('defensive: a sub-1.0 scale never shortens a budget', () {
       final budget = Duration(seconds: 30);
       expect(scalePtyWaitBudget(budget, 0.5), budget);
     });
 
-    test('the ceiling scale stays overflow-safe (90 s boot budget at 10x)',
-        () {
+    test('the ceiling scale stays overflow-safe (90 s boot budget at 10x)', () {
       expect(
         scalePtyWaitBudget(const Duration(seconds: 90), 10.0),
         const Duration(minutes: 15),

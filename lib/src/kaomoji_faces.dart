@@ -163,8 +163,7 @@ final class KaomojiFacePicker {
   static int? debugPin;
 
   /// The face a fresh run opens on: uniform over all eight.
-  KaomojiFace first() =>
-      kKaomojiFaces[_current = _draw(kKaomojiFaces.length)];
+  KaomojiFace first() => kKaomojiFaces[_current = _draw(kKaomojiFaces.length)];
 
   /// The face a swap boundary shows next: uniform over the other seven.
   KaomojiFace next() {

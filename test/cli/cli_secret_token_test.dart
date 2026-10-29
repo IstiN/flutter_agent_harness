@@ -177,8 +177,7 @@ void main() {
   });
 
   group('bundledCatalogModelIds', () {
-    test('exposes the offline fallback ids the leak guard must subtract',
-        () {
+    test('exposes the offline fallback ids the leak guard must subtract', () {
       // The cli_visual leak guard subtracts this set from real-config
       // markers: every id the /models offline fallback can render
       // without user config must be here, or a hermetic screen showing
@@ -196,4 +195,4 @@ void main() {
       expect(bundledCatalogModelIds, everyElement(isNotEmpty));
     });
   });
- }
+}

@@ -12,12 +12,12 @@
 // tests) so the assertions see what a real terminal would show.
 library;
 
-
 import 'package:dart_tui/dart_tui.dart';
 import 'package:dart_tui/src/renderer.dart';
 
 import 'package:flutter_agent_harness/src/cli/fa_tui.dart';
-import 'package:flutter_agent_harness/src/cli/tui_chrome.dart' show tuiChromeEnabled;
+import 'package:flutter_agent_harness/src/cli/tui_chrome.dart'
+    show tuiChromeEnabled;
 import 'package:test/test.dart';
 
 import 'tui_render_harness.dart';
@@ -42,73 +42,87 @@ void main() {
         '(chrome=$chrome)', () {
       addTearDown(() => tuiChromeEnabled = true);
       tuiChromeEnabled = chrome;
-    var model = FaTuiModel(
-      callbacks: callbacks(),
-      isExited: () => false,
-      termWidth: 80,
-      termHeight: 80,
-    );
+      var model = FaTuiModel(
+        callbacks: callbacks(),
+        isExited: () => false,
+        termWidth: 80,
+        termHeight: 80,
+      );
 
-    // Submit a question: busy starts, the echo is recorded, viewport snaps
-    // to the bottom — the real _applySubmit path, not hand-built state.
-    model = model.copyWith(inputText: 'explain the scrollback bug');
-    model = send(model, KeyPressMsg(const TeaKey(code: KeyCode.enter)));
-    // The run lifecycle flips busy via BusyMsg (the submit Cmd's stream);
-    // in-app it arrives right after submit — deliver it directly here.
-    model = send(model, const BusyMsg(true, source: 'run'));
-    expect(model.busy, isTrue, reason: 'submit must start a run');
+      // Submit a question: busy starts, the echo is recorded, viewport snaps
+      // to the bottom — the real _applySubmit path, not hand-built state.
+      model = model.copyWith(inputText: 'explain the scrollback bug');
+      model = send(model, KeyPressMsg(const TeaKey(code: KeyCode.enter)));
+      // The run lifecycle flips busy via BusyMsg (the submit Cmd's stream);
+      // in-app it arrives right after submit — deliver it directly here.
+      model = send(model, const BusyMsg(true, source: 'run'));
+      expect(model.busy, isTrue, reason: 'submit must start a run');
 
-    // Stream past the viewport height so the echo fully scrolls out and the
-    // sticky pins; then keep streaming — like real streamed text, each
-    // message advances the history by exactly one wrapped row under the
-    // pinned rows (the reported corruption shape).
-    for (var i = 0; i < 30; i++) {
-      model = send(model, OutputMsg('answer line $i', newline: true));
-    }
+      // Stream past the viewport height so the echo fully scrolls out and the
+      // sticky pins; then keep streaming — like real streamed text, each
+      // message advances the history by exactly one wrapped row under the
+      // pinned rows (the reported corruption shape).
+      for (var i = 0; i < 30; i++) {
+        model = send(model, OutputMsg('answer line $i', newline: true));
+      }
 
-    // Guard against a vacuous pass: the echo must actually be pinned now.
-    final rows =
-        model.view().content.split('\n').map((l) => l.replaceAll(ansi, '')).toList();
-    if (chrome) {
-      expect(rows.first.trim(), isEmpty,
-          reason: 'sticky echo pins the bubble band top (issue #807 chrome)');
-    } else {
-      // Kill switch (D1): the legacy full-width dim rule pins row 0.
-      expect(rows.first, contains('─'),
-          reason: 'tuiChromeEnabled=false keeps the legacy echo rule');
-    }
-    expect(rows[1], contains('explain the scrollback bug'));
+      // Guard against a vacuous pass: the echo must actually be pinned now.
+      final rows = model
+          .view()
+          .content
+          .split('\n')
+          .map((l) => l.replaceAll(ansi, ''))
+          .toList();
+      if (chrome) {
+        expect(
+          rows.first.trim(),
+          isEmpty,
+          reason: 'sticky echo pins the bubble band top (issue #807 chrome)',
+        );
+      } else {
+        // Kill switch (D1): the legacy full-width dim rule pins row 0.
+        expect(
+          rows.first,
+          contains('─'),
+          reason: 'tuiChromeEnabled=false keeps the legacy echo rule',
+        );
+      }
+      expect(rows[1], contains('explain the scrollback bug'));
 
-    // Feed eleven consecutive streaming frames through the real renderer.
-    final buf = StringBuffer();
-    final renderer = CellRenderer(
-      output: StringSinkIOSink(buf),
-      logSink: null,
-      defaultAltScreen: false,
-      defaultHideCursor: false,
-    );
-    renderer.render(model.view());
-    for (var i = 30; i < 40; i++) {
-      model = send(model, OutputMsg('answer line $i', newline: true));
+      // Feed eleven consecutive streaming frames through the real renderer.
+      final buf = StringBuffer();
+      final renderer = CellRenderer(
+        output: StringSinkIOSink(buf),
+        logSink: null,
+        defaultAltScreen: false,
+        defaultHideCursor: false,
+      );
       renderer.render(model.view());
-    }
-    final out = buf.toString();
+      for (var i = 30; i < 40; i++) {
+        model = send(model, OutputMsg('answer line $i', newline: true));
+        renderer.render(model.view());
+      }
+      final out = buf.toString();
 
-    expect(
-      RegExp(r'\x1b\[[0-9]*S').hasMatch(out),
-      isFalse,
-      reason: 'row 0 stays pinned while streaming — a whole-screen scroll '
-          'would push the prompt echo into the terminal scrollback (#761)',
-    );
+      expect(
+        RegExp(r'\x1b\[[0-9]*S').hasMatch(out),
+        isFalse,
+        reason:
+            'row 0 stays pinned while streaming — a whole-screen scroll '
+            'would push the prompt echo into the terminal scrollback (#761)',
+      );
 
-    // Replay what a terminal would have shown: the live screen converges to
-    // the streamed tail, and the native scrollback receives NO copy of the
-    // pinned prompt (pre-fix, one scrolled-off copy per frame).
-    final replay = _replay(out, rows: 80, cols: 80);
-    expect(replay.screen, contains('answer line 39'));
-    expect(replay.scrollback, isNot(contains('explain the scrollback bug')),
-        reason: 'the sticky echo must stay pinned, never scroll off');
-  });
+      // Replay what a terminal would have shown: the live screen converges to
+      // the streamed tail, and the native scrollback receives NO copy of the
+      // pinned prompt (pre-fix, one scrolled-off copy per frame).
+      final replay = _replay(out, rows: 80, cols: 80);
+      expect(replay.screen, contains('answer line 39'));
+      expect(
+        replay.scrollback,
+        isNot(contains('explain the scrollback bug')),
+        reason: 'the sticky echo must stay pinned, never scroll off',
+      );
+    });
   }
 
   // Wrap-turn dedupe (issue #917): the pin-vs-transcript decision used the
@@ -164,7 +178,9 @@ void main() {
       return (model, draft);
     }
 
-    List<String> rowsOf(FaTuiModel model) => model.view().content
+    List<String> rowsOf(FaTuiModel model) => model
+        .view()
+        .content
         .split('\n')
         .map((l) => l.replaceAll(ansi, ''))
         .toList();
@@ -181,8 +197,11 @@ void main() {
       // Fixture guard: never a duplicate through every state so far (the
       // pre-fix lost-echo transient - echo neither pinned nor painted -
       // is the sibling raw-offset artifact; the dup is what #917 pins).
-      expect(paintsOf(model), lessThanOrEqualTo(1),
-          reason: 'fixture: no duplicate while composing');
+      expect(
+        paintsOf(model),
+        lessThanOrEqualTo(1),
+        reason: 'fixture: no duplicate while composing',
+      );
 
       // The draft goes away (a backspace burst lands after the last output
       // event - the slow-PTY interleave): the input zone shrinks, the
@@ -192,8 +211,13 @@ void main() {
       for (var i = 0; i < draft.length; i++) {
         model = send(model, KeyPressMsg(const TeaKey(code: KeyCode.backspace)));
       }
-      expect(paintsOf(model), 1, reason: 'the turn row paints exactly once - '
-          'pinned OR in the transcript window, never both');
+      expect(
+        paintsOf(model),
+        1,
+        reason:
+            'the turn row paints exactly once - '
+            'pinned OR in the transcript window, never both',
+      );
     });
 
     // The DETACHED branch of the same dedupe (review round 1): after a
@@ -288,14 +312,20 @@ _Replay _replay(String bytes, {required int rows, required int cols}) {
       continue;
     }
     // SGR, mode sets, OSC 8 and any other escape run is layout-neutral.
-    final osc = RegExp(r'\x1b\][^\x07\x1b]*(\x07|\x1b\\)').matchAsPrefix(bytes, i);
+    final osc = RegExp(
+      r'\x1b\][^\x07\x1b]*(\x07|\x1b\\)',
+    ).matchAsPrefix(bytes, i);
     if (osc != null) {
       i = osc.end;
       continue;
     }
-    final esc = RegExp(r'\x1b(\[[0-9;?<>=]*[A-Za-z]|.)').matchAsPrefix(bytes, i);
+    final esc = RegExp(
+      r'\x1b(\[[0-9;?<>=]*[A-Za-z]|.)',
+    ).matchAsPrefix(bytes, i);
     i = esc?.end ?? i + 1;
   }
-  return _Replay(screen.map((row) => row.join().trimRight()).join('\n'),
-      scrollback.join('\n'));
+  return _Replay(
+    screen.map((row) => row.join().trimRight()).join('\n'),
+    scrollback.join('\n'),
+  );
 }

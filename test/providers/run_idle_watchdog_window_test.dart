@@ -21,18 +21,22 @@ const _plainModel = Model(
   maxTokens: 4096,
 );
 
-Model _model(String baseUrl, {Duration? idle, Duration? connect, String? label}) =>
-    Model(
-      id: 'm',
-      api: 'openai-completions',
-      provider: 'kimi',
-      baseUrl: baseUrl,
-      contextWindow: 100000,
-      maxTokens: 4096,
-      streamIdleTimeout: idle,
-      connectTimeout: connect,
-      timeoutScopeLabel: label,
-    );
+Model _model(
+  String baseUrl, {
+  Duration? idle,
+  Duration? connect,
+  String? label,
+}) => Model(
+  id: 'm',
+  api: 'openai-completions',
+  provider: 'kimi',
+  baseUrl: baseUrl,
+  contextWindow: 100000,
+  maxTokens: 4096,
+  streamIdleTimeout: idle,
+  connectTimeout: connect,
+  timeoutScopeLabel: label,
+);
 
 void main() {
   late ProviderTimeoutsOverride? savedGlobal;
@@ -196,9 +200,7 @@ void main() {
         baseUrl: 'https://llama.test/v1',
         connect: const Duration(seconds: 70),
       );
-      final resolved = explicitConnectForModel(
-        _model('https://llama.test/v1'),
-      );
+      final resolved = explicitConnectForModel(_model('https://llama.test/v1'));
       expect(resolved, isNotNull);
       expect(resolved!.$1, const Duration(seconds: 70));
       expect(resolved.$2, 'provider:llama-local');
@@ -326,10 +328,7 @@ void main() {
 
     test('sub-second windows render as milliseconds — a mis-keyed window '
         'is recognizable verbatim (AC4 names config values)', () {
-      expect(
-        formatProviderTimeout(const Duration(milliseconds: 150)),
-        '150ms',
-      );
+      expect(formatProviderTimeout(const Duration(milliseconds: 150)), '150ms');
       expect(
         describeRunIdleWindow(
           const Duration(milliseconds: 150),

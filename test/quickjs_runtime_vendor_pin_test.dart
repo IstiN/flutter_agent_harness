@@ -24,6 +24,7 @@
 import 'dart:io';
 
 import 'package:test/test.dart';
+
 const vendorDir = 'vendor/quickjs_runtime';
 const hookPath = '$vendorDir/hook/build.dart';
 const vendorPubspecPath = '$vendorDir/pubspec.yaml';
@@ -35,7 +36,11 @@ const appLockPath = 'flutter_app/pubspec.lock';
 String _topLevelBlock(String yaml, String key, {String reason = ''}) {
   final lines = yaml.split('\n');
   final start = lines.indexWhere((l) => l.trim() == '$key:');
-  expect(start, isNot(-1), reason: reason.isEmpty ? 'no `$key:` found' : reason);
+  expect(
+    start,
+    isNot(-1),
+    reason: reason.isEmpty ? 'no `$key:` found' : reason,
+  );
   final block = StringBuffer();
   for (var i = start + 1; i < lines.length; i++) {
     final line = lines[i];
@@ -106,39 +111,48 @@ void main() {
       expect(
         File(hookPath).existsSync(),
         isTrue,
-        reason: 'the Native Assets hook must stay present for '
+        reason:
+            'the Native Assets hook must stay present for '
             'iOS/macOS/Linux/Android (js_widget_runtime 0.4.180 prefers the '
             'QuickJS backend there)',
       );
     });
 
-    test('Android never links libpthread (NDK has no libpthread since r18)', () {
-      final code = _hookCode();
-      final androidArm = RegExp(
-        r"OS\.android\s*=>\s*const\s*\[([^\]]*)\]",
-      ).firstMatch(code);
-      expect(
-        androidArm,
-        isNotNull,
-        reason:
-            '$hookPath must link libraries via an explicit `OS.android =>` '
-            'switch arm so the pthread exclusion is greppable — upstream '
-            '0.4.2 links `-lpthread` unconditionally and the NDK link dies '
-            'with `ld.lld: error: unable to find library -lpthread`.',
-      );
-      expect(
-        androidArm!.group(1),
-        isNot(contains('pthread')),
-        reason:
-            'bionic ships pthread inside libc; there is no libpthread in '
-            'the Android NDK sysroot since r18 — `-lpthread` fails the link '
-            'for every ABI (Build Android APK CI leg).',
-      );
-      // Desktop Linux (glibc) still has a real libpthread — dropping it
-      // there would trade one red leg for another.
-      expect(code, contains("'pthread'"), reason: 'pthread must stay linked '
-          'on the non-Android VM platforms where it exists');
-    });
+    test(
+      'Android never links libpthread (NDK has no libpthread since r18)',
+      () {
+        final code = _hookCode();
+        final androidArm = RegExp(
+          r"OS\.android\s*=>\s*const\s*\[([^\]]*)\]",
+        ).firstMatch(code);
+        expect(
+          androidArm,
+          isNotNull,
+          reason:
+              '$hookPath must link libraries via an explicit `OS.android =>` '
+              'switch arm so the pthread exclusion is greppable — upstream '
+              '0.4.2 links `-lpthread` unconditionally and the NDK link dies '
+              'with `ld.lld: error: unable to find library -lpthread`.',
+        );
+        expect(
+          androidArm!.group(1),
+          isNot(contains('pthread')),
+          reason:
+              'bionic ships pthread inside libc; there is no libpthread in '
+              'the Android NDK sysroot since r18 — `-lpthread` fails the link '
+              'for every ABI (Build Android APK CI leg).',
+        );
+        // Desktop Linux (glibc) still has a real libpthread — dropping it
+        // there would trade one red leg for another.
+        expect(
+          code,
+          contains("'pthread'"),
+          reason:
+              'pthread must stay linked '
+              'on the non-Android VM platforms where it exists',
+        );
+      },
+    );
 
     test('Windows returns before the Native Assets CBuilder', () {
       final code = _hookCode();
@@ -158,12 +172,18 @@ void main() {
             'pre-0.4.0 Windows behavior.',
       );
       final builder = code.indexOf('CBuilder');
-      expect(builder, greaterThan(-1), reason: 'the CBuilder must remain for '
-          'iOS/Android/macOS/Linux');
+      expect(
+        builder,
+        greaterThan(-1),
+        reason:
+            'the CBuilder must remain for '
+            'iOS/Android/macOS/Linux',
+      );
       expect(
         guard!.start,
         lessThan(builder),
-        reason: 'the Windows early-return must sit before the CBuilder '
+        reason:
+            'the Windows early-return must sit before the CBuilder '
             'construction — anything after it never runs on Windows',
       );
     });
@@ -230,6 +250,7 @@ void main() {
         }
         return out.toString().replaceAll(RegExp(r'\s+'), ' ');
       }
+
       for (final (path, castForm, narrowForm) in casts) {
         final source = norm(File(path).readAsStringSync());
         expect(

@@ -31,8 +31,9 @@ void main() {
   // policy the regression to catch is exactly "one leg re-pinned to a
   // stale SHA or a random ref while the rest track main".
   final kicker = File('.github/workflows/sm-kicker.yml').readAsStringSync();
-  final mergeTrigger = File('.github/workflows/merge-trigger.yml')
-      .readAsStringSync();
+  final mergeTrigger = File(
+    '.github/workflows/merge-trigger.yml',
+  ).readAsStringSync();
 
   /// Every machine-loop stub -> the factory workflow it calls. New stubs
   /// MUST be added here: the lockstep, factory_ref-echo and per-callee

@@ -66,8 +66,10 @@ bool _regionBlockedIn(Iterable<Object?> events) => events.any(_isRegionBlock);
 
 void _noteRegionBlock() {
   // ignore: avoid_print
-  print('⏭️ upstream provider rejects this region (403 '
-      'unsupported_country_region_territory) — vacuous pass');
+  print(
+    '⏭️ upstream provider rejects this region (403 '
+    'unsupported_country_region_territory) — vacuous pass',
+  );
 }
 
 Future<String?> _resolveKey() async {
@@ -92,10 +94,7 @@ Future<void> main() async {
         final stream = streamOpenAICompletions(
           _model,
           Context(messages: [UserMessage.text('Say hello in three words.')]),
-          OpenAICompletionsOptions(
-            apiKey: key,
-            maxTokens: 64,
-          ),
+          OpenAICompletionsOptions(apiKey: key, maxTokens: 64),
         );
 
         final events = await stream.toList();

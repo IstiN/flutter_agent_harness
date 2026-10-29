@@ -72,9 +72,9 @@ ToolExecutionResult _renderSqliteSelector(
 ) {
   switch (selector) {
     case SqliteListSelector():
-      final tables = listSqliteTables(db)
-          .take(maxSqliteTableListEntries)
-          .toList();
+      final tables = listSqliteTables(
+        db,
+      ).take(maxSqliteTableListEntries).toList();
       return ToolExecutionResult.text(renderSqliteTableList(tables));
     case SqliteSchemaSelector(:final table, :final sampleLimit):
       return _readSqliteSchema(db, table, sampleLimit);

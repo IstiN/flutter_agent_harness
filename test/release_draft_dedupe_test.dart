@@ -194,98 +194,107 @@ exit 0
 
 void main() {
   group('release_draft_dedupe.sh — reclaims own-run twin drafts', () {
-    test('two own-run twin drafts of the published tag are deleted by id; nothing else is touched', () {
-      final run = runDedupe(
-        'twins',
-        releasesJsonText: releasesJson([
-          release(id: 1, tag: 'v1.2.3'), // the published release
-          release(
-            id: 2,
-            tag: 'v1.2.3',
-            draft: true,
-            owner: 'run/111/job/binaries-linux-arm64',
-          ),
-          release(
-            id: 3,
-            tag: 'v1.2.3',
-            draft: true,
-            owner: 'run/111/job/binaries-macos-arm64',
-          ),
-          release(id: 4, tag: 'v9.9.9', draft: true, owner: 'run/111/job/x'),
-        ]),
-      );
-      expect(run.exitCode, 0, reason: run.out);
-      expect(
-        run.log,
-        contains('api -X DELETE repos/OWNER/REPO/releases/2'),
-        reason: 'the first own-run twin must be deleted',
-      );
-      expect(
-        run.log,
-        contains('api -X DELETE repos/OWNER/REPO/releases/3'),
-        reason: 'the second own-run twin must be deleted too (2+ items)',
-      );
-      expect(
-        run.log.where((l) => l.contains('-X DELETE')),
-        hasLength(2),
-        reason:
-            'exactly the two twins — the published release and the '
-            'other tag\'s draft must survive',
-      );
-      expect(run.out, contains('gh-1899'));
-    });
+    test(
+      'two own-run twin drafts of the published tag are deleted by id; nothing else is touched',
+      () {
+        final run = runDedupe(
+          'twins',
+          releasesJsonText: releasesJson([
+            release(id: 1, tag: 'v1.2.3'), // the published release
+            release(
+              id: 2,
+              tag: 'v1.2.3',
+              draft: true,
+              owner: 'run/111/job/binaries-linux-arm64',
+            ),
+            release(
+              id: 3,
+              tag: 'v1.2.3',
+              draft: true,
+              owner: 'run/111/job/binaries-macos-arm64',
+            ),
+            release(id: 4, tag: 'v9.9.9', draft: true, owner: 'run/111/job/x'),
+          ]),
+        );
+        expect(run.exitCode, 0, reason: run.out);
+        expect(
+          run.log,
+          contains('api -X DELETE repos/OWNER/REPO/releases/2'),
+          reason: 'the first own-run twin must be deleted',
+        );
+        expect(
+          run.log,
+          contains('api -X DELETE repos/OWNER/REPO/releases/3'),
+          reason: 'the second own-run twin must be deleted too (2+ items)',
+        );
+        expect(
+          run.log.where((l) => l.contains('-X DELETE')),
+          hasLength(2),
+          reason:
+              'exactly the two twins — the published release and the '
+              'other tag\'s draft must survive',
+        );
+        expect(run.out, contains('gh-1899'));
+      },
+    );
 
-    test('foreign-run and unmarked drafts are never deleted (ownership discipline)', () {
-      final run = runDedupe(
-        'foreign',
-        releasesJsonText: releasesJson([
-          release(id: 1, tag: 'v1.2.3'),
-          release(
-            id: 2,
-            tag: 'v1.2.3',
-            draft: true,
-            owner: 'run/999/job/binaries-linux-arm64',
-          ),
-          release(id: 3, tag: 'v1.2.3', draft: true),
-        ]),
-      );
-      expect(run.exitCode, 0, reason: run.out);
-      expect(
-        run.log.where((l) => l.contains('-X DELETE')),
-        isEmpty,
-        reason:
-            'a sibling run\'s mid-upload draft and an unmarked legacy '
-            'draft are left for the 24h sweeper — the exact rule '
-            'release_draft_guard.sh enforces',
-      );
-    });
+    test(
+      'foreign-run and unmarked drafts are never deleted (ownership discipline)',
+      () {
+        final run = runDedupe(
+          'foreign',
+          releasesJsonText: releasesJson([
+            release(id: 1, tag: 'v1.2.3'),
+            release(
+              id: 2,
+              tag: 'v1.2.3',
+              draft: true,
+              owner: 'run/999/job/binaries-linux-arm64',
+            ),
+            release(id: 3, tag: 'v1.2.3', draft: true),
+          ]),
+        );
+        expect(run.exitCode, 0, reason: run.out);
+        expect(
+          run.log.where((l) => l.contains('-X DELETE')),
+          isEmpty,
+          reason:
+              'a sibling run\'s mid-upload draft and an unmarked legacy '
+              'draft are left for the 24h sweeper — the exact rule '
+              'release_draft_guard.sh enforces',
+        );
+      },
+    );
 
-    test('no published release for the tag → nothing deleted (recovery window stays open)', () {
-      // A red provenance (e.g. the gh-1832 gate) leaves the draft on
-      // purpose so `gh run rerun --failed` can recover it — the dedupe
-      // guard must NOT take that draft away just because it carries
-      // this run's marker.
-      final run = runDedupe(
-        'unpublished',
-        releasesJsonText: releasesJson([
-          release(
-            id: 2,
-            tag: 'v1.2.3',
-            draft: true,
-            owner: 'run/111/job/binaries-linux-arm64',
-          ),
-        ]),
-      );
-      expect(run.exitCode, 0, reason: run.out);
-      expect(
-        run.log.where((l) => l.contains('-X DELETE')),
-        isEmpty,
-        reason:
-            'post-publish guard: without a published release the draft '
-            'is the recovery vessel, never sweep food',
-      );
-      expect(run.out, contains('no published release'));
-    });
+    test(
+      'no published release for the tag → nothing deleted (recovery window stays open)',
+      () {
+        // A red provenance (e.g. the gh-1832 gate) leaves the draft on
+        // purpose so `gh run rerun --failed` can recover it — the dedupe
+        // guard must NOT take that draft away just because it carries
+        // this run's marker.
+        final run = runDedupe(
+          'unpublished',
+          releasesJsonText: releasesJson([
+            release(
+              id: 2,
+              tag: 'v1.2.3',
+              draft: true,
+              owner: 'run/111/job/binaries-linux-arm64',
+            ),
+          ]),
+        );
+        expect(run.exitCode, 0, reason: run.out);
+        expect(
+          run.log.where((l) => l.contains('-X DELETE')),
+          isEmpty,
+          reason:
+              'post-publish guard: without a published release the draft '
+              'is the recovery vessel, never sweep food',
+        );
+        expect(run.out, contains('no published release'));
+      },
+    );
 
     test('no drafts at all → clean no-op', () {
       final run = runDedupe(
@@ -382,27 +391,30 @@ void main() {
       );
     });
 
-    test('release_attach_or_create.sh reclaims twins after its servable-recovery flip', () {
-      final script = read('scripts/release_attach_or_create.sh');
-      final flip = script.indexOf(
-        'gh release edit "\$tag" --draft=false --latest',
-      );
-      expect(flip, isNot(-1), reason: 'the recovery flip must exist');
-      final dedupe = script.indexOf('release_draft_dedupe.sh');
-      expect(
-        dedupe,
-        isNot(-1),
-        reason:
-            'the daily legs\' servable-recovery publish must reclaim '
-            'twin drafts too — the race is in the shared lazy create, '
-            'not the train only',
-      );
-      expect(
-        dedupe,
-        greaterThan(flip),
-        reason: 'dedupe only after the publish flip',
-      );
-    });
+    test(
+      'release_attach_or_create.sh reclaims twins after its servable-recovery flip',
+      () {
+        final script = read('scripts/release_attach_or_create.sh');
+        final flip = script.indexOf(
+          'gh release edit "\$tag" --draft=false --latest',
+        );
+        expect(flip, isNot(-1), reason: 'the recovery flip must exist');
+        final dedupe = script.indexOf('release_draft_dedupe.sh');
+        expect(
+          dedupe,
+          isNot(-1),
+          reason:
+              'the daily legs\' servable-recovery publish must reclaim '
+              'twin drafts too — the race is in the shared lazy create, '
+              'not the train only',
+        );
+        expect(
+          dedupe,
+          greaterThan(flip),
+          reason: 'dedupe only after the publish flip',
+        );
+      },
+    );
 
     test('draft lifecycle roster: guard (failure) + dedupe (post-publish)', () {
       // The two halves of the issue #282 invariant, next to each other:
@@ -428,101 +440,112 @@ void main() {
   group(
     'best-effort failure mode — a dedupe blip never reds a published release',
     () {
-      test('failing DELETE after a successful flip keeps the attach leg green with a ::warning:: (review thread 1)', () {
-        // RED-first pin for the review finding: upload_all runs under
-        // `set -euo pipefail`, so a cleanup-only API failure AFTER the
-        // publish flip used to propagate as a red leg for a release that
-        // is published and servable. Best-effort: warn, stay green — the
-        // 24h sweeper remains the backstop.
-        final run = runAttachServable(
-          'dedupe-fails',
-          releasesJsonText: releasesJson([
-            release(id: 1, tag: 'v1.2.3'),
-            release(
-              id: 2,
-              tag: 'v1.2.3',
-              draft: true,
-              owner: 'run/111/job/binaries-macos-arm64',
+      test(
+        'failing DELETE after a successful flip keeps the attach leg green with a ::warning:: (review thread 1)',
+        () {
+          // RED-first pin for the review finding: upload_all runs under
+          // `set -euo pipefail`, so a cleanup-only API failure AFTER the
+          // publish flip used to propagate as a red leg for a release that
+          // is published and servable. Best-effort: warn, stay green — the
+          // 24h sweeper remains the backstop.
+          final run = runAttachServable(
+            'dedupe-fails',
+            releasesJsonText: releasesJson([
+              release(id: 1, tag: 'v1.2.3'),
+              release(
+                id: 2,
+                tag: 'v1.2.3',
+                draft: true,
+                owner: 'run/111/job/binaries-macos-arm64',
+              ),
+            ]),
+            dedupeDeleteFails: true,
+          );
+          expect(
+            run.exitCode,
+            0,
+            reason:
+                'the flip already succeeded — the release is published and '
+                'servable; a transient DELETE failure is notification noise, '
+                'not a leg failure (gh-1899 review, IMPORTANT)',
+          );
+          expect(
+            run.out,
+            contains('::warning::'),
+            reason: 'the swallowed failure must still surface as a warning',
+          );
+          expect(
+            run.log,
+            contains(
+              'release edit v1.2.3 --draft=false --latest --repo OWNER/REPO',
             ),
-          ]),
-          dedupeDeleteFails: true,
-        );
-        expect(
-          run.exitCode,
-          0,
-          reason:
-              'the flip already succeeded — the release is published and '
-              'servable; a transient DELETE failure is notification noise, '
-              'not a leg failure (gh-1899 review, IMPORTANT)',
-        );
-        expect(
-          run.out,
-          contains('::warning::'),
-          reason: 'the swallowed failure must still surface as a warning',
-        );
-        expect(
-          run.log,
-          contains(
-            'release edit v1.2.3 --draft=false --latest --repo OWNER/REPO',
-          ),
-          reason: 'the publish flip ran BEFORE the failing dedupe',
-        );
-        expect(
-          run.log,
-          contains('api -X DELETE repos/OWNER/REPO/releases/2'),
-          reason: 'the dedupe really attempted the twin delete',
-        );
-      });
+            reason: 'the publish flip ran BEFORE the failing dedupe',
+          );
+          expect(
+            run.log,
+            contains('api -X DELETE repos/OWNER/REPO/releases/2'),
+            reason: 'the dedupe really attempted the twin delete',
+          );
+        },
+      );
 
-      test('wiring lints: BOTH dedupe call sites are best-effort (review threads 1 + 2)', () {
-        // release_attach_or_create.sh — the call must be guarded with
-        // `|| echo "::warning::…"` so `set -euo pipefail` cannot turn a
-        // cleanup blip into a red leg after the flip.
-        final attachLines = read('scripts/release_attach_or_create.sh')
-            .split('\n');
-        final attachIdx = attachLines.indexWhere(
-          (l) => l.contains('release_draft_dedupe.sh'),
-        );
-        expect(attachIdx, isNot(-1), reason: 'the dedupe call site must exist');
-        final attachCall = attachLines
-            .sublist(attachIdx, attachIdx + 2)
-            .join('\n');
-        expect(
-          attachCall,
-          contains('||'),
-          reason:
-              'best-effort guard: the call must not propagate its exit '
-              'code into the `set -euo pipefail` upload_all',
-        );
-        expect(
-          attachCall,
-          contains('::warning::'),
-          reason: 'the swallowed failure must surface as an Actions warning',
-        );
-        expect(
-          attachCall,
-          contains('gh-1899'),
-          reason: 'the warning must be traceable to this guard',
-        );
+      test(
+        'wiring lints: BOTH dedupe call sites are best-effort (review threads 1 + 2)',
+        () {
+          // release_attach_or_create.sh — the call must be guarded with
+          // `|| echo "::warning::…"` so `set -euo pipefail` cannot turn a
+          // cleanup blip into a red leg after the flip.
+          final attachLines = read(
+            'scripts/release_attach_or_create.sh',
+          ).split('\n');
+          final attachIdx = attachLines.indexWhere(
+            (l) => l.contains('release_draft_dedupe.sh'),
+          );
+          expect(
+            attachIdx,
+            isNot(-1),
+            reason: 'the dedupe call site must exist',
+          );
+          final attachCall = attachLines
+              .sublist(attachIdx, attachIdx + 2)
+              .join('\n');
+          expect(
+            attachCall,
+            contains('||'),
+            reason:
+                'best-effort guard: the call must not propagate its exit '
+                'code into the `set -euo pipefail` upload_all',
+          );
+          expect(
+            attachCall,
+            contains('::warning::'),
+            reason: 'the swallowed failure must surface as an Actions warning',
+          );
+          expect(
+            attachCall,
+            contains('gh-1899'),
+            reason: 'the warning must be traceable to this guard',
+          );
 
-        // ci.yml release-provenance — same best-effort contract at the
-        // provenance call site: a red dedupe there would skip
-        // release-asset-smoke (it gates on the provenance result) for a
-        // release that is actually fine.
-        final ciLines = read('.github/workflows/ci.yml').split('\n');
-        final ciIdx = ciLines.indexWhere(
-          (l) => l.contains('release_draft_dedupe.sh'),
-        );
-        expect(ciIdx, isNot(-1), reason: 'the dedupe step must exist');
-        expect(
-          ciLines[ciIdx],
-          contains('|| echo "::warning::'),
-          reason:
-              'best-effort at the provenance call site too — a cleanup '
-              'blip after the flip must not fail the job and silently '
-              'skip release-asset-smoke',
-        );
-      });
+          // ci.yml release-provenance — same best-effort contract at the
+          // provenance call site: a red dedupe there would skip
+          // release-asset-smoke (it gates on the provenance result) for a
+          // release that is actually fine.
+          final ciLines = read('.github/workflows/ci.yml').split('\n');
+          final ciIdx = ciLines.indexWhere(
+            (l) => l.contains('release_draft_dedupe.sh'),
+          );
+          expect(ciIdx, isNot(-1), reason: 'the dedupe step must exist');
+          expect(
+            ciLines[ciIdx],
+            contains('|| echo "::warning::'),
+            reason:
+                'best-effort at the provenance call site too — a cleanup '
+                'blip after the flip must not fail the job and silently '
+                'skip release-asset-smoke',
+          );
+        },
+      );
     },
   );
 }

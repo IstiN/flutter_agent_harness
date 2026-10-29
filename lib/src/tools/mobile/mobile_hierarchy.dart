@@ -41,7 +41,8 @@ MobileElementIndex parseMobileHierarchy(
 
   for (final match in nodeTag.allMatches(xml)) {
     final attrs = <String, String>{
-      for (final a in attr.allMatches(match.group(1)!)) a.group(1)!: a.group(2)!,
+      for (final a in attr.allMatches(match.group(1)!))
+        a.group(1)!: a.group(2)!,
     };
 
     final pkg = _unescape(attrs['package'] ?? '');
@@ -162,14 +163,13 @@ String? _visibleText(String text, {required bool password}) {
 }
 
 /// Decodes the five XML predefined entities the serializer emits.
-String _unescape(String raw) => raw
-    .replaceAllMapped(
-      RegExp(r'&(amp|lt|gt|quot|apos);'),
-      (m) => switch (m.group(1)) {
-        'lt' => '<',
-        'gt' => '>',
-        'quot' => '"',
-        'apos' => "'",
-        _ => '&',
-      },
-    );
+String _unescape(String raw) => raw.replaceAllMapped(
+  RegExp(r'&(amp|lt|gt|quot|apos);'),
+  (m) => switch (m.group(1)) {
+    'lt' => '<',
+    'gt' => '>',
+    'quot' => '"',
+    'apos' => "'",
+    _ => '&',
+  },
+);

@@ -183,43 +183,37 @@ void main() {
         const Duration(milliseconds: 40),
       );
     });
-    test(
-      'a due steer keeps the instant wake — the crossing fires right '
-      'after the round, on cadence',
-      () {
-        expect(
-          headlessDrainRoundSleep(
-            wake: Duration.zero,
-            steerDue: true,
-            remainingCeiling: const Duration(milliseconds: 60),
-          ),
-          Duration.zero,
-        );
-      },
-    );
-    test(
-      'a non-positive wake with nothing to consume sleeps the remaining '
-      'ceiling — never a spin that beats the wall budget to the round cap '
-      '(run 38120494810)',
-      () {
-        expect(
-          headlessDrainRoundSleep(
-            wake: Duration.zero,
-            steerDue: false,
-            remainingCeiling: const Duration(milliseconds: 60),
-          ),
-          const Duration(milliseconds: 60),
-        );
-        expect(
-          headlessDrainRoundSleep(
-            wake: const Duration(milliseconds: -1),
-            steerDue: false,
-            remainingCeiling: const Duration(seconds: 3),
-          ),
-          const Duration(seconds: 3),
-        );
-      },
-    );
+    test('a due steer keeps the instant wake — the crossing fires right '
+        'after the round, on cadence', () {
+      expect(
+        headlessDrainRoundSleep(
+          wake: Duration.zero,
+          steerDue: true,
+          remainingCeiling: const Duration(milliseconds: 60),
+        ),
+        Duration.zero,
+      );
+    });
+    test('a non-positive wake with nothing to consume sleeps the remaining '
+        'ceiling — never a spin that beats the wall budget to the round cap '
+        '(run 38120494810)', () {
+      expect(
+        headlessDrainRoundSleep(
+          wake: Duration.zero,
+          steerDue: false,
+          remainingCeiling: const Duration(milliseconds: 60),
+        ),
+        const Duration(milliseconds: 60),
+      );
+      expect(
+        headlessDrainRoundSleep(
+          wake: const Duration(milliseconds: -1),
+          steerDue: false,
+          remainingCeiling: const Duration(seconds: 3),
+        ),
+        const Duration(seconds: 3),
+      );
+    });
   });
 
   group(

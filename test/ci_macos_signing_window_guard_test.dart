@@ -81,16 +81,22 @@ void main() {
     final fastfile = read('flutter_app/fastlane/Fastfile');
     final unlockIdx = fastfile.indexOf('sh(ci_sign, "unlock")');
     final gymIdx = fastfile.indexOf('build_app(');
-    expect(unlockIdx, greaterThanOrEqualTo(0),
-        reason:
-            'the Fastfile must unlock the persistent signing keychain via '
-            'ci-sign — hours can pass between the workflow\'s provision '
-            'step and the archive, and point-of-use unlock is immune to '
-            'any gap length (the retired gh-1798 window hack was not)');
-    expect(gymIdx, greaterThan(unlockIdx),
-        reason:
-            'the `ci-sign unlock` call must precede the archive '
-            '(build_app) in the Fastfile — an unlock after the archive '
-            'protects nothing');
+    expect(
+      unlockIdx,
+      greaterThanOrEqualTo(0),
+      reason:
+          'the Fastfile must unlock the persistent signing keychain via '
+          'ci-sign — hours can pass between the workflow\'s provision '
+          'step and the archive, and point-of-use unlock is immune to '
+          'any gap length (the retired gh-1798 window hack was not)',
+    );
+    expect(
+      gymIdx,
+      greaterThan(unlockIdx),
+      reason:
+          'the `ci-sign unlock` call must precede the archive '
+          '(build_app) in the Fastfile — an unlock after the archive '
+          'protects nothing',
+    );
   });
 }

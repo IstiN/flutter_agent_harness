@@ -63,7 +63,8 @@ void writeNwbgy7aFixture(String dir) {
 /// The IT layer's turn-1 bash command: the scripted agent produces the
 /// same fixture in its current directory (run it from the app directory —
 /// `mkdir -p app && cd app &&` — to mirror the trial).
-String nwbgy7aProduceCommand() => '$nwbgy7aStationsCsvPrint && '
+String nwbgy7aProduceCommand() =>
+    '$nwbgy7aStationsCsvPrint && '
     '$nwbgy7aStationsCsvStalePrint && '
     "cat > mean.sh <<'EOF'\n$nwbgy7aMeanSh"
     'EOF';

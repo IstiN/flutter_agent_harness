@@ -73,7 +73,10 @@ void main() {
       expect(initiate.expiresIn, 900);
       expect(bodies, hasLength(1));
       expect(bodies.single['provider'], 'google');
-      expect(bodies.single['client_redirect_uri'], 'http://127.0.0.1:4919/callback');
+      expect(
+        bodies.single['client_redirect_uri'],
+        'http://127.0.0.1:4919/callback',
+      );
       expect(bodies.single['client_type'], 'desktop');
       expect(bodies.single['environment'], 'prod');
     });
@@ -140,7 +143,11 @@ void main() {
       await expectLater(
         exchangeAiinOAuthCode(code: 'c', state: 's', client: client),
         throwsA(
-          isA<AiinAuthException>().having((e) => e.code, 'code', 'invalid_grant'),
+          isA<AiinAuthException>().having(
+            (e) => e.code,
+            'code',
+            'invalid_grant',
+          ),
         ),
       );
     });
@@ -163,10 +170,7 @@ void main() {
           headers: {'content-type': 'application/json'},
         );
       });
-      final key = await createAiinApiKey(
-        accessToken: 'acc',
-        client: client,
-      );
+      final key = await createAiinApiKey(accessToken: 'acc', client: client);
       expect(key.raw, 'sk-aiin-deadbeefdeadbeefdeadbeefdeadbeef');
       expect(key.id, 'key-1');
       expect(key.prefix, 'sk-aiin-abcd');
@@ -216,7 +220,10 @@ void main() {
     test('matches the API and auth hosts only at their domains', () {
       expect(isAiinBaseUrl('https://api.aiin.by/v1'), isTrue);
       expect(isAiinBaseUrl('https://api.aiin.by'), isTrue);
-      expect(isAiinBaseUrl('https://auth.aiin.by/api/oauth-proxy/providers'), isTrue);
+      expect(
+        isAiinBaseUrl('https://auth.aiin.by/api/oauth-proxy/providers'),
+        isTrue,
+      );
       expect(isAiinBaseUrl('https://evil.example/u?x=api.aiin.by'), isFalse);
       expect(isAiinBaseUrl('https://api.aiin.by.evil.example/v1'), isFalse);
       expect(isAiinBaseUrl('https://openrouter.ai/api/v1'), isFalse);
@@ -225,7 +232,9 @@ void main() {
 
   group('error mapping', () {
     test('non-JSON error bodies still produce an AiinAuthException', () async {
-      final client = _client((_) async => http.Response('gateway timeout', 504));
+      final client = _client(
+        (_) async => http.Response('gateway timeout', 504),
+      );
       await expectLater(
         fetchAiinOAuthProviders(client: client),
         throwsA(

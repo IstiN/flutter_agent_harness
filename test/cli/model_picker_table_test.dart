@@ -39,27 +39,42 @@ void main() {
 
     test('sorts by recency, then cheaper total price, unpriced last', () {
       final items = buildModelPickerTable([
-        row(modelId: 'pricey', recency: 1, cost: const (input: 1.0, output: 2.0)),
+        row(
+          modelId: 'pricey',
+          recency: 1,
+          cost: const (input: 1.0, output: 2.0),
+        ),
         row(modelId: 'unpriced', recency: 1, cost: null),
-        row(modelId: 'newest', recency: 0, cost: const (input: 9.9, output: 0.0)),
-        row(modelId: 'cheap', recency: 1, cost: const (input: 0.1, output: 0.2)),
+        row(
+          modelId: 'newest',
+          recency: 0,
+          cost: const (input: 9.9, output: 0.0),
+        ),
+        row(
+          modelId: 'cheap',
+          recency: 1,
+          cost: const (input: 0.1, output: 0.2),
+        ),
       ], 200);
       expect(
         [for (final item in items) item.key],
-        ['catalog|newest', 'catalog|cheap', 'catalog|pricey', 'catalog|unpriced'],
+        [
+          'catalog|newest',
+          'catalog|cheap',
+          'catalog|pricey',
+          'catalog|unpriced',
+        ],
       );
     });
 
     test('marks the current model with ●', () {
-      final items = buildModelPickerTable(
-        [row(modelId: 'm', isCurrent: true)],
-        100,
-      );
+      final items = buildModelPickerTable([
+        row(modelId: 'm', isCurrent: true),
+      ], 100);
       expect(items.single.label, startsWith('● '));
     });
 
-    test('narrow terminals elide cost first, then provider; id + ctx stay',
-        () {
+    test('narrow terminals elide cost first, then provider; id + ctx stay', () {
       final rows = [
         row(
           modelId: 'model-one',
@@ -92,10 +107,9 @@ void main() {
     });
 
     test('E3: missing pricing renders — never 0.00', () {
-      final items = buildModelPickerTable(
-        [row(cost: null, contextWindow: 128000)],
-        100,
-      );
+      final items = buildModelPickerTable([
+        row(cost: null, contextWindow: 128000),
+      ], 100);
       expect(items.single.description, contains('—'));
       expect(items.single.description, isNot(contains('0.00')));
     });

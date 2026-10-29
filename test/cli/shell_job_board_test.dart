@@ -234,13 +234,19 @@ void main() {
   group('gh-1446 jobs-line contract (pure)', () {
     test('the three state cells of the capability table', () {
       // R > 0, L = 0.
-      expect(shellJobLiveSummaryLine(running: 2, lost: 0),
-          '◐ Background jobs (2)');
+      expect(
+        shellJobLiveSummaryLine(running: 2, lost: 0),
+        '◐ Background jobs (2)',
+      );
       // L > 0, any R including 0.
-      expect(shellJobLiveSummaryLine(running: 1, lost: 16),
-          '◐ Background jobs (1) · 16 lost');
-      expect(shellJobLiveSummaryLine(running: 0, lost: 16),
-          '◐ Background jobs (0) · 16 lost');
+      expect(
+        shellJobLiveSummaryLine(running: 1, lost: 16),
+        '◐ Background jobs (1) · 16 lost',
+      );
+      expect(
+        shellJobLiveSummaryLine(running: 0, lost: 16),
+        '◐ Background jobs (0) · 16 lost',
+      );
       // R == 0 && L == 0 → absent.
       expect(shellJobLiveSummaryLine(running: 0, lost: 0), isNull);
       // The forbidden chrome substrings never appear.
@@ -379,7 +385,9 @@ void main() {
 
     test('liveLines collapses multiline commands into a single line', () {
       final board = ShellJobBoard();
-      board.start(_card('sh-1', command: 'python3 -c "\nimport os\nprint(1)\n"'));
+      board.start(
+        _card('sh-1', command: 'python3 -c "\nimport os\nprint(1)\n"'),
+      );
       final live = board.liveLines();
       expect(live, hasLength(1));
       expect(live.single, isNot(contains('\n')));
@@ -626,8 +634,7 @@ void main() {
 
     test('preview: first line + ellipsis for multi-line, unchanged for '
         'single-line', () {
-      expect(shellJobCommandPreview(heredoc),
-          "cat > /tmp/i572.md << 'EOF'…");
+      expect(shellJobCommandPreview(heredoc), "cat > /tmp/i572.md << 'EOF'…");
       expect(shellJobCommandPreview('tail -f app.log'), 'tail -f app.log');
       // E1: a heredoc whose EOF never appears still previews one line —
       // there is no body parsing to fail.
@@ -660,12 +667,16 @@ void main() {
         isNot(contains('heredoc body line')),
         reason: 'no heredoc body line may render',
       );
-      expect(lines.join('\n'), isNot(contains('EOF\n')), reason: 'the '
-          'terminator is part of the overflow count, not a rendered row');
+      expect(
+        lines.join('\n'),
+        isNot(contains('EOF\n')),
+        reason:
+            'the '
+            'terminator is part of the overflow count, not a rendered row',
+      );
     });
 
-    test('AC2: a 500-line label (captured output shape) caps the card too',
-        () {
+    test('AC2: a 500-line label (captured output shape) caps the card too', () {
       final outputish = [
         for (var i = 1; i <= 500; i++) 'output row $i',
       ].join('\n');
@@ -694,13 +705,15 @@ void main() {
       expect(lines.join('\n'), isNot(contains('more — bash_job output')));
     });
 
-    test('the live row keeps one physical line for a multi-line command',
-        () {
+    test('the live row keeps one physical line for a multi-line command', () {
       final board = ShellJobBoard()..start(_card('sh-2', command: heredoc));
       final live = board.liveLines();
       expect(live, hasLength(1));
-      expect(live.single.contains('\n'), isFalse,
-          reason: 'an embedded newline would tear the reserved live row');
+      expect(
+        live.single.contains('\n'),
+        isFalse,
+        reason: 'an embedded newline would tear the reserved live row',
+      );
       expect(live.single, contains("cat > /tmp/i572.md << 'EOF'"));
       expect(live.single, isNot(contains('heredoc body line')));
     });
@@ -710,7 +723,8 @@ void main() {
       // 200-char single-line command: the FULL preview survives liveLines
       // (the TUI frame clips at the live width, recomputed on resize);
       // only the width clip may shorten it, never a char-count stub.
-      final long = 'python3 -c "print(${List.filled(30, 1).join("+")})" '
+      final long =
+          'python3 -c "print(${List.filled(30, 1).join("+")})" '
           '// padding-padding-padding-padding-padding-padding-padding';
       final board = ShellJobBoard()..start(_card('sh-wide', command: long));
       final live = board.liveLines();

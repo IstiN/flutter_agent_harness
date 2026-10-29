@@ -25,11 +25,10 @@ void main() {
     const conformanceEntry = 'test/conformance.test.mjs';
     final Process process;
     try {
-      process = await Process.start(
-        'node',
-        ['--test', conformanceEntry],
-        workingDirectory: 'sdk/web',
-      );
+      process = await Process.start('node', [
+        '--test',
+        conformanceEntry,
+      ], workingDirectory: 'sdk/web');
     } on ProcessException catch (error) {
       fail('node is required for the sdk/web conformance suite: $error');
     }
@@ -53,10 +52,6 @@ void main() {
     }
     final out = await stdoutFuture;
     final err = await stderrFuture;
-    expect(
-      exitCode,
-      0,
-      reason: 'sdk/web conformance failed:\n$out\n$err',
-    );
+    expect(exitCode, 0, reason: 'sdk/web conformance failed:\n$out\n$err');
   });
 }

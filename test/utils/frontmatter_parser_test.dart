@@ -13,13 +13,11 @@ void main() {
     });
 
     test('parses the fenced block and trims values', () {
-      const text = '---\nname: security-review\nreadOnly: true\n'
+      const text =
+          '---\nname: security-review\nreadOnly: true\n'
           '---\nYou are a security reviewer.\n';
       final (frontmatter, body) = parseFrontmatter(text);
-      expect(frontmatter, {
-        'name': 'security-review',
-        'readOnly': 'true',
-      });
+      expect(frontmatter, {'name': 'security-review', 'readOnly': 'true'});
       expect(body, 'You are a security reviewer.\n');
     });
 
@@ -39,7 +37,8 @@ void main() {
     });
 
     test('typed variant preserves lists, booleans, and nested maps', () {
-      const text = '---\ntools: [read, grep]\nreadOnly: true\n'
+      const text =
+          '---\ntools: [read, grep]\nreadOnly: true\n'
           'meta:\n  owner: qa\n---\nbody text';
       final (frontmatter, body) = parseFrontmatterTyped(text);
       expect(frontmatter['tools'], ['read', 'grep']);
@@ -58,8 +57,7 @@ void main() {
       expect(frontmatterWellFormed('---\nname: x\n---\nbody'), isTrue);
     });
 
-    test('an opened fence that is never closed is malformed (torn write)',
-        () {
+    test('an opened fence that is never closed is malformed (torn write)', () {
       expect(frontmatterWellFormed('---\nname: x\n'), isFalse);
     });
 
@@ -67,8 +65,7 @@ void main() {
       expect(frontmatterWellFormed('---\n\ta: b\n---\nbody'), isFalse);
     });
 
-    test('a yaml list fence is malformed (no map to read metadata from)',
-        () {
+    test('a yaml list fence is malformed (no map to read metadata from)', () {
       expect(frontmatterWellFormed('---\n- a\n- b\n---\nbody'), isFalse);
     });
 

@@ -24,7 +24,10 @@ void main() {
     });
 
     test('trims surrounding whitespace', () {
-      expect(jobLogDirOverride(const {'FAH_JOB_LOG_DIR': ' /tmp/x '}), '/tmp/x');
+      expect(
+        jobLogDirOverride(const {'FAH_JOB_LOG_DIR': ' /tmp/x '}),
+        '/tmp/x',
+      );
     });
 
     test('null when unset or blank', () {

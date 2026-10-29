@@ -113,12 +113,7 @@ void main() {
       addTearDown(() => stateFile.parent.delete(recursive: true));
       var served = false;
       final code = await hubServe(
-        (
-          port: 0,
-          flagSecret: null,
-          flagBind: 'lan',
-          relayAllowAnyHost: false,
-        ),
+        (port: 0, flagSecret: null, flagBind: 'lan', relayAllowAnyHost: false),
         stateFile: stateFile,
         pidFile: File('${stateFile.parent.path}/hub.pid'),
         serveLoop: (hub, _) async => served = true,

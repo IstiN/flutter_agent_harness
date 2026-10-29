@@ -316,34 +316,38 @@ void main() {
       });
     });
 
-    test('startShellJob with no secrets passes options through untouched',
-        () async {
-      final shell = _RecordingShell();
-      final env = SecretsExecutionEnv(
-        MemoryExecutionEnv(cwd: '/', shell: shell),
-        const {},
-      );
-      final options = ShellExecOptions(env: const {'OTHER': '1'});
-      await env.startShellJob(
-        'x',
-        id: 'sh-x',
-        logPath: '.fah/bash_jobs/sh-x.log',
-        options: options,
-      );
-      // No merge happened: the exact instance went through.
-      expect(identical(shell.lastBgOptions, options), isTrue);
-    });
+    test(
+      'startShellJob with no secrets passes options through untouched',
+      () async {
+        final shell = _RecordingShell();
+        final env = SecretsExecutionEnv(
+          MemoryExecutionEnv(cwd: '/', shell: shell),
+          const {},
+        );
+        final options = ShellExecOptions(env: const {'OTHER': '1'});
+        await env.startShellJob(
+          'x',
+          id: 'sh-x',
+          logPath: '.fah/bash_jobs/sh-x.log',
+          options: options,
+        );
+        // No merge happened: the exact instance went through.
+        expect(identical(shell.lastBgOptions, options), isTrue);
+      },
+    );
 
-    test('startShellJob injects registered names for roster-only envs',
-        () async {
-      final shell = _RecordingShell();
-      final env = SecretsExecutionEnv(
-        MemoryExecutionEnv(cwd: '/', shell: shell),
-        const {},
-      )..registerSecretNames(const ['VAULT_TOKEN']);
-      await env.startShellJob('x', id: 'sh-x', logPath: '.fah/x.log');
-      expect(shell.lastBgOptions!.env, {secretPresenceEnvVar: 'VAULT_TOKEN'});
-    });
+    test(
+      'startShellJob injects registered names for roster-only envs',
+      () async {
+        final shell = _RecordingShell();
+        final env = SecretsExecutionEnv(
+          MemoryExecutionEnv(cwd: '/', shell: shell),
+          const {},
+        )..registerSecretNames(const ['VAULT_TOKEN']);
+        await env.startShellJob('x', id: 'sh-x', logPath: '.fah/x.log');
+        expect(shell.lastBgOptions!.env, {secretPresenceEnvVar: 'VAULT_TOKEN'});
+      },
+    );
 
     test('addSecrets merges into the live map for later exec calls', () async {
       final shell = _RecordingShell();

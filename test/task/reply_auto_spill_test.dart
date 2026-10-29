@@ -104,7 +104,7 @@ _toolsRig({
     for (final t in subagentMonitoringTools(
       manager: manager,
       currentSubagentId: () => 'kid',
-      capture: () => capture ?? (autoSpill == null ? effective : effective),
+      capture: () => capture ?? effective,
     ))
       t.name: t,
   };
@@ -154,6 +154,18 @@ void main() {
       expect(kinds, contains(DeliverableRecordKind.chunk));
       expect(kinds, contains(DeliverableRecordKind.manifest));
       expect(rig.manager['kid']!.deliverables.last.manifestComplete, isTrue);
+    });
+
+    test('the spill-reach gate answers under its public name (gh-1956 '
+        'review: barrel-exported API, no post-release rename)', () {
+      final rig = _rig();
+      // Same-session handle: an agent:// pointer can reach it.
+      expect(rig.capture.spillAppliesTo('kid'), isTrue);
+      // The parent inbox: reachable too.
+      expect(rig.capture.spillAppliesTo('main'), isTrue);
+      // A2A and cross-instance addresses: never spill targets (E11).
+      expect(rig.capture.spillAppliesTo('bot@remote'), isFalse);
+      expect(rig.capture.spillAppliesTo('other/main'), isFalse);
     });
   });
 
@@ -315,6 +327,32 @@ void main() {
         record.render(),
         'deliverable complete: agent://${record.outputId} '
         '(250 chars, ${record.bytes} bytes)',
+      );
+    });
+
+    test('a legacy external constructor without bytes still compiles and '
+        'renders chars-only (gh-1956 review: barrel-exported type, the '
+        'package is published)', () {
+      // Out-of-repo callers built DeliverableRecord.artifact(...) before
+      // gh-1956; the new field must not break their compile.
+      final record = DeliverableRecord.artifact(
+        childId: 'kid',
+        outputId: 'kid-report',
+        status: AgentArtifactStatus.complete,
+        chars: 120,
+      );
+      expect(record.bytes, isNull);
+      expect(
+        record.render(),
+        'deliverable complete: agent://kid-report (120 chars)',
+      );
+      // The harness-owned spill path still carries the byte count.
+      final rig = _rig(cap: 200);
+      final spilled = rig.capture.deliverReply('kid', 'x' * 250)!;
+      expect(spilled.bytes, isNotNull);
+      expect(
+        spilled.render(),
+        contains('(${spilled.chars} chars, ${spilled.bytes} bytes)'),
       );
     });
   });

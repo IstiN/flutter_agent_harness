@@ -36,17 +36,17 @@ class _FrameSink implements StreamConsumer<List<int>> {
 }
 
 http.Client _forbiddenClient() => MockClient.streaming(
-      (request, requestBody) async => http.StreamedResponse(
-        Stream.value(
-          utf8.encode(
-            '{"error":{"message":"forbidden: access denied",'
-            '"type":"invalid_request_error"}}',
-          ),
-        ),
-        403,
-        headers: const {'content-type': 'application/json'},
+  (request, requestBody) async => http.StreamedResponse(
+    Stream.value(
+      utf8.encode(
+        '{"error":{"message":"forbidden: access denied",'
+        '"type":"invalid_request_error"}}',
       ),
-    );
+    ),
+    403,
+    headers: const {'content-type': 'application/json'},
+  ),
+);
 
 void main() {
   test(
@@ -96,19 +96,25 @@ void main() {
         keys.add([0x0d]);
         var painted = false;
         for (var i = 0; i < 2400 && !painted; i++) {
-          painted = frames.text.contains('403') ||
-              frames.text.contains('forbidden');
+          painted =
+              frames.text.contains('403') || frames.text.contains('forbidden');
           if (!painted) {
             await Future<void>.delayed(const Duration(milliseconds: 5));
           }
         }
-        expect(painted, isTrue,
-            reason: 'the adapter 403 must reach the TUI (#355)');
+        expect(
+          painted,
+          isTrue,
+          reason: 'the adapter 403 must reach the TUI (#355)',
+        );
         var exited = false;
         run.then((_) => exited = true);
         await Future<void>.delayed(const Duration(milliseconds: 200));
-        expect(exited, isFalse,
-            reason: 'a run error must never exit the TUI app (#355)');
+        expect(
+          exited,
+          isFalse,
+          reason: 'a run error must never exit the TUI app (#355)',
+        );
         keys.add([0x03]); // press 1 arms the window (#830)…
         keys.add([0x03]); // …press 2 quits the TUI
         await run.timeout(const Duration(seconds: 10));

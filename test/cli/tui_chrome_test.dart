@@ -30,14 +30,15 @@ void main() {
 
   group('message divider (omp chrome/message-divider.ts)', () {
     test('wide terminal: short default rule of 10 + label', () {
-      expect(cells(tuiMessageDividerLayout('Turn 2', 120)),
-          '────────── Turn 2');
+      expect(
+        cells(tuiMessageDividerLayout('Turn 2', 120)),
+        '────────── Turn 2',
+      );
     });
 
     test('rule shrinks to the width budget: min(10, width - label - 1)', () {
       // width 20, label 6 → budget 13 → rule stays 10 … width 14 → 7.
-      expect(cells(tuiMessageDividerLayout('Turn 2', 20)),
-          '────────── Turn 2');
+      expect(cells(tuiMessageDividerLayout('Turn 2', 20)), '────────── Turn 2');
       expect(tuiMessageDividerLayout('Turn 2', 14), '─────── Turn 2');
     });
 
@@ -53,10 +54,7 @@ void main() {
 
     test('width math is cell-accurate for wide labels', () {
       // '時時' is 4 cells: budget 80-4-1 = 75 → default 10 wins.
-      expect(
-        cells(tuiMessageDividerLayout('時時', 80)),
-        '────────── 時時',
-      );
+      expect(cells(tuiMessageDividerLayout('時時', 80)), '────────── 時時');
     });
   });
 
@@ -83,18 +81,26 @@ void main() {
       expect(rows, ['', ' hi', '']);
     });
 
-    test('an unknown stored tint is kept, never repainted as a bubble (JVtX)', () {
-      FaThemeController.instance
-        ..reset()
-        ..profile = ColorProfile.trueColor;
-      const alienLead = '\x1b[48;2;1;2;3m';
-      final line = AnsiMarkdown(width: 60).formatLine('$alienLead card\x1b[0m');
-      // The stored lead survives verbatim — no bubble band guessed in.
-      expect(line, startsWith(alienLead));
-      expect(line, isNot(contains(tuiUserMessageBgSgr())));
-      // Still width-padded inside the stored band.
-      expect(tuiTextWidth(line.replaceAll(RegExp(r'\x1b\[[0-9;]*m'), '')), 60);
-    });
+    test(
+      'an unknown stored tint is kept, never repainted as a bubble (JVtX)',
+      () {
+        FaThemeController.instance
+          ..reset()
+          ..profile = ColorProfile.trueColor;
+        const alienLead = '\x1b[48;2;1;2;3m';
+        final line = AnsiMarkdown(
+          width: 60,
+        ).formatLine('$alienLead card\x1b[0m');
+        // The stored lead survives verbatim — no bubble band guessed in.
+        expect(line, startsWith(alienLead));
+        expect(line, isNot(contains(tuiUserMessageBgSgr())));
+        // Still width-padded inside the stored band.
+        expect(
+          tuiTextWidth(line.replaceAll(RegExp(r'\x1b\[[0-9;]*m'), '')),
+          60,
+        );
+      },
+    );
   });
 
   group('tool card (omp render/status-line.ts + getStateBgColor)', () {
@@ -114,27 +120,30 @@ void main() {
       expect(tuiCardGlyph(TuiCardPhase.error), '✘');
     });
 
-    test('phase tints: success/error ride the named roles, pending the stand-in', () {
-      final c = FaThemeController.instance;
-      expect(
-        tuiCardTintSgr(TuiCardPhase.success),
-        c.sgrPrefix(c.current.toolSuccessBg),
-      );
-      expect(
-        tuiCardTintSgr(TuiCardPhase.error),
-        c.sgrPrefix(c.current.toolErrorBg),
-      );
-      // S1 landed toolPendingBg — pending/running ride the named role
-      // (default palette pins the historical highlight stand-in value).
-      expect(
-        tuiCardTintSgr(TuiCardPhase.pending),
-        c.sgrPrefix(c.current.toolPendingBg),
-      );
-      expect(
-        tuiCardTintSgr(TuiCardPhase.running),
-        tuiCardTintSgr(TuiCardPhase.pending),
-      );
-    });
+    test(
+      'phase tints: success/error ride the named roles, pending the stand-in',
+      () {
+        final c = FaThemeController.instance;
+        expect(
+          tuiCardTintSgr(TuiCardPhase.success),
+          c.sgrPrefix(c.current.toolSuccessBg),
+        );
+        expect(
+          tuiCardTintSgr(TuiCardPhase.error),
+          c.sgrPrefix(c.current.toolErrorBg),
+        );
+        // S1 landed toolPendingBg — pending/running ride the named role
+        // (default palette pins the historical highlight stand-in value).
+        expect(
+          tuiCardTintSgr(TuiCardPhase.pending),
+          c.sgrPrefix(c.current.toolPendingBg),
+        );
+        expect(
+          tuiCardTintSgr(TuiCardPhase.running),
+          tuiCardTintSgr(TuiCardPhase.pending),
+        );
+      },
+    );
 
     test('header grammar: glyph title: description [badge] meta·meta', () {
       final header = tuiToolCardHeader(
@@ -152,21 +161,17 @@ void main() {
 
     test('squeeze drops from the tail: meta, then badge, then description', () {
       ToolCardSegments segs({String meta = '3s'}) => ToolCardSegments(
-            title: 'bash',
-            description: 'a very long command that will not fit',
-            badge: 'exit 1',
-            meta: [meta],
-          );
+        title: 'bash',
+        description: 'a very long command that will not fit',
+        badge: 'exit 1',
+        meta: [meta],
+      );
       // head 7 + desc 40 + badge 9 + meta 3 = 59: at 57 the meta drops,
       // everything else fits; at 50 the badge drops too.
-      final w1 = cells(
-        tuiToolCardHeader(segs(), TuiCardPhase.success, 57),
-      );
+      final w1 = cells(tuiToolCardHeader(segs(), TuiCardPhase.success, 57));
       expect(w1, isNot(contains('·')));
       expect(w1, contains('[exit 1]'));
-      final w2 = cells(
-        tuiToolCardHeader(segs(), TuiCardPhase.success, 50),
-      );
+      final w2 = cells(tuiToolCardHeader(segs(), TuiCardPhase.success, 50));
       expect(w2, isNot(contains('[')));
       expect(w2, startsWith('✔ bash:'));
       // The row NEVER exceeds its budget (cells, not code units).
@@ -208,11 +213,7 @@ void main() {
     test('no profile: card degrades to plain rows, structure intact', () {
       FaThemeController.instance.profile = null;
       final card = tuiToolCard(
-        const ToolCardSegments(
-          title: 'bash',
-          description: 'ls',
-          meta: ['2s'],
-        ),
+        const ToolCardSegments(title: 'bash', description: 'ls', meta: ['2s']),
         TuiCardPhase.error,
         40,
         detailLines: ['failed'],
@@ -246,7 +247,11 @@ void main() {
       expect(header, contains(c.muted(' 2s')));
       // Non-error phases keep the muted description.
       final ok = tuiToolCardHeader(
-        const ToolCardSegments(title: 'read', description: 'fine', meta: ['1s']),
+        const ToolCardSegments(
+          title: 'read',
+          description: 'fine',
+          meta: ['1s'],
+        ),
         TuiCardPhase.success,
         80,
       );
@@ -295,10 +300,7 @@ void main() {
         TuiCardPhase.pending,
         60,
       )[0];
-      expect(
-        fmt.formatLine(pendingRow),
-        startsWith(c.toolPendingBgSgr()),
-      );
+      expect(fmt.formatLine(pendingRow), startsWith(c.toolPendingBgSgr()));
       expect(
         fmt.formatLine('${tuiUserMessageBgSgr()}hello\x1b[0m'),
         startsWith(tuiUserMessageBgSgr()),
@@ -306,64 +308,76 @@ void main() {
     });
   });
 
-  group('settledToolCardRows + failureFirstLine (issue #916 shared builder)', () {
-    test('drops empty meta fragments — byte-compat with the live '
-        'empty-elapsed cell', () {
-      final withCell = settledToolCardRows(
-        toolName: 'bash',
-        successDetail: 'echo hi',
-        isError: false,
-        width: 80,
-        meta: const ['0s'],
-      );
-      final withoutCell = settledToolCardRows(
-        toolName: 'bash',
-        successDetail: 'echo hi',
-        isError: false,
-        width: 80,
-        meta: const [''],
-      );
-      expect(cells(withCell.join('\n')), contains('0s'));
-      // A filtered-away fragment must leave exactly the card that never
-      // had one: the pre-#916 live edge painted no elapsed cell when the
-      // clock never started, and the shared builder keeps those bytes.
-      expect(withoutCell, tuiToolCard(
-        const ToolCardSegments(title: 'bash', description: 'echo hi'),
-        TuiCardPhase.success,
-        80,
-      ));
-    });
+  group(
+    'settledToolCardRows + failureFirstLine (issue #916 shared builder)',
+    () {
+      test('drops empty meta fragments — byte-compat with the live '
+          'empty-elapsed cell', () {
+        final withCell = settledToolCardRows(
+          toolName: 'bash',
+          successDetail: 'echo hi',
+          isError: false,
+          width: 80,
+          meta: const ['0s'],
+        );
+        final withoutCell = settledToolCardRows(
+          toolName: 'bash',
+          successDetail: 'echo hi',
+          isError: false,
+          width: 80,
+          meta: const [''],
+        );
+        expect(cells(withCell.join('\n')), contains('0s'));
+        // A filtered-away fragment must leave exactly the card that never
+        // had one: the pre-#916 live edge painted no elapsed cell when the
+        // clock never started, and the shared builder keeps those bytes.
+        expect(
+          withoutCell,
+          tuiToolCard(
+            const ToolCardSegments(title: 'bash', description: 'echo hi'),
+            TuiCardPhase.success,
+            80,
+          ),
+        );
+      });
 
-    test('interrupted (replay-only): error phase over the plain detail — '
-        'resultContent never becomes the description', () {
-      final rows = settledToolCardRows(
-        toolName: 'bash',
-        successDetail: 'git status',
-        isError: false,
-        width: 60,
-        resultContent: const [TextContent(text: 'boom')],
-        interrupted: true,
-      );
-      expect(rows, tuiToolCard(
-        const ToolCardSegments(title: 'bash', description: 'git status'),
-        TuiCardPhase.error,
-        60,
-      ));
-    });
+      test('interrupted (replay-only): error phase over the plain detail — '
+          'resultContent never becomes the description', () {
+        final rows = settledToolCardRows(
+          toolName: 'bash',
+          successDetail: 'git status',
+          isError: false,
+          width: 60,
+          resultContent: const [TextContent(text: 'boom')],
+          interrupted: true,
+        );
+        expect(
+          rows,
+          tuiToolCard(
+            const ToolCardSegments(title: 'bash', description: 'git status'),
+            TuiCardPhase.error,
+            60,
+          ),
+        );
+      });
 
-    test('failureFirstLine: empty content is empty; first line of the '
-        'joined blocks', () {
-      expect(failureFirstLine(const []), '');
-      expect(failureFirstLine(const [TextContent(text: 'boom\nstack')]), 'boom');
-      // Blocks join WITHOUT a separator: a block boundary inside one
-      // visual line stays one line.
-      expect(
-        failureFirstLine(const [
-          TextContent(text: 'one'),
-          TextContent(text: '\ntwo'),
-        ]),
-        'one',
-      );
-    });
-  });
+      test('failureFirstLine: empty content is empty; first line of the '
+          'joined blocks', () {
+        expect(failureFirstLine(const []), '');
+        expect(
+          failureFirstLine(const [TextContent(text: 'boom\nstack')]),
+          'boom',
+        );
+        // Blocks join WITHOUT a separator: a block boundary inside one
+        // visual line stays one line.
+        expect(
+          failureFirstLine(const [
+            TextContent(text: 'one'),
+            TextContent(text: '\ntwo'),
+          ]),
+          'one',
+        );
+      });
+    },
+  );
 }

@@ -198,9 +198,7 @@ void main() {
         isTrue,
       );
       expect(
-        out.any(
-          (m) => m is ToolResultMessage && m.toolCallId == 'c1',
-        ),
+        out.any((m) => m is ToolResultMessage && m.toolCallId == 'c1'),
         isTrue,
       );
       // The result CONTENT made it onto the wire (not a synthesized

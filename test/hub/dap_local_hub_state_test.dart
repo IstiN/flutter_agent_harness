@@ -10,14 +10,8 @@ import 'package:test/test.dart';
 void main() {
   group('dapHubPidFileFor', () {
     test('places the pid file under <home>/.dap', () {
-      expect(
-        dapHubPidFileFor('/home/u'),
-        '/home/u/.dap/hub.pid',
-      );
-      expect(
-        dapHubPidFileFor('/home/u/'),
-        '/home/u/.dap/hub.pid',
-      );
+      expect(dapHubPidFileFor('/home/u'), '/home/u/.dap/hub.pid');
+      expect(dapHubPidFileFor('/home/u/'), '/home/u/.dap/hub.pid');
     });
   });
 
@@ -33,8 +27,11 @@ void main() {
     final parsed = parseDapLocalHubState(rendered);
     expect(parsed, isNotNull);
     expect(parsed!.relaySecret, 'a"b\\c\nd');
-    expect(rendered.contains('a"b'), isFalse,
-        reason: 'the quote is escaped in the file body');
+    expect(
+      rendered.contains('a"b'),
+      isFalse,
+      reason: 'the quote is escaped in the file body',
+    );
   });
 
   group('parseDapLocalHubState', () {
@@ -45,9 +42,7 @@ void main() {
         startedAt: '2026-09-13T10:00:00Z',
         relaySecret: 'reg-pair-4f2a',
       );
-      final parsed = parseDapLocalHubState(
-        renderDapLocalHubState(state),
-      );
+      final parsed = parseDapLocalHubState(renderDapLocalHubState(state));
       expect(parsed, isNotNull);
       expect(parsed!.pid, 4242);
       expect(parsed.port, 8787);
@@ -63,18 +58,26 @@ void main() {
       expect(parsed!.relaySecret, isNull);
     });
 
-    test('null on missing, invalid or incomplete content (E4 no zombie)',
-        () {
+    test('null on missing, invalid or incomplete content (E4 no zombie)', () {
       expect(parseDapLocalHubState(null), isNull);
       expect(parseDapLocalHubState(''), isNull);
       expect(parseDapLocalHubState('not json'), isNull);
-      expect(parseDapLocalHubState('{"port": 8787}'), isNull,
-          reason: 'no pid — the file cannot name an owner');
-      expect(parseDapLocalHubState('{"pid": 1}'), isNull,
-          reason: 'no port — the file cannot name the hub');
+      expect(
+        parseDapLocalHubState('{"port": 8787}'),
+        isNull,
+        reason: 'no pid — the file cannot name an owner',
+      );
+      expect(
+        parseDapLocalHubState('{"pid": 1}'),
+        isNull,
+        reason: 'no port — the file cannot name the hub',
+      );
       expect(parseDapLocalHubState('{"pid": "x", "port": 1}'), isNull);
-      expect(parseDapLocalHubState('{"pid": -5, "port": 1}'), isNull,
-          reason: 'a negative pid is not a process');
+      expect(
+        parseDapLocalHubState('{"pid": -5, "port": 1}'),
+        isNull,
+        reason: 'a negative pid is not a process',
+      );
     });
 
     test('a missing startedAt defaults to empty, not a parse failure', () {

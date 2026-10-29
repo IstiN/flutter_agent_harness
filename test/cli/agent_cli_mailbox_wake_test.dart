@@ -77,8 +77,10 @@ void main() {
     test('spawns in the existing cwd', () async {
       final shell = _RecordingShell();
       final env = MemoryExecutionEnv(cwd: '/work', shell: shell);
-      (await env.createDir('/Users/y/_w/postal-nl', recursive: true))
-          .getOrThrow();
+      (await env.createDir(
+        '/Users/y/_w/postal-nl',
+        recursive: true,
+      )).getOrThrow();
       final error = await launchMailboxWake(
         env: env,
         wakeExecutable: '/usr/local/bin/fa',
@@ -107,8 +109,10 @@ void main() {
         MemoryExecutionEnv(cwd: '/work', shell: shell),
         symlinkPath: '/Users/y/_w/postal-nl',
       );
-      (await target.inner.createDir('/Users/y/_w/postal-nl', recursive: true))
-          .getOrThrow();
+      (await target.inner.createDir(
+        '/Users/y/_w/postal-nl',
+        recursive: true,
+      )).getOrThrow();
       final error = await launchMailboxWake(
         env: target,
         wakeExecutable: '/usr/local/bin/fa',

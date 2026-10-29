@@ -115,8 +115,9 @@ void main() {
         AutoUpdateMode.notify,
       );
       expect(
-        CliConfig.fromYaml(loadYaml('provider: anthropic') as YamlMap)
-            .autoUpdate,
+        CliConfig.fromYaml(
+          loadYaml('provider: anthropic') as YamlMap,
+        ).autoUpdate,
         AutoUpdateMode.notify,
       );
     });
@@ -258,9 +259,7 @@ void main() {
     }
 
     test('a non-default mode persists and loads back', () async {
-      final text = await savedText(
-        CliConfig(autoUpdate: AutoUpdateMode.on),
-      );
+      final text = await savedText(CliConfig(autoUpdate: AutoUpdateMode.on));
       expect(text, contains('auto_update: true\n'));
       expect(loadCliConfig(tmp.path).autoUpdate, AutoUpdateMode.on);
 

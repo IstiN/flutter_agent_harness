@@ -35,7 +35,10 @@ void main() {
 
     expect(paths, containsAll(['root.md', 'a/inner.dart', 'a/deep/leaf.dart']));
     // Shallow files complete first: root.md precedes the nested leaf.
-    expect(paths.indexOf('root.md'), lessThan(paths.indexOf('a/deep/leaf.dart')));
+    expect(
+      paths.indexOf('root.md'),
+      lessThan(paths.indexOf('a/deep/leaf.dart')),
+    );
     // Nothing is absolute — the composer splices these into the input.
     for (final p in paths) {
       expect(p.startsWith('/'), isFalse, reason: p);

@@ -19,14 +19,14 @@ const _model = Model(
 );
 
 AssistantMessage _assistantText(String text) => AssistantMessage(
-      content: [TextContent(text: text)],
-      api: 'test-api',
-      provider: 'test-provider',
-      model: 'test-model',
-      usage: Usage.zero,
-      stopReason: StopReason.stop,
-      timestamp: DateTime.utc(2026),
-    );
+  content: [TextContent(text: text)],
+  api: 'test-api',
+  provider: 'test-provider',
+  model: 'test-model',
+  usage: Usage.zero,
+  stopReason: StopReason.stop,
+  timestamp: DateTime.utc(2026),
+);
 
 List<AssistantMessageEvent> _textTurn(String text) {
   final empty = _assistantText('');
@@ -48,11 +48,13 @@ class _CapturingStream {
     Context context, {
     CancelToken? cancelToken,
   }) {
-    contexts.add(Context(
-      systemPrompt: context.systemPrompt,
-      messages: List.of(context.messages),
-      tools: context.tools,
-    ));
+    contexts.add(
+      Context(
+        systemPrompt: context.systemPrompt,
+        messages: List.of(context.messages),
+        tools: context.tools,
+      ),
+    );
     final stream = AssistantMessageEventStream();
     for (final event in _textTurn('ok')) {
       stream.push(event);
@@ -78,9 +80,11 @@ int _imageParts(List<Message> messages) {
 
 int _occurrences(String haystack, String needle) {
   var count = 0;
-  for (var i = haystack.indexOf(needle);
-      i != -1;
-      i = haystack.indexOf(needle, i + needle.length)) {
+  for (
+    var i = haystack.indexOf(needle);
+    i != -1;
+    i = haystack.indexOf(needle, i + needle.length)
+  ) {
     count++;
   }
   return count;
@@ -94,19 +98,24 @@ String _serialized(List<Message> messages) =>
 List<Message> _photoHeavyHistory() {
   final messages = <Message>[];
   for (var i = 0; i < 50; i++) {
-    messages.add(UserMessage(
-      content: [
-        TextContent(text: 'problem $i'),
-        ImageContent(data: 'unique${i % 3}', mimeType: 'image/png'),
-      ],
-      timestamp: DateTime.utc(2026, 1, 1, 0, i),
-    ));
+    messages.add(
+      UserMessage(
+        content: [
+          TextContent(text: 'problem $i'),
+          ImageContent(data: 'unique${i % 3}', mimeType: 'image/png'),
+        ],
+        timestamp: DateTime.utc(2026, 1, 1, 0, i),
+      ),
+    );
     messages.add(_assistantText('solved $i'));
   }
   return messages;
 }
 
-Future<Context> _runOnce(List<Message> history, List<UserMessage> prompts) async {
+Future<Context> _runOnce(
+  List<Message> history,
+  List<UserMessage> prompts,
+) async {
   final fake = _CapturingStream();
   await agentLoop(
     prompts: prompts,
@@ -138,81 +147,90 @@ void main() {
     expect(_occurrences(serialized, unavailableImageNote), 0);
   });
 
-  test('current message image rides in place even when known (AC6/I3)',
-      () async {
-    final history = [
-      UserMessage(
-        content: const [
-          TextContent(text: 'earlier'),
-          ImageContent(data: 'same', mimeType: 'image/png'),
-        ],
-        timestamp: DateTime.utc(2026),
-      ),
-    ];
-    final request = await _runOnce(history, [
-      UserMessage(
-        content: const [
-          TextContent(text: 'this exact one again'),
-          ImageContent(data: 'same', mimeType: 'image/png'),
-        ],
-        timestamp: DateTime.utc(2026, 1, 2),
-      ),
-    ]);
-    expect(_imageParts(request.messages), 1);
-    final last = request.messages.last as UserMessage;
-    expect(
-      (last.content as List<ContentBlock>).whereType<ImageContent>(),
-      isNotEmpty,
-    );
-    // The history occurrence is a ref pointing at the current part; the
-    // current part carries its own F3 label.
-    final serialized = _serialized(request.messages);
-    expect(_occurrences(serialized, 'same'), 1);
-    expect(_occurrences(serialized, '[Image 0]'), 2);
-  });
+  test(
+    'current message image rides in place even when known (AC6/I3)',
+    () async {
+      final history = [
+        UserMessage(
+          content: const [
+            TextContent(text: 'earlier'),
+            ImageContent(data: 'same', mimeType: 'image/png'),
+          ],
+          timestamp: DateTime.utc(2026),
+        ),
+      ];
+      final request = await _runOnce(history, [
+        UserMessage(
+          content: const [
+            TextContent(text: 'this exact one again'),
+            ImageContent(data: 'same', mimeType: 'image/png'),
+          ],
+          timestamp: DateTime.utc(2026, 1, 2),
+        ),
+      ]);
+      expect(_imageParts(request.messages), 1);
+      final last = request.messages.last as UserMessage;
+      expect(
+        (last.content as List<ContentBlock>).whereType<ImageContent>(),
+        isNotEmpty,
+      );
+      // The history occurrence is a ref pointing at the current part; the
+      // current part carries its own F3 label.
+      final serialized = _serialized(request.messages);
+      expect(_occurrences(serialized, 'same'), 1);
+      expect(_occurrences(serialized, '[Image 0]'), 2);
+    },
+  );
 
-  test('kill switch reproduces the legacy request shape byte-for-byte (AC5)',
-      () async {
-    final history = _photoHeavyHistory();
-    final prompts = [UserMessage.text('grade them all')];
+  test(
+    'kill switch reproduces the legacy request shape byte-for-byte (AC5)',
+    () async {
+      final history = _photoHeavyHistory();
+      final prompts = [UserMessage.text('grade them all')];
 
-    imageRegistryConfig = const ImageRegistryConfig(enabled: false);
-    final legacy = await _runOnce(history, prompts);
-    expect(_imageParts(legacy.messages), 50);
+      imageRegistryConfig = const ImageRegistryConfig(enabled: false);
+      final legacy = await _runOnce(history, prompts);
+      expect(_imageParts(legacy.messages), 50);
 
-    // Byte-for-byte: identical to serializing the unrewritten inputs.
-    final expected = _serialized([...history, ...prompts]);
-    expect(_serialized(legacy.messages), expected);
-  });
+      // Byte-for-byte: identical to serializing the unrewritten inputs.
+      final expected = _serialized([...history, ...prompts]);
+      expect(_serialized(legacy.messages), expected);
+    },
+  );
 
-  test('compaction: evicted originals leave no dangling refs (AC4)',
-      () async {
+  test('compaction: evicted originals leave no dangling refs (AC4)', () async {
     // Post-compaction window: the summary mentions an image whose
     // original is outside the kept window.
-    final request = await _runOnce([
-      UserMessage.text(
-        'Summary of earlier turns: the user shared [Image 1] and we '
-        'discussed it.',
-      ),
-    ], [
-      UserMessage.text('continue'),
-    ]);
+    final request = await _runOnce(
+      [
+        UserMessage.text(
+          'Summary of earlier turns: the user shared [Image 1] and we '
+          'discussed it.',
+        ),
+      ],
+      [UserMessage.text('continue')],
+    );
     final serialized = _serialized(request.messages);
     expect(_occurrences(serialized, '[Image 1]'), 0);
     expect(_occurrences(serialized, unavailableImageNote), 1);
   });
 
-  test('determinism: two loads of one JSONL build identical requests (AC2)',
-      () async {
-    final history = _photoHeavyHistory();
-    final dump = jsonEncode([for (final m in history) m.toJson()]);
-    List<Message> load() => [
-          for (final json in (jsonDecode(dump) as List))
-            messageFromJson(json as Map<String, dynamic>),
-        ];
-    final prompt = UserMessage(content: 'go', timestamp: DateTime.utc(2026, 2));
-    final first = await _runOnce(load(), [prompt]);
-    final second = await _runOnce(load(), [prompt]);
-    expect(_serialized(second.messages), _serialized(first.messages));
-  });
+  test(
+    'determinism: two loads of one JSONL build identical requests (AC2)',
+    () async {
+      final history = _photoHeavyHistory();
+      final dump = jsonEncode([for (final m in history) m.toJson()]);
+      List<Message> load() => [
+        for (final json in (jsonDecode(dump) as List))
+          messageFromJson(json as Map<String, dynamic>),
+      ];
+      final prompt = UserMessage(
+        content: 'go',
+        timestamp: DateTime.utc(2026, 2),
+      );
+      final first = await _runOnce(load(), [prompt]);
+      final second = await _runOnce(load(), [prompt]);
+      expect(_serialized(second.messages), _serialized(first.messages));
+    },
+  );
 }

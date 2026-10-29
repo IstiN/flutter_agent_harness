@@ -42,9 +42,7 @@ void main() {
 
     test('a shell default parses from the exec error message', () {
       expect(
-        bashTimeoutStatus(
-          errorMessage: 'timeout: 0:00:30',
-        ),
+        bashTimeoutStatus(errorMessage: 'timeout: 0:00:30'),
         'Command timed out after 30 seconds',
       );
     });

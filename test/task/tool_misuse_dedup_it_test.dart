@@ -19,7 +19,6 @@ import 'package:test/test.dart';
 
 import '../support/scripted_stream_harness.dart';
 
-
 AssistantMessageEventStream _immediate(List<AssistantMessageEvent> events) {
   final stream = AssistantMessageEventStream();
   for (final event in events) {

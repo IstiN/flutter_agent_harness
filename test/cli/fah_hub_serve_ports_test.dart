@@ -199,8 +199,7 @@ void main() {
     'serve with an unwritable pid path: best-effort pid state, still 0',
     () async {
       final port = await freePort();
-      final blocker = File('${tempHome.path}/blocker')
-        ..writeAsStringSync('x');
+      final blocker = File('${tempHome.path}/blocker')..writeAsStringSync('x');
       LocalHub? served;
       final code = await runHubCommand(
         ['serve', '--port', '$port'],

@@ -18,8 +18,9 @@ import 'package:yaml/yaml.dart';
 YamlMap _doc(String text) => loadYaml(text) as YamlMap;
 
 const _allPresent = ToolCapability.available();
-Map<String, ToolCapability> _caps() =>
-    {for (final id in knownToolIds) id: _allPresent};
+Map<String, ToolCapability> _caps() => {
+  for (final id in knownToolIds) id: _allPresent,
+};
 
 void main() {
   group('UT-1 tools scope stack', () {
@@ -49,9 +50,12 @@ void main() {
           'web_search': const ToolCapability.absent('not wired'),
         },
         scopes: [
-          (ToolScope.global, parseAppConfigSections(
-            userDoc: _doc('tools:\n  web_search: true\n'),
-          ).userTools),
+          (
+            ToolScope.global,
+            parseAppConfigSections(
+              userDoc: _doc('tools:\n  web_search: true\n'),
+            ).userTools,
+          ),
         ],
       );
       expect(floored.byId['web_search']!.enabled, isFalse);
@@ -110,7 +114,9 @@ void main() {
       // Everything enabled beyond the base is demoted (and discovery is
       // off in pi, so the gate mounts exactly the benchmark base).
       expect(
-        enabled.difference(piEssential).every(resolution.discoverableIds.contains),
+        enabled
+            .difference(piEssential)
+            .every(resolution.discoverableIds.contains),
         isTrue,
       );
       expect(discoveryEnabledByLoadMode[AgentLoadMode.pi], isFalse);
@@ -236,8 +242,7 @@ void main() {
       expect(app.warnings, isEmpty);
     });
 
-    test('a non-string agent.mode warns and keeps the default (round-1)',
-        () {
+    test('a non-string agent.mode warns and keeps the default (round-1)', () {
       final app = parseAppConfigSections(userDoc: _doc('agent:\n  mode: 42\n'));
       expect(app.loadMode, AgentLoadMode.defaultMode);
       expect(app.warnings.single, contains('agent.mode'));

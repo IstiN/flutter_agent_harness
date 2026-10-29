@@ -35,8 +35,9 @@ const ciYamlPath = '.github/workflows/ci.yml';
 List<String> classifierPatterns() {
   final body = File(ciYamlPath).readAsStringSync();
   return [
-    for (final m in RegExp("grep -qE (['\"])(.+?)\\1 /tmp/build-ios\\.log")
-        .allMatches(body))
+    for (final m in RegExp(
+      "grep -qE (['\"])(.+?)\\1 /tmp/build-ios\\.log",
+    ).allMatches(body))
       m.group(2)!,
   ];
 }
@@ -49,26 +50,23 @@ String classify(String log) {
   expect(
     patterns.length,
     greaterThanOrEqualTo(2),
-    reason: 'ci.yml build-ios classifier must keep its two grep -qE '
+    reason:
+        'ci.yml build-ios classifier must keep its two grep -qE '
         'signatures (native-assets, then CocoaPods).',
   );
   final tmp = Directory.systemTemp.createTempSync('classifier-test');
   try {
     final logFile = File('${tmp.path}/build-ios.log')..writeAsStringSync(log);
-    final run = Process.runSync(
-      'bash',
-      [
-        '-c',
-        'if grep -qE "\$1" "\$3"; then echo native-assets; '
-            'elif grep -qE "\$2" "\$3"; then echo cocoapods; '
-            'else echo xcode; fi',
-        'classifier',
-        patterns[0],
-        patterns[1],
-        logFile.path,
-      ],
-      stdoutEncoding: utf8,
-    );
+    final run = Process.runSync('bash', [
+      '-c',
+      'if grep -qE "\$1" "\$3"; then echo native-assets; '
+          'elif grep -qE "\$2" "\$3"; then echo cocoapods; '
+          'else echo xcode; fi',
+      'classifier',
+      patterns[0],
+      patterns[1],
+      logFile.path,
+    ], stdoutEncoding: utf8);
     return (run.stdout as String).trim();
   } finally {
     tmp.deleteSync(recursive: true);
@@ -81,7 +79,8 @@ void main() {
     expect(
       body.contains('error while running pod install'),
       isFalse,
-      reason: '`error while running pod install` never matches — '
+      reason:
+          '`error while running pod install` never matches — '
           'flutter_tools prints `Error running pod install` '
           '(throwToolExit, macos/cocoapods.dart). A case-sensitive grep '
           'for the "while" variant is dead code (PR #1298 review '
@@ -93,39 +92,43 @@ void main() {
     expect(
       classifierPatterns().any((p) => p.contains('Error running pod install')),
       isTrue,
-      reason: 'the generic pod-install failure signature must match the '
+      reason:
+          'the generic pod-install failure signature must match the '
           'exact string flutter_tools throws: `Error running pod install` '
           '— case-sensitive, no "while" (PR #1298 review thread 1).',
     );
   });
 
-  test('a log with only the real pod-install error classifies as cocoapods',
-      () {
-    expect(
-      classify(
-        'Encountered error while building for device.\n'
-        'Error running pod install\n'
-        'Error launching application\n',
-      ),
-      'cocoapods',
-      reason: 'a generic `pod install` failure whose log shows only the '
-          'real flutter_tools message must land in the CocoaPods layer, '
-          'not fall through to the Xcode/app fallback.',
-    );
-  });
+  test(
+    'a log with only the real pod-install error classifies as cocoapods',
+    () {
+      expect(
+        classify(
+          'Encountered error while building for device.\n'
+          'Error running pod install\n'
+          'Error launching application\n',
+        ),
+        'cocoapods',
+        reason:
+            'a generic `pod install` failure whose log shows only the '
+            'real flutter_tools message must land in the CocoaPods layer, '
+            'not fall through to the Xcode/app fallback.',
+      );
+    },
+  );
 
   test('the version-conflict and sandbox signatures still classify', () {
     expect(
       classify(
         '[!] CocoaPods could not find compatible versions for pod '
-            '"flutter_gemma":\n',
+        '"flutter_gemma":\n',
       ),
       'cocoapods',
     );
     expect(
       classify(
         "[!] The sandbox is not in sync with the Podfile.lock. Run "
-            "'pod install' or update your CocoaPods installation.\n",
+        "'pod install' or update your CocoaPods installation.\n",
       ),
       'cocoapods',
     );
@@ -136,7 +139,7 @@ void main() {
     expect(
       classify(
         '[!] Unable to satisfy the following requirements:\n'
-            '- `Flutter` required by `Podfile`\n',
+        '- `Flutter` required by `Podfile`\n',
       ),
       'cocoapods',
     );
@@ -149,12 +152,13 @@ void main() {
     expect(
       classify(
         'Running pod install...\n'
-            'Flutter installation finished\n'
-            '4.4s\n'
-            'Built build/app/iphoneos/iphone.app\n',
+        'Flutter installation finished\n'
+        '4.4s\n'
+        'Built build/app/iphoneos/iphone.app\n',
       ),
       'xcode',
-      reason: 'a failure log that only contains normal pod-install '
+      reason:
+          'a failure log that only contains normal pod-install '
           'progress lines has NO CocoaPods signature — it must stay '
           'unlabeled (xcode fallback) instead of being mislabeled.',
     );
@@ -164,11 +168,12 @@ void main() {
     expect(
       classify(
         'Error running pod install\n' // decoy: cocoapods text present
-            'Hash of downloaded file '
-            'does not match the hash pinned in the manifest\n',
+        'Hash of downloaded file '
+        'does not match the hash pinned in the manifest\n',
       ),
       'native-assets',
-      reason: 'the native-assets grep runs BEFORE the CocoaPods grep — '
+      reason:
+          'the native-assets grep runs BEFORE the CocoaPods grep — '
           'a hash-mismatch failure that also mentions pod install must '
           'still be labeled native-assets (the gh-1296 misdirection).',
     );

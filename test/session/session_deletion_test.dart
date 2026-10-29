@@ -145,47 +145,56 @@ void main() {
       await repo.delete(metadata, actor: 'test:ac1');
 
       expect((await fs.exists(metadata.path)).valueOrNull, isFalse);
-      expect(
-        (await repo.list()).where((m) => m.id == metadata.id),
-        isEmpty,
-      );
+      expect((await repo.list()).where((m) => m.id == metadata.id), isEmpty);
     });
 
-    test('a backend that renames nothing still deletes via copy+delete', () async {
-      // The decorator gap behind issue #863 ("renamePath not supported by
-      // Instance of 'LocalExecutionEnv'"): the base reports the rename
-      // capability but fails it as notSupported. The delete must still
-      // really happen — trash copy first, then the unlink.
-      final env = _NoRenameEnv();
-      final noRenameRepo = JsonlSessionRepo(
-        fs: env,
-        sessionsRoot: '/sessions',
-        processId: 4242,
-        now: () => clock,
-      );
-      final session = await noRenameRepo.create(
-        JsonlSessionCreateOptions(id: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaa1002', cwd: '/proj'),
-      );
-      await env.appendFile((await session.getMetadata()).path, '{"record":"real"}\n');
-      final metadata = await session.getMetadata();
+    test(
+      'a backend that renames nothing still deletes via copy+delete',
+      () async {
+        // The decorator gap behind issue #863 ("renamePath not supported by
+        // Instance of 'LocalExecutionEnv'"): the base reports the rename
+        // capability but fails it as notSupported. The delete must still
+        // really happen — trash copy first, then the unlink.
+        final env = _NoRenameEnv();
+        final noRenameRepo = JsonlSessionRepo(
+          fs: env,
+          sessionsRoot: '/sessions',
+          processId: 4242,
+          now: () => clock,
+        );
+        final session = await noRenameRepo.create(
+          JsonlSessionCreateOptions(
+            id: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaa1002',
+            cwd: '/proj',
+          ),
+        );
+        await env.appendFile(
+          (await session.getMetadata()).path,
+          '{"record":"real"}\n',
+        );
+        final metadata = await session.getMetadata();
 
-      await noRenameRepo.delete(metadata, actor: 'test:copy-delete');
+        await noRenameRepo.delete(metadata, actor: 'test:copy-delete');
 
-      expect((await env.exists(metadata.path)).valueOrNull, isFalse);
-      final trash = (await env.listDir('/sessions/.trash')).valueOrNull!;
-      expect(trash, hasLength(1));
-      expect(
-        (await env.readTextFile(trash.single.path)).valueOrNull,
-        contains('"record":"real"'),
-      );
-      final raw = (await env.readTextFile('/sessions/session_ops.journal'))
-          .valueOrNull!;
-      expect(raw, contains('"result":"copy-delete"'));
-      expect(
-        await noRenameRepo.list().then((l) => l.where((m) => m.id == metadata.id)),
-        isEmpty,
-      );
-    });
+        expect((await env.exists(metadata.path)).valueOrNull, isFalse);
+        final trash = (await env.listDir('/sessions/.trash')).valueOrNull!;
+        expect(trash, hasLength(1));
+        expect(
+          (await env.readTextFile(trash.single.path)).valueOrNull,
+          contains('"record":"real"'),
+        );
+        final raw = (await env.readTextFile(
+          '/sessions/session_ops.journal',
+        )).valueOrNull!;
+        expect(raw, contains('"result":"copy-delete"'));
+        expect(
+          await noRenameRepo.list().then(
+            (l) => l.where((m) => m.id == metadata.id),
+          ),
+          isEmpty,
+        );
+      },
+    );
 
     test('copy+delete refuses sessions over the trash-copy budget', () async {
       // The fallback stages the trash copy in RAM; an oversized session
@@ -200,7 +209,10 @@ void main() {
         now: () => clock,
       );
       final session = await noRenameRepo.create(
-        JsonlSessionCreateOptions(id: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaa1004', cwd: '/proj'),
+        JsonlSessionCreateOptions(
+          id: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaa1004',
+          cwd: '/proj',
+        ),
       );
       await env.appendFile(
         (await session.getMetadata()).path,
@@ -224,29 +236,37 @@ void main() {
       expect((await env.listDir('/sessions/.trash')).valueOrNull, isEmpty);
     });
 
-    test('E3: a backend that removes nothing fails loudly, not silently', () async {
-      final env = _LyingRemoveEnv();
-      final lyingRepo = JsonlSessionRepo(
-        fs: env,
-        sessionsRoot: '/sessions',
-        processId: 4242,
-        now: () => clock,
-      );
-      final metadata = await lyingRepo
-          .create(JsonlSessionCreateOptions(id: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaa1003', cwd: '/proj'))
-          .then((s) => s.getMetadata());
+    test(
+      'E3: a backend that removes nothing fails loudly, not silently',
+      () async {
+        final env = _LyingRemoveEnv();
+        final lyingRepo = JsonlSessionRepo(
+          fs: env,
+          sessionsRoot: '/sessions',
+          processId: 4242,
+          now: () => clock,
+        );
+        final metadata = await lyingRepo
+            .create(
+              JsonlSessionCreateOptions(
+                id: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaa1003',
+                cwd: '/proj',
+              ),
+            )
+            .then((s) => s.getMetadata());
 
-      await expectLater(
-        lyingRepo.delete(metadata, actor: 'test:lying'),
-        throwsA(
-          isA<SessionException>()
-              .having((e) => e.code, 'code', SessionErrorCode.storage)
-              .having((e) => e.message, 'message', contains('still exists')),
-        ),
-      );
-      // The file survived (the backend lied) — the refusal is the point.
-      expect((await env.exists(metadata.path)).valueOrNull, isTrue);
-    });
+        await expectLater(
+          lyingRepo.delete(metadata, actor: 'test:lying'),
+          throwsA(
+            isA<SessionException>()
+                .having((e) => e.code, 'code', SessionErrorCode.storage)
+                .having((e) => e.message, 'message', contains('still exists')),
+          ),
+        );
+        // The file survived (the backend lied) — the refusal is the point.
+        expect((await env.exists(metadata.path)).valueOrNull, isTrue);
+      },
+    );
   });
 
   group('live-session guard (AC2)', () {
@@ -421,8 +441,10 @@ final class _NoRenameEnv implements FileSystem, RenamableFileSystem {
   @override
   Future<Result<bool, FileError>> exists(String path) => _base.exists(path);
   @override
-  Future<Result<void, FileError>> createDir(String path, {bool recursive = true}) =>
-      _base.createDir(path, recursive: recursive);
+  Future<Result<void, FileError>> createDir(
+    String path, {
+    bool recursive = true,
+  }) => _base.createDir(path, recursive: recursive);
   @override
   Future<Result<void, FileError>> remove(
     String path, {

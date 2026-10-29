@@ -254,7 +254,9 @@ void main() {
           sessionRoot: '/sessions',
           providerKind: 'copilot',
           modelsHttpClient: refreshBackend.client(),
-          onModelChanged: (model) async { changed.add(model); },
+          onModelChanged: (model) async {
+            changed.add(model);
+          },
         ),
         io: io,
         streamFunction: FakeStreamFunction([textTurn('ok')]).call,
@@ -294,7 +296,9 @@ void main() {
           sessionRoot: '/sessions',
           providerKind: 'copilot',
           modelsHttpClient: backend.client(),
-          onModelChanged: (model) async { changed.add(model); },
+          onModelChanged: (model) async {
+            changed.add(model);
+          },
         ),
         io: io,
         streamFunction: FakeStreamFunction([textTurn('ok')]).call,

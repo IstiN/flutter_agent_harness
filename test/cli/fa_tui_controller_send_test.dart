@@ -49,12 +49,12 @@ void main() {
   test('a restored input history reaches the composer through the model', () {
     var model = FaTuiModel(callbacks: _callbacks(), isExited: () => false);
     model =
-        model.update(SetInputHistoryMsg(['earlier', 'first'])).$1
-            as FaTuiModel;
+        model.update(SetInputHistoryMsg(['earlier', 'first'])).$1 as FaTuiModel;
     // ↑ recalls the last submitted line instead of scrolling history.
     expect(model.inputHistory, ['earlier', 'first']);
-    final (next, cmd) =
-        model.update(KeyPressMsg(const TeaKey(code: KeyCode.up)));
+    final (next, cmd) = model.update(
+      KeyPressMsg(const TeaKey(code: KeyCode.up)),
+    );
     model = next as FaTuiModel;
     expect(model.inputText, 'first');
     expect(cmd, isNull);

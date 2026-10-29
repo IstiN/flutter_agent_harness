@@ -102,21 +102,20 @@ const _redLiveTail = [
 ];
 
 void main() {
-  test(
-    'gh-1422 sig-2: the exact red board row is chrome, never transcript '
-    'grammar',
-    () {
-      expect(
-        _classify('✓ done pty446             0s    – reply with the single '
-            'word ok'),
-        isNull,
-        reason:
-            'the subagent board row re-entered the transcript grammar — '
-            'the AC1 alignment window shifts one row again (issue #1422 '
-            'signature 2: run 37802938457, location [0] off-by-one)',
-      );
-    },
-  );
+  test('gh-1422 sig-2: the exact red board row is chrome, never transcript '
+      'grammar', () {
+    expect(
+      _classify(
+        '✓ done pty446             0s    – reply with the single '
+        'word ok',
+      ),
+      isNull,
+      reason:
+          'the subagent board row re-entered the transcript grammar — '
+          'the AC1 alignment window shifts one row again (issue #1422 '
+          'signature 2: run 37802938457, location [0] off-by-one)',
+    );
+  });
 
   test('gh-1422: the full subagent board vocabulary stays chrome', () {
     // The gh-1415 vocabulary is one glyph per display state; the matcher
@@ -138,14 +137,14 @@ void main() {
       expect(
         _classify(row),
         row,
-        reason: 'a settlement notice row went chrome — the resumed tail '
+        reason:
+            'a settlement notice row went chrome — the resumed tail '
             'loses rows the live tail keeps (issue #1422 failure class)',
       );
     }
   });
 
-  test('gh-1422: settled cards canonicalize identically across the legs',
-      () {
+  test('gh-1422: settled cards canonicalize identically across the legs', () {
     // The #916 contract on the red scenario's exact cards: the live card
     // carries the elapsed cell, the replay card the honest `—` — both
     // must canonicalize to the same `name: detail` core or AC1's 1:1
@@ -202,8 +201,7 @@ void main() {
     }
   });
 
-  test('gh-1422: the red run live/resume tails align 1:1 (the AC1 window)',
-      () {
+  test('gh-1422: the red run live/resume tails align 1:1 (the AC1 window)', () {
     // The exact alignment assertion that red at 37798533323 and
     // 37802938457, replayed through the row classifier: the resumed tail
     // and the live tail must align on the LAST liveTail.length rows.
@@ -220,13 +218,17 @@ void main() {
       final canonical = _classify(row);
       if (canonical != null) resumeTail.add(canonical);
     }
-    expect(liveTail, hasLength(8),
-        reason: 'the red live tail minus its one chrome row (the board)');
+    expect(
+      liveTail,
+      hasLength(8),
+      reason: 'the red live tail minus its one chrome row (the board)',
+    );
     expect(resumeTail, hasLength(_redResumeTail.length));
     expect(
       resumeTail.sublist(resumeTail.length - liveTail.length),
       liveTail,
-      reason: 'the AC1 alignment failed again — the resumed window slid '
+      reason:
+          'the AC1 alignment failed again — the resumed window slid '
           '(issue #1422 signature 2 regression)',
     );
   });

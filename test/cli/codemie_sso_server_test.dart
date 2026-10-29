@@ -188,36 +188,39 @@ void main() {
       );
     });
 
-    test('skips the launch when the policy says so (gh-1450 AC2/AC3)', () async {
-      final statuses = <String>[];
-      final driver = _CodeMieFlowDriver();
-      final jwt = _jwt(
-        exp: DateTime.now().millisecondsSinceEpoch ~/ 1000 + 3600,
-      );
-      final token = _tokenCookie({'codemie_access_token': jwt});
-      var launches = 0;
+    test(
+      'skips the launch when the policy says so (gh-1450 AC2/AC3)',
+      () async {
+        final statuses = <String>[];
+        final driver = _CodeMieFlowDriver();
+        final jwt = _jwt(
+          exp: DateTime.now().millisecondsSinceEpoch ~/ 1000 + 3600,
+        );
+        final token = _tokenCookie({'codemie_access_token': jwt});
+        var launches = 0;
 
-      final flowFuture = runCodeMieSsoCliFlow(
-        codeMieUrl: 'https://codemie.example.com',
-        onStatus: (s) => driver.record(statuses, s),
-        openBrowserFn: (_) async {
-          launches++;
-          return true;
-        },
-        shouldOpenBrowserFn: () => false,
-      );
+        final flowFuture = runCodeMieSsoCliFlow(
+          codeMieUrl: 'https://codemie.example.com',
+          onStatus: (s) => driver.record(statuses, s),
+          openBrowserFn: (_) async {
+            launches++;
+            return true;
+          },
+          shouldOpenBrowserFn: () => false,
+        );
 
-      await driver.hitCallback(token);
-      await flowFuture;
+        await driver.hitCallback(token);
+        await flowFuture;
 
-      // The launch function is never called; the URL still prints.
-      expect(launches, 0);
-      expect(statuses, contains(contains('browser launch skipped')));
-      _expectExactlyOneAuthorizationUrlLine(
-        statuses,
-        'https://codemie.example.com',
-      );
-    });
+        // The launch function is never called; the URL still prints.
+        expect(launches, 0);
+        expect(statuses, contains(contains('browser launch skipped')));
+        _expectExactlyOneAuthorizationUrlLine(
+          statuses,
+          'https://codemie.example.com',
+        );
+      },
+    );
 
     test('a throwing launcher degrades to the failure branch with the URL '
         '(gh-1450 E3)', () async {
@@ -248,24 +251,26 @@ void main() {
       );
     });
 
-    test('the timeout status carries the authorization URL (gh-1450 AC4)',
-        () async {
-      final statuses = <String>[];
+    test(
+      'the timeout status carries the authorization URL (gh-1450 AC4)',
+      () async {
+        final statuses = <String>[];
 
-      final result = await runCodeMieSsoCliFlow(
-        codeMieUrl: 'https://codemie.example.com',
-        onStatus: statuses.add,
-        openBrowserFn: (_) async => true,
-        shouldOpenBrowserFn: () => true,
-        timeout: const Duration(milliseconds: 60),
-      );
+        final result = await runCodeMieSsoCliFlow(
+          codeMieUrl: 'https://codemie.example.com',
+          onStatus: statuses.add,
+          openBrowserFn: (_) async => true,
+          shouldOpenBrowserFn: () => true,
+          timeout: const Duration(milliseconds: 60),
+        );
 
-      expect(result, isNull);
-      expect(statuses, contains(contains('no SSO callback received')));
-      // The LAST status is the last-chance rescue line.
-      expect(statuses.last, contains('authorization URL:'));
-      expect(statuses.last, contains('https://codemie.example.com'));
-    });
+        expect(result, isNull);
+        expect(statuses, contains(contains('no SSO callback received')));
+        // The LAST status is the last-chance rescue line.
+        expect(statuses.last, contains('authorization URL:'));
+        expect(statuses.last, contains('https://codemie.example.com'));
+      },
+    );
 
     test('no token/cookie value ever appears in the printed lines '
         '(gh-1450 AC5)', () async {

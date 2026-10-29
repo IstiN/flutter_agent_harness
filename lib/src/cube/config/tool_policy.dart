@@ -32,10 +32,7 @@ import '../../exceptions.dart';
 final class CubeToolPolicy {
   /// Creates a policy; both sets are matched as whole command-word strings
   /// (e.g. `'git push'`), never shell-expressed.
-  const CubeToolPolicy({
-    this.allow = const {},
-    this.deny = const {},
-  });
+  const CubeToolPolicy({this.allow = const {}, this.deny = const {}});
 
   /// Command words the run may execute. Empty set = deny everything.
   final Set<String> allow;
@@ -81,9 +78,7 @@ final class CubeToolPolicy {
   /// prefix, or trailing-`*` plain string prefix.
   static bool _entryMatches(String entry, String commandWords) {
     if (entry.endsWith('*')) {
-      return commandWords.startsWith(
-        entry.substring(0, entry.length - 1),
-      );
+      return commandWords.startsWith(entry.substring(0, entry.length - 1));
     }
     if (commandWords == entry) return true;
     return commandWords.startsWith(entry) &&

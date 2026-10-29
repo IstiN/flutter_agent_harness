@@ -56,22 +56,25 @@ void main() {
       sink.dispose();
     });
 
-    test('creates a missing parent directory — fresh installs record the trail', () {
-      // pr-1727 review BLOCKING pin: bin/fah.dart arms the trace at the
-      // very top of main(), before anything has created ~/.fah/logs/ —
-      // on a fresh install the sink must best-effort create its parent
-      // directory or the armed trail is void (silently zero bytes).
-      final nested = File('${dir.path}/logs/nested/trace.log');
-      expect(nested.parent.existsSync(), isFalse);
-      final sink = FileStreamTraceSink(nested);
-      StreamTrace.start(sink);
+    test(
+      'creates a missing parent directory — fresh installs record the trail',
+      () {
+        // pr-1727 review BLOCKING pin: bin/fah.dart arms the trace at the
+        // very top of main(), before anything has created ~/.fah/logs/ —
+        // on a fresh install the sink must best-effort create its parent
+        // directory or the armed trail is void (silently zero bytes).
+        final nested = File('${dir.path}/logs/nested/trace.log');
+        expect(nested.parent.existsSync(), isFalse);
+        final sink = FileStreamTraceSink(nested);
+        StreamTrace.start(sink);
 
-      StreamTrace.mark(StreamTraceMark.net, '+8B');
-      sink.dispose();
+        StreamTrace.mark(StreamTraceMark.net, '+8B');
+        sink.dispose();
 
-      expect(nested.existsSync(), isTrue);
-      expect(nested.readAsStringSync(), contains('net'));
-    });
+        expect(nested.existsSync(), isTrue);
+        expect(nested.readAsStringSync(), contains('net'));
+      },
+    );
 
     test('flush on a broken path degrades to silence, never throws', () {
       final sink = FileStreamTraceSink(file);

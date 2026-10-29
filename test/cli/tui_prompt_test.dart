@@ -1267,7 +1267,10 @@ void main() {
       );
       state = handleTuiPromptKey(state, const PromptTab()).state;
       final rows = renderTuiPrompt(state, 60).join('\n');
-      expect(rows, contains('type to replace name · tab to value · esc cancel'));
+      expect(
+        rows,
+        contains('type to replace name · tab to value · esc cancel'),
+      );
     });
   });
 }

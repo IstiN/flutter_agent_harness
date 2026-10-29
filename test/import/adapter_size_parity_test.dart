@@ -32,9 +32,7 @@ void main() {
   )..createSync(recursive: true);
 
   Directory ompBucket() => Directory(
-    '${home.path}/.omp/agent/sessions/--${project.path
-        .replaceFirst('/', '')
-        .replaceAll('/', '-')}--',
+    '${home.path}/.omp/agent/sessions/--${project.path.replaceFirst('/', '').replaceAll('/', '-')}--',
   )..createSync(recursive: true);
 
   setUp(() {
@@ -52,8 +50,9 @@ void main() {
 
   test('claude: over-cap file on a non-ranged backend is still discovered '
       'and refuses at read time', () async {
-    File('${claudeBucket().path}/big.jsonl')
-        .writeAsStringSync(fixture('claude_basic.jsonl'));
+    File(
+      '${claudeBucket().path}/big.jsonl',
+    ).writeAsStringSync(fixture('claude_basic.jsonl'));
     final adapter = ClaudeAdapter();
     final summaries = await adapter.discover(
       fs: _NoRangeEnv(ranged),
@@ -84,8 +83,9 @@ void main() {
 
   test('claude: the non-ranged over-cap file warns with the counted '
       'warning through the runner', () async {
-    File('${claudeBucket().path}/big.jsonl')
-        .writeAsStringSync(fixture('claude_basic.jsonl'));
+    File(
+      '${claudeBucket().path}/big.jsonl',
+    ).writeAsStringSync(fixture('claude_basic.jsonl'));
     final noRange = _NoRangeEnv(ranged);
     final lines = <String>[];
     final result = await runImport(
@@ -107,8 +107,9 @@ void main() {
 
   test('omp: over-cap file on a non-ranged backend is still discovered '
       'and warns through the runner (parity both ways)', () async {
-    File('${ompBucket().path}/big.jsonl')
-        .writeAsStringSync(fixture('omp_modern.jsonl'));
+    File(
+      '${ompBucket().path}/big.jsonl',
+    ).writeAsStringSync(fixture('omp_modern.jsonl'));
     final noRange = _NoRangeEnv(ranged);
     final adapter = OmpAdapter();
     final summaries = await adapter.discover(

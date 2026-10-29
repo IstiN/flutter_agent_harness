@@ -62,25 +62,22 @@ void main() {
   });
 
   group('CompactionSettings.forWindow', () {
-    test(
-      'gh-1742 AC3: proportional headroom above the legacy-parity band',
-      () {
-        // 200k sits INSIDE the parity band (16k, 262k): the legacy term
-        // (`min(16384, window/4)` capped) dominates → the exact legacy
-        // reserve, so the estimate-only channel fires at the legacy line
-        // (gh-1742 review round 1, comment 1: the old proportional-only
-        // curve compacted up to 12k later than legacy there).
-        final s200k = CompactionSettings.forWindow(200000);
-        expect(s200k.reserveTokens, 16384);
-        expect(s200k.keepRecentTokens, 25000);
-        // 1M (the kimi class): reserve ≥ 65536 → ≥60k headroom at the
-        // trigger, enough to absorb one huge tool result plus drift.
-        final s1m = CompactionSettings.forWindow(1048576);
-        expect(s1m.reserveTokens, greaterThanOrEqualTo(65536));
-        expect(s1m.reserveTokens, 65536);
-        expect(s1m.keepRecentTokens, 131072);
-      },
-    );
+    test('gh-1742 AC3: proportional headroom above the legacy-parity band', () {
+      // 200k sits INSIDE the parity band (16k, 262k): the legacy term
+      // (`min(16384, window/4)` capped) dominates → the exact legacy
+      // reserve, so the estimate-only channel fires at the legacy line
+      // (gh-1742 review round 1, comment 1: the old proportional-only
+      // curve compacted up to 12k later than legacy there).
+      final s200k = CompactionSettings.forWindow(200000);
+      expect(s200k.reserveTokens, 16384);
+      expect(s200k.keepRecentTokens, 25000);
+      // 1M (the kimi class): reserve ≥ 65536 → ≥60k headroom at the
+      // trigger, enough to absorb one huge tool result plus drift.
+      final s1m = CompactionSettings.forWindow(1048576);
+      expect(s1m.reserveTokens, greaterThanOrEqualTo(65536));
+      expect(s1m.reserveTokens, 65536);
+      expect(s1m.keepRecentTokens, 131072);
+    });
 
     test('UT-2: scaling table across the hosted-model range', () {
       // window → reserve: legacy parity below 262,144 (the `min(16384,

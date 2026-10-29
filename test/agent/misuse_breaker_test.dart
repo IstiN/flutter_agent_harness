@@ -9,7 +9,6 @@ import 'package:test/test.dart';
 
 import '../support/scripted_stream_harness.dart';
 
-
 /// A scripted turn whose assistant message repeats ONE malformed tool call.
 List<AssistantMessageEvent> _badCallTurn(String id, String toolName) {
   final call = ToolCall(id: id, name: toolName, arguments: const {});
@@ -25,7 +24,6 @@ List<AssistantMessageEvent> _badCallTurn(String id, String toolName) {
     DoneEvent(reason: StopReason.toolUse, message: partial),
   ];
 }
-
 
 Tool _tool(String name) => Tool(
   name: name,
@@ -123,8 +121,7 @@ void main() {
 
   group('IT-3: breaker over the real agent loop (AC6)', () {
     test('3 identical validation failures arm the corrective note in the '
-        'NEXT request payload; 6 stop executing the identical call',
-        () async {
+        'NEXT request payload; 6 stop executing the identical call', () async {
       final breaker = ToolMisuseBreaker();
       var executions = 0;
       final registry = ToolRegistry([
@@ -147,10 +144,7 @@ void main() {
 
       final stream = agentLoop(
         prompts: [UserMessage.text('do the thing')],
-        context: Context(
-          messages: const [],
-          tools: [_tool('flaky')],
-        ),
+        context: Context(messages: const [], tools: [_tool('flaky')]),
         config: AgentLoopConfig(model: testModel, toolMisuseBreaker: breaker),
         streamFunction: fake.call,
         toolExecutor: registry.executor,
@@ -187,11 +181,9 @@ void main() {
       // The 6th failure marks the call stopped: turns 7-8 are refused
       // WITHOUT executing the tool.
       expect(executions, 0, reason: 'validation fails before every execute');
-      final lastResults =
-          messages.whereType<ToolResultMessage>().toList();
+      final lastResults = messages.whereType<ToolResultMessage>().toList();
       expect(lastResults, hasLength(8));
-      final refusalText =
-          (lastResults.last.content.single as TextContent).text;
+      final refusalText = (lastResults.last.content.single as TextContent).text;
       expect(refusalText, contains('refused'));
       expect(refusalText, contains('6 consecutive times'));
       expect(refusalText, contains('Change the arguments'));

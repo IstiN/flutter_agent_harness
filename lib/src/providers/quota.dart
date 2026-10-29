@@ -26,9 +26,9 @@ enum QuotaUnit {
   String toJson() => name;
 
   static QuotaUnit fromJson(Object? value) => QuotaUnit.values.firstWhere(
-        (u) => u.name == value,
-        orElse: () => QuotaUnit.currencyUsd,
-      );
+    (u) => u.name == value,
+    orElse: () => QuotaUnit.currencyUsd,
+  );
 }
 
 /// A provider's remaining-allowance snapshot at [updatedAt].
@@ -52,10 +52,10 @@ class ProviderQuota {
   /// DIAL-style providers with no billing surface at all: reported
   /// silently, never an error.
   factory ProviderQuota.unmetered({DateTime? updatedAt}) => ProviderQuota(
-        unit: QuotaUnit.unmetered,
-        isUnmetered: true,
-        updatedAt: updatedAt,
-      );
+    unit: QuotaUnit.unmetered,
+    isUnmetered: true,
+    updatedAt: updatedAt,
+  );
 
   /// `limit - used`, or null when either side is unknown.
   double? get remaining =>
@@ -70,26 +70,26 @@ class ProviderQuota {
       resetsAt != null && now.isAfter(resetsAt!);
 
   Map<String, Object?> toJson() => {
-        'used': used,
-        'limit': limit,
-        'unit': unit.toJson(),
-        if (resetsAt != null) 'resetsAt': resetsAt!.toUtc().toIso8601String(),
-        if (isUnmetered) 'isUnmetered': true,
-        'updatedAt': updatedAt.toUtc().toIso8601String(),
-      };
+    'used': used,
+    'limit': limit,
+    'unit': unit.toJson(),
+    if (resetsAt != null) 'resetsAt': resetsAt!.toUtc().toIso8601String(),
+    if (isUnmetered) 'isUnmetered': true,
+    'updatedAt': updatedAt.toUtc().toIso8601String(),
+  };
 
   factory ProviderQuota.fromJson(Map<String, Object?> json) => ProviderQuota(
-        used: (json['used'] as num?)?.toDouble(),
-        limit: (json['limit'] as num?)?.toDouble(),
-        unit: QuotaUnit.fromJson(json['unit']),
-        resetsAt: json['resetsAt'] is String
-            ? DateTime.parse(json['resetsAt'] as String)
-            : null,
-        isUnmetered: json['isUnmetered'] == true,
-        updatedAt: json['updatedAt'] is String
-            ? DateTime.parse(json['updatedAt'] as String)
-            : DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
-      );
+    used: (json['used'] as num?)?.toDouble(),
+    limit: (json['limit'] as num?)?.toDouble(),
+    unit: QuotaUnit.fromJson(json['unit']),
+    resetsAt: json['resetsAt'] is String
+        ? DateTime.parse(json['resetsAt'] as String)
+        : null,
+    isUnmetered: json['isUnmetered'] == true,
+    updatedAt: json['updatedAt'] is String
+        ? DateTime.parse(json['updatedAt'] as String)
+        : DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
+  );
 
   @override
   String toString() =>
@@ -110,8 +110,9 @@ class QuotaFetchResult {
   bool get isUnknown => quota == null;
 
   @override
-  String toString() =>
-      isUnknown ? 'QuotaFetchResult(unknown: $reason)' : 'QuotaFetchResult($quota)';
+  String toString() => isUnknown
+      ? 'QuotaFetchResult(unknown: $reason)'
+      : 'QuotaFetchResult($quota)';
 }
 
 /// Per-provider quota source: pure parse + injectable [http.Client].
@@ -157,10 +158,12 @@ String _trimNumber(double value, int fractionDigits) =>
 /// reported at all, `…/$150` when only the limit is known.
 String formatQuotaUsedLimit(ProviderQuota? quota) {
   if (quota == null) return 'unknown';
-  if (quota.isUnmetered || quota.unit == QuotaUnit.unmetered) return 'unmetered';
+  if (quota.isUnmetered || quota.unit == QuotaUnit.unmetered)
+    return 'unmetered';
   final used = formatQuotaAmount(quota.used, quota.unit);
-  final limit =
-      quota.limit == null ? null : formatQuotaAmount(quota.limit, quota.unit);
+  final limit = quota.limit == null
+      ? null
+      : formatQuotaAmount(quota.limit, quota.unit);
   if (quota.used == null && limit == null) return 'unlimited';
   if (limit == null) return '$used/no cap';
   return '$used/$limit';
@@ -196,8 +199,8 @@ String formatQuotaBadge({
   final ratio = used == null && limit == null
       ? 'unlimited'
       : limit == null
-          ? '${used ?? "…"}/no cap'
-          : '$used/$limit';
+      ? '${used ?? "…"}/no cap'
+      : '$used/$limit';
   final reset = formatQuotaReset(quota.resetsAt, now);
   return '[$shortName $ratio${reset.isEmpty ? '' : ' · $reset'}]';
 }

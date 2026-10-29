@@ -786,7 +786,7 @@ String? _validateMessageSend(
     // graceful chunk-fallback notice — never a silent loss.
     if (message.length > manager.maxReplyChars &&
         !deliverable.spillEnabled &&
-        deliverable.spillApliesTo(target)) {
+        deliverable.spillAppliesTo(target)) {
       return (
         message,
         ' Note: the body exceeds the ${manager.maxReplyChars}-char budget '

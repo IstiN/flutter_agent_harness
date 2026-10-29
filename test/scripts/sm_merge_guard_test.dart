@@ -116,25 +116,27 @@ void main() {
     },
   );
 
-  test('a run entry WITHOUT a conclusion key does NOT validate (only '
-      'confirmed successes count — for every caller by construction)', () async {
-    final code = await runGuard([
-      // A future caller that builds run dicts without a 'conclusion'
-      // key must not get a pass from a run that was never confirmed
-      // green — the exact-SHA fast-forward match included.
-      {'database_id': 11, 'head_sha': _sha, 'tree_sha': 'differenttree'},
-      _run(id: 12, sha: 'validatedhead', tree: _tree)
-        ..remove('conclusion'),
-    ]);
-    expect(
-      code,
-      3,
-      reason:
-          'a run that was never confirmed successful is the alarm '
-          'class — a missing conclusion sneaking in as a pass is how '
-          'a red validation would silently certify a push',
-    );
-  });
+  test(
+    'a run entry WITHOUT a conclusion key does NOT validate (only '
+    'confirmed successes count — for every caller by construction)',
+    () async {
+      final code = await runGuard([
+        // A future caller that builds run dicts without a 'conclusion'
+        // key must not get a pass from a run that was never confirmed
+        // green — the exact-SHA fast-forward match included.
+        {'database_id': 11, 'head_sha': _sha, 'tree_sha': 'differenttree'},
+        _run(id: 12, sha: 'validatedhead', tree: _tree)..remove('conclusion'),
+      ]);
+      expect(
+        code,
+        3,
+        reason:
+            'a run that was never confirmed successful is the alarm '
+            'class — a missing conclusion sneaking in as a pass is how '
+            'a red validation would silently certify a push',
+      );
+    },
+  );
 
   test('a push/tag-event run match does NOT validate (must be the SM '
       'dispatch population)', () async {
@@ -173,11 +175,7 @@ void main() {
 
   test('an empty commit subject still alarms cleanly — the alarm path '
       'must never traceback on `splitlines()[0]`', () async {
-    final code = await runGuard(
-      [],
-      subject: '',
-      alarmIssue: true,
-    );
+    final code = await runGuard([], subject: '', alarmIssue: true);
     expect(
       code,
       1,

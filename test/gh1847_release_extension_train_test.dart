@@ -51,22 +51,36 @@ void main() {
       );
     });
 
-    test('the leg rides the tag/release train and waits for the quality gate',
-        () {
-      final needs = job!['needs'];
-      final needsList =
-          needs is YamlList ? needs.map((n) => n.toString()) : [needs];
-      expect(needsList, contains('quality-gate'),
-          reason: 'same keyed model as web-spa — the leg builds only what '
-              'the gate validated');
-      final cond = job['if'].toString();
-      expect(cond, contains("startsWith(github.ref, 'refs/tags/v')"),
-          reason: 'PR/dispatch runs must not touch releases');
-      expect(cond, contains("github.event_name == 'release'"),
-          reason: 'the gh-1172 direct-release path publishes through the '
-              'release event too — the extension must attach there');
-      expect(cond, contains("needs.quality-gate.result == 'success'"));
-    });
+    test(
+      'the leg rides the tag/release train and waits for the quality gate',
+      () {
+        final needs = job!['needs'];
+        final needsList = needs is YamlList
+            ? needs.map((n) => n.toString())
+            : [needs];
+        expect(
+          needsList,
+          contains('quality-gate'),
+          reason:
+              'same keyed model as web-spa — the leg builds only what '
+              'the gate validated',
+        );
+        final cond = job['if'].toString();
+        expect(
+          cond,
+          contains("startsWith(github.ref, 'refs/tags/v')"),
+          reason: 'PR/dispatch runs must not touch releases',
+        );
+        expect(
+          cond,
+          contains("github.event_name == 'release'"),
+          reason:
+              'the gh-1172 direct-release path publishes through the '
+              'release event too — the extension must attach there',
+        );
+        expect(cond, contains("needs.quality-gate.result == 'success'"));
+      },
+    );
 
     test('the leg is additive (continue-on-error), like web-spa', () {
       // fa-extension.zip is a gh-1832 REQUIRED asset, but the attach leg
@@ -75,41 +89,64 @@ void main() {
       // single publish blocker and strands the draft loudly on the
       // MISSING asset.
       expect(job!['continue-on-error'], isTrue);
-      expect(job['timeout-minutes'], isNotNull,
-          reason: '#351: every leg carries an explicit ceiling');
-      expect((job['permissions'] as YamlMap)['contents'], 'write',
-          reason: 'the leg attaches fa-extension.zip to the release');
+      expect(
+        job['timeout-minutes'],
+        isNotNull,
+        reason: '#351: every leg carries an explicit ceiling',
+      );
+      expect(
+        (job['permissions'] as YamlMap)['contents'],
+        'write',
+        reason: 'the leg attaches fa-extension.zip to the release',
+      );
     });
 
     test('build → size gate → attach, in that order', () {
-      final buildAt =
-          steps.indexOf('bash scripts/build_browser_ext.sh --with-app');
+      final buildAt = steps.indexOf(
+        'bash scripts/build_browser_ext.sh --with-app',
+      );
       final gateAt = steps.indexOf(gateInvocation);
       final uploadAt = steps.indexOf('gh release upload');
       expect(buildAt, isNonNegative, reason: 'must build the real artifact');
-      expect(gateAt, isNonNegative,
-          reason: 'gh-1684 AC5: gate before upload — a budget regression '
-              'must not reach the release assets');
+      expect(
+        gateAt,
+        isNonNegative,
+        reason:
+            'gh-1684 AC5: gate before upload — a budget regression '
+            'must not reach the release assets',
+      );
       expect(uploadAt, isNonNegative);
       expect(buildAt, lessThan(gateAt));
       expect(gateAt, lessThan(uploadAt));
     });
 
     test('the attach is draft-first and never publishes', () {
-      expect(steps, contains('release_lazy_draft.sh'),
-          reason: 'gh-1801: draft-first create via the helper (curated '
-              'notes + ownership marker), never an inline create');
+      expect(
+        steps,
+        contains('release_lazy_draft.sh'),
+        reason:
+            'gh-1801: draft-first create via the helper (curated '
+            'notes + ownership marker), never an inline create',
+      );
       expect(steps, contains('fa-extension.zip'));
       expect(steps, contains('--clobber'));
-      expect(steps, isNot(contains('--draft=false')),
-          reason: 'the publish flip is provenance-owned and rides ONLY '
-              'the SHA256SUMS upload (gh-1801 rework)');
+      expect(
+        steps,
+        isNot(contains('--draft=false')),
+        reason:
+            'the publish flip is provenance-owned and rides ONLY '
+            'the SHA256SUMS upload (gh-1801 rework)',
+      );
     });
 
     test('the leg builds on the pinned Flutter SDK (gh-1684 AC5)', () {
-      expect(steps, contains('flutter-version: 3.47.7'),
-          reason: '#1431 exact-patch pin — every fa-extension.zip builder '
-              'must stay comparable across legs');
+      expect(
+        steps,
+        contains('flutter-version: 3.47.7'),
+        reason:
+            '#1431 exact-patch pin — every fa-extension.zip builder '
+            'must stay comparable across legs',
+      );
       expect(steps, contains('cache: true'));
     });
   });
@@ -137,12 +174,17 @@ void main() {
     test('build-macos.yml build-extension still gates then uploads', () {
       final macosJobs = jobsOf(macos);
       final daily = macosJobs[jobId] as YamlMap?;
-      expect(daily, isNotNull,
-          reason: 'the daily leg still pre-stages the next-tag draft, and '
-              'the n_1012 emergency recovery dispatch '
-              '(--ref <tag> -f version=<tag>) keeps working');
-      final dailySteps =
-          (daily!['steps'] as YamlList).map((s) => s.toString()).join('\n');
+      expect(
+        daily,
+        isNotNull,
+        reason:
+            'the daily leg still pre-stages the next-tag draft, and '
+            'the n_1012 emergency recovery dispatch '
+            '(--ref <tag> -f version=<tag>) keeps working',
+      );
+      final dailySteps = (daily!['steps'] as YamlList)
+          .map((s) => s.toString())
+          .join('\n');
       expect(dailySteps, contains(gateInvocation));
       expect(dailySteps, contains('gh release upload'));
     });

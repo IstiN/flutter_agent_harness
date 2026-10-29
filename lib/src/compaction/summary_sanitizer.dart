@@ -110,8 +110,7 @@ SanitizedSummary sanitizeSummary(
     // envelope (truncated checkpoint, hostile open without close) re-arms
     // sanitization after [_maxPinEnvelopeLines] lines instead of staying
     // exempt for the rest of the summary.
-    final keptLine =
-        insidePinEnvelope && envelopeLines < _maxPinEnvelopeLines
+    final keptLine = insidePinEnvelope && envelopeLines < _maxPinEnvelopeLines
         ? line
         : _sanitizeLine(line, stripped, protectedLines);
     if (keptLine != null) keptLines.add(keptLine);

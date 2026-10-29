@@ -28,22 +28,25 @@ const mandatorySections = {
 };
 
 void main() {
-  test('AC6: privacy.html carries all nine mandatory sections in EN and RU',
-      () {
-    final html = File('site/privacy.html').readAsStringSync();
-    for (final lang in const ['en', 'ru']) {
-      final block = _languageBlock(html, lang);
-      for (final key in mandatorySections.keys) {
-        expect(
-          block,
-          contains('data-sec="$key"'),
-          reason: 'the $lang block is missing the mandatory '
-              '"${mandatorySections[key]}" section (data-sec="$key") — '
-              'CWS rejects omission of any section',
-        );
+  test(
+    'AC6: privacy.html carries all nine mandatory sections in EN and RU',
+    () {
+      final html = File('site/privacy.html').readAsStringSync();
+      for (final lang in const ['en', 'ru']) {
+        final block = _languageBlock(html, lang);
+        for (final key in mandatorySections.keys) {
+          expect(
+            block,
+            contains('data-sec="$key"'),
+            reason:
+                'the $lang block is missing the mandatory '
+                '"${mandatorySections[key]}" section (data-sec="$key") — '
+                'CWS rejects omission of any section',
+          );
+        }
       }
-    }
-  });
+    },
+  );
 
   test('PRIVACY.md (repo source text) carries the same nine sections', () {
     final md = File('PRIVACY.md').readAsStringSync();
@@ -51,7 +54,8 @@ void main() {
       expect(
         md,
         contains('<!-- sec:$key -->'),
-        reason: 'PRIVACY.md drifted from site/privacy.html — the '
+        reason:
+            'PRIVACY.md drifted from site/privacy.html — the '
             '"${mandatorySections[key]}" section marker is missing '
             '(AGENTS.md: keep both in sync)',
       );
@@ -60,14 +64,17 @@ void main() {
 
   test('AC6: the store listing links the live privacy policy URL', () {
     final listing = File('browser_ext/store/listing.md').readAsStringSync();
-    expect(listing, contains('https://fa1.dev/privacy.html'),
-        reason: 'the store listing "Privacy policy" field must point at '
-            'the live, rendering URL');
+    expect(
+      listing,
+      contains('https://fa1.dev/privacy.html'),
+      reason:
+          'the store listing "Privacy policy" field must point at '
+          'the live, rendering URL',
+    );
   });
 
   test('F2: the store privacy disclosures no longer justify the four '
-      'removed permissions — and DO justify the retained `downloads`',
-      () {
+      'removed permissions — and DO justify the retained `downloads`', () {
     final privacy = File('browser_ext/store/privacy.md').readAsStringSync();
     // gh-1630: a justification for a permission the extension no longer
     // requests invites review questions — the four dead ones stay out.
@@ -77,17 +84,25 @@ void main() {
       'identity',
       'desktopCapture',
     ]) {
-      expect(privacy, isNot(contains('**$dead**')),
-          reason: '"$dead" is removed from the manifest (gh-1630 F2) — a '
-              'justification for a permission the extension no longer '
-              'requests invites review questions');
+      expect(
+        privacy,
+        isNot(contains('**$dead**')),
+        reason:
+            '"$dead" is removed from the manifest (gh-1630 F2) — a '
+            'justification for a permission the extension no longer '
+            'requests invites review questions',
+      );
     }
     // gh-1630 F2′: `downloads` is RETAINED — an UNjustified requested
     // permission is the opposite failure (CWS asks for the call site
     // story), so its disclosure must stay.
-    expect(privacy, contains('**downloads**'),
-        reason: '`downloads` stays declared (F2′, shipped `download` tool '
-            'call site) — the store disclosure must justify it');
+    expect(
+      privacy,
+      contains('**downloads**'),
+      reason:
+          '`downloads` stays declared (F2′, shipped `download` tool '
+          'call site) — the store disclosure must justify it',
+    );
   });
 }
 

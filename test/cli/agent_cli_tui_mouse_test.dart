@@ -103,7 +103,8 @@ void main() {
     expect(
       frames.text,
       contains(_mouseDisable),
-      reason: '/mouse off must write the full ?1000l ?1002l ?1003l ?1006l '
+      reason:
+          '/mouse off must write the full ?1000l ?1002l ?1003l ?1006l '
           'teardown to the terminal',
     );
   });
@@ -125,9 +126,7 @@ void main() {
         // A SECOND enable: the boot's first one precedes the off; a fresh
         // ?1002h after the off proves the transition re-armed the terminal.
         final afterOff = frames.text.indexOf(_mouseDisable);
-        return frames.text
-            .substring(afterOff)
-            .contains(_cellMotionEnable);
+        return frames.text.substring(afterOff).contains(_cellMotionEnable);
       },
     );
     final afterOff = frames.text.indexOf(_mouseDisable);

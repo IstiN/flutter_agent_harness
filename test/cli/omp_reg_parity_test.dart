@@ -144,11 +144,11 @@ void main() {
     // per-pixel comparison at the same row lives in the flutter parity
     // leg where BOTH renders exist.
     const bg = [0x12, 0x12, 0x12];
-    final png = refDir.listSync().whereType<File>().where(
-      (f) => f.path.endsWith('.png'),
-    ).firstWhere(
-      (f) => _stem(f.path) == '02_status_bar_default',
-    );
+    final png = refDir
+        .listSync()
+        .whereType<File>()
+        .where((f) => f.path.endsWith('.png'))
+        .firstWhere((f) => _stem(f.path) == '02_status_bar_default');
     final decoded = _decodeFixture(png);
     var hits = 0;
     for (final pixel in decoded.data!) {
@@ -290,9 +290,7 @@ img.Image _decodeFixture(File f) {
     }
     sleep(const Duration(milliseconds: 250));
   }
-  throw StateError(
-    'fixture decode failed after 3 attempts: $lastError',
-  );
+  throw StateError('fixture decode failed after 3 attempts: $lastError');
 }
 
 String _stem(String path) => path

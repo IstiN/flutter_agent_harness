@@ -377,45 +377,42 @@ void main() {
       });
     });
 
-    test(
-      'play leg is independent of the testflight leg outcome (#359)',
-      () {
-        // #348 serialized play after testflight (needs: [plan, testflight]
-        // + a result() guard) as a mitigation for the #343 sibling-dispatch
-        // race. #351 fixed that race structurally — exact displayTitle
-        // correlation (distinct run-names per dispatch shape), newest-match,
-        // 30s window, per-run_id concurrency group — so the edge only
-        // bought cascading skips (a cancelled testflight watcher skipped
-        // Play; run 34827074052 showed one leg's external blocker stopping
-        // the train) and up to 360m of start latency. This pins the
-        // decoupling: nothing in the play job may reference the testflight
-        // leg, by needs or by result guard.
-        final play = ((loadYaml(daily) as Map)['jobs'] as Map)['play'] as Map;
-        // needs may be a scalar (`needs: plan`) or a list.
-        final needs = play['needs'];
-        final needsList = needs is List ? needs : [needs];
-        expect(
-          needsList,
-          contains('plan'),
-          reason: 'play still orders after plan (change detection + versions)',
-        );
-        expect(
-          needsList,
-          isNot(contains('testflight')),
-          reason:
-              'needs: testflight couples Play to the TestFlight outcome — '
-              'the #348 serialization is obsolete after #351 correlation '
-              '(#359)',
-        );
-        expect(
-          play['if'].toString(),
-          isNot(contains('testflight')),
-          reason:
-              'a needs.testflight.result guard re-introduces the coupling '
-              'the missing edge removed (#348 guard, dropped in #359)',
-        );
-      },
-    );
+    test('play leg is independent of the testflight leg outcome (#359)', () {
+      // #348 serialized play after testflight (needs: [plan, testflight]
+      // + a result() guard) as a mitigation for the #343 sibling-dispatch
+      // race. #351 fixed that race structurally — exact displayTitle
+      // correlation (distinct run-names per dispatch shape), newest-match,
+      // 30s window, per-run_id concurrency group — so the edge only
+      // bought cascading skips (a cancelled testflight watcher skipped
+      // Play; run 34827074052 showed one leg's external blocker stopping
+      // the train) and up to 360m of start latency. This pins the
+      // decoupling: nothing in the play job may reference the testflight
+      // leg, by needs or by result guard.
+      final play = ((loadYaml(daily) as Map)['jobs'] as Map)['play'] as Map;
+      // needs may be a scalar (`needs: plan`) or a list.
+      final needs = play['needs'];
+      final needsList = needs is List ? needs : [needs];
+      expect(
+        needsList,
+        contains('plan'),
+        reason: 'play still orders after plan (change detection + versions)',
+      );
+      expect(
+        needsList,
+        isNot(contains('testflight')),
+        reason:
+            'needs: testflight couples Play to the TestFlight outcome — '
+            'the #348 serialization is obsolete after #351 correlation '
+            '(#359)',
+      );
+      expect(
+        play['if'].toString(),
+        isNot(contains('testflight')),
+        reason:
+            'a needs.testflight.result guard re-introduces the coupling '
+            'the missing edge removed (#348 guard, dropped in #359)',
+      );
+    });
   });
 
   // #368: pubspec.yaml declares .env as a Flutter asset (flutter_dotenv)
@@ -442,8 +439,8 @@ void main() {
   group('release-train tripwires (gh-798)', () {
     test('build-ios asserts the ASC version floor before building', () {
       final yaml = loadYaml(buildMobile) as Map;
-      final steps = ((yaml['jobs'] as Map)['build-ios'] as Map)['steps']
-          as Iterable;
+      final steps =
+          ((yaml['jobs'] as Map)['build-ios'] as Map)['steps'] as Iterable;
       final names = steps.map((s) => (s as Map)['name']).toList();
       // gh-800 r2: a DELETED tripwire must fail loudly. indexOf returns -1
       // for a missing step and -1 < anything, so the order assertion below
@@ -468,7 +465,8 @@ void main() {
       expect(
         fastfile,
         contains('require_relative "version_floor"'),
-        reason: 'the lane must keep using the plain-ruby tested decision '
+        reason:
+            'the lane must keep using the plain-ruby tested decision '
             'module (gh-798)',
       );
       expect(
@@ -488,15 +486,16 @@ void main() {
             'the Verify AAB step must run the gate via the shared script — '
             'an inline copy drifts from the self-tested one (gh-798 AC3)',
       );
-      final selftest =
-          read('.github/workflows/aab-gate-selftest.yml');
+      final selftest = read('.github/workflows/aab-gate-selftest.yml');
       expect(
         selftest,
         contains('scripts/verify_aab_native_libs.sh'),
         reason: 'the self-test job must exercise the REAL gate script',
       );
       final selftestYaml = loadYaml(selftest) as Map;
-      final on = (selftestYaml['on'] ?? selftestYaml[true]) as Map; // YAML 1.1 may key `on` as true
+      final on =
+          (selftestYaml['on'] ?? selftestYaml[true])
+              as Map; // YAML 1.1 may key `on` as true
       final paths = on['pull_request'] as Map;
       expect(
         (paths['paths'] as List).cast<String>(),

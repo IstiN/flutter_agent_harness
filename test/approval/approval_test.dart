@@ -698,7 +698,9 @@ void main() {
           // before the write lands. Reads observing same-batch writes is
           // not a modeled ordering; asserting it pinned accidental
           // microtask timing.
-          _toolTurn(const [ToolCall(id: 'tc-3', name: 'ls', arguments: {'path': '.'})]),
+          _toolTurn(const [
+            ToolCall(id: 'tc-3', name: 'ls', arguments: {'path': '.'}),
+          ]),
           _textTurn('done'),
         ],
         tools: tools,

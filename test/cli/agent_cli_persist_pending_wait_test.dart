@@ -256,28 +256,30 @@ void main() {
     expect(ledger.entries.single.text, _reason);
   });
 
-  test('a result line without a scheduled id is reported, not written',
-      () async {
-    final stream = _ProbedStream([
-      (
-        [
-          (cli) async => cli.recordPendingWait(
-            resultText: 'error: text is required',
-            arguments: const {},
-          ),
-        ],
-        textTurn('ack'),
-      ),
-    ]);
-    final results = await _runConversation(
-      env,
-      io,
-      stream,
-      userLines: ['arm the watch'],
-    );
-    expect(results.single, contains('did not carry a scheduled id'));
-    expect((await _latestLedger(env)).entries, isEmpty);
-  });
+  test(
+    'a result line without a scheduled id is reported, not written',
+    () async {
+      final stream = _ProbedStream([
+        (
+          [
+            (cli) async => cli.recordPendingWait(
+              resultText: 'error: text is required',
+              arguments: const {},
+            ),
+          ],
+          textTurn('ack'),
+        ),
+      ]);
+      final results = await _runConversation(
+        env,
+        io,
+        stream,
+        userLines: ['arm the watch'],
+      );
+      expect(results.single, contains('did not carry a scheduled id'));
+      expect((await _latestLedger(env)).entries, isEmpty);
+    },
+  );
 
   test('classic-engine sessions never grow the ledger (E3)', () async {
     final stream = _ProbedStream([
@@ -310,30 +312,32 @@ void main() {
     expect((await _latestLedger(env)).entries, isEmpty);
   });
 
-  test('the live watcher records a schedule_message hit into the ledger',
-      () async {
-    final cli = _bootCli(env: env, io: io, stream: _ProbedStream(const []));
-    cli.sessionForTest = await JsonlSessionRepo(
-      fs: env,
-      sessionsRoot: '/sessions',
-    ).create(JsonlSessionCreateOptions(cwd: '/work'));
+  test(
+    'the live watcher records a schedule_message hit into the ledger',
+    () async {
+      final cli = _bootCli(env: env, io: io, stream: _ProbedStream(const []));
+      cli.sessionForTest = await JsonlSessionRepo(
+        fs: env,
+        sessionsRoot: '/sessions',
+      ).create(JsonlSessionCreateOptions(cwd: '/work'));
 
-    final result = await _driveWatcher(
-      cli,
-      toolName: 'schedule_message',
-      isError: false,
-      resultText: _scheduleResult('sm-live-1'),
-      arguments: {'text': _reason},
-    );
+      final result = await _driveWatcher(
+        cli,
+        toolName: 'schedule_message',
+        isError: false,
+        resultText: _scheduleResult('sm-live-1'),
+        arguments: {'text': _reason},
+      );
 
-    // A clean recording stays silent: no `[obligations]` note on io.
-    expect(result, isNull);
-    expect(io.out.toString(), isNot(contains('[obligations]')));
-    final ledger = await _latestLedger(env);
-    expect(ledger.entries.single.kind, ObligationKind.pendingWait);
-    expect(ledger.entries.single.text, _reason);
-    expect(ledger.entries.single.sourceRecordId, 'sm-live-1');
-  });
+      // A clean recording stays silent: no `[obligations]` note on io.
+      expect(result, isNull);
+      expect(io.out.toString(), isNot(contains('[obligations]')));
+      final ledger = await _latestLedger(env);
+      expect(ledger.entries.single.kind, ObligationKind.pendingWait);
+      expect(ledger.entries.single.text, _reason);
+      expect(ledger.entries.single.sourceRecordId, 'sm-live-1');
+    },
+  );
 
   test('error results and foreign tools never reach the ledger', () async {
     final cli = _bootCli(env: env, io: io, stream: _ProbedStream(const []));
@@ -361,8 +365,7 @@ void main() {
     expect((await _latestLedger(env)).entries, isEmpty);
   });
 
-  test('a schedule result without a scheduled id is reported on io',
-      () async {
+  test('a schedule result without a scheduled id is reported on io', () async {
     final cli = _bootCli(env: env, io: io, stream: _ProbedStream(const []));
     cli.sessionForTest = await JsonlSessionRepo(
       fs: env,
@@ -384,29 +387,29 @@ void main() {
     expect((await _latestLedger(env)).entries, isEmpty);
   });
 
-  test('a ledger crash cannot fail the tool call the schedule succeeded',
-      () async {
-    // The throw needs a REAL repo behind `_repo` (the snapshot scan
-    // rehydrates through it), so boot one full turn first; the swapped
-    // session's metadata probe then crashes the scan inside the hook.
-    final stream = _ProbedStream([
-      ([], textTurn('warmup')),
-    ]);
-    final cli = _bootCli(env: env, io: io, stream: stream);
-    await _runConversation(env, io, stream, userLines: ['hello']);
-    cli.sessionForTest = Session(_ThrowingMetadataStorage());
+  test(
+    'a ledger crash cannot fail the tool call the schedule succeeded',
+    () async {
+      // The throw needs a REAL repo behind `_repo` (the snapshot scan
+      // rehydrates through it), so boot one full turn first; the swapped
+      // session's metadata probe then crashes the scan inside the hook.
+      final stream = _ProbedStream([([], textTurn('warmup'))]);
+      final cli = _bootCli(env: env, io: io, stream: stream);
+      await _runConversation(env, io, stream, userLines: ['hello']);
+      cli.sessionForTest = Session(_ThrowingMetadataStorage());
 
-    final result = await _driveWatcher(
-      cli,
-      toolName: 'schedule_message',
-      isError: false,
-      resultText: _scheduleResult('sm-crash-1'),
-      arguments: {'text': _reason},
-    );
+      final result = await _driveWatcher(
+        cli,
+        toolName: 'schedule_message',
+        isError: false,
+        resultText: _scheduleResult('sm-crash-1'),
+        arguments: {'text': _reason},
+      );
 
-    // The swallow: no exception surfaced, the prior chain still ran,
-    // and the failure is NOT misreported as a recording note.
-    expect(result, isNull);
-    expect(io.out.toString(), isNot(contains('[obligations]')));
-  });
+      // The swallow: no exception surfaced, the prior chain still ran,
+      // and the failure is NOT misreported as a recording note.
+      expect(result, isNull);
+      expect(io.out.toString(), isNot(contains('[obligations]')));
+    },
+  );
 }

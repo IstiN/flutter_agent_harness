@@ -128,11 +128,7 @@ AppFahSections parseAppConfigSections({
   // tools: — both scopes parse independently; the caller stacks them
   // (global < project < runtime) in the live resolution.
   final userTools = _parseTools(user?['tools'], userSource, warnings);
-  final projectTools = _parseTools(
-    project?['tools'],
-    projectSource,
-    warnings,
-  );
+  final projectTools = _parseTools(project?['tools'], projectSource, warnings);
   final ttsr = _parseTtsrSection(
     user,
     userSource,
@@ -197,8 +193,7 @@ ModelRolesConfig? _parseRolesSection(
 /// the retry policy only rides a roles parse — so it stays one here
 /// (parity over convenience).
 bool _shipsRolesSection(YamlMap? user) =>
-    user != null &&
-    (user['roles'] != null || user['modelOverrides'] != null);
+    user != null && (user['roles'] != null || user['modelOverrides'] != null);
 
 /// The `ttsr:` section: user settings + rules, project `.fah/rules.yaml`
 /// rules first (the CLI _resolveTtsr merge: project rules win name
@@ -256,9 +251,7 @@ List<TtsrRule>? _parseProjectTtsrRules(
       warnings: warnings,
     );
   } on ConfigException catch (error) {
-    warnings.add(
-      'invalid ttsr rules in $projectRulesSource: ${error.message}',
-    );
+    warnings.add('invalid ttsr rules in $projectRulesSource: ${error.message}');
     return null;
   }
 }

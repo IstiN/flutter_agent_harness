@@ -55,7 +55,6 @@ AssistantMessage _assistant({
   );
 }
 
-
 /// A turn that hangs until cancelled, then reports aborted.
 class _AbortableStreamFunction {
   var started = false;
@@ -170,57 +169,60 @@ void main() {
     return session.getEntries();
   }
 
-  test('events run: header first, ordered frames, stdout stays empty', () async {
-    final fake = FakeStreamFunction([
-      toolTurn([
-        ToolCall(
-          id: 'c1',
-          name: 'read',
-          arguments: const {'path': 'notes.txt'},
-        ),
-      ]),
-      textTurn('done reading'),
-    ]);
-    final cli = cliFor(fake.call);
-    // The host wraps the IO for stdout purity (bin/fah.dart does the
-    // same in events mode): deltas ride frames, prose rides diagnostics.
-    io.eventsMode = true;
-    final frames = <String>[];
-    final hep = HepWriter(emit: frames.add, fahVersion: 'test');
+  test(
+    'events run: header first, ordered frames, stdout stays empty',
+    () async {
+      final fake = FakeStreamFunction([
+        toolTurn([
+          ToolCall(
+            id: 'c1',
+            name: 'read',
+            arguments: const {'path': 'notes.txt'},
+          ),
+        ]),
+        textTurn('done reading'),
+      ]);
+      final cli = cliFor(fake.call);
+      // The host wraps the IO for stdout purity (bin/fah.dart does the
+      // same in events mode): deltas ride frames, prose rides diagnostics.
+      io.eventsMode = true;
+      final frames = <String>[];
+      final hep = HepWriter(emit: frames.add, fahVersion: 'test');
 
-    final code = await cli.runHeadless(
-      'read notes.txt',
-      hep: hep,
-    );
+      final code = await cli.runHeadless('read notes.txt', hep: hep);
 
-    expect(code, 0);
-    // Stdout carries NOTHING but the HEP stream: the writer owns stdout;
-    // prose goes to the diagnostics channel only.
-    expect(io.out.toString(), isEmpty);
+      expect(code, 0);
+      // Stdout carries NOTHING but the HEP stream: the writer owns stdout;
+      // prose goes to the diagnostics channel only.
+      expect(io.out.toString(), isEmpty);
 
-    final parsed = [
-      for (final line in frames) jsonDecode(line) as Map<String, dynamic>,
-    ];
-    expect(parsed.first['type'], 'hep_header');
-    expect(parsed.first['session'], isNotNull);
-    expect(parsed.first['hep'], 'v1');
-    expect(parsed.first['fah'], 'test');
-    expect(parsed.map((f) => f['type']), containsAllInOrder([
-      'hep_header',
-      'agent_start',
-      'message_start',
-      'tool_start',
-      'turn_done',
-      'turn_done',
-    ]));
-    // The last frame is the final turn_done with the assistant text.
-    final last = parsed.last;
-    expect(last['type'], 'turn_done');
-    expect(last['message'], 'done reading');
-    // The session persisted like any headless run.
-    final messages = (await sessionEntries()).whereType<MessageRecord>();
-    expect(messages, isNotEmpty);
-  });
+      final parsed = [
+        for (final line in frames) jsonDecode(line) as Map<String, dynamic>,
+      ];
+      expect(parsed.first['type'], 'hep_header');
+      expect(parsed.first['session'], isNotNull);
+      expect(parsed.first['hep'], 'v1');
+      expect(parsed.first['fah'], 'test');
+      expect(
+        parsed.map((f) => f['type']),
+        containsAllInOrder([
+          'hep_header',
+          'agent_start',
+          'message_start',
+          'tool_start',
+          'turn_done',
+          'turn_done',
+        ]),
+      );
+      // The last frame is the final turn_done with the assistant text.
+      final last = parsed.last;
+      expect(last['type'], 'turn_done');
+      expect(last['message'], 'done reading');
+      // The session persisted like any headless run.
+      final messages = (await sessionEntries()).whereType<MessageRecord>();
+      expect(messages, isNotEmpty);
+    },
+  );
 
   test('REG: without a HepWriter stdout stays prose (no frames)', () async {
     final fake = FakeStreamFunction([textTurn('plain answer')]);
@@ -251,9 +253,7 @@ void main() {
 
     final code = await cli.runHeadless(
       'what is in the photo',
-      images: const [
-        ImageContent(data: 'cGhvdG8=', mimeType: 'image/jpeg'),
-      ],
+      images: const [ImageContent(data: 'cGhvdG8=', mimeType: 'image/jpeg')],
     );
 
     expect(code, 0);
@@ -271,28 +271,29 @@ void main() {
     expect(texts[1].text, '[Image 0]');
   });
 
-  test('interrupt mid-run: cancelled frame, exit 130, partial persisted',
-      () async {
-    final fake = _AbortableStreamFunction();
-    final cli = cliFor(fake.call, persistAbortedPartials: true);
-    final frames = <String>[];
-    final hep = HepWriter(emit: frames.add, fahVersion: 'test');
+  test(
+    'interrupt mid-run: cancelled frame, exit 130, partial persisted',
+    () async {
+      final fake = _AbortableStreamFunction();
+      final cli = cliFor(fake.call, persistAbortedPartials: true);
+      final frames = <String>[];
+      final hep = HepWriter(emit: frames.add, fahVersion: 'test');
 
-    final run = cli.runHeadless('hang', hep: hep);
-    await _waitFor(() => fake.started, reason: 'stream started');
-    io.interrupt();
+      final run = cli.runHeadless('hang', hep: hep);
+      await _waitFor(() => fake.started, reason: 'stream started');
+      io.interrupt();
 
-    expect(await run, 130);
-    expect(frames.last, contains('"type":"cancelled"'));
-    // The aborted partial assistant message persisted to the JSONL (the
-    // backend-mode cancel contract) — and the user message always does.
-    final messages = (await sessionEntries()).whereType<MessageRecord>();
-    expect(messages.first.message.role, 'user');
-    expect(messages.last.message.role, 'assistant');
-  });
+      expect(await run, 130);
+      expect(frames.last, contains('"type":"cancelled"'));
+      // The aborted partial assistant message persisted to the JSONL (the
+      // backend-mode cancel contract) — and the user message always does.
+      final messages = (await sessionEntries()).whereType<MessageRecord>();
+      expect(messages.first.message.role, 'user');
+      expect(messages.last.message.role, 'assistant');
+    },
+  );
 
-  test('compaction over threshold emits compaction_start/end frames',
-      () async {
+  test('compaction over threshold emits compaction_start/end frames', () async {
     final fake = FakeStreamFunction([
       textTurn('a' * 20000),
       textTurn('AUTO SUMMARY'),
@@ -320,8 +321,7 @@ void main() {
     );
   });
 
-  test('unknown session key on a clean root starts a fresh session',
-      () async {
+  test('unknown session key on a clean root starts a fresh session', () async {
     // First run seeds one session in the root.
     final seedFake = FakeStreamFunction([textTurn('seed')]);
     final seedCli = cliFor(seedFake.call);
@@ -352,9 +352,7 @@ void main() {
     final after = await repo.list(cwd: '/work');
     expect(after, hasLength(2));
     expect(after.map((s) => s.id), contains(seededId));
-    final named = await repo.open(
-      after.firstWhere((s) => s.id != seededId),
-    );
+    final named = await repo.open(after.firstWhere((s) => s.id != seededId));
     expect(await named.getSessionName(), 'u:42');
   });
 }

@@ -140,11 +140,13 @@ void main() {
       });
     });
 
-    test('derives model_name from the first assistant record when not given',
-        () {
-      final doc = _export(_snapshot());
-      expect(doc['agent']['model_name'], 'claude-test');
-    });
+    test(
+      'derives model_name from the first assistant record when not given',
+      () {
+        final doc = _export(_snapshot());
+        expect(doc['agent']['model_name'], 'claude-test');
+      },
+    );
 
     test('steps are sequential from 1 with ledger-order sources', () {
       final doc = _export(_snapshot());
@@ -153,10 +155,15 @@ void main() {
       for (var i = 0; i < steps.length; i++) {
         expect(steps[i]['step_id'], i + 1);
       }
-      expect(
-        steps.map((s) => s['source']).toList(),
-        ['user', 'agent', 'agent', 'agent', 'system', 'system', 'system'],
-      );
+      expect(steps.map((s) => s['source']).toList(), [
+        'user',
+        'agent',
+        'agent',
+        'agent',
+        'system',
+        'system',
+        'system',
+      ]);
     });
 
     test('non-agent steps carry no agent-only fields', () {
@@ -245,13 +252,16 @@ void main() {
       );
     });
 
-    test('matches the cross-validated golden fixture the Python gate reads', () {
-      // The SAME bytes the harbor-side contract test
-      // (bench/harbor_fa/test_atif_contract.py) validates against harbor
-      // 0.23.0's pydantic Trajectory model — one artifact, both sides.
-      final fixture = File('bench/harbor_fa/fixtures/atif_sample.json');
-      final golden = jsonDecode(fixture.readAsStringSync());
-      expect(_export(_snapshot()), golden);
-    });
+    test(
+      'matches the cross-validated golden fixture the Python gate reads',
+      () {
+        // The SAME bytes the harbor-side contract test
+        // (bench/harbor_fa/test_atif_contract.py) validates against harbor
+        // 0.23.0's pydantic Trajectory model — one artifact, both sides.
+        final fixture = File('bench/harbor_fa/fixtures/atif_sample.json');
+        final golden = jsonDecode(fixture.readAsStringSync());
+        expect(_export(_snapshot()), golden);
+      },
+    );
   });
 }

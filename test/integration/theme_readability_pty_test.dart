@@ -253,7 +253,8 @@ void main() {
       // (FA_TUI_PICKER_REVEAL_MS), not a product regression (gh-671 /
       // gh-1049 family). Two reds on an unchanged head = quarantine, not a
       // third rerun. Un-quarantine when the wait/reveal race is fixed.
-      skip: 'QUARANTINE 2026-10-04: waitForScreen-vs-reveal timing race — '
+      skip:
+          'QUARANTINE 2026-10-04: waitForScreen-vs-reveal timing race — '
           'marker rendered but wait timed out twice (fa#1205, gh-671 family)',
     );
   });

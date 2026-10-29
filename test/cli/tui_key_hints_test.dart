@@ -72,7 +72,8 @@ void main() {
             expect(
               reparsed.canonical,
               canonical,
-              reason: '${binding.action}: "${chord.display(darwin: darwin)}" '
+              reason:
+                  '${binding.action}: "${chord.display(darwin: darwin)}" '
                   'must reparse to "$canonical"',
             );
           }
@@ -97,10 +98,10 @@ void main() {
     });
 
     test('picker footer chords', () {
-      expect(
-        tuiChordsFor('picker.navigate').map((c) => c.canonical),
-        ['up', 'down'],
-      );
+      expect(tuiChordsFor('picker.navigate').map((c) => c.canonical), [
+        'up',
+        'down',
+      ]);
       expect(
         tuiChordsFor('picker.select').map((c) => c.canonical),
         containsAll(['enter', 'tab']),
@@ -109,10 +110,8 @@ void main() {
     });
 
     test('prompt-sheet chords (tab cycle, ctrl+R reveal, ctrl+U kill)', () {
-      expect(tuiChordsFor('prompt.nextField').map((c) => c.canonical),
-          ['tab']);
-      expect(tuiChordsFor('prompt.reveal').map((c) => c.canonical),
-          ['ctrl+r']);
+      expect(tuiChordsFor('prompt.nextField').map((c) => c.canonical), ['tab']);
+      expect(tuiChordsFor('prompt.reveal').map((c) => c.canonical), ['ctrl+r']);
       expect(tuiChordsFor('prompt.kill').map((c) => c.canonical), ['ctrl+u']);
       expect(
         tuiChordsFor('prompt.answer').map((c) => c.canonical),
@@ -134,8 +133,11 @@ void main() {
       for (final b in kTuiKeybindings) {
         expect(b.chords, isNotEmpty, reason: '${b.action} has no chords');
         expect(b.description, isNotEmpty, reason: '${b.action} has no desc');
-        expect(_scopeTitles.contains(b.scope), isTrue,
-            reason: '${b.action} has an untitled scope "${b.scope}"');
+        expect(
+          _scopeTitles.contains(b.scope),
+          isTrue,
+          reason: '${b.action} has an untitled scope "${b.scope}"',
+        );
       }
     });
   });
@@ -165,8 +167,7 @@ void main() {
       expect(() => hintAction('queue.deleete', 'delete'), throwsArgumentError);
     });
 
-    test('plain text carries no escapes; styling is the caller\'s emitter',
-        () {
+    test('plain text carries no escapes; styling is the caller\'s emitter', () {
       final row = tuiKeyHintRow([hintAction('run.interrupt', 'interrupt')]);
       expect(row, 'esc interrupt');
       expect(row.contains('\x1b'), isFalse);
@@ -176,7 +177,8 @@ void main() {
       final controller = FaThemeController.instance;
       final wasProfile = controller.profile;
       addTearDown(() => controller.profile = wasProfile);
-      controller.profile = null; // what detectThemeProfile returns under NO_COLOR
+      controller.profile =
+          null; // what detectThemeProfile returns under NO_COLOR
       const row = 'esc interrupt';
       expect(tuiDim(row), row);
     });
@@ -201,8 +203,7 @@ void main() {
       }
     });
 
-    test('markdown shape (TUI): sections, pipe rows, no alignment padding',
-        () {
+    test('markdown shape (TUI): sections, pipe rows, no alignment padding', () {
       final lines = tuiHotkeyTableLines(markdown: true);
       expect(lines.first, '**Key bindings**');
       expect(lines, contains('| Key | Action |'));
@@ -214,17 +215,19 @@ void main() {
         '**Prompt sheets**',
       ];
       final indexes = [for (final t in sections) lines.indexOf(t)];
-      expect(indexes.every((i) => i >= 0), isTrue,
-          reason: 'missing section: ${[
-            for (var i = 0; i < sections.length; i++)
-              if (indexes[i] < 0) sections[i],
-          ]}');
-      expect([...indexes]..sort(), indexes,
-          reason: 'sections must appear in registry scope order');
       expect(
-        lines.join('\n'),
-        contains('| `Enter` | send message |'),
+        indexes.every((i) => i >= 0),
+        isTrue,
+        reason:
+            'missing section: ${[for (var i = 0; i < sections.length; i++)
+              if (indexes[i] < 0) sections[i]]}',
       );
+      expect(
+        [...indexes]..sort(),
+        indexes,
+        reason: 'sections must appear in registry scope order',
+      );
+      expect(lines.join('\n'), contains('| `Enter` | send message |'));
       // Section titles are markdown bold, not the plain bracket form.
       expect(lines.join('\n').contains('[Key bindings]'), isFalse);
     });
@@ -245,14 +248,20 @@ void main() {
           if (i >= 0) startCols.add(i);
         }
       }
-      expect(startCols.length, 1, reason: 'descriptions must align: $startCols');
+      expect(
+        startCols.length,
+        1,
+        reason: 'descriptions must align: $startCols',
+      );
     });
 
     test('platform-aware: darwin renders Option labels', () {
       final mac = tuiHotkeyTableLines(markdown: true, darwin: true).join('\n');
       expect(mac, contains('Option+Enter'));
-      final other =
-          tuiHotkeyTableLines(markdown: true, darwin: false).join('\n');
+      final other = tuiHotkeyTableLines(
+        markdown: true,
+        darwin: false,
+      ).join('\n');
       expect(other, contains('Alt+Enter'));
       expect(other.contains('Option'), isFalse);
     });
@@ -261,10 +270,7 @@ void main() {
       final wasDarwin = tuiKeyHintDarwin;
       addTearDown(() => tuiKeyHintDarwin = wasDarwin);
       tuiKeyHintDarwin = true;
-      expect(
-        tuiHotkeyTableLines().join('\n'),
-        contains('Option+Enter'),
-      );
+      expect(tuiHotkeyTableLines().join('\n'), contains('Option+Enter'));
     });
 
     test('plain table aligns the description column in display cells', () {
@@ -273,10 +279,12 @@ void main() {
       // cells (tuiTextWidth, matching dart_tui) — ambiguous-width arrows
       // (↑) stay terminal-dependent in line mode by design (threads
       // lC-WJ + 859 review).
-      const wide = TuiKeybinding('test.wide', 'composer', [TuiChord('漢字漢')],
-          'wide synthetic binding');
-      const ascii = TuiKeybinding(
-          'test.ascii', 'composer', [TuiChord('ctrl+x')], 'ascii binding');
+      const wide = TuiKeybinding('test.wide', 'composer', [
+        TuiChord('漢字漢'),
+      ], 'wide synthetic binding');
+      const ascii = TuiKeybinding('test.ascii', 'composer', [
+        TuiChord('ctrl+x'),
+      ], 'ascii binding');
       final lines = tuiHotkeyTableLines(
         markdown: false,
         darwin: false,
@@ -295,8 +303,9 @@ void main() {
       // in lockstep).
       expect(tuiTextWidth('漢字漢'), 6, reason: 'CJK is 2 cells per glyph');
       expect(starts, hasLength(2));
-      expect(starts.toSet(), {10},
-          reason: '2 + 6 + 2 — descriptions share one display column');
+      expect(starts.toSet(), {
+        10,
+      }, reason: '2 + 6 + 2 — descriptions share one display column');
     });
 
     test('markdown table box-grids through the transcript renderer', () {
@@ -311,8 +320,11 @@ void main() {
       out.addAll(fmt.flushTrailing());
       final text = out.join('\n');
       expect(text.contains('| `'), isFalse, reason: 'raw markdown leaked');
-      expect(text.contains('│'), isTrue,
-          reason: 'box-grid column separator missing');
+      expect(
+        text.contains('│'),
+        isTrue,
+        reason: 'box-grid column separator missing',
+      );
       expect(text.contains('Composer'), isTrue);
     });
   });

@@ -94,78 +94,102 @@ Future<(Directory, String)> _craftSession() async {
 
 void main() {
   for (final (columns, rowsCount) in [(80, 24), (100, 40)]) {
-    test('resume tail + single lost summary at $columns x $rowsCount',
-        () async {
-      final (tempHome, id) = await _craftSession();
-      addTearDown(() => tempHome.deleteSync(recursive: true));
-      // Pin the classic chrome: this suite asserts the classic grid
-      // (#503); the band redesign (#805-#807) has its own surface. The
-      // harness configures nothing else via config, so the pin rides its
-      // own tiny config.yaml.
-      File('${tempHome.path}/.fah/config.yaml')
-        ..createSync(recursive: true)
-        ..writeAsStringSync('tui:\n  classic: true\n');
+    test(
+      'resume tail + single lost summary at $columns x $rowsCount',
+      () async {
+        final (tempHome, id) = await _craftSession();
+        addTearDown(() => tempHome.deleteSync(recursive: true));
+        // Pin the classic chrome: this suite asserts the classic grid
+        // (#503); the band redesign (#805-#807) has its own surface. The
+        // harness configures nothing else via config, so the pin rides its
+        // own tiny config.yaml.
+        File('${tempHome.path}/.fah/config.yaml')
+          ..createSync(recursive: true)
+          ..writeAsStringSync('tui:\n  classic: true\n');
 
-      final harness = await FaCliHarness.spawn(
-        workingDirectory: '${tempHome.path}/proj',
-        extraEnv: {'HOME': tempHome.path},
-        args: [
-          '--session',
-          id,
-          '--session-root',
-          '${tempHome.path}/.fah/sessions',
-        ],
-        columns: columns,
-        rows: rowsCount,
-      );
-      addTearDown(harness.close);
+        final harness = await FaCliHarness.spawn(
+          workingDirectory: '${tempHome.path}/proj',
+          extraEnv: {'HOME': tempHome.path},
+          args: [
+            '--session',
+            id,
+            '--session-root',
+            '${tempHome.path}/.fah/sessions',
+          ],
+          columns: columns,
+          rows: rowsCount,
+        );
+        addTearDown(harness.close);
 
-      // The banner's [Model] block scrolls off a flooded 24-row glass —
-      // the status row is the boot marker that always exists.
-      await harness.waitForText(' · ctx ', timeout: const Duration(seconds: 90));
-      await harness.waitForOutput(
-        settleMs: 700,
-        timeout: const Duration(seconds: 20),
-      );
-      final grid = [
-        for (final line in harness.viewportLines) line.trimRight(),
-      ];
+        // The banner's [Model] block scrolls off a flooded 24-row glass —
+        // the status row is the boot marker that always exists.
+        await harness.waitForText(
+          ' · ctx ',
+          timeout: const Duration(seconds: 90),
+        );
+        await harness.waitForOutput(
+          settleMs: 700,
+          timeout: const Duration(seconds: 20),
+        );
+        final grid = [
+          for (final line in harness.viewportLines) line.trimRight(),
+        ];
 
-      // ── the lost-tasks summary: EXACTLY ONCE, one row ─────────────────
-      final summaryRows = [
-        for (var i = 0; i < grid.length; i++)
-          if (grid[i].contains(_summaryMarker)) i,
-      ];
-      expect(summaryRows.length, 1,
-          reason: 'the lost-task flood must collapse to ONE summary row; '
-              'screen:\n${grid.join('\n')}');
-      final summary = grid[summaryRows.single];
-      expect(summary, contains('10'),
-          reason: 'the summary names the lost count: "$summary"');
+        // ── the lost-tasks summary: EXACTLY ONCE, one row ─────────────────
+        final summaryRows = [
+          for (var i = 0; i < grid.length; i++)
+            if (grid[i].contains(_summaryMarker)) i,
+        ];
+        expect(
+          summaryRows.length,
+          1,
+          reason:
+              'the lost-task flood must collapse to ONE summary row; '
+              'screen:\n${grid.join('\n')}',
+        );
+        final summary = grid[summaryRows.single];
+        expect(
+          summary,
+          contains('10'),
+          reason: 'the summary names the lost count: "$summary"',
+        );
 
-      // ── the last assistant message visible on the glass ───────────────
-      final anchorRows = [
-        for (var i = 0; i < grid.length; i++)
-          if (grid[i].contains(_anchor)) i,
-      ];
-      expect(anchorRows.length, 1,
-          reason: 'the resumed tail (last assistant message) is on the '
-              'glass exactly once; screen:\n${grid.join('\n')}');
+        // ── the last assistant message visible on the glass ───────────────
+        final anchorRows = [
+          for (var i = 0; i < grid.length; i++)
+            if (grid[i].contains(_anchor)) i,
+        ];
+        expect(
+          anchorRows.length,
+          1,
+          reason:
+              'the resumed tail (last assistant message) is on the '
+              'glass exactly once; screen:\n${grid.join('\n')}',
+        );
 
-      // ── boot order: notices BEFORE the replay, replay paints last ────
-      expect(summaryRows.single < anchorRows.single, isTrue,
-          reason: 'the reconciliation notice paints before the history '
-              'replay; the replay is the final paint');
+        // ── boot order: notices BEFORE the replay, replay paints last ────
+        expect(
+          summaryRows.single < anchorRows.single,
+          isTrue,
+          reason:
+              'the reconciliation notice paints before the history '
+              'replay; the replay is the final paint',
+        );
 
-      // ── no individual lost cards flood the glass ─────────────────────
-      final cardHeaders = [
-        for (final row in grid)
-          if (row.contains('bash task lost')) row,
-      ];
-      expect(cardHeaders, isEmpty,
-          reason: 'lost cards must not flood the first screen; the summary '
+        // ── no individual lost cards flood the glass ─────────────────────
+        final cardHeaders = [
+          for (final row in grid)
+            if (row.contains('bash task lost')) row,
+        ];
+        expect(
+          cardHeaders,
+          isEmpty,
+          reason:
+              'lost cards must not flood the first screen; the summary '
               'row replaces them (details stay on /tasks); screen:\n'
-              '${grid.join('\n')}');
-    });
+              '${grid.join('\n')}',
+        );
+      },
+    );
   }
 }

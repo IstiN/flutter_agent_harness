@@ -54,19 +54,19 @@ bool asksFullHistory(YamlMap step) {
 }
 
 void main() {
-  final workflows = Directory('.github/workflows')
-      .listSync()
-      .whereType<File>()
-      .where((f) => f.path.endsWith('.yml'))
-      .map((f) => f.path)
-      .toList()
-    ..sort();
+  final workflows =
+      Directory('.github/workflows')
+          .listSync()
+          .whereType<File>()
+          .where((f) => f.path.endsWith('.yml'))
+          .map((f) => f.path)
+          .toList()
+        ..sort();
 
   group('AC1 — full-history checkouts are blobless (gh-1477)', () {
     for (final workflow in workflows) {
       test(workflow, () {
-        for (final (path, jobId, stepIndex, step)
-            in checkoutSteps(workflow)) {
+        for (final (path, jobId, stepIndex, step) in checkoutSteps(workflow)) {
           if (!asksFullHistory(step)) continue;
           final filter = (step['with'] as YamlMap?)?['filter'];
           expect(
@@ -97,8 +97,7 @@ void main() {
       for (final jobId in entry.value) {
         test('${entry.key} job "$jobId"', () {
           final job =
-              (loadYaml(read(entry.key))['jobs'] as YamlMap)[jobId]
-                  as YamlMap;
+              (loadYaml(read(entry.key))['jobs'] as YamlMap)[jobId] as YamlMap;
           final timeout = job['timeout-minutes'];
           expect(
             timeout,

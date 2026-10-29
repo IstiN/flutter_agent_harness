@@ -62,114 +62,111 @@ allowedTools: []
 /// Lets the last frame settle (the ≤200ms repaint window), then returns
 /// the painted viewport as one string.
 Future<String> _settledScreen(FaCliHarness harness) async {
-  await harness.waitForOutput(settleMs: 200, timeout: const Duration(seconds: 10));
+  await harness.waitForOutput(
+    settleMs: 200,
+    timeout: const Duration(seconds: 10),
+  );
   return harness.viewportLines.join('\n');
 }
 
 void main() {
-  test(
-    'a settled background job drops the waiting row from the next idle '
-    'screen (#615)',
-    () async {
-      final server = await MockLlmServer.start()
-        // Turn 1: one background job; the tool result returns and the turn
-        // answers, leaving the agent idle with the job still running.
-        ..enqueueToolCall('bash', '{"command": "sleep 2", "background": true}')
-        ..enqueueText('noted')
-        // Turn 2: the settle notice re-enters as a fresh turn.
-        ..enqueueText('all quiet now');
-      addTearDown(server.stop);
+  test('a settled background job drops the waiting row from the next idle '
+      'screen (#615)', () async {
+    final server = await MockLlmServer.start()
+      // Turn 1: one background job; the tool result returns and the turn
+      // answers, leaving the agent idle with the job still running.
+      ..enqueueToolCall('bash', '{"command": "sleep 2", "background": true}')
+      ..enqueueText('noted')
+      // Turn 2: the settle notice re-enters as a fresh turn.
+      ..enqueueText('all quiet now');
+    addTearDown(server.stop);
 
-      final (harness, tempHome) = await _boot(server);
-      addTearDown(() async {
-        await harness.close();
-        tempHome.deleteSync(recursive: true);
-      });
+    final (harness, tempHome) = await _boot(server);
+    addTearDown(() async {
+      await harness.close();
+      tempHome.deleteSync(recursive: true);
+    });
 
-      harness.sendText('go');
-      await Future<void>.delayed(const Duration(milliseconds: 150));
-      harness.sendEnter();
+    harness.sendText('go');
+    await Future<void>.delayed(const Duration(milliseconds: 150));
+    harness.sendEnter();
 
-      // Baseline: once idle with the job running, the row is on screen.
-      await harness.waitForScreen(
-        _waitingHead(),
-        timeout: const Duration(seconds: 60),
-      );
+    // Baseline: once idle with the job running, the row is on screen.
+    await harness.waitForScreen(
+      _waitingHead(),
+      timeout: const Duration(seconds: 60),
+    );
 
-      // The job settles (sleep 2) and the notice turn answers. THE
-      // CONTRACT: the next idle screen is rowless — the composer regains
-      // its full height. Pre-fix the swallowed empty push left the stale
-      // row painted above the composer forever.
-      await harness.waitForText(
-        'all quiet now',
-        timeout: const Duration(seconds: 60),
-      );
-      final screen = await _settledScreen(harness);
-      expect(
-        screen,
-        isNot(contains(_waitingHead())),
-        reason:
-            'the job settled and the board says 0 running — the waiting '
-            'row must be gone from the idle screen:\n$screen',
-      );
-      // Sanity: the screen is live and idle, not frozen mid-turn.
-      expect(screen, contains('>_Fa'));
-    },
-  );
+    // The job settles (sleep 2) and the notice turn answers. THE
+    // CONTRACT: the next idle screen is rowless — the composer regains
+    // its full height. Pre-fix the swallowed empty push left the stale
+    // row painted above the composer forever.
+    await harness.waitForText(
+      'all quiet now',
+      timeout: const Duration(seconds: 60),
+    );
+    final screen = await _settledScreen(harness);
+    expect(
+      screen,
+      isNot(contains(_waitingHead())),
+      reason:
+          'the job settled and the board says 0 running — the waiting '
+          'row must be gone from the idle screen:\n$screen',
+    );
+    // Sanity: the screen is live and idle, not frozen mid-turn.
+    expect(screen, contains('>_Fa'));
+  });
 
-  test(
-    'the waiting row follows the outstanding waiter and dies with the '
-    'last one (#615 AC3)',
-    () async {
-      final server = await MockLlmServer.start()
-        ..enqueueToolCall('bash', '{"command": "sleep 2", "background": true}')
-        ..enqueueToolCall('bash', '{"command": "sleep 4", "background": true}')
-        ..enqueueText('noted')
-        ..enqueueText('first gone')
-        ..enqueueText('second gone');
-      addTearDown(server.stop);
+  test('the waiting row follows the outstanding waiter and dies with the '
+      'last one (#615 AC3)', () async {
+    final server = await MockLlmServer.start()
+      ..enqueueToolCall('bash', '{"command": "sleep 2", "background": true}')
+      ..enqueueToolCall('bash', '{"command": "sleep 4", "background": true}')
+      ..enqueueText('noted')
+      ..enqueueText('first gone')
+      ..enqueueText('second gone');
+    addTearDown(server.stop);
 
-      final (harness, tempHome) = await _boot(server);
-      addTearDown(() async {
-        await harness.close();
-        tempHome.deleteSync(recursive: true);
-      });
+    final (harness, tempHome) = await _boot(server);
+    addTearDown(() async {
+      await harness.close();
+      tempHome.deleteSync(recursive: true);
+    });
 
-      harness.sendText('go');
-      await Future<void>.delayed(const Duration(milliseconds: 150));
-      harness.sendEnter();
+    harness.sendText('go');
+    await Future<void>.delayed(const Duration(milliseconds: 150));
+    harness.sendEnter();
 
-      // Both waiters show in the headline.
-      await harness.waitForScreen(
-        '2 jobs',
-        timeout: const Duration(seconds: 60),
-      );
+    // Both waiters show in the headline.
+    await harness.waitForScreen('2 jobs', timeout: const Duration(seconds: 60));
 
-      // First settle: the row re-points at the remaining waiter.
-      await harness.waitForText(
-        'first gone',
-        timeout: const Duration(seconds: 60),
-      );
-      var screen = await _settledScreen(harness);
-      expect(screen, contains('${_waitingHead()} · sleep 4'),
-          reason: 'the row follows the outstanding waiter:\n$screen');
-      expect(
-        screen,
-        isNot(contains('${_waitingHead()} · sleep 2')),
-        reason: 'the settled waiter leaves the row:\n$screen',
-      );
+    // First settle: the row re-points at the remaining waiter.
+    await harness.waitForText(
+      'first gone',
+      timeout: const Duration(seconds: 60),
+    );
+    var screen = await _settledScreen(harness);
+    expect(
+      screen,
+      contains('${_waitingHead()} · sleep 4'),
+      reason: 'the row follows the outstanding waiter:\n$screen',
+    );
+    expect(
+      screen,
+      isNot(contains('${_waitingHead()} · sleep 2')),
+      reason: 'the settled waiter leaves the row:\n$screen',
+    );
 
-      // Last settle: the row dies with it.
-      await harness.waitForText(
-        'second gone',
-        timeout: const Duration(seconds: 60),
-      );
-      screen = await _settledScreen(harness);
-      expect(
-        screen,
-        isNot(contains(_waitingHead())),
-        reason: 'the row dies with the last waiter:\n$screen',
-      );
-    },
-  );
+    // Last settle: the row dies with it.
+    await harness.waitForText(
+      'second gone',
+      timeout: const Duration(seconds: 60),
+    );
+    screen = await _settledScreen(harness);
+    expect(
+      screen,
+      isNot(contains(_waitingHead())),
+      reason: 'the row dies with the last waiter:\n$screen',
+    );
+  });
 }

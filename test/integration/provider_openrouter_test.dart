@@ -34,10 +34,10 @@ final _optedIn = Platform.environment['FA_OPENROUTER_LIVE'] == '1';
 
 final _skip = !_optedIn
     ? 'live OpenRouter is region-blocked for this deployment; '
-        'set FA_OPENROUTER_LIVE=1 to opt in'
+          'set FA_OPENROUTER_LIVE=1 to opt in'
     : (_apiKey?.isEmpty ?? true)
-        ? 'OPENROUTER_API_KEY not set'
-        : false;
+    ? 'OPENROUTER_API_KEY not set'
+    : false;
 
 /// Cheap chat model known to work via OpenRouter (the `OPENROUTER_MODEL`
 /// alternative documented in `example/openrouter_smoke.dart`).
@@ -66,7 +66,6 @@ const _addTool = Tool(
   },
 );
 
-
 /// OpenRouter fans out to upstream providers; some of them (e.g. OpenAI)
 /// reject requests from unsupported regions with
 /// `403 unsupported_country_region_territory`. That is an environment
@@ -82,8 +81,10 @@ Future<void> _withRegionBlock(Future<void> Function() body) async {
   } on Object catch (error) {
     if (_isRegionBlock(error)) {
       // ignore: avoid_print
-      print('⏭️ upstream provider rejects this region (403 '
-          'unsupported_country_region_territory) — vacuous pass');
+      print(
+        '⏭️ upstream provider rejects this region (403 '
+        'unsupported_country_region_territory) — vacuous pass',
+      );
       return;
     }
     rethrow;
@@ -104,8 +105,10 @@ void main() {
         final events = await stream.toList();
         if (events.any((e) => _isRegionBlock(e))) {
           // ignore: avoid_print
-          print('⏭️ upstream provider rejects this region (403 '
-              'unsupported_country_region_territory) — vacuous pass');
+          print(
+            '⏭️ upstream provider rejects this region (403 '
+            'unsupported_country_region_territory) — vacuous pass',
+          );
           return;
         }
         expect(events.first, isA<StartEvent>());
@@ -152,8 +155,10 @@ void main() {
         final events = await stream.toList();
         if (events.any((e) => _isRegionBlock(e))) {
           // ignore: avoid_print
-          print('⏭️ upstream provider rejects this region (403 '
-              'unsupported_country_region_territory) — vacuous pass');
+          print(
+            '⏭️ upstream provider rejects this region (403 '
+            'unsupported_country_region_territory) — vacuous pass',
+          );
           return;
         }
         expect(events.whereType<ToolCallStartEvent>(), isNotEmpty);
@@ -214,8 +219,10 @@ void main() {
 
         if (_isRegionBlock(agent.state.errorMessage)) {
           // ignore: avoid_print
-          print('⏭️ upstream provider rejects this region (403 '
-              'unsupported_country_region_territory) — vacuous pass');
+          print(
+            '⏭️ upstream provider rejects this region (403 '
+            'unsupported_country_region_territory) — vacuous pass',
+          );
           return;
         }
         expect(agent.state.errorMessage, isNull);

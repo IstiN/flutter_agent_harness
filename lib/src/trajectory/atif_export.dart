@@ -51,11 +51,7 @@ String? exportAtifJson(
   return const JsonEncoder.withIndent('  ').convert({
     'schema_version': 'ATIF-v1.7',
     'session_id': ?sessionId,
-    'agent': {
-      'name': agentName,
-      'version': agentVersion,
-      'model_name': ?model,
-    },
+    'agent': {'name': agentName, 'version': agentVersion, 'model_name': ?model},
     'steps': steps,
     'notes': ?notes,
     'final_metrics': _finalMetrics(steps),

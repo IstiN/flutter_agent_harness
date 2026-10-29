@@ -26,9 +26,7 @@ void main() {
 
   setUp(() async {
     taskDir = await Directory.systemTemp.createTemp('fa_bookkeeping_task');
-    artifactsDir = await Directory.systemTemp.createTemp(
-      'fa_bookkeeping_art',
-    );
+    artifactsDir = await Directory.systemTemp.createTemp('fa_bookkeeping_art');
   });
 
   tearDown(() async {
@@ -75,15 +73,16 @@ void main() {
       expect(
         exit,
         0,
-        reason: 'the run completes with the job detached\n'
+        reason:
+            'the run completes with the job detached\n'
             '--- captured CLI output ---\n${io.out}',
       );
 
       // The job's artifacts land OUTSIDE the task workspace.
       await waitForIt(
-        () => Directory('${artifactsDir.path}/bash_jobs')
-            .listSync()
-            .any((entry) => entry.path.endsWith('.log')),
+        () => Directory(
+          '${artifactsDir.path}/bash_jobs',
+        ).listSync().any((entry) => entry.path.endsWith('.log')),
         reason: 'the job log is written under the override dir',
       );
 

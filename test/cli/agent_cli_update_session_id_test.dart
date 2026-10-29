@@ -101,42 +101,38 @@ void main() {
 
   test('a named session resolves to its NAME', () async {
     final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
-    final session = await repo.create(
-      JsonlSessionCreateOptions(cwd: '/work'),
-    );
+    final session = await repo.create(JsonlSessionCreateOptions(cwd: '/work'));
     await session.appendSessionName('work');
 
     expect(await driveUpdate(session: session), 'work');
   });
 
   test('a session file that cannot be probed degrades to the raw id', () async {
-    expect(await driveUpdate(session: Session(_MissingFileStorage())), 'sess-1');
+    expect(
+      await driveUpdate(session: Session(_MissingFileStorage())),
+      'sess-1',
+    );
   });
 
-  test(
-    'a marathon session resolves via the quick probe when the name is '
-    'outside the resident window (#503 shape)',
-    () async {
-      final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
-      final session = await repo.create(
-        JsonlSessionCreateOptions(cwd: '/work'),
-      );
-      await session.appendSessionName('work');
-      final bulk = 'x' * 32768;
-      for (var i = 0; i < 300; i++) {
-        await session.appendMessage(UserMessage.text('old $i $bulk'));
-      }
-      final kept = await session.appendMessage(UserMessage.text('kept'));
-      await session.appendCompaction(
-        summary: 'older turns compacted',
-        firstKeptEntryId: kept,
-        tokensBefore: 100000,
-      );
-      for (var i = 0; i < 10; i++) {
-        await session.appendMessage(UserMessage.text('tail $i $bulk'));
-      }
+  test('a marathon session resolves via the quick probe when the name is '
+      'outside the resident window (#503 shape)', () async {
+    final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
+    final session = await repo.create(JsonlSessionCreateOptions(cwd: '/work'));
+    await session.appendSessionName('work');
+    final bulk = 'x' * 32768;
+    for (var i = 0; i < 300; i++) {
+      await session.appendMessage(UserMessage.text('old $i $bulk'));
+    }
+    final kept = await session.appendMessage(UserMessage.text('kept'));
+    await session.appendCompaction(
+      summary: 'older turns compacted',
+      firstKeptEntryId: kept,
+      tokensBefore: 100000,
+    );
+    for (var i = 0; i < 10; i++) {
+      await session.appendMessage(UserMessage.text('tail $i $bulk'));
+    }
 
-      expect(await driveUpdate(session: session), 'work');
-    },
-  );
+    expect(await driveUpdate(session: session), 'work');
+  });
 }

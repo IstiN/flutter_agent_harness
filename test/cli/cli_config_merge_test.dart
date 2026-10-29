@@ -25,8 +25,9 @@ CustomProviderEntry entry(
 
 File configFile(Directory tmp) => File('${tmp.path}/.fah/config.yaml');
 
-List<String> providerNames(CliConfig config) =>
-    [for (final e in config.customProviders) e.name];
+List<String> providerNames(CliConfig config) => [
+  for (final e in config.customProviders) e.name,
+];
 
 void main() {
   group('saveCliConfig merge-before-write (issue #221)', () {
@@ -40,57 +41,61 @@ void main() {
       tmp.deleteSync(recursive: true);
     });
 
-    test(
-      'a stale snapshot save keeps providers another process added '
-      '(IT-clobber: kimi_me survives)',
-      () async {
-        // Process A boots (snapshot: ira-1 only).
-        await saveCliConfig(tmp.path, CliConfig(customProviders: [entry('ira-1')]));
-        final staleA = loadCliConfig(tmp.path);
-        // Process B boots later, adds kimi_me, saves.
-        final freshB = loadCliConfig(tmp.path);
-        await saveCliConfig(
+    test('a stale snapshot save keeps providers another process added '
+        '(IT-clobber: kimi_me survives)', () async {
+      // Process A boots (snapshot: ira-1 only).
+      await saveCliConfig(
+        tmp.path,
+        CliConfig(customProviders: [entry('ira-1')]),
+      );
+      final staleA = loadCliConfig(tmp.path);
+      // Process B boots later, adds kimi_me, saves.
+      final freshB = loadCliConfig(tmp.path);
+      await saveCliConfig(
+        tmp.path,
+        CliConfig(
+          customProviders: [...freshB.customProviders, entry('kimi_me')],
+        ),
+      );
+      // A saves ANY unrelated change from its hours-old snapshot.
+      await saveCliConfig(
+        tmp.path,
+        CliConfig(mode: 'architect', customProviders: staleA.customProviders),
+      );
+      final reloaded = loadCliConfig(tmp.path);
+      expect(providerNames(reloaded), containsAll(['ira-1', 'kimi_me']));
+      expect(reloaded.mode, 'architect');
+    });
+
+    test('concurrent writers adding different providers both land '
+        '(no lost update under interleaved writes)', () async {
+      await saveCliConfig(
+        tmp.path,
+        CliConfig(customProviders: [entry('ira-1')]),
+      );
+      final a = loadCliConfig(tmp.path);
+      final b = loadCliConfig(tmp.path);
+      await Future.wait([
+        saveCliConfig(
           tmp.path,
-          CliConfig(customProviders: [...freshB.customProviders, entry('kimi_me')]),
-        );
-        // A saves ANY unrelated change from its hours-old snapshot.
-        await saveCliConfig(
+          CliConfig(customProviders: [...a.customProviders, entry('kimi_me')]),
+        ),
+        saveCliConfig(
           tmp.path,
           CliConfig(
-            mode: 'architect',
-            customProviders: staleA.customProviders,
+            customProviders: [
+              ...b.customProviders,
+              entry('minimax-x', apiType: 'minimax'),
+            ],
           ),
-        );
-        final reloaded = loadCliConfig(tmp.path);
-        expect(providerNames(reloaded), containsAll(['ira-1', 'kimi_me']));
-        expect(reloaded.mode, 'architect');
-      },
-    );
-
-    test(
-      'concurrent writers adding different providers both land '
-      '(no lost update under interleaved writes)',
-      () async {
-        await saveCliConfig(tmp.path, CliConfig(customProviders: [entry('ira-1')]));
-        final a = loadCliConfig(tmp.path);
-        final b = loadCliConfig(tmp.path);
-        await Future.wait([
-          saveCliConfig(
-            tmp.path,
-            CliConfig(customProviders: [...a.customProviders, entry('kimi_me')]),
-          ),
-          saveCliConfig(
-            tmp.path,
-            CliConfig(customProviders: [...b.customProviders, entry('minimax-x', apiType: 'minimax')]),
-          ),
-        ]);
-        final reloaded = loadCliConfig(tmp.path);
-        expect(
-          providerNames(reloaded),
-          containsAll(['ira-1', 'kimi_me', 'minimax-x']),
-        );
-      },
-    );
+        ),
+      ]);
+      final reloaded = loadCliConfig(tmp.path);
+      expect(
+        providerNames(reloaded),
+        containsAll(['ira-1', 'kimi_me', 'minimax-x']),
+      );
+    });
 
     test(
       'concurrent writers adding the SAME provider yield one entry (E1)',
@@ -101,11 +106,21 @@ void main() {
         await Future.wait([
           saveCliConfig(
             tmp.path,
-            CliConfig(customProviders: [...a.customProviders, entry('kimi_me', modelId: 'k1')]),
+            CliConfig(
+              customProviders: [
+                ...a.customProviders,
+                entry('kimi_me', modelId: 'k1'),
+              ],
+            ),
           ),
           saveCliConfig(
             tmp.path,
-            CliConfig(customProviders: [...b.customProviders, entry('kimi_me', modelId: 'k2')]),
+            CliConfig(
+              customProviders: [
+                ...b.customProviders,
+                entry('kimi_me', modelId: 'k2'),
+              ],
+            ),
           ),
         ]);
         final reloaded = loadCliConfig(tmp.path);
@@ -133,9 +148,11 @@ void main() {
         // A (stale) edits ira-1's last-used model and saves after.
         await saveCliConfig(
           tmp.path,
-          CliConfig(customProviders: [
-            for (final e in a.customProviders) entry(e.name, modelId: 'new'),
-          ]),
+          CliConfig(
+            customProviders: [
+              for (final e in a.customProviders) entry(e.name, modelId: 'new'),
+            ],
+          ),
         );
         final reloaded = loadCliConfig(tmp.path);
         expect(providerNames(reloaded), containsAll(['ira-1', 'kimi_me']));
@@ -146,46 +163,43 @@ void main() {
       },
     );
 
-    test(
-      'a deleted ghost stays deleted: a stale save never resurrects an '
-      'entry named after a built-in provider',
-      () async {
-        configFile(tmp)
-          ..createSync(recursive: true)
-          ..writeAsStringSync(
-            'mode: code\n'
-            'customProviders:\n'
-            '  - name: ira-1\n'
-            '    apiType: openai\n'
-            '    baseUrl: https://ira-1.example.com/v1\n'
-            '    modelId: m1\n'
-            '  - name: openai\n'
-            '    apiType: openai\n'
-            '    baseUrl: https://ghost.example.com/v1\n'
-            '    modelId: g1\n',
-          );
-        // The ghost never enters memory (load drops reserved names)...
-        final stale = loadCliConfig(tmp.path);
-        expect(providerNames(stale), ['ira-1']);
-        // ...the user deletes it from the file...
-        configFile(tmp).writeAsStringSync(
+    test('a deleted ghost stays deleted: a stale save never resurrects an '
+        'entry named after a built-in provider', () async {
+      configFile(tmp)
+        ..createSync(recursive: true)
+        ..writeAsStringSync(
           'mode: code\n'
           'customProviders:\n'
           '  - name: ira-1\n'
           '    apiType: openai\n'
           '    baseUrl: https://ira-1.example.com/v1\n'
-          '    modelId: m1\n',
+          '    modelId: m1\n'
+          '  - name: openai\n'
+          '    apiType: openai\n'
+          '    baseUrl: https://ghost.example.com/v1\n'
+          '    modelId: g1\n',
         );
-        // ...and a stale save must not bring it back.
-        await saveCliConfig(
-          tmp.path,
-          CliConfig(mode: 'chat', customProviders: stale.customProviders),
-        );
-        final text = configFile(tmp).readAsStringSync();
-        expect(text, isNot(contains('ghost.example.com')));
-        expect(providerNames(loadCliConfig(tmp.path)), ['ira-1']);
-      },
-    );
+      // The ghost never enters memory (load drops reserved names)...
+      final stale = loadCliConfig(tmp.path);
+      expect(providerNames(stale), ['ira-1']);
+      // ...the user deletes it from the file...
+      configFile(tmp).writeAsStringSync(
+        'mode: code\n'
+        'customProviders:\n'
+        '  - name: ira-1\n'
+        '    apiType: openai\n'
+        '    baseUrl: https://ira-1.example.com/v1\n'
+        '    modelId: m1\n',
+      );
+      // ...and a stale save must not bring it back.
+      await saveCliConfig(
+        tmp.path,
+        CliConfig(mode: 'chat', customProviders: stale.customProviders),
+      );
+      final text = configFile(tmp).readAsStringSync();
+      expect(text, isNot(contains('ghost.example.com')));
+      expect(providerNames(loadCliConfig(tmp.path)), ['ira-1']);
+    });
 
     test('a ghost entry built in memory is never persisted', () async {
       await saveCliConfig(
@@ -195,52 +209,46 @@ void main() {
       expect(providerNames(loadCliConfig(tmp.path)), ['ira-1']);
     });
 
-    test(
-      'corrupt yaml on disk makes the save refuse loudly without '
-      'clobbering the file (E3)',
-      () async {
-        configFile(tmp)
-          ..createSync(recursive: true)
-          ..writeAsStringSync('not yaml: [unclosed');
-        await expectLater(
-          saveCliConfig(tmp.path, CliConfig(mode: 'chat')),
-          throwsA(isA<ConfigException>()),
-        );
-        expect(configFile(tmp).readAsStringSync(), 'not yaml: [unclosed');
-      },
-    );
+    test('corrupt yaml on disk makes the save refuse loudly without '
+        'clobbering the file (E3)', () async {
+      configFile(tmp)
+        ..createSync(recursive: true)
+        ..writeAsStringSync('not yaml: [unclosed');
+      await expectLater(
+        saveCliConfig(tmp.path, CliConfig(mode: 'chat')),
+        throwsA(isA<ConfigException>()),
+      );
+      expect(configFile(tmp).readAsStringSync(), 'not yaml: [unclosed');
+    });
 
-    test(
-      'writes are atomic: concurrent large saves leave no temp files and '
-      'always a parseable document',
-      () async {
-        await saveCliConfig(tmp.path, CliConfig(customProviders: [entry('ira-1')]));
-        final seed = loadCliConfig(tmp.path);
-        await Future.wait([
-          for (var i = 0; i < 12; i++)
-            saveCliConfig(
-              tmp.path,
-              CliConfig(
-                customProviders: [
-                  ...seed.customProviders,
-                  entry('provider-$i'),
-                ],
-                allowedTools: [for (var j = 0; j < 50; j++) 'tool-$i-$j'],
-              ),
+    test('writes are atomic: concurrent large saves leave no temp files and '
+        'always a parseable document', () async {
+      await saveCliConfig(
+        tmp.path,
+        CliConfig(customProviders: [entry('ira-1')]),
+      );
+      final seed = loadCliConfig(tmp.path);
+      await Future.wait([
+        for (var i = 0; i < 12; i++)
+          saveCliConfig(
+            tmp.path,
+            CliConfig(
+              customProviders: [...seed.customProviders, entry('provider-$i')],
+              allowedTools: [for (var j = 0; j < 50; j++) 'tool-$i-$j'],
             ),
-        ]);
-        final leftovers = Directory(
-          '${tmp.path}/.fah',
-        ).listSync().where((f) => f.path.contains('.tmp')).toList();
-        expect(leftovers, isEmpty, reason: 'temp files must be renamed away');
-        final reloaded = loadCliConfig(tmp.path);
-        // Every provider from every interleaved writer survived the merge.
-        expect(
-          providerNames(reloaded),
-          containsAll(['ira-1', for (var i = 0; i < 12; i++) 'provider-$i']),
-        );
-      },
-    );
+          ),
+      ]);
+      final leftovers = Directory(
+        '${tmp.path}/.fah',
+      ).listSync().where((f) => f.path.contains('.tmp')).toList();
+      expect(leftovers, isEmpty, reason: 'temp files must be renamed away');
+      final reloaded = loadCliConfig(tmp.path);
+      // Every provider from every interleaved writer survived the merge.
+      expect(
+        providerNames(reloaded),
+        containsAll(['ira-1', for (var i = 0; i < 12; i++) 'provider-$i']),
+      );
+    });
   });
 
   group('reserved provider names (issue #221 ghost)', () {

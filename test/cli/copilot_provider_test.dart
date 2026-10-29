@@ -995,9 +995,11 @@ void main() {
         return http.Response('not found', 404);
       });
       final fake = FakeStreamFunction([textTurn('ok')]);
-      final cli = rolesCli([
-        ModelRef(provider: 'copilot', modelId: 'gpt-4.1'),
-      ], fake: fake, modelsHttpClient: confirmingClient);
+      final cli = rolesCli(
+        [ModelRef(provider: 'copilot', modelId: 'gpt-4.1')],
+        fake: fake,
+        modelsHttpClient: confirmingClient,
+      );
       final run = cli.run();
 
       await waitForIt(

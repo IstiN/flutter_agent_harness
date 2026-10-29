@@ -27,8 +27,7 @@ import 'package:xterm/xterm.dart';
 
 import 'pty_harness.dart';
 
-const _olderRow =
-    '⟳ Background jobs (5) · 5 running · 0 done · 0 lost · older';
+const _olderRow = '⟳ Background jobs (5) · 5 running · 0 done · 0 lost · older';
 
 void main() {
   group('frameContentLines', () {
@@ -77,10 +76,7 @@ void main() {
           t.buffer.lines[t.buffer.scrollBack + 4].getText();
 
       expect(lineOf(written), isNot(lineOf(erased)));
-      expect(
-        lineOf(written).trimRight(),
-        lineOf(erased).trimRight(),
-      );
+      expect(lineOf(written).trimRight(), lineOf(erased).trimRight());
     });
   });
 }

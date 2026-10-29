@@ -292,11 +292,20 @@ void main() {
 
     test('isChatGptCodexEndpoint: codex shapes and impostors', () {
       expect(isChatGptCodexEndpoint(chatGptCodexBaseUrl), isTrue);
-      expect(isChatGptCodexEndpoint('https://chatgpt.com/backend-api/codex/x'), isTrue);
+      expect(
+        isChatGptCodexEndpoint('https://chatgpt.com/backend-api/codex/x'),
+        isTrue,
+      );
       // A different host is never the codex backend — even a chatgpt-ish
       // suffix trick.
-      expect(isChatGptCodexEndpoint('https://proxy.example.com/backend-api/codex'), isFalse);
-      expect(isChatGptCodexEndpoint('https://evilchatgpt.com/backend-api/codex'), isFalse);
+      expect(
+        isChatGptCodexEndpoint('https://proxy.example.com/backend-api/codex'),
+        isFalse,
+      );
+      expect(
+        isChatGptCodexEndpoint('https://evilchatgpt.com/backend-api/codex'),
+        isFalse,
+      );
       expect(isChatGptCodexEndpoint('https://api.openai.com/v1'), isFalse);
     });
 

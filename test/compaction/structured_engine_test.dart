@@ -266,7 +266,8 @@ void main() {
       expect(
         prints,
         isEmpty,
-        reason: 'a stray print here interleaves into the live TUI glass '
+        reason:
+            'a stray print here interleaves into the live TUI glass '
             'and corrupts mid-run chrome (gh-1469)',
       );
     },

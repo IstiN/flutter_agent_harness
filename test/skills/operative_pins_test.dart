@@ -225,11 +225,7 @@ void main() {
       final boundary = user(
         '$compactionSummaryPrefix\nthe summary body\n$compactionSummarySuffix',
       );
-      final messages = [
-        user('old stuff'),
-        boundary,
-        user('newest user turn'),
-      ];
+      final messages = [user('old stuff'), boundary, user('newest user turn')];
       final injected = injectOperativePinCarriers(messages, skills: skills);
       expect(injected, hasLength(messages.length + 1));
       final carrier = injected[2]; // right after the boundary message.
@@ -456,16 +452,15 @@ void main() {
     UserMessage user(String text) =>
         UserMessage(content: text, timestamp: DateTime.utc(2026));
 
-    AssistantMessage assistant(List<ContentBlock> content) =>
-        AssistantMessage(
-          content: content,
-          api: 'test-api',
-          provider: 'test-provider',
-          model: 'test-model',
-          usage: Usage.zero,
-          stopReason: StopReason.stop,
-          timestamp: DateTime.utc(2026),
-        );
+    AssistantMessage assistant(List<ContentBlock> content) => AssistantMessage(
+      content: content,
+      api: 'test-api',
+      provider: 'test-provider',
+      model: 'test-model',
+      usage: Usage.zero,
+      stopReason: StopReason.stop,
+      timestamp: DateTime.utc(2026),
+    );
 
     test('a pin quoted by an ASSISTANT text block counts as present — no '
         'repair', () {
@@ -479,7 +474,11 @@ void main() {
         ]),
       ];
       final notices = <String>[];
-      injectOperativePinCarriers(messages, skills: skills, onNotice: notices.add);
+      injectOperativePinCarriers(
+        messages,
+        skills: skills,
+        onNotice: notices.add,
+      );
       expect(notices.where((n) => n.contains('restored')), isEmpty);
     });
 
@@ -492,18 +491,23 @@ void main() {
         ToolResultMessage(
           toolCallId: 't1',
           toolName: 'bash',
-          content: [TextContent(text: 'output: never hand-roll the gh battery')],
+          content: [
+            TextContent(text: 'output: never hand-roll the gh battery'),
+          ],
           isError: false,
           timestamp: DateTime.utc(2026),
         ),
       ];
       final notices = <String>[];
-      injectOperativePinCarriers(messages, skills: skills, onNotice: notices.add);
+      injectOperativePinCarriers(
+        messages,
+        skills: skills,
+        onNotice: notices.add,
+      );
       expect(notices.where((n) => n.contains('restored')), isEmpty);
     });
 
-    test('a pin quoted in a list-content USER message counts as present',
-        () {
+    test('a pin quoted in a list-content USER message counts as present', () {
       final skills = [
         _skill('fleet', ['never hand-roll the gh battery']),
       ];
@@ -517,7 +521,11 @@ void main() {
         ),
       ];
       final notices = <String>[];
-      injectOperativePinCarriers(messages, skills: skills, onNotice: notices.add);
+      injectOperativePinCarriers(
+        messages,
+        skills: skills,
+        onNotice: notices.add,
+      );
       expect(notices.where((n) => n.contains('restored')), isEmpty);
     });
 
@@ -531,25 +539,30 @@ void main() {
         assistant([const ThinkingContent(thinking: 'hmm')]),
       ];
       final notices = <String>[];
-      injectOperativePinCarriers(messages, skills: skills, onNotice: notices.add);
+      injectOperativePinCarriers(
+        messages,
+        skills: skills,
+        onNotice: notices.add,
+      );
       expect(notices.where((n) => n.contains('restored')), hasLength(1));
     });
   });
 
   group('readSkillPathsInWindow — branch matrix (review round 2)', () {
-    AssistantMessage assistant(List<ContentBlock> content) =>
-        AssistantMessage(
-          content: content,
-          api: 'test-api',
-          provider: 'test-provider',
-          model: 'test-model',
-          usage: Usage.zero,
-          stopReason: StopReason.stop,
-          timestamp: DateTime.utc(2026),
-        );
+    AssistantMessage assistant(List<ContentBlock> content) => AssistantMessage(
+      content: content,
+      api: 'test-api',
+      provider: 'test-provider',
+      model: 'test-model',
+      usage: Usage.zero,
+      stopReason: StopReason.stop,
+      timestamp: DateTime.utc(2026),
+    );
 
     test('non-`read` tool calls never count as skill reads', () {
-      final skills = [_skill('fleet', ['rule'])];
+      final skills = [
+        _skill('fleet', ['rule']),
+      ];
       final reads = readSkillPathsInWindow([
         assistant([
           ToolCall(
@@ -563,7 +576,9 @@ void main() {
     });
 
     test('non-String `path` arguments are ignored', () {
-      final skills = [_skill('fleet', ['rule'])];
+      final skills = [
+        _skill('fleet', ['rule']),
+      ];
       final reads = readSkillPathsInWindow([
         assistant([
           ToolCall(id: 't1', name: 'read', arguments: {'path': 42}),
@@ -573,7 +588,9 @@ void main() {
     });
 
     test('paths outside the skill set are ignored', () {
-      final skills = [_skill('fleet', ['rule'])];
+      final skills = [
+        _skill('fleet', ['rule']),
+      ];
       final reads = readSkillPathsInWindow([
         assistant([
           ToolCall(
@@ -588,15 +605,18 @@ void main() {
 
     test('a real skill read is reported (the P6 priority class)', () {
       final skill = _skill('fleet', ['rule']);
-      final reads = readSkillPathsInWindow([
-        assistant([
-          ToolCall(
-            id: 't1',
-            name: 'read',
-            arguments: {'path': skill.filePath},
-          ),
-        ]),
-      ], [skill]);
+      final reads = readSkillPathsInWindow(
+        [
+          assistant([
+            ToolCall(
+              id: 't1',
+              name: 'read',
+              arguments: {'path': skill.filePath},
+            ),
+          ]),
+        ],
+        [skill],
+      );
       expect(reads, {skill.filePath});
     });
   });
@@ -620,12 +640,16 @@ void main() {
 
     test('a changed content key supersedes with a notice naming the NEW '
         'line (P5)', () {
-      final skills = [_skill('fleet', ['use fleet_sweep.sh'])];
+      final skills = [
+        _skill('fleet', ['use fleet_sweep.sh']),
+      ];
       injectOperativePinCarriers(window(), skills: skills);
       final notices = <String>[];
       injectOperativePinCarriers(
         window(),
-        skills: [_skill('fleet', ['use fleet_sweep_v2.sh'])],
+        skills: [
+          _skill('fleet', ['use fleet_sweep_v2.sh']),
+        ],
         onNotice: notices.add,
       );
       final supersede = notices.singleWhere(
@@ -645,7 +669,9 @@ void main() {
       final notices = <String>[];
       injectOperativePinCarriers(
         window(),
-        skills: [_skill('other', ['other rule'])],
+        skills: [
+          _skill('other', ['other rule']),
+        ],
         onNotice: notices.add,
       );
       final dropped = notices.singleWhere(
@@ -657,18 +683,25 @@ void main() {
     });
 
     test('an unchanged registry diffs clean — no repeat notices', () {
-      final skills = [_skill('fleet', ['use fleet_sweep.sh'])];
+      final skills = [
+        _skill('fleet', ['use fleet_sweep.sh']),
+      ];
       injectOperativePinCarriers(window(), skills: skills);
       final notices = <String>[];
-      injectOperativePinCarriers(window(), skills: skills, onNotice: notices.add);
+      injectOperativePinCarriers(
+        window(),
+        skills: skills,
+        onNotice: notices.add,
+      );
       expect(notices.where((n) => n.contains('superseded')), isEmpty);
-      expect(notices.where((n) => n.contains('skill pin dropped:')),
-          isEmpty);
+      expect(notices.where((n) => n.contains('skill pin dropped:')), isEmpty);
     });
 
     test('ALL skills gone at once still reports the last pin drops '
         '(round 3: the empty-list corner)', () {
-      final skills = [_skill('fleet', ['use fleet_sweep.sh'])];
+      final skills = [
+        _skill('fleet', ['use fleet_sweep.sh']),
+      ];
       injectOperativePinCarriers(window(), skills: skills);
       final notices = <String>[];
       injectOperativePinCarriers(window(), skills: [], onNotice: notices.add);
@@ -684,7 +717,9 @@ void main() {
 
     test('an empty-window or disabled turn never touches the baseline '
         '(round 3: kill-switch stays inert)', () {
-      final skills = [_skill('fleet', ['use fleet_sweep.sh'])];
+      final skills = [
+        _skill('fleet', ['use fleet_sweep.sh']),
+      ];
       injectOperativePinCarriers(window(), skills: skills);
       // Empty window: nothing to report against, baseline untouched.
       injectOperativePinCarriers([], skills: []);
@@ -707,7 +742,9 @@ void main() {
       final notices = <String>[];
       injectOperativePinCarriers(
         window(),
-        skills: [_skill('other', ['other rule'])],
+        skills: [
+          _skill('other', ['other rule']),
+        ],
         onNotice: notices.add,
       );
       expect(notices.any((n) => n.contains('no longer discoverable')), isTrue);
@@ -716,7 +753,9 @@ void main() {
       final messages = window();
       final injected = injectOperativePinCarriers(
         messages,
-        skills: [_skill('other', ['other rule'])],
+        skills: [
+          _skill('other', ['other rule']),
+        ],
       );
       expect(identical(injected, messages), isFalse);
     });
@@ -749,7 +788,9 @@ void main() {
       final before = SkillOperativePins.build([
         _skill('fleet', ['rule one', 'rule two']),
       ]);
-      final after = SkillOperativePins.build([_skill('fleet', ['rule one'])]);
+      final after = SkillOperativePins.build([
+        _skill('fleet', ['rule one']),
+      ]);
       final diff = after.diff(before);
       expect(diff.superseded, isEmpty);
       expect(diff.dropped.single.line, 'rule two');

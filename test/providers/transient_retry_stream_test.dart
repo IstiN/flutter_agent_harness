@@ -341,10 +341,8 @@ void main() {
     group('transientRetryBufferThinking (the #964 escape hatch)', () {
       setUp(() => transientRetryBufferThinking = true);
 
-      test(
-        'a thinking-only drop replays — nothing user-visible was emitted '
-        '(issue #964)',
-        () async {
+      test('a thinking-only drop replays — nothing user-visible was emitted '
+          '(issue #964)', () async {
         var calls = 0;
         final wrapped = transientRetryStreamFunction((
           model,
@@ -358,10 +356,7 @@ void main() {
               stream
                 ..push(StartEvent(partial: testAssistant()))
                 ..push(
-                  ThinkingStartEvent(
-                    contentIndex: 0,
-                    partial: testAssistant(),
-                  ),
+                  ThinkingStartEvent(contentIndex: 0, partial: testAssistant()),
                 );
               for (var i = 1; i <= 3; i++) {
                 stream.push(
@@ -403,69 +398,68 @@ void main() {
           message.content.whereType<TextContent>().single.text,
           'recovered',
         );
-      },
-    );
-
-    test('a thinking-only success flushes the buffered reasoning '
-        '(issue #964)', () async {
-      final wrapped = transientRetryStreamFunction((
-        model,
-        context, {
-        cancelToken,
-      }) {
-        final stream = AssistantMessageEventStream();
-        scheduleMicrotask(() {
-          final full = testAssistant(
-            content: const [ThinkingContent(thinking: 'deep thought')],
-          );
-          stream
-            ..push(StartEvent(partial: testAssistant()))
-            ..push(
-              ThinkingStartEvent(contentIndex: 0, partial: testAssistant()),
-            )
-            ..push(
-              ThinkingDeltaEvent(
-                contentIndex: 0,
-                delta: 'deep ',
-                partial: testAssistant(
-                  content: const [ThinkingContent(thinking: 'deep ')],
-                ),
-              ),
-            )
-            ..push(
-              ThinkingDeltaEvent(
-                contentIndex: 0,
-                delta: 'thought',
-                partial: testAssistant(
-                  content: const [ThinkingContent(thinking: 'deep thought')],
-                ),
-              ),
-            )
-            ..push(
-              ThinkingEndEvent(
-                contentIndex: 0,
-                content: 'deep thought',
-                partial: full,
-              ),
-            )
-            ..push(DoneEvent(reason: StopReason.stop, message: full));
-          stream.end();
-        });
-        return stream;
       });
 
-      final events = await wrapped(
-        testModel,
-        const Context(messages: []),
-      ).toList();
+      test('a thinking-only success flushes the buffered reasoning '
+          '(issue #964)', () async {
+        final wrapped = transientRetryStreamFunction((
+          model,
+          context, {
+          cancelToken,
+        }) {
+          final stream = AssistantMessageEventStream();
+          scheduleMicrotask(() {
+            final full = testAssistant(
+              content: const [ThinkingContent(thinking: 'deep thought')],
+            );
+            stream
+              ..push(StartEvent(partial: testAssistant()))
+              ..push(
+                ThinkingStartEvent(contentIndex: 0, partial: testAssistant()),
+              )
+              ..push(
+                ThinkingDeltaEvent(
+                  contentIndex: 0,
+                  delta: 'deep ',
+                  partial: testAssistant(
+                    content: const [ThinkingContent(thinking: 'deep ')],
+                  ),
+                ),
+              )
+              ..push(
+                ThinkingDeltaEvent(
+                  contentIndex: 0,
+                  delta: 'thought',
+                  partial: testAssistant(
+                    content: const [ThinkingContent(thinking: 'deep thought')],
+                  ),
+                ),
+              )
+              ..push(
+                ThinkingEndEvent(
+                  contentIndex: 0,
+                  content: 'deep thought',
+                  partial: full,
+                ),
+              )
+              ..push(DoneEvent(reason: StopReason.stop, message: full));
+            stream.end();
+          });
+          return stream;
+        });
 
-      expect(
-        events.whereType<ThinkingDeltaEvent>().map((e) => e.delta).toList(),
-        ['deep ', 'thought'],
-        reason: 'buffered thinking flushes in order at Done — never lost',
-      );
-      expect(events.last, isA<DoneEvent>());
-      expect(events.whereType<ErrorEvent>(), isEmpty);
+        final events = await wrapped(
+          testModel,
+          const Context(messages: []),
+        ).toList();
+
+        expect(
+          events.whereType<ThinkingDeltaEvent>().map((e) => e.delta).toList(),
+          ['deep ', 'thought'],
+          reason: 'buffered thinking flushes in order at Done — never lost',
+        );
+        expect(events.last, isA<DoneEvent>());
+        expect(events.whereType<ErrorEvent>(), isEmpty);
       });
     });
 
@@ -1351,20 +1345,8 @@ void main() {
         stream
           ..push(StartEvent(partial: empty))
           ..push(TextStartEvent(contentIndex: 0, partial: empty))
-          ..push(
-            TextDeltaEvent(
-              contentIndex: 0,
-              delta: text,
-              partial: partial,
-            ),
-          )
-          ..push(
-            TextEndEvent(
-              contentIndex: 0,
-              content: text,
-              partial: partial,
-            ),
-          )
+          ..push(TextDeltaEvent(contentIndex: 0, delta: text, partial: partial))
+          ..push(TextEndEvent(contentIndex: 0, content: text, partial: partial))
           ..push(
             ErrorEvent(
               reason: StopReason.aborted,
@@ -1399,10 +1381,7 @@ void main() {
           calls++;
           requestContexts.add(context);
           if (calls == 1) {
-            return abortAfterText(
-              'The path tracer ',
-              deadUsage: usage(10, 5),
-            );
+            return abortAfterText('The path tracer ', deadUsage: usage(10, 5));
           }
           return FakeStreamFunction([
             textTurn('reversed.', usage: usage(20, 7)),
@@ -1417,10 +1396,9 @@ void main() {
         expect(calls, 2, reason: 'the aborted attempt resumes exactly once');
         // The tail request carries the accumulated content as the anchor.
         final anchor = requestContexts[1].messages.last as AssistantMessage;
-        expect(
-          anchor.content.whereType<TextContent>().map((b) => b.text),
-          ['The path tracer '],
-        );
+        expect(anchor.content.whereType<TextContent>().map((b) => b.text), [
+          'The path tracer ',
+        ]);
         expect(anchor.stopReason, StopReason.stop);
         expect(anchor.errorMessage, isNull);
         // ONE logical assistant message: no second start, no duplicated
@@ -1506,11 +1484,7 @@ void main() {
                       content: [
                         const TextContent(text: 'Working on it.'),
                         // The snapshot's best-effort finalized tool call.
-                        const ToolCall(
-                          id: 't1',
-                          name: 'sed',
-                          arguments: {},
-                        ),
+                        const ToolCall(id: 't1', name: 'sed', arguments: {}),
                       ],
                       stopReason: StopReason.aborted,
                       errorMessage: 'Request was aborted',
@@ -1523,9 +1497,11 @@ void main() {
           }
           return FakeStreamFunction([
             toolTurn([
-              const ToolCall(id: 't1', name: 'sed', arguments: {
-                'path': 'a.md',
-              }),
+              const ToolCall(
+                id: 't1',
+                name: 'sed',
+                arguments: {'path': 'a.md'},
+              ),
             ]),
           ]).call(model, context, cancelToken: cancelToken);
         });
@@ -1540,11 +1516,9 @@ void main() {
         // (best-effort JSON) drops, so it can neither execute broken nor
         // duplicate.
         final anchor = requestContexts[1].messages.last as AssistantMessage;
-        expect(
-          anchor.content.whereType<TextContent>().map((b) => b.text),
-          ['Working on it.'],
-          reason: 'only completed blocks; the truncated tool call drops',
-        );
+        expect(anchor.content.whereType<TextContent>().map((b) => b.text), [
+          'Working on it.',
+        ], reason: 'only completed blocks; the truncated tool call drops');
         expect(anchor.content.whereType<ToolCall>(), isEmpty);
         // Tail indices shift past the prefix block.
         final toolEnd = events.whereType<ToolCallEndEvent>().single;
@@ -1559,107 +1533,100 @@ void main() {
       },
     );
 
-    test(
-      'an abort inside the first unfinished block stands loud — nothing '
-      'completed to resume from',
-      () async {
-        var calls = 0;
-        final wrapped = transientRetryStreamFunction((
-          model,
-          context, {
-          cancelToken,
-        }) {
-          calls++;
-          final stream = AssistantMessageEventStream();
-          scheduleMicrotask(() {
-            final empty = testAssistant();
-            final partial = testAssistant(
-              content: [
-                const ToolCall(
-                  id: 't1',
-                  name: 'sed',
-                  arguments: {},
-                  partialArguments: '{"pa',
+    test('an abort inside the first unfinished block stands loud — nothing '
+        'completed to resume from', () async {
+      var calls = 0;
+      final wrapped = transientRetryStreamFunction((
+        model,
+        context, {
+        cancelToken,
+      }) {
+        calls++;
+        final stream = AssistantMessageEventStream();
+        scheduleMicrotask(() {
+          final empty = testAssistant();
+          final partial = testAssistant(
+            content: [
+              const ToolCall(
+                id: 't1',
+                name: 'sed',
+                arguments: {},
+                partialArguments: '{"pa',
+              ),
+            ],
+          );
+          stream
+            ..push(StartEvent(partial: empty))
+            ..push(ToolCallStartEvent(contentIndex: 0, partial: empty))
+            ..push(
+              ToolCallDeltaEvent(
+                contentIndex: 0,
+                delta: '{"pa',
+                partial: partial,
+              ),
+            )
+            ..push(
+              ErrorEvent(
+                reason: StopReason.aborted,
+                error: testAssistant(
+                  content: [
+                    const ToolCall(id: 't1', name: 'sed', arguments: {}),
+                  ],
+                  stopReason: StopReason.aborted,
+                  errorMessage: 'Request was aborted',
                 ),
-              ],
+              ),
             );
-            stream
-              ..push(StartEvent(partial: empty))
-              ..push(ToolCallStartEvent(contentIndex: 0, partial: empty))
-              ..push(
-                ToolCallDeltaEvent(
-                  contentIndex: 0,
-                  delta: '{"pa',
-                  partial: partial,
-                ),
-              )
-              ..push(
-                ErrorEvent(
-                  reason: StopReason.aborted,
-                  error: testAssistant(
-                    content: [
-                      const ToolCall(id: 't1', name: 'sed', arguments: {}),
-                    ],
-                    stopReason: StopReason.aborted,
-                    errorMessage: 'Request was aborted',
-                  ),
-                ),
-              );
-            stream.end();
-          });
-          return stream;
+          stream.end();
         });
+        return stream;
+      });
 
-        final events = await wrapped(
-          testModel,
-          const Context(messages: []),
-        ).toList();
+      final events = await wrapped(
+        testModel,
+        const Context(messages: []),
+      ).toList();
 
-        expect(
-          calls,
-          1,
-          reason:
-              'a replay would duplicate the streamed tool-call delta',
-        );
-        expect(
-          events.whereType<ErrorEvent>().single.error.errorMessage,
-          'Request was aborted',
-        );
-        expect(events.whereType<DoneEvent>(), isEmpty);
-      },
-    );
+      expect(
+        calls,
+        1,
+        reason: 'a replay would duplicate the streamed tool-call delta',
+      );
+      expect(
+        events.whereType<ErrorEvent>().single.error.errorMessage,
+        'Request was aborted',
+      );
+      expect(events.whereType<DoneEvent>(), isEmpty);
+    });
 
-    test(
-      'AC2: repeated aborts exhaust the budget and die loud with the full '
-      'partial content preserved',
-      () async {
-        var calls = 0;
-        final wrapped = transientRetryStreamFunction((
-          model,
-          context, {
-          cancelToken,
-        }) {
-          calls++;
-          return abortAfterText(calls == 1 ? 'part' : 'more');
-        }, maxAttempts: 2);
+    test('AC2: repeated aborts exhaust the budget and die loud with the full '
+        'partial content preserved', () async {
+      var calls = 0;
+      final wrapped = transientRetryStreamFunction((
+        model,
+        context, {
+        cancelToken,
+      }) {
+        calls++;
+        return abortAfterText(calls == 1 ? 'part' : 'more');
+      }, maxAttempts: 2);
 
-        final events = await wrapped(
-          testModel,
-          const Context(messages: []),
-        ).toList();
+      final events = await wrapped(
+        testModel,
+        const Context(messages: []),
+      ).toList();
 
-        expect(calls, 2, reason: 'the resume chain is bounded by the budget');
-        final terminal = events.whereType<ErrorEvent>().single;
-        expect(terminal.reason, StopReason.aborted);
-        expect(terminal.error.errorMessage, 'Request was aborted');
-        expect(
-          terminal.error.content.whereType<TextContent>().map((b) => b.text),
-          ['part', 'more'],
-          reason: 'nothing the host already streamed is lost',
-        );
-        expect(events.whereType<DoneEvent>(), isEmpty);
-      },
-    );
+      expect(calls, 2, reason: 'the resume chain is bounded by the budget');
+      final terminal = events.whereType<ErrorEvent>().single;
+      expect(terminal.reason, StopReason.aborted);
+      expect(terminal.error.errorMessage, 'Request was aborted');
+      expect(
+        terminal.error.content.whereType<TextContent>().map((b) => b.text),
+        ['part', 'more'],
+        reason: 'nothing the host already streamed is lost',
+      );
+      expect(events.whereType<DoneEvent>(), isEmpty);
+    });
 
     test(
       'AC3: a user abort after content stands — never enters the retry path',
@@ -1730,162 +1697,22 @@ void main() {
       },
     );
 
-    test(
-      'E3: a run-idle-watchdog cancel (TimeoutException reason) is a '
-      'machine abort — it resumes from the prefix',
-      () async {
-        var calls = 0;
-        final source = CancelTokenSource();
-        final wrapped = transientRetryStreamFunction((
-          model,
-          context, {
-          cancelToken,
-        }) {
-          calls++;
-          if (calls == 1) {
-            final stream = AssistantMessageEventStream();
-            scheduleMicrotask(() {
-              final empty = testAssistant();
-              final partial = testAssistant(
-                content: [const TextContent(text: 'watchdog cut')],
-              );
-              stream
-                ..push(StartEvent(partial: empty))
-                ..push(TextStartEvent(contentIndex: 0, partial: empty))
-                ..push(
-                  TextDeltaEvent(
-                    contentIndex: 0,
-                    delta: 'watchdog cut',
-                    partial: partial,
-                  ),
-                )
-                ..push(
-                  TextEndEvent(
-                    contentIndex: 0,
-                    content: 'watchdog cut',
-                    partial: partial,
-                  ),
-                );
-              // agent.dart `_onRunWatchdogFired` cancels with its
-              // RunIdleWatchdogFire (a TimeoutException subtype) as the
-              // reason.
-              scheduleMicrotask(
-                () => source.cancel(
-                  RunIdleWatchdogFire(
-                    'agent run produced no events for 480s (run idle '
-                    'watchdog)',
-                  ),
-                ),
-              );
-              source.token.onCancel.then((_) {
-                stream
-                  ..push(
-                    ErrorEvent(
-                      reason: StopReason.aborted,
-                      error: testAssistant(
-                        content: [
-                          const TextContent(text: 'watchdog cut'),
-                        ],
-                        stopReason: StopReason.aborted,
-                        errorMessage: 'Request was aborted',
-                      ),
-                    ),
-                  )
-                  ..end();
-              });
-            });
-            return stream;
-          }
-          return FakeStreamFunction([
-            textTurn('finished'),
-          ]).call(model, context, cancelToken: cancelToken);
-        });
-
-        final events = await wrapped(
-          testModel,
-          const Context(messages: []),
-          cancelToken: source.token,
-        ).toList();
-
-        expect(calls, 2, reason: 'the watchdog-cancelled run resumes');
-        final done = events.whereType<DoneEvent>().single;
-        expect(
-          done.message.content.whereType<TextContent>().map((b) => b.text),
-          ['watchdog cut', 'finished'],
-        );
-        // Issue #1132 review: the resume re-arms the SAME token in place —
-        // the loop's tool phases and a later `Agent.abort()` observe a
-        // live latch, not a spent one.
-        expect(source.token.isCancelled, isFalse);
-      },
-    );
-
-    test(
-      'S1: a user abort during the tail, after a watchdog resume, is '
-      'honored — it stands with the streamed prefix preserved',
-      () async {
-        var calls = 0;
-        final source = CancelTokenSource();
-        final wrapped = transientRetryStreamFunction((
-          model,
-          context, {
-          cancelToken,
-        }) {
-          calls++;
-          if (calls == 1) {
-            final stream = AssistantMessageEventStream();
-            scheduleMicrotask(() {
-              final empty = testAssistant();
-              final partial = testAssistant(
-                content: [const TextContent(text: 'watchdog cut')],
-              );
-              stream
-                ..push(StartEvent(partial: empty))
-                ..push(TextStartEvent(contentIndex: 0, partial: empty))
-                ..push(
-                  TextDeltaEvent(
-                    contentIndex: 0,
-                    delta: 'watchdog cut',
-                    partial: partial,
-                  ),
-                )
-                ..push(
-                  TextEndEvent(
-                    contentIndex: 0,
-                    content: 'watchdog cut',
-                    partial: partial,
-                  ),
-                );
-              // Watchdog fire (machine abort)...
-              scheduleMicrotask(
-                () => source.cancel(RunIdleWatchdogFire('watchdog')),
-              );
-              source.token.onCancel.then((_) {
-                stream
-                  ..push(
-                    ErrorEvent(
-                      reason: StopReason.aborted,
-                      error: testAssistant(
-                        content: [
-                          const TextContent(text: 'watchdog cut'),
-                        ],
-                        stopReason: StopReason.aborted,
-                        errorMessage: 'Request was aborted',
-                      ),
-                    ),
-                  )
-                  ..end();
-              });
-            });
-            return stream;
-          }
-          // The tail: content streams, then the USER aborts (bare cancel
-          // on the same host source — live again after the reset).
+    test('E3: a run-idle-watchdog cancel (TimeoutException reason) is a '
+        'machine abort — it resumes from the prefix', () async {
+      var calls = 0;
+      final source = CancelTokenSource();
+      final wrapped = transientRetryStreamFunction((
+        model,
+        context, {
+        cancelToken,
+      }) {
+        calls++;
+        if (calls == 1) {
           final stream = AssistantMessageEventStream();
           scheduleMicrotask(() {
             final empty = testAssistant();
             final partial = testAssistant(
-              content: [const TextContent(text: 'tail continued')],
+              content: [const TextContent(text: 'watchdog cut')],
             );
             stream
               ..push(StartEvent(partial: empty))
@@ -1893,17 +1720,35 @@ void main() {
               ..push(
                 TextDeltaEvent(
                   contentIndex: 0,
-                  delta: 'tail continued',
+                  delta: 'watchdog cut',
+                  partial: partial,
+                ),
+              )
+              ..push(
+                TextEndEvent(
+                  contentIndex: 0,
+                  content: 'watchdog cut',
                   partial: partial,
                 ),
               );
-            scheduleMicrotask(source.cancel);
+            // agent.dart `_onRunWatchdogFired` cancels with its
+            // RunIdleWatchdogFire (a TimeoutException subtype) as the
+            // reason.
+            scheduleMicrotask(
+              () => source.cancel(
+                RunIdleWatchdogFire(
+                  'agent run produced no events for 480s (run idle '
+                  'watchdog)',
+                ),
+              ),
+            );
             source.token.onCancel.then((_) {
               stream
                 ..push(
                   ErrorEvent(
                     reason: StopReason.aborted,
                     error: testAssistant(
+                      content: [const TextContent(text: 'watchdog cut')],
                       stopReason: StopReason.aborted,
                       errorMessage: 'Request was aborted',
                     ),
@@ -1913,28 +1758,140 @@ void main() {
             });
           });
           return stream;
+        }
+        return FakeStreamFunction([
+          textTurn('finished'),
+        ]).call(model, context, cancelToken: cancelToken);
+      });
+
+      final events = await wrapped(
+        testModel,
+        const Context(messages: []),
+        cancelToken: source.token,
+      ).toList();
+
+      expect(calls, 2, reason: 'the watchdog-cancelled run resumes');
+      final done = events.whereType<DoneEvent>().single;
+      expect(done.message.content.whereType<TextContent>().map((b) => b.text), [
+        'watchdog cut',
+        'finished',
+      ]);
+      // Issue #1132 review: the resume re-arms the SAME token in place —
+      // the loop's tool phases and a later `Agent.abort()` observe a
+      // live latch, not a spent one.
+      expect(source.token.isCancelled, isFalse);
+    });
+
+    test('S1: a user abort during the tail, after a watchdog resume, is '
+        'honored — it stands with the streamed prefix preserved', () async {
+      var calls = 0;
+      final source = CancelTokenSource();
+      final wrapped = transientRetryStreamFunction((
+        model,
+        context, {
+        cancelToken,
+      }) {
+        calls++;
+        if (calls == 1) {
+          final stream = AssistantMessageEventStream();
+          scheduleMicrotask(() {
+            final empty = testAssistant();
+            final partial = testAssistant(
+              content: [const TextContent(text: 'watchdog cut')],
+            );
+            stream
+              ..push(StartEvent(partial: empty))
+              ..push(TextStartEvent(contentIndex: 0, partial: empty))
+              ..push(
+                TextDeltaEvent(
+                  contentIndex: 0,
+                  delta: 'watchdog cut',
+                  partial: partial,
+                ),
+              )
+              ..push(
+                TextEndEvent(
+                  contentIndex: 0,
+                  content: 'watchdog cut',
+                  partial: partial,
+                ),
+              );
+            // Watchdog fire (machine abort)...
+            scheduleMicrotask(
+              () => source.cancel(RunIdleWatchdogFire('watchdog')),
+            );
+            source.token.onCancel.then((_) {
+              stream
+                ..push(
+                  ErrorEvent(
+                    reason: StopReason.aborted,
+                    error: testAssistant(
+                      content: [const TextContent(text: 'watchdog cut')],
+                      stopReason: StopReason.aborted,
+                      errorMessage: 'Request was aborted',
+                    ),
+                  ),
+                )
+                ..end();
+            });
+          });
+          return stream;
+        }
+        // The tail: content streams, then the USER aborts (bare cancel
+        // on the same host source — live again after the reset).
+        final stream = AssistantMessageEventStream();
+        scheduleMicrotask(() {
+          final empty = testAssistant();
+          final partial = testAssistant(
+            content: [const TextContent(text: 'tail continued')],
+          );
+          stream
+            ..push(StartEvent(partial: empty))
+            ..push(TextStartEvent(contentIndex: 0, partial: empty))
+            ..push(
+              TextDeltaEvent(
+                contentIndex: 0,
+                delta: 'tail continued',
+                partial: partial,
+              ),
+            );
+          scheduleMicrotask(source.cancel);
+          source.token.onCancel.then((_) {
+            stream
+              ..push(
+                ErrorEvent(
+                  reason: StopReason.aborted,
+                  error: testAssistant(
+                    stopReason: StopReason.aborted,
+                    errorMessage: 'Request was aborted',
+                  ),
+                ),
+              )
+              ..end();
+          });
         });
+        return stream;
+      });
 
-        final events = await wrapped(
-          testModel,
-          const Context(messages: []),
-          cancelToken: source.token,
-        ).toList();
+      final events = await wrapped(
+        testModel,
+        const Context(messages: []),
+        cancelToken: source.token,
+      ).toList();
 
-        expect(calls, 2, reason: 'no third call: the user abort stands');
-        final terminal = events.whereType<ErrorEvent>().single;
-        expect(terminal.error.stopReason, StopReason.aborted);
-        // The transcript-final message keeps the completed prefix (the
-        // tail's un-ended delta drops per the #290 stand semantics — only
-        // completed blocks are promised).
-        expect(
-          terminal.error.content.whereType<TextContent>().map((b) => b.text),
-          ['watchdog cut'],
-        );
-        // The user's cancel is the last word: the token stays latched.
-        expect(source.token.isCancelled, isTrue);
-      },
-    );
+      expect(calls, 2, reason: 'no third call: the user abort stands');
+      final terminal = events.whereType<ErrorEvent>().single;
+      expect(terminal.error.stopReason, StopReason.aborted);
+      // The transcript-final message keeps the completed prefix (the
+      // tail's un-ended delta drops per the #290 stand semantics — only
+      // completed blocks are promised).
+      expect(
+        terminal.error.content.whereType<TextContent>().map((b) => b.text),
+        ['watchdog cut'],
+      );
+      // The user's cancel is the last word: the token stays latched.
+      expect(source.token.isCancelled, isTrue);
+    });
 
     test(
       'S2: a completed tool call before the abort never rides the anchor '
@@ -1962,7 +1919,10 @@ void main() {
                 arguments: {'i': ''},
               );
               final withCall = testAssistant(
-                content: [const TextContent(text: 'Working on '), call],
+                content: [
+                  const TextContent(text: 'Working on '),
+                  call,
+                ],
               );
               stream
                 ..push(StartEvent(partial: empty))
@@ -2020,10 +1980,9 @@ void main() {
         // The tail request's anchor stops before the completed tool call:
         // no tool_use without a tool_result reaches the wire.
         final anchor = requestContexts[1].messages.last as AssistantMessage;
-        expect(
-          anchor.content.whereType<TextContent>().map((b) => b.text),
-          ['Working on '],
-        );
+        expect(anchor.content.whereType<TextContent>().map((b) => b.text), [
+          'Working on ',
+        ]);
         expect(anchor.content.whereType<ToolCall>(), isEmpty);
         // The host-visible logical message carries only what actually
         // executes: the dead call is dropped from the state (it never ran
@@ -2038,254 +1997,385 @@ void main() {
       },
     );
 
-    test(
-      'S2b: an abort whose only completed block is a tool call sends the '
-      'tail on the original context — no empty anchor',
-      () async {
-        var calls = 0;
-        final requestContexts = <Context>[];
-        final wrapped = transientRetryStreamFunction((
-          model,
-          context, {
-          cancelToken,
-        }) {
-          calls++;
-          requestContexts.add(context);
-          if (calls == 1) {
-            final stream = AssistantMessageEventStream();
-            scheduleMicrotask(() {
-              final empty = testAssistant();
-              const call = ToolCall(id: 't1', name: 'sed', arguments: {});
-              final withCall = testAssistant(content: [call]);
-              stream
-                ..push(StartEvent(partial: empty))
-                ..push(ToolCallStartEvent(contentIndex: 0, partial: empty))
-                ..push(
-                  ToolCallEndEvent(
-                    contentIndex: 0,
-                    toolCall: call,
-                    partial: withCall,
-                  ),
-                )
-                ..push(
-                  ErrorEvent(
-                    reason: StopReason.aborted,
-                    error: testAssistant(
-                      content: [call],
-                      stopReason: StopReason.aborted,
-                      errorMessage: 'Request was aborted',
-                    ),
-                  ),
-                );
-              stream.end();
-            });
-            return stream;
-          }
-          return FakeStreamFunction([
-            textTurn('done'),
-          ]).call(model, context, cancelToken: cancelToken);
-        });
-
-        final events = await wrapped(
-          testModel,
-          const Context(messages: []),
-        ).toList();
-
-        expect(calls, 2);
-        // The anchor would be empty (tool calls never anchor): the tail
-        // request goes out on the original context instead.
-        expect(
-          requestContexts[1].messages.length,
-          requestContexts[0].messages.length,
-        );
-        // The dead call is dropped entirely: the resumed message carries
-        // only the tail's content, so nothing unexecuted rides the
-        // transcript.
-        final done = events.whereType<DoneEvent>().single;
-        expect(done.message.content.whereType<ToolCall>(), isEmpty);
-        expect(
-          done.message.content.whereType<TextContent>().map((b) => b.text),
-          ['done'],
-        );
-      },
-    );
-
-    test(
-      'S3: the chain dying on a non-abort tail failure at budget end keeps '
-      'the streamed prefix in the terminal message',
-      () async {
-        var calls = 0;
-        final wrapped = transientRetryStreamFunction((
-          model,
-          context, {
-          cancelToken,
-        }) {
-          calls++;
-          if (calls == 1) {
-            return abortAfterText('part', deadUsage: usage(10, 5));
-          }
-          // Attempt 2 dies pre-commit with a transient RST on the last
-          // budgeted attempt.
-          final stream = AssistantMessageEventStream();
-          scheduleMicrotask(() {
-            stream
-              ..push(
-                ErrorEvent(
-                  reason: StopReason.error,
-                  error: testAssistant(
-                    stopReason: StopReason.error,
-                    errorMessage: 'Connection reset by peer',
-                  ),
-                ),
-              )
-              ..end();
-          });
-          return stream;
-        }, maxAttempts: 2);
-
-        final events = await wrapped(
-          testModel,
-          const Context(messages: []),
-        ).toList();
-
-        expect(calls, 2);
-        final terminal = events.whereType<ErrorEvent>().single;
-        expect(terminal.error.stopReason, StopReason.error);
-        expect(terminal.error.errorMessage, contains('2 attempt(s)'));
-        // Nothing already streamed is lost (AC2 promise at the seam).
-        expect(
-          terminal.error.content.whereType<TextContent>().map((b) => b.text),
-          ['part'],
-        );
-        expect(terminal.error.usage.input, 10);
-        expect(terminal.error.usage.output, 5);
-      },
-    );
-
-    test(
-      'S4: a post-commit non-abort failure on the resumed path keeps the '
-      'mid-answer hygiene wrap and the streamed prefix',
-      () async {
-        var calls = 0;
-        final wrapped = transientRetryStreamFunction((
-          model,
-          context, {
-          cancelToken,
-        }) {
-          calls++;
-          if (calls == 1) {
-            return abortAfterText('part');
-          }
+    test('S2b: an abort whose only completed block is a tool call sends the '
+        'tail on the original context — no empty anchor', () async {
+      var calls = 0;
+      final requestContexts = <Context>[];
+      final wrapped = transientRetryStreamFunction((
+        model,
+        context, {
+        cancelToken,
+      }) {
+        calls++;
+        requestContexts.add(context);
+        if (calls == 1) {
           final stream = AssistantMessageEventStream();
           scheduleMicrotask(() {
             final empty = testAssistant();
-            final partial = testAssistant(
-              content: [const TextContent(text: 'tail')],
-            );
+            const call = ToolCall(id: 't1', name: 'sed', arguments: {});
+            final withCall = testAssistant(content: [call]);
             stream
               ..push(StartEvent(partial: empty))
-              ..push(TextStartEvent(contentIndex: 0, partial: empty))
+              ..push(ToolCallStartEvent(contentIndex: 0, partial: empty))
               ..push(
-                TextDeltaEvent(
+                ToolCallEndEvent(
                   contentIndex: 0,
-                  delta: 'tail',
-                  partial: partial,
+                  toolCall: call,
+                  partial: withCall,
                 ),
               )
               ..push(
                 ErrorEvent(
-                  reason: StopReason.error,
+                  reason: StopReason.aborted,
                   error: testAssistant(
-                    content: [const TextContent(text: 'tail')],
-                    stopReason: StopReason.error,
-                    errorMessage: 'Connection reset by peer',
+                    content: [call],
+                    stopReason: StopReason.aborted,
+                    errorMessage: 'Request was aborted',
                   ),
                 ),
               );
             stream.end();
           });
           return stream;
+        }
+        return FakeStreamFunction([
+          textTurn('done'),
+        ]).call(model, context, cancelToken: cancelToken);
+      });
+
+      final events = await wrapped(
+        testModel,
+        const Context(messages: []),
+      ).toList();
+
+      expect(calls, 2);
+      // The anchor would be empty (tool calls never anchor): the tail
+      // request goes out on the original context instead.
+      expect(
+        requestContexts[1].messages.length,
+        requestContexts[0].messages.length,
+      );
+      // The dead call is dropped entirely: the resumed message carries
+      // only the tail's content, so nothing unexecuted rides the
+      // transcript.
+      final done = events.whereType<DoneEvent>().single;
+      expect(done.message.content.whereType<ToolCall>(), isEmpty);
+      expect(done.message.content.whereType<TextContent>().map((b) => b.text), [
+        'done',
+      ]);
+    });
+
+    test('S3: the chain dying on a non-abort tail failure at budget end keeps '
+        'the streamed prefix in the terminal message', () async {
+      var calls = 0;
+      final wrapped = transientRetryStreamFunction((
+        model,
+        context, {
+        cancelToken,
+      }) {
+        calls++;
+        if (calls == 1) {
+          return abortAfterText('part', deadUsage: usage(10, 5));
+        }
+        // Attempt 2 dies pre-commit with a transient RST on the last
+        // budgeted attempt.
+        final stream = AssistantMessageEventStream();
+        scheduleMicrotask(() {
+          stream
+            ..push(
+              ErrorEvent(
+                reason: StopReason.error,
+                error: testAssistant(
+                  stopReason: StopReason.error,
+                  errorMessage: 'Connection reset by peer',
+                ),
+              ),
+            )
+            ..end();
         });
+        return stream;
+      }, maxAttempts: 2);
 
-        final events = await wrapped(
-          testModel,
-          const Context(messages: []),
-        ).toList();
+      final events = await wrapped(
+        testModel,
+        const Context(messages: []),
+      ).toList();
 
-        final terminal = events.whereType<ErrorEvent>().single;
+      expect(calls, 2);
+      final terminal = events.whereType<ErrorEvent>().single;
+      expect(terminal.error.stopReason, StopReason.error);
+      expect(terminal.error.errorMessage, contains('2 attempt(s)'));
+      // Nothing already streamed is lost (AC2 promise at the seam).
+      expect(
+        terminal.error.content.whereType<TextContent>().map((b) => b.text),
+        ['part'],
+      );
+      expect(terminal.error.usage.input, 10);
+      expect(terminal.error.usage.output, 5);
+    });
+
+    test('S4: a post-commit non-abort failure on the resumed path keeps the '
+        'mid-answer hygiene wrap and the streamed prefix', () async {
+      var calls = 0;
+      final wrapped = transientRetryStreamFunction((
+        model,
+        context, {
+        cancelToken,
+      }) {
+        calls++;
+        if (calls == 1) {
+          return abortAfterText('part');
+        }
+        final stream = AssistantMessageEventStream();
+        scheduleMicrotask(() {
+          final empty = testAssistant();
+          final partial = testAssistant(
+            content: [const TextContent(text: 'tail')],
+          );
+          stream
+            ..push(StartEvent(partial: empty))
+            ..push(TextStartEvent(contentIndex: 0, partial: empty))
+            ..push(
+              TextDeltaEvent(contentIndex: 0, delta: 'tail', partial: partial),
+            )
+            ..push(
+              ErrorEvent(
+                reason: StopReason.error,
+                error: testAssistant(
+                  content: [const TextContent(text: 'tail')],
+                  stopReason: StopReason.error,
+                  errorMessage: 'Connection reset by peer',
+                ),
+              ),
+            );
+          stream.end();
+        });
+        return stream;
+      });
+
+      final events = await wrapped(
+        testModel,
+        const Context(messages: []),
+      ).toList();
+
+      final terminal = events.whereType<ErrorEvent>().single;
+      expect(
+        terminal.error.errorMessage,
+        contains('Provider failed mid-answer'),
+        reason: 'the #290 hygiene wrap applies on the resume path too',
+      );
+      expect(terminal.error.errorMessage, contains('Connection reset'));
+      expect(
+        terminal.error.content.whereType<TextContent>().map((b) => b.text),
+        ['part', 'tail'],
+      );
+    });
+    test('S5: a plain TimeoutException cancel (a compaction budget kill) is '
+        'host intent — it stands, never resumes', () async {
+      var calls = 0;
+      final source = CancelTokenSource();
+      final wrapped = transientRetryStreamFunction((
+        model,
+        context, {
+        cancelToken,
+      }) {
+        calls++;
+        final stream = AssistantMessageEventStream();
+        scheduleMicrotask(() {
+          final empty = testAssistant();
+          final partial = testAssistant(
+            content: [const TextContent(text: 'summarizing...')],
+          );
+          stream
+            ..push(StartEvent(partial: empty))
+            ..push(TextStartEvent(contentIndex: 0, partial: empty))
+            ..push(
+              TextDeltaEvent(
+                contentIndex: 0,
+                delta: 'summarizing...',
+                partial: partial,
+              ),
+            )
+            ..push(
+              TextEndEvent(
+                contentIndex: 0,
+                content: 'summarizing...',
+                partial: partial,
+              ),
+            );
+          // The structured-compaction budget cancels with a NAMED plain
+          // TimeoutException (engine.dart) — fail-fast, no retry spin.
+          // The text block COMPLETED first, so only the typed reason
+          // check keeps this from resuming.
+          scheduleMicrotask(
+            () => source.cancel(
+              TimeoutException(
+                'structured compaction summary exceeded the 90s budget '
+                '(issue #515)',
+              ),
+            ),
+          );
+          source.token.onCancel.then((_) {
+            stream
+              ..push(
+                ErrorEvent(
+                  reason: StopReason.aborted,
+                  error: testAssistant(
+                    content: [const TextContent(text: 'summarizing...')],
+                    stopReason: StopReason.aborted,
+                    errorMessage: 'Request was aborted',
+                  ),
+                ),
+              )
+              ..end();
+          });
+        });
+        return stream;
+      });
+
+      final events = await wrapped(
+        testModel,
+        const Context(messages: []),
+        cancelToken: source.token,
+      ).toList();
+
+      expect(calls, 1, reason: 'a budget kill must not spin the resume');
+      final terminal = events.whereType<ErrorEvent>().single;
+      expect(terminal.error.stopReason, StopReason.aborted);
+      // The token stays latched — the kill keeps its teeth.
+      expect(source.token.isCancelled, isTrue);
+    });
+  });
+
+  group(
+    'issue #1168 - mid-stream connection failures resume from the prefix',
+    () {
+      AssistantMessage errorMsg(
+        String text, {
+        List<ContentBlock> content = const [],
+        Usage usage = Usage.zero,
+      }) => AssistantMessage(
+        content: content,
+        api: 'test-api',
+        provider: 'test-provider',
+        model: 'test-model',
+        usage: usage,
+        stopReason: StopReason.error,
+        errorMessage: text,
+        timestamp: DateTime.utc(2026),
+      );
+
+      const ownerTimeout =
+          'SocketException: Connection failed (OS Error: Operation timed out, '
+          'errno = 60), address = api.example.com, port = 443';
+
+      test('the owner wording classifies as transient', () {
+        expect(isTransientNetworkError(errorMsg(ownerTimeout)), isTrue);
         expect(
-          terminal.error.errorMessage,
-          contains('Provider failed mid-answer'),
-          reason: 'the #290 hygiene wrap applies on the resume path too',
+          isTransientNetworkError(
+            errorMsg('SocketException: Connection attempt timed out'),
+          ),
+          isTrue,
         );
-        expect(terminal.error.errorMessage, contains('Connection reset'));
         expect(
-          terminal.error.content.whereType<TextContent>().map((b) => b.text),
-          ['part', 'tail'],
+          isTransientNetworkError(
+            errorMsg('ClientException: Connection closed while receiving data'),
+          ),
+          isTrue,
         );
-      },
-    );
-    test(
-      'S5: a plain TimeoutException cancel (a compaction budget kill) is '
-      'host intent — it stands, never resumes',
-      () async {
-        var calls = 0;
+        expect(
+          isTransientNetworkError(
+            errorMsg('HttpException: Connection terminated'),
+          ),
+          isTrue,
+        );
+        expect(
+          isTransientNetworkError(
+            errorMsg('SocketException: Failed host lookup: api.example.com'),
+          ),
+          isTrue,
+        );
+        // Non-connection classes stay fatal.
+        expect(
+          isTransientNetworkError(errorMsg('401 unauthorized: invalid key')),
+          isFalse,
+        );
+      });
+
+      test('a mid-answer Operation timed out resumes and completes one '
+          'logical message', () async {
         final source = CancelTokenSource();
+        var calls = 0;
+        final notices = <String>[];
+        transientRetryNotice = (attempt, maxAttempts, delay, reason) {
+          notices.add(reason);
+        };
         final wrapped = transientRetryStreamFunction((
           model,
           context, {
           cancelToken,
         }) {
-          calls++;
+          final n = ++calls;
           final stream = AssistantMessageEventStream();
           scheduleMicrotask(() {
-            final empty = testAssistant();
-            final partial = testAssistant(
-              content: [const TextContent(text: 'summarizing...')],
-            );
-            stream
-              ..push(StartEvent(partial: empty))
-              ..push(TextStartEvent(contentIndex: 0, partial: empty))
-              ..push(
-                TextDeltaEvent(
-                  contentIndex: 0,
-                  delta: 'summarizing...',
-                  partial: partial,
-                ),
-              )
-              ..push(
-                TextEndEvent(
-                  contentIndex: 0,
-                  content: 'summarizing...',
-                  partial: partial,
-                ),
+            if (n == 1) {
+              final part = testAssistant(
+                content: [const TextContent(text: 'part')],
               );
-            // The structured-compaction budget cancels with a NAMED plain
-            // TimeoutException (engine.dart) — fail-fast, no retry spin.
-            // The text block COMPLETED first, so only the typed reason
-            // check keeps this from resuming.
-            scheduleMicrotask(
-              () => source.cancel(
-                TimeoutException(
-                  'structured compaction summary exceeded the 90s budget '
-                  '(issue #515)',
-                ),
-              ),
-            );
-            source.token.onCancel.then((_) {
               stream
+                ..push(StartEvent(partial: testAssistant()))
+                ..push(
+                  TextStartEvent(contentIndex: 0, partial: testAssistant()),
+                )
+                ..push(
+                  TextDeltaEvent(contentIndex: 0, delta: 'part', partial: part),
+                )
+                ..push(
+                  TextEndEvent(contentIndex: 0, content: 'part', partial: part),
+                )
                 ..push(
                   ErrorEvent(
-                    reason: StopReason.aborted,
-                    error: testAssistant(
-                      content: [const TextContent(text: 'summarizing...')],
-                      stopReason: StopReason.aborted,
-                      errorMessage: 'Request was aborted',
+                    reason: StopReason.error,
+                    error: errorMsg(
+                      ownerTimeout,
+                      content: part.content,
+                      usage: const Usage(
+                        input: 5,
+                        output: 1,
+                        cacheRead: 0,
+                        cacheWrite: 0,
+                        totalTokens: 6,
+                        cost: UsageCost(),
+                      ),
                     ),
                   ),
+                );
+            } else {
+              final tail = testAssistant(
+                content: [const TextContent(text: 'tail')],
+                usage: const Usage(
+                  input: 3,
+                  output: 2,
+                  cacheRead: 0,
+                  cacheWrite: 0,
+                  totalTokens: 5,
+                  cost: UsageCost(),
+                ),
+              );
+              stream
+                ..push(StartEvent(partial: testAssistant()))
+                ..push(
+                  TextStartEvent(contentIndex: 0, partial: testAssistant()),
                 )
-                ..end();
-            });
+                ..push(
+                  TextDeltaEvent(contentIndex: 0, delta: 'tail', partial: tail),
+                )
+                ..push(
+                  TextEndEvent(contentIndex: 0, content: 'tail', partial: tail),
+                )
+                ..push(DoneEvent(reason: StopReason.stop, message: tail));
+            }
+            stream.end();
           });
           return stream;
         });
@@ -2296,86 +2386,116 @@ void main() {
           cancelToken: source.token,
         ).toList();
 
-        expect(calls, 1, reason: 'a budget kill must not spin the resume');
-        final terminal = events.whereType<ErrorEvent>().single;
-        expect(terminal.error.stopReason, StopReason.aborted);
-        // The token stays latched — the kill keeps its teeth.
-        expect(source.token.isCancelled, isTrue);
-      },
-    );
-  });
-
-  group('issue #1168 - mid-stream connection failures resume from the prefix',
-      () {
-    AssistantMessage errorMsg(
-      String text, {
-      List<ContentBlock> content = const [],
-      Usage usage = Usage.zero,
-    }) =>
-        AssistantMessage(
-          content: content,
-          api: 'test-api',
-          provider: 'test-provider',
-          model: 'test-model',
-          usage: usage,
-          stopReason: StopReason.error,
-          errorMessage: text,
-          timestamp: DateTime.utc(2026),
+        expect(calls, 2, reason: 'the cut transport resumes from the prefix');
+        // One logical message: the prefix rides, no ErrorEvent surfaces.
+        expect(events.whereType<ErrorEvent>(), isEmpty);
+        final done = events.whereType<DoneEvent>().single;
+        expect(
+          done.message.content
+              .whereType<TextContent>()
+              .map((block) => block.text)
+              .toList(),
+          ['part', 'tail'],
+          reason: 'the transcript keeps what the host already streamed',
         );
+        // The dead attempt's usage is billed once in the terminal message:
+        // 5/1 (the dead attempt's error snapshot) + 3/2 (the tail).
+        expect(done.message.usage.input, 8);
+        expect(done.message.usage.output, 3);
+        // The retry is voiced, naming the resumed prefix.
+        expect(notices, hasLength(1));
+        expect(notices.single, contains('resuming from 1 completed block(s)'));
+      });
 
-    const ownerTimeout =
-        'SocketException: Connection failed (OS Error: Operation timed out, '
-        'errno = 60), address = api.example.com, port = 443';
+      test('repeated connection failures exhaust the budget loud - error '
+          'reason, full prefix preserved', () async {
+        final source = CancelTokenSource();
+        var calls = 0;
+        final wrapped = transientRetryStreamFunction((
+          model,
+          context, {
+          cancelToken,
+        }) {
+          final stream = AssistantMessageEventStream();
+          final n = ++calls;
+          scheduleMicrotask(() {
+            final part = testAssistant(content: [TextContent(text: 'part $n')]);
+            stream
+              ..push(StartEvent(partial: testAssistant()))
+              ..push(TextStartEvent(contentIndex: 0, partial: testAssistant()))
+              ..push(
+                TextDeltaEvent(
+                  contentIndex: 0,
+                  delta: 'part $n',
+                  partial: part,
+                ),
+              )
+              ..push(
+                TextEndEvent(
+                  contentIndex: 0,
+                  content: 'part $n',
+                  partial: part,
+                ),
+              )
+              ..push(
+                ErrorEvent(
+                  reason: StopReason.error,
+                  error: errorMsg(ownerTimeout, content: part.content),
+                ),
+              )
+              ..end();
+          });
+          return stream;
+        });
 
-    test('the owner wording classifies as transient', () {
-      expect(isTransientNetworkError(errorMsg(ownerTimeout)), isTrue);
-      expect(
-        isTransientNetworkError(
-          errorMsg('SocketException: Connection attempt timed out'),
-        ),
-        isTrue,
-      );
-      expect(
-        isTransientNetworkError(
-          errorMsg(
-            'ClientException: Connection closed while receiving data',
-          ),
-        ),
-        isTrue,
-      );
-      expect(
-        isTransientNetworkError(
-          errorMsg('HttpException: Connection terminated'),
-        ),
-        isTrue,
-      );
-      expect(
-        isTransientNetworkError(
-          errorMsg('SocketException: Failed host lookup: api.example.com'),
-        ),
-        isTrue,
-      );
-      // Non-connection classes stay fatal.
-      expect(
-        isTransientNetworkError(errorMsg('401 unauthorized: invalid key')),
-        isFalse,
-      );
-    });
+        final events = await wrapped(
+          testModel,
+          const Context(messages: []),
+          cancelToken: source.token,
+        ).toList();
 
-    test('a mid-answer Operation timed out resumes and completes one '
-        'logical message', () async {
-      final source = CancelTokenSource();
-      var calls = 0;
-      final notices = <String>[];
-      transientRetryNotice = (attempt, maxAttempts, delay, reason) {
-        notices.add(reason);
-      };
-      final wrapped = transientRetryStreamFunction((model, context,
-          {cancelToken}) {
-        final n = ++calls;
-        final stream = AssistantMessageEventStream();
-        scheduleMicrotask(() {
-          if (n == 1) {
+        expect(calls, 3, reason: 'the default attempt budget');
+        final terminal = events.whereType<ErrorEvent>().single;
+        // A transport death surfaces as error, never as aborted.
+        expect(terminal.reason, StopReason.error);
+        // The terminal carries the exhaustion STORY (issue #1168 review):
+        // the resume provenance names the consumed verdict so layers above
+        // neither rewrap it ("not retried" would be false) nor retry it.
+        expect(
+          terminal.error.errorMessage,
+          startsWith('Provider retry chain exhausted after 3 attempt(s)'),
+        );
+        expect(terminal.error.errorMessage, contains('Operation timed out'));
+        expect(
+          terminal.error.errorMessage,
+          contains('resumed from 2 completed block(s)'),
+        );
+        expect(terminal.error.errorMessage, contains('no further retries'));
+        // The verdict is un-classifiable as transient: this layer and the
+        // roles ladder above both stand down on it.
+        expect(isTransientNetworkError(terminal.error), isFalse);
+        expect(isTransientExhaustionStory(terminal.error.errorMessage), isTrue);
+        expect(
+          terminal.error.content
+              .whereType<TextContent>()
+              .map((block) => block.text)
+              .toList(),
+          ['part 1', 'part 2', 'part 3'],
+          reason: 'the full partial content is preserved on exhaustion',
+        );
+      });
+
+      test('an auth failure after completed content stands verbatim', () async {
+        final source = CancelTokenSource();
+        var calls = 0;
+        final wrapped = transientRetryStreamFunction((
+          model,
+          context, {
+          cancelToken,
+        }) {
+          final stream = AssistantMessageEventStream();
+          scheduleMicrotask(() {
+            calls++;
             final part = testAssistant(
               content: [const TextContent(text: 'part')],
             );
@@ -2386,351 +2506,209 @@ void main() {
                 TextDeltaEvent(contentIndex: 0, delta: 'part', partial: part),
               )
               ..push(
-                TextEndEvent(
-                    contentIndex: 0, content: 'part', partial: part),
+                TextEndEvent(contentIndex: 0, content: 'part', partial: part),
               )
               ..push(
                 ErrorEvent(
                   reason: StopReason.error,
                   error: errorMsg(
-                    ownerTimeout,
+                    '401 unauthorized: invalid API key',
                     content: part.content,
-                    usage: const Usage(
-                      input: 5,
-                      output: 1,
-                      cacheRead: 0,
-                      cacheWrite: 0,
-                      totalTokens: 6,
-                      cost: UsageCost(),
-                    ),
                   ),
                 ),
-              );
-          } else {
-            final tail = testAssistant(
-              content: [const TextContent(text: 'tail')],
-              usage: const Usage(
-                input: 3,
-                output: 2,
-                cacheRead: 0,
-                cacheWrite: 0,
-                totalTokens: 5,
-                cost: UsageCost(),
-              ),
+              )
+              ..end();
+          });
+          return stream;
+        });
+
+        final events = await wrapped(
+          testModel,
+          const Context(messages: []),
+          cancelToken: source.token,
+        ).toList();
+
+        expect(calls, 1, reason: 'an auth error never retries');
+        final terminal = events.whereType<ErrorEvent>().single;
+        expect(
+          terminal.error.errorMessage,
+          '401 unauthorized: invalid API key',
+        );
+      });
+
+      test('a user-cancelled token outranks the transport class', () async {
+        final source = CancelTokenSource();
+        var calls = 0;
+        final wrapped = transientRetryStreamFunction((
+          model,
+          context, {
+          cancelToken,
+        }) {
+          final stream = AssistantMessageEventStream();
+          scheduleMicrotask(() {
+            calls++;
+            final part = testAssistant(
+              content: [const TextContent(text: 'part')],
             );
             stream
               ..push(StartEvent(partial: testAssistant()))
               ..push(TextStartEvent(contentIndex: 0, partial: testAssistant()))
               ..push(
-                TextDeltaEvent(contentIndex: 0, delta: 'tail', partial: tail),
+                TextDeltaEvent(contentIndex: 0, delta: 'part', partial: part),
               )
               ..push(
-                TextEndEvent(
-                    contentIndex: 0, content: 'tail', partial: tail),
-              )
-              ..push(DoneEvent(reason: StopReason.stop, message: tail));
-          }
-          stream.end();
-        });
-        return stream;
-      });
-
-      final events = await wrapped(
-        testModel,
-        const Context(messages: []),
-        cancelToken: source.token,
-      ).toList();
-
-      expect(calls, 2, reason: 'the cut transport resumes from the prefix');
-      // One logical message: the prefix rides, no ErrorEvent surfaces.
-      expect(events.whereType<ErrorEvent>(), isEmpty);
-      final done = events.whereType<DoneEvent>().single;
-      expect(
-        done.message.content
-            .whereType<TextContent>()
-            .map((block) => block.text)
-            .toList(),
-        ['part', 'tail'],
-        reason: 'the transcript keeps what the host already streamed',
-      );
-      // The dead attempt's usage is billed once in the terminal message:
-      // 5/1 (the dead attempt's error snapshot) + 3/2 (the tail).
-      expect(done.message.usage.input, 8);
-      expect(done.message.usage.output, 3);
-      // The retry is voiced, naming the resumed prefix.
-      expect(notices, hasLength(1));
-      expect(notices.single, contains('resuming from 1 completed block(s)'));
-    });
-
-    test('repeated connection failures exhaust the budget loud - error '
-        'reason, full prefix preserved', () async {
-      final source = CancelTokenSource();
-      var calls = 0;
-      final wrapped = transientRetryStreamFunction((model, context,
-          {cancelToken}) {
-        final stream = AssistantMessageEventStream();
-        final n = ++calls;
-        scheduleMicrotask(() {
-          final part = testAssistant(
-            content: [TextContent(text: 'part $n')],
-          );
-          stream
-            ..push(StartEvent(partial: testAssistant()))
-            ..push(TextStartEvent(contentIndex: 0, partial: testAssistant()))
-            ..push(
-              TextDeltaEvent(
-                  contentIndex: 0, delta: 'part $n', partial: part),
-            )
-            ..push(
-              TextEndEvent(contentIndex: 0, content: 'part $n', partial: part),
-            )
-            ..push(
-              ErrorEvent(
-                reason: StopReason.error,
-                error: errorMsg(ownerTimeout, content: part.content),
-              ),
-            )
-            ..end();
-        });
-        return stream;
-      });
-
-      final events = await wrapped(
-        testModel,
-        const Context(messages: []),
-        cancelToken: source.token,
-      ).toList();
-
-      expect(calls, 3, reason: 'the default attempt budget');
-      final terminal = events.whereType<ErrorEvent>().single;
-      // A transport death surfaces as error, never as aborted.
-      expect(terminal.reason, StopReason.error);
-      // The terminal carries the exhaustion STORY (issue #1168 review):
-      // the resume provenance names the consumed verdict so layers above
-      // neither rewrap it ("not retried" would be false) nor retry it.
-      expect(
-        terminal.error.errorMessage,
-        startsWith('Provider retry chain exhausted after 3 attempt(s)'),
-      );
-      expect(terminal.error.errorMessage, contains('Operation timed out'));
-      expect(
-        terminal.error.errorMessage,
-        contains('resumed from 2 completed block(s)'),
-      );
-      expect(terminal.error.errorMessage, contains('no further retries'));
-      // The verdict is un-classifiable as transient: this layer and the
-      // roles ladder above both stand down on it.
-      expect(isTransientNetworkError(terminal.error), isFalse);
-      expect(isTransientExhaustionStory(terminal.error.errorMessage), isTrue);
-      expect(
-        terminal.error.content
-            .whereType<TextContent>()
-            .map((block) => block.text)
-            .toList(),
-        ['part 1', 'part 2', 'part 3'],
-        reason: 'the full partial content is preserved on exhaustion',
-      );
-    });
-
-    test('an auth failure after completed content stands verbatim',
-        () async {
-      final source = CancelTokenSource();
-      var calls = 0;
-      final wrapped = transientRetryStreamFunction((model, context,
-          {cancelToken}) {
-        final stream = AssistantMessageEventStream();
-        scheduleMicrotask(() {
-          calls++;
-          final part = testAssistant(
-            content: [const TextContent(text: 'part')],
-          );
-          stream
-            ..push(StartEvent(partial: testAssistant()))
-            ..push(TextStartEvent(contentIndex: 0, partial: testAssistant()))
-            ..push(
-              TextDeltaEvent(contentIndex: 0, delta: 'part', partial: part),
-            )
-            ..push(
-              TextEndEvent(contentIndex: 0, content: 'part', partial: part),
-            )
-            ..push(
-              ErrorEvent(
-                reason: StopReason.error,
-                error: errorMsg(
-                  '401 unauthorized: invalid API key',
-                  content: part.content,
-                ),
-              ),
-            )
-            ..end();
-        });
-        return stream;
-      });
-
-      final events = await wrapped(
-        testModel,
-        const Context(messages: []),
-        cancelToken: source.token,
-      ).toList();
-
-      expect(calls, 1, reason: 'an auth error never retries');
-      final terminal = events.whereType<ErrorEvent>().single;
-      expect(terminal.error.errorMessage, '401 unauthorized: invalid API key');
-    });
-
-    test('a user-cancelled token outranks the transport class', () async {
-      final source = CancelTokenSource();
-      var calls = 0;
-      final wrapped = transientRetryStreamFunction((model, context,
-          {cancelToken}) {
-        final stream = AssistantMessageEventStream();
-        scheduleMicrotask(() {
-          calls++;
-          final part = testAssistant(
-            content: [const TextContent(text: 'part')],
-          );
-          stream
-            ..push(StartEvent(partial: testAssistant()))
-            ..push(TextStartEvent(contentIndex: 0, partial: testAssistant()))
-            ..push(
-              TextDeltaEvent(contentIndex: 0, delta: 'part', partial: part),
-            )
-            ..push(
-              TextEndEvent(contentIndex: 0, content: 'part', partial: part),
-            );
-          source.cancel();
-          stream.push(
-            ErrorEvent(
-              reason: StopReason.error,
-              error: errorMsg(ownerTimeout, content: part.content),
-            ),
-          );
-          stream.end();
-        });
-        return stream;
-      });
-
-      final events = await wrapped(
-        testModel,
-        const Context(messages: []),
-        cancelToken: source.token,
-      ).toList();
-
-      expect(calls, 1, reason: 'host intent outranks the transport class');
-      // The failure stands as the mid-answer wrap: the terminal names the
-      // wrap and keeps the raw provider line as evidence, never a resume.
-      final terminal = events.whereType<ErrorEvent>().single;
-      expect(terminal.reason, StopReason.error);
-      expect(terminal.error.errorMessage, startsWith('Provider failed '
-          'mid-answer'));
-      expect(terminal.error.errorMessage, contains('Operation timed out'));
-    });
-
-    test('a pre-commit connection-closed cut (stripped ClientException) '
-        'replays', () async {
-      final source = CancelTokenSource();
-      var calls = 0;
-      final wrapped = transientRetryStreamFunction((model, context,
-          {cancelToken}) {
-        final stream = AssistantMessageEventStream();
-        scheduleMicrotask(() {
-          if (++calls == 1) {
-            stream
-              ..push(StartEvent(partial: testAssistant()))
-              ..push(
-                ErrorEvent(
-                  reason: StopReason.error,
-                  error: errorMsg(
-                    'ClientException: Connection closed while receiving data',
-                  ),
-                ),
+                TextEndEvent(contentIndex: 0, content: 'part', partial: part),
               );
-          } else {
-            final done = testAssistant(
-              content: [const TextContent(text: 'recovered')],
-            );
-            stream
-              ..push(StartEvent(partial: testAssistant()))
-              ..push(DoneEvent(reason: StopReason.stop, message: done));
-          }
-          stream.end();
-        });
-        return stream;
-      });
-
-      final events = await wrapped(
-        testModel,
-        const Context(messages: []),
-        cancelToken: source.token,
-      ).toList();
-
-      expect(calls, 2, reason: 'the cut transport replays');
-      expect(
-        events.whereType<DoneEvent>().single.message.content,
-        hasLength(1),
-      );
-    });
-
-    test('a watchdog-fired cancel does not outrank the transport class',
-        () async {
-      // Aligned with the abort class (issue #1168 review): a
-      // RunIdleWatchdogFire cancel is machine intent, so the transport
-      // class resumes and the latch re-arms; a bare user cancel stands
-      // (the test above).
-      final source = CancelTokenSource();
-      var calls = 0;
-      final wrapped = transientRetryStreamFunction((model, context,
-          {cancelToken}) {
-        final stream = AssistantMessageEventStream();
-        scheduleMicrotask(() {
-          final n = ++calls;
-          final part = testAssistant(
-            content: [TextContent(text: n == 1 ? 'part' : 'tail')],
-          );
-          if (n == 1) {
-            // The watchdog's cancel races the stream: the token is
-            // latched when the transport error arrives.
-            source.cancel(RunIdleWatchdogFire('watchdog'));
-          }
-          stream
-            ..push(StartEvent(partial: testAssistant()))
-            ..push(TextStartEvent(contentIndex: 0, partial: testAssistant()))
-            ..push(
-              TextDeltaEvent(
-                  contentIndex: 0,
-                  delta: n == 1 ? 'part' : 'tail',
-                  partial: part),
-            )
-            ..push(
-              TextEndEvent(
-                  contentIndex: 0,
-                  content: n == 1 ? 'part' : 'tail',
-                  partial: part),
-            );
-          if (n == 1) {
+            source.cancel();
             stream.push(
               ErrorEvent(
                 reason: StopReason.error,
                 error: errorMsg(ownerTimeout, content: part.content),
               ),
             );
-          } else {
-            stream.push(DoneEvent(reason: StopReason.stop, message: part));
-          }
-          stream.end();
+            stream.end();
+          });
+          return stream;
         });
-        return stream;
+
+        final events = await wrapped(
+          testModel,
+          const Context(messages: []),
+          cancelToken: source.token,
+        ).toList();
+
+        expect(calls, 1, reason: 'host intent outranks the transport class');
+        // The failure stands as the mid-answer wrap: the terminal names the
+        // wrap and keeps the raw provider line as evidence, never a resume.
+        final terminal = events.whereType<ErrorEvent>().single;
+        expect(terminal.reason, StopReason.error);
+        expect(
+          terminal.error.errorMessage,
+          startsWith(
+            'Provider failed '
+            'mid-answer',
+          ),
+        );
+        expect(terminal.error.errorMessage, contains('Operation timed out'));
       });
 
-      final events = await wrapped(
-        testModel,
-        const Context(messages: []),
-        cancelToken: source.token,
-      ).toList();
+      test('a pre-commit connection-closed cut (stripped ClientException) '
+          'replays', () async {
+        final source = CancelTokenSource();
+        var calls = 0;
+        final wrapped = transientRetryStreamFunction((
+          model,
+          context, {
+          cancelToken,
+        }) {
+          final stream = AssistantMessageEventStream();
+          scheduleMicrotask(() {
+            if (++calls == 1) {
+              stream
+                ..push(StartEvent(partial: testAssistant()))
+                ..push(
+                  ErrorEvent(
+                    reason: StopReason.error,
+                    error: errorMsg(
+                      'ClientException: Connection closed while receiving data',
+                    ),
+                  ),
+                );
+            } else {
+              final done = testAssistant(
+                content: [const TextContent(text: 'recovered')],
+              );
+              stream
+                ..push(StartEvent(partial: testAssistant()))
+                ..push(DoneEvent(reason: StopReason.stop, message: done));
+            }
+            stream.end();
+          });
+          return stream;
+        });
 
-      expect(calls, 2, reason: 'the watchdog fire is machine intent');
-      expect(events.whereType<DoneEvent>(), isNotEmpty);
-    });
-  });
+        final events = await wrapped(
+          testModel,
+          const Context(messages: []),
+          cancelToken: source.token,
+        ).toList();
 
+        expect(calls, 2, reason: 'the cut transport replays');
+        expect(
+          events.whereType<DoneEvent>().single.message.content,
+          hasLength(1),
+        );
+      });
+
+      test(
+        'a watchdog-fired cancel does not outrank the transport class',
+        () async {
+          // Aligned with the abort class (issue #1168 review): a
+          // RunIdleWatchdogFire cancel is machine intent, so the transport
+          // class resumes and the latch re-arms; a bare user cancel stands
+          // (the test above).
+          final source = CancelTokenSource();
+          var calls = 0;
+          final wrapped = transientRetryStreamFunction((
+            model,
+            context, {
+            cancelToken,
+          }) {
+            final stream = AssistantMessageEventStream();
+            scheduleMicrotask(() {
+              final n = ++calls;
+              final part = testAssistant(
+                content: [TextContent(text: n == 1 ? 'part' : 'tail')],
+              );
+              if (n == 1) {
+                // The watchdog's cancel races the stream: the token is
+                // latched when the transport error arrives.
+                source.cancel(RunIdleWatchdogFire('watchdog'));
+              }
+              stream
+                ..push(StartEvent(partial: testAssistant()))
+                ..push(
+                  TextStartEvent(contentIndex: 0, partial: testAssistant()),
+                )
+                ..push(
+                  TextDeltaEvent(
+                    contentIndex: 0,
+                    delta: n == 1 ? 'part' : 'tail',
+                    partial: part,
+                  ),
+                )
+                ..push(
+                  TextEndEvent(
+                    contentIndex: 0,
+                    content: n == 1 ? 'part' : 'tail',
+                    partial: part,
+                  ),
+                );
+              if (n == 1) {
+                stream.push(
+                  ErrorEvent(
+                    reason: StopReason.error,
+                    error: errorMsg(ownerTimeout, content: part.content),
+                  ),
+                );
+              } else {
+                stream.push(DoneEvent(reason: StopReason.stop, message: part));
+              }
+              stream.end();
+            });
+            return stream;
+          });
+
+          final events = await wrapped(
+            testModel,
+            const Context(messages: []),
+            cancelToken: source.token,
+          ).toList();
+
+          expect(calls, 2, reason: 'the watchdog fire is machine intent');
+          expect(events.whereType<DoneEvent>(), isNotEmpty);
+        },
+      );
+    },
+  );
 }

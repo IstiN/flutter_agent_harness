@@ -83,10 +83,14 @@ void main() {
     final m = parseManifest();
     final all = [...manifestPermissions(m), ...manifestOptionalPermissions(m)];
     for (final dead in deadPermissions) {
-      expect(all, isNot(contains(dead)),
-          reason: 'CWS Purple Potassium: "$dead" has no call site in the '
-              'shipped JS — a requested-but-unused permission is a hard '
-              'rejection ("Don\'t future-proof")');
+      expect(
+        all,
+        isNot(contains(dead)),
+        reason:
+            'CWS Purple Potassium: "$dead" has no call site in the '
+            'shipped JS — a requested-but-unused permission is a hard '
+            'rejection ("Don\'t future-proof")',
+      );
     }
   });
 
@@ -94,43 +98,59 @@ void main() {
       'shipped call site', () {
     final m = parseManifest();
     final all = [...manifestPermissions(m), ...manifestOptionalPermissions(m)];
-    expect(all, contains('downloads'),
-        reason: 'gh-1630 F2′ (owner decision) retains the capability: '
-            'silently dropping it would regress the user-facing download '
-            'feature and un-justify the manifest row');
+    expect(
+      all,
+      contains('downloads'),
+      reason:
+          'gh-1630 F2′ (owner decision) retains the capability: '
+          'silently dropping it would regress the user-facing download '
+          'feature and un-justify the manifest row',
+    );
     // And the call site is real: the spec table registers a `download`
     // tool riding the downloads permission (source-level pin — the
     // browser_ext/dart package owns the live registry tests).
     final tools = File(
       'browser_ext/dart/src/browser_api_tools.dart',
     ).readAsStringSync();
-    expect(RegExp(r"name: 'download',").hasMatch(tools), isTrue,
-        reason: 'the F2′ download tool must exist in the spec table');
     expect(
-        RegExp(r"name: 'download',\s*\n\s*permissions: \{'downloads'\},")
-            .hasMatch(tools),
-        isTrue,
-        reason: 'the download tool must declare the downloads permission');
+      RegExp(r"name: 'download',").hasMatch(tools),
+      isTrue,
+      reason: 'the F2′ download tool must exist in the spec table',
+    );
+    expect(
+      RegExp(
+        r"name: 'download',\s*\n\s*permissions: \{'downloads'\},",
+      ).hasMatch(tools),
+      isTrue,
+      reason: 'the download tool must declare the downloads permission',
+    );
   });
 
   test('I5/AC5: CSP = self + wasm-unsafe-eval, no remote origins', () {
     final csp =
         ((parseManifest()['content_security_policy']
-                as Map<String, dynamic>)['extension_pages'] as String)
+                    as Map<String, dynamic>)['extension_pages']
+                as String)
             .trim();
-    expect(csp, contains("'wasm-unsafe-eval'"),
-        reason: 'local pyodide/onnxruntime/quickjs wasm needs it');
+    expect(
+      csp,
+      contains("'wasm-unsafe-eval'"),
+      reason: 'local pyodide/onnxruntime/quickjs wasm needs it',
+    );
     expect(csp, contains("'self'"));
-    expect(csp, isNot(contains('http')),
-        reason: 'CSP must keep blocking every remote origin');
+    expect(
+      csp,
+      isNot(contains('http')),
+      reason: 'CSP must keep blocking every remote origin',
+    );
   });
 
   test('AC1 (source level): packaged-verbatim browser_ext/ files carry no '
       'remote-code markers', () {
     final offenders = <String>[];
-    for (final entity in Directory('browser_ext')
-        .listSync(recursive: true)
-        .whereType<File>()) {
+    for (final entity in Directory(
+      'browser_ext',
+    ).listSync(recursive: true).whereType<File>()) {
       final p = entity.path.replaceAll('\\', '/');
       if (browserExtBuildArtifacts.any(p.startsWith)) continue;
       // Bytes first, then a MALFORMED-tolerant decode: the tree carries
@@ -142,9 +162,13 @@ void main() {
         offenders.add(p);
       }
     }
-    expect(offenders, isEmpty,
-        reason: 'CWS Blue Argon: remote-code URLs in the shipped tree are '
-            'rejected on presence, reachability irrelevant (I1)');
+    expect(
+      offenders,
+      isEmpty,
+      reason:
+          'CWS Blue Argon: remote-code URLs in the shipped tree are '
+          'rejected on presence, reachability irrelevant (I1)',
+    );
   });
 
   test('I3/I4: interpreter loader URLs are selected per build — extension '
@@ -161,38 +185,51 @@ void main() {
     // build_browser_ext.sh), so assert the gate, not a re-declaration.
     expect(urls, contains("kFaBuildHost == 'extension'"));
     expect(
-      File('flutter_app/lib/services/relay/relay_probe.dart')
-          .readAsStringSync(),
+      File(
+        'flutter_app/lib/services/relay/relay_probe.dart',
+      ).readAsStringSync(),
       contains("String.fromEnvironment('FA_HOST')"),
-      reason: 'kFaBuildHost must stay the FA_HOST define the extension '
+      reason:
+          'kFaBuildHost must stay the FA_HOST define the extension '
           'build passes',
     );
     // The extension variant resolves into the package-local vendor dir.
     expect(urls, contains('vendor/interpreters/'));
     // Every vendor path is package-relative — no scheme, no host.
     for (final match in RegExp(r"'/vendor").allMatches(urls)) {
-      fail('extension vendor paths must stay package-relative: '
-          '${match.input.substring(match.start)}');
+      fail(
+        'extension vendor paths must stay package-relative: '
+        '${match.input.substring(match.start)}',
+      );
     }
   });
 
-  test('I2/AC3: vendor.lock.json pins every engine artifact with sha256',
-      () {
+  test('I2/AC3: vendor.lock.json pins every engine artifact with sha256', () {
     final lockFile = File('browser_ext/vendor.lock.json');
-    expect(lockFile.existsSync(), isTrue,
-        reason: 'the vendor supply chain must be pinned + verifiable');
-    final lock = jsonDecode(lockFile.readAsStringSync()) as Map<String, dynamic>;
+    expect(
+      lockFile.existsSync(),
+      isTrue,
+      reason: 'the vendor supply chain must be pinned + verifiable',
+    );
+    final lock =
+        jsonDecode(lockFile.readAsStringSync()) as Map<String, dynamic>;
     final engines = lock['engines'] as Map<String, dynamic>;
     expect(engines.keys.toSet(), containsAll(requiredVendoredEngines));
     final sha256 = RegExp(r'^[0-9a-f]{64}$');
     for (final entry in engines.entries) {
       final engine = entry.value as Map<String, dynamic>;
-      expect(engine['version'], isA<String>(),
-          reason: '${entry.key}: version must be pinned');
+      expect(
+        engine['version'],
+        isA<String>(),
+        reason: '${entry.key}: version must be pinned',
+      );
       for (final file in (engine['files'] as List<dynamic>).cast<Map>()) {
         expect(file['url'], isA<String>());
-        expect(file['sha256'], matches(sha256),
-            reason: '${entry.key}/${file['name']}: sha256 pin missing');
+        expect(
+          file['sha256'],
+          matches(sha256),
+          reason: '${entry.key}/${file['name']}: sha256 pin missing',
+        );
         // The URL must pin A version — the engine's own, or the pinned
         // dependency a vendored artifact rides (transformers 4.2.0 →
         // onnxruntime-web 1.26.0-dev…; litert 0.12.1 → wasm-utils 2.5.0).
@@ -209,11 +246,17 @@ void main() {
       'the build, and fails loud on checksum mismatch', () {
     final script = File('scripts/fetch_vendor_assets.sh');
     expect(script.existsSync(), isTrue);
-    expect(script.statSync().mode & 0x1FF, isNot(0),
-        reason: 'build scripts must carry the executable bit');
+    expect(
+      script.statSync().mode & 0x1FF,
+      isNot(0),
+      reason: 'build scripts must carry the executable bit',
+    );
     final build = File('scripts/build_browser_ext.sh').readAsStringSync();
-    expect(build, contains('fetch_vendor_assets.sh'),
-        reason: 'the packaging build must fetch vendor assets from the lock');
+    expect(
+      build,
+      contains('fetch_vendor_assets.sh'),
+      reason: 'the packaging build must fetch vendor assets from the lock',
+    );
 
     // E1 selftest over file:// — no network: a lock fixture pinning a
     // temp file; verify passes with the true sha256, fails loud with a
@@ -224,48 +267,61 @@ void main() {
       ..writeAsStringSync('console.log("vendored");\n');
     final trueSha = sha256Hex(asset.readAsBytesSync());
     final lockFixture = File('${tmp.path}/lock.json')
-      ..writeAsStringSync(jsonEncode({
-        'engines': {
-          'fixture': {
-            'version': '1.2.3',
-            'files': [
-              {
-                'name': 'asset.js',
-                'url': asset.uri.toString(),
-                'sha256': trueSha,
-              },
-            ],
+      ..writeAsStringSync(
+        jsonEncode({
+          'engines': {
+            'fixture': {
+              'version': '1.2.3',
+              'files': [
+                {
+                  'name': 'asset.js',
+                  'url': asset.uri.toString(),
+                  'sha256': trueSha,
+                },
+              ],
+            },
           },
-        },
-      }));
+        }),
+      );
     final dest = Directory('${tmp.path}/dest')..createSync();
     // Simulate a completed fetch: the pinned artifact sits in the dest
     // tree, byte-identical to the lock fixture source.
     File('${dest.path}/asset.js').writeAsBytesSync(asset.readAsBytesSync());
 
     int runScript() => Process.runSync('bash', [
-          'scripts/fetch_vendor_assets.sh',
-          '--lock', lockFixture.path,
-          '--dest', dest.path,
-          '--verify-only',
-        ]).exitCode;
+      'scripts/fetch_vendor_assets.sh',
+      '--lock',
+      lockFixture.path,
+      '--dest',
+      dest.path,
+      '--verify-only',
+    ]).exitCode;
 
     expect(runScript(), 0, reason: 'intact assets must verify');
     // Corrupt the pinned file in the dest tree — verify-only must fail
     // LOUD (the source fixture stays intact: the tamper is purely in the
     // vendor tree the package would zip).
-    File('${dest.path}/asset.js')
-        .writeAsStringSync('console.log("tampered");\n');
+    File(
+      '${dest.path}/asset.js',
+    ).writeAsStringSync('console.log("tampered");\n');
     final result = Process.runSync('bash', [
       'scripts/fetch_vendor_assets.sh',
-      '--lock', lockFixture.path,
-      '--dest', dest.path,
+      '--lock',
+      lockFixture.path,
+      '--dest',
+      dest.path,
       '--verify-only',
     ]);
-    expect(result.exitCode, isNot(0),
-        reason: 'checksum mismatch must fail the build (E1)');
-    expect(result.stderr, contains('asset.js'),
-        reason: 'the failure must name the artifact');
+    expect(
+      result.exitCode,
+      isNot(0),
+      reason: 'checksum mismatch must fail the build (E1)',
+    );
+    expect(
+      result.stderr,
+      contains('asset.js'),
+      reason: 'the failure must name the artifact',
+    );
   });
 
   test('AC3/E2: a full fetch lands the REPLACEMENT-TRANSFORMED bytes, '
@@ -283,52 +339,66 @@ void main() {
     final source = File('${tmp.path}/engine.js')..writeAsStringSync(raw);
     const localRef = 'fetch("./vendor/engine-1.2.3.js");\n';
     final lockFixture = File('${tmp.path}/lock.json')
-      ..writeAsStringSync(jsonEncode({
-        'engines': {
-          'fixture': {
-            'version': '1.2.3',
-            'files': [
-              {
-                'name': 'engine.js',
-                'url': source.uri.toString(),
-                'sha256': sha256Hex(utf8.encode(localRef)),
-                'replacements': [
-                  [
-                    'https://cdn.fixture.invalid/engine@1.2.3.js',
-                    './vendor/engine-1.2.3.js',
+      ..writeAsStringSync(
+        jsonEncode({
+          'engines': {
+            'fixture': {
+              'version': '1.2.3',
+              'files': [
+                {
+                  'name': 'engine.js',
+                  'url': source.uri.toString(),
+                  'sha256': sha256Hex(utf8.encode(localRef)),
+                  'replacements': [
+                    [
+                      'https://cdn.fixture.invalid/engine@1.2.3.js',
+                      './vendor/engine-1.2.3.js',
+                    ],
                   ],
-                ],
-              },
-            ],
+                },
+              ],
+            },
           },
-        },
-      }));
+        }),
+      );
     final dest = Directory('${tmp.path}/dest')..createSync();
 
     final result = Process.runSync('bash', [
       'scripts/fetch_vendor_assets.sh',
-      '--lock', lockFixture.path,
-      '--dest', dest.path,
+      '--lock',
+      lockFixture.path,
+      '--dest',
+      dest.path,
     ]);
     expect(result.exitCode, 0, reason: result.stderr);
 
     final landed = File('${dest.path}/engine.js').readAsStringSync();
-    expect(landed, localRef,
-        reason: 'the fetched artifact must land with the lock-declared '
-            'replacement applied — shipping the raw download re-introduces '
-            'the remote constant the lock exists to strip (AC1)');
+    expect(
+      landed,
+      localRef,
+      reason:
+          'the fetched artifact must land with the lock-declared '
+          'replacement applied — shipping the raw download re-introduces '
+          'the remote constant the lock exists to strip (AC1)',
+    );
     expect(landed, isNot(contains('cdn.fixture.invalid')));
     // The staged tree must verify against the same lock it was fetched
     // from (the CI cache leg re-runs --verify-only on it).
     final verify = Process.runSync('bash', [
       'scripts/fetch_vendor_assets.sh',
-      '--lock', lockFixture.path,
-      '--dest', dest.path,
+      '--lock',
+      lockFixture.path,
+      '--dest',
+      dest.path,
       '--verify-only',
     ]);
-    expect(verify.exitCode, 0,
-        reason: 'the freshly fetched tree must pass --verify-only:\n'
-            '${verify.stderr}');
+    expect(
+      verify.exitCode,
+      0,
+      reason:
+          'the freshly fetched tree must pass --verify-only:\n'
+          '${verify.stderr}',
+    );
   });
 
   test('AC3/E1: a drifted on-disk artifact is RE-FETCHED from the lock '
@@ -343,33 +413,42 @@ void main() {
     final asset = File('${tmp.path}/asset.js')
       ..writeAsStringSync('console.log("vendored v2");\n');
     final lockFixture = File('${tmp.path}/lock.json')
-      ..writeAsStringSync(jsonEncode({
-        'engines': {
-          'fixture': {
-            'version': '2.0.0',
-            'files': [
-              {
-                'name': 'asset.js',
-                'url': asset.uri.toString(),
-                'sha256': sha256Hex(asset.readAsBytesSync()),
-              },
-            ],
+      ..writeAsStringSync(
+        jsonEncode({
+          'engines': {
+            'fixture': {
+              'version': '2.0.0',
+              'files': [
+                {
+                  'name': 'asset.js',
+                  'url': asset.uri.toString(),
+                  'sha256': sha256Hex(asset.readAsBytesSync()),
+                },
+              ],
+            },
           },
-        },
-      }));
+        }),
+      );
     final dest = Directory('${tmp.path}/dest')..createSync();
     // Stage a drifted artifact: stale content the lock no longer pins.
-    File('${dest.path}/asset.js')
-        .writeAsStringSync('console.log("stale drift");\n');
+    File(
+      '${dest.path}/asset.js',
+    ).writeAsStringSync('console.log("stale drift");\n');
 
     final result = Process.runSync('bash', [
       'scripts/fetch_vendor_assets.sh',
-      '--lock', lockFixture.path,
-      '--dest', dest.path,
+      '--lock',
+      lockFixture.path,
+      '--dest',
+      dest.path,
     ]);
-    expect(result.exitCode, 0,
-        reason: 'drift must re-fetch, not abort on the drifted bytes:\n'
-            '${result.stderr}');
+    expect(
+      result.exitCode,
+      0,
+      reason:
+          'drift must re-fetch, not abort on the drifted bytes:\n'
+          '${result.stderr}',
+    );
     expect(
       File('${dest.path}/asset.js').readAsBytesSync(),
       asset.readAsBytesSync(),
@@ -380,9 +459,13 @@ void main() {
   test('F1/AC2: extension panel staging swaps CDN engine loaders for '
       'package-local vendor loaders (no failure stub)', () {
     final staging = File('scripts/stage_extension_panel.py');
-    expect(staging.existsSync(), isTrue,
-        reason: 'the index.html transform must be a testable standalone '
-            'script, not an inline build heredoc');
+    expect(
+      staging.existsSync(),
+      isTrue,
+      reason:
+          'the index.html transform must be a testable standalone '
+          'script, not an inline build heredoc',
+    );
 
     final tmp = Directory.systemTemp.createTempSync('fah-stage-panel');
     addTearDown(() => tmp.deleteSync(recursive: true));
@@ -398,8 +481,9 @@ void main() {
       'inline_script_5.js',
       'inline_script_6.js',
     ]) {
-      File('${appDir.path}/$name')
-          .writeAsStringSync('// placeholder for $name\n');
+      File(
+        '${appDir.path}/$name',
+      ).writeAsStringSync('// placeholder for $name\n');
     }
     final first = Process.runSync('python3', [
       staging.path,
@@ -412,15 +496,25 @@ void main() {
       'inline_script_5.js',
       'inline_script_6.js',
     ]) {
-      expect(File('${appDir.path}/$orphan').existsSync(), isFalse,
-          reason: 'the stripped CDN loader module must be deleted from '
-              'the staged copy, not left as dead weight');
+      expect(
+        File('${appDir.path}/$orphan').existsSync(),
+        isFalse,
+        reason:
+            'the stripped CDN loader module must be deleted from '
+            'the staged copy, not left as dead weight',
+      );
     }
-    expect(File('${appDir.path}/inline_script_1.js').existsSync(), isTrue,
-        reason: 'unrelated scripts must survive staging');
+    expect(
+      File('${appDir.path}/inline_script_1.js').existsSync(),
+      isTrue,
+      reason: 'unrelated scripts must survive staging',
+    );
     final staged = index.readAsStringSync();
-    expect(staged, isNot(contains('jsdelivr')),
-        reason: 'AC1: the staged extension index must not carry CDN URLs');
+    expect(
+      staged,
+      isNot(contains('jsdelivr')),
+      reason: 'AC1: the staged extension index must not carry CDN URLs',
+    );
     expect(
       staged,
       allOf(
@@ -428,7 +522,8 @@ void main() {
         contains('vendor_loader_transformers.js'),
         contains('vendor_loader_litert.js'),
       ),
-      reason: 'the three CDN loader tags are replaced by vendor loader '
+      reason:
+          'the three CDN loader tags are replaced by vendor loader '
           'tags (AC2)',
     );
     for (final loader in const [
@@ -437,15 +532,26 @@ void main() {
       'vendor_loader_litert.js',
     ]) {
       final body = File('${appDir.path}/$loader').readAsStringSync();
-      expect(body, contains('../../vendor/'),
-          reason: '$loader must import the engine from the package-local '
-              'vendor dir (AC2)');
-      expect(body, isNot(contains('jsdelivr')),
-          reason: '$loader must not carry CDN URLs (AC1)');
+      expect(
+        body,
+        contains('../../vendor/'),
+        reason:
+            '$loader must import the engine from the package-local '
+            'vendor dir (AC2)',
+      );
+      expect(
+        body,
+        isNot(contains('jsdelivr')),
+        reason: '$loader must not carry CDN URLs (AC1)',
+      );
     }
-    expect(staged, isNot(contains('ondevice_stub.js')),
-        reason: 'gh-1630: the engines are vendored — the CSP-failure stub '
-            'that disabled them must be gone');
+    expect(
+      staged,
+      isNot(contains('ondevice_stub.js')),
+      reason:
+          'gh-1630: the engines are vendored — the CSP-failure stub '
+          'that disabled them must be gone',
+    );
     // Idempotent (E3-style: a rebuild over an already-staged tree).
     final second = Process.runSync('python3', [
       staging.path,
@@ -458,16 +564,26 @@ void main() {
   test('REG-1/AC7: the packaging guard scans the built zip for remote code '
       'and CI enforces the compliance check', () {
     final guard = File('scripts/ext_package_guard.py').readAsStringSync();
-    expect(guard, contains('remote'),
-        reason: 'ext_package_guard check must scan zip entries for '
-            'remote-code markers on the real artifact');
+    expect(
+      guard,
+      contains('remote'),
+      reason:
+          'ext_package_guard check must scan zip entries for '
+          'remote-code markers on the real artifact',
+    );
     final compliance = File('scripts/check_cws_compliance.py');
     expect(compliance.existsSync(), isTrue);
     expect(compliance.statSync().mode & 0x1FF, isNot(0));
-    final workflow = File('.github/workflows/browser-ext.yml').readAsStringSync();
-    expect(workflow, contains('check_cws_compliance.py'),
-        reason: 'a packaging CI job must assert AC1/AC5/AC6 mechanically — '
-            'red REG blocks merge');
+    final workflow = File(
+      '.github/workflows/browser-ext.yml',
+    ).readAsStringSync();
+    expect(
+      workflow,
+      contains('check_cws_compliance.py'),
+      reason:
+          'a packaging CI job must assert AC1/AC5/AC6 mechanically — '
+          'red REG blocks merge',
+    );
   });
 }
 
@@ -507,8 +623,7 @@ String sha256Hex(List<int> bytes) {
   final tmp = Directory.systemTemp.createTempSync('fah-sha');
   addTearDown(() => tmp.deleteSync(recursive: true));
   final f = File('${tmp.path}/blob')..writeAsBytesSync(bytes);
-  return Process.runSync('sha256sum', [f.path]).stdout
-      .toString()
-      .split(' ')
-      .first;
+  return Process.runSync('sha256sum', [
+    f.path,
+  ]).stdout.toString().split(' ').first;
 }

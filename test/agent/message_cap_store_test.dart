@@ -140,10 +140,7 @@ void main() {
 
     test('a cap-unknown refusal arms exactly one pre-emptive pass (E1)', () {
       final store = ModelCapsStore();
-      expect(
-        store.isPremptivePassPending(_model.provider, _model.id),
-        isFalse,
-      );
+      expect(store.isPremptivePassPending(_model.provider, _model.id), isFalse);
       store.learnFromRefusal(_model, const MessageCapRefusal());
       expect(
         store.isPremptivePassPending(_model.provider, _model.id),
@@ -152,10 +149,7 @@ void main() {
       );
       expect(store.takePremptivePass(_model.provider, _model.id), isTrue);
       // Consumed: exactly ONE pass per refusal, never a permanent trigger.
-      expect(
-        store.isPremptivePassPending(_model.provider, _model.id),
-        isFalse,
-      );
+      expect(store.isPremptivePassPending(_model.provider, _model.id), isFalse);
       expect(store.takePremptivePass(_model.provider, _model.id), isFalse);
     });
 
@@ -165,10 +159,7 @@ void main() {
         _model,
         const MessageCapRefusal(maxMessages: 2048),
       );
-      expect(
-        store.isPremptivePassPending(_model.provider, _model.id),
-        isFalse,
-      );
+      expect(store.isPremptivePassPending(_model.provider, _model.id), isFalse);
     });
 
     test('learning a numeric cap disarms a pending pre-emptive pass', () {
@@ -225,7 +216,11 @@ void main() {
       expect(messageCapTriggerReached(100, 8), isFalse);
       expect(messageCapTriggerReached(100000, 1), isFalse);
       // Just above the margin the trigger fires at `cap − margin`.
-      expect(messageCapTriggerReached(1, 17), isTrue, reason: 'cap − margin = 1');
+      expect(
+        messageCapTriggerReached(1, 17),
+        isTrue,
+        reason: 'cap − margin = 1',
+      );
     });
   });
 }

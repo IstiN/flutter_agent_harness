@@ -105,8 +105,9 @@ void main() {
           (await env.listDir('/.fah/memory-b/note')).valueOrNull ?? const [];
       final texts = <String>{
         for (final id in noteIds)
-          (await env.readTextFile('/.fah/memory-b/note/${id.name}'))
-              .valueOrNull!,
+          (await env.readTextFile(
+            '/.fah/memory-b/note/${id.name}',
+          )).valueOrNull!,
       };
       expect(
         texts.join('\n'),
@@ -147,39 +148,45 @@ void main() {
       await Future.wait([first, second]);
 
       final bNoteIds =
-          (await env.listDir('/.fah/memory-race-b/note')).valueOrNull ?? const [];
+          (await env.listDir('/.fah/memory-race-b/note')).valueOrNull ??
+          const [];
       final texts = <String>{
         for (final id in bNoteIds)
-          (await env.readTextFile('/.fah/memory-race-b/note/${id.name}'))
-              .valueOrNull!,
+          (await env.readTextFile(
+            '/.fah/memory-race-b/note/${id.name}',
+          )).valueOrNull!,
       };
       expect(texts.join('\n'), contains('mid-flight note'));
       expect(texts.join('\n'), contains('swap note'));
     },
   );
 
-  test('user-scope add survives a broken LLM core via the plain fallback',
-      () async {
-    // The user-scope half of the `_addNoteAnyhow` fallback: the storage is
-    // rebuilt from the resolved user path when needed (no force-unwrap),
-    // and the note still saves with keyword-only metadata.
-    final env = MemoryExecutionEnv();
-    final controller = MemoryController(
-      env: env,
-      userRoot: '/user-home',
-      llmProvider: _BrokenCoreProvider(),
-    );
-    await controller.add(text: 'user scope fact', scope: 'user');
+  test(
+    'user-scope add survives a broken LLM core via the plain fallback',
+    () async {
+      // The user-scope half of the `_addNoteAnyhow` fallback: the storage is
+      // rebuilt from the resolved user path when needed (no force-unwrap),
+      // and the note still saves with keyword-only metadata.
+      final env = MemoryExecutionEnv();
+      final controller = MemoryController(
+        env: env,
+        userRoot: '/user-home',
+        llmProvider: _BrokenCoreProvider(),
+      );
+      await controller.add(text: 'user scope fact', scope: 'user');
 
-    final noteIds =
-        (await env.listDir('/user-home/.fah/memory/note')).valueOrNull ?? const [];
-    final texts = <String>{
-      for (final id in noteIds)
-        (await env.readTextFile('/user-home/.fah/memory/note/${id.name}'))
-            .valueOrNull!,
-    };
-    expect(texts.join('\n'), contains('user scope fact'));
-  });
+      final noteIds =
+          (await env.listDir('/user-home/.fah/memory/note')).valueOrNull ??
+          const [];
+      final texts = <String>{
+        for (final id in noteIds)
+          (await env.readTextFile(
+            '/user-home/.fah/memory/note/${id.name}',
+          )).valueOrNull!,
+      };
+      expect(texts.join('\n'), contains('user scope fact'));
+    },
+  );
 
   test('search/add degrades are observable through onDegrade', () async {
     // gh-1393 rework: the `on Object {}` swallows are the ticket's intent,
@@ -226,9 +233,7 @@ class _HangingThenBrokenProvider extends LlmProvider {
     void Function()? onCancel,
   }) async {
     await _release.future;
-    throw Exception(
-      'Invalid core: OLDER session state read on a NEW session',
-    );
+    throw Exception('Invalid core: OLDER session state read on a NEW session');
   }
 
   @override
@@ -238,8 +243,6 @@ class _HangingThenBrokenProvider extends LlmProvider {
     void Function()? onCancel,
   }) async {
     await _release.future;
-    throw Exception(
-      'Invalid core: OLDER session state read on a NEW session',
-    );
+    throw Exception('Invalid core: OLDER session state read on a NEW session');
   }
 }

@@ -21,13 +21,19 @@ void main() {
     await tmp.delete(recursive: true);
   });
 
-  test('load creates a fresh identity on first boot (load-or-create)', () async {
-    final keyPath = '${tmp.path}/absent';
-    final created = await loadHubIdentity(keyPath);
-    final reloaded = await loadHubIdentity(keyPath);
-    expect(reloaded.agentId, created.agentId,
-        reason: 'the first boot persists its identity');
-  });
+  test(
+    'load creates a fresh identity on first boot (load-or-create)',
+    () async {
+      final keyPath = '${tmp.path}/absent';
+      final created = await loadHubIdentity(keyPath);
+      final reloaded = await loadHubIdentity(keyPath);
+      expect(
+        reloaded.agentId,
+        created.agentId,
+        reason: 'the first boot persists its identity',
+      );
+    },
+  );
 
   test('a saved identity reloads with the same address', () async {
     final keyPath = '${tmp.path}/hub_identity';
@@ -45,7 +51,6 @@ void main() {
       await first.dhKeyPair.extractPrivateKeyBytes(),
     );
   });
-
 
   test('save locks the file to owner-only where the OS supports it', () async {
     final keyPath = '${tmp.path}/hub_identity';

@@ -37,72 +37,68 @@ void main() {
       await mock.close();
     });
 
-    test(
-      'IT-e2e: ask opens the masked prompt, stdin feeds the process, '
-      'no secret bytes anywhere',
-      () async {
-        await harness.waitForBoot();
-        harness.sendText('install the thing');
-        harness.sendEnter();
-        // The bash command prints the ask on stderr, then blocks on `head`
-        // until the detector fired, the answer was typed, and the value
-        // was written to the live process stdin.
-        await harness.waitForText(
-          'Password',
-          timeout: const Duration(seconds: 60),
-        );
-        const secret = 'pt-E2E-secret-9';
-        harness.sendText(secret);
-        // gh-1244: the exact transient `waitForText('•••••')` anchor is
-        // not a synchronization point — under CI timing the prompt paints
-        // past the checkpoint before the poll evaluates, and the caret
-        // cell is wrapped in inverse-video escapes on the raw wire, so N
-        // consecutive `•` need never exist in the stream at all.
-        // Synchronize on the full masked row on the painted SCREEN (the
-        // 1245 property anchor), re-anchoring once if the closing border
-        // lagged a repaint.
-        var screen = await harness.waitForScreen(
+    test('IT-e2e: ask opens the masked prompt, stdin feeds the process, '
+        'no secret bytes anywhere', () async {
+      await harness.waitForBoot();
+      harness.sendText('install the thing');
+      harness.sendEnter();
+      // The bash command prints the ask on stderr, then blocks on `head`
+      // until the detector fired, the answer was typed, and the value
+      // was written to the live process stdin.
+      await harness.waitForText(
+        'Password',
+        timeout: const Duration(seconds: 60),
+      );
+      const secret = 'pt-E2E-secret-9';
+      harness.sendText(secret);
+      // gh-1244: the exact transient `waitForText('•••••')` anchor is
+      // not a synchronization point — under CI timing the prompt paints
+      // past the checkpoint before the poll evaluates, and the caret
+      // cell is wrapped in inverse-video escapes on the raw wire, so N
+      // consecutive `•` need never exist in the stream at all.
+      // Synchronize on the full masked row on the painted SCREEN (the
+      // 1245 property anchor), re-anchoring once if the closing border
+      // lagged a repaint.
+      var screen = await harness.waitForScreen(
+        '•' * secret.length,
+        timeout: const Duration(seconds: 30),
+      );
+      if (maskedValueRow(screen) == null) {
+        screen = await harness.waitForScreen(
           '•' * secret.length,
           timeout: const Duration(seconds: 30),
         );
-        if (maskedValueRow(screen) == null) {
-          screen = await harness.waitForScreen(
-            '•' * secret.length,
-            timeout: const Duration(seconds: 30),
-          );
+      }
+      // Security pin: no rendered frame — raw or on-screen — may carry
+      // the password bytes (asserted on the ANCHORED screen).
+      expect(harness.rawOutput.contains(secret), isFalse);
+      expect(screen.contains(secret), isFalse);
+      harness.sendEnter();
+      // The write unblocks `head`; the command finishes and its output
+      // (marker included) reaches the model on the scripted follow-up.
+      // Wait on that REQUEST BODY, not the screen: the command only ever
+      // surfaced idle-side through the waiting row, and the stale row
+      // that outlived its job is exactly the #615 bug this branch fixes —
+      // with the row clearing on settle, the body is the honest
+      // observable (same assertion as below, awaited).
+      final fedDeadline = DateTime.now().add(const Duration(seconds: 60));
+      while (mock.bodies.length < 2 || !mock.bodies[1].contains('PWD-FED-OK')) {
+        if (DateTime.now().isAfter(fedDeadline)) {
+          fail('follow-up request never carried PWD-FED-OK');
         }
-        // Security pin: no rendered frame — raw or on-screen — may carry
-        // the password bytes (asserted on the ANCHORED screen).
-        expect(harness.rawOutput.contains(secret), isFalse);
-        expect(screen.contains(secret), isFalse);
-        harness.sendEnter();
-        // The write unblocks `head`; the command finishes and its output
-        // (marker included) reaches the model on the scripted follow-up.
-        // Wait on that REQUEST BODY, not the screen: the command only ever
-        // surfaced idle-side through the waiting row, and the stale row
-        // that outlived its job is exactly the #615 bug this branch fixes —
-        // with the row clearing on settle, the body is the honest
-        // observable (same assertion as below, awaited).
-        final fedDeadline = DateTime.now().add(const Duration(seconds: 60));
-        while (mock.bodies.length < 2 ||
-            !mock.bodies[1].contains('PWD-FED-OK')) {
-          if (DateTime.now().isAfter(fedDeadline)) {
-            fail('follow-up request never carried PWD-FED-OK');
-          }
-          await Future<void>.delayed(const Duration(milliseconds: 50));
-        }
-        await harness.waitForText(
-          'turn-complete',
-          timeout: const Duration(seconds: 60),
-        );
-        // The follow-up request (tool result + transcript) never carries
-        // the secret either — only the command's own output marker.
-        final followUp = mock.bodies[1];
-        expect(followUp.contains('PWD-FED-OK'), isTrue);
-        expect(followUp.contains(secret), isFalse);
-        expect(harness.rawOutput.contains(secret), isFalse);
-      },
-    );
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+      }
+      await harness.waitForText(
+        'turn-complete',
+        timeout: const Duration(seconds: 60),
+      );
+      // The follow-up request (tool result + transcript) never carries
+      // the secret either — only the command's own output marker.
+      final followUp = mock.bodies[1];
+      expect(followUp.contains('PWD-FED-OK'), isTrue);
+      expect(followUp.contains(secret), isFalse);
+      expect(harness.rawOutput.contains(secret), isFalse);
+    });
   });
 }
 

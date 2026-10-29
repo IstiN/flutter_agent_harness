@@ -13,26 +13,21 @@ import 'package:test/test.dart';
 import '../cli/agent_cli_test_support.dart';
 
 void main() {
-  group('HostKeyResolver.missingKeyHint store-health states (gh-1679 AC3)',
-      () {
+  group('HostKeyResolver.missingKeyHint store-health states (gh-1679 AC3)', () {
     const baseUrl = 'https://api.kimi.com/coding/v1';
 
     HostKeyResolution resolve({
       bool storeDegraded = false,
       String? lastStoreError,
-    }) =>
-        HostKeyResolver(
-          envRead: (_) => null,
-          storeRead: (_) => null,
-        ).resolveKey(
+    }) => HostKeyResolver(envRead: (_) => null, storeRead: (_) => null)
+        .resolveKey(
           provider: 'kimi',
           baseUrl: baseUrl,
           storeDegraded: storeDegraded,
           lastStoreError: lastStoreError,
         );
 
-    test('healthy-and-empty store keeps the plain wording naming the slot',
-        () {
+    test('healthy-and-empty store keeps the plain wording naming the slot', () {
       final hint = resolve().missingKeyHint;
       expect(hint, isNotNull);
       expect(hint, contains('provider "kimi"'));
@@ -54,22 +49,23 @@ void main() {
     });
 
     test('a resolved key never carries the degraded hint', () {
-      final resolution = HostKeyResolver(
-        envRead: (_) => null,
-        storeRead: (name) => name == 'FA_KEY_API_KIMI_COM' ? 'sk-kimi' : null,
-      ).resolveKey(
-        provider: 'kimi',
-        baseUrl: baseUrl,
-        storeDegraded: true,
-        lastStoreError: 'no default keychain (exit 1)',
-      );
+      final resolution =
+          HostKeyResolver(
+            envRead: (_) => null,
+            storeRead: (name) =>
+                name == 'FA_KEY_API_KIMI_COM' ? 'sk-kimi' : null,
+          ).resolveKey(
+            provider: 'kimi',
+            baseUrl: baseUrl,
+            storeDegraded: true,
+            lastStoreError: 'no default keychain (exit 1)',
+          );
       expect(resolution.slotName, 'FA_KEY_API_KIMI_COM');
       expect(resolution.missingKeyHint, isNull);
     });
   });
 
-  group('KeyStatusRenderer no-key hint store-health states (gh-1679 AC3)',
-      () {
+  group('KeyStatusRenderer no-key hint store-health states (gh-1679 AC3)', () {
     const customUrl = 'https://api.kimi.com/coding/v1';
 
     Future<KeyStatusRenderer> rendererWith({
@@ -99,15 +95,17 @@ void main() {
       );
     }
 
-    test('healthy store: the custom-endpoint hint is the plain wording',
-        () async {
-      final renderer = await rendererWith(store: FakeSecureKeyStore());
-      final hint = renderer.customEndpointAuthHint(customUrl);
-      expect(hint, isNotNull);
-      expect(hint, contains('no key resolved for $customUrl'));
-      expect(hint, contains('/key set FA_KEY_API_KIMI_COM <value>'));
-      expect(hint, isNot(contains('not persisted')));
-    });
+    test(
+      'healthy store: the custom-endpoint hint is the plain wording',
+      () async {
+        final renderer = await rendererWith(store: FakeSecureKeyStore());
+        final hint = renderer.customEndpointAuthHint(customUrl);
+        expect(hint, isNotNull);
+        expect(hint, contains('no key resolved for $customUrl'));
+        expect(hint, contains('/key set FA_KEY_API_KIMI_COM <value>'));
+        expect(hint, isNot(contains('not persisted')));
+      },
+    );
 
     test('degraded store: the hint names the last write failure and the '
         'persist caveat; never the value', () async {
@@ -124,25 +122,26 @@ void main() {
       expect(hint, isNot(contains('sk-seed-value')));
     });
 
-    test('the errorLine 401 path carries the degraded wording end-to-end',
-        () async {
-      final renderer = await rendererWith(
-        store: FakeSecureKeyStore(),
-        seedSaveFailure: true,
-      );
-      final line = renderer.errorLine(
-        '401 Invalid Authentication — no key set',
-        customUrl,
-      );
-      expect(line, contains('error: 401'));
-      expect(line, contains('secure store is not writable'));
-      expect(line, contains('/key set FA_KEY_API_KIMI_COM <value>'));
-      expect(line, isNot(contains('sk-seed-value')));
-    });
+    test(
+      'the errorLine 401 path carries the degraded wording end-to-end',
+      () async {
+        final renderer = await rendererWith(
+          store: FakeSecureKeyStore(),
+          seedSaveFailure: true,
+        );
+        final line = renderer.errorLine(
+          '401 Invalid Authentication — no key set',
+          customUrl,
+        );
+        expect(line, contains('error: 401'));
+        expect(line, contains('secure store is not writable'));
+        expect(line, contains('/key set FA_KEY_API_KIMI_COM <value>'));
+        expect(line, isNot(contains('sk-seed-value')));
+      },
+    );
 
     test('one degraded slot that differs from the suggested one names '
-        'itself (gh-1679 review: the diagnostic belongs to a slot)',
-        () async {
+        'itself (gh-1679 review: the diagnostic belongs to a slot)', () async {
       final renderer = await rendererWith(
         store: FakeSecureKeyStore(),
         seedSaveFailure: true, // fails FA_KEY_SEED, suggested is kimi's slot
@@ -170,20 +169,22 @@ void main() {
       expect(hint, contains('/key set FA_KEY_API_KIMI_COM <value>'));
     });
 
-    test('several degraded slots keep the aggregate wording, labeled as '
-        'the last write failure (never implied to be the suggested slot)',
-        () async {
-      final renderer = await rendererWith(
-        store: FakeSecureKeyStore(),
-        seedSaveFailure: true,
-        failedNames: const ['FA_KEY_SEED', 'FA_KEY_OTHER'],
-      );
-      final hint = renderer.customEndpointAuthHint(customUrl);
-      expect(hint, contains('last write failure:'));
-      expect(hint, contains('keychain write failed (exit 45)'));
-      expect(hint, isNot(contains('last failure: FA_KEY_')));
-      expect(hint, contains('/key set FA_KEY_API_KIMI_COM <value>'));
-      expect(hint, isNot(contains('sk-seed-value')));
-    });
+    test(
+      'several degraded slots keep the aggregate wording, labeled as '
+      'the last write failure (never implied to be the suggested slot)',
+      () async {
+        final renderer = await rendererWith(
+          store: FakeSecureKeyStore(),
+          seedSaveFailure: true,
+          failedNames: const ['FA_KEY_SEED', 'FA_KEY_OTHER'],
+        );
+        final hint = renderer.customEndpointAuthHint(customUrl);
+        expect(hint, contains('last write failure:'));
+        expect(hint, contains('keychain write failed (exit 45)'));
+        expect(hint, isNot(contains('last failure: FA_KEY_')));
+        expect(hint, contains('/key set FA_KEY_API_KIMI_COM <value>'));
+        expect(hint, isNot(contains('sk-seed-value')));
+      },
+    );
   });
 }

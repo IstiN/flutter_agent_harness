@@ -173,9 +173,7 @@ models:
       );
       final once = CliConfig(models: models).toYaml();
       expect(once, contains('authHeader: "x-api-key"'));
-      final reparsed = CliConfig.fromYaml(
-        loadYaml(once) as YamlMap,
-      ).models!;
+      final reparsed = CliConfig.fromYaml(loadYaml(once) as YamlMap).models!;
       expect(reparsed.custom['bedrock']!.authHeader, 'x-api-key');
       // Byte-stable second write.
       expect(CliConfig(models: reparsed).toYaml(), once);
@@ -592,7 +590,9 @@ models:
       final cli = cliFor(
         _FakeStreamFunction([]).call,
         modelsConfig: models,
-        onModelChanged: (model) async { changed = model; }
+        onModelChanged: (model) async {
+          changed = model;
+        },
       );
       final run = cli.run();
       io.sendLine('/model fast');

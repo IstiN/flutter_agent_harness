@@ -333,11 +333,10 @@ void main() {
 
       expect(deleted, 2);
       expect(
-        (await env.listDir(
-          '.fah/trajectories/dead/requests',
-        )).valueOrNull,
+        (await env.listDir('.fah/trajectories/dead/requests')).valueOrNull,
         isEmpty,
-        reason: 'a dead session keeps NOTHING past the TTL — including its '
+        reason:
+            'a dead session keeps NOTHING past the TTL — including its '
             'newest blob (no newest-kept grace on the boot sweep)',
       );
       expect(
@@ -371,9 +370,7 @@ void main() {
 
       expect(spill, isNotNull);
       expect(
-        (await env.listDir(
-          '.fah/trajectories/dead/requests',
-        )).valueOrNull,
+        (await env.listDir('.fah/trajectories/dead/requests')).valueOrNull,
         isEmpty,
       );
       // The sweep is once per store instance: a second write must not

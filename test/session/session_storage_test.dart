@@ -148,10 +148,7 @@ void main() {
         // …and the sidecar itself stays clean one-record-per-line JSONL —
         // the quarantined span already carries its trailing newline, so
         // no stray blank line may separate records.
-        expect(
-          sidecar.split('\n'),
-          ['{"id":"torn","parentId":"e1"', ''],
-        );
+        expect(sidecar.split('\n'), ['{"id":"torn","parentId":"e1"', '']);
 
         // …and the main file was rewritten without the tear: every line
         // past the header is valid JSON again.
@@ -312,41 +309,43 @@ void main() {
       expect(infos.single, isA<SessionInfoRecord>());
     });
 
-    test('getPathToRoot walks a branch; unknown ids fail loudly (#1114)',
-        () async {
-      final storage = await createStorage();
-      await storage.appendEntry(
-        MessageRecord(
-          id: 'e1',
-          parentId: null,
-          timestamp: DateTime.utc(2026),
-          message: UserMessage.text('a'),
-        ),
-      );
-      await storage.appendEntry(
-        MessageRecord(
-          id: 'e2',
-          parentId: 'e1',
-          timestamp: DateTime.utc(2026),
-          message: UserMessage.text('b'),
-        ),
-      );
-      expect((await storage.getPathToRoot(null)), isEmpty);
-      expect((await storage.getPathToRoot('e2')).map((e) => e.id), [
-        'e1',
-        'e2',
-      ]);
-      expect(
-        () => storage.getPathToRoot('ghost'),
-        throwsA(
-          isA<SessionException>().having(
-            (e) => e.code,
-            'code',
-            SessionErrorCode.notFound,
+    test(
+      'getPathToRoot walks a branch; unknown ids fail loudly (#1114)',
+      () async {
+        final storage = await createStorage();
+        await storage.appendEntry(
+          MessageRecord(
+            id: 'e1',
+            parentId: null,
+            timestamp: DateTime.utc(2026),
+            message: UserMessage.text('a'),
           ),
-        ),
-      );
-    });
+        );
+        await storage.appendEntry(
+          MessageRecord(
+            id: 'e2',
+            parentId: 'e1',
+            timestamp: DateTime.utc(2026),
+            message: UserMessage.text('b'),
+          ),
+        );
+        expect((await storage.getPathToRoot(null)), isEmpty);
+        expect((await storage.getPathToRoot('e2')).map((e) => e.id), [
+          'e1',
+          'e2',
+        ]);
+        expect(
+          () => storage.getPathToRoot('ghost'),
+          throwsA(
+            isA<SessionException>().having(
+              (e) => e.code,
+              'code',
+              SessionErrorCode.notFound,
+            ),
+          ),
+        );
+      },
+    );
 
     test('getPathToRoot stops at a dangling parentId (partial path)', () async {
       await createStorage();
@@ -403,65 +402,60 @@ void main() {
       );
     });
 
-    test(
-      'a blank first line opens on the streamed path too (whole-file '
-      'parity)',
-      () async {
-        // _openWholeFileLocked filters blank lines before taking the
-        // header; the streamed scan must skip leading blanks the same
-        // way — same session, different filesystem capability, same
-        // outcome.
-        await createStorage();
-        final content = (await fs.readTextFile(path)).getOrThrow();
-        await fs.writeFile(path, '\n$content');
-        final reopened = await JsonlSessionStorage.open(fs, path);
-        await reopened.appendEntry(msg('e1', null, 'hello'));
-        final again = await JsonlSessionStorage.open(fs, path);
-        expect((await again.getEntries()).map((e) => e.id), ['e1']);
-      },
-    );
+    test('a blank first line opens on the streamed path too (whole-file '
+        'parity)', () async {
+      // _openWholeFileLocked filters blank lines before taking the
+      // header; the streamed scan must skip leading blanks the same
+      // way — same session, different filesystem capability, same
+      // outcome.
+      await createStorage();
+      final content = (await fs.readTextFile(path)).getOrThrow();
+      await fs.writeFile(path, '\n$content');
+      final reopened = await JsonlSessionStorage.open(fs, path);
+      await reopened.appendEntry(msg('e1', null, 'hello'));
+      final again = await JsonlSessionStorage.open(fs, path);
+      expect((await again.getEntries()).map((e) => e.id), ['e1']);
+    });
 
-    test(
-      'parse batches carry physical line numbers — blank lines do not '
-      'drift the numbering',
-      () async {
-        final batches = <SessionParseBatch>[];
-        final storage = await createStorage();
-        for (var i = 1; i <= 600; i++) {
-          await storage.appendEntry(
-            MessageRecord(
-              id: 'm$i',
-              parentId: null,
-              timestamp: DateTime.utc(2026),
-              message: UserMessage.text('line $i'),
-            ),
-          );
-        }
-        // Physical layout: line 1 header, line 2 m1, line 3 BLANK, then
-        // m2..m600. Blank lines are not records, so the batch that starts
-        // at m501 must be numbered by its PHYSICAL line (503), not by
-        // counting only records (502).
-        final content = (await fs.readTextFile(path)).getOrThrow();
-        final lines = content.split('\n');
-        await fs.writeFile(
-          path,
-          [lines.first, lines[1], '', ...lines.sublist(2)].join('\n'),
+    test('parse batches carry physical line numbers — blank lines do not '
+        'drift the numbering', () async {
+      final batches = <SessionParseBatch>[];
+      final storage = await createStorage();
+      for (var i = 1; i <= 600; i++) {
+        await storage.appendEntry(
+          MessageRecord(
+            id: 'm$i',
+            parentId: null,
+            timestamp: DateTime.utc(2026),
+            message: UserMessage.text('line $i'),
+          ),
         );
-        await JsonlSessionStorage.open(
-          fs,
-          path,
-          parseExecutor: _CapturingParseExecutor(batches),
-        );
-        expect(batches.length, greaterThanOrEqualTo(2));
-        expect(batches[0].firstLineNumber, 2);
-        expect(
-          batches[1].firstLineNumber,
-          503,
-          reason: 'the blank line shifted the physical numbering by one — '
-              'error-text line numbers must follow the real file',
-        );
-      },
-    );
+      }
+      // Physical layout: line 1 header, line 2 m1, line 3 BLANK, then
+      // m2..m600. Blank lines are not records, so the batch that starts
+      // at m501 must be numbered by its PHYSICAL line (503), not by
+      // counting only records (502).
+      final content = (await fs.readTextFile(path)).getOrThrow();
+      final lines = content.split('\n');
+      await fs.writeFile(
+        path,
+        [lines.first, lines[1], '', ...lines.sublist(2)].join('\n'),
+      );
+      await JsonlSessionStorage.open(
+        fs,
+        path,
+        parseExecutor: _CapturingParseExecutor(batches),
+      );
+      expect(batches.length, greaterThanOrEqualTo(2));
+      expect(batches[0].firstLineNumber, 2);
+      expect(
+        batches[1].firstLineNumber,
+        503,
+        reason:
+            'the blank line shifted the physical numbering by one — '
+            'error-text line numbers must follow the real file',
+      );
+    });
 
     test(
       'open quarantines a corrupt entry line (JSON garbage) mid-file',
@@ -1240,8 +1234,10 @@ void main() {
         );
         // The poison line, then a VALID record parented on it — the shape
         // every post-quarantine open of such a session carries.
-        (await fs.appendFile(path, '${poisonAssistantLine('rp', 'r0')}\n'))
-            .getOrThrow();
+        (await fs.appendFile(
+          path,
+          '${poisonAssistantLine('rp', 'r0')}\n',
+        )).getOrThrow();
         await storage.appendEntry(
           MessageRecord(
             id: 'r1',
@@ -1271,43 +1267,46 @@ void main() {
       },
     );
 
-    test('a dangling LeafRecord target falls back to the newest record',
-        () async {
-      final storage = await createStorage();
-      await storage.appendEntry(
-        MessageRecord(
-          id: 'r0',
-          parentId: null,
-          timestamp: DateTime.utc(2026),
-          message: UserMessage.text('hello'),
-        ),
-      );
-      (await fs.appendFile(path, '${poisonAssistantLine('rp', 'r0')}\n'))
-          .getOrThrow();
-      // A navigation leaf whose target is the record about to quarantine.
-      await storage.appendEntry(
-        LeafRecord(
-          id: 'L1',
-          parentId: 'r0',
-          timestamp: DateTime.utc(2026),
-          targetId: 'rp',
-        ),
-      );
+    test(
+      'a dangling LeafRecord target falls back to the newest record',
+      () async {
+        final storage = await createStorage();
+        await storage.appendEntry(
+          MessageRecord(
+            id: 'r0',
+            parentId: null,
+            timestamp: DateTime.utc(2026),
+            message: UserMessage.text('hello'),
+          ),
+        );
+        (await fs.appendFile(
+          path,
+          '${poisonAssistantLine('rp', 'r0')}\n',
+        )).getOrThrow();
+        // A navigation leaf whose target is the record about to quarantine.
+        await storage.appendEntry(
+          LeafRecord(
+            id: 'L1',
+            parentId: 'r0',
+            timestamp: DateTime.utc(2026),
+            targetId: 'rp',
+          ),
+        );
 
-      final reopened = await JsonlSessionStorage.open(fs, path);
-      expect(reopened.quarantinedEntries, 1);
-      // The heal is surfaced, not silent — same convention as quarantine.
-      expect(reopened.healedLeafEntries, 1);
-      // The tracked leaf dangled ('rp' quarantined); load healed it to the
-      // newest surviving record — the LeafRecord itself.
-      expect(await reopened.getLeafId(), 'L1');
-      final session = Session(reopened);
-      final messages = await session.buildContextMessages();
-      expect(messages, hasLength(1));
-    });
+        final reopened = await JsonlSessionStorage.open(fs, path);
+        expect(reopened.quarantinedEntries, 1);
+        // The heal is surfaced, not silent — same convention as quarantine.
+        expect(reopened.healedLeafEntries, 1);
+        // The tracked leaf dangled ('rp' quarantined); load healed it to the
+        // newest surviving record — the LeafRecord itself.
+        expect(await reopened.getLeafId(), 'L1');
+        final session = Session(reopened);
+        final messages = await session.buildContextMessages();
+        expect(messages, hasLength(1));
+      },
+    );
 
-    test('a parentId cycle terminates the walk instead of spinning',
-        () async {
+    test('a parentId cycle terminates the walk instead of spinning', () async {
       final storage = await createStorage();
       // An adversarial/foreign-authored file can carry a cycle; appendEntry
       // does not validate tree shape, so it is reachable through the API.
@@ -1404,23 +1403,22 @@ void main() {
         // TOP-LEVEL (a valid item slot), never as a message content part.
         final input = responsesInputItems(messages);
         expect(firstResponsesGrammarViolation(input), isNull);
-        expect(
-          [
-            for (final item in input)
-              if (item['type'] == 'function_call_output') item,
-          ],
-          hasLength(1),
-        );
+        expect([
+          for (final item in input)
+            if (item['type'] == 'function_call_output') item,
+        ], hasLength(1));
 
         // The resumed turn completes against a fake Responses stream…
         final client = http_testing.MockClient.streaming((request, body) async {
           return http.StreamedResponse(
-            Stream.value(utf8.encode(
-              'data: ${jsonEncode({
-                'type': 'response.completed',
-                'response': {'id': 'r', 'model': 'gpt-5-codex'},
-              })}\n\n',
-            )),
+            Stream.value(
+              utf8.encode(
+                'data: ${jsonEncode({
+                  'type': 'response.completed',
+                  'response': {'id': 'r', 'model': 'gpt-5-codex'},
+                })}\n\n',
+              ),
+            ),
             200,
             headers: {'content-type': 'text/event-stream'},
           );

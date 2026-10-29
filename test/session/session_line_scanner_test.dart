@@ -59,27 +59,19 @@ void main() {
       final bytes = <int>[
         for (final line in linesIn) ...utf8.encode('$line\n'),
       ];
-      final scanner = SessionLineScanner(
-        fs: fs,
-        path: path,
-      );
+      final scanner = SessionLineScanner(fs: fs, path: path);
       await writeBytes(bytes);
       final seen = <String>[];
       await scanner.scan((line) async => seen.add(line.text));
       expect(seen, linesIn);
     });
 
-    test('a multi-byte UTF-8 character split across chunks survives',
-        () async {
+    test('a multi-byte UTF-8 character split across chunks survives', () async {
       final payload = 'ünïcödé-üüt' * 300; // multi-byte chars galore
       final bytes = [...utf8.encode('$payload\n')];
       // Force chunk edges mid-character: chunk of 7 bytes cuts the 2-byte
       // sequences at odd offsets.
-      final scanner = SessionLineScanner(
-        fs: fs,
-        path: path,
-        chunkBytes: 7,
-      );
+      final scanner = SessionLineScanner(fs: fs, path: path, chunkBytes: 7);
       await writeBytes(bytes);
       final seen = <String>[];
       await scanner.scan((line) async => seen.add(line.text));
@@ -87,7 +79,12 @@ void main() {
     });
 
     test('malformed UTF-8 degrades instead of failing the scan', () async {
-      final bytes = <int>[...utf8.encode('ok\n'), 0xFF, 0xFE, ...'\n'.codeUnits];
+      final bytes = <int>[
+        ...utf8.encode('ok\n'),
+        0xFF,
+        0xFE,
+        ...'\n'.codeUnits,
+      ];
       final lines = await scanLines(bytes);
       expect(lines, hasLength(2));
       expect(lines[0].$3, 'ok');

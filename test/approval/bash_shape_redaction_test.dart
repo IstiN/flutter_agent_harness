@@ -55,13 +55,15 @@ void main() {
       expect(redactBashCommandSecretShapes(command), isNull);
     });
 
-    test('a high-entropy token that is not a vendor shape is NOT rewritten',
-        () {
-      const command =
-          'curl -s -H "X-Api-Key: 9f86d081882c48665fd555eb3f2f4e73" '
-          'https://api.example.test';
-      expect(redactBashCommandSecretShapes(command), isNull);
-    });
+    test(
+      'a high-entropy token that is not a vendor shape is NOT rewritten',
+      () {
+        const command =
+            'curl -s -H "X-Api-Key: 9f86d081882c48665fd555eb3f2f4e73" '
+            'https://api.example.test';
+        expect(redactBashCommandSecretShapes(command), isNull);
+      },
+    );
 
     test('a truncated AWS-shaped token (wrong length) is NOT rewritten', () {
       const command = 'touch AKIA1234.pem';
@@ -148,10 +150,7 @@ void main() {
       const token = 'AKIAIOSFODNN7EXAMPLE';
       const command = 'aws configure set aws_access_key_id $token';
       expect(
-        redactBashCommandSecretShapes(
-          command,
-          approvedLiterals: {token},
-        ),
+        redactBashCommandSecretShapes(command, approvedLiterals: {token}),
         isNull,
       );
     });
@@ -167,65 +166,76 @@ void main() {
       // 37783963871 — the previous isNot(contains('$token and'))
       // assertion contradicted the hatch: the approved value is SUPPOSED
       // to remain in the command).
-      expect(
-        rewrite.command,
-        'use $token and [REDACTED:GitHub Token]',
-      );
+      expect(rewrite.command, 'use $token and [REDACTED:GitHub Token]');
       expect(rewrite.changes.single.label, 'GitHub Token');
     });
   });
 
   group('bash tool applies the shape interceptor (issue #1408 AC3)', () {
-    test('a true shape executes rewritten and the result carries the notice',
-        () async {
-      final shell = _RecordingShell();
-      final tool = bt.shellTool(
-        MemoryExecutionEnv(cwd: '/work', shell: shell),
-        retryBackoff: Duration.zero,
-      );
-      final result = await tool.execute({
-        'command': 'aws configure set aws_access_key_id AKIAIOSFODNN7EXAMPLE',
-      }, null, null);
+    test(
+      'a true shape executes rewritten and the result carries the notice',
+      () async {
+        final shell = _RecordingShell();
+        final tool = bt.shellTool(
+          MemoryExecutionEnv(cwd: '/work', shell: shell),
+          retryBackoff: Duration.zero,
+        );
+        final result = await tool.execute(
+          {
+            'command':
+                'aws configure set aws_access_key_id AKIAIOSFODNN7EXAMPLE',
+          },
+          null,
+          null,
+        );
 
-      // The executed command is the REWRITTEN one: the raw secret never
-      // reaches the shell, the job logs, or the session record.
-      expect(shell.lastCommand, isNotNull);
-      expect(shell.lastCommand, contains('[REDACTED:AWS Access Key]'));
-      expect(shell.lastCommand, isNot(contains('AKIAIOSFODNN7EXAMPLE')));
-      // The tool result NAMES what changed.
-      final text = _textOf(result);
-      expect(text, contains('[bash interceptor rewrote 1 secret-shaped value'));
-      expect(text, contains('AWS Access Key'));
-    });
+        // The executed command is the REWRITTEN one: the raw secret never
+        // reaches the shell, the job logs, or the session record.
+        expect(shell.lastCommand, isNotNull);
+        expect(shell.lastCommand, contains('[REDACTED:AWS Access Key]'));
+        expect(shell.lastCommand, isNot(contains('AKIAIOSFODNN7EXAMPLE')));
+        // The tool result NAMES what changed.
+        final text = _textOf(result);
+        expect(
+          text,
+          contains('[bash interceptor rewrote 1 secret-shaped value'),
+        );
+        expect(text, contains('AWS Access Key'));
+      },
+    );
 
-    test('a key-like filename command runs byte-identically, no notice',
-        () async {
-      final shell = _RecordingShell();
-      final tool = bt.shellTool(
-        MemoryExecutionEnv(cwd: '/work', shell: shell),
-        retryBackoff: Duration.zero,
-      );
-      const command = 'ssh-keygen -t ed25519 -f id_ed25519_9f86d081882c48d6';
-      final result = await tool.execute({'command': command}, null, null);
+    test(
+      'a key-like filename command runs byte-identically, no notice',
+      () async {
+        final shell = _RecordingShell();
+        final tool = bt.shellTool(
+          MemoryExecutionEnv(cwd: '/work', shell: shell),
+          retryBackoff: Duration.zero,
+        );
+        const command = 'ssh-keygen -t ed25519 -f id_ed25519_9f86d081882c48d6';
+        final result = await tool.execute({'command': command}, null, null);
 
-      expect(shell.lastCommand, command);
-      expect(_textOf(result), isNot(contains('[bash interceptor rewrote')));
-    });
+        expect(shell.lastCommand, command);
+        expect(_textOf(result), isNot(contains('[bash interceptor rewrote')));
+      },
+    );
 
-    test('shellTool honors redactionConfig: disabled executes verbatim',
-        () async {
-      final shell = _RecordingShell();
-      final tool = bt.shellTool(
-        MemoryExecutionEnv(cwd: '/work', shell: shell),
-        retryBackoff: Duration.zero,
-        redactionConfig: const RedactionConfig(enabled: false),
-      );
-      const command =
-          'aws configure set aws_access_key_id AKIAIOSFODNN7EXAMPLE';
-      await tool.execute({'command': command}, null, null);
+    test(
+      'shellTool honors redactionConfig: disabled executes verbatim',
+      () async {
+        final shell = _RecordingShell();
+        final tool = bt.shellTool(
+          MemoryExecutionEnv(cwd: '/work', shell: shell),
+          retryBackoff: Duration.zero,
+          redactionConfig: const RedactionConfig(enabled: false),
+        );
+        const command =
+            'aws configure set aws_access_key_id AKIAIOSFODNN7EXAMPLE';
+        await tool.execute({'command': command}, null, null);
 
-      expect(shell.lastCommand, command);
-    });
+        expect(shell.lastCommand, command);
+      },
+    );
 
     test('shellTool exempts host-registered secret literals', () async {
       final shell = _RecordingShell();

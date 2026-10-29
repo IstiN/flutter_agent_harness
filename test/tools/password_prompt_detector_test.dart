@@ -44,12 +44,14 @@ void main() {
   Future<void> settle() => Future<void>.delayed(Duration.zero);
 
   group('detects the sudo/password asks', () {
-    test('AC1: [sudo] password for user: with the full line as title',
-        () async {
-      detector.feed('[sudo] password for user:');
-      await settle();
-      expect(prompts, equals(['[sudo] password for user:']));
-    });
+    test(
+      'AC1: [sudo] password for user: with the full line as title',
+      () async {
+        detector.feed('[sudo] password for user:');
+        await settle();
+        expect(prompts, equals(['[sudo] password for user:']));
+      },
+    );
 
     test('bare Password: prompt (sudo retry, ssh)', () async {
       detector.feed('Sorry, try again.\nPassword:');
@@ -85,20 +87,24 @@ void main() {
       expect(prompts, equals(['[sudo] password for user:']));
     });
 
-    test('prompt after complete lines: only the partial line is the title',
-        () async {
-      detector.feed('some earlier output\r\n[sudo] password for user:  ');
-      await settle();
-      expect(prompts, equals(['[sudo] password for user:']));
-    });
+    test(
+      'prompt after complete lines: only the partial line is the title',
+      () async {
+        detector.feed('some earlier output\r\n[sudo] password for user:  ');
+        await settle();
+        expect(prompts, equals(['[sudo] password for user:']));
+      },
+    );
 
-    test('stderr chunks feed the same detector (sudo prompts on stderr)',
-        () async {
-      detector.feed('regular output\n');
-      detector.feed('[sudo] password for user:');
-      await settle();
-      expect(prompts, equals(['[sudo] password for user:']));
-    });
+    test(
+      'stderr chunks feed the same detector (sudo prompts on stderr)',
+      () async {
+        detector.feed('regular output\n');
+        detector.feed('[sudo] password for user:');
+        await settle();
+        expect(prompts, equals(['[sudo] password for user:']));
+      },
+    );
 
     test('a newline-terminated Password: line is ordinary output', () {
       detector.feed('Password:\n');
@@ -122,18 +128,20 @@ void main() {
   });
 
   group('quiet-window debounce', () {
-    test('new output inside the quiet window cancels the pending match',
-        () async {
-      final d = build(quiet: const Duration(milliseconds: 40));
-      d.feed('Password:');
-      // More output arrives before the window elapses — the "prompt" was
-      // just a chunk boundary in a streamed document.
-      await Future<void>.delayed(const Duration(milliseconds: 10));
-      d.feed(' more prose following the colon\n');
-      await Future<void>.delayed(const Duration(milliseconds: 60));
-      expect(prompts, isEmpty);
-      d.dispose();
-    });
+    test(
+      'new output inside the quiet window cancels the pending match',
+      () async {
+        final d = build(quiet: const Duration(milliseconds: 40));
+        d.feed('Password:');
+        // More output arrives before the window elapses — the "prompt" was
+        // just a chunk boundary in a streamed document.
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+        d.feed(' more prose following the colon\n');
+        await Future<void>.delayed(const Duration(milliseconds: 60));
+        expect(prompts, isEmpty);
+        d.dispose();
+      },
+    );
 
     test('the match fires after the quiet window holds', () async {
       final d = build(quiet: const Duration(milliseconds: 40));
@@ -143,8 +151,7 @@ void main() {
       d.dispose();
     });
 
-    test('output resuming after the fire does not re-fire by itself',
-        () async {
+    test('output resuming after the fire does not re-fire by itself', () async {
       final d = build(quiet: const Duration(milliseconds: 20));
       d.feed('Password:');
       await Future<void>.delayed(const Duration(milliseconds: 50));
@@ -159,30 +166,32 @@ void main() {
   });
 
   group('re-arm lifecycle (E1)', () {
-    test('muted while the answer is pending; re-arms after the answer',
-        () async {
-      var answerGate = Completer<void>();
-      final d = PasswordPromptDetector(
-        onPrompt: (line) async {
-          prompts.add(line);
-          await answerGate.future;
-        },
-        quiet: Duration.zero,
-      );
-      d.feed('[sudo] password for user:');
-      await Future<void>.delayed(Duration.zero);
-      // A second prompt-shaped burst while the first sheet is open is
-      // ignored — one sheet at a time.
-      d.feed('\nPassword:');
-      expect(prompts, hasLength(1));
-      answerGate.complete();
-      await Future<void>.delayed(Duration.zero);
-      // Wrong password: sudo prints the retry and asks again — the sheet
-      // re-arms.
-      d.feed('Sorry, try again.\nPassword:');
-      expect(prompts, equals(['[sudo] password for user:', 'Password:']));
-      d.dispose();
-    });
+    test(
+      'muted while the answer is pending; re-arms after the answer',
+      () async {
+        var answerGate = Completer<void>();
+        final d = PasswordPromptDetector(
+          onPrompt: (line) async {
+            prompts.add(line);
+            await answerGate.future;
+          },
+          quiet: Duration.zero,
+        );
+        d.feed('[sudo] password for user:');
+        await Future<void>.delayed(Duration.zero);
+        // A second prompt-shaped burst while the first sheet is open is
+        // ignored — one sheet at a time.
+        d.feed('\nPassword:');
+        expect(prompts, hasLength(1));
+        answerGate.complete();
+        await Future<void>.delayed(Duration.zero);
+        // Wrong password: sudo prints the retry and asks again — the sheet
+        // re-arms.
+        d.feed('Sorry, try again.\nPassword:');
+        expect(prompts, equals(['[sudo] password for user:', 'Password:']));
+        d.dispose();
+      },
+    );
 
     test('dispose cancels the pending quiet timer', () async {
       final d = build(quiet: const Duration(milliseconds: 30));

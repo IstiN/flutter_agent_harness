@@ -145,7 +145,6 @@ final class RemoteModelPricing {
   final double output;
 }
 
-
 /// The catalog endpoint — overridable via `fa1.dev/models-catalog-url`
 /// (the `models:` yaml section keys ride the same resolver) for staging
 /// or self-hosted mirrors.
@@ -176,6 +175,7 @@ Future<RemoteModelsCatalog?> fetchRemoteModelsCatalog({
     if (ownsClient) httpClient.close();
   }
 }
+
 /// Bundled fallback catalog — ships in-process so the picker still
 /// works when the remote URL is down (the user just reported "только
 /// одна m3 захардкожена" because the GitHub Pages site at fa1.dev

@@ -73,14 +73,18 @@ tui:
       harness.sendText('run the long sleep now');
       await Future<void>.delayed(const Duration(milliseconds: 150));
       harness.sendEnter();
-      await harness.waitForText('· submit', timeout: const Duration(seconds: 20));
+      await harness.waitForText(
+        '· submit',
+        timeout: const Duration(seconds: 20),
+      );
 
       // Compose the long line mid-run, then let the 1 Hz ticks repaint.
       for (var i = 0; i < _composed.length; i += 10) {
         harness.sendText(
-          _composed.substring(i, i + 10 > _composed.length
-              ? _composed.length
-              : i + 10),
+          _composed.substring(
+            i,
+            i + 10 > _composed.length ? _composed.length : i + 10,
+          ),
         );
         await Future<void>.delayed(const Duration(milliseconds: 20));
       }
@@ -104,8 +108,11 @@ tui:
           .sublist(rules[rules.length - 2] + 1, rules.last)
           .map((l) => l.trimRight())
           .toList();
-      expect(region.length, greaterThanOrEqualTo(3),
-          reason: 'wrapped, not one row: ${region.join(" | ")}');
+      expect(
+        region.length,
+        greaterThanOrEqualTo(3),
+        reason: 'wrapped, not one row: ${region.join(" | ")}',
+      );
       final visible = region.map((l) => l.replaceAll(' ', '')).join();
       expect(visible, _composed.replaceAll(' ', ''));
       expect(region.first.trimLeft().startsWith('please '), isTrue);
@@ -115,13 +122,20 @@ tui:
         for (final row in gridA)
           if (row.contains(' · turn ')) row,
       ];
-      expect(statusRows.length, 1,
-          reason: 'status rendered exactly once; screen:\n'
-              '${gridA.where((l) => l.trim().isNotEmpty).join("\n")}');
+      expect(
+        statusRows.length,
+        1,
+        reason:
+            'status rendered exactly once; screen:\n'
+            '${gridA.where((l) => l.trim().isNotEmpty).join("\n")}',
+      );
       final statusRow = statusRows.single.trimRight();
       // Merging with the composer would put composed text left of the cwd.
-      expect(statusRow.trimLeft().startsWith('/'), isTrue,
-          reason: 'status opens with the cwd, not composer text');
+      expect(
+        statusRow.trimLeft().startsWith('/'),
+        isTrue,
+        reason: 'status opens with the cwd, not composer text',
+      );
       expect(statusRow, contains('ctx '));
       expect(statusRow, contains('mock-model'));
       // Own bottom row: the status is the LAST non-blank grid row and the
@@ -130,10 +144,16 @@ tui:
       while (last > 0 && gridA[last].trim().isEmpty) {
         last--;
       }
-      expect(gridA[last].contains(' · turn '), isTrue,
-          reason: 'status is the bottom row');
-      expect(gridA[last - 1].trim(), rule,
-          reason: 'a full-width rule separates the composer from the status');
+      expect(
+        gridA[last].contains(' · turn '),
+        isTrue,
+        reason: 'status is the bottom row',
+      );
+      expect(
+        gridA[last - 1].trim(),
+        rule,
+        reason: 'a full-width rule separates the composer from the status',
+      );
 
       // ── (3) the ticker updates IN PLACE ─────────────────────────────────
       // _oneRowTickDiffPair already guarantees exactly ONE differing row
@@ -146,8 +166,11 @@ tui:
           busyIdx = i;
         }
       }
-      expect(busyIdx, greaterThanOrEqualTo(0),
-          reason: 'the sampled pair must differ in the busy row');
+      expect(
+        busyIdx,
+        greaterThanOrEqualTo(0),
+        reason: 'the sampled pair must differ in the busy row',
+      );
       // gh-1446 retired the face zone (issue #1374): the row is plain
       // text at column 0, only the seconds digits move; every other
       // column stays pinned byte-for-byte.
@@ -155,9 +178,13 @@ tui:
       final busyA = gridA[busyIdx];
       final busyB = gridB[busyIdx];
       expect(busyA.isNotEmpty, isTrue);
-      expect(masked(busyA), masked(busyB),
-          reason: 'inside the busy row only spinner + seconds may move:\n'
-              '$busyA\n$busyB');
+      expect(
+        masked(busyA),
+        masked(busyB),
+        reason:
+            'inside the busy row only spinner + seconds may move:\n'
+            '$busyA\n$busyB',
+      );
       // And it really is the ticker row.
       expect(busyA, contains('· submit'));
 
@@ -238,11 +265,17 @@ tui:
 
       for (var tick = 0; tick < grids.length; tick++) {
         final grid = grids[tick];
-        expect(grid.length, rowsCount,
-            reason: 'tick $tick: frame height drifted — a row wrapped');
+        expect(
+          grid.length,
+          rowsCount,
+          reason: 'tick $tick: frame height drifted — a row wrapped',
+        );
         // The status stays the BOTTOM row: any wrap above pushes it off.
-        expect(grid[rowsCount - 1].contains(' · turn '), isTrue,
-            reason: 'tick $tick: status not at the bottom — drift');
+        expect(
+          grid[rowsCount - 1].contains(' · turn '),
+          isTrue,
+          reason: 'tick $tick: status not at the bottom — drift',
+        );
         for (final row in grid) {
           expect(row.runes.length, lessThanOrEqualTo(columns));
         }
@@ -253,8 +286,11 @@ tui:
           for (final row in grid)
             if (row.contains('↳ ')) row.substring(0, row.indexOf(' ·')),
         ];
-        expect(boardIds.toSet().length, boardIds.length,
-            reason: 'tick $tick: duplicated board rows (ghost snapshot)');
+        expect(
+          boardIds.toSet().length,
+          boardIds.length,
+          reason: 'tick $tick: duplicated board rows (ghost snapshot)',
+        );
       }
       // The composed line survived intact through the run.
       final rules = [
@@ -268,23 +304,29 @@ tui:
           .sublist(rules[rules.length - 2] + 1, rules.last)
           .map((l) => l.replaceAll(' ', ''))
           .join();
-      expect(composer, isEmpty,
-          reason: 'the submitted line must not linger in the composer:\n'
-              '${grids.last.join('\n')}');
+      expect(
+        composer,
+        isEmpty,
+        reason:
+            'the submitted line must not linger in the composer:\n'
+            '${grids.last.join('\n')}',
+      );
       // …and the line survived the run INTACT: the history echo still
       // carries all 300 chars, wrapped inside the width (rows already
       // width-checked above). Probed against 2dfea311: the old check
       // (text between the last two rules) could never pass on ANY build —
       // it looked in the cleared composer, not the echo.
-      final onScreen = grids.last
-          .map((l) => l.replaceAll(' ', ''))
-          .join();
-      expect(onScreen, contains(composed300.substring(0, 300)
-          .replaceAll(' ', '')),
-          reason: 'the composed line must survive the run intact (echoed '
-              'into the history, width-wrapped):\n${grids.last.join('\n')}');
+      final onScreen = grids.last.map((l) => l.replaceAll(' ', '')).join();
+      expect(
+        onScreen,
+        contains(composed300.substring(0, 300).replaceAll(' ', '')),
+        reason:
+            'the composed line must survive the run intact (echoed '
+            'into the history, width-wrapped):\n${grids.last.join('\n')}',
+      );
     });
   }
+
   /// NEW AC (owner evidence #2, issue #503): a steering insert landing
   /// mid-run while the composer holds a TALL multi-row text must keep the
   /// bottom chrome distinct — the painted frame never overruns the glass
@@ -329,7 +371,10 @@ tui:
       harness.sendText('run the held tool');
       await Future<void>.delayed(const Duration(milliseconds: 150));
       harness.sendEnter();
-      await harness.waitForText('· submit', timeout: const Duration(seconds: 20));
+      await harness.waitForText(
+        '· submit',
+        timeout: const Duration(seconds: 20),
+      );
 
       // The steering insert lands mid-run (the owner's trigger).
       harness.sendText('steer me once');
@@ -347,56 +392,80 @@ tui:
       harness.sendText('steer draft line 40 of forty');
       await Future<void>.delayed(const Duration(milliseconds: 1200));
 
-      final grid = [
-        for (final line in harness.viewportLines) line.trimRight(),
-      ];
+      final grid = [for (final line in harness.viewportLines) line.trimRight()];
       final rule = '─' * columns;
       String screenShot() => grid.join('\n');
 
       // The frame fits the glass: no overrun, no hardware scroll.
-      expect(grid.length, rowsCount,
-          reason: 'frame height drifted — the input zone overran the '
-              'glass:\n${screenShot()}');
+      expect(
+        grid.length,
+        rowsCount,
+        reason:
+            'frame height drifted — the input zone overran the '
+            'glass:\n${screenShot()}',
+      );
 
       // Status: bottom row, left edge intact (cwd, never composer text).
       var last = grid.length - 1;
       while (last > 0 && grid[last].trim().isEmpty) {
         last--;
       }
-      expect(grid[last].contains(' · turn '), isTrue,
-          reason: 'status is the bottom row:\n${screenShot()}');
+      expect(
+        grid[last].contains(' · turn '),
+        isTrue,
+        reason: 'status is the bottom row:\n${screenShot()}',
+      );
       expect(
         grid[last].trimLeft().startsWith('/') ||
             grid[last].trimLeft().startsWith('…'),
         isTrue,
-        reason: 'status left edge (cwd) not overwritten: '
+        reason:
+            'status left edge (cwd) not overwritten: '
             '"${grid[last]}"',
       );
-      expect(grid[last - 1].trim(), rule,
-          reason: 'a full-width rule separates the composer from the '
-              'status:\n${screenShot()}');
+      expect(
+        grid[last - 1].trim(),
+        rule,
+        reason:
+            'a full-width rule separates the composer from the '
+            'status:\n${screenShot()}',
+      );
 
       // Input-frame rules both present, input zone between them.
       final rules = [
         for (var i = 0; i < grid.length; i++)
           if (grid[i].trim() == rule) i,
       ];
-      expect(rules.length, greaterThanOrEqualTo(2),
-          reason: 'input frame rules present:\n${screenShot()}');
-      expect(rules.last, last - 1,
-          reason: 'the bottom rule sits directly above the status');
-      expect(last - 1 - rules[rules.length - 2], greaterThanOrEqualTo(1),
-          reason: 'the input zone holds at least one row between the '
-              'rules:\n${screenShot()}');
+      expect(
+        rules.length,
+        greaterThanOrEqualTo(2),
+        reason: 'input frame rules present:\n${screenShot()}',
+      );
+      expect(
+        rules.last,
+        last - 1,
+        reason: 'the bottom rule sits directly above the status',
+      );
+      expect(
+        last - 1 - rules[rules.length - 2],
+        greaterThanOrEqualTo(1),
+        reason:
+            'the input zone holds at least one row between the '
+            'rules:\n${screenShot()}',
+      );
 
       // The cursor window shows the composer tail (the last typed line).
       final composer = grid
           .sublist(rules[rules.length - 2] + 1, rules.last)
           .map((l) => l.replaceAll(' ', ''))
           .join();
-      expect(composer, contains('steerdraftline40offorty'),
-          reason: 'the cursor window follows the composer tail:\n'
-              '${screenShot()}');
+      expect(
+        composer,
+        contains('steerdraftline40offorty'),
+        reason:
+            'the cursor window follows the composer tail:\n'
+            '${screenShot()}',
+      );
     });
   }
 }
@@ -423,16 +492,14 @@ List<String> _composerRegion(List<String> grid, int columns) {
 /// deterministic replacement for the old fixed 1200ms sleep before the
 /// grid math, which sampled half-echoed frames on loaded hosts (#550
 /// family: the raw echo settles long before the render loop repaints).
-Future<void> _waitForComposedInRegion(
-  FaCliHarness harness,
-  int columns,
-) async {
+Future<void> _waitForComposedInRegion(FaCliHarness harness, int columns) async {
   final want = _composed.replaceAll(' ', '');
   final deadline = DateTime.now().add(const Duration(seconds: 20));
   while (DateTime.now().isBefore(deadline)) {
-    final visible = _composerRegion(_grid(harness), columns)
-        .map((l) => l.replaceAll(' ', ''))
-        .join();
+    final visible = _composerRegion(
+      _grid(harness),
+      columns,
+    ).map((l) => l.replaceAll(' ', '')).join();
     if (visible.contains(want)) return;
     await Future<void>.delayed(const Duration(milliseconds: 100));
   }

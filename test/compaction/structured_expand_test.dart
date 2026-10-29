@@ -69,11 +69,7 @@ void main() {
     int? page,
   }) async {
     final result = await controller.tool.execute(
-      {
-        'target': ?target,
-        'query': ?query,
-        'page': ?page,
-      },
+      {'target': ?target, 'query': ?query, 'page': ?page},
       null,
       null,
     );

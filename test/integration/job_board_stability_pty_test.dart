@@ -83,9 +83,7 @@ final _turns = [
 /// The first wave's collapsed live summary row (gh-1446 signal format:
 /// the running count behind the modern glyph, no done/lost noise — the
 /// `· older` provenance marker stays, frozen at first print, #539).
-final _olderRow = RegExp(
-  r'[◐○⬤\W] Background jobs \(5\) · older',
-);
+final _olderRow = RegExp(r'[◐○⬤\W] Background jobs \(5\) · older');
 
 /// The first settle notice — `[bash] sh-… exited(0)` prints once per
 /// settled job; the first of wave one's staggered exits.
@@ -175,7 +173,8 @@ void main() {
         expect(
           boardRow.hasMatch(viewport[i]),
           isFalse,
-          reason: 'board rows never paint below the status row '
+          reason:
+              'board rows never paint below the status row '
               '(row $i: "${viewport[i]}"):\n${viewport.join('\n')}',
         );
       }
@@ -193,7 +192,8 @@ void main() {
       expect(
         viewport.last.trimRight(),
         startsWith('╰─'),
-        reason: 'idle chrome collapses to the composer prompt row:\n'
+        reason:
+            'idle chrome collapses to the composer prompt row:\n'
             '${viewport.join('\n')}',
       );
     }
@@ -348,15 +348,8 @@ void main() {
       // summary card keeps its terminal counts (a transcript record, not
       // live chrome).
       expect(
-        after
-            .where((l) => l.trimLeft().startsWith('◐ Background jobs')),
-        everyElement(
-          isNot(
-            contains(
-              'running',
-            ),
-          ),
-        ),
+        after.where((l) => l.trimLeft().startsWith('◐ Background jobs')),
+        everyElement(isNot(contains('running'))),
         reason: 'the live board line names no `running` segment',
       );
 

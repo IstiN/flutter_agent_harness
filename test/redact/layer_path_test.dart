@@ -87,8 +87,14 @@ void main() {
     });
 
     test('process.env is not a credential path (false-positive guard)', () {
-      expect(layerPath('read process.env.FOO', const RedactionConfig()), isEmpty);
-      expect(layerPath('the environment is fine', const RedactionConfig()), isEmpty);
+      expect(
+        layerPath('read process.env.FOO', const RedactionConfig()),
+        isEmpty,
+      );
+      expect(
+        layerPath('the environment is fine', const RedactionConfig()),
+        isEmpty,
+      );
     });
 
     test('a bare .env filename stays visible (no location info)', () {

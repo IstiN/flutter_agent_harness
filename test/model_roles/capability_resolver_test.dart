@@ -81,8 +81,7 @@ void main() {
       expect(caps.thinkingLevel, 'high');
     });
 
-    test('override raises the window above the cap (raise direction kept)',
-        () {
+    test('override raises the window above the cap (raise direction kept)', () {
       final caps = _resolve(
         override: const ModelCapabilityOverride(contextWindow: 1000000),
         contextWindowCap: 500000,
@@ -238,8 +237,7 @@ void main() {
   });
 
   group('resolveModelCapabilities — divergence notes (E1/E4)', () {
-    test('an override contradicting endpoint truth names the divergence',
-        () {
+    test('an override contradicting endpoint truth names the divergence', () {
       final caps = _resolve(
         override: const ModelCapabilityOverride(contextWindow: 400000),
         endpointContextWindow: 300000,
@@ -259,8 +257,7 @@ void main() {
       expect(caps.notes, isEmpty);
     });
 
-    test('an override for a model absent from every catalog is kept (E4)',
-        () {
+    test('an override for a model absent from every catalog is kept (E4)', () {
       final caps = _resolve(
         spec: null,
         remoteCatalogContextWindow: null,
@@ -273,8 +270,7 @@ void main() {
   });
 
   group('resolveModelCapabilities — boundary floors (UT-1)', () {
-    test('a programmatically small override window floors at the reserve',
-        () {
+    test('a programmatically small override window floors at the reserve', () {
       // Parse rejects values below the floor loudly; the resolver's floor
       // is the safety net for non-yaml construction paths.
       final caps = _resolve(
@@ -283,19 +279,25 @@ void main() {
       expect(caps.contextWindow, minOverrideContextWindow);
     });
 
-    test('a programmatically small override maxTokens floors at the answer',
-        () {
-      final caps = _resolve(
-        override: const ModelCapabilityOverride(maxTokens: 10),
-      );
-      expect(caps.maxTokens, minOverrideMaxTokens);
-    });
+    test(
+      'a programmatically small override maxTokens floors at the answer',
+      () {
+        final caps = _resolve(
+          override: const ModelCapabilityOverride(maxTokens: 10),
+        );
+        expect(caps.maxTokens, minOverrideMaxTokens);
+      },
+    );
 
     test('parse rejects an override window below the compaction reserve', () {
       expect(
-        () => ModelCapabilityOverride.fromYaml('zai', 'glm-5.3-flash', _yaml('''
+        () => ModelCapabilityOverride.fromYaml(
+          'zai',
+          'glm-5.3-flash',
+          _yaml('''
 contextWindow: 100
-''')),
+'''),
+        ),
         throwsA(
           isA<ConfigException>().having(
             (e) => e.message,
@@ -308,9 +310,13 @@ contextWindow: 100
 
     test('parse rejects an override maxTokens below the answer floor', () {
       expect(
-        () => ModelCapabilityOverride.fromYaml('zai', 'glm-5.3-flash', _yaml('''
+        () => ModelCapabilityOverride.fromYaml(
+          'zai',
+          'glm-5.3-flash',
+          _yaml('''
 maxTokens: 512
-''')),
+'''),
+        ),
         throwsA(
           isA<ConfigException>().having(
             (e) => e.message,

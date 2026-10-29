@@ -33,12 +33,7 @@ String dapHubPidFileFor(String home) =>
 /// properly (a relay secret carrying quotes or backslashes cannot
 /// corrupt the file).
 String renderDapLocalHubState(DapLocalHubState state) =>
-    '${const JsonEncoder.withIndent('  ').convert({
-      'pid': state.pid,
-      'port': state.port,
-      'startedAt': state.startedAt.isEmpty ? null : state.startedAt,
-      'relaySecret': state.relaySecret,
-    })}\n';
+    '${const JsonEncoder.withIndent('  ').convert({'pid': state.pid, 'port': state.port, 'startedAt': state.startedAt.isEmpty ? null : state.startedAt, 'relaySecret': state.relaySecret})}\n';
 
 /// Parses a pid/state file body; null when [content] is missing, invalid
 /// JSON, or lacks a usable `pid`/`port` (E4: a bad file is no state —

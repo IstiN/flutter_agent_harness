@@ -15,15 +15,17 @@ void main() {
     });
 
     test('session id, --format, and --output parse positionally', () {
-      final args = parseCliArgs([
-        'trajectory',
-        'export',
-        'sess-1',
-        '--format',
-        'atif',
-        '--output',
-        '/logs/agent/trajectory.json',
-      ]) as CliArgs;
+      final args =
+          parseCliArgs([
+                'trajectory',
+                'export',
+                'sess-1',
+                '--format',
+                'atif',
+                '--output',
+                '/logs/agent/trajectory.json',
+              ])
+              as CliArgs;
       expect(args.trajectory!.verb, 'export');
       expect(args.trajectory!.positionals, ['sess-1']);
       expect(args.trajectory!.format, 'atif');
@@ -31,14 +33,16 @@ void main() {
     });
 
     test('--session-root still parses after the verb', () {
-      final args = parseCliArgs([
-        'trajectory',
-        'export',
-        '--session-root',
-        '/logs/agent/fah-sessions',
-        '--output',
-        '/tmp/t.json',
-      ]) as CliArgs;
+      final args =
+          parseCliArgs([
+                'trajectory',
+                'export',
+                '--session-root',
+                '/logs/agent/fah-sessions',
+                '--output',
+                '/tmp/t.json',
+              ])
+              as CliArgs;
       expect(args.sessionRoot, '/logs/agent/fah-sessions');
       expect(args.trajectory!.output, '/tmp/t.json');
     });

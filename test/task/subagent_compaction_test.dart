@@ -39,6 +39,23 @@ final _model = Model(
 /// trajectory; raising the window by the exact delta keeps the trigger
 /// crossings where they were.
 final int _contractTokens = () {
+  // gh-1956: the fixtures below are calibrated to the pre-gh-1956
+  // trajectory, so the window grows by the TRUE request-footprint delta
+  // over that baseline — the system-prompt contract copy plus BOTH tool
+  // descriptions ride every request verbatim (the #1829-era
+  // `length - contract` approximation under-measures once the
+  // descriptions diverge from the contract copy). The 237 offset is the
+  // pre-gh-1956 contract footprint in tokens; the baseline and its
+  // provenance live on [_gh1956BaselineChars].
+  return 237 + ((_childFootprintChars - _gh1956BaselineChars) / 4).ceil();
+}();
+
+/// The true child-request footprint this file's fixtures calibrate
+/// against: the system-prompt contract copy plus the `reply` and
+/// `agent_message` tool descriptions at budget 800 (exactly what
+/// [_contractTokens]' delta consumes), exposed for the calibration guard
+/// test below.
+final int _childFootprintChars = () {
   final mgr = SubagentManager(parentSessionId: 'p', maxReplyChars: 8000);
   final descriptions = [
     for (final tool in subagentMonitoringTools(
@@ -48,19 +65,24 @@ final int _contractTokens = () {
       if (tool.name == 'reply' || tool.name == 'agent_message')
         tool.description,
   ];
-  final contract = deliverableChunkContract(8000).length;
-  // gh-1956: the fixtures below are calibrated to the pre-gh-1956
-  // trajectory, so the window grows by the TRUE request-footprint delta
-  // over that baseline — the system-prompt contract copy plus BOTH tool
-  // descriptions ride every request verbatim (the #1829-era
-  // `length - contract` approximation under-measures once the
-  // descriptions diverge from the contract copy). The gh-1956 baseline
-  // footprint: contract 948 + reply 592 + agent_message 799 = 2339 chars.
-  const gh1956BaselineChars = 2339;
-  final footprintChars =
-      contract + descriptions.fold<int>(0, (a, d) => a + d.length);
-  return 237 + ((footprintChars - gh1956BaselineChars) / 4).ceil();
+  return deliverableChunkContract(8000).length +
+      descriptions.fold<int>(0, (a, d) => a + d.length);
 }();
+
+/// The gh-1956 baseline footprint: contract + reply 592 + agent_message
+/// 799 chars (gh-1956 review hardening). The baseline is SPLIT so a
+/// prompt-copy edit re-baselines half of itself: the CONTRACT term
+/// derives from the shipped `report_size_contract.md` constant (gh-1956
+/// measured 948 at budget 800), so editing that prompt does NOT need a
+/// recalibration here; the gh-1956 tool-description sizes stay PINNED
+/// with provenance — the REPORT SIZE paragraphs in
+/// `_replyTool`/`_agentMessageTool` (subagent_tools.dart) at budget 800.
+/// An edit to either description lands as a one-line diff: update its
+/// pinned size. The compaction guard test asserts the footprint never
+/// drifts BELOW this baseline — a silent shrink would widen the fixture
+/// windows instead of failing loudly.
+final int _gh1956BaselineChars =
+    deliverableChunkContract(8000).length + 592 + 799;
 
 final _fakeTime = DateTime.utc(2026, 9, 15, 12, 0, 0);
 
@@ -314,6 +336,30 @@ Context _firstRequest(_ScriptedStream stream, String marker) =>
     );
 
 void main() {
+  group(
+    'calibration guard (gh-1956 review: the baseline cannot rot silently)',
+    () {
+      test('the child request footprint never drifts below the gh-1956 '
+          'baseline', () {
+        // A footprint BELOW the pinned baseline (a prompt-copy shrink) is
+        // the dangerous direction: the delta term goes negative and the
+        // fixture windows silently widen until a threshold crossing drifts
+        // out of the scripted turns. Equality is the calibrated gh-1956
+        // point; anything above adapts through the delta term.
+        expect(
+          _childFootprintChars,
+          greaterThanOrEqualTo(_gh1956BaselineChars),
+        );
+        // And the pinned baseline matches the provenance comment: contract
+        // (budget 800) + reply 592 + agent_message 799.
+        expect(
+          _gh1956BaselineChars,
+          deliverableChunkContract(8000).length + 592 + 799,
+        );
+      });
+    },
+  );
+
   group('AC1+AC6 IT-child-compaction: proactive compaction on child turns', () {
     test('child crossing the threshold mid-task compacts at the turn boundary; '
         'the next request is under-window and the session gains a compaction '

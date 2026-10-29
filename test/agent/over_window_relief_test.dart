@@ -121,41 +121,44 @@ List<Message> trimTo(List<Message> messages, int limit) {
 }
 
 void main() {
-  test('gross mid-turn overflow: one relief + one retry completes the turn', () async {
-    // Request 1 (~76 tok) fits; the tool result balloons request 2
-    // (~180 tok) past the 120-token window; the relief drops the stale
-    // prompt and the retried request (~105 tok) goes out.
-    final fake = _FakeStreamFunction([
-      _toolTurn([_call('c1', 'bash')]),
-      _textTurn('done'),
-    ]);
-    var reliefCalls = 0;
-    final stream = agentLoop(
-      prompts: [UserMessage.text('u' * 300)],
-      context: const Context(messages: [], tools: [_bashTool]),
-      config: AgentLoopConfig(
-        model: _model,
-        overWindowRelief: (messages) async {
-          reliefCalls++;
-          return trimTo(messages, 100);
-        },
-      ),
-      streamFunction: fake.call,
-      toolExecutor: (_, _, _) async => ToolExecutionResult.text('r' * 400),
-    );
+  test(
+    'gross mid-turn overflow: one relief + one retry completes the turn',
+    () async {
+      // Request 1 (~76 tok) fits; the tool result balloons request 2
+      // (~180 tok) past the 120-token window; the relief drops the stale
+      // prompt and the retried request (~105 tok) goes out.
+      final fake = _FakeStreamFunction([
+        _toolTurn([_call('c1', 'bash')]),
+        _textTurn('done'),
+      ]);
+      var reliefCalls = 0;
+      final stream = agentLoop(
+        prompts: [UserMessage.text('u' * 300)],
+        context: const Context(messages: [], tools: [_bashTool]),
+        config: AgentLoopConfig(
+          model: _model,
+          overWindowRelief: (messages) async {
+            reliefCalls++;
+            return trimTo(messages, 100);
+          },
+        ),
+        streamFunction: fake.call,
+        toolExecutor: (_, _, _) async => ToolExecutionResult.text('r' * 400),
+      );
 
-    final messages = await stream.result as List<dynamic>;
+      final messages = await stream.result as List<dynamic>;
 
-    // The invariant: every request that left was measured under the window.
-    for (final context in fake.contexts) {
-      expect(_requestTokens(context), lessThanOrEqualTo(120));
-    }
-    expect(fake.calls, 2, reason: 'the guarded request was retried once');
-    expect(reliefCalls, 1, reason: 'relief is bounded to one attempt');
-    final assistant = messages.whereType<AssistantMessage>().last;
-    expect(assistant.stopReason, StopReason.stop);
-    expect(assistant.errorMessage, isNull);
-  });
+      // The invariant: every request that left was measured under the window.
+      for (final context in fake.contexts) {
+        expect(_requestTokens(context), lessThanOrEqualTo(120));
+      }
+      expect(fake.calls, 2, reason: 'the guarded request was retried once');
+      expect(reliefCalls, 1, reason: 'relief is bounded to one attempt');
+      final assistant = messages.whereType<AssistantMessage>().last;
+      expect(assistant.stopReason, StopReason.stop);
+      expect(assistant.errorMessage, isNull);
+    },
+  );
 
   test('the loop adopts the relieved context for later requests', () async {
     // After the relief, the next request must be built on the compacted
@@ -188,62 +191,68 @@ void main() {
     expect(second, hasLength(2), reason: 'assistant carrier + tool result');
   });
 
-  test('nothing hideable: the verbatim guard error survives, no loop', () async {
-    final fake = _FakeStreamFunction([_textTurn('never')]);
-    var reliefCalls = 0;
-    final stream = agentLoop(
-      prompts: [UserMessage.text('x' * 800)],
-      context: const Context(messages: [], tools: [_bashTool]),
-      config: AgentLoopConfig(
-        model: _model,
-        overWindowRelief: (messages) async {
-          reliefCalls++;
-          return null; // The host could not free the window.
-        },
-      ),
-      streamFunction: fake.call,
-      toolExecutor: (_, _, _) async => ToolExecutionResult.text('unused'),
-    );
+  test(
+    'nothing hideable: the verbatim guard error survives, no loop',
+    () async {
+      final fake = _FakeStreamFunction([_textTurn('never')]);
+      var reliefCalls = 0;
+      final stream = agentLoop(
+        prompts: [UserMessage.text('x' * 800)],
+        context: const Context(messages: [], tools: [_bashTool]),
+        config: AgentLoopConfig(
+          model: _model,
+          overWindowRelief: (messages) async {
+            reliefCalls++;
+            return null; // The host could not free the window.
+          },
+        ),
+        streamFunction: fake.call,
+        toolExecutor: (_, _, _) async => ToolExecutionResult.text('unused'),
+      );
 
-    final messages = await stream.result as List<dynamic>;
-    expect(fake.calls, 0);
-    expect(reliefCalls, 1, reason: 'one attempt — never a loop');
-    final assistant = messages.whereType<AssistantMessage>().single;
-    expect(assistant.stopReason, StopReason.error);
-    expect(assistant.errorMessage, contains(contextWindowExhaustedMarker));
-    expect(assistant.errorMessage, contains('The request was not sent'));
-  });
+      final messages = await stream.result as List<dynamic>;
+      expect(fake.calls, 0);
+      expect(reliefCalls, 1, reason: 'one attempt — never a loop');
+      final assistant = messages.whereType<AssistantMessage>().single;
+      expect(assistant.stopReason, StopReason.error);
+      expect(assistant.errorMessage, contains(contextWindowExhaustedMarker));
+      expect(assistant.errorMessage, contains('The request was not sent'));
+    },
+  );
 
-  test('relief that stays over the window counts as failure (E1: never loops)', () async {
-    // A single tool result larger than the whole window: no compaction can
-    // save it, and the relief's "compacted" list is STILL over — the loop
-    // must give up with the honest error, not retry forever.
-    final fake = _FakeStreamFunction([
-      _toolTurn([_call('c1', 'bash')]),
-      _textTurn('never'),
-    ]);
-    var reliefCalls = 0;
-    final stream = agentLoop(
-      prompts: [UserMessage.text('u' * 40)],
-      context: const Context(messages: [], tools: [_bashTool]),
-      config: AgentLoopConfig(
-        model: _model,
-        overWindowRelief: (messages) async {
-          reliefCalls++;
-          return messages; // "Compacted" but still over the window.
-        },
-      ),
-      streamFunction: fake.call,
-      toolExecutor: (_, _, _) async => ToolExecutionResult.text('r' * 800),
-    );
+  test(
+    'relief that stays over the window counts as failure (E1: never loops)',
+    () async {
+      // A single tool result larger than the whole window: no compaction can
+      // save it, and the relief's "compacted" list is STILL over — the loop
+      // must give up with the honest error, not retry forever.
+      final fake = _FakeStreamFunction([
+        _toolTurn([_call('c1', 'bash')]),
+        _textTurn('never'),
+      ]);
+      var reliefCalls = 0;
+      final stream = agentLoop(
+        prompts: [UserMessage.text('u' * 40)],
+        context: const Context(messages: [], tools: [_bashTool]),
+        config: AgentLoopConfig(
+          model: _model,
+          overWindowRelief: (messages) async {
+            reliefCalls++;
+            return messages; // "Compacted" but still over the window.
+          },
+        ),
+        streamFunction: fake.call,
+        toolExecutor: (_, _, _) async => ToolExecutionResult.text('r' * 800),
+      );
 
-    final messages = await stream.result as List<dynamic>;
-    expect(fake.calls, 1, reason: 'the first request fit and went out');
-    expect(reliefCalls, 1, reason: 'one attempt — never a loop');
-    final assistant = messages.whereType<AssistantMessage>().last;
-    expect(assistant.stopReason, StopReason.error);
-    expect(assistant.errorMessage, contains(contextWindowExhaustedMarker));
-  });
+      final messages = await stream.result as List<dynamic>;
+      expect(fake.calls, 1, reason: 'the first request fit and went out');
+      expect(reliefCalls, 1, reason: 'one attempt — never a loop');
+      final assistant = messages.whereType<AssistantMessage>().last;
+      expect(assistant.stopReason, StopReason.error);
+      expect(assistant.errorMessage, contains(contextWindowExhaustedMarker));
+    },
+  );
 
   test("no relief configured: today's behavior is byte-identical", () async {
     final fake = _FakeStreamFunction([_textTurn('never')]);

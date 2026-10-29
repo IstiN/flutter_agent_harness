@@ -63,8 +63,9 @@ void main() {
   });
 
   test('pubspec.yaml has no js_widget_runtime dependency_override', () {
-    final overrides = loadPubspec('flutter_app/pubspec.yaml')
-        ['dependency_overrides'] as YamlMap?;
+    final overrides =
+        loadPubspec('flutter_app/pubspec.yaml')['dependency_overrides']
+            as YamlMap?;
     expect(
       overrides?.keys,
       isNot(contains('js_widget_runtime')),
@@ -76,27 +77,31 @@ void main() {
   });
 
   test('pubspec.yaml requires js_widget_runtime >= $minFixedVersion', () {
-    final deps = loadPubspec('flutter_app/pubspec.yaml')['dependencies']
-        as YamlMap;
+    final deps =
+        loadPubspec('flutter_app/pubspec.yaml')['dependencies'] as YamlMap;
     expect(deps['js_widget_runtime'], '^$minFixedVersion');
   });
 
   test('committed lockfile resolves js_widget_runtime hosted >= '
       '$minFixedVersion', () {
-    final entry = (loadPubspec('flutter_app/pubspec.lock')['packages']
-        as YamlMap)['js_widget_runtime'] as YamlMap;
+    final entry =
+        (loadPubspec('flutter_app/pubspec.lock')['packages']
+                as YamlMap)['js_widget_runtime']
+            as YamlMap;
     final description = entry['description'] as YamlMap;
     expect(
       entry['source'],
       'hosted',
-      reason: 'a git-sourced js_widget_runtime in the lockfile is the '
+      reason:
+          'a git-sourced js_widget_runtime in the lockfile is the '
           'pre-gh-1341 pin regression (bd1e7c2 has no 9d57570 bridge fix)',
     );
     expect(description['url'], 'https://pub.dev');
     expect(
       pubVersion(entry['version'] as String),
       greaterThanOrEqualTo(pubVersion(minFixedVersion)),
-      reason: 'versions before 0.4.156 ship the flutter_js engine with the '
+      reason:
+          'versions before 0.4.156 ship the flutter_js engine with the '
           'stale _bridgeChannels list — jsr.hostCall/jsr.capture hang on JSC',
     );
   });

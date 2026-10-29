@@ -411,10 +411,7 @@ void main() {
         expect(polls, 5);
         expect(requests, hasLength(5));
         // The retries surfaced as STATUS lines, not an exception.
-        expect(
-          statuses.where((s) => s.contains('retrying')),
-          hasLength(3),
-        );
+        expect(statuses.where((s) => s.contains('retrying')), hasLength(3));
       },
     );
 

@@ -53,26 +53,28 @@ void main() {
       expect(cache.lastSaveError, contains('keychain write failed'));
     });
 
-    test('a successful save clears the name; other names stay degraded',
-        () async {
-      final store = _ScriptedStore()
-        ..writeError = StateError('keychain write failed (exit 45)');
-      final cache = SecureKeyCache(store);
-      await cache.probe();
+    test(
+      'a successful save clears the name; other names stay degraded',
+      () async {
+        final store = _ScriptedStore()
+          ..writeError = StateError('keychain write failed (exit 45)');
+        final cache = SecureKeyCache(store);
+        await cache.probe();
 
-      await cache.save('FA_KEY_A', 'k1');
-      await cache.save('FA_KEY_B', 'k2');
-      expect(cache.failedSaveNames, ['FA_KEY_A', 'FA_KEY_B']);
+        await cache.save('FA_KEY_A', 'k1');
+        await cache.save('FA_KEY_B', 'k2');
+        expect(cache.failedSaveNames, ['FA_KEY_A', 'FA_KEY_B']);
 
-      store.writeError = null;
-      expect(await cache.save('FA_KEY_A', 'k3'), isTrue);
+        store.writeError = null;
+        expect(await cache.save('FA_KEY_A', 'k3'), isTrue);
 
-      expect(cache.failedSaveNames, ['FA_KEY_B']);
-      expect(cache.saveFailureDiagnostic('FA_KEY_A'), isNull);
-      expect(cache.read('FA_KEY_A'), 'k3');
-      // Counter semantics stay cumulative (gh-1059 /key status contract).
-      expect(cache.saveFailures, 2);
-    });
+        expect(cache.failedSaveNames, ['FA_KEY_B']);
+        expect(cache.saveFailureDiagnostic('FA_KEY_A'), isNull);
+        expect(cache.read('FA_KEY_A'), 'k3');
+        // Counter semantics stay cumulative (gh-1059 /key status contract).
+        expect(cache.saveFailures, 2);
+      },
+    );
 
     test('the unavailable store degrades with the slot name too', () async {
       final store = _ScriptedStore();
@@ -87,8 +89,7 @@ void main() {
     });
   });
 
-  group('macOS missing-default-keychain advisory (gh-1679 UT-4, AC6)',
-      () {
+  group('macOS missing-default-keychain advisory (gh-1679 UT-4, AC6)', () {
     test('classifies the preflight failure shape', () {
       expect(
         isMissingDefaultKeychainError('no default keychain (exit 1)'),

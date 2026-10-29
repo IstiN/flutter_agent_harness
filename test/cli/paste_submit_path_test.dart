@@ -53,9 +53,7 @@ class _GatedStream {
     }
 
     if (calls == gateOnCall) {
-      unawaited(
-        gate.future.then((_) => emit(turns.removeAt(0))),
-      );
+      unawaited(gate.future.then((_) => emit(turns.removeAt(0))));
     } else {
       emit(turns.removeAt(0));
     }

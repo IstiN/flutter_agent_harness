@@ -57,16 +57,12 @@ void main() {
       expect(info.resetsAt, DateTime.utc(2026, 10, 19, 19, 49, 31));
 
       // Non-numeric strings still degrade exactly as before — no throw.
-      const junk =
-          '{"error":{"plan_type":"free","resets_in_seconds":"soon"}}';
+      const junk = '{"error":{"plan_type":"free","resets_in_seconds":"soon"}}';
       expect(
         parseRateLimitInfo(statusCode: 429, body: junk)!.resetsInSeconds,
         isNull,
       );
-      expect(
-        parseRateLimitInfo(statusCode: 429, body: junk)!.resetsAt,
-        isNull,
-      );
+      expect(parseRateLimitInfo(statusCode: 429, body: junk)!.resetsAt, isNull);
     });
   });
 
@@ -141,7 +137,10 @@ void main() {
           '"resets_at":1792439371,"eligible_promo":"SUMMER50",'
           '"resets_in_seconds":2280562}}';
       final info = parseRateLimitInfo(statusCode: 429, body: body)!;
-      expect(formatRateLimitMessage(info), contains('Promo available: SUMMER50.'));
+      expect(
+        formatRateLimitMessage(info),
+        contains('Promo available: SUMMER50.'),
+      );
       expect(
         formatRateLimitMessage(info, localeCode: 'ru'),
         contains('Доступно промо: SUMMER50.'),
@@ -176,10 +175,7 @@ void main() {
   group('formatResetStamp', () {
     test('ru day-month + 24h clock', () {
       expect(
-        formatResetStamp(
-          DateTime(2026, 10, 19, 22, 49),
-          localeCode: 'ru',
-        ),
+        formatResetStamp(DateTime(2026, 10, 19, 22, 49), localeCode: 'ru'),
         '19 октября в 22:49',
       );
     });
@@ -293,8 +289,7 @@ void main() {
   });
 
   group('render surfaces (AC5)', () {
-    test('formatProviderError renders the human line with the 429 prefix',
-        () {
+    test('formatProviderError renders the human line with the 429 prefix', () {
       final error = ProviderHttpError(429, clipBody, rateLimit: clipInfo());
       final rendered = formatProviderError(error);
       expect(rendered, startsWith('429: '));
@@ -341,10 +336,7 @@ void main() {
   group('parseRetryAfter (moved verbatim, issue #867)', () {
     test('delta seconds and HTTP dates still parse', () {
       expect(parseRetryAfter('120'), const Duration(minutes: 2));
-      expect(
-        parseRetryAfter('Wed, 21 Oct 2015 07:28:00 GMT'),
-        isNotNull,
-      );
+      expect(parseRetryAfter('Wed, 21 Oct 2015 07:28:00 GMT'), isNotNull);
       expect(parseRetryAfter('garbage'), isNull);
       expect(parseRetryAfter(null), isNull);
     });

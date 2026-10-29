@@ -225,8 +225,10 @@ void main() {
 
     test('legacy escape-free slugs decode as before (compat)', () {
       // Existing on-disk folders keep decoding through the legacy split.
-      expect(decodeSessionCwd('--Users-Uladzimir_Klyshevich-git-dm.ai--'),
-          '/Users/Uladzimir_Klyshevich/git/dm.ai');
+      expect(
+        decodeSessionCwd('--Users-Uladzimir_Klyshevich-git-dm.ai--'),
+        '/Users/Uladzimir_Klyshevich/git/dm.ai',
+      );
       expect(decodeSessionCwd('--tmp-a-b--'), '/tmp/a/b');
     });
 

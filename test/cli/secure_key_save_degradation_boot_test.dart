@@ -32,16 +32,18 @@ final class _MapStore implements SecureKeyStore {
 
 void main() {
   group('secureKeySaveDegradationLines (gh-1679 UT-2, IT-2, AC2)', () {
-    test('boot with no failures and no flagged entries prints nothing new',
-        () async {
-      final keys = SecureKeyCache(_MapStore());
-      await keys.probe();
+    test(
+      'boot with no failures and no flagged entries prints nothing new',
+      () async {
+        final keys = SecureKeyCache(_MapStore());
+        await keys.probe();
 
-      expect(
-        secureKeySaveDegradationLines(keys: keys, customProviders: const []),
-        isEmpty,
-      );
-    });
+        expect(
+          secureKeySaveDegradationLines(keys: keys, customProviders: const []),
+          isEmpty,
+        );
+      },
+    );
 
     test('in-process failed saves print one line per slot with the last '
         'error and the retry command', () async {
@@ -109,37 +111,32 @@ void main() {
       );
 
       expect(
-        secureKeySaveDegradationLines(
-          keys: keys,
-          customProviders: [entry],
-        ),
+        secureKeySaveDegradationLines(keys: keys, customProviders: [entry]),
         isEmpty,
       );
     });
 
-    test('a successful save clears the in-process name from the boot note',
-        () async {
-      final store = _MapStore()..failWrites = true;
-      final keys = SecureKeyCache(store);
-      await keys.probe();
-      await keys.save('FA_KEY_A', 'sk-value-a');
-      expect(keys.failedSaveNames, ['FA_KEY_A']);
+    test(
+      'a successful save clears the in-process name from the boot note',
+      () async {
+        final store = _MapStore()..failWrites = true;
+        final keys = SecureKeyCache(store);
+        await keys.probe();
+        await keys.save('FA_KEY_A', 'sk-value-a');
+        expect(keys.failedSaveNames, ['FA_KEY_A']);
 
-      store.failWrites = false;
-      await keys.save('FA_KEY_A', 'sk-value-a');
-      expect(
-        secureKeySaveDegradationLines(
-          keys: keys,
-          customProviders: const [],
-        ),
-        isEmpty,
-      );
-    });
+        store.failWrites = false;
+        await keys.save('FA_KEY_A', 'sk-value-a');
+        expect(
+          secureKeySaveDegradationLines(keys: keys, customProviders: const []),
+          isEmpty,
+        );
+      },
+    );
   });
 
   group('CustomProviderEntry.keyNotPersisted yaml round-trip (gh-1679)', () {
-    test('the flag survives a yaml round-trip; unset stays byte-absent',
-        () {
+    test('the flag survives a yaml round-trip; unset stays byte-absent', () {
       final flagged = CustomProviderEntry(
         name: 'kimi_ira',
         apiType: 'openai',
@@ -160,8 +157,10 @@ void main() {
         keyName: 'FA_KEY_API_KIMI_COM_KIMI_ME',
       );
       expect(plain.toYaml(), isNot(contains('keyNotPersisted')));
-      expect(CustomProviderEntry.fromYaml(plain.toYaml()).keyNotPersisted,
-          isFalse);
+      expect(
+        CustomProviderEntry.fromYaml(plain.toYaml()).keyNotPersisted,
+        isFalse,
+      );
     });
   });
 

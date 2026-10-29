@@ -51,10 +51,7 @@ const String logFidelityEnvKey = 'FA_LOG_FIDELITY';
 /// The resolved render defaults for one run (gh-1433).
 final class LogFidelity {
   /// Creates the resolved defaults.
-  const LogFidelity({
-    required this.streamThinking,
-    required this.liveText,
-  });
+  const LogFidelity({required this.streamThinking, required this.liveText});
 
   /// Thinking deltas render dimmed, live (the gh-1198 tier-1 renderer).
   final bool streamThinking;
@@ -102,8 +99,7 @@ LogFidelity resolveLogFidelity({
       );
     case LogFidelityFace.log:
       final legacy =
-          (envFidelity ?? '').trim().toLowerCase() ==
-          logFidelityLegacyEnvValue;
+          (envFidelity ?? '').trim().toLowerCase() == logFidelityLegacyEnvValue;
       if (legacy) {
         // The second-tier revert: the exact pre-flip face — thinking only
         // through the setting, text per the surface's own mode.

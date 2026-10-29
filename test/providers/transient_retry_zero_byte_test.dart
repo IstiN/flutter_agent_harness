@@ -167,42 +167,44 @@ void main() {
       expect(isTransientNetworkError(terminal), isTrue);
     });
 
-    test('a socket-class failure chain keeps the full 3-attempt budget — '
-        'the zero-byte bound governs only watchdog-killed silent attempts',
-        () async {
-      var calls = 0;
-      final wrapped = transientRetryStreamFunction((
-        model,
-        context, {
-        cancelToken,
-      }) {
-        calls++;
-        final stream = AssistantMessageEventStream();
-        scheduleMicrotask(() {
-          stream
-            ..push(
-              ErrorEvent(
-                reason: StopReason.error,
-                error: testAssistant(
-                  stopReason: StopReason.error,
-                  errorMessage: 'Connection reset by peer',
+    test(
+      'a socket-class failure chain keeps the full 3-attempt budget — '
+      'the zero-byte bound governs only watchdog-killed silent attempts',
+      () async {
+        var calls = 0;
+        final wrapped = transientRetryStreamFunction((
+          model,
+          context, {
+          cancelToken,
+        }) {
+          calls++;
+          final stream = AssistantMessageEventStream();
+          scheduleMicrotask(() {
+            stream
+              ..push(
+                ErrorEvent(
+                  reason: StopReason.error,
+                  error: testAssistant(
+                    stopReason: StopReason.error,
+                    errorMessage: 'Connection reset by peer',
+                  ),
                 ),
-              ),
-            )
-            ..end();
+              )
+              ..end();
+          });
+          return stream;
         });
-        return stream;
-      });
 
-      final events = await wrapped(
-        testModel,
-        const Context(messages: []),
-      ).toList();
+        final events = await wrapped(
+          testModel,
+          const Context(messages: []),
+        ).toList();
 
-      expect(calls, 3, reason: 'socket-class replays keep the full budget');
-      final terminal = events.whereType<ErrorEvent>().single;
-      expect(terminal.error.errorMessage, contains('failed after 3'));
-    });
+        expect(calls, 3, reason: 'socket-class replays keep the full budget');
+        final terminal = events.whereType<ErrorEvent>().single;
+        expect(terminal.error.errorMessage, contains('failed after 3'));
+      },
+    );
 
     test('a USER abort before any byte still stands — no replay', () async {
       var calls = 0;
@@ -347,13 +349,15 @@ void main() {
         isTransientNetworkError(
           testAssistant(
             stopReason: StopReason.error,
-            errorMessage: 'TimeoutException: provider stream request to '
+            errorMessage:
+                'TimeoutException: provider stream request to '
                 'https://api.example.com/v1/chat/completions timed out: no '
                 'response headers within 180s (connect watchdog)',
           ),
         ),
         isTrue,
-        reason: 'the #1125 connect ladder exhaustion must flow into this '
+        reason:
+            'the #1125 connect ladder exhaustion must flow into this '
             'retry budget, not die as a raw error',
       );
     });

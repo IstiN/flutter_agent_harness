@@ -49,8 +49,7 @@ void main() {
       expect(out, isNot(contains('ImageView bounds=[240,380]')));
     });
 
-    test('web view: text nodes and links survive, zero-area link dropped',
-        () {
+    test('web view: text nodes and links survive, zero-area link dropped', () {
       final index = parseMobileHierarchy(_fixture('web_view.xml'));
       final out = index.render();
       expect(out, contains('com.example.browser'));

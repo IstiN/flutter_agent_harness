@@ -272,63 +272,59 @@ void main() {
   });
 
   group('fa_hub_client against a protected hub', () {
-    test(
-      'master-secret client enrolls; the issued secret reconnects',
-      () async {
-        final stateFile = File(
-          '\${Directory.systemTemp.path}/hub_e2e_state_\${DateTime.now().microsecondsSinceEpoch}.json',
-        );
-        final clientConfigFile =
-            '\${Directory.systemTemp.path}/hub_e2e_client_\${DateTime.now().microsecondsSinceEpoch}.json';
-        addTearDown(() async {
-          if (await stateFile.exists()) await stateFile.delete();
-          final f = File(clientConfigFile);
-          if (await f.exists()) await f.delete();
-        });
-        final hub = LocalHub(
-          port: 0,
-          masterSecret: 'hub-pw',
-          stateFile: stateFile,
-        );
-        await hub.start();
-        addTearDown(hub.stop);
+    test('master-secret client enrolls; the issued secret reconnects', () async {
+      final stateFile = File(
+        '\${Directory.systemTemp.path}/hub_e2e_state_\${DateTime.now().microsecondsSinceEpoch}.json',
+      );
+      final clientConfigFile =
+          '\${Directory.systemTemp.path}/hub_e2e_client_\${DateTime.now().microsecondsSinceEpoch}.json';
+      addTearDown(() async {
+        if (await stateFile.exists()) await stateFile.delete();
+        final f = File(clientConfigFile);
+        if (await f.exists()) await f.delete();
+      });
+      final hub = LocalHub(
+        port: 0,
+        masterSecret: 'hub-pw',
+        stateFile: stateFile,
+      );
+      await hub.start();
+      addTearDown(hub.stop);
 
-        final identity = await HubIdentity.generate();
-        final first = HubClient(
-          config: HubConfig(url: hub.url.toString()),
-          identity: identity,
-          clientSecret: 'hub-pw',
-          enroll: true,
-          configFile: clientConfigFile,
-          backoff: (int _) => const Duration(milliseconds: 5),
-        );
-        await first.connect();
-        expect(first.welcomed, completes);
-        // The enrolled frame lands after welcome and the persist is
-        // fire-and-forget — poll until the issued secret is on disk.
-        String? issued;
-        for (var i = 0; i < 100 && issued == null; i++) {
-          await Future<void>.delayed(const Duration(milliseconds: 50));
-          issued = readDapConfig(clientConfigFile)['clientSecret'] as String?;
-        }
-        await first.disconnect();
-        expect(issued, isNotNull);
-        expect(issued, isNot('hub-pw'));
+      final identity = await HubIdentity.generate();
+      final first = HubClient(
+        config: HubConfig(url: hub.url.toString()),
+        identity: identity,
+        clientSecret: 'hub-pw',
+        enroll: true,
+        configFile: clientConfigFile,
+        backoff: (int _) => const Duration(milliseconds: 5),
+      );
+      await first.connect();
+      expect(first.welcomed, completes);
+      // The enrolled frame lands after welcome and the persist is
+      // fire-and-forget — poll until the issued secret is on disk.
+      String? issued;
+      for (var i = 0; i < 100 && issued == null; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        issued = readDapConfig(clientConfigFile)['clientSecret'] as String?;
+      }
+      await first.disconnect();
+      expect(issued, isNotNull);
+      expect(issued, isNot('hub-pw'));
 
-        // Reconnect with the issued secret (no master): welcomed.
-        final second = HubClient(
-          config: HubConfig(url: hub.url.toString()),
-          identity: identity,
-          clientSecret: issued,
-          configFile: clientConfigFile,
-          backoff: (int _) => const Duration(milliseconds: 5),
-        );
-        await second.connect();
-        expect(second.welcomed, completes);
-        await second.disconnect();
-      },
-      timeout: const Timeout(Duration(seconds: 15)),
-    );
+      // Reconnect with the issued secret (no master): welcomed.
+      final second = HubClient(
+        config: HubConfig(url: hub.url.toString()),
+        identity: identity,
+        clientSecret: issued,
+        configFile: clientConfigFile,
+        backoff: (int _) => const Duration(milliseconds: 5),
+      );
+      await second.connect();
+      expect(second.welcomed, completes);
+      await second.disconnect();
+    }, timeout: const Timeout(Duration(seconds: 15)));
 
     test('a wrong password is rejected at the upgrade (401)', () async {
       final hub = LocalHub(port: 0, masterSecret: 'hub-pw');

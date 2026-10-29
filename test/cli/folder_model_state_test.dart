@@ -46,7 +46,8 @@ void main() {
             hasProviderPreconfig: preconfig,
           ),
           isFalse,
-          reason: 'model=$model provider=$provider baseUrl=$baseUrl '
+          reason:
+              'model=$model provider=$provider baseUrl=$baseUrl '
               'preconfig=$preconfig',
         );
       }
@@ -135,7 +136,10 @@ void main() {
     });
 
     test('corrupt JSON loads as null', () async {
-      final path = folderModelStatePath(sessionsRoot: '/sessions', cwd: '/work');
+      final path = folderModelStatePath(
+        sessionsRoot: '/sessions',
+        cwd: '/work',
+      );
       await env.writeFile(path, '{not json');
       expect(
         await loadFolderModelState(
@@ -148,10 +152,16 @@ void main() {
     });
 
     test('wrong field types load as null', () async {
-      final path = folderModelStatePath(sessionsRoot: '/sessions', cwd: '/work');
+      final path = folderModelStatePath(
+        sessionsRoot: '/sessions',
+        cwd: '/work',
+      );
       await env.writeFile(
         path,
-        jsonEncode({'providerKind': 42, 'modelId': ['x']}),
+        jsonEncode({
+          'providerKind': 42,
+          'modelId': ['x'],
+        }),
       );
       expect(
         await loadFolderModelState(
@@ -164,7 +174,10 @@ void main() {
     });
 
     test('a JSON array loads as null', () async {
-      final path = folderModelStatePath(sessionsRoot: '/sessions', cwd: '/work');
+      final path = folderModelStatePath(
+        sessionsRoot: '/sessions',
+        cwd: '/work',
+      );
       await env.writeFile(path, '[1,2,3]');
       expect(
         await loadFolderModelState(
@@ -177,7 +190,10 @@ void main() {
     });
 
     test('a missing modelId loads as null', () async {
-      final path = folderModelStatePath(sessionsRoot: '/sessions', cwd: '/work');
+      final path = folderModelStatePath(
+        sessionsRoot: '/sessions',
+        cwd: '/work',
+      );
       await env.writeFile(path, jsonEncode({'providerKind': 'anthropic'}));
       expect(
         await loadFolderModelState(
@@ -210,7 +226,10 @@ void main() {
     });
 
     test('a pre-change state file loads with a null pin (AC4)', () async {
-      final path = folderModelStatePath(sessionsRoot: '/sessions', cwd: '/work');
+      final path = folderModelStatePath(
+        sessionsRoot: '/sessions',
+        cwd: '/work',
+      );
       await env.writeFile(
         path,
         jsonEncode({
@@ -229,7 +248,10 @@ void main() {
     });
 
     test('a non-string pin degrades to null', () async {
-      final path = folderModelStatePath(sessionsRoot: '/sessions', cwd: '/work');
+      final path = folderModelStatePath(
+        sessionsRoot: '/sessions',
+        cwd: '/work',
+      );
       await env.writeFile(
         path,
         jsonEncode({
@@ -285,8 +307,10 @@ void main() {
         baseUrl: 'https://api.kimi.com/coding/v1',
         customProvider: 'Kimi_Me',
       );
-      expect(folderStateProviderEntry(state, registryWith()).entry!.name,
-          'kimi_me');
+      expect(
+        folderStateProviderEntry(state, registryWith()).entry!.name,
+        'kimi_me',
+      );
     });
 
     test('a deleted entry yields the E1 note with the model kept', () {

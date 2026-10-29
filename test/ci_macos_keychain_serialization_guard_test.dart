@@ -69,26 +69,28 @@ void main() {
     final strategy = job['strategy'] as YamlMap?;
     final maxParallel = strategy?['max-parallel'];
     if (maxParallel is int) {
-      expect(maxParallel, greaterThanOrEqualTo(2),
-          reason:
-              'build-macos matrix is serialized (max-parallel: '
-              '$maxParallel) but the gh-1852 reason is retired: legs no '
-              'longer create keychains or write the search list — they '
-              'sign via ci-sign against the persistent host keychain. '
-              'Serialization here is pure lost throughput (#359). If a '
-              'NEW race justifies re-serializing, the reason must be '
-              'documented in this test, not inherited from the retired '
-              'per-job-keychain era.');
+      expect(
+        maxParallel,
+        greaterThanOrEqualTo(2),
+        reason:
+            'build-macos matrix is serialized (max-parallel: '
+            '$maxParallel) but the gh-1852 reason is retired: legs no '
+            'longer create keychains or write the search list — they '
+            'sign via ci-sign against the persistent host keychain. '
+            'Serialization here is pure lost throughput (#359). If a '
+            'NEW race justifies re-serializing, the reason must be '
+            'documented in this test, not inherited from the retired '
+            'per-job-keychain era.',
+      );
     }
   });
 
   test('AC2 — audit: no multi-leg matrix job mutates keychain state '
       '(gh-1852 class)', () {
     final offenders = <String>[];
-    for (final wf in Directory('.github/workflows')
-        .listSync()
-        .whereType<File>()
-        .where((f) => f.path.endsWith('.yml'))) {
+    for (final wf in Directory(
+      '.github/workflows',
+    ).listSync().whereType<File>().where((f) => f.path.endsWith('.yml'))) {
       final jobs = loadYaml(read(wf.path))['jobs'] as YamlMap? ?? YamlMap();
       jobs.forEach((name, job) {
         if (job is! YamlMap) return;
@@ -99,14 +101,17 @@ void main() {
         }
       });
     }
-    expect(offenders, isEmpty,
-        reason:
-            'a multi-leg matrix job still performs keychain lifecycle or '
-            'user-global keychain writes: $offenders. Matrix fan-outs '
-            'amplify every keychain race on the shared fa-m5 host/user '
-            '(gh-1852: intra-matrix eviction; gh-1866: cross-workflow '
-            'eviction; gh-1865: same-subject identity ambiguity). Signing '
-            'legs route through ci-sign against the persistent host '
-            'keychain instead.');
+    expect(
+      offenders,
+      isEmpty,
+      reason:
+          'a multi-leg matrix job still performs keychain lifecycle or '
+          'user-global keychain writes: $offenders. Matrix fan-outs '
+          'amplify every keychain race on the shared fa-m5 host/user '
+          '(gh-1852: intra-matrix eviction; gh-1866: cross-workflow '
+          'eviction; gh-1865: same-subject identity ambiguity). Signing '
+          'legs route through ci-sign against the persistent host '
+          'keychain instead.',
+    );
   });
 }

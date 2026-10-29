@@ -182,8 +182,7 @@ void main() {
       expect(snapshot.files, isEmpty);
     });
 
-    test('exports the subtree below cwd, deep-first and name-sorted',
-        () async {
+    test('exports the subtree below cwd, deep-first and name-sorted', () async {
       final fs = MemoryFileSystem(cwd: '/work');
       await fs.writeFile('/work/b/2.txt', 'two');
       await fs.writeFile('/work/a.txt', 'a');
@@ -198,24 +197,27 @@ void main() {
         '/work/b/1.txt',
         '/work/b/2.txt',
       ]);
-      expect(
-        snapshot.files.entries.map((e) => utf8.decode(e.value)),
-        ['a', 'one', 'two'],
-      );
+      expect(snapshot.files.entries.map((e) => utf8.decode(e.value)), [
+        'a',
+        'one',
+        'two',
+      ]);
     });
 
-    test('deep-copies file bytes (later writes cannot mutate the export)',
-        () async {
-      final fs = MemoryFileSystem(cwd: '/');
-      // writeBinaryFile stores the caller's buffer BY REFERENCE, so a
-      // shallow export would observe this later mutation.
-      final bytes = Uint8List.fromList(utf8.encode('before'));
-      await fs.writeBinaryFile('/f.bin', bytes);
-      final snapshot = fs.exportSnapshot();
-      bytes[0] = 'X'.codeUnitAt(0);
-      await fs.appendFile('/f.bin', '!');
-      expect(utf8.decode(snapshot.files['/f.bin']!), 'before');
-    });
+    test(
+      'deep-copies file bytes (later writes cannot mutate the export)',
+      () async {
+        final fs = MemoryFileSystem(cwd: '/');
+        // writeBinaryFile stores the caller's buffer BY REFERENCE, so a
+        // shallow export would observe this later mutation.
+        final bytes = Uint8List.fromList(utf8.encode('before'));
+        await fs.writeBinaryFile('/f.bin', bytes);
+        final snapshot = fs.exportSnapshot();
+        bytes[0] = 'X'.codeUnitAt(0);
+        await fs.appendFile('/f.bin', '!');
+        expect(utf8.decode(snapshot.files['/f.bin']!), 'before');
+      },
+    );
 
     test('export order matches an async listDir walk', () async {
       final fs = MemoryFileSystem(cwd: '/');

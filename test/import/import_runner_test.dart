@@ -73,59 +73,69 @@ void main() {
     faRoot.deleteSync(recursive: true);
   });
 
-  test('AC1: one session lands in the current folder bucket and renders',
-      () async {
-    await writeOmpStore({'s.jsonl': fixture('omp_modern.jsonl')});
-    final result = await run(const ImportSelector.all());
-    expect(result.exitCode, 0);
-    expect(lines, hasLength(1));
-    expect(lines.single, startsWith('imported 1f9d2a6b'));
-    expect(lines.single, matches(RegExp(r'\(\d+ records, skipped \d+\)(\s*\[[^\]]*\])?$')));
+  test(
+    'AC1: one session lands in the current folder bucket and renders',
+    () async {
+      await writeOmpStore({'s.jsonl': fixture('omp_modern.jsonl')});
+      final result = await run(const ImportSelector.all());
+      expect(result.exitCode, 0);
+      expect(lines, hasLength(1));
+      expect(lines.single, startsWith('imported 1f9d2a6b'));
+      expect(
+        lines.single,
+        matches(RegExp(r'\(\d+ records, skipped \d+\)(\s*\[[^\]]*\])?$')),
+      );
 
-    final sessions = await repo.list(cwd: project.path);
-    expect(sessions, hasLength(1));
-    final bucketDir = Directory(
-      '${faRoot.path}/${encodeSessionCwd(project.path)}',
-    );
-    expect(bucketDir.existsSync(), isTrue);
-    expect(bucketDir.listSync().whereType<File>(), hasLength(1));
+      final sessions = await repo.list(cwd: project.path);
+      expect(sessions, hasLength(1));
+      final bucketDir = Directory(
+        '${faRoot.path}/${encodeSessionCwd(project.path)}',
+      );
+      expect(bucketDir.existsSync(), isTrue);
+      expect(bucketDir.listSync().whereType<File>(), hasLength(1));
 
-    // The imported name rides the foreign title, newline-free (AC4).
-    final name = await repo.sessionNameQuick(sessions.single);
-    expect(name, 'Fix the login flow (renamed)');
+      // The imported name rides the foreign title, newline-free (AC4).
+      final name = await repo.sessionNameQuick(sessions.single);
+      expect(name, 'Fix the login flow (renamed)');
 
-    // Existing surfaces read it: trajectory projection renders the branch.
-    final session = await repo.open(sessions.single);
-    final snapshot = trajectorySnapshotOf(await session.getBranch());
-    expect(trajectoryLines(snapshot, width: 80), isNotEmpty);
+      // Existing surfaces read it: trajectory projection renders the branch.
+      final session = await repo.open(sessions.single);
+      final snapshot = trajectorySnapshotOf(await session.getBranch());
+      expect(trajectoryLines(snapshot, width: 80), isNotEmpty);
 
-    // The dedupe marker survives reload (F12/AC10).
-    final marker = sessions.single.metadata?['importedFrom'];
-    expect(marker, isA<Map>());
-    expect((marker as Map)['sourceId'], '1f9d2a6b-9c0d-4f34-a111-000000000001');
-    expect(marker['harness'], 'omp');
-    expect(marker['recordCount'], greaterThan(0));
-  });
+      // The dedupe marker survives reload (F12/AC10).
+      final marker = sessions.single.metadata?['importedFrom'];
+      expect(marker, isA<Map>());
+      expect(
+        (marker as Map)['sourceId'],
+        '1f9d2a6b-9c0d-4f34-a111-000000000001',
+      );
+      expect(marker['harness'], 'omp');
+      expect(marker['recordCount'], greaterThan(0));
+    },
+  );
 
-  test('AC2 + E6: --all imports every session; reruns skip idempotently',
-      () async {
-    await writeOmpStore({
-      'a.jsonl': fixture('omp_modern.jsonl'),
-      'b.jsonl': fixture('omp_legacy.jsonl'),
-    });
-    final first = await run(const ImportSelector.all());
-    expect(first.exitCode, 0);
-    expect(lines.where((l) => l.startsWith('imported ')), hasLength(2));
+  test(
+    'AC2 + E6: --all imports every session; reruns skip idempotently',
+    () async {
+      await writeOmpStore({
+        'a.jsonl': fixture('omp_modern.jsonl'),
+        'b.jsonl': fixture('omp_legacy.jsonl'),
+      });
+      final first = await run(const ImportSelector.all());
+      expect(first.exitCode, 0);
+      expect(lines.where((l) => l.startsWith('imported ')), hasLength(2));
 
-    final second = await run(const ImportSelector.all());
-    expect(second.exitCode, 0, reason: 'already-imported is not an error');
-    expect(lines.where((l) => l.startsWith('skipped ')), hasLength(2));
-    expect(
-      await repo.list(cwd: project.path),
-      hasLength(2),
-      reason: 're-import writes nothing new',
-    );
-  });
+      final second = await run(const ImportSelector.all());
+      expect(second.exitCode, 0, reason: 'already-imported is not an error');
+      expect(lines.where((l) => l.startsWith('skipped ')), hasLength(2));
+      expect(
+        await repo.list(cwd: project.path),
+        hasLength(2),
+        reason: 're-import writes nothing new',
+      );
+    },
+  );
 
   test('E7: an absent store exits 2 naming the expected path', () async {
     final result = await run(const ImportSelector.all());
@@ -150,8 +160,7 @@ void main() {
     expect(await repo.list(cwd: project.path), isEmpty);
   });
 
-  test('E9b: an ambiguous id lists the matches and imports nothing',
-      () async {
+  test('E9b: an ambiguous id lists the matches and imports nothing', () async {
     final modern = fixture('omp_modern.jsonl');
     await writeOmpStore({
       'p1.jsonl': modern,
@@ -172,16 +181,20 @@ void main() {
     expect(await repo.list(cwd: project.path), hasLength(1));
   });
 
-  test('E10: a corrupt line mid-file skips with a count, rest imports',
-      () async {
-    final linesText = fixture('omp_legacy.jsonl').split('\n');
-    linesText.insert(2, '{this is not json');
-    Directory(ompBucket()).createSync(recursive: true);
-    File('${ompBucket()}/corrupt.jsonl').writeAsStringSync(linesText.join('\n'));
-    final result = await run(const ImportSelector.all());
-    expect(result.exitCode, 0);
-    expect(lines.single, matches(RegExp(r'skipped [1-9]+\)')));
-  });
+  test(
+    'E10: a corrupt line mid-file skips with a count, rest imports',
+    () async {
+      final linesText = fixture('omp_legacy.jsonl').split('\n');
+      linesText.insert(2, '{this is not json');
+      Directory(ompBucket()).createSync(recursive: true);
+      File(
+        '${ompBucket()}/corrupt.jsonl',
+      ).writeAsStringSync(linesText.join('\n'));
+      final result = await run(const ImportSelector.all());
+      expect(result.exitCode, 0);
+      expect(lines.single, matches(RegExp(r'skipped [1-9]+\)')));
+    },
+  );
 
   test('E14: a kill-mid-import file is replaced on retry (AC10)', () async {
     await writeOmpStore({'s.jsonl': fixture('omp_modern.jsonl')});
@@ -194,15 +207,17 @@ void main() {
     final text = file.readAsStringSync();
     final withoutComplete = text
         .split('\n')
-        .where(
-          (line) => !line.contains('import.omp.complete'),
-        )
+        .where((line) => !line.contains('import.omp.complete'))
         .join('\n');
     file.writeAsStringSync(withoutComplete);
 
     final retry = await run(const ImportSelector.all());
     expect(retry.exitCode, 0);
-    expect(lines.single, startsWith('imported '), reason: 'replaced, not skipped');
+    expect(
+      lines.single,
+      startsWith('imported '),
+      reason: 'replaced, not skipped',
+    );
     final after = await repo.list(cwd: project.path);
     expect(after, hasLength(1));
     final session = await repo.open(after.single);
@@ -215,18 +230,20 @@ void main() {
     );
   });
 
-  test('AC9: oversized files refuse with an explicit reason and no import',
-      () async {
-    await writeOmpStore({'big.jsonl': fixture('omp_modern.jsonl')});
-    final result = await run(
-      const ImportSelector.all(),
-      limits: const ImportLimits(maxFileBytes: 16),
-    );
-    expect(result.exitCode, 3, reason: 'nothing imported');
-    expect(lines.single, startsWith('warning: skipped'));
-    expect(lines.single, contains('file too large'));
-    expect(await repo.list(cwd: project.path), isEmpty);
-  });
+  test(
+    'AC9: oversized files refuse with an explicit reason and no import',
+    () async {
+      await writeOmpStore({'big.jsonl': fixture('omp_modern.jsonl')});
+      final result = await run(
+        const ImportSelector.all(),
+        limits: const ImportLimits(maxFileBytes: 16),
+      );
+      expect(result.exitCode, 3, reason: 'nothing imported');
+      expect(lines.single, startsWith('warning: skipped'));
+      expect(lines.single, contains('file too large'));
+      expect(await repo.list(cwd: project.path), isEmpty);
+    },
+  );
 
   test('REG-5 + AC11: the foreign store stays byte-identical and stdout '
       'carries ids/counts only', () async {
@@ -261,5 +278,8 @@ void main() {
 /// path → (size, mtimeMs) for every file under [dir].
 Map<String, (int, int)> _treeSnapshot(Directory dir) => {
   for (final entity in dir.listSync(recursive: true).whereType<File>())
-    entity.path: (entity.lengthSync(), entity.statSync().modified.millisecondsSinceEpoch),
+    entity.path: (
+      entity.lengthSync(),
+      entity.statSync().modified.millisecondsSinceEpoch,
+    ),
 };

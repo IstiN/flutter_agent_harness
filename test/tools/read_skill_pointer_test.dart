@@ -50,10 +50,7 @@ void main() {
 
   group('AC1 — pointer-following reads', () {
     test('fs path and builtin URI return identical bytes', () async {
-      await seedPointer(
-        'create-goal',
-        '${builtinSkillPath('create-goal')}\n',
-      );
+      await seedPointer('create-goal', '${builtinSkillPath('create-goal')}\n');
       final path = '/ws/.fah/skills/create-goal/SKILL.md';
 
       final viaPointer = await readText(path);
@@ -63,25 +60,24 @@ void main() {
       expect(viaPointer, contains('create-goal'));
     });
 
-    test('every builtin skill reads byte-identically through its pointer',
-        () async {
-      for (final skill in builtinSkills()) {
-        await seedPointer(skill.name, '${builtinSkillPath(skill.name)}\n');
-        final viaPointer = await readText(
-          '/ws/.fah/skills/${skill.name}/SKILL.md',
-        );
-        final viaBuiltin = await readText(builtinSkillPath(skill.name));
-        expect(viaPointer, viaBuiltin, reason: skill.name);
-      }
-    });
+    test(
+      'every builtin skill reads byte-identically through its pointer',
+      () async {
+        for (final skill in builtinSkills()) {
+          await seedPointer(skill.name, '${builtinSkillPath(skill.name)}\n');
+          final viaPointer = await readText(
+            '/ws/.fah/skills/${skill.name}/SKILL.md',
+          );
+          final viaBuiltin = await readText(builtinSkillPath(skill.name));
+          expect(viaPointer, viaBuiltin, reason: skill.name);
+        }
+      },
+    );
 
     test('a missing file with no pointer keeps the error', () async {
       final error = await readError('/ws/notes.txt');
       expect(error, isA<StateError>());
-      expect(
-        (error as StateError).message,
-        isNot(contains('skill pointer')),
-      );
+      expect((error as StateError).message, isNot(contains('skill pointer')));
     });
 
     test('a real file still wins over pointer machinery', () async {
@@ -123,25 +119,27 @@ void main() {
       expect(text, completion('recovered body'));
     });
 
-    test('persistently empty lookup → explicit error naming the resource',
-        () async {
-      await expectLater(
-        readText(
-          'builtin://skills/create-goal/SKILL.md',
-          builtinText: (path) => '',
-        ),
-        throwsA(
-          isA<StateError>().having(
-            (e) => e.message,
-            'message',
-            allOf(
-              contains('builtin://skills/create-goal/SKILL.md'),
-              contains('empty after retry'),
+    test(
+      'persistently empty lookup → explicit error naming the resource',
+      () async {
+        await expectLater(
+          readText(
+            'builtin://skills/create-goal/SKILL.md',
+            builtinText: (path) => '',
+          ),
+          throwsA(
+            isA<StateError>().having(
+              (e) => e.message,
+              'message',
+              allOf(
+                contains('builtin://skills/create-goal/SKILL.md'),
+                contains('empty after retry'),
+              ),
             ),
           ),
-        ),
-      );
-    });
+        );
+      },
+    );
 
     test('the error names the resource id (E5)', () async {
       await expectLater(

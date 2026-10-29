@@ -47,10 +47,7 @@ void main() {
     test('the banner fires once per process', () {
       final notify = AutoUpdateNotify();
       // The tag carries its own v prefix (release tags are `v0.1.44`).
-      expect(
-        notify.banner('v0.1.44'),
-        'fa v0.1.44 available → run: fa update',
-      );
+      expect(notify.banner('v0.1.44'), 'fa v0.1.44 available → run: fa update');
       expect(
         notify.banner('v0.1.45'),
         isNull,

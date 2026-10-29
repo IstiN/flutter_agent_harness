@@ -51,8 +51,7 @@ final class RefusingFullOpenRepo implements SessionRepo {
       _delegate.create(options);
 
   @override
-  Future<List<SessionMetadata>> list({String? cwd}) =>
-      _delegate.list(cwd: cwd);
+  Future<List<SessionMetadata>> list({String? cwd}) => _delegate.list(cwd: cwd);
 
   @override
   Future<void> delete(SessionMetadata metadata, {String actor = 'unknown'}) =>
@@ -116,99 +115,86 @@ void main() {
     await session.appendMessage(UserMessage.text('hello from $name'));
   }
 
-  test(
-    'picker opens an over-the-backstop session windowed and switches '
-    '(gh-1555 AC1/F3)',
-    () async {
-      await seedNamedSession('marathon');
-      final cli = cliFor(FakeStreamFunction([textTurn('ok')]).call);
-      cli.repoForTest = incidentRepo();
+  test('picker opens an over-the-backstop session windowed and switches '
+      '(gh-1555 AC1/F3)', () async {
+    await seedNamedSession('marathon');
+    final cli = cliFor(FakeStreamFunction([textTurn('ok')]).call);
+    cli.repoForTest = incidentRepo();
 
-      await cli.openSessionsPickerForTest();
-      await cli.tuiPickSessionForTest('r0');
-      expect(
-        io.out.toString(),
-        contains("switched to session 'marathon'"),
-        reason: 'the picker must not ride the refused full open',
-      );
-      expect(io.out.toString(), isNot(contains('failed to open session')));
-    },
-  );
+    await cli.openSessionsPickerForTest();
+    await cli.tuiPickSessionForTest('r0');
+    expect(
+      io.out.toString(),
+      contains("switched to session 'marathon'"),
+      reason: 'the picker must not ride the refused full open',
+    );
+    expect(io.out.toString(), isNot(contains('failed to open session')));
+  });
 
-  test(
-    'a corrupt (not merely large) session still reports inline from the '
-    'picker (gh-1555 F3 NEG)',
-    () async {
-      await seedNamedSession('marathon');
-      final delegate = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
-      final corrupt = CorruptWindowedRepo(delegate);
-      final cli = cliFor(FakeStreamFunction([textTurn('ok')]).call);
-      cli.repoForTest = corrupt;
+  test('a corrupt (not merely large) session still reports inline from the '
+      'picker (gh-1555 F3 NEG)', () async {
+    await seedNamedSession('marathon');
+    final delegate = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
+    final corrupt = CorruptWindowedRepo(delegate);
+    final cli = cliFor(FakeStreamFunction([textTurn('ok')]).call);
+    cli.repoForTest = corrupt;
 
-      await cli.openSessionsPickerForTest();
-      await cli.tuiPickSessionForTest('r0');
-      expect(
-        io.out.toString(),
-        contains('failed to open session'),
-        reason: 'the error UX is preserved, not swallowed',
-      );
-    },
-  );
+    await cli.openSessionsPickerForTest();
+    await cli.tuiPickSessionForTest('r0');
+    expect(
+      io.out.toString(),
+      contains('failed to open session'),
+      reason: 'the error UX is preserved, not swallowed',
+    );
+  });
 
-  test(
-    'boot resume by name resolves the name scan windowed (gh-1555 d4) and '
-    'the marathon fallback never full-opens (AC2)',
-    () async {
-      await seedNamedSession('marathon');
-      final cli = AgentCli(
-        config: AgentCliConfig(
-          model: testModel,
-          apiKey: '[REDACTED:Sensitive Value]',
-          env: env,
-          sessionRoot: '/sessions',
-          sessionName: 'marathon',
-          providerKind: 'openai-completions',
-        ),
-        io: io,
-        streamFunction: FakeStreamFunction([textTurn('ok')]).call,
-      );
-      cli.repoForTest = incidentRepo();
+  test('boot resume by name resolves the name scan windowed (gh-1555 d4) and '
+      'the marathon fallback never full-opens (AC2)', () async {
+    await seedNamedSession('marathon');
+    final cli = AgentCli(
+      config: AgentCliConfig(
+        model: testModel,
+        apiKey: '[REDACTED:Sensitive Value]',
+        env: env,
+        sessionRoot: '/sessions',
+        sessionName: 'marathon',
+        providerKind: 'openai-completions',
+      ),
+      io: io,
+      streamFunction: FakeStreamFunction([textTurn('ok')]).call,
+    );
+    cli.repoForTest = incidentRepo();
 
-      final run = cli.run();
-      await waitForIt(
-        () => io.out.toString().contains('restored session'),
-        reason: 'the boot resume replays the session',
-      );
-      expect(io.out.toString(), isNot(contains('failed to open session')));
-      io.sendLine('/exit');
-      await run;
-    },
-  );
+    final run = cli.run();
+    await waitForIt(
+      () => io.out.toString().contains('restored session'),
+      reason: 'the boot resume replays the session',
+    );
+    expect(io.out.toString(), isNot(contains('failed to open session')));
+    io.sendLine('/exit');
+    await run;
+  });
 
-  test(
-    'subagent transcript preview tails an over-the-backstop child session '
-    '(gh-1555 AC4/d7)',
-    () async {
-      final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
-      final child = await repo.create(
-        JsonlSessionCreateOptions(cwd: '/work'),
-      );
-      await child.appendMessage(UserMessage.text('child task'));
-      final childPath = (await child.getMetadata()).path;
+  test('subagent transcript preview tails an over-the-backstop child session '
+      '(gh-1555 AC4/d7)', () async {
+    final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
+    final child = await repo.create(JsonlSessionCreateOptions(cwd: '/work'));
+    await child.appendMessage(UserMessage.text('child task'));
+    final childPath = (await child.getMetadata()).path;
 
-      final cli = cliFor(FakeStreamFunction([textTurn('ok')]).call);
-      cli.repoForTest = incidentRepo();
+    final cli = cliFor(FakeStreamFunction([textTurn('ok')]).call);
+    cli.repoForTest = incidentRepo();
 
-      final lines = await cli.readChildMessagesForTest(childPath, tail: 8);
-      expect(
-        lines,
-        isNotEmpty,
-        reason: 'the preview rides the windowed tail, not the refused '
-            'full open',
-      );
-      expect(lines.first, startsWith('user: child task'));
-    },
-  );
+    final lines = await cli.readChildMessagesForTest(childPath, tail: 8);
+    expect(
+      lines,
+      isNotEmpty,
+      reason:
+          'the preview rides the windowed tail, not the refused '
+          'full open',
+    );
+    expect(lines.first, startsWith('user: child task'));
+  });
 
   test(
     'the headless trajectory resolver opens windowed (gh-1555 AC3)',
@@ -220,7 +206,8 @@ void main() {
       expect(
         byName,
         isNotNull,
-        reason: 'trajectory resolution must survive the backstop the '
+        reason:
+            'trajectory resolution must survive the backstop the '
             'incident sessions hit',
       );
       final metadata = await byName!.getMetadata();
@@ -248,68 +235,63 @@ void main() {
       return session;
     }
 
-    test(
-      'the fixed poll composition (original session + windowed '
-      'ingestAppended) renders an externally appended record — more '
-      'records than the residency window',
-      () async {
-        final session = await seedLongSession(300);
-        final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
-        final meta = await session.getMetadata();
+    test('the fixed poll composition (original session + windowed '
+        'ingestAppended) renders an externally appended record — more '
+        'records than the residency window', () async {
+      final session = await seedLongSession(300);
+      final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
+      final meta = await session.getMetadata();
 
-        // The headless verb's exact composition: windowed resolve, whole-
-        // ledger prime, initial backfill, then poll the ORIGINAL session.
-        final polled = await repo.open(meta, windowed: true);
-        await polled.ensureWholeLedgerResident();
-        final tailer = TrajectoryTailer(width: 80);
-        final backfill = tailer.tail(await polled.getBranch());
-        expect(backfill, hasLength(300));
+      // The headless verb's exact composition: windowed resolve, whole-
+      // ledger prime, initial backfill, then poll the ORIGINAL session.
+      final polled = await repo.open(meta, windowed: true);
+      await polled.ensureWholeLedgerResident();
+      final tailer = TrajectoryTailer(width: 80);
+      final backfill = tailer.tail(await polled.getBranch());
+      expect(backfill, hasLength(300));
 
-        // An external writer appends past the primed ledger.
-        await session.appendMessage(UserMessage.text('fresh!'));
+      // An external writer appends past the primed ledger.
+      await session.appendMessage(UserMessage.text('fresh!'));
 
-        final storage = polled.getStorage();
-        expect(storage, isA<WindowedSessionStorage>());
-        await (storage as WindowedSessionStorage).ingestAppended();
-        final lines = tailer.tail(await polled.getBranch());
-        expect(
-          lines.join('\n'),
-          contains('fresh!'),
-          reason: 'the poll must render the appended record, not stall '
-              'silently (the BLOCKING finding)',
-        );
-      },
-    );
+      final storage = polled.getStorage();
+      expect(storage, isA<WindowedSessionStorage>());
+      await (storage as WindowedSessionStorage).ingestAppended();
+      final lines = tailer.tail(await polled.getBranch());
+      expect(
+        lines.join('\n'),
+        contains('fresh!'),
+        reason:
+            'the poll must render the appended record, not stall '
+            'silently (the BLOCKING finding)',
+      );
+    });
 
-    test(
-      'the regression shape: a fresh windowed re-open per poll after a '
-      'whole-ledger prime still renders the appended record',
-      () async {
-        final session = await seedLongSession(300);
-        final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
-        final meta = await session.getMetadata();
+    test('the regression shape: a fresh windowed re-open per poll after a '
+        'whole-ledger prime still renders the appended record', () async {
+      final session = await seedLongSession(300);
+      final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
+      final meta = await session.getMetadata();
 
-        final polled = await repo.open(meta, windowed: true);
-        await polled.ensureWholeLedgerResident();
-        final tailer = TrajectoryTailer(width: 80);
-        expect(tailer.tail(await polled.getBranch()), hasLength(300));
+      final polled = await repo.open(meta, windowed: true);
+      await polled.ensureWholeLedgerResident();
+      final tailer = TrajectoryTailer(width: 80);
+      expect(tailer.tail(await polled.getBranch()), hasLength(300));
 
-        await session.appendMessage(UserMessage.text('late!'));
+      await session.appendMessage(UserMessage.text('late!'));
 
-        // The poll-window composition that shipped green: a FRESH
-        // windowed open returns only the resident tail window (~200
-        // records) — shorter than the primed ledger. A count-based
-        // tailer reads that as "nothing new" forever; the id-based
-        // dedupe renders the appended record.
-        final freshWindow = await repo.open(meta, windowed: true);
-        final lines = tailer.tail(await freshWindow.getBranch());
-        expect(
-          lines.join('\n'),
-          contains('late!'),
-          reason: 'windowed poll windows must not silence the tailer',
-        );
-      },
-    );
+      // The poll-window composition that shipped green: a FRESH
+      // windowed open returns only the resident tail window (~200
+      // records) — shorter than the primed ledger. A count-based
+      // tailer reads that as "nothing new" forever; the id-based
+      // dedupe renders the appended record.
+      final freshWindow = await repo.open(meta, windowed: true);
+      final lines = tailer.tail(await freshWindow.getBranch());
+      expect(
+        lines.join('\n'),
+        contains('late!'),
+        reason: 'windowed poll windows must not silence the tailer',
+      );
+    });
 
     test(
       'the tail verb never primes the whole ledger: it tails an '
@@ -360,6 +342,10 @@ final class CorruptWindowedRepo extends RefusingFullOpenRepo {
     if (windowed) {
       throw StateError('Unexpected character (at offset 12)');
     }
-    return super.open(metadata, windowed: windowed, wholeFileOnly: wholeFileOnly);
+    return super.open(
+      metadata,
+      windowed: windowed,
+      wholeFileOnly: wholeFileOnly,
+    );
   }
 }

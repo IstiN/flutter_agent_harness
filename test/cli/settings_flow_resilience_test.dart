@@ -193,7 +193,8 @@ void main() {
       );
       io.sendLine('450000');
       await waitForIt(
-        () => io.out.toString().contains('retry.maxWaitForLastEntryMs = 450000'),
+        () =>
+            io.out.toString().contains('retry.maxWaitForLastEntryMs = 450000'),
       );
       io.sendLine('8');
       await waitForIt(

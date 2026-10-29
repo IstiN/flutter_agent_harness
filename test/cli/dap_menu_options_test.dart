@@ -68,11 +68,12 @@ void main() {
 
   test('the menu has exactly one of start/stop in the first slot', () {
     for (final running in [false, true]) {
-      final keys = [
-        for (final o in dapMenuOptions(hubRunning: running)) o.$1,
-      ];
-      expect(keys.contains('start') && keys.contains('stop'), isFalse,
-          reason: 'running=$running: start and stop are mutually exclusive');
+      final keys = [for (final o in dapMenuOptions(hubRunning: running)) o.$1];
+      expect(
+        keys.contains('start') && keys.contains('stop'),
+        isFalse,
+        reason: 'running=$running: start and stop are mutually exclusive',
+      );
       expect(keys.first, running ? 'stop' : 'start');
     }
   });

@@ -318,8 +318,7 @@ void main() {
         expect(c.detail, '');
       });
 
-      test('non-map entries and name-less entries are skipped, not fatal',
-          () {
+      test('non-map entries and name-less entries are skipped, not fatal', () {
         final c = toolRowContent('task', {
           'tasks': [
             'not-a-map',
@@ -333,7 +332,9 @@ void main() {
 
       test('entries with no names and no task text count the children', () {
         final c = toolRowContent('task', {
-          'tasks': [{'x': 1}],
+          'tasks': [
+            {'x': 1},
+          ],
         });
         expect(c.detail, '1 child');
       });

@@ -16,39 +16,41 @@ import '../session/flaky_session_fs.dart';
 void main() {
   const path = '/sessions/child.jsonl';
 
-  test('the child-session opener retries a transient ENOENT and opens',
-      () async {
-    final fs = FlakySessionFs();
-    final logs = <String>[];
-    final delays = <Duration>[];
-    final config = SessionIoRetryConfig(
-      policy: SessionIoRetryPolicy(
-        initialBackoff: Duration.zero,
-        multiplier: 1,
-        maxTotalBackoff: const Duration(seconds: 2),
-      ),
-      logger: logs.add,
-      delay: (d) async => delays.add(d),
-    );
-    await JsonlSessionStorage.create(
-      fs,
-      path,
-      cwd: '/work',
-      sessionId: 'child-1',
-    );
-    fs.failNextReads = 1;
+  test(
+    'the child-session opener retries a transient ENOENT and opens',
+    () async {
+      final fs = FlakySessionFs();
+      final logs = <String>[];
+      final delays = <Duration>[];
+      final config = SessionIoRetryConfig(
+        policy: SessionIoRetryPolicy(
+          initialBackoff: Duration.zero,
+          multiplier: 1,
+          maxTotalBackoff: const Duration(seconds: 2),
+        ),
+        logger: logs.add,
+        delay: (d) async => delays.add(d),
+      );
+      await JsonlSessionStorage.create(
+        fs,
+        path,
+        cwd: '/work',
+        sessionId: 'child-1',
+      );
+      fs.failNextReads = 1;
 
-    final session = await jsonlChildSessionOpener(fs, ioRetry: config)(path);
+      final session = await jsonlChildSessionOpener(fs, ioRetry: config)(path);
 
-    expect(session.cachedId, 'child-1');
-    // gh-1073: the open stats first (fileInfo) and streams ranged chunks —
-    // it never readTextFiles, so the retried read surface is statCalls.
-    expect(fs.statCalls, 2);
-    expect(delays, hasLength(1));
-    expect(logs.single, contains('session_io_retry'));
-    expect(logs.single, contains('op=open'));
-    expect(logs.single, contains('path=$path'));
-  });
+      expect(session.cachedId, 'child-1');
+      // gh-1073: the open stats first (fileInfo) and streams ranged chunks —
+      // it never readTextFiles, so the retried read surface is statCalls.
+      expect(fs.statCalls, 2);
+      expect(delays, hasLength(1));
+      expect(logs.single, contains('session_io_retry'));
+      expect(logs.single, contains('op=open'));
+      expect(logs.single, contains('path=$path'));
+    },
+  );
 
   test('the child-session opener exhausts the cap into a named '
       'SessionException (resume refuses, never wedges)', () async {

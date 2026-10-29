@@ -99,13 +99,19 @@ void main() {
         r'^# Note:\s*(n_1012_[0-9a-f]{4})\s*$',
         multiLine: true,
       ).firstMatch(contents)!.group(1)!;
-      expect(headingId, frontmatterId,
-          reason:
-              'review thread PRRT_kwDOTXdlLc6v8Epw: after renaming the '
-              'note, update the in-body `# Note:` heading too — the '
-              'hashing strips it, but readers resolve notes by heading');
-      expect(frontmatterId, note.uri.pathSegments.last.replaceAll('.md', ''),
-          reason: 'frontmatter id must match the filename');
+      expect(
+        headingId,
+        frontmatterId,
+        reason:
+            'review thread PRRT_kwDOTXdlLc6v8Epw: after renaming the '
+            'note, update the in-body `# Note:` heading too — the '
+            'hashing strips it, but readers resolve notes by heading',
+      );
+      expect(
+        frontmatterId,
+        note.uri.pathSegments.last.replaceAll('.md', ''),
+        reason: 'frontmatter id must match the filename',
+      );
     });
   });
 }

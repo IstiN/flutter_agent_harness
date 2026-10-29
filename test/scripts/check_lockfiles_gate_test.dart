@@ -20,8 +20,7 @@ import 'dart:io';
 import 'package:test/test.dart';
 
 void main() {
-  test('check_lockfiles selftest: every red exit stays red (gh-1296 AC2)',
-      () {
+  test('check_lockfiles selftest: every red exit stays red (gh-1296 AC2)', () {
     final result = Process.runSync(
       'bash',
       ['scripts/check_lockfiles_selftest.sh'],
@@ -31,7 +30,8 @@ void main() {
     expect(
       result.exitCode,
       0,
-      reason: 'the lockfile gate selftest must pass — a rotting guard is '
+      reason:
+          'the lockfile gate selftest must pass — a rotting guard is '
           'worse than no guard (#1100 pattern). stderr:\n'
           '${result.stderr}',
     );

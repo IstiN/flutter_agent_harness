@@ -635,9 +635,10 @@ class AgentCli {
             if (session == null) {
               // Best-effort (AC3) — but never silent (gh-1956 review): a
               // dropped row is discoverable after the fact.
-              deliverableDurabilityLog
-                  ?.call('[deliverables] artifact row dropped: '
-                      'no open parent session');
+              deliverableDurabilityLog?.call(
+                '[deliverables] artifact row dropped: '
+                'no open parent session',
+              );
               return;
             }
             await session.appendCustomEntry(

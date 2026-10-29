@@ -210,54 +210,48 @@ void main() {
       expect(decision.needsForce, isFalse);
     });
 
-    test(
-      'REG-1 gh_1122 shape: at <=200k windows the reconciled trigger fires '
-      'no later than legacy',
-      () {
-        // The real child timeline: est 189,596 → observed 199,098 on a
-        // 204,800 window. Legacy (est-only, reserve 16,384) fired at
-        // 188,416; the new channel must not fire later than that.
-        final decision = assessContextPressure(
-          estimatedTokens: 189596,
-          observedTokens: 199098,
-          contextWindow: 204800,
-          settings: CompactionSettings.forWindow(204800),
-        );
-        expect(decision.triggered, isTrue);
-        // forWindow(204800).reserveTokens == 16,384 — the legacy value
-        // exactly (204,800 sits inside the parity band), so the
-        // reconciled line (188,416) IS the legacy line and the firing
-        // boundary can never be later than before.
-        expect(decision.pressureTokens, 199098);
-      },
-    );
+    test('REG-1 gh_1122 shape: at <=200k windows the reconciled trigger fires '
+        'no later than legacy', () {
+      // The real child timeline: est 189,596 → observed 199,098 on a
+      // 204,800 window. Legacy (est-only, reserve 16,384) fired at
+      // 188,416; the new channel must not fire later than that.
+      final decision = assessContextPressure(
+        estimatedTokens: 189596,
+        observedTokens: 199098,
+        contextWindow: 204800,
+        settings: CompactionSettings.forWindow(204800),
+      );
+      expect(decision.triggered, isTrue);
+      // forWindow(204800).reserveTokens == 16,384 — the legacy value
+      // exactly (204,800 sits inside the parity band), so the
+      // reconciled line (188,416) IS the legacy line and the firing
+      // boundary can never be later than before.
+      expect(decision.pressureTokens, 199098);
+    });
 
-    test(
-      'REG-1 kimi shape: a −5% estimate drift on a 1M window cannot delay '
-      'the observed channel (legacy rode real input for hours)',
-      () {
-        // The real failure: real context 983.5k, estimate 5% under →
-        // 934,325. Legacy (trigger = 1M − 16,384 = 1,032,192) saw 934k
-        // and stayed quiet until the estimate caught up — real input
-        // ~1,035k, 13k from the hard window. The observed channel fires
-        // at window − 65,536 = 983,040: this very boundary.
-        final decision = assessContextPressure(
-          estimatedTokens: 934325,
-          observedTokens: 983500,
-          contextWindow: 1048576,
-          settings: CompactionSettings.forWindow(1048576),
-        );
-        expect(decision.triggered, isTrue);
-        expect(decision.needsForce, isTrue);
-        // The estimate channel alone stays quiet here — the observation
-        // is the only thing that fired (the regression pin).
-        final estimateOnly = assessContextPressure(
-          estimatedTokens: 934325,
-          contextWindow: 1048576,
-          settings: CompactionSettings.forWindow(1048576),
-        );
-        expect(estimateOnly.triggered, isFalse);
-      },
-    );
+    test('REG-1 kimi shape: a −5% estimate drift on a 1M window cannot delay '
+        'the observed channel (legacy rode real input for hours)', () {
+      // The real failure: real context 983.5k, estimate 5% under →
+      // 934,325. Legacy (trigger = 1M − 16,384 = 1,032,192) saw 934k
+      // and stayed quiet until the estimate caught up — real input
+      // ~1,035k, 13k from the hard window. The observed channel fires
+      // at window − 65,536 = 983,040: this very boundary.
+      final decision = assessContextPressure(
+        estimatedTokens: 934325,
+        observedTokens: 983500,
+        contextWindow: 1048576,
+        settings: CompactionSettings.forWindow(1048576),
+      );
+      expect(decision.triggered, isTrue);
+      expect(decision.needsForce, isTrue);
+      // The estimate channel alone stays quiet here — the observation
+      // is the only thing that fired (the regression pin).
+      final estimateOnly = assessContextPressure(
+        estimatedTokens: 934325,
+        contextWindow: 1048576,
+        settings: CompactionSettings.forWindow(1048576),
+      );
+      expect(estimateOnly.triggered, isFalse);
+    });
   });
 }

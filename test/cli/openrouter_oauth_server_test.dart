@@ -8,6 +8,7 @@ import 'dart:io';
 import 'package:flutter_agent_harness/src/cli/openrouter_oauth_server.dart';
 import 'package:flutter_agent_harness/src/providers/openrouter_oauth.dart';
 import 'package:test/test.dart';
+
 void main() {
   group('OpenRouterOAuthLocalCallbackServer', () {
     test('binds to 127.0.0.1 on an ephemeral port', () async {
@@ -132,33 +133,36 @@ void main() {
       },
     );
 
-    test('skips the launch when the policy says so (gh-1450 AC2/AC3)', () async {
-      final statuses = <String>[];
-      String? authUrl;
-      var launches = 0;
+    test(
+      'skips the launch when the policy says so (gh-1450 AC2/AC3)',
+      () async {
+        final statuses = <String>[];
+        String? authUrl;
+        var launches = 0;
 
-      final result = await runOpenRouterOAuthCliFlow(
-        onStatus: (status) {
-          statuses.add(status);
-          if (status.startsWith(authorizationUrlPrefix)) {
-            authUrl = status.substring(authorizationUrlPrefix.length);
-          }
-        },
-        openBrowserFn: (_) async {
-          launches++;
-          return true;
-        },
-        shouldOpenBrowserFn: () => false,
-        timeout: const Duration(milliseconds: 80),
-      );
+        final result = await runOpenRouterOAuthCliFlow(
+          onStatus: (status) {
+            statuses.add(status);
+            if (status.startsWith(authorizationUrlPrefix)) {
+              authUrl = status.substring(authorizationUrlPrefix.length);
+            }
+          },
+          openBrowserFn: (_) async {
+            launches++;
+            return true;
+          },
+          shouldOpenBrowserFn: () => false,
+          timeout: const Duration(milliseconds: 80),
+        );
 
-      expect(result, isNull);
-      // The launch function is never called; the URL still prints.
-      expect(launches, 0);
-      expect(statuses, contains(contains('browser launch skipped')));
-      expect(authUrl, isNotNull);
-      expect(Uri.parse(authUrl!).host, 'openrouter.ai');
-    });
+        expect(result, isNull);
+        // The launch function is never called; the URL still prints.
+        expect(launches, 0);
+        expect(statuses, contains(contains('browser launch skipped')));
+        expect(authUrl, isNotNull);
+        expect(Uri.parse(authUrl!).host, 'openrouter.ai');
+      },
+    );
 
     test('a throwing launcher degrades to the failure branch with the URL '
         '(gh-1450 E3)', () async {
@@ -185,27 +189,29 @@ void main() {
       expect(urlLines.first, contains('https://openrouter.ai/'));
     });
 
-    test('the timeout status carries the authorization URL (gh-1450 AC4)',
-        () async {
-      final statuses = <String>[];
+    test(
+      'the timeout status carries the authorization URL (gh-1450 AC4)',
+      () async {
+        final statuses = <String>[];
 
-      final result = await runOpenRouterOAuthCliFlow(
-        onStatus: statuses.add,
-        openBrowserFn: (_) async => true,
-        shouldOpenBrowserFn: () => true,
-        timeout: const Duration(milliseconds: 60),
-      );
+        final result = await runOpenRouterOAuthCliFlow(
+          onStatus: statuses.add,
+          openBrowserFn: (_) async => true,
+          shouldOpenBrowserFn: () => true,
+          timeout: const Duration(milliseconds: 60),
+        );
 
-      expect(result, isNull);
-      expect(
-        statuses,
-        contains(contains('no authorization code received')),
-      );
-      expect(statuses.last, contains(authorizationUrlPrefix));
-      expect(Uri.parse(
-        statuses.last.substring(authorizationUrlPrefix.length),
-      ).host, 'openrouter.ai');
-    });
+        expect(result, isNull);
+        expect(statuses, contains(contains('no authorization code received')));
+        expect(statuses.last, contains(authorizationUrlPrefix));
+        expect(
+          Uri.parse(
+            statuses.last.substring(authorizationUrlPrefix.length),
+          ).host,
+          'openrouter.ai',
+        );
+      },
+    );
 
     test('no code/verifier/key value ever appears in the printed lines '
         '(gh-1450 AC5)', () async {
@@ -218,9 +224,7 @@ void main() {
         onStatus: (status) {
           statuses.add(status);
           if (status.startsWith('listening for OAuth callback on')) {
-            callbackUrl = status
-                .split('listening for OAuth callback on ')
-                .last;
+            callbackUrl = status.split('listening for OAuth callback on ').last;
           }
         },
         openBrowserFn: (url) async {

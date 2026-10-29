@@ -288,9 +288,9 @@ void main() {
       expect(repair.sessionList?.repairTarget, 'bloated');
       expect(repair.sessionList?.dryRun, isFalse);
 
-      final dry = parseCliArgs(
-        ['session', 'repair', '/abs/path.jsonl', '--dry-run'],
-      ) as CliArgs;
+      final dry =
+          parseCliArgs(['session', 'repair', '/abs/path.jsonl', '--dry-run'])
+              as CliArgs;
       expect(dry.sessionList?.repairTarget, '/abs/path.jsonl');
       expect(dry.sessionList?.dryRun, isTrue);
 
@@ -412,11 +412,7 @@ class _GenericRepo implements SessionRepo {
     SessionMetadata metadata, {
     bool windowed = false,
     bool wholeFileOnly = false,
-  }) => _inner.open(
-        metadata,
-        windowed: windowed,
-        wholeFileOnly: wholeFileOnly,
-      );
+  }) => _inner.open(metadata, windowed: windowed, wholeFileOnly: wholeFileOnly);
 
   @override
   dynamic noSuchMethod(Invocation invocation) =>

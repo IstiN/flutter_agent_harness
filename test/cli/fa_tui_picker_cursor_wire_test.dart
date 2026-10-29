@@ -93,8 +93,13 @@ Future<void> _run() async {
     // never an escape riding the diffed frame content (which the cell
     // renderer's SGR-only grid silently drops — the #510 bug).
     final hideAt = frames.text.indexOf('\x1b[?25l');
-    expect(hideAt, isNonNegative, reason: 'the wire must carry a DECTCEM '
-        'hide when the selection-only picker opens (#510)');
+    expect(
+      hideAt,
+      isNonNegative,
+      reason:
+          'the wire must carry a DECTCEM '
+          'hide when the selection-only picker opens (#510)',
+    );
     expect(
       hideAt,
       lessThan(settingsAt),

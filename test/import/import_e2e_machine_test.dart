@@ -14,12 +14,11 @@ import 'package:test/test.dart';
 
 void main() {
   final home = Platform.environment['HOME'] ?? '';
-  final storeReady = home.isNotEmpty &&
-      Directory('$home/.omp/agent/sessions').existsSync();
+  final storeReady =
+      home.isNotEmpty && Directory('$home/.omp/agent/sessions').existsSync();
   final e2eEnabled = Platform.environment['FA_IMPORT_E2E'] == '1';
 
-  test('real omp store: discovery + full read of the newest session',
-      () async {
+  test('real omp store: discovery + full read of the newest session', () async {
     if (!e2eEnabled || !storeReady) {
       markTestSkipped(
         'machine-gated: requires FA_IMPORT_E2E=1 and a real '

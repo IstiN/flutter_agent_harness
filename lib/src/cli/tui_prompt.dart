@@ -1391,10 +1391,7 @@ String _secretValueSegmentRow({
   final isFirst = index == 0;
   final marker = focused && isFirst ? '${_accent('>')} ' : '  ';
   if (focused && isFirst && state.secretValue.isEmpty) {
-    return _wrapBodyLine(
-      '$marker${_dim('(paste or type secret)')}',
-      inner,
-    );
+    return _wrapBodyLine('$marker${_dim('(paste or type secret)')}', inner);
   }
   if (focused && isFirst) {
     final clampedCursor = state.secretCursor.clamp(0, segment.length);

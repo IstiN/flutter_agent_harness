@@ -81,8 +81,7 @@ void main() {
       );
     });
 
-    test('sm-kicker delegates the live rescue dispatch to the factory kicker',
-        () {
+    test('sm-kicker delegates the live rescue dispatch to the factory kicker', () {
       final kicker = File('.github/workflows/sm-kicker.yml').readAsStringSync();
       expect(
         kicker,

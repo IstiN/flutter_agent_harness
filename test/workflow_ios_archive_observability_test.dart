@@ -81,8 +81,11 @@ void main() {
       final buildIdx = steps.indexWhere(
         (s) => (s['name']?.toString() ?? '') == 'Build iOS IPA',
       );
-      expect(installIdx, greaterThan(-1),
-          reason: 'build-ios must install xcbeautify (gh-1692)');
+      expect(
+        installIdx,
+        greaterThan(-1),
+        reason: 'build-ios must install xcbeautify (gh-1692)',
+      );
       expect(buildIdx, greaterThan(-1));
       expect(
         installIdx,
@@ -100,9 +103,7 @@ void main() {
         (s) =>
             (s['uses']?.toString() ?? '').contains('upload-artifact') &&
             (s['if']?.toString() ?? '') == 'failure()' &&
-            (s['with'] as YamlMap?)?['path']
-                    ?.toString()
-                    .contains('Logs/gym') ==
+            (s['with'] as YamlMap?)?['path']?.toString().contains('Logs/gym') ==
                 true,
       );
       expect(
@@ -122,8 +123,9 @@ void main() {
       test('$job checkout clone retries a bounded number of times', () {
         final steps = stepsOf(mobile, job);
         final checkout = steps.firstWhere(
-          (s) => (s['name']?.toString() ?? '')
-              .startsWith('Checkout repository from local mirror'),
+          (s) => (s['name']?.toString() ?? '').startsWith(
+            'Checkout repository from local mirror',
+          ),
         );
         final script = checkout['run'].toString();
         expect(

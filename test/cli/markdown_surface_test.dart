@@ -59,10 +59,7 @@ class _HeadlessIO implements CliIO {
   void writeln(String text) => diag.write('$text\n');
 }
 
-AgentCli _headlessCli(
-  _HeadlessIO io, {
-  MarkdownSurface? markdownSurface,
-}) {
+AgentCli _headlessCli(_HeadlessIO io, {MarkdownSurface? markdownSurface}) {
   return AgentCli(
     config: AgentCliConfig(
       model: testModel,
@@ -121,8 +118,7 @@ void main() {
       expect(io.out.toString().contains('\x1b'), isFalse);
     });
 
-    test('a default (unresolved) surface keeps the legacy raw bytes',
-        () async {
+    test('a default (unresolved) surface keeps the legacy raw bytes', () async {
       final io = _HeadlessIO();
       final code = await _headlessCli(io).runHeadless('hi');
 
@@ -130,23 +126,25 @@ void main() {
       expect(io.out.toString(), '$_repro\n');
     });
 
-    test('NO_COLOR-style degrade renders structure, zero escapes (AC4)',
-        () async {
-      final io = _HeadlessIO();
-      final code = await _headlessCli(
-        io,
-        markdownSurface: MarkdownSurface.resolving(tty: true, color: false),
-      ).runHeadless('hi');
+    test(
+      'NO_COLOR-style degrade renders structure, zero escapes (AC4)',
+      () async {
+        final io = _HeadlessIO();
+        final code = await _headlessCli(
+          io,
+          markdownSurface: MarkdownSurface.resolving(tty: true, color: false),
+        ).runHeadless('hi');
 
-      expect(code, 0);
-      final out = io.out.toString();
-      expect(out.contains('\x1b'), isFalse); // byte-scan
-      expect(out, contains('Plan')); // heading emphasis kept, marker gone
-      expect(out, isNot(contains('# Plan')));
-      expect(out, contains('•'));
-      expect(out, contains('│'));
-      expect(out, contains('  var x = 1;'));
-    });
+        expect(code, 0);
+        final out = io.out.toString();
+        expect(out.contains('\x1b'), isFalse); // byte-scan
+        expect(out, contains('Plan')); // heading emphasis kept, marker gone
+        expect(out, isNot(contains('# Plan')));
+        expect(out, contains('•'));
+        expect(out, contains('│'));
+        expect(out, contains('  var x = 1;'));
+      },
+    );
   });
 
   group('line-mode REPL (issue #774)', () {
@@ -192,9 +190,8 @@ void main() {
   /// [gate] releases the second delta and the DoneEvent.
   StreamFunction gatedStream(Completer<void> gate, String full) {
     return (model, context, {cancelToken}) {
-      AssistantMessage partialOf(String text) => testAssistant(
-        content: [TextContent(text: text)],
-      );
+      AssistantMessage partialOf(String text) =>
+          testAssistant(content: [TextContent(text: text)]);
       final stream = AssistantMessageEventStream()
         ..push(StartEvent(partial: testAssistant()))
         ..push(TextStartEvent(contentIndex: 0, partial: testAssistant()))
@@ -215,9 +212,7 @@ void main() {
                 partial: partialOf(full),
               ),
             )
-            ..push(
-              DoneEvent(reason: StopReason.stop, message: partialOf(full)),
-            )
+            ..push(DoneEvent(reason: StopReason.stop, message: partialOf(full)))
             ..end();
         }),
       );
@@ -315,8 +310,7 @@ void main() {
       expect(FaThemeController.instance.profile, ColorProfile.trueColor);
     });
 
-    test('a plain palette pins plain; no palette falls back to detection',
-        () {
+    test('a plain palette pins plain; no palette falls back to detection', () {
       AgentCli(
         config: AgentCliConfig(
           model: testModel,

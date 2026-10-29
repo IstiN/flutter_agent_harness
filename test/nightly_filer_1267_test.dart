@@ -35,29 +35,37 @@ void main() {
   final filer = jobsOf(nightly)['auto-issue'] as YamlMap;
 
   group('#1267 AC3 — the filer arms where the drill can reach it', () {
-    test('the job runs on schedule AND on the fileTracker drill dispatch',
-        () {
+    test('the job runs on schedule AND on the fileTracker drill dispatch', () {
       final cond = filer['if'].toString();
       expect(cond, contains("github.event_name == 'schedule'"));
-      expect(cond, contains('fileTracker'),
-          reason: 'the synthetic-red drill is a workflow_dispatch with '
-              'fileTracker=true — a schedule-only job can never satisfy '
-              'AC3 (tracker comment within the same run)');
+      expect(
+        cond,
+        contains('fileTracker'),
+        reason:
+            'the synthetic-red drill is a workflow_dispatch with '
+            'fileTracker=true — a schedule-only job can never satisfy '
+            'AC3 (tracker comment within the same run)',
+      );
     });
 
     test('the dispatch trigger declares the fileTracker input', () {
       expect(body, contains('fileTracker:'));
       expect(body, contains('type: boolean'));
-      expect(body, contains('default: false'),
-          reason: 'ad-hoc manual dispatches must stay tracker-silent — only '
-              'scheduled nights (and explicit drills) file');
+      expect(
+        body,
+        contains('default: false'),
+        reason:
+            'ad-hoc manual dispatches must stay tracker-silent — only '
+            'scheduled nights (and explicit drills) file',
+      );
     });
 
     test('a drill dispatch can never CLOSE the live tracker on green', () {
       expect(
         body,
         contains("if: success() && github.event_name == 'schedule'"),
-        reason: 'a manual dispatch is not a night — its green must not '
+        reason:
+            'a manual dispatch is not a night — its green must not '
             'close a tracker a real red night opened',
       );
     });
@@ -68,7 +76,8 @@ void main() {
       expect(
         '// empty'.allMatches(body).length,
         greaterThanOrEqualTo(2),
-        reason: 'both steps (green close + red file/comment) dedup through '
+        reason:
+            'both steps (green close + red file/comment) dedup through '
             'the label lookup — one fixed and one bare lookup would leave '
             'half the filer dead',
       );
@@ -76,7 +85,8 @@ void main() {
       expect(
         body,
         isNot(contains(".[0].number' --repo")),
-        reason: "the bare lookup prints jq's literal \"null\" on an empty "
+        reason:
+            "the bare lookup prints jq's literal \"null\" on an empty "
             'result — [ -n ] reads it as a live issue number and the filer '
             'dies commenting issue "null" (the 5-red-nights silent death)',
       );
@@ -89,39 +99,46 @@ void main() {
       expect(
         body,
         contains('--event schedule --status completed'),
-        reason: 'the streak counts real nights only — dispatch drills and '
+        reason:
+            'the streak counts real nights only — dispatch drills and '
             'incomplete runs must never inflate it',
       );
       expect(
         body,
         contains('[ "\$streak" -ge 1 ]'),
-        reason: 'streak >= 1 completed prior red + tonight = 2 consecutive '
+        reason:
+            'streak >= 1 completed prior red + tonight = 2 consecutive '
             'nights — the escalation threshold',
       );
       expect(
         body,
         contains('(\$r.databaseId | tostring)'),
-        reason: 'the current run must be excluded from its own streak — '
+        reason:
+            'the current run must be excluded from its own streak — '
             'the job runs before the run concludes in the API',
       );
     });
 
-    test('the decision (filed/commented/closed/why-not) hits the output',
-        () {
+    test('the decision (filed/commented/closed/why-not) hits the output', () {
       for (final line in [
         'decision: filed',
         'decision: commented',
         'decision: closed',
         'decision: why-not',
       ]) {
-        expect(body, contains(line),
-            reason: 'the filer must log WHAT it did and WHY — an empty '
-                'decision log is how the filer stayed dead for 5 nights');
+        expect(
+          body,
+          contains(line),
+          reason:
+              'the filer must log WHAT it did and WHY — an empty '
+              'decision log is how the filer stayed dead for 5 nights',
+        );
       }
       expect(
         body.split(r'$GITHUB_STEP_SUMMARY').length - 1,
         greaterThanOrEqualTo(4),
-        reason: 'the decision lands in the step summary too, not only the '
+        reason:
+            'the decision lands in the step summary too, not only the '
             'raw job log',
       );
     });

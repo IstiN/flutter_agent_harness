@@ -196,16 +196,17 @@ void main() {
         block: pinnedOperativePromptBlock(bigRegistry)!,
         lines: {for (final pin in bigRegistry.pins) pin.line},
       );
-      final budget = summarizationPayloadBudget(4096, defaultCompactionSettings);
+      final budget = summarizationPayloadBudget(
+        4096,
+        defaultCompactionSettings,
+      );
       final fake = _FakeSummarizer([
         for (var i = 0; i < 64; i++) SummarizationResult.success('fold $i'),
       ]);
       await generateSummary(
         [
           for (var i = 0; i < 120; i++)
-            UserMessage.text(
-              'history turn $i — ${'detail ' * 40}',
-            ),
+            UserMessage.text('history turn $i — ${'detail ' * 40}'),
         ],
         summarize: fake.call,
         pinnedOperative: payload,
@@ -219,7 +220,8 @@ void main() {
         expect(
           estimateStringTokens(prompt),
           lessThanOrEqualTo(budget),
-          reason: 'a pinned, budget-maxed summarization prompt must fit '
+          reason:
+              'a pinned, budget-maxed summarization prompt must fit '
               'summarizationPayloadBudget',
         );
       }

@@ -349,9 +349,9 @@ String nextFrameId() {
   // dart2js shifts are signed 32-bit, so hi >= 0x8000 turns the composite
   // negative and a '-' leaks into the hex tail (issue #1074). Multiplication
   // is exact on both backends (< 2^53) and byte-identical on the VM.
-  final rand = (_secureRandom.nextInt(0xFFFF) * 0x10000 +
-          _secureRandom.nextInt(0xFFFF))
-      .toRadixString(16)
-      .padLeft(8, '0');
+  final rand =
+      (_secureRandom.nextInt(0xFFFF) * 0x10000 + _secureRandom.nextInt(0xFFFF))
+          .toRadixString(16)
+          .padLeft(8, '0');
   return '$ms-${rand.substring(rand.length - 8)}';
 }

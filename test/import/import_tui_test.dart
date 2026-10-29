@@ -26,21 +26,19 @@ void main() {
   // Local getters are invalid Dart — a local function closing over the
   // `late` temp dirs that setUp assigns.
   String ompBucket() =>
-      '${home.path}/.omp/agent/sessions/--${project.path
-          .replaceFirst('/', '')
-          .replaceAll('/', '-')}--';
+      '${home.path}/.omp/agent/sessions/--${project.path.replaceFirst('/', '').replaceAll('/', '-')}--';
 
   setUp(() {
     home = Directory.systemTemp.createTempSync('fa_import_tui_home');
     project = Directory.systemTemp.createTempSync('fa_import_tui_proj');
     faRoot = Directory.systemTemp.createTempSync('fa_import_tui_fa');
     Directory(ompBucket()).createSync(recursive: true);
-    File('${ompBucket()}/modern.jsonl').writeAsStringSync(
-      fixture('omp_modern.jsonl'),
-    );
-    File('${ompBucket()}/legacy.jsonl').writeAsStringSync(
-      fixture('omp_legacy.jsonl'),
-    );
+    File(
+      '${ompBucket()}/modern.jsonl',
+    ).writeAsStringSync(fixture('omp_modern.jsonl'));
+    File(
+      '${ompBucket()}/legacy.jsonl',
+    ).writeAsStringSync(fixture('omp_legacy.jsonl'));
     env = LocalExecutionEnv(cwd: project.path);
     io = FakeCliIO();
   });
@@ -65,19 +63,21 @@ void main() {
     streamFunction: FakeStreamFunction([textTurn('ok')]).call,
   );
 
-  test('the harness picker lists all four harnesses with the two spikes',
-      () async {
-    final cli = cliFor();
-    final run = cli.run();
-    await waitForIt(() => !cli.isBusy && io.out.toString().isNotEmpty);
+  test(
+    'the harness picker lists all four harnesses with the two spikes',
+    () async {
+      final cli = cliFor();
+      final run = cli.run();
+      await waitForIt(() => !cli.isBusy && io.out.toString().isNotEmpty);
 
-    await cli.openImportHarnessPickerForTest();
-    final keys = cli.importHarnessItemsForTest!.map((i) => i.key).toList();
-    expect(keys, ['omp', 'claude', 'opencode', 'kimi']);
+      await cli.openImportHarnessPickerForTest();
+      final keys = cli.importHarnessItemsForTest!.map((i) => i.key).toList();
+      expect(keys, ['omp', 'claude', 'opencode', 'kimi']);
 
-    io.sendLine('/exit');
-    await run;
-  });
+      io.sendLine('/exit');
+      await run;
+    },
+  );
 
   test('a pending-spike harness answers and writes nothing', () async {
     final cli = cliFor();
@@ -125,51 +125,54 @@ void main() {
     // Keyword search over CONTENT (not just titles): a query from the
     // session BODY finds it; the same query misses untitled sessions.
     final hit = cli.importSessionMenuForTest('login flow');
-    expect(
-      hit.map((i) => i.label),
-      contains('Fix the login flow'),
-    );
+    expect(hit.map((i) => i.label), contains('Fix the login flow'));
     final bodyHit = cli.importSessionMenuForTest('legacy answer');
     expect(bodyHit.map((i) => i.label), contains('Legacy session'));
     final miss = cli.importSessionMenuForTest('zzz-no-such-content');
-    expect(miss, hasLength(1), reason: 'only the All row survives a dead query');
-
-    io.sendLine('/exit');
-    await run;
-  });
-
-  test('selecting All imports every discovered session into the store',
-      () async {
-    final cli = cliFor();
-    final run = cli.run();
-    await waitForIt(() => !cli.isBusy && io.out.toString().isNotEmpty);
-
-    await cli.tuiPickImportHarnessForTest('omp');
-    await cli.tuiPickImportSessionForTest('all');
-
-    expect(io.out.toString(), contains('imported 1f9d2a6b'));
-    expect(io.out.toString(), contains('imported legacy-0001'));
-    final repo = JsonlSessionRepo(fs: env, sessionsRoot: faRoot.path);
-    // Count only importer-owned sessions — the live CLI boot may keep its
-    // own (empty) session file in the same bucket.
-    final imported = [
-      for (final session in await repo.list(cwd: project.path))
-        if ((session.metadata?['importedFrom'] as Map?)?['sourceId'] != null)
-          session,
-    ];
-    expect(imported, hasLength(2));
-
-    // Re-importing the same rows skips idempotently (E6 in the TUI too);
-    // the skip line carries the FULL sourceId (runner format).
-    await cli.tuiPickImportSessionForTest('all');
     expect(
-      io.out.toString(),
-      contains(
-        'skipped 1f9d2a6b-9c0d-4f34-a111-000000000001 (already imported)',
-      ),
+      miss,
+      hasLength(1),
+      reason: 'only the All row survives a dead query',
     );
 
     io.sendLine('/exit');
     await run;
   });
+
+  test(
+    'selecting All imports every discovered session into the store',
+    () async {
+      final cli = cliFor();
+      final run = cli.run();
+      await waitForIt(() => !cli.isBusy && io.out.toString().isNotEmpty);
+
+      await cli.tuiPickImportHarnessForTest('omp');
+      await cli.tuiPickImportSessionForTest('all');
+
+      expect(io.out.toString(), contains('imported 1f9d2a6b'));
+      expect(io.out.toString(), contains('imported legacy-0001'));
+      final repo = JsonlSessionRepo(fs: env, sessionsRoot: faRoot.path);
+      // Count only importer-owned sessions — the live CLI boot may keep its
+      // own (empty) session file in the same bucket.
+      final imported = [
+        for (final session in await repo.list(cwd: project.path))
+          if ((session.metadata?['importedFrom'] as Map?)?['sourceId'] != null)
+            session,
+      ];
+      expect(imported, hasLength(2));
+
+      // Re-importing the same rows skips idempotently (E6 in the TUI too);
+      // the skip line carries the FULL sourceId (runner format).
+      await cli.tuiPickImportSessionForTest('all');
+      expect(
+        io.out.toString(),
+        contains(
+          'skipped 1f9d2a6b-9c0d-4f34-a111-000000000001 (already imported)',
+        ),
+      );
+
+      io.sendLine('/exit');
+      await run;
+    },
+  );
 }

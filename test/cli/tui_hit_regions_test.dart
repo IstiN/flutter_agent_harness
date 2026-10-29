@@ -38,14 +38,16 @@ void main() {
       expect(r.contains(2, 5), isFalse);
     });
 
-    test('clear() drops every region — unmounted widgets cannot ghost-click',
-        () {
-      final registry = TuiHitRegionRegistry()..add(region());
-      expect(registry.isEmpty, isFalse);
-      registry.clear();
-      expect(registry.isEmpty, isTrue);
-      expect(registry.hitTest(0, 0), isNull);
-    });
+    test(
+      'clear() drops every region — unmounted widgets cannot ghost-click',
+      () {
+        final registry = TuiHitRegionRegistry()..add(region());
+        expect(registry.isEmpty, isFalse);
+        registry.clear();
+        expect(registry.isEmpty, isTrue);
+        expect(registry.hitTest(0, 0), isNull);
+      },
+    );
   });
 
   group('TuiMouseRouter', () {
@@ -72,8 +74,7 @@ void main() {
       expect(gesture.region.kind, TuiRegionKind.composer);
     });
 
-    test('release outside every region routes nothing (unclaimed chrome)',
-        () {
+    test('release outside every region routes nothing (unclaimed chrome)', () {
       final registry = TuiHitRegionRegistry()..add(region(w: 2));
       final router = TuiMouseRouter();
       router.pressAt(1, 0);

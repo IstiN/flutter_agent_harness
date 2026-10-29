@@ -283,30 +283,33 @@ void main() {
       );
     });
 
-    test('skips the launch when the policy says so (gh-1450 AC2/AC3)', () async {
-      final statuses = <String>[];
-      final driver = _FlowDriver();
-      var launches = 0;
+    test(
+      'skips the launch when the policy says so (gh-1450 AC2/AC3)',
+      () async {
+        final statuses = <String>[];
+        final driver = _FlowDriver();
+        var launches = 0;
 
-      final flowFuture = runChatGptOAuthCliFlow(
-        ports: const [0],
-        onStatus: (status) => driver.record(statuses, status),
-        openBrowserFn: (_) async {
-          launches++;
-          return true;
-        },
-        shouldOpenBrowserFn: () => false,
-      );
+        final flowFuture = runChatGptOAuthCliFlow(
+          ports: const [0],
+          onStatus: (status) => driver.record(statuses, status),
+          openBrowserFn: (_) async {
+            launches++;
+            return true;
+          },
+          shouldOpenBrowserFn: () => false,
+        );
 
-      final state = await driver.authorizeState();
-      await driver.getCallback({'code': 'flow-code', 'state': state});
-      await flowFuture;
+        final state = await driver.authorizeState();
+        await driver.getCallback({'code': 'flow-code', 'state': state});
+        await flowFuture;
 
-      // The launch function is never called; the URL still prints.
-      expect(launches, 0);
-      expect(statuses, contains(contains('browser launch skipped')));
-      _expectExactlyOneAuthorizationUrlLine(statuses);
-    });
+        // The launch function is never called; the URL still prints.
+        expect(launches, 0);
+        expect(statuses, contains(contains('browser launch skipped')));
+        _expectExactlyOneAuthorizationUrlLine(statuses);
+      },
+    );
 
     test('a throwing launcher degrades to the failure branch with the URL '
         '(gh-1450 E3)', () async {

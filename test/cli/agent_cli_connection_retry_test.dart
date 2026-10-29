@@ -143,9 +143,10 @@ void main() {
     await stubSleep();
     final io = FakeCliIO();
 
-    final exitCode = await cli(diesOnceThenCompletes(), io).runHeadless(
-      'say hi',
-    );
+    final exitCode = await cli(
+      diesOnceThenCompletes(),
+      io,
+    ).runHeadless('say hi');
 
     expect(exitCode, 0, reason: 'the turn survived the dead connection');
     expect(io.out.toString(), contains('partial answer'));
@@ -153,36 +154,41 @@ void main() {
     expect(io.out.toString(), isNot(contains('error:')));
   });
 
-  test('headless: the retry is visible as a [net] notice, never silent',
-      () async {
-    // No global override: null the hook first, so the ONLY way the [net]
-    // line can appear is runHeadless's own boot wiring (issue #1168
-    // review - headless must voice the resume exactly like the REPL).
-    await stubSleep();
-    transientRetryNotice = null;
-    final io = FakeCliIO();
+  test(
+    'headless: the retry is visible as a [net] notice, never silent',
+    () async {
+      // No global override: null the hook first, so the ONLY way the [net]
+      // line can appear is runHeadless's own boot wiring (issue #1168
+      // review - headless must voice the resume exactly like the REPL).
+      await stubSleep();
+      transientRetryNotice = null;
+      final io = FakeCliIO();
 
-    final exitCode = await cli(diesOnceThenCompletes(), io).runHeadless(
-      'say hi',
-    );
+      final exitCode = await cli(
+        diesOnceThenCompletes(),
+        io,
+      ).runHeadless('say hi');
 
-    expect(exitCode, 0);
-    // The dim [net] line names the mid-stream resume with the completed
-    // prefix - a multi-second pause is never silent in headless.
-    expect(io.out.toString(), contains('[net] connection lost'));
-    expect(io.out.toString(), contains('mid-stream connection failure'));
-    expect(io.out.toString(), contains('resuming from 1 completed block(s)'));
-  });
+      expect(exitCode, 0);
+      // The dim [net] line names the mid-stream resume with the completed
+      // prefix - a multi-second pause is never silent in headless.
+      expect(io.out.toString(), contains('[net] connection lost'));
+      expect(io.out.toString(), contains('mid-stream connection failure'));
+      expect(io.out.toString(), contains('resuming from 1 completed block(s)'));
+    },
+  );
 
-  test('headless: an auth error stays fatal — exit 1 and the error line',
-      () async {
-    await stubSleep();
-    final io = FakeCliIO();
+  test(
+    'headless: an auth error stays fatal — exit 1 and the error line',
+    () async {
+      await stubSleep();
+      final io = FakeCliIO();
 
-    final exitCode = await cli(alwaysAuthError(), io).runHeadless('say hi');
+      final exitCode = await cli(alwaysAuthError(), io).runHeadless('say hi');
 
-    expect(exitCode, 1);
-    expect(io.out.toString(), contains('error:'));
-    expect(io.out.toString(), contains('401 unauthorized'));
-  });
+      expect(exitCode, 1);
+      expect(io.out.toString(), contains('error:'));
+      expect(io.out.toString(), contains('401 unauthorized'));
+    },
+  );
 }

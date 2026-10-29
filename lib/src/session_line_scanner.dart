@@ -159,7 +159,11 @@ final class SessionLineScanner {
     return SessionLineScanResult(bytes: size, lines: lines);
   }
 
-  Future<Uint8List> _readRange(RangedReadFileSystem ranged, int a, int b) async {
+  Future<Uint8List> _readRange(
+    RangedReadFileSystem ranged,
+    int a,
+    int b,
+  ) async {
     final result = await ranged.readRange(path, a, b);
     if (result.isErr) {
       final error = result.errorOrNull!;

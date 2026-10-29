@@ -916,10 +916,7 @@ final class JsonlSessionStorage implements SessionStorage, SessionHeaderCache {
       batchSpans = <(int, int)>[];
     }
 
-    await SessionLineScanner(
-      fs: fs,
-      path: segmentPath,
-    ).scan((line) async {
+    await SessionLineScanner(fs: fs, path: segmentPath).scan((line) async {
       lineNumber++;
       // Blank lines are skipped — INCLUDING before the header, matching
       // the whole-file path (which filters blanks before taking

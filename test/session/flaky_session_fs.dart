@@ -76,7 +76,10 @@ final class FlakySessionFs implements FileSystem, RangedReadFileSystem {
   }
 
   @override
-  Future<Result<void, FileError>> appendFile(String path, String content) async {
+  Future<Result<void, FileError>> appendFile(
+    String path,
+    String content,
+  ) async {
     appendCalls++;
     if (failNextAppends > 0) {
       failNextAppends--;
@@ -136,8 +139,7 @@ final class FlakySessionFs implements FileSystem, RangedReadFileSystem {
   }
 
   @override
-  Future<Result<bool, FileError>> exists(String path) =>
-      _delegate.exists(path);
+  Future<Result<bool, FileError>> exists(String path) => _delegate.exists(path);
 
   @override
   Future<Result<void, FileError>> createDir(

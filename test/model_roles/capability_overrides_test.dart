@@ -65,10 +65,14 @@ messageCap: 2048
 
     test('rejects unknown fields naming the key', () {
       expect(
-        () => ModelCapabilityOverride.fromYaml('zai', 'glm-5.3-flash', _yaml('''
+        () => ModelCapabilityOverride.fromYaml(
+          'zai',
+          'glm-5.3-flash',
+          _yaml('''
 contextWindow: 200000
 bogus: 1
-''')),
+'''),
+        ),
         throwsA(
           isA<ConfigException>().having(
             (e) => e.message,
@@ -81,18 +85,26 @@ bogus: 1
 
     test('rejects a bad thinking level naming the ladder', () {
       expect(
-        () => ModelCapabilityOverride.fromYaml('zai', 'glm', _yaml('''
+        () => ModelCapabilityOverride.fromYaml(
+          'zai',
+          'glm',
+          _yaml('''
 thinkingLevel: turbo
-''')),
+'''),
+        ),
         throwsA(isA<ConfigException>()),
       );
     });
 
     test('rejects non-boolean omitMaxOutputTokens', () {
       expect(
-        () => ModelCapabilityOverride.fromYaml('zai', 'glm', _yaml('''
+        () => ModelCapabilityOverride.fromYaml(
+          'zai',
+          'glm',
+          _yaml('''
 omitMaxOutputTokens: sometimes
-''')),
+'''),
+        ),
         throwsA(isA<ConfigException>()),
       );
     });
@@ -100,7 +112,8 @@ omitMaxOutputTokens: sometimes
 
   group('ModelsConfig overrides section', () {
     test('parses overrides alongside slots/custom', () {
-      final models = ModelsConfig.fromYaml(_yaml('''
+      final models = ModelsConfig.fromYaml(
+        _yaml('''
 overrides:
   zai:
     glm-5.3-flash:
@@ -109,52 +122,59 @@ overrides:
   openrouter:
     vendor/big-model:
       contextWindow: 1000000
-'''));
-      expect(models.overrides.length, 2);
-      expect(
-        models.overrides.lookup('zai', 'glm-5.3-flash')?.maxTokens,
-        65536,
+'''),
       );
+      expect(models.overrides.length, 2);
+      expect(models.overrides.lookup('zai', 'glm-5.3-flash')?.maxTokens, 65536);
       expect(
-        models.overrides.lookup('openrouter', 'vendor/big-model')
+        models.overrides
+            .lookup('openrouter', 'vendor/big-model')
             ?.contextWindow,
         1000000,
       );
     });
 
     test('lookup normalizes the provider name, keeps the model id exact', () {
-      final models = ModelsConfig.fromYaml(_yaml('''
+      final models = ModelsConfig.fromYaml(
+        _yaml('''
 overrides:
   Zai:
     glm-5.3-flash:
       maxTokens: 65536
-'''));
+'''),
+      );
       expect(models.overrides.lookup('zai', 'glm-5.3-flash'), isNotNull);
       expect(models.overrides.lookup('ZAI', 'glm-5.3-flash'), isNotNull);
       // Model ids are matched verbatim (openrouter vendor prefixes, case).
       expect(models.overrides.lookup('zai', 'GLM-5.3-FLASH'), isNull);
     });
 
-    test('unknown provider/model strings are allowed (they address futures)',
-        () {
-      final models = ModelsConfig.fromYaml(_yaml('''
+    test(
+      'unknown provider/model strings are allowed (they address futures)',
+      () {
+        final models = ModelsConfig.fromYaml(
+          _yaml('''
 overrides:
   future-provider:
     future-model:
       maxTokens: 65536
-'''));
-      expect(
-        models.overrides.lookup('future-provider', 'future-model'),
-        isNotNull,
-      );
-    });
+'''),
+        );
+        expect(
+          models.overrides.lookup('future-provider', 'future-model'),
+          isNotNull,
+        );
+      },
+    );
 
     test('rejects unknown section keys', () {
       expect(
-        () => ModelsConfig.fromYaml(_yaml('''
+        () => ModelsConfig.fromYaml(
+          _yaml('''
 overrides: {}
 bogus: {}
-''')),
+'''),
+        ),
         throwsA(
           isA<ConfigException>().having(
             (e) => e.message,
@@ -174,11 +194,13 @@ bogus: {}
 
     test('rejects a non-map model entry', () {
       expect(
-        () => ModelsConfig.fromYaml(_yaml('''
+        () => ModelsConfig.fromYaml(
+          _yaml('''
 overrides:
   zai:
     glm-5.3-flash: 65536
-''')),
+'''),
+        ),
         throwsA(isA<ConfigException>()),
       );
     });
@@ -238,28 +260,29 @@ overrides:
   });
 
   group('buildCatalogModel — override consultation (AC2)', () {
-    test('the owner pain: raised maxTokens + thinking level reach the model',
-        () {
-      final previous = modelCapabilityOverrides;
-      final overrides = ModelCapabilityOverrides()
-        ..set(
-          'zai',
-          'glm-5.3-flash',
-          const ModelCapabilityOverride(
-            maxTokens: 65536,
-            thinkingLevel: 'high',
-          ),
-        );
-      modelCapabilityOverrides = overrides;
-      addTearDown(() => modelCapabilityOverrides = previous);
-      final model = buildCatalogModel('zai', 'glm-5.3-flash');
-      expect(model.maxTokens, 65536);
-      expect(model.thinkingLevel, 'high');
-      expect(model.contextWindow, 200000); // untouched field keeps catalog
-    });
+    test(
+      'the owner pain: raised maxTokens + thinking level reach the model',
+      () {
+        final previous = modelCapabilityOverrides;
+        final overrides = ModelCapabilityOverrides()
+          ..set(
+            'zai',
+            'glm-5.3-flash',
+            const ModelCapabilityOverride(
+              maxTokens: 65536,
+              thinkingLevel: 'high',
+            ),
+          );
+        modelCapabilityOverrides = overrides;
+        addTearDown(() => modelCapabilityOverrides = previous);
+        final model = buildCatalogModel('zai', 'glm-5.3-flash');
+        expect(model.maxTokens, 65536);
+        expect(model.thinkingLevel, 'high');
+        expect(model.contextWindow, 200000); // untouched field keeps catalog
+      },
+    );
 
-    test('an override beats the explicit role-slot argument (layer order)',
-        () {
+    test('an override beats the explicit role-slot argument (layer order)', () {
       // The resolver precedence: override (layer 1) beats role slot (layer
       // 2) — the explicit buildCatalogModel contextWindow arg IS the role
       // slot, so an override contextWindow wins over it.

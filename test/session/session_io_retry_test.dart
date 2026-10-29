@@ -47,37 +47,39 @@ void main() {
   }
 
   group('JsonlSessionStorage transient-ENOENT retry (issue #427)', () {
-    test('appendEntry retries a transient ENOENT and lands the record',
-        () async {
-      final fs = FlakySessionFs();
-      final retry = recordingRetry();
-      final storage = await createStorage(fs, ioRetry: retry.config);
-      fs.failNextAppends = 2;
+    test(
+      'appendEntry retries a transient ENOENT and lands the record',
+      () async {
+        final fs = FlakySessionFs();
+        final retry = recordingRetry();
+        final storage = await createStorage(fs, ioRetry: retry.config);
+        fs.failNextAppends = 2;
 
-      final record = MessageRecord(
-        id: 'e1',
-        parentId: null,
-        timestamp: DateTime.utc(2026),
-        message: UserMessage.text('hello'),
-      );
-      await storage.appendEntry(record);
+        final record = MessageRecord(
+          id: 'e1',
+          parentId: null,
+          timestamp: DateTime.utc(2026),
+          message: UserMessage.text('hello'),
+        );
+        await storage.appendEntry(record);
 
-      // The record landed on disk exactly once, after the retries.
-      final content = (await fs.readTextFile(path)).getOrThrow();
-      final lines = content.trim().split('\n');
-      expect(lines, hasLength(2));
-      expect(jsonDecode(lines.last)['id'], 'e1');
-      expect(fs.appendCalls, 3);
-      expect(retry.delays, hasLength(2));
-      // One `session_io_retry` line per retry, naming the op.
-      expect(retry.logs, hasLength(2));
-      expect(retry.logs[0], contains('session_io_retry'));
-      expect(retry.logs[0], contains('op=append'));
-      expect(retry.logs[0], contains('attempt=2/4'));
-      expect(retry.logs[1], contains('attempt=3/4'));
-      // The in-memory index sees the record too.
-      expect(await storage.getEntry('e1'), same(record));
-    });
+        // The record landed on disk exactly once, after the retries.
+        final content = (await fs.readTextFile(path)).getOrThrow();
+        final lines = content.trim().split('\n');
+        expect(lines, hasLength(2));
+        expect(jsonDecode(lines.last)['id'], 'e1');
+        expect(fs.appendCalls, 3);
+        expect(retry.delays, hasLength(2));
+        // One `session_io_retry` line per retry, naming the op.
+        expect(retry.logs, hasLength(2));
+        expect(retry.logs[0], contains('session_io_retry'));
+        expect(retry.logs[0], contains('op=append'));
+        expect(retry.logs[0], contains('attempt=2/4'));
+        expect(retry.logs[1], contains('attempt=3/4'));
+        // The in-memory index sees the record too.
+        expect(await storage.getEntry('e1'), same(record));
+      },
+    );
 
     test('appendEntry exhaustion is a named SessionException and never '
         'poisons the store for later appends', () async {
@@ -183,43 +185,44 @@ void main() {
       expect(retry.logs.single, contains('attempt=2/4'));
     });
 
-    test('windowed appendEntry rides the same helper (app chat submit path)',
-        () async {
-      final fs = FlakySessionFs();
-      final retry = recordingRetry();
-      await JsonlSessionStorage.create(
-        fs,
-        path,
-        cwd: '/work',
-        sessionId: 's1',
-      );
-      final windowed = await WindowedSessionStorage.open(
-        fs,
-        path,
-        ioRetry: retry.config,
-      );
-      fs.failNextAppends = 1;
+    test(
+      'windowed appendEntry rides the same helper (app chat submit path)',
+      () async {
+        final fs = FlakySessionFs();
+        final retry = recordingRetry();
+        await JsonlSessionStorage.create(
+          fs,
+          path,
+          cwd: '/work',
+          sessionId: 's1',
+        );
+        final windowed = await WindowedSessionStorage.open(
+          fs,
+          path,
+          ioRetry: retry.config,
+        );
+        fs.failNextAppends = 1;
 
-      await windowed.appendEntry(
-        MessageRecord(
-          id: 'e1',
-          parentId: null,
-          timestamp: DateTime.utc(2026),
-          message: UserMessage.text('hello'),
-        ),
-      );
+        await windowed.appendEntry(
+          MessageRecord(
+            id: 'e1',
+            parentId: null,
+            timestamp: DateTime.utc(2026),
+            message: UserMessage.text('hello'),
+          ),
+        );
 
-      expect(fs.appendCalls, 2);
-      expect(retry.logs, hasLength(1));
-      expect(retry.logs.single, contains('op=append'));
-      final content = (await fs.readTextFile(path)).getOrThrow();
-      expect(content.trim().split('\n'), hasLength(2));
-    });
+        expect(fs.appendCalls, 2);
+        expect(retry.logs, hasLength(1));
+        expect(retry.logs.single, contains('op=append'));
+        final content = (await fs.readTextFile(path)).getOrThrow();
+        expect(content.trim().split('\n'), hasLength(2));
+      },
+    );
   });
 
   group('JsonlSessionRepo transient-ENOENT retry (issue #427)', () {
-    test('open retries a transient ENOENT and returns the session',
-        () async {
+    test('open retries a transient ENOENT and returns the session', () async {
       final fs = FlakySessionFs();
       final retry = recordingRetry();
       final repo = JsonlSessionRepo(

@@ -79,46 +79,47 @@ void main() {
   /// The `agent_directory` body rendered over [fabric] (the tool path the
   /// agent actually sees).
   Future<String> render(MessagingRepository fabric) async {
-    final manager = SubagentManager(
-      parentSessionId: 'p',
-      messaging: fabric,
-    )..mailboxPrefix = 'sess1';
+    final manager = SubagentManager(parentSessionId: 'p', messaging: fabric)
+      ..mailboxPrefix = 'sess1';
     final tools = subagentMonitoringTools(manager: manager);
     final directory = tools.firstWhere((t) => t.name == 'agent_directory');
     final result = await directory.execute(const {}, null, null);
     return (result.content.first as dynamic).text as String;
   }
 
-  test(
-    'kill switch off (fabric.hub: false): the listing is byte-identical '
-    'to the legacy file-only rendering',
-    () async {
-      final legacy = await render(await seededFabric());
-      // What `fabric.hub: false` produces: the SAME bare construction —
-      // bin/fah.dart passes hubFabric: null when the switch is off
-      // (pinned by hubFabricWired in test/hub/dap_command_test.dart).
-      final killSwitch = await render(await seededFabric());
+  test('kill switch off (fabric.hub: false): the listing is byte-identical '
+      'to the legacy file-only rendering', () async {
+    final legacy = await render(await seededFabric());
+    // What `fabric.hub: false` produces: the SAME bare construction —
+    // bin/fah.dart passes hubFabric: null when the switch is off
+    // (pinned by hubFabricWired in test/hub/dap_command_test.dart).
+    final killSwitch = await render(await seededFabric());
 
-      expect(killSwitch, legacy,
-          reason: 'the kill switch must reproduce the legacy listing '
-              'byte-for-byte (E6)');
-      expect(killSwitch, isNot(contains('Browser')));
-      expect(killSwitch, isNot(contains('[hub]')));
-      expect(killSwitch, contains('sess1/main — 1 pending'));
+    expect(
+      killSwitch,
+      legacy,
+      reason:
+          'the kill switch must reproduce the legacy listing '
+          'byte-for-byte (E6)',
+    );
+    expect(killSwitch, isNot(contains('Browser')));
+    expect(killSwitch, isNot(contains('[hub]')));
+    expect(killSwitch, contains('sess1/main — 1 pending'));
+  });
+
+  test(
+    'control: the same state with the hub fabric ON adds the hub row',
+    () async {
+      final bare = await seededFabric();
+      final composite = FallbackMessagingRepository(
+        primary: _HubPrimaryStub(),
+        fallback: bare,
+      )..primaryMailbox = () => 'sess1/main';
+      final withHub = await render(composite);
+      expect(withHub, contains('Browser'));
+      expect(withHub, contains('[hub]'));
+      // The file rows keep their exact legacy bytes inside the merged view.
+      expect(withHub, contains('sess1/main — 1 pending'));
     },
   );
-
-  test('control: the same state with the hub fabric ON adds the hub row',
-      () async {
-    final bare = await seededFabric();
-    final composite = FallbackMessagingRepository(
-      primary: _HubPrimaryStub(),
-      fallback: bare,
-    )..primaryMailbox = () => 'sess1/main';
-    final withHub = await render(composite);
-    expect(withHub, contains('Browser'));
-    expect(withHub, contains('[hub]'));
-    // The file rows keep their exact legacy bytes inside the merged view.
-    expect(withHub, contains('sess1/main — 1 pending'));
-  });
 }

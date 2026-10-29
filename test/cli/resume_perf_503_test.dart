@@ -152,7 +152,8 @@ void main() {
     expect(
       replayMs + firstFormatMs,
       lessThan(2000),
-      reason: 'resume boot pipeline: replay=$replayMs '
+      reason:
+          'resume boot pipeline: replay=$replayMs '
           'firstFormat=$firstFormatMs',
     );
   });

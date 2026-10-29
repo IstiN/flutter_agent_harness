@@ -439,7 +439,9 @@ String formatSkillsForPrompt(
       ..writeln('    <location>${escape(skill.filePath)}</location>');
     if (scannedAt != null &&
         midSessionNames.contains(skill.name.toLowerCase())) {
-      buffer.writeln('    <status>added mid-session (${skill.source.name})</status>');
+      buffer.writeln(
+        '    <status>added mid-session (${skill.source.name})</status>',
+      );
     }
     buffer.writeln('  </skill>');
   }
@@ -452,7 +454,7 @@ String formatSkillsForPrompt(
         liveRediscovery
             ? 'skills index scanned at $stamp'
             : 'skills index scanned at $stamp — '
-                'newer files are NOT reflected; /skills reload to refresh',
+                  'newer files are NOT reflected; /skills reload to refresh',
       );
   }
   return buffer.toString();

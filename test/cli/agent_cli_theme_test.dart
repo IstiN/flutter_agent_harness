@@ -124,19 +124,21 @@ void main() {
     await run;
   });
 
-  test('/theme with an unknown name is a named error, nothing persisted',
-      () async {
-    final cli = cliFor();
-    final run = cli.run();
-    io.sendLine('/theme solarized');
-    await waitForOut((out) => out.contains('unknown theme: solarized'));
-    expect(io.out.toString(), contains('ohmypi-dark'));
-    io.sendLine('/exit');
-    await run;
-    // No config file was written by the failed switch.
-    expect(await configFile('/work/.fah/config.yaml'), isEmpty);
-    expect(FaThemeController.instance.currentName, 'default');
-  });
+  test(
+    '/theme with an unknown name is a named error, nothing persisted',
+    () async {
+      final cli = cliFor();
+      final run = cli.run();
+      io.sendLine('/theme solarized');
+      await waitForOut((out) => out.contains('unknown theme: solarized'));
+      expect(io.out.toString(), contains('ohmypi-dark'));
+      io.sendLine('/exit');
+      await run;
+      // No config file was written by the failed switch.
+      expect(await configFile('/work/.fah/config.yaml'), isEmpty);
+      expect(FaThemeController.instance.currentName, 'default');
+    },
+  );
 
   test('boot applies the persisted tui.theme', () async {
     cliFor(tuiTheme: 'pi');
@@ -144,22 +146,26 @@ void main() {
     expect(FaThemeController.instance.currentName, 'pi');
   });
 
-  test('TUI boot without tui.theme: COLORFGBG light resolves ohmypi-light',
-      () async {
-    cliFor(useTui: true, environment: const {'COLORFGBG': '0;15'});
-    await cliThemeSettle();
-    expect(FaThemeController.instance.currentName, 'ohmypi-light');
-    expect(FaThemeController.instance.autoLightDarkArmed, isTrue);
-  });
+  test(
+    'TUI boot without tui.theme: COLORFGBG light resolves ohmypi-light',
+    () async {
+      cliFor(useTui: true, environment: const {'COLORFGBG': '0;15'});
+      await cliThemeSettle();
+      expect(FaThemeController.instance.currentName, 'ohmypi-light');
+      expect(FaThemeController.instance.autoLightDarkArmed, isTrue);
+    },
+  );
 
-  test('TUI boot auto tier: dark COLORFGBG keeps the default palette',
-      () async {
-    cliFor(useTui: true, environment: const {'COLORFGBG': '15;0'});
-    await cliThemeSettle();
-    expect(FaThemeController.instance.currentName, kDefaultTuiTheme.name);
-    // Still armed: a later OSC 11 reply may upgrade to light.
-    expect(FaThemeController.instance.autoLightDarkArmed, isTrue);
-  });
+  test(
+    'TUI boot auto tier: dark COLORFGBG keeps the default palette',
+    () async {
+      cliFor(useTui: true, environment: const {'COLORFGBG': '15;0'});
+      await cliThemeSettle();
+      expect(FaThemeController.instance.currentName, kDefaultTuiTheme.name);
+      // Still armed: a later OSC 11 reply may upgrade to light.
+      expect(FaThemeController.instance.autoLightDarkArmed, isTrue);
+    },
+  );
 
   test('line mode never runs the auto tier (byte-unchanged)', () async {
     cliFor(environment: const {'COLORFGBG': '0;15'});
@@ -179,21 +185,23 @@ void main() {
     expect(FaThemeController.instance.autoLightDarkArmed, isFalse);
   });
 
-  test('user themes load at boot: a persisted user theme applies (AC4)',
-      () async {
-    await env.writeFile(
-      '/home/.fah/themes/warm.json',
-      jsonEncode({
-        'roles': {'accent': '#ff8800', 'error': '#ff1122'},
-      }),
-    );
-    cliFor(useColor: true, tuiTheme: 'warm');
-    await cliThemeSettle();
-    expect(FaThemeController.instance.currentName, 'warm');
-    // The user palette drives the live emitters.
-    expect(tuiAccent('x'), contains('38;2;255;136;0'));
-    expect(FaThemeController.instance.available().keys, contains('warm'));
-  });
+  test(
+    'user themes load at boot: a persisted user theme applies (AC4)',
+    () async {
+      await env.writeFile(
+        '/home/.fah/themes/warm.json',
+        jsonEncode({
+          'roles': {'accent': '#ff8800', 'error': '#ff1122'},
+        }),
+      );
+      cliFor(useColor: true, tuiTheme: 'warm');
+      await cliThemeSettle();
+      expect(FaThemeController.instance.currentName, 'warm');
+      // The user palette drives the live emitters.
+      expect(tuiAccent('x'), contains('38;2;255;136;0'));
+      expect(FaThemeController.instance.available().keys, contains('warm'));
+    },
+  );
 
   test('/theme resolves a user theme written mid-session (AC5)', () async {
     final cli = cliFor(useColor: true);
@@ -212,24 +220,26 @@ void main() {
     await run;
   });
 
-  test('broken and shadowing user themes warn at boot, default survives',
-      () async {
-    await env.writeFile('/home/.fah/themes/broken.json', '{nope');
-    await env.writeFile(
-      '/home/.fah/themes/pi.json',
-      jsonEncode({
-        'roles': {'accent': '#123456'},
-      }),
-    );
-    cliFor(useColor: true, tuiTheme: 'pi');
-    await cliThemeSettle();
-    final out = io.out.toString();
-    expect(out, contains('broken: not valid JSON'));
-    expect(out, contains('cannot shadow a built-in theme name'));
-    // The shadowing file never replaced the built-in.
-    expect(tuiAccent('x'), contains('38;2;138;190;183'));
-    expect(FaThemeController.instance.currentName, 'pi');
-  });
+  test(
+    'broken and shadowing user themes warn at boot, default survives',
+    () async {
+      await env.writeFile('/home/.fah/themes/broken.json', '{nope');
+      await env.writeFile(
+        '/home/.fah/themes/pi.json',
+        jsonEncode({
+          'roles': {'accent': '#123456'},
+        }),
+      );
+      cliFor(useColor: true, tuiTheme: 'pi');
+      await cliThemeSettle();
+      final out = io.out.toString();
+      expect(out, contains('broken: not valid JSON'));
+      expect(out, contains('cannot shadow a built-in theme name'));
+      // The shadowing file never replaced the built-in.
+      expect(tuiAccent('x'), contains('38;2;138;190;183'));
+      expect(FaThemeController.instance.currentName, 'pi');
+    },
+  );
 
   test('boot with an unknown tui.theme warns and keeps the default', () async {
     cliFor(tuiTheme: 'solarized');

@@ -26,7 +26,8 @@ final class TuiChord {
   factory TuiChord.parse(String text) {
     final raw = text.trim().toLowerCase().replaceAll(RegExp(r'[\s_-]+'), '+');
     final parts = [
-      for (final p in raw.split('+')) _glyphFromDisplay[p] ?? _keyAliases[p] ?? p,
+      for (final p in raw.split('+'))
+        _glyphFromDisplay[p] ?? _keyAliases[p] ?? p,
     ]..removeWhere((p) => p.isEmpty);
     return TuiChord(parts.join('+'));
   }
@@ -60,18 +61,11 @@ final class TuiChord {
 }
 
 /// Arrow glyphs render as themselves in every form — they ARE the label.
-const _glyphs = {
-  'up': '↑',
-  'down': '↓',
-  'left': '←',
-  'right': '→',
-};
+const _glyphs = {'up': '↑', 'down': '↓', 'left': '←', 'right': '→'};
 
 /// Display glyph → canonical id (`↑` → `up`), so chord text parses like it
 /// displays — bare or modified (`ctrl+↑`).
-final _glyphFromDisplay = {
-  for (final e in _glyphs.entries) e.value: e.key,
-};
+final _glyphFromDisplay = {for (final e in _glyphs.entries) e.value: e.key};
 
 /// Free-text spellings that normalize to canonical ids (`Option+P` →
 /// `alt+p`, `PgDn` → `pgdown`).
@@ -84,12 +78,12 @@ const _keyAliases = {
 };
 
 Map<String, String> _modifierLabels(bool darwin) => {
-      'ctrl': 'Ctrl',
-      'alt': darwin ? 'Option' : 'Alt',
-      'shift': 'Shift',
-      'meta': 'Meta',
-      'super': darwin ? 'Cmd' : 'Super',
-    };
+  'ctrl': 'Ctrl',
+  'alt': darwin ? 'Option' : 'Alt',
+  'shift': 'Shift',
+  'meta': 'Meta',
+  'super': darwin ? 'Cmd' : 'Super',
+};
 
 const _keyLabels = {
   'enter': 'Enter',
@@ -130,102 +124,130 @@ final class TuiKeybinding {
 const kTuiKeybindings = <TuiKeybinding>[
   // ── Composer / editor ────────────────────────────────────────────────
   TuiKeybinding('editor.send', 'composer', [TuiChord('enter')], 'send message'),
-  TuiKeybinding(
-    'editor.newline',
-    'composer',
-    [
-      TuiChord('shift+enter'),
-      TuiChord('alt+enter'),
-      TuiChord('ctrl+o'),
-      TuiChord('ctrl+j'),
-    ],
-    'insert newline',
-  ),
-  TuiKeybinding('editor.submit', 'composer', [TuiChord('ctrl+s')],
-      'submit without Shift+Enter support'),
-  TuiKeybinding('editor.lineStart', 'composer',
-      [TuiChord('ctrl+a'), TuiChord('home')], 'start of line'),
-  TuiKeybinding('editor.lineEnd', 'composer', [TuiChord('ctrl+e'),
-      TuiChord('end')], 'end of line'),
-  TuiKeybinding('editor.cursor', 'composer', [TuiChord('left'),
-      TuiChord('right')], 'move cursor'),
-  TuiKeybinding('editor.wordBack', 'composer', [TuiChord('alt+left')],
-      'one word back'),
-  TuiKeybinding('editor.wordForward', 'composer', [TuiChord('alt+right')],
-      'one word forward'),
-  TuiKeybinding('editor.killToLineStart', 'composer', [TuiChord('ctrl+u')],
-      'kill to line start'),
-  TuiKeybinding('editor.killToLineEnd', 'composer', [TuiChord('ctrl+k')],
-      'kill to line end'),
-  TuiKeybinding('editor.killWordBack', 'composer', [TuiChord('ctrl+w')],
-      'delete word before cursor'),
-  TuiKeybinding('editor.deleteForward', 'composer', [TuiChord('delete')],
-      'delete character forward'),
-  TuiKeybinding('editor.yank', 'composer', [TuiChord('ctrl+y')],
-      'yank last kill (repeat walks the ring)'),
-  TuiKeybinding('editor.transpose', 'composer', [TuiChord('ctrl+t')],
-      'transpose characters'),
+  TuiKeybinding('editor.newline', 'composer', [
+    TuiChord('shift+enter'),
+    TuiChord('alt+enter'),
+    TuiChord('ctrl+o'),
+    TuiChord('ctrl+j'),
+  ], 'insert newline'),
+  TuiKeybinding('editor.submit', 'composer', [
+    TuiChord('ctrl+s'),
+  ], 'submit without Shift+Enter support'),
+  TuiKeybinding('editor.lineStart', 'composer', [
+    TuiChord('ctrl+a'),
+    TuiChord('home'),
+  ], 'start of line'),
+  TuiKeybinding('editor.lineEnd', 'composer', [
+    TuiChord('ctrl+e'),
+    TuiChord('end'),
+  ], 'end of line'),
+  TuiKeybinding('editor.cursor', 'composer', [
+    TuiChord('left'),
+    TuiChord('right'),
+  ], 'move cursor'),
+  TuiKeybinding('editor.wordBack', 'composer', [
+    TuiChord('alt+left'),
+  ], 'one word back'),
+  TuiKeybinding('editor.wordForward', 'composer', [
+    TuiChord('alt+right'),
+  ], 'one word forward'),
+  TuiKeybinding('editor.killToLineStart', 'composer', [
+    TuiChord('ctrl+u'),
+  ], 'kill to line start'),
+  TuiKeybinding('editor.killToLineEnd', 'composer', [
+    TuiChord('ctrl+k'),
+  ], 'kill to line end'),
+  TuiKeybinding('editor.killWordBack', 'composer', [
+    TuiChord('ctrl+w'),
+  ], 'delete word before cursor'),
+  TuiKeybinding('editor.deleteForward', 'composer', [
+    TuiChord('delete'),
+  ], 'delete character forward'),
+  TuiKeybinding('editor.yank', 'composer', [
+    TuiChord('ctrl+y'),
+  ], 'yank last kill (repeat walks the ring)'),
+  TuiKeybinding('editor.transpose', 'composer', [
+    TuiChord('ctrl+t'),
+  ], 'transpose characters'),
   TuiKeybinding('editor.undo', 'composer', [TuiChord('ctrl+z')], 'undo edit'),
-  TuiKeybinding('editor.historyPrev', 'composer', [TuiChord('up')],
-      'previous sent message (idle) / edit last queued row (busy)'),
-  TuiKeybinding('editor.historyNext', 'composer', [TuiChord('down')],
-      'next sent message'),
-  TuiKeybinding('editor.scroll', 'composer',
-      [TuiChord('pgup'), TuiChord('pgdown')], 'scroll transcript'),
-  TuiKeybinding('editor.complete', 'composer', [TuiChord('tab')],
-      'path completion / accept menu item'),
-  TuiKeybinding('editor.pasteImage', 'composer', [TuiChord('ctrl+v')],
-      'attach clipboard image'),
-  TuiKeybinding('editor.commands', 'composer', [TuiChord('/')],
-      'slash commands'),
-  TuiKeybinding('editor.shell', 'composer', [TuiChord('!')],
-      'run shell command'),
+  TuiKeybinding('editor.historyPrev', 'composer', [
+    TuiChord('up'),
+  ], 'previous sent message (idle) / edit last queued row (busy)'),
+  TuiKeybinding('editor.historyNext', 'composer', [
+    TuiChord('down'),
+  ], 'next sent message'),
+  TuiKeybinding('editor.scroll', 'composer', [
+    TuiChord('pgup'),
+    TuiChord('pgdown'),
+  ], 'scroll transcript'),
+  TuiKeybinding('editor.complete', 'composer', [
+    TuiChord('tab'),
+  ], 'path completion / accept menu item'),
+  TuiKeybinding('editor.pasteImage', 'composer', [
+    TuiChord('ctrl+v'),
+  ], 'attach clipboard image'),
+  TuiKeybinding('editor.commands', 'composer', [
+    TuiChord('/'),
+  ], 'slash commands'),
+  TuiKeybinding('editor.shell', 'composer', [
+    TuiChord('!'),
+  ], 'run shell command'),
   // ── Run & queue ──────────────────────────────────────────────────────
-  TuiKeybinding('run.interrupt', 'run', [TuiChord('esc')],
-      'abort the streaming run'),
-  TuiKeybinding('app.exit', 'run', [TuiChord('ctrl+c')],
-      'clear composer · double-press to exit'),
-  TuiKeybinding('run.queue', 'run', [TuiChord('enter')],
-      'queue message while a run streams'),
-  TuiKeybinding('queue.pop', 'run', [TuiChord('up')],
-      'pop last queued message for editing'),
-  TuiKeybinding('queue.delete', 'run', [TuiChord('ctrl+x')],
-      'delete last queued message'),
-  TuiKeybinding('queue.steer', 'run', [TuiChord('ctrl+s')],
-      'steer queued messages into the running turn'),
+  TuiKeybinding('run.interrupt', 'run', [
+    TuiChord('esc'),
+  ], 'abort the streaming run'),
+  TuiKeybinding('app.exit', 'run', [
+    TuiChord('ctrl+c'),
+  ], 'clear composer · double-press to exit'),
+  TuiKeybinding('run.queue', 'run', [
+    TuiChord('enter'),
+  ], 'queue message while a run streams'),
+  TuiKeybinding('queue.pop', 'run', [
+    TuiChord('up'),
+  ], 'pop last queued message for editing'),
+  TuiKeybinding('queue.delete', 'run', [
+    TuiChord('ctrl+x'),
+  ], 'delete last queued message'),
+  TuiKeybinding('queue.steer', 'run', [
+    TuiChord('ctrl+s'),
+  ], 'steer queued messages into the running turn'),
   // ── Pickers ──────────────────────────────────────────────────────────
-  TuiKeybinding('picker.navigate', 'picker',
-      [TuiChord('up'), TuiChord('down')], 'move selection'),
-  TuiKeybinding('picker.select', 'picker',
-      [TuiChord('enter'), TuiChord('tab')], 'accept selection'),
+  TuiKeybinding('picker.navigate', 'picker', [
+    TuiChord('up'),
+    TuiChord('down'),
+  ], 'move selection'),
+  TuiKeybinding('picker.select', 'picker', [
+    TuiChord('enter'),
+    TuiChord('tab'),
+  ], 'accept selection'),
   TuiKeybinding('picker.close', 'picker', [TuiChord('esc')], 'close picker'),
-  TuiKeybinding('picker.filter', 'picker', [TuiChord('type')],
-      'filter the list'),
+  TuiKeybinding('picker.filter', 'picker', [
+    TuiChord('type'),
+  ], 'filter the list'),
   // ── Prompt sheets (ask / approval / secret) ──────────────────────────
   TuiKeybinding('prompt.confirm', 'prompt', [TuiChord('enter')], 'confirm'),
-  TuiKeybinding('prompt.cancel', 'prompt', [TuiChord('esc')],
-      'cancel / deny'),
-  TuiKeybinding('prompt.nextField', 'prompt', [TuiChord('tab')],
-      'next field / free text'),
-  TuiKeybinding('prompt.reveal', 'prompt', [TuiChord('ctrl+r')],
-      'show / hide secret value'),
-  TuiKeybinding('prompt.kill', 'prompt', [TuiChord('ctrl+u')],
-      'clear note / name field'),
-  TuiKeybinding('prompt.selector', 'prompt',
-      [TuiChord('up'), TuiChord('down')], 'move selector'),
-  TuiKeybinding(
-    'prompt.answer',
-    'prompt',
-    [
-      TuiChord('1'),
-      TuiChord('2'),
-      TuiChord('3'),
-      TuiChord('y'),
-      TuiChord('a'),
-      TuiChord('n'),
-    ],
-    'answer approval',
-  ),
+  TuiKeybinding('prompt.cancel', 'prompt', [TuiChord('esc')], 'cancel / deny'),
+  TuiKeybinding('prompt.nextField', 'prompt', [
+    TuiChord('tab'),
+  ], 'next field / free text'),
+  TuiKeybinding('prompt.reveal', 'prompt', [
+    TuiChord('ctrl+r'),
+  ], 'show / hide secret value'),
+  TuiKeybinding('prompt.kill', 'prompt', [
+    TuiChord('ctrl+u'),
+  ], 'clear note / name field'),
+  TuiKeybinding('prompt.selector', 'prompt', [
+    TuiChord('up'),
+    TuiChord('down'),
+  ], 'move selector'),
+  TuiKeybinding('prompt.answer', 'prompt', [
+    TuiChord('1'),
+    TuiChord('2'),
+    TuiChord('3'),
+    TuiChord('y'),
+    TuiChord('a'),
+    TuiChord('n'),
+  ], 'answer approval'),
 ];
 
 /// Chords registered for [action] (`queue.delete`); empty when unregistered.
@@ -267,11 +289,11 @@ TuiKeyHint hintText(String text) => (keys: const [], description: text);
 /// style it through the theme emitters (`tuiDim`) at write time, which also
 /// owns the `NO_COLOR` / profile degradation (rule #279).
 String tuiKeyHintRow(List<TuiKeyHint> hints) => [
-      for (final h in hints)
-        h.keys.isEmpty
-            ? h.description
-            : '${formatKeyHints(h.keys)} ${h.description}',
-    ].join(' · ');
+  for (final h in hints)
+    h.keys.isEmpty
+        ? h.description
+        : '${formatKeyHints(h.keys)} ${h.description}',
+].join(' · ');
 
 /// Platform pin for chord display: true = darwin labels (`Option`, `Cmd`).
 /// The CLI entry point sets it from `Platform.isMacOS` at boot; tests pass
@@ -307,21 +329,22 @@ List<String> tuiHotkeyTableLines({
     for (final b in bindings)
       (
         binding: b,
-        keys: [for (final c in b.chords) c.display(darwin: isDarwin)].join(' / '),
+        keys: [
+          for (final c in b.chords) c.display(darwin: isDarwin),
+        ].join(' / '),
       ),
   ];
 
-  final lines = <String>[
-    markdown ? '**Key bindings**' : '[Key bindings]',
-    '',
-  ];
+  final lines = <String>[markdown ? '**Key bindings**' : '[Key bindings]', ''];
   // Plain mode pads the key column to the widest entry of the whole table —
   // computed up front in display cells (a wide key under-pads its row when
   // measured in UTF-16 units; ambiguous-width arrows stay terminal-dependent
   // in line mode by design), so descriptions align across sections.
   // `tuiPadRight` uses the same measurement.
-  final keyColumn =
-      rows.fold<int>(0, (w, r) => math.max(w, tuiTextWidth(r.keys)));
+  final keyColumn = rows.fold<int>(
+    0,
+    (w, r) => math.max(w, tuiTextWidth(r.keys)),
+  );
   var lastScope = '';
   for (final r in rows) {
     if (r.binding.scope != lastScope) {

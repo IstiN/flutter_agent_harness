@@ -88,10 +88,7 @@ void main() {
 
     await cli.startAutoUpdateFlow();
 
-    expect(
-      io.out.toString(),
-      contains('cannot read $_configPath'),
-    );
+    expect(io.out.toString(), contains('cannot read $_configPath'));
     expect(cli.config.autoUpdate, AutoUpdateMode.off);
   });
 

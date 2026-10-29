@@ -121,19 +121,24 @@ void main() {
     expect(ok, isFalse);
   });
 
-  test('the default probe completes in time on healthy hosts', () async {
-    // Wherever the HID read fails fast (no CoreGraphics — every CI host)
-    // or answers fast (GUI session), the probe completes: true. Only a
-    // wedged HID system (SSH macOS) hangs past the timeout.
-    final ok = await probeHidShiftPolling(timeout: const Duration(seconds: 2));
-    expect(ok, isTrue);
-  },
-      skip: _canRunRealCoreGraphicsProbe()
-          ? null
-          : 'no GUI login session: the real CoreGraphics read blocks '
+  test(
+    'the default probe completes in time on healthy hosts',
+    () async {
+      // Wherever the HID read fails fast (no CoreGraphics — every CI host)
+      // or answers fast (GUI session), the probe completes: true. Only a
+      // wedged HID system (SSH macOS) hangs past the timeout.
+      final ok = await probeHidShiftPolling(
+        timeout: const Duration(seconds: 2),
+      );
+      expect(ok, isTrue);
+    },
+    skip: _canRunRealCoreGraphicsProbe()
+        ? null
+        : 'no GUI login session: the real CoreGraphics read blocks '
               'forever (issue #355) and the wedged probe isolate — parked '
               'in a sync FFI call — cannot be killed, pinning the test '
-              'VM\'s shutdown');
+              'VM\'s shutdown',
+  );
 }
 
 /// Whether the real `_hidProbeEntry` may run here: non-macOS hosts fail

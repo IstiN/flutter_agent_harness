@@ -77,8 +77,7 @@ Future<Map<String, dynamic>> _captureOpenAi(
 }) async {
   Map<String, dynamic>? captured;
   final client = http_testing.MockClient.streaming((request, body) async {
-    captured =
-        jsonDecode(await body.bytesToString()) as Map<String, dynamic>;
+    captured = jsonDecode(await body.bytesToString()) as Map<String, dynamic>;
     return http.StreamedResponse(
       Stream.value(utf8.encode(_okOpenAiSse)),
       200,
@@ -101,8 +100,7 @@ Future<Map<String, dynamic>> _captureGoogle(
 }) async {
   Map<String, dynamic>? captured;
   final client = http_testing.MockClient.streaming((request, body) async {
-    captured =
-        jsonDecode(await body.bytesToString()) as Map<String, dynamic>;
+    captured = jsonDecode(await body.bytesToString()) as Map<String, dynamic>;
     return http.StreamedResponse(
       Stream.value(utf8.encode(_googleSse())),
       200,
@@ -122,8 +120,7 @@ Future<Map<String, dynamic>> _captureGoogle(
 Future<Map<String, dynamic>> _captureAnthropic(Model model) async {
   Map<String, dynamic>? captured;
   final client = http_testing.MockClient.streaming((request, body) async {
-    captured =
-        jsonDecode(await body.bytesToString()) as Map<String, dynamic>;
+    captured = jsonDecode(await body.bytesToString()) as Map<String, dynamic>;
     return http.StreamedResponse(
       Stream.value(utf8.encode(_anthropicSse())),
       200,
@@ -147,23 +144,25 @@ void main() {
       expect(body['reasoning_effort'], 'high');
     });
 
-    test('openrouter-shaped endpoints get the nested reasoning object',
-        () async {
-      final body = await _captureOpenAi(
-        Model(
-          id: 'vendor/model',
-          api: 'openai-completions',
-          provider: 'openrouter',
-          baseUrl: 'https://openrouter.ai/api/v1',
-          reasoning: true,
-          thinkingLevel: 'low',
-          contextWindow: 200000,
-          maxTokens: 16384,
-        ),
-      );
-      expect(body['reasoning'], {'effort': 'low'});
-      expect(body.containsKey('reasoning_effort'), isFalse);
-    });
+    test(
+      'openrouter-shaped endpoints get the nested reasoning object',
+      () async {
+        final body = await _captureOpenAi(
+          Model(
+            id: 'vendor/model',
+            api: 'openai-completions',
+            provider: 'openrouter',
+            baseUrl: 'https://openrouter.ai/api/v1',
+            reasoning: true,
+            thinkingLevel: 'low',
+            contextWindow: 200000,
+            maxTokens: 16384,
+          ),
+        );
+        expect(body['reasoning'], {'effort': 'low'});
+        expect(body.containsKey('reasoning_effort'), isFalse);
+      },
+    );
 
     test('reasoning:false model never sends the pinned level (E3)', () async {
       final body = await _captureOpenAi(
@@ -206,48 +205,51 @@ void main() {
       expect(body['max_completion_tokens'], 16384);
     });
 
-    test('an explicit options maxTokens is omitted under the flag too',
-        () async {
-      final body = await _captureOpenAi(
-        _openAiModel(
-          compat: const OpenAICompletionsCompat(omitMaxOutputTokens: true),
-        ),
-        options: const OpenAICompletionsOptions(apiKey: 'k', maxTokens: 4096),
-      );
-      expect(body.containsKey('max_completion_tokens'), isFalse);
-      expect(body.containsKey('max_tokens'), isFalse);
-    });
+    test(
+      'an explicit options maxTokens is omitted under the flag too',
+      () async {
+        final body = await _captureOpenAi(
+          _openAiModel(
+            compat: const OpenAICompletionsCompat(omitMaxOutputTokens: true),
+          ),
+          options: const OpenAICompletionsOptions(apiKey: 'k', maxTokens: 4096),
+        );
+        expect(body.containsKey('max_completion_tokens'), isFalse);
+        expect(body.containsKey('max_tokens'), isFalse);
+      },
+    );
   });
 
   group('google wire — pinned thinking level (AC6)', () {
-    test('model.thinkingLevel maps to the Gemini thinkingLevel ladder',
-        () async {
-      for (final entry in {
-        'minimal': 'MINIMAL',
-        'low': 'LOW',
-        'medium': 'MEDIUM',
-        'high': 'HIGH',
-      }.entries) {
-        final body = await _captureGoogle(
-          Model(
-            id: 'gemini-2.5-pro',
-            api: 'google-generative-ai',
-            provider: 'google',
-            baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
-            reasoning: true,
-            thinkingLevel: entry.key,
-            contextWindow: 1000000,
-            maxTokens: 16384,
-          ),
-        );
-        final config = body['generationConfig'] as Map<String, dynamic>;
-        expect(
-          config['thinkingConfig'],
-          {'includeThoughts': true, 'thinkingLevel': entry.value},
-          reason: 'level ${entry.key}',
-        );
-      }
-    });
+    test(
+      'model.thinkingLevel maps to the Gemini thinkingLevel ladder',
+      () async {
+        for (final entry in {
+          'minimal': 'MINIMAL',
+          'low': 'LOW',
+          'medium': 'MEDIUM',
+          'high': 'HIGH',
+        }.entries) {
+          final body = await _captureGoogle(
+            Model(
+              id: 'gemini-2.5-pro',
+              api: 'google-generative-ai',
+              provider: 'google',
+              baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+              reasoning: true,
+              thinkingLevel: entry.key,
+              contextWindow: 1000000,
+              maxTokens: 16384,
+            ),
+          );
+          final config = body['generationConfig'] as Map<String, dynamic>;
+          expect(config['thinkingConfig'], {
+            'includeThoughts': true,
+            'thinkingLevel': entry.value,
+          }, reason: 'level ${entry.key}');
+        }
+      },
+    );
 
     test('reasoning:false model never sends thinkingConfig (E3)', () async {
       final body = await _captureGoogle(

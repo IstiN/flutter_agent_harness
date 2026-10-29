@@ -52,17 +52,13 @@ final class SkillRootsFingerprint {
   bool operator ==(Object other) =>
       other is SkillRootsFingerprint &&
       other.stamps.length == stamps.length &&
-      other.stamps.entries.every(
-        (entry) => stamps[entry.key] == entry.value,
-      );
+      other.stamps.entries.every((entry) => stamps[entry.key] == entry.value);
 
   @override
-  int get hashCode => Object.hashAll(
-    [
-      for (final key in stamps.keys.toList()..sort())
-        Object.hash(key, stamps[key]),
-    ],
-  );
+  int get hashCode => Object.hashAll([
+    for (final key in stamps.keys.toList()..sort())
+      Object.hash(key, stamps[key]),
+  ]);
 }
 
 /// Computes the fingerprint of [roots] against [env].

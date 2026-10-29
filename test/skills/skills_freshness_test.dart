@@ -34,14 +34,17 @@ void main() {
   }
 
   group('UT-1: fingerprint stability and change detection', () {
-    test('missing roots are stable; an unchanged tree keeps the value', () async {
-      final before = await fingerprint();
-      final again = await fingerprint();
-      // Both computations list only absent roots — stable "absent" stamps
-      // (E-4: no rescan loop off a missing root).
-      expect(before, equals(again));
-      expect(before.stamps.values, everyElement(absentSkillRootStamp));
-    });
+    test(
+      'missing roots are stable; an unchanged tree keeps the value',
+      () async {
+        final before = await fingerprint();
+        final again = await fingerprint();
+        // Both computations list only absent roots — stable "absent" stamps
+        // (E-4: no rescan loop off a missing root).
+        expect(before, equals(again));
+        expect(before.stamps.values, everyElement(absentSkillRootStamp));
+      },
+    );
 
     test('adding a skill entry changes the fingerprint', () async {
       await env.createDir('/work/.fah/skills');
@@ -50,30 +53,34 @@ void main() {
       expect(await fingerprint(), isNot(equals(before)));
     });
 
-    test('removing an entry changes it; renaming is replace, not duplicate',
-        () async {
-      await seedSkill('old-name');
-      final before = await fingerprint();
-      // Rename = old dir gone + new dir appears (E-5) — the listing changes
-      // either way.
-      await env.remove('/work/.fah/skills/old-name', recursive: true);
-      expect(await fingerprint(), isNot(equals(before)));
-      await seedSkill('new-name');
-      final afterRename = await fingerprint();
-      expect(await fingerprint(), equals(afterRename));
-    });
+    test(
+      'removing an entry changes it; renaming is replace, not duplicate',
+      () async {
+        await seedSkill('old-name');
+        final before = await fingerprint();
+        // Rename = old dir gone + new dir appears (E-5) — the listing changes
+        // either way.
+        await env.remove('/work/.fah/skills/old-name', recursive: true);
+        expect(await fingerprint(), isNot(equals(before)));
+        await seedSkill('new-name');
+        final afterRename = await fingerprint();
+        expect(await fingerprint(), equals(afterRename));
+      },
+    );
 
-    test('an mtime bump on a flat skill file changes it (edit detection)',
-        () async {
-      await env.createDir('/work/.fah/skills');
-      await env.writeFile(
-        '/work/.fah/skills/flat.md',
-        '---\ndescription: v1\n---\nbody\n',
-      );
-      final before = await fingerprint();
-      env.setMtime('/work/.fah/skills/flat.md', 1234567890);
-      expect(await fingerprint(), isNot(equals(before)));
-    });
+    test(
+      'an mtime bump on a flat skill file changes it (edit detection)',
+      () async {
+        await env.createDir('/work/.fah/skills');
+        await env.writeFile(
+          '/work/.fah/skills/flat.md',
+          '---\ndescription: v1\n---\nbody\n',
+        );
+        final before = await fingerprint();
+        env.setMtime('/work/.fah/skills/flat.md', 1234567890);
+        expect(await fingerprint(), isNot(equals(before)));
+      },
+    );
 
     test('a change under one root leaves other roots untouched', () async {
       await seedSkill('a');
@@ -88,31 +95,33 @@ void main() {
       );
     });
 
-    test('stamp math is content-free (names + kinds + sizes + mtimes only)',
-        () {
-      const entries = [
-        FileInfo(
-          name: 'deploy',
-          path: '/work/.fah/skills/deploy',
-          kind: FileKind.directory,
-          size: 0,
-          mtimeMs: 42,
-        ),
-        FileInfo(
-          name: 'flat.md',
-          path: '/work/.fah/skills/flat.md',
-          kind: FileKind.file,
-          size: 7,
-          mtimeMs: 99,
-        ),
-      ];
-      final stamp = skillRootStamp(entries);
-      expect(stamp, contains('deploy:directory:0:42'));
-      expect(stamp, contains('flat.md:file:7:99'));
-      // Order-independent input, deterministic output.
-      final reversed = skillRootStamp(entries.reversed.toList());
-      expect(reversed, equals(stamp));
-    });
+    test(
+      'stamp math is content-free (names + kinds + sizes + mtimes only)',
+      () {
+        const entries = [
+          FileInfo(
+            name: 'deploy',
+            path: '/work/.fah/skills/deploy',
+            kind: FileKind.directory,
+            size: 0,
+            mtimeMs: 42,
+          ),
+          FileInfo(
+            name: 'flat.md',
+            path: '/work/.fah/skills/flat.md',
+            kind: FileKind.file,
+            size: 7,
+            mtimeMs: 99,
+          ),
+        ];
+        final stamp = skillRootStamp(entries);
+        expect(stamp, contains('deploy:directory:0:42'));
+        expect(stamp, contains('flat.md:file:7:99'));
+        // Order-independent input, deterministic output.
+        final reversed = skillRootStamp(entries.reversed.toList());
+        expect(reversed, equals(stamp));
+      },
+    );
   });
 
   group('UT-2: freshness rendering determinism (AC1, AC7)', () {
@@ -155,24 +164,24 @@ void main() {
       },
     );
 
-    test('mid-session entries carry the added mid-session flag with source',
-        () {
-      final out = formatSkillsForPrompt(
-        [skill],
-        scannedAt: DateTime.utc(2026, 10, 8, 15, 43, 13),
-        midSessionNames: {'deploy'},
-      );
-      expect(out, contains('added mid-session (fah)'));
-      // Boot-time entries carry no flag.
-      final quiet = formatSkillsForPrompt(
-        [skill],
-        scannedAt: DateTime.utc(2026, 10, 8, 15, 43, 13),
-      );
-      expect(quiet, isNot(contains('mid-session')));
-    });
+    test(
+      'mid-session entries carry the added mid-session flag with source',
+      () {
+        final out = formatSkillsForPrompt(
+          [skill],
+          scannedAt: DateTime.utc(2026, 10, 8, 15, 43, 13),
+          midSessionNames: {'deploy'},
+        );
+        expect(out, contains('added mid-session (fah)'));
+        // Boot-time entries carry no flag.
+        final quiet = formatSkillsForPrompt([
+          skill,
+        ], scannedAt: DateTime.utc(2026, 10, 8, 15, 43, 13));
+        expect(quiet, isNot(contains('mid-session')));
+      },
+    );
 
-    test('liveRediscovery off renders the staleness footer; on the stamp',
-        () {
+    test('liveRediscovery off renders the staleness footer; on the stamp', () {
       final scannedAt = DateTime.utc(2026, 10, 8, 15, 43, 13);
       final off = formatSkillsForPrompt(
         [skill],
@@ -197,100 +206,91 @@ void main() {
 
     test('no skills ⇒ empty section, even with a stamp', () {
       expect(
-        formatSkillsForPrompt(
-          const [],
-          scannedAt: DateTime.utc(2026, 10, 8),
-        ),
+        formatSkillsForPrompt(const [], scannedAt: DateTime.utc(2026, 10, 8)),
         '',
       );
     });
   });
 
   group('UT-4: /skill: resolution decision table', () {
-    test(
-      'indexed / on-disk-unindexed / disabled-by-toggle / nowhere — '
-      'only the last says unknown skill',
-      () async {
-        // indexed: `known` is discovered at boot. disabled: `off` is
-        // discovered but toggled off. latecomer: lands on disk AFTER boot.
-        await seedSkill('known');
-        await env.writeFile(
-          '/work/.fah/skills/off/SKILL.md',
-          '---\nname: off\ndescription: toggled off\n---\nbody\n',
-        );
-        final cli = AgentCli(
-          config: AgentCliConfig(
-            model: testModel,
-            apiKey: 'test-key',
-            env: env,
-            sessionRoot: '/sessions',
-            providerKind: 'openai-completions',
-            skillToggles: {'off': false},
-          ),
-          io: io,
-          // Three invocations start runs (latecomer, known, and one spare
-          // for the boot-time none).
-          streamFunction: FakeStreamFunction([
-            textTurn('ok'),
-            textTurn('ok'),
-            textTurn('ok'),
-          ]).call,
-        );
-        final run = cli.run();
-        await waitForIt(
-          () => cli.systemPrompt.contains('<name>known</name>'),
-          reason: 'boot index; out=${io.out}',
-        );
+    test('indexed / on-disk-unindexed / disabled-by-toggle / nowhere — '
+        'only the last says unknown skill', () async {
+      // indexed: `known` is discovered at boot. disabled: `off` is
+      // discovered but toggled off. latecomer: lands on disk AFTER boot.
+      await seedSkill('known');
+      await env.writeFile(
+        '/work/.fah/skills/off/SKILL.md',
+        '---\nname: off\ndescription: toggled off\n---\nbody\n',
+      );
+      final cli = AgentCli(
+        config: AgentCliConfig(
+          model: testModel,
+          apiKey: 'test-key',
+          env: env,
+          sessionRoot: '/sessions',
+          providerKind: 'openai-completions',
+          skillToggles: {'off': false},
+        ),
+        io: io,
+        // Three invocations start runs (latecomer, known, and one spare
+        // for the boot-time none).
+        streamFunction: FakeStreamFunction([
+          textTurn('ok'),
+          textTurn('ok'),
+          textTurn('ok'),
+        ]).call,
+      );
+      final run = cli.run();
+      await waitForIt(
+        () => cli.systemPrompt.contains('<name>known</name>'),
+        reason: 'boot index; out=${io.out}',
+      );
 
-        // nowhere: exact wording, no new noise (AC4).
-        io.sendLine('/skill:does-not-exist');
-        await waitForIt(
-          () => io.out.toString().contains('unknown skill: does-not-exist'),
-          reason: 'unknown-skill step; out=${io.out}',
-        );
-        expect(
-          io.out.toString(),
-          isNot(contains('discovered since startup')),
-        );
+      // nowhere: exact wording, no new noise (AC4).
+      io.sendLine('/skill:does-not-exist');
+      await waitForIt(
+        () => io.out.toString().contains('unknown skill: does-not-exist'),
+        reason: 'unknown-skill step; out=${io.out}',
+      );
+      expect(io.out.toString(), isNot(contains('discovered since startup')));
 
-        // Mid-session drop AFTER that miss's rescan: `latecomer` is on
-        // disk but unindexed — the cold-resolve path (AC3).
-        await seedSkill('latecomer');
-        io.sendLine('/skill:latecomer');
-        await waitForIt(
-          () => io.out.toString().contains(
-            'skill latecomer discovered since startup — index refreshed',
-          ),
-          reason: 'cold-resolve warning; out=${io.out}',
-        );
-        await waitForIt(
-          () => io.out.toString().contains('skill latecomer — '),
-          reason: 'latecomer render; out=${io.out}',
-        );
+      // Mid-session drop AFTER that miss's rescan: `latecomer` is on
+      // disk but unindexed — the cold-resolve path (AC3).
+      await seedSkill('latecomer');
+      io.sendLine('/skill:latecomer');
+      await waitForIt(
+        () => io.out.toString().contains(
+          'skill latecomer discovered since startup — index refreshed',
+        ),
+        reason: 'cold-resolve warning; out=${io.out}',
+      );
+      await waitForIt(
+        () => io.out.toString().contains('skill latecomer — '),
+        reason: 'latecomer render; out=${io.out}',
+      );
 
-        // indexed: the normal path, no warning — assert on the DELTA (the
-        // transcript already carries the latecomer cold-resolve line).
-        final outBeforeKnown = io.out.toString();
-        io.sendLine('/skill:known');
-        await waitForIt(
-          () => io.out.toString().contains('skill known — '),
-          reason: 'known render; out=${io.out}',
-        );
-        final knownDelta = io.out.toString().substring(outBeforeKnown.length);
-        expect(knownDelta, isNot(contains('discovered since startup')));
-        expect(knownDelta, contains('skill known — '));
+      // indexed: the normal path, no warning — assert on the DELTA (the
+      // transcript already carries the latecomer cold-resolve line).
+      final outBeforeKnown = io.out.toString();
+      io.sendLine('/skill:known');
+      await waitForIt(
+        () => io.out.toString().contains('skill known — '),
+        reason: 'known render; out=${io.out}',
+      );
+      final knownDelta = io.out.toString().substring(outBeforeKnown.length);
+      expect(knownDelta, isNot(contains('discovered since startup')));
+      expect(knownDelta, contains('skill known — '));
 
-        // disabled-by-toggle: named way back, never `unknown skill`.
-        io.sendLine('/skill:off');
-        await waitForIt(
-          () => io.out.toString().contains('skill off is disabled'),
-          reason: 'off disabled; out=${io.out}',
-        );
-        expect(io.out.toString(), contains('/skills on off'));
+      // disabled-by-toggle: named way back, never `unknown skill`.
+      io.sendLine('/skill:off');
+      await waitForIt(
+        () => io.out.toString().contains('skill off is disabled'),
+        reason: 'off disabled; out=${io.out}',
+      );
+      expect(io.out.toString(), contains('/skills on off'));
 
-        io.sendLine('/exit');
-        await run;
-      },
-    );
+      io.sendLine('/exit');
+      await run;
+    });
   });
 }

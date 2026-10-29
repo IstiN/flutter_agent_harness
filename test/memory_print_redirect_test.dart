@@ -68,7 +68,8 @@ void main() {
       expect(
         sinkLines,
         isNotEmpty,
-        reason: 'the package prints on the tag-generation path — the '
+        reason:
+            'the package prints on the tag-generation path — the '
             'redirect must have something to catch',
       );
       expect(
@@ -79,7 +80,8 @@ void main() {
       expect(
         stdoutLines.where((l) => l.contains('KBTagGeneratorAgent')),
         isEmpty,
-        reason: 'a package print reaching stdout writes raw bytes into the '
+        reason:
+            'a package print reaching stdout writes raw bytes into the '
             'TUI frame stream (gh-1510 screen corruption)',
       );
       expect(
@@ -89,26 +91,29 @@ void main() {
       );
     });
 
-    test('without printSink the historical print behavior is preserved', () async {
-      final stdoutLines = <String>[];
-      await runZoned(
-        () async {
-          final controller = MemoryController(
-            env: MemoryExecutionEnv(),
-            llmProvider: _ThrowingProvider(),
-          );
-          await controller.add(text: 'durable keyword fact');
-        },
-        zoneSpecification: ZoneSpecification(
-          print: (self, parent, zone, line) => stdoutLines.add(line),
-        ),
-      );
-      // Null sink = pass-through (embedders/headless keep the package's
-      // debug output; the TUI host always wires the diagnostic log).
-      expect(
-        stdoutLines.any((l) => l.contains('KBTagGeneratorAgent')),
-        isTrue,
-      );
-    });
+    test(
+      'without printSink the historical print behavior is preserved',
+      () async {
+        final stdoutLines = <String>[];
+        await runZoned(
+          () async {
+            final controller = MemoryController(
+              env: MemoryExecutionEnv(),
+              llmProvider: _ThrowingProvider(),
+            );
+            await controller.add(text: 'durable keyword fact');
+          },
+          zoneSpecification: ZoneSpecification(
+            print: (self, parent, zone, line) => stdoutLines.add(line),
+          ),
+        );
+        // Null sink = pass-through (embedders/headless keep the package's
+        // debug output; the TUI host always wires the diagnostic log).
+        expect(
+          stdoutLines.any((l) => l.contains('KBTagGeneratorAgent')),
+          isTrue,
+        );
+      },
+    );
   });
 }

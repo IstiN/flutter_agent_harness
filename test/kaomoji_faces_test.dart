@@ -37,27 +37,17 @@ void main() {
 
   test('ASCII-safe fallbacks for the non-ASCII faces', () {
     // ◕‿◕ → ^.^ ; ¬_¬ → -_/ (mouth = the tilted stroke) ; o_o? → o_o.
-    expect(
-      kKaomojiFaces[5].runsFor(true).map((r) => r.$1).join(),
-      '^.^',
-    );
-    expect(
-      kKaomojiFaces[6].runsFor(true).map((r) => r.$1).join(),
-      '-_/',
-    );
-    expect(
-      kKaomojiFaces[7].runsFor(true).map((r) => r.$1).join(),
-      'o_o',
-    );
+    expect(kKaomojiFaces[5].runsFor(true).map((r) => r.$1).join(), '^.^');
+    expect(kKaomojiFaces[6].runsFor(true).map((r) => r.$1).join(), '-_/');
+    expect(kKaomojiFaces[7].runsFor(true).map((r) => r.$1).join(), 'o_o');
     // The primary set is already ASCII-safe for the plain faces: same
     // run content either way.
     expect(kKaomojiFaces[0].runsFor(true), kKaomojiFaces[0].runs);
     // The mouth tone segmentation matches the sprite's `.b` class: the
     // `¬_¬` fallback's tilted stroke is the mouth, the flat ones are not.
-    expect(
-      kKaomojiFaces[6].runsFor(true).where((r) => r.$2).map((r) => r.$1),
-      ['/'],
-    );
+    expect(kKaomojiFaces[6].runsFor(true).where((r) => r.$2).map((r) => r.$1), [
+      '/',
+    ]);
     expect(
       kKaomojiFaces[6].runsFor(false).where((r) => r.$2).map((r) => r.$1),
       ['_'],
@@ -76,16 +66,17 @@ void main() {
     expect(kKaomojiSwapTicks, 9);
   });
 
-  test('AC spec: every SVG frame is the approved 24-grid sprite content',
-      () {
+  test('AC spec: every SVG frame is the approved 24-grid sprite content', () {
     for (final face in kKaomojiFaces) {
       final svg = kaomojiFaceSvg(face);
       expect(svg, contains('viewBox="0 0 24 24"'), reason: svg);
       // 1.45× content scale + 1.4 stroke: the approved group attrs.
       expect(
         svg,
-        contains('transform="translate(12 12) scale(1.45) '
-            'translate(-12 -12)"'),
+        contains(
+          'transform="translate(12 12) scale(1.45) '
+          'translate(-12 -12)"',
+        ),
         reason: svg,
       );
       expect(svg, contains('stroke-width="1.4"'), reason: svg);
@@ -99,10 +90,7 @@ void main() {
     // The two-tone split lands on the sprite's shape kinds: the `>_o`
     // frame strokes both eyes teal and the mouth blue.
     final gtO = kaomojiFaceSvg(kKaomojiFaces[0]);
-    expect(
-      gtO,
-      contains('<path stroke="#60d0d0" d="M5 9.5l2.6 1.7L5 12.9"/>'),
-    );
+    expect(gtO, contains('<path stroke="#60d0d0" d="M5 9.5l2.6 1.7L5 12.9"/>'));
     expect(
       gtO,
       contains('<circle stroke="#60d0d0" cx="16.8" cy="11" r="1.8"/>'),
@@ -145,41 +133,48 @@ void main() {
     expect(seen.length, kKaomojiFaces.length, reason: 'seen $seen');
   });
 
-  test('debugPin: pinned draws freeze the face — deterministic goldens',
-      () {
+  test('debugPin: pinned draws freeze the face — deterministic goldens', () {
     addTearDown(() => KaomojiFacePicker.debugPin = null);
     KaomojiFacePicker.debugPin = 3;
     final picker = KaomojiFacePicker();
     expect(picker.first(), same(kKaomojiFaces[3]));
     for (var i = 0; i < 5; i++) {
-      expect(picker.next(), same(kKaomojiFaces[3]),
-          reason: 'the pin freezes the face across swap boundaries');
+      expect(
+        picker.next(),
+        same(kKaomojiFaces[3]),
+        reason: 'the pin freezes the face across swap boundaries',
+      );
     }
     // Out-of-range pins clamp into the face set.
     KaomojiFacePicker.debugPin = 99;
     expect(KaomojiFacePicker().first(), same(kKaomojiFaces[7]));
   });
 
-  test('kaomojiNextFaceIndex: the skip-over seam the CLI pick injects into',
-      () {
-    // raw 0 with current 0 skips to 1; raw >= current shifts +1; raw <
-    // current passes through.
-    expect(kaomojiNextFaceIndex((max) {
-      expect(max, kKaomojiFaces.length - 1);
-      return 0;
-    }, 0), 1);
-    expect(kaomojiNextFaceIndex((max) => 5, 3), 6);
-    expect(kaomojiNextFaceIndex((max) => 5, 6), 5);
-    // For EVERY current, every legal raw lands off current, in range.
-    for (var current = 0; current < kKaomojiFaces.length; current++) {
-      for (var raw = 0; raw < kKaomojiFaces.length - 1; raw++) {
-        final next = kaomojiNextFaceIndex((max) {
+  test(
+    'kaomojiNextFaceIndex: the skip-over seam the CLI pick injects into',
+    () {
+      // raw 0 with current 0 skips to 1; raw >= current shifts +1; raw <
+      // current passes through.
+      expect(
+        kaomojiNextFaceIndex((max) {
           expect(max, kKaomojiFaces.length - 1);
-          return raw;
-        }, current);
-        expect(next, inInclusiveRange(0, kKaomojiFaces.length - 1));
-        expect(next, isNot(current), reason: 'current $current raw $raw');
+          return 0;
+        }, 0),
+        1,
+      );
+      expect(kaomojiNextFaceIndex((max) => 5, 3), 6);
+      expect(kaomojiNextFaceIndex((max) => 5, 6), 5);
+      // For EVERY current, every legal raw lands off current, in range.
+      for (var current = 0; current < kKaomojiFaces.length; current++) {
+        for (var raw = 0; raw < kKaomojiFaces.length - 1; raw++) {
+          final next = kaomojiNextFaceIndex((max) {
+            expect(max, kKaomojiFaces.length - 1);
+            return raw;
+          }, current);
+          expect(next, inInclusiveRange(0, kKaomojiFaces.length - 1));
+          expect(next, isNot(current), reason: 'current $current raw $raw');
+        }
       }
-    }
-  });
+    },
+  );
 }

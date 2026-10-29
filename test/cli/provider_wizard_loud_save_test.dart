@@ -96,9 +96,7 @@ void main() {
     io.sendLine('1');
     await waitForIt(() => io.out.toString().contains('base URL (empty ='));
     io.sendLine(baseUrl);
-    await waitForIt(
-      () => io.out.toString().contains('provider name (empty ='),
-    );
+    await waitForIt(() => io.out.toString().contains('provider name (empty ='));
     io.sendLine(name);
     await waitForIt(
       () => io.out.toString().contains('API key (empty for none):'),
@@ -115,8 +113,7 @@ void main() {
 
   group('wizard loud save failure (gh-1679 UT-1, IT-1, AC1, AC4)', () {
     test('a failing store prints slot + label + diagnostic on the spot, '
-        'records the entry flagged, and never renders the key value',
-        () async {
+        'records the entry flagged, and never renders the key value', () async {
       final fake = FakeStreamFunction([textTurn('ok')]);
       final store = _FlakyStore()
         ..writeError = StateError('keychain write failed (exit 45)');
@@ -143,10 +140,7 @@ void main() {
       // Loud on the spot: slot + store label + diagnostic (AC1).
       expect(output, contains('could not save $slot to fake store'));
       expect(output, contains('keychain write failed (exit 45)'));
-      expect(
-        output,
-        contains('/key set $slot <value>'),
-      );
+      expect(output, contains('/key set $slot <value>'));
       // The session keeps working off the typed token.
       expect(output, contains('key: provided'));
       // AC4 byte-scan: no rendered string carries any byte of the value.
@@ -187,63 +181,62 @@ void main() {
       final output = io.out.toString();
       expect(output, isNot(contains('could not save')));
       expect(output, isNot(contains('keyNotPersisted')));
-      expect(
-        store.map['FA_KEY_API_KIMI_COM_KIMI_IRA'],
-        'sk-ira-secret-789',
-      );
+      expect(store.map['FA_KEY_API_KIMI_COM_KIMI_IRA'], 'sk-ira-secret-789');
       final entry = registry.find('kimi_ira');
       expect(entry!.keyNotPersisted, isFalse);
       expect(cache.failedSaveNames, isEmpty);
     });
 
-    test('wizard and /key set failure handling converge (AC5 parity)',
-        () async {
-      const slot = 'FA_KEY_API_KIMI_COM_KIMI_IRA';
-      final fake = FakeStreamFunction([textTurn('ok'), textTurn('ok')]);
-      final store = _FlakyStore()
-        ..writeError = StateError('keychain write failed (exit 45)');
-      final cache = SecureKeyCache(store);
-      await cache.probe();
-      final cli = cliFor(fake.call, secureKeys: cache);
-      final run = cli.run();
+    test(
+      'wizard and /key set failure handling converge (AC5 parity)',
+      () async {
+        const slot = 'FA_KEY_API_KIMI_COM_KIMI_IRA';
+        final fake = FakeStreamFunction([textTurn('ok'), textTurn('ok')]);
+        final store = _FlakyStore()
+          ..writeError = StateError('keychain write failed (exit 45)');
+        final cache = SecureKeyCache(store);
+        await cache.probe();
+        final cli = cliFor(fake.call, secureKeys: cache);
+        final run = cli.run();
 
-      // /key set on the same failing store.
-      io.sendLine('/key set $slot sk-ira-secret-789');
-      await waitForIt(
-        () => io.out.toString().contains('could not save $slot'),
-      );
-
-      // The wizard on the same failing store.
-      await runWizard(
-        baseUrl: 'https://api.kimi.com/coding/v1',
-        name: 'kimi_ira',
-        key: 'sk-ira-secret-789',
-      );
-      io.sendLine('/exit');
-      await run;
-
-      final output = io.out.toString();
-      // Both write paths converge on the shared loud-failure surface:
-      // `could not save <slot> to <label>: the write failed` (/key set's
-      // wording is the frozen golden; the wizard matches it and adds the
-      // diagnostic + retry command — the incident RCA's ask).
-      final keySetLine = output
-          .split('\n')
-          .firstWhere((l) => l.contains('could not save $slot'));
-      final wizardLine = output
-          .split('\n')
-          .reversed
-          .firstWhere((l) => l.contains('could not save $slot'));
-      for (final line in [keySetLine, wizardLine]) {
-        expect(
-          line,
-          contains('could not save $slot to fake store: the write failed'),
+        // /key set on the same failing store.
+        io.sendLine('/key set $slot sk-ira-secret-789');
+        await waitForIt(
+          () => io.out.toString().contains('could not save $slot'),
         );
-      }
-      expect(wizardLine, contains('keychain write failed (exit 45)'));
-      expect(wizardLine, contains('/key set $slot <value>'));
-      expect(output, isNot(contains('sk-ira-secret-789')));
-    });
+
+        // The wizard on the same failing store.
+        await runWizard(
+          baseUrl: 'https://api.kimi.com/coding/v1',
+          name: 'kimi_ira',
+          key: 'sk-ira-secret-789',
+        );
+        io.sendLine('/exit');
+        await run;
+
+        final output = io.out.toString();
+        // Both write paths converge on the shared loud-failure surface:
+        // `could not save <slot> to <label>: the write failed` (/key set's
+        // wording is the frozen golden; the wizard matches it and adds the
+        // diagnostic + retry command — the incident RCA's ask).
+        final keySetLine = output
+            .split('\n')
+            .firstWhere((l) => l.contains('could not save $slot'));
+        final wizardLine = output
+            .split('\n')
+            .reversed
+            .firstWhere((l) => l.contains('could not save $slot'));
+        for (final line in [keySetLine, wizardLine]) {
+          expect(
+            line,
+            contains('could not save $slot to fake store: the write failed'),
+          );
+        }
+        expect(wizardLine, contains('keychain write failed (exit 45)'));
+        expect(wizardLine, contains('/key set $slot <value>'));
+        expect(output, isNot(contains('sk-ira-secret-789')));
+      },
+    );
   });
 
   group('macOS default-keychain repair offer (gh-1679 AC7)', () {
@@ -287,9 +280,7 @@ void main() {
         () => io.out.toString().contains('no default keychain (exit 1)'),
       );
       // ...and the [y/N] offer appears.
-      await waitForIt(
-        () => io.out.toString().contains('[y/N]'),
-      );
+      await waitForIt(() => io.out.toString().contains('[y/N]'));
       io.sendLine('n');
       await waitForIt(
         () => io.out.toString().contains('switched provider to openai'),
@@ -306,61 +297,60 @@ void main() {
       expect(output, isNot(contains('sk-ira-secret-789')));
     });
 
-    test('a "y" runs the exact repair command and re-attempts the save',
-        () async {
-      final fake = FakeStreamFunction([textTurn('ok')]);
-      final store = _FlakyStore()
-        ..writeError = StateError('no default keychain (exit 1)');
-      final shell = _RepairShell(store);
-      final env = MemoryExecutionEnv(cwd: '/work', shell: shell);
-      final cache = SecureKeyCache(store);
-      await cache.probe();
-      final registry = CustomProviderRegistry(const []);
-      final cli = cliFor(
-        fake.call,
-        secureKeys: cache,
-        customProviders: registry,
-        env: env,
-      );
-      final run = cli.run();
+    test(
+      'a "y" runs the exact repair command and re-attempts the save',
+      () async {
+        final fake = FakeStreamFunction([textTurn('ok')]);
+        final store = _FlakyStore()
+          ..writeError = StateError('no default keychain (exit 1)');
+        final shell = _RepairShell(store);
+        final env = MemoryExecutionEnv(cwd: '/work', shell: shell);
+        final cache = SecureKeyCache(store);
+        await cache.probe();
+        final registry = CustomProviderRegistry(const []);
+        final cli = cliFor(
+          fake.call,
+          secureKeys: cache,
+          customProviders: registry,
+          env: env,
+        );
+        final run = cli.run();
 
-      io.sendLine('/provider custom');
-      await waitForIt(() => io.out.toString().contains('type a number:'));
-      io.sendLine('1');
-      await waitForIt(() => io.out.toString().contains('base URL (empty ='));
-      io.sendLine('https://api.kimi.com/coding/v1');
-      await waitForIt(
-        () => io.out.toString().contains('provider name (empty ='),
-      );
-      io.sendLine('kimi_ira');
-      await waitForIt(
-        () => io.out.toString().contains('API key (empty for none):'),
-      );
-      io.sendLine('sk-ira-secret-789');
-      await waitForIt(
-        () => io.out.toString().contains('no model list from the endpoint'),
-      );
-      io.sendLine('proxy-model');
-      await waitForIt(() => io.out.toString().contains('[y/N]'));
-      io.sendLine('y');
-      await waitForIt(
-        () => io.out.toString().contains('saved FA_KEY_API_KIMI_COM_KIMI_IRA'),
-      );
-      io.sendLine('/exit');
-      await run;
+        io.sendLine('/provider custom');
+        await waitForIt(() => io.out.toString().contains('type a number:'));
+        io.sendLine('1');
+        await waitForIt(() => io.out.toString().contains('base URL (empty ='));
+        io.sendLine('https://api.kimi.com/coding/v1');
+        await waitForIt(
+          () => io.out.toString().contains('provider name (empty ='),
+        );
+        io.sendLine('kimi_ira');
+        await waitForIt(
+          () => io.out.toString().contains('API key (empty for none):'),
+        );
+        io.sendLine('sk-ira-secret-789');
+        await waitForIt(
+          () => io.out.toString().contains('no model list from the endpoint'),
+        );
+        io.sendLine('proxy-model');
+        await waitForIt(() => io.out.toString().contains('[y/N]'));
+        io.sendLine('y');
+        await waitForIt(
+          () =>
+              io.out.toString().contains('saved FA_KEY_API_KIMI_COM_KIMI_IRA'),
+        );
+        io.sendLine('/exit');
+        await run;
 
-      // The exact repair command ran once, then the save landed.
-      expect(
-        shell.commands,
-        ['security default-keychain -s ~/Library/Keychains/login.keychain-db'],
-      );
-      expect(
-        store.map['FA_KEY_API_KIMI_COM_KIMI_IRA'],
-        'sk-ira-secret-789',
-      );
-      expect(registry.find('kimi_ira')!.keyNotPersisted, isFalse);
-      expect(io.out.toString(), isNot(contains('sk-ira-secret-789')));
-    });
+        // The exact repair command ran once, then the save landed.
+        expect(shell.commands, [
+          'security default-keychain -s ~/Library/Keychains/login.keychain-db',
+        ]);
+        expect(store.map['FA_KEY_API_KIMI_COM_KIMI_IRA'], 'sk-ira-secret-789');
+        expect(registry.find('kimi_ira')!.keyNotPersisted, isFalse);
+        expect(io.out.toString(), isNot(contains('sk-ira-secret-789')));
+      },
+    );
 
     test('the canceled-authorization failure shape also gets the repair '
         'offer (gh-1679 review: the incident second live shape)', () async {
@@ -406,9 +396,7 @@ void main() {
       await waitForIt(
         () => io.out.toString().contains('authorization was canceled'),
       );
-      await waitForIt(
-        () => io.out.toString().contains('[y/N]'),
-      );
+      await waitForIt(() => io.out.toString().contains('[y/N]'));
       io.sendLine('n');
       await waitForIt(
         () => io.out.toString().contains('switched provider to openai'),
@@ -425,8 +413,7 @@ void main() {
     });
 
     test('a repaired keychain whose retried save fails again prints the '
-        'loud line again (gh-1679 review: the retry is never mute)',
-        () async {
+        'loud line again (gh-1679 review: the retry is never mute)', () async {
       final fake = FakeStreamFunction([textTurn('ok')]);
       final store = _FlakyStore()
         ..writeError = StateError('no default keychain (exit 1)');
@@ -462,9 +449,7 @@ void main() {
       io.sendLine('proxy-model');
       await waitForIt(() => io.out.toString().contains('[y/N]'));
       io.sendLine('y');
-      await waitForIt(
-        () => io.out.toString().contains('retrying the save'),
-      );
+      await waitForIt(() => io.out.toString().contains('retrying the save'));
       // The retried save fails too — a SECOND loud line must follow the
       // retry notice (the old flow fell through silently here).
       await waitForIt(
@@ -525,8 +510,8 @@ void main() {
       // openai' — the add wizard printed the first, and a plain contains()
       // would fire on the stale line before the flow's gate resets.
       await waitForIt(
-        () => io.out.toString().split('switched provider to openai').length >=
-            3,
+        () =>
+            io.out.toString().split('switched provider to openai').length >= 3,
       );
     }
 
@@ -567,8 +552,7 @@ void main() {
       expect(store.map, isEmpty, reason: 'the edit never touched the store');
     });
 
-    test('a no-token RENAME carries the flag onto the rebuilt entry',
-        () async {
+    test('a no-token RENAME carries the flag onto the rebuilt entry', () async {
       final fake = FakeStreamFunction([textTurn('ok')]);
       final store = _FlakyStore()
         ..writeError = StateError('keychain write failed (exit 45)');
