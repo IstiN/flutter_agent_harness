@@ -144,9 +144,20 @@ import_fingerprint() { # import_fingerprint <p12file> <password>; prints SHA1 (n
   tmp="$(mktemp -d)"
   # shellcheck disable=SC2064
   trap "rm -rf '$tmp'" RETURN
-  openssl pkcs12 -passin "pass:$2" -in "$1" -clcerts -nokeys -out "$tmp/c.pem" 2>/dev/null \
-    || openssl pkcs12 -passin "pass:" -in "$1" -clcerts -nokeys -out "$tmp/c.pem" 2>/dev/null \
-    || return 1
+  # gh-1954 signature B: when the payload cannot be read, the previous
+  # "cannot read P12" gave zero diagnostics. Log the openssl error and
+  # the payload shape (both non-secret) so the failure is actionable.
+  if ! openssl pkcs12 -passin "pass:$2" -in "$1" -clcerts -nokeys -out "$tmp/c.pem" 2>"$tmp/err1"; then
+    if ! openssl pkcs12 -passin "pass:" -in "$1" -clcerts -nokeys -out "$tmp/c.pem" 2>"$tmp/err2"; then
+      err "pkcs12 with secret password: $(tail -2 "$tmp/err1" | tr '\n' ' ')"
+      err "pkcs12 with empty password:  $(tail -2 "$tmp/err2" | tr '\n' ' ')"
+      err "payload: $(wc -c < "$1" | tr -d ' ') bytes, head: $(head -c 24 "$1" | od -An -tx1 | tr -s ' ' | cut -c1-40)"
+      if head -c 11 "$1" | grep -q -- '-----BEGIN'; then
+        err "payload looks like PEM TEXT, not a binary PKCS12 — the secret may hold base64-of-PEM (cert only), not base64-of-p12"
+      fi
+      return 1
+    fi
+  fi
   openssl x509 -in "$tmp/c.pem" -noout -fingerprint -sha1 2>/dev/null \
     | sed 's/^.*=//; s/://g'
 }
