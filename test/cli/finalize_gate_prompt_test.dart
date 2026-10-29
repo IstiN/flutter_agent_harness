@@ -21,7 +21,7 @@ void main() {
   }) => AgentCli(
     config: AgentCliConfig(
       model: testModel,
-      apiKey: '[REDACTED:Sensitive Value]',
+      apiKey: '[REDACTED:Sensitive-Value]',
       env: MemoryExecutionEnv(cwd: '/work'),
       sessionRoot: '/sessions',
       approvalMode: approvalMode,

@@ -86,7 +86,7 @@ void main() {
       final cli = AgentCli(
         config: AgentCliConfig(
           model: loopModel,
-          apiKey: '[REDACTED:Sensitive Value]',
+          apiKey: '[REDACTED:Sensitive-Value]',
           env: env,
           sessionRoot: '/sessions',
           providerKind: 'openai-completions',

@@ -83,7 +83,7 @@ Future<String> reasoningThinkingOf(List<String> reasoningChunks) async {
   final stream = streamOpenAICompletions(
     openRouterModel,
     simpleContext(),
-    const OpenAICompletionsOptions(apiKey: '[REDACTED:Sensitive Value]'),
+    const OpenAICompletionsOptions(apiKey: '[REDACTED:Sensitive-Value]'),
     client,
   );
   final events = await stream.toList();
@@ -289,7 +289,7 @@ void main() {
         final stream = streamOpenAICompletions(
           testModel,
           simpleContext(),
-          const OpenAICompletionsOptions(apiKey: '[REDACTED:Sensitive Value]'),
+          const OpenAICompletionsOptions(apiKey: '[REDACTED:Sensitive-Value]'),
           client,
         );
 
@@ -372,7 +372,7 @@ void main() {
         final stream = streamOpenAICompletions(
           testModel,
           simpleContext(),
-          const OpenAICompletionsOptions(apiKey: '[REDACTED:Sensitive Value]'),
+          const OpenAICompletionsOptions(apiKey: '[REDACTED:Sensitive-Value]'),
           client,
         );
 
@@ -989,7 +989,7 @@ void main() {
         final stream = streamOpenAICompletions(
           testModel,
           simpleContext(),
-          const OpenAICompletionsOptions(apiKey: '[REDACTED:Sensitive Value]'),
+          const OpenAICompletionsOptions(apiKey: '[REDACTED:Sensitive-Value]'),
           client,
         );
 
@@ -1016,7 +1016,7 @@ void main() {
         final stream = streamOpenAICompletions(
           testModel,
           simpleContext(),
-          const OpenAICompletionsOptions(apiKey: '[REDACTED:Sensitive Value]'),
+          const OpenAICompletionsOptions(apiKey: '[REDACTED:Sensitive-Value]'),
           client,
         );
 

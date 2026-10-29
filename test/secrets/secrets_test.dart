@@ -301,7 +301,7 @@ void main() {
       final shell = _RecordingShell();
       final env = SecretsExecutionEnv(
         MemoryExecutionEnv(cwd: '/', shell: shell),
-        const {'SECRET': '[REDACTED:Sensitive Value]'},
+        const {'SECRET': '[REDACTED:Sensitive-Value]'},
       );
       await env.startShellJob(
         'echo x',
@@ -310,7 +310,7 @@ void main() {
         options: ShellExecOptions(env: const {'OTHER': '1'}),
       );
       expect(shell.lastBgOptions!.env, {
-        'SECRET': '[REDACTED:Sensitive Value]',
+        'SECRET': '[REDACTED:Sensitive-Value]',
         'OTHER': '1',
         secretPresenceEnvVar: 'SECRET',
       });

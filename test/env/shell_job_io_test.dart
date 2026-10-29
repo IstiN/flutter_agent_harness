@@ -476,7 +476,7 @@ void main() {
       await job.settled;
       final log = File(job.logPath).readAsStringSync();
       expect(log, isNot(contains('AKIAIOSFODNN7EXAMPLE')));
-      expect(log, contains('[REDACTED:AWS Access Key]'));
+      expect(log, contains('[REDACTED:AWS-Access-Key]'));
     });
 
     test('a secret split across chunks stays redacted (line buffering)', () {

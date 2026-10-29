@@ -94,9 +94,18 @@ final class Session {
   /// below-tail records from `getEntries()` (issue #488 class), while the
   /// raw scan streams the whole file chain. The obligations ledger's
   /// projection fallback is the consumer.
-  Session(this._storage, {this.customRecordScan});
+  ///
+  /// [persistTransform], when given (the JSONL repo injects the host's
+  /// redaction pipeline), shapes every message about to become a
+  /// [MessageRecord] — the record-write mask over tool-call arguments
+  /// (gh-1952 review: the persisted record must not carry raw secret
+  /// bytes in `toolCalls[].arguments`). Runs ONLY on the record; the
+  /// caller's in-memory message stays untouched.
+  Session(this._storage, {this.customRecordScan, this._persistTransform});
 
   final SessionStorage _storage;
+
+  final Message Function(Message message)? _persistTransform;
 
   /// gh-1589: the run-lifecycle seal (null while the session is open for
   /// writing). Set by the run teardown paths (`runHeadless`' finally, the
@@ -125,7 +134,7 @@ final class Session {
   /// it (direct constructions in tools/tests) — consumers then degrade to
   /// the resident view only.
   final Future<List<CustomRecord>> Function(Set<String> types)?
-      customRecordScan;
+  customRecordScan;
 
   /// Cached result of the one-time obligations scan fallback (null =
   /// not scanned yet; a scanned-empty result is cached too). Resident
@@ -302,14 +311,18 @@ final class Session {
   }
 
   /// Appends a conversation message at the active leaf. Returns the new
-  /// record id.
+  /// record id. The [persistTransform] (when the session was built with
+  /// one) runs on the RECORD copy only — the caller's message object is
+  /// not re-shaped.
   Future<String> appendMessage(Message message) {
+    final transform = _persistTransform;
+    final persisted = transform == null ? message : transform(message);
     return _append(
       (id, parentId) => MessageRecord(
         id: id,
         parentId: parentId,
         timestamp: DateTime.now(),
-        message: message,
+        message: persisted,
       ),
       sealClass: 'message',
     );
