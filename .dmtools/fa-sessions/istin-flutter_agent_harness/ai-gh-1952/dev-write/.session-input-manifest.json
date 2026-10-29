@@ -1,0 +1,153 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-29T09:11:55.008Z",
+  "ticketKey": "gh-1952",
+  "headSha": "72ad45f1a581ba7011d77b14610d91f2ebcc668b",
+  "baseBranch": "main",
+  "reviewDecision": "NONE",
+  "labels": [],
+  "files": {
+    "ci_failures.md": {
+      "hash": "fnv1a64:322b878d3c3c2465",
+      "size": 288
+    },
+    "pr_diff.txt": {
+      "hash": "fnv1a64:62c4dd0d3fb56698",
+      "size": 12303
+    },
+    "pr_discussions.md": {
+      "hash": "fnv1a64:8dc90ca59c4f06fa",
+      "size": 16937
+    },
+    "pr_discussions_raw.json": {
+      "hash": "fnv1a64:3d7f49055402a9a3",
+      "size": 7825
+    },
+    "pr_info.md": {
+      "hash": "fnv1a64:eaac4e2750b07109",
+      "size": 3178
+    },
+    "request.md": {
+      "hash": "fnv1a64:178dfc0ea348f2d5",
+      "size": 6353
+    },
+    "review_state.md": {
+      "hash": "fnv1a64:428b907d60dec02c",
+      "size": 1421
+    },
+    "rework_base_head.txt": {
+      "hash": "fnv1a64:63d60707c9f427bd",
+      "size": 40
+    },
+    "ticket.json": {
+      "hash": "fnv1a64:968b66f73608839a",
+      "size": 6487
+    },
+    "ticket.md": {
+      "hash": "fnv1a64:178dfc0ea348f2d5",
+      "size": 6353
+    }
+  },
+  "comments": [
+    {
+      "id": "PRRT_kwDOTXdlLc6xevDf",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "lib/src/redact/layer_entropy.dart:44",
+      "resolved": false,
+      "body": "🚨 **BLOCKING: the `K=V` carve-out regexes over-match and silently disable the entropy layer's secret net**\n\n`_envAssignment = ^[A-Za-z_][A-Za-z0-9_.]*=` matches **any** entropy token whose first char is a letter/underscore and that contains `=` anywhere — not just define/assignment shapes. Two important secret classes become exempt from the last-resort entropy heuristic (this layer runs on the **display/persistence pipeline too**, not just command text):\n\n1. **Base64-padded secrets** — tokens ending in `=`/`==` (the entropy token charset already includes `=`): the run up to the first padding `=` parses as a \"key\". Example (verified against this branch): `tZ3mK8vB2nR7xW4cJ9fT5gL0dP1sH6yUqZ3mK8vB2nR=` has entropy 4.72 bits/char and a 29-char alphabet — masked before this PR, now `layerEntropy` returns **0 matches** for it.\n2. **`KEY=<random>` assignments in tool output** — `printenv`/CI-log/config lines like `SESSION_KEY=<random>` were previously masked as one token; now exempt. The context layer (`layer_context.dart:19-26`) anchors only a fixed key list (password/secret/api_key/token/…), so for any other key the entropy layer **was** the only net. Arbitrary keys with random values now reach the session JSONL and provider context raw.\n\n`docs/redaction.md:33-41` claims \"the carve-out never outranks a real layer\" — true for registered/vendor/PEM/context, but the entropy layer **is** the real last-resort layer for everything unregistered and non-vendor-shaped, and this exemption outranks it for the most common secret encodings. The incident's repro shapes are all still covered by the narrow flag forms (`--dart-define=`, `-D`); the bare-`K=V` match is the over-broad part.\n\nSuggested fix (keeps every incident shape exempt, re-covers the holes):\n\n```dart\nbool _isDefineOrAssignmentToken(String token) =>\n    _dartDefineFlag.hasMatch(token) ||\n    _dartDefineShortFlag.hasMatch(token) ||\n    // bare assignment: bounded identifier key, and never base64 padding\n    (_envAssignment.hasMatch(token) && !token.endsWith('='));\nfinal RegExp _envAssignment = RegExp(r'^[A-Za-z_][A-Za-z0-9_.]{0,63}=');\n```\n\n…plus regression tests asserting (a) a padded-base64 secret and (b) `KEY=<random>` in tool **output** still get masked."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6xevGO",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "test/integration/redaction_e2e_test.dart:412",
+      "resolved": false,
+      "body": "🚨 **BLOCKING: the raw registered secret persists verbatim in the session JSONL via the tool-call argument — the new e2e asserts only the masked half**\n\nThis test pins AC1 as \"the persisted transcript shows the masked form\", but it only checks that the masked marker is **present** (`expect(jsonl, contains('[REDACTED:Registered-Secret]'))`). It never asserts the raw secret's **absence** — unlike its sibling AC5 test (`expect(jsonl.contains(_ghp), isFalse)` at line ~208).\n\nEmpirically (scratch copy of this test with the extra assertion): `jsonl.contains(defineSecret)` is **true**. The masked marker comes from the *result* record, but the *call* record persists the argument verbatim:\n\n- `AssistantMessage.toolCalls[].arguments` are serialized as-is (`ToolCall.toJson` → `arguments`; `_sanitizeJsonValue` in `types.dart` only handles unserializable values, it does not redact).\n- The redaction hooks mask AssistantMessage *content blocks* and tool *results* (`redaction_hooks.dart` `_redactMessage` / `afterToolCall`) — never call arguments.\n- The real CLI persists every message (`agent_cli_persist.dart:41`, `agent_session_manager.dart:173`), so this is the production path, not a test artifact.\n\nThis is realistic, not hypothetical: the #1408 `approvedSecretLiterals` hatch *explicitly allows* registered secrets to materialize in authored commands — so \"register a secret, embed it in a bash command\" produces a session JSONL (the \"persisted, shareable record\" per the AC5 comment) that carries the raw secret. That contradicts both the PR description (\"the persisted session record shows the registered-secret variant masked\") and the hooks' documented contract (\"so the session JSONL carries masked text, never the raw secret\").\n\nNote: masking persisted call arguments does **not** violate the display-only/byte-identical-argv contract — execution uses the live call, not the record.\n\nRemedies (either):\n1. Mask registered/vendor-shaped literals in persisted `toolCalls[].arguments` (persistence/record-write path, not `transformContext` — shaping provider context would change what the model sees), and add `expect(jsonl.contains(defineSecret), isFalse)` here; or\n2. Keep the behavior, but correct the PR description claim and add an explicit comment+assertion here documenting that call args persist raw."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6xevI2",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "lib/src/wire/wire_protocol.dart:1268",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT: the TypeScript mirror of `redactForLog` was not aligned — the \"ONE construction site\" invariant is now Dart-only**\n\nThis line adopts the shared `redactionMarker()` constructor on the Dart side, but the web SDK has its own construction site: `sdk/web/src/wire-client.ts:427` still interpolates the label verbatim — ``out[key] = `[REDACTED:${kindLabel}]`;`` — without the whitespace-run → `-` normalization.\n\nToday's wire kinds (`secret_response`, `model_request`, `unknown`, …) contain no whitespace, so the divergence is latent. But the invariant this PR establishes — *every rendered marker is one shell token* — is now enforced only in Dart. A future kind label with whitespace would render differently between CLI and web client, and the web-rendered marker could still split into several argv items if it leaks into a shell string — exactly the gh-1952 I2 incident class this PR closes.\n\nSuggestion: mirror the normalization in `wire-client.ts` (e.g. `kindLabel.replace(/\\s+/g, '-')`), ideally with a shared fixture test asserting the two runtimes render identical markers for the full label surface."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6xevLE",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "lib/src/redact/redaction_types.dart:122",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: the docstring shows the *hyphenated* marker while describing the *spaced* incident marker**\n\nThis comment reads \"the way the spaced `[REDACTED:High-Entropy-String]` of the gh-1952 incident did (the shell split it into three…)\". The incident marker was the **spaced** form — `[REDACTED:High Entropy String]` (the `highEntropyLabel` const) — which split into three argv items. The hyphenated rendering shown here is the **new** output of `redactionMarker` and cannot split at all, so as written the doc claims an impossibility and obscures which form was the problem.\n\nSame inversion in `test/approval/bash_shape_redaction_test.dart:279-280` (\"the old spaced `[REDACTED:High-Entropy-String]`-style markers split into three argv items\").\n\nSuggest quoting the spaced form (or interpolating `highEntropyLabel`) in both spots so the before/after contrast stays readable:\n\n```\n/// ... the way the spaced `[REDACTED:High Entropy String]` of the\n/// gh-1952 incident did ...\n```"
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-29:636fe029",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-29",
+      "updatedAt": "2026-10-29",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🚨 **BLOCKING: the `K=V` carve-out regexes over-match and silently disable the entropy layer's secret net**\n\n`_envAssignment = ^[A-Za-z_][A-Za-z0-9_.]*=` matches **any** entropy token whose first char is a letter/underscore and that contains `=` anywhere — not just define/assignment shapes. Two important secret classes become exempt from the last-resort entropy heuristic (this layer runs on the **display/persistence pipeline too**, not just command text):\n\n1. **Base64-padded secrets** — tokens ending in `=`/`==` (the entropy token charset already includes `=`): the run up to the first padding `=` parses as a \"key\". Example (verified against this branch): `tZ3mK8vB2nR7xW4cJ9fT5gL0dP1sH6yUqZ3mK8vB2nR=` has entropy 4.72 bits/char and a 29-char alphabet — masked before this PR, now `layerEntropy` returns **0 matches** for it.\n2. **`KEY=<random>` assignments in tool output** — `printenv`/CI-log/config lines like `SESSION_KEY=<random>` were previously masked as one token; now exempt. The context layer (`layer_context.dart:19-26`) anchors only a fixed key list (password/secret/api_key/token/…), so for any other key the entropy layer **was** the only net. Arbitrary keys with random values now reach the session JSONL and provider context raw.\n\n`docs/redaction.md:33-41` claims \"the carve-out never outranks a real layer\" — true for registered/vendor/PEM/context, but the entropy layer **is** the real last-resort layer for everything unregistered and non-vendor-shaped, and this exemption outranks it for the most common secret encodings. The incident's repro shapes are all still covered by the narrow flag forms (`--dart-define=`, `-D`); the bare-`K=V` match is the over-broad part.\n\nSuggested fix (keeps every incident shape exempt, re-covers the holes):\n\n```dart\nbool _isDefineOrAssignmentToken(String token) =>\n    _dartDefineFlag.hasMatch(token) ||\n    _dartDefineShortFlag.hasMatch(token) ||\n    // bare assignment: bounded identifier key, and never base64 padding\n    (_envAssignment.hasMatch(token) && !token.endsWith('='));\nfinal RegExp _envAssignment = RegExp(r'^[A-Za-z_][A-Za-z0-9_.]{0,63}=');\n```\n\n…plus regression tests asserting (a) a padded-base64 secret and (b) `KEY=<random>` in tool **output** still get masked."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-29:8811595c",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-29",
+      "updatedAt": "2026-10-29",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🚨 **BLOCKING: the raw registered secret persists verbatim in the session JSONL via the tool-call argument — the new e2e asserts only the masked half**\n\nThis test pins AC1 as \"the persisted transcript shows the masked form\", but it only checks that the masked marker is **present** (`expect(jsonl, contains('[REDACTED:Registered-Secret]'))`). It never asserts the raw secret's **absence** — unlike its sibling AC5 test (`expect(jsonl.contains(_ghp), isFalse)` at line ~208).\n\nEmpirically (scratch copy of this test with the extra assertion): `jsonl.contains(defineSecret)` is **true**. The masked marker comes from the *result* record, but the *call* record persists the argument verbatim:\n\n- `AssistantMessage.toolCalls[].arguments` are serialized as-is (`ToolCall.toJson` → `arguments`; `_sanitizeJsonValue` in `types.dart` only handles unserializable values, it does not redact).\n- The redaction hooks mask AssistantMessage *content blocks* and tool *results* (`redaction_hooks.dart` `_redactMessage` / `afterToolCall`) — never call arguments.\n- The real CLI persists every message (`agent_cli_persist.dart:41`, `agent_session_manager.dart:173`), so this is the production path, not a test artifact.\n\nThis is realistic, not hypothetical: the #1408 `approvedSecretLiterals` hatch *explicitly allows* registered secrets to materialize in authored commands — so \"register a secret, embed it in a bash command\" produces a session JSONL (the \"persisted, shareable record\" per the AC5 comment) that carries the raw secret. That contradicts both the PR description (\"the persisted session record shows the registered-secret variant masked\") and the hooks' documented contract (\"so the session JSONL carries masked text, never the raw secret\").\n\nNote: masking persisted call arguments does **not** violate the display-only/byte-identical-argv contract — execution uses the live call, not the record.\n\nRemedies (either):\n1. Mask registered/vendor-shaped literals in persisted `toolCalls[].arguments` (persistence/record-write path, not `transformContext` — shaping provider context would change what the model sees), and add `expect(jsonl.contains(defineSecret), isFalse)` here; or\n2. Keep the behavior, but correct the PR description claim and add an explicit comment+assertion here documenting that call args persist raw."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-29:6ff9744a",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-29",
+      "updatedAt": "2026-10-29",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT: the TypeScript mirror of `redactForLog` was not aligned — the \"ONE construction site\" invariant is now Dart-only**\n\nThis line adopts the shared `redactionMarker()` constructor on the Dart side, but the web SDK has its own construction site: `sdk/web/src/wire-client.ts:427` still interpolates the label verbatim — ``out[key] = `[REDACTED:${kindLabel}]`;`` — without the whitespace-run → `-` normalization.\n\nToday's wire kinds (`secret_response`, `model_request`, `unknown`, …) contain no whitespace, so the divergence is latent. But the invariant this PR establishes — *every rendered marker is one shell token* — is now enforced only in Dart. A future kind label with whitespace would render differently between CLI and web client, and the web-rendered marker could still split into several argv items if it leaks into a shell string — exactly the gh-1952 I2 incident class this PR closes.\n\nSuggestion: mirror the normalization in `wire-client.ts` (e.g. `kindLabel.replace(/\\s+/g, '-')`), ideally with a shared fixture test asserting the two runtimes render identical markers for the full label surface."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-29:c11cdc7e",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-29",
+      "updatedAt": "2026-10-29",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: the docstring shows the *hyphenated* marker while describing the *spaced* incident marker**\n\nThis comment reads \"the way the spaced `[REDACTED:High-Entropy-String]` of the gh-1952 incident did (the shell split it into three…)\". The incident marker was the **spaced** form — `[REDACTED:High Entropy String]` (the `highEntropyLabel` const) — which split into three argv items. The hyphenated rendering shown here is the **new** output of `redactionMarker` and cannot split at all, so as written the doc claims an impossibility and obscures which form was the problem.\n\nSame inversion in `test/approval/bash_shape_redaction_test.dart:279-280` (\"the old spaced `[REDACTED:High-Entropy-String]`-style markers split into three argv items\").\n\nSuggest quoting the spaced form (or interpolating `highEntropyLabel`) in both spots so the before/after contrast stays readable:\n\n```\n/// ... the way the spaced `[REDACTED:High Entropy String]` of the\n/// gh-1952 incident did ...\n```"
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-29:179ece8b",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-29",
+      "updatedAt": "2026-10-29",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — REQUEST_CHANGES\n\n**Summary**: Two blocking security findings: the `--dart-define`/`K=V` entropy carve-out regex over-matches (base64-padded secrets and `KEY=<random>` output lines are no longer entropy-masked), and the PR's own new e2e fixture persists a registered secret **raw** into the session JSONL via the bash tool-call argument while asserting only the masked half. Plus one important gap (the TS `wire-client.ts` marker site was not aligned with the new single-token `redactionMarker` contract) and one doc nit.\n\n**Key Issues**:\n- 🚨 `lib/src/redact/layer_entropy.dart:44` — `^[A-Za-z_][A-Za-z0-9_.]*=` exempts *any* token containing `=` from the entropy layer: padded-base64 secrets and `KEY=<random>` assignments in tool output were masked before, pass raw now (verified by probe against this branch).\n- 🚨 `test/integration/redaction_e2e_test.dart:411-413` — raw registered secret persists in session JSONL via `toolCalls[].arguments` (probe: `jsonl.contains(defineSecret) == true`); the e2e asserts marker presence but never raw-secret absence, unlike the sibling AC5 test.\n- ⚠️ `sdk/web/src/wire-client.ts:427` — TS `redactForLog` still builds `[REDACTED:${kindLabel}]` without the whitespace→`-` normalization; the single-token invariant is Dart-only.\n- 💡 `redaction_types.dart:121-122` + `bash_shape_redaction_test.dart:279` — \"spaced\" incident marker quoted in its new hyphenated form (reads as an impossibility).\n\n**Next Steps**:\n1. Tighten the carve-out (bounded key + `!token.endsWith('=')`, or flag-prefix shapes only) and add output-side regression tests for padded base64 and `KEY=<random>`.\n2. Either mask registered/vendor literals in persisted call arguments or correct the \"persisted record shows the masked variant\" claim; add `expect(jsonl.contains(defineSecret), isFalse)`.\n3. Mirror the marker normalization in `sdk/web/src/wire-client.ts`.\n4. Fix the two \"spaced marker\" doc quotes.\n\nThe core I1/I2/AC5 work is solid: argv byte-identity is pinned end-to-end, single-token markers are well tested, legacy spaced markers stay idempotent, and the single execution-feed seam audit checks out. The marker-literal fixture sweep (~75 files) is consistent, and `dart test test/redact/ test/approval/bash_shape_redaction_test.dart` plus the redaction e2e pass (219 + 5 tests green on this checkout)."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-29:7218e17a",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-29",
+      "updatedAt": "2026-10-29",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🧵 Unresolved review threads — rework armed. This machine-authored PR is reviewed (ai_pr_reviewed) but still has open review threads. The rework leg owns open threads: agent:rework is armed on this PR and the rework runner will work through the threads and push. Validation re-runs automatically afterwards, and once the threads are resolved a fresh re-review is armed (review-threads-resolved)."
+    }
+  ]
+}
