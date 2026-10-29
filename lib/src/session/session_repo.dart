@@ -15,6 +15,7 @@ import 'package:meta/meta.dart';
 import '../env/execution_env.dart';
 import '../env/session_parse_executor.dart';
 import '../exceptions.dart';
+import '../types.dart' show Message;
 import '../session_io_retry.dart';
 import '../session_retention.dart' show sessionIdFromSessionPath;
 import 'session_chunk_reader.dart';
@@ -371,7 +372,7 @@ final class JsonlSessionRepo implements SessionRepo {
       metadata: options.metadata,
       ioRetry: _ioRetry,
     );
-    return Session(storage);
+    return Session(storage, persistTransform: persistTransform);
   }
 
   @override
@@ -433,6 +434,7 @@ final class JsonlSessionRepo implements SessionRepo {
       // The repo backs the session's raw custom-record scan (the
       // obligations ledger's below-the-tail fallback, #488 class).
       customRecordScan: (types) => readCustomRecordsOfType(metadata, types),
+      persistTransform: persistTransform,
     );
   }
 
@@ -831,7 +833,7 @@ final class JsonlSessionRepo implements SessionRepo {
     for (final entry in forkedEntries) {
       await storage.appendEntry(entry);
     }
-    return Session(storage);
+    return Session(storage, persistTransform: persistTransform);
   }
 
   /// The session's display name WITHOUT a full open (issue #199): the

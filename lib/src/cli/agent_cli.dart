@@ -1722,6 +1722,13 @@ class AgentCli {
     presenceStore: config.presenceStore,
     processId: config.processId,
     parseExecutor: config.parseExecutor,
+    // gh-1952 review: the record-write mask — appended tool-call
+    // arguments carry masked secrets, never raw bytes (the live message
+    // and the provider context stay untouched).
+    persistTransform: config.redactionPipeline == null
+        ? null
+        : (message) =>
+              persistRedactMessage(config.redactionPipeline!, message),
   );
   Session? _session;
 

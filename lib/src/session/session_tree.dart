@@ -100,11 +100,7 @@ final class Session {
   /// (gh-1952 review: the persisted record must not carry raw secret
   /// bytes in `toolCalls[].arguments`). Runs ONLY on the record; the
   /// caller's in-memory message stays untouched.
-  Session(
-    this._storage, {
-    this.customRecordScan,
-    Message Function(Message message)? persistTransform,
-  }) : _persistTransform = persistTransform;
+  Session(this._storage, {this.customRecordScan, this._persistTransform});
 
   final SessionStorage _storage;
 
