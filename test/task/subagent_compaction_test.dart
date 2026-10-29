@@ -49,12 +49,17 @@ final int _contractTokens = () {
         tool.description,
   ];
   final contract = deliverableChunkContract(8000).length;
-  final growthChars =
-      contract + // system prompt copy
-      descriptions
-          .map((d) => d.length - contract < 0 ? 0 : d.length - contract)
-          .fold<int>(0, (a, b) => a + b);
-  return (growthChars / 4).ceil();
+  // gh-1956: the fixtures below are calibrated to the pre-gh-1956
+  // trajectory, so the window grows by the TRUE request-footprint delta
+  // over that baseline — the system-prompt contract copy plus BOTH tool
+  // descriptions ride every request verbatim (the #1829-era
+  // `length - contract` approximation under-measures once the
+  // descriptions diverge from the contract copy). The gh-1956 baseline
+  // footprint: contract 948 + reply 592 + agent_message 799 = 2339 chars.
+  const gh1956BaselineChars = 2339;
+  final footprintChars =
+      contract + descriptions.fold<int>(0, (a, d) => a + d.length);
+  return 237 + ((footprintChars - gh1956BaselineChars) / 4).ceil();
 }();
 
 final _fakeTime = DateTime.utc(2026, 9, 15, 12, 0, 0);
