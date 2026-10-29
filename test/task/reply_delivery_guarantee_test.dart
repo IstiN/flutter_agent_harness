@@ -771,33 +771,51 @@ void main() {
   group('Review round 2 rework: resume ordering + envelope hygiene', () {
     test(
       'resume marks the child running exactly ONCE — no duplicate '
-      'running update before the first provider call',
+      'running update before the warm-wake',
       () async {
         final wiring = _ResumeWiring(resumeTurns: [_textTurn('resumed once')]);
         addTearDown(wiring.dispose);
         await wiring.spawn('Watcher', 'batch-work');
 
-        // Count running-status events emitted between resume start and the
-        // resume run's first provider call (the broadcast stream delivers
-        // in order, and every await before the prompt drains pending
-        // deliveries — so everything emitted before the gate flips is
-        // counted). The duplicated manager.update(running) emitted TWO.
-        final gate = wiring.providerCalls;
-        final runningEvents = <SubagentEvent>[];
-        final sub = wiring.manager.events.listen((event) {
-          if (wiring.providerCalls == gate &&
-              event.handle.status == SubagentStatus.running) {
-            runningEvents.add(event);
-          }
-        });
+        // The resume's warm-wake enqueue (message != null) is a stable
+        // ORDER MARKER: it emits after the running update(s), before the
+        // session boot. The events before it must carry exactly ONE
+        // running-status update — the duplicated manager.update(running)
+        // emitted two.
+        final seen = <SubagentEvent>[];
+        final sub = wiring.manager.events.listen(seen.add);
         addTearDown(() => sub.cancel());
 
         await wiring.executor.resumeChild('Watcher', 'RESUME-MARKER once');
         await wiring.drainMicrotasks();
 
+        // ignore: avoid_print
+        for (final e in seen.indexed) {
+          // ignore: avoid_print
+          print(
+            'DBG[$e] status=${e.$2.handle.status.name} '
+            'msg=${e.$2.message != null}',
+          );
+        }
+        final wakeIndex = seen.indexWhere((event) => event.message != null);
+        // ignore: avoid_print
+        print('DBG wakeIndex=$wakeIndex');
         expect(
-          runningEvents,
-          hasLength(1),
+          wakeIndex,
+          greaterThan(0),
+          reason: 'the resume warm-wake enqueue must emit its event',
+        );
+        final runningBeforeWake = seen
+            .take(wakeIndex)
+            .where(
+              (event) =>
+                  event.message == null &&
+                  event.handle.status == SubagentStatus.running,
+            )
+            .length;
+        expect(
+          runningBeforeWake,
+          1,
           reason:
               'resumeChild must emit a single running-status update — a '
               'duplicate doubles the SubagentEvent stream noise and appends '
@@ -882,10 +900,10 @@ void main() {
       'blocking render: over-preview AND truncated output carries exactly '
       'one pointer line (no contradictory label pair)',
       () async {
-        // 600 lines: _capOutput truncates to maxTaskOutputLines (truncated:
-        // true) AND the stored text stays over the 500-char blocking
-        // preview — the exact contradictory-labels shape.
-        final overPreview = List.generate(600, (i) => 'L$i').join('\n');
+        // 5001 lines: _capOutput truncates to maxTaskOutputLines (5000 →
+        // truncated: true) AND the stored text stays over the 500-char
+        // blocking preview — the exact contradictory-labels shape.
+        final overPreview = List.generate(5001, (i) => 'L$i').join('\n');
         final h = await _harness(
           rules: [
             (match: 'job', turns: [_textTurn(overPreview)]),
