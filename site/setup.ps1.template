@@ -46,6 +46,20 @@ Write-Host ""
 # ── 1. Verify CLI is installed ───────────────────────────────────────────────
 $faCmd = Get-Command fa -ErrorAction SilentlyContinue
 if (-not $faCmd) { $faCmd = Get-Command fah -ErrorAction SilentlyContinue }
+# The installer updates the *user* PATH, which only new logons pick up: run
+# right after it, this session still misses the directory and the wizard used
+# to claim the CLI was never installed. Probe where the installer puts it.
+if (-not $faCmd) {
+    $faLocalRoot = if ($env:LOCALAPPDATA) { $env:LOCALAPPDATA } else { Join-Path $env:USERPROFILE 'AppData\Local' }
+    $faBin = Join-Path $faLocalRoot 'Fa\bin'
+    if (Test-Path (Join-Path $faBin 'fa.exe')) {
+        $env:Path = "$faBin;$env:Path"
+        $faCmd = Get-Command fa -ErrorAction SilentlyContinue
+        if ($faCmd) {
+            Write-Info "Using $($faCmd.Source) (PATH is refreshed for new windows only)."
+        }
+    }
+}
 if (-not $faCmd) {
     Write-Err "'fa' is not on your PATH."
     Write-Host ""
@@ -57,7 +71,8 @@ if (-not $faCmd) {
     Write-Host ""
     Write-Host "    irm https://fa1.dev/setup.ps1 | iex"
     Write-Host ""
-    exit 1
+    # throw, not exit: `exit` closes the caller's console under `irm | iex`.
+    throw "the Fa CLI is not installed - run the installer, then this wizard again."
 }
 Write-Ok "Found 'fa' on PATH ($($faCmd.Source))."
 
@@ -70,14 +85,15 @@ if ([System.Console]::IsInputRedirected) {
     Write-Host ""
     Write-Host "    fa"
     Write-Host ""
-    exit 0
+    # return, not exit: `exit` closes the caller's console under `irm | iex`.
+    return
 }
 
 if (Test-Path $FahConfigFile) {
     $reconfigure = Read-Host "A config already exists at $FahConfigFile. Reconfigure? [y/N]"
     if ($reconfigure -notmatch '^[Yy]') {
         Write-Ok "Kept existing config. Run 'fa' to start."
-        exit 0
+        return
     }
 }
 
