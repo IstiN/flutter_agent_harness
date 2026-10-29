@@ -250,6 +250,7 @@ final class JsonlSessionRepo implements SessionRepo {
     this.presenceStore,
     this.processId,
     this.maxTrashCopyBytes = defaultMaxTrashCopyBytes,
+    this.persistTransform,
     DateTime Function()? now,
   }) : _sessionsRootInput = sessionsRoot,
        now = now ?? DateTime.now;
@@ -279,6 +280,13 @@ final class JsonlSessionRepo implements SessionRepo {
 
   /// Clock seam for journal timestamps and trash file stamps (tests).
   final DateTime Function() now;
+
+  /// gh-1952 review: the record-write mask threaded into every session
+  /// this repo creates/opens — hosts with a redaction pipeline pass
+  /// `persistRedactMessage`-shaped transforms so appended records never
+  /// carry raw secrets in `toolCalls[].arguments`. `null` (read-only
+  /// repos, tools, imports) keeps appends byte-identical.
+  final Message Function(Message message)? persistTransform;
 
   /// Header-read concurrency for [list] (issue #199): bounded so 500+
   /// sessions never exhaust fds; ≥ 2 so latency overlaps (E4 pins the VM
