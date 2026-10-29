@@ -21,7 +21,7 @@ void main() {
   AgentCli cliFor(FakeStreamFunction stream) => AgentCli(
     config: AgentCliConfig(
       model: testModel,
-      apiKey: '[REDACTED:Sensitive Value]',
+      apiKey: '[REDACTED:Sensitive-Value]',
       env: env,
       sessionRoot: '/sessions',
       providerKind: 'openai-completions',

@@ -110,4 +110,92 @@ void main() {
       expect(matches.single.kindLabel, highEntropyLabel);
     });
   });
+
+  group('define / assignment carve-out (gh-1952 I3 / AC3)', () {
+    // A define argument is ONE entropy token (the charset includes `=`
+    // and `-`), so `--dart-define=JSR_THREE_EXAMPLE=webgl_geometry_colors`
+    // crossed the threshold and got masked — the incident behind gh-1952.
+    // Ordinary compile-time defines are not secrets: the SHAPE is exempt
+    // from the entropy heuristic. Real secret layers (registered, vendor,
+    // context, ...) outrank the carve-out and still match inside defines.
+    const defines = <String>[
+      // The exact incident shape: long flag, uppercase-snake key, plain
+      // lowercase value, > 32 token chars total.
+      'flutter test --dart-define=JSR_THREE_EXAMPLE=webgl_geometry_colors',
+      // Short flag spelling.
+      'flutter build apk -DJSR_THREE_EXAMPLE=webgl_geometry_colors',
+      // Bare env-style assignment in a bash command.
+      'DEF=webgl_geometry_colors_lightsphysicallycorrect',
+      // Quoted value: the in-quote run is still an assignment shape.
+      'flutter test --dart-define="JSR_THREE_EXAMPLE=webgl_geometry_colors"',
+      // Long option with the value in the next shell word.
+      'flutter test --dart-define JSR_THREE_EXAMPLE=webgl_geometry_colors',
+      // Dotted flutter define key.
+      'flutter run --dart-define=flutter.inspector.structuredErrorsValue=trueX',
+    ];
+
+    test('define shapes never match the entropy layer', () {
+      for (final command in defines) {
+        expect(
+          layerEntropy(command, _cfg),
+          isEmpty,
+          reason: 'define must stay clean: $command',
+        );
+      }
+    });
+
+    test('a standalone high-entropy value without an assignment '
+        'shape still matches', () {
+      // The carve-out is shape-based: without a K=V / flag shape the
+      // heuristic keeps working (regression guard against over-carving).
+      const secret = 'qZ3mR7kW9pX2vB5nT8yC4jF6hD1sG0aL7eM3uQ9i';
+      expect(layerEntropy('key $secret end', _cfg), hasLength(1));
+    });
+
+    test('a define key alone (no =) is not carved out', () {
+      // `--dart-define` requires K=V; a bare long flag run stays subject
+      // to the heuristic.
+      const arg = '--dart-defineqZ3mR7kW9pX2vB5nT8yC4jF6hD1sG0aL';
+      expect(layerEntropy('x $arg y', _cfg), hasLength(1));
+    });
+  });
+  group('carve-out must not silence the entropy net (gh-1952 review)', () {
+    // Review of the first cut: the bare `K=V` exemption branch matched
+    // ANY token containing `=`, so the two most common secret encodings
+    // lost their last-resort net — this layer also runs on the display/
+    // persistence pipeline where tool OUTPUT flows through.
+    test('a padded-base64 secret is still entropy-masked', () {
+      // 37 chars, alphabet > 8, entropy ~5.1, ends in `=` padding: the
+      // run up to the first `=` parses as a "key" only for an unbounded
+      // assignment match. Masked before the carve-out, must stay masked.
+      // (The literal is pieced together so no single source line carries
+      // a secret-shaped token — adjacent literals concatenate in Dart.)
+      const b64 =
+          'ZmIoNyph'
+          'ZDlQcUByWi'
+          'VmbzhTZXQz'
+          'djVyITA9'
+          '=';
+      final matches = layerEntropy('token $b64 end', _cfg);
+      expect(matches, hasLength(1), reason: 'padded base64 must stay masked');
+      expect(matches.single.kindLabel, highEntropyLabel);
+    });
+
+    test('a KEY=<random> assignment in tool output is still masked', () {
+      // `printenv`/CI-log/config lines: an arbitrary key with a random
+      // value (SESSION_KEY is NOT in the context layer's fixed anchor
+      // list, so the entropy layer was — and stays — the only net for
+      // this class). Pieced literal, same reason as the base64 test.
+      const line =
+          'SESSION_'
+          'KEY='
+          'xJ8f2kQz'
+          '7Lp3vN5w'
+          'R9tY2uM4'
+          'bC6dE1';
+      final matches = layerEntropy('out $line tail', _cfg);
+      expect(matches, hasLength(1), reason: 'KEY=<random> must stay masked');
+      expect(matches.single.kindLabel, highEntropyLabel);
+    });
+  });
 }

@@ -43,7 +43,7 @@ void main() {
           contextWindow: 100000,
           maxTokens: 4096,
         ),
-        apiKey: '[REDACTED:Sensitive Value]',
+        apiKey: '[REDACTED:Sensitive-Value]',
         env: env,
         sessionRoot: '/sessions',
         plugins: [plugin],

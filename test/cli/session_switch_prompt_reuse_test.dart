@@ -35,7 +35,7 @@ void main() {
     return AgentCli(
       config: AgentCliConfig(
         model: testModel,
-        apiKey: '[REDACTED:Sensitive Value]',
+        apiKey: '[REDACTED:Sensitive-Value]',
         env: env,
         sessionRoot: '/sessions',
         providerKind: 'openai-completions',

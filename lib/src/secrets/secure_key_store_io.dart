@@ -436,10 +436,31 @@ final class _WindowsCredentialLockerStore
     final result = await _ps(
       "$_prologue try { "
       "\$c = \$v.Retrieve('$secureKeyServiceName','$name'); "
-      r'$c.RetrievePassword(); $c.Password '
+      r'$c.RetrievePassword(); '
+      // PowerShell writes to a redirected stdout in the console's OEM code
+      // page, so a raw secret with non-ASCII characters arrives as invalid
+      // UTF-8 and the read died with `FormatException: Unexpected extension
+      // byte`. Base64 keeps the pipe ASCII and the payload byte-exact.
+      r'[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($c.Password)) '
       "} catch { '' }",
     );
-    return _classifyRead(result, name);
+    final outcome = _classifyRead(result, name);
+    if (outcome.status != SecureKeyReadStatus.found) return outcome;
+    try {
+      return SecureKeyReadOutcome(
+        name,
+        SecureKeyReadStatus.found,
+        value: utf8.decode(base64.decode(outcome.value!)),
+      );
+    } on FormatException {
+      // Written by an older build (raw bytes) or corrupted: degrade to an
+      // error diagnostic instead of failing the whole preload.
+      return SecureKeyReadOutcome(
+        name,
+        SecureKeyReadStatus.error,
+        error: 'stored credential is not base64-encoded UTF-8',
+      );
+    }
   }
 
   @override
