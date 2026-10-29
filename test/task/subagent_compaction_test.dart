@@ -332,6 +332,8 @@ void main() {
       );
       final result = await w.spawn('grower', 'grow the context');
       expect(result.status, TaskSpawnStatus.completed, reason: result.error);
+      // ignore: avoid_print
+      print('DBG result.output=${result.output.length}chars error=${result.error} handle.error=${w.manager['grower']?.error}');
       final handle = w.manager['grower']!;
       expect(handle.compactions, greaterThanOrEqualTo(1));
       expect(handle.lastCompactionFreed, greaterThan(0));
@@ -339,6 +341,15 @@ void main() {
 
       // Zero over-window requests; the engine actually ran.
       expect(w.stream.compactionCalls, greaterThanOrEqualTo(1));
+      for (final c in w.stream.contexts) {
+        final names = c.messages
+            .expand((m) => m is AssistantMessage ? m.content : <ContentBlock>[])
+            .whereType<ToolCall>()
+            .map((t) => t.name)
+            .join(',');
+        // ignore: avoid_print
+        print('DBG calls=$names tokens=${w.stream.requestTokens(c)} lastUser=${_ScriptedStream.lastUserText(c).substring(0, 40)}');
+      }
       expect(w.stream.calls, greaterThanOrEqualTo(6));
       for (final context in w.stream.contexts) {
         expect(
