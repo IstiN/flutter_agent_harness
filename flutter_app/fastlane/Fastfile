@@ -75,12 +75,21 @@ end
 # ~/Library/Logs/gym/ on the runner. xcbeautify keeps error lines, and on
 # lane failure the newest gym log tail is dumped into the job log so the
 # failure is diagnosable from the GH run page without the artifact.
-def print_gym_log_tail(lines: 80)
+def print_gym_log_tail(lines: 80, since: nil)
   log_dir = File.expand_path("~/Library/Logs/gym")
   return unless Dir.exist?(log_dir)
 
   newest = Dir.glob(File.join(log_dir, "**", "*.log")).max_by { |f| File.mtime(f) }
   return if newest.nil?
+
+  # gh-1954: a gym log older than the lane start is STALE — run 40849468765
+  # printed an Oct-27 profile/cert error while the REAL failure was the
+  # -showBuildSettings keychain-prompt timeout. Never attribute a previous
+  # build's error to the current failure.
+  if since && File.mtime(newest) < since
+    UI.error("gh-1692: newest gym log (#{newest}) is STALE (mtime #{File.mtime(newest)} < lane start #{since}) — NOT dumping it; the real error is in the fastlane output above.")
+    return
+  end
 
   UI.error("gh-1692: newest gym log tail (#{newest}) — the REAL xcodebuild error:")
   File.readlines(newest).last(lines).each { |l| UI.error(l.chomp) }
@@ -452,6 +461,7 @@ platform :ios do
     # repo/scripts) — fastlane's sh does not honor the assumed lane cwd.
     ci_sign = File.expand_path("../../scripts/ci-sign", __dir__)
     sh(ci_sign, "unlock")
+    lane_start = Time.now
 
     team_id = ENV["IOS_TEAM_ID"] || "YP9HC3USZ3"
     bundle_id = ENV["IOS_BUNDLE_ID"] || "dev.fa1.app"
@@ -513,6 +523,12 @@ platform :ios do
     sh("xcrun simctl boot 'iPhone 16' 2>/dev/null || xcrun simctl boot 'iPhone 15' 2>/dev/null || true")
     sh("flutter", "build", "ios", "--release", "--no-codesign", *build_name_args)
 
+    # gh-1954: point-of-use re-unlock right before gym — the lane-start
+    # unlock goes stale during the long CocoaPods/SPM phase, and gym's
+    # `xcodebuild -showBuildSettings` hangs on a locked keychain's GUI
+    # prompt (headless = fastlane timeout, run 40849468765).
+    sh(ci_sign, "unlock")
+
     # gh-1954: xcodebuild resolves signing identities ONLY through the
     # user keychain search list — and on the shared host a concurrent
     # signing leg rewrites that list mid-build (run 40843155381: doctor OK
@@ -562,7 +578,7 @@ platform :ios do
         export_xcargs: "-allowProvisioningUpdates"
       )
     rescue StandardError => e
-      print_gym_log_tail
+      print_gym_log_tail(since: lane_start)
       raise e
     ensure
       # gh-1954: restore the pre-gym search list (best effort — never mask

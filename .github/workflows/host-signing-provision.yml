@@ -18,6 +18,11 @@ name: Host signing provision (ci-sign)
 
 on:
   workflow_dispatch:
+    inputs:
+      force:
+        description: 'Recreate signing keychains from scratch (gh-1954: applies never-auto-lock settings; re-imports identities from repo secrets)'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -56,7 +61,11 @@ jobs:
             echo "::warning::IOS_P12_BASE64 not set — iOS label not provisioned"
             exit 0
           fi
-          ~/bin/ci-sign install fa-ios
+          if [ "${{ inputs.force }}" = "true" ]; then
+            ~/bin/ci-sign install fa-ios --force
+          else
+            ~/bin/ci-sign install fa-ios
+          fi
           echo "ios sha1=$(~/bin/ci-sign sha1 fa-ios) serial=$(~/bin/ci-sign serial fa-ios) name=$(~/bin/ci-sign name fa-ios)"
 
       - name: Provision macOS distribution identity
