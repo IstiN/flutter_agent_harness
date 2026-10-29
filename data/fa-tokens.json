@@ -51,15 +51,6 @@
   "pr-1637": [
     {
       "leg": "review",
-      "at": "2026-10-15T23:06:39Z",
-      "prompt": 111598,
-      "completion": 7002,
-      "total": 118600,
-      "cacheRead": 1064128,
-      "model": "glm-5.3-flash"
-    },
-    {
-      "leg": "review",
       "at": "2026-10-15T23:49:39Z",
       "prompt": 123581,
       "completion": 4151,
@@ -3904,6 +3895,17 @@
       "completion": 29518,
       "total": 123093,
       "cacheRead": 4385152,
+      "model": "glm-5.3-flash"
+    }
+  ],
+  "pr-1981": [
+    {
+      "leg": "review",
+      "at": "2026-10-29T23:46:42Z",
+      "prompt": 128284,
+      "completion": 32072,
+      "total": 160356,
+      "cacheRead": 4559232,
       "model": "glm-5.3-flash"
     }
   ]
