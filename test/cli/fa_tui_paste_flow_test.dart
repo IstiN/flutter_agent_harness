@@ -48,6 +48,100 @@ FaTuiModel build({
 }
 
 void main() {
+  test('ctrl+v pastes the clipboard text into an open prompt sheet', () async {
+    // gh-1575 wired the text fallback for the composer; a prompt sheet (the
+    // provider/secret wizard) owns typed input, so Ctrl+V used to be a silent
+    // no-op exactly where a token has to be pasted.
+    var model = build(
+      textReader: () async => const PasteboardText('sk-token-123'),
+    );
+    model = model.copyWith(
+      prompt: TuiPromptState(SecretPromptSpec(name: 'KEY', reason: 'r')),
+    );
+
+    final (next, cmd) = model.update(
+      KeyPressMsg(
+        const TeaKey(code: KeyCode.rune, text: 'v', modifiers: {KeyMod.ctrl}),
+      ),
+    );
+    model = next as FaTuiModel;
+    // The read is async: the sheet is untouched until the message lands.
+    expect(model.prompt?.secretValue, isEmpty);
+
+    final followUp = await cmd?.call();
+    if (followUp != null) {
+      model = model.update(followUp).$1 as FaTuiModel;
+    }
+
+    expect(model.prompt?.secretValue, 'sk-token-123');
+    // A paste must not answer the sheet: it stays open for Enter.
+    expect(model.prompt, isNotNull);
+  });
+
+  test('ctrl+v in a prompt ignores an empty clipboard silently', () async {
+    var model = build(textReader: () async => const PasteboardText(''));
+    model = model.copyWith(
+      prompt: TuiPromptState(SecretPromptSpec(name: 'KEY', reason: 'r')),
+    );
+
+    final (next, cmd) = model.update(
+      KeyPressMsg(
+        const TeaKey(code: KeyCode.rune, text: 'v', modifiers: {KeyMod.ctrl}),
+      ),
+    );
+    model = next as FaTuiModel;
+    final followUp = await cmd?.call();
+    if (followUp != null) {
+      model = model.update(followUp).$1 as FaTuiModel;
+    }
+
+    expect(model.prompt?.secretValue, isEmpty);
+    expect(model.view().content, isNot(contains('clipboard')));
+  });
+
+  test('ctrl+v in a prompt is a no-op without a text reader', () {
+    // Web/headless hosts wire no reader: the pre-existing silence is kept.
+    var model = build(reader: () async => PasteboardImage(_png));
+    model = model.copyWith(
+      prompt: TuiPromptState(SecretPromptSpec(name: 'KEY', reason: 'r')),
+    );
+
+    final (next, cmd) = model.update(
+      KeyPressMsg(
+        const TeaKey(code: KeyCode.rune, text: 'v', modifiers: {KeyMod.ctrl}),
+      ),
+    );
+
+    expect(cmd, isNull);
+    final after = next as FaTuiModel;
+    expect(after.prompt?.secretValue, isEmpty);
+    // The composer's image path is never reached from prompt mode.
+    expect(after.attachments, isEmpty);
+  });
+
+  test('ctrl+v in a prompt stays silent when the pasteboard is unavailable', () async {
+    var model = build(
+      textReader: () async => const PasteboardUnavailable('no pasteboard'),
+    );
+    model = model.copyWith(
+      prompt: TuiPromptState(SecretPromptSpec(name: 'KEY', reason: 'r')),
+    );
+
+    final (next, cmd) = model.update(
+      KeyPressMsg(
+        const TeaKey(code: KeyCode.rune, text: 'v', modifiers: {KeyMod.ctrl}),
+      ),
+    );
+    model = next as FaTuiModel;
+    final followUp = await cmd?.call();
+    if (followUp != null) {
+      model = model.update(followUp).$1 as FaTuiModel;
+    }
+
+    expect(model.prompt?.secretValue, isEmpty);
+    expect(model.view().content, isNot(contains('no pasteboard')));
+  });
+
   test('ctrl+v with a wired reader attaches a chip', () async {
     var model = build(reader: () async => PasteboardImage(_png));
     final (next, cmd) = model.update(

@@ -16,6 +16,14 @@ final class PasteboardResultMsg extends Msg {
   final bool silentFailure;
 }
 
+/// Ctrl+V pressed while a prompt sheet is open: the async answer to the key
+/// [_FaTuiModel._handlePromptKey] intercepted. Carries only what the
+/// clipboard returned — the sheet decides how much of it it can take.
+final class PromptClipboardTextMsg extends Msg {
+  PromptClipboardTextMsg(this.read);
+  final PasteboardRead read;
+}
+
 /// How long a fired pasteboard probe owns the paste gesture (issue #1067):
 /// the Ctrl+V key event and the terminal's bracketed paste of ONE action
 /// arrive back to back, and tmux/screen split large pastes into adjacent
@@ -125,6 +133,19 @@ extension FaTuiPaste on FaTuiModel {
     } on Object {
       return text; // never worse than the input
     }
+  }
+
+  /// Ctrl+V inside a prompt sheet: feed the sheet the clipboard's text
+  /// through the SAME [_handlePaste] branch a terminal paste takes, so the
+  /// secret masking, CRLF normalisation, name trimming and enter-resolution
+  /// stay one implementation. A non-text read, an empty payload, or a sheet
+  /// that closed while the read was in flight are no-ops — the pre-existing
+  /// silent behaviour for those cases.
+  (Model, Cmd?) _handlePromptClipboardText(PromptClipboardTextMsg msg) {
+    final read = msg.read;
+    if (read is! PasteboardText || read.text.isEmpty) return (this, null);
+    if (prompt == null) return (this, null);
+    return _handlePaste(PasteMsg(read.text));
   }
 
   (Model, Cmd?) _handlePaste(PasteMsg msg) {

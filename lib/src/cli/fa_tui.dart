@@ -974,6 +974,9 @@ final class FaTuiModel extends Model {
     if (msg is PasteMsg) {
       return _withFreshCtrlCWindow(msg, () => _handlePaste(msg));
     }
+    if (msg is PromptClipboardTextMsg) {
+      return _handlePromptClipboardText(msg);
+    }
     return _handleKeyMsg(msg);
   }
 
@@ -1600,6 +1603,18 @@ final class FaTuiModel extends Model {
   /// resolves the host completer when it produces an answer (closing the
   /// prompt zone and handing control back to normal input).
   (Model, Cmd?) _handlePromptKey(KeyMsg msg) {
+    // Ctrl+V inside a prompt sheet (provider key, secret, ask): the sheet owns
+    // typed input, so the terminal's paste gesture never reaches the composer's
+    // bracketed-paste path — and this key used to be a silent no-op, which read
+    // as "the token cannot be pasted here". Read the clipboard's TEXT and feed
+    // the sheet the same PromptPaste a terminal paste produces (masked in a
+    // secret field, CRLF-normalised). Without a wired reader the old no-op is
+    // preserved, so web/headless hosts keep behaving exactly as before.
+    if (msg.key == 'ctrl+v') {
+      final reader = callbacks.readClipboardText;
+      if (reader == null || prompt == null) return (this, null);
+      return (this, () async => PromptClipboardTextMsg(await reader()));
+    }
     final key = _promptKeyFromMsg(msg);
     if (key == null) return (this, null);
     final (state: next, resolved: answer) = handleTuiPromptKey(prompt!, key);
