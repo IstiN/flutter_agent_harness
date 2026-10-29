@@ -17,11 +17,14 @@ final class PasteboardResultMsg extends Msg {
 }
 
 /// Ctrl+V pressed while a prompt sheet is open: the async answer to the key
-/// [_FaTuiModel._handlePromptKey] intercepted. Carries only what the
-/// clipboard returned — the sheet decides how much of it it can take.
+/// [_handlePromptKey] intercepted. Carries what the clipboard returned — the
+/// sheet decides how much of it it can take — plus the [gestureMs] stamp of
+/// the paste gesture that fired it, so a bracketed paste which took the same
+/// gesture over can suppress this late result (review of PR #1974).
 final class PromptClipboardTextMsg extends Msg {
-  PromptClipboardTextMsg(this.read);
+  PromptClipboardTextMsg(this.read, this.gestureMs);
   final PasteboardRead read;
+  final int gestureMs;
 }
 
 /// How long a fired pasteboard probe owns the paste gesture (issue #1067):
@@ -144,8 +147,31 @@ extension FaTuiPaste on FaTuiModel {
   (Model, Cmd?) _handlePromptClipboardText(PromptClipboardTextMsg msg) {
     final read = msg.read;
     if (read is! PasteboardText || read.text.isEmpty) return (this, null);
+    // The sheet closed while the read was in flight: drop the result rather
+    // than re-opening a sheet the user already dismissed (or rerouting the
+    // secret into the composer).
     if (prompt == null) return (this, null);
-    return _handlePaste(PasteMsg(read.text));
+    // A bracketed paste took this gesture over while the read was in flight:
+    // its payload is already in the sheet, so this copy must not land.
+    if (msg.gestureMs != _pasteboardProbeFiredAtMs) return (this, null);
+    return _pasteIntoPrompt(read.text);
+  }
+
+  /// Applies [content] to the open sheet exactly as a terminal paste does
+  /// (`PromptPaste`: masking, CRLF normalisation, name trimming), resolving the
+  /// sheet when the payload completes it. Shared by the bracketed-paste path
+  /// and the Ctrl+V clipboard read so both keep ONE insertion contract.
+  (Model, Cmd?) _pasteIntoPrompt(String content) {
+    final (state: next, resolved: answer) = handleTuiPromptKey(
+      prompt!,
+      PromptPaste(content),
+    );
+    if (answer != null) {
+      _promptCompleter?.complete(answer);
+      _promptCompleter = null;
+      return (copyWith(clearPrompt: true), null);
+    }
+    return (copyWith(prompt: next), null);
   }
 
   (Model, Cmd?) _handlePaste(PasteMsg msg) {
@@ -155,14 +181,17 @@ extension FaTuiPaste on FaTuiModel {
     // never probe the clipboard (issue #1067 AC4: pasted secrets stay
     // plain text).
     if (prompt != null) {
-      final key = PromptPaste(content);
-      final (state: next, resolved: answer) = handleTuiPromptKey(prompt!, key);
-      if (answer != null) {
-        _promptCompleter?.complete(answer);
-        _promptCompleter = null;
-        return (copyWith(clearPrompt: true), null);
-      }
-      return (copyWith(prompt: next), null);
+      // One gesture, one insertion (issue #1067, review of PR #1974): the
+      // Ctrl+V key that fired a clipboard read for THIS gesture already owns
+      // the payload — inserting the bracketed twin as well put the token in
+      // the sheet twice ("sk-tokensk-token"), silently behind the masking.
+      if (_pasteboardProbeInFlight()) return (this, null);
+      // A bracketed paste can be the FIRST carrier of the gesture too: arm the
+      // window so the twin ctrl+v key, or a late clipboard result, is dropped.
+      final armed = copyWith();
+      armed._pasteboardProbeFiredAtMs = nowFn().millisecondsSinceEpoch;
+      final (next, cmd) = armed._pasteIntoPrompt(content);
+      return (next, cmd);
     }
     // Any paste action also probes the clipboard for images (issue #1067):
     // terminal-menu Paste / Cmd+V arrive as bracketed paste, never as the

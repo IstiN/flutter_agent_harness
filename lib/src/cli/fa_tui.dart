@@ -1613,7 +1613,16 @@ final class FaTuiModel extends Model {
     if (msg.key == 'ctrl+v') {
       final reader = callbacks.readClipboardText;
       if (reader == null || prompt == null) return (this, null);
-      return (this, () async => PromptClipboardTextMsg(await reader()));
+      // The terminal's bracketed paste of this same gesture already landed (or
+      // the clipboard read is still in flight): one gesture, one insertion.
+      if (_pasteboardProbeInFlight()) return (this, null);
+      final armed = copyWith();
+      final gestureMs = nowFn().millisecondsSinceEpoch;
+      armed._pasteboardProbeFiredAtMs = gestureMs;
+      return (
+        armed,
+        () async => PromptClipboardTextMsg(await reader(), gestureMs),
+      );
     }
     final key = _promptKeyFromMsg(msg);
     if (key == null) return (this, null);
