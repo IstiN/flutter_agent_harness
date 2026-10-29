@@ -827,6 +827,9 @@ class AgentService extends ChangeNotifier
         childSessionFactory: childSessionFactory,
         rolesResolver: _taskRolesResolver,
         officeApi: officeApi,
+        // gh-1956 review: the app host honors `subagents.replyAutoSpill`
+        // (the kill switch) through the same parsed-section handoff.
+        subagentsConfig: appConfig?.subagents,
       ),
     );
     wiredFileFabric = wired.fileFabric;

@@ -24,6 +24,7 @@ extension AgentServiceHostBuilder on AgentService {
     childSessionFactory,
     required ModelRolesResolver? rolesResolver,
     required OfficeApi? officeApi,
+    required SubagentsConfig? subagentsConfig,
   }) => AgentCoreServices(
     baseEnv: env,
     // Session-correlation vars: the builder appends the layer (base →
@@ -79,6 +80,14 @@ extension AgentServiceHostBuilder on AgentService {
       notifyHeartbeat: (digest) => AppLog.i('subagents', digest),
       heartbeatMinutes: () => 0,
       stallMinutes: () => 0,
+      // gh-1956 review: the reply auto-spill kill switch is honored here
+      // too — the parsed `subagents:` section (the CLI's own parser, via
+      // loadAppFahConfig) consulted live per delivery. Null (absent
+      // section) = the default (spill on); an explicit
+      // `subagents.replyAutoSpill: false` restores pure-chunk behavior on
+      // the app host exactly like on the CLI.
+      replyAutoSpill: () =>
+          subagentsConfig?.replyAutoSpill ?? defaultReplyAutoSpill,
       rolesResolver: rolesResolver,
       childSessionFactory: childSessionFactory,
     ),

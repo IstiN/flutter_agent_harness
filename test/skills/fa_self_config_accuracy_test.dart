@@ -190,6 +190,7 @@ const _nestedKeySources = <String, String>{
   'projectContext.maxBytes': 'lib/src/prompts/project_context.dart',
   'subagents.heartbeatMinutes': 'lib/src/task/subagent_heartbeat.dart',
   'subagents.stallMinutes': 'lib/src/task/subagent_heartbeat.dart',
+  'subagents.replyAutoSpill': 'lib/src/task/subagent_heartbeat.dart',
   'output.streamThinking': 'lib/src/cli/cli_config.dart',
 };
 

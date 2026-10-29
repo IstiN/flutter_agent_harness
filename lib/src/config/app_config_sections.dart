@@ -4,7 +4,9 @@
 
 /// The app-side read of the sections of `~/.fah/config.yaml` the Flutter
 /// host honors (issue #1078): `roles:`, `tools:`, `ttsr:`, `redact:`,
-/// `providerTimeouts:`, and `agent.mode`.
+/// `providerTimeouts:`, `agent.mode`, and — since gh-1956's review round —
+/// `subagents:` (the reply auto-spill kill switch must honor
+/// `subagents.replyAutoSpill: false` on every host, not just the CLI).
 ///
 /// ONE parsing layer shared by both hosts: every section goes through the
 /// SAME strict core parser the CLI boot runs ([ModelRolesConfig.fromYaml],
@@ -37,6 +39,7 @@ import '../exceptions.dart';
 import '../model_roles/model_roles.dart';
 import '../providers/provider_common.dart';
 import '../redact/redaction_types.dart';
+import '../task/subagent_heartbeat.dart';
 import '../tools/availability.dart';
 import '../tools/load_modes.dart';
 import '../ttsr/ttsr.dart';
@@ -55,6 +58,7 @@ final class AppFahSections {
     this.projectTools = const ToolsConfig(),
     this.redact,
     this.providerTimeouts,
+    this.subagents,
     this.loadMode = AgentLoadMode.defaultMode,
     this.mcpConfigured = false,
     this.warnings = const [],
@@ -79,6 +83,11 @@ final class AppFahSections {
 
   /// The `providerTimeouts:` overrides, or null (defaults).
   final ProviderTimeoutsOverride? providerTimeouts;
+
+  /// The `subagents:` section (gh-1956 review): heartbeat cadence, stall
+  /// threshold, and the reply auto-spill kill switch, or null (absent
+  /// section — the structured defaults apply).
+  final SubagentsConfig? subagents;
 
   /// The resolved tool-load preset: `FA_AGENT_MODE` env > `agent.mode`
   /// config (the app has no `--omp` flag; the CLI's flag rung is its own).
@@ -119,11 +128,7 @@ AppFahSections parseAppConfigSections({
   // tools: — both scopes parse independently; the caller stacks them
   // (global < project < runtime) in the live resolution.
   final userTools = _parseTools(user?['tools'], userSource, warnings);
-  final projectTools = _parseTools(
-    project?['tools'],
-    projectSource,
-    warnings,
-  );
+  final projectTools = _parseTools(project?['tools'], projectSource, warnings);
   final ttsr = _parseTtsrSection(
     user,
     userSource,
@@ -133,6 +138,7 @@ AppFahSections parseAppConfigSections({
   );
   final redact = _parseRedactSection(user, userSource, warnings);
   final providerTimeouts = _parseTimeoutsSection(user, userSource, warnings);
+  final subagents = _parseSubagentsSection(user, userSource, warnings);
   final loadMode = _resolveLoadMode(envMode, user, userSource, warnings);
   // Inventory #2 interim: `mcp:` stays CLI-only on mobile — say so instead
   // of silently ignoring it.
@@ -150,6 +156,7 @@ AppFahSections parseAppConfigSections({
     projectTools: projectTools,
     redact: redact,
     providerTimeouts: providerTimeouts,
+    subagents: subagents,
     loadMode: loadMode,
     mcpConfigured: mcpConfigured,
     warnings: warnings,
@@ -186,8 +193,7 @@ ModelRolesConfig? _parseRolesSection(
 /// the retry policy only rides a roles parse — so it stays one here
 /// (parity over convenience).
 bool _shipsRolesSection(YamlMap? user) =>
-    user != null &&
-    (user['roles'] != null || user['modelOverrides'] != null);
+    user != null && (user['roles'] != null || user['modelOverrides'] != null);
 
 /// The `ttsr:` section: user settings + rules, project `.fah/rules.yaml`
 /// rules first (the CLI _resolveTtsr merge: project rules win name
@@ -245,9 +251,7 @@ List<TtsrRule>? _parseProjectTtsrRules(
       warnings: warnings,
     );
   } on ConfigException catch (error) {
-    warnings.add(
-      'invalid ttsr rules in $projectRulesSource: ${error.message}',
-    );
+    warnings.add('invalid ttsr rules in $projectRulesSource: ${error.message}');
     return null;
   }
 }
@@ -299,6 +303,25 @@ ProviderTimeoutsOverride? _parseTimeoutsSection(
     warnings.add(
       'invalid providerTimeouts section in $userSource: ${error.message}',
     );
+    return null;
+  }
+}
+
+/// The `subagents:` section — the CLI's own strict parser
+/// ([SubagentsConfig.fromYaml]); a bad section warns and falls back to
+/// the defaults (AC7), never poisoning the other sections (gh-1956
+/// review: the app host must honor the reply auto-spill kill switch).
+SubagentsConfig? _parseSubagentsSection(
+  YamlMap? user,
+  String userSource,
+  List<String> warnings,
+) {
+  final node = user?['subagents'];
+  if (node == null) return null;
+  try {
+    return SubagentsConfig.fromYaml(node);
+  } on ConfigException catch (error) {
+    warnings.add('invalid subagents section in $userSource: ${error.message}');
     return null;
   }
 }
