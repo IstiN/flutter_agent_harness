@@ -1,5 +1,5 @@
 82008	Payload/Runner.app/Assets.car
-28336528	Payload/Runner.app/Frameworks/App.framework/App
+29839120	Payload/Runner.app/Frameworks/App.framework/App
 126278	Payload/Runner.app/Frameworks/App.framework/flutter_assets/NOTICES.Z
 420428	Payload/Runner.app/Frameworks/App.framework/flutter_assets/assets/fonts/Inter-Bold.ttf
 417300	Payload/Runner.app/Frameworks/App.framework/flutter_assets/assets/fonts/Inter-Medium.ttf
@@ -29,11 +29,11 @@
 17025248	Payload/Runner.app/Frameworks/LiteRtLm.framework/LiteRtLm
 5466480	Payload/Runner.app/Frameworks/LiteRtMetalAccelerator.framework/LiteRtMetalAccelerator
 85360	Payload/Runner.app/Frameworks/StreamProxy.framework/StreamProxy
-172080	Payload/Runner.app/Frameworks/libswiftCompatibilitySpan.dylib
-203136	Payload/Runner.app/Frameworks/objective_c.framework/objective_c
-950272	Payload/Runner.app/Frameworks/quickjs_bridge.framework/quickjs_bridge
+172224	Payload/Runner.app/Frameworks/libswiftCompatibilitySpan.dylib
+203120	Payload/Runner.app/Frameworks/objective_c.framework/objective_c
+832336	Payload/Runner.app/Frameworks/quickjs_bridge.framework/quickjs_bridge
 1648704	Payload/Runner.app/Frameworks/sqlite3.framework/sqlite3
-111760	Payload/Runner.app/PlugIns/FaLiveActivity.appex/FaLiveActivity
-10877488	Payload/Runner.app/Runner
-171952	SwiftSupport/iphoneos/libswiftCompatibilitySpan.dylib
-150287456	TOTAL
+111792	Payload/Runner.app/PlugIns/FaLiveActivity.appex/FaLiveActivity
+10745824	Payload/Runner.app/Runner
+172096	SwiftSupport/iphoneos/libswiftCompatibilitySpan.dylib
+151494553	TOTAL
