@@ -167,14 +167,46 @@ TeaKey? parseKeyFromBuffer(List<int> buffer) {
     }
   }
 
-  // If we're here, it might be a partial UTF-8 sequence or invalid.
-  // UTF-8 lead bytes: 110xxxxx (2 bytes), 1110xxxx (3 bytes), 11110xxx (4 bytes).
-  if (b0 & 0x80 == 0) {
-    // Should have been handled by utf8.decode(len=1) but for safety:
+  // If we're here, it could be a PARTIAL UTF-8 sequence or something that can
+  // never decode. The second case is not hypothetical: a Windows console in a
+  // legacy OEM code page delivers a Cyrillic keystroke as ONE byte (0xEF for
+  // 'п'), which looks like a 3-byte UTF-8 lead but is never followed by
+  // continuations. Waiting for them wedged the WHOLE input stream — the buffer
+  // only grew and no key was ever emitted again, so the user could not type
+  // Russian at all (fa issue #1973 follow-up). Wait only while the head can
+  // still complete.
+  final expected = _utf8SequenceLength(b0);
+  if (expected == 0) {
+    // Not a UTF-8 lead byte: a bare continuation byte or 0xF8+. Junk — drop it.
     buffer.removeAt(0);
-    return TeaKey(code: KeyCode.rune, text: String.fromCharCode(b0));
+    return const TeaKey(code: KeyCode.unknown);
   }
+  final lookahead = expected < buffer.length ? expected : buffer.length;
+  var malformed = false;
+  for (var i = 1; i < lookahead; i++) {
+    if ((buffer[i] & 0xC0) != 0x80) {
+      malformed = true; // a non-continuation inside the promised window
+      break;
+    }
+  }
+  if (!malformed && buffer.length < expected) {
+    return null; // genuinely partial: the rest of the character is in flight
+  }
+  // The head can never complete here: consume ONE byte so typing recovers
+  // instead of stalling. The byte surfaces as a Latin-1 rune rather than
+  // vanishing silently.
+  buffer.removeAt(0);
+  return TeaKey(code: KeyCode.rune, text: String.fromCharCode(b0));
+}
 
-  // Wait for more bytes if it looks like a lead byte
-  return null;
+/// How many bytes a UTF-8 sequence starting with [b] occupies (1 for ASCII),
+/// or 0 when [b] cannot start one. The parser uses it to tell a genuinely
+/// partial character (wait for more bytes) from a head that can never decode
+/// (consume it, or the stream stalls — see [parseKeyFromBuffer]).
+int _utf8SequenceLength(int b) {
+  if (b < 0x80) return 1;
+  if ((b & 0xE0) == 0xC0) return 2;
+  if ((b & 0xF0) == 0xE0) return 3;
+  if ((b & 0xF8) == 0xF0) return 4;
+  return 0;
 }

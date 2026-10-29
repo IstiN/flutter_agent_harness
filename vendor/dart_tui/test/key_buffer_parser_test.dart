@@ -3,6 +3,70 @@ import 'package:dart_tui/src/msg.dart';
 import 'package:test/test.dart';
 
 void main() {
+  group('UTF-8 keyboard input on Windows (Cyrillic)', () {
+    test('multi-byte UTF-8 decodes even when every byte lands alone', () {
+      // Valid UTF-8 is what the console sends once its input code page is
+      // UTF-8 (windows_terminal.dart). Split reads must not lose bytes.
+      final buffer = <int>[];
+      final keys = <String>[];
+      for (final b in <int>[0xD0, 0xBF, 0xD1, 0x80, 0xD0, 0xB8]) {
+        buffer.add(b); // 'при', one byte per read
+        final key = parseKeyFromBuffer(buffer);
+        if (key != null) keys.add(key.text);
+      }
+
+      expect(keys.join(), 'при');
+      expect(buffer, isEmpty);
+    });
+
+    test('a single-byte code page can never wedge the parser', () {
+      // A legacy console page delivers 'п' as ONE byte (0xEF) — a 3-byte
+      // UTF-8 lead that is never followed by continuations. The parser used
+      // to return null forever and the buffer only grew: every later
+      // keystroke was swallowed (the reported "cannot type Russian at all").
+      final buffer = <int>[0xEF, 0xF0, 0xE8]; // 'при' in cp1251
+
+      final key = parseKeyFromBuffer(buffer);
+
+      expect(key, isNotNull, reason: 'a head that can never complete must be '
+          'surfaced instead of stalling the stream');
+      expect(key!.text, String.fromCharCode(0xEF));
+      expect(buffer, <int>[0xF0, 0xE8], reason: 'one byte is consumed');
+    });
+
+    test('typing recovers after a bad byte', () {
+      final buffer = <int>[0xEF, 0xF0, 0xE8, 0x61]; // junk + 'a'
+      final keys = <String>[];
+      while (true) {
+        final key = parseKeyFromBuffer(buffer);
+        if (key == null) break;
+        keys.add(key.text);
+      }
+
+      expect(keys, contains('a'), reason: 'ASCII after junk must still arrive');
+      expect(buffer, isEmpty);
+    });
+
+    test('a genuinely partial character still waits for the rest', () {
+      final buffer = <int>[0xD0]; // first byte of 'п'
+
+      expect(parseKeyFromBuffer(buffer), isNull);
+      expect(buffer, <int>[0xD0], reason: 'the byte must not be eaten');
+
+      buffer.add(0xBF);
+      expect(parseKeyFromBuffer(buffer)?.text, 'п');
+      expect(buffer, isEmpty);
+    });
+
+    test('a bare continuation byte is dropped, not fatal', () {
+      final buffer = <int>[0xBF, 0x61]; // stray continuation, then 'a'
+
+      expect(parseKeyFromBuffer(buffer)?.code, KeyCode.unknown);
+      expect(parseKeyFromBuffer(buffer)?.text, 'a');
+      expect(buffer, isEmpty);
+    });
+  });
+
   test('parseKeyFromBuffer handles printable ASCII', () {
     final b = <int>[0x61];
     final k = parseKeyFromBuffer(b);

@@ -25,6 +25,49 @@ List<Msg> _feedBytewise(TerminalInputDecoder d, List<int> data) {
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 void main() {
+  group('decoder: Windows Cyrillic keystrokes', () {
+    List<String> texts(List<Msg> msgs) => [
+      for (final m in msgs)
+        if (m is KeyPressMsg) m.keyEvent.text,
+    ];
+
+    test('UTF-8 Cyrillic arrives as characters (whole chunk)', () {
+      final decoder = TerminalInputDecoder();
+
+      final msgs = decoder.feed(utf8.encode('привет'));
+
+      expect(texts(msgs).join(), 'привет');
+    });
+
+    test('UTF-8 Cyrillic survives a chunk split mid-character', () {
+      final decoder = TerminalInputDecoder();
+      final bytes = utf8.encode('привет');
+      final out = <String>[];
+      for (var i = 0; i < bytes.length; i += 2) {
+        out.addAll(
+          texts(
+            decoder.feed(
+              bytes.sublist(i, i + 2 > bytes.length ? bytes.length : i + 2),
+            ),
+          ),
+        );
+      }
+
+      expect(out.join(), 'привет');
+    });
+
+    test('a legacy code-page byte does not stall the stream', () {
+      // cp1251 'п' (0xEF) followed by an ASCII 'a': the decoder must keep
+      // producing messages — before the parser fix the 0xEF head wedged it
+      // and the 'a' never arrived.
+      final decoder = TerminalInputDecoder();
+
+      final msgs = decoder.feed(<int>[0xEF, 0x61]);
+
+      expect(texts(msgs), contains('a'));
+    });
+  });
+
   // ── Basic ASCII / printable ──────────────────────────────────────────────
 
   group('ASCII printable', () {
