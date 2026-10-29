@@ -335,4 +335,28 @@ void main() {
           'Actions log (three diagnostic runs printed nothing)',
     );
   });
+
+  test('AC10 — build_only pins the user keychain search list around gym '
+      '(gh-1954: xcodebuild resolves identities only via the search list, '
+      'concurrent legs rewrite it mid-build, run 40843155381)', () {
+    final fastfile = File('flutter_app/fastlane/Fastfile').readAsStringSync();
+    final laneStart = fastfile.indexOf('lane :build_only do');
+    final laneEnd = fastfile.indexOf('lane :', laneStart + 10);
+    final lane = fastfile.substring(laneStart, laneEnd);
+    expect(
+      lane,
+      contains('list-keychains'),
+      reason: 'the persistent ci-signing.keychain-db must be VISIBLE to '
+          'xcodebuild at gym time — provision-time doctor is not enough '
+          '(a concurrent leg can rewrite the list during the 15-minute '
+          'compile window)',
+    );
+    expect(lane, contains('ci-signing.keychain-db'));
+    expect(
+      lane,
+      contains('saved_search_list'),
+      reason: 'the pre-gym search list must be restored in ensure — the '
+          'pin is a visibility window, not a permanent global change',
+    );
+  });
 }
