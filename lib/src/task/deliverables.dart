@@ -422,6 +422,25 @@ final class DeliverableCapture {
     }
   }
 
+  /// gh-1951 AC6: persists an UNDELIVERED reply carried over from a
+  /// previous child life (a child killed mid-run after its reply ack) as a
+  /// COMPLETE artifact — the resume completion surfaces the pointer out of
+  /// band (I4), so an acked reply is never lost across a kill-and-resume.
+  /// No envelope-fit check: the record rides the deliverables render lines,
+  /// not a bounded envelope. Throws through — the resume fails with a
+  /// NAMED error rather than losing the reply silently (E5).
+  DeliverableRecord persistCarriedReply(String childId, String body) {
+    final redacted = _redactOrThrow(body);
+    final record = _persist(
+      childId: childId,
+      redacted: redacted,
+      status: AgentArtifactStatus.complete,
+      checkEnvelopeFit: false,
+    );
+    manager[childId]?.deliverables.add(record);
+    return record;
+  }
+
   /// Child-selected ids are interpolated into parent-visible render lines
   /// and ledger keys — strip structural characters so a hostile-looking id
   /// cannot inject synthetic lines (review hygiene, issue #1829).

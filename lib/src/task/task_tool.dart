@@ -116,17 +116,75 @@ String taskAsyncResultNotice(TaskJob job) {
       '<task-result id="${job.id}" agent="${job.agent}" '
       'status="${job.status.name}">',
     );
-  final output = result?.output ?? '';
-  if (output.isNotEmpty) {
+  _renderResultBody(
+    buffer,
+    result,
+    outputPreviewChars: taskAsyncResultPreviewChars,
+    leadWithPointer: true,
+  );
+  _renderDeliverables(buffer, result);
+  final error = result?.error;
+  if (error != null) buffer.write('\nerror: $error');
+  buffer
+    ..write('\n</task-result>')
+    ..write('\n</system-notice>');
+  return buffer.toString();
+}
+
+/// The parent-visible body of one settled child result (gh-1951): the
+/// EXPLICIT reply rides verbatim when present — it is the deliverable,
+/// and a content-free final-message stub never stands in for it (the
+/// incident: a 7909-char reply acked "delivered", the parent saw only the
+/// stub). Over-cap replies arrive as the #1829 envelope (excerpt +
+/// pointer + completeness), which `recordReply` stored on the handle.
+/// With no reply at all, the documented `completed_without_reply` notice
+/// names the bare completion text for what it is.
+///
+/// [leadWithPointer] appends the `agent://` pointer line for the
+/// full final-message output when the body was not already pointer-tailed
+/// (the async envelope only pointers a truncated preview).
+void _renderResultBody(
+  StringBuffer buffer,
+  TaskSingleResult? result, {
+  required int outputPreviewChars,
+  bool leadWithPointer = false,
+}) {
+  if (result == null) return;
+  var pointerTailed = false;
+  final reply = result.reply;
+  if (reply != null && reply.trim().isNotEmpty) {
     buffer
       ..writeln()
-      ..writeln(
-        output.length > taskAsyncResultPreviewChars
-            ? '${output.substring(0, taskAsyncResultPreviewChars)}\n…\n'
-                  '[Full output: agent://${job.id}]'
-            : output,
+      ..writeln('[explicit reply]')
+      ..write(reply)
+      ..write('\n[explicit reply end]');
+  } else {
+    if (result.completedWithoutReply) {
+      buffer.write(
+        '\n[completed_without_reply — no explicit reply was recorded; the '
+        'text below is the child\'s final message, not a reply]',
       );
+    }
+    final output = result.output;
+    if (output.isNotEmpty) {
+      if (output.length > outputPreviewChars) {
+        buffer
+          ..writeln()
+          ..writeln(output.substring(0, outputPreviewChars))
+          ..writeln('…')
+          ..write('[Full output: agent://${result.id}]');
+        pointerTailed = true;
+      } else {
+        buffer
+          ..writeln()
+          ..write(output);
+      }
+    }
   }
+  if (leadWithPointer && !pointerTailed) {
+    buffer.write('\n[Full output: agent://${result.id}]');
+  }
+}
   _renderDeliverables(buffer, result);
   final error = result?.error;
   if (error != null) buffer.write('\nerror: $error');
@@ -205,6 +263,25 @@ final class TaskJobManager {
     };
     if (!job._settled.isCompleted) job._settled.complete();
     _completions.add(job);
+  }
+
+  /// Publishes a RESUMED child's settled run (gh-1951 AC3/AC6). Resumes
+  /// execute inline on the executor — no [TaskJob] of their own — so
+  /// their completions are published here, riding the SAME async-result
+  /// envelope through the SAME [completions] stream every host already
+  /// consumes. The job replaces the spawn's settled row under the child
+  /// id (`/tasks` keeps one row per child); no start event fires (this
+  /// run was never queued in this registry), and `settled` resolves
+  /// instantly, so the headless drain never waits on it.
+  void publishResumed(TaskSingleResult result) {
+    final job = TaskJob._(
+      id: result.id,
+      index: 0,
+      agent: result.agent,
+      task: result.task,
+    );
+    _jobs[result.id] = job;
+    _finish(job, result);
   }
 }
 
@@ -346,7 +423,13 @@ final class TaskToolConfig {
     contextWindowCap: contextWindowCap,
     misuseBreaker: misuseBreaker,
     deliverableRedactor: deliverableRedactor,
+    // gh-1951 AC3/AC6: resumed-run completions ride the SAME async-result
+    // envelope a background spawn gets — the publisher is wired here, so
+    // every host listening to [TaskJobManager.completions] (CLI, wire
+    // serve, app) surfaces them with zero per-host changes.
+    resultPublisher: (result) => jobManager.publishResumed(result),
   );
+}
 }
 
 /// Creates the `task` tool bound to [config] (omp's `TaskTool`).
@@ -751,8 +834,9 @@ String _renderResults(List<TaskSingleResult> results, Duration total) {
 }
 
 /// Renders one per-item block of the settled batch response: header with
-/// status (and schema verdict when validated), the error line, the capped
-/// output preview, and the `agent://` pointer.
+/// status (and schema verdict when validated), the error line, the gh-1951
+/// deliverable body (explicit reply verbatim — or the completion notice +
+/// final-text preview when none was recorded), and the `agent://` pointer.
 void _renderResult(StringBuffer buffer, TaskSingleResult result) {
   buffer.write(
     '\n\n## ${result.id} (${result.agent}) — ${_spawnStatusLabel(result.status)}',
@@ -765,12 +849,11 @@ void _renderResult(StringBuffer buffer, TaskSingleResult result) {
   if (error != null) {
     buffer.write('\nerror: $error');
   }
-  if (result.output.isNotEmpty) {
-    final preview = result.output.length > taskOutputPreviewChars
-        ? '${result.output.substring(0, taskOutputPreviewChars)}\n…'
-        : result.output;
-    buffer.write('\n$preview');
-  }
+  _renderResultBody(
+    buffer,
+    result,
+    outputPreviewChars: taskOutputPreviewChars,
+  );
   buffer.write(
     '\n[${result.truncated ? 'Truncated output' : 'Full output'}: '
     'agent://${result.id}]',

@@ -207,6 +207,14 @@ final class TaskSingleResult {
   bool get completedWithoutReply =>
       status == TaskSpawnStatus.completed && reply == null;
 
+
+/// Publishes a settled child result through the session's async-result
+/// channel (gh-1951 AC3/AC6): resumed runs have no [TaskJob] of their own
+/// (they execute inline on the executor), so their completions are
+/// published through the SAME envelope/stream every host already consumes.
+/// Wired from `TaskToolConfig`; the executor itself never sees the job
+/// registry.
+typedef TaskResultPublisher = void Function(TaskSingleResult result);
   /// Convenience: omp's `exitCode` mapping of [status].
   int get exitCode => status == TaskSpawnStatus.completed ? 0 : 1;
 }
