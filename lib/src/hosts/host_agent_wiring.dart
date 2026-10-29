@@ -1044,6 +1044,12 @@ _WiredTaskSurface? _wireTaskSurface({
     contextWindowCap: bundle.contextWindowCap,
     misuseBreaker: bundle.misuseBreaker,
     deliverableRedactor: bundle.deliverableRedactor,
+    // gh-1956: reply auto-spill is the default delivery for oversized
+    // reports; the kill switch getter and the durable-artifact seam ride
+    // the same config surface.
+    replyAutoSpill: bundle.replyAutoSpill,
+    deliverableArtifactSink: bundle.deliverableArtifactSink,
+    deliverableArtifactSource: bundle.deliverableArtifactSource,
     childSessionFactory: bundle.childSessionFactory,
     // Issue #222: the resume path reopens a child's JSONL session by
     // path so task_resume/task_send continue the child in the SAME file.

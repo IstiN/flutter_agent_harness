@@ -13,8 +13,6 @@ import 'dart:convert';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:test/test.dart';
 
-const _secret = 'sk-live-canary-0123456789';
-
 final class _Rig {
   _Rig(this.manager, this.store, this.capture);
 
@@ -138,7 +136,6 @@ void main() {
     });
 
     test('over-cap reply without a capture degrades to the same notice', () async {
-      final rig = _toolsRig(cap: 100);
       final bare = SubagentManager(parentSessionId: 'p', maxReplyChars: 100);
       bare.register(id: 'kid', name: 'kid', agentType: 'task', task: 't');
       // Host without artifact storage: no capture provider wired at all.
@@ -185,9 +182,6 @@ void main() {
   });
 
   group('natural excerpt boundary (edge case)', () {
-    String statusLineOf(int chars, int bytes, String id) =>
-        '[deliverable complete: agent://$id ($chars chars, $bytes bytes)]';
-
     test('the excerpt ends at a paragraph boundary when one is in window', () {
       final rig = _rig(cap: 200);
       final body = '${'p1' * 40}\n${'q' * 300}';
@@ -226,7 +220,7 @@ void main() {
       final body = 'plain ascii body ' * 40;
       final record = rig.capture.deliverReply('kid', body)!;
       expect(
-        utf8.encode(rig.store.get(record.outputId)!),
+        utf8.encode(rig.store.get(record.outputId!)!),
         utf8.encode(body),
       );
     });
@@ -235,7 +229,7 @@ void main() {
       final rig = _rig(cap: 120);
       final body = '漢字テスト' * 60; // 3 bytes per rune, far over the cap.
       final record = rig.capture.deliverReply('kid', body)!;
-      final stored = rig.store.get(record.outputId)!;
+      final stored = rig.store.get(record.outputId!)!;
       expect(record.bytes, utf8.encode(stored).length);
       expect(record.chars, stored.length);
       expect(record.bytes, greaterThan(record.chars));
@@ -292,7 +286,7 @@ void main() {
         if (spills) {
           expect(record, isNotNull);
           expect(
-            utf8.encode(rig.store.get(record!.outputId)!),
+            utf8.encode(rig.store.get(record!.outputId!)!),
             utf8.encode('a' * len),
           );
         } else {

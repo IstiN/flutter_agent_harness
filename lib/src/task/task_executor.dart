@@ -334,6 +334,14 @@ final class TaskExecutor {
       _resumesInFlight.contains(id) ||
       _inFlightCancels.containsKey(id);
 
+  /// Eagerly restores the durable deliverable artifacts of the parent
+  /// session (gh-1956, AC6). The capture also restores lazily before its
+  /// first delivery decision; hosts may kick this at boot so an early
+  /// parent-side `agent://` resolution already sees the re-seeded
+  /// artifacts. No-op without a capture.
+  Future<void> ensureDeliverablesRestored() =>
+      _capture?.ensureRestored() ?? Future<void>.value();
+
   /// Requests the in-flight child [id] to abort: its run settles through
   /// the NORMAL path (aborted for a spawn, failed-resumable for a resume),
   /// so the registry row always ends up telling the truth. Returns false

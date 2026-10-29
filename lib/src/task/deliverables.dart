@@ -46,6 +46,11 @@ import 'subagent_manager.dart';
 /// inspected, persisted, or delivered by this path.
 const Set<String> deliverableToolNames = {'reply', 'agent_message'};
 
+/// The parent-session custom record type carrying one durable spilled
+/// artifact per record (gh-1956, AC6): a resumed session re-seeds its
+/// store from these rows, so an `agent://` pointer survives restart.
+const String deliverableArtifactRecordType = 'deliverable_artifact';
+
 /// What a recorded deliverable is: a stored artifact (over-cap body or
 /// salvaged partial text), an observed report chunk, or a final-manifest
 /// verdict.
@@ -360,7 +365,7 @@ final class DeliverableCapture {
         'content': redacted,
         'status': status.name,
         'childId': childId,
-        if (reportId != null) 'reportId': reportId,
+        'reportId': ?reportId,
         'chars': redacted.length,
       }).catchError((Object _) {}),
     );
