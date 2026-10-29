@@ -144,9 +144,20 @@ import_fingerprint() { # import_fingerprint <p12file> <password>; prints SHA1 (n
   tmp="$(mktemp -d)"
   # shellcheck disable=SC2064
   trap "rm -rf '$tmp'" RETURN
-  openssl pkcs12 -passin "pass:$2" -in "$1" -clcerts -nokeys -out "$tmp/c.pem" 2>/dev/null \
-    || openssl pkcs12 -passin "pass:" -in "$1" -clcerts -nokeys -out "$tmp/c.pem" 2>/dev/null \
-    || return 1
+  # gh-1954 signature B: when the payload cannot be read, the previous
+  # "cannot read P12" gave zero diagnostics. Log the openssl error and
+  # the payload shape (both non-secret) so the failure is actionable.
+  if ! openssl pkcs12 -passin "pass:$2" -in "$1" -clcerts -nokeys -out "$tmp/c.pem" 2>"$tmp/err1"; then
+    if ! openssl pkcs12 -passin "pass:" -in "$1" -clcerts -nokeys -out "$tmp/c.pem" 2>"$tmp/err2"; then
+      err "pkcs12 with secret password: $(tail -2 "$tmp/err1" | tr '\n' ' ')"
+      err "pkcs12 with empty password:  $(tail -2 "$tmp/err2" | tr '\n' ' ')"
+      err "payload: $(wc -c < "$1" | tr -d ' ') bytes, head: $(head -c 24 "$1" | od -An -tx1 | tr -s ' ' | cut -c1-40)"
+      if head -c 11 "$1" | grep -q -- '-----BEGIN'; then
+        err "payload looks like PEM TEXT, not a binary PKCS12 — the secret may hold base64-of-PEM (cert only), not base64-of-p12"
+      fi
+      return 1
+    fi
+  fi
   openssl x509 -in "$tmp/c.pem" -noout -fingerprint -sha1 2>/dev/null \
     | sed 's/^.*=//; s/://g'
 }
@@ -223,7 +234,17 @@ case "$CMD" in
     printf '%s' "$P12_B64" | base64 --decode > "$TMP/cert.p12" 2>/dev/null || die "P12 payload for '$LABEL' is not valid base64"
 
     NEW_FP="$(import_fingerprint "$TMP/cert.p12" "$P12_PW")" || die "cannot read P12 for '$LABEL' (wrong password or corrupt payload?)"
-    [ -n "$NEW_FP" ] || die "cannot read P12 for '$LABEL' (wrong password or corrupt payload?)"
+    if [ -z "$NEW_FP" ]; then
+      err "pkcs12 parsed but NO client certificate extracted — payload diagnostics:"
+      err "  size: $(wc -c < "$TMP/cert.p12" | tr -d ' ') bytes"
+      err "  first bytes: $(head -c 24 "$TMP/cert.p12" | od -An -tx1 | tr -s ' ' | cut -c1-48)"
+      if head -c 11 "$TMP/cert.p12" | grep -q -- '-----BEGIN'; then
+        err "  payload is PEM TEXT (base64-of-PEM in the secret, not base64-of-p12!)"
+      fi
+      err "  pkcs12 cert inventory: $(openssl pkcs12 -passin "pass:$P12_PW" -in "$TMP/cert.p12" -nokeys 2>&1 | grep -cE 'subject=|friendlyName' || true) entries"
+      err "  pkcs12 no-cert probe: $(openssl pkcs12 -passin "pass:$P12_PW" -in "$TMP/cert.p12" -nocerts -nodes 2>&1 | tail -1 || true)"
+      die "cannot read P12 for '$LABEL' (parsed but no client certificate)"
+    fi
 
     OLD_FP="$( [ -f "$LABELS_DIR/$LABEL" ] && sed -n 's/^sha1=//p' "$LABELS_DIR/$LABEL" || true )"
     if [ "$FORCE" -eq 0 ] && [ "$NEW_FP" = "$OLD_FP" ]; then
