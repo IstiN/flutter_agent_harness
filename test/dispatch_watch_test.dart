@@ -376,11 +376,8 @@ class DwLive {
     final deadline = DateTime.now().add(timeout);
     while (DateTime.now().isBefore(deadline)) {
       if (File(logFile).existsSync() &&
-          '${File(logFile).readAsStringSync()} '
-              .split(needle)
-              .length -
-              1 >=
-          occurrences) {
+          '${File(logFile).readAsStringSync()} '.split(needle).length - 1 >=
+              occurrences) {
         return;
       }
       await Future<void>.delayed(const Duration(milliseconds: 20));
@@ -967,73 +964,72 @@ void main() {
       );
     });
 
-    test('watcher dies WITHOUT the orphan-cleanup handler (trap-action '
-        'parse loss) → the backstop still cancels the never-started child',
-        () async {
-      // CI reds on main b54f324c (run 40857595467, TERM test) and PR #1958
-      // 6a49b3ec (run 40858364862, INT test), 2026-10-29: on bash 5.3
-      // (ubuntu-26.04 runners) a signal landing while the shell's parser
-      // holds a half-read construct makes run_pending_traps parse the trap
-      // ACTION STRING in a poisoned state — bash prints
-      // `dispatch_and_watch.sh: trap: line 2: unexpected EOF while looking
-      // for matching ')'` and exits 2 WITHOUT running orphan_cleanup. The
-      // gh-1903 orphan-cancel is then LOST exactly when it matters (the leg
-      // died). DW_TRAP_PARSE_DEATH=1 installs a deliberately unparseable
-      // trap action, reproducing that death shape deterministically: the
-      // script must STILL cancel the never-started child via the detached
-      // orphan backstop, exactly once.
-      final live = await startDw(
-        'term-trap-parse-death',
-        ['office-addin.yml'],
-        {
-          'runs.json': runJson([run(888, 'office-addin-suite', iso(-2))]),
-          'view-888.txt': 'in_progress -\n',
-          'jobs-888.txt': '0\n',
-          'siblings.json': '[]',
-        },
-        env: {
-          'DW_POLL_SECONDS': '1',
-          'DW_TRAP_PARSE_DEATH': '1',
-        },
-      );
-      await live.waitForLog('run view 888 --repo OWNER/REPO');
-      await live.waitForPolls('run view 888 --repo OWNER/REPO');
-      live.process.kill(ProcessSignal.sigterm);
-      final code = await live.finish();
-      expect(
-        code,
-        2,
-        reason:
-            'the poisoned trap action kills the shell in the parser '
-            '(parser_error → exit 2) before orphan_cleanup runs — the '
-            'exact CI death shape; diagnostics:\n${live.diagnostics()}',
-      );
-      expect(
-        live.out,
-        isNot(contains('::error::leg terminated')),
-        reason: 'the handler never ran — the poisoned parse died first',
-      );
-      // The backstop notices the watcher's death on its own poll cadence
-      // (≤ DW_BACKSTOP_POLL_SECONDS) and cancels from OUTSIDE the dead
-      // process — wait bounded, this cancel is asynchronous by design.
-      final cancelDeadline = DateTime.now().add(const Duration(seconds: 10));
-      while (DateTime.now().isBefore(cancelDeadline)) {
-        if (File('${live.dir.path}/cancelled-888').existsSync()) break;
-        await Future<void>.delayed(const Duration(milliseconds: 50));
-      }
-      expect(
-        File('${live.dir.path}/cancelled-888').existsSync(),
-        isTrue,
-        reason:
-            'gh-1903 containment must survive the handler parse loss: the '
-            'detached orphan backstop cancels the never-started child',
-      );
-      expect(
-        live.logLines.where((l) => l.contains('run cancel')).length,
-        1,
-        reason: 'exactly one targeted cancel — backstop, never a double',
-      );
-    });
+    test(
+      'watcher dies WITHOUT the orphan-cleanup handler (trap-action '
+      'parse loss) → the backstop still cancels the never-started child',
+      () async {
+        // CI reds on main b54f324c (run 40857595467, TERM test) and PR #1958
+        // 6a49b3ec (run 40858364862, INT test), 2026-10-29: on bash 5.3
+        // (ubuntu-26.04 runners) a signal landing while the shell's parser
+        // holds a half-read construct makes run_pending_traps parse the trap
+        // ACTION STRING in a poisoned state — bash prints
+        // `dispatch_and_watch.sh: trap: line 2: unexpected EOF while looking
+        // for matching ')'` and exits 2 WITHOUT running orphan_cleanup. The
+        // gh-1903 orphan-cancel is then LOST exactly when it matters (the leg
+        // died). DW_TRAP_PARSE_DEATH=1 installs a deliberately unparseable
+        // trap action, reproducing that death shape deterministically: the
+        // script must STILL cancel the never-started child via the detached
+        // orphan backstop, exactly once.
+        final live = await startDw(
+          'term-trap-parse-death',
+          ['office-addin.yml'],
+          {
+            'runs.json': runJson([run(888, 'office-addin-suite', iso(-2))]),
+            'view-888.txt': 'in_progress -\n',
+            'jobs-888.txt': '0\n',
+            'siblings.json': '[]',
+          },
+          env: {'DW_POLL_SECONDS': '1', 'DW_TRAP_PARSE_DEATH': '1'},
+        );
+        await live.waitForLog('run view 888 --repo OWNER/REPO');
+        await live.waitForPolls('run view 888 --repo OWNER/REPO');
+        live.process.kill(ProcessSignal.sigterm);
+        final code = await live.finish();
+        expect(
+          code,
+          2,
+          reason:
+              'the poisoned trap action kills the shell in the parser '
+              '(parser_error → exit 2) before orphan_cleanup runs — the '
+              'exact CI death shape; diagnostics:\n${live.diagnostics()}',
+        );
+        expect(
+          live.out,
+          isNot(contains('::error::leg terminated')),
+          reason: 'the handler never ran — the poisoned parse died first',
+        );
+        // The backstop notices the watcher's death on its own poll cadence
+        // (≤ DW_BACKSTOP_POLL_SECONDS) and cancels from OUTSIDE the dead
+        // process — wait bounded, this cancel is asynchronous by design.
+        final cancelDeadline = DateTime.now().add(const Duration(seconds: 10));
+        while (DateTime.now().isBefore(cancelDeadline)) {
+          if (File('${live.dir.path}/cancelled-888').existsSync()) break;
+          await Future<void>.delayed(const Duration(milliseconds: 50));
+        }
+        expect(
+          File('${live.dir.path}/cancelled-888').existsSync(),
+          isTrue,
+          reason:
+              'gh-1903 containment must survive the handler parse loss: the '
+              'detached orphan backstop cancels the never-started child',
+        );
+        expect(
+          live.logLines.where((l) => l.contains('run cancel')).length,
+          1,
+          reason: 'exactly one targeted cancel — backstop, never a double',
+        );
+      },
+    );
   });
 
   // ── DwLive.finish — the wedged signal handoff must self-identify ────────
