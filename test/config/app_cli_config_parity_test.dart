@@ -50,6 +50,10 @@ redact:
 providerTimeouts:
   connectTimeoutMs: 42000
   streamIdleTimeoutMs: 25000
+subagents:
+  heartbeatMinutes: 5
+  stallMinutes: 30
+  replyAutoSpill: false
 agent:
   mode: omp
 ''';
@@ -89,7 +93,9 @@ void main() {
     // Same scope inputs…
     expect(app.userTools.tools, cli.tools!.tools);
     // …and the same resolved decision over an identical stack.
-    final capabilities = {for (final id in knownToolIds) id: ToolCapability.available()};
+    final capabilities = {
+      for (final id in knownToolIds) id: ToolCapability.available(),
+    };
     final stack = [
       (ToolScope.global, cli.tools!),
       (ToolScope.runtime, const ToolsConfig()),
@@ -163,6 +169,20 @@ void main() {
     expect(app.providerTimeouts!.streamIdle, const Duration(seconds: 25));
   });
 
+  test('subagents: the reply auto-spill kill switch matches (gh-1956)', () {
+    expect(app.subagents, isNotNull);
+    expect(
+      app.subagents!.replyAutoSpill,
+      cli.subagents.replyAutoSpill,
+      reason:
+          'subagents.replyAutoSpill: false must read identically on '
+          'both hosts — the app silently no-oping it was the review gap',
+    );
+    expect(app.subagents!.replyAutoSpill, isFalse);
+    expect(app.subagents!.heartbeatMinutes, cli.subagents.heartbeatMinutes);
+    expect(app.subagents!.stallMinutes, cli.subagents.stallMinutes);
+  });
+
   test('agent.mode matches the CLI load-mode label', () {
     expect(app.loadMode, AgentLoadMode.omp);
     expect(
@@ -184,6 +204,7 @@ void main() {
     expect(app.redact, isNull);
     expect(cli.providerTimeouts, isNull);
     expect(app.providerTimeouts, isNull);
+    expect(app.subagents, isNull);
     expect(app.loadMode, AgentLoadMode.defaultMode);
     expect(app.warnings, isEmpty);
   });
@@ -197,8 +218,7 @@ void main() {
     expect(app.warnings, isEmpty);
   });
 
-  test('a non-string agent.mode errors on the CLI and warns on the app',
-      () {
+  test('a non-string agent.mode errors on the CLI and warns on the app', () {
     final doc = _parse('provider: p\nagent:\n  mode: 42\n');
     final app = parseAppConfigSections(userDoc: doc);
     expect(app.loadMode, AgentLoadMode.defaultMode);
