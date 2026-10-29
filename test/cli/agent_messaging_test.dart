@@ -222,6 +222,7 @@ void main() {
     String ownName,
     String text, {
     String toId = '#kb',
+    String? fromName,
   }) async {
     final cli = AgentCli(
       config: AgentCliConfig(
@@ -239,6 +240,7 @@ void main() {
               toId: toId,
               text: text,
               sentAt: DateTime.now().toUtc().toIso8601String(),
+              fromName: fromName,
             ),
           ),
         ],
@@ -251,6 +253,22 @@ void main() {
     expect(messages, hasLength(1));
     return (messages.single as UserMessage).content as String;
   }
+
+  test(
+    'channel mail with a sender name attributes the human, not the relay id',
+    () async {
+      // App members write through the fa_network relay: the wire sender is
+      // the relay's hub agentId, the payload carries the human's name. The
+      // steering line must lead with the human (name + wire id) — otherwise
+      // agents greet the relay ("Hello 3cfaee1aa054fe6e!").
+      final line = await deliver('kb-agent', 'hello', fromName: 'Uladzimir');
+      expect(line, contains('from Uladzimir (human-app) in #kb: hello'));
+      expect(
+        line,
+        contains('[reply into this channel with agent_message to: "#kb"]'),
+      );
+    },
+  );
 
   test(
     'a channel @-mention is marked only for the addressed DAP name',

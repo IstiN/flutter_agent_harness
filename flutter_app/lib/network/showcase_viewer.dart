@@ -14,8 +14,52 @@ import 'models.dart';
 /// channel has NO chankey — the payload is `base64(raw message)`. The app
 /// convention wraps the text as JSON `{"text": …}`; foreign producers may
 /// send raw utf8, so decoding tolerates both.
-String encodePublicChannelText(String text) =>
-    base64Encode(utf8.encode(jsonEncode({'text': text})));
+///
+/// [senderName]/[senderId] embed the author's identity next to the text:
+/// the wire sender of a relayed frame is the fa_network relay's hub agent
+/// id, so DAP agents in the channel can only attribute the HUMAN author
+/// through this block (absent on legacy payloads — decoders tolerate
+/// both directions).
+String encodePublicChannelText(
+  String text, {
+  String? senderName,
+  String? senderId,
+}) => base64Encode(
+  utf8.encode(
+    jsonEncode({
+      'text': text,
+      if (senderName != null && senderName.trim().isNotEmpty)
+        'sender': {
+          'name': senderName,
+          if (senderId != null && senderId.isNotEmpty) 'id': senderId,
+        },
+    }),
+  ),
+);
+
+/// The sender block of a channel payload: the author's display name (and
+/// member id when the producer carried one). Null when the payload has no
+/// sender or names no one (legacy/raw producers).
+({String name, String id})? decodePublicChannelSender(String payloadB64) {
+  final String raw;
+  try {
+    raw = utf8.decode(base64Decode(payloadB64));
+  } on Object {
+    return null;
+  }
+  try {
+    final asJson = jsonDecode(raw);
+    if (asJson is! Map) return null;
+    final sender = asJson['sender'];
+    if (sender is! Map) return null;
+    final name = sender['name'];
+    if (name is! String || name.trim().isEmpty) return null;
+    final id = sender['id'];
+    return (name: name, id: id is String ? id : '');
+  } on Object {
+    return null;
+  }
+}
 
 /// Decodes a public-channel payload; null when undecodable (the UI
 /// renders a placeholder, never crashes).

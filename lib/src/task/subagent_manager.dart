@@ -643,6 +643,7 @@ final class SubagentManager {
             hops: m.hops,
             isUserInput: m.kind == AgentMessageKind.user,
             toId: m.toId,
+            fromName: m.fromName,
           ),
       ];
     }

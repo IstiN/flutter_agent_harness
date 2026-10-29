@@ -48,6 +48,7 @@ extension AgentCliMessagingFlow on AgentCli {
           userInput: message.isUserInput,
           channel: message.toId,
           ownDapName: ownDapName,
+          fromName: message.fromName,
         ),
     ]);
     // Plugin inboxes (e.g. the hub) join the same steering flow, after
@@ -82,6 +83,7 @@ extension AgentCliMessagingFlow on AgentCli {
             userInput: message.kind == AgentMessageKind.user,
             channel: message.toId,
             ownDapName: ownDapName,
+            fromName: message.fromName,
           ),
       ]);
     }
@@ -108,6 +110,7 @@ extension AgentCliMessagingFlow on AgentCli {
     required bool userInput,
     String? channel,
     String? ownDapName,
+    String? fromName,
   }) {
     // Channel mail names its channel AND the reply route: without the
     // explicit hint agents tend to DM the sender (a dead end for app
@@ -131,9 +134,17 @@ extension AgentCliMessagingFlow on AgentCli {
         mention = ' [mentions you — you are @$name]';
       }
     }
+    // The human author first when the transport names them: app members
+    // write through the fa_network relay, and a bare relay agent id makes
+    // agents greet the relay ("Hello 3cfaee1aa054fe6e!"). The id stays
+    // parenthesized — replies route by it.
+    final trimmedFromName = fromName?.trim();
+    final sender = trimmedFromName != null && trimmedFromName.isNotEmpty
+        ? '$trimmedFromName ($fromId)'
+        : fromId;
     return userInput
-        ? UserMessage.text('[from $fromId$where] $body$mention$hint')
-        : UserMessage.text('from $fromId$where: $body$mention$hint');
+        ? UserMessage.text('[from $sender$where] $body$mention$hint')
+        : UserMessage.text('from $sender$where: $body$mention$hint');
   }
 
   /// The steering probe: fabric mail pending, or any plugin inbox

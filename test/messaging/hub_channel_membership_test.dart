@@ -48,6 +48,81 @@ void main() {
       expect(messages, hasLength(1));
       expect(messages.single.text, 'public inbound');
       expect(messages.single.toId, '#$channel');
+      // Legacy payloads carry no sender block: no fromName.
+      expect(messages.single.fromName, isNull);
+    },
+  );
+
+  test(
+    'channel mail carries the payload sender identity (public + keyed)',
+    () async {
+      final identity = await HubIdentity.generate();
+      final sender = await HubIdentity.generate();
+      final channelPair = await X25519().newKeyPair();
+      final channelData = await channelPair.extract();
+      final transport = _FakeTransport(peer: sender);
+      final repo = _repo(identity, transport);
+      addTearDown(repo.dispose);
+      final pub = base64Encode(channelData.publicKey.bytes);
+      final priv = base64Encode(await channelPair.extractPrivateKeyBytes());
+      await repo.start();
+      const keyedChannel =
+          'fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210';
+      await repo.joinChannel(channel);
+      await repo.joinChannel(
+        keyedChannel,
+        keys: HubChannelKeys(pub: pub, priv: priv),
+      );
+      final socket = transport.sockets.single;
+
+      // A relayed human writes through the app: the payload names them.
+      socket.emit({
+        'op': 'msg',
+        'id': 'pub-sender-1',
+        'from': sender.agentId,
+        'ts': 1767225600000,
+        'channel': channel,
+        'ciphertext': base64Encode(
+          utf8.encode(
+            jsonEncode({
+              'text': 'hello from the app',
+              'sender': {'name': 'Uladzimir', 'id': 'm-7'},
+            }),
+          ),
+        ),
+      });
+      // And a keyed fanet1 envelope whose plaintext is the same envelope
+      // shape (private-channel app messages).
+      const keyedId = 'keyed-sender-1';
+      socket.emit({
+        'op': 'msg',
+        'id': keyedId,
+        'from': sender.agentId,
+        'ts': 1767225600001,
+        'channel': keyedChannel,
+        'ciphertext': await hubEncryptPayload(
+          sender: sender,
+          recipientDhPubkey: channelData.publicKey,
+          frameId: keyedId,
+          aadTarget: keyedChannel,
+          plaintext: jsonEncode({
+            'text': 'private hello',
+            'sender': {'name': 'Ann'},
+          }),
+        ),
+      });
+      await _waitUntil(() async => (await repo.peek('main')).length >= 2);
+      final messages = await repo.drain('main');
+      final publicMail = messages.firstWhere((m) => m.id == 'pub-sender-1');
+      expect(publicMail.text, 'hello from the app');
+      expect(publicMail.fromName, 'Uladzimir');
+      final keyedMail = messages.firstWhere((m) => m.id == keyedId);
+      expect(keyedMail.text, 'private hello');
+      expect(keyedMail.fromName, 'Ann');
+      // Both keep the wire sender (the relay) for routing/replies.
+      expect(publicMail.fromId, sender.agentId);
+      // JSON round-trip keeps the name (file-fabric persistence).
+      expect(AgentMessage.fromJson(publicMail.toJson()).fromName, 'Uladzimir');
     },
   );
 

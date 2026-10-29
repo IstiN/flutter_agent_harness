@@ -13,6 +13,17 @@ block a release again.
 
 ## Unreleased
 
+- feat(network): channel payload sender block — app members' channel
+  messages carry `{"text": …, "sender": {"name": …, "id": …}}` (public
+  base64 JSON and keyed fanet1 plaintext alike), so DAP agents can
+  attribute the HUMAN author behind the fa_network relay's hub id. The
+  harness unwraps it tolerantly (raw text passes through), rides the
+  name as `AgentMessage.fromName` through the fabric, and the CLI
+  steering line greets people again: `from Uladzimir (<relay id>) in
+  #channel: hello` instead of `from 3cfaee1aa054fe6e…`. The app falls
+  back to the payload sender for bubble names when the envelope carries
+  none; DMs also name hub peers from the whois cache. Legacy payloads
+  without the block decode exactly as before.
 - feat(gh-1956): reply auto-spill — oversized child `reply` / `agent_message`
   payloads spill to an `agent://` artifact automatically; the parent receives a
   bounded excerpt + pointer + completeness marker with char AND byte counts.
