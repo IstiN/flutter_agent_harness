@@ -131,6 +131,30 @@ Future<String> _dumpSessionJsonl(MemoryExecutionEnv env) async {
   return buffer.toString();
 }
 
+/// A [Shell] that records the exact command string it was handed and
+/// echoes it into stdout (like `bash -x` traces do), so the tool result —
+/// and therefore the persisted transcript — carries the command text.
+final class _RecordingShell implements Shell {
+  final commands = <String>[];
+  Result<ShellExecResult, ExecutionError> result = const Ok(
+    ShellExecResult(stdout: '', stderr: '', exitCode: 0),
+  );
+
+  /// The canned stdout of the next exec: the `bash -x`-style trace of the
+  /// command itself, set per call from the recorded command.
+  Result<ShellExecResult, ExecutionError> traced(String command) =>
+      Ok(ShellExecResult(stdout: '+ $command\n', stderr: '', exitCode: 0));
+
+  @override
+  Future<Result<ShellExecResult, ExecutionError>> exec(
+    String command, {
+    ShellExecOptions? options,
+  }) async {
+    commands.add(command);
+    return traced(command);
+  }
+}
+
 void main() {
   group('redaction e2e (issue #24)', () {
     test('AC5: tool result is masked in the provider context and in the '
@@ -165,10 +189,10 @@ void main() {
           .whereType<ToolResultMessage>()
           .single;
       final resultText = (toolResult.content.single as TextContent).text;
-      expect(resultText, contains('[REDACTED:GitHub Token]'));
-      expect(resultText, contains('[REDACTED:PEM PRIVATE KEY]'));
+      expect(resultText, contains('[REDACTED:GitHub-Token]'));
+      expect(resultText, contains('[REDACTED:PEM-PRIVATE-KEY]'));
       expect(resultText.contains(_ghp), isFalse);
-      expect(resultText.contains('[REDACTED:High Entropy String]'), isFalse);
+      expect(resultText.contains('[REDACTED:High-Entropy-String]'), isFalse);
 
       // The session JSONL — the persisted, shareable record — carries the
       // masked text, never the raw secret bytes.
@@ -182,8 +206,8 @@ void main() {
       }
       final jsonl = await _dumpSessionJsonl(env);
       expect(jsonl.contains(_ghp), isFalse);
-      expect(jsonl.contains('[REDACTED:High Entropy String]'), isFalse);
-      expect(jsonl, contains('[REDACTED:GitHub Token]'));
+      expect(jsonl.contains('[REDACTED:High-Entropy-String]'), isFalse);
+      expect(jsonl, contains('[REDACTED:GitHub-Token]'));
     });
 
     test(
@@ -229,7 +253,7 @@ void main() {
         expect(text, contains('redact.blockMode'));
         expect(
           text,
-          contains('[REDACTED:Credential File]'),
+          contains('[REDACTED:Credential-File]'),
           reason: 'the denial masks the credential basename',
         );
         expect(text.contains('id_rsa contents'), isFalse);
@@ -297,7 +321,7 @@ void main() {
           .single;
       final text = userMessage.content as String;
       expect(text.contains(_ghp), isFalse);
-      expect(text, contains('[REDACTED:GitHub Token]'));
+      expect(text, contains('[REDACTED:GitHub-Token]'));
 
       final env = MemoryExecutionEnv(cwd: '/work');
       final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
@@ -310,6 +334,94 @@ void main() {
       final jsonl = await _dumpSessionJsonl(env);
       expect(jsonl.contains(_ghp), isFalse);
       expect(pipeline.stats.byTool['user_input'], 1);
+    });
+  });
+
+  group('gh-1952: redaction is display-only for the bash path', () {
+    test('AC1: the repro command executes with its original argv while the '
+        'persisted transcript shows the masked form', () async {
+      // The exact incident shape: a non-secret compile-time define the
+      // entropy layer used to rewrite into `[REDACTED:High Entropy
+      // String]` — a marker whose SPACES split it into 3 argv items
+      // the Flutter test loader tried to open as paths.
+      final defineCommand =
+          'flutter test '
+          'test/three_example_selection_test.dart '
+          '--dart-define=JSR_THREE_EXAMPLE=webgl_geometry_colors';
+      // A REGISTERED secret riding the same define shape: display
+      // masks it, execution must still receive the original bytes.
+      const defineSecret = 'Q7zRaBc9DeF2gHi4jKl5mNo6pQrS8tUvWxYz0123';
+      final secretCommand = 'flutter run --dart-define=API_KEY=$defineSecret';
+
+      final shell = _RecordingShell();
+      final fake = _FakeStream([
+        _toolTurn([
+          ToolCall(
+            id: 'call-1',
+            name: 'bash',
+            arguments: {'command': defineCommand},
+          ),
+          ToolCall(
+            id: 'call-2',
+            name: 'bash',
+            arguments: {'command': secretCommand},
+          ),
+        ]),
+        _textTurn('done'),
+      ]);
+      final env = MemoryExecutionEnv(cwd: '/work', shell: shell);
+      final registry = ToolRegistry()
+        ..register(shellTool(env, retryBackoff: Duration.zero));
+      final agent = Agent(streamFunction: fake.call, toolRegistry: registry);
+      final pipeline = RedactionPipeline(registeredSecrets: [defineSecret]);
+      attachRedactionPipeline(agent, pipeline);
+
+      await agent.promptMessage(UserMessage.text('run the selection test'));
+      await agent.waitForIdle();
+
+      // I1: both commands reached the executor BYTE-IDENTICAL —
+      // redaction ON did not rewrite a single argv byte.
+      expect(shell.commands, [defineCommand, secretCommand]);
+
+      // The results as the provider/persist pipeline sees them: the
+      // non-secret define trace stays verbatim (nothing matched, so
+      // nothing was masked), the registered-secret trace is masked.
+      final results = fake.contexts[1].messages
+          .whereType<ToolResultMessage>()
+          .toList();
+      expect(results, hasLength(2));
+      final defineText = (results[0].content.single as TextContent).text;
+      expect(defineText, contains(defineCommand));
+      expect(defineText.contains('[REDACTED:'), isFalse);
+      final secretText = (results[1].content.single as TextContent).text;
+      expect(secretText.contains(defineSecret), isFalse);
+      expect(secretText, contains('[REDACTED:Registered-Secret]'));
+
+      // The persisted transcript (session JSONL): the tool RESULT
+      // record carries the masked form, the non-secret define survives
+      // unmasked, and no rewrite notice ever fired. The repo is built
+      // with the production persist transform (gh-1952 review: the
+      // record-write mask over tool-call arguments) — the CLI wires the
+      // same closure into its `JsonlSessionRepo`.
+      final repo = JsonlSessionRepo(
+        fs: env,
+        sessionsRoot: '/sessions',
+        persistTransform: (message) => persistRedactMessage(pipeline, message),
+      );
+      final session = await repo.create(
+        JsonlSessionCreateOptions(cwd: '/work'),
+      );
+      for (final message in agent.state.messages) {
+        await session.appendMessage(message);
+      }
+      final jsonl = await _dumpSessionJsonl(env);
+      expect(jsonl, contains('[REDACTED:Registered-Secret]'));
+      expect(jsonl, contains(defineCommand));
+      // The call record must not leak the registered secret either: the
+      // persist transform masks it in `toolCalls[].arguments` while the
+      // executed argv stayed byte-identical (asserted above).
+      expect(jsonl.contains(defineSecret), isFalse);
+      expect(jsonl.contains('[bash interceptor rewrote'), isFalse);
     });
   });
 }

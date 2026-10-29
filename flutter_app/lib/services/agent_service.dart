@@ -229,23 +229,21 @@ class AgentService extends ChangeNotifier
        _contextWindowCap = contextWindowCap,
        approval = ApprovalManager(
          mode: initialApprovalMode ?? ApprovalMode.write,
-       ),
-       _repo =
-           repo ??
-           // Issue #522: the deletion gate reads the shared live-session
-           // heartbeats — the app must not delete a session a CLI owns.
-           JsonlSessionRepo(
-             fs: env,
-             sessionsRoot: sessionsRoot,
-             // Resume diagnostics: session-open timings as `resume_timing`
-             // lines in the app debug log (logs/app.log).
-             timingLog: (line) => AppLog.i('resume', line),
-             presenceStore: FileSessionPresenceStore(
-               env: env,
-               root: sessionsRoot,
-             ),
-           ) {
+       ) {
     maybeCurrent = this;
+    // Issue #522: the deletion gate reads the shared live-session
+    // heartbeats — the app must not delete a session a CLI owns.
+    _repo =
+        repo ??
+        JsonlSessionRepo(
+          fs: env,
+          sessionsRoot: sessionsRoot,
+          // Resume diagnostics: session-open timings as `resume_timing`
+          // lines in the app debug log (logs/app.log).
+          timingLog: (line) => AppLog.i('resume', line),
+          presenceStore: FileSessionPresenceStore(env: env, root: sessionsRoot),
+          persistTransform: _persistTransform,
+        );
     _responseTimeout = responseTimeout ?? const Duration(seconds: 90);
     _providerKind = _agent.state.model.provider;
     // Seed the active endpoint from the model (reconfigure overwrites it) so
@@ -588,15 +586,16 @@ class AgentService extends ChangeNotifier
                    name: 'Outlook always-prompt guard',
                },
        ),
-       sessionsRoot = sessionsRoot,
-       _repo = JsonlSessionRepo(
-         fs: env,
-         sessionsRoot: sessionsRoot,
-         parseExecutor: parseExecutor,
-         // Issue #522: deletions refuse sessions with a live CLI heartbeat.
-         presenceStore: FileSessionPresenceStore(env: env, root: sessionsRoot),
-       ) {
+       sessionsRoot = sessionsRoot {
     maybeCurrent = this;
+    // Issue #522: deletions refuse sessions with a live CLI heartbeat.
+    _repo = JsonlSessionRepo(
+      fs: env,
+      sessionsRoot: sessionsRoot,
+      parseExecutor: parseExecutor,
+      presenceStore: FileSessionPresenceStore(env: env, root: sessionsRoot),
+      persistTransform: _persistTransform,
+    );
     _wireImageDropNotice();
     _wireTextOnlyImageDropNotice();
     _wireOperativePinNotice();
@@ -1315,7 +1314,21 @@ class AgentService extends ChangeNotifier
   /// shaders; Gemma loads multi-GB weights), 90 s otherwise.
   /// Reassigned by [reconfigure] when the backend kind changes.
   late Duration _responseTimeout;
-  final JsonlSessionRepo _repo;
+
+  /// gh-1952 review: the record-write mask over every appended message —
+  /// tool-call arguments carry masked secrets, never raw bytes (the live
+  /// message and the provider context stay untouched). The pipeline
+  /// resolves at CALL time: it is built after the boot config loads
+  /// (`_reloadRedactionPipeline`), so sessions created before the
+  /// pipeline exists still mask once it appears.
+  Message Function(Message message) get _persistTransform => (message) {
+    final pipeline = _redactionPipeline;
+    return pipeline == null ? message : persistRedactMessage(pipeline, message);
+  };
+
+  /// Assigned in the constructor bodies (the persist-transform closure
+  /// needs `this`), see [_persistTransform].
+  late final JsonlSessionRepo _repo;
   final String sessionsRoot;
 
   /// Provider adapter kind of the active backend (`openai-completions`,
