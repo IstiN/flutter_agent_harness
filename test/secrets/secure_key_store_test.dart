@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
@@ -398,8 +399,9 @@ Future<void> main() async {
 
   group('Windows Credential Locker backend', () {
     test('read retrieves the credential and unprotects the password', () async {
+      final encoded = base64Encode(utf8.encode('sk-secret-123'));
       final runner = _FakeRunner()
-        ..queue.add(const SecureKeyRunResult(0, 'sk-secret-123\r\n'));
+        ..queue.add(SecureKeyRunResult(0, '$encoded\r\n'));
       final store = platformSecureKeyStore(
         runner: runner.call,
         platform: 'windows',
@@ -418,6 +420,41 @@ Future<void> main() async {
       final script = call.arguments[3];
       expect(script, contains("Retrieve('fah','OPENAI_API_KEY')"));
       expect(script, contains('RetrievePassword()'));
+      expect(script, contains('ToBase64String'));
+    });
+
+    test('read round-trips a non-ASCII secret through base64', () async {
+      // PowerShell renders a redirected stdout in the console OEM code page:
+      // a raw Cyrillic secret is not valid UTF-8 on the Dart side, so the read
+      // used to die with a FormatException and the key silently read as
+      // unavailable. Base64 keeps the pipe ASCII.
+      const secret = 'sk-кириллица-ключ-\$dollar';
+      final encoded = base64Encode(utf8.encode(secret));
+      final runner = _FakeRunner()
+        ..queue.add(SecureKeyRunResult(0, '$encoded\r\n'));
+      final store = platformSecureKeyStore(
+        runner: runner.call,
+        platform: 'windows',
+      );
+
+      expect(await store.read('OPENAI_API_KEY'), secret);
+    });
+
+    test('read degrades a legacy raw value to an error, not a crash', () async {
+      final runner = _FakeRunner()
+        ..queue.add(const SecureKeyRunResult(0, 'sk-secret-123\r\n'));
+      final store = platformSecureKeyStore(
+        runner: runner.call,
+        platform: 'windows',
+      );
+
+      final outcome = await (store as SecureKeyDiagnostics).readDetailed(
+        'OPENAI_API_KEY',
+      );
+
+      expect(outcome.status, SecureKeyReadStatus.error);
+      expect(outcome.value, isNull);
+      expect(outcome.error, contains('base64'));
     });
 
     test('write passes the secret through the child environment', () async {
