@@ -23,8 +23,16 @@ typedef _GetConsoleModeC = Int32 Function(IntPtr, Pointer<Uint32>);
 typedef _GetConsoleModeD = int Function(int, Pointer<Uint32>);
 typedef _SetConsoleModeC = Int32 Function(IntPtr, Uint32);
 typedef _SetConsoleModeD = int Function(int, int);
+typedef _GetConsoleCpC = Uint32 Function();
+typedef _GetConsoleCpD = int Function();
+typedef _SetConsoleCpC = Int32 Function(Uint32);
+typedef _SetConsoleCpD = int Function(int);
+
+/// The UTF-8 code page: what `dart_tui`'s decoder expects on the wire.
+const int _utf8CodePage = 65001;
 
 int? _savedMode;
+int? _savedCodePage;
 
 /// Puts the Windows console **input** handle into raw virtual-terminal mode so
 /// arrow keys, Esc, Shift+Tab, function keys and the mouse arrive as the escape
@@ -64,6 +72,26 @@ void enableWindowsVtInput() {
             _enableEchoInput |
             _enableProcessedInput);
     setConsoleMode(handle, next);
+    // The console hands input over in its INPUT code page: under a legacy OEM
+    // page (866/1251 on a Russian Windows) a Cyrillic keystroke is a single
+    // byte like 0xEF, which `key_buffer_parser.dart` cannot decode as UTF-8 —
+    // and a stream stuck on such a byte swallows every later keystroke too
+    // ("cannot type Russian at all"). UTF-8 makes non-ASCII arrive in the
+    // bytes the decoder already understands.
+    try {
+      final getConsoleCP = k32
+          .lookupFunction<_GetConsoleCpC, _GetConsoleCpD>('GetConsoleCP');
+      final setConsoleCP = k32
+          .lookupFunction<_SetConsoleCpC, _SetConsoleCpD>('SetConsoleCP');
+      final previousCp = getConsoleCP();
+      if (previousCp != 0 && previousCp != _utf8CodePage) {
+        _savedCodePage ??= previousCp;
+        setConsoleCP(_utf8CodePage);
+      }
+    } on Object {
+      // Older Windows / not a real console: the parser's recovery path below
+      // still keeps the input stream alive.
+    }
   } finally {
     calloc.free(modePtr);
   }
@@ -73,6 +101,16 @@ void enableWindowsVtInput() {
 /// call. No-op on non-Windows platforms or if it was never enabled.
 void restoreWindowsVtInput() {
   if (!Platform.isWindows) return;
+  final savedCp = _savedCodePage;
+  if (savedCp != null) {
+    try {
+      DynamicLibrary.open('kernel32.dll')
+          .lookupFunction<_SetConsoleCpC, _SetConsoleCpD>('SetConsoleCP')(savedCp);
+    } on Object {
+      // Best effort: never block the teardown on a console that went away.
+    }
+    _savedCodePage = null;
+  }
   final saved = _savedMode;
   if (saved == null) return;
   final k32 = DynamicLibrary.open('kernel32.dll');
