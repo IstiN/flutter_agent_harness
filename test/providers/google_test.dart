@@ -1859,4 +1859,53 @@ void main() {
       },
     );
   });
+
+  group('audio content', () {
+    test('user AudioContent becomes a Gemini inlineData part', () async {
+      Map<String, dynamic>? captured;
+      final client = http_testing.MockClient.streaming((request, body) async {
+        captured =
+            jsonDecode(await body.bytesToString()) as Map<String, dynamic>;
+        return http.StreamedResponse(
+          Stream.value(utf8.encode(sseBody([textChunk('hi')]))),
+          200,
+        );
+      });
+      final stream = streamGoogle(
+        testModel,
+        Context(
+          messages: [
+            UserMessage(
+              content: const [
+                TextContent(text: 'What track is this?'),
+                AudioContent(data: 'aGk=', mimeType: 'audio/mp4'),
+              ],
+              timestamp: DateTime.utc(2026),
+            ),
+          ],
+        ),
+        const GoogleOptions(apiKey: '[REDACTED:Sensitive Value]'),
+        client,
+      );
+      await stream.result;
+      final contents = captured!['contents'] as List<dynamic>;
+      expect(contents.last, {
+        'role': 'user',
+        'parts': [
+          {'text': 'What track is this?'},
+          {
+            'inlineData': {'mimeType': 'audio/mp4', 'data': 'aGk='},
+          },
+        ],
+      });
+    });
+
+    test('AudioContent JSON round-trips through ContentBlock', () {
+      const block = AudioContent(data: 'aGk=', mimeType: 'audio/mpeg');
+      final restored = ContentBlock.fromJson(block.toJson());
+      expect(restored, isA<AudioContent>());
+      expect((restored as AudioContent).mimeType, 'audio/mpeg');
+      expect(restored.data, 'aGk=');
+    });
+  });
 }

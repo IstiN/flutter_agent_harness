@@ -98,7 +98,7 @@ void main() {
     return AgentCli(
       config: AgentCliConfig(
         model: testModel,
-        apiKey: '[REDACTED:Sensitive Value]',
+        apiKey: '[REDACTED:Sensitive-Value]',
         env: env,
         sessionRoot: '/sessions',
         providerKind: 'openai-completions',
@@ -296,7 +296,7 @@ void main() {
       final cli = AgentCli(
         config: AgentCliConfig(
           model: testModel,
-          apiKey: '[REDACTED:Sensitive Value]',
+          apiKey: '[REDACTED:Sensitive-Value]',
           env: env,
           sessionRoot: '/sessions',
           headlessRun: true,
@@ -343,7 +343,7 @@ void main() {
       final cli = AgentCli(
         config: AgentCliConfig(
           model: testModel,
-          apiKey: '[REDACTED:Sensitive Value]',
+          apiKey: '[REDACTED:Sensitive-Value]',
           env: env,
           sessionRoot: '/sessions',
           headlessRun: true,

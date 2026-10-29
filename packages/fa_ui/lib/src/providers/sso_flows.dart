@@ -571,66 +571,103 @@ Future<String?> _pickModel(
   _SsoModelPickPage(title: provider, models: models),
 );
 
-class _SsoModelPickPage extends StatelessWidget {
+class _SsoModelPickPage extends StatefulWidget {
   const _SsoModelPickPage({required this.title, required this.models});
 
   final String title;
   final List<String> models;
 
   @override
+  State<_SsoModelPickPage> createState() => _SsoModelPickPageState();
+}
+
+class _SsoModelPickPageState extends State<_SsoModelPickPage> {
+  var _query = '';
+
+  @override
   Widget build(BuildContext context) {
     final strings = FaUiStrings.of(context);
+    final models = widget.models;
+    final query = _query.trim().toLowerCase();
+    final filteredModels = query.isEmpty
+        ? models
+        : models
+              .where((model) => model.toLowerCase().contains(query))
+              .toList(growable: false);
+    final manualEntry = ListTile(
+      leading: const Icon(Icons.edit_outlined),
+      title: Text(
+        models.isEmpty
+            ? 'Enter a model id manually'
+            : 'Enter a different model id manually',
+      ),
+      onTap: () async {
+        final typed = await showDialog<String>(
+          context: context,
+          builder: (dialogContext) {
+            var modelId = '';
+            return AlertDialog(
+              title: const Text('Model id'),
+              content: TextField(
+                autofocus: true,
+                onChanged: (value) => modelId = value,
+                onSubmitted: (value) => Navigator.pop(dialogContext, value),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(dialogContext),
+                  child: Text(strings.settingsCancelButton),
+                ),
+                TextButton(
+                  onPressed: () => Navigator.pop(dialogContext, modelId),
+                  child: Text(strings.settingsApplyButton),
+                ),
+              ],
+            );
+          },
+        );
+        if (typed != null && typed.isNotEmpty && context.mounted) {
+          Navigator.pop(context, typed);
+        }
+      },
+    );
     return Scaffold(
-      appBar: AppBar(title: Text('${strings.settingsPickModelTitle} — $title')),
+      appBar: AppBar(
+        title: Text('${strings.settingsPickModelTitle} — ${widget.title}'),
+      ),
       body: SafeArea(
-        child: ListView(
-          children: [
-            for (final model in models)
-              ListTile(
-                title: Text(model),
-                onTap: () => Navigator.pop(context, model),
-              ),
-            ListTile(
-              leading: const Icon(Icons.edit_outlined),
-              title: Text(
-                models.isEmpty
-                    ? 'Enter a model id manually'
-                    : 'Enter a different model id manually',
-              ),
-              onTap: () async {
-                final typed = await showDialog<String>(
-                  context: context,
-                  builder: (dialogContext) {
-                    var modelId = '';
-                    return AlertDialog(
-                      title: const Text('Model id'),
-                      content: TextField(
-                        autofocus: true,
-                        onChanged: (value) => modelId = value,
-                        onSubmitted: (value) =>
-                            Navigator.pop(dialogContext, value),
+        child: models.isEmpty
+            ? ListView(children: [manualEntry])
+            : Column(
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+                    child: TextField(
+                      autofocus: true,
+                      decoration: InputDecoration(
+                        prefixIcon: const Icon(Icons.search, size: 20),
+                        hintText: strings.modelPickerSearchHelper,
+                        isDense: true,
+                        border: const OutlineInputBorder(),
                       ),
-                      actions: [
-                        TextButton(
-                          onPressed: () => Navigator.pop(dialogContext),
-                          child: Text(strings.settingsCancelButton),
-                        ),
-                        TextButton(
-                          onPressed: () =>
-                              Navigator.pop(dialogContext, modelId),
-                          child: Text(strings.settingsApplyButton),
-                        ),
+                      onChanged: (value) => setState(() => _query = value),
+                    ),
+                  ),
+                  Expanded(
+                    child: ListView(
+                      padding: const EdgeInsets.symmetric(vertical: 4),
+                      children: [
+                        for (final model in filteredModels)
+                          ListTile(
+                            title: Text(model),
+                            onTap: () => Navigator.pop(context, model),
+                          ),
+                        manualEntry,
                       ],
-                    );
-                  },
-                );
-                if (typed != null && typed.isNotEmpty && context.mounted) {
-                  Navigator.pop(context, typed);
-                }
-              },
-            ),
-          ],
-        ),
+                    ),
+                  ),
+                ],
+              ),
       ),
     );
   }

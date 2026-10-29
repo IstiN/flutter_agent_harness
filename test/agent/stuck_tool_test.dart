@@ -830,7 +830,7 @@ void main() {
             return ToolExecutionResult.text(
               '[bash interceptor rewrote 1 secret-shaped value in the '
               'command (GitHub Token) — the executed command carries the '
-              '[REDACTED:GitHub Token] marker.]\n'
+              '[REDACTED:GitHub-Token] marker.]\n'
               '${stuckBackgroundHandbackText(jobId: 'sh-rw2', logPath: '/tmp/sh-rw2.log', supervisorMoved: false)}',
             );
           },

@@ -2166,5 +2166,21 @@ void main() {
       expect(result.$2, isNotNull);
       expect((result.$1 as FaTuiModel).termWidth, 120);
     });
+
+    test('same-size WindowSizeMsg is a no-op (no clear request, #1977)', () {
+      final model = FaTuiModel(
+        callbacks: callbacks(),
+        isExited: () => false,
+        termWidth: 120,
+        termHeight: 20,
+      );
+      final result = model.update(WindowSizeMsg(120, 20));
+      expect(
+        result.$2,
+        isNull,
+        reason: 'unchanged geometry must not burn a full-screen clear',
+      );
+      expect(identical(result.$1, model), isTrue);
+    });
   });
 }

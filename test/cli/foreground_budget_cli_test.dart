@@ -35,7 +35,7 @@ void main() {
   AgentCli cliFor(FakeStreamFunction fake) => AgentCli(
     config: AgentCliConfig(
       model: testModel,
-      apiKey: '[REDACTED:Sensitive Value]',
+      apiKey: '[REDACTED:Sensitive-Value]',
       env: env,
       sessionRoot: '/sessions',
       approvalMode: ApprovalMode.yolo,

@@ -248,7 +248,7 @@ void main() {
         model: model,
         state: 'x',
         questions: const {'q': DecisionBoolQuestion(instructions: 'q?')},
-        apiKey: '[REDACTED:Sensitive Value]',
+        apiKey: '[REDACTED:Sensitive-Value]',
       );
       final success = result as DecisionSuccess;
       expect(
@@ -311,7 +311,7 @@ void main() {
         model: model,
         state: 'x',
         questions: const {'q': DecisionBoolQuestion(instructions: 'q?')},
-        apiKey: '[REDACTED:Sensitive Value]',
+        apiKey: '[REDACTED:Sensitive-Value]',
       );
       final failure = result as DecisionFailure;
       expect(failure.statusCode, 504);
@@ -327,7 +327,7 @@ void main() {
         model: model,
         state: 'x',
         questions: const {'q': DecisionBoolQuestion(instructions: 'q?')},
-        apiKey: '[REDACTED:Sensitive Value]',
+        apiKey: '[REDACTED:Sensitive-Value]',
       );
       final failure = result as DecisionFailure;
       expect(failure.statusCode, 200);
@@ -344,7 +344,7 @@ void main() {
         model: model,
         state: 'x',
         questions: const {'q': DecisionBoolQuestion(instructions: 'q?')},
-        apiKey: '[REDACTED:Sensitive Value]',
+        apiKey: '[REDACTED:Sensitive-Value]',
       );
       final failure = result as DecisionFailure;
       expect(failure.statusCode, 200);
@@ -368,7 +368,7 @@ void main() {
         model: model,
         state: 'x',
         questions: const {'q': DecisionBoolQuestion(instructions: 'q?')},
-        apiKey: '[REDACTED:Sensitive Value]',
+        apiKey: '[REDACTED:Sensitive-Value]',
       );
       final failure = result as DecisionFailure;
       expect(failure.statusCode, 200);

@@ -312,9 +312,9 @@ Message _transformAssistantMessage(AssistantMessage message) {
         }
       case ToolCall():
         content.add(TextContent(text: _serializeToolCall(block)));
-      case ThinkingContent() || ImageContent():
-        // Reasoning is streaming scratch; images are invalid in assistant
-        // messages. Drop both.
+      case ThinkingContent() || ImageContent() || AudioContent():
+        // Reasoning is streaming scratch; images/audio are invalid in
+        // assistant messages. Drop them all.
         break;
     }
   }

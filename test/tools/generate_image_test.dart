@@ -600,7 +600,7 @@ void main() {
           endpoint: MediaEndpoint(
             baseUrl: 'https://openrouter.ai/api/v1',
             modelId: 'recraft/recraft-3',
-            apiKey: '[REDACTED:Sensitive Value]',
+            apiKey: '[REDACTED:Sensitive-Value]',
           ),
           prompt: 'a logo',
           client: http_testing.MockClient(
@@ -636,7 +636,7 @@ void main() {
       const endpoint = MediaEndpoint(
         baseUrl: 'https://openrouter.ai/api/v1',
         modelId: 'recraft/recraft-3',
-        apiKey: '[REDACTED:Sensitive Value]',
+        apiKey: '[REDACTED:Sensitive-Value]',
       );
 
       test('forwards size and quality when given', () async {

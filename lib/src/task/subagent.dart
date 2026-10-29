@@ -18,6 +18,7 @@ final class SubagentMessage {
     this.hops = 0,
     this.isUserInput = false,
     this.toId = '',
+    this.fromName,
   });
 
   /// Sender id (`parent` for parent-originated messages).
@@ -42,6 +43,10 @@ final class SubagentMessage {
   /// own words, not agent chat.
   final bool isUserInput;
 
+  /// The sender's display name when the transport knows it (hub channel
+  /// mail names the human author behind the fa_network relay's id).
+  final String? fromName;
+
   SubagentMessage decayed() => SubagentMessage(
     fromId: fromId,
     text: text,
@@ -49,6 +54,7 @@ final class SubagentMessage {
     hops: hops - 1,
     isUserInput: isUserInput,
     toId: toId,
+    fromName: fromName,
   );
 
   Map<String, dynamic> toJson() => {
@@ -58,6 +64,7 @@ final class SubagentMessage {
     'hops': hops,
     if (isUserInput) 'isUserInput': true,
     if (toId.isNotEmpty) 'toId': toId,
+    if (fromName != null && fromName!.isNotEmpty) 'fromName': fromName,
   };
 
   factory SubagentMessage.fromJson(Map<String, dynamic> json) =>
@@ -68,6 +75,9 @@ final class SubagentMessage {
         hops: json['hops'] as int? ?? 0,
         isUserInput: json['isUserInput'] as bool? ?? false,
         toId: json['toId'] as String? ?? '',
+        fromName: (json['fromName'] as String?)?.trim() == ''
+            ? null
+            : json['fromName'] as String?,
       );
 }
 
@@ -202,6 +212,12 @@ final class SubagentHandle {
   /// the parent gets a `completed_without_reply` notice with the final-text
   /// preview instead (prime-agent semantics).
   String? lastReply;
+
+  /// Duplicate `reply` calls observed after the first (gh-1951 edge case:
+  /// double reply is idempotent — the first reply stays the deliverable,
+  /// later ones are noted here and never overwrite it). Reset per run at
+  /// resume start. In-memory like [deliverables].
+  int duplicateReplies = 0;
 
   /// The id of the previous same-named handle this child supersedes
   /// (issue #222): an explicit fresh respawn after a failure links back to

@@ -37,7 +37,7 @@ void main() {
   }) => AgentCli(
     config: AgentCliConfig(
       model: testModel,
-      apiKey: '[REDACTED:Sensitive Value]',
+      apiKey: '[REDACTED:Sensitive-Value]',
       env: env,
       sessionRoot: '/sessions',
       homeDir: '/home',
@@ -105,7 +105,7 @@ void main() {
       // I4: the artifact is schema-shaped only.
       expect(
         jsonEncode(ledger.toJson()),
-        isNot(contains('[REDACTED:Sensitive Value]')),
+        isNot(contains('[REDACTED:Sensitive-Value]')),
       );
 
       final log = (await env.readTextFile(
@@ -135,7 +135,7 @@ void main() {
     final cli = AgentCli(
       config: AgentCliConfig(
         model: testModel,
-        apiKey: '[REDACTED:Sensitive Value]',
+        apiKey: '[REDACTED:Sensitive-Value]',
         env: env,
         sessionRoot: '/sessions',
         homeDir: '/home',
@@ -174,7 +174,7 @@ void main() {
     final cli = AgentCli(
       config: AgentCliConfig(
         model: testModel,
-        apiKey: '[REDACTED:Sensitive Value]',
+        apiKey: '[REDACTED:Sensitive-Value]',
         env: env,
         sessionRoot: '/sessions',
         homeDir: '/home',
@@ -204,7 +204,7 @@ void main() {
     final cli = AgentCli(
       config: AgentCliConfig(
         model: testModel,
-        apiKey: '[REDACTED:Sensitive Value]',
+        apiKey: '[REDACTED:Sensitive-Value]',
         env: env,
         sessionRoot: '/sessions',
         homeDir: '/home',
@@ -374,7 +374,7 @@ void main() {
       final cli2 = AgentCli(
         config: AgentCliConfig(
           model: testModel,
-          apiKey: '[REDACTED:Sensitive Value]',
+          apiKey: '[REDACTED:Sensitive-Value]',
           env: env,
           sessionRoot: '/sessions',
           homeDir: '/home',
