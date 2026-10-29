@@ -218,6 +218,21 @@ final class SubagentServices {
   /// text before it lands in the session output store. Null = no pipeline.
   final String Function(String text)? deliverableRedactor;
 
+  /// The reply auto-spill kill switch (gh-1956, `subagents.replyAutoSpill`):
+  /// live getter consulted per delivery and per child-prompt build. Null
+  /// or true = auto-spill on (the default); false = pure-chunk behavior.
+  final bool Function()? replyAutoSpill;
+
+  /// The durable-artifact sink (gh-1956, AC6): one append row per spill
+  /// (the host writes it into the parent session). Best-effort.
+  final Future<void> Function(Map<String, dynamic> artifact)?
+  deliverableArtifactSink;
+
+  /// The durable-artifact source backing resume-time restore (gh-1956,
+  /// AC6). Null keeps artifacts session-lifetime only.
+  final Future<List<Map<String, dynamic>>> Function()?
+  deliverableArtifactSource;
+
   /// Real JSONL child sessions, created at child COMPLETION (fast
   /// register keeps the steering race away; the transcript lands when the
   /// child finishes).
@@ -252,6 +267,9 @@ final class SubagentServices {
     this.contextWindowCap,
     this.misuseBreaker = true,
     this.deliverableRedactor,
+    this.replyAutoSpill,
+    this.deliverableArtifactSink,
+    this.deliverableArtifactSource,
     this.childSessionFactory,
     this.resolveChildSessionPath,
     this.sessionIoRetry,

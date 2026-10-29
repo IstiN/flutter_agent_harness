@@ -93,7 +93,26 @@ final class TaskExecutor {
     this.contextWindowCap,
     this.misuseBreaker = true,
     this.deliverableRedactor,
+    this.replyAutoSpill,
+    this.deliverableArtifactSink,
+    this.deliverableArtifactSource,
   });
+
+  /// The auto-spill kill switch (gh-1956, `subagents.replyAutoSpill`):
+  /// live getter consulted per delivery and per child-prompt build. Null
+  /// or true = auto-spill on (the default); false = pure-chunk behavior.
+  final bool Function()? replyAutoSpill;
+
+  /// The durable-artifact sink (gh-1956, AC6): one append row per spill.
+  /// Best-effort — a failed row never corrupts the in-session delivery.
+  final Future<void> Function(Map<String, dynamic> artifact)?
+  deliverableArtifactSink;
+
+  /// The durable-artifact source backing resume-time restore (gh-1956,
+  /// AC6): the spilled artifacts of the parent session, read back by the
+  /// host before the first post-resume delivery.
+  final Future<List<Map<String, dynamic>>> Function()?
+  deliverableArtifactSource;
 
   /// Pre-persistence redaction gate for deliverable artifacts (issue
   /// #1829, I3): the same pipeline tool results pass. Null = the host runs
@@ -110,6 +129,9 @@ final class TaskExecutor {
           store: store,
           manager: subagentManager!,
           redact: deliverableRedactor,
+          autoSpill: replyAutoSpill,
+          persistArtifact: deliverableArtifactSink,
+          restoreArtifacts: deliverableArtifactSource,
         );
 
   /// The tool-misuse circuit breaker switch (issue #862, default true):
@@ -1474,13 +1496,20 @@ final class TaskExecutor {
         ..writeln('# CONTEXT')
         ..write(context.trim());
     }
-    // Issue #1829 Core flow C: children with the reply/agent_message
-    // surface get the report-size contract with the live budget.
+    // Issue #1829 Core flow C + gh-1956: children with the
+    // reply/agent_message surface get the report-size contract with the
+    // live budget — the auto-spill contract by default, the pure-chunk
+    // contract under the kill switch.
     if (replyBudget != null) {
       systemPrompt
         ..writeln()
         ..writeln()
-        ..write(deliverableChunkContract(replyBudget));
+        ..write(
+          deliverableChunkContract(
+            replyBudget,
+            autoSpill: replyAutoSpill?.call() ?? true,
+          ),
+        );
     }
     return systemPrompt.toString();
   }

@@ -474,9 +474,12 @@ String _shortCwd(String cwd, String? homeDir) {
 /// `reply` — the CHILD-only tool: delivers the child's explicit answer to
 /// the parent (prime-agent's `reply`). A reply replaces the default
 /// completed_without_reply notice: the parent event/envelope carries the
-/// reply text verbatim. Over-cap replies go through the durable deliverable
-/// path (issue #1829): the full redacted report is stored as an `agent://`
-/// artifact and a bounded envelope is delivered in its place.
+/// reply text verbatim. Oversized replies auto-spill (gh-1956): the full
+/// redacted report is stored as an `agent://` artifact and a bounded
+/// envelope is delivered in its place. When auto-spill is unavailable
+/// (the `subagents.replyAutoSpill` kill switch, or a host without
+/// artifact storage) the legacy budget cap applies and the tool result
+/// teaches the chunk fallback — never a false "delivered".
 AgentTool _replyTool(
   SubagentManager manager,
   CurrentSubagentIdProvider? currentSubagentId,
@@ -491,11 +494,15 @@ AgentTool _replyTool(
         'message as a completion notice, but an explicit reply is the '
         'reliable channel.\n\n'
         'REPORT SIZE: per-message budget ${manager.maxReplyChars} chars — '
-        'split longer reports into ordered agent_message parts '
-        '(report_id, 0-based part_index, more=false on the last), then a '
-        'short final manifest reply (report_id + report_parts); the '
-        'harness validates it. See REPORT SIZE CONTRACT in your system '
-        'prompt. Never probe the output limit.',
+        'you may send one complete reply even when it is larger: the '
+        'harness auto-spills it (the full text is stored as an agent:// '
+        'artifact; the parent gets an excerpt + pointer + completeness, '
+        'and this tool result names the reference). Manual chunking '
+        '(ordered agent_message parts with report_id + 0-based '
+        'part_index, more=false on the last, then a final manifest reply '
+        'carrying report_id + report_parts) is the FALLBACK for when '
+        'auto-spill is unavailable. See REPORT SIZE CONTRACT in your '
+        'system prompt. Never probe the output limit.',
     parameters: {
       'type': 'object',
       'properties': {
@@ -539,6 +546,9 @@ AgentTool _replyTool(
         );
       }
       final deliverable = capture?.call();
+      // gh-1956 AC6: restore the durable artifacts before any delivery
+      // decision so resumed ids stay reserved (no post-resume clobber).
+      if (deliverable != null) await deliverable.ensureRestored();
       if (deliverable != null) {
         try {
           final record = deliverable.deliverReply(
@@ -548,14 +558,15 @@ AgentTool _replyTool(
             reportParts: reportParts,
           );
           if (record != null) {
-            // Core flow A: the envelope — bounded excerpt + pointer +
-            // explicit completeness — replaces the bare body.
+            // Auto-spill (the default): the envelope — bounded excerpt +
+            // pointer + explicit completeness — replaces the bare body;
+            // the ack names the reference and the byte count.
             final envelope = deliverable.envelopeText(record);
             await manager.recordReply(id, envelope);
             return ToolExecutionResult.text(
               'reply delivered to the parent via artifact '
               'agent://${record.outputId} (${record.status!.name}, '
-              '${record.chars} chars)',
+              '${record.chars} chars, ${record.bytes} bytes)',
             );
           }
         } on StateError catch (error) {
@@ -570,6 +581,20 @@ AgentTool _replyTool(
             'agent_message',
           );
         }
+      }
+      // Over budget with no spill available (kill switch or a host
+      // without artifact storage): the legacy bare cap applies and the
+      // result truthfully names it — never a false "delivered" — and
+      // teaches the chunk fallback (gh-1956 graceful degradation).
+      if (message.length > manager.maxReplyChars) {
+        await manager.recordReply(id, message);
+        return ToolExecutionResult.text(
+          'reply delivered truncated to the ${manager.maxReplyChars}-char '
+          'delivery budget (auto-spill unavailable here) — send the full '
+          'text as ordered agent_message parts to the parent (shared '
+          'report_id + 0-based part_index, more=false on the last), then '
+          'a final manifest reply',
+        );
       }
       await manager.recordReply(id, message);
       return ToolExecutionResult.text('reply delivered to the parent');
@@ -604,9 +629,12 @@ AgentTool _agentMessageTool(
         'live mailbox. The recipient sees the message in its inbox on its '
         'next turn; completed siblings are resumed. Unknown ids and full '
         'queues are rejected.\n\n'
-        'REPORT SIZE: budget ${manager.maxReplyChars} chars — split long '
-        'report bodies into ordered parts (report_id + 0-based '
-        'part_index). See REPORT SIZE CONTRACT in your system prompt.',
+        'REPORT SIZE: budget ${manager.maxReplyChars} chars — oversized '
+        'same-session bodies auto-spill (stored as an agent:// artifact '
+        'and delivered as a bounded envelope). Manual chunking (ordered '
+        'report_id + part_index parts) is the FALLBACK for when '
+        'auto-spill is unavailable. See REPORT SIZE CONTRACT in your '
+        'system prompt.',
     parameters: {
       'type': 'object',
       'properties': {
@@ -665,8 +693,12 @@ AgentTool _agentMessageTool(
       }
       final reportId = args['report_id'] as String?;
       final partIndex = args['part_index'] as int?;
+      final deliverable = capture?.call();
+      // gh-1956 AC6: restore before any delivery decision so resumed ids
+      // stay reserved.
+      if (deliverable != null) await deliverable.ensureRestored();
       final (body, artifactNote, deliverError) = _applyDeliverableEnvelope(
-        capture?.call(),
+        deliverable,
         manager: manager,
         childId: fromId,
         target: target,
@@ -745,7 +777,21 @@ String? _validateMessageSend(
       return (
         deliverable.envelopeText(record),
         ' Report body stored as agent://${record.outputId} '
-            '(${record.chars} chars).',
+            '(${record.chars} chars, ${record.bytes} bytes).',
+        null,
+      );
+    }
+    // gh-1956: an over-cap same-session body with spill unavailable
+    // (kill switch) keeps the legacy bare cap at delivery and gets the
+    // graceful chunk-fallback notice — never a silent loss.
+    if (message.length > manager.maxReplyChars &&
+        !deliverable.spillEnabled &&
+        deliverable.spillApliesTo(target)) {
+      return (
+        message,
+        ' Note: the body exceeds the ${manager.maxReplyChars}-char budget '
+            'and auto-spill is unavailable — delivery caps it. Split long '
+            'bodies into ordered report parts (report_id + part_index).',
         null,
       );
     }
