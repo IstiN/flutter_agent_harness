@@ -225,7 +225,10 @@ case "$CMD" in
     LOCK="$CFG/install.lock"
     mkdir -p "$CFG"
     ACQUIRED=0
-    for _ in $(seq 1 60); do
+    # gh-1964: wait up to 600s (was 120s) — a real re-import on the shared
+    # host takes ~2 min; concurrent waves (provision + build) must
+    # serialize by WAITING, not by failing the later wave (run 40857285170).
+    for _ in $(seq 1 300); do
       if mkdir "$LOCK" 2>/dev/null; then ACQUIRED=1; break; fi
       # Stale-lock recovery: a SIGKILLed holder would wedge host signing
       # forever. The happy path holds the lock for seconds; a lock older
