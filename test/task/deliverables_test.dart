@@ -454,7 +454,8 @@ void main() {
       final record = rig.capture.deliverReply('kid', 'x' * 250)!;
       expect(
         record.render(),
-        'deliverable complete: agent://${record.outputId} (250 chars)',
+        'deliverable complete: agent://${record.outputId} '
+        '(250 chars, 250 bytes)',
       );
     });
 
@@ -495,7 +496,7 @@ void main() {
       expect(
         oversize.render(),
         'report r1 part 1 stored (over budget): agent://${oversize.outputId} '
-        '(250 chars)',
+        '(250 chars, 250 bytes)',
       );
     });
 

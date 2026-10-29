@@ -46,13 +46,50 @@ _Rig _rig({
 String _text(ToolExecutionResult result) =>
     result.content.whereType<TextContent>().map((b) => b.text).join('\n');
 
+/// Minimal in-memory fabric so `agent_message` can reach `main`.
+final class _FakeFabric implements MessagingRepository {
+  final _inboxes = <String, List<AgentMessage>>{};
+
+  List<AgentMessage> inbox(String mailbox) =>
+      List.unmodifiable(_inboxes[mailbox] ?? const []);
+
+  @override
+  Future<void> send(AgentMessage message) async =>
+      _inboxes.putIfAbsent(message.toId, () => []).add(message);
+
+  @override
+  Future<List<AgentMessage>> peek(String agentId) async => inbox(agentId);
+
+  @override
+  Future<List<AgentMessage>> drain(String agentId) async =>
+      List.unmodifiable(_inboxes.remove(agentId) ?? const []);
+
+  @override
+  Future<void> register(
+    String agentId, {
+    String? sessionName,
+    List<AgentCapability> capabilities = const [],
+  }) async {}
+
+  @override
+  Future<void> touch(String agentId, {bool busy = false}) async {}
+
+  @override
+  Future<List<MailboxEntry>> directory() async => const [];
+}
+
 ({SubagentManager manager, AgentOutputStore store, Map<String, AgentTool> tools})
 _toolsRig({
   int cap = 200,
   bool Function()? autoSpill,
   DeliverableCapture? capture,
+  _FakeFabric? fabric,
 }) {
-  final manager = SubagentManager(parentSessionId: 'p', maxReplyChars: cap);
+  final manager = SubagentManager(
+    parentSessionId: 'p',
+    maxReplyChars: cap,
+    messaging: fabric,
+  );
   manager.register(id: 'kid', name: 'kid', agentType: 'task', task: 't');
   final store = AgentOutputStore();
   final effective =
@@ -130,7 +167,7 @@ void main() {
       expect(ack, isNot(contains('agent://')));
       expect(ack, contains('agent_message'));
       // Legacy bare cap applies to the recorded reply (pure-chunk restore).
-      expect(rig.manager['kid']!.lastReply!.length, lessThanOrEqualTo(100));
+      expect(rig.manager['kid']!.lastReply, startsWith('z' * 100));
       expect(rig.manager['kid']!.lastReply, contains('…[truncated]'));
       expect(rig.store.availableIds, isEmpty);
     });
@@ -169,14 +206,15 @@ void main() {
     });
 
     test('over-cap same-session agent_message gets the chunk notice', () async {
-      final rig = _toolsRig(cap: 100, autoSpill: () => false);
+      final fabric = _FakeFabric();
+      final rig = _toolsRig(cap: 100, autoSpill: () => false, fabric: fabric);
       final result = await rig.tools['agent_message']!.execute({
         'to': 'main',
         'message': 'b' * 500,
       }, null, null);
       final ack = _text(result);
       expect(ack, contains('message queued for "main"'));
-      expect(ack, contains('truncated'));
+      expect(ack, contains('exceeds the 100-char budget'));
       expect(ack, contains('part_index'));
     });
   });
@@ -184,13 +222,13 @@ void main() {
   group('natural excerpt boundary (edge case)', () {
     test('the excerpt ends at a paragraph boundary when one is in window', () {
       final rig = _rig(cap: 200);
-      final body = '${'p1' * 40}\n${'q' * 300}';
+      final body = '${'a' * 105}\n\n${'q' * 300}';
       final record = rig.capture.deliverReply('kid', body)!;
       final envelope = rig.capture.envelopeText(record);
       expect(envelope.length, lessThanOrEqualTo(200));
-      // The cut lands at the paragraph break: the first section in full,
-      // never a partial next-paragraph fragment.
-      expect(envelope, startsWith('p1' * 40));
+      // The cut lands at the blank-line paragraph break: the first
+      // section in full, never a partial next-paragraph fragment.
+      expect(envelope, startsWith('${'a' * 105}\n'));
       expect(envelope, isNot(contains('qq')));
     });
 
@@ -199,7 +237,8 @@ void main() {
       final body = '${'a' * 130}\n${'z' * 300}';
       final record = rig.capture.deliverReply('kid', body)!;
       final envelope = rig.capture.envelopeText(record);
-      expect(envelope, startsWith('${'a' * 130}…'));
+      expect(envelope, startsWith('a' * 100));
+      expect(envelope, contains('${'a' * 130}…'));
       expect(envelope, isNot(contains('zz')));
     });
 
@@ -430,7 +469,7 @@ void main() {
     test('the pure-chunk contract (kill switch) mandates manual chunking', () {
       final text = deliverableChunkContract(8000, autoSpill: false);
       expect(text, contains('8000'));
-      expect(text, contains('split a long report'));
+      expect(text, contains('Split a long report'));
       expect(text, isNot(contains('spill')));
       expect(text, contains('report_id'));
     });
