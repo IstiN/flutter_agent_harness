@@ -529,6 +529,24 @@ platform :ios do
     # prompt (headless = fastlane timeout, run 40849468765).
     sh(ci_sign, "unlock")
 
+    # gh-1954: keychain re-unlock WATCHDOG for the whole gym window. The
+    # keychain auto-locks after ~5 min of inactivity and
+    # set-keychain-settings can never fix it non-interactively on this
+    # host (GUI SecurityAgent prompt — screenshot-confirmed). A locked
+    # keychain mid-archive/export = xcodebuild hangs on the password
+    # prompt. unlock-keychain -p never prompts, so re-unlocking every
+    # 60 s keeps the signing identity usable through archive AND export.
+    unlock_watchdog = Thread.new do
+      loop do
+        sleep 60
+        begin
+          sh(ci_sign, "unlock")
+        rescue StandardError
+          # best effort — a transient unlock failure must not kill the build
+        end
+      end
+    end
+
     # gh-1954: xcodebuild resolves signing identities ONLY through the
     # user keychain search list — and on the shared host a concurrent
     # signing leg rewrites that list mid-build (run 40843155381: doctor OK
@@ -581,6 +599,7 @@ platform :ios do
       print_gym_log_tail(since: lane_start)
       raise e
     ensure
+      unlock_watchdog.kill
       # gh-1954: restore the pre-gym search list (best effort — never mask
       # the gym result with a restore failure).
       begin
