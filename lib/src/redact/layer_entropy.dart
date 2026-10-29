@@ -30,6 +30,29 @@ final RegExp _hexRun = RegExp(r'^[0-9a-fA-F][0-9a-fA-F_-]+\$');
 final RegExp _isoTimestamp = RegExp(r'^\d{4}-\d{2}-\d{2}T');
 final RegExp _integrityHash = RegExp(r'^sha(256|384|512)-');
 
+/// gh-1952 (I3): compile-time defines and env-style assignments are not
+/// secrets by default. The token charset includes `=` and `-`, so a
+/// whole define argument is ONE candidate token — the incident command's
+/// `--dart-define=JSR_THREE_EXAMPLE=webgl_geometry_colors` crossed the
+/// entropy threshold and the redactor rewrote it into a marker that then
+/// reached the child process. These shapes are exempt from THIS
+/// heuristic only; the real secret layers (registered, vendor, pem,
+/// context, ...) outrank the entropy layer and still match inside
+/// defines.
+final RegExp _dartDefineFlag = RegExp(r'^--dart-define=');
+final RegExp _dartDefineShortFlag = RegExp(r'^-D[A-Za-z_][A-Za-z0-9_.]*=');
+final RegExp _envAssignment = RegExp(r'^[A-Za-z_][A-Za-z0-9_.]*=');
+
+/// Whether [token] reads as a define argument (`--dart-define=K=V`,
+/// `-DK=V`) or an env-style `K=V` assignment. Quoted define values
+/// (`--dart-define="K=V"`) tokenize without the flag prefix but still
+/// carry the `K=V` assignment shape. Shape-based, not configurable
+/// (gh-1952 non-goals).
+bool _isDefineOrAssignmentToken(String token) =>
+    _dartDefineFlag.hasMatch(token) ||
+    _dartDefineShortFlag.hasMatch(token) ||
+    _envAssignment.hasMatch(token);
+
 /// Whether [token] is a well-known safe structured value a secret never
 /// takes the shape of (public hashes, ids, timestamps).
 bool isStructuredIdentifier(String token) {
@@ -72,6 +95,9 @@ List<RedactionMatch> layerEntropy(
     final token = m.group(0)!;
     // Alphabet-length guard: a real secret never uses a tiny alphabet.
     if (token.codeUnits.toSet().length < 8) continue;
+    // gh-1952 (I3): defines and env-style assignments are not secrets
+    // by default — exempt before the entropy math.
+    if (_isDefineOrAssignmentToken(token)) continue;
     if (shannonEntropy(token) < cfg.minEntropy) continue;
     if (isStructuredIdentifier(token)) continue;
     // A token glued after `/` is a path component, not a standalone

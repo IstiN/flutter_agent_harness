@@ -1,13 +1,4 @@
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
-import 'package:flutter_agent_harness/src/redact/layer_asn1.dart';
-import 'package:flutter_agent_harness/src/redact/layer_connection.dart';
-import 'package:flutter_agent_harness/src/redact/layer_context.dart';
-import 'package:flutter_agent_harness/src/redact/layer_entropy.dart';
-import 'package:flutter_agent_harness/src/redact/layer_path.dart';
-import 'package:flutter_agent_harness/src/redact/layer_pem.dart';
-import 'package:flutter_agent_harness/src/redact/layer_pii.dart';
-import 'package:flutter_agent_harness/src/redact/layer_registered.dart';
-import 'package:flutter_agent_harness/src/redact/layer_vendor.dart';
 import 'package:test/test.dart';
 
 /// gh-1952 (I2 / AC2): every `[REDACTED:<kind>]` marker is ONE shell

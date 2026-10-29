@@ -110,4 +110,53 @@ void main() {
       expect(matches.single.kindLabel, highEntropyLabel);
     });
   });
+
+  group('define / assignment carve-out (gh-1952 I3 / AC3)', () {
+    // A define argument is ONE entropy token (the charset includes `=`
+    // and `-`), so `--dart-define=JSR_THREE_EXAMPLE=webgl_geometry_colors`
+    // crossed the threshold and got masked — the incident behind gh-1952.
+    // Ordinary compile-time defines are not secrets: the SHAPE is exempt
+    // from the entropy heuristic. Real secret layers (registered, vendor,
+    // context, ...) outrank the carve-out and still match inside defines.
+    const defines = <String>[
+      // The exact incident shape: long flag, uppercase-snake key, plain
+      // lowercase value, > 32 token chars total.
+      'flutter test --dart-define=JSR_THREE_EXAMPLE=webgl_geometry_colors',
+      // Short flag spelling.
+      'flutter build apk -DJSR_THREE_EXAMPLE=webgl_geometry_colors',
+      // Bare env-style assignment in a bash command.
+      'DEF=webgl_geometry_colors_lightsphysicallycorrect',
+      // Quoted value: the in-quote run is still an assignment shape.
+      'flutter test --dart-define="JSR_THREE_EXAMPLE=webgl_geometry_colors"',
+      // Long option with the value in the next shell word.
+      'flutter test --dart-define JSR_THREE_EXAMPLE=webgl_geometry_colors',
+      // Dotted flutter define key.
+      'flutter run --dart-define=flutter.inspector.structuredErrorsValue=trueX',
+    ];
+
+    test('define shapes never match the entropy layer', () {
+      for (final command in defines) {
+        expect(
+          layerEntropy(command, _cfg),
+          isEmpty,
+          reason: 'define must stay clean: $command',
+        );
+      }
+    });
+
+    test('a standalone high-entropy value without an assignment '
+        'shape still matches', () {
+      // The carve-out is shape-based: without a K=V / flag shape the
+      // heuristic keeps working (regression guard against over-carving).
+      const secret = 'qZ3mR7kW9pX2vB5nT8yC4jF6hD1sG0aL7eM3uQ9i';
+      expect(layerEntropy('key $secret end', _cfg), hasLength(1));
+    });
+
+    test('a define key alone (no =) is not carved out', () {
+      // `--dart-define` requires K=V; a bare long flag run stays subject
+      // to the heuristic.
+      const arg = '--dart-defineqZ3mR7kW9pX2vB5nT8yC4jF6hD1sG0aL';
+      expect(layerEntropy('x $arg y', _cfg), hasLength(1));
+    });
+  });
 }
