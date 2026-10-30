@@ -50,6 +50,13 @@ void main() {
       '"supported_endpoints":["/chat/completions"]}'
       ']}';
 
+  /// A business-tier exchange answer: the proxy-ep token routes /models
+  /// to the acme tenant host, whose payload shape keeps the STRICT
+  /// picker list (gh-2003: the tier fallback is individual-tier-only).
+  const businessExchangeBody =
+      '{"token":"cop-biz;proxy-ep=proxy.acme.githubcopilot.com;'
+      'exp=1900000000","expires_at":1900000000}';
+
   group('tier matrix — healthy shapes list models (AC1)', () {
     test(
       'individual: no-proxy-ep token serves from the configured host',
@@ -249,9 +256,12 @@ void main() {
         final body =
             '{"data":[${List.generate(12, (i) => '{"id":"m$i"}').join(',')}]}}'
                 .replaceFirst('}]}}', '}]}');
-        final (client, _) = fakeCopilot(modelsBody: body);
+        final (client, _) = fakeCopilot(
+          exchangeBody: businessExchangeBody,
+          modelsBody: body,
+        );
         final report = await fetchModelsForEndpointReport(
-          'https://api.githubcopilot.com',
+          'https://api.business.githubcopilot.com',
           apiKey: 'gho_flagless',
           provider: 'copilot',
           client: client,
@@ -366,9 +376,12 @@ void main() {
           },
         ],
       });
-      final (client, _) = fakeCopilot(modelsBody: body);
+      final (client, _) = fakeCopilot(
+        exchangeBody: businessExchangeBody,
+        modelsBody: body,
+      );
       final report = await fetchModelsForEndpointReport(
-        'https://api.githubcopilot.com',
+        'https://api.business.githubcopilot.com',
         apiKey: 'gho_mixed',
         provider: 'copilot',
         client: client,
@@ -400,9 +413,12 @@ void main() {
           },
         ],
       });
-      final (client, _) = fakeCopilot(modelsBody: body);
+      final (client, _) = fakeCopilot(
+        exchangeBody: businessExchangeBody,
+        modelsBody: body,
+      );
       final report = await fetchModelsForEndpointReport(
-        'https://api.githubcopilot.com',
+        'https://api.business.githubcopilot.com',
         apiKey: 'gho_mixed2',
         provider: 'copilot',
         client: client,
@@ -412,6 +428,222 @@ void main() {
         report.diagnostic!.message,
         '3 models fetched, 3 filtered '
         '(picker flag absent ×2, policy disabled)',
+      );
+    });
+  });
+
+  group('tier-aware picker-flag fallback (gh-2003)', () {
+    // The gh-2003 shape: individual-tier /models payloads omit
+    // model_picker_enabled entirely — phase 1 dropped every entry as
+    // "picker flag absent" and the list stayed empty.
+    const flagAbsentBody =
+        '{"data":['
+        '{"id":"gpt-4.1","capabilities":{"limits":'
+        '{"max_context_window_tokens":128000,"max_output_tokens":16384}}},'
+        '{"id":"claude-sonnet-5"}'
+        ']}';
+    const noProxyEpToken =
+        '{"token":"cop-ind;exp=1900000000","expires_at":1900000000}';
+
+    test('individual tier: an absent picker flag is kept, and the keep '
+        'names itself (AC5)', () async {
+      final (client, _) = fakeCopilot(
+        exchangeBody: noProxyEpToken, // no proxy-ep — individual by design
+        modelsBody: flagAbsentBody,
+      );
+      final report = await fetchModelsForEndpointReport(
+        'https://api.githubcopilot.com',
+        apiKey: 'gho_session',
+        provider: 'copilot',
+        client: client,
+      );
+      expect(report.info.$1, ['claude-sonnet-5', 'gpt-4.1']);
+      expect(report.info.$2['gpt-4.1'], 128000);
+      expect(report.info.$3['gpt-4.1'], 16384);
+      expect(report.diagnostic, isNull, reason: 'models listed');
+      expect(
+        report.note,
+        '2 of 2 models kept via the individual-tier fallback '
+        '(picker flag absent)',
+        reason:
+            'the tier-aware keep names what happened — never a '
+            'silent swallow of the absent flag',
+      );
+    });
+
+    test('individual tier: an explicit model_picker_enabled false still '
+        'drops', () async {
+      final body =
+          '{"data":['
+          '{"id":"gpt-4.1"},'
+          '{"id":"text-embedding-3-small","model_picker_enabled":false}'
+          ']}';
+      final (client, _) = fakeCopilot(
+        exchangeBody: noProxyEpToken,
+        modelsBody: body,
+      );
+      final report = await fetchModelsForEndpointReport(
+        'https://api.githubcopilot.com',
+        apiKey: 'gho_session',
+        provider: 'copilot',
+        client: client,
+      );
+      expect(report.info.$1, ['gpt-4.1']);
+      expect(
+        report.droppedModels,
+        contains(const ('text-embedding-3-small', 'picker flag false')),
+      );
+      expect(
+        report.note,
+        '1 of 2 models filtered (picker flag false); '
+        '1 of 2 models kept via the individual-tier fallback '
+        '(picker flag absent)',
+      );
+    });
+
+    test('individual tier: mixed reasons — absent kept, the rest still '
+        'named', () async {
+      final body =
+          '{"data":['
+          '{"id":"a"},' // absent → kept via the fallback
+          '{"id":"b"},' // absent → kept via the fallback
+          '{"id":"c","model_picker_enabled":true,'
+          '"policy":{"state":"disabled"}},' // dropped: policy
+          '{"id":"d","model_picker_enabled":true,'
+          '"supported_endpoints":["/responses"]},' // dropped: endpoint
+          '{"id":"e","model_picker_enabled":true}' // plainly selectable
+          ']}';
+      final (client, _) = fakeCopilot(
+        exchangeBody: noProxyEpToken,
+        modelsBody: body,
+      );
+      final report = await fetchModelsForEndpointReport(
+        'https://api.githubcopilot.com',
+        apiKey: 'gho_session',
+        provider: 'copilot',
+        client: client,
+      );
+      expect(report.info.$1, ['a', 'b', 'e']);
+      expect(
+        report.note,
+        '2 of 5 models filtered (policy disabled, endpoint unsupported); '
+        '2 of 5 models kept via the individual-tier fallback '
+        '(picker flag absent)',
+      );
+    });
+
+    test('individual tier: an all-false payload still names the filter '
+        'branch — no silent empty', () async {
+      final body =
+          '{"data":['
+          '{"id":"embed-1","model_picker_enabled":false},'
+          '{"id":"embed-2","model_picker_enabled":false}'
+          ']}';
+      final (client, _) = fakeCopilot(
+        exchangeBody: noProxyEpToken,
+        modelsBody: body,
+      );
+      final report = await fetchModelsForEndpointReport(
+        'https://api.githubcopilot.com',
+        apiKey: 'gho_session',
+        provider: 'copilot',
+        client: client,
+      );
+      expect(report.info.$1, isEmpty);
+      final d = report.diagnostic!;
+      expect(d.stage, ModelsFetchDiagnostic.stageFilter);
+      expect(d.message, '2 models fetched, 2 filtered (picker flag false)');
+    });
+
+    test('business tier: absent flags still drop — strict picker list '
+        'as today', () async {
+      final (client, _) = fakeCopilot(
+        exchangeBody:
+            '{"token":"cop-biz;proxy-ep=proxy.acme.githubcopilot.com;'
+            'exp=1900000000","expires_at":1900000000}',
+        modelsBody: flagAbsentBody,
+      );
+      final report = await fetchModelsForEndpointReport(
+        'https://api.business.githubcopilot.com',
+        apiKey: 'gho_session',
+        provider: 'copilot',
+        client: client,
+      );
+      expect(report.info.$1, isEmpty);
+      final d = report.diagnostic!;
+      expect(d.stage, ModelsFetchDiagnostic.stageFilter);
+      expect(d.message, '2 models fetched, 2 filtered (picker flag absent)');
+      expect(report.note, isNull);
+    });
+
+    test('enterprise tier: absent flags still drop — strict picker list '
+        'as today', () async {
+      final (client, _) = fakeCopilot(
+        exchangeBody:
+            '{"token":"cop-corp;proxy-ep=proxy.corp.githubcopilot.com;'
+            'exp=1900000000","expires_at":1900000000}',
+        modelsBody: flagAbsentBody,
+      );
+      final report = await fetchModelsForEndpointReport(
+        'https://api.enterprise.githubcopilot.com',
+        apiKey: 'gho_session',
+        provider: 'copilot',
+        client: client,
+      );
+      expect(report.info.$1, isEmpty);
+      expect(
+        report.diagnostic!.message,
+        '2 models fetched, 2 filtered (picker flag absent)',
+      );
+    });
+
+    test('PAT mode on the individual host: absent flags kept, named', () async {
+      final (client, requests) = fakeCopilot(modelsBody: flagAbsentBody);
+      final report = await fetchModelsForEndpointReport(
+        'https://api.githubcopilot.com',
+        apiKey: 'github_pat_fine',
+        provider: 'copilot',
+        client: client,
+      );
+      expect(report.info.$1, ['claude-sonnet-5', 'gpt-4.1']);
+      expect(report.note, contains('kept via the individual-tier fallback'));
+      expect(requests.where((r) => r.url.host == 'api.github.com'), isEmpty);
+    });
+
+    test('PAT mode on the business host: absent flags still drop', () async {
+      final (client, _) = fakeCopilot(modelsBody: flagAbsentBody);
+      final report = await fetchModelsForEndpointReport(
+        'https://api.business.githubcopilot.com',
+        apiKey: 'github_pat_fine',
+        provider: 'copilot',
+        client: client,
+      );
+      expect(report.info.$1, isEmpty);
+      expect(
+        report.diagnostic!.message,
+        '2 models fetched, 2 filtered (picker flag absent)',
+      );
+    });
+
+    test('an individual proxy-ep token (api.individual.…) gets the same '
+        'fallback — the pi-mono trigger spelling', () async {
+      final (client, requests) = fakeCopilot(
+        exchangeBody:
+            '{"token":"cop-ind;proxy-ep=proxy.individual.githubcopilot.com;'
+            'exp=1900000000","expires_at":1900000000}',
+        modelsBody: flagAbsentBody,
+      );
+      final report = await fetchModelsForEndpointReport(
+        'https://api.githubcopilot.com',
+        apiKey: 'gho_session',
+        provider: 'copilot',
+        client: client,
+      );
+      expect(report.info.$1, ['claude-sonnet-5', 'gpt-4.1']);
+      expect(
+        requests.last.url,
+        Uri.parse('https://api.individual.githubcopilot.com/models'),
+        reason: 'the token routes /models to its own tenant host',
       );
     });
   });

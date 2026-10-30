@@ -678,12 +678,19 @@ final class _CopilotDialect extends ModelListDialect {
               '$copilotIndividualBaseUrl) — check the configured base URL '
               '($configuredBase)'
         : null;
+    // Tier-aware picker-flag fallback (gh-2003): a no-proxy-ep token is
+    // individual-tier by design, and a token serving from an individual
+    // host answers the flag-omitting /models shape either way — see
+    // [_copilotModelFilterVerdict].
+    final individualTier =
+        tokenBase == null || _isIndividualCopilotApiHost(effectiveBase);
     return _fetchModelsList(
       effectiveBase,
       copilotApiHeaders(copilotToken: apiToken.token),
       client,
       path: ModelsFetchDiagnostic.pathExchange,
       extraHint: tierHint,
+      individualTier: individualTier,
     );
   }
 
@@ -699,6 +706,7 @@ final class _CopilotDialect extends ModelListDialect {
     copilotPatApiHeaders(pat: pat),
     client,
     path: ModelsFetchDiagnostic.pathPatDirect,
+    individualTier: _isIndividualCopilotApiHost(configuredBase),
   );
 
   /// GETs `{base}/models` under [headers] and parses the answer with the
@@ -709,6 +717,7 @@ final class _CopilotDialect extends ModelListDialect {
     http.Client client, {
     required String path,
     String? extraHint,
+    required bool individualTier,
   }) async {
     final uri = Uri.parse('$base/models');
     final http.Response response;
@@ -757,6 +766,7 @@ final class _CopilotDialect extends ModelListDialect {
       response.body,
       path: path,
       extraHint: extraHint,
+      individualTier: individualTier,
     );
   }
 
@@ -772,10 +782,14 @@ final class _CopilotDialect extends ModelListDialect {
     String body, {
     required String path,
     String? extraHint,
+    required bool individualTier,
   }) {
-    final (ModelsEndpointInfo, int, List<(String, String)>, bool)? parsed;
+    final (ModelsEndpointInfo, int, List<(String, String)>, bool, int)? parsed;
     try {
-      parsed = _parseCopilotModelsResponse(body);
+      parsed = _parseCopilotModelsResponse(
+        body,
+        individualTier: individualTier,
+      );
     } on FormatException catch (error) {
       return ModelsFetchReport(
         info: _emptyCopilotInfo,
@@ -789,15 +803,19 @@ final class _CopilotDialect extends ModelListDialect {
         ),
       );
     }
-    final (info, fetchedCount, dropped, dataIsList) = parsed;
+    final (info, fetchedCount, dropped, dataIsList, keptByTierFallback) =
+        parsed;
     if (info.$1.isNotEmpty) {
-      // Models listed — the partial-filter summary rides the note.
+      // Models listed — the partial-filter summary rides the note
+      // (AC2), and so does the tier-aware keep (gh-2003): the
+      // fallback rescued flag-absent entries and the note names it.
       return ModelsFetchReport(
         info: info,
-        note: dropped.isEmpty
-            ? null
-            : '${dropped.length} of $fetchedCount models filtered '
-                  '(${_filterReasonSummary(dropped)})',
+        note: _filterTransparencyNote(
+          dropped,
+          fetchedCount,
+          keptByTierFallback,
+        ),
         droppedModels: dropped,
       );
     }
@@ -873,29 +891,44 @@ const _emptyCopilotInfo = (<String>[], <String, int>{}, <String, int>{});
 /// The individual-tier API host (no-proxy-ep tokens serve from here).
 final _individualApiHost = Uri.parse(copilotIndividualBaseUrl).host;
 
+/// Whether [baseUrl] serves the individual tier: the
+/// [copilotIndividualBaseUrl] host, or pi-mono's spelling
+/// `api.individual.githubcopilot.com` — the host an individual token's
+/// `proxy-ep=proxy.individual.githubcopilot.com` resolves to via
+/// [copilotApiBaseUrlFromToken]. Business/enterprise tenants never
+/// match, so their /models answers keep the strict picker list.
+bool _isIndividualCopilotApiHost(String baseUrl) {
+  final host = Uri.tryParse(baseUrl)?.host;
+  return host == _individualApiHost ||
+      host == 'api.individual.githubcopilot.com';
+}
+
 /// Maps the Copilot `{data: [{id, capabilities.limits.{max_context_window_
 /// tokens, max_output_tokens}}]}` shape into [ModelsEndpointInfo] (the
 /// limits are nested, so [parseModelsResponse] reads only the ids).
-/// Non-chat entries are filtered out — see [_copilotModelDropReason].
+/// Non-chat entries are filtered out — see [_copilotModelFilterVerdict].
 /// Alongside the info it answers the entry count, the per-model
 /// (id, drop reason) pairs for the filter transparency (gh-1990 AC2),
 /// and whether the payload carried a "data" list at all (the
 /// empty-list vs unexpected-shape distinction — decoded ONCE here; the
-/// caller never re-decodes). Throws [FormatException] on a non-JSON
-/// body — the caller guards it (the dialect contract: empty on any
-/// error).
-(ModelsEndpointInfo, int, List<(String, String)>, bool)
-_parseCopilotModelsResponse(String body) {
+/// caller never re-decodes). gh-2003 adds the fifth element: how many
+/// entries were kept ONLY via the tier-aware picker-flag fallback (so
+/// the report note can name the keep). Throws [FormatException] on a
+/// non-JSON body — the caller guards it (the dialect contract: empty
+/// on any error).
+(ModelsEndpointInfo, int, List<(String, String)>, bool, int)
+_parseCopilotModelsResponse(String body, {required bool individualTier}) {
   final decoded = jsonDecode(body);
   final data = decoded is Map<String, dynamic> ? decoded['data'] : null;
   if (data is! List) {
     const dropped = <(String, String)>[];
-    return (_emptyCopilotInfo, 0, dropped, false);
+    return (_emptyCopilotInfo, 0, dropped, false, 0);
   }
   final ids = <String>[];
   final windows = <String, int>{};
   final maxTokens = <String, int>{};
   final dropped = <(String, String)>[];
+  var keptByTierFallback = 0;
   for (final entry in data) {
     if (entry is! Map<String, dynamic>) {
       dropped.add(const ('(malformed entry)', 'malformed entry'));
@@ -906,11 +939,15 @@ _parseCopilotModelsResponse(String body) {
       dropped.add(const ('(no id)', 'no id'));
       continue;
     }
-    final dropReason = _copilotModelDropReason(entry);
+    final (dropReason, tierFallbackKeep) = _copilotModelFilterVerdict(
+      entry,
+      individualTier: individualTier,
+    );
     if (dropReason != null) {
       dropped.add((id, dropReason));
       continue;
     }
+    if (tierFallbackKeep) keptByTierFallback++;
     ids.add(id);
     final limits =
         ((entry['capabilities'] as Map<String, dynamic>?)?['limits']
@@ -921,40 +958,67 @@ _parseCopilotModelsResponse(String body) {
     if (cap != null) maxTokens[id] = cap;
   }
   ids.sort();
-  return ((ids, windows, maxTokens), data.length, dropped, true);
+  return (
+    (ids, windows, maxTokens),
+    data.length,
+    dropped,
+    true,
+    keptByTierFallback,
+  );
 }
 
-/// WHY [entry] is not picker-eligible — the reason strings of the gh-1990
-/// filter transparency. Null = selectable. The criteria are pi-mono
-/// parity (`packages/ai/src/auth/oauth/github-copilot.ts`
-/// `isSelectableCopilotModel`): the entry must be picker-enabled, not
-/// policy-disabled, and tool-call capable (embeddings and completion-only
-/// entries carry `model_picker_enabled: false` already). On top of pi:
-/// when the payload declares `supported_endpoints`, `/chat/completions`
-/// must be among them — our provider streams there, and responses-only
-/// models (e.g. `gpt-5.6-sol` on `["/responses", "ws:/responses"]`) 400
-/// with "not accessible via the /chat/completions endpoint". Entries
-/// WITHOUT the field (individual-tier shapes, older/self-hosted proxies)
-/// are DROPPED with "picker flag absent" — absence is not an explicit
-/// true; they still count toward the fetched total, and the reason is
-/// the one AC2 pins for the individual-tier shapes. This only NAMES
-/// which criterion fired; the criteria themselves are unchanged.
-String? _copilotModelDropReason(Map<String, dynamic> entry) {
+/// WHY [entry] is not picker-eligible — the reason strings of the
+/// gh-1990 filter transparency. Answers `(dropReason,
+/// tierFallbackKeep)`: null dropReason = selectable, and
+/// [individualTier] flags the entries selectable ONLY via the gh-2003
+/// fallback so the report note can name the keep.
+///
+/// The criteria are pi-mono parity
+/// (`packages/ai/src/auth/oauth/github-copilot.ts`
+/// `parseGitHubCopilotModelCatalog`/`isSelectableCopilotModel`): the
+/// entry must be picker-enabled, not policy-disabled, and tool-call
+/// capable (embeddings and completion-only entries carry
+/// `model_picker_enabled: false` already). On top of pi: when the
+/// payload declares `supported_endpoints`, `/chat/completions` must be
+/// among them — our provider streams there, and responses-only models
+/// (e.g. `gpt-5.6-sol` on `["/responses", "ws:/responses"]`) 400 with
+/// "not accessible via the /chat/completions endpoint".
+///
+/// gh-2003 (gh-1990 phase 2, the individual-tier gap): an entry with
+/// the `model_picker_enabled` KEY ABSENT is kept when the response
+/// comes from the individual tier ([individualTier] — the individual
+/// host or a no-proxy-ep token; pi-mono's trigger is
+/// `allowPolicyFallback = baseUrl === "https://api.individual.githubcopilot.com"`
+/// in `fetchGitHubCopilotModels`): individual-tier /models responses
+/// omit the flag entirely, and absence ≠ an explicit `false`. An
+/// explicit `false` still drops everywhere, business/enterprise
+/// responses keep the strict picker list, and off the individual tier
+/// an absent key still drops with "picker flag absent" (the AC2
+/// wording). The keep is never silent — the parser counts it and the
+/// report note names it.
+(String?, bool) _copilotModelFilterVerdict(
+  Map<String, dynamic> entry, {
+  required bool individualTier,
+}) {
   final picker = entry['model_picker_enabled'];
-  if (picker == null) return 'picker flag absent';
-  if (picker != true) return 'picker flag false';
+  if (picker == null) {
+    return individualTier ? (null, true) : ('picker flag absent', false);
+  }
+  if (picker != true) return ('picker flag false', false);
   final policy = entry['policy'];
-  if (policy is Map && policy['state'] == 'disabled') return 'policy disabled';
+  if (policy is Map && policy['state'] == 'disabled') {
+    return ('policy disabled', false);
+  }
   final capabilities = entry['capabilities'];
   final supports = capabilities is Map ? capabilities['supports'] : null;
   if (supports is Map && supports['tool_calls'] == false) {
-    return 'no tool_calls';
+    return ('no tool_calls', false);
   }
   final endpoints = entry['supported_endpoints'];
   if (endpoints is List && !endpoints.contains('/chat/completions')) {
-    return 'endpoint unsupported';
+    return ('endpoint unsupported', false);
   }
-  return null;
+  return (null, false);
 }
 
 /// The grouped drop-reason summary for the filter messages: a single
@@ -972,6 +1036,27 @@ String _filterReasonSummary(List<(String, String)> dropped) {
             entry.value == 1 ? entry.key : '${entry.key} ×${entry.value}',
       )
       .join(', ');
+}
+
+/// The transparency note for a listed answer: the partial-filter
+/// summary (gh-1990 AC2) and — when the gh-2003 tier-aware fallback
+/// kept flag-absent entries — the keep, never one without the other.
+/// Null when neither fired (every entry plainly selectable).
+String? _filterTransparencyNote(
+  List<(String, String)> dropped,
+  int fetchedCount,
+  int keptByTierFallback,
+) {
+  final parts = <String>[
+    if (dropped.isNotEmpty)
+      '${dropped.length} of $fetchedCount models filtered '
+          '(${_filterReasonSummary(dropped)})',
+    if (keptByTierFallback > 0)
+      '$keptByTierFallback of $fetchedCount models kept via the '
+          'individual-tier fallback (picker flag absent)',
+  ];
+  if (parts.isEmpty) return null;
+  return parts.join('; ');
 }
 
 // ── OpenAI-compatible (Bearer + /models) — the default fallback ────────

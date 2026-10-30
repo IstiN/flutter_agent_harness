@@ -86,17 +86,28 @@ void main() {
   testWidgets('a filter-empty copilot answer carries the filter counts', (
     tester,
   ) async {
+    // A BUSINESS endpoint keeps the strict picker list (gh-2003): the
+    // proxy-ep token routes /models to the tenant host, whose
+    // flag-absent entries still drop with the AC2 counts.
     final client = http_testing.MockClient((request) async {
       if (request.url.host == 'api.github.com') {
         return http.Response(
-          '{"token":"cop-tok","expires_at":9999999999}',
+          '{"token":"cop-biz;proxy-ep=proxy.acme.githubcopilot.com;'
+          'exp=9999999999","expires_at":9999999999}',
           200,
         );
       }
       return http.Response('{"data":[{"id":"embed-1"},{"id":"embed-2"}]}', 200);
     });
     setModelsDispatchClientForTesting(client);
-    final controller = controllerFor();
+    final controller = EndpointModelsController(
+      mutate: mutate,
+      baseUrl: () => 'https://api.business.githubcopilot.com',
+      apiKey: () => 'gho_dead',
+      identityKind: () => 'copilot',
+      fetchEnabled: () => true,
+      overrideFetcher: () => null,
+    );
 
     await controller.fetch();
     await tester.pump();
@@ -104,9 +115,32 @@ void main() {
     expect(controller.models, isEmpty);
     expect(
       controller.emptyReason,
-      '2 models fetched, 2 filtered '
-      '(picker flag absent)',
+      '2 models fetched, 2 filtered (picker flag absent)',
     );
+  });
+
+  testWidgets('an individual-tier answer without picker flags lists '
+      'models (gh-2003)', (tester) async {
+    final client = http_testing.MockClient((request) async {
+      if (request.url.host == 'api.github.com') {
+        return http.Response(
+          '{"token":"cop-ind;exp=9999999999","expires_at":9999999999}',
+          200,
+        );
+      }
+      return http.Response(
+        '{"data":[{"id":"gpt-4.1"},{"id":"claude-sonnet-5"}]}',
+        200,
+      );
+    });
+    setModelsDispatchClientForTesting(client);
+    final controller = controllerFor();
+
+    await controller.fetch();
+    await tester.pump();
+
+    expect(controller.models, ['claude-sonnet-5', 'gpt-4.1']);
+    expect(controller.emptyReason, isNull);
   });
 
   testWidgets('an override fetcher answer lists models with no reason', (
