@@ -13,6 +13,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart' as http_testing;
 
 const _testModel = Model(
   id: 'test-model',
@@ -300,5 +302,63 @@ void main() {
     expect(await done, isFalse);
     expect(registry.providers, isEmpty);
     expect(service.reconfigured, isNull);
+  });
+
+  group('default report callback (gh-1990)', () {
+    tearDown(() {
+      setModelsDispatchClientForTesting(null);
+    });
+
+    test('a healthy answer lists models with no reason', () async {
+      final client = http_testing.MockClient((request) async {
+        if (request.url.host == 'api.github.com') {
+          return http.Response(
+            '{"token":"[REDACTED:credential]","expires_at":9999999999}',
+            200,
+          );
+        }
+        return http.Response(
+          '{"data":[{"id":"gpt-4.1","model_picker_enabled":true,'
+          '"supported_endpoints":["/chat/completions"]}]}',
+          200,
+        );
+      });
+      setModelsDispatchClientForTesting(client);
+      final callback = defaultCopilotCallbacks().fetchModelsReport;
+
+      final (ids, reason) = await callback!(
+        'gho_dead',
+        'https://api.githubcopilot.com',
+      );
+
+      expect(ids, ['gpt-4.1']);
+      expect(reason, isNull);
+    });
+
+    test(
+      'an empty answer names the exchange branch with the remedies',
+      () async {
+        final client = http_testing.MockClient((request) async {
+          if (request.url.host == 'api.github.com') {
+            return http.Response('{"message":"Bad credentials"}', 401);
+          }
+          return http.Response('{"message":"no"}', 401);
+        });
+        setModelsDispatchClientForTesting(client);
+        final callback = defaultCopilotCallbacks().fetchModelsReport;
+
+        // A classic ghp_ PAT retries PAT-direct (also 401 here) — the
+        // combined reason names both paths and hints at the remedies.
+        final (ids, reason) = await callback!(
+          'ghp_deadbeef',
+          'https://api.githubcopilot.com',
+        );
+
+        expect(ids, isEmpty);
+        expect(reason, contains('exchange path:'));
+        expect(reason, contains('pat-direct path:'));
+        expect(reason, contains('OAuth device flow'));
+      },
+    );
   });
 }

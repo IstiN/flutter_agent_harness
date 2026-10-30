@@ -2030,6 +2030,14 @@ class AgentCli {
   final Map<String, List<String>> _allProvidersModelCache = {};
   bool _allProvidersCacheRefreshed = false;
 
+  /// Per-provider fetch notes from the last refresh cycle (gh-1990): a
+  /// provider whose /models answer named something — the failed branch
+  /// (exchange / HTTP / filter + hint) or the partial-filter summary.
+  /// The `/models` fetch-notes section prints these instead of a bare
+  /// (or missing) list. Cleared at the start of every refresh so stale
+  /// notes never linger.
+  final Map<String, String> _providerModelFetchReasons = {};
+
   /// Providers whose cached list is trusted for THIS session: fetched live
   /// here, or loaded from a disk entry younger than 24h. A trusted entry
   /// skips the live refetch; anything else revalidates in the background.

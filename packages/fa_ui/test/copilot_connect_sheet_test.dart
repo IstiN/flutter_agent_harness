@@ -25,12 +25,15 @@ CopilotConnectCallbacks _fakes({
   Future<String> Function(CopilotDeviceCode deviceCode)? poll,
   Future<String> Function(String githubToken)? login,
   Future<List<String>> Function(String githubToken, String baseUrl)? models,
+  Future<(List<String>, String?)> Function(String githubToken, String baseUrl)?
+  modelsReport,
 }) {
   return CopilotConnectCallbacks(
     requestDeviceCode: start ?? (() async => _deviceCode),
     pollAccessToken: poll ?? ((_) async => 'gho_token'),
     fetchLogin: login ?? ((_) async => 'octocat'),
     fetchModels: models ?? ((_, _) async => const ['gpt-4.1', 'gpt-4o']),
+    fetchModelsReport: modelsReport,
   );
 }
 
@@ -324,6 +327,55 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(result!.modelId, 'my-copilot-model');
+  });
+
+  testWidgets('an empty model fetch with a named reason renders it '
+      '(gh-1990)', (tester) async {
+    CopilotConnectResult? result;
+    await _pump(
+      tester,
+      _fakes(
+        modelsReport: (_, _) async => const (
+          <String>[],
+          'token exchange failed: GitHub token '
+              'rejected (401) — use the OAuth device flow',
+        ),
+      ),
+      (r) => result = r,
+    );
+
+    await tester.tap(find.text('Sign in with GitHub'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Connect Copilot'));
+    await tester.pumpAndSettle();
+
+    // The reason renders inline, the manual id field stays the escape.
+    expect(find.textContaining('token exchange failed'), findsOneWidget);
+    expect(find.textContaining('enter a model id manually'), findsOneWidget);
+    expect(result, isNull);
+  });
+
+  testWidgets('a report callback listing models shows them with no reason', (
+    tester,
+  ) async {
+    CopilotConnectResult? result;
+    await _pump(
+      tester,
+      _fakes(modelsReport: (_, _) async => (const ['copilot-model-x'], null)),
+      (r) => result = r,
+    );
+
+    await tester.tap(find.text('Sign in with GitHub'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Connect Copilot'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('copilot-model-x'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Connect Copilot'));
+    await tester.pumpAndSettle();
+
+    expect(result!.modelId, 'copilot-model-x');
+    expect(find.textContaining('token exchange failed'), findsNothing);
   });
 
   testWidgets('business plan is reported in the result', (tester) async {

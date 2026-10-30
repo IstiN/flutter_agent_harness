@@ -238,12 +238,14 @@ extension on AgentCli {
   /// dialect (also recording the reported limits), everything else is an
   /// OpenAI-compatible `/models` ([AgentCliConfig.modelsFetcher] override
   /// included). Without this a DIAL/CodeMie pick dropped the user into
-  /// manual model entry.
+  /// manual model entry. [onCopilotReport] receives the Copilot fetch
+  /// report (gh-1990) — the connect flow surfaces the empty-answer reason.
   Future<List<String>> _fetchProviderModelIds(
     String providerName,
     String baseUrl,
-    String key,
-  ) async {
+    String key, {
+    void Function(ModelsFetchReport report)? onCopilotReport,
+  }) async {
     if (baseUrl.contains('/code-assistant-api/')) {
       return fetchCodeMieModels(
         baseUrl,
@@ -274,7 +276,12 @@ extension on AgentCli {
       return ids;
     }
     if (providerName == 'copilot') {
-      return _fetchCopilotModelsAndLimits(baseUrl, apiKey: key);
+      final (ids, report) = await _fetchCopilotModelsAndLimits(
+        baseUrl,
+        apiKey: key,
+      );
+      onCopilotReport?.call(report);
+      return ids;
     }
     final override = config.modelsFetcher;
     if (override != null) return override(baseUrl, apiKey: key);
@@ -881,21 +888,36 @@ extension on AgentCli {
       }
     }
     // No provider carries a default model — the id comes from the live
-    // /models list (user picks) or a manual entry.
-    final ids = await _fetchProviderModelIds(spec.name, baseUrl, githubToken);
-    if (isFineGrainedGitHubPat(githubToken) && ids.isEmpty) {
-      // PAT mode validates against the Copilot API HERE (no exchange):
-      // an empty answer is the dialect's collapse of EVERY failure
-      // (rejected PAT, no granted models, transport error) — soften the
-      // causes so a flaky network doesn't read as a token problem
-      // (gh-1606 review).
-      io.writeln(
-        'note: the Copilot API returned no models for this PAT — it was '
-        'rejected, granted nothing, or the request itself failed; check '
-        'the "Copilot Requests" permission '
-        '(github.com/settings/personal-access-tokens → edit → '
-        'Permissions) and the account\'s Copilot seat',
-      );
+    // /models list (user picks) or a manual entry. An EMPTY answer names
+    // its branch now (gh-1990): the exchange status, the /models HTTP
+    // status, or the filter counts — never a bare drop to manual entry.
+    ModelsFetchReport? copilotReport;
+    final ids = await _fetchProviderModelIds(
+      spec.name,
+      baseUrl,
+      githubToken,
+      onCopilotReport: (report) => copilotReport = report,
+    );
+    if (ids.isEmpty) {
+      if (copilotReport?.diagnostic != null) {
+        // The canonical join (gh-1990 review round 2 — no hand-rolled
+        // `message — hint` copy): reasonText appends the hint when
+        // present, byte-identical to the inline ternary it replaces.
+        io.writeln('no models: ${copilotReport!.reasonText}');
+      } else if (isFineGrainedGitHubPat(githubToken)) {
+        // PAT mode validates against the Copilot API HERE (no exchange):
+        // a report-less empty answer is the dialect's collapse of EVERY
+        // failure (rejected PAT, no granted models, transport error) —
+        // soften the causes so a flaky network doesn't read as a token
+        // problem (gh-1606 review).
+        io.writeln(
+          'note: the Copilot API returned no models for this PAT — it was '
+          'rejected, granted nothing, or the request itself failed; check '
+          'the "Copilot Requests" permission '
+          '(github.com/settings/personal-access-tokens → edit → '
+          'Permissions) and the account\'s Copilot seat',
+        );
+      }
     }
     final picked = ids.isNotEmpty
         ? await _pickModelFromList(ids, title: 'Copilot model')

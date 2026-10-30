@@ -410,6 +410,9 @@ extension on AgentCli {
     final completer = Completer<void>();
     _modelCacheFuture = completer.future;
     try {
+      // A fresh cycle recomputes every reason (gh-1990) — stale fetch
+      // failures never outlive the refresh that produced them.
+      _providerModelFetchReasons.clear();
       await _fetchAllSavedProviderModels();
       // Also fetch the active catalog provider's live /models list (e.g.
       // OpenRouter) so the model picker is never empty just because the user
@@ -422,6 +425,11 @@ extension on AgentCli {
             activeSpec.name,
             _agent.state.model.baseUrl,
             _apiKey,
+            // The named failure rides to `/models` here too (gh-1990
+            // review round 2): an unsaved active Copilot's empty answer
+            // is never a silent seed fallback.
+            onCopilotReport: (report) =>
+                _noteProviderFetchReason(activeProvider, report),
           );
           _allProvidersModelCache[activeProvider] = ids.isEmpty
               ? (knownModelPresets[activeProvider] ?? [_agent.state.model.id])
@@ -450,7 +458,9 @@ extension on AgentCli {
   /// Fetches model lists for the env-keyed catalog providers (a key in the
   /// environment but no saved entry — the FA_PROVIDER_* / out-of-the-box
   /// path). Split out of [_refreshAllProvidersModelCache] to keep its
-  /// cyclomatic complexity under the CRAP ratchet; behavior unchanged.
+  /// cyclomatic complexity under the CRAP ratchet. The gh-1990 review
+  /// round 2 wiring adds the fetch-note report (the Copilot empty-answer
+  /// reason) — the cached ids themselves are unchanged.
   Future<void> _refreshEnvKeyedProviders(String activeProvider) async {
     // Env-keyed catalog providers: a provider whose key sits in the
     // environment (ZAI_API_KEY, MINIMAX_API_KEY, ...) is usable out of
@@ -470,6 +480,10 @@ extension on AgentCli {
           spec.name,
           spec.defaultBaseUrl,
           envKey.$2,
+          // Same surface as the saved-entry path (gh-1990 review round
+          // 2): an env-keyed Copilot's empty answer names its branch.
+          onCopilotReport: (report) =>
+              _noteProviderFetchReason(spec.name, report),
         );
         if (ids.isNotEmpty) {
           _allProvidersModelCache[spec.name] = ids;
@@ -527,7 +541,14 @@ extension on AgentCli {
       return fetchDialModels(entry.baseUrl, cookieOrKey);
     }
     if (entry.spec.kind == 'copilot') {
-      return _fetchCopilotModelsAndLimits(entry.baseUrl, apiKey: cookieOrKey);
+      final (ids, report) = await _fetchCopilotModelsAndLimits(
+        entry.baseUrl,
+        apiKey: cookieOrKey,
+      );
+      // The named failure rides to `/models` (gh-1990) — an empty
+      // provider answer is never a silent hole in the list.
+      _noteProviderFetchReason(entry.name, report);
+      return ids;
     }
     if (entry.spec.kind == 'chatgpt-codex') {
       // The Codex backend's /models — the list call codex-rs'
@@ -910,20 +931,54 @@ extension on AgentCli {
   /// GitHub key is exchanged for the short-lived Copilot token first — a
   /// raw Bearer GET would 401): records the endpoint-reported limits
   /// (context window / max output from `capabilities.limits`) and answers
-  /// the plain id list.
-  Future<List<String>> _fetchCopilotModelsAndLimits(
+  /// [fetchModelsForEndpointReport] wrapper routing Copilot to its dialect
+  /// (the GitHub key is exchanged for the short-lived Copilot token first —
+  /// a raw Bearer GET would 401): records the endpoint-reported limits
+  /// (context window / max output from `capabilities.limits`) and answers
+  /// the plain id list PLUS the report — the empty-answer reason (gh-1990)
+  /// rides to the callers that surface it (`/models`, the connect flow).
+  Future<(List<String>, ModelsFetchReport)> _fetchCopilotModelsAndLimits(
     String baseUrl, {
     String? apiKey,
   }) async {
-    final (ids, windows, maxTokens) = await fetchModelsForEndpoint(
+    final report = await fetchModelsForEndpointReport(
       baseUrl,
       apiKey: apiKey ?? _apiKey,
       provider: 'copilot',
       client: modelFetchClient('copilot'),
     );
+    final (ids, windows, maxTokens) = report.info;
     if (windows.isNotEmpty) _modelContextWindows = windows;
     if (maxTokens.isNotEmpty) _modelMaxTokens = maxTokens;
-    return ids;
+    return (ids, report);
+  }
+
+  /// Records [report]'s user-facing reason for [name] (gh-1990): the
+  /// empty-answer diagnostic (with its hint), or the partial-filter note.
+  /// A report with neither clears the entry's stored reason.
+  void _noteProviderFetchReason(String name, ModelsFetchReport report) {
+    // gh-1990 review (DRY): the canonical formatting rule — no
+    // hand-rolled `message — hint` join.
+    final reason = report.userFacingReason;
+    if (reason == null || reason.isEmpty) {
+      _providerModelFetchReasons.remove(name);
+    } else {
+      _providerModelFetchReasons[name] = reason;
+    }
+  }
+
+  /// The `/models` fetch-notes section (gh-1990): one line per provider
+  /// whose live answer named something — the failed branch (exchange /
+  /// HTTP / filter with the remediation hint) or the partial-filter
+  /// summary — so a provider's model list is never silent about why it
+  /// is (or isn't) what the endpoint serves.
+  void _printProviderFetchReasons() {
+    if (_providerModelFetchReasons.isEmpty) return;
+    io.writeln('fetch notes:');
+    final names = _providerModelFetchReasons.keys.toList()..sort();
+    for (final name in names) {
+      io.writeln('  $name: ${_providerModelFetchReasons[name]}');
+    }
   }
 
   Future<List<String>> _fetchOpenAiCompatibleModels(
@@ -964,6 +1019,7 @@ extension on AgentCli {
     if (entries.isEmpty) return io.writeln('no models available');
     io.writeln('models (provider/model):');
     _printNumberedModels(entries);
+    _printProviderFetchReasons();
     io.writeln('use /model <n> or /model <provider>/<id> to switch');
   }
 
