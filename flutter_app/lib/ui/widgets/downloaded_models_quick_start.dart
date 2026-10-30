@@ -9,15 +9,13 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import 'package:fa/services/agent_service.dart';
-import 'package:fa/gemma/gemma_service.dart';
-import 'package:fa/gemma/gemma_types.dart';
 import 'package:fa/transformers_js/transformers_js_service.dart';
 import 'package:fa/transformers_js/transformers_js_types.dart';
 import 'package:fa/webllm/webllm_service.dart';
 import 'package:fa/webllm/webllm_types.dart';
 
 /// Which on-device engine a quick-start row belongs to.
-enum _QuickStartKind { webllm, gemma, transformersJs }
+enum _QuickStartKind { webllm, transformersJs }
 
 /// One row in the quick-start section: a model whose weights are already on
 /// this device/browser, ready to load without a download.
@@ -32,7 +30,7 @@ final class _QuickStartEntry {
 
   final _QuickStartKind kind;
 
-  /// The model preset (`WebLlmModelPreset` / `GemmaModelPreset` /
+  /// The model preset (`WebLlmModelPreset` /
   /// `TransformersJsModelPreset`, matched by [kind]).
   final Object preset;
 
@@ -48,9 +46,9 @@ final class _QuickStartEntry {
 
 /// The "Downloaded models" section on the setup screen: one row per
 /// on-device model whose weights are already cached/installed here (WebLLM
-/// and transformers.js CacheStorage on web, the flutter_gemma repository on
-/// mobile), each with a one-tap "Use" action that loads the model (no
-/// download, no API key) and connects straight away.
+/// and transformers.js CacheStorage on web), each with a one-tap "Use"
+/// action that loads the model (no download, no API key) and connects
+/// straight away.
 ///
 /// The section is hidden while the scan runs and when nothing is downloaded
 /// — first-run users never see it. The scan only queries cache state; it
@@ -62,7 +60,6 @@ class DownloadedModelsQuickStart extends StatefulWidget {
     super.key,
     required this.onConnect,
     this.webLlmEngine,
-    this.gemmaEngine,
     this.transformersJsEngine,
     this.isWeb,
   });
@@ -73,11 +70,9 @@ class DownloadedModelsQuickStart extends StatefulWidget {
 
   /// Engine overrides for tests; default to the platform singletons.
   final WebLlmEngineApi? webLlmEngine;
-  final GemmaEngineApi? gemmaEngine;
   final TransformersJsEngineApi? transformersJsEngine;
 
-  /// Platform override for tests (the Gemma install file names differ per
-  /// platform — the same seam as `GemmaCacheSection.isWeb`).
+  /// Platform override for tests.
   final bool? isWeb;
 
   @override
@@ -89,7 +84,6 @@ class _DownloadedModelsQuickStartState
     extends State<DownloadedModelsQuickStart> {
   late final WebLlmEngineApi _webLlm =
       widget.webLlmEngine ?? createWebLlmService();
-  late final GemmaEngineApi _gemma = widget.gemmaEngine ?? createGemmaService();
   late final TransformersJsEngineApi _transformersJs =
       widget.transformersJsEngine ?? createTransformersJsService();
   late final bool _isWeb = widget.isWeb ?? kIsWeb;
@@ -97,20 +91,10 @@ class _DownloadedModelsQuickStartState
   /// Rows from the last scan; `null` while the scan runs (section hidden).
   List<_QuickStartEntry>? _entries;
 
-  /// The manual timer behind [_installedModelsBounded] — cancelled on
-  /// dispose so a wedged plugin never leaves a pending timer behind
-  /// (`Future.timeout`'s internal timer cannot be cancelled).
-  Timer? _gemmaScanTimer;
-
   bool _busy = false;
   double? _loadFraction;
   String? _loadStatus;
   String? _error;
-
-  /// Upper bound for the Gemma repository scan: a hung store (OPFS lock,
-  /// dead plugin channel) must not pin the section (same bound as the Gemma
-  /// cache section).
-  static const _scanTimeout = Duration(seconds: 10);
 
   @override
   void initState() {
@@ -120,41 +104,13 @@ class _DownloadedModelsQuickStartState
 
   @override
   void dispose() {
-    _gemmaScanTimer?.cancel();
     super.dispose();
-  }
-
-  /// [GemmaEngineApi.installedModels] with the [_scanTimeout] bound, but on
-  /// a [Timer] this State owns (and cancels in [dispose]).
-  Future<List<GemmaInstalledModel>> _installedModelsBounded(
-    GemmaEngineApi engine,
-  ) {
-    final completer = Completer<List<GemmaInstalledModel>>();
-    _gemmaScanTimer = Timer(_scanTimeout, () {
-      if (!completer.isCompleted) {
-        completer.completeError(
-          TimeoutException('Gemma repository scan timed out', _scanTimeout),
-        );
-      }
-    });
-    unawaited(
-      engine.installedModels().then(
-        (models) {
-          if (!completer.isCompleted) completer.complete(models);
-        },
-        onError: (Object error) {
-          if (!completer.isCompleted) completer.completeError(error);
-        },
-      ),
-    );
-    return completer.future;
   }
 
   Future<void> _scan() async {
     final entries = <_QuickStartEntry>[];
     await _scanWebLlmEntries(entries);
     await _scanTransformersJsEntries(entries);
-    await _scanGemmaEntries(entries);
     if (mounted) setState(() => _entries = entries);
   }
 
@@ -198,44 +154,6 @@ class _DownloadedModelsQuickStartState
     }
   }
 
-  Future<void> _scanGemmaEntries(List<_QuickStartEntry> entries) async {
-    if (!_gemma.isAvailable) return;
-    try {
-      final installed = await _installedModelsBounded(_gemma);
-      for (final preset in gemmaModelPresets) {
-        _scanGemmaPreset(entries, preset, installed);
-      }
-    } on Object {
-      // A failed repository scan yields no Gemma rows, not an error — the
-      // full connection form below still offers every provider.
-    } finally {
-      _gemmaScanTimer?.cancel();
-    }
-  }
-
-  void _scanGemmaPreset(
-    List<_QuickStartEntry> entries,
-    GemmaModelPreset preset,
-    List<GemmaInstalledModel> installed,
-  ) {
-    final filename = preset.filenameFor(isWeb: _isWeb);
-    GemmaInstalledModel? match;
-    for (final model in installed) {
-      if (model.filename == filename) match = model;
-    }
-    if (match != null) {
-      entries.add(
-        _QuickStartEntry(
-          kind: _QuickStartKind.gemma,
-          preset: preset,
-          title: preset.displayName,
-          sizeLabel: preset.sizeLabelFor(isWeb: _isWeb),
-          bytes: match.sizeBytes,
-        ),
-      );
-    }
-  }
-
   /// Cache queries are best effort: a blocked storage API hides the row
   /// rather than breaking the scan (mirrors the cache sections' `null`
   /// handling).
@@ -259,7 +177,6 @@ class _DownloadedModelsQuickStartState
         _QuickStartKind.webllm => _loadWebLlm(
           entry.preset as WebLlmModelPreset,
         ),
-        _QuickStartKind.gemma => _loadGemma(entry.preset as GemmaModelPreset),
         _QuickStartKind.transformersJs => _loadTransformersJs(
           entry.preset as TransformersJsModelPreset,
         ),
@@ -303,27 +220,6 @@ class _DownloadedModelsQuickStartState
     );
   }
 
-  /// Marks an installed Gemma model active and loads it (install skips what
-  /// is already on disk — no token, no download) and builds its
-  /// [AgentConfig].
-  Future<AgentConfig> _loadGemma(GemmaModelPreset preset) async {
-    final sub = _gemma.progressEvents.listen(_onGemmaProgress);
-    try {
-      await _gemma.installModel(preset);
-      await _gemma.loadModel(preset);
-    } finally {
-      unawaited(sub.cancel());
-    }
-    return AgentConfig(
-      providerKind: gemmaProviderKind,
-      modelId: preset.id,
-      baseUrl: '',
-      apiKey: '',
-      contextWindow: preset.contextWindow,
-      maxTokens: 1024,
-    );
-  }
-
   /// Loads a cached transformers.js model (ONNX weights already in
   /// CacheStorage) and builds its [AgentConfig].
   Future<AgentConfig> _loadTransformersJs(
@@ -349,14 +245,6 @@ class _DownloadedModelsQuickStartState
   }
 
   void _onWebLlmProgress(WebLlmProgress report) {
-    if (!mounted) return;
-    setState(() {
-      _loadFraction = report.fraction;
-      _loadStatus = report.text;
-    });
-  }
-
-  void _onGemmaProgress(GemmaProgress report) {
     if (!mounted) return;
     setState(() {
       _loadFraction = report.fraction;

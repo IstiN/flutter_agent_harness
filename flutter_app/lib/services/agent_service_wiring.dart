@@ -12,15 +12,12 @@ part of 'agent_service.dart';
 /// library, so private members resolve).
 extension AgentServiceWiring on AgentService {
   /// Picks the stream function for [config]'s backend: the on-device
-  /// bridges for `webllm`/`gemma`/`transformers_js`, the HTTP adapters
+  /// bridges for `webllm`/`transformers_js`, the HTTP adapters
   /// otherwise. HTTP adapters get the live session id as the prompt-cache
   /// affinity key (resolved lazily — the session is created after this).
   StreamFunction _streamFunctionFor(AgentConfig config) {
     if (config.providerKind == webLlmProviderKind) {
       return webLlmStreamFunction(createWebLlmService());
-    }
-    if (config.providerKind == gemmaProviderKind) {
-      return gemmaStreamFunction(createGemmaService());
     }
     if (config.providerKind == transformersJsProviderKind) {
       return transformersJsStreamFunction(createTransformersJsService());

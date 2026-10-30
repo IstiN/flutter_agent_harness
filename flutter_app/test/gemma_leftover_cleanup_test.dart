@@ -6,10 +6,21 @@ import 'package:fa/services/gemma_leftover_cleanup.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-/// A [MemoryExecutionEnv] whose `remove` always fails (the read-only-volume
-/// shape: delete errors must be recorded, never fatal).
-final class _FailingRemoveEnv extends MemoryExecutionEnv {
-  _FailingRemoveEnv({super.cwd});
+/// An [ExecutionEnv] whose `remove` always fails (the read-only-volume
+/// shape: delete errors must be recorded, never fatal). Everything else
+/// forwards to the in-memory inner env; unimplemented members can never be
+/// reached by the cleanup module (it only walks/removes).
+final class _FailingRemoveEnv implements ExecutionEnv {
+  _FailingRemoveEnv(this._inner);
+
+  final ExecutionEnv _inner;
+
+  @override
+  String get cwd => _inner.cwd;
+
+  @override
+  Future<Result<List<FileInfo>, FileError>> listDir(String path) =>
+      _inner.listDir(path);
 
   @override
   Future<Result<void, FileError>> remove(
@@ -21,6 +32,10 @@ final class _FailingRemoveEnv extends MemoryExecutionEnv {
       FileError(FileErrorCode.unknown, 'read-only volume', path: path),
     );
   }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) =>
+      throw UnimplementedError('${invocation.memberName}');
 }
 
 /// The in-memory OPFS/web storage fake for the web cleanup path.
@@ -63,17 +78,28 @@ void main() {
         report.deleted.map((p) => p.split('/').last),
         containsAll(['gemma-4-E2B-it.litertlm', 'gemma-4-E4B-it.litertlm']),
       );
-      expect(await env.exists('${env.cwd}/gemma-4-E2B-it.litertlm'), isFalse);
       expect(
-        await env.exists('${env.cwd}/nested/deeper/gemma-4-E4B-it.litertlm'),
+        (await env.exists('${env.cwd}/gemma-4-E2B-it.litertlm')).valueOrNull,
+        isFalse,
+      );
+      expect(
+        (
+          await env.exists('${env.cwd}/nested/deeper/gemma-4-E4B-it.litertlm')
+        ).valueOrNull,
         isFalse,
       );
       // The plugin's storage dir is gone (its registry file with it).
-      expect(await env.exists('${env.cwd}/flutter_gemma/model.json'), isFalse);
+      expect(
+        (await env.exists('${env.cwd}/flutter_gemma/model.json')).valueOrNull,
+        isFalse,
+      );
       // User files untouched.
-      expect(await env.exists('${env.cwd}/keep-me.txt'), isTrue);
+      expect((await env.exists('${env.cwd}/keep-me.txt')).valueOrNull, isTrue);
       // `.bak` is not a `.litertlm` suffix match.
-      expect(await env.exists('${env.cwd}/other/x.litertlm.bak'), isTrue);
+      expect(
+        (await env.exists('${env.cwd}/other/x.litertlm.bak')).valueOrNull,
+        isTrue,
+      );
     });
 
     test('an empty sandbox cleans nothing', () async {

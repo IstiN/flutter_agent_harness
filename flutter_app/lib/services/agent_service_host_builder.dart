@@ -214,13 +214,8 @@ extension AgentServiceHostBuilder on AgentService {
 }
 
 /// Whether the on-device inference runtimes ship with THIS build
-/// (webllm + transformers.js on web, gemma on iOS/Android): the honest
-/// `on_device_providers` marker, per platform. Desktop builds target
-/// server providers only.
-bool get _onDeviceRuntimesShip {
-  if (kIsWeb) return true;
-  return switch (defaultTargetPlatform) {
-    TargetPlatform.iOS || TargetPlatform.android => true,
-    _ => false,
-  };
-}
+/// (webllm + transformers.js on web): the honest `on_device_providers`
+/// marker, per platform. Mobile and desktop builds target server providers
+/// only — the on-device iOS/Android engine was removed with the gemma
+/// stack (gh-2004).
+bool get _onDeviceRuntimesShip => kIsWeb;

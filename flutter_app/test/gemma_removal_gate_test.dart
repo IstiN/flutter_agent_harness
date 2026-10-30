@@ -14,25 +14,31 @@ import 'package:flutter_test/flutter_test.dart';
 /// `lib/gemma/` file trips here, so coming back needs a deliberate new
 /// card, not an accident.
 ///
-/// Exclusions: `lib/webllm/` and `lib/transformers_js/` are the two OTHER
-/// local-model stacks (gh-2004 non-goals) whose model catalogs legitimately
-/// carry Gema-family model names (`onnx-community/gemma-4-E2B-it-ONNX`,
-/// `gemma-2-2b-it-q4f16_1-MLC` — the real upstream model ids). Tokens
-/// anywhere else under `lib/` or in `pubspec.yaml` fail the gate.
+/// Exclusions:
+/// - `lib/webllm/` and `lib/transformers_js/` are the two OTHER local-model
+///   stacks (gh-2004 non-goals) whose model catalogs legitimately carry
+///   Gema-family model names (`onnx-community/gemma-4-E2B-it-ONNX`,
+///   `gemma-2-2b-it-q4f16_1-MLC` — the real upstream model ids);
+/// - `lib/services/gemma_leftover_cleanup.dart` (+ `gemma_web_artifacts*`)
+///   is gh-2004's own removal machinery — it must name the artifacts it
+///   deletes.
+/// Tokens anywhere else under `lib/` or in `pubspec.yaml` fail the gate.
 void main() {
   final appDir = Directory.current.path;
   const pattern = 'gemma|litert|litertlm|mediapipe';
   final regex = RegExp(pattern, caseSensitive: false);
 
-  /// lib files the gate inspects (the surviving local-model stacks are
-  /// excluded — see the library docstring).
+  /// lib files the gate inspects (see the exclusion list above).
   final libFiles = Directory('$appDir/lib')
       .listSync(recursive: true)
       .whereType<File>()
       .map((f) => f.path)
       .where(
         (p) =>
-            !p.contains('/lib/webllm/') && !p.contains('/lib/transformers_js/'),
+            !p.contains('/lib/webllm/') &&
+            !p.contains('/lib/transformers_js/') &&
+            !p.contains('gemma_leftover_cleanup') &&
+            !p.contains('gemma_web_artifacts'),
       )
       .toList()..sort();
 
