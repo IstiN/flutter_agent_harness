@@ -104,10 +104,14 @@ ensure_keychain() {
   # fastlane timeout, run 40849468765). Settings only apply
   # non-interactively on a FRESH keychain; on an existing one the command
   # prompts (GUI session) or fails silently (headless, masked by || true).
-  # Bounded: set-keychain-settings prompts via GUI SecurityAgent on this
-  # host (screenshot-confirmed) — unbounded it wedges install forever.
-  # Best-effort only; the REAL anti-lock mechanism is the Fastfile's
-  # unlock watchdog (unlock-keychain -p never prompts).
+  # gh-1972: unlock FIRST — set-keychain-settings on a LOCKED keychain
+  # spawns a GUI SecurityAgent password dialog that outlives the 5s
+  # alarm (orphan dialog on the host screen, nightly run 05:21Z).
+  # unlock-keychain -p never prompts; on an UNLOCKED keychain the
+  # settings call does not prompt either. Still alarm-bounded and
+  # best-effort: the REAL anti-lock mechanism is the Fastfile's unlock
+  # watchdog (gh-1965).
+  security unlock-keychain -p "$kcpass" "$KC"
   perl -e 'alarm 5; exec @ARGV' security set-keychain-settings -t 0 "$KC" 2>/dev/null || true
   # Idempotent, additive, self-verifying search-list membership (gh-1866
   # logic, applied ONCE for a persistent entry — never per job). Skipped
@@ -119,7 +123,6 @@ ensure_keychain() {
     security list-keychains -d user -s $current "$KC"
     security list-keychains | sed 's/[[:space:]]//g; s/"//g' | grep -qxF "$KC" || die "failed to add keychain to search list"
   fi
-  security unlock-keychain -p "$kcpass" "$KC"
 }
 
 do_unlock() {

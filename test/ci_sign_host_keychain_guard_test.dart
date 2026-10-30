@@ -465,4 +465,18 @@ void main() {
           '(600s), not fail — the lock holder always finishes',
     );
   });
+
+  test('AC17 — install unlocks BEFORE set-keychain-settings (gh-1972: '
+      'settings on a LOCKED keychain spawns an orphan SecurityAgent '
+      'password dialog on the host screen; the 5s alarm kills the CLI '
+      'but the dialog lingers — nightly run 05:21Z)', () {
+    final cisign = File('scripts/ci-sign').readAsStringSync();
+    final unlockAt = cisign.indexOf(r'security unlock-keychain -p "$kcpass" "$KC"');
+    final settingsAt = cisign.indexOf("alarm 5; exec @ARGV' security set-keychain-settings");
+    expect(unlockAt, greaterThan(-1), reason: 'install must unlock');
+    expect(settingsAt, greaterThan(-1), reason: 'settings call must exist');
+    expect(unlockAt, lessThan(settingsAt),
+        reason: 'on an UNLOCKED keychain set-keychain-settings does not '
+            'prompt; unlock first, settings second — no GUI dialog');
+  });
 }
