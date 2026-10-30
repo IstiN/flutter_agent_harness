@@ -82,6 +82,7 @@ final class ImageRegistryConfig {
     this.maxPerRequest = defaultMaxImagesPerRequest,
     this.maxBytesPerRequest = defaultMaxImageBytesPerRequest,
     this.perModel = const {},
+    this.autoInspect = true,
   });
 
   /// Kill switch: `images.registry: false` reproduces today's request
@@ -100,6 +101,13 @@ final class ImageRegistryConfig {
   /// user truth beats the catalog and the global default; a
   /// ceiling-setter only — never raises a cap above provider reality.
   final Map<String, int> perModel;
+
+  /// Image-read auto-route (gh-1984 AC2/AC3): with a vision model
+  /// configured, an image `read` under a non-vision chat model describes
+  /// the image through the vision model inline instead of returning the
+  /// bare omission note. `false` keeps today's note but names the
+  /// `inspect_image` tool + model so the agent can call it deliberately.
+  final bool autoInspect;
 }
 
 /// Process-wide image-registry settings, published by hosts at boot from

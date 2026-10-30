@@ -572,6 +572,14 @@ class AgentCli {
         isUnattended: () => _approval.mode == ApprovalMode.unattended,
         vision: config.visionConfig,
         transcribe: config.transcribeConfig,
+        visionResolver: config.visionResolver,
+        // gh-1984 AC2: the auto-route's side-call spend joins the CLI's
+        // /cost meter (tokens + cost, no turn-count bump) unless the host
+        // brought its own sink. Same getter the sqlite swap site rides —
+        // both read-tool construction sites must share ONE default.
+        onImageInspectUsage: AgentCliTools(this)._readOnImageUsage,
+        mediaFileReadNotes: config.mediaFileReadNotes,
+        transcribeAvailable: _readTranscribeAvailable,
         transcribeSessionId: () => _session?.cachedId,
         media: MediaToolServices(
           modelsConfig: config.modelsConfig,
@@ -1036,6 +1044,13 @@ class AgentCli {
 
   /// The active mode.
   AgentMode get currentMode => _currentMode;
+
+  /// The live API key of the active provider connection: boot-resolved,
+  /// replaced by a `/provider` switch. The media-slot resolvers read it
+  /// per resolution so a same-host slot's main-key reuse follows the
+  /// CURRENT connection (the same live accessor `MediaToolServices`
+  /// rides), never a boot-pinned value.
+  String get apiKey => _apiKey;
 
   /// The effective system prompt sent to the model.
   String get systemPrompt => _agent.state.systemPrompt;

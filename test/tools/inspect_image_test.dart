@@ -177,5 +177,123 @@ void main() {
         ),
       );
     });
+
+    test('forwards a mid-stream cancel to the vision call (AC6)', () async {
+      await env.writeBinaryFile('/work/shot.png', _makePng());
+      final source = CancelTokenSource();
+      // The endpoint streams slowly: the cancel lands MID-STREAM, which
+      // only aborts when the tool forwards the token into the shared
+      // vision helper (pre-call checkpoints cannot see it).
+      final client = http_testing.MockClient.streaming((request, body) async {
+        final chunk =
+            'data: ${jsonEncode({
+              'id': 'c',
+              'object': 'chat.completion.chunk',
+              'created': 1,
+              'model': 'gpt-4o',
+              'choices': [
+                {
+                  'index': 0,
+                  'delta': {'role': 'assistant', 'content': 'partial'},
+                  'finish_reason': null,
+                },
+              ],
+            })}\n\n';
+        final done =
+            'data: ${jsonEncode({
+              'id': 'c',
+              'object': 'chat.completion.chunk',
+              'created': 1,
+              'model': 'gpt-4o',
+              'choices': [
+                {'index': 0, 'delta': {}, 'finish_reason': 'stop'},
+              ],
+            })}\n\n';
+        return http.StreamedResponse(
+          () async* {
+            yield utf8.encode(chunk);
+            // Held open until the test cancels — the tool must abort here.
+            await source.token.onCancel;
+            yield utf8.encode(done);
+          }(),
+          200,
+          headers: {'content-type': 'text/event-stream'},
+        );
+      });
+      final config = InspectImageConfig(
+        modelId: 'gpt-4o',
+        apiKey: '[REDACTED:Sensitive-Value]',
+        httpClient: client,
+      );
+      final tool = inspectImageTool(env, config);
+      final future = tool.execute(
+        {'path': '/work/shot.png'},
+        source.token,
+        null,
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      source.cancel();
+      Object outcome;
+      try {
+        final result = await future;
+        outcome = result.content
+            .whereType<TextContent>()
+            .map((b) => b.text)
+            .join();
+      } on Object catch (error) {
+        outcome = error;
+      }
+      expect(
+        outcome,
+        isA<CancelledException>(),
+        reason: 'a user cancel must abort a hung vision stream mid-flight',
+      );
+    });
+
+    test('reports the vision call usage via onUsage (/cost parity)', () async {
+      await env.writeBinaryFile('/work/shot.png', _makePng());
+      final client = http_testing.MockClient.streaming((request, body) async {
+        final payload =
+            'data: ${jsonEncode({
+              'id': 'c',
+              'object': 'chat.completion.chunk',
+              'created': 1,
+              'model': 'gpt-4o',
+              'choices': [
+                {
+                  'index': 0,
+                  'delta': {'role': 'assistant', 'content': 'A small red pixel.'},
+                  'finish_reason': null,
+                },
+              ],
+            })}\n\n';
+        final done =
+            'data: ${jsonEncode({
+              'id': 'c',
+              'object': 'chat.completion.chunk',
+              'created': 1,
+              'model': 'gpt-4o',
+              'choices': [
+                {'index': 0, 'delta': {}, 'finish_reason': 'stop'},
+              ],
+              'usage': {'prompt_tokens': 1200, 'completion_tokens': 42, 'total_tokens': 1242},
+            })}\n\n';
+        return http.StreamedResponse(
+          Stream.fromIterable([utf8.encode(payload), utf8.encode(done)]),
+          200,
+          headers: {'content-type': 'text/event-stream'},
+        );
+      });
+      final config = InspectImageConfig(
+        modelId: 'gpt-4o',
+        apiKey: '[REDACTED:Sensitive-Value]',
+        httpClient: client,
+      );
+      final usages = <Usage>[];
+      final tool = inspectImageTool(env, config, onUsage: usages.add);
+      await tool.execute({'path': '/work/shot.png'}, null, null);
+      expect(usages, hasLength(1));
+      expect(usages.first.totalTokens, 1242);
+    });
   });
 }
