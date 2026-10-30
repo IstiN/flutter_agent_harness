@@ -34,8 +34,10 @@
 //        the keychain does not exist).
 //   AC3  the always() Cleanup step stops the watchdog by the SAME pid
 //        file the provisioning step wrote, guarded by a file-existence
-//        check (a provisioning failure before watchdog arm must not
-//        make Cleanup kill an arbitrary recycled pid).
+//        check AND an identity check (the pid's command line must still
+//        be the ci-sign unlock loop — a provisioning failure before
+//        watchdog arm must not make Cleanup kill an arbitrary recycled
+//        pid).
 //   AC4  the Fastfile's gh-1954 gym-lane watchdog still stands (both
 //        lanes on the shared host share one invariant).
 import 'dart:io';
@@ -60,15 +62,6 @@ String _stripComments(String content) => content
       return hash == -1 ? line : line.substring(0, hash);
     })
     .join('\n');
-
-String executableScriptOf(YamlMap job) {
-  final steps = job['steps'] as YamlList? ?? YamlList();
-  return steps
-      .whereType<YamlMap>()
-      .map((s) => s['run']?.toString() ?? '')
-      .map(_stripComments)
-      .join('\n');
-}
 
 YamlMap stepByName(YamlMap job, String name) {
   final steps = job['steps'] as YamlList? ?? YamlList();
@@ -122,7 +115,7 @@ void main() {
   });
 
   test('AC3 — the always() Cleanup step stops the watchdog by the same '
-      'pid file, existence-guarded', () {
+      'pid file, existence-guarded AND identity-checked', () {
     final cleanup = stepByName(job, cleanupStepName);
     expect(cleanup['if']?.toString(), contains('always()'), reason:
         'Cleanup must run on failure too — a dead build must not leak a '
@@ -133,9 +126,16 @@ void main() {
         'the kill must be guarded by pid-file existence — a provisioning '
         'failure before the watchdog armed would otherwise make Cleanup '
         'kill an arbitrary (possibly recycled) pid');
+    final psIdx = script.indexOf('ps -p "\$WPID" -o command=');
+    expect(psIdx, greaterThan(guardIdx), reason:
+        'the kill must only consider a pid that exists AND whose command '
+        'line is still the ci-sign unlock loop — a pid file outlives its '
+        'process and a recycled pid must never be killed');
     final killIdx = script.indexOf('kill');
     expect(killIdx, greaterThan(guardIdx), reason:
         'Cleanup kills only what the provisioning step recorded');
+    expect(psIdx, lessThan(killIdx), reason:
+        'the identity check must gate the kill');
     expect(script.contains('ci-sign-watchdog.pid'), isTrue, reason:
         'Cleanup must target the SAME pid file the provisioning step '
         'wrote — a renamed marker would orphan the watchdog');

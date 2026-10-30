@@ -631,7 +631,7 @@ jobs:
           # step's log). gh-1954's --force host re-provision (run
           # 40857357741, 2026-10-29) re-created the keychain with the
           # locking defaults, and this leg — unlike the iOS gym lane —
-          # had no unlock watchdog: run 410808179 (gh-1986) then hit its
+          # had no unlock watchdog: run 41008008179 (gh-1986) then hit its
           # FIRST codesign 2h14m after this step's unlock and BOTH matrix
           # archs died with errSecInternalComponent on the same embedded
           # framework (GoogleAppMeasurement), 0.4 s apart. Same fix
