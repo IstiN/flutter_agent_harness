@@ -1,8 +1,8 @@
 /// Patches ELF shared libraries in place for 16 KB memory-page support
 /// (gh-746: Play "Your app does not support 16 KB memory page sizes").
 ///
-/// Some prebuilt Android `.so` blobs — today the Qualcomm QNN HTP `Skel`
-/// libraries that flutter_gemma's LiteRT-LM native assets bundle ships —
+/// Some prebuilt Android `.so` blobs (historically the Qualcomm QNN HTP
+/// `Skel` libraries the removed on-device Gema stack shipped, gh-2004)
 /// are linked with a 4 KB max page size, so their PT_LOAD program headers
 /// carry `p_align = 0x1000`. Google Play rejects uploads containing such
 /// libraries, and 16 KB-page devices cannot map them in place.

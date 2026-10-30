@@ -24,7 +24,7 @@ typedef FaOnDevicePageBuilder =
     );
 
 /// One on-device provider entry of the default-chat-model picker (WebLLM,
-/// Gemma, transformers.js — whatever the host supports). fa_ui knows
+/// transformers.js — whatever the host supports). fa_ui knows
 /// nothing about engines; the host supplies the tile label and the page
 /// builder, and pre-filters the list by platform visibility.
 final class FaOnDeviceRoute {
@@ -36,7 +36,7 @@ final class FaOnDeviceRoute {
     this.id = '',
   });
 
-  /// The engine/provider kind this route configures (webllm/gemma/...) —
+  /// The engine/provider kind this route configures (webllm/...) —
   /// hosts use it to gate the tile's visibility (a configured engine keeps
   /// its row; a never-used one stays discoverable via "Add provider").
   final String id;

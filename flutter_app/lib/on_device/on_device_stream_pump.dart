@@ -2,14 +2,14 @@
 // Use of this source code is governed by a MIT license that can be found
 // in the LICENSE file.
 
-/// The shared skeleton of the three on-device provider stream functions
-/// (gemma, transformers.js, WebLLM): turn state + partial-first event
+/// The shared skeleton of the on-device provider stream functions
+/// (transformers.js, WebLLM): turn state + partial-first event
 /// emission ([OnDeviceStreamTurn]) and the per-attempt engine-call pump
 /// ([pumpOnDeviceChat]).
 ///
 /// Each provider keeps only its wire quirks: preset lookup, message
 /// conversion (see `on_device_message_codec.dart`), tool-call payloads
-/// (gemma), the GPU-crash retry loop (transformers.js), and error text
+/// (WebLLM), the GPU-crash retry loop (transformers.js), and error text
 /// formatting — handed to the pump as small hooks.
 ///
 /// The emitted protocol is the one the HTTP provider adapters use:
@@ -27,7 +27,7 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 ///
 /// Holds the text buffer, stop reason, and error message, and builds the
 /// partial-first [AssistantMessage] snapshots every event carries. The
-/// provider contributes its non-text content blocks (gemma's tool calls)
+/// provider contributes its non-text content blocks (WebLLM's tool calls)
 /// through [extraContent].
 final class OnDeviceStreamTurn {
   /// Creates a turn. [formatError] renders a raw engine/config failure for
@@ -71,7 +71,7 @@ final class OnDeviceStreamTurn {
   var _ended = false;
 
   /// Whether any text delta was streamed (transformers.js retries only
-  /// pre-text failures; gemma infers `toolUse` from emitted calls).
+  /// pre-text failures; WebLLM infers `toolUse` from emitted calls).
   bool get hasText => _textStarted;
 
   /// The turn's start timestamp — the snapshots' timestamp and the stamp
@@ -181,7 +181,7 @@ final class OnDeviceChatCall {
   String finishReason = '';
 
   /// The engine bridge's cancel handle (interrupts the JS-side
-  /// generation); null for engines without one (gemma).
+  /// generation); null for engines without one.
   void Function()? cancelJs;
 
   /// The done gate's future (what [pumpOnDeviceChat] awaits).

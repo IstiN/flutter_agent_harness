@@ -15,9 +15,8 @@ import 'package:fa_ui/src/strings/fa_ui_strings.dart';
 
 /// A bring-your-own-key provider preset. Hosted presets talk to an
 /// OpenAI-compatible chat-completions endpoint; [webllm] runs a small model
-/// on-device in the browser (no key, no endpoint); [gemma] runs Gemma 4
-/// on-device via the `flutter_gemma` plugin on iOS/Android;
-/// [transformersJs] runs Gemma 4 ONNX on-device in the browser via
+/// on-device in the browser (no key, no endpoint); [transformersJs] runs
+/// ONNX models on-device in the browser via
 /// `@huggingface/transformers`.
 ///
 /// Presets are built-in and cannot be deleted; user-added providers
@@ -43,7 +42,6 @@ enum ProviderPreset {
   minimax(baseUrl: 'https://api.minimax.io/v1', defaultModel: 'MiniMax-M3'),
   custom(baseUrl: null, defaultModel: ''),
   webllm(baseUrl: null, defaultModel: ''),
-  gemma(baseUrl: null, defaultModel: ''),
   transformersJs(baseUrl: null, defaultModel: '');
 
   const ProviderPreset({required this.baseUrl, required this.defaultModel});
@@ -65,7 +63,6 @@ enum ProviderPreset {
   /// key/model/URL fields with a model picker and a download bar.
   bool get isOnDevice =>
       this == ProviderPreset.webllm ||
-      this == ProviderPreset.gemma ||
       this == ProviderPreset.transformersJs;
 
   /// Short label shown in the provider picker.
@@ -82,7 +79,6 @@ enum ProviderPreset {
     ProviderPreset.minimax => strings.settingsPresetMinimax,
     ProviderPreset.custom => strings.settingsPresetCustom,
     ProviderPreset.webllm => strings.settingsPresetWebllm,
-    ProviderPreset.gemma => strings.settingsPresetGemma,
     ProviderPreset.transformersJs => strings.settingsPresetTransformersJs,
   };
 
@@ -101,9 +97,7 @@ enum ProviderPreset {
     ProviderPreset.dial => strings.settingsCorsNoteCustom,
     ProviderPreset.minimax => strings.settingsCorsNoteCustom,
     ProviderPreset.custom => strings.settingsCorsNoteCustom,
-    ProviderPreset.webllm ||
-    ProviderPreset.gemma ||
-    ProviderPreset.transformersJs => null,
+    ProviderPreset.webllm || ProviderPreset.transformersJs => null,
   };
 
   /// Infers a preset from a configured base URL (for env-prefilled setups).

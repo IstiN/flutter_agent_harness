@@ -19,14 +19,13 @@ const sandboxSystemPrompt =
 const webLlmNoToolsNote =
     'IMPORTANT: this conversation runs on-device (WebLLM) with NO tools registered — no shell, no file access. Do not emit tool calls, function calls, or shell/file actions; there is nothing to execute them. Answer in plain text only.';
 
-/// Note appended to the transformers.js (on-device Gemma) system prompt when
-/// the agent's tool registry is empty: the prompt-tools wrapper is a
-/// passthrough without tools, so the model must be told plainly that it cannot
-/// call any.
+/// Note appended to the transformers.js (on-device) system prompt when the
+/// agent's tool registry is empty: the prompt-tools wrapper is a passthrough
+/// without tools, so the model must be told plainly that it cannot call any.
 ///
 /// Source: `flutter_app/prompts/transformers_js_no_tools_note.md`.
 const transformersJsNoToolsNote =
-    'IMPORTANT: this conversation runs on-device (Gemma via transformers.js) with NO tools registered — no shell, no file access. Do not emit tool calls, function calls, or shell/file actions; there is nothing to execute them. Answer in plain text only.';
+    'IMPORTANT: this conversation runs on-device (via transformers.js) with NO tools registered — no shell, no file access. Do not emit tool calls, function calls, or shell/file actions; there is nothing to execute them. Answer in plain text only.';
 
 /// System prompt section describing the agent messaging fabric (own mailbox,
 /// discovery, cross-instance addressing) for the Flutter app.

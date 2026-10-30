@@ -182,9 +182,6 @@ abstract class FaUiStrings {
   /// Label of the on-device WebLLM preset.
   String get settingsPresetWebllm;
 
-  /// Label of the on-device Gemma preset.
-  String get settingsPresetGemma;
-
   /// Label of the on-device transformers.js preset.
   String get settingsPresetTransformersJs;
 
@@ -462,10 +459,7 @@ class FaUiStringsEn extends FaUiStrings {
   @override
   String get settingsPresetWebllm => 'On-device (WebLLM)';
   @override
-  String get settingsPresetGemma => 'On-device (Gemma)';
-  @override
-  String get settingsPresetTransformersJs =>
-      'On-device (Gemma, transformers.js)';
+  String get settingsPresetTransformersJs => 'On-device (transformers.js)';
   @override
   String get settingsModelsFetching => 'Fetching models from the endpoint…';
   @override
@@ -709,10 +703,8 @@ class FaUiStringsRu extends FaUiStrings {
   @override
   String get settingsPresetWebllm => 'На устройстве (WebLLM)';
   @override
-  String get settingsPresetGemma => 'На устройстве (Gemma)';
-  @override
   String get settingsPresetTransformersJs =>
-      'На устройстве (Gemma, transformers.js)';
+      'На устройстве (transformers.js)';
   @override
   String get settingsModelsFetching => 'Загрузка списка моделей с эндпоинта…';
   @override

@@ -1971,8 +1971,8 @@ jobs:
       # generated .flutter-plugins-dependencies; the gate fails the PR when a
       # native iOS/macOS plugin resolved by the committed pubspec.lock has no
       # pod in the platform's Podfile.lock, or its pod is pinned at a stale
-      # version vs the resolved podspec (the gh-1274 class, plus the
-      # flutter_gemma 1.8.0-vs-1.11.3 skew this PR fixed). Self-tested in
+      # version vs the resolved podspec (the gh-1274 class; the historical
+      # flutter_gemma 1.8.0-vs-1.11.3 skew motivated it). Self-tested in
       # Static gates (AC2).
       - name: Lockfile pod-sync gate (gh-1296 NG1)
         run: bash scripts/check_lockfiles.sh pod-sync
@@ -2891,12 +2891,6 @@ jobs:
 
       - uses: ./.github/actions/flutter-pub-get
 
-      # gh-1468: pre-seed the flutter_gemma LiteRT-LM Android cache so the
-      # build hook never downloads litertlm-android_arm64.tar.gz mid-build
-      # — one release-asset CDN 500 red'd this leg and the aggregate
-      # Quality gate. Same hardening as the macOS companion-dylibs step.
-      - uses: ./.github/actions/flutter-gemma-android-seed
-
       # gh-1655: pre-install the Flutter-pinned NDK so Gradle configuration
       # never auto-installs it mid-build — that path has no retry, and one
       # truncated download ("Error on ZipFile unknown archive") red'd this
@@ -3145,27 +3139,6 @@ jobs:
           ls -la "$DEST/WasmRun.xcframework"
 
       - uses: ./.github/actions/flutter-pub-get
-
-      # The macOS Podfile bundles the LiteRT-LM companion dylibs via a
-      # Runner script phase that fails on a fresh runner ("Could not find
-      # macOS companion dylibs") — seed from the pinned upstream native
-      # release, sha256-verified (same incantation as build-macos.yml).
-      - name: Ensure flutter_gemma macOS companion dylibs
-        run: |
-          set -euo pipefail
-          GEMMA_CACHE="$HOME/Library/Caches/flutter_gemma/native/macos_arm64"
-          if [ -f "$GEMMA_CACHE/libGemmaModelConstraintProvider.dylib" ]; then
-            echo "companion dylibs already cached"
-          else
-            echo "seeding companion dylibs from flutter_gemma native-v0.16.0"
-            mkdir -p "$GEMMA_CACHE"
-            curl -L --retry 3 --retry-all-errors --retry-delay 10 --max-time 600 \
-              -o /tmp/litertlm-macos_arm64.tar.gz \
-              https://github.com/DenisovAV/flutter_gemma/releases/download/native-v0.16.0/litertlm-macos_arm64.tar.gz
-            echo "c597554a7a5cdf099658227099a54ef4916c5802b9182757e656e1788f9426b6  /tmp/litertlm-macos_arm64.tar.gz" | shasum -a 256 -c -
-            tar xzf /tmp/litertlm-macos_arm64.tar.gz -C "$GEMMA_CACHE"
-          fi
-          ls -la "$GEMMA_CACHE"
 
       - name: flutter build macos (debug)
         run: |

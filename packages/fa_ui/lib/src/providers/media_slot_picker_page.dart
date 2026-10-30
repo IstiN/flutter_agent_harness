@@ -91,7 +91,7 @@ class MediaSlotProviderPickerPage extends StatelessWidget {
   /// clearing it makes no sense there.
   final bool allowMainConnection;
 
-  /// On-device engine routes (Gemma/WebLLM/…), rendered as tiles before the
+  /// On-device engine routes (WebLLM/…), rendered as tiles before the
   /// Add provider row (the default-chat flow offers them; role/media
   /// overrides don't).
   final List<FaOnDeviceRoute> onDeviceRoutes;

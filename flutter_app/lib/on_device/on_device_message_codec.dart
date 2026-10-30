@@ -2,8 +2,8 @@
 // Use of this source code is governed by a MIT license that can be found
 // in the LICENSE file.
 
-/// One shared message walk for the three on-device providers
-/// (gemma, transformers.js, WebLLM): a harness [Context] projects onto
+/// One shared message walk for the on-device providers
+/// (transformers.js, WebLLM): a harness [Context] projects onto
 /// provider-neutral [OnDeviceMessage] records through an
 /// [OnDeviceCodecProfile]; each provider's codec is a tiny adapter mapping
 /// the neutral records onto its engine's chat-message type.
@@ -12,13 +12,13 @@
 /// join multi-part text with newlines, degrade images with an omission
 /// note, render historical tool calls, render tool results with a
 /// `(no output)` fallback — and the profile carries the wire quirks:
-/// the system message policy (gemma travels its system prompt through a
-/// separate `systemInstruction` parameter and emits no system message),
+/// the system message policy (transformers.js travels its system prompt
+/// through a separate `systemInstruction` parameter and emits no system
+/// message),
 /// the image policy (transformers.js passes decodable `data:` URIs when
-/// the preset supports vision; gemma/WebLLM are text-only), and the
-/// tool-call/tool-result shapes (gemma emits a separate OpenAI-style
-/// `tool_call` message + a `tool_result` role; transformers.js/WebLLM
-/// inline `[tool call: …]` lines and a `[tool result]` user header).
+/// the preset supports vision; WebLLM is text-only), and the
+/// tool-call/tool-result shapes (transformers.js/WebLLM inline
+/// `[tool call: …]` lines and a `[tool result]` user header).
 library;
 
 import 'dart:convert';
@@ -27,7 +27,7 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
 /// Provider-neutral projection of one harness message onto an on-device
 /// engine's wire shape. [images] holds `data:` URIs (transformers.js
-/// vision); [toolName] travels only on gemma's `tool_result` role.
+/// vision); [toolName] travels only on `tool_result` roles.
 typedef OnDeviceMessage = ({
   String role,
   String content,
@@ -58,11 +58,11 @@ final class OnDeviceCodecProfile {
   projectImages;
 
   /// The inline `[tool call: …]` text line for a historical tool call, or
-  /// null when calls travel as separate messages (gemma).
+  /// null when calls travel inline instead of separate messages.
   final String? Function(ToolCall call) toolCallLine;
 
   /// Extra messages a historical tool-call turn emits beyond the text
-  /// message (gemma's OpenAI-style `tool_call` envelope; empty for the
+  /// message (an OpenAI-style `tool_call` envelope; empty for the
   /// inline-line providers).
   final List<OnDeviceMessage> Function(List<ToolCall> calls)
   extraAssistantMessages;
