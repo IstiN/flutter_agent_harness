@@ -458,7 +458,9 @@ extension on AgentCli {
   /// Fetches model lists for the env-keyed catalog providers (a key in the
   /// environment but no saved entry — the FA_PROVIDER_* / out-of-the-box
   /// path). Split out of [_refreshAllProvidersModelCache] to keep its
-  /// cyclomatic complexity under the CRAP ratchet; behavior unchanged.
+  /// cyclomatic complexity under the CRAP ratchet. The gh-1990 review
+  /// round 2 wiring adds the fetch-note report (the Copilot empty-answer
+  /// reason) — the cached ids themselves are unchanged.
   Future<void> _refreshEnvKeyedProviders(String activeProvider) async {
     // Env-keyed catalog providers: a provider whose key sits in the
     // environment (ZAI_API_KEY, MINIMAX_API_KEY, ...) is usable out of

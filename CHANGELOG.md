@@ -35,7 +35,14 @@ block a release again.
   the field, and the Copilot connect sheet shows the reason above the
   manual model id. The legacy `fetchModelsForEndpoint` answers are
   unchanged (parity); the filter criteria themselves are unchanged
-  (pi-mono parity — only the reporting is new).
+  (pi-mono parity — only the reporting is new). Review round 2: the
+  `fetch notes:` wiring covers the unsaved sibling paths too (the
+  active-catalog and env-keyed Copilot fetches surface the same named
+  failure instead of a silent seed fallback), the connect flow's
+  `no models:` line reuses `ModelsFetchReport.reasonText` (the last
+  hand-rolled `message — hint` join), and the `ModelsFetchReport`
+  docs scope the diagnostic contract to the dialects that name their
+  failure branches.
 - feat(network): channel payload sender block — app members' channel
   messages carry `{"text": …, "sender": {"name": …, "id": …}}` (public
   base64 JSON and keyed fanet1 plaintext alike), so DAP agents can
