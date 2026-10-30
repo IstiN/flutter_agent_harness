@@ -3984,5 +3984,16 @@
       "cacheRead": 7858688,
       "model": "kimi-for-coding"
     }
+  ],
+  "pr-2006": [
+    {
+      "leg": "review",
+      "at": "2026-10-30T21:10:33Z",
+      "prompt": 162492,
+      "completion": 42739,
+      "total": 205231,
+      "cacheRead": 11038912,
+      "model": "glm-5.3-flash"
+    }
   ]
 }
