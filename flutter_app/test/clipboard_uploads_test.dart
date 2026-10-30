@@ -2,338 +2,238 @@
 // Use of this source code is governed by a MIT license that can be found
 // in the LICENSE file.
 
-import 'dart:async';
-import 'dart:convert';
 import 'dart:io';
-
-import 'package:fa/services/clipboard_uploads.dart';
 import 'package:fa_ui/fa_ui.dart' show FaClipboardUnsupportedException;
-import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:super_clipboard/super_clipboard.dart';
+import 'package:fa/services/clipboard_files.dart';
+import 'package:fa/services/clipboard_files_io.dart';
+import 'package:fa/services/clipboard_uploads.dart';
 
-/// Pins the type-aware clipboard walk (issue #1979 AC3/AC4): copied file
-/// references read per item in order, raw flavor priority
-/// (audio/video/pdf > images), the `paste-<ts>.<ext>` fallback name, and
-/// the unsupported-flavor hint contract (rich clipboard without plain text
-/// throws — the composer toasts it, never silence).
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  const filesChannel = MethodChannel('fa/clipboard_files');
+  const pasteboardChannel = MethodChannel('pasteboard');
+  final messenger =
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+
+  tearDown(() {
+    messenger.setMockMethodCallHandler(filesChannel, null);
+    messenger.setMockMethodCallHandler(pasteboardChannel, null);
+  });
+
+  /// Answers the native channel with [files] (name/bytes maps) and the
+  /// [unsupported] flag, recording whether it was consulted at all.
+  ({int calls}) answerNative({
+    List<Map<String, Object?>> files = const [],
+    bool unsupported = false,
+    Object? error,
+  }) {
+    var calls = 0;
+    messenger.setMockMethodCallHandler(filesChannel, (call) async {
+      calls++;
+      if (call.method != 'readClipboardFiles') {
+        throw MissingPluginException();
+      }
+      if (error != null) throw error;
+      return {'files': files, 'unsupported': unsupported};
+    });
+    return (calls: calls);
+  }
+
+  void answerPasteboard(Uint8List? bytes) {
+    messenger.setMockMethodCallHandler(pasteboardChannel, (call) async {
+      if (call.method != 'image') return null;
+      return bytes;
+    });
+  }
+
   group('readClipboardUploads', () {
-    test(
-      'reads every file-reference item in order (Finder/Explorer copy)',
-      () async {
-        final dir = await Directory.systemTemp.createTemp('fa_clip_test');
-        addTearDown(() => dir.delete(recursive: true));
-        final a = File('${dir.path}/notes.txt');
-        final b = File('${dir.path}/sheet.csv');
-        await a.writeAsString('hello');
-        await b.writeAsString('x,y\n1,2');
-
-        final files = await readClipboardUploads(
-          source: ClipboardReader([
-            _FakeItem(
-              values: {Formats.fileUri: Uri.file(a.path)},
-              platformFormats: const ['public.file-url'],
-            ),
-            _FakeItem(
-              values: {Formats.fileUri: Uri.file(b.path)},
-              platformFormats: const ['public.file-url'],
-            ),
-          ]),
-        );
-
-        expect(files.map((f) => f.name).toList(), ['notes.txt', 'sheet.csv']);
-        expect(utf8.decode(files[0].bytes), 'hello');
-        expect(utf8.decode(files[1].bytes), 'x,y\n1,2');
-        // Names are what the outgoing message references; the MIME table
-        // has no .txt/.csv rows yet, so the derived type stays generic.
-        expect(files[0].mimeType, 'application/octet-stream');
-      },
-    );
-
-    test('an audio flavor beats an image flavor and keeps its real name '
-        '(files > audio/video > image)', () async {
-      final files = await readClipboardUploads(
-        source: ClipboardReader([
-          _FakeItem(
-            advertised: {Formats.mp3, Formats.png},
-            files: {
-              Formats.mp3: ([9, 9, 9], 'voice memo.mp3'),
-              Formats.png: ([1, 2, 3], null),
-            },
-            platformFormats: const ['public.mp3'],
-          ),
-        ]),
+    test('stages native file refs first and never consults the image '
+        'reader', () async {
+      answerNative(
+        files: [
+          {
+            'name': 'report.pdf',
+            'bytes': Uint8List.fromList([1, 2, 3]),
+          },
+          {
+            'name': 'take.mp3',
+            'bytes': Uint8List.fromList([4]),
+          },
+        ],
       );
-
-      expect(files, hasLength(1));
-      expect(files.single.name, 'voice memo.mp3');
-      expect(files.single.mimeType, 'audio/mpeg');
-    });
-
-    test('an image-only clipboard synthesizes paste-<ts>.<ext> with the '
-        'derived MIME', () async {
-      final before = DateTime.now().millisecondsSinceEpoch;
-      final files = await readClipboardUploads(
-        source: ClipboardReader([
-          _FakeItem(
-            advertised: {Formats.png},
-            files: {
-              Formats.png: ([1, 2, 3, 4], null),
-            },
-            platformFormats: const ['public.png'],
-          ),
-        ]),
-      );
-
-      expect(files, hasLength(1));
-      expect(files.single.name, matches(RegExp(r'^paste-\d+\.png$')));
-      final stamp = int.parse(files.single.name.split('-')[1].split('.').first);
-      expect(stamp, greaterThanOrEqualTo(before));
-      expect(files.single.mimeType, 'image/png');
-    });
-
-    test('an empty clipboard is a silent no-op', () async {
-      final files = await readClipboardUploads(
-        source: ClipboardReader(const []),
-      );
-      expect(files, isEmpty);
-    });
-
-    test('a rich clipboard with no storable flavor and no text throws the '
-        'unsupported hint (never silence)', () async {
-      final reader = ClipboardReader([
-        // HTML-only copy: advertised flavor that never delivers a payload,
-        // no plain text — exactly the dead-end AC3 forbids hiding.
-        _FakeItem(
-          advertised: {Formats.htmlText},
-          platformFormats: const ['public.html'],
-        ),
-      ]);
-
-      await expectLater(
-        readClipboardUploads(source: reader),
-        throwsA(isA<FaClipboardUnsupportedException>()),
-      );
-    });
-
-    test('unsupported rich flavors with plain text do NOT throw — the '
-        'composer applies the text-paste rules', () async {
-      final files = await readClipboardUploads(
-        source: ClipboardReader([
-          _FakeItem(
-            advertised: {Formats.htmlText, Formats.plainText},
-            values: {Formats.plainText: 'rich text copy'},
-            platformFormats: const ['public.html'],
-          ),
-        ]),
-      );
-      expect(files, isEmpty);
-    });
-
-    test(
-      'non-file and nameless URIs are skipped, real refs still stage',
-      () async {
-        final dir = await Directory.systemTemp.createTemp('fa_clip_test');
-        addTearDown(() => dir.delete(recursive: true));
-        final a = File('${dir.path}/real.txt');
-        await a.writeAsString('ok');
-
-        final files = await readClipboardUploads(
-          source: ClipboardReader([
-            _FakeItem(
-              values: {Formats.fileUri: Uri.parse('https://example.com/x')},
-            ),
-            _FakeItem(values: {Formats.fileUri: Uri.file('/')}), // no segment
-            _FakeItem(
-              values: {Formats.fileUri: Uri.file('${dir.path}/gone.txt')},
-              platformFormats: const ['public.file-url'],
-            ),
-            _FakeItem(
-              values: {Formats.fileUri: Uri.file(a.path)},
-              platformFormats: const ['public.file-url'],
-            ),
-          ]),
-        );
-
-        expect(files.map((f) => f.name).toList(), ['real.txt']);
-      },
-    );
-
-    test('an advertised-but-undeliverable flavor falls through to the next '
-        'flavor and to text', () async {
-      // canProvide(mp3) is optimistic: no payload behind it. The walk
-      // continues to the deliverable png and stages that.
-      final files = await readClipboardUploads(
-        source: ClipboardReader([
-          _FakeItem(
-            advertised: {Formats.mp3, Formats.png},
-            files: {
-              Formats.png: ([7, 8], null),
-            },
-            platformFormats: const ['public.png'],
-          ),
-        ]),
-      );
-      expect(files, hasLength(1));
-      expect(files.single.mimeType, 'image/png');
-
-      // Undeliverable everything + no text → the unsupported hint.
-      await expectLater(
-        readClipboardUploads(
-          source: ClipboardReader([
-            _FakeItem(
-              advertised: {Formats.png},
-              platformFormats: const ['public.png'],
-            ),
-          ]),
-        ),
-        throwsA(isA<FaClipboardUnsupportedException>()),
-      );
-    });
-
-    test('a flavor payload that fails to read falls through instead of '
-        'throwing', () async {
-      final files = await readClipboardUploads(
-        source: ClipboardReader([
-          _FakeItem(
-            advertised: {Formats.png, Formats.plainText},
-            files: {Formats.png: (const _FailingBytes(), 'broken.png')},
-            values: {Formats.plainText: 'text stays'},
-            platformFormats: const ['public.png'],
-          ),
-        ]),
-      );
-      expect(files, isEmpty); // text-paste rules take over, no throw
-    });
-
-    test('no source probes the system clipboard and stays silent when it '
-        'is unavailable (VM test frame)', () async {
-      // On the VM test frame the super_clipboard plugin is unregistered:
-      // the probe either reports no API or fails to read — both must land
-      // as a silent empty result.
+      answerPasteboard(Uint8List.fromList([9, 9, 9]));
       final files = await readClipboardUploads();
-      expect(files, isEmpty);
+      expect(files, hasLength(2));
+      expect(files[0].name, 'report.pdf');
+      expect(files[0].mimeType, 'application/pdf');
+      expect(files[0].bytes, [1, 2, 3]);
+      expect(files[1].name, 'take.mp3');
+      expect(files[1].mimeType, 'audio/mpeg');
+    });
+
+    test(
+      'falls through to Pasteboard.image when no files are staged',
+      () async {
+        answerNative();
+        answerPasteboard(Uint8List.fromList([7, 8, 9]));
+        final files = await readClipboardUploads();
+        expect(files, hasLength(1));
+        expect(files.single.name, startsWith('paste-'));
+        expect(files.single.name, endsWith('.png'));
+        expect(files.single.mimeType, 'image/png');
+        expect(files.single.bytes, [7, 8, 9]);
+      },
+    );
+
+    test('missing native handler degrades to the image path', () async {
+      messenger.setMockMethodCallHandler(filesChannel, (call) async {
+        throw MissingPluginException();
+      });
+      answerPasteboard(Uint8List.fromList([5]));
+      final files = await readClipboardUploads();
+      expect(files, hasLength(1));
+      expect(files.single.mimeType, 'image/png');
+    });
+
+    test(
+      'empty clipboard (nothing stageable, no image) is a silent empty',
+      () async {
+        answerNative();
+        answerPasteboard(null);
+        expect(await readClipboardUploads(), isEmpty);
+      },
+    );
+
+    test('file-shaped-but-unstageable content throws the unsupported hint '
+        'instead of silence', () async {
+      answerNative(unsupported: true);
+      answerPasteboard(null);
+      expect(
+        readClipboardUploads,
+        throwsA(isA<FaClipboardUnsupportedException>()),
+      );
+    });
+
+    test('channel-level failure stays silent (not a stageable-content '
+        'signal)', () async {
+      answerNative(error: PlatformException(code: 'oops'));
+      answerPasteboard(null);
+      expect(await readClipboardUploads(), isEmpty);
     });
   });
-}
 
-/// A scripted clipboard item: the formats it advertises, the value-flavor
-/// payloads (file URIs, plain text) and the file-flavor payloads it can
-/// deliver. Only the members the walk actually touches behave; the rest
-/// are inert defaults.
-class _FakeItem extends ClipboardDataReader {
-  _FakeItem({
-    this.advertised = const {},
-    this.values = const {},
-    this.files = const {},
-    this.platformFormats = const [],
+  group('readClipboardFiles (channel contract)', () {
+    test('malformed entries are skipped, well-formed kept', () async {
+      messenger.setMockMethodCallHandler(filesChannel, (call) async {
+        return {
+          'files': [
+            {
+              'name': 'keep.txt',
+              'bytes': Uint8List.fromList([1]),
+            },
+            {
+              'bytes': Uint8List.fromList([2]),
+            }, // no name
+            {'name': 'bad-bytes', 'bytes': 'nope'}, // not bytes
+            'junk', // not a map
+            {'name': 'ok.bin', 'bytes': Uint8List(0)},
+          ],
+          'unsupported': false,
+        };
+      });
+      final probe = await readClipboardFilesViaChannelForTest();
+      expect(probe.files.map((f) => f.name), ['keep.txt', 'ok.bin']);
+      expect(probe.unsupported, isFalse);
+    });
+
+    test('null answer reads as an empty probe', () async {
+      messenger.setMockMethodCallHandler(filesChannel, (call) async => null);
+      final probe = await readClipboardFilesViaChannelForTest();
+      expect(probe.files, isEmpty);
+      expect(probe.unsupported, isFalse);
+    });
   });
 
-  final Set<DataFormat> advertised;
-  final Map<ValueFormat<Object>, Object> values;
-  final Map<FileFormat, (Object, String?)> files;
-  @override
-  final List<String> platformFormats;
+  group('readClipboardFilesUriList (Linux)', () {
+    late Directory scratch;
 
-  @override
-  List<DataFormat> getFormats(List<DataFormat> allFormats) =>
-      allFormats.where(advertised.contains).toList();
+    setUp(() => scratch = Directory.systemTemp.createTempSync('fah_clip'));
+    tearDown(() => scratch.deleteSync(recursive: true));
 
-  @override
-  Future<T?> readValue<T extends Object>(ValueFormat<T> format) async {
-    final value = values[format];
-    return value == null ? null : value as T;
-  }
-
-  @override
-  ReadProgress? getValue<T extends Object>(
-    ValueFormat<T> format,
-    AsyncValueChanged<T?> onValue, {
-    ValueChanged<Object>? onError,
-  }) {
-    final value = values[format];
-    if (value == null) return null;
-    scheduleMicrotask(() => onValue(value as T?));
-    return _FakeProgress();
-  }
-
-  @override
-  ReadProgress? getFile(
-    FileFormat? format,
-    AsyncValueChanged<DataReaderFile> onFile, {
-    ValueChanged<Object>? onError,
-    bool allowVirtualFiles = true,
-    bool synthesizeFilesFromURIs = true,
-  }) {
-    final file = files[format];
-    if (file == null) return null;
-    final (payload, fileName) = file;
-    final dataReaderFile = payload is _FailingBytes
-        ? _FakeFile.failing(fileName)
-        : _FakeFile(Uint8List.fromList(payload as List<int>), fileName);
-    scheduleMicrotask(() => onFile(dataReaderFile));
-    return _FakeProgress();
-  }
-
-  @override
-  bool isSynthesized(DataFormat format) => false;
-
-  @override
-  bool isVirtual(DataFormat format) => false;
-
-  @override
-  Future<String?> getSuggestedName() async => null;
-
-  @override
-  Future<VirtualFileReceiver?> getVirtualFileReceiver({FileFormat? format}) =>
-      Future.value(null);
-}
-
-/// Marker payload: the flavor "delivers" a file whose read fails.
-class _FailingBytes {
-  const _FailingBytes();
-}
-
-class _FakeFile implements DataReaderFile {
-  _FakeFile(this.bytes, this.fileName);
-
-  _FakeFile.failing(this.fileName) : bytes = null;
-
-  final Uint8List? bytes;
-
-  @override
-  final String? fileName;
-
-  @override
-  int? get fileSize => bytes?.length;
-
-  @override
-  Stream<Uint8List> getStream() => Stream.value(bytes!);
-
-  @override
-  void close() {}
-
-  @override
-  Future<Uint8List> readAll() async {
-    final b = bytes;
-    if (b == null) {
-      throw StateError('payload unavailable');
+    File note(String name) {
+      final file = File('${scratch.path}/$name');
+      file.writeAsBytesSync([name.length, 42]);
+      return file;
     }
-    return b;
-  }
-}
 
-class _FakeProgress implements ReadProgress {
-  final _fraction = ValueNotifier<double?>(1.0);
-  final _cancellable = ValueNotifier<bool>(false);
+    test('uri-list entries stage as named files', () async {
+      final a = note('a.txt');
+      final b = note('b.mp3');
+      final probe = await readClipboardFilesUriList(
+        runProcess: (_, _) async =>
+            ProcessResult(0, 0, 'file://${a.path}\nfile://${b.path}\n', ''),
+      );
+      expect(probe.files, hasLength(2));
+      expect(probe.files[0].name, 'a.txt');
+      expect(probe.files[0].bytes, [5, 42]);
+      expect(probe.files[1].name, 'b.mp3');
+    });
 
-  @override
-  ValueListenable<double?> get fraction => _fraction;
+    test('xclip failure falls through to wl-paste', () async {
+      final file = note('c.png');
+      final seen = <String>[];
+      final probe = await readClipboardFilesUriList(
+        runProcess: (executable, _) async {
+          seen.add(executable);
+          if (executable == 'xclip') {
+            return ProcessResult(0, 1, '', 'xclip: no display');
+          }
+          return ProcessResult(0, 0, 'file://${file.path}', '');
+        },
+      );
+      expect(seen, ['xclip', 'wl-paste']);
+      expect(probe.files.single.name, 'c.png');
+    });
 
-  @override
-  ValueListenable<bool> get cancellable => _cancellable;
+    test('only non-file URIs surface the unsupported flag', () async {
+      final probe = await readClipboardFilesUriList(
+        runProcess: (_, _) async =>
+            ProcessResult(0, 0, 'https://example.com/file.txt\n', ''),
+      );
+      expect(probe.files, isEmpty);
+      expect(probe.unsupported, isTrue);
+    });
 
-  @override
-  void cancel() {}
+    test('both CLIs absent is a silent empty', () async {
+      final probe = await readClipboardFilesUriList(
+        runProcess: (_, _) async => ProcessResult(0, 1, '', 'not found'),
+      );
+      expect(probe.files, isEmpty);
+      expect(probe.unsupported, isFalse);
+    });
+
+    test('unplain uri encoding resolves through Uri parsing', () async {
+      final dir = Directory.systemTemp.createTempSync('fah clip enc');
+      final file = File('${dir.path}/with space.txt');
+      file.writeAsBytesSync([1]);
+      final encoded = Uri.file(file.path).toString();
+      final probe = await readClipboardFilesUriList(
+        runProcess: (_, _) async => ProcessResult(0, 0, encoded, ''),
+      );
+      dir.deleteSync(recursive: true);
+      expect(probe.files.single.name, 'with space.txt');
+    });
+  });
+
+  group('readClipboardFilesWin32 (dispatch guard)', () {
+    test('is a silent empty off-Windows (the FFI path itself needs a '
+        'Windows device run)', () async {
+      final probe = await readClipboardFilesWin32();
+      expect(probe.files, isEmpty);
+      expect(probe.unsupported, isFalse);
+    });
+  });
 }

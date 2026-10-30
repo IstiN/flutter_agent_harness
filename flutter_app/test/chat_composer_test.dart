@@ -592,7 +592,7 @@ void main() {
       addTearDown(service.dispose);
       await service.initialize();
       // No clipboardReader override: the app adapter probes the real
-      // clipboard through super_clipboard; with no plugin registered in
+      // clipboard through the native readers; with no plugin registered in
       // the test frame the probe fails and the composer falls back to the
       // plain text paste.
       await _pumpComposer(tester, service);

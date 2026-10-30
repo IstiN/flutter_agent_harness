@@ -11,8 +11,7 @@ list(APPEND FLUTTER_PLUGIN_LIST
   firebase_core
   flutter_gemma
   flutter_js
-  irondash_engine_context
-  super_native_extensions
+  pasteboard
   url_launcher_windows
 )
 

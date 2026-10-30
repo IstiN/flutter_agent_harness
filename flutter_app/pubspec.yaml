@@ -48,18 +48,20 @@ dependencies:
   # Mobile-friendly filesystem root and image picking.
   path_provider: ^2.1.6
   image_picker: ^1.2.3
-  # Type-aware clipboard paste for the composer's smart paste (issue
-  # #1979): copied file refs, audio/video, and images — all platforms.
-  super_clipboard: ^0.9.1
+  # Clipboard images for the composer's smart paste (Pasteboard.image —
+  # restored per the owner's native-clipboard decision; no Rust, no
+  # super_native_extensions chain). Clipboard FILE reading is our own thin
+  # per-platform code: `fa/clipboard_files` method channel (iOS
+  # UIPasteboard / Android ClipData+ContentResolver / macOS NSPasteboard),
+  # win32 FFI (CF_HDROP), and text/uri-list (Linux) — see
+  # lib/services/clipboard_files.dart.
+  pasteboard: ^0.5.0
+  # Native clipboard file reads on Windows (CF_HDROP via FFI, issue
+  # #1979). Resolves to the same 6.x already required by pty2.
+  win32: ^6.0.0
   # Any-type multi-select system file picker (issue #1979 AC1): NSOpenPanel
   # / Windows/Linux dialogs / iOS document picker / Android SAF / web input.
-  # (file_picker is incompatible with super_clipboard: windows_file_picker
-  # hard-pins win32 ^6.3.0 while super_clipboard's device_info_plus caps
-  # win32 <6.0.0.)
   file_selector: ^1.1.0
-  # XFile for reading clipboard file references (already resolved
-  # transitively; pinned for the direct import in clipboard_uploads.dart).
-  cross_file: ^0.3.5+5
   # Image decode/encode for the Gemini adapter (PNG → JPEG conversion
   # strips alpha/EXIF that Gemini's vision encoder rejects).
   image: ^4.5.4
@@ -251,18 +253,6 @@ dependency_overrides:
   # archive — the packaging/pin-fetch code paths that do run in CI, not in
   # the app. ponytail: if a client path ever needs pin_fetcher, revisit.
   archive: ^4.0.9
-  # super_clipboard 0.9.x (issue #1979) → super_native_extensions →
-  # device_info_plus <12 → win32 <6, which collides with pty2's win32 ^6.
-  # The dev line that lifts the cap (0.10.0-dev) instead requires a Rust
-  # toolchain at build/test time — a no-go for this repo's CI. The middle
-  # path: override device_info_plus to 13.x (win32 ^6 pair) — it is the
-  # SINGLE conflicting node, and super_native_extensions only touches
-  # DeviceInfoPlugin().deviceInfo + AndroidDeviceInfo.version.sdkInt
-  # (API-stable 10→13). Forcing win32 instead dragged win32_registry 2.1.0
-  # (a win32-5 client) against win32 6 APIs and broke the Android
-  # kernel_snapshot. ponytail: revisit when super_native_extensions ships
-  # a stable release past the device_info_plus cap.
-  device_info_plus: 13.3.0
   # (meta override removed with Flutter 3.47.4: the SDK now declares
   # meta ^1.18.3 and dart_tui 2.x declares ^1.19.0, so meta 1.19.0
   # resolves for both without an override.)

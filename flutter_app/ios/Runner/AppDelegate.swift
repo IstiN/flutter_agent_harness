@@ -32,6 +32,7 @@ import AuthenticationServices
     registerNotifyChannel(messenger: engineBridge.applicationRegistrar.messenger())
     registerVideoChannel(messenger: engineBridge.applicationRegistrar.messenger())
     registerWebAuthSessionChannel(messenger: engineBridge.applicationRegistrar.messenger())
+    registerClipboardFilesChannel(messenger: engineBridge.applicationRegistrar.messenger())
   }
 }
 
@@ -2415,5 +2416,78 @@ private func registerWebAuthSessionChannel(messenger: FlutterBinaryMessenger) {
     default:
       result(FlutterMethodNotImplemented)
     }
+  }
+}
+
+/// The `fa/clipboard_files` method channel: thin native clipboard FILE
+/// reading for the composer's smart paste (issue #1979 — owner decision:
+/// our own ~100-line reader instead of the super_native_extensions chain).
+/// `readClipboardFiles` walks `UIPasteboard.general.items`, picks the
+/// `public.file-url` flavors (what the Files app puts on the clipboard for
+/// "Copy" and share-sheet copies), and reads each file's bytes through its
+/// staged security-scoped URL. Answers
+/// `{files: [{name, bytes}], unsupported: bool}` — `unsupported` fires when
+/// file-shaped flavors were present but could not be staged (so the Dart
+/// side can show the explicit hint instead of silence).
+private func registerClipboardFilesChannel(messenger: FlutterBinaryMessenger) {
+  let channel = FlutterMethodChannel(
+    name: "fa/clipboard_files",
+    binaryMessenger: messenger,
+  )
+  channel.setMethodCallHandler { call, result in
+    switch call.method {
+    case "readClipboardFiles":
+      result(FaClipboardFilesReader.read())
+    default:
+      result(FlutterMethodNotImplemented)
+    }
+  }
+}
+
+private enum FaClipboardFilesReader {
+  static let maxFileBytes = 32 * 1024 * 1024
+
+  static func read() -> [String: Any] {
+    let pasteboard = UIPasteboard.general
+    var files: [[String: Any]] = []
+    var unsupported = false
+    for item in pasteboard.items {
+      for (uti, value) in item {
+        if uti == UTType.fileURL.identifier || uti == "public.file-url",
+          let entry = readFileValue(value) {
+          files.append(entry)
+        } else if uti == UTType.data.identifier || uti == "public.data" {
+          // Raw data flavor without a usable file URL: visible file-ish
+          // content we cannot stage → the unsupported hint.
+          unsupported = true
+        }
+      }
+    }
+    return ["files": files, "unsupported": unsupported]
+  }
+
+  /// Reads one pasteboard value: an NSURL (bridged file URL) or an archived
+  /// URL data blob, through its security-scoped access.
+  static func readFileValue(_ value: Any) -> [String: Any]? {
+    let url: URL?
+    if let direct = value as? URL {
+      url = direct
+    } else if let data = value as? Data {
+      url = try? NSKeyedUnarchiver.unarchivedObject(
+        ofClass: NSURL.self, from: data) as URL?
+    } else {
+      url = nil
+    }
+    guard let fileURL = url, fileURL.isFileURL else { return nil }
+    let scoped = fileURL.startAccessingSecurityScopedResource()
+    defer { if scoped { fileURL.stopAccessingSecurityScopedResource() } }
+    guard
+      let data = try? Data(contentsOf: fileURL),
+      data.count <= maxFileBytes
+    else { return nil }
+    return [
+      "name": fileURL.lastPathComponent,
+      "bytes": data,
+    ]
   }
 }

@@ -58,7 +58,7 @@ class ChatComposer extends StatelessWidget {
   final AsrTranscriber? asrTranscriber;
 
   /// Clipboard file reader for smart paste (files / audio / video /
-  /// images — issue #1979). Defaults to the super_clipboard-backed
+  /// images — issue #1979). Defaults to the native-readers-backed
   /// [readClipboardUploads]; tests inject a fake or null.
   final fa_ui.FaClipboardReader? clipboardReader;
 
