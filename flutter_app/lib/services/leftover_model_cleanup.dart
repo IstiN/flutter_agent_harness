@@ -85,7 +85,7 @@ const _maxEntries = 500;
 /// from [env] (IO walk) or the web storage root ([isWeb]). Best-effort:
 /// per-entry failures land in [GemmaLeftoverCleanupReport.failed] and the
 /// walk continues. Returns the report; logging is the caller's job (once
-/// per boot, via [logGemmaLeftoverCleanup]).
+/// per boot, via [cleanupGemmaLeftoversAndLog]).
 Future<GemmaLeftoverCleanupReport> cleanupGemmaLeftovers(
   ExecutionEnv env, {
   bool? isWeb,
