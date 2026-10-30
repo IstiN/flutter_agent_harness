@@ -530,13 +530,14 @@ void main() {
       // portal / proxy error page (HTTP 200, not JSON) must NOT throw
       // through the dispatch (the dialect contract at the top of
       // models_for_endpoint.dart) nor crash the unguarded CLI connect
-      // flow. It names its branch instead.
-      final (client, _) = fakeCopilot(
+      // flow. It names its branch instead. A fine-grained PAT pins the
+      // SINGLE-path shape (a PAT never falls into the exchange).
+      final (client, requests) = fakeCopilot(
         modelsBody: '<html>captive portal</html>',
       );
       final report = await fetchModelsForEndpointReport(
         'https://api.githubcopilot.com',
-        apiKey: '[REDACTED:Sensitive-Value]',
+        apiKey: 'github_pat_SINGLEPATH',
         provider: 'copilot',
         client: client,
       );
@@ -551,7 +552,44 @@ void main() {
         reason: 'a parse failure is a path failure — the dual-path '
             'fallback may retry the other credential route',
       );
+      expect(
+        requests,
+        hasLength(1),
+        reason: 'a fine-grained PAT never falls into the exchange',
+      );
     });
+
+    test(
+      'unparseable HTTP 200 body on OAuth retries pat-direct, then '
+      'names both paths',
+      () async {
+        final (client, requests) = fakeCopilot(
+          modelsBody: '<html>captive portal</html>',
+        );
+        final report = await fetchModelsForEndpointReport(
+          'https://api.githubcopilot.com',
+          apiKey: '[REDACTED:Sensitive-Value]',
+          provider: 'copilot',
+          client: client,
+        );
+        expect(report.info.$1, isEmpty);
+        final d = report.diagnostic!;
+        expect(
+          d.stage,
+          '${ModelsFetchDiagnostic.stageModels}'
+          '${ModelsFetchDiagnostic.stageDualJoiner}'
+          '${ModelsFetchDiagnostic.stageModels}',
+        );
+        expect(d.stages, ['models', 'models']);
+        expect(d.message, contains('unparseable payload'));
+        expect(
+          requests.where((r) => r.url.host != 'api.github.com'),
+          hasLength(2),
+          reason: 'the parse failure IS a path failure — the fallback '
+              'retry may run (plus the one exchange request)',
+        );
+      },
+    );
 
     test('unparseable HTTP 200 body answers empty on the legacy API',
         () async {

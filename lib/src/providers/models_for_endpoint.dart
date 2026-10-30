@@ -774,20 +774,7 @@ final class _CopilotDialect extends ModelListDialect {
         ),
       );
     }
-    final (info, fetchedCount, dropped, dataIsList) = parsed!;
-    } on FormatException catch (error) {
-      return ModelsFetchReport(
-        info: _emptyCopilotInfo,
-        diagnostic: ModelsFetchDiagnostic(
-          stage: ModelsFetchDiagnostic.stageModels,
-          path: path,
-          message:
-              '$base/models answered an unparseable payload (HTTP 200): '
-              '$error',
-          hint: extraHint,
-        ),
-      );
-    }
+    final (info, fetchedCount, dropped, dataIsList) = parsed;
     if (info.$1.isNotEmpty) {
       // Models listed — the partial-filter summary rides the note.
       return ModelsFetchReport(
