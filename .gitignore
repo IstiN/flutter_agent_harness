@@ -166,6 +166,9 @@ vendor/wasm_run_flutter/android/*.tar.gz
 .dmtools/fa-sessions/
 .dmtools/copilot-sessions/
 .dmtools/credential-helper.log
+# gh-1986 review: dmtools target-workingdir marker — local tool state,
+# never commit (was swept into the PR by a WIP auto-save once already).
+.dmtools-target-workingdir
 
 # factory runtime clone (checked out by the machine loop, never committed)
 factory-agents/

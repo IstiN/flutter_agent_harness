@@ -572,8 +572,10 @@ jobs:
         run: |
           if [ -z "$MACOS_CERTIFICATE_P12_BASE64" ]; then
             echo "⚠️  No signing certificate found — building unsigned (development only)"
+            signed=false
             echo "signed=false" >> $GITHUB_OUTPUT
           else
+            signed=true
             echo "✅ Signing certificate found — provisioning via ci-sign..."
             # gh-1865 model v3 (owner decision 2026-10-28): NO per-arch
             # temporary keychains, NO search-list writes, NO default-keychain
@@ -619,6 +621,30 @@ jobs:
           else
             echo "⚠️  No provisioning profile found — TestFlight will warn"
             echo "profile_embedded=false" >> $GITHUB_OUTPUT
+          fi
+          # gh-1986: keychain re-unlock WATCHDOG for the whole signing
+          # window. The persistent ci-signing.keychain-db auto-locks after
+          # ~5 min of inactivity, and `set-keychain-settings -t 0` cannot
+          # fix it non-interactively on this host (GUI SecurityAgent
+          # prompt — screenshot-confirmed in the Fastfile; ci-sign's
+          # bounded attempt is alarm-killed: "Alarm clock: 14" in this
+          # step's log). gh-1954's --force host re-provision (run
+          # 40857357741, 2026-10-29) re-created the keychain with the
+          # locking defaults, and this leg — unlike the iOS gym lane —
+          # had no unlock watchdog: run 41008008179 (gh-1986) then hit its
+          # FIRST codesign 2h14m after this step's unlock and BOTH matrix
+          # archs died with errSecInternalComponent on the same embedded
+          # framework (GoogleAppMeasurement), 0.4 s apart. Same fix
+          # gh-1954 gave gym: re-unlock every 60 s (unlock-keychain -p
+          # never prompts) across build, DMG/PKG packaging, notarize and
+          # the no-sandbox build; the always() Cleanup step stops it.
+          if [ "$signed" = "true" ]; then
+            ~/bin/ci-sign unlock
+            nohup bash -c 'while :; do sleep 60; ~/bin/ci-sign unlock >/dev/null 2>&1 || true; done' \
+              </dev/null >/dev/null 2>&1 &
+            disown
+            echo $! > ci-sign-watchdog.pid
+            echo "ci-sign unlock watchdog armed (pid $(cat ci-sign-watchdog.pid), 60s cadence — gh-1986)"
           fi
 
       - name: Build macOS release (${{ matrix.arch }})
@@ -1085,6 +1111,21 @@ jobs:
       - name: Cleanup
         if: always()
         run: |
+          # gh-1986: stop the keychain unlock watchdog armed in the
+          # provisioning step — the persistent ci-signing keychain is host
+          # state and stays; only this job's watchdog process is per-job.
+          # Existence-guarded + identity-checked: a provisioning failure
+          # before the watchdog armed must never kill a recycled pid.
+          if [ -f ci-sign-watchdog.pid ]; then
+            WPID="$(cat ci-sign-watchdog.pid)"
+            if ps -p "$WPID" -o command= 2>/dev/null | grep -q "ci-sign unlock"; then
+              kill "$WPID" 2>/dev/null || true
+              echo "ci-sign unlock watchdog stopped (pid $WPID)"
+            else
+              echo "ci-sign unlock watchdog pid $WPID no longer running — nothing to stop"
+            fi
+            rm -f ci-sign-watchdog.pid
+          fi
           # gh-1865 model v3: no per-job keychain to delete — the persistent
           # ci-signing keychain is host state, never removed from jobs.
           rm -f certificate.p12 installer.p12
