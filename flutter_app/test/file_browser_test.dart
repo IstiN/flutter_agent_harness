@@ -8,6 +8,9 @@ import 'package:fa/ui/widgets/file_browser.dart';
 import 'package:fa/ui/widgets/file_preview.dart';
 import 'package:fa/services/flutter_session_manager.dart';
 import 'package:fa/services/upload.dart';
+import 'package:fa/services/upload_picker_stub.dart'
+    if (dart.library.io) 'package:fa/services/upload_picker_io.dart'
+    if (dart.library.html) 'package:fa/services/upload_picker_web.dart';
 import 'package:fa/services/icloud_sync_service.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -500,13 +503,14 @@ void main() {
       expect((await env.exists('overflow.bin')).getOrThrow(), isFalse);
     });
 
-    testWidgets('host default: no platform picker, no upload button', (
-      tester,
-    ) async {
+    testWidgets('host default: the native picker wires the upload button '
+        '(issue #1979 — createUploadPicker is the file_selector-backed '
+        'IoUploadPicker on VM builds)', (tester) async {
       final env = await _seededEnv();
       await tester.pumpWidget(_wrap(FileBrowser(env: env)));
       await tester.pumpAndSettle();
-      expect(find.byTooltip('Upload files here'), findsNothing);
+      expect(createUploadPicker(), isNotNull);
+      expect(find.byTooltip('Upload files here'), findsOneWidget);
     });
 
     test('uploadBatchSizeError enforces the cap over the batch total', () {

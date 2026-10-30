@@ -23,7 +23,9 @@ import 'package:fa_ui/fa_ui.dart' show UploadFile;
 
 /// Opens the platform file chooser for arbitrary files.
 ///
-/// Implementations: `upload_picker_web.dart` (a hidden browser
+/// Implementations: `upload_picker_io.dart` (the native system chooser —
+/// NSOpenPanel / Windows/Linux dialogs / iOS document picker / Android SAF,
+/// issue #1979), `upload_picker_web.dart` (a hidden browser
 /// `<input type="file" multiple>`), `upload_picker_stub.dart` (none — the
 /// upload affordance hides itself when the factory returns `null`).
 abstract interface class UploadPicker {

@@ -94,7 +94,7 @@ void main() {
   Future<FakeChatService> pumpComposer(
     WidgetTester tester, {
     FaChatVoiceInput? voiceInput,
-    FaClipboardImageReader? clipboardImageReader,
+    FaClipboardReader? clipboardReader,
   }) async {
     final service = FakeChatService();
     await tester.pumpWidget(
@@ -103,7 +103,7 @@ void main() {
           body: ChatComposer(
             service: service,
             voiceInput: voiceInput,
-            clipboardImageReader: clipboardImageReader,
+            clipboardReader: clipboardReader,
           ),
         ),
       ),
@@ -447,11 +447,13 @@ void main() {
       stubClipboard(tester, text: 'caption');
       final service = await pumpComposer(
         tester,
-        clipboardImageReader: () async => (
-          name: 'shot.png',
-          bytes: Uint8List.fromList(k1x1Png),
-          mimeType: 'image/png',
-        ),
+        clipboardReader: () async => [
+          (
+            name: 'shot.png',
+            bytes: Uint8List.fromList(k1x1Png),
+            mimeType: 'image/png',
+          ),
+        ],
       );
       await smartPaste(tester);
       await tester.pumpAndSettle();
@@ -462,11 +464,44 @@ void main() {
       expect(find.byType(Image), findsOneWidget);
     });
 
-    testWidgets('no clipboard image falls through to text', (tester) async {
+    testWidgets('multiple clipboard files stage in order through the same '
+        'staging tail (issue #1979 AC3/AC8)', (tester) async {
+      stubClipboard(tester, text: 'notes');
+      final service = await pumpComposer(
+        tester,
+        clipboardReader: () async => [
+          (
+            name: 'memo.m4a',
+            bytes: Uint8List.fromList(const [1, 2, 3]),
+            mimeType: 'audio/mp4',
+          ),
+          (
+            name: 'report.pdf',
+            bytes: Uint8List.fromList(const [4, 5]),
+            mimeType: 'application/pdf',
+          ),
+        ],
+      );
+      await smartPaste(tester);
+      await tester.pumpAndSettle();
+
+      expect(service.stagedCalls.map((c) => c.name).toList(), [
+        'memo.m4a',
+        'report.pdf',
+      ]);
+      expect(fieldText(tester), 'notes');
+      // Type-aware chips: audio and video get their own icons; the pdf
+      // stays the generic file mark.
+      expect(find.byIcon(Icons.audiotrack), findsOneWidget);
+      expect(find.byIcon(Icons.insert_drive_file_outlined), findsOneWidget);
+      expect(find.textContaining('memo.m4a'), findsOneWidget);
+    });
+
+    testWidgets('no clipboard files falls through to text', (tester) async {
       stubClipboard(tester, text: 'just text');
       final service = await pumpComposer(
         tester,
-        clipboardImageReader: () async => null,
+        clipboardReader: () async => const [],
       );
       await smartPaste(tester);
 
@@ -474,16 +509,32 @@ void main() {
       expect(fieldText(tester), 'just text');
     });
 
-    testWidgets('a broken image reader falls through to text', (tester) async {
+    testWidgets('a broken file reader falls through to text', (tester) async {
       stubClipboard(tester, text: 'still text');
       final service = await pumpComposer(
         tester,
-        clipboardImageReader: () async => throw Exception('probe failed'),
+        clipboardReader: () async => throw Exception('probe failed'),
       );
       await smartPaste(tester);
 
       expect(service.stagedCalls, isEmpty);
       expect(fieldText(tester), 'still text');
+    });
+
+    testWidgets('an unsupported rich flavor surfaces the hint toast and '
+        'still pastes text (issue #1979 AC3)', (tester) async {
+      stubClipboard(tester, text: 'kept text');
+      final service = await pumpComposer(
+        tester,
+        clipboardReader: () async =>
+            throw const FaClipboardUnsupportedException(),
+      );
+      await smartPaste(tester);
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('Clipboard holds content'), findsOneWidget);
+      expect(service.stagedCalls, isEmpty);
+      expect(fieldText(tester), 'kept text');
     });
   });
 }

@@ -52,6 +52,7 @@ class MainFlutterWindow: NSWindow {
     registerMicChannel(messenger: messenger)
     registerNotifyChannel(messenger: messenger)
     registerVideoChannel(messenger: messenger)
+    registerClipboardFilesChannel(messenger: messenger)
 
     super.awakeFromNib()
 
@@ -1266,4 +1267,63 @@ private func notifyCancel(id: String) {
   let center = UNUserNotificationCenter.current()
   center.removePendingNotificationRequests(withIdentifiers: [id])
   center.removeDeliveredNotifications(withIdentifiers: [id])
+}
+
+/// The `fa/clipboard_files` method channel: thin native clipboard FILE
+/// reading for the composer's smart paste (issue #1979 — owner decision:
+/// our own ~50-line reader instead of the super_native_extensions chain).
+/// `readClipboardFiles` pulls the file URLs Finder puts on the pasteboard
+/// (`public.file-url` / the legacy `NSFilenamesPboardType`, both surfaced
+/// by `readObjects(forClasses: [NSURL.self])`) and reads each file's
+/// bytes. Answers `{files: [{name, bytes}], unsupported: bool}` — same
+/// contract as the iOS reader.
+private func registerClipboardFilesChannel(messenger: FlutterBinaryMessenger) {
+  let channel = FlutterMethodChannel(
+    name: "fa/clipboard_files",
+    binaryMessenger: messenger,
+  )
+  channel.setMethodCallHandler { call, result in
+    switch call.method {
+    case "readClipboardFiles":
+      result(FaClipboardFilesReader.read())
+    default:
+      result(FlutterMethodNotImplemented)
+    }
+  }
+}
+
+private enum FaClipboardFilesReader {
+  static let maxFileBytes = 32 * 1024 * 1024
+
+  static func read() -> [String: Any] {
+    guard let urls = NSPasteboard.general.readObjects(
+      forClasses: [NSURL.self],
+      options: [NSPasteboard.ReadingOptionKey.urlReadingFileURLsOnly: true],
+    ) as? [URL] else {
+      return ["files": [[String: Any]](), "unsupported": false]
+    }
+    var files: [[String: Any]] = []
+    for url in urls {
+      if let entry = readFile(at: url) {
+        files.append(entry)
+      }
+    }
+    // macOS clipboard file reads of user-intent copies are permitted by
+    // the sandbox; a rare failure surfaces as plain silence with the text
+    // rules intact.
+    return ["files": files, "unsupported": false]
+  }
+
+  static func readFile(at url: URL) -> [String: Any]? {
+    let scoped = url.startAccessingSecurityScopedResource()
+    defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+    guard
+      let data = try? Data(contentsOf: url),
+      data.count <= maxFileBytes
+    else { return nil }
+    return [
+      "name": url.lastPathComponent,
+      "bytes": data,
+    ]
+  }
 }

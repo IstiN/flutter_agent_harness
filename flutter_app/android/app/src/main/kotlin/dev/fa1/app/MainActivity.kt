@@ -109,7 +109,82 @@ class MainActivity : FlutterActivity() {
             MobileProviders(this)
         }
         MobileChannels.register(messenger, mobileProviders)
+        registerClipboardFilesChannel(messenger)
     }
+
+    // ── fa/clipboard_files (issue #1979) ─────────────────────────────────
+    // Thin native clipboard FILE reading for the composer's smart paste —
+    // owner decision: our own ~70-line reader instead of the
+    // super_native_extensions chain. Reads ClipData item URIs through
+    // ContentResolver.openInputStream (pasted URIs need no storage
+    // permission); file names come from the provider's display-name column.
+    // Answers {files: [{name, bytes}], unsupported: bool} — `unsupported`
+    // fires when URI-bearing items existed but could not be staged, so the
+    // Dart side shows the explicit hint instead of silence.
+    private fun registerClipboardFilesChannel(messenger: io.flutter.plugin.common.BinaryMessenger) {
+        MethodChannel(
+            messenger,
+            "fa/clipboard_files",
+        ).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "readClipboardFiles" ->
+                    keychainExecutor.execute {
+                        val answer = try {
+                            clipboardFilesAnswer()
+                        } catch (e: Exception) {
+                            mapOf("files" to emptyList<Map<String, Any>>(), "unsupported" to false)
+                        }
+                        runOnUiThread { result.success(answer) }
+                    }
+                else -> result.notImplemented()
+            }
+        }
+    }
+
+    private fun clipboardFilesAnswer(): Map<String, Any> {
+        val clipboardManager =
+            getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+        val clip = clipboardManager.primaryClip
+            ?: return mapOf("files" to emptyList<Map<String, Any>>(), "unsupported" to false)
+        val files = mutableListOf<Map<String, Any>>()
+        var unsupported = false
+        for (i in 0 until clip.itemCount) {
+            val uri = clip.getItemAt(i).uri ?: continue
+            val name = queryClipboardFileName(uri) ?: uri.lastPathSegment
+            try {
+                contentResolver.openInputStream(uri)?.use { input ->
+                    val bytes = input.readBytes()
+                    if (bytes.size <= 32 * 1024 * 1024 && name != null) {
+                        files.add(
+                            mapOf(
+                                "name" to name,
+                                "bytes" to bytes,
+                            ),
+                        )
+                    }
+                } ?: run { unsupported = true }
+            } catch (e: Exception) {
+                unsupported = true
+            }
+        }
+        return mapOf("files" to files, "unsupported" to unsupported)
+    }
+
+    private fun queryClipboardFileName(uri: android.net.Uri): String? =
+        try {
+            contentResolver
+                .query(
+                    uri,
+                    arrayOf(android.provider.OpenableColumns.DISPLAY_NAME),
+                    null,
+                    null,
+                    null,
+                )?.use { cursor ->
+                    if (cursor.moveToFirst()) cursor.getString(0) else null
+                }
+        } catch (e: Exception) {
+            null
+        }
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         // Projection consent (god flavor) routes through the channel layer.

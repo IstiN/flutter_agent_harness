@@ -7,7 +7,7 @@ import 'package:fa/services/agent_service.dart';
 import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/screens/chat_screen.dart';
 import 'package:fa/ui/widgets/chat_composer.dart';
-import 'package:fa_ui/fa_ui.dart' show FaClipboardImageReader;
+import 'package:fa_ui/fa_ui.dart' show FaClipboardReader;
 import 'package:flutter/foundation.dart'
     show debugDefaultTargetPlatformOverride;
 import 'package:flutter/material.dart';
@@ -87,7 +87,7 @@ AgentService _fakeService(ExecutionEnv env, StreamFunction streamFunction) {
 Future<void> _pumpComposer(
   WidgetTester tester,
   AgentService service, {
-  FaClipboardImageReader? clipboardImageReader,
+  FaClipboardReader? clipboardReader,
   bool Function(BuildContext context, String text)? onSubmit,
 }) async {
   await tester.pumpWidget(
@@ -99,7 +99,7 @@ Future<void> _pumpComposer(
       home: Scaffold(
         body: ChatComposer(
           service: service,
-          clipboardImageReader: clipboardImageReader,
+          clipboardReader: clipboardReader,
           onSubmit: onSubmit,
         ),
       ),
@@ -444,7 +444,7 @@ void main() {
       await _pumpComposer(
         tester,
         service,
-        clipboardImageReader: () async => null,
+        clipboardReader: () async => const [],
       );
 
       await tester.tap(find.byType(TextField));
@@ -468,7 +468,7 @@ void main() {
       await _pumpComposer(
         tester,
         service,
-        clipboardImageReader: () async => null,
+        clipboardReader: () async => const [],
       );
 
       await tester.tap(find.byType(TextField));
@@ -498,11 +498,13 @@ void main() {
       await _pumpComposer(
         tester,
         service,
-        clipboardImageReader: () async => (
-          name: 'clipboard-shot.png',
-          bytes: Uint8List.fromList(const [1, 2, 3]),
-          mimeType: 'image/png',
-        ),
+        clipboardReader: () async => [
+          (
+            name: 'clipboard-shot.png',
+            bytes: Uint8List.fromList(const [1, 2, 3]),
+            mimeType: 'image/png',
+          ),
+        ],
       );
 
       await tester.tap(find.byType(TextField));
@@ -527,11 +529,13 @@ void main() {
       await _pumpComposer(
         tester,
         service,
-        clipboardImageReader: () async => (
-          name: 'clipboard-shot.png',
-          bytes: Uint8List.fromList(const [1, 2, 3]),
-          mimeType: 'image/png',
-        ),
+        clipboardReader: () async => [
+          (
+            name: 'clipboard-shot.png',
+            bytes: Uint8List.fromList(const [1, 2, 3]),
+            mimeType: 'image/png',
+          ),
+        ],
       );
 
       await tester.tap(find.byType(TextField));
@@ -553,11 +557,13 @@ void main() {
       await _pumpComposer(
         tester,
         service,
-        clipboardImageReader: () async => (
-          name: 'clipboard-shot.png',
-          bytes: Uint8List.fromList(const [1, 2, 3]),
-          mimeType: 'image/png',
-        ),
+        clipboardReader: () async => [
+          (
+            name: 'clipboard-shot.png',
+            bytes: Uint8List.fromList(const [1, 2, 3]),
+            mimeType: 'image/png',
+          ),
+        ],
       );
 
       await tester.tap(find.byType(TextField));
@@ -585,18 +591,10 @@ void main() {
       final service = _fakeService(env, _singleTextResponse('ok'));
       addTearDown(service.dispose);
       await service.initialize();
-      // No clipboardImageReader override: the app adapter probes the
-      // Pasteboard platform channel; the mock answers "no image".
-      messenger.setMockMethodCallHandler(
-        const MethodChannel('pasteboard'),
-        (call) async => call.method == 'image' ? null : null,
-      );
-      addTearDown(
-        () => messenger.setMockMethodCallHandler(
-          const MethodChannel('pasteboard'),
-          null,
-        ),
-      );
+      // No clipboardReader override: the app adapter probes the real
+      // clipboard through the native readers; with no plugin registered in
+      // the test frame the probe fails and the composer falls back to the
+      // plain text paste.
       await _pumpComposer(tester, service);
 
       await tester.tap(find.byType(TextField));

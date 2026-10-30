@@ -48,8 +48,20 @@ dependencies:
   # Mobile-friendly filesystem root and image picking.
   path_provider: ^2.1.6
   image_picker: ^1.2.3
-  # Clipboard images for the composer's smart paste (Cmd/Ctrl+V).
+  # Clipboard images for the composer's smart paste (Pasteboard.image —
+  # restored per the owner's native-clipboard decision; no Rust, no
+  # super_native_extensions chain). Clipboard FILE reading is our own thin
+  # per-platform code: `fa/clipboard_files` method channel (iOS
+  # UIPasteboard / Android ClipData+ContentResolver / macOS NSPasteboard),
+  # win32 FFI (CF_HDROP), and text/uri-list (Linux) — see
+  # lib/services/clipboard_files.dart.
   pasteboard: ^0.5.0
+  # Native clipboard file reads on Windows (CF_HDROP via FFI, issue
+  # #1979). Resolves to the same 6.x already required by pty2.
+  win32: ^6.0.0
+  # Any-type multi-select system file picker (issue #1979 AC1): NSOpenPanel
+  # / Windows/Linux dialogs / iOS document picker / Android SAF / web input.
+  file_selector: ^1.1.0
   # Image decode/encode for the Gemini adapter (PNG → JPEG conversion
   # strips alpha/EXIF that Gemini's vision encoder rejects).
   image: ^4.5.4

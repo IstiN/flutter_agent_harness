@@ -10,6 +10,7 @@ import 'package:fa/services/project_mount_env.dart';
 import 'package:fa/services/project_mount_flow.dart';
 import 'package:fa/services/upload.dart';
 import 'package:fa/services/upload_picker_stub.dart'
+    if (dart.library.io) 'package:fa/services/upload_picker_io.dart'
     if (dart.library.html) 'package:fa/services/upload_picker_web.dart';
 import 'package:fa_ui/fa_ui.dart' hide formatFileSize;
 

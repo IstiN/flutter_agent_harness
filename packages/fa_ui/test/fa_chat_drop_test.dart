@@ -32,6 +32,7 @@ Future<void> _fireChannel(
   String method,
   Object arguments, {
   bool Function()? until,
+  Duration settle = const Duration(milliseconds: 100),
 }) async {
   final data = const StandardMethodCodec().encodeMethodCall(
     MethodCall(method, arguments),
@@ -48,7 +49,7 @@ Future<void> _fireChannel(
         await Future<void>.delayed(const Duration(milliseconds: 10));
       }
     } else {
-      await Future<void>.delayed(const Duration(milliseconds: 100));
+      await Future<void>.delayed(settle);
     }
   });
   await tester.pump();
@@ -90,12 +91,9 @@ void main() {
     await _fireChannel(tester, 'entered', <double>[400, 300]);
     expect(find.byKey(const ValueKey('faChatDropHighlight')), findsOneWidget);
 
-    await _fireChannel(
-      tester,
-      'performOperation',
-      [for (final f in files) f.path],
-      until: () => service.stagedCalls.length == 2,
-    );
+    await _fireChannel(tester, 'performOperation', [
+      for (final f in files) f.path,
+    ], until: () => service.stagedCalls.length == 2);
 
     // Highlight gone, both files staged through the same path as the
     // picker, both chips rendered.
@@ -110,11 +108,14 @@ void main() {
     final service = await _pumpScreen(tester);
 
     // Linux delivers text drags as rawText with no resolvable file paths.
-    await _fireChannel(
-      tester,
-      'performOperation_linux',
-      <Object>['dragged note', <double>[400, 300]],
-    );
+    // The drag must enter the target first: desktop_drop dispatches the
+    // done event only when the target is non-idle (or on Linux hosts —
+    // which this test must not depend on).
+    await _fireChannel(tester, 'entered', <double>[400, 300]);
+    await _fireChannel(tester, 'performOperation_linux', <Object>[
+      'dragged note',
+      <double>[400, 300],
+    ]);
 
     final field = tester.widget<TextField>(find.byType(TextField));
     expect(field.controller!.text, 'dragged note');
@@ -126,12 +127,11 @@ void main() {
     final service = await _pumpScreen(tester);
     final file = _tempFile('real.txt', 'x'.codeUnits);
 
-    await _fireChannel(
-      tester,
-      'performOperation',
-      ['/tmp', file.path],
-      until: () => service.stagedCalls.isNotEmpty,
-    );
+    await _fireChannel(tester, 'entered', <double>[400, 300]);
+    await _fireChannel(tester, 'performOperation', [
+      '/tmp',
+      file.path,
+    ], until: () => service.stagedCalls.isNotEmpty);
 
     expect(find.textContaining('Folders cannot be attached'), findsOneWidget);
     expect(service.stagedCalls.map((c) => c.name), ['real.txt']);
@@ -140,16 +140,12 @@ void main() {
   testWidgets('E2: paste spam beyond the attachment cap stages the cap and '
       'notices the skipped count', (tester) async {
     final service = await _pumpScreen(tester);
-    final files = [
-      for (var i = 0; i < 12; i++) _tempFile('spam-$i.txt'),
-    ];
+    final files = [for (var i = 0; i < 12; i++) _tempFile('spam-$i.txt')];
 
-    await _fireChannel(
-      tester,
-      'performOperation',
-      [for (final f in files) f.path],
-      until: () => service.stagedCalls.length == 10,
-    );
+    await _fireChannel(tester, 'entered', <double>[400, 300]);
+    await _fireChannel(tester, 'performOperation', [
+      for (final f in files) f.path,
+    ], until: () => service.stagedCalls.length == 10);
 
     expect(service.stagedCalls, hasLength(10));
     expect(find.textContaining('skipped 2'), findsOneWidget);
@@ -160,12 +156,10 @@ void main() {
     final service = await _pumpScreen(tester);
     final file = _tempFile('huge.bin', Uint8List(25 * 1024 * 1024 + 1));
 
-    await _fireChannel(
-      tester,
-      'performOperation',
-      [file.path],
-      until: () => find.textContaining('exceeds the').evaluate().isNotEmpty,
-    );
+    await _fireChannel(tester, 'entered', <double>[400, 300]);
+    await _fireChannel(tester, 'performOperation', [
+      file.path,
+    ], settle: const Duration(seconds: 2));
 
     expect(find.textContaining('exceeds the'), findsOneWidget);
     expect(service.stagedCalls, isEmpty);
