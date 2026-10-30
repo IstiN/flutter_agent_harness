@@ -227,7 +227,7 @@ void main() {
         await container.writeFile('/host-project/keep.txt', 'user data');
         await container.writeFile('/container/x.litertlm', 'weights');
 
-        final report = await cleanupGemmaLeftovers(env);
+        await cleanupGemmaLeftovers(env);
 
         expect(
           (await container.exists('/container/x.litertlm')).valueOrNull,
@@ -265,7 +265,7 @@ void main() {
         'fork',
       );
 
-      final report = await cleanupGemmaLeftovers(env);
+      await cleanupGemmaLeftovers(env);
 
       expect(
         (await env.exists('${env.cwd}/flutter_gemma/model.json')).valueOrNull,
