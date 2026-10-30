@@ -354,9 +354,10 @@ void main() {
     expect(lane, contains('ci-signing.keychain-db'));
     expect(
       lane,
-      contains('saved_search_list'),
-      reason: 'the pre-gym search list must be restored in ensure — the '
-          'pin is a visibility window, not a permanent global change',
+      isNot(contains('saved_search_list')),
+      reason: 'gh-1972 root cause: no save/restore — the captured copy '
+          'entrenched a System duplicate across runs; the canonical pin '
+          'IS the persistent state, nothing to restore',
     );
   });
 
@@ -497,5 +498,20 @@ void main() {
     expect(appendWrite, greaterThan(-1));
     expect(loginWrite, lessThan(appendWrite),
         reason: 'login-first branch precedes the fallback');
+  });
+
+  test('AC19 — Fastfile gym guard has NO save/restore of the search list '
+      '(gh-1972 root cause: the restore wrote back whatever it captured, '
+      'entrenching a System duplicate across runs; the pinned list is '
+      'canonical — restore removed)', () {
+    final fastfile = File('flutter_app/fastlane/Fastfile').readAsStringSync();
+    expect(fastfile, isNot(contains('saved_search_list')),
+        reason: 'no captured copy to restore — the pin is the state');
+    expect(fastfile, isNot(contains("scan(/\"([^\"]+)\"/)")),
+        reason: 'the write-back restore must not exist');
+    expect(fastfile, contains('/Library/Keychains/System.keychain'),
+        reason: 'the canonical pin keeps login/System/ci-signing');
+    expect(fastfile, contains('ci-signing.keychain-db'),
+        reason: 'the canonical pin keeps ci-signing LAST');
   });
 }
