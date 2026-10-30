@@ -1034,66 +1034,6 @@ abstract class AppLocalizations {
   /// **'Upload files here'**
   String get filesUploadTooltip;
 
-  /// No description provided for @gemmaCacheDeleteOrphan.
-  ///
-  /// In en, this message translates to:
-  /// **'Removes the file ({size}) from {storage}. Installed models are not affected.'**
-  String gemmaCacheDeleteOrphan(Object size, Object storage);
-
-  /// No description provided for @gemmaCacheDeleteWeights.
-  ///
-  /// In en, this message translates to:
-  /// **'Removes the downloaded weights ({size}) from {storage}. The model downloads again the next time you use it.'**
-  String gemmaCacheDeleteWeights(Object size, Object storage);
-
-  /// No description provided for @gemmaCacheMobileOnly.
-  ///
-  /// In en, this message translates to:
-  /// **'On-device (Gemma) models are available in the iOS/Android builds only (on web the transformers.js provider covers on-device Gemma).'**
-  String get gemmaCacheMobileOnly;
-
-  /// No description provided for @gemmaCacheScanError.
-  ///
-  /// In en, this message translates to:
-  /// **'Could not scan the model cache: {error}'**
-  String gemmaCacheScanError(Object error);
-
-  /// No description provided for @gemmaCacheSubtitle.
-  ///
-  /// In en, this message translates to:
-  /// **'Gemma weights stored {storage}. Deleting frees space; a model re-downloads on next use.'**
-  String gemmaCacheSubtitle(Object storage);
-
-  /// No description provided for @gemmaCacheTitle.
-  ///
-  /// In en, this message translates to:
-  /// **'On-device models (Gemma)'**
-  String get gemmaCacheTitle;
-
-  /// No description provided for @gemmaStorageFromBrowser.
-  ///
-  /// In en, this message translates to:
-  /// **'the browser storage'**
-  String get gemmaStorageFromBrowser;
-
-  /// No description provided for @gemmaStorageFromDevice.
-  ///
-  /// In en, this message translates to:
-  /// **'the device'**
-  String get gemmaStorageFromDevice;
-
-  /// No description provided for @gemmaStorageInBrowser.
-  ///
-  /// In en, this message translates to:
-  /// **'in your browser'**
-  String get gemmaStorageInBrowser;
-
-  /// No description provided for @gemmaStorageOnDevice.
-  ///
-  /// In en, this message translates to:
-  /// **'on this device'**
-  String get gemmaStorageOnDevice;
-
   /// No description provided for @keysAddButton.
   ///
   /// In en, this message translates to:
@@ -2528,18 +2468,6 @@ abstract class AppLocalizations {
   /// **'A key is saved for this provider — leave the field empty to keep it.'**
   String get settingsEditorKeepKeyNote;
 
-  /// No description provided for @settingsHfTokenHint.
-  ///
-  /// In en, this message translates to:
-  /// **'hf_… — needed if the repo is gated'**
-  String get settingsHfTokenHint;
-
-  /// No description provided for @settingsHfTokenLabel.
-  ///
-  /// In en, this message translates to:
-  /// **'HuggingFace token (optional)'**
-  String get settingsHfTokenLabel;
-
   /// No description provided for @settingsKeyNoteCustom.
   ///
   /// In en, this message translates to:
@@ -2630,12 +2558,6 @@ abstract class AppLocalizations {
   /// **'Custom'**
   String get settingsPresetCustom;
 
-  /// No description provided for @settingsPresetGemma.
-  ///
-  /// In en, this message translates to:
-  /// **'On-device (Gemma)'**
-  String get settingsPresetGemma;
-
   /// No description provided for @settingsPresetOllama.
   ///
   /// In en, this message translates to:
@@ -2651,7 +2573,7 @@ abstract class AppLocalizations {
   /// No description provided for @settingsPresetTransformersJs.
   ///
   /// In en, this message translates to:
-  /// **'On-device (Gemma, transformers.js)'**
+  /// **'On-device (transformers.js)'**
   String get settingsPresetTransformersJs;
 
   /// No description provided for @settingsPresetWebllm.
@@ -2701,12 +2623,6 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'The previously used model ({model}) was removed from the cache — pick a model to download it again.'**
   String settingsStaleModelCache(Object model);
-
-  /// No description provided for @settingsStaleModelDevice.
-  ///
-  /// In en, this message translates to:
-  /// **'The previously used model ({model}) was removed from this device — pick a model to download it again.'**
-  String settingsStaleModelDevice(Object model);
 
   /// No description provided for @settingsSkillsAccess.
   ///

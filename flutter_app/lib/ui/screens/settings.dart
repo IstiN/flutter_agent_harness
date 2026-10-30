@@ -27,9 +27,6 @@ import 'package:fa/ui/widgets/provider_selection_list.dart';
 import 'package:fa/ui/widgets/store_get_banner.dart';
 import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/widgets/approval_ui.dart';
-import 'package:fa/gemma/gemma_cache_section.dart';
-import 'package:fa/gemma/gemma_service.dart';
-import 'package:fa/gemma/gemma_types.dart';
 import 'package:fa/services/keychain_store.dart';
 import 'package:fa/services/last_connection.dart';
 import 'package:fa/services/ondevice_config_store.dart';
@@ -126,7 +123,6 @@ class AgentSettingsForm extends StatefulWidget {
     this.initialProvider,
     this.keysStore,
     this.webLlmEngine,
-    this.gemmaEngine,
     this.transformersJsEngine,
     this.isWeb,
     this.modelsFetcher,
@@ -166,18 +162,13 @@ class AgentSettingsForm extends StatefulWidget {
   /// the platform singleton.
   final WebLlmEngineApi? webLlmEngine;
 
-  /// Engine override for the on-device Gemma provider (tests); defaults to
-  /// the platform singleton.
-  final GemmaEngineApi? gemmaEngine;
-
   /// Engine override for the on-device transformers.js provider (tests);
   /// defaults to the platform singleton.
   final TransformersJsEngineApi? transformersJsEngine;
 
   /// Platform override for tests (host tests run with `kIsWeb == false`, so
-  /// the web-only provider visibility — [transformersJsProviderVisible],
-  /// [gemmaProviderVisible] — is exercised through this seam, the same
-  /// pattern as `GemmaCacheSection.isWeb`).
+  /// the web-only provider visibility — [transformersJsProviderVisible] — is
+  /// exercised through this seam).
   final bool? isWeb;
 
   /// `/models` fetch override (tests); defaults to the production HTTP
@@ -205,13 +196,9 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
   late final TextEditingController _keyController;
   late final TextEditingController _modelController;
   late final TextEditingController _urlController;
-  late final TextEditingController _hfTokenController;
 
   /// Selected on-device model (only meaningful for [ProviderPreset.webllm]).
   WebLlmModelPreset _webllmModel = webLlmModelPresets.first;
-
-  /// Selected on-device model (only meaningful for [ProviderPreset.gemma]).
-  GemmaModelPreset _gemmaModel = gemmaModelPresets.first;
 
   /// Selected on-device model (only meaningful for
   /// [ProviderPreset.transformersJs]).
@@ -230,12 +217,6 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
   /// cached/installed (the provider stays pre-selected; the model falls back
   /// to the default preset). Cleared when the user changes the selection.
   String? _staleModelNote;
-
-  /// The manual timer bounding the Gemma installed-check in
-  /// [_verifyGemmaInstalled] — cancelled on dispose so a wedged plugin never
-  /// leaves a pending timer behind (`Future.timeout`'s internal timer cannot
-  /// be cancelled).
-  Timer? _gemmaVerifyTimer;
 
   /// Platform-appropriate OpenRouter OAuth callback URL. `null` on desktop
   /// (a localhost server is started lazily by the coordinator).
@@ -279,9 +260,6 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
     _vision = modelIdSuggestsVision(_modelController.text);
     _modelController.addListener(_onModelIdChanged);
     _urlController = TextEditingController(text: initialUrl);
-    _hfTokenController = TextEditingController(
-      text: settingsKeyEnv('HUGGINGFACE_TOKEN', widget.keysStore),
-    );
     // The last connection wins over the env-based defaults.
     final forcedProvider = widget.initialProvider;
     if (forcedProvider != null) _applyPreset(forcedProvider);
@@ -309,7 +287,7 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
       baseUrl: () => _urlController.text,
       apiKey: () => _keyController.text,
       identityKind: () => _selectionKind,
-      fetchEnabled: () => !_isOnDevice && !_isGemma && !_isTransformersJs,
+      fetchEnabled: () => !_isOnDevice && !_isTransformersJs,
       overrideFetcher: () => widget.modelsFetcher,
     );
     _urlController.addListener(_models.schedule);
@@ -336,20 +314,16 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
 
   @override
   void dispose() {
-    _gemmaVerifyTimer?.cancel();
     _models.dispose();
     _modelFocusNode.dispose();
     _registry.removeListener(_onRegistryChanged);
     _keyController.dispose();
     _modelController.dispose();
     _urlController.dispose();
-    _hfTokenController.dispose();
     super.dispose();
   }
 
   bool get _isOnDevice => _selection == ProviderPreset.webllm;
-
-  bool get _isGemma => _selection == ProviderPreset.gemma;
 
   bool get _isTransformersJs => _selection == ProviderPreset.transformersJs;
 
@@ -453,8 +427,6 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
     switch (connection.providerKind) {
       case webLlmProviderKind:
         _applyWebLlmLastConnection(connection);
-      case gemmaProviderKind:
-        _applyGemmaLastConnection(connection);
       case transformersJsProviderKind:
         _applyTransformersJsLastConnection(connection);
       default:
@@ -484,54 +456,6 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
     setState(() {
       _webllmModel = webLlmModelPresets.first;
       _staleModelNote = context.l10n.settingsStaleModelCache(
-        preset.displayName,
-      );
-    });
-  }
-
-  /// The Gemma variant of [_verifyWebLlmCache], over the plugin's installed
-  /// model repository (with the cache section's scan timeout: a hung store
-  /// must not pin the form; the timer is this State's own so dispose can
-  /// cancel it).
-  Future<void> _verifyGemmaInstalled(GemmaModelPreset preset) async {
-    final engine = widget.gemmaEngine ?? createGemmaService();
-    if (!engine.isAvailable) return;
-    var installed = true;
-    try {
-      final completer = Completer<List<GemmaInstalledModel>>();
-      _gemmaVerifyTimer = Timer(const Duration(seconds: 10), () {
-        if (!completer.isCompleted) {
-          completer.completeError(
-            TimeoutException('Gemma repository scan timed out'),
-          );
-        }
-      });
-      unawaited(
-        engine.installedModels().then(
-          (models) {
-            if (!completer.isCompleted) completer.complete(models);
-          },
-          onError: (Object error) {
-            if (!completer.isCompleted) completer.completeError(error);
-          },
-        ),
-      );
-      final models = await completer.future;
-      installed = models.any(
-        (model) => model.filename == preset.filenameFor(isWeb: _isWeb),
-      );
-    } on Object {
-      return;
-    } finally {
-      _gemmaVerifyTimer?.cancel();
-    }
-    if (installed || !mounted) return;
-    if (_selection != ProviderPreset.gemma || _gemmaModel.id != preset.id) {
-      return;
-    }
-    setState(() {
-      _gemmaModel = gemmaModelPresets.first;
-      _staleModelNote = context.l10n.settingsStaleModelDevice(
         preset.displayName,
       );
     });
@@ -654,9 +578,6 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
     if (_isOnDevice) {
       return _connectWebLlm();
     }
-    if (_isGemma) {
-      return _connectGemma();
-    }
     if (_isTransformersJs) {
       return _connectTransformersJs();
     }
@@ -747,67 +668,6 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
         _loadFraction = null;
         _loadStatus = null;
       });
-    }
-  }
-
-  /// On-device Gemma connect: downloads the selected model (skipping what is
-  /// already installed, showing progress in the form), loads it into memory,
-  /// then hands over to [onConnect]. The engine is a singleton, so the
-  /// stream function reuses this warm instance — the first chat turn does
-  /// not pay the load again. The HuggingFace token is used for this install
-  /// only and never persisted.
-  Future<void> _connectGemma() async {
-    final preset = _gemmaModel;
-    final service = widget.gemmaEngine ?? createGemmaService();
-    setState(() {
-      _loading = true;
-      _error = null;
-      _loadFraction = null;
-      _loadStatus = null;
-    });
-    StreamSubscription<GemmaProgress>? progressSub;
-    try {
-      if (!service.isAvailable) {
-        throw StateError(gemmaUnsupportedPlatformMessage);
-      }
-      progressSub = service.progressEvents.listen((report) {
-        if (!mounted) return;
-        setState(() {
-          _loadFraction = report.fraction;
-          _loadStatus = report.text;
-        });
-      });
-      final hfToken = _hfTokenController.text.trim();
-      await service.installModel(
-        preset,
-        huggingFaceToken: hfToken.isEmpty ? null : hfToken,
-      );
-      await service.loadModel(preset);
-      if (!mounted) return;
-      await widget.onConnect(
-        AgentConfig(
-          providerKind: gemmaProviderKind,
-          modelId: preset.id,
-          baseUrl: '',
-          apiKey: '',
-          contextWindow: preset.contextWindow,
-          maxTokens: 1024,
-        ),
-      );
-    } catch (e) {
-      if (mounted) {
-        setState(() => _error = e is StateError ? e.message : e.toString());
-      }
-    } finally {
-      // See _connectWebLlm: not awaited on purpose.
-      unawaited(progressSub?.cancel());
-      if (mounted) {
-        setState(() {
-          _loading = false;
-          _loadFraction = null;
-          _loadStatus = null;
-        });
-      }
     }
   }
 
@@ -943,83 +803,6 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
             Expanded(
               child: Text(
                 context.l10n.settingsWebllmNote,
-                style: theme.textTheme.bodySmall,
-              ),
-            ),
-          ],
-        ),
-        if (_loading) ...[
-          const SizedBox(height: 12),
-          LinearProgressIndicator(value: _loadFraction),
-          const SizedBox(height: 4),
-          Text(
-            _loadStatus != null && _loadStatus!.isNotEmpty
-                ? _loadStatus!
-                : context.l10n.settingsDownloadingWeights,
-            style: theme.textTheme.bodySmall,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-          ),
-        ],
-      ],
-    );
-  }
-
-  /// The on-device (Gemma) replacement for the key/model/URL fields: a
-  /// model picker over [gemmaModelPresets], the HuggingFace token field
-  /// (session-only), the offline note, and — while an install/load is in
-  /// flight — the progress bar.
-  Widget _buildGemmaFields(ThemeData theme) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        DropdownButtonFormField<GemmaModelPreset>(
-          initialValue: _gemmaModel,
-          isExpanded: true,
-          decoration: InputDecoration(
-            labelText: context.l10n.settingsOnDeviceModelLabel,
-          ),
-          items: [
-            for (final preset in gemmaModelPresets)
-              DropdownMenuItem(
-                value: preset,
-                child: Text(
-                  '${preset.displayName} · '
-                  '${preset.sizeLabelFor(isWeb: kIsWeb)}',
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-          ],
-          onChanged: _loading
-              ? null
-              : (preset) {
-                  if (preset == null) return;
-                  setState(() {
-                    _gemmaModel = preset;
-                    _staleModelNote = null;
-                  });
-                },
-        ),
-        const SizedBox(height: 12),
-        TextField(
-          controller: _hfTokenController,
-          decoration: InputDecoration(
-            labelText: context.l10n.settingsHfTokenLabel,
-            hintText: context.l10n.settingsHfTokenHint,
-          ),
-          obscureText: true,
-          autocorrect: false,
-          enableSuggestions: false,
-        ),
-        const SizedBox(height: 16),
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Icon(Icons.memory, size: 16, color: theme.colorScheme.primary),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                gemmaStorageNote(isWeb: kIsWeb, preset: _gemmaModel),
                 style: theme.textTheme.bodySmall,
               ),
             ),
@@ -1425,7 +1208,6 @@ class SettingsScreen extends StatefulWidget {
     this.lastConnectionStore,
     this.layoutStore,
     this.webLlmEngine,
-    this.gemmaEngine,
     this.transformersJsEngine,
     this.modelsFetcher,
     this.taskModelsStore,
@@ -1459,10 +1241,6 @@ class SettingsScreen extends StatefulWidget {
   /// Engine override for the downloaded-models section (tests); defaults to
   /// the platform singleton.
   final WebLlmEngineApi? webLlmEngine;
-
-  /// Engine override for the on-device Gemma provider and its cache section
-  /// (tests); defaults to the platform singleton.
-  final GemmaEngineApi? gemmaEngine;
 
   /// Engine override for the on-device transformers.js provider and its
   /// cache section (tests); defaults to the platform singleton.
@@ -1744,7 +1522,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
           await widget.lastConnectionStore?.saveFromConfig(config);
         },
         webLlmEngine: widget.webLlmEngine,
-        gemmaEngine: widget.gemmaEngine,
         transformersJsEngine: widget.transformersJsEngine,
       ),
       // On-device rows appear only for engines the user has configured
@@ -1755,7 +1532,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
         final agentConfig = agentConfigFrom(config);
         const onDeviceKinds = {
           webLlmProviderKind,
-          gemmaProviderKind,
           transformersJsProviderKind,
         };
         if (onDeviceKinds.contains(agentConfig.providerKind)) {
@@ -1790,7 +1566,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 modelsFetcher: widget.modelsFetcher,
                 taskModelsStore: taskModels,
                 webLlmEngine: widget.webLlmEngine,
-                gemmaEngine: widget.gemmaEngine,
                 transformersJsEngine: widget.transformersJsEngine,
               ),
             ),
@@ -1878,22 +1653,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   /// On-device engine cache sections (issue #702: extracted from build).
-  /// The transformers.js section is web-only (its provider is); the Gemma
-  /// section hides where its provider is unsupported — on web the
-  /// litert-lm path is abandoned in favour of transformers.js, and on
-  /// Windows/Linux it is not enabled yet.
+  /// The transformers.js section is web-only (its provider is).
   List<Widget> _onDeviceCacheSections() {
     return [
-      // The transformers.js section is web-only; Gemma's provider hides
-      // where unsupported (web uses transformers.js; Windows/Linux are
-      // not enabled yet).
+      // The transformers.js section is web-only (its provider is).
       if (transformersJsProviderSupported) ...[
         const SizedBox(height: 24),
         TransformersJsCacheSection(engine: widget.transformersJsEngine),
-      ],
-      if (gemmaProviderSupported) ...[
-        const SizedBox(height: 24),
-        GemmaCacheSection(engine: widget.gemmaEngine),
       ],
       // Device automation (issue #622): the consent surface exists
       // only in the god flavor on Android — store builds never

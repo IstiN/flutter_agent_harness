@@ -28,8 +28,8 @@ const transformersJsUnavailableMessage =
 
 /// Whether the transformers.js provider appears in the settings provider
 /// picker. Web-only: the ONNX Runtime Web backend needs a browser (WebGPU);
-/// on iOS/Android the flutter_gemma provider covers on-device Gemma, and
-/// desktop builds offer no on-device provider at all. Pure function so
+/// mobile and desktop builds offer no on-device provider at all (the old
+/// flutter_gemma stack was removed in gh-2004). Pure function so
 /// widget/unit tests can exercise the rule; the app reads
 /// [transformersJsProviderSupported].
 bool transformersJsProviderVisible({required bool isWeb}) => isWeb;

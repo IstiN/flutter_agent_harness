@@ -31,7 +31,7 @@ fa_ui never depends on your agent service or on-device engines:
   your service.
 - Applying a model choice calls your `onApply` with a `FaChatModelConfig`;
   map it onto your own config type.
-- On-device providers (WebLLM, Gemma, …) are `FaOnDeviceRoute` entries —
+- On-device providers (WebLLM, transformers.js, …) are `FaOnDeviceRoute` entries —
   you supply the picker label and the connect-page builder.
 - Named API keys resolve through `FaUiHost.keyResolver` (install once at
   startup) and the nearest `SessionKeysScope`.

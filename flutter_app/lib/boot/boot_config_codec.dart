@@ -12,7 +12,6 @@
 library;
 
 import 'package:fa/services/agent_service.dart';
-import 'package:fa/gemma/gemma_types.dart';
 import 'package:fa/services/last_connection.dart';
 import 'package:fa/services/provider_registry.dart';
 import 'package:fa/services/relay/ext_runtime.dart';
@@ -60,9 +59,7 @@ AgentConfig? restorableBootConfig({
 /// (openai-completions, google, anthropic, dial, minimax,
 /// chatgpt-codex) restores.
 bool _isOnDeviceKind(String kind) =>
-    kind == webLlmProviderKind ||
-    kind == gemmaProviderKind ||
-    kind == transformersJsProviderKind;
+    kind == webLlmProviderKind || kind == transformersJsProviderKind;
 
 /// The registry provider with the exact same base URL, if any.
 CustomProvider? _matchCustomProvider(

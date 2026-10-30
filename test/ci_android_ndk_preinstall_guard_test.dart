@@ -12,9 +12,9 @@
 // the download OUT of the unretryable mid-build path, pre-fetch it with
 // bounded retry, and skip idempotently when the artifact is present.
 //
-// Deliberately YAML-level asserts (the ci_gemma_android_seed_guard_test.dart
-// static pattern — a future bare Android build job must red here, not
-// silently re-enter the download roulette):
+// Deliberately YAML-level asserts (the static-pattern style of the
+// removed gh-2004 gemma seed guard — a future bare Android build job must
+// red here, not silently re-enter the download roulette):
 //  AC1  the shared composite action exists, is composite, resolves the NDK
 //       version from the pinned Flutter SDK's own gradle plugin source (the
 //       exact value `flutter.ndkVersion` resolves to — no second pin to

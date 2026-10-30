@@ -132,7 +132,6 @@ extension _SettingsFormFlowHelpers on _AgentSettingsFormState {
     String? corsNote,
   ) {
     if (_isOnDevice) return _buildWebLlmFields(theme);
-    if (_isGemma) return _buildGemmaFields(theme);
     if (_isTransformersJs) return _buildTransformersJsFields(theme);
     return _buildStandardFields(theme, selection, corsNote);
   }
@@ -263,7 +262,7 @@ extension _SettingsFormFlowHelpers on _AgentSettingsFormState {
   );
 
   Widget _connectButtonChild(ThemeData theme) =>
-      _loading && !_isOnDevice && !_isGemma && !_isTransformersJs
+      _loading && !_isOnDevice && !_isTransformersJs
       ? const SizedBox(
           width: 20,
           height: 20,
@@ -290,22 +289,6 @@ extension _SettingsFormFlowHelpers on _AgentSettingsFormState {
     _selection = ProviderPreset.webllm;
     _webllmModel = preset;
     unawaited(_verifyWebLlmCache(preset));
-  }
-
-  /// Gemma record: the provider is iOS/Android/macOS-only — a record
-  /// written there must not resurrect it where the picker hides it (a
-  /// selection outside the dropdown's items breaks it).
-  void _applyGemmaLastConnection(LastConnection connection) {
-    if (!gemmaProviderVisible(isWeb: _isWeb, platform: defaultTargetPlatform)) {
-      return;
-    }
-    final preset = findGemmaPreset(
-      connection.gemmaPresetId ?? connection.modelId,
-    );
-    if (preset == null) return;
-    _selection = ProviderPreset.gemma;
-    _gemmaModel = preset;
-    unawaited(_verifyGemmaInstalled(preset));
   }
 
   /// transformers.js record: web-only, like the picker entry.

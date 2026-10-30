@@ -566,45 +566,6 @@ class AppLocalizationsEn extends AppLocalizations {
   String get filesUploadTooltip => 'Upload files here';
 
   @override
-  String gemmaCacheDeleteOrphan(Object size, Object storage) {
-    return 'Removes the file ($size) from $storage. Installed models are not affected.';
-  }
-
-  @override
-  String gemmaCacheDeleteWeights(Object size, Object storage) {
-    return 'Removes the downloaded weights ($size) from $storage. The model downloads again the next time you use it.';
-  }
-
-  @override
-  String get gemmaCacheMobileOnly =>
-      'On-device (Gemma) models are available in the iOS/Android builds only (on web the transformers.js provider covers on-device Gemma).';
-
-  @override
-  String gemmaCacheScanError(Object error) {
-    return 'Could not scan the model cache: $error';
-  }
-
-  @override
-  String gemmaCacheSubtitle(Object storage) {
-    return 'Gemma weights stored $storage. Deleting frees space; a model re-downloads on next use.';
-  }
-
-  @override
-  String get gemmaCacheTitle => 'On-device models (Gemma)';
-
-  @override
-  String get gemmaStorageFromBrowser => 'the browser storage';
-
-  @override
-  String get gemmaStorageFromDevice => 'the device';
-
-  @override
-  String get gemmaStorageInBrowser => 'in your browser';
-
-  @override
-  String get gemmaStorageOnDevice => 'on this device';
-
-  @override
   String get keysAddButton => 'Add key';
 
   @override
@@ -1405,12 +1366,6 @@ class AppLocalizationsEn extends AppLocalizations {
       'A key is saved for this provider — leave the field empty to keep it.';
 
   @override
-  String get settingsHfTokenHint => 'hf_… — needed if the repo is gated';
-
-  @override
-  String get settingsHfTokenLabel => 'HuggingFace token (optional)';
-
-  @override
   String get settingsKeyNoteCustom =>
       'The provider definition (name, URL, model) is saved — no secrets. The API key stays in memory for this session only and is gone on reload.';
 
@@ -1460,17 +1415,13 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settingsPresetCustom => 'Custom';
 
   @override
-  String get settingsPresetGemma => 'On-device (Gemma)';
-
-  @override
   String get settingsPresetOllama => 'Ollama';
 
   @override
   String get settingsPresetOpenrouter => 'OpenRouter';
 
   @override
-  String get settingsPresetTransformersJs =>
-      'On-device (Gemma, transformers.js)';
+  String get settingsPresetTransformersJs => 'On-device (transformers.js)';
 
   @override
   String get settingsPresetWebllm => 'On-device (WebLLM)';
@@ -1498,11 +1449,6 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String settingsStaleModelCache(Object model) {
     return 'The previously used model ($model) was removed from the cache — pick a model to download it again.';
-  }
-
-  @override
-  String settingsStaleModelDevice(Object model) {
-    return 'The previously used model ($model) was removed from this device — pick a model to download it again.';
   }
 
   @override

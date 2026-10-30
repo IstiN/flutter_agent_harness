@@ -68,7 +68,7 @@ enum HostCapability {
   /// sqlite reader, `lsp`, `dap` tool families.
   sqliteLspDap,
 
-  /// On-device providers (webllm / gemma in-process inference).
+  /// On-device providers (webllm / transformers.js in-process inference).
   onDeviceProviders,
 
   /// JS apps (jsr) + `dynamic_message` — the browser-API surface.

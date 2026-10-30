@@ -22,9 +22,8 @@ final class AgentConfig {
   });
 
   /// Provider adapter kind: `openai-completions`, `anthropic`, `google`,
-  /// `webllm` (on-device, web — see `lib/webllm/`), `gemma` (on-device,
-  /// iOS/Android — see `lib/gemma/`), or `transformers_js` (on-device, web —
-  /// see `lib/transformers_js/`).
+  /// `webllm` (on-device, web — see `lib/webllm/`) or `transformers_js`
+  /// (on-device, web — see `lib/transformers_js/`).
   final String providerKind;
 
   /// Model id passed to the provider.

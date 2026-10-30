@@ -283,3 +283,27 @@ extension AppStorageCwd on ExecutionEnv {
     }
   }
 }
+
+/// The app-owned environment underneath the decorator/mount stack.
+///
+/// Where [AppStorageCwd] yields only the container cwd string, this
+/// resolves the [ExecutionEnv] itself, so callers can walk or mutate the
+/// app container with listDir/remove semantics that never see the mounted
+/// user project (gh-2004 review: the first-boot leftover cleanup must
+/// operate on app-owned storage only).
+extension AppOwnedEnv on ExecutionEnv {
+  ExecutionEnv get appOwnedEnv {
+    var env = this;
+    while (true) {
+      if (env is SecretsExecutionEnv) {
+        env = env.delegate;
+      } else if (env is SessionVarsExecutionEnv) {
+        env = env.delegate;
+      } else if (env case final ProjectMountEnv mountEnv) {
+        env = mountEnv._delegate;
+      } else {
+        return env;
+      }
+    }
+  }
+}

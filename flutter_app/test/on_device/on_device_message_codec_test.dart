@@ -1,20 +1,17 @@
 // Copyright (c) 2026, the Flutter Agent Harness authors.
 // Use of this source code is governed by a MIT license that can be found
 // in the LICENSE file.
-import 'dart:convert';
-
-/// Table tests for the shared on-device message walk: ONE fixture set of
-/// harness contexts drives ALL THREE provider codecs (gemma,
-/// transformers.js, WebLLM) — each fixture asserts the exact records the
-/// provider's engine receives. The fixtures ARE the shared conversion
-/// table: a new provider codec joins by adding a column, not by
-/// re-deriving the conversions.
-import 'package:fa/gemma/gemma_stream_function.dart';
 import 'package:fa/prompts.g.dart';
 import 'package:fa/transformers_js/transformers_js_stream_function.dart';
 import 'package:fa/webllm/webllm_stream_function.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+/// Table tests for the shared on-device message walk: ONE fixture set of
+/// harness contexts drives BOTH surviving provider codecs (transformers.js,
+/// WebLLM) — each fixture asserts the exact records the provider's engine
+/// receives. The fixtures ARE the shared conversion table: a new provider
+/// codec joins by adding a column, not by re-deriving the conversions.
 
 /// The `bash` tool every content fixture registers (keeps the no-tools
 /// system note out of content-shape assertions).
@@ -125,64 +122,15 @@ final _svgFixture = _context(
   ],
 );
 
+/// The note as each on-device codec emits it: the shared source with the
+/// engine placeholder filled.
+final _webLlmNote = onDeviceNoToolsNote.replaceAll('{{engine}}', 'WebLLM');
+final _transformersJsNote = onDeviceNoToolsNote.replaceAll(
+  '{{engine}}',
+  'transformers.js',
+);
+
 void main() {
-  group('shared on-device codec walk: gemma adapter', () {
-    test('system prompt stays out (travels via systemInstruction)', () {
-      final messages = convertGemmaMessages(
-        _fixtures['system prompt, no tools']!,
-      );
-      expect(messages, [(role: 'user', content: 'hi', toolName: null)]);
-    });
-
-    test('images degrade to the text-only omission note', () {
-      final messages = convertGemmaMessages(
-        _fixtures['multi-part user text and image']!,
-      );
-      expect(messages, [
-        (
-          role: 'user',
-          content:
-              'look at this\n'
-              '(attached image omitted: the Gemma provider is text-only '
-              'in this build)',
-          toolName: null,
-        ),
-      ]);
-    });
-
-    test('empty user strings are dropped', () {
-      // Gemma keeps the system prompt out entirely, so nothing survives.
-      expect(
-        convertGemmaMessages(_fixtures['empty user strings are dropped']!),
-        isEmpty,
-      );
-    });
-
-    test('historical tool calls become the OpenAI-style tool_call message', () {
-      final messages = convertGemmaMessages(
-        _fixtures['assistant text plus historical tool calls']!,
-      );
-      expect(messages, hasLength(2));
-      expect(messages[0], (
-        role: 'assistant',
-        content: 'running it',
-        toolName: null,
-      ));
-      expect(messages[1].role, 'tool_call');
-      expect(messages[1].toolName, isNull);
-      expect(messages[1].content, _jsonToolCalls('bash', 'ls'));
-    });
-
-    test('tool results carry the tool name; empty collapses', () {
-      expect(convertGemmaMessages(_fixtures['tool result ok']!), [
-        (role: 'tool_result', content: 'file.txt', toolName: 'bash'),
-      ]);
-      expect(convertGemmaMessages(_fixtures['empty tool result']!), [
-        (role: 'tool_result', content: '(no output)', toolName: 'bash'),
-      ]);
-    });
-  });
-
   group('shared on-device codec walk: transformers.js adapter', () {
     test('no tools appends the no-tools note to the system message', () {
       final system = convertTransformersJsMessages(
@@ -190,7 +138,7 @@ void main() {
         supportsVision: false,
       ).first;
       expect(system.role, 'system');
-      expect(system.content, 'You are Fa.\n\n$transformersJsNoToolsNote');
+      expect(system.content, 'You are Fa.\n\n$_transformersJsNote');
     });
 
     test('blank system prompt with no tools becomes the note itself', () {
@@ -198,7 +146,7 @@ void main() {
         _context(tools: const [], messages: [UserMessage.text('hi')]),
         supportsVision: false,
       ).first;
-      expect(system.content, transformersJsNoToolsNote);
+      expect(system.content, _transformersJsNote);
     });
 
     test(
@@ -273,12 +221,12 @@ void main() {
         _fixtures['system prompt, no tools']!,
       ).first;
       expect(system.role, 'system');
-      expect(system.content, 'You are Fa.\n\n$webLlmNoToolsNote');
+      expect(system.content, 'You are Fa.\n\n$_webLlmNote');
       expect(
         convertWebLlmMessages(
           _context(tools: const [], messages: [UserMessage.text('hi')]),
         ).first.content,
-        webLlmNoToolsNote,
+        _webLlmNote,
       );
     });
 
@@ -318,17 +266,3 @@ void main() {
     });
   });
 }
-
-/// The gemma tool_call envelope's exact JSON (arguments double-encoded).
-String _jsonToolCalls(String name, String args) => jsonEncode({
-  'role': 'assistant',
-  'tool_calls': [
-    {
-      'type': 'function',
-      'function': {
-        'name': name,
-        'arguments': jsonEncode({'cmd': args}),
-      },
-    },
-  ],
-});

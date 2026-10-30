@@ -150,8 +150,9 @@ flutter {
 }
 
 // ── 16 KB page-size gate for prebuilt native assets (gh-746) ─────────────
-// flutter_gemma's LiteRT-LM native bundle ships Qualcomm QNN HTP Skel
-// libraries whose ELF LOAD segments declare a 4 KB alignment; Google Play
+// Prebuilt native-asset bundles (historically the LiteRT-LM QNN HTP Skel
+// libraries, gh-2004 since removed) shipped ELF LOAD segments declaring a
+// 4 KB alignment; Google Play
 // rejects uploads containing such libraries. The flutter tool stages native
 // assets under build/intermediates/flutter/<variant>/native_assets/jniLibs
 // during compileFlutterBuild<Variant>, and copyJniLibsflutterBuild<Variant>

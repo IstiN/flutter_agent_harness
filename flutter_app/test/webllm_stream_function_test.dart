@@ -132,6 +132,10 @@ AssistantMessage _assistant(List<ContentBlock> content) => AssistantMessage(
 String _partialText(AssistantMessage message) =>
     message.content.whereType<TextContent>().map((block) => block.text).join();
 
+/// The note as the WebLLM codec emits it: the shared on-device source with
+/// the engine placeholder filled.
+final _noToolsNote = onDeviceNoToolsNote.replaceAll('{{engine}}', 'WebLLM');
+
 void main() {
   group('streamWebLlm event mapping', () {
     test(
@@ -360,7 +364,7 @@ void main() {
       expect(system.content, contains('"cmd"'));
       expect(system.content, contains('```tool_call'));
       // Tools exist, so the no-tools note must NOT appear.
-      expect(system.content, isNot(contains(webLlmNoToolsNote)));
+      expect(system.content, isNot(contains(_noToolsNote)));
     });
 
     test(
@@ -464,7 +468,7 @@ void main() {
       final system = engine.lastMessages!.first;
       expect(system.role, 'system');
       expect(system.content, startsWith('You are Fa.'));
-      expect(system.content, contains(webLlmNoToolsNote));
+      expect(system.content, contains(_noToolsNote));
       expect(system.content, isNot(contains('## Available tools')));
 
       expect(events.whereType<ToolCallStartEvent>(), isEmpty);
@@ -503,12 +507,12 @@ void main() {
         _context(systemPrompt: 'You are Fa.'),
       );
       expect(noTools.first.role, 'system');
-      expect(noTools.first.content, 'You are Fa.\n\n$webLlmNoToolsNote');
+      expect(noTools.first.content, 'You are Fa.\n\n$_noToolsNote');
 
       final emptyTools = convertWebLlmMessages(
         _context(systemPrompt: 'You are Fa.', tools: const []),
       );
-      expect(emptyTools.first.content, contains(webLlmNoToolsNote));
+      expect(emptyTools.first.content, contains(_noToolsNote));
     });
 
     test('no system message when there is no prompt and tools exist', () {
