@@ -2099,13 +2099,15 @@ void main() {
       expect(note, contains('--transcribe-model'));
     });
 
-    test('video in the CLI → the note names the app host', () async {
+    test('video in the CLI → the note names the video-model configuration '
+        '(gh-1985 C1 replaced the app-host-only hint)', () async {
       await env.writeBinaryFile('/work/clip.mp4', Uint8List.fromList([1, 2]));
       final tool = readFileTool(env, mediaFileReadNotes: true);
       final result = await tool.execute({'path': '/work/clip.mp4'}, null, null);
       final note = _text(result);
       expect(note, contains('[Video file: /work/clip.mp4'));
-      expect(note, contains('Fa app'));
+      expect(note, contains('models.slots.vision'));
+      expect(note, contains('--vision-model'));
     });
 
     test('gate off (app host) → audio falls through unchanged (REG)', () async {

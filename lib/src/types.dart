@@ -307,6 +307,7 @@ sealed class ContentBlock {
       'toolCall' => ToolCall.fromJson(json),
       'image' => ImageContent.fromJson(json),
       'audio' => AudioContent.fromJson(json),
+      'video' => VideoContent.fromJson(json),
       _ => throw FormatException('Unknown content block type: ${json['type']}'),
     };
   }
@@ -523,6 +524,35 @@ final class AudioContent extends ContentBlock {
 
   /// Deserializes from a JSON map produced by [toJson].
   factory AudioContent.fromJson(Map<String, dynamic> json) => AudioContent(
+    data: json['data'] as String? ?? '',
+    mimeType: json['mimeType'] as String? ?? '',
+  );
+}
+
+/// Inline video data for video-understanding models (gh-1985 C1: the
+/// `glm-5.3-flash`/`gemini` video-read family). Base64-encoded like
+/// [ImageContent]; providers shape it natively (google `inlineData`,
+/// openai-completions `video_url`) and models without the `video` input
+/// modality have the block replaced by the standard omission note before
+/// the request (same downgrade path as images).
+final class VideoContent extends ContentBlock {
+  const VideoContent({required this.data, required this.mimeType});
+
+  /// Base64-encoded video bytes (mp4, webm, mov, mpeg…).
+  final String data;
+
+  /// MIME type, e.g. `video/mp4`, `video/webm`, `video/quicktime`.
+  final String mimeType;
+
+  @override
+  Map<String, dynamic> toJson() => {
+    'type': 'video',
+    'data': data,
+    'mimeType': mimeType,
+  };
+
+  /// Deserializes from a JSON map produced by [toJson].
+  factory VideoContent.fromJson(Map<String, dynamic> json) => VideoContent(
     data: json['data'] as String? ?? '',
     mimeType: json['mimeType'] as String? ?? '',
   );

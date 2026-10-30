@@ -672,6 +672,12 @@ List<TrajectoryRequestMessageBlock> trajectoryRequestBlocks(
           chars: data.length,
           text: '[audio $mimeType]',
         ),
+      VideoContent(:final data, :final mimeType) =>
+        TrajectoryRequestMessageBlock(
+          type: 'video',
+          chars: data.length,
+          text: '[video $mimeType]',
+        ),
     },
 ];
 

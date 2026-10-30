@@ -237,6 +237,24 @@ AgentTool readFileTool(
           if (imageResult != null) {
             return _withNotice(imageResult, windowNotice);
           }
+          // gh-1985 C1: a video extension routes the bytes natively — to a
+          // video-capable chat model (VideoContent rides), else to the
+          // configured media/vision slot with attribution; without either,
+          // today's behavior (the AC10 note when the host opted in, else
+          // the plain fall-through) keeps byte-identical.
+          final videoResult = await _readVideoResult(
+            path,
+            bytes,
+            parsed,
+            model,
+            vision: vision,
+            autoInspect: autoInspect,
+            onImageUsage: onImageUsage,
+            cancelToken: cancelToken,
+          );
+          if (videoResult != null) {
+            return _withNotice(videoResult, windowNotice);
+          }
           // Audio/video files (gh-1984 AC10): an honest note naming the
           // tool/slot/host instead of a bare fall-through. The gate keeps
           // hosts without media wiring byte-identical to today.
@@ -509,10 +527,12 @@ String? _mediaFileNote(
               'transcribe_audio tool.]';
   }
   if (_videoExtensions.any(lower.endsWith)) {
-    return '[Video file: $path — text content is not shown. Video reading '
-        'runs in the Fa app host only (read_video over the fah/video '
-        'channel). In the CLI, extract frames with a bash command '
-        '(e.g. ffmpeg -i clip.mp4 frame-%02d.png) and read the frames.]';
+    return '[Video file: $path — the current model has no video input and '
+        'no video model is configured. Configure a video-capable model as '
+        'the vision slot (models.slots.vision via /settings → Media models '
+        '→ vision, or --vision-model <id>, e.g. a gemini or glm-5.3-flash '
+        'model) and the read describes the video; a video-capable chat '
+        'model receives the bytes directly.]';
   }
   return null;
 }
@@ -530,6 +550,142 @@ const _audioExtensions = [
   '.aiff',
   '.amr',
 ];
+
+/// The video read route (gh-1985 C1/AC2): a matching video extension routes
+/// the bytes to a video-capable target —
+///
+/// - a chat model whose `input` modalities contain `video` gets the bytes
+///   attached ([VideoContent]); the ride is size-capped by
+///   `images.maxBytesPerRequest` (AC7) — an oversized video is NOT attached
+///   and the note names the size + the trim/convert hint, with no endless
+///   retry;
+/// - else the configured media/vision slot describes the video (AC2,
+///   `[via video model <id>]` attribution), honoring the same
+///   `autoInspect` knob and CancelToken as the image auto-route; provider
+///   failures degrade to an honest note — the read never fails (AC6
+///   semantics);
+/// - with neither target present, returns null so the caller keeps today's
+///   behavior (the AC10 note when the host opted in, else the plain
+///   fall-through) — byte-identical (REG).
+Future<ToolExecutionResult?> _readVideoResult(
+  String path,
+  Uint8List bytes,
+  ReadSelector parsed,
+  Model? Function()? model, {
+  Future<InspectImageConfig?> Function()? vision,
+  bool Function()? autoInspect,
+  void Function(Usage usage)? onImageUsage,
+  CancelToken? cancelToken,
+}) async {
+  if (!(_videoExtensions.any(path.toLowerCase().endsWith))) {
+    return null;
+  }
+  if (parsed is! ReadSelectorNone) {
+    // Line selectors apply to text files only — same refusal as images.
+    throw StateError(
+      'Line selectors (:N, :A-B, :raw) apply to text files; '
+      "'$path' is a video.",
+    );
+  }
+  final budget = imageRegistryConfig.maxBytesPerRequest;
+  final payloadBase64 = base64Encode(bytes);
+  final sizeLabel = formatToolSize(bytes.length);
+  final currentModel = model?.call();
+  if (currentModel != null && currentModel.input.contains('video')) {
+    if (payloadBase64.length > budget) {
+      return ToolExecutionResult.text(
+        '[Video: $path, $sizeLabel — exceeds the video byte budget '
+        '(images.maxBytesPerRequest = $budget bytes). The video is NOT '
+        'attached. Trim/convert the clip (e.g. ffmpeg -i $path -ss 0 -t 30 '
+        'small.mp4) and read the smaller file.]',
+      );
+    }
+    return ToolExecutionResult(
+      content: [
+        TextContent(
+          text:
+              '[Video: $path, $sizeLabel — the video is attached for the '
+              'current video-capable model.]',
+        ),
+        VideoContent(data: payloadBase64, mimeType: _videoMimeType(path)),
+      ],
+    );
+  }
+
+  // Non-video-capable chat model: the configured media/vision slot
+  // describes the video (AC2 attribution), same knobs as the image
+  // auto-route.
+  final visionConfig = await vision?.call();
+  if (visionConfig == null ||
+      !(autoInspect?.call() ?? imageRegistryConfig.autoInspect)) {
+    if (visionConfig == null) return null;
+    // A video model IS configured but the auto-route knob is off (the
+    // gh-1984 AC3 note shape): name the model instead of staying silent.
+    return ToolExecutionResult.text(
+      '[Video file: $path — a video model is configured '
+      '(${visionConfig.modelId}) but the read auto-route is off '
+      '(images.autoInspect: false). The video is not attached; switch to a '
+      'video-capable chat model or enable the auto-route to have the read '
+      'describe it.]',
+    );
+  }
+  if (payloadBase64.length > budget) {
+    return ToolExecutionResult.text(
+      '[Video: $path, $sizeLabel — exceeds the video byte budget '
+      '(images.maxBytesPerRequest = $budget bytes); video inspection '
+      'skipped. Trim/convert the clip and read the smaller file.]',
+    );
+  }
+  try {
+    final description = await describeVideoWithVisionModel(
+      visionConfig,
+      bytes,
+      _videoMimeType(path),
+      '',
+      cancelToken: cancelToken,
+      onUsage: onImageUsage,
+    );
+    cancelToken?.throwIfCancelled();
+    return ToolExecutionResult(
+      content: [
+        TextContent(
+          text:
+              '[Video: $path, $sizeLabel]\n'
+              '[The video is not attached — the current model has no video '
+              'input.]\n'
+              '[via video model ${visionConfig.modelId}]\n'
+              '$description',
+        ),
+      ],
+    );
+  } on CancelledException {
+    rethrow;
+  } on Object catch (error) {
+    // A cancel surfacing as a provider stream error must stay a cancel,
+    // not a degrade note (gh-1984 AC6 semantics).
+    cancelToken?.throwIfCancelled();
+    return ToolExecutionResult.text(
+      '[Video: $path, $sizeLabel]\n'
+      '[Video inspection via video model ${visionConfig.modelId} failed: '
+      '$error. The read continues without the video.]',
+    );
+  }
+}
+
+/// The video MIME type for a path (the extension table the route matches;
+/// unknown extensions fall back to `video/mp4` — OpenRouter/Gemini accept
+/// the mp4 spelling and the route only reaches here for video extensions).
+String _videoMimeType(String path) {
+  final lower = path.toLowerCase();
+  return switch (lower.substring(lower.lastIndexOf('.') + 1)) {
+    'webm' => 'video/webm',
+    'mov' => 'video/quicktime',
+    'mkv' => 'video/x-matroska',
+    'avi' => 'video/x-msvideo',
+    'mpeg' || 'mpg' => 'video/mpeg',
+    _ => 'video/mp4',
+  };
+}
 
 /// Video file extensions the AC10 note names.
 const _videoExtensions = [
