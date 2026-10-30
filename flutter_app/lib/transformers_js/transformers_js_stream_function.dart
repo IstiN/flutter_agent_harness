@@ -23,7 +23,7 @@
 /// [StopReason.toolUse]).
 ///
 /// When `Context.tools` is empty the wrapper is a byte-identical
-/// passthrough; [transformersJsNoToolsNote] is then appended to the system
+/// passthrough; [onDeviceNoToolsNote] (engine substituted) is then appended to the system
 /// message so the model does not try to call tools that are not there.
 ///
 /// Usage accounting: the engine reports no token counts, so every message
@@ -275,9 +275,10 @@ bool _shouldRetryTransformersJsGpuCrash({
     recoveryAttempts < _maxRecoveryAttemptsPerTurn &&
     isTransformersJsGpuCrash(_formatTransformersJsError(error));
 
-/// The transformers.js projection quirks: a system message (carrying
-/// [transformersJsNoToolsNote] when the context has no tools — with tools
-/// present the wrapper already appended the tool instructions upstream),
+/// The transformers.js projection quirks: a system message (carrying the
+/// [onDeviceNoToolsNote] with `{{engine}}` filled when the context has
+/// no tools — with tools present the wrapper already appended the tool
+/// instructions upstream),
 /// vision images as decodable `data:` URIs ([isInlineImageMimeType]:
 /// PNG, JPEG, GIF, WebP — feeding undecodable bytes to `RawImage` kills
 /// the ONNX Runtime WebGPU session, `mapAsync ... invalid Buffer`), inline
@@ -289,9 +290,11 @@ OnDeviceCodecProfile _transformersJsCodecProfile({
   systemMessage: (system, hasTools) {
     var text = system;
     if (!hasTools) {
-      text = text.isEmpty
-          ? transformersJsNoToolsNote
-          : '$text\n\n$transformersJsNoToolsNote';
+      final note = onDeviceNoToolsNote.replaceAll(
+        '{{engine}}',
+        'transformers.js',
+      );
+      text = text.isEmpty ? note : '$text\n\n$note';
     }
     if (text.isEmpty) return null;
     return (role: 'system', content: text, toolName: null, images: const []);

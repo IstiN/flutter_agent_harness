@@ -184,6 +184,16 @@ _downloadedEngines() {
   );
 }
 
+/// gh-2004: the committed baselines for the gema-affected scenarios no
+/// longer match the rendered surface (the gema engine rows are gone).
+/// Baselines are only valid when baked on the pinned macOS release runner
+/// (memory n_1018_80a7 — a linux re-bake corrupts them), so the affected
+/// scenarios skip instead of failing the nightly against a stale PNG.
+/// Flip to false (or drop the skips) IN THE SAME CHANGE as the
+/// release-runner `flutter test test/golden --update-goldens` re-bake of
+/// setup_quick_start_desktop.png + setup_quick_start_phone.png.
+const _baselineRebakePending = true;
+
 void main() {
   setUpAll(() async {
     await ensureGoldenFonts();
@@ -205,42 +215,28 @@ void main() {
   // the same change as the release-runner `flutter test test/golden
   // --update-goldens` re-bake of setup_quick_start_desktop.png +
   // setup_quick_start_phone.png.
-  testWidgets(
-    'quick start lists cached/installed on-device models',
-    (tester) async {
-      final engines = _downloadedEngines();
-      await _pumpSetup(
-        tester,
-        webLlmEngine: engines.webLlm,
-        transformersJsEngine: engines.transformersJs,
-      );
-      await expectGolden(tester, 'setup_quick_start_desktop');
-    },
-    skip:
-        'baseline re-bake pending on the pinned macOS release runner '
-        '(gh-2004): unskip together with the '
-        '`flutter test test/golden --update-goldens` re-bake of '
-        'setup_quick_start_desktop/phone',
-  );
+  testWidgets('quick start lists cached/installed on-device models', (
+    tester,
+  ) async {
+    final engines = _downloadedEngines();
+    await _pumpSetup(
+      tester,
+      webLlmEngine: engines.webLlm,
+      transformersJsEngine: engines.transformersJs,
+    );
+    await expectGolden(tester, 'setup_quick_start_desktop');
+  }, skip: _baselineRebakePending);
 
-  testWidgets(
-    'quick start on a phone frame',
-    (tester) async {
-      final engines = _downloadedEngines();
-      await _pumpSetup(
-        tester,
-        size: goldenSizePhone,
-        webLlmEngine: engines.webLlm,
-        transformersJsEngine: engines.transformersJs,
-      );
-      await expectGolden(tester, 'setup_quick_start_phone');
-    },
-    skip:
-        'baseline re-bake pending on the pinned macOS release runner '
-        '(gh-2004): unskip together with the '
-        '`flutter test test/golden --update-goldens` re-bake of '
-        'setup_quick_start_desktop/phone',
-  );
+  testWidgets('quick start on a phone frame', (tester) async {
+    final engines = _downloadedEngines();
+    await _pumpSetup(
+      tester,
+      size: goldenSizePhone,
+      webLlmEngine: engines.webLlm,
+      transformersJsEngine: engines.transformersJs,
+    );
+    await expectGolden(tester, 'setup_quick_start_phone');
+  }, skip: _baselineRebakePending);
 
   testWidgets('a saved hosted connection prefills the form', (tester) async {
     await _pumpSetup(

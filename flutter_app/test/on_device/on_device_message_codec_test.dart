@@ -122,8 +122,15 @@ final _svgFixture = _context(
   ],
 );
 
-void main() {
+/// The note as each on-device codec emits it: the shared source with the
+/// engine placeholder filled.
+final _webLlmNote = onDeviceNoToolsNote.replaceAll('{{engine}}', 'WebLLM');
+final _transformersJsNote = onDeviceNoToolsNote.replaceAll(
+  '{{engine}}',
+  'transformers.js',
+);
 
+void main() {
   group('shared on-device codec walk: transformers.js adapter', () {
     test('no tools appends the no-tools note to the system message', () {
       final system = convertTransformersJsMessages(
@@ -131,7 +138,7 @@ void main() {
         supportsVision: false,
       ).first;
       expect(system.role, 'system');
-      expect(system.content, 'You are Fa.\n\n$transformersJsNoToolsNote');
+      expect(system.content, 'You are Fa.\n\n$_transformersJsNote');
     });
 
     test('blank system prompt with no tools becomes the note itself', () {
@@ -139,7 +146,7 @@ void main() {
         _context(tools: const [], messages: [UserMessage.text('hi')]),
         supportsVision: false,
       ).first;
-      expect(system.content, transformersJsNoToolsNote);
+      expect(system.content, _transformersJsNote);
     });
 
     test(
@@ -214,12 +221,12 @@ void main() {
         _fixtures['system prompt, no tools']!,
       ).first;
       expect(system.role, 'system');
-      expect(system.content, 'You are Fa.\n\n$webLlmNoToolsNote');
+      expect(system.content, 'You are Fa.\n\n$_webLlmNote');
       expect(
         convertWebLlmMessages(
           _context(tools: const [], messages: [UserMessage.text('hi')]),
         ).first.content,
-        webLlmNoToolsNote,
+        _webLlmNote,
       );
     });
 
