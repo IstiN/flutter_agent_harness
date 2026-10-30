@@ -556,7 +556,13 @@ platform :ios do
     # for the duration of gym and restore it in ensure. This is NOT the
     # retired per-job keychain model: the keychain itself stays persistent;
     # only xcodebuild's visibility window is pinned.
-    saved_search_list = `security list-keychains -d user`.strip
+    # gh-1972 root cause: the save/restore dance entrenched whatever it
+    # captured — one System duplicate slipping in between the two writers
+    # (this pin + ci-sign install append) was then written back by EVERY
+    # subsequent run, and a later "Reset To Defaults" on the host turned
+    # the stale login path dangling ("Keychain Not Found" GUI dialogs,
+    # gh auth failure). The pin below IS the canonical persistent list;
+    # there is nothing to restore to.
     sh("security", "list-keychains", "-d", "user", "-s",
        File.expand_path("~/Library/Keychains/login.keychain-db"),
        "/Library/Keychains/System.keychain",
@@ -603,8 +609,9 @@ platform :ios do
       # gh-1954: restore the pre-gym search list (best effort — never mask
       # the gym result with a restore failure).
       begin
-        entries = saved_search_list.scan(/"([^"]+)"/).flatten
-        sh("security", "list-keychains", "-d", "user", "-s", *entries) unless entries.empty?
+        # gh-1972: no write-back restore. The pinned list is canonical and
+        # idempotent — restoring a captured copy only re-entrenches any
+        # garbage captured at pin time (see the root-cause note above).
       rescue StandardError
       end
     end
