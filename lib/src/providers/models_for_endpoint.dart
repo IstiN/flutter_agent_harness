@@ -81,10 +81,144 @@ Future<ModelsEndpointInfo> fetchModelsForEndpoint(
   http.Client? client,
   void Function()? onBundledFallback,
 }) async {
+  final report = await fetchModelsForEndpointReport(
+    baseUrl,
+    apiKey: apiKey,
+    provider: provider,
+    client: client,
+    onBundledFallback: onBundledFallback,
+  );
+  return report.info;
+}
+
+/// Why a `/models` fetch answered empty — the named failure branch
+/// (gh-1990): no picker may show a bare empty list again, every
+/// silent-empty exit (token exchange / HTTP / tier routing / filter)
+/// carries its reason.
+@immutable
+final class ModelsFetchDiagnostic {
+  /// Creates the diagnostic; [stage] and [message] are the contract, the
+  /// rest is best-effort structure for programmatic surfacing.
+  const ModelsFetchDiagnostic({
+    required this.stage,
+    required this.message,
+    this.path,
+    this.httpStatus,
+    this.timedOut = false,
+    this.pathFailed = true,
+    this.fetchedCount = 0,
+    this.filteredCount = 0,
+    this.hint,
+  });
+
+  /// The stage that produced this: the token exchange, the `/models`
+  /// HTTP call, or the picker filter.
+  final String stage;
+
+  /// The exchange stage — `copilot_internal/v2/token` failed.
+  static const stageExchange = 'exchange';
+
+  /// The models stage — the `/models` HTTP call failed or answered empty.
+  static const stageModels = 'models';
+
+  /// The filter stage — `/models` answered, the picker filter dropped
+  /// every entry.
+  static const stageFilter = 'filter';
+
+  /// Which credential path produced this: the exchanged-token path or
+  /// the raw-PAT path (the dual-path provenance, gh-1606).
+  final String? path;
+
+  /// The exchanged-token path (the default credential route).
+  static const pathExchange = 'exchange';
+
+  /// The raw-PAT path (fine-grained PATs, the gh-1606 PAT mode).
+  static const pathPatDirect = 'pat-direct';
+
+  /// The one-line user-facing reason.
+  final String message;
+
+  /// The HTTP status when a request failed with one.
+  final int? httpStatus;
+
+  /// Whether the failure was the watchdog firing instead of an answer.
+  final bool timedOut;
+
+  /// Whether THIS path failed (exchange throw, non-200, timeout,
+  /// transport) — as opposed to answering and the filter dropping the
+  /// entries. The dual-path fallback retries only failed paths.
+  final bool pathFailed;
+
+  /// Entries the payload carried (the filter stage).
+  final int fetchedCount;
+
+  /// Entries the picker filter dropped (the filter stage).
+  final int filteredCount;
+
+  /// Optional remediation hint (tier host, PAT remedies, seat check).
+  final String? hint;
+
+  @override
+  String toString() => message;
+}
+
+/// A `/models` fetch answer plus its provenance (gh-1990): the parsed
+/// [ModelsEndpointInfo], the empty-answer [diagnostic] (null exactly when
+/// models were listed), an optional human-facing [note] (path fallback,
+/// partial filtering), and the per-model filter drops.
+@immutable
+final class ModelsFetchReport {
+  /// Creates the report; [diagnostic] must be non-null exactly when
+  /// [info].$1 is empty — an empty answer always names its reason.
+  const ModelsFetchReport({
+    required this.info,
+    this.diagnostic,
+    this.note,
+    this.droppedModels = const <(String, String)>[],
+  });
+
+  /// The parsed model list (ids, context windows, output caps).
+  final ModelsEndpointInfo info;
+
+  /// Why the answer is empty — null exactly when models were listed.
+  final ModelsFetchDiagnostic? diagnostic;
+
+  /// Optional provenance note even on success: the dual-path fallback
+  /// note (which credential path answered), a partial-filter summary.
+  final String? note;
+
+  /// Per-model filter drops as (model id, drop reason) — populated even
+  /// when some models were listed (AC2 transparency).
+  final List<(String, String)> droppedModels;
+
+  /// Whether the fetch answered no models.
+  bool get isEmpty => info.$1.isEmpty;
+
+  /// The one-line user-facing reason for an empty answer, with the
+  /// remediation hint appended when present.
+  String get reasonText {
+    final d = diagnostic;
+    if (d == null) return '';
+    return d.hint == null ? d.message : '${d.message} — ${d.hint}';
+  }
+}
+
+/// Fetches the model list of [baseUrl] WITH the empty-answer diagnostic
+/// (gh-1990): the same dispatch as [fetchModelsForEndpoint], but the
+/// answer carries WHY it is empty — the failed stage (token exchange /
+/// HTTP / filter), the HTTP status, the timeout flag, the per-model
+/// filter drops, and any remediation hint.
+Future<ModelsFetchReport> fetchModelsForEndpointReport(
+  String baseUrl, {
+  required String apiKey,
+  String? provider,
+  http.Client? client,
+  void Function()? onBundledFallback,
+}) async {
   final effectiveClient = client ?? _dispatchHttpClientForTesting;
   for (final dialect in modelListDialects) {
     if (dialect.matches(baseUrl, provider)) {
-      return dialect.fetch(
+      return dialect.fetchReport(
         baseUrl,
         apiKey,
         client: effectiveClient,
@@ -92,7 +226,13 @@ Future<ModelsEndpointInfo> fetchModelsForEndpoint(
       );
     }
   }
-  return (const <String>[], const <String, int>{}, const <String, int>{});
+  return ModelsFetchReport(
+    info: (const <String>[], const <String, int>{}, const <String, int>{}),
+    diagnostic: ModelsFetchDiagnostic(
+      stage: ModelsFetchDiagnostic.stageModels,
+      message: 'no model-list dialect handles this endpoint',
+    ),
+  );
 }
 
 http.Client? _dispatchHttpClientForTesting;

@@ -45,11 +45,16 @@ bool isCopilotBaseUrl(String baseUrl) =>
 /// the GitHub token is dead and must be re-issued (`/provider copilot`),
 /// NOT refreshed like a short-lived Copilot token would be.
 final class CopilotAuthException implements Exception {
-  /// Creates the auth failure with a user-facing [message].
-  const CopilotAuthException(this.message);
+  /// Creates the auth failure with a user-facing [message] and, when the
+  /// failure came from an HTTP status, that [statusCode] (null for
+  /// payload/shape failures — gh-1990 diagnostics report it).
+  const CopilotAuthException(this.message, {this.statusCode});
 
   /// The human-readable failure description.
   final String message;
+
+  /// The HTTP status that produced this failure, when one did.
+  final int? statusCode;
 
   @override
   String toString() => message;
@@ -116,6 +121,15 @@ bool isFineGrainedGitHubPat(String token) => token.startsWith('github_pat_');
 /// CLI docs (2026-09): classic PATs are NOT a supported Copilot
 /// credential type — the connect flow warns at paste time and re-asks.
 bool isClassicGitHubPat(String token) => token.startsWith('ghp_');
+
+/// Whether [token] is an OAuth-shaped GitHub token (`gho_`/`ghu_`/`ghs_`)
+/// — the only shapes the Copilot token exchange accepts (gh-1990
+/// dual-path: an OAuth key never retries as a direct PAT Bearer, a PAT
+/// key never retries into the exchange).
+bool isOAuthShapedGitHubToken(String token) =>
+    token.startsWith('gho_') ||
+    token.startsWith('ghu_') ||
+    token.startsWith('ghs_');
 
 /// The first-party Copilot CLI client identity (PAT mode): the official
 /// Copilot CLI presents `copilot-developer-cli` plus a
@@ -203,6 +217,7 @@ Future<CopilotApiToken> fetchCopilotApiToken({
     throw const CopilotAuthException(
       'GitHub token rejected (401) by the Copilot token exchange — '
       're-authorize Copilot (CLI: /provider copilot).',
+      statusCode: 401,
     );
   }
   if (response.statusCode == 404) {
@@ -217,6 +232,7 @@ Future<CopilotApiToken> fetchCopilotApiToken({
         'settings/personal-access-tokens → edit → Permissions); the '
         'GitHub device flow (/provider copilot) mints a working OAuth '
         'token. Body: ${response.body.trim()}',
+        statusCode: 404,
       );
     }
     throw CopilotAuthException(
@@ -227,12 +243,14 @@ Future<CopilotApiToken> fetchCopilotApiToken({
       '(ghp_…) are not supported by Copilot at all; or the account has '
       'no Copilot seat. The GitHub device flow (/provider copilot) mints '
       'a working OAuth token. Body: ${response.body.trim()}',
+      statusCode: 404,
     );
   }
   if (response.statusCode != 200) {
     throw CopilotAuthException(
       'Copilot token exchange failed (HTTP ${response.statusCode}): '
       '${response.body.trim()}',
+      statusCode: response.statusCode,
     );
   }
   final decoded = jsonDecode(response.body);
