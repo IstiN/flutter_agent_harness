@@ -124,8 +124,8 @@ final class _FakeTransformersJsEngine implements TransformersJsEngineApi {
 
 Future<void> _pumpSection(
   WidgetTester tester, {
-  _FakeWebLlmEngine? webLlmEngine,
-  _FakeTransformersJsEngine? transformersJsEngine,
+  WebLlmEngineApi? webLlmEngine,
+  TransformersJsEngineApi? transformersJsEngine,
   bool? isWeb,
   Future<void> Function(AgentConfig config)? onConnect,
 }) {
