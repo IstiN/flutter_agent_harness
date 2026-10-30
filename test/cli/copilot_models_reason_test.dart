@@ -29,18 +29,21 @@ void main() {
     http.Client? modelsHttpClient,
     SecureKeyCache? secureKeys,
     CustomProviderRegistry? customProviders,
+    Model? model,
+    String? providerKind,
+    String? Function(String name)? envVarValue,
   }) {
     return AgentCli(
       config: AgentCliConfig(
-        model: testModel,
+        model: model ?? testModel,
         apiKey: '[REDACTED:Sensitive-Value]',
         env: env,
         sessionRoot: '/sessions',
-        envVarValue: (_) => null,
+        envVarValue: envVarValue ?? (_) => null,
         modelsHttpClient: modelsHttpClient,
         secureKeys: secureKeys,
         customProviders: customProviders,
-        providerKind: 'openai-completions',
+        providerKind: providerKind ?? 'openai-completions',
       ),
       io: io,
       streamFunction: streamFunction,
@@ -168,4 +171,118 @@ void main() {
       expect(out, isNot(contains('fetch notes:')));
     },
   );
+
+  // gh-1990 review round 2 — the saved-entry path above is covered; the
+  // two SIBLING Copilot fetch paths (unsaved active-catalog provider,
+  // env-keyed provider) must surface the same named failure instead of
+  // silently falling back to the seed lists.
+  group('fetch notes on the sibling copilot paths (unsaved providers)', () {
+    test('an unsaved ACTIVE copilot catalog provider names its failure',
+        () async {
+      final fake = FakeStreamFunction([]);
+      const activeCopilot = Model(
+        id: 'gpt-4.1',
+        api: 'openai-completions',
+        provider: 'copilot',
+        baseUrl: copilotIndividualBaseUrl,
+        contextWindow: 1000000,
+        maxTokens: 32768,
+      );
+      final client = http_testing.MockClient((request) async {
+        if (request.url.host == 'api.github.com') {
+          return http.Response('{"message":"Bad credentials"}', 401);
+        }
+        return http.Response('{"message":"denied"}', 401);
+      });
+      final cli = cliFor(
+        fake.call,
+        modelsHttpClient: client,
+        model: activeCopilot,
+        providerKind: 'copilot',
+      );
+      final run = cli.run();
+
+      io.sendLine('/models');
+      await waitForIt(
+        () => io.out.toString().contains('models (provider/model):'),
+      );
+      io.sendLine('/exit');
+      await run;
+
+      final out = io.out.toString();
+      expect(out, contains('fetch notes:'));
+      expect(out, contains('copilot:'));
+      // The dual-path shape: the classic-shaped session key rescues
+      // through PAT-direct after the exchange rejects it.
+      expect(out, contains('exchange path:'));
+      expect(out, contains('pat-direct path:'));
+    });
+
+    test('an env-keyed copilot provider names its failure', () async {
+      final fake = FakeStreamFunction([]);
+      final client = http_testing.MockClient((request) async {
+        if (request.url.host == 'api.github.com') {
+          return http.Response(
+            '{"token":"[REDACTED:credential]","expires_at":9999999999}',
+            200,
+          );
+        }
+        return http.Response('{"message":"seat inactive"}', 403);
+      });
+      final cli = cliFor(
+        fake.call,
+        modelsHttpClient: client,
+        envVarValue: (name) =>
+            name == 'COPILOT_GITHUB_TOKEN' ? 'gho_dead' : null,
+      );
+      final run = cli.run();
+
+      io.sendLine('/models');
+      await waitForIt(
+        () => io.out.toString().contains('models (provider/model):'),
+      );
+      io.sendLine('/exit');
+      await run;
+
+      final out = io.out.toString();
+      expect(out, contains('fetch notes:'));
+      expect(out, contains('copilot:'));
+      expect(out, contains('answered HTTP 403'));
+    });
+
+    test('a healthy env-keyed copilot provider adds no failure section',
+        () async {
+      final fake = FakeStreamFunction([]);
+      final client = http_testing.MockClient((request) async {
+        if (request.url.host == 'api.github.com') {
+          return http.Response(
+            '{"token":"[REDACTED:credential]","expires_at":9999999999}',
+            200,
+          );
+        }
+        return http.Response(
+          '{"data":[{"id":"gpt-4.1","model_picker_enabled":true,'
+          '"supported_endpoints":["/chat/completions"]}]}',
+          200,
+        );
+      });
+      final cli = cliFor(
+        fake.call,
+        modelsHttpClient: client,
+        envVarValue: (name) =>
+            name == 'COPILOT_GITHUB_TOKEN' ? 'gho_ok' : null,
+      );
+      final run = cli.run();
+
+      io.sendLine('/models');
+      await waitForIt(
+        () => io.out.toString().contains('models (provider/model):'),
+      );
+      io.sendLine('/exit');
+      await run;
+
+      final out = io.out.toString();
+      expect(out, isNot(contains('fetch notes:')));
+    });
+  });
 }
