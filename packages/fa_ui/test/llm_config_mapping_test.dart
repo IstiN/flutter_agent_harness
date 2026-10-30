@@ -78,7 +78,6 @@ void main() {
     });
 
     test('on-device presets have no default hosted config', () {
-      expect(ProviderPreset.gemma.toDefaultLlmConfig(), isNull);
       expect(ProviderPreset.webllm.toDefaultLlmConfig(), isNull);
       expect(ProviderPreset.transformersJs.toDefaultLlmConfig(), isNull);
     });

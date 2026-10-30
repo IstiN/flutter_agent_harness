@@ -16,7 +16,6 @@ void main() {
       expect(preset.label(strings), isNotEmpty, reason: '$preset');
     }
     expect(ProviderPreset.aiin.label(strings), strings.settingsPresetAiin);
-    expect(ProviderPreset.gemma.label(strings), strings.settingsPresetGemma);
     expect(
       ProviderPreset.transformersJs.label(strings),
       strings.settingsPresetTransformersJs,
@@ -60,7 +59,6 @@ void main() {
     expect(ProviderPreset.openrouter.cors(strings), isNull);
     expect(ProviderPreset.gemini.cors(strings), isNull);
     expect(ProviderPreset.webllm.cors(strings), isNull);
-    expect(ProviderPreset.gemma.cors(strings), isNull);
     expect(ProviderPreset.transformersJs.cors(strings), isNull);
   });
 
@@ -79,7 +77,6 @@ void main() {
 
   test('the on-device presets are on-device and lose the endpoint field', () {
     expect(ProviderPreset.webllm.isOnDevice, isTrue);
-    expect(ProviderPreset.gemma.isOnDevice, isTrue);
     expect(ProviderPreset.transformersJs.isOnDevice, isTrue);
     expect(ProviderPreset.openrouter.isOnDevice, isFalse);
     expect(ProviderPreset.webllm.hasEditableBaseUrl, isFalse);
