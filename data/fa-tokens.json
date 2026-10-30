@@ -3943,6 +3943,15 @@
       "total": 2485663,
       "cacheRead": 50573312,
       "model": "glm-5.3-flash"
+    },
+    {
+      "leg": "review",
+      "at": "2026-10-30T20:26:09Z",
+      "prompt": 40654,
+      "completion": 12005,
+      "total": 52659,
+      "cacheRead": 1097984,
+      "model": "kimi-for-coding"
     }
   ],
   "pr-2005": [
