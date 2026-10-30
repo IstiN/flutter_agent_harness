@@ -62,15 +62,6 @@
   "pr-1653": [
     {
       "leg": "review",
-      "at": "2026-10-16T13:09:14Z",
-      "prompt": 41194,
-      "completion": 10465,
-      "total": 51659,
-      "cacheRead": 611520,
-      "model": "glm-5.3-flash"
-    },
-    {
-      "leg": "review",
       "at": "2026-10-16T13:51:05Z",
       "prompt": 60457,
       "completion": 4984,
@@ -3779,6 +3770,15 @@
       "completion": 11352,
       "total": 168214,
       "cacheRead": 2046656,
+      "model": "glm-5.3-flash"
+    },
+    {
+      "leg": "review",
+      "at": "2026-10-30T13:10:29Z",
+      "prompt": 264148,
+      "completion": 23861,
+      "total": 288009,
+      "cacheRead": 4385664,
       "model": "glm-5.3-flash"
     }
   ],
