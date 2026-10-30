@@ -51,15 +51,6 @@
   "issue-1646": [
     {
       "leg": "review",
-      "at": "2026-10-16T10:35:03Z",
-      "prompt": 63557,
-      "completion": 20975,
-      "total": 84532,
-      "cacheRead": 1434624,
-      "model": "glm-5.3-flash"
-    },
-    {
-      "leg": "review",
       "at": "2026-10-16T22:38:23Z",
       "prompt": 114246,
       "completion": 11542,
@@ -3888,6 +3879,17 @@
       "completion": 25623,
       "total": 94962,
       "cacheRead": 1338880,
+      "model": "glm-5.3-flash"
+    }
+  ],
+  "issue-1990": [
+    {
+      "leg": "dev",
+      "at": "2026-10-30T10:37:18Z",
+      "prompt": 2112327,
+      "completion": 98650,
+      "total": 2210977,
+      "cacheRead": 39991616,
       "model": "glm-5.3-flash"
     }
   ]
