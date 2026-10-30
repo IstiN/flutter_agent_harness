@@ -4,7 +4,6 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:fa/ui/screens/app_launcher_screen.dart';
-import 'package:fa/gemma/gemma_types.dart';
 import 'package:fa/services/last_connection.dart';
 import 'package:fa/main.dart';
 import 'package:fa/services/provider_registry.dart';
@@ -55,111 +54,11 @@ final class _FakeWebLlmEngine implements WebLlmEngineApi {
   Future<void> deleteCachedModel(String modelId) async {}
 }
 
-/// Fake [GemmaEngineApi] answering the installed-models scan from a script.
-final class _FakeGemmaEngine implements GemmaEngineApi {
-  _FakeGemmaEngine(this.installed);
-
-  final List<GemmaInstalledModel> installed;
-  bool available = true;
-
-  @override
-  bool get isAvailable => available;
-
-  @override
-  String? get loadedModelId => null;
-
-  @override
-  Stream<GemmaProgress> get progressEvents => const Stream.empty();
-
-  @override
-  Future<bool> isModelInstalled(GemmaModelPreset preset) async => false;
-
-  @override
-  Future<void> installModel(
-    GemmaModelPreset preset, {
-    String? huggingFaceToken,
-  }) async {}
-
-  @override
-  Future<void> loadModel(GemmaModelPreset preset) async {}
-
-  @override
-  Future<void> chatStream({
-    required List<GemmaChatMessage> messages,
-    required void Function(String chunk) onChunk,
-    String? systemInstruction,
-    void Function()? onDone,
-    void Function(String message)? onError,
-    void Function(String toolCallsJson)? onToolCalls,
-    List<Map<String, dynamic>>? tools,
-    int? maxOutputTokens,
-  }) async {}
-
-  @override
-  Future<void> interrupt() async {}
-
-  @override
-  Future<void> unload() async {}
-
-  @override
-  Future<List<GemmaInstalledModel>> installedModels() async => installed;
-
-  @override
-  Future<void> uninstall(String filename) async {}
-}
-
-/// Fake [TransformersJsEngineApi] answering cache queries from a script.
-final class _FakeTransformersJsEngine implements TransformersJsEngineApi {
-  _FakeTransformersJsEngine(this.cache);
-
-  final Map<String, TransformersJsCacheInfo> cache;
-  bool available = true;
-
-  @override
-  bool get isAvailable => available;
-
-  @override
-  String? get loadedModelId => null;
-
-  @override
-  Stream<TransformersJsProgress> get progressEvents => const Stream.empty();
-
-  @override
-  Future<void> loadModel(TransformersJsModelPreset preset) async {}
-
-  @override
-  Future<void Function()> chatStream({
-    required List<TransformersJsChatMessage> messages,
-    required void Function(String chunk) onChunk,
-    void Function(String finishReason)? onDone,
-    void Function(String message)? onError,
-    int? maxTokens,
-  }) async => () {};
-
-  @override
-  Future<void> interrupt() async {}
-
-  @override
-  Future<void> unloadModel() async {}
-
-  @override
-  Future<TransformersJsCacheInfo?> modelCacheInfo(String modelId) async =>
-      cache[modelId];
-
-  @override
-  Future<void> deleteCachedModel(String modelId) async {}
-}
-
-TextField _field(WidgetTester tester, String label) {
-  return tester.widget<TextField>(find.widgetWithText(TextField, label));
-}
-
 Future<void> _pumpForm(
   WidgetTester tester, {
   ProviderRegistry? registry,
   LastConnection? initialConnection,
   _FakeWebLlmEngine? webLlmEngine,
-  _FakeGemmaEngine? gemmaEngine,
   _FakeTransformersJsEngine? transformersJsEngine,
   bool? isWeb,
 }) {
@@ -171,7 +70,6 @@ Future<void> _pumpForm(
             registry: registry ?? ProviderRegistry.inMemory(),
             initialConnection: initialConnection,
             webLlmEngine: webLlmEngine,
-            gemmaEngine: gemmaEngine,
             transformersJsEngine: transformersJsEngine,
             isWeb: isWeb,
             onConnect: (_) async {},
@@ -347,92 +245,6 @@ void main() {
       expect(find.text('OpenRouter'), findsOneWidget);
     });
 
-    testWidgets('an installed Gemma model is pre-selected on mobile', (
-      tester,
-    ) async {
-      debugDefaultTargetPlatformOverride = TargetPlatform.android;
-      await _pumpForm(
-        tester,
-        initialConnection: const LastConnection(
-          providerKind: gemmaProviderKind,
-          modelId: 'gemma-4-E4B-it',
-          gemmaPresetId: 'gemma-4-E4B-it',
-        ),
-        gemmaEngine: _FakeGemmaEngine(const [
-          GemmaInstalledModel(filename: 'gemma-4-E4B-it.litertlm'),
-        ]),
-      );
-      await tester.pumpAndSettle();
-
-      expect(find.text('On-device (Gemma)'), findsOneWidget);
-      expect(find.text('Gemma 4 E4B · ~4.3 GB'), findsOneWidget);
-      expect(find.textContaining('previously used model'), findsNothing);
-      debugDefaultTargetPlatformOverride = null;
-    });
-
-    testWidgets('a Gemma model uninstalled meanwhile falls back with a note', (
-      tester,
-    ) async {
-      debugDefaultTargetPlatformOverride = TargetPlatform.android;
-      await _pumpForm(
-        tester,
-        initialConnection: const LastConnection(
-          providerKind: gemmaProviderKind,
-          modelId: 'gemma-4-E4B-it',
-          gemmaPresetId: 'gemma-4-E4B-it',
-        ),
-        gemmaEngine: _FakeGemmaEngine(const []),
-      );
-      await tester.pumpAndSettle();
-
-      expect(find.text('On-device (Gemma)'), findsOneWidget);
-      expect(find.text('Gemma 4 E2B · ~2.4 GB'), findsOneWidget);
-      expect(find.textContaining('previously used model'), findsOneWidget);
-      expect(find.textContaining('was removed'), findsOneWidget);
-      debugDefaultTargetPlatformOverride = null;
-    });
-
-    testWidgets('a Gemma record is ignored on desktop platforms that do not '
-        'support flutter_gemma', (tester) async {
-      debugDefaultTargetPlatformOverride = TargetPlatform.windows;
-      await _pumpForm(
-        tester,
-        initialConnection: const LastConnection(
-          providerKind: gemmaProviderKind,
-          modelId: 'gemma-4-E2B-it',
-          gemmaPresetId: 'gemma-4-E2B-it',
-        ),
-        gemmaEngine: _FakeGemmaEngine(const [
-          GemmaInstalledModel(filename: 'gemma-4-E2B-it.litertlm'),
-        ]),
-      );
-      await tester.pumpAndSettle();
-
-      expect(find.text('OpenRouter'), findsOneWidget);
-      debugDefaultTargetPlatformOverride = null;
-    });
-
-    testWidgets('a Gemma record is pre-selected on macOS', (tester) async {
-      debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
-      await _pumpForm(
-        tester,
-        initialConnection: const LastConnection(
-          providerKind: gemmaProviderKind,
-          modelId: 'gemma-4-E2B-it',
-          gemmaPresetId: 'gemma-4-E2B-it',
-        ),
-        gemmaEngine: _FakeGemmaEngine(const [
-          GemmaInstalledModel(filename: 'gemma-4-E2B-it.litertlm'),
-        ]),
-      );
-      await tester.pumpAndSettle();
-
-      expect(find.text('On-device (Gemma)'), findsOneWidget);
-      expect(find.text('Gemma 4 E2B · ~2.4 GB'), findsOneWidget);
-      expect(find.textContaining('previously used model'), findsNothing);
-      debugDefaultTargetPlatformOverride = null;
-    });
-
     testWidgets('a cached transformers.js model is pre-selected on web', (
       tester,
     ) async {
@@ -452,7 +264,7 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      expect(find.text('On-device (Gemma, transformers.js)'), findsOneWidget);
+      expect(find.text('On-device (transformers.js)'), findsOneWidget);
       expect(find.text('Gemma 4 E4B (ONNX) · ~5.2 GB'), findsOneWidget);
       expect(find.textContaining('previously used model'), findsNothing);
     });
@@ -475,7 +287,7 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      expect(find.text('On-device (Gemma, transformers.js)'), findsOneWidget);
+      expect(find.text('On-device (transformers.js)'), findsOneWidget);
       expect(find.text('Gemma 4 E2B (ONNX) · ~3.4 GB'), findsOneWidget);
       expect(find.textContaining('previously used model'), findsOneWidget);
       expect(find.textContaining('was removed'), findsOneWidget);
@@ -554,7 +366,6 @@ void main() {
               // Engine fakes keep the quick-start scan off the real plugin
               // singleton (its method channel has no answer in host tests).
               webLlmEngine: _FakeWebLlmEngine({}),
-              gemmaEngine: _FakeGemmaEngine(const []),
               transformersJsEngine: _FakeTransformersJsEngine({}),
             ),
           ),
@@ -598,7 +409,6 @@ void main() {
               registry: ProviderRegistry.inMemory(),
               lastConnectionStore: reloaded,
               webLlmEngine: _FakeWebLlmEngine({}),
-              gemmaEngine: _FakeGemmaEngine(const []),
               transformersJsEngine: _FakeTransformersJsEngine({}),
             ),
           ),

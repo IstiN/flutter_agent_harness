@@ -6,7 +6,6 @@ library;
 
 import 'dart:io';
 
-import 'package:fa/gemma/gemma_types.dart';
 import 'package:fa/main.dart';
 import 'package:fa/services/last_connection.dart';
 import 'package:fa/services/provider_registry.dart';
@@ -76,58 +75,6 @@ final class _FakeWebLlmEngine implements WebLlmEngineApi {
   Future<void> deleteCachedModel(String modelId) async {}
 }
 
-/// Fake [GemmaEngineApi] answering the installed-models scan from a script.
-final class _FakeGemmaEngine implements GemmaEngineApi {
-  _FakeGemmaEngine(this.installed);
-
-  final List<GemmaInstalledModel> installed;
-  bool available = true;
-
-  @override
-  bool get isAvailable => available;
-
-  @override
-  String? get loadedModelId => null;
-
-  @override
-  Stream<GemmaProgress> get progressEvents => const Stream.empty();
-
-  @override
-  Future<bool> isModelInstalled(GemmaModelPreset preset) async => false;
-
-  @override
-  Future<void> installModel(
-    GemmaModelPreset preset, {
-    String? huggingFaceToken,
-  }) async {}
-
-  @override
-  Future<void> loadModel(GemmaModelPreset preset) async {}
-
-  @override
-  Future<void> chatStream({
-    required List<GemmaChatMessage> messages,
-    required void Function(String chunk) onChunk,
-    String? systemInstruction,
-    void Function()? onDone,
-    void Function(String message)? onError,
-    void Function(String toolCallsJson)? onToolCalls,
-    List<Map<String, dynamic>>? tools,
-    int? maxOutputTokens,
-  }) async {}
-
-  @override
-  Future<void> interrupt() async {}
-
-  @override
-  Future<void> unload() async {}
-
-  @override
-  Future<List<GemmaInstalledModel>> installedModels() async => installed;
-
-  @override
-  Future<void> uninstall(String filename) async {}
-}
 
 /// Fake [TransformersJsEngineApi] answering cache queries from a script.
 final class _FakeTransformersJsEngine implements TransformersJsEngineApi {
@@ -184,7 +131,6 @@ Future<void> _pumpSetup(
   ProviderRegistry? registry,
   LastConnection? lastConnection,
   _FakeWebLlmEngine? webLlmEngine,
-  _FakeGemmaEngine? gemmaEngine,
   _FakeTransformersJsEngine? transformersJsEngine,
   bool? isWeb,
 }) async {
@@ -197,7 +143,6 @@ Future<void> _pumpSetup(
       registry: registry ?? ProviderRegistry.inMemory(),
       lastConnectionStore: store,
       webLlmEngine: webLlmEngine ?? _FakeWebLlmEngine(const {}),
-      gemmaEngine: gemmaEngine ?? _FakeGemmaEngine(const []),
       transformersJsEngine:
           transformersJsEngine ?? _FakeTransformersJsEngine(const {}),
       isWeb: isWeb,
@@ -223,11 +168,10 @@ Future<void> _pumpSetup(
   );
 }
 
-/// Engines scripted with three already-downloaded on-device models: one per
-/// engine family, with fixed byte counts so the size labels are stable.
+/// Engines scripted with already-downloaded on-device models: one per
+/// surviving engine family, with fixed byte counts so size labels are stable.
 ({
   _FakeWebLlmEngine webLlm,
-  _FakeGemmaEngine gemma,
   _FakeTransformersJsEngine transformersJs,
 })
 _downloadedEngines() {
@@ -235,12 +179,6 @@ _downloadedEngines() {
     webLlm: _FakeWebLlmEngine(const {
       'Qwen3-4B-q4f16_1-MLC': WebLlmCacheInfo(cached: true, bytes: 2900000000),
     }),
-    gemma: _FakeGemmaEngine(const [
-      GemmaInstalledModel(
-        filename: 'gemma-4-E4B-it.litertlm',
-        sizeBytes: 4300000000,
-      ),
-    ]),
     transformersJs: _FakeTransformersJsEngine(const {
       'onnx-community/gemma-4-E2B-it-ONNX': TransformersJsCacheInfo(
         cached: true,
@@ -270,7 +208,6 @@ void main() {
     await _pumpSetup(
       tester,
       webLlmEngine: engines.webLlm,
-      gemmaEngine: engines.gemma,
       transformersJsEngine: engines.transformersJs,
     );
     await expectGolden(tester, 'setup_quick_start_desktop');
@@ -282,7 +219,6 @@ void main() {
       tester,
       size: goldenSizePhone,
       webLlmEngine: engines.webLlm,
-      gemmaEngine: engines.gemma,
       transformersJsEngine: engines.transformersJs,
     );
     await expectGolden(tester, 'setup_quick_start_phone');

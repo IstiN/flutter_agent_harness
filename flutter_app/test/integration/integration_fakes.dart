@@ -10,7 +10,6 @@ library;
 import 'package:fa/apps/app_tile_host.dart';
 import 'package:fa/apps/apps_store.dart';
 import 'package:fa/apps/js_app_engine.dart';
-import 'package:fa/gemma/gemma_types.dart';
 import 'package:fa/transformers_js/transformers_js_types.dart';
 import 'package:fa/webllm/webllm_types.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
@@ -55,57 +54,6 @@ final class FakeWebLlmEngine implements WebLlmEngineApi {
   Future<void> deleteCachedModel(String modelId) async {}
 }
 
-/// Fake [GemmaEngineApi] answering the installed-models scan from a script.
-final class FakeGemmaEngine implements GemmaEngineApi {
-  FakeGemmaEngine(this.installed);
-
-  final List<GemmaInstalledModel> installed;
-
-  @override
-  bool get isAvailable => true;
-
-  @override
-  String? get loadedModelId => null;
-
-  @override
-  Stream<GemmaProgress> get progressEvents => const Stream.empty();
-
-  @override
-  Future<bool> isModelInstalled(GemmaModelPreset preset) async => false;
-
-  @override
-  Future<void> installModel(
-    GemmaModelPreset preset, {
-    String? huggingFaceToken,
-  }) async {}
-
-  @override
-  Future<void> loadModel(GemmaModelPreset preset) async {}
-
-  @override
-  Future<void> chatStream({
-    required List<GemmaChatMessage> messages,
-    required void Function(String chunk) onChunk,
-    String? systemInstruction,
-    void Function()? onDone,
-    void Function(String message)? onError,
-    void Function(String toolCallsJson)? onToolCalls,
-    List<Map<String, dynamic>>? tools,
-    int? maxOutputTokens,
-  }) async {}
-
-  @override
-  Future<void> interrupt() async {}
-
-  @override
-  Future<void> unload() async {}
-
-  @override
-  Future<List<GemmaInstalledModel>> installedModels() async => installed;
-
-  @override
-  Future<void> uninstall(String filename) async {}
-}
 
 /// Fake [TransformersJsEngineApi] answering cache queries from a script.
 final class FakeTransformersJsEngine implements TransformersJsEngineApi {

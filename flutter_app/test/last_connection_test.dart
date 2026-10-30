@@ -1,5 +1,4 @@
 import 'package:fa/services/agent_service.dart';
-import 'package:fa/gemma/gemma_types.dart';
 import 'package:fa/services/last_connection.dart';
 import 'package:fa/transformers_js/transformers_js_types.dart';
 import 'package:fa/webllm/webllm_types.dart';
@@ -62,7 +61,6 @@ void main() {
         expect(connection.modelId, 'gpt-oss:120b');
         expect(connection.baseUrl, 'https://ollama.com/v1');
         expect(connection.webllmPresetId, isNull);
-        expect(connection.gemmaPresetId, isNull);
         expect(connection.transformersJsPresetId, isNull);
       },
     );
@@ -77,16 +75,6 @@ void main() {
           baseUrl: '',
           apiKey: '',
           contextWindow: 2048,
-          maxTokens: 1024,
-        ),
-      );
-      await store.saveFromConfig(
-        AgentConfig(
-          providerKind: gemmaProviderKind,
-          modelId: 'gemma-4-E4B-it',
-          baseUrl: '',
-          apiKey: '',
-          contextWindow: 4096,
           maxTokens: 1024,
         ),
       );
@@ -123,17 +111,6 @@ void main() {
             apiKey: '',
           ),
         ).webllmPresetId,
-        'm',
-      );
-      expect(
-        LastConnection.fromConfig(
-          AgentConfig(
-            providerKind: gemmaProviderKind,
-            modelId: 'm',
-            baseUrl: '',
-            apiKey: '',
-          ),
-        ).gemmaPresetId,
         'm',
       );
     });
