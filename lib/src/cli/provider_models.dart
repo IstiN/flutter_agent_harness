@@ -1101,6 +1101,11 @@ extension on AgentCli {
     );
     io.writeln('slot $slot → ${parts[1]} @ $baseUrl (openai-completions)');
     config.onModelsConfigChanged?.call();
+    // gh-1984 (review thread 5): the availability pass follows the live
+    // slot — a mid-session `/models set vision|transcription` must not
+    // leave /tools (or the tool registrations) contradicting the read
+    // auto-route until some unrelated rebuild happens to run.
+    unawaited(AgentCliTools(this).rebuildToolAvailability());
   }
 
   /// `/models remove <slot>`: drops a media slot override, returning the
@@ -1127,6 +1132,8 @@ extension on AgentCli {
     }
     io.writeln('slot $slot → main connection');
     config.onModelsConfigChanged?.call();
+    // Same live-slot rule as `/models set` (gh-1984 review thread 5).
+    unawaited(AgentCliTools(this).rebuildToolAvailability());
   }
 
   Future<void> _handleModelCommand(String rest) async {

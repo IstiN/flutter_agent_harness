@@ -365,6 +365,44 @@ prompts:
       expect(reloaded.images?.maxBytesPerRequest, 1048576);
     });
 
+    test(
+      'parses images.autoInspect and round-trips it (gh-1984 AC3)',
+      () async {
+        final file = File('${tmp.path}/.fah/config.yaml');
+        file.createSync(recursive: true);
+        file.writeAsStringSync('images:\n  autoInspect: false\n');
+        final loaded = loadCliConfig(tmp.path);
+        expect(loaded.images?.autoInspect, isFalse);
+
+        await saveCliConfig(tmp.path, loaded);
+        final reloaded = loadCliConfig(tmp.path);
+        expect(reloaded.images?.autoInspect, isFalse);
+      },
+    );
+
+    test('images.autoInspect defaults to true (gh-1984 AC2)', () {
+      // Absent section AND section without the key both default on: the
+      // auto-route is the default behavior, `false` is the explicit opt-out.
+      expect(const ImageRegistryConfig().autoInspect, isTrue);
+      expect(
+        parseImagesSection(loadYaml('registry: true'))?.autoInspect,
+        isTrue,
+      );
+    });
+
+    test('images rejects a non-bool autoInspect', () {
+      expect(
+        () => parseImagesSection(loadYaml('autoInspect: "off"')),
+        throwsA(
+          isA<ConfigException>().having(
+            (e) => e.message,
+            'message',
+            contains('images.autoInspect'),
+          ),
+        ),
+      );
+    });
+
     test('images defaults to null when absent', () {
       expect(loadCliConfig(tmp.path).images, isNull);
     });

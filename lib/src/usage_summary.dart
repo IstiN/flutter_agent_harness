@@ -59,6 +59,16 @@ final class UsageAccumulator {
     _turns += 1;
   }
 
+  /// Adds a SIDE-CALL's [usage] (gh-1984 AC2): token and cost totals grow
+  /// (the read auto-route's vision-model request is real spend and must
+  /// show in /cost), but the turn count does not — a side call is not an
+  /// agent turn.
+  void addSideCall(Usage usage) {
+    final before = _turns;
+    add(usage);
+    _turns = before;
+  }
+
   /// Zeroes every accumulator (session switches start a fresh meter —
   /// otherwise tok/cost/turn keep counting the previous session's usage).
   void reset() {
