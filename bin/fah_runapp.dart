@@ -1077,6 +1077,17 @@ Future<void> _runApp(List<String> args) async {
   // the per-read resolvers (gh-1984 review thread 6).
   final liveModels = saved.models ?? ModelsConfig();
 
+  // The LIVE main connection (gh-1984 review thread 10): the media
+  // generation tools read `AgentCli._apiKey` / `state.model` per call, so
+  // a mid-session `/provider` switch re-points the same-host main-key
+  // reuse — the media read tools follow the same rule. Until the CLI is
+  // constructed (the eager boot resolution below runs first) the
+  // boot-resolved values serve; after, the accessors read the CLI live.
+  AgentCli? mediaMainConnection;
+  String liveMainBaseUrl() =>
+      mediaMainConnection?.agent.state.model.baseUrl ?? model.baseUrl;
+  String liveMainApiKey() => mediaMainConnection?.apiKey ?? apiKey;
+
   /// The effective vision capability: `--vision-model` (the override,
   /// hard-failing the boot without a key — unchanged) else the persisted
   /// `models.slots.vision`, read live with the main connection in scope
@@ -1086,15 +1097,16 @@ Future<void> _runApp(List<String> args) async {
     flagBaseUrl: effective.visionBaseUrl,
     modelsConfig: liveModels,
     resolveKey: resolveMediaSlotKeyName,
-    // The main connection in scope = the boot model's endpoint (the same
+    // The main connection in scope = the LIVE model's endpoint (the same
     // accessor MediaToolServices rides: `state.model.baseUrl`) — a
     // `/models set vision <id>` slot with no apiKeyName on the SAME host
-    // reuses the main key (gh-184; review thread 2).
-    mainBaseUrl: model.baseUrl,
-    mainApiKey: apiKey,
+    // reuses the main key (gh-184; review thread 2), and a mid-session
+    // `/provider` switch re-points the match (review thread 10).
+    mainBaseUrl: liveMainBaseUrl,
+    mainApiKey: liveMainApiKey,
     flagConfig: (modelId, flagBaseUrl) => InspectImageConfig(
       modelId: modelId,
-      apiKey: _resolveApiKey('vision', keyCache, fallback: apiKey),
+      apiKey: _resolveApiKey('vision', keyCache, fallback: liveMainApiKey()),
       baseUrl: flagBaseUrl,
     ),
   )();
@@ -1108,15 +1120,20 @@ Future<void> _runApp(List<String> args) async {
         flagBaseUrl: effective.transcribeBaseUrl,
         modelsConfig: liveModels,
         resolveKey: resolveMediaSlotKeyName,
-        // The main connection in scope = the boot model's endpoint (the
+        // The main connection in scope = the LIVE model's endpoint (the
         // same accessor MediaToolServices rides: `state.model.baseUrl`) —
         // a `/models set` slot with no apiKeyName on the SAME host reuses
-        // the main key (gh-184; review thread 2).
-        mainBaseUrl: model.baseUrl,
-        mainApiKey: apiKey,
+        // the main key (gh-184; review thread 2), re-pointed live on a
+        // `/provider` switch (review thread 10).
+        mainBaseUrl: liveMainBaseUrl,
+        mainApiKey: liveMainApiKey,
         flagConfig: (modelId, flagBaseUrl) => TranscribeAudioConfig(
           modelId: modelId,
-          apiKey: _resolveApiKey('transcribe', keyCache, fallback: apiKey),
+          apiKey: _resolveApiKey(
+            'transcribe',
+            keyCache,
+            fallback: liveMainApiKey(),
+          ),
           baseUrl: flagBaseUrl,
         ),
       )();
@@ -1971,6 +1988,11 @@ Future<void> _runApp(List<String> args) async {
   } on ConfigException catch (error) {
     await failAfterPlugins(error.message);
   }
+  // The media-slot resolvers' live main connection (gh-1984 review thread
+  // 10): from here the accessors read the CLI's live key/model — a
+  // mid-session `/provider` switch re-points the same-host main-key reuse
+  // instead of leaving the boot-resolved pair pinned.
+  mediaMainConnection = cli;
   if (redactorAttached) attachSecretRedactor(cli.agent, redactor);
 
   // Issue #823: boot builds the queue runtime before the CLI (and its

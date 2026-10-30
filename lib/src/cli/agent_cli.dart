@@ -1045,6 +1045,13 @@ class AgentCli {
   /// The active mode.
   AgentMode get currentMode => _currentMode;
 
+  /// The live API key of the active provider connection: boot-resolved,
+  /// replaced by a `/provider` switch. The media-slot resolvers read it
+  /// per resolution so a same-host slot's main-key reuse follows the
+  /// CURRENT connection (the same live accessor `MediaToolServices`
+  /// rides), never a boot-pinned value.
+  String get apiKey => _apiKey;
+
   /// The effective system prompt sent to the model.
   String get systemPrompt => _agent.state.systemPrompt;
 

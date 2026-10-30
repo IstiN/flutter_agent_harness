@@ -331,4 +331,93 @@ void main() {
     io.sendLine('/exit');
     await run;
   });
+
+  test('gh-1984: a live-registered inspect_image keeps the /cost sink '
+      '(review thread 9)', () async {
+    // _syncInspectImageTool re-registers the tool on a mid-session slot
+    // set (and on a remove → re-set cycle); the re-registered instance
+    // must carry the SAME default /cost sink the boot path passes
+    // (host_agent_wiring.dart) — otherwise the tool's spend silently
+    // leaves /cost on exactly the sessions that registered it live.
+    final img = Image(width: 2, height: 2)..getPixel(0, 0).r = 255;
+    await env.writeBinaryFile(
+      '/work/shot.png',
+      Uint8List.fromList(encodePng(img)),
+    );
+    var calls = 0;
+    final client = http_testing.MockClient.streaming((request, body) async {
+      calls++;
+      final done = jsonEncode({
+        'id': 'chatcmpl-test',
+        'object': 'chat.completion.chunk',
+        'created': 1234567890,
+        'model': 'glm-5.3-flash',
+        'choices': [
+          {'index': 0, 'delta': {}, 'finish_reason': 'stop'},
+        ],
+        'usage': {
+          'prompt_tokens': 1200,
+          'completion_tokens': 42,
+          'total_tokens': 1242,
+        },
+      });
+      final sse = Stream.fromIterable(['data: $done\n\n']);
+      return http.StreamedResponse(
+        sse.transform(utf8.encoder),
+        200,
+        headers: {'content-type': 'text/event-stream'},
+      );
+    });
+    var slotServes = false;
+    final fake = FakeStreamFunction([]);
+    final cli = AgentCli(
+      config: AgentCliConfig(
+        model: testModel,
+        apiKey: '[REDACTED:Sensitive-Value]',
+        env: env,
+        sessionRoot: '/sessions',
+        // No boot visionConfig — the resolver IS the capability; it starts
+        // serving null so boot registers no inspect_image.
+        visionResolver: () async => slotServes
+            ? InspectImageConfig(
+                modelId: 'glm-5.3-flash',
+                apiKey: '[REDACTED:Sensitive-Value]',
+                baseUrl: 'https://api.example.com/v1',
+                httpClient: client,
+              )
+            : null,
+      ),
+      io: io,
+      streamFunction: fake.call,
+    );
+    final run = cli.run();
+    await waitForIt(() => cli.agent.state.tools.isNotEmpty);
+    expect(
+      cli.agent.state.tools.whereType<AgentTool>().map((t) => t.name),
+      isNot(contains('inspect_image')),
+      reason: 'boot with the slot withdrawn — nothing registered yet',
+    );
+
+    // The mid-session slot set: the next availability rebuild registers
+    // the tool through the sync site (thread 5's live registration).
+    slotServes = true;
+    io.sendLine('/tools reload');
+    await waitForIt(() => io.out.toString().contains('availability reloaded'));
+    AgentTool inspectOf() => cli.agent.state.tools
+        .whereType<AgentTool>()
+        .firstWhere((t) => t.name == 'inspect_image');
+    await inspectOf().execute({'path': '/work/shot.png'}, null, null);
+    expect(calls, 1);
+    io.sendLine('/stats');
+    await waitForIt(() => io.out.toString().contains('total tokens:'));
+    io.sendLine('/exit');
+    await run;
+    expect(
+      io.out.toString(),
+      contains('total tokens: 1242'),
+      reason:
+          'the live-registered inspect_image must report its spend to '
+          '/cost through the default sink, identical to the boot path',
+    );
+  });
 }

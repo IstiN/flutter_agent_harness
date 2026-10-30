@@ -182,7 +182,6 @@ void main() {
     expect(names, contains('transcribe_audio'));
   });
 
-
   test('builtinTools wiring keeps shellJobs and config registered', () {
     // Regression: adding the `config:` arg dropped `shellJobs:` from this
     // call site once — both args must stay wired together (issue #29 S3).

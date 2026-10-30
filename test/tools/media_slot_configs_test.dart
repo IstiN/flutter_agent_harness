@@ -189,8 +189,8 @@ void main() {
           flagBaseUrl: 'https://flag.example.com/v1',
           modelsConfig: _models('vision'),
           resolveKey: (_) async => 'slot-key',
-          mainBaseUrl: 'https://main.example.com/v1',
-          mainApiKey: 'main-key',
+          mainBaseUrl: () => 'https://main.example.com/v1',
+          mainApiKey: () => 'main-key',
           flagConfig: (modelId, baseUrl) {
             flagBuilt++;
             return InspectImageConfig(
@@ -216,8 +216,8 @@ void main() {
       final resolve = cliVisionSlotResolver(
         modelsConfig: liveModels,
         resolveKey: (_) async => 'slot-key',
-        mainBaseUrl: 'https://main.example.com/v1',
-        mainApiKey: 'main-key',
+        mainBaseUrl: () => 'https://main.example.com/v1',
+        mainApiKey: () => 'main-key',
         flagConfig: (modelId, baseUrl) => InspectImageConfig(
           modelId: modelId,
           apiKey: 'flag-key',
@@ -257,8 +257,8 @@ void main() {
         final resolve = cliVisionSlotResolver(
           modelsConfig: liveModels,
           resolveKey: (_) async => 'unused-named',
-          mainBaseUrl: 'https://main.example.com/v1',
-          mainApiKey: 'main-key',
+          mainBaseUrl: () => 'https://main.example.com/v1',
+          mainApiKey: () => 'main-key',
           flagConfig: (modelId, baseUrl) => InspectImageConfig(
             modelId: modelId,
             apiKey: 'flag-key',
@@ -293,8 +293,8 @@ void main() {
         final resolve = cliVisionSlotResolver(
           modelsConfig: liveModels,
           resolveKey: (_) async => null,
-          mainBaseUrl: 'https://main.example.com/v1',
-          mainApiKey: 'main-key',
+          mainBaseUrl: () => 'https://main.example.com/v1',
+          mainApiKey: () => 'main-key',
           flagConfig: (modelId, baseUrl) => InspectImageConfig(
             modelId: modelId,
             apiKey: 'flag-key',
@@ -309,6 +309,56 @@ void main() {
         expect(config!.apiKey, isEmpty);
       },
     );
+
+    test('flagless: the main connection is read LIVE per resolution '
+        '(a /provider switch re-points the same-host match — review '
+        'thread 10)', () async {
+      // The media generation tools read AgentCli's live key/model per
+      // call (MediaToolServices(mainApiKey: () => _apiKey)); the media
+      // read tools follow the same rule: the accessors resolve at CALL
+      // time, so a mid-session provider switch re-points the same-host
+      // key match instead of pinning the boot connection forever.
+      var mainBase = 'https://boot.example.com/v1';
+      var mainKey = 'boot-key';
+      final liveModels = ModelsConfig(
+        slots: {
+          // The slot lives on the provider the session will SWITCH TO:
+          // cross-host against the boot connection (empty key — no
+          // leak), same-host against the switched-to connection.
+          'vision': MediaSlotModelConfig(
+            providerKind: 'openai-completions',
+            baseUrl: 'https://switched.example.com/v1',
+            modelId: 'slot-model',
+          ),
+        },
+      );
+      final resolve = cliVisionSlotResolver(
+        modelsConfig: liveModels,
+        resolveKey: (_) async => 'unused-named',
+        mainBaseUrl: () => mainBase,
+        mainApiKey: () => mainKey,
+        flagConfig: (modelId, baseUrl) => InspectImageConfig(
+          modelId: modelId,
+          apiKey: '[REDACTED:Sensitive-Value]',
+          baseUrl: baseUrl,
+        ),
+      );
+      expect(
+        (await resolve())!.apiKey,
+        isEmpty,
+        reason: 'cross-host against the boot connection',
+      );
+      // The `/provider` switch: the live main connection moves.
+      mainBase = 'https://switched.example.com/v1';
+      mainKey = 'new-key';
+      expect(
+        (await resolve())!.apiKey,
+        'new-key',
+        reason:
+            'the accessors must be read at resolution time — '
+            'boot-pinned values would keep the slot cross-host forever',
+      );
+    });
   });
 
   group('cliTranscriptionSlotResolver (the host wiring builder)', () {
@@ -318,8 +368,8 @@ void main() {
         flagBaseUrl: 'https://flag.example.com/v1',
         modelsConfig: _models('transcription'),
         resolveKey: (_) async => 'slot-key',
-        mainBaseUrl: 'https://main.example.com/v1',
-        mainApiKey: 'main-key',
+        mainBaseUrl: () => 'https://main.example.com/v1',
+        mainApiKey: () => 'main-key',
         flagConfig: (modelId, baseUrl) => TranscribeAudioConfig(
           modelId: modelId,
           apiKey: 'flag-key',
@@ -337,8 +387,8 @@ void main() {
       final resolve = cliTranscriptionSlotResolver(
         modelsConfig: liveModels,
         resolveKey: (_) async => 'named',
-        mainBaseUrl: 'https://main.example.com/v1',
-        mainApiKey: 'main-key',
+        mainBaseUrl: () => 'https://main.example.com/v1',
+        mainApiKey: () => 'main-key',
         flagConfig: (modelId, baseUrl) => TranscribeAudioConfig(
           modelId: modelId,
           apiKey: 'flag-key',
@@ -357,6 +407,41 @@ void main() {
       final config = await resolve();
       expect(config!.modelId, 'slot-model');
       expect(config.apiKey, 'main-key');
+    });
+
+    test('flagless: the transcription main connection is read LIVE too '
+        '(review thread 10)', () async {
+      var mainKey = 'boot-key';
+      final liveModels = ModelsConfig(
+        slots: {
+          'transcription': MediaSlotModelConfig(
+            providerKind: 'openai-completions',
+            baseUrl: 'https://main.example.com/v1',
+            modelId: 'slot-model',
+          ),
+        },
+      );
+      final resolve = cliTranscriptionSlotResolver(
+        modelsConfig: liveModels,
+        resolveKey: (_) async => 'named',
+        mainBaseUrl: () => 'https://main.example.com/v1',
+        mainApiKey: () => mainKey,
+        flagConfig: (modelId, baseUrl) => TranscribeAudioConfig(
+          modelId: modelId,
+          apiKey: '[REDACTED:Sensitive-Value]',
+          baseUrl: baseUrl,
+        ),
+      );
+      expect((await resolve())!.apiKey, 'boot-key');
+      mainKey = 'new-key';
+      expect(
+        (await resolve())!.apiKey,
+        'new-key',
+        reason:
+            'same rule as the vision resolver — the accessor is read '
+            'at resolution time, so a provider switch applies without a '
+            'restart',
+      );
     });
   });
 }

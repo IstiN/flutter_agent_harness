@@ -86,19 +86,26 @@ Future<TranscribeAudioConfig?> resolveTranscriptionSlotConfig(
 /// `models.slots.vision` serves, read LIVE from [modelsConfig] — the SAME
 /// instance the host's `/models set` flow mutates, so a mid-session slot
 /// edit (on a fresh install's empty fallback config included) applies
-/// without a restart (review thread 6) — with the main connection in scope
-/// ([mainBaseUrl]/[mainApiKey]) for the gh-184 same-host key reuse: one
-/// rule with `generate_image`/`generate_video`, so the flagship
+/// without a restart (review thread 6) — with the main connection in
+/// scope ([mainBaseUrl]/[mainApiKey]) for the gh-184 same-host key reuse:
+/// one rule with `generate_image`/`generate_video`, so the flagship
 /// `/models set vision <id>` flow (no `apiKeyName`, main endpoint)
 /// authenticates with the main key instead of an empty one (review
 /// thread 2).
+///
+/// The main connection arrives as LIVE accessors (review thread 10): the
+/// media generation tools ride `MediaToolServices(mainApiKey: () => ...)`
+/// — `AgentCli._apiKey`, which a `/provider` switch updates — so the
+/// same-host key/base match re-points with the CURRENT connection instead
+/// of pinning the boot one. The accessors are read inside the returned
+/// closure, at every resolution.
 Future<InspectImageConfig?> Function() cliVisionSlotResolver({
   String? flagModel,
   String? flagBaseUrl,
   required ModelsConfig modelsConfig,
   required MediaKeyResolver resolveKey,
-  required String mainBaseUrl,
-  required String mainApiKey,
+  required String Function() mainBaseUrl,
+  required String Function() mainApiKey,
   required InspectImageConfig Function(String modelId, String? baseUrl)
   flagConfig,
 }) {
@@ -107,22 +114,22 @@ Future<InspectImageConfig?> Function() cliVisionSlotResolver({
     return resolveVisionSlotInspectConfig(
       modelsConfig,
       resolveKey: resolveKey,
-      mainBaseUrl: mainBaseUrl,
-      mainApiKey: mainApiKey,
+      mainBaseUrl: mainBaseUrl(),
+      mainApiKey: mainApiKey(),
     );
   };
 }
 
 /// Builds the plain CLI host's live transcription resolver — the
 /// transcription twin of [cliVisionSlotResolver] (same flag override, same
-/// live persisted slot, same main-connection scope).
+/// live persisted slot, same live main-connection accessors).
 Future<TranscribeAudioConfig?> Function() cliTranscriptionSlotResolver({
   String? flagModel,
   String? flagBaseUrl,
   required ModelsConfig modelsConfig,
   required MediaKeyResolver resolveKey,
-  required String mainBaseUrl,
-  required String mainApiKey,
+  required String Function() mainBaseUrl,
+  required String Function() mainApiKey,
   required TranscribeAudioConfig Function(String modelId, String? baseUrl)
   flagConfig,
 }) {
@@ -131,8 +138,8 @@ Future<TranscribeAudioConfig?> Function() cliTranscriptionSlotResolver({
     return resolveTranscriptionSlotConfig(
       modelsConfig,
       resolveKey: resolveKey,
-      mainBaseUrl: mainBaseUrl,
-      mainApiKey: mainApiKey,
+      mainBaseUrl: mainBaseUrl(),
+      mainApiKey: mainApiKey(),
     );
   };
 }

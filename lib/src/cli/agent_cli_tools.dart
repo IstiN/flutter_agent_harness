@@ -24,7 +24,11 @@ final class _ToolsWiringState {
   /// the read auto-route's resolver by every availability rebuild, so the
   /// `inspect_image` capability and registration follow the slot a
   /// mid-session `/models set vision` sets — never contradicting the
-  /// auto-route. Null before the first rebuild (the boot config decides).
+  /// auto-route. Null until the FIRST rebuild resolves it, and the
+  /// `inspect_image` capability then reports off (there is no boot-config
+  /// fallback in that window) — not user-visible because the boot hook
+  /// runs `rebuildToolAvailability()` during startup before any /tools
+  /// or prompt can read the capability map.
   InspectImageConfig? resolvedVision;
 
   /// Unknown ids already warned about (warn once per distinct id).
@@ -453,7 +457,15 @@ extension AgentCliTools on AgentCli {
     final wanted = visionConfig != null;
     if (wanted == registered) return;
     if (wanted) {
-      final tool = inspectImageTool(_coreToolEnv, visionConfig);
+      // The boot path's sink (host_agent_wiring.dart) rides along — a
+      // live-registered tool reports its spend to /cost exactly like a
+      // boot-registered one (gh-1984 review thread 9; the same default
+      // the read auto-route's construction sites share).
+      final tool = inspectImageTool(
+        _coreToolEnv,
+        visionConfig,
+        onUsage: _readOnImageUsage,
+      );
       _toolRegistry.register(tool);
       _toolGroupsById['inspect_image'] = [tool];
     } else {
