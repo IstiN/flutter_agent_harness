@@ -3869,6 +3869,15 @@
       "total": 1436290,
       "cacheRead": 38461248,
       "model": "glm-5.3-flash"
+    },
+    {
+      "leg": "rework",
+      "at": "2026-10-30T10:39:59Z",
+      "prompt": 202905,
+      "completion": 0,
+      "total": 202905,
+      "cacheRead": 0,
+      "model": "kimi-for-coding"
     }
   ],
   "pr-1989": [
