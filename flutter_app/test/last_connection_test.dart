@@ -183,5 +183,51 @@ void main() {
       );
       expect(store.connection?.modelId, 'm');
     });
+
+    test('a persisted gemma connection resets silently on load (gh-2004)',
+        () async {
+      final env = MemoryExecutionEnv();
+      // A pre-removal record: the user last connected via the on-device
+      // gemma provider (gh-2004 dropped that stack entirely).
+      await env.writeFile(
+        '${env.cwd}/${LastConnectionStore.fileName}',
+        '{"version": 1, "connection": {"providerKind": "gemma", '
+        '"modelId": "gemma-4-E2B-it", "gemmaPresetId": "gemma-4-E2B-it"}}',
+      );
+
+      final store = await LastConnectionStore.load(env);
+
+      // Silent reset to the default (no last connection): the setup form
+      // shows its cloud default instead, no crash, no migration.
+      expect(store.connection, isNull);
+      // The stale record does not linger: the store file is reset too, so
+      // a later save starts clean.
+      final text = (await env.readTextFile(
+        '${env.cwd}/${LastConnectionStore.fileName}',
+      )).valueOrNull;
+      expect(text, isNull);
+    });
+
+    test('saving over a reset store writes a fresh record', () async {
+      final env = MemoryExecutionEnv();
+      await env.writeFile(
+        '${env.cwd}/${LastConnectionStore.fileName}',
+        '{"version": 1, "connection": {"providerKind": "gemma", '
+        '"modelId": "gemma-4-E2B-it", "gemmaPresetId": "gemma-4-E2B-it"}}',
+      );
+      final store = await LastConnectionStore.load(env);
+      expect(store.connection, isNull);
+
+      await store.save(
+        const LastConnection(
+          providerKind: 'openai-completions',
+          modelId: 'gpt-4o-mini',
+          baseUrl: 'https://openrouter.ai/api/v1',
+        ),
+      );
+
+      final reloaded = await LastConnectionStore.load(env);
+      expect(reloaded.connection?.providerKind, 'openai-completions');
+    });
   });
 }

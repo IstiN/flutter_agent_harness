@@ -11,17 +11,17 @@ void main() {
     test('missing file loads as empty', () async {
       final store = await OnDeviceConfigStore.load(MemoryExecutionEnv());
       expect(store.configuredKinds, isEmpty);
-      expect(store.isConfigured('gemma'), isFalse);
+      expect(store.isConfigured('webllm'), isFalse);
     });
 
     test('markConfigured persists and round-trips', () async {
       final env = MemoryExecutionEnv();
       final store = await OnDeviceConfigStore.load(env);
-      await store.markConfigured('gemma');
-      expect(store.isConfigured('gemma'), isTrue);
+      await store.markConfigured('webllm');
+      expect(store.isConfigured('webllm'), isTrue);
 
       final reloaded = await OnDeviceConfigStore.load(env);
-      expect(reloaded.configuredKinds, {'gemma'});
+      expect(reloaded.configuredKinds, {'webllm'});
     });
 
     test('a corrupt file loads as empty instead of crashing', () async {
@@ -38,10 +38,41 @@ void main() {
       final store = OnDeviceConfigStore.inMemory();
       var notified = 0;
       store.addListener(() => notified++);
-      await store.markConfigured('gemma');
-      await store.markConfigured('gemma');
       await store.markConfigured('webllm');
+      await store.markConfigured('webllm');
+      await store.markConfigured('transformers_js');
       expect(notified, 2);
+    });
+
+    test('a persisted gema kind resets silently on load (gh-2004)', () async {
+      final env = MemoryExecutionEnv();
+      // A pre-removal store: the user once configured the gema engine
+      // (plus the surviving on-device engines).
+      await env.writeFile(
+        '${env.cwd}/${OnDeviceConfigStore.fileName}',
+        '{"version": 1, "kinds": ["webllm", "gemma", "transformers_js"]}',
+      );
+
+      final store = await OnDeviceConfigStore.load(env);
+
+      // The removed kind is dropped (its provider rows can never come
+      // back on this build); the surviving kinds stay.
+      expect(store.isConfigured('gemma'), isFalse);
+      expect(store.isConfigured('webllm'), isTrue);
+      expect(store.isConfigured('transformers_js'), isTrue);
+      // Unknown/removed kinds never re-persist (tolerant parse, no
+      // migration logic — the next markConfigured write carries only the
+      // surviving kinds).
+      await store.markConfigured('webllm'); // no-op: already present
+      expect(store.configuredKinds, {'webllm', 'transformers_js'});
+    });
+
+    test('markConfigured refuses removed kinds (gemma cannot come back)',
+        () async {
+      final store = OnDeviceConfigStore.inMemory();
+      await store.markConfigured('gemma');
+      expect(store.isConfigured('gemma'), isFalse);
+      expect(store.configuredKinds, isEmpty);
     });
   });
 }
