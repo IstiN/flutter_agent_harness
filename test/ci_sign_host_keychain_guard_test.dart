@@ -479,4 +479,23 @@ void main() {
         reason: 'on an UNLOCKED keychain set-keychain-settings does not '
             'prompt; unlock first, settings second — no GUI dialog');
   });
+
+  test('AC18 — install rewrites the search list defensively: login kept '
+      'first, ci-signing appended last, duplicates removed (gh-1972: the '
+      'naive append garbled the list — System twice, login missing, '
+      'default dangling → "A keychain cannot be found to store" dialogs '
+      'and gh auth failures on the shared host)', () {
+    final cisign = File('scripts/ci-sign').readAsStringSync();
+    expect(cisign, contains("login_kc=\"\$HOME/Library/Keychains/login.keychain-db\""),
+        reason: 'the login keychain path must be pinned explicitly');
+    expect(cisign, contains("awk '!seen[\$0]++'"),
+        reason: 'the rewrite must dedupe entries');
+    final loginWrite = cisign.indexOf('security list-keychains -d user -s "\$login_kc"');
+    final appendWrite = cisign.indexOf('security list-keychains -d user -s \$rest');
+    expect(loginWrite, greaterThan(-1),
+        reason: 'login must be written FIRST in the explicit list');
+    expect(appendWrite, greaterThan(-1));
+    expect(loginWrite, lessThan(appendWrite),
+        reason: 'login-first branch precedes the fallback');
+  });
 }

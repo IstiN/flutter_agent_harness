@@ -117,10 +117,20 @@ ensure_keychain() {
   # logic, applied ONCE for a persistent entry — never per job). Skipped
   # for test keychains (CI_SIGN_KEYCHAIN override) — they never leave the
   # test sandbox.
-  if [ -z "${CI_SIGN_KEYCHAIN:-}" ] && ! security list-keychains | sed 's/[[:space:]]//g; s/"//g' | grep -qxF "$KC"; then
-    local current
-    current="$(security list-keychains | sed 's/[[:space:]]//g; s/"//g' | grep -v '^$' | grep -vxF "$KC" | tr '\n' ' ')"
-    security list-keychains -d user -s $current "$KC"
+  # gh-1972: rewrite the search list DEFENSIVELY — the naive append once
+  # produced a garbled list (System duplicated, login.keychain-db missing,
+  # default dangling → "A keychain cannot be found to store" GUI dialogs
+  # and gh auth failures on the shared host). Dedupe, keep login FIRST,
+  # append ci-signing LAST, always write the full explicit list.
+  if [ -z "${CI_SIGN_KEYCHAIN:-}" ]; then
+    local rest login_kc
+    login_kc="$HOME/Library/Keychains/login.keychain-db"
+    rest="$(security list-keychains | sed 's/[[:space:]]//g; s/"//g' | grep -v '^$' | grep -vxF "$KC" | grep -vxF "$login_kc" | awk '!seen[$0]++')"
+    if [ -f "$login_kc" ]; then
+      security list-keychains -d user -s "$login_kc" $rest "$KC"
+    else
+      security list-keychains -d user -s $rest "$KC"
+    fi
     security list-keychains | sed 's/[[:space:]]//g; s/"//g' | grep -qxF "$KC" || die "failed to add keychain to search list"
   fi
 }
