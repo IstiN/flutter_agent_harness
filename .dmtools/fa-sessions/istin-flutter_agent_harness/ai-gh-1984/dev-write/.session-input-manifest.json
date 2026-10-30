@@ -1,0 +1,271 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-30T13:16:45.517Z",
+  "ticketKey": "gh-1984",
+  "headSha": "fe64b7e8991b531a43355160930845e1a44253c1",
+  "baseBranch": "main",
+  "reviewDecision": "NONE",
+  "labels": [],
+  "files": {
+    "ci_failures.md": {
+      "hash": "fnv1a64:5268592315dc2f00",
+      "size": 129055
+    },
+    "ci_failures_full.log": {
+      "hash": "fnv1a64:9ab5833a32353064",
+      "size": 2222460
+    },
+    "ci_violations.json": {
+      "hash": "fnv1a64:474dc2ca2d3ce6e8",
+      "size": 503
+    },
+    "pr_diff.txt": {
+      "hash": "fnv1a64:42b699cd1ebd6b06",
+      "size": 12302
+    },
+    "pr_discussions.md": {
+      "hash": "fnv1a64:d0595c505960c4cf",
+      "size": 24787
+    },
+    "pr_discussions_raw.json": {
+      "hash": "fnv1a64:529898ef31b976ec",
+      "size": 12044
+    },
+    "pr_info.md": {
+      "hash": "fnv1a64:a1f484920863ef02",
+      "size": 3656
+    },
+    "request.md": {
+      "hash": "fnv1a64:8586f3a14cd3f928",
+      "size": 8114
+    },
+    "review_state.md": {
+      "hash": "fnv1a64:678461f30424b137",
+      "size": 2322
+    },
+    "rework_base_head.txt": {
+      "hash": "fnv1a64:c7e26170c9f427bd",
+      "size": 40
+    },
+    "ticket.json": {
+      "hash": "fnv1a64:70a754323eac5815",
+      "size": 8237
+    },
+    "ticket.md": {
+      "hash": "fnv1a64:8586f3a14cd3f928",
+      "size": 8114
+    }
+  },
+  "comments": [
+    {
+      "id": "PRRT_kwDOTXdlLc6x-Z70",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "lib/src/tools/builtin_tools_read.dart:358",
+      "resolved": false,
+      "body": "🚨 **BLOCKING: The auto-route gates the *resized* payload but uploads the *original* bytes — `images.maxBytesPerRequest` is bypassed and the mime/bytes pair can disagree**\n\nThe budget gate measures the processed (resized/converted) payload:\n\n```dart\n// builtin_tools_read.dart:348\nif (processed.base64.length > budget) { ... }\n```\n\nbut the vision request is built from the **raw file bytes**:\n\n```dart\n// builtin_tools_read.dart:358\nfinal description = await describeImageWithVisionModel(\n  visionConfig,\n  bytes,               // ← original file bytes, NOT processed\n  processed.mimeType,  // ← mime of the CONVERTED payload\n  ...\n```\n\n`describeImageWithVisionModel` then sends `base64Encode(bytes)` (`inspect_image.dart`). `_processImage` resizes/re-encodes (BMP→PNG conversion, EXIF orientation baked, 0.75 shrink ladder) precisely when the original exceeds the inline limits — the common case for photos/screenshots. For such images:\n\n1. **The budget gate is ineffective** — a 30 MB original whose shrunk inline payload is ~200 KB passes the gate and uploads a ~40 MB base64 blob to the vision provider, violating `images.maxBytesPerRequest` (the very knob the PR claims \"applies to the auto-route call too\"), with real spend/latency and provider-rejection risk.\n2. **Mime/bytes mismatch** — a BMP converted to PNG inline is uploaded as raw BMP bytes labeled `image/png`; providers may reject or misdecode. The EXIF orientation the inline path bakes is also never applied to what the vision model sees.\n\nFix: send the processed payload so gate, mime, and body agree — e.g. thread the processed bytes out of `_processImage` (or `base64Decode(processed.base64)`) into the call. The AC6 degrade path already covers any residual provider failure."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6x-Z_F",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "bin/fah_runapp.dart:1084",
+      "resolved": false,
+      "body": "🚨 **BLOCKING: The resolvers never receive the main connection's key — the flagship `/models set vision|transcription <id>` flow resolves an EMPTY API key**\n\n`resolveVisionSlotInspectConfig`/`resolveTranscriptionSlotConfig` support the gh-184 same-host main-key reuse (`mainBaseUrl`/`mainApiKey` → `resolveMediaSlotKey`), but the only production wiring — right here — passes just `resolveKey`, so `mainBaseUrl`/`mainApiKey` default to `''` and the same-host branch can never match.\n\nThat breaks the most common pin flow: `/models set vision <model>` writes a slot with **no `apiKeyName`** and `baseUrl` = the main endpoint (`provider_models.dart:_setModelsSlot`):\n\n```\nresolveMediaSlotKey → keyName null → _isSameHost(override.baseUrl, '') == false → key = ''\n```\n\nResult: `inspect_image`/`transcribe_audio` register **on** (the slot IS configured), and every call — including every image-read auto-route — fails with the provider's auth error. The \"empty key is honest\" rationale in the library docs covers slots whose named key genuinely can't resolve; here the main key **is** resolvable, and the established rule says same-host slots reuse it: `generate_image`/`generate_video` do exactly that for the identical slot shape via `MediaToolServices(mainApiKey: () => _apiKey, ...)` (\"one rule, both CLI tools\", gh-184 review). The new adapters are the exception, in the PR whose whole point is media-slot parity.\n\nFix: pass the main connection in scope (both variables already exist in `_runApp`):\n\n```dart\nreturn resolveVisionSlotInspectConfig(\n  saved.models,\n  mainBaseUrl: effective.baseUrl,\n  mainApiKey: apiKey ?? '',\n  resolveKey: resolveMediaSlotKeyName,\n);\n```\n\n(same for `resolveTranscriptionSlotConfig`). The existing test \"same-host slots reuse the main key when no apiKeyName is set\" proves the mechanism — it just never fires in production today."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6x-aCd",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "lib/src/cli/agent_cli_tools.dart:425",
+      "resolved": false,
+      "body": "🚨 **BLOCKING: The sqlite read swap drops the default /cost sink — after the swap, auto-route spend silently leaves /cost (AC2 regression)**\n\n`AgentCli` applies the default sink at the services boundary (`agent_cli.dart:576`):\n\n```dart\nonImageInspectUsage:\n    config.onImageInspectUsage ?? (usage) => _usage.addSideCall(usage),\n```\n\nso the initially registered `read` tool gets `_usage.addSideCall` when the host doesn't set `onImageInspectUsage` (the plain CLI never does). But this swap site — which rebuilds the SAME tool — reads the raw config field:\n\n```dart\nonImageUsage: config.onImageInspectUsage,  // null in the plain CLI\n```\n\n`_swapReadSqliteVariant` runs on every tool-availability refresh whose sqlite decision flips the variant, so in any session where it fires, the swapped `read` carries `onImageUsage: null` and every subsequent auto-route vision call is untracked — exactly what the gh-1984 AC2 wiring (\"Auto-route spend joins /cost via `UsageAccumulator.addSideCall` … wired as the default sink in `AgentCli`\") is supposed to guarantee.\n\nThe comment above already states the invariant for the resolver: \"Both read-tool construction sites (wireAgentCore and the sqlite swap) must ride the SAME resolver.\" Apply the same hoist to the sink:\n\n```dart\nvoid Function(Usage usage)? get _readOnImageUsage =>\n    config.onImageInspectUsage ?? (usage) => _usage.addSideCall(usage);\n```\n\nand pass `_readOnImageUsage` here (matching `_readVisionResolver` / `_readTranscribeAvailable`, which are already consistent)."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6x-aEn",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": ".dmtools-target-workingdir:1",
+      "resolved": false,
+      "body": "🚨 **BLOCKING: `.dmtools-target-workingdir` (local dmtools tool state) was swept into the feature commit — remove it from the PR**\n\nThis new tracked file contains a single `.` — it's the dmtools target-workingdir marker, local tool state. The repo already ruled on exactly this artifact (`.gitignore:169-171`):\n\n```\n# gh-1986 review: dmtools target-workingdir marker — local tool state,\n# never commit (was swept into the PR by a WIP auto-save once already).\n.dmtools-target-workingdir\n```\n\nThis is a repeat of the known gh-1990 WIP auto-save accident: the file is ignored, but because it was committed in febdd7d86b the ignore rule can't untrack it. It's unrelated to gh-1984 scope and pollutes every future checkout.\n\nFix: `git rm --cached .dmtools-target-workingdir && git commit` (drop it from the PR; the local file stays in place). Consider squashing it out of febdd7d86b if the history is still malleable, otherwise a follow-up removal commit on this branch."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6x-aId",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "lib/src/cli/agent_cli_tools.dart:172",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT: Tool registration stays boot-static while the read auto-route goes live — a mid-session `/models set` produces a mixed, misleading state**\n\nThe read auto-route re-resolves the vision slot per read (live), but the `inspect_image`/`transcribe_audio` capability decisions here still read the boot-frozen `config.visionConfig`/`config.transcribeConfig`:\n\n```dart\n'inspect_image': config.visionConfig != null ? on : const ToolCapability.absent(...)\n```\n\nAfter a mid-session `/models set vision <id>` (which the PR's design explicitly supports without a restart — the resolver closure picks it up on the next read):\n\n- the read auto-route works, but `/tools` still shows `inspect_image` **off** with \"no vision model configured — set models.slots.vision\" — now false advice;\n- with `images.autoInspect: false`, the omission note tells the agent \"call inspect_image to describe this image\" — a tool that is not registered in this session.\n\nSuggestion: gate the capability on the same live resolver (a cached `bool Function()` like `_readTranscribeAvailable`, re-evaluated by the `rebuildToolAvailability()` pass that already re-reads scopes and re-applies availability), or at minimum reword the AC3 note/`/tools` hint to mention that the tool registers on restart when the boot config predates the slot."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6x-aMf",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "bin/fah_runapp.dart:1085",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT: The per-read resolver reads `saved.models`, but `/models set` mutates `config.modelsConfig` — the two diverge when the config has no `models:` section**\n\nThe live-resolver design works because `AgentCliConfig.modelsConfig` is wired as `saved.models ?? ModelsConfig()` (`bin/fah_runapp.dart:1785`) and `/models set` mutates that shared object — when `saved.models` is non-null they are the same instance. But on a config with **no `models:` section** (fresh install), the CLI mutates a fresh `ModelsConfig()` while this resolver keeps reading `saved.models` (null) — a mid-session `/models set vision <id>` never reaches the auto-route, silently contradicting the \"/models set edits apply without a restart\" decision on exactly the machines that need guided setup the most.\n\nFix: resolve through the same source the CLI mutates, e.g. capture `saved.models ?? config.modelsConfig` in the closure (or thread a `ModelsConfig Function()` live accessor like the media tools' `modelsConfig:` seam). Line 1994 already shows the `cli.config.modelsConfig ?? saved.models` precedence — mirroring it here keeps one rule."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6x-aPP",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "lib/src/tools/inspect_image.dart:177",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: The shared vision helper now supports `cancelToken`/`onUsage` — wire them at the `inspect_image` call site and drop the pass-through wrapper**\n\n`describeImageWithVisionModel` gained `cancelToken` (AC6) and `onUsage` (/cost), but the `inspect_image` tool's execute still calls the pass-through wrapper without either:\n\n```dart\n// inspect_image.dart:281\nfinal description = await _inspectWithVisionModel(\n  config,\n  bytes,\n  mimeType,\n  prompt,\n);\n```\n\nTwo small parity wins, no behavior risk: forward `cancelToken: cancelToken` so a user cancel aborts a hung vision stream mid-flight (today only the pre-call checkpoints cancel), and forward `onUsage` if the tool's spend should be as visible as the auto-route's. With both wired, `_inspectWithVisionModel` (a pure forwarder since this PR) can be deleted entirely."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6x-aTD",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "lib/src/tools/builtin_tools.dart:183",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: The `autoInspect` parameter is a test-only seam — document it as such**\n\nNo production caller passes `autoInspect` (host wiring relies on the process-global `imageRegistryConfig.autoInspect` published at boot); only `builtin_tools_test.dart` sets it. That's a fine fault-injection seam (same spirit as `builtinText`), but a one-line doc note — \"test seam; production reads the boot-published `images.autoInspect` knob\" — would prevent a future host from wiring it and accidentally forking from the process-global truth."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-30:57f6d04f",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-30",
+      "updatedAt": "2026-10-30",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🚨 **BLOCKING: The auto-route gates the *resized* payload but uploads the *original* bytes — `images.maxBytesPerRequest` is bypassed and the mime/bytes pair can disagree**\n\nThe budget gate measures the processed (resized/converted) payload:\n\n```dart\n// builtin_tools_read.dart:348\nif (processed.base64.length > budget) { ... }\n```\n\nbut the vision request is built from the **raw file bytes**:\n\n```dart\n// builtin_tools_read.dart:358\nfinal description = await describeImageWithVisionModel(\n  visionConfig,\n  bytes,               // ← original file bytes, NOT processed\n  processed.mimeType,  // ← mime of the CONVERTED payload\n  ...\n```\n\n`describeImageWithVisionModel` then sends `base64Encode(bytes)` (`inspect_image.dart`). `_processImage` resizes/re-encodes (BMP→PNG conversion, EXIF orientation baked, 0.75 shrink ladder) precisely when the original exceeds the inline limits — the common case for photos/screenshots. For such images:\n\n1. **The budget gate is ineffective** — a 30 MB original whose shrunk inline payload is ~200 KB passes the gate and uploads a ~40 MB base64 blob to the vision provider, violating `images.maxBytesPerRequest` (the very knob the PR claims \"applies to the auto-route call too\"), with real spend/latency and provider-rejection risk.\n2. **Mime/bytes mismatch** — a BMP converted to PNG inline is uploaded as raw BMP bytes labeled `image/png`; providers may reject or misdecode. The EXIF orientation the inline path bakes is also never applied to what the vision model sees.\n\nFix: send the processed payload so gate, mime, and body agree — e.g. thread the processed bytes out of `_processImage` (or `base64Decode(processed.base64)`) into the call. The AC6 degrade path already covers any residual provider failure."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-30:b68237f5",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-30",
+      "updatedAt": "2026-10-30",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🚨 **BLOCKING: The resolvers never receive the main connection's key — the flagship `/models set vision|transcription <id>` flow resolves an EMPTY API key**\n\n`resolveVisionSlotInspectConfig`/`resolveTranscriptionSlotConfig` support the gh-184 same-host main-key reuse (`mainBaseUrl`/`mainApiKey` → `resolveMediaSlotKey`), but the only production wiring — right here — passes just `resolveKey`, so `mainBaseUrl`/`mainApiKey` default to `''` and the same-host branch can never match.\n\nThat breaks the most common pin flow: `/models set vision <model>` writes a slot with **no `apiKeyName`** and `baseUrl` = the main endpoint (`provider_models.dart:_setModelsSlot`):\n\n```\nresolveMediaSlotKey → keyName null → _isSameHost(override.baseUrl, '') == false → key = ''\n```\n\nResult: `inspect_image`/`transcribe_audio` register **on** (the slot IS configured), and every call — including every image-read auto-route — fails with the provider's auth error. The \"empty key is honest\" rationale in the library docs covers slots whose named key genuinely can't resolve; here the main key **is** resolvable, and the established rule says same-host slots reuse it: `generate_image`/`generate_video` do exactly that for the identical slot shape via `MediaToolServices(mainApiKey: () => _apiKey, ...)` (\"one rule, both CLI tools\", gh-184 review). The new adapters are the exception, in the PR whose whole point is media-slot parity.\n\nFix: pass the main connection in scope (both variables already exist in `_runApp`):\n\n```dart\nreturn resolveVisionSlotInspectConfig(\n  saved.models,\n  mainBaseUrl: effective.baseUrl,\n  mainApiKey: apiKey ?? '',\n  resolveKey: resolveMediaSlotKeyName,\n);\n```\n\n(same for `resolveTranscriptionSlotConfig`). The existing test \"same-host slots reuse the main key when no apiKeyName is set\" proves the mechanism — it just never fires in production today."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-30:64592aec",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-30",
+      "updatedAt": "2026-10-30",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🚨 **BLOCKING: The sqlite read swap drops the default /cost sink — after the swap, auto-route spend silently leaves /cost (AC2 regression)**\n\n`AgentCli` applies the default sink at the services boundary (`agent_cli.dart:576`):\n\n```dart\nonImageInspectUsage:\n    config.onImageInspectUsage ?? (usage) => _usage.addSideCall(usage),\n```\n\nso the initially registered `read` tool gets `_usage.addSideCall` when the host doesn't set `onImageInspectUsage` (the plain CLI never does). But this swap site — which rebuilds the SAME tool — reads the raw config field:\n\n```dart\nonImageUsage: config.onImageInspectUsage,  // null in the plain CLI\n```\n\n`_swapReadSqliteVariant` runs on every tool-availability refresh whose sqlite decision flips the variant, so in any session where it fires, the swapped `read` carries `onImageUsage: null` and every subsequent auto-route vision call is untracked — exactly what the gh-1984 AC2 wiring (\"Auto-route spend joins /cost via `UsageAccumulator.addSideCall` … wired as the default sink in `AgentCli`\") is supposed to guarantee.\n\nThe comment above already states the invariant for the resolver: \"Both read-tool construction sites (wireAgentCore and the sqlite swap) must ride the SAME resolver.\" Apply the same hoist to the sink:\n\n```dart\nvoid Function(Usage usage)? get _readOnImageUsage =>\n    config.onImageInspectUsage ?? (usage) => _usage.addSideCall(usage);\n```\n\nand pass `_readOnImageUsage` here (matching `_readVisionResolver` / `_readTranscribeAvailable`, which are already consistent)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-30:b2f5d8a5",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-30",
+      "updatedAt": "2026-10-30",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🚨 **BLOCKING: `.dmtools-target-workingdir` (local dmtools tool state) was swept into the feature commit — remove it from the PR**\n\nThis new tracked file contains a single `.` — it's the dmtools target-workingdir marker, local tool state. The repo already ruled on exactly this artifact (`.gitignore:169-171`):\n\n```\n# gh-1986 review: dmtools target-workingdir marker — local tool state,\n# never commit (was swept into the PR by a WIP auto-save once already).\n.dmtools-target-workingdir\n```\n\nThis is a repeat of the known gh-1990 WIP auto-save accident: the file is ignored, but because it was committed in febdd7d86b the ignore rule can't untrack it. It's unrelated to gh-1984 scope and pollutes every future checkout.\n\nFix: `git rm --cached .dmtools-target-workingdir && git commit` (drop it from the PR; the local file stays in place). Consider squashing it out of febdd7d86b if the history is still malleable, otherwise a follow-up removal commit on this branch."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-30:73e2a432",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-30",
+      "updatedAt": "2026-10-30",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT: Tool registration stays boot-static while the read auto-route goes live — a mid-session `/models set` produces a mixed, misleading state**\n\nThe read auto-route re-resolves the vision slot per read (live), but the `inspect_image`/`transcribe_audio` capability decisions here still read the boot-frozen `config.visionConfig`/`config.transcribeConfig`:\n\n```dart\n'inspect_image': config.visionConfig != null ? on : const ToolCapability.absent(...)\n```\n\nAfter a mid-session `/models set vision <id>` (which the PR's design explicitly supports without a restart — the resolver closure picks it up on the next read):\n\n- the read auto-route works, but `/tools` still shows `inspect_image` **off** with \"no vision model configured — set models.slots.vision\" — now false advice;\n- with `images.autoInspect: false`, the omission note tells the agent \"call inspect_image to describe this image\" — a tool that is not registered in this session.\n\nSuggestion: gate the capability on the same live resolver (a cached `bool Function()` like `_readTranscribeAvailable`, re-evaluated by the `rebuildToolAvailability()` pass that already re-reads scopes and re-applies availability), or at minimum reword the AC3 note/`/tools` hint to mention that the tool registers on restart when the boot config predates the slot."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-30:7ee8a009",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-30",
+      "updatedAt": "2026-10-30",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT: The per-read resolver reads `saved.models`, but `/models set` mutates `config.modelsConfig` — the two diverge when the config has no `models:` section**\n\nThe live-resolver design works because `AgentCliConfig.modelsConfig` is wired as `saved.models ?? ModelsConfig()` (`bin/fah_runapp.dart:1785`) and `/models set` mutates that shared object — when `saved.models` is non-null they are the same instance. But on a config with **no `models:` section** (fresh install), the CLI mutates a fresh `ModelsConfig()` while this resolver keeps reading `saved.models` (null) — a mid-session `/models set vision <id>` never reaches the auto-route, silently contradicting the \"/models set edits apply without a restart\" decision on exactly the machines that need guided setup the most.\n\nFix: resolve through the same source the CLI mutates, e.g. capture `saved.models ?? config.modelsConfig` in the closure (or thread a `ModelsConfig Function()` live accessor like the media tools' `modelsConfig:` seam). Line 1994 already shows the `cli.config.modelsConfig ?? saved.models` precedence — mirroring it here keeps one rule."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-30:068ee683",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-30",
+      "updatedAt": "2026-10-30",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: The shared vision helper now supports `cancelToken`/`onUsage` — wire them at the `inspect_image` call site and drop the pass-through wrapper**\n\n`describeImageWithVisionModel` gained `cancelToken` (AC6) and `onUsage` (/cost), but the `inspect_image` tool's execute still calls the pass-through wrapper without either:\n\n```dart\n// inspect_image.dart:281\nfinal description = await _inspectWithVisionModel(\n  config,\n  bytes,\n  mimeType,\n  prompt,\n);\n```\n\nTwo small parity wins, no behavior risk: forward `cancelToken: cancelToken` so a user cancel aborts a hung vision stream mid-flight (today only the pre-call checkpoints cancel), and forward `onUsage` if the tool's spend should be as visible as the auto-route's. With both wired, `_inspectWithVisionModel` (a pure forwarder since this PR) can be deleted entirely."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-30:7849ecde",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-30",
+      "updatedAt": "2026-10-30",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: The `autoInspect` parameter is a test-only seam — document it as such**\n\nNo production caller passes `autoInspect` (host wiring relies on the process-global `imageRegistryConfig.autoInspect` published at boot); only `builtin_tools_test.dart` sets it. That's a fine fault-injection seam (same spirit as `builtinText`), but a one-line doc note — \"test seam; production reads the boot-published `images.autoInspect` knob\" — would prevent a future host from wiring it and accidentally forking from the process-global truth."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-30:41305023",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-30",
+      "updatedAt": "2026-10-30",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🛑 stale-cancel febdd7d86b2696a4d0aea15ead20e41942c3a8e1 — stale base at 2026-10-30T12:29:23.572Z\n\nCancelled 1 validation run(s) dispatched on a superseded head of this PR — the silent refresh moved the base and their results would be discarded anyway (gh-846). `cancelled` is not a verdict (gh-755): no fail-validation, no zombie re-dispatch, no red-head count is recorded for these heads — validation re-dispatches only on the current head."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-30:9512afaf",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-30",
+      "updatedAt": "2026-10-30",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ Validation CI went red on the head — merge aborted, rework re-queued. (linked issue #1984 re-armed) (approval latch kept — no re-review after fixes)\nFailed run: https://github.com/IstiN/flutter_agent_harness/actions/runs/41056528467\n🔴 red head fe64b7e8991b531a43355160930845e1a44253c1 — red 1/3 (owner directive 2026-10-04: red yields the slot — after 3 reds on the same head, validation waits for a NEW head)"
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-30:55aa3e75",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-30",
+      "updatedAt": "2026-10-30",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — REQUEST CHANGES\n\n**Summary**: 4 blocking issues: the read auto-route gates the resized payload but uploads the original bytes (`images.maxBytesPerRequest` bypass + mime/bytes mismatch); the slot resolvers never receive the main connection's key, so the flagship `/models set vision|transcription <id>` flow authenticates with an empty key; the sqlite read swap drops the default `/cost` sink (AC2); and `.dmtools-target-workingdir` (local tool state, `.gitignore:171` says \"never commit\") was swept into the feature commit. 2 important (boot-static tool registration vs live slot resolution; `saved.models` vs `config.modelsConfig` divergence on fresh installs) and 2 suggestions — see inline threads.\n\n**What looks good**: clean `dart analyze`; targeted suites green (367 tests); solid AC coverage in tests (auto-route, degrade, cancel, budget, live re-read, media notes, `addSideCall`); the main-connection opt-in exclusion and the app host's byte-identical read path are well reasoned and tested.\n\n**Next steps**:\n1. Send the processed image payload to the vision model so the budget gate, mime, and body agree (comment1)\n2. Pass `mainBaseUrl`/`mainApiKey` from the `fah_runapp` resolvers — same-host main-key reuse (comment2)\n3. Hoist the `/cost` sink default into a getter shared by both read-tool construction sites (comment3)\n4. `git rm --cached .dmtools-target-workingdir` (comment4)\n5. Align tool registration/`/tools` hints with the live resolver, or scope the claim to boot config (comment5)\n6. Minor: resolver source on fresh installs, `inspect_image` cancel/usage parity, doc drift in `host_wiring_builder.dart:301` (still lists only `visionConfig, transcribeConfig` wiring)"
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-30:37327b7d",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-30",
+      "updatedAt": "2026-10-30",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🔴 red head fe64b7e8991b531a43355160930845e1a44253c1 — red 2/3 (owner directive 2026-10-04: red yields the slot — after 3 reds on the same head, validation waits for a NEW head)\n🔴 Red pre-merge gate on the head with no armed validation — rework armed (gh-917: first validation included, review or no review). The rework runner pushes a fix and validation re-runs on the new head (validate-fresh). After 3 red arming attempts on the SAME head the arm is withheld and a human is escalated (no infinite retry)."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-30:7218e17a",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-30",
+      "updatedAt": "2026-10-30",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🧵 Unresolved review threads — rework armed. This machine-authored PR is reviewed (ai_pr_reviewed) but still has open review threads. The rework leg owns open threads: agent:rework is armed on this PR and the rework runner will work through the threads and push. Validation re-runs automatically afterwards, and once the threads are resolved a fresh re-review is armed (review-threads-resolved)."
+    }
+  ]
+}
