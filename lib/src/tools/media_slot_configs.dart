@@ -78,3 +78,61 @@ Future<TranscribeAudioConfig?> resolveTranscriptionSlotConfig(
     baseUrl: override.baseUrl,
   );
 }
+
+/// Builds the plain CLI host's live vision resolver (gh-1984 AC5/AC8): the
+/// explicit `--vision-model` flag ([flagModel], with [flagBaseUrl]) is the
+/// hard override — its boot config is built once by [flagConfig] (the
+/// flag's own key resolution, unchanged); WITHOUT a flag the persisted
+/// `models.slots.vision` serves, read LIVE from [modelsConfig] — the SAME
+/// instance the host's `/models set` flow mutates, so a mid-session slot
+/// edit (on a fresh install's empty fallback config included) applies
+/// without a restart (review thread 6) — with the main connection in scope
+/// ([mainBaseUrl]/[mainApiKey]) for the gh-184 same-host key reuse: one
+/// rule with `generate_image`/`generate_video`, so the flagship
+/// `/models set vision <id>` flow (no `apiKeyName`, main endpoint)
+/// authenticates with the main key instead of an empty one (review
+/// thread 2).
+Future<InspectImageConfig?> Function() cliVisionSlotResolver({
+  String? flagModel,
+  String? flagBaseUrl,
+  required ModelsConfig modelsConfig,
+  required MediaKeyResolver resolveKey,
+  required String mainBaseUrl,
+  required String mainApiKey,
+  required InspectImageConfig Function(String modelId, String? baseUrl)
+  flagConfig,
+}) {
+  return () async {
+    if (flagModel != null) return flagConfig(flagModel, flagBaseUrl);
+    return resolveVisionSlotInspectConfig(
+      modelsConfig,
+      resolveKey: resolveKey,
+      mainBaseUrl: mainBaseUrl,
+      mainApiKey: mainApiKey,
+    );
+  };
+}
+
+/// Builds the plain CLI host's live transcription resolver — the
+/// transcription twin of [cliVisionSlotResolver] (same flag override, same
+/// live persisted slot, same main-connection scope).
+Future<TranscribeAudioConfig?> Function() cliTranscriptionSlotResolver({
+  String? flagModel,
+  String? flagBaseUrl,
+  required ModelsConfig modelsConfig,
+  required MediaKeyResolver resolveKey,
+  required String mainBaseUrl,
+  required String mainApiKey,
+  required TranscribeAudioConfig Function(String modelId, String? baseUrl)
+  flagConfig,
+}) {
+  return () async {
+    if (flagModel != null) return flagConfig(flagModel, flagBaseUrl);
+    return resolveTranscriptionSlotConfig(
+      modelsConfig,
+      resolveKey: resolveKey,
+      mainBaseUrl: mainBaseUrl,
+      mainApiKey: mainApiKey,
+    );
+  };
+}

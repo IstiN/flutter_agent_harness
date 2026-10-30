@@ -412,14 +412,21 @@ void main() {
     );
     final run = cli.run();
     await waitForIt(() => cli.agent.state.tools.isNotEmpty);
-    io.sendLine('/tools');
-    await waitForIt(() => io.out.toString().contains('inspect_image'));
-    var line = io.out
+    // The /tools output accumulates; count the listings before reading the
+    // LAST one so a slow flush never reads a stale row.
+    int inspectLines() => io.out
         .toString()
         .split('\n')
-        .firstWhere((l) => l.startsWith('inspect_image'.padRight(16)));
+        .where((l) => l.startsWith('inspect_image'.padRight(16)))
+        .length;
+    String lastInspectLine() => io.out
+        .toString()
+        .split('\n')
+        .lastWhere((l) => l.startsWith('inspect_image'.padRight(16)));
+    io.sendLine('/tools');
+    await waitForIt(() => inspectLines() >= 1);
     expect(
-      line,
+      lastInspectLine(),
       contains(' on '),
       reason: 'the live resolver serves a vision config — /tools must say so',
     );
@@ -435,12 +442,8 @@ void main() {
     io.sendLine('/tools reload');
     await waitForIt(() => io.out.toString().contains('availability reloaded'));
     io.sendLine('/tools');
-    await waitForIt(() => io.out.toString().contains('availability reloaded'));
-    line = io.out
-        .toString()
-        .split('\n')
-        .lastWhere((l) => l.startsWith('inspect_image'.padRight(16)));
-    expect(line, contains(' off '));
+    await waitForIt(() => inspectLines() >= 2);
+    expect(lastInspectLine(), contains(' off '));
     expect(
       cli.agent.state.tools.whereType<AgentTool>().map((t) => t.name),
       isNot(contains('inspect_image')),
@@ -453,14 +456,8 @@ void main() {
       () => io.out.toString().split('availability reloaded').length >= 3,
     );
     io.sendLine('/tools');
-    await waitForIt(
-      () => io.out.toString().split('availability reloaded').length >= 3,
-    );
-    line = io.out
-        .toString()
-        .split('\n')
-        .lastWhere((l) => l.startsWith('inspect_image'.padRight(16)));
-    expect(line, contains(' on '));
+    await waitForIt(() => inspectLines() >= 3);
+    expect(lastInspectLine(), contains(' on '));
     expect(
       cli.agent.state.tools.whereType<AgentTool>().map((t) => t.name),
       contains('inspect_image'),

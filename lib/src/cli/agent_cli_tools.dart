@@ -20,6 +20,13 @@ final class _ToolsWiringState {
   ToolsConfig project = const ToolsConfig();
   ToolsConfig session = const ToolsConfig();
 
+  /// The LIVE vision capability (gh-1984 review thread 5): refreshed from
+  /// the read auto-route's resolver by every availability rebuild, so the
+  /// `inspect_image` capability and registration follow the slot a
+  /// mid-session `/models set vision` sets — never contradicting the
+  /// auto-route. Null before the first rebuild (the boot config decides).
+  InspectImageConfig? resolvedVision;
+
   /// Unknown ids already warned about (warn once per distinct id).
   Set<String> warnedIds = const {};
 }
@@ -169,13 +176,13 @@ extension AgentCliTools on AgentCli {
       'generate_image': on,
       'generate_video': on,
       'decide': on,
-      'inspect_image': config.visionConfig != null
+      'inspect_image': _toolsWiring.resolvedVision != null
           ? on
           : const ToolCapability.absent(
               'no vision model configured — set models.slots.vision '
               '(/settings → Media models → vision) or pass --vision-model',
             ),
-      'transcribe_audio': config.transcribeConfig != null
+      'transcribe_audio': _readTranscribeAvailable()
           ? on
           : const ToolCapability.absent(
               'no transcription endpoint configured — set '
@@ -224,6 +231,13 @@ extension AgentCliTools on AgentCli {
       'project',
     );
     state.session = await _readSessionTools();
+    // gh-1984 (review thread 5): the media capabilities and registrations
+    // follow the LIVE vision slot — refreshed from the read auto-route's
+    // resolver on every pass, so a mid-session `/models set vision` is
+    // reflected by the next /tools (or any availability rebuild) instead
+    // of contradicting the working auto-route.
+    state.resolvedVision = await _resolveLiveVisionConfig();
+    _syncInspectImageTool(state.resolvedVision);
     final resolution = resolveToolAvailability(
       capabilities: toolCapabilities(),
       // Load mode (issue #680): the active preset's essential ids pin the
@@ -414,6 +428,39 @@ extension AgentCliTools on AgentCli {
   /// untracked every post-swap auto-route.
   void Function(Usage usage)? get _readOnImageUsage =>
       config.onImageInspectUsage ?? (usage) => _usage.addSideCall(usage);
+
+  /// The live vision capability for the availability pass (gh-1984 review
+  /// thread 5): the SAME resolver the read auto-route rides, resolved once
+  /// per rebuild. A failed slot read resolves to null — /tools stays
+  /// honest about the capability and the next read degrades per AC6.
+  Future<InspectImageConfig?> _resolveLiveVisionConfig() async {
+    try {
+      return await _readVisionResolver();
+    } on Object {
+      return null;
+    }
+  }
+
+  /// Keeps the `inspect_image` REGISTRATION in step with the live vision
+  /// capability (gh-1984 review thread 5): the read auto-route re-resolves
+  /// the slot per read, so a mid-session slot set/remove must not leave
+  /// the tool unregistered while the capability says on (the AC3 note
+  /// names the tool) — or registered while it says off. Same pattern as
+  /// the sqlite read swap: (un)register here, keep the group map aligned
+  /// for the gate and the /tools listing.
+  void _syncInspectImageTool(InspectImageConfig? visionConfig) {
+    final registered = _toolRegistry.contains('inspect_image');
+    final wanted = visionConfig != null;
+    if (wanted == registered) return;
+    if (wanted) {
+      final tool = inspectImageTool(_coreToolEnv, visionConfig);
+      _toolRegistry.register(tool);
+      _toolGroupsById['inspect_image'] = [tool];
+    } else {
+      _toolRegistry.unregister('inspect_image');
+      _toolGroupsById.remove('inspect_image');
+    }
+  }
 
   /// Swaps the registered `read` tool when the sqlite decision flipped:
   /// same shared snapshot store (hashline anchors recorded by either
