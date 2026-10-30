@@ -7,7 +7,7 @@ import 'dart:ffi';
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:meta/meta.dart';
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:win32/win32.dart';
 
 import 'clipboard_files.dart';
@@ -200,6 +200,8 @@ Future<FaClipboardFileRef?> _readUri(String raw) async {
 
 /// Test seams: the CRAP ratchet's coverage comes from these units' tests
 /// (the win32 FFI calls themselves need a Windows device run).
+/// Test seam: the CRAP ratchet's coverage of the win32 path comes from
+/// these (the FFI calls themselves need a Windows device run).
 @visibleForTesting
 List<String> decodeDropPathsForTest(Uint8List blob) => _decodeDropPaths(blob);
 
