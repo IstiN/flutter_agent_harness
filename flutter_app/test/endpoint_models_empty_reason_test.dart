@@ -119,12 +119,11 @@ void main() {
       identityKind: () => null,
       fetchEnabled: () => true,
       overrideFetcher: () =>
-          (baseUrl, {required apiKey}) async =>
-              (
-                const ['m-1', 'm-2'],
-                const <String, int>{'m-1': 64000},
-                const <String, int>{},
-              ),
+          (baseUrl, {required apiKey}) async => (
+            const ['m-1', 'm-2'],
+            const <String, int>{'m-1': 64000},
+            const <String, int>{},
+          ),
     );
 
     await controller.fetch();

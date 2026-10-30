@@ -335,27 +335,30 @@ void main() {
       expect(reason, isNull);
     });
 
-    test('an empty answer names the exchange branch with the remedies', () async {
-      final client = http_testing.MockClient((request) async {
-        if (request.url.host == 'api.github.com') {
-          return http.Response('{"message":"Bad credentials"}', 401);
-        }
-        return http.Response('{"message":"no"}', 401);
-      });
-      setModelsDispatchClientForTesting(client);
-      final callback = defaultCopilotCallbacks().fetchModelsReport;
+    test(
+      'an empty answer names the exchange branch with the remedies',
+      () async {
+        final client = http_testing.MockClient((request) async {
+          if (request.url.host == 'api.github.com') {
+            return http.Response('{"message":"Bad credentials"}', 401);
+          }
+          return http.Response('{"message":"no"}', 401);
+        });
+        setModelsDispatchClientForTesting(client);
+        final callback = defaultCopilotCallbacks().fetchModelsReport;
 
-      // A classic ghp_ PAT retries PAT-direct (also 401 here) — the
-      // combined reason names both paths and hints at the remedies.
-      final (ids, reason) = await callback!(
-        'ghp_deadbeef',
-        'https://api.githubcopilot.com',
-      );
+        // A classic ghp_ PAT retries PAT-direct (also 401 here) — the
+        // combined reason names both paths and hints at the remedies.
+        final (ids, reason) = await callback!(
+          'ghp_deadbeef',
+          'https://api.githubcopilot.com',
+        );
 
-      expect(ids, isEmpty);
-      expect(reason, contains('exchange path:'));
-      expect(reason, contains('pat-direct path:'));
-      expect(reason, contains('OAuth device flow'));
-    });
+        expect(ids, isEmpty);
+        expect(reason, contains('exchange path:'));
+        expect(reason, contains('pat-direct path:'));
+        expect(reason, contains('OAuth device flow'));
+      },
+    );
   });
 }
