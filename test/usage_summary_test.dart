@@ -6,6 +6,53 @@ import 'package:test/test.dart';
 
 void main() {
   group('UsageAccumulator', () {
+    test('addSideCall sums tokens and cost without bumping the turn count', () {
+      // gh-1984 AC2: the read auto-route's vision-model call rides the
+      // session's /cost meter, but it is NOT an agent turn.
+      final accumulator = UsageAccumulator()
+        ..add(
+          const Usage(
+            input: 100,
+            output: 50,
+            cacheRead: 20,
+            cacheWrite: 10,
+            totalTokens: 180,
+            cost: UsageCost(input: 0.1, output: 0.2, total: 0.3),
+          ),
+        )
+        ..addSideCall(
+          const Usage(
+            input: 1000,
+            output: 200,
+            cacheRead: 0,
+            cacheWrite: 0,
+            totalTokens: 1200,
+            cost: UsageCost(input: 0.01, output: 0.02, total: 0.03),
+          ),
+        );
+      expect(accumulator.turns, 1);
+      expect(accumulator.total.input, 1100);
+      expect(accumulator.total.output, 250);
+      expect(accumulator.total.totalTokens, 1380);
+      expect(accumulator.total.cost.total, closeTo(0.33, 1e-9));
+    });
+
+    test('addSideCall on a fresh accumulator keeps turns at zero', () {
+      final accumulator = UsageAccumulator()
+        ..addSideCall(
+          const Usage(
+            input: 10,
+            output: 5,
+            cacheRead: 0,
+            cacheWrite: 0,
+            totalTokens: 15,
+            cost: UsageCost(),
+          ),
+        );
+      expect(accumulator.turns, 0);
+      expect(accumulator.total.totalTokens, 15);
+    });
+
     test('starts at zero usage with zero turns', () {
       final accumulator = UsageAccumulator();
       expect(accumulator.turns, 0);

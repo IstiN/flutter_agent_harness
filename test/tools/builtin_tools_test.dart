@@ -4,6 +4,8 @@ import 'dart:typed_data';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_agent_harness/src/tools/builtin_tools.dart' as bt;
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart' as http_testing;
 import 'package:image/image.dart';
 import 'package:test/test.dart';
 
@@ -506,26 +508,28 @@ void main() {
       );
     });
 
-    test('coerces a malformed patch + complete exact-match payload: '
-        'exact-match applies with the same notice shape (issue #862 AC2)',
-        () async {
-      final result = await editTool.execute(
-        {
-          'path': 'main.dart',
-          'patch': 'definitely not a hashline patch',
-          'oldText': '  print("hello");',
-          'newText': '  print("exact");',
-        },
-        null,
-        null,
-      );
-      expect(_text(result), contains('IGNORED'));
-      expect(_text(result), contains('patch'));
-      expect(
-        (await env.readTextFile('main.dart')).valueOrNull,
-        'void main() {\n  print("exact");\n}\n',
-      );
-    });
+    test(
+      'coerces a malformed patch + complete exact-match payload: '
+      'exact-match applies with the same notice shape (issue #862 AC2)',
+      () async {
+        final result = await editTool.execute(
+          {
+            'path': 'main.dart',
+            'patch': 'definitely not a hashline patch',
+            'oldText': '  print("hello");',
+            'newText': '  print("exact");',
+          },
+          null,
+          null,
+        );
+        expect(_text(result), contains('IGNORED'));
+        expect(_text(result), contains('patch'));
+        expect(
+          (await env.readTextFile('main.dart')).valueOrNull,
+          'void main() {\n  print("exact");\n}\n',
+        );
+      },
+    );
 
     test('rejects calls with neither mode fully specified, with a remedy '
         'example (issue #862 AC3)', () {
@@ -608,10 +612,7 @@ void main() {
           isA<StateError>().having(
             (e) => e.message,
             'message',
-            allOf(
-              contains('[PATH#HASH]'),
-              contains('Example:'),
-            ),
+            allOf(contains('[PATH#HASH]'), contains('Example:')),
           ),
         ),
       );
@@ -752,10 +753,7 @@ void main() {
           ),
         );
         // Nothing was applied.
-        expect(
-          (await env.readTextFile('f.txt')).valueOrNull,
-          'a\nb\nc\nd\n',
-        );
+        expect((await env.readTextFile('f.txt')).valueOrNull, 'a\nb\nc\nd\n');
       },
     );
 
@@ -1228,17 +1226,19 @@ void main() {
     // turn — steering and cancel cannot reach the agent while the call
     // stays open. This env has no job registry, so the denial's escape
     // advice is the explicit-timeout fallback, not background: true.
-    test('denies a bare long foreground sleep with the instructive message',
-        () async {
-      final result = await tool.execute({'command': 'sleep 300'}, null, null);
-      final text = _text(result);
-      expect(text, contains('Denied: a bare foreground sleep of 300s'));
-      expect(text, contains('not supported in this environment'));
-      expect(text, contains('explicit timeout'));
-      expect(text, contains('Never poll in the foreground'));
-      // Validation, not execution: the shell never saw the command.
-      expect(shell.lastCommand, isNull);
-    });
+    test(
+      'denies a bare long foreground sleep with the instructive message',
+      () async {
+        final result = await tool.execute({'command': 'sleep 300'}, null, null);
+        final text = _text(result);
+        expect(text, contains('Denied: a bare foreground sleep of 300s'));
+        expect(text, contains('not supported in this environment'));
+        expect(text, contains('explicit timeout'));
+        expect(text, contains('Never poll in the foreground'));
+        // Validation, not execution: the shell never saw the command.
+        expect(shell.lastCommand, isNull);
+      },
+    );
 
     // The review rework: an explicit `timeout` is a deliberate bail cap —
     // the call unwinds there (steering/cancel reach the agent), so a
@@ -1254,23 +1254,28 @@ void main() {
       expect(shell.lastOptions?.timeout, const Duration(seconds: 45));
     });
 
-    test('fractional seconds: 60.5 denied, 90.5 labeled with the fraction',
-        () async {
-      final atBoundary = await tool.execute(
-        {'command': 'sleep 60.5'},
-        null,
-        null,
-      );
-      expect(_text(atBoundary), contains('Denied'));
-      final labeled = await tool.execute({'command': 'sleep 90.5'}, null, null);
-      expect(
-        _text(labeled),
-        contains('Denied: a bare foreground sleep of 90.5s'),
-      );
-    });
+    test(
+      'fractional seconds: 60.5 denied, 90.5 labeled with the fraction',
+      () async {
+        final atBoundary = await tool.execute(
+          {'command': 'sleep 60.5'},
+          null,
+          null,
+        );
+        expect(_text(atBoundary), contains('Denied'));
+        final labeled = await tool.execute(
+          {'command': 'sleep 90.5'},
+          null,
+          null,
+        );
+        expect(
+          _text(labeled),
+          contains('Denied: a bare foreground sleep of 90.5s'),
+        );
+      },
+    );
 
-    test('the sleep deny threshold allows sleep 60, denies sleep 61',
-        () async {
+    test('the sleep deny threshold allows sleep 60, denies sleep 61', () async {
       await tool.execute({'command': 'sleep 60'}, null, null);
       expect(shell.lastCommand, 'sleep 60');
       final result = await tool.execute({'command': 'sleep 61'}, null, null);
@@ -1290,11 +1295,13 @@ void main() {
       },
     );
 
-    test('a sleep wrapped in shell constructs is NOT denied (phase 2 scope)',
-        () async {
-      await tool.execute({'command': 'sleep 300 && echo done'}, null, null);
-      expect(shell.lastCommand, 'sleep 300 && echo done');
-    });
+    test(
+      'a sleep wrapped in shell constructs is NOT denied (phase 2 scope)',
+      () async {
+        await tool.execute({'command': 'sleep 300 && echo done'}, null, null);
+        expect(shell.lastCommand, 'sleep 300 && echo done');
+      },
+    );
 
     test('a long quiet legit command is NOT denied', () async {
       await tool.execute({'command': 'make release'}, null, null);
@@ -1608,6 +1615,504 @@ void main() {
       );
       expect(result.content.whereType<ImageContent>(), isEmpty);
       expect(_text(result), isEmpty);
+    });
+  });
+
+  group('read image auto-route (gh-1984)', () {
+    late MemoryExecutionEnv env;
+
+    setUp(() {
+      env = MemoryExecutionEnv(cwd: '/work');
+    });
+
+    Uint8List makePng() {
+      final img = Image(width: 2, height: 2)..getPixel(0, 0).r = 255;
+      return Uint8List.fromList(encodePng(img));
+    }
+
+    /// An SSE vision endpoint returning [content]; records its call count.
+    /// [afterRequest] runs when the request arrives (cancel seams).
+    (http.Client, int Function()) fakeVision(
+      String content, {
+      Object? Function()? afterRequest,
+    }) {
+      var calls = 0;
+      final client = http_testing.MockClient.streaming((
+        request,
+        bodyStream,
+      ) async {
+        calls++;
+        afterRequest?.call();
+        final payload = jsonEncode({
+          'id': 'chatcmpl-test',
+          'object': 'chat.completion.chunk',
+          'created': 1234567890,
+          'model': 'glm-5.3-flash',
+          'choices': [
+            {
+              'index': 0,
+              'delta': {'role': 'assistant', 'content': content},
+              'finish_reason': null,
+            },
+          ],
+        });
+        final done = jsonEncode({
+          'id': 'chatcmpl-test',
+          'object': 'chat.completion.chunk',
+          'created': 1234567890,
+          'model': 'glm-5.3-flash',
+          'choices': [
+            {'index': 0, 'delta': {}, 'finish_reason': 'stop'},
+          ],
+          'usage': {
+            'prompt_tokens': 1200,
+            'completion_tokens': 42,
+            'total_tokens': 1242,
+          },
+        });
+        final sse = Stream.fromIterable([
+          'data: $payload\n\n',
+          'data: $done\n\n',
+        ]);
+        return http.StreamedResponse(
+          sse.transform(utf8.encoder),
+          200,
+          headers: {'content-type': 'text/event-stream'},
+        );
+      });
+      return (client, () => calls);
+    }
+
+    Model textOnlyModel([List<String> input = const ['text']]) => Model(
+      id: 'glm-5.3',
+      api: 'openai-completions',
+      provider: 'openai-completions',
+      baseUrl: 'https://api.example.com/v1',
+      input: input,
+      contextWindow: 128000,
+      maxTokens: 4096,
+    );
+
+    InspectImageConfig visionConfig(http.Client client) => InspectImageConfig(
+      modelId: 'glm-5.3-flash',
+      apiKey: 'vision-key',
+      baseUrl: 'https://api.example.com/v1',
+      httpClient: client,
+    );
+
+    Future<ToolExecutionResult> readImage(
+      AgentTool tool, {
+      CancelToken? token,
+    }) => tool.execute({'path': '/work/shot.png'}, token, null);
+
+    test('AC2: non-vision model + configured vision → inline description with '
+        'attribution, no ImageContent', () async {
+      await env.writeBinaryFile('/work/shot.png', makePng());
+      final (client, calls) = fakeVision('A tiny red pixel.');
+      final usages = <Usage>[];
+      final tool = readFileTool(
+        env,
+        model: () => textOnlyModel(),
+        vision: () async => visionConfig(client),
+        onImageUsage: usages.add,
+      );
+      final result = await readImage(tool);
+      final note = _text(result);
+      expect(note, contains('A tiny red pixel.'));
+      // The attribution marker names the vision model (AC2).
+      expect(note, contains('[via vision model glm-5.3-flash]'));
+      // NOT the bare omission note (AC2).
+      expect(note, isNot(contains('does not support images')));
+      // The payload leaves with the description: the chat model cannot
+      // use the bytes anyway (providers placeholder them at request time).
+      expect(result.content.whereType<ImageContent>(), isEmpty);
+      // One vision-model call per read, no loops (AC2).
+      expect(calls(), 1);
+      // The side-call's spend is reported (AC2: cost visible in /cost).
+      expect(usages, hasLength(1));
+      expect(usages.first.totalTokens, greaterThan(0));
+    });
+
+    test('AC3: images.autoInspect: false → the note names inspect_image + '
+        'the vision model, image stays', () async {
+      await env.writeBinaryFile('/work/shot.png', makePng());
+      final (client, calls) = fakeVision('A tiny red pixel.');
+      final tool = readFileTool(
+        env,
+        model: () => textOnlyModel(),
+        vision: () async => visionConfig(client),
+        autoInspect: () => false,
+      );
+      final result = await readImage(tool);
+      final note = _text(result);
+      expect(note, contains('does not support images'));
+      expect(note, contains('inspect_image'));
+      expect(note, contains('glm-5.3-flash'));
+      expect(result.content.whereType<ImageContent>(), hasLength(1));
+      expect(calls(), 0, reason: 'no auto-route call happens');
+    });
+
+    test(
+      'AC4: no vision configured → the note instructs how to configure',
+      () async {
+        await env.writeBinaryFile('/work/shot.png', makePng());
+        final tool = readFileTool(env, model: () => textOnlyModel());
+        final result = await readImage(tool);
+        final note = _text(result);
+        expect(note, contains('does not support images'));
+        expect(note, contains('No vision model is configured'));
+        expect(note, contains('models.slots.vision'));
+        expect(result.content.whereType<ImageContent>(), hasLength(1));
+      },
+    );
+
+    test(
+      'AC4 REG: vision chat model rides in place — no note, no call',
+      () async {
+        await env.writeBinaryFile('/work/shot.png', makePng());
+        final (client, calls) = fakeVision('A tiny red pixel.');
+        final visionModel = textOnlyModel(const ['text', 'image']);
+        final tool = readFileTool(
+          env,
+          model: () => visionModel,
+          vision: () async => visionConfig(client),
+        );
+        final result = await readImage(tool);
+        expect(_text(result), isNot(contains('does not support images')));
+        expect(result.content.whereType<ImageContent>(), hasLength(1));
+        expect(calls(), 0);
+      },
+    );
+
+    test('AC6: vision provider failure degrades to the omission note + '
+        'reason; the read still succeeds', () async {
+      await env.writeBinaryFile('/work/shot.png', makePng());
+      final client = http_testing.MockClient.streaming((request, body) async {
+        throw http.ClientException('quota exceeded', request.url);
+      });
+      final tool = readFileTool(
+        env,
+        model: () => textOnlyModel(),
+        vision: () async => visionConfig(client),
+      );
+      final result = await readImage(tool);
+      final note = _text(result);
+      expect(note, contains('does not support images'));
+      expect(note, contains('quota exceeded'));
+      // The read did not fail; the image stays for when the vision path
+      // recovers (provider placeholder rules are unchanged).
+      expect(result.content.whereType<ImageContent>(), hasLength(1));
+    });
+
+    test('AC6: cancellation mid-call aborts the auto-route', () async {
+      await env.writeBinaryFile('/work/shot.png', makePng());
+      final source = CancelTokenSource();
+      final client = http_testing.MockClient.streaming((request, body) async {
+        // Block until the test cancels, then surface the cancel.
+        await source.token.onCancel;
+        throw CancelledException('cancelled mid-call');
+      });
+      final tool = readFileTool(
+        env,
+        model: () => textOnlyModel(),
+        vision: () async => visionConfig(client),
+      );
+      final future = tool.execute(
+        {'path': '/work/shot.png'},
+        source.token,
+        null,
+      );
+      await Future<void>.delayed(Duration.zero);
+      source.cancel();
+      Object outcome;
+      try {
+        outcome = _text(await future);
+      } on Object catch (error) {
+        outcome = error;
+      }
+      expect(outcome, isA<CancelledException>());
+    });
+
+    test(
+      'live re-read: the resolver runs per read (slot edits apply live)',
+      () async {
+        await env.writeBinaryFile('/work/shot.png', makePng());
+        final (client, calls) = fakeVision('A tiny red pixel.');
+        var slotConfigured = true;
+        final tool = readFileTool(
+          env,
+          model: () => textOnlyModel(),
+          vision: () async => slotConfigured ? visionConfig(client) : null,
+        );
+        final first = await readImage(tool);
+        expect(_text(first), contains('[via vision model glm-5.3-flash]'));
+        // The slot is withdrawn mid-session (e.g. /models remove vision) —
+        // the NEXT read degrades honestly instead of keeping a stale config.
+        slotConfigured = false;
+        final second = await readImage(tool);
+        final note = _text(second);
+        expect(note, contains('No vision model is configured'));
+        expect(second.content.whereType<ImageContent>(), hasLength(1));
+        expect(calls(), 1, reason: 'only the first read inspects');
+      },
+    );
+
+    test(
+      'images.maxBytesPerRequest budget applies to the auto-route',
+      () async {
+        await env.writeBinaryFile('/work/shot.png', makePng());
+        final (client, calls) = fakeVision('A tiny red pixel.');
+        final saved = imageRegistryConfig;
+        imageRegistryConfig = ImageRegistryConfig(
+          enabled: saved.enabled,
+          maxPerRequest: saved.maxPerRequest,
+          maxBytesPerRequest: 1,
+          perModel: saved.perModel,
+          autoInspect: saved.autoInspect,
+        );
+        try {
+          final tool = readFileTool(
+            env,
+            model: () => textOnlyModel(),
+            vision: () async => visionConfig(client),
+          );
+          final result = await readImage(tool);
+          final note = _text(result);
+          expect(note, contains('does not support images'));
+          expect(note, contains('maxBytesPerRequest'));
+          expect(result.content.whereType<ImageContent>(), hasLength(1));
+          expect(calls(), 0);
+        } finally {
+          imageRegistryConfig = saved;
+        }
+      },
+    );
+
+    test('the auto-route uploads the PROCESSED payload — gate, mime, and '
+        'bytes agree (review: resized/converted images)', () async {
+      // A BMP: the inline pipeline converts it to PNG before the budget
+      // gate (providers refuse inline BMP) — the vision request must
+      // carry the converted PNG, not the raw BMP bytes labeled image/png.
+      final bmp = Uint8List.fromList(encodeBmp(Image(width: 64, height: 64)));
+      await env.writeBinaryFile('/work/shot.bmp', bmp);
+      final bodies = <String>[];
+      final client = http_testing.MockClient.streaming((
+        request,
+        bodyStream,
+      ) async {
+        bodies.add(await utf8.decoder.bind(bodyStream).join());
+        return http.StreamedResponse(
+          Stream.fromIterable([
+            'data: ${jsonEncode({
+              'id': 'c',
+              'object': 'chat.completion.chunk',
+              'created': 1,
+              'model': 'glm-5.3-flash',
+              'choices': [
+                {
+                  'index': 0,
+                  'delta': {'role': 'assistant', 'content': 'A solid gray square.'},
+                  'finish_reason': null,
+                },
+              ],
+            })}\n\n',
+            'data: ${jsonEncode({
+              'id': 'c',
+              'object': 'chat.completion.chunk',
+              'created': 1,
+              'model': 'glm-5.3-flash',
+              'choices': [
+                {'index': 0, 'delta': {}, 'finish_reason': 'stop'},
+              ],
+            })}\n\n',
+          ]).transform(utf8.encoder),
+          200,
+          headers: {'content-type': 'text/event-stream'},
+        );
+      });
+      final tool = readFileTool(
+        env,
+        model: () => textOnlyModel(),
+        vision: () async => visionConfig(client),
+      );
+      final result = await tool.execute({'path': '/work/shot.bmp'}, null, null);
+      expect(_text(result), contains('[via vision model glm-5.3-flash]'));
+      expect(bodies, hasLength(1));
+      final params = jsonDecode(bodies.first) as Map<String, dynamic>;
+      final content = (params['messages'] as List).last['content'] as List;
+      final imagePart =
+          content.firstWhere(
+                (part) => part is Map && part['type'] == 'image_url',
+              )
+              as Map<String, dynamic>;
+      final dataUrl = (imagePart['image_url'] as Map)['url'] as String;
+      final match = RegExp(r'^data:([^;]+);base64,(.*)$').firstMatch(dataUrl)!;
+      // The mime names the CONVERTED payload…
+      expect(match.group(1), 'image/png');
+      final uploaded = base64Decode(match.group(2)!);
+      // …and the bytes ARE that payload: the converted PNG, not the raw
+      // BMP mislabeled as PNG. The gate that measured the processed
+      // base64 must bound the same bytes the request carries.
+      expect(uploaded, isNot(equals(bmp)));
+      const pngMagic = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
+      expect(uploaded.sublist(0, 8), pngMagic);
+      final resized = decodeImage(uploaded)!;
+      expect(resized.width, 64, reason: 'the converted PNG keeps its size');
+    });
+
+    test(
+      'the budget gate bounds the bytes the auto-route uploads (a large '
+      'original whose processed payload fits still uploads ≤ budget)',
+      () async {
+        // A big-enough original that the shrink ladder re-encodes it: the
+        // buggy path uploaded the ORIGINAL bytes while gating the
+        // processed ones, so the request payload blew past
+        // images.maxBytesPerRequest. The processed path must ride.
+        final big = Uint8List.fromList(
+          encodePng(Image(width: 2200, height: 40)),
+        );
+        await env.writeBinaryFile('/work/wide.png', big);
+        final bodies = <String>[];
+        final client = http_testing.MockClient.streaming((
+          request,
+          bodyStream,
+        ) async {
+          bodies.add(await utf8.decoder.bind(bodyStream).join());
+          return http.StreamedResponse(
+            Stream.fromIterable([
+              'data: ${jsonEncode({
+                'id': 'c',
+                'object': 'chat.completion.chunk',
+                'created': 1,
+                'model': 'glm-5.3-flash',
+                'choices': [
+                  {
+                    'index': 0,
+                    'delta': {'role': 'assistant', 'content': 'A very wide thin image.'},
+                    'finish_reason': null,
+                  },
+                ],
+              })}\n\n',
+              'data: ${jsonEncode({
+                'id': 'c',
+                'object': 'chat.completion.chunk',
+                'created': 1,
+                'model': 'glm-5.3-flash',
+                'choices': [
+                  {'index': 0, 'delta': {}, 'finish_reason': 'stop'},
+                ],
+              })}\n\n',
+            ]).transform(utf8.encoder),
+            200,
+            headers: {'content-type': 'text/event-stream'},
+          );
+        });
+        final saved = imageRegistryConfig;
+        // Budget between the processed and the original payload sizes.
+        imageRegistryConfig = ImageRegistryConfig(
+          enabled: saved.enabled,
+          maxPerRequest: saved.maxPerRequest,
+          maxBytesPerRequest: 40000,
+          perModel: saved.perModel,
+          autoInspect: saved.autoInspect,
+        );
+        try {
+          final tool = readFileTool(
+            env,
+            model: () => textOnlyModel(),
+            vision: () async => visionConfig(client),
+          );
+          final result = await tool.execute(
+            {'path': '/work/wide.png'},
+            null,
+            null,
+          );
+          expect(_text(result), contains('[via vision model glm-5.3-flash]'));
+          expect(bodies, hasLength(1));
+          final params = jsonDecode(bodies.first) as Map<String, dynamic>;
+          final content = (params['messages'] as List).last['content'] as List;
+          final imagePart =
+              content.firstWhere(
+                    (part) => part is Map && part['type'] == 'image_url',
+                  )
+                  as Map<String, dynamic>;
+          final dataUrl = (imagePart['image_url'] as Map)['url'] as String;
+          final uploadedBase64 = dataUrl.split('base64,').last;
+          expect(
+            uploadedBase64.length,
+            lessThanOrEqualTo(40000),
+            reason:
+                'the upload must be the gated processed payload — the '
+                'original bytes would exceed images.maxBytesPerRequest',
+          );
+          expect(base64Decode(uploadedBase64).length, lessThan(big.length));
+          final resized = decodeImage(base64Decode(uploadedBase64))!;
+          expect(
+            resized.width,
+            2000,
+            reason: 'the shrink ladder clamped the 2200px original',
+          );
+        } finally {
+          imageRegistryConfig = saved;
+        }
+      },
+    );
+  });
+
+  group('read audio/video notes (gh-1984 AC10)', () {
+    late MemoryExecutionEnv env;
+
+    setUp(() {
+      env = MemoryExecutionEnv(cwd: '/work');
+    });
+
+    test(
+      'audio with a transcription slot → the note names transcribe_audio',
+      () async {
+        await env.writeBinaryFile('/work/note.mp3', Uint8List.fromList([1, 2]));
+        final tool = readFileTool(
+          env,
+          mediaFileReadNotes: true,
+          transcribeAvailable: () => true,
+        );
+        final result = await tool.execute(
+          {'path': '/work/note.mp3'},
+          null,
+          null,
+        );
+        final note = _text(result);
+        expect(note, contains('[Audio file: /work/note.mp3'));
+        expect(note, contains('transcribe_audio'));
+      },
+    );
+
+    test('audio without a slot → the note names what to configure', () async {
+      await env.writeBinaryFile('/work/note.mp3', Uint8List.fromList([1, 2]));
+      final tool = readFileTool(
+        env,
+        mediaFileReadNotes: true,
+        transcribeAvailable: () => false,
+      );
+      final result = await tool.execute({'path': '/work/note.mp3'}, null, null);
+      final note = _text(result);
+      expect(note, contains('models.slots.transcription'));
+      expect(note, contains('--transcribe-model'));
+    });
+
+    test('video in the CLI → the note names the app host', () async {
+      await env.writeBinaryFile('/work/clip.mp4', Uint8List.fromList([1, 2]));
+      final tool = readFileTool(env, mediaFileReadNotes: true);
+      final result = await tool.execute({'path': '/work/clip.mp4'}, null, null);
+      final note = _text(result);
+      expect(note, contains('[Video file: /work/clip.mp4'));
+      expect(note, contains('Fa app'));
+    });
+
+    test('gate off (app host) → audio falls through unchanged (REG)', () async {
+      await env.writeBinaryFile('/work/note.mp3', Uint8List.fromList([1, 2]));
+      final tool = readFileTool(env);
+      final result = await tool.execute({'path': '/work/note.mp3'}, null, null);
+      expect(_text(result), isNot(contains('[Audio file:')));
     });
   });
 
