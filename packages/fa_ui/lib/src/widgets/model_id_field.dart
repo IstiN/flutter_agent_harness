@@ -106,7 +106,9 @@ class ModelIdAutocompleteField extends StatelessWidget {
         );
       },
     );
-    if (!fromBundledCatalog && emptyReason == null) return field;
+    if (!fromBundledCatalog && (emptyReason == null || models.isNotEmpty)) {
+      return field;
+    }
     final theme = Theme.of(context);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -114,7 +116,7 @@ class ModelIdAutocompleteField extends StatelessWidget {
       children: [
         field,
         const SizedBox(height: 4),
-        if (emptyReason != null)
+        if (emptyReason != null && models.isEmpty)
           Text(
             emptyReason!,
             style: theme.textTheme.bodySmall?.copyWith(

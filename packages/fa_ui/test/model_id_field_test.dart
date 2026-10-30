@@ -168,4 +168,77 @@ void main() {
     final modelField = tester.widget<TextField>(find.byType(TextField));
     expect(modelField.decoration?.helperMaxLines, 2);
   });
+
+  testWidgets('the empty-reason renders under the field when the endpoint '
+      'answered no models (gh-1990)', (tester) async {
+    final controller = TextEditingController();
+    final focusNode = FocusNode();
+    addTearDown(controller.dispose);
+    addTearDown(focusNode.dispose);
+    const reason = 'token exchange failed: GitHub token rejected (401) — '
+        'use the OAuth device flow';
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ModelIdAutocompleteField(
+            controller: controller,
+            focusNode: focusNode,
+            models: const [],
+            loading: false,
+            emptyReason: reason,
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    expect(find.textContaining('token exchange failed'), findsOneWidget);
+  });
+
+  testWidgets('the empty-reason is hidden when models were listed',
+      (tester) async {
+    final controller = TextEditingController();
+    final focusNode = FocusNode();
+    addTearDown(controller.dispose);
+    addTearDown(focusNode.dispose);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ModelIdAutocompleteField(
+            controller: controller,
+            focusNode: focusNode,
+            models: const ['m1'],
+            loading: false,
+            emptyReason: 'should not render',
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    expect(find.text('should not render'), findsNothing);
+  });
+
+  testWidgets('the list picker shows the named empty reason instead of the '
+      'generic note', (tester) async {
+    final controller = TextEditingController();
+    addTearDown(controller.dispose);
+    const reason = '12 models fetched, 12 filtered (picker flag absent)';
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: FaModelListPicker(
+            controller: controller,
+            models: const [],
+            loading: false,
+            emptyReason: reason,
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    expect(find.text(reason), findsOneWidget);
+    expect(
+      find.text('The endpoint listed no models — type the id manually'),
+      findsNothing,
+    );
+  });
 }
