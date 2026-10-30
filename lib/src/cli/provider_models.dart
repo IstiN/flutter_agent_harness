@@ -959,12 +959,14 @@ extension on AgentCli {
     }
   }
 
-  /// The `/models` fetch-failure section (gh-1990): one line per provider
-  /// whose live answer named its failure — exchange / HTTP / filter — so
-  /// an empty provider is never a silent hole in the list.
+  /// The `/models` fetch-notes section (gh-1990): one line per provider
+  /// whose live answer named something — the failed branch (exchange /
+  /// HTTP / filter with the remediation hint) or the partial-filter
+  /// summary — so a provider's model list is never silent about why it
+  /// is (or isn't) what the endpoint serves.
   void _printProviderFetchReasons() {
     if (_providerModelFetchReasons.isEmpty) return;
-    io.writeln('fetch failures:');
+    io.writeln('fetch notes:');
     final names = _providerModelFetchReasons.keys.toList()..sort();
     for (final name in names) {
       io.writeln('  $name: ${_providerModelFetchReasons[name]}');

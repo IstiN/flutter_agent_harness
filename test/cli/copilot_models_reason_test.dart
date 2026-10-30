@@ -11,7 +11,7 @@ import 'agent_cli_test_support.dart';
 
 /// gh-1990 — `/models` never shows a silent hole for a Copilot provider:
 /// the dialect's named failure (exchange status / HTTP status / filter
-/// counts, with the remediation hint) is printed as a `fetch failures:`
+/// counts, with the remediation hint) is printed as a `fetch notes:`
 /// section, and a healthy provider adds no failure lines.
 void main() {
   late MemoryExecutionEnv env;
@@ -80,12 +80,12 @@ void main() {
     final run = cli.run();
 
     io.sendLine('/models');
-    await waitForIt(() => io.out.toString().contains('fetch failures:'));
+    await waitForIt(() => io.out.toString().contains('fetch notes:'));
     io.sendLine('/exit');
     await run;
 
     final out = io.out.toString();
-    expect(out, contains('fetch failures:'));
+    expect(out, contains('fetch notes:'));
     expect(out, contains('copilot-isti:'));
     // Both credential paths are named — a classic PAT rescues through
     // PAT-direct after the exchange rejects it.
@@ -118,7 +118,7 @@ void main() {
     final run = cli.run();
 
     io.sendLine('/models');
-    await waitForIt(() => io.out.toString().contains('fetch failures:'));
+    await waitForIt(() => io.out.toString().contains('fetch notes:'));
     io.sendLine('/exit');
     await run;
 
@@ -165,7 +165,7 @@ void main() {
 
       final out = io.out.toString();
       expect(out, contains('copilot-isti/gpt-4.1'));
-      expect(out, isNot(contains('fetch failures:')));
+      expect(out, isNot(contains('fetch notes:')));
     },
   );
 }

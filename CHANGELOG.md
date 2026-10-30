@@ -29,7 +29,7 @@ block a release again.
   PAT-direct (the provenance note names which path answered), a
   fine-grained PAT never falls into the exchange, an OAuth token never
   becomes a direct PAT Bearer. Surfacing: `/models` prints a `fetch
-  failures:` section per provider, the `/provider copilot` connect flow
+  notes:` section per provider, the `/provider copilot` connect flow
   prints the named failure before manual entry, the app's model
   quick-select (`EndpointModelsController.emptyReason`) renders it under
   the field, and the Copilot connect sheet shows the reason above the

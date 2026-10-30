@@ -2015,10 +2015,12 @@ class AgentCli {
   final Map<String, List<String>> _allProvidersModelCache = {};
   bool _allProvidersCacheRefreshed = false;
 
-  /// Per-provider fetch-failure reasons from the last refresh cycle
-  /// (gh-1990): a provider whose /models answer named its failure —
-  /// `/models` prints these instead of a bare (or missing) list. Cleared
-  /// at the start of every refresh so stale reasons never linger.
+  /// Per-provider fetch notes from the last refresh cycle (gh-1990): a
+  /// provider whose /models answer named something — the failed branch
+  /// (exchange / HTTP / filter + hint) or the partial-filter summary.
+  /// The `/models` fetch-notes section prints these instead of a bare
+  /// (or missing) list. Cleared at the start of every refresh so stale
+  /// notes never linger.
   final Map<String, String> _providerModelFetchReasons = {};
 
   /// Providers whose cached list is trusted for THIS session: fetched live
