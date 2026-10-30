@@ -33,7 +33,6 @@ MODULES=(
   packages/dap_hub/lib
   packages/fa_llm/lib
   packages/fa_llm_mock/lib
-  packages/fa_llm_flutter/lib
   browser_ext/dart
 )
 
@@ -60,7 +59,6 @@ report_path, threshold, root = sys.argv[1], float(sys.argv[2]), sys.argv[3]
 MODS = [
     "lib/", "bin/", "flutter_app/lib/", "packages/fa_ui/lib/",
     "packages/dap_hub/lib/", "packages/fa_llm/lib/",
-    "packages/fa_llm_mock/lib/", "packages/fa_llm_flutter/lib/",
     "browser_ext/dart/",
 ]
 

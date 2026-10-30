@@ -104,7 +104,11 @@ Future<GemmaLeftoverCleanupReport> cleanupGemmaLeftoversAndLog(
   bool? isWeb,
   GemmaWebArtifactStore? webStore,
 }) async {
-  final report = await cleanupGemmaLeftovers(env, isWeb: isWeb, webStore: webStore);
+  final report = await cleanupGemmaLeftovers(
+    env,
+    isWeb: isWeb,
+    webStore: webStore,
+  );
   if (!report.isEmpty) {
     debugPrint(
       '[fah] gemma leftover cleanup: '
@@ -167,7 +171,10 @@ Future<GemmaLeftoverCleanupReport> _cleanupIo(ExecutionEnv env) async {
   }
 
   await walk(root, 0);
-  return GemmaLeftoverCleanupReport(List.unmodifiable(deleted), List.unmodifiable(failed));
+  return GemmaLeftoverCleanupReport(
+    List.unmodifiable(deleted),
+    List.unmodifiable(failed),
+  );
 }
 
 Future<GemmaLeftoverCleanupReport> _cleanupWeb(
@@ -194,7 +201,10 @@ Future<GemmaLeftoverCleanupReport> _cleanupWeb(
       failed.add(entry.name);
     }
   }
-  return GemmaLeftoverCleanupReport(List.unmodifiable(deleted), List.unmodifiable(failed));
+  return GemmaLeftoverCleanupReport(
+    List.unmodifiable(deleted),
+    List.unmodifiable(failed),
+  );
 }
 
 /// Fires the cleanup without awaiting it (boot wiring: cleanup must never
