@@ -4,7 +4,7 @@
 
 import 'dart:async' show unawaited;
 
-import 'package:fa/services/gemma_web_artifacts.dart';
+import 'package:fa/services/web_model_artifacts.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 

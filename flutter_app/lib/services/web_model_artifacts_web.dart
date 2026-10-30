@@ -11,7 +11,7 @@ library;
 
 import 'dart:js_interop';
 
-import 'package:fa/services/gemma_leftover_cleanup.dart';
+import 'package:fa/services/leftover_model_cleanup.dart';
 import 'package:web/web.dart' as web;
 
 extension type _JSAsyncIterator<T extends JSAny>._(JSObject _)

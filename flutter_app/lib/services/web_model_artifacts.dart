@@ -7,5 +7,5 @@
 /// everywhere else (the cleanup's IO walk covers those platforms).
 library;
 
-export 'package:fa/services/gemma_web_artifacts_stub.dart'
-    if (dart.library.js_interop) 'gemma_web_artifacts_web.dart';
+export 'package:fa/services/web_model_artifacts_stub.dart'
+    if (dart.library.js_interop) 'web_model_artifacts_web.dart';

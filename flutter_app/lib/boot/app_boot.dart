@@ -30,7 +30,7 @@ import 'package:fa/services/analytics.dart';
 import 'package:fa/services/app_log.dart';
 import 'package:fa/services/copilot_cli_identity.dart';
 import 'package:fa/services/flutter_session_manager.dart';
-import 'package:fa/services/gemma_leftover_cleanup.dart';
+import 'package:fa/services/leftover_model_cleanup.dart';
 import 'package:fa/services/relay_agent_service.dart';
 import 'package:fa/services/sessions_root.dart';
 import 'package:fa/services/image_preview_store.dart';

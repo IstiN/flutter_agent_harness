@@ -2,7 +2,7 @@
 // Use of this source code is governed by a MIT license that can be found
 // in the LICENSE file.
 
-import 'package:fa/services/gemma_leftover_cleanup.dart';
+import 'package:fa/services/leftover_model_cleanup.dart';
 
 /// Non-web fallback: the web OPFS seam is unreachable here (the cleanup
 /// runs its IO walk instead). Throwing keeps an accidental web-seam call

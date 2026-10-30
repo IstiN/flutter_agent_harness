@@ -19,7 +19,7 @@ import 'package:flutter_test/flutter_test.dart';
 ///   stacks (gh-2004 non-goals) whose model catalogs legitimately carry
 ///   Gema-family model names (`onnx-community/gemma-4-E2B-it-ONNX`,
 ///   `gemma-2-2b-it-q4f16_1-MLC` — the real upstream model ids);
-/// - `lib/services/gemma_leftover_cleanup.dart` (+ `gemma_web_artifacts*`)
+/// - `lib/services/leftover_model_cleanup.dart` (+ `web_model_artifacts*`)
 ///   is gh-2004's own removal machinery — it must name the artifacts it
 ///   deletes;
 /// - `lib/services/ondevice_config_store.dart` and
@@ -42,8 +42,8 @@ void main() {
         (p) =>
             !p.contains('/lib/webllm/') &&
             !p.contains('/lib/transformers_js/') &&
-            !p.contains('gemma_leftover_cleanup') &&
-            !p.contains('gemma_web_artifacts') &&
+            !p.contains('leftover_model_cleanup') &&
+            !p.contains('web_model_artifacts') &&
             !p.endsWith('ondevice_config_store.dart') &&
             !p.endsWith('last_connection.dart'),
       )
