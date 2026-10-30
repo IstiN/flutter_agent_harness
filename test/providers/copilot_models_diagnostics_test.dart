@@ -549,7 +549,8 @@ void main() {
       expect(
         d.pathFailed,
         isTrue,
-        reason: 'a parse failure is a path failure — the dual-path '
+        reason:
+            'a parse failure is a path failure — the dual-path '
             'fallback may retry the other credential route',
       );
       expect(
@@ -559,40 +560,37 @@ void main() {
       );
     });
 
-    test(
-      'unparseable HTTP 200 body on OAuth retries pat-direct, then '
-      'names both paths',
-      () async {
-        final (client, requests) = fakeCopilot(
-          modelsBody: '<html>captive portal</html>',
-        );
-        final report = await fetchModelsForEndpointReport(
-          'https://api.githubcopilot.com',
-          apiKey: '[REDACTED:Sensitive-Value]',
-          provider: 'copilot',
-          client: client,
-        );
-        expect(report.info.$1, isEmpty);
-        final d = report.diagnostic!;
-        expect(
-          d.stage,
-          '${ModelsFetchDiagnostic.stageModels}'
-          '${ModelsFetchDiagnostic.stageDualJoiner}'
-          '${ModelsFetchDiagnostic.stageModels}',
-        );
-        expect(d.stages, ['models', 'models']);
-        expect(d.message, contains('unparseable payload'));
-        expect(
-          requests.where((r) => r.url.host != 'api.github.com'),
-          hasLength(2),
-          reason: 'the parse failure IS a path failure — the fallback '
-              'retry may run (plus the one exchange request)',
-        );
-      },
-    );
+    test('unparseable HTTP 200 body on OAuth retries pat-direct, then '
+        'names both paths', () async {
+      final (client, requests) = fakeCopilot(
+        modelsBody: '<html>captive portal</html>',
+      );
+      final report = await fetchModelsForEndpointReport(
+        'https://api.githubcopilot.com',
+        apiKey: '[REDACTED:Sensitive-Value]',
+        provider: 'copilot',
+        client: client,
+      );
+      expect(report.info.$1, isEmpty);
+      final d = report.diagnostic!;
+      expect(
+        d.stage,
+        '${ModelsFetchDiagnostic.stageModels}'
+        '${ModelsFetchDiagnostic.stageDualJoiner}'
+        '${ModelsFetchDiagnostic.stageModels}',
+      );
+      expect(d.stages, ['models', 'models']);
+      expect(d.message, contains('unparseable payload'));
+      expect(
+        requests.where((r) => r.url.host != 'api.github.com'),
+        hasLength(2),
+        reason:
+            'the parse failure IS a path failure — the fallback '
+            'retry may run (plus the one exchange request)',
+      );
+    });
 
-    test('unparseable HTTP 200 body answers empty on the legacy API',
-        () async {
+    test('unparseable HTTP 200 body answers empty on the legacy API', () async {
       final (client, _) = fakeCopilot(
         modelsBody: '<html>captive portal</html>',
       );
@@ -644,7 +642,10 @@ void main() {
           message: '3 models fetched, 3 filtered (picker flag absent)',
         ),
       );
-      expect(bare.userFacingReason, '3 models fetched, 3 filtered (picker flag absent)');
+      expect(
+        bare.userFacingReason,
+        '3 models fetched, 3 filtered (picker flag absent)',
+      );
     });
 
     test('no diagnostic falls back to the note; neither answers null', () {
