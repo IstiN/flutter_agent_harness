@@ -572,7 +572,11 @@ jobs:
         run: |
           if [ -z "$MACOS_CERTIFICATE_P12_BASE64" ]; then
             echo "⚠️  No signing certificate found — building unsigned (development only)"
+            signed=false
             echo "signed=false" >> $GITHUB_OUTPUT
+          else
+            signed=true
+            echo "✅ Signing certificate found — provisioning via ci-sign..."
           else
             echo "✅ Signing certificate found — provisioning via ci-sign..."
             # gh-1865 model v3 (owner decision 2026-10-28): NO per-arch
