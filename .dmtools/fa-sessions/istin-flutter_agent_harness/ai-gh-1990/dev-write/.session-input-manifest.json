@@ -1,0 +1,271 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-30T12:57:31.709Z",
+  "ticketKey": "gh-1990",
+  "headSha": "53d92228580fed90dcd016332aabf7dd6e9fafb8",
+  "baseBranch": "main",
+  "reviewDecision": "NONE",
+  "labels": [],
+  "files": {
+    "ci_failures.md": {
+      "hash": "fnv1a64:9f39c5b17a4aaddb",
+      "size": 2313
+    },
+    "ci_failures_full.log": {
+      "hash": "fnv1a64:aaa813a7ffa42138",
+      "size": 1727
+    },
+    "ci_violations.json": {
+      "hash": "fnv1a64:88fa6b1c111c425f",
+      "size": 369
+    },
+    "pr_diff.txt": {
+      "hash": "fnv1a64:f596ce64e8bec9d8",
+      "size": 12303
+    },
+    "pr_discussions.md": {
+      "hash": "fnv1a64:f3a6f14ad7c28686",
+      "size": 30963
+    },
+    "pr_discussions_raw.json": {
+      "hash": "fnv1a64:eb02d82ef15b23a0",
+      "size": 12397
+    },
+    "pr_info.md": {
+      "hash": "fnv1a64:5b2f35691e7b5de2",
+      "size": 2795
+    },
+    "request.md": {
+      "hash": "fnv1a64:72f42a3b7d30e9d9",
+      "size": 5835
+    },
+    "review_state.md": {
+      "hash": "fnv1a64:5e31e70550c5b259",
+      "size": 2149
+    },
+    "rework_base_head.txt": {
+      "hash": "fnv1a64:66fec94dc9f427bd",
+      "size": 40
+    },
+    "ticket.json": {
+      "hash": "fnv1a64:dbd464005178e22b",
+      "size": 5930
+    },
+    "ticket.md": {
+      "hash": "fnv1a64:72f42a3b7d30e9d9",
+      "size": 5835
+    }
+  },
+  "comments": [
+    {
+      "id": "PRRT_kwDOTXdlLc6x98d1",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "lib/src/providers/models_for_endpoint.dart:718",
+      "resolved": false,
+      "body": "🚨 **BLOCKING: HTTP 200 with a non-JSON body now THROWS out of the dispatch — the old `on Object → empty` catch was removed with the refactor**\n\n`_parseCopilotModelsResponse(response.body)` runs outside any `try`/`catch` (the only guard left covers the HTTP GET + timeout). Pre-PR, `_CopilotDialect.fetch` wrapped the whole body in `on Object { return empty }`; the refactor moved the parse into `_fetchModelsList` with no equivalent guard. `jsonDecode` at `_parseCopilotModelsResponse` (models_for_endpoint.dart:821) throws `FormatException` on any HTTP 200 whose body is not JSON (captive portal, proxy error page, shape drift on a misconfigured host).\n\n**Verified by execution on this head** (mock client: exchange 200, `/models` 200 with `<html>captive portal</html>`):\n\n```\nFormatException: Unexpected character (at character 1)\n<html>captive portal</html>\n  jsonDecode → _parseCopilotModelsResponse (821:19)\n  → _CopilotDialect._fetchModelsList (718:43) → _fetchWithDualPath → fetchReport\n```\n\nThis breaks three contracts at once:\n\n1. The dialect contract documented at the top of this file: *\"Implementations must answer an empty [ModelsEndpointInfo] on any error — the manual-entry fallback in the pickers depends on it.\"*\n2. This PR's own AC6/REG claim (\"legacy `fetchModelsForEndpoint` answers are unchanged\") — the legacy API throws too, where it never did before.\n3. The gh-1990 goal itself: the only caller without a try/catch is the CLI `/provider copilot` connect flow (`_applyCopilotCredentials` → `_fetchProviderModelIds`, provider_commands.dart:895) — a malformed 200 now crashes the interactive flow with a raw exception instead of naming the branch or dropping to manual entry. In the guarded cache-refresh path the throw is caught but misclassified as \"dead endpoint\" (silently falls back to `[entry.modelId]`) and `_noteProviderFetchReason` is skipped, so the fetch note vanishes exactly in this case.\n\nNone of the new tests covers this branch — `'fetchModelsForEndpoint stays empty on failures — no throw'` only pins exchange 401.\n\n**Fix** (and it doubles as another gh-1990 diagnostic branch): wrap the parse, e.g.\n\n```dart\nfinal (info, fetchedCount, dropped);\ntry {\n  (info, fetchedCount, dropped) = _parseCopilotModelsResponse(response.body);\n} on FormatException catch (error) {\n  return ModelsFetchReport(\n    info: _emptyCopilotInfo,\n    diagnostic: ModelsFetchDiagnostic(\n      stage: ModelsFetchDiagnostic.stageModels,\n      path: path,\n      message: '$base/models answered an unparseable payload (HTTP 200): $error',\n      hint: extraHint,\n    ),\n  );\n}\n```\n\nand add the missing test: `fakeCopilot(modelsBody: 'not-json')` → report answers a named diagnostic, legacy API answers empty without throwing."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6x98gl",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": ".dmtools-target-workingdir:1",
+      "resolved": false,
+      "body": "🚨 **BLOCKING: stray local tool-state marker committed — remove before merge**\n\nThis PR adds `.dmtools-target-workingdir` (1 byte, content `.`) to the tracked tree. That file is the dmtools CLI's **local** working-dir marker, and `origin/main`'s `.gitignore` explicitly excludes it with a review-mandated comment (commit `25e7ddf70d`, added on main after this branch's merge-base):\n\n```gitignore\n# gh-1986 review: dmtools target-workingdir marker — local tool state,\n# never commit (was swept into the PR by a WIP auto-save once already).\n.dmtools-target-workingdir\n```\n\nSo this is the *second* time a WIP auto-save swept it into a PR — the exact recurrence that comment warns about. It is not referenced anywhere in the PR's code, tests, or CHANGELOG; it is pure scope creep, and once merged it becomes tracked junk in `main` that `.gitignore` can no longer hide (tracking overrides ignores) and that every future branch will see as a deletion conflict.\n\n**Fix:** `git rm --cached .dmtools-target-workingdir` (keep the local file on disk) and re-push. After the rebase onto current `main`, the ignore rule will keep it out for good."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6x98jS",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "lib/src/providers/models_for_endpoint.dart:875",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT: this criterion is the prime-suspect branch for the owner's provider — please confirm the follow-up ticket for the tier-aware filter exists (AC5 is still open)**\n\nPer gh-1990's implementer guidance, the owner's failing provider (`copilot-IstiN`, OAuth `gho_` token, individual tier) most likely hits exactly this branch: individual-tier `/models` responses omit `model_picker_enabled`, so every entry drops with `picker flag absent` and the list stays empty. This PR ships the intended **phase 1** (make the branch visible — «12 models fetched, 12 filtered (picker flag absent)») and the issue's non-goals keep the criteria frozen, so this is not a defect in this diff. But it means after merge the owner still has **zero usable models** — AC5 (\"with `copilot-IstiN` … either lists models or shows the exact named failure\") is only half of the story until the guidance's **phase 2** lands:\n\n> \"then — evidence permitting — the likely one-line class fix: **tier-aware filter** — treat `model_picker_enabled` ABSENT (key missing) as selectable when the response comes from the individual host / a no-proxy-ep token (absence ≠ explicit false; an explicit `false` still drops).\"\n\nFor reference, pi-mono (which this criterion mirrors) already solves the same individual-tier shape at the filter level: `packages/ai/src/auth/oauth/github-copilot.ts` (`badlogic/pi-mono`, read during this review) computes `allowPolicyFallback = baseUrl === \"https://api.individual.githubcopilot.com\"` and falls back to policy-enabled models when the strict picker list empties — same trigger condition, same endpoint scoping.\n\n**Ask:** confirm a follow-up issue exists (or file one) for the tier-aware filter so the owner-validation loop doesn't stall after the diagnostics land. If AC5 evidence already shows a different branch (exchange 403 / HTTP), say so in the PR description — the filter path is currently only exercised by synthetic bodies."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6x98mO",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "lib/src/providers/models_for_endpoint.dart:565",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: the combined diagnostic fabricates a `stage` outside the documented vocabulary**\n\nWhen both credential paths fail, `stage: '${a.stage}+${b.stage}'` produces values like `'exchange+models'`. `ModelsFetchDiagnostic.stage` is new public API whose doc pins a closed set — `stageExchange`, `stageModels`, `stageFilter` (\"The stage that produced this: the token exchange, the `/models` HTTP call, or the picker filter\") — and any programmatic consumer matching on those constants (the same surfaces the PR says render diagnostics) will silently fail to match the combined value.\n\nOptions: add a documented `stageDual` constant (or `stages: List<String>`), or keep `stage` as the primary path's stage and let `message` carry the combination (it already does). No current consumer matches on `stage`, so this is polish — but cheap to fix before the type accretes dependents."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6x98pA",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "lib/src/providers/models_for_endpoint.dart:869",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: doc comment contradicts the code — entries WITHOUT the flag are dropped, not kept**\n\n> \"Payloads without the field (older/self-hosted proxies) are kept — they read as 'picker flag absent' …\"\n\nAs written this says the opposite of what the code two lines below does: `if (picker == null) return 'picker flag absent';` **drops** the entry (and pi's strict `pickerModelIds` filter in `github-copilot.ts` drops them too — `pickerEnabled: item.model_picker_enabled === true`). Presumably the intended meaning is \"such entries stay in the fetched count but are reported as dropped with this reason\" — say that, or the next reader of this parity-sensitive comment will mis-derive the behavior. The AC2 tests pin the real behavior, so this is wording only."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6x98r5",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "packages/fa_ui/lib/src/providers/media_slot_picker_page.dart:535",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: the `message — hint` join is hand-rolled in two more places — reuse (or fold into) `ModelsFetchReport.reasonText`**\n\nThe canonical one-liner exists as `ModelsFetchReport.reasonText`, and the rework notes say the app controller and report callback now reuse it. But two surfaces still duplicate the identical join inline:\n\n- here (`media_slot_picker_page.dart` ~535): `diagnostic.hint == null ? diagnostic.message : '${diagnostic.message} — ${diagnostic.hint}'`\n- `lib/src/cli/provider_models.dart:952` (`_noteProviderFetchReason`), which additionally falls back to `report.note`\n\nThree copies of the same formatting rule will drift the first time the join gains a prefix or length cap. Cheap fix: add `String? get userFacingReason => diagnostic == null ? note : reasonText;` (or similar) on `ModelsFetchReport` and use it at both sites. Behavior-identical today; pure DRY."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6x98uR",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "lib/src/providers/copilot_oauth.dart:245",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: unbounded response body embedded in user-facing one-line diagnostics**\n\nThe 404/non-200 exchange failures embed `Body: ${response.body.trim()}` verbatim into `CopilotAuthException.message` (pre-existing text, `statusCode` added around it here). With gh-1990 that message now propagates through `ModelsFetchDiagnostic.message` into `fetch notes:` (CLI), the connect sheet, and the app's model field — all single-line UI surfaces. A misconfigured base URL pointing at an HTML endpoint (or a verbose gateway error page) can flood them with an arbitrarily long blob, and the body is shown raw with no redaction layer in front of it.\n\nThe exchange endpoint is api.github.com so today's bodies are tame JSON errors, but the cheap hardening is worth it while this code is being touched: cap the embedded body (e.g. `final snippet = response.body.trim(); '${snippet.length > 200 ? '${snippet.substring(0, 200)}…' : snippet}'`). Not a leak today — just future-proofing a string that now reaches five surfaces."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6x98w5",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "lib/src/providers/models_for_endpoint.dart:808",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: `_copilotModelsShapeValid` decodes the body a second time**\n\n`_fetchModelsList` calls `_parseCopilotModelsResponse(response.body)` (which `jsonDecode`s the body and already knows whether `data` is a `List`), then on the empty branch calls `_copilotModelsShapeValid(response.body)`, which `jsonDecode`s the same body again just to re-derive the shape the parser already computed. Have the parser return the shape (or a `dataIsList` flag) and drop the second decode — one less JSON pass on every honest-empty answer, and the \"empty list vs unexpected shape\" distinction stops depending on a re-parse agreeing with the first one. Related: this helper is also one of the two unguarded `jsonDecode` sites (see the BLOCKING thread on `_fetchModelsList`) — folding it into the parser removes the duplicate hazard too."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-30:4c1da223",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-30",
+      "updatedAt": "2026-10-30",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🚨 **BLOCKING: HTTP 200 with a non-JSON body now THROWS out of the dispatch — the old `on Object → empty` catch was removed with the refactor**\n\n`_parseCopilotModelsResponse(response.body)` runs outside any `try`/`catch` (the only guard left covers the HTTP GET + timeout). Pre-PR, `_CopilotDialect.fetch` wrapped the whole body in `on Object { return empty }`; the refactor moved the parse into `_fetchModelsList` with no equivalent guard. `jsonDecode` at `_parseCopilotModelsResponse` (models_for_endpoint.dart:821) throws `FormatException` on any HTTP 200 whose body is not JSON (captive portal, proxy error page, shape drift on a misconfigured host).\n\n**Verified by execution on this head** (mock client: exchange 200, `/models` 200 with `<html>captive portal</html>`):\n\n```\nFormatException: Unexpected character (at character 1)\n<html>captive portal</html>\n  jsonDecode → _parseCopilotModelsResponse (821:19)\n  → _CopilotDialect._fetchModelsList (718:43) → _fetchWithDualPath → fetchReport\n```\n\nThis breaks three contracts at once:\n\n1. The dialect contract documented at the top of this file: *\"Implementations must answer an empty [ModelsEndpointInfo] on any error — the manual-entry fallback in the pickers depends on it.\"*\n2. This PR's own AC6/REG claim (\"legacy `fetchModelsForEndpoint` answers are unchanged\") — the legacy API throws too, where it never did before.\n3. The gh-1990 goal itself: the only caller without a try/catch is the CLI `/provider copilot` connect flow (`_applyCopilotCredentials` → `_fetchProviderModelIds`, provider_commands.dart:895) — a malformed 200 now crashes the interactive flow with a raw exception instead of naming the branch or dropping to manual entry. In the guarded cache-refresh path the throw is caught but misclassified as \"dead endpoint\" (silently falls back to `[entry.modelId]`) and `_noteProviderFetchReason` is skipped, so the fetch note vanishes exactly in this case.\n\nNone of the new tests covers this branch — `'fetchModelsForEndpoint stays empty on failures — no throw'` only pins exchange 401.\n\n**Fix** (and it doubles as another gh-1990 diagnostic branch): wrap the parse, e.g.\n\n```dart\nfinal (info, fetchedCount, dropped);\ntry {\n  (info, fetchedCount, dropped) = _parseCopilotModelsResponse(response.body);\n} on FormatException catch (error) {\n  return ModelsFetchReport(\n    info: _emptyCopilotInfo,\n    diagnostic: ModelsFetchDiagnostic(\n      stage: ModelsFetchDiagnostic.stageModels,\n      path: path,\n      message: '$base/models answered an unparseable payload (HTTP 200): $error',\n      hint: extraHint,\n    ),\n  );\n}\n```\n\nand add the missing test: `fakeCopilot(modelsBody: 'not-json')` → report answers a named diagnostic, legacy API answers empty without throwing."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-30:03164c3a",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-30",
+      "updatedAt": "2026-10-30",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🚨 **BLOCKING: stray local tool-state marker committed — remove before merge**\n\nThis PR adds `.dmtools-target-workingdir` (1 byte, content `.`) to the tracked tree. That file is the dmtools CLI's **local** working-dir marker, and `origin/main`'s `.gitignore` explicitly excludes it with a review-mandated comment (commit `25e7ddf70d`, added on main after this branch's merge-base):\n\n```gitignore\n# gh-1986 review: dmtools target-workingdir marker — local tool state,\n# never commit (was swept into the PR by a WIP auto-save once already).\n.dmtools-target-workingdir\n```\n\nSo this is the *second* time a WIP auto-save swept it into a PR — the exact recurrence that comment warns about. It is not referenced anywhere in the PR's code, tests, or CHANGELOG; it is pure scope creep, and once merged it becomes tracked junk in `main` that `.gitignore` can no longer hide (tracking overrides ignores) and that every future branch will see as a deletion conflict.\n\n**Fix:** `git rm --cached .dmtools-target-workingdir` (keep the local file on disk) and re-push. After the rebase onto current `main`, the ignore rule will keep it out for good."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-30:e722d638",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-30",
+      "updatedAt": "2026-10-30",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT: this criterion is the prime-suspect branch for the owner's provider — please confirm the follow-up ticket for the tier-aware filter exists (AC5 is still open)**\n\nPer gh-1990's implementer guidance, the owner's failing provider (`copilot-IstiN`, OAuth `gho_` token, individual tier) most likely hits exactly this branch: individual-tier `/models` responses omit `model_picker_enabled`, so every entry drops with `picker flag absent` and the list stays empty. This PR ships the intended **phase 1** (make the branch visible — «12 models fetched, 12 filtered (picker flag absent)») and the issue's non-goals keep the criteria frozen, so this is not a defect in this diff. But it means after merge the owner still has **zero usable models** — AC5 (\"with `copilot-IstiN` … either lists models or shows the exact named failure\") is only half of the story until the guidance's **phase 2** lands:\n\n> \"then — evidence permitting — the likely one-line class fix: **tier-aware filter** — treat `model_picker_enabled` ABSENT (key missing) as selectable when the response comes from the individual host / a no-proxy-ep token (absence ≠ explicit false; an explicit `false` still drops).\"\n\nFor reference, pi-mono (which this criterion mirrors) already solves the same individual-tier shape at the filter level: `packages/ai/src/auth/oauth/github-copilot.ts` (`badlogic/pi-mono`, read during this review) computes `allowPolicyFallback = baseUrl === \"https://api.individual.githubcopilot.com\"` and falls back to policy-enabled models when the strict picker list empties — same trigger condition, same endpoint scoping.\n\n**Ask:** confirm a follow-up issue exists (or file one) for the tier-aware filter so the owner-validation loop doesn't stall after the diagnostics land. If AC5 evidence already shows a different branch (exchange 403 / HTTP), say so in the PR description — the filter path is currently only exercised by synthetic bodies."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-30:68786a4a",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-30",
+      "updatedAt": "2026-10-30",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: the combined diagnostic fabricates a `stage` outside the documented vocabulary**\n\nWhen both credential paths fail, `stage: '${a.stage}+${b.stage}'` produces values like `'exchange+models'`. `ModelsFetchDiagnostic.stage` is new public API whose doc pins a closed set — `stageExchange`, `stageModels`, `stageFilter` (\"The stage that produced this: the token exchange, the `/models` HTTP call, or the picker filter\") — and any programmatic consumer matching on those constants (the same surfaces the PR says render diagnostics) will silently fail to match the combined value.\n\nOptions: add a documented `stageDual` constant (or `stages: List<String>`), or keep `stage` as the primary path's stage and let `message` carry the combination (it already does). No current consumer matches on `stage`, so this is polish — but cheap to fix before the type accretes dependents."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-30:edb79747",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-30",
+      "updatedAt": "2026-10-30",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: doc comment contradicts the code — entries WITHOUT the flag are dropped, not kept**\n\n> \"Payloads without the field (older/self-hosted proxies) are kept — they read as 'picker flag absent' …\"\n\nAs written this says the opposite of what the code two lines below does: `if (picker == null) return 'picker flag absent';` **drops** the entry (and pi's strict `pickerModelIds` filter in `github-copilot.ts` drops them too — `pickerEnabled: item.model_picker_enabled === true`). Presumably the intended meaning is \"such entries stay in the fetched count but are reported as dropped with this reason\" — say that, or the next reader of this parity-sensitive comment will mis-derive the behavior. The AC2 tests pin the real behavior, so this is wording only."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-30:033f6493",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-30",
+      "updatedAt": "2026-10-30",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: the `message — hint` join is hand-rolled in two more places — reuse (or fold into) `ModelsFetchReport.reasonText`**\n\nThe canonical one-liner exists as `ModelsFetchReport.reasonText`, and the rework notes say the app controller and report callback now reuse it. But two surfaces still duplicate the identical join inline:\n\n- here (`media_slot_picker_page.dart` ~535): `diagnostic.hint == null ? diagnostic.message : '${diagnostic.message} — ${diagnostic.hint}'`\n- `lib/src/cli/provider_models.dart:952` (`_noteProviderFetchReason`), which additionally falls back to `report.note`\n\nThree copies of the same formatting rule will drift the first time the join gains a prefix or length cap. Cheap fix: add `String? get userFacingReason => diagnostic == null ? note : reasonText;` (or similar) on `ModelsFetchReport` and use it at both sites. Behavior-identical today; pure DRY."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-30:40545ed2",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-30",
+      "updatedAt": "2026-10-30",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: unbounded response body embedded in user-facing one-line diagnostics**\n\nThe 404/non-200 exchange failures embed `Body: ${response.body.trim()}` verbatim into `CopilotAuthException.message` (pre-existing text, `statusCode` added around it here). With gh-1990 that message now propagates through `ModelsFetchDiagnostic.message` into `fetch notes:` (CLI), the connect sheet, and the app's model field — all single-line UI surfaces. A misconfigured base URL pointing at an HTML endpoint (or a verbose gateway error page) can flood them with an arbitrarily long blob, and the body is shown raw with no redaction layer in front of it.\n\nThe exchange endpoint is api.github.com so today's bodies are tame JSON errors, but the cheap hardening is worth it while this code is being touched: cap the embedded body (e.g. `final snippet = response.body.trim(); '${snippet.length > 200 ? '${snippet.substring(0, 200)}…' : snippet}'`). Not a leak today — just future-proofing a string that now reaches five surfaces."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-30:d8d4fb10",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-30",
+      "updatedAt": "2026-10-30",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: `_copilotModelsShapeValid` decodes the body a second time**\n\n`_fetchModelsList` calls `_parseCopilotModelsResponse(response.body)` (which `jsonDecode`s the body and already knows whether `data` is a `List`), then on the empty branch calls `_copilotModelsShapeValid(response.body)`, which `jsonDecode`s the same body again just to re-derive the shape the parser already computed. Have the parser return the shape (or a `dataIsList` flag) and drop the second decode — one less JSON pass on every honest-empty answer, and the \"empty list vs unexpected shape\" distinction stops depending on a re-parse agreeing with the first one. Related: this helper is also one of the two unguarded `jsonDecode` sites (see the BLOCKING thread on `_fetchModelsList`) — folding it into the parser removes the duplicate hazard too."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-30:1be4a6b6",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-30",
+      "updatedAt": "2026-10-30",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ Validation CI went red on the head — merge aborted, rework re-queued. (linked issue #1990 re-armed) (approval latch kept — no re-review after fixes)\n🔴 red head f440a17a0ad3c403132590c2aed04f58823508a3 — red 1/3 (owner directive 2026-10-04: red yields the slot — after 3 reds on the same head, validation waits for a NEW head)"
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-30:3397d018",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-30",
+      "updatedAt": "2026-10-30",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## 🔧 Rework Complete — gh-1990\n\nAll PR review comments have been addressed. See fix summary below."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-30:88725c40",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-30",
+      "updatedAt": "2026-10-30",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🔄 zombie re-dispatch 91f9dea86ff141b998765eedd334a69b24c6c460 — zombie 1/3 at 2026-10-30T12:15:03.670Z\n\nThis head carried no dispatched validation run at all — the dispatch was lost (gh-821). CI was re-dispatched automatically (bounded: 1 per head per hour; 3 in a row on the same head park the PR validation_failed)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-30:f0303788",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-30",
+      "updatedAt": "2026-10-30",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — REQUEST_CHANGES\n\n**Summary**: One verified correctness regression and one stray committed file block merge; 1 important + 5 suggestions are non-blocking.\n\n**Key Issues**:\n- 🚨 **BLOCKING** — HTTP 200 + non-JSON body now **throws** `FormatException` out of `fetchModelsForEndpointReport` and legacy `fetchModelsForEndpoint` (`models_for_endpoint.dart:718`): the refactor dropped the old `on Object → empty` catch. Breaks the dialect's \"empty on any error\" contract, the PR's AC6/REG claim, and crashes the unguarded CLI `/provider copilot` connect flow (execution repro in the thread).\n- 🚨 **BLOCKING** — `.dmtools-target-workingdir` (local dmtools marker) is committed; `main`'s `.gitignore` says \"never commit (was swept into the PR by a WIP auto-save once already)\" — a recurrence. `git rm --cached`.\n- ⚠️ IMPORTANT — AC5 open: the owner's prime-suspect branch (`picker flag absent`, individual tier) is named but still yields zero usable models; confirm the follow-up tier-aware-filter ticket (gh-1990 phase 2).\n- 💡 5 suggestions: combined-`stage` vocabulary break, contradictory `picker flag absent` doc wording, duplicated `message — hint` join (2 sites beyond `reasonText`), unbounded body in one-line diagnostics, double `jsonDecode`.\n\n**Verified green here**: core suites 24 ✅, fa_ui suites 23 ✅, `dart analyze` + `dart format` clean on touched files. Validation CI on head `91f9dea86f` is still pending (zombie re-dispatch after the CRAP-gate red on `f440a17a`).\n\n**Next Steps**:\n1. Guard the `/models` body parse → named diagnostic; add the `modelsBody: 'not-json'` test.\n2. `git rm --cached .dmtools-target-workingdir`.\n3. Confirm the follow-up filter issue; address the suggestions."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-30:7218e17a",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-30",
+      "updatedAt": "2026-10-30",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🧵 Unresolved review threads — rework armed. This machine-authored PR is reviewed (ai_pr_reviewed) but still has open review threads. The rework leg owns open threads: agent:rework is armed on this PR and the rework runner will work through the threads and push. Validation re-runs automatically afterwards, and once the threads are resolved a fresh re-review is armed (review-threads-resolved)."
+    }
+  ]
+}
