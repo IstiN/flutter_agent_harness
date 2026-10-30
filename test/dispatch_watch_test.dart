@@ -837,19 +837,44 @@ void main() {
       live.process.kill(ProcessSignal.sigterm);
       final code = await live.finish();
       expect(
-        code,
-        143,
+        const {143, 2}.contains(code),
+        isTrue,
         reason:
-            'killed by the leg timeout (TERM); diagnostics:\n'
-            '${live.diagnostics()}',
+            'killed by the leg timeout (TERM) — 143 dies through the '
+            'orphan-cleanup trap, 2 dies through the documented bash-5.3 '
+            'poisoned-parse trap death (a signal landing while the parser '
+            'holds a half-read construct parses the trap ACTION STRING in '
+            'that state: main b54f324c run 40857595467, PR #1958 6a49b3ec '
+            'run 40858364862, gh-1986 head aab81cbfa run 41035084398). '
+            'Containment never depends on the death shape: the detached '
+            'backstop owns the never-started cancel, and a started child '
+            'is left alone either way; diagnostics:\n${live.diagnostics()}',
       );
+      // On the accepted poisoned-parse death shape (exit 2, handler never
+      // runs — the bash-5.3 parser state documented in the reason above)
+      // the never-started cancel is issued by the DETACHED orphan backstop
+      // on its own poll cadence (scripts/dispatch_and_watch.sh
+      // --dw-orphan-backstop, spawned >/dev/null at the correlation site),
+      // not by the handler before process exit: the cancel is asynchronous
+      // by design. Asserting it synchronously here lost that race in
+      // validation CI on head 6f855aa34f (run 41041694087, Expected: true
+      // / Actual: false) — wait bounded, exactly like the parse-loss test
+      // pins; on the trap death (143) the loop exits on its first
+      // iteration, so no precision is lost.
+      final cancelDeadline = DateTime.now().add(const Duration(seconds: 10));
+      while (DateTime.now().isBefore(cancelDeadline)) {
+        if (File('${live.dir.path}/cancelled-111').existsSync()) break;
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+      }
       expect(
         File('${live.dir.path}/cancelled-111').existsSync(),
         isTrue,
         reason:
             'exactly the orphaned never-started child is cancelled so it '
             'cannot publish unattended when the pool revives (gh-172 '
-            'containment, gh-1903 orphan-cancel)',
+            'containment, gh-1903 orphan-cancel) — by the handler on the '
+            'trap death (143), by the detached backstop on the poisoned '
+            'parse death (2)',
       );
       final cancels = live.logLines
           .where((l) => l.contains('run cancel'))
@@ -861,11 +886,18 @@ void main() {
         1,
         reason: '(d) the orphan-cancel must never re-dispatch',
       );
-      expect(
-        live.out,
-        contains('NEVER STARTED'),
-        reason: 'the leg-timeout diagnostic names the child state',
-      );
+      if (code == 143) {
+        expect(
+          live.out,
+          contains('NEVER STARTED'),
+          reason:
+              'on the clean trap path the leg-timeout diagnostic must '
+              'name the child state — the poisoned-parse shape dies '
+              'before the handler can speak (accepted: the diagnostic '
+              'is conditional on the death shape, the containment is '
+              'not)',
+        );
+      }
       expect(
         live.out,
         contains('run 111'),
@@ -878,8 +910,8 @@ void main() {
       );
     });
 
-    test('TERM after the child started → NO cancel (never-started children '
-        'only), nothing to cancel is logged', () async {
+    test('TERM after the child started → NO cancel (never-started '
+        'children only)', () async {
       final live = await startDw(
         'term-after-start',
         ['pages.yml'],
@@ -904,11 +936,17 @@ void main() {
       live.process.kill(ProcessSignal.sigterm);
       final code = await live.finish();
       expect(
-        code,
-        143,
+        const {143, 2}.contains(code),
+        isTrue,
         reason:
-            'the dw script must die through the orphan-cleanup trap; '
-            'diagnostics:\n${live.diagnostics()}',
+            'the dw script must die through the orphan-cleanup trap '
+            '(143) or through the documented bash-5.3 poisoned-parse '
+            'trap death (2 — trap ACTION STRING parsed in a poisoned '
+            'parser state; main b54f324c run 40857595467, PR #1958 '
+            '6a49b3ec run 40858364862, gh-1986 head aab81cbfa run '
+            '41035084398). Either way a STARTED child is never '
+            'cancelled — that is the gh-1903 AC4 contract this test '
+            'pins; diagnostics:\n${live.diagnostics()}',
       );
       expect(
         File('${live.dir.path}/cancelled-555').existsSync(),
@@ -923,11 +961,18 @@ void main() {
         isEmpty,
         reason: 'not one cancel call may be issued',
       );
-      expect(
-        live.out,
-        contains('nothing to cancel'),
-        reason: 'the diagnostic must say WHY no cancel happened',
-      );
+      if (code == 143) {
+        expect(
+          live.out,
+          contains('nothing to cancel'),
+          reason:
+              'on the clean trap path the diagnostic must say WHY no '
+              'cancel happened — the poisoned-parse shape dies before '
+              'the handler can speak (accepted: the diagnostic is '
+              'conditional on the death shape, the no-cancel contract '
+              'is not)',
+        );
+      }
     });
 
     test('INT (manual workflow cancel) with a never-started child → the '
@@ -950,13 +995,37 @@ void main() {
       live.process.kill(ProcessSignal.sigint);
       final code = await live.finish();
       expect(
-        code,
-        130,
+        const {130, 2}.contains(code),
+        isTrue,
         reason:
-            'killed by manual cancel (INT); diagnostics:\n'
+            'killed by manual cancel (INT) — 130 dies through the '
+            'orphan-cleanup trap, 2 dies through the documented bash-5.3 '
+            'poisoned-parse trap death (PR #1958 6a49b3ec run '
+            '40858364862 was exactly this test going red that way). '
+            'The single cancel never depends on the shape: the handler '
+            'marks handler-ran BEFORE its gh call so the detached '
+            'backstop cancels exactly once on the poisoned path '
+            '(pinned by the parse-loss test below); diagnostics:\n'
             '${live.diagnostics()}',
       );
-      expect(File('${live.dir.path}/cancelled-777').existsSync(), isTrue);
+      // Same asynchronous-cancel caveat as the TERM test above: on the
+      // poisoned-parse death shape (2) the single never-started cancel
+      // comes from the detached backstop on its own poll cadence — wait
+      // bounded, never assert it synchronously (validation CI red on head
+      // 6f855aa34f, run 41041694087 was exactly this race).
+      final cancelDeadline = DateTime.now().add(const Duration(seconds: 10));
+      while (DateTime.now().isBefore(cancelDeadline)) {
+        if (File('${live.dir.path}/cancelled-777').existsSync()) break;
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+      }
+      expect(
+        File('${live.dir.path}/cancelled-777').existsSync(),
+        isTrue,
+        reason:
+            'the never-started child is cancelled exactly once — by the '
+            'handler on the trap death (130), by the detached backstop '
+            'on the poisoned parse death (2)',
+      );
       expect(
         live.logLines.where((l) => l.contains('run cancel')).length,
         1,
@@ -1027,6 +1096,76 @@ void main() {
           live.logLines.where((l) => l.contains('run cancel')).length,
           1,
           reason: 'exactly one targeted cancel — backstop, never a double',
+        );
+      },
+    );
+    test(
+      'trap-action parse loss on a STARTED child → no cancel, backstop '
+      'correctly silent (gh-1903 AC4: never-started children only)',
+      () async {
+        // gh-1986 validation red (head aab81cbfa, run 41035084398,
+        // 2026-10-30): the STARTED-child signal test still pinned the
+        // death MECHANISM (exit 143 through the trap) although the
+        // bash-5.3 poisoned-parse death (exit 2, handler never runs)
+        // can hit ANY of the signal tests — the poll anchor narrows
+        // but does not close the window. For a started child the
+        // poisoned shape loses nothing: the orphan-cancel is
+        // never-started children ONLY, so the backstop must stay
+        // silent exactly as the handler's else-branch cancels nothing
+        // — the child's own #344 per-job timeout bounds it. The
+        // DW_TRAP_PARSE_DEATH shim reproduces the death shape
+        // deterministically (no signal race).
+        final live = await startDw(
+          'term-trap-parse-death-started',
+          ['pages.yml'],
+          {
+            'runs.json': runJson([run(999, 'Deploy to GitHub Pages', iso(-2))]),
+            'view-999.txt': 'in_progress -\n',
+            'jobs-999.txt': '1\n',
+            'siblings.json': '[]',
+          },
+          env: {'DW_POLL_SECONDS': '1', 'DW_TRAP_PARSE_DEATH': '1'},
+        );
+        await live.waitForLog('run view 999 --repo OWNER/REPO');
+        await live.waitForPolls('run view 999 --repo OWNER/REPO');
+        live.process.kill(ProcessSignal.sigterm);
+        final code = await live.finish();
+        expect(
+          code,
+          2,
+          reason:
+              'the poisoned trap action kills the shell in the parser '
+              '(parser_error → exit 2) before orphan_cleanup runs — '
+              'the same death shape CI hit on the started-child test; '
+              'diagnostics:\n${live.diagnostics()}',
+        );
+        expect(
+          live.out,
+          isNot(contains('::error::leg terminated')),
+          reason:
+              'the handler never ran — the poisoned parse died first, '
+              'so its "nothing to cancel" branch diagnostic is lost '
+              'with it (accepted: the backstop is deliberately '
+              'silenced — >/dev/null — so a detached process can never '
+              'spew into an ended runner step log)',
+        );
+        // The backstop polls the dead parent on its own cadence; give
+        // it time to (wrongly) act before asserting it never did.
+        await Future<void>.delayed(const Duration(seconds: 2));
+        expect(
+          File('${live.dir.path}/cancelled-999').existsSync(),
+          isFalse,
+          reason:
+              'a child that ever started is NEVER cancelled — not by '
+              'the handler (clean path), not by the backstop (poisoned '
+              'path reads child-started and exits) — gh-1903 AC4',
+        );
+        expect(
+          live.logLines.where((l) => l.contains('run cancel')),
+          isEmpty,
+          reason:
+              'no cancel call may be issued for a started child in any '
+              'death shape',
         );
       },
     );
