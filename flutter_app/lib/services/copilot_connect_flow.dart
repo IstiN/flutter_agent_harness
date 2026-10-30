@@ -9,7 +9,7 @@ import 'package:fa/services/provider_registry.dart';
 import 'package:fa/services/session_keys_store.dart';
 import 'package:fa_llm/fa_llm.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart'
-    show fetchModelsForEndpoint;
+    show fetchModelsForEndpoint, fetchModelsForEndpointReport;
 import 'package:fa_ui/fa_ui.dart'
     show
         CopilotConnectCallbacks,
@@ -72,6 +72,25 @@ Future<bool> runCopilotConnectFlow({
           apiKey: token,
           provider: 'copilot',
         )).$1,
+        // The sheet prefers the report form (gh-1990): an empty answer
+        // names its branch (exchange status / HTTP status / filter counts
+        // + the remediation hint) instead of the generic failure string.
+        fetchModelsReport: (token, baseUrl) async {
+          final report = await fetchModelsForEndpointReport(
+            baseUrl,
+            apiKey: token,
+            provider: 'copilot',
+          );
+          final diagnostic = report.diagnostic;
+          return (
+            report.info.$1,
+            diagnostic == null
+                ? null
+                : (diagnostic.hint == null
+                      ? diagnostic.message
+                      : '${diagnostic.message} — ${diagnostic.hint}'),
+          );
+        },
       );
 
   CopilotConnectResult? result;
