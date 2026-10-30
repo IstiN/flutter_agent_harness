@@ -1887,6 +1887,183 @@ void main() {
         }
       },
     );
+
+    test(
+      'the auto-route uploads the PROCESSED payload — gate, mime, and '
+      'bytes agree (review: resized/converted images)',
+      () async {
+        // A BMP: the inline pipeline converts it to PNG before the budget
+        // gate (providers refuse inline BMP) — the vision request must
+        // carry the converted PNG, not the raw BMP bytes labeled image/png.
+        final bmp = Uint8List.fromList(
+          encodeBmp(Image(width: 64, height: 64)),
+        );
+        await env.writeBinaryFile('/work/shot.bmp', bmp);
+        final bodies = <String>[];
+        final client = http_testing.MockClient.streaming((
+          request,
+          bodyStream,
+        ) async {
+          bodies.add(await utf8.decoder.bind(bodyStream).join());
+          return http.StreamedResponse(
+            Stream.fromIterable([
+              'data: ${jsonEncode({
+                'id': 'c',
+                'object': 'chat.completion.chunk',
+                'created': 1,
+                'model': 'glm-5.3-flash',
+                'choices': [
+                  {
+                    'index': 0,
+                    'delta': {
+                      'role': 'assistant',
+                      'content': 'A solid gray square.',
+                    },
+                    'finish_reason': null,
+                  },
+                ],
+              })}\n\n',
+              'data: ${jsonEncode({
+                'id': 'c',
+                'object': 'chat.completion.chunk',
+                'created': 1,
+                'model': 'glm-5.3-flash',
+                'choices': [
+                  {'index': 0, 'delta': {}, 'finish_reason': 'stop'},
+                ],
+              })}\n\n',
+            ]).transform(utf8.encoder),
+            200,
+            headers: {'content-type': 'text/event-stream'},
+          );
+        });
+        final tool = readFileTool(
+          env,
+          model: () => textOnlyModel(),
+          vision: () async => visionConfig(client),
+        );
+        final result = await readImage(tool);
+        expect(_text(result), contains('[via vision model glm-5.3-flash]'));
+        expect(bodies, hasLength(1));
+        final params = jsonDecode(bodies.first) as Map<String, dynamic>;
+        final content =
+            (params['messages'] as List).last['content'] as List;
+        final imagePart = content.firstWhere(
+          (part) => part is Map && part['type'] == 'image_url',
+        ) as Map<String, dynamic>;
+        final dataUrl = (imagePart['image_url'] as Map)['url'] as String;
+        final match = RegExp(
+          r'^data:([^;]+);base64,(.*)$',
+        ).firstMatch(dataUrl)!;
+        // The mime names the CONVERTED payload…
+        expect(match.group(1), 'image/png');
+        final uploaded = base64Decode(match.group(2)!);
+        // …and the bytes ARE that payload: the converted PNG, not the raw
+        // BMP mislabeled as PNG. The gate that measured the processed
+        // base64 must bound the same bytes the request carries.
+        expect(uploaded, isNot(equals(bmp)));
+        const pngMagic = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
+        expect(uploaded.sublist(0, 8), pngMagic);
+        final resized = decodeImage(uploaded)!;
+        expect(resized.width, 64, reason: 'the converted PNG keeps its size');
+      },
+    );
+
+    test(
+      'the budget gate bounds the bytes the auto-route uploads (a large '
+      'original whose processed payload fits still uploads ≤ budget)',
+      () async {
+        // A big-enough original that the shrink ladder re-encodes it: the
+        // buggy path uploaded the ORIGINAL bytes while gating the
+        // processed ones, so the request payload blew past
+        // images.maxBytesPerRequest. The processed path must ride.
+        final big = Uint8List.fromList(
+          encodePng(Image(width: 2200, height: 40)),
+        );
+        await env.writeBinaryFile('/work/wide.png', big);
+        final bodies = <String>[];
+        final client = http_testing.MockClient.streaming((
+          request,
+          bodyStream,
+        ) async {
+          bodies.add(await utf8.decoder.bind(bodyStream).join());
+          return http.StreamedResponse(
+            Stream.fromIterable([
+              'data: ${jsonEncode({
+                'id': 'c',
+                'object': 'chat.completion.chunk',
+                'created': 1,
+                'model': 'glm-5.3-flash',
+                'choices': [
+                  {
+                    'index': 0,
+                    'delta': {
+                      'role': 'assistant',
+                      'content': 'A very wide thin image.',
+                    },
+                    'finish_reason': null,
+                  },
+                ],
+              })}\n\n',
+              'data: ${jsonEncode({
+                'id': 'c',
+                'object': 'chat.completion.chunk',
+                'created': 1,
+                'model': 'glm-5.3-flash',
+                'choices': [
+                  {'index': 0, 'delta': {}, 'finish_reason': 'stop'},
+                ],
+              })}\n\n',
+            ]).transform(utf8.encoder),
+            200,
+            headers: {'content-type': 'text/event-stream'},
+          );
+        });
+        final saved = imageRegistryConfig;
+        // Budget between the processed and the original payload sizes.
+        imageRegistryConfig = ImageRegistryConfig(
+          enabled: saved.enabled,
+          maxPerRequest: saved.maxPerRequest,
+          maxBytesPerRequest: 40000,
+          perModel: saved.perModel,
+          autoInspect: saved.autoInspect,
+        );
+        try {
+          final tool = readFileTool(
+            env,
+            model: () => textOnlyModel(),
+            vision: () async => visionConfig(client),
+          );
+          final result = await readImage(tool);
+          expect(_text(result), contains('[via vision model glm-5.3-flash]'));
+          expect(bodies, hasLength(1));
+          final params = jsonDecode(bodies.first) as Map<String, dynamic>;
+          final content =
+              (params['messages'] as List).last['content'] as List;
+          final imagePart = content.firstWhere(
+            (part) => part is Map && part['type'] == 'image_url',
+          ) as Map<String, dynamic>;
+          final dataUrl = (imagePart['image_url'] as Map)['url'] as String;
+          final uploadedBase64 = dataUrl.split('base64,').last;
+          expect(
+            uploadedBase64.length,
+            lessThanOrEqualTo(40000),
+            reason:
+                'the upload must be the gated processed payload — the '
+                'original bytes would exceed images.maxBytesPerRequest',
+          );
+          expect(base64Decode(uploadedBase64).length, lessThan(big.length));
+          final resized = decodeImage(base64Decode(uploadedBase64))!;
+          expect(
+            resized.width,
+            2000,
+            reason: 'the shrink ladder clamped the 2200px original',
+          );
+        } finally {
+          imageRegistryConfig = saved;
+        }
+      },
+    );
   });
 
   group('read audio/video notes (gh-1984 AC10)', () {
