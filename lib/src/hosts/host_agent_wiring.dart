@@ -443,7 +443,7 @@ final class AgentCoreServices {
   /// kind of marker for `js_extensions`).
   final Object? dynamicMessageSink;
 
-  /// The on-device inference bridges (webllm / gemma / transformers.js):
+  /// The on-device inference bridges (webllm / transformers.js):
   /// a presence marker like [dynamicMessageSink] — the stream functions
   /// are per-connection host choices, the marker keeps the
   /// `on_device_providers` cell honest on the hosts that ship the
