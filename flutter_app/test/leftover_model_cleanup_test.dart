@@ -3,6 +3,7 @@
 // in the LICENSE file.
 
 import 'package:fa/services/leftover_model_cleanup.dart';
+import 'package:fa/services/project_mount_env.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -127,6 +128,140 @@ void main() {
       expect(report.deleted, isEmpty);
       // Non-artifact cleanup state is untouched either way.
       expect(report.isEmpty, isFalse);
+    });
+  });
+
+  group('cleanupGemmaLeftovers (mounted project env — gh-2004 review)', () {
+    // The desktop boot env with a mounted project folder: cwd == '/project'
+    // maps onto the user-selected HOST folder, while the app container
+    // (where the flutter_gemma plugin actually stored) stays the delegate
+    // env's cwd. The cleanup must walk ONLY the app-owned container —
+    // the user's real project content must survive every boot.
+    test('a mounted user project survives; the app container is cleaned',
+        () async {
+      final container = MemoryExecutionEnv(cwd: '/container');
+      final mount = ProjectMountEnv(container)..mountedRoot = '/host-project';
+
+      // User's real project content under the mounted root — including
+      // shapes the fragment/exact match would kill if the walk ever
+      // reached the host folder (vendored checkout, notes folder, a
+      // fixture bundle).
+      await container.writeFile(
+        '/host-project/third_party/flutter_gemma/lib/main.dart',
+        'vendored checkout',
+      );
+      await container.writeFile(
+        '/host-project/docs/flutter_gemma_notes/readme.md',
+        'notes',
+      );
+      await container.writeFile('/host-project/sample.litertlm', 'fixture');
+      // Plugin leftovers where the plugin actually stored: the app
+      // container.
+      await container.writeFile(
+        '/container/flutter_gemma/model.json',
+        'registry',
+      );
+      await container.writeFile(
+        '/container/gemma-4-E2B-it.litertlm',
+        'weights',
+      );
+
+      final report = await cleanupGemmaLeftovers(mount);
+
+      // The plugin's storage inside the app container is gone.
+      expect(
+        (await container.exists('/container/flutter_gemma/model.json'))
+            .valueOrNull,
+        isFalse,
+      );
+      expect(
+        (await container.exists('/container/gemma-4-E2B-it.litertlm'))
+            .valueOrNull,
+        isFalse,
+      );
+      expect(report.deleted, isNotEmpty);
+      // Every deleted path lives inside the app container — nothing under
+      // the mounted host folder was touched.
+      for (final path in report.deleted) {
+        expect(path, startsWith('/container/'));
+      }
+      // The user's project content survives, byte-for-byte present.
+      expect(
+        (await container.exists(
+          '/host-project/third_party/flutter_gemma/lib/main.dart',
+        ))
+            .valueOrNull,
+        isTrue,
+      );
+      expect(
+        (await container.exists('/host-project/docs/flutter_gemma_notes/readme.md'))
+            .valueOrNull,
+        isTrue,
+      );
+      expect(
+        (await container.exists('/host-project/sample.litertlm')).valueOrNull,
+        isTrue,
+      );
+    });
+
+    test('decorator wrappers (secrets/session vars) still find the container',
+        () async {
+      final container = MemoryExecutionEnv(cwd: '/container');
+      final mount = ProjectMountEnv(container)..mountedRoot = '/host-project';
+      final env = SecretsExecutionEnv(mount, {'API_KEY': 'k'});
+      await container.writeFile('/host-project/keep.txt', 'user data');
+      await container.writeFile('/container/x.litertlm', 'weights');
+
+      final report = await cleanupGemmaLeftovers(env);
+
+      expect(
+        (await container.exists('/container/x.litertlm')).valueOrNull,
+        isFalse,
+      );
+      expect(
+        (await container.exists('/host-project/keep.txt')).valueOrNull,
+        isTrue,
+      );
+    });
+
+    test('only the plugin\'s exact storage dir name matches', () async {
+      // Inside the app container a dir merely CONTAINING the fragment is
+      // not the plugin's storage — `flutter_gemma` was the exact name the
+      // plugin created; anything else (notes, forks) must survive.
+      final env = MemoryExecutionEnv();
+      await env.writeFile(
+        '${env.cwd}/flutter_gemma/model.json',
+        'registry',
+      );
+      await env.writeFile(
+        '${env.cwd}/flutter_gemma_notes/readme.md',
+        'notes',
+      );
+      await env.writeFile(
+        '${env.cwd}/third_party/flutter_gemma/model.json',
+        'fork',
+      );
+
+      final report = await cleanupGemmaLeftovers(env);
+
+      expect(
+        (await env.exists('${env.cwd}/flutter_gemma/model.json')).valueOrNull,
+        isFalse,
+      );
+      expect(
+        (await env.exists('${env.cwd}/flutter_gemma_notes/readme.md'))
+            .valueOrNull,
+        isTrue,
+      );
+      expect(
+        (
+          await env.exists(
+            '${env.cwd}/third_party/flutter_gemma/model.json',
+          )
+        )
+            .valueOrNull,
+        isTrue,
+      );
     });
   });
 

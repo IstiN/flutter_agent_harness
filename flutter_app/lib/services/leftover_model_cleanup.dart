@@ -4,6 +4,7 @@
 
 import 'dart:async' show unawaited;
 
+import 'package:fa/services/project_mount_env.dart';
 import 'package:fa/services/web_model_artifacts.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
@@ -12,15 +13,25 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 /// artifacts (gh-2004).
 ///
 /// Builds before gh-2004 could download multi-GB `.litertlm` weights via
-/// the `flutter_gemma` plugin (app storage on IO, the browser's OPFS plus
-/// the plugin's registry on web). The plugin is gone from the app, so the
-/// new build cannot uninstall through it — instead boot scans the known
-/// locations and deletes what matches:
+/// the `flutter_gemma` plugin (app storage on IO, the browser's OPFS on
+/// web). The plugin is gone from the app, so the new build cannot
+/// uninstall through it — instead boot scans the known locations and
+/// deletes what matches:
 ///
-/// - IO: a bounded walk of the sandbox cwd (the app-documents root the
-///   plugin stored under) deleting `*.litertlm` files and any
-///   `flutter_gemma` storage directory;
+/// - IO: a bounded walk of the **app-owned container** (the env unwrapped
+///   past decorator/mount layers via [AppOwnedEnv] — never the macOS
+///   mounted user project, which the plugin never wrote to) deleting
+///   `*.litertlm` files and the plugin's exact `flutter_gemma` storage
+///   directory;
 /// - web: the OPFS root, deleting the same shapes.
+///
+/// The app used the plugin's **streaming** storage mode exclusively, so
+/// the OPFS root is the only web surface that can hold artifacts. The
+/// plugin's non-streaming CacheStorage fallback (the deleted
+/// `web/cache_api.js`) was never enabled by this app — no gema-named
+/// caches can exist — and its SharedPreferences registry keeps only stale
+/// entries naming deleted files, which nothing reads anymore; both are
+/// documented here so the next reader does not re-audit them.
 ///
 /// Every failure is non-fatal and folded into the once-per-boot log line
 /// — a read-only volume must never block startup. No settings action, no
@@ -58,12 +69,15 @@ abstract interface class GemmaWebArtifactStore {
 /// File suffix of the LiteRT-LM model bundles the old stack downloaded.
 const _artifactSuffix = '.litertlm';
 
-/// Name fragment of the plugin's storage directories.
-const _storageDirFragment = 'flutter_gemma';
+/// Exact name of the plugin's storage directory (the layout
+/// `flutter_gemma` created under the app documents root). An exact match
+/// — not a name fragment — so user folders that merely mention the vendor
+/// (notes, vendored forks) are never touched (gh-2004 review).
+const _storageDirName = 'flutter_gemma';
 
-/// Walk/entry caps: the sandbox cwd can be large (user project folders on
-/// desktop), so the scan is bounded — enough for the plugin's storage
-/// layout, never an unbounded crawl.
+/// Walk/entry caps: the app container can be large, so the scan is
+/// bounded — enough for the plugin's storage layout, never an unbounded
+/// crawl.
 const _maxDepth = 6;
 const _maxEntries = 500;
 
@@ -107,12 +121,25 @@ Future<GemmaLeftoverCleanupReport> _cleanupIo(ExecutionEnv env) async {
   final deleted = <String>[];
   final failed = <String>[];
   var visited = 0;
-  var root = env.cwd;
+  // gh-2004 review: resolve the walk root to the APP-OWNED container. The
+  // boot env can carry the macOS project-folder mount (ProjectMountEnv,
+  // cwd == /project mapping onto the user-selected host folder); the
+  // plugin only ever stored inside the app container, so walking env.cwd
+  // would recursively delete user project content and miss the real
+  // cache. Unwrap decorator/mount layers and refuse to touch the mount
+  // segment outright.
+  final owned = env.appOwnedEnv;
+  var root = owned.cwd;
+  if (root == projectMountSegment || root.startsWith('$projectMountSegment/')) {
+    // Unwrapping failed to leave the mounted-user-project namespace —
+    // never walk it (the plugin stored nothing there anyway).
+    return GemmaLeftoverCleanupReport(const [], const []);
+  }
   if (!root.endsWith('/')) root = '$root/';
 
   Future<void> walk(String dir, int depth) async {
     if (depth > _maxDepth) return;
-    final listing = await env.listDir(dir);
+    final listing = await owned.listDir(dir);
     final infos = listing.valueOrNull;
     if (infos == null) return; // unreadable dir: skip silently
     for (final info in infos) {
@@ -120,8 +147,8 @@ Future<GemmaLeftoverCleanupReport> _cleanupIo(ExecutionEnv env) async {
       final name = info.name;
       final path = info.path;
       if (info.kind == FileKind.directory) {
-        if (name.contains(_storageDirFragment)) {
-          final result = await env.remove(path, recursive: true);
+        if (name == _storageDirName) {
+          final result = await owned.remove(path, recursive: true);
           (result.isOk ? deleted : failed).add(path);
           continue;
         }
@@ -129,7 +156,7 @@ Future<GemmaLeftoverCleanupReport> _cleanupIo(ExecutionEnv env) async {
         continue;
       }
       if (name.endsWith(_artifactSuffix)) {
-        final result = await env.remove(path);
+        final result = await owned.remove(path);
         (result.isOk ? deleted : failed).add(path);
       }
     }
@@ -154,7 +181,7 @@ Future<GemmaLeftoverCleanupReport> _cleanupWeb(
   for (final entry in entries) {
     final isArtifact =
         (!entry.directory && entry.name.endsWith(_artifactSuffix)) ||
-        (entry.directory && entry.name.contains(_storageDirFragment));
+        (entry.directory && entry.name == _storageDirName);
     if (!isArtifact) continue;
     try {
       await store.remove(entry.name, directory: entry.directory);
@@ -167,11 +194,7 @@ Future<GemmaLeftoverCleanupReport> _cleanupWeb(
 }
 
 /// Fires the cleanup without awaiting it (boot wiring: cleanup must never
-/// delay startup; the report lands in the log).
-/// gh-2004 boot hook: neutral-named alias so call sites (app_boot) do not
-/// carry the removed vendor's name — see [unawaitedGemmaLeftoverCleanup].
+/// delay startup; the report lands in the log). Neutral name so the call
+/// site (app_boot) does not carry the removed vendor's name.
 void unawaitedLeftoverModelCleanup(ExecutionEnv env, {bool? isWeb}) =>
-    unawaitedGemmaLeftoverCleanup(env, isWeb: isWeb);
-
-void unawaitedGemmaLeftoverCleanup(ExecutionEnv env, {bool? isWeb}) =>
     unawaited(cleanupGemmaLeftoversAndLog(env, isWeb: isWeb));
