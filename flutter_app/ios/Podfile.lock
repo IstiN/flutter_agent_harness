@@ -252,7 +252,6 @@ EXTERNAL SOURCES:
     :path: ".symlinks/plugins/cupertino_http/darwin"
   file_selector_ios:
     :path: ".symlinks/plugins/file_selector_ios/ios"
-  file_selector_ios: 4aa3dc2aca9eaf0bc2422c169ca4413d406b48c8
   firebase_analytics:
     :path: ".symlinks/plugins/firebase_analytics/ios"
   firebase_core:
@@ -293,6 +292,7 @@ SPEC CHECKSUMS:
   connectivity_plus: cb623214f4e1f6ef8fe7403d580fdad517d2f7dd
   cupertino_http: 94ac07f5ff090b8effa6c5e2c47871d48ab7c86c
   Firebase: a8539b633d474fbeb654c7043f9c1649e274045b
+  file_selector_ios: 4aa3dc2aca9eaf0bc2422c169ca4413d406b48c8
   firebase_analytics: eb8345c126a25cd1914597079faf3e64c2e6835f
   firebase_core: 1c1e250a77e2df9e80bb8bf0875c8b427044a697
   firebase_crashlytics: 4d38aa785af57b2687a460778303d3b459707192
