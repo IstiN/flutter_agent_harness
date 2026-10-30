@@ -168,5 +168,10 @@ Future<GemmaLeftoverCleanupReport> _cleanupWeb(
 
 /// Fires the cleanup without awaiting it (boot wiring: cleanup must never
 /// delay startup; the report lands in the log).
+/// gh-2004 boot hook: neutral-named alias so call sites (app_boot) do not
+/// carry the removed vendor's name — see [unawaitedGemmaLeftoverCleanup].
+void unawaitedLeftoverModelCleanup(ExecutionEnv env, {bool? isWeb}) =>
+    unawaitedGemmaLeftoverCleanup(env, isWeb: isWeb);
+
 void unawaitedGemmaLeftoverCleanup(ExecutionEnv env, {bool? isWeb}) =>
     unawaited(cleanupGemmaLeftoversAndLog(env, isWeb: isWeb));

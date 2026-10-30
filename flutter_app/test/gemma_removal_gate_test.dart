@@ -21,7 +21,12 @@ import 'package:flutter_test/flutter_test.dart';
 ///   `gemma-2-2b-it-q4f16_1-MLC` — the real upstream model ids);
 /// - `lib/services/gemma_leftover_cleanup.dart` (+ `gemma_web_artifacts*`)
 ///   is gh-2004's own removal machinery — it must name the artifacts it
-///   deletes.
+///   deletes;
+/// - `lib/services/ondevice_config_store.dart` and
+///   `lib/services/last_connection.dart` are the persisted-config reset
+///   codecs: their gh-2004 contract is to recognize the removed
+///   `'gemma'` provider kind and reset it silently, so naming the kind is
+///   the feature, not a residue.
 /// Tokens anywhere else under `lib/` or in `pubspec.yaml` fail the gate.
 void main() {
   final appDir = Directory.current.path;
@@ -38,7 +43,9 @@ void main() {
             !p.contains('/lib/webllm/') &&
             !p.contains('/lib/transformers_js/') &&
             !p.contains('gemma_leftover_cleanup') &&
-            !p.contains('gemma_web_artifacts'),
+            !p.contains('gemma_web_artifacts') &&
+            !p.endsWith('ondevice_config_store.dart') &&
+            !p.endsWith('last_connection.dart'),
       )
       .toList()..sort();
 

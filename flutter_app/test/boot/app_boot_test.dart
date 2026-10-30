@@ -11,7 +11,6 @@ library;
 import 'dart:async';
 import 'dart:io';
 
-import 'package:fa/main.dart';
 import 'package:fa/boot/app_boot.dart';
 import 'package:fa/boot/boot_config_codec.dart';
 import 'package:fa/services/agent_service.dart';

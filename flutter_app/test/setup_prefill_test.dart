@@ -54,6 +54,52 @@ final class _FakeWebLlmEngine implements WebLlmEngineApi {
   Future<void> deleteCachedModel(String modelId) async {}
 }
 
+/// Fake [TransformersJsEngineApi] answering cache queries from a script.
+final class _FakeTransformersJsEngine implements TransformersJsEngineApi {
+  _FakeTransformersJsEngine(this.cache);
+
+  final Map<String, TransformersJsCacheInfo> cache;
+  bool available = true;
+
+  @override
+  bool get isAvailable => available;
+
+  @override
+  String? get loadedModelId => null;
+
+  @override
+  Stream<TransformersJsProgress> get progressEvents => const Stream.empty();
+
+  @override
+  Future<void> loadModel(TransformersJsModelPreset preset) async {}
+
+  @override
+  Future<void Function()> chatStream({
+    required List<TransformersJsChatMessage> messages,
+    required void Function(String chunk) onChunk,
+    void Function(String finishReason)? onDone,
+    void Function(String message)? onError,
+    int? maxTokens,
+  }) async => () {};
+
+  @override
+  Future<void> interrupt() async {}
+
+  @override
+  Future<void> unloadModel() async {}
+
+  @override
+  Future<TransformersJsCacheInfo?> modelCacheInfo(String modelId) async =>
+      cache[modelId];
+
+  @override
+  Future<void> deleteCachedModel(String modelId) async {}
+}
+
+TextField _field(WidgetTester tester, String label) {
+  return tester.widget<TextField>(find.widgetWithText(TextField, label));
+}
+
 Future<void> _pumpForm(
   WidgetTester tester, {
   ProviderRegistry? registry,

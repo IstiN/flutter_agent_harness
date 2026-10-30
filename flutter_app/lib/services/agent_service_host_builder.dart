@@ -216,6 +216,5 @@ extension AgentServiceHostBuilder on AgentService {
 /// Whether the on-device inference runtimes ship with THIS build
 /// (webllm + transformers.js on web): the honest `on_device_providers`
 /// marker, per platform. Mobile and desktop builds target server providers
-/// only — the on-device iOS/Android engine was removed with the gemma
-/// stack (gh-2004).
+/// only — the on-device iOS/Android engine was removed (gh-2004).
 bool get _onDeviceRuntimesShip => kIsWeb;

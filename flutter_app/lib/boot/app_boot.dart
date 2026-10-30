@@ -292,10 +292,10 @@ Future<BootStores> loadBootStores(ExecutionEnv env) async {
   BootSteps.begin('storage:onDeviceConfig');
   final onDeviceConfig = await OnDeviceConfigStore.load(env);
   BootSteps.mark('storage:onDeviceConfig');
-  // gh-2004: drop the removed gema stack's cached model artifacts on
+  // gh-2004: drop the removed on-device stack's cached model artifacts on
   // boot — best-effort, non-fatal, logged once. Idempotent: a sandbox
   // with nothing cached scans and deletes nothing.
-  unawaitedGemmaLeftoverCleanup(env);
+  unawaitedLeftoverModelCleanup(env);
   final imagePreviews = ImagePreviewStore(env);
   BootSteps.begin('storage:imagePreviews');
   await imagePreviews.load();

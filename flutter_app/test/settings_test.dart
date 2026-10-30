@@ -1,11 +1,9 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:fa/services/agent_service.dart';
 import 'package:fa/ui/screens/chat_screen.dart';
 import 'package:fa/services/flutter_session_manager.dart';
-import 'package:fa/ui/widgets/provider_selection_list.dart';
 import 'package:fa/services/last_connection.dart';
 import 'package:fa/main.dart';
 import 'package:fa/services/provider_registry.dart';
@@ -129,8 +127,6 @@ Future<void> _setEditorModel(
   );
   await tester.pumpAndSettle();
 }
-
-Future<void> _noopConnect(AgentConfig config) async {}
 
 Future<void> _pumpForm(
   WidgetTester tester,
@@ -1258,4 +1254,4 @@ void main() {
       expect(webLlmProviderVisible(isWeb: false), isFalse);
     });
   });
-
+}
