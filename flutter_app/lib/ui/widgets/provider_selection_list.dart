@@ -1,7 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
-import 'package:fa/gemma/gemma_types.dart';
 import 'package:fa/transformers_js/transformers_js_types.dart';
 import 'package:fa/webllm/webllm_types.dart';
 import 'package:fa_ui/fa_ui.dart';
@@ -61,10 +60,6 @@ class ProviderSelectionList extends StatelessWidget {
     final web = isWeb ?? kIsWeb;
     return switch (preset) {
       ProviderPreset.webllm => webLlmProviderVisible(isWeb: web),
-      ProviderPreset.gemma => gemmaProviderVisible(
-        isWeb: web,
-        platform: defaultTargetPlatform,
-      ),
       ProviderPreset.transformersJs => transformersJsProviderVisible(
         isWeb: web,
       ),

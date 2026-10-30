@@ -24,7 +24,8 @@
 /// [StopReason.toolUse]).
 ///
 /// When `Context.tools` is empty the wrapper is a byte-identical
-/// passthrough; [webLlmNoToolsNote] is then appended to the system message
+/// passthrough; [onDeviceNoToolsNote] (engine substituted) is then
+/// appended to the system message
 /// so the model does not try to call tools that are not there.
 ///
 /// Usage accounting: WebLLM reports no token counts, so every message
@@ -140,7 +141,7 @@ Future<void> _runWebLlm(
 /// Maps a harness [Context] to OpenAI-style messages for WebLLM — the
 /// shared on-device walk ([convertOnDeviceMessages]) with the WebLLM wire
 /// quirks ([_webLlmCodecProfile]): a system message (carrying
-/// [webLlmNoToolsNote] when the context has no tools — with tools present
+/// the engine-substituted [onDeviceNoToolsNote] when the context has no tools — with tools present
 /// the wrapper already appended the tool instructions upstream), text-only
 /// images, inline `[tool call: …]` history lines, and `[tool result]` user
 /// headers (the chat template has no tool role).
@@ -156,7 +157,8 @@ final _webLlmCodecProfile = OnDeviceCodecProfile(
   systemMessage: (system, hasTools) {
     var text = system;
     if (!hasTools) {
-      text = text.isEmpty ? webLlmNoToolsNote : '$text\n\n$webLlmNoToolsNote';
+      final note = onDeviceNoToolsNote.replaceAll('{{engine}}', 'WebLLM');
+      text = text.isEmpty ? note : '$text\n\n$note';
     }
     if (text.isEmpty) return null;
     return (role: 'system', content: text, toolName: null, images: const []);

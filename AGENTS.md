@@ -1158,7 +1158,7 @@ factual: paths, commands, invariants — no essays.
   `media_models_store.dart`/`vision_models.dart` are shim re-exports of the
   fa_ui stores), `lib/sandbox/` (env,
   shells, wasm, git, fs persistence), feature dirs
-  `lib/apps|gemma|webllm|transformers_js|l10n/`. All lib-internal imports
+  `lib/apps|webllm|transformers_js|l10n/`. All lib-internal imports
   are absolute `package:fa/...` — no relative imports.
 - `flutter_app/lib/ui/markdown_style.dart` (shim re-export of
   `packages/fa_ui/lib/src/chat/markdown_style.dart`) — beyond
@@ -1906,7 +1906,7 @@ and `scripts/check_goldens.py --quick` (skipped for docs-only commits).
     `_testBuiltin` 132→9, `_duBuiltin` 132→3, `_expandTrSet` 110→gone,
     `_tacBuiltin` 90→6, `_pipBuiltin` 72→3 — spec/table-driven parse
     helpers in `wasm_shell_builtins.dart` + tested exec halves) → next
-    milestone 210-class (`GemmaService.chatStream`, `_statBuiltin` 156,
+    milestone 210-class (`GemmaService.chatStream` — gh-2004 since removed, `_statBuiltin` 156,
     wide_layout 156 pair) → … → **40**, each step "fix the code, then
     lower the threshold" — never lower first.
   - Guards (`scripts/check_crap_guards.py`): README badge == config
@@ -2112,7 +2112,7 @@ workspace.
   when a native iOS/macOS plugin resolved by pubspec.lock has no pod in the
   platform's `Podfile.lock` (the gh-1274 class), or its pod is pinned at a
   stale version vs the resolved plugin podspec's `s.version` (the
-  flutter_gemma 1.8.0-vs-1.11.3 skew; the podspec is the comparison target,
+  historical flutter_gemma 1.8.0-vs-1.11.3 skew; the podspec is the comparison target,
   not the pubspec version — vendored/beta pods legitimately differ from the
   Dart package version). The inventory also enforces the gh-1303 path-pin
   sync: `flutter_app/pubspec.lock` pins this repo as a path dependency, so

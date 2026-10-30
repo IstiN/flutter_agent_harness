@@ -12,7 +12,7 @@ part of 'agent_service.dart';
 /// is @protected, callable only inside the class).
 extension AgentServiceMedia on AgentService {
   /// Whether the active provider accepts inline image content: hosted
-  /// providers do; the on-device text-only backends (WebLLM, Gemma,
+  /// providers do; the on-device text-only backends (WebLLM,
   /// transformers.js) get file paths only, never [ImageContent].
   bool get inlinesImageAttachments =>
       !AgentService._isOnDeviceKind(providerKind);

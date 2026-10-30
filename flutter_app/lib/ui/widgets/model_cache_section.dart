@@ -40,7 +40,7 @@ final class ModelCacheRow {
 }
 
 /// Shared state and behavior behind the engine-specific "downloaded models"
-/// settings sections (Gemma, WebLLM, transformers.js): scan the store, list
+/// settings sections (WebLLM, transformers.js): scan the store, list
 /// the rows, delete with a confirm dialog, show a notice, rescan.
 final class ModelCacheSectionController {
   ModelCacheSectionController({

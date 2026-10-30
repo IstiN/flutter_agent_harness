@@ -11,7 +11,7 @@ import 'provider_preset.dart';
 /// host can build an [fa_llm.LlmProvider] from the same settings the UI
 /// collected.
 ///
-/// On-device provider kinds (`webllm`, `gemma`, `transformers_js`) have no
+/// On-device provider kinds (`webllm`, `transformers_js`) have no
 /// hosted endpoint, so this mapping is meaningful only for the
 /// OpenAI-compatible presets and custom providers.
 extension FaChatModelConfigLlmMapping on FaChatModelConfig {

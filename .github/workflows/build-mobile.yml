@@ -227,11 +227,6 @@ jobs:
         working-directory: flutter_app
         run: bundle install
 
-      # gh-1468: same seed as ci.yml build-android — the release lane runs
-      # the same flutter_gemma_litertlm hook download and rides the same
-      # release-asset CDN roulette without it.
-      - uses: ./.github/actions/flutter-gemma-android-seed
-
       # gh-1655: same NDK pre-install as ci.yml build-android — the
       # release lane's Gradle configuration auto-installs the
       # Flutter-pinned NDK mid-build with no retry; one truncated
@@ -454,10 +449,6 @@ jobs:
           else
             echo "GOOGLE_SERVICES_JSON_BASE64 not set — building with the committed placeholder google-services.json"
           fi
-
-      # gh-1468: same seed as the ci.yml/ci AAB jobs — the flavor matrix
-      # runs the same flutter_gemma_litertlm hook download per leg.
-      - uses: ./.github/actions/flutter-gemma-android-seed
 
       # gh-1655: same NDK pre-install as ci.yml build-android — the
       # flavor matrix's Gradle configuration auto-installs the
@@ -1165,7 +1156,8 @@ jobs:
       # re-adds above 5% of TOTAL (Symbols/ qualifies at 99 MB; the 5.6 MB
       # glb does not — +3.8% TOTAL, sub-share NEW), so a returning evicted
       # artifact fails via --forbid in the same step. Also pins the owner
-      # hard constraint: the js-apps WASM runtime and LiteRT LM always ship.
+      # hard constraint: the js-apps WASM runtime always ships (the on-device
+      # LiteRT LM keep-set ended with the gemma stack removal — gh-2004).
       - name: Size manifest ratchet + wasm keep-set (#1331)
         run: |
           set -euo pipefail
@@ -1186,11 +1178,7 @@ jobs:
               exit 1
             }
           done
-          grep -q "LiteRtLm.framework/LiteRtLm" "$MANIFEST" || {
-            echo "::error::LiteRtLm.framework missing from the IPA — on-device LLM stack must always ship (owner directive, #1331)"
-            exit 1
-          }
-          echo "✅ wasm runtime + LiteRT keep-set present; iOS size ratchet green"
+          echo "✅ wasm runtime keep-set present; iOS size ratchet green"
 
       - name: Verify IPA and FFI symbols
         run: |

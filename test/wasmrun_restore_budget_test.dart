@@ -305,8 +305,9 @@ void main() {
             'unzip CRC32 only proves the zip is INTERNALLY consistent — a '
             'wrong-content-but-valid-zip (asset re-uploaded under the same '
             'tag, intercepted payload) would pass unzip and be cached forever '
-            'under wasmrun-xcframework-v0.1.0. Pin the digest like the '
-            'litertlm download in this same file does (gh-1149 review)',
+            'under wasmrun-xcframework-v0.1.0. Pin the digest (gh-1149 '
+            'review; the same posture the since-removed litertlm download '
+            'carried)',
       );
       expect(
         run,

@@ -11,10 +11,8 @@ library;
 import 'dart:async';
 import 'dart:io';
 
-import 'package:fa/main.dart';
 import 'package:fa/boot/app_boot.dart';
 import 'package:fa/boot/boot_config_codec.dart';
-import 'package:fa/gemma/gemma_types.dart';
 import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/analytics.dart';
 import 'package:fa/services/flutter_session_manager.dart';
@@ -350,11 +348,7 @@ void main() {
     );
 
     test('on-device connections never restore (quick start re-offers)', () {
-      for (final kind in [
-        webLlmProviderKind,
-        gemmaProviderKind,
-        transformersJsProviderKind,
-      ]) {
+      for (final kind in [webLlmProviderKind, transformersJsProviderKind]) {
         expect(
           restorableBootConfig(
             connection: LastConnection(

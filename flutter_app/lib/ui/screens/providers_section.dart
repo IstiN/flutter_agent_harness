@@ -9,11 +9,10 @@
 library;
 
 import 'package:fa_ui/fa_ui.dart' as fa_ui;
-import 'package:flutter/foundation.dart' show defaultTargetPlatform, kIsWeb;
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:fa/services/copilot_connect_flow.dart';
-import 'package:fa/gemma/gemma_types.dart';
 import 'package:fa/l10n/l10n_ext.dart';
 import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/relay/ext_runtime.dart';
@@ -52,7 +51,6 @@ class DefaultChatModelSection extends StatelessWidget {
     this.lastConnectionStore,
     this.modelsFetcher,
     this.webLlmEngine,
-    this.gemmaEngine,
     this.transformersJsEngine,
     this.isWeb,
     this.onDeviceConfigStore,
@@ -76,7 +74,6 @@ class DefaultChatModelSection extends StatelessWidget {
 
   /// Engine overrides for the on-device routes (tests).
   final WebLlmEngineApi? webLlmEngine;
-  final GemmaEngineApi? gemmaEngine;
   final TransformersJsEngineApi? transformersJsEngine;
 
   /// Platform override for tests (see [AgentSettingsForm.isWeb]).
@@ -87,7 +84,6 @@ class DefaultChatModelSection extends StatelessWidget {
   Future<void> _apply(AgentConfig config) async {
     const onDeviceKinds = {
       webLlmProviderKind,
-      gemmaProviderKind,
       transformersJsProviderKind,
     };
     if (onDeviceKinds.contains(config.providerKind)) {
@@ -122,7 +118,6 @@ class DefaultChatModelSection extends StatelessWidget {
         registry: reg,
         onApply: _apply,
         webLlmEngine: webLlmEngine,
-        gemmaEngine: gemmaEngine,
         transformersJsEngine: transformersJsEngine,
         isWeb: isWeb,
         configStore: onDeviceConfigStore,
@@ -131,7 +126,6 @@ class DefaultChatModelSection extends StatelessWidget {
       providerKindLabels: {
         if (webLlmProviderVisible(isWeb: web))
           webLlmProviderKind: ProviderPreset.webllm.labelFor(context),
-        gemmaProviderKind: ProviderPreset.gemma.labelFor(context),
         transformersJsProviderKind: ProviderPreset.transformersJs.labelFor(
           context,
         ),
@@ -147,7 +141,6 @@ class DefaultChatModelSection extends StatelessWidget {
           registry: reg,
           onApply: _apply,
           webLlmEngine: webLlmEngine,
-          gemmaEngine: gemmaEngine,
           transformersJsEngine: transformersJsEngine,
           isWeb: isWeb,
           configStore: onDeviceConfigStore,
@@ -200,15 +193,14 @@ class DefaultChatModelSection extends StatelessWidget {
   }
 }
 
-/// Builds the on-device provider routes (Gemma, WebLLM, transformers.js)
-/// for the current platform. Used both by [DefaultChatModelSection] and by
+/// Builds the on-device provider routes (WebLLM, transformers.js) for the
+/// current platform. Used both by [DefaultChatModelSection] and by
 /// the unified [ProvidersSection] in the settings page.
 List<fa_ui.FaOnDeviceRoute> buildOnDeviceProviderRoutes(
   BuildContext context, {
   required ProviderRegistry? registry,
   required Future<void> Function(AgentConfig config) onApply,
   WebLlmEngineApi? webLlmEngine,
-  GemmaEngineApi? gemmaEngine,
   TransformersJsEngineApi? transformersJsEngine,
   bool? isWeb,
   OnDeviceConfigStore? configStore,
@@ -219,8 +211,8 @@ List<fa_ui.FaOnDeviceRoute> buildOnDeviceProviderRoutes(
   bool onlyConfigured = false,
 }) {
   // The extension's CSP blocks the jsdelivr CDN imports these engines
-  // lazy-load (web-llm / transformers.js / litert) — offering the tiles
-  // only produced console errors and dead connect forms.
+  // lazy-load (web-llm / transformers.js) — offering the tiles only
+  // produced console errors and dead connect forms.
   if (isExtensionHost()) return const [];
   final web = isWeb ?? kIsWeb;
   fa_ui.FaOnDeviceRoute route(ProviderPreset preset, String kind) =>
@@ -237,7 +229,6 @@ List<fa_ui.FaOnDeviceRoute> buildOnDeviceProviderRoutes(
             await apply(_faConfigFrom(config));
           },
           webLlmEngine: webLlmEngine,
-          gemmaEngine: gemmaEngine,
           transformersJsEngine: transformersJsEngine,
           isWeb: isWeb,
         ),
@@ -249,9 +240,6 @@ List<fa_ui.FaOnDeviceRoute> buildOnDeviceProviderRoutes(
   return [
     if (webLlmProviderVisible(isWeb: web) && visible(webLlmProviderKind))
       route(ProviderPreset.webllm, webLlmProviderKind),
-    if (gemmaProviderVisible(isWeb: web, platform: defaultTargetPlatform) &&
-        visible(gemmaProviderKind))
-      route(ProviderPreset.gemma, gemmaProviderKind),
     if (transformersJsProviderVisible(isWeb: web) &&
         visible(transformersJsProviderKind))
       route(ProviderPreset.transformersJs, transformersJsProviderKind),
@@ -267,7 +255,6 @@ class _OnDeviceFormPage extends StatelessWidget {
     required this.registry,
     required this.onApply,
     this.webLlmEngine,
-    this.gemmaEngine,
     this.transformersJsEngine,
     this.isWeb,
   });
@@ -276,7 +263,6 @@ class _OnDeviceFormPage extends StatelessWidget {
   final ProviderRegistry registry;
   final Future<void> Function(AgentConfig config) onApply;
   final WebLlmEngineApi? webLlmEngine;
-  final GemmaEngineApi? gemmaEngine;
   final TransformersJsEngineApi? transformersJsEngine;
   final bool? isWeb;
 
@@ -293,7 +279,6 @@ class _OnDeviceFormPage extends StatelessWidget {
             registry: registry,
             keysStore: SessionKeysScope.maybeOf(context),
             webLlmEngine: webLlmEngine,
-            gemmaEngine: gemmaEngine,
             transformersJsEngine: transformersJsEngine,
             isWeb: isWeb,
             onConnect: (config) async {

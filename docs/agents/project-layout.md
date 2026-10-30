@@ -19,7 +19,7 @@ graph TD
   R --> T[test/ — mirrors lib/]
   R --> P[prompts/ — LLM prompts as Markdown]
   R --> Bin[bin/ — fah/fa CLI + serve_a2a + self_manage]
-  R --> Pkg[packages/<br/>fa_ui, fa_llm, fa_llm_flutter]
+  R --> Pkg[packages/<br/>fa_ui, fa_llm]
   R --> App[flutter_app/ — Flutter chat example]
   R --> Docs[docs/]
   R --> Site[site/ — GitHub Pages]

@@ -1,12 +1,9 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:fa/services/agent_service.dart';
 import 'package:fa/ui/screens/chat_screen.dart';
 import 'package:fa/services/flutter_session_manager.dart';
-import 'package:fa/gemma/gemma_types.dart';
-import 'package:fa/ui/widgets/provider_selection_list.dart';
 import 'package:fa/services/last_connection.dart';
 import 'package:fa/main.dart';
 import 'package:fa/services/provider_registry.dart';
@@ -131,14 +128,11 @@ Future<void> _setEditorModel(
   await tester.pumpAndSettle();
 }
 
-Future<void> _noopConnect(AgentConfig config) async {}
-
 Future<void> _pumpForm(
   WidgetTester tester,
   ProviderRegistry registry, {
   Future<void> Function(AgentConfig config)? onConnect,
   WebLlmEngineApi? webLlmEngine,
-  GemmaEngineApi? gemmaEngine,
   TransformersJsEngineApi? transformersJsEngine,
   ModelsEndpointFetcher? modelsFetcher,
   bool? isWeb,
@@ -150,7 +144,6 @@ Future<void> _pumpForm(
           child: AgentSettingsForm(
             registry: registry,
             webLlmEngine: webLlmEngine,
-            gemmaEngine: gemmaEngine,
             transformersJsEngine: transformersJsEngine,
             modelsFetcher: modelsFetcher,
             isWeb: isWeb,
@@ -224,88 +217,6 @@ final class FakeTransformersJsEngine implements TransformersJsEngineApi {
   Future<void> deleteCachedModel(String modelId) async {}
 }
 
-/// Fake [GemmaEngineApi] for the settings form: records install/load calls,
-/// emits scripted progress reports, and can hold the install open (to assert
-/// mid-download UI) or fail it.
-final class FakeGemmaEngine implements GemmaEngineApi {
-  var available = true;
-  Object? installError;
-
-  /// Standard (async) broadcast, like the real engine: progress lands on a
-  /// later microtask, so tests pump to let it render.
-  final progress = StreamController<GemmaProgress>.broadcast();
-
-  GemmaModelPreset? installedPreset;
-  String? installedWithToken;
-  GemmaModelPreset? loadedPreset;
-
-  /// While non-null and incomplete, `installModel` awaits it after emitting
-  /// [pendingProgress].
-  Completer<void>? installGate;
-
-  /// Emitted by `installModel` before the gate.
-  GemmaProgress? pendingProgress;
-
-  @override
-  bool get isAvailable => available;
-
-  @override
-  String? get loadedModelId => loadedPreset?.id;
-
-  @override
-  Stream<GemmaProgress> get progressEvents => progress.stream;
-
-  @override
-  Future<bool> isModelInstalled(GemmaModelPreset preset) async => false;
-
-  @override
-  Future<void> installModel(
-    GemmaModelPreset preset, {
-    String? huggingFaceToken,
-  }) async {
-    final error = installError;
-    if (error != null) throw error;
-    installedPreset = preset;
-    installedWithToken = huggingFaceToken;
-    final pending = pendingProgress;
-    if (pending != null) progress.add(pending);
-    final gate = installGate;
-    if (gate != null) await gate.future;
-  }
-
-  @override
-  Future<void> loadModel(GemmaModelPreset preset) async {
-    loadedPreset = preset;
-  }
-
-  @override
-  Future<void> chatStream({
-    required List<GemmaChatMessage> messages,
-    required void Function(String chunk) onChunk,
-    String? systemInstruction,
-    void Function()? onDone,
-    void Function(String message)? onError,
-    void Function(String toolCallsJson)? onToolCalls,
-    List<Map<String, dynamic>>? tools,
-    int? maxOutputTokens,
-  }) async {}
-
-  @override
-  Future<void> interrupt() async {}
-
-  @override
-  Future<void> unload() async {}
-
-  @override
-  Future<List<GemmaInstalledModel>> installedModels() async => const [];
-
-  @override
-  Future<void> uninstall(String filename) async {}
-}
-
-/// Fake [WebLlmEngineApi] for the settings form: records load calls,
-/// emits scripted progress reports, and can hold the load open (to assert
-/// mid-download UI) or fail it.
 final class FakeWebLlmEngine implements WebLlmEngineApi {
   var available = true;
   Object? loadError;
@@ -1207,222 +1118,32 @@ void main() {
     });
   });
 
-  group('On-device (Gemma) provider', () {
-    // Widget tests run with defaultTargetPlatform = android by default, so
-    // the Gemma preset is visible unless a test overrides the platform. The
-    // override must be reset before the test body ends (the binding's
-    // invariant check runs before addTearDown callbacks).
-    void setPlatform(TargetPlatform? platform) {
-      debugDefaultTargetPlatformOverride = platform;
-    }
-
-    testWidgets('shows the model picker and the HF token field on mobile', (
-      tester,
-    ) async {
-      setPlatform(TargetPlatform.android);
-      await tester.pumpWidget(const MyApp());
-
-      await _selectProvider(tester, 'On-device (Gemma)');
-
-      // The key/model/URL fields are replaced by the on-device model picker.
-      expect(find.text('API key'), findsNothing);
-      expect(find.text('Base URL'), findsNothing);
-      expect(find.text('On-device model'), findsOneWidget);
-      expect(find.textContaining('Gemma 4 E2B'), findsOneWidget);
-      expect(find.text('HuggingFace token (optional)'), findsOneWidget);
-      expect(
-        find.textContaining('Runs fully offline after download'),
-        findsOneWidget,
-      );
-      // The mobile note points at on-device storage (the web variant —
-      // "cached by the browser (OPFS)" — is pure-function tested; kIsWeb is
-      // a compile-time constant widget tests cannot flip).
-      expect(find.textContaining('weights stay on the device'), findsOneWidget);
-
-      // The picker offers both presets, E2B first (E4B is the ~4.3 GB one).
-      await tester.tap(find.byType(DropdownButtonFormField<GemmaModelPreset>));
-      await tester.pumpAndSettle();
-      expect(find.textContaining('Gemma 4 E2B'), findsWidgets);
-      expect(find.textContaining('Gemma 4 E4B'), findsOneWidget);
-      await tester.tap(find.textContaining('Gemma 4 E4B'));
-      await tester.pumpAndSettle();
-      expect(find.textContaining('Gemma 4 E4B'), findsOneWidget);
-      setPlatform(null);
-    });
-
-    testWidgets('a forced provider locks the form: no provider list, no '
-        'change-provider link', (tester) async {
-      setPlatform(TargetPlatform.android);
-      await tester.pumpWidget(
-        const MaterialApp(
-          home: Scaffold(
-            body: SingleChildScrollView(
-              child: AgentSettingsForm(
-                initialProvider: ProviderPreset.gemma,
-                onConnect: _noopConnect,
-              ),
-            ),
-          ),
-        ),
-      );
-      await tester.pumpAndSettle();
-
-      // The on-device settings route locks to its engine: straight to the
-      // model picker, no provider list in between.
-      expect(find.byType(ProviderSelectionList), findsNothing);
-      expect(find.text('Change provider'), findsNothing);
-      expect(find.text('On-device model'), findsOneWidget);
-      setPlatform(null);
-    });
-
-    testWidgets('is hidden on non-macOS desktop (and on web, where '
-        'transformers.js replaces it)', (tester) async {
-      setPlatform(TargetPlatform.linux);
-      await tester.pumpWidget(const MyApp());
-
-      await tester.tap(find.text('OpenRouter').first);
-      await tester.pumpAndSettle();
-      expect(find.text('On-device (Gemma)'), findsNothing);
-      // WebLLM is web-only and hidden on host platforms.
-      expect(find.text('On-device (WebLLM)'), findsNothing);
-      // The transformers.js provider is web-only: hidden on desktop.
-      expect(find.text('On-device (Gemma, transformers.js)'), findsNothing);
-      await tester.tap(find.text('OpenRouter').last);
-      await tester.pumpAndSettle();
-      setPlatform(null);
-    });
-
-    testWidgets('connect installs with progress and hands over the gemma '
-        'config', (tester) async {
-      setPlatform(TargetPlatform.android);
-      final engine = FakeGemmaEngine()
-        ..pendingProgress = const GemmaProgress(
-          fraction: 0.4,
-          text: 'Downloading Gemma 4 E2B… 40%',
-        )
-        ..installGate = Completer<void>();
-      AgentConfig? connected;
-      await _pumpForm(
-        tester,
-        ProviderRegistry.inMemory(),
-        gemmaEngine: engine,
-        onConnect: (config) async => connected = config,
-      );
-
-      await _selectProvider(tester, 'On-device (Gemma)');
-      await tester.enterText(
-        find.widgetWithText(TextField, 'HuggingFace token (optional)'),
-        'hf_test_token',
-      );
-
-      await tester.ensureVisible(find.text('Start chat'));
-      await tester.tap(find.text('Start chat'));
-      // Let the connect flow reach the (held) install and render progress.
-      await tester.pump();
-      await tester.pump();
-
-      expect(find.text('Downloading Gemma 4 E2B… 40%'), findsOneWidget);
-      final bar = tester.widget<LinearProgressIndicator>(
-        find.byType(LinearProgressIndicator),
-      );
-      expect(bar.value, 0.4);
-      expect(engine.installedPreset?.id, gemmaModelPresets.first.id);
-      expect(engine.installedWithToken, 'hf_test_token');
-      expect(connected, isNull);
-
-      engine.installGate!.complete();
-      await tester.pumpAndSettle();
-
-      expect(engine.loadedPreset?.id, gemmaModelPresets.first.id);
-      expect(connected?.providerKind, gemmaProviderKind);
-      expect(connected?.modelId, gemmaModelPresets.first.id);
-      expect(connected?.baseUrl, isEmpty);
-      expect(connected?.apiKey, isEmpty);
-      expect(connected?.contextWindow, gemmaModelPresets.first.contextWindow);
-      expect(connected?.maxTokens, 1024);
-      // Progress UI is cleared once the connect flow finishes.
-      expect(find.byType(LinearProgressIndicator), findsNothing);
-      setPlatform(null);
-    });
-
-    testWidgets('a failed install surfaces the engine error', (tester) async {
-      setPlatform(TargetPlatform.android);
-      final engine = FakeGemmaEngine()
-        ..installError = StateError('403: gated repo, token required');
-      await _pumpForm(tester, ProviderRegistry.inMemory(), gemmaEngine: engine);
-
-      await _selectProvider(tester, 'On-device (Gemma)');
-      await _tapConnect(tester, 'Start chat');
-      await tester.pumpAndSettle();
-
-      expect(
-        find.textContaining('403: gated repo, token required'),
-        findsOneWidget,
-      );
-      expect(engine.loadedPreset, isNull);
-      setPlatform(null);
-    });
-
-    testWidgets('an unavailable engine surfaces the platform message', (
-      tester,
-    ) async {
-      setPlatform(TargetPlatform.android);
-      final engine = FakeGemmaEngine()..available = false;
-      await _pumpForm(tester, ProviderRegistry.inMemory(), gemmaEngine: engine);
-
-      await _selectProvider(tester, 'On-device (Gemma)');
-      await _tapConnect(tester, 'Start chat');
-      await tester.pumpAndSettle();
-
-      expect(
-        find.textContaining('not available in this build'),
-        findsOneWidget,
-      );
-      setPlatform(null);
-    });
-  });
-
-  group('CLI-only settings listing (issue #288 AC4)', () {
-    testWidgets('stays visible on a fresh install with no agent service', (
-      tester,
-    ) async {
-      // The registry-driven listing is static — it must not ride the
-      // `service != null` gate (ResetApps/Approval/etc.): a fresh
-      // install before any service exists still shows WHY those
-      // settings are CLI-only instead of silently omitting them.
-      await tester.pumpWidget(const MaterialApp(home: SettingsScreen()));
-      await tester.pumpAndSettle();
-
-      expect(find.text('CLI-only settings'), findsOneWidget);
-    });
-  });
-
-  group('On-device (Gemma, transformers.js) provider', () {
+  group('On-device (transformers.js) provider', () {
     // The provider is web-only; host widget tests exercise the web case
     // through the form's isWeb seam (kIsWeb is a compile-time constant).
-    testWidgets('is visible on web, where flutter_gemma is hidden', (
+    testWidgets('is visible on web; the removed gemma row stays gone', (
       tester,
     ) async {
       await _pumpForm(tester, ProviderRegistry.inMemory(), isWeb: true);
 
       await tester.tap(find.text('OpenRouter').first);
       await tester.pumpAndSettle();
-      expect(find.text('On-device (Gemma, transformers.js)'), findsOneWidget);
+      expect(find.text('On-device (transformers.js)'), findsOneWidget);
       expect(find.text('On-device (Gemma)'), findsNothing);
       expect(find.text('On-device (WebLLM)'), findsOneWidget);
       await tester.tap(find.text('OpenRouter').last);
       await tester.pumpAndSettle();
     });
 
-    testWidgets('is hidden on mobile (flutter_gemma shown instead)', (
+    testWidgets('is hidden on mobile (no on-device provider remains)', (
       tester,
     ) async {
       await tester.pumpWidget(const MyApp());
 
       await tester.tap(find.text('OpenRouter').first);
       await tester.pumpAndSettle();
-      expect(find.text('On-device (Gemma, transformers.js)'), findsNothing);
-      expect(find.text('On-device (Gemma)'), findsOneWidget);
+      expect(find.text('On-device (transformers.js)'), findsNothing);
+      expect(find.textContaining('On-device (Gemma'), findsNothing);
       await tester.tap(find.text('OpenRouter').last);
       await tester.pumpAndSettle();
     });
@@ -1431,7 +1152,7 @@ void main() {
         'public-repo note', (tester) async {
       await _pumpForm(tester, ProviderRegistry.inMemory(), isWeb: true);
 
-      await _selectProvider(tester, 'On-device (Gemma, transformers.js)');
+      await _selectProvider(tester, 'On-device (transformers.js)');
 
       // The key/model/URL fields are replaced by the on-device model picker;
       // no HuggingFace token field (the ONNX repo is public).
@@ -1467,7 +1188,7 @@ void main() {
         onConnect: (config) async => connected = config,
       );
 
-      await _selectProvider(tester, 'On-device (Gemma, transformers.js)');
+      await _selectProvider(tester, 'On-device (transformers.js)');
       await tester.ensureVisible(find.text('Start chat'));
       await tester.tap(find.text('Start chat'));
       // Let the connect flow reach the (held) load and render progress.
@@ -1511,7 +1232,7 @@ void main() {
         isWeb: true,
       );
 
-      await _selectProvider(tester, 'On-device (Gemma, transformers.js)');
+      await _selectProvider(tester, 'On-device (transformers.js)');
       await _tapConnect(tester, 'Start chat');
       await tester.pumpAndSettle();
 
@@ -1532,75 +1253,5 @@ void main() {
       expect(webLlmProviderVisible(isWeb: true), isTrue);
       expect(webLlmProviderVisible(isWeb: false), isFalse);
     });
-  });
-
-  group('gemmaProviderVisible', () {
-    test('iOS/Android only — web is served by the transformers.js provider, '
-        'desktop by neither', () {
-      for (final platform in TargetPlatform.values) {
-        expect(
-          gemmaProviderVisible(isWeb: true, platform: platform),
-          isFalse,
-          reason:
-              'web replaced flutter_gemma with the transformers.js '
-              'provider (litert-lm web engine abandoned)',
-        );
-      }
-      expect(
-        gemmaProviderVisible(isWeb: false, platform: TargetPlatform.iOS),
-        isTrue,
-      );
-      expect(
-        gemmaProviderVisible(isWeb: false, platform: TargetPlatform.android),
-        isTrue,
-      );
-      expect(
-        gemmaProviderVisible(isWeb: false, platform: TargetPlatform.macOS),
-        isTrue,
-        reason: 'macOS is supported by flutter_gemma 1.5.x',
-      );
-      for (final desktop in [TargetPlatform.linux, TargetPlatform.windows]) {
-        expect(
-          gemmaProviderVisible(isWeb: false, platform: desktop),
-          isFalse,
-          reason: 'desktop needs extra native packaging — hidden for now',
-        );
-      }
-    });
-  });
-
-  group('gemmaStorageNote', () {
-    test(
-      'web cites the one-time OPFS download, mobile the on-device weights',
-      () {
-        final e2b = gemmaModelPresets.first;
-        expect(
-          gemmaStorageNote(isWeb: true, preset: e2b),
-          allOf([
-            // The web download is the (smaller) `-web.litertlm` build.
-            contains('downloads ~1.9 GB once'),
-            contains('cached by the browser (OPFS)'),
-            contains('Runs fully offline after download'),
-            // Honest about the web engine dropping image/audio inputs.
-            contains('text-only on web'),
-            contains('never persisted'),
-          ]),
-        );
-        final e4b = gemmaModelPresets.last;
-        expect(
-          gemmaStorageNote(isWeb: true, preset: e4b),
-          contains('downloads ~2.8 GB once'),
-        );
-        expect(
-          gemmaStorageNote(isWeb: false, preset: e2b),
-          allOf([
-            contains('weights stay on the device'),
-            isNot(contains('OPFS')),
-            isNot(contains('text-only')),
-            contains('never persisted'),
-          ]),
-        );
-      },
-    );
   });
 }

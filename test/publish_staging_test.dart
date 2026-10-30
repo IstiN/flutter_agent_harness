@@ -526,9 +526,11 @@ void main() {
 
     test('other packages/* trees stay out of the pub payload', () {
       // /packages/* + !fa_llm_mock + !fa_llm must keep hiding every
-      // sibling: dap_hub and fa_ui are repo tooling, fa_llm_flutter is
-      // publish_to: none (never published from this repo, so it needs no
-      // sub-package visibility either).
+      // sibling: dap_hub and fa_ui are repo tooling, never published from
+      // this repo (so they need no sub-package visibility either). The
+      // probes skip silently when a package is gone (gh-2004 removed
+      // fa_llm_flutter) — the assertion is about the hiding pattern, not
+      // the current package list.
       for (final probe in [
         'packages/dap_hub/pubspec.yaml',
         'packages/fa_ui/pubspec.yaml',

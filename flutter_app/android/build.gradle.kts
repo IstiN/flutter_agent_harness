@@ -16,8 +16,8 @@ subprojects {
     project.layout.buildDirectory.value(newSubprojectBuildDir)
 }
 
-// Pub-resolved plugins (the flutter_js fork pins Kotlin 1.8, flutter_gemma
-// pins Java 11) trip AGP 9's "Inconsistent JVM-target compatibility"
+// Pub-resolved plugins (the flutter_js fork pins Kotlin 1.8, others pin
+// Java 11) trip AGP 9's "Inconsistent JVM-target compatibility"
 // check. Align every plugin subproject to the app's JVM 17 (issue #289):
 // the android extension's compileOptions is overridden after each plugin's
 // own script ran (afterEvaluate), and the Kotlin compile tasks' jvmTarget

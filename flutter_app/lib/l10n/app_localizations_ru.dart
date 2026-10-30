@@ -572,45 +572,6 @@ class AppLocalizationsRu extends AppLocalizations {
   String get filesUploadTooltip => 'Загрузить файлы сюда';
 
   @override
-  String gemmaCacheDeleteOrphan(Object size, Object storage) {
-    return 'Удаляет файл ($size) из $storage. Установленные модели не затрагиваются.';
-  }
-
-  @override
-  String gemmaCacheDeleteWeights(Object size, Object storage) {
-    return 'Удаляет скачанные веса ($size) из $storage. Модель скачается снова при следующем использовании.';
-  }
-
-  @override
-  String get gemmaCacheMobileOnly =>
-      'On-device модели (Gemma) доступны только в iOS/Android сборках (в вебе on-device Gemma покрывает провайдер transformers.js).';
-
-  @override
-  String gemmaCacheScanError(Object error) {
-    return 'Не удалось просканировать кэш моделей: $error';
-  }
-
-  @override
-  String gemmaCacheSubtitle(Object storage) {
-    return 'Веса Gemma хранятся $storage. Удаление освобождает место; модель скачается снова при следующем использовании.';
-  }
-
-  @override
-  String get gemmaCacheTitle => 'Модели на устройстве (Gemma)';
-
-  @override
-  String get gemmaStorageFromBrowser => 'хранилища браузера';
-
-  @override
-  String get gemmaStorageFromDevice => 'устройства';
-
-  @override
-  String get gemmaStorageInBrowser => 'в вашем браузере';
-
-  @override
-  String get gemmaStorageOnDevice => 'на этом устройстве';
-
-  @override
   String get keysAddButton => 'Добавить ключ';
 
   @override
@@ -1419,12 +1380,6 @@ class AppLocalizationsRu extends AppLocalizations {
       'Для этого провайдера сохранён ключ — оставьте поле пустым, чтобы не менять его.';
 
   @override
-  String get settingsHfTokenHint => 'hf_… — нужен, если репозиторий закрытый';
-
-  @override
-  String get settingsHfTokenLabel => 'Токен HuggingFace (необязательно)';
-
-  @override
   String get settingsKeyNoteCustom =>
       'Определение провайдера (имя, URL, модель) сохраняется — без секретов. Ключ API хранится в памяти только в течение этого сеанса и исчезает после перезагрузки.';
 
@@ -1474,17 +1429,13 @@ class AppLocalizationsRu extends AppLocalizations {
   String get settingsPresetCustom => 'Пользовательский';
 
   @override
-  String get settingsPresetGemma => 'На устройстве (Gemma)';
-
-  @override
   String get settingsPresetOllama => 'Ollama';
 
   @override
   String get settingsPresetOpenrouter => 'OpenRouter';
 
   @override
-  String get settingsPresetTransformersJs =>
-      'На устройстве (Gemma, transformers.js)';
+  String get settingsPresetTransformersJs => 'На устройстве (transformers.js)';
 
   @override
   String get settingsPresetWebllm => 'На устройстве (WebLLM)';
@@ -1512,11 +1463,6 @@ class AppLocalizationsRu extends AppLocalizations {
   @override
   String settingsStaleModelCache(Object model) {
     return 'Ранее использованная модель ($model) удалена из кеша — выберите модель, чтобы скачать её снова.';
-  }
-
-  @override
-  String settingsStaleModelDevice(Object model) {
-    return 'Ранее использованная модель ($model) удалена с этого устройства — выберите модель, чтобы скачать её снова.';
   }
 
   @override

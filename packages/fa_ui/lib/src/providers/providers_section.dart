@@ -61,7 +61,7 @@ class ProvidersSection extends StatelessWidget {
   /// in-memory registry (tests, previews).
   final ProviderRegistry? registry;
 
-  /// On-device provider routes (Gemma, WebLLM, transformers.js, …). Shown
+  /// On-device provider routes (WebLLM, transformers.js, …). Shown
   /// after the custom providers when non-empty.
   final List<FaOnDeviceRoute> onDeviceProviders;
 

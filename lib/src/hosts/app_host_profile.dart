@@ -34,7 +34,7 @@ import 'host_capability_profile.dart';
 ///   by the shell's network controller over the builder's file fabric.
 /// - `sandbox_env: off` — the platform env (desktop container, mobile
 ///   sandbox, browser store) IS the app's sandbox; no cube layer yet.
-/// - `on_device_providers: on` — webllm / gemma / transformers.js are the
+/// - `on_device_providers: on` — webllm / transformers.js are the
 ///   app's in-process backends.
 /// - `js_apps: on` — dynamic_message and the jsr app surface are core
 ///   app features (the matrix's browser-API row).
