@@ -12,7 +12,10 @@ import 'package:fa_ui/src/strings/fa_ui_strings.dart';
 /// model ids, filtered by the typed text (any custom id stays valid).
 /// While [loading] the field shows the fetching helper and a spinner.
 /// When [fromBundledCatalog] is set the list answered from the bundled
-/// offline catalog (the live fetch failed) — a muted note says so.
+/// offline catalog (the live fetch failed) — a muted note says so. When
+/// [emptyReason] is set the endpoint answered no models and NAMED why
+/// (gh-1990) — the reason renders under the field instead of a bare
+/// empty quick-select.
 class ModelIdAutocompleteField extends StatelessWidget {
   const ModelIdAutocompleteField({
     super.key,
@@ -21,6 +24,7 @@ class ModelIdAutocompleteField extends StatelessWidget {
     required this.models,
     required this.loading,
     this.fromBundledCatalog = false,
+    this.emptyReason,
   });
 
   /// The model id being edited (also receives the picked option).
@@ -38,6 +42,11 @@ class ModelIdAutocompleteField extends StatelessWidget {
   /// Whether the list answered from the bundled offline catalog (the live
   /// fetch failed) — shows the provenance note.
   final bool fromBundledCatalog;
+
+  /// Why the endpoint answered no models (gh-1990) — the named failure
+  /// branch from the fetch report. Rendered under the field when the
+  /// quick-select is empty because the endpoint said why it has nothing.
+  final String? emptyReason;
 
   @override
   Widget build(BuildContext context) {
@@ -97,7 +106,9 @@ class ModelIdAutocompleteField extends StatelessWidget {
         );
       },
     );
-    if (!fromBundledCatalog) return field;
+    if (!fromBundledCatalog && (emptyReason == null || models.isNotEmpty)) {
+      return field;
+    }
     final theme = Theme.of(context);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -105,12 +116,20 @@ class ModelIdAutocompleteField extends StatelessWidget {
       children: [
         field,
         const SizedBox(height: 4),
-        Text(
-          strings.modelPickerBundledCatalogNote,
-          style: theme.textTheme.bodySmall?.copyWith(
-            color: theme.colorScheme.outline,
+        if (emptyReason != null && models.isEmpty)
+          Text(
+            emptyReason!,
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.error,
+            ),
           ),
-        ),
+        if (fromBundledCatalog)
+          Text(
+            strings.modelPickerBundledCatalogNote,
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.outline,
+            ),
+          ),
       ],
     );
   }

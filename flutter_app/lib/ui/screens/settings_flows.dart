@@ -196,6 +196,7 @@ extension _SettingsFormFlowHelpers on _AgentSettingsFormState {
     models: _models.models,
     loading: _models.loading,
     fromBundledCatalog: _models.fromBundledCatalog,
+    emptyReason: _models.emptyReason,
   );
 
   Widget _buildVisionCheckbox() => CheckboxListTile(

@@ -317,6 +317,31 @@ void main() {
         ),
       );
     });
+
+    test('an embedded body is capped for the one-line diagnostics', () async {
+      // gh-1990 review: the exchange message now reaches five single-line
+      // UI surfaces (fetch notes, connect sheet, the app model field…) —
+      // a misconfigured base URL serving an HTML page must not flood
+      // them with an unbounded blob.
+      final client = http_testing.MockClient(
+        (_) async => http.Response('x' * 500, 429),
+      );
+
+      await expectLater(
+        fetchCopilotApiToken(githubToken: 'gh', client: client),
+        throwsA(
+          isA<CopilotAuthException>().having(
+            (e) => e.message,
+            'message',
+            allOf(
+              contains('x' * 200),
+              isNot(contains('x' * 201)),
+              endsWith('…'),
+            ),
+          ),
+        ),
+      );
+    });
   });
 
   group('fetchGitHubLogin', () {

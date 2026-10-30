@@ -13,6 +13,36 @@ block a release again.
 
 ## Unreleased
 
+- fix(gh-1990): the Copilot `/models` dialect never answers a silent
+  empty list again. Every silent-empty exit names its branch through the
+  new `fetchModelsForEndpointReport` dispatch (`ModelsFetchReport` +
+  `ModelsFetchDiagnostic`): the token-exchange HTTP status (with the
+  OAuth device-flow / fine-grained PAT remedies for classic `ghp_…`
+  keys), the `/models` HTTP status or timeout (with the seat + per-tier
+  host hint), proxy-ep-less individual tokens aimed at a business/
+  enterprise configured host (the tier-misrouting hint), and the picker
+  filter with per-model drop reasons (`picker flag absent`, `picker flag
+  false`, `policy disabled`, `no tool_calls`, `endpoint unsupported`) —
+  «12 models fetched, 12 filtered (picker flag absent)». A failed
+  primary credential path retries the other path ONCE before declaring
+  empty (dual-path fallback, gh-1606): an exchange-401 classic PAT tries
+  PAT-direct (the provenance note names which path answered), a
+  fine-grained PAT never falls into the exchange, an OAuth token never
+  becomes a direct PAT Bearer. Surfacing: `/models` prints a `fetch
+  notes:` section per provider, the `/provider copilot` connect flow
+  prints the named failure before manual entry, the app's model
+  quick-select (`EndpointModelsController.emptyReason`) renders it under
+  the field, and the Copilot connect sheet shows the reason above the
+  manual model id. The legacy `fetchModelsForEndpoint` answers are
+  unchanged (parity); the filter criteria themselves are unchanged
+  (pi-mono parity — only the reporting is new). Review round 2: the
+  `fetch notes:` wiring covers the unsaved sibling paths too (the
+  active-catalog and env-keyed Copilot fetches surface the same named
+  failure instead of a silent seed fallback), the connect flow's
+  `no models:` line reuses `ModelsFetchReport.reasonText` (the last
+  hand-rolled `message — hint` join), and the `ModelsFetchReport`
+  docs scope the diagnostic contract to the dialects that name their
+  failure branches.
 - feat(network): channel payload sender block — app members' channel
   messages carry `{"text": …, "sender": {"name": …, "id": …}}` (public
   base64 JSON and keyed fanet1 plaintext alike), so DAP agents can
