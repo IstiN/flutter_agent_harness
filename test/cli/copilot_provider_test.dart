@@ -471,8 +471,9 @@ void main() {
         await waitForIt(() => io.out.toString().contains('Copilot plan'));
         io.sendLine('1'); // individual
         // The Copilot API rejection is surfaced at the model fetch, not
-        // swallowed into a silent manual-entry drop.
-        await waitForIt(() => io.out.toString().contains('returned no models'));
+        // swallowed into a silent manual-entry drop (gh-1990: the named
+        // failure branch).
+        await waitForIt(() => io.out.toString().contains('no models:'));
         await waitForIt(() => io.out.toString().contains('model id: '));
         io.sendLine('gpt-4.1');
         await waitForIt(
@@ -482,11 +483,11 @@ void main() {
         await run;
 
         final output = io.out.toString();
-        expect(output, contains('returned no models'));
+        // gh-1990: the named failure replaces the softened catch-all note —
+        // the /models HTTP branch names its status and the PAT remedies.
+        expect(output, contains('no models:'));
+        expect(output, contains('answered HTTP 401'));
         expect(output, contains('Copilot Requests'));
-        // Softened causes (gh-1606 review): the note must not read as
-        // token-hunting when the failure could be a transport error.
-        expect(output, contains('or the request itself failed'));
         expect(registry.find('copilot-hubot')!.modelId, 'gpt-4.1');
       },
     );
