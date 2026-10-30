@@ -62,15 +62,6 @@
   "pr-1653": [
     {
       "leg": "review",
-      "at": "2026-10-16T11:47:33Z",
-      "prompt": 42975,
-      "completion": 12411,
-      "total": 55386,
-      "cacheRead": 642816,
-      "model": "glm-5.3-flash"
-    },
-    {
-      "leg": "review",
       "at": "2026-10-16T13:09:14Z",
       "prompt": 41194,
       "completion": 10465,
@@ -89,15 +80,6 @@
     }
   ],
   "issue-1652": [
-    {
-      "leg": "dev",
-      "at": "2026-10-16T11:50:52Z",
-      "prompt": 154687,
-      "completion": 47922,
-      "total": 202609,
-      "cacheRead": 13678656,
-      "model": "glm-5.3-flash"
-    },
     {
       "leg": "review",
       "at": "2026-10-16T12:58:53Z",
@@ -3886,6 +3868,15 @@
       "completion": 98650,
       "total": 2210977,
       "cacheRead": 39991616,
+      "model": "glm-5.3-flash"
+    },
+    {
+      "leg": "rework",
+      "at": "2026-10-30T12:03:48Z",
+      "prompt": 560798,
+      "completion": 70572,
+      "total": 631370,
+      "cacheRead": 56002624,
       "model": "glm-5.3-flash"
     }
   ]
