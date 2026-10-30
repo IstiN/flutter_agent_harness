@@ -166,7 +166,10 @@ void main() {
         client: client,
       );
       final d = report.diagnostic!;
-      expect(d.stage, ModelsFetchDiagnostic.stageExchange);
+      // A classic PAT retries PAT-direct (which also answers empty here),
+      // so the combined diagnostic names both branches.
+      expect(d.stage, 'exchange+models');
+      expect(d.message, contains('exchange path:'));
       expect(d.httpStatus, 401);
       expect(d.hint, isNotNull);
       expect(d.hint, contains('OAuth device flow'));
@@ -423,7 +426,11 @@ void main() {
       final d = report.diagnostic!;
       expect(d.message, contains('exchange path:'));
       expect(d.message, contains('pat-direct path:'));
-      expect(requests, hasLength(3), reason: 'exchange + /models + retry');
+      expect(
+        requests,
+        hasLength(2),
+        reason: 'the exchange + one pat-direct attempt',
+      );
     });
 
     test('a failing fine-grained PAT never falls back into the exchange',

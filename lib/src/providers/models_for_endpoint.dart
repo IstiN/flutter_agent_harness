@@ -541,7 +541,9 @@ final class _CopilotDialect extends ModelListDialect {
       apiKey,
       client,
     );
-    if (!(secondary.diagnostic?.pathFailed ?? false)) {
+    if (secondary.diagnostic == null) {
+      // The fallback path LISTED models — the rescue landed, and the
+      // provenance note says which path answered (AC3).
       final failedReason = primary.diagnostic!.message;
       return ModelsFetchReport(
         info: secondary.info,
@@ -550,7 +552,9 @@ final class _CopilotDialect extends ModelListDialect {
         droppedModels: secondary.droppedModels,
       );
     }
-    // Both paths failed — one combined reason (AC3), never a bare empty.
+    // Both paths came up empty — one combined reason (AC3), never a bare
+    // empty list: the primary's failure and the fallback's answer both
+    // name themselves.
     final a = primary.diagnostic!;
     final b = secondary.diagnostic!;
     return ModelsFetchReport(
@@ -877,14 +881,15 @@ String? _copilotModelDropReason(Map<String, dynamic> entry) {
   return null;
 }
 
-/// The grouped drop-reason summary for the filter messages: one distinct
-/// reason reads bare («picker flag absent»), several carry counts
-/// («picker flag absent ×10, policy disabled ×2»).
+/// The grouped drop-reason summary for the filter messages: a single
+/// distinct reason reads bare («picker flag absent» — the AC2 wording),
+/// several carry counts («picker flag absent ×10, policy disabled ×2»).
 String _filterReasonSummary(List<(String, String)> dropped) {
   final counts = <String, int>{};
   for (final (_, reason) in dropped) {
     counts[reason] = (counts[reason] ?? 0) + 1;
   }
+  if (counts.length == 1) return counts.keys.single;
   return counts.entries
       .map(
         (entry) => entry.value == 1

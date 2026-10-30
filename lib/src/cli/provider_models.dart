@@ -410,6 +410,9 @@ extension on AgentCli {
     final completer = Completer<void>();
     _modelCacheFuture = completer.future;
     try {
+      // A fresh cycle recomputes every reason (gh-1990) — stale fetch
+      // failures never outlive the refresh that produced them.
+      _providerModelFetchReasons.clear();
       await _fetchAllSavedProviderModels();
       // Also fetch the active catalog provider's live /models list (e.g.
       // OpenRouter) so the model picker is never empty just because the user
@@ -527,7 +530,14 @@ extension on AgentCli {
       return fetchDialModels(entry.baseUrl, cookieOrKey);
     }
     if (entry.spec.kind == 'copilot') {
-      return _fetchCopilotModelsAndLimits(entry.baseUrl, apiKey: cookieOrKey);
+      final (ids, report) = await _fetchCopilotModelsAndLimits(
+        entry.baseUrl,
+        apiKey: cookieOrKey,
+      );
+      // The named failure rides to `/models` (gh-1990) — an empty
+      // provider answer is never a silent hole in the list.
+      _noteProviderFetchReason(entry.name, report);
+      return ids;
     }
     if (entry.spec.kind == 'chatgpt-codex') {
       // The Codex backend's /models — the list call codex-rs'
@@ -910,20 +920,55 @@ extension on AgentCli {
   /// GitHub key is exchanged for the short-lived Copilot token first — a
   /// raw Bearer GET would 401): records the endpoint-reported limits
   /// (context window / max output from `capabilities.limits`) and answers
-  /// the plain id list.
-  Future<List<String>> _fetchCopilotModelsAndLimits(
+  /// [fetchModelsForEndpointReport] wrapper routing Copilot to its dialect
+  /// (the GitHub key is exchanged for the short-lived Copilot token first —
+  /// a raw Bearer GET would 401): records the endpoint-reported limits
+  /// (context window / max output from `capabilities.limits`) and answers
+  /// the plain id list PLUS the report — the empty-answer reason (gh-1990)
+  /// rides to the callers that surface it (`/models`, the connect flow).
+  Future<(List<String>, ModelsFetchReport)> _fetchCopilotModelsAndLimits(
     String baseUrl, {
     String? apiKey,
   }) async {
-    final (ids, windows, maxTokens) = await fetchModelsForEndpoint(
+    final report = await fetchModelsForEndpointReport(
       baseUrl,
       apiKey: apiKey ?? _apiKey,
       provider: 'copilot',
       client: modelFetchClient('copilot'),
     );
+    final (ids, windows, maxTokens) = report.info;
     if (windows.isNotEmpty) _modelContextWindows = windows;
     if (maxTokens.isNotEmpty) _modelMaxTokens = maxTokens;
-    return ids;
+    return (ids, report);
+  }
+
+  /// Records [report]'s user-facing reason for [name] (gh-1990): the
+  /// empty-answer diagnostic (with its hint), or the partial-filter note.
+  /// A report with neither clears the entry's stored reason.
+  void _noteProviderFetchReason(String name, ModelsFetchReport report) {
+    final diagnostic = report.diagnostic;
+    final reason = diagnostic == null
+        ? report.note
+        : (diagnostic.hint == null
+              ? diagnostic.message
+              : '${diagnostic.message} — ${diagnostic.hint}');
+    if (reason == null || reason.isEmpty) {
+      _providerModelFetchReasons.remove(name);
+    } else {
+      _providerModelFetchReasons[name] = reason;
+    }
+  }
+
+  /// The `/models` fetch-failure section (gh-1990): one line per provider
+  /// whose live answer named its failure — exchange / HTTP / filter — so
+  /// an empty provider is never a silent hole in the list.
+  void _printProviderFetchReasons() {
+    if (_providerModelFetchReasons.isEmpty) return;
+    io.writeln('fetch failures:');
+    final names = _providerModelFetchReasons.keys.toList()..sort();
+    for (final name in names) {
+      io.writeln('  $name: ${_providerModelFetchReasons[name]}');
+    }
   }
 
   Future<List<String>> _fetchOpenAiCompatibleModels(
@@ -964,6 +1009,7 @@ extension on AgentCli {
     if (entries.isEmpty) return io.writeln('no models available');
     io.writeln('models (provider/model):');
     _printNumberedModels(entries);
+    _printProviderFetchReasons();
     io.writeln('use /model <n> or /model <provider>/<id> to switch');
   }
 
