@@ -48,17 +48,6 @@
       "model": "glm-5.3-flash"
     }
   ],
-  "issue-1649": [
-    {
-      "leg": "review",
-      "at": "2026-10-16T11:24:35Z",
-      "prompt": 81653,
-      "completion": 24139,
-      "total": 105792,
-      "cacheRead": 2148800,
-      "model": "glm-5.3-flash"
-    }
-  ],
   "pr-1651": [
     {
       "leg": "review",
@@ -3877,6 +3866,15 @@
       "completion": 17728,
       "total": 128050,
       "cacheRead": 2073344,
+      "model": "glm-5.3-flash"
+    },
+    {
+      "leg": "rework",
+      "at": "2026-10-30T11:39:57Z",
+      "prompt": 157690,
+      "completion": 20362,
+      "total": 178052,
+      "cacheRead": 4223488,
       "model": "glm-5.3-flash"
     }
   ],
