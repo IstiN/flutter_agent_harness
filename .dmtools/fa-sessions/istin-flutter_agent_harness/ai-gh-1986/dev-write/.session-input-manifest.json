@@ -1,0 +1,181 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-30T10:00:39.835Z",
+  "ticketKey": "gh-1986",
+  "headSha": "aab81cbfa127868691512154b96872ba1faa83c8",
+  "baseBranch": "main",
+  "reviewDecision": "NONE",
+  "labels": [],
+  "files": {
+    "ci_failures.md": {
+      "hash": "fnv1a64:87872f7138251805",
+      "size": 97410
+    },
+    "ci_failures_full.log": {
+      "hash": "fnv1a64:605854209c0d1a8c",
+      "size": 604934
+    },
+    "ci_violations.json": {
+      "hash": "fnv1a64:e86e487ebd8d315d",
+      "size": 712
+    },
+    "pr_diff.txt": {
+      "hash": "fnv1a64:f11f92840267e431",
+      "size": 12300
+    },
+    "pr_discussions.md": {
+      "hash": "fnv1a64:9022107c8c695abb",
+      "size": 11267
+    },
+    "pr_discussions_raw.json": {
+      "hash": "fnv1a64:3cc175febe69215f",
+      "size": 113
+    },
+    "pr_info.md": {
+      "hash": "fnv1a64:8e1d6e09dd3031d4",
+      "size": 2958
+    },
+    "request.md": {
+      "hash": "fnv1a64:e7f27882843fbb0a",
+      "size": 4011
+    },
+    "review_state.md": {
+      "hash": "fnv1a64:7eed40bef4b17114",
+      "size": 517
+    },
+    "rework_base_head.txt": {
+      "hash": "fnv1a64:275d1d70c9f427bd",
+      "size": 40
+    },
+    "ticket.json": {
+      "hash": "fnv1a64:7387a28d3ccf4ed9",
+      "size": 4097
+    },
+    "ticket.md": {
+      "hash": "fnv1a64:e7f27882843fbb0a",
+      "size": 4011
+    }
+  },
+  "comments": [
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-30:6114d9fe",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-30",
+      "updatedAt": "2026-10-30",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🚨 **BLOCKING: Unintended file committed — `.dmtools-target-workingdir` is local tool state, not part of this fix**\n\nThis PR is described as a CI-only fix (`build-macos.yml` + guard test), but a third file, `.dmtools-target-workingdir`, was swept in by the WIP auto-save commit `245af98d41` (\"gh-1986 WIP auto-save 2026-10-30T07-50-04\"). Evidence it is accidental, not intentional:\n\n- Not present on `origin/main` (`git log origin/main -- .dmtools-target-workingdir` is empty); it first appears in this branch's WIP auto-save commit.\n- No committed code, doc, or script references it — only harness-internal runtime state (`.fah/`) mentions the path.\n- `.gitignore` deliberately keeps only `.dmtools/config.js` and `.dmtools/runners/*.json` visible (lines 161-167); this marker is not among them.\n- The PR description never mentions it (\"No product code changed — CI-only fix\").\n\nThe content is a single `.` (no trailing newline) — a dmtools working-directory marker. Committing it plants a root-level tool-state marker into every future clone of this repo, changing how dmtools-based agent tooling resolves its working directory for everyone working here — an ambient side effect the PR never declares.\n\n**Fix**: remove it from the PR — `git rm .dmtools-target-workingdir` (the file stays on disk locally for the tooling) — and to prevent recurrence, add `.dmtools-target-workingdir` to `.gitignore` next to the other precise dmtools ignores."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-30:99358b25",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-30",
+      "updatedAt": "2026-10-30",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: run ID typo in the gh-1986 forensics comment**\n\nThis comment cites \"run `410808179`\" (9 digits), but the test file header (`test/ci_macos_keychain_unlock_watchdog_guard_test.dart:5`) and the ticket both cite run `41008008179` (11 digits — GitHub Actions run IDs are 10-11 digits). A `0` was dropped from the ID in the workflow copy (\"41008…\" became \"4108…\").\n\nFuture readers doing log forensics will grep the ID from this comment and hit nothing. Please align it with the 11-digit ID: `41008008179`."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-30:91be1fd6",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-30",
+      "updatedAt": "2026-10-30",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: AC3 should also pin the identity-checked kill**\n\nThe Fix description advertises an \"existence-guarded, identity-checked kill (never a recycled pid)\" and the Cleanup implements it (`ps -p \"$WPID\" -o command= 2>/dev/null | grep -q \"ci-sign unlock\"` before `kill`). But AC3 only pins: pid-file existence guard, a `kill` somewhere after the guard, and the same pid file. If a future edit drops the `ps` identity check and kills straight off the pid file, AC3 still passes — the recycled-pid protection the fix is named for would regress unpinned.\n\nSuggested strengthening inside AC3 (the guard test asserts on the comment-stripped script, so strings match the raw YAML):\n\n```dart\nfinal psIdx = script.indexOf('ps -p \"\\$WPID\" -o command=');\nexpect(psIdx, greaterThan(guardIdx), reason:\n    'the kill must only consider a pid that exists AND whose command '\n    'line is still the ci-sign unlock loop — a pid file outlives its '\n    'process and a recycled pid must never be killed');\nexpect(psIdx, lessThan(killIdx), reason:\n    'the identity check must gate the kill');\n```"
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-30:01fc9c08",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-30",
+      "updatedAt": "2026-10-30",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: `executableScriptOf` is dead code**\n\nDefined at line 64 but never called — `main()` uses `scriptOf(job, stepName)` and `_stripComments(...)` directly. `dart analyze` does not flag it (public top-level function), but it will silently rot as the workflow evolves.\n\nDrop it, or keep it only if a planned AC actually needs the whole-job executable-script view; as-is it is unused surface in a guard test whose job is to pin exactly four properties."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-30:b3338bda",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-30",
+      "updatedAt": "2026-10-30",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Thread: 🚨 BLOCKING — unintended `.dmtools-target-workingdir` committed\n\n**Fixed.** The marker is out of the PR and now cannot come back:\n\n- `git rm --cached .dmtools-target-workingdir` — removed from the PR's tree; the file stays on disk for the local tooling, exactly as the review requested (commit `a2fe930891` on `ai/gh-1986`, deletion line: `.dmtools-target-workingdir | 1 -`).\n- Recurrence guard: `.dmtools-target-workingdir` added to `.gitignore` in the same precise-dmtools-ignores block that already keeps `.dmtools/fa-trace.log`, `.dmtools/fa-sessions/`, etc. out of the tree (`.gitignore:169-171`).\n\nVerification on the pushed head:\n\n```bash\n$ git ls-files | grep dmtools-target-workingdir\n(empty — no longer tracked)\n\n$ git check-ignore -v .dmtools-target-workingdir\n.gitignore:171:.dmtools-target-workingdir\t.dmtools-target-workingdir\n\n$ ls -la .dmtools-target-workingdir   # still on disk for the tooling\n-rw-r--r-- 1 runner runner 1 ... .dmtools-target-workingdir\n```\n\n`git diff origin/main..HEAD --name-only` now lists only the two intended files plus `.gitignore`: `.github/workflows/build-macos.yml`, `test/ci_macos_keychain_unlock_watchdog_guard_test.dart`, `.gitignore`."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-30:02759c22",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-30",
+      "updatedAt": "2026-10-30",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Thread: 💡 SUGGESTION — run ID typo in the gh-1986 forensics comment\n\n**Fixed.** `.github/workflows/build-macos.yml:634` now cites the full 11-digit run ID:\n\n```diff\n-          # had no unlock watchdog: run 410808179 (gh-1986) then hit its\n+          # had no unlock watchdog: run 41008008179 (gh-1986) then hit its\n```\n\nThe workflow comment, the guard-test header (`test/ci_macos_keychain_unlock_watchdog_guard_test.dart:5`) and the ticket's leg-run URL (`actions/runs/41008008179`) now all agree on `41008008179`. Verified no other test pins the old string: `grep -rn \"410808179\" test/` returns nothing."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-30:505927c6",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-30",
+      "updatedAt": "2026-10-30",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Thread: 💡 SUGGESTION — AC3 should also pin the identity-checked kill\n\n**Fixed** — AC3 now pins the `ps` identity check exactly as suggested, and the pin was proven to have teeth via mutation (RED→GREEN):\n\n1. Added to AC3 in `test/ci_macos_keychain_unlock_watchdog_guard_test.dart` (assertions run on the comment-stripped Cleanup script, so the strings match the raw YAML):\n\n```dart\nfinal psIdx = script.indexOf('ps -p \"\\$WPID\" -o command=');\nexpect(psIdx, greaterThan(guardIdx), reason:\n    'the kill must only consider a pid that exists AND whose command '\n    'line is still the ci-sign unlock loop — a pid file outlives its '\n    'process and a recycled pid must never be killed');\n...\nexpect(psIdx, lessThan(killIdx), reason:\n    'the identity check must gate the kill');\n```\n\nThe test title and the file-header AC3 description now read \"existence-guarded AND identity-checked\".\n\n2. RED proof (the pin catches the regression the review fears): with the `if ps -p \"$WPID\" -o command= … | grep -q \"ci-sign unlock\"` line temporarily replaced by `if true; then` in the workflow, AC3 fails:\n\n```\n❌ AC3 — ... existence-guarded AND identity-checked (failed)\nExpected: a value greater than <8>\n  Actual: <-1>\nthe kill must only consider a pid that exists AND whose command line is\nstill the ci-sign unlock loop — a pid file outlives its process and a\nrecycled pid must never be killed\n```\n\n3. GREEN: workflow restored byte-identical (`git diff` on `build-macos.yml` empty at that point), AC3 passes; the full guard file is 4/4.\n\nCurrent Cleanup script order pinned by the test: pid-file existence guard → `ps -p \"$WPID\" -o command=` identity check → `kill`."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-30:46533b0b",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-30",
+      "updatedAt": "2026-10-30",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Thread: 💡 SUGGESTION — `executableScriptOf` is dead code\n\n**Fixed** — dropped. `executableScriptOf` (the whole-job executable-script view) is removed from `test/ci_macos_keychain_unlock_watchdog_guard_test.dart`; the suite keeps only the accessors the four ACs actually use (`scriptOf`, `stepByName`, `_stripComments`, `read`, `jobsOf`).\n\nVerification: `dart analyze test/ci_macos_keychain_unlock_watchdog_guard_test.dart` → \"No issues found!\"; the guard file passes 4/4. No planned AC needs a whole-job view — if one appears it can reintroduce the helper with a caller."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-30:416380fd",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-30",
+      "updatedAt": "2026-10-30",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — REQUEST_CHANGES\n\n**Summary**: One blocking finding: `.dmtools-target-workingdir` (local dmtools tool-state, swept in by WIP auto-save commit `245af98d41`) was committed by accident — remove it. The gh-1986 watchdog mechanism itself is sound: correctly gated on `signed=true`, Cleanup stop is existence-guarded + identity-checked, mirrors the gh-1954 Fastfile gym lane, and the new guard test passes (4/4, analyzer clean).\n\n**Key Issues**:\n- 🚨 `.dmtools-target-workingdir` committed unintentionally — not on `origin/main`, referenced by no committed code, absent from the PR description.\n- 💡 3 suggestions: run-ID typo in the workflow forensics comment; AC3 doesn't pin the `ps` identity check the Fix advertises; `executableScriptOf` is dead code in the new test.\n\n**Next Steps**:\n1. `git rm .dmtools-target-workingdir` and add it to `.gitignore`\n2. Fix the run-ID typo (`410808179` → `41008008179`) in `build-macos.yml`\n3. Optionally strengthen AC3 (identity-check assertions) and drop `executableScriptOf`\n\n*Note (pre-existing, outside this diff)*: `build-macos.yml:67-73` re-installs the repo-authoritative `scripts/ci-sign` only in the ubuntu `version` job, so the self-hosted macOS leg runs the host's existing `~/bin/ci-sign` (refreshed via `build-mobile.yml:973` / gh-1954 provisioning). The new watchdog reuses that same host copy — no new dependency — but the \"repo copy is authoritative\" intent is not fulfilled on this leg; consider a follow-up ticket."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-30:7218e17a",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-30",
+      "updatedAt": "2026-10-30",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🧵 Unresolved review threads — rework armed. This machine-authored PR is reviewed (ai_pr_reviewed) but still has open review threads. The rework leg owns open threads: agent:rework is armed on this PR and the rework runner will work through the threads and push. Validation re-runs automatically afterwards, and once the threads are resolved a fresh re-review is armed (review-threads-resolved)."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-30:5066e6fb",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-30",
+      "updatedAt": "2026-10-30",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🔄 zombie re-dispatch aab81cbfa127868691512154b96872ba1faa83c8 — zombie 1/3 at 2026-10-30T09:40:01.796Z\n\nThis head carried no dispatched validation run at all — the dispatch was lost (gh-821). CI was re-dispatched automatically (bounded: 1 per head per hour; 3 in a row on the same head park the PR validation_failed)."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-30:a3d4f23e",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-30",
+      "updatedAt": "2026-10-30",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ Validation CI went red on the head — merge aborted, rework re-queued. (linked issue #1986 re-armed) (approval latch kept — no re-review after fixes)\n🔴 red head aab81cbfa127868691512154b96872ba1faa83c8 — red 1/3 (owner directive 2026-10-04: red yields the slot — after 3 reds on the same head, validation waits for a NEW head)"
+    }
+  ]
+}
