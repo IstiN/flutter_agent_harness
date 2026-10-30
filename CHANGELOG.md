@@ -13,6 +13,21 @@ block a release again.
 
 ## Unreleased
 
+- fix(gh-2003): the Copilot picker filter is tier-aware. Individual-tier
+  `/models` responses omit `model_picker_enabled` entirely, so phase 1
+  dropped every such entry as «picker flag absent» and individual/OAuth
+  accounts still listed zero usable models. When the response comes from
+  the individual tier — the individual host (`api.githubcopilot.com` or
+  pi-mono's `api.individual.githubcopilot.com` spelling) or a
+  no-proxy-ep token (individual by design) — an ABSENT flag is now
+  selectable: absence ≠ an explicit `false`, which still drops
+  everywhere (embeddings, completion-only). Business/enterprise answers
+  keep the strict picker list unchanged, and the keep is never silent:
+  the fetch note names it («2 of 2 models kept via the individual-tier
+  fallback (picker flag absent)») through the existing `fetch notes:`
+  surfacing. pi-mono parity: the trigger mirrors `allowPolicyFallback =
+  baseUrl === "https://api.individual.githubcopilot.com"` in
+  `packages/ai/src/auth/oauth/github-copilot.ts`.
 - fix(gh-1990): the Copilot `/models` dialect never answers a silent
   empty list again. Every silent-empty exit names its branch through the
   new `fetchModelsForEndpointReport` dispatch (`ModelsFetchReport` +
