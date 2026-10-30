@@ -354,9 +354,10 @@ void main() {
     expect(lane, contains('ci-signing.keychain-db'));
     expect(
       lane,
-      contains('saved_search_list'),
-      reason: 'the pre-gym search list must be restored in ensure — the '
-          'pin is a visibility window, not a permanent global change',
+      isNot(contains('saved_search_list')),
+      reason: 'gh-1972 root cause: no save/restore — the captured copy '
+          'entrenched a System duplicate across runs; the canonical pin '
+          'IS the persistent state, nothing to restore',
     );
   });
 
@@ -464,5 +465,53 @@ void main() {
           'takes ~2 min on the shared host; the concurrent wave must WAIT '
           '(600s), not fail — the lock holder always finishes',
     );
+  });
+
+  test('AC17 — install unlocks BEFORE set-keychain-settings (gh-1972: '
+      'settings on a LOCKED keychain spawns an orphan SecurityAgent '
+      'password dialog on the host screen; the 5s alarm kills the CLI '
+      'but the dialog lingers — nightly run 05:21Z)', () {
+    final cisign = File('scripts/ci-sign').readAsStringSync();
+    final unlockAt = cisign.indexOf(r'security unlock-keychain -p "$kcpass" "$KC"');
+    final settingsAt = cisign.indexOf("alarm 5; exec @ARGV' security set-keychain-settings");
+    expect(unlockAt, greaterThan(-1), reason: 'install must unlock');
+    expect(settingsAt, greaterThan(-1), reason: 'settings call must exist');
+    expect(unlockAt, lessThan(settingsAt),
+        reason: 'on an UNLOCKED keychain set-keychain-settings does not '
+            'prompt; unlock first, settings second — no GUI dialog');
+  });
+
+  test('AC18 — install rewrites the search list defensively: login kept '
+      'first, ci-signing appended last, duplicates removed (gh-1972: the '
+      'naive append garbled the list — System twice, login missing, '
+      'default dangling → "A keychain cannot be found to store" dialogs '
+      'and gh auth failures on the shared host)', () {
+    final cisign = File('scripts/ci-sign').readAsStringSync();
+    expect(cisign, contains("login_kc=\"\$HOME/Library/Keychains/login.keychain-db\""),
+        reason: 'the login keychain path must be pinned explicitly');
+    expect(cisign, contains("awk '!seen[\$0]++'"),
+        reason: 'the rewrite must dedupe entries');
+    final loginWrite = cisign.indexOf('security list-keychains -d user -s "\$login_kc"');
+    final appendWrite = cisign.indexOf('security list-keychains -d user -s \$rest');
+    expect(loginWrite, greaterThan(-1),
+        reason: 'login must be written FIRST in the explicit list');
+    expect(appendWrite, greaterThan(-1));
+    expect(loginWrite, lessThan(appendWrite),
+        reason: 'login-first branch precedes the fallback');
+  });
+
+  test('AC19 — Fastfile gym guard has NO save/restore of the search list '
+      '(gh-1972 root cause: the restore wrote back whatever it captured, '
+      'entrenching a System duplicate across runs; the pinned list is '
+      'canonical — restore removed)', () {
+    final fastfile = File('flutter_app/fastlane/Fastfile').readAsStringSync();
+    expect(fastfile, isNot(contains('saved_search_list')),
+        reason: 'no captured copy to restore — the pin is the state');
+    expect(fastfile, isNot(contains("scan(/\"([^\"]+)\"/)")),
+        reason: 'the write-back restore must not exist');
+    expect(fastfile, contains('/Library/Keychains/System.keychain'),
+        reason: 'the canonical pin keeps login/System/ci-signing');
+    expect(fastfile, contains('ci-signing.keychain-db'),
+        reason: 'the canonical pin keeps ci-signing LAST');
   });
 }
