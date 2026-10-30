@@ -899,13 +899,11 @@ extension on AgentCli {
       onCopilotReport: (report) => copilotReport = report,
     );
     if (ids.isEmpty) {
-      final diagnostic = copilotReport?.diagnostic;
-      if (diagnostic != null) {
-        io.writeln(
-          diagnostic.hint == null
-              ? 'no models: ${diagnostic.message}'
-              : 'no models: ${diagnostic.message} — ${diagnostic.hint}',
-        );
+      if (copilotReport?.diagnostic != null) {
+        // The canonical join (gh-1990 review round 2 — no hand-rolled
+        // `message — hint` copy): reasonText appends the hint when
+        // present, byte-identical to the inline ternary it replaces.
+        io.writeln('no models: ${copilotReport!.reasonText}');
       } else if (isFineGrainedGitHubPat(githubToken)) {
         // PAT mode validates against the Copilot API HERE (no exchange):
         // a report-less empty answer is the dialect's collapse of EVERY

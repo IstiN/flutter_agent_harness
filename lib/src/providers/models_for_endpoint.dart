@@ -200,13 +200,24 @@ final class ModelsFetchDiagnostic {
 }
 
 /// A `/models` fetch answer plus its provenance (gh-1990): the parsed
-/// [ModelsEndpointInfo], the empty-answer [diagnostic] (null exactly when
-/// models were listed), an optional human-facing [note] (path fallback,
-/// partial filtering), and the per-model filter drops.
+/// [ModelsEndpointInfo], the empty-answer [diagnostic], an optional
+/// human-facing [note] (path fallback, partial filtering), and the
+/// per-model filter drops.
+///
+/// The diagnostic contract is SCOPED (gh-1990 review round 2): dialects
+/// that override [ModelListDialect.fetchReport] with named failure
+/// branches (today the Copilot dialect) attach a diagnostic on every
+/// empty answer; the DEFAULT keeps the legacy diagnostic-less shape
+/// (null even when empty). A consumer must not assume
+/// `diagnostic != null ⇔ isEmpty`.
 @immutable
 final class ModelsFetchReport {
-  /// Creates the report; [diagnostic] must be non-null exactly when
-  /// [info].$1 is empty — an empty answer always names its reason.
+  /// Creates the report. Dialects that override
+  /// [ModelListDialect.fetchReport] with named failure branches (today
+  /// the Copilot dialect) attach a [diagnostic] on every empty answer;
+  /// the default keeps the legacy diagnostic-less shape (null even when
+  /// empty) — an empty answer names its reason only where a dialect
+  /// names it.
   const ModelsFetchReport({
     required this.info,
     this.diagnostic,
@@ -217,7 +228,9 @@ final class ModelsFetchReport {
   /// The parsed model list (ids, context windows, output caps).
   final ModelsEndpointInfo info;
 
-  /// Why the answer is empty — null exactly when models were listed.
+  /// Why the answer is empty — set by dialects that name their failure
+  /// branches (the Copilot dialect today); the default `fetchReport`
+  /// answers null even when [isEmpty].
   final ModelsFetchDiagnostic? diagnostic;
 
   /// Optional provenance note even on success: the dual-path fallback
@@ -243,7 +256,9 @@ final class ModelsFetchReport {
   /// the single formatting rule, no hand-rolled `message — hint` joins
   /// at the call sites): the diagnostic's [reasonText] when the fetch
   /// named a failed branch, else the provenance [note] (fallback path,
-  /// partial filter). Null when neither is present.
+  /// partial filter). Null when neither is present — in particular for
+  /// the default `fetchReport`'s legacy diagnostic-less empty answers
+  /// (the non-Copilot dialects), which carry neither.
   String? get userFacingReason => diagnostic == null ? note : reasonText;
 }
 

@@ -425,6 +425,11 @@ extension on AgentCli {
             activeSpec.name,
             _agent.state.model.baseUrl,
             _apiKey,
+            // The named failure rides to `/models` here too (gh-1990
+            // review round 2): an unsaved active Copilot's empty answer
+            // is never a silent seed fallback.
+            onCopilotReport: (report) =>
+                _noteProviderFetchReason(activeProvider, report),
           );
           _allProvidersModelCache[activeProvider] = ids.isEmpty
               ? (knownModelPresets[activeProvider] ?? [_agent.state.model.id])
@@ -473,6 +478,10 @@ extension on AgentCli {
           spec.name,
           spec.defaultBaseUrl,
           envKey.$2,
+          // Same surface as the saved-entry path (gh-1990 review round
+          // 2): an env-keyed Copilot's empty answer names its branch.
+          onCopilotReport: (report) =>
+              _noteProviderFetchReason(spec.name, report),
         );
         if (ids.isNotEmpty) {
           _allProvidersModelCache[spec.name] = ids;
