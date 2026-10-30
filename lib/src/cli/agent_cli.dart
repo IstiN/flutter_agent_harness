@@ -572,6 +572,14 @@ class AgentCli {
         isUnattended: () => _approval.mode == ApprovalMode.unattended,
         vision: config.visionConfig,
         transcribe: config.transcribeConfig,
+        visionResolver: config.visionResolver,
+        // gh-1984 AC2: the auto-route's side-call spend joins the CLI's
+        // /cost meter (tokens + cost, no turn-count bump) unless the host
+        // brought its own sink.
+        onImageInspectUsage:
+            config.onImageInspectUsage ?? (usage) => _usage.addSideCall(usage),
+        mediaFileReadNotes: config.mediaFileReadNotes,
+        transcribeAvailable: _readTranscribeAvailable,
         transcribeSessionId: () => _session?.cachedId,
         media: MediaToolServices(
           modelsConfig: config.modelsConfig,

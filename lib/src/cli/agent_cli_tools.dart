@@ -171,10 +171,17 @@ extension AgentCliTools on AgentCli {
       'decide': on,
       'inspect_image': config.visionConfig != null
           ? on
-          : const ToolCapability.absent('no vision model configured'),
+          : const ToolCapability.absent(
+              'no vision model configured — set models.slots.vision '
+              '(/settings → Media models → vision) or pass --vision-model',
+            ),
       'transcribe_audio': config.transcribeConfig != null
           ? on
-          : const ToolCapability.absent('no transcription endpoint configured'),
+          : const ToolCapability.absent(
+              'no transcription endpoint configured — set '
+              'models.slots.transcription (/settings → Media models → '
+              'transcription) or pass --transcribe-model',
+            ),
       // Browser floor (issue #23): the family exists only while a browser
       // controller is attached (CLI: an extension is paired on the bridge).
       // Disconnect hides both ids live with an actionable reason (AC5).
@@ -387,10 +394,23 @@ extension AgentCliTools on AgentCli {
   bool _readToolIsSqlite(List<AgentTool> group) =>
       group.first.description.contains(readSqliteSectionPrompt);
 
+  /// The live vision-slot resolver for the `read` tool (gh-1984): the
+  /// host-provided resolver wins; without one the boot config is the
+  /// capability. Both read-tool construction sites (wireAgentCore and the
+  /// sqlite swap) must ride the SAME resolver.
+  Future<InspectImageConfig?> Function() get _readVisionResolver =>
+      config.visionResolver ?? (() async => config.visionConfig);
+
+  /// Whether `transcribe_audio` is registered — steers the audio read
+  /// note. Same rule for both read-tool construction sites.
+  bool Function() get _readTranscribeAvailable =>
+      config.transcribeAvailable ?? (() => config.transcribeConfig != null);
+
   /// Swaps the registered `read` tool when the sqlite decision flipped:
   /// same shared snapshot store (hashline anchors recorded by either
   /// variant validate for `edit`), same env, only the description and the
-  /// engine change.
+  /// engine change. The gh-1984 media params ride along so the swapped
+  /// variant keeps the auto-route and the audio/video notes.
   void _swapReadSqliteVariant(ToolAvailabilityResolution resolution) {
     final wantSqlite = resolution.byId['sqlite']?.enabled ?? false;
     final group = _toolGroupsById['read'];
@@ -401,6 +421,10 @@ extension AgentCliTools on AgentCli {
       snapshots: _snapshotStore,
       model: () => _agent.state.model,
       sqlite: wantSqlite ? config.sqliteEngine : null,
+      vision: _readVisionResolver,
+      onImageUsage: config.onImageInspectUsage,
+      mediaFileReadNotes: config.mediaFileReadNotes,
+      transcribeAvailable: _readTranscribeAvailable,
     );
     _toolRegistry.unregister('read');
     _toolRegistry.register(fresh);

@@ -73,6 +73,7 @@ import '../mcp/mcp_manager.dart';
 import '../model_roles/models_config.dart';
 import '../model_roles/provider_key_resolver.dart';
 import '../redact/redaction_types.dart';
+import '../types.dart' show Usage;
 import '../session/session_tree.dart' show Session;
 import '../session_io_retry.dart' show SessionIoRetryConfig;
 import '../task/child_session_io.dart'
@@ -339,6 +340,27 @@ final class AgentCoreServices {
   final InspectImageConfig? vision;
   final TranscribeAudioConfig? transcribe;
 
+  /// The live vision-slot resolver for the read auto-route (gh-1984
+  /// AC5/AC8): invoked PER image read so slot edits and a later-arriving
+  /// key apply without a restart. Null = the boot [vision] value is the
+  /// capability (no live re-read).
+  final Future<InspectImageConfig?> Function()? visionResolver;
+
+  /// Receives the read auto-route's vision-model usage (gh-1984 AC2) so
+  /// the host can surface the spend in /cost. Null = untracked.
+  final void Function(Usage usage)? onImageInspectUsage;
+
+  /// Audio/video read notes (gh-1984 AC10): the host opts in when its
+  /// media surface matches the note text (CLI + headless name
+  /// `transcribe_audio`; the app's transcriptionTool/read_video differ, so
+  /// it keeps today's byte-identical read behavior).
+  final bool mediaFileReadNotes;
+
+  /// Whether the `transcribe_audio` tool is (or will be) registered —
+  /// steers the audio read note between "call the tool" and "configure the
+  /// slot". Null = [transcribe] presence decides.
+  final bool Function()? transcribeAvailable;
+
   /// Resolves the live session id for the transcribe tool's sidecar
   /// placement (issue #1890 review: sidecars must ride the session-scoped
   /// spill bucket, not `sessionless`). Null = session-less host.
@@ -478,6 +500,10 @@ final class AgentCoreServices {
     this.obligationsClose,
     this.vision,
     this.transcribe,
+    this.visionResolver,
+    this.onImageInspectUsage,
+    this.mediaFileReadNotes = false,
+    this.transcribeAvailable,
     this.transcribeSessionId,
     this.media,
     this.decisions,
@@ -788,6 +814,15 @@ List<AgentTool> _buildCoreTools({
       networkGate: networkGate,
       config: configService,
       model: () => currentAgent()?.state.model,
+      // gh-1984: the read auto-route rides the live vision-slot resolver
+      // (per-read so slot edits apply without a restart), falling back to
+      // the boot value; the side-call's usage joins the host's /cost
+      // meter; the audio/video notes are a host opt-in.
+      vision: services.visionResolver ?? (() async => services.vision),
+      onImageUsage: services.onImageInspectUsage,
+      mediaFileReadNotes: services.mediaFileReadNotes,
+      transcribeAvailable:
+          services.transcribeAvailable ?? (() => services.transcribe != null),
       sqlite: services.sqlite,
       lsp: services.lsp,
       mcp: services.mcp,

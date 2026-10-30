@@ -1058,23 +1058,53 @@ Future<void> _runApp(List<String> args) async {
 
   late final Future<void> Function() persistConfig;
 
-  InspectImageConfig? visionConfig;
-  if (effective.visionModel != null) {
-    visionConfig = InspectImageConfig(
-      modelId: effective.visionModel!,
-      apiKey: _resolveApiKey('vision', keyCache, fallback: apiKey),
-      baseUrl: effective.visionBaseUrl,
+  // Media slots (gh-1984 AC5/AC8): ONE persisted source for every host —
+  // the `models:` slots the app and `/models set` write. The explicit
+  // flags stay the override; without one the persisted slot serves.
+  // Resolution re-runs per image read via the resolver below, so a
+  // `/models set` edit (or a key landing in the secure store) applies
+  // without a restart.
+  Future<String?> resolveMediaSlotKeyName(String name) async {
+    final envValue = Platform.environment[name];
+    if (envValue != null && envValue.isNotEmpty) return envValue;
+    return keyCache.read(name);
+  }
+
+  /// The effective vision capability: `--vision-model` (the override,
+  /// hard-failing the boot without a key — unchanged) else the persisted
+  /// `models.slots.vision`.
+  Future<InspectImageConfig?> resolveVisionConfig() async {
+    if (effective.visionModel != null) {
+      return InspectImageConfig(
+        modelId: effective.visionModel!,
+        apiKey: _resolveApiKey('vision', keyCache, fallback: apiKey),
+        baseUrl: effective.visionBaseUrl,
+      );
+    }
+    return resolveVisionSlotInspectConfig(
+      saved.models,
+      resolveKey: resolveMediaSlotKeyName,
     );
   }
 
-  TranscribeAudioConfig? transcribeConfig;
-  if (effective.transcribeModel != null) {
-    transcribeConfig = TranscribeAudioConfig(
-      modelId: effective.transcribeModel!,
-      apiKey: _resolveApiKey('transcribe', keyCache, fallback: apiKey),
-      baseUrl: effective.transcribeBaseUrl,
+  /// The effective transcription capability: `--transcribe-model` (the
+  /// override, unchanged) else the persisted `models.slots.transcription`.
+  Future<TranscribeAudioConfig?> resolveTranscribeConfig() async {
+    if (effective.transcribeModel != null) {
+      return TranscribeAudioConfig(
+        modelId: effective.transcribeModel!,
+        apiKey: _resolveApiKey('transcribe', keyCache, fallback: apiKey),
+        baseUrl: effective.transcribeBaseUrl,
+      );
+    }
+    return resolveTranscriptionSlotConfig(
+      saved.models,
+      resolveKey: resolveMediaSlotKeyName,
     );
   }
+
+  final visionConfig = await resolveVisionConfig();
+  final transcribeConfig = await resolveTranscribeConfig();
 
   // The process's single hub client instance: registered as the `hub`
   // plugin when enabled, and read by the settings-hub DAP / Hub flow's
@@ -1667,6 +1697,11 @@ Future<void> _runApp(List<String> args) async {
         sessionName: effective.session,
         visionConfig: visionConfig,
         transcribeConfig: transcribeConfig,
+        // gh-1984: the read auto-route re-resolves the slot per read
+        // (flag override kept); the audio/video read notes are the CLI
+        // surface's opt-in.
+        visionResolver: resolveVisionConfig,
+        mediaFileReadNotes: true,
         webSearchConfig: WebSearchConfig(secrets: webSearch),
         sqliteEngine: const Sqlite3Engine(),
         // The lsp tool: the io-side process transport spawns `dart

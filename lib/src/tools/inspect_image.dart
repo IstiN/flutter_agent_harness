@@ -16,6 +16,7 @@ import 'package:http/http.dart' as http;
 import '../agent/agent_loop.dart' show ToolExecutionResult;
 import '../agent/agent_tool.dart';
 import '../approval/approval.dart';
+import '../cancel_token.dart' show CancelToken;
 import '../context.dart';
 import '../env/execution_env.dart';
 import '../event_stream.dart';
@@ -30,10 +31,10 @@ import '../types.dart';
 /// has no vision wire. One constant so the two refuse sites (default
 /// endpoint pick and the explicit-baseUrl stream route) cannot drift.
 StateError _codexVisionRefusal() => StateError(
-      'inspect_image: provider kind "chatgpt-codex" (ChatGPT Codex) has no '
-      'vision adapter — configure inspect_image with an openai-completions '
-      'or copilot vision model',
-    );
+  'inspect_image: provider kind "chatgpt-codex" (ChatGPT Codex) has no '
+  'vision adapter — configure inspect_image with an openai-completions '
+  'or copilot vision model',
+);
 
 /// Configuration for the [inspectImageTool] vision model.
 final class InspectImageConfig {
@@ -134,12 +135,21 @@ AssistantMessageEventStream _streamVisionResponse(
   }
 }
 
-/// Collects the final assistant text out of a vision event stream; throws on
-/// a stream error.
-Future<String> _collectVisionText(AssistantMessageEventStream stream) async {
+/// The vision call's outcome: the final text plus the response usage when
+/// the provider reported it (the auto-route forwards it to /cost).
+typedef _VisionOutcome = ({String text, Usage? usage});
+
+/// Collects the final assistant text out of a vision event stream; throws
+/// on a stream error and aborts on [cancelToken] (gh-1984 AC6).
+Future<_VisionOutcome> _collectVisionText(
+  AssistantMessageEventStream stream,
+  CancelToken? cancelToken,
+) async {
   String? text;
   String? error;
+  Usage? usage;
   await for (final event in stream) {
+    cancelToken?.throwIfCancelled();
     if (event is TextDeltaEvent || event is DoneEvent) {
       final message = event.partial;
       final currentText = message.content
@@ -147,6 +157,10 @@ Future<String> _collectVisionText(AssistantMessageEventStream stream) async {
           .map((b) => b.text)
           .join();
       if (currentText.isNotEmpty) text = currentText;
+      final messageUsage = message.usage;
+      if (messageUsage.totalTokens > 0) {
+        usage = messageUsage;
+      }
     } else if (event is ErrorEvent) {
       error = event.error.errorMessage ?? 'unknown error';
     }
@@ -155,7 +169,7 @@ Future<String> _collectVisionText(AssistantMessageEventStream stream) async {
   if (error != null) {
     throw StateError('Vision model error: $error');
   }
-  return text?.trim() ?? '';
+  return (text: text?.trim() ?? '', usage: usage);
 }
 
 /// Streams a vision request and returns the final assistant text.
@@ -163,8 +177,36 @@ Future<String> _inspectWithVisionModel(
   InspectImageConfig config,
   Uint8List bytes,
   String mimeType,
-  String userPrompt,
-) async {
+  String userPrompt, {
+  CancelToken? cancelToken,
+  void Function(Usage usage)? onUsage,
+}) => describeImageWithVisionModel(
+  config,
+  bytes,
+  mimeType,
+  userPrompt,
+  cancelToken: cancelToken,
+  onUsage: onUsage,
+);
+
+/// One vision-model request over [bytes]: the system prompt + the image +
+/// [userPrompt], streamed through [config]'s provider kind. Returns the
+/// final assistant text. Shared by the `inspect_image` tool and the read
+/// auto-route (gh-1984 AC2) so both describe images through the SAME
+/// request shape.
+///
+/// [cancelToken] aborts the stream mid-flight (AC6); [onUsage] receives
+/// the response's usage so hosts can surface the spend in /cost. Throws
+/// on a stream error — callers degrade to their own failure notes.
+Future<String> describeImageWithVisionModel(
+  InspectImageConfig config,
+  Uint8List bytes,
+  String mimeType,
+  String userPrompt, {
+  CancelToken? cancelToken,
+  void Function(Usage usage)? onUsage,
+}) async {
+  cancelToken?.throwIfCancelled();
   final model = _visionModel(config);
   final image = ImageContent(data: base64Encode(bytes), mimeType: mimeType);
   final context = Context(
@@ -183,7 +225,9 @@ Future<String> _inspectWithVisionModel(
   );
 
   final stream = _streamVisionResponse(config, model, context);
-  return _collectVisionText(stream);
+  final result = await _collectVisionText(stream, cancelToken);
+  if (result.usage != null) onUsage?.call(result.usage!);
+  return result.text;
 }
 
 /// Creates the `inspect_image` tool.

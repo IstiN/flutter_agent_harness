@@ -182,6 +182,113 @@ void main() {
     expect(names, contains('transcribe_audio'));
   });
 
+  test(
+    'gh-1984 AC1: /tools shows inspect_image off with the configure hint',
+    () async {
+      final fake = FakeStreamFunction([]);
+      final cli = cliFor(fake.call);
+      final run = cli.run();
+      await waitForIt(() => cli.agent.state.tools.isNotEmpty);
+      io.sendLine('/tools');
+      await waitForIt(() => io.out.toString().contains('inspect_image'));
+      io.sendLine('/exit');
+      await run;
+      final line = io.out
+          .toString()
+          .split('\n')
+          .firstWhere((l) => l.startsWith('inspect_image'.padRight(16)));
+      expect(line, contains(' off '));
+      expect(line, contains('models.slots.vision'));
+      expect(line, contains('--vision-model'));
+    },
+  );
+
+  test(
+    'gh-1984 AC1: /tools shows inspect_image on when the slot serves',
+    () async {
+      final fake = FakeStreamFunction([]);
+      final cli = AgentCli(
+        config: AgentCliConfig(
+          model: testModel,
+          apiKey: '[REDACTED:Sensitive-Value]',
+          env: env,
+          sessionRoot: '/sessions',
+          visionConfig: InspectImageConfig(
+            modelId: 'glm-5.3-flash',
+            apiKey: '[REDACTED:Sensitive-Value]',
+          ),
+        ),
+        io: io,
+        streamFunction: fake.call,
+      );
+      final run = cli.run();
+      await waitForIt(() => cli.agent.state.tools.isNotEmpty);
+      io.sendLine('/tools');
+      await waitForIt(() => io.out.toString().contains('inspect_image'));
+      io.sendLine('/exit');
+      await run;
+      final line = io.out
+          .toString()
+          .split('\n')
+          .firstWhere((l) => l.startsWith('inspect_image'.padRight(16)));
+      expect(line, contains(' on '));
+    },
+  );
+
+  test(
+    'gh-1984 AC9: /tools shows transcribe_audio off naming the slot',
+    () async {
+      final fake = FakeStreamFunction([]);
+      final cli = cliFor(fake.call);
+      final run = cli.run();
+      await waitForIt(() => cli.agent.state.tools.isNotEmpty);
+      io.sendLine('/tools');
+      await waitForIt(() => io.out.toString().contains('transcribe_audio'));
+      io.sendLine('/exit');
+      await run;
+      final line = io.out
+          .toString()
+          .split('\n')
+          .firstWhere((l) => l.startsWith('transcribe_audio'.padRight(16)));
+      expect(line, contains(' off '));
+      expect(line, contains('models.slots.transcription'));
+      expect(line, contains('--transcribe-model'));
+    },
+  );
+
+  test(
+    'gh-1984 AC10: the CLI read tool carries the audio note opt-in',
+    () async {
+      // The threading proof: mediaFileReadNotes rides AgentCliConfig →
+      // wireAgentCore → the registered read tool (not just readFileTool
+      // directly).
+      await env.writeBinaryFile('/work/note.mp3', Uint8List.fromList([1, 2]));
+      final fake = FakeStreamFunction([]);
+      final cli = AgentCli(
+        config: AgentCliConfig(
+          model: testModel,
+          apiKey: '[REDACTED:Sensitive-Value]',
+          env: env,
+          sessionRoot: '/sessions',
+          mediaFileReadNotes: true,
+          transcribeAvailable: () => true,
+        ),
+        io: io,
+        streamFunction: fake.call,
+      );
+      final read = cli.agent.state.tools.whereType<AgentTool>().firstWhere(
+        (t) => t.name == 'read',
+      );
+      final result = await read.execute({'path': '/work/note.mp3'}, null, null);
+      final text = result.content
+          .whereType<TextContent>()
+          .map((b) => b.text)
+          .join();
+      expect(text, contains('[Audio file: /work/note.mp3'));
+      expect(text, contains('transcribe_audio'));
+    },
+  );
+
   test('builtinTools wiring keeps shellJobs and config registered', () {
     // Regression: adding the `config:` arg dropped `shellJobs:` from this
     // call site once — both args must stay wired together (issue #29 S3).
@@ -1904,8 +2011,9 @@ void main() {
     // and the tool schemas with every request, and the meter counts that
     // overhead (same basis as the over-window guard).
     final rest = output.substring(lastStatus);
-    final match = RegExp(r'· ctx (\d+)% \((\S+)/100k\) · 0tok')
-        .firstMatch(rest);
+    final match = RegExp(
+      r'· ctx (\d+)% \((\S+)/100k\) · 0tok',
+    ).firstMatch(rest);
     expect(match, isNotNull);
     expect(match!.group(2), isNot('0'));
   });
@@ -2179,12 +2287,8 @@ void main() {
                 expiresAt: DateTime.now().millisecondsSinceEpoch + 86400000,
               );
             },
-            codeMieGuidedSetupFn: (
-              apiBase,
-              cookie,
-              pickOption,
-              askLine,
-            ) async => 'gpt-4o-mini',
+            codeMieGuidedSetupFn:
+                (apiBase, cookie, pickOption, askLine) async => 'gpt-4o-mini',
           ),
           io: io,
           streamFunction: (model, context, {cancelToken}) {
