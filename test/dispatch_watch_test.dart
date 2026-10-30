@@ -850,13 +850,31 @@ void main() {
             'backstop owns the never-started cancel, and a started child '
             'is left alone either way; diagnostics:\n${live.diagnostics()}',
       );
+      // On the accepted poisoned-parse death shape (exit 2, handler never
+      // runs — the bash-5.3 parser state documented in the reason above)
+      // the never-started cancel is issued by the DETACHED orphan backstop
+      // on its own poll cadence (scripts/dispatch_and_watch.sh
+      // --dw-orphan-backstop, spawned >/dev/null at the correlation site),
+      // not by the handler before process exit: the cancel is asynchronous
+      // by design. Asserting it synchronously here lost that race in
+      // validation CI on head 6f855aa34f (run 41041694087, Expected: true
+      // / Actual: false) — wait bounded, exactly like the parse-loss test
+      // pins; on the trap death (143) the loop exits on its first
+      // iteration, so no precision is lost.
+      final cancelDeadline = DateTime.now().add(const Duration(seconds: 10));
+      while (DateTime.now().isBefore(cancelDeadline)) {
+        if (File('${live.dir.path}/cancelled-111').existsSync()) break;
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+      }
       expect(
         File('${live.dir.path}/cancelled-111').existsSync(),
         isTrue,
         reason:
             'exactly the orphaned never-started child is cancelled so it '
             'cannot publish unattended when the pool revives (gh-172 '
-            'containment, gh-1903 orphan-cancel)',
+            'containment, gh-1903 orphan-cancel) — by the handler on the '
+            'trap death (143), by the detached backstop on the poisoned '
+            'parse death (2)',
       );
       final cancels = live.logLines
           .where((l) => l.contains('run cancel'))
@@ -990,7 +1008,24 @@ void main() {
             '(pinned by the parse-loss test below); diagnostics:\n'
             '${live.diagnostics()}',
       );
-      expect(File('${live.dir.path}/cancelled-777').existsSync(), isTrue);
+      // Same asynchronous-cancel caveat as the TERM test above: on the
+      // poisoned-parse death shape (2) the single never-started cancel
+      // comes from the detached backstop on its own poll cadence — wait
+      // bounded, never assert it synchronously (validation CI red on head
+      // 6f855aa34f, run 41041694087 was exactly this race).
+      final cancelDeadline = DateTime.now().add(const Duration(seconds: 10));
+      while (DateTime.now().isBefore(cancelDeadline)) {
+        if (File('${live.dir.path}/cancelled-777').existsSync()) break;
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+      }
+      expect(
+        File('${live.dir.path}/cancelled-777').existsSync(),
+        isTrue,
+        reason:
+            'the never-started child is cancelled exactly once — by the '
+            'handler on the trap death (130), by the detached backstop '
+            'on the poisoned parse death (2)',
+      );
       expect(
         live.logLines.where((l) => l.contains('run cancel')).length,
         1,
