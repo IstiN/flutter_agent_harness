@@ -39,6 +39,23 @@ typedef FaClipboardFilesProbe = ({
 /// (iOS/macOS: Runner AppDelegate; Android: MainActivity).
 const MethodChannel _channel = MethodChannel('fa/clipboard_files');
 
+/// Empty result helpers shared by the platform readers (a single shape so
+/// every reader's degrade paths stay identical).
+FaClipboardFilesProbe faEmptyClipboardProbe() =>
+    (files: const <FaClipboardFileRef>[], unsupported: false);
+
+/// Per-platform clipboard-file readers. A map, not a switch: the CRAP
+/// ratchet runs on Linux CI where only the Linux arm can ever execute, and
+/// a partially-covered branch ladder cannot stay under the 12.0 ratchet
+/// (issue #1979 — the #558 pattern).
+final Map<TargetPlatform, Future<FaClipboardFilesProbe> Function()> _readers = {
+  TargetPlatform.iOS: _readViaChannel,
+  TargetPlatform.android: _readViaChannel,
+  TargetPlatform.macOS: _readViaChannel,
+  TargetPlatform.windows: impl.readClipboardFilesWin32,
+  TargetPlatform.linux: impl.readClipboardFilesUriList,
+};
+
 /// Reads FILE content off the system clipboard through our own thin
 /// per-platform readers (owner decision on #1979: no super_clipboard / no
 /// Rust / no vendoring):
@@ -57,19 +74,11 @@ const MethodChannel _channel = MethodChannel('fa/clipboard_files');
 /// an empty list or the [FaClipboardFilesProbe.unsupported] flag — this
 /// function never throws.
 Future<FaClipboardFilesProbe> readClipboardFiles() async {
-  if (kIsWeb) return (files: const <FaClipboardFileRef>[], unsupported: false);
-  switch (defaultTargetPlatform) {
-    case TargetPlatform.iOS:
-    case TargetPlatform.android:
-    case TargetPlatform.macOS:
-      return _readViaChannel();
-    case TargetPlatform.windows:
-      return impl.readClipboardFilesWin32();
-    case TargetPlatform.linux:
-      return impl.readClipboardFilesUriList();
-    case TargetPlatform.fuchsia:
-      return (files: const <FaClipboardFileRef>[], unsupported: false);
-  }
+  if (kIsWeb) return faEmptyClipboardProbe();
+  final reader =
+      _readers[defaultTargetPlatform] ??
+      ((() async => faEmptyClipboardProbe()));
+  return reader();
 }
 
 Future<FaClipboardFilesProbe> _readViaChannel() async {
@@ -89,17 +98,15 @@ Future<FaClipboardFilesProbe> _readViaChannel() async {
         }
       }
     }
-    // `answer` is a dynamic-decoded map; the second lookup keeps the same
-    // pattern-based access (an extra cast here would just repeat the first).
     final unsupported = answer is Map ? answer['unsupported'] == true : false;
     return (files: files, unsupported: unsupported);
   } on MissingPluginException {
     // No native handler (e.g. the desktop app predates the channel):
     // behave as if the clipboard holds no files.
-    return (files: const <FaClipboardFileRef>[], unsupported: false);
+    return faEmptyClipboardProbe();
   } on Object {
     // Channel-level failure: not a stageable-content signal — silent empty.
-    return (files: const <FaClipboardFileRef>[], unsupported: false);
+    return faEmptyClipboardProbe();
   }
 }
 

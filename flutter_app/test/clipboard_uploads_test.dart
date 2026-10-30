@@ -3,6 +3,7 @@
 // in the LICENSE file.
 
 import 'dart:io';
+import 'dart:typed_data';
 import 'package:fa_ui/fa_ui.dart' show FaClipboardUnsupportedException;
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -233,6 +234,73 @@ void main() {
         'Windows device run)', () async {
       final probe = await readClipboardFilesWin32();
       expect(probe.files, isEmpty);
+      expect(probe.unsupported, isFalse);
+    });
+  });
+
+  group('win32 DROPFILES blob decode (pure units behind the FFI seam)', () {
+    Uint8List dropBlob(List<int> pathUnits, {bool wide = true}) {
+      final header = ByteData(20);
+      header.setUint32(0, 20, Endian.little); // pFiles offset
+      header.setInt32(16, wide ? 1 : 0, Endian.little); // fWide
+      return Uint8List.fromList([...header.buffer.asUint8List(), ...pathUnits]);
+    }
+
+    List<int> utf16(String s) => [
+      for (final unit in s.codeUnits) ...[unit & 0xff, unit >> 8],
+    ];
+
+    test('wide blob with multiple files decodes to names', () {
+      final blob = dropBlob([
+        ...utf16('C:\\a.txt'),
+        0, 0,
+        ...utf16('C:\\b.mp3'),
+        0, 0,
+        0, 0, // list terminator
+      ]);
+      expect(decodeDropPathsForTest(blob), ['C:\\a.txt', 'C:\\b.mp3']);
+    });
+
+    test('narrow blob decodes byte-per-char paths', () {
+      final blob = dropBlob('C:/plain.wav'.codeUnits, wide: false);
+      expect(decodeDropPathsForTest(blob), ['C:/plain.wav']);
+    });
+
+    test('short garbage returns no paths', () {
+      expect(decodeDropPathsForTest(Uint8List.fromList([1, 2, 3])), isEmpty);
+    });
+
+    test('staging decoded paths reads real files and flags failures', () async {
+      final dir = Directory.systemTemp.createTempSync('fah_drop');
+      final good = File('${dir.path}/good.txt');
+      good.writeAsBytesSync([1, 2]);
+      final probe = await probePathsForTest([
+        good.path,
+        '${dir.path}/missing.bin',
+      ]);
+      dir.deleteSync(recursive: true);
+      expect(probe.files.single.name, 'good.txt');
+      expect(probe.unsupported, isFalse); // the good file staged - no hint
+    });
+
+    test('staging only-failing paths flags unsupported', () async {
+      final dir = Directory.systemTemp.createTempSync('fah_drop3');
+      final probe = await probePathsForTest([
+        '${dir.path}/missing.bin',
+        '${dir.path}/also-missing.bin',
+      ]);
+      dir.deleteSync(recursive: true);
+      expect(probe.files, isEmpty);
+      expect(probe.unsupported, isTrue);
+    });
+
+    test('staging only-readable paths stays silent on unsupported', () async {
+      final dir = Directory.systemTemp.createTempSync('fah_drop2');
+      final good = File('${dir.path}/ok.png');
+      good.writeAsBytesSync([9]);
+      final probe = await probePathsForTest([good.path]);
+      dir.deleteSync(recursive: true);
+      expect(probe.files.single.name, 'ok.png');
       expect(probe.unsupported, isFalse);
     });
   });
