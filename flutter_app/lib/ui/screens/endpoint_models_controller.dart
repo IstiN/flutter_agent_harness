@@ -57,6 +57,13 @@ final class EndpointModelsController {
   /// live fetch failed) — drives the field's provenance note.
   bool fromBundledCatalog = false;
 
+  /// WHY the endpoint answered no models (gh-1990) — the named failure
+  /// branch from the fetch report (token exchange / HTTP status / filter
+  /// counts, plus the remediation hint). Null when models were listed or
+  /// the dialect had nothing to name. The field renders it instead of a
+  /// bare empty quick-select.
+  String? emptyReason;
+
   /// Stale-response guard: bumped per fetch, only the latest applies.
   var _generation = 0;
   Timer? _debounce;
@@ -70,7 +77,8 @@ final class EndpointModelsController {
   }
 
   /// Fetches the endpoint's model list through the core dispatch, hinted
-  /// by the selected entry's persisted identity over URL matching.
+  /// by the selected entry's persisted identity over URL matching. The
+  /// report API (gh-1990) carries the empty-answer reason for the field.
   Future<void> fetch() async {
     if (!fetchEnabled()) return;
     final endpointUrl = baseUrl().trim();
@@ -78,23 +86,34 @@ final class EndpointModelsController {
     final generation = ++_generation;
     mutate(() => loading = true);
     var bundled = false;
+    String? reason;
     try {
       final key = apiKey().trim();
       final override = overrideFetcher();
-      final (ids, windows, caps) = override != null
-          ? await override(endpointUrl, apiKey: key)
-          : await fetchModelsForEndpoint(
+      final report = override != null
+          ? ModelsFetchReport(
+              info: await override(endpointUrl, apiKey: key),
+            )
+          : await fetchModelsForEndpointReport(
               endpointUrl,
               apiKey: key,
               provider: modelsDispatchHintForEntry(identityKind(), endpointUrl),
               onBundledFallback: () => bundled = true,
             );
       if (generation != _generation) return;
+      final (ids, windows, caps) = report.info;
+      final diagnostic = report.diagnostic;
+      reason = diagnostic == null
+          ? null
+          : (diagnostic.hint == null
+                ? diagnostic.message
+                : '${diagnostic.message} — ${diagnostic.hint}');
       mutate(() {
         models = ids;
         contextWindows = windows;
         maxTokens = caps;
         fromBundledCatalog = bundled;
+        emptyReason = ids.isEmpty ? reason : null;
       });
       AppAnalytics.instance.modelsFetchResult(ids.length, fromBundled: bundled);
     } on Object {
@@ -104,6 +123,7 @@ final class EndpointModelsController {
         contextWindows = const {};
         maxTokens = const {};
         fromBundledCatalog = false;
+        emptyReason = null;
       });
     } finally {
       if (generation == _generation) mutate(() => loading = false);

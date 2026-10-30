@@ -19,6 +19,7 @@ class CopilotConnectCallbacks {
     required this.pollAccessToken,
     required this.fetchLogin,
     required this.fetchModels,
+    this.fetchModelsReport,
   });
 
   /// Starts the GitHub OAuth device flow.
@@ -37,6 +38,14 @@ class CopilotConnectCallbacks {
   /// no provider carries a default model.
   final Future<List<String>> Function(String githubToken, String baseUrl)
   fetchModels;
+
+  /// Like [fetchModels], but carries the empty-answer REASON (gh-1990):
+  /// the ids plus the named failure (exchange status / HTTP status /
+  /// filter counts, with the remediation hint) when the endpoint answered
+  /// none. When set the sheet prefers it and renders the reason instead
+  /// of the generic fetch-failed string.
+  final Future<(List<String>, String?)> Function(String githubToken, String baseUrl)?
+  fetchModelsReport;
 }
 
 /// What a completed Copilot connect hands back to the host.
@@ -116,6 +125,11 @@ class _CopilotConnectSheetState extends State<_CopilotConnectSheet> {
   List<String> _modelIds = const [];
   String _modelId = '';
   bool _modelsFetchFailed = false;
+
+  /// WHY the model fetch answered empty (gh-1990) — the named failure
+  /// from the host's report callback; rendered under the generic
+  /// fetch-failed text. Null when the host supplied no reason.
+  String? _modelsEmptyReason;
   final _tokenController = TextEditingController();
   final _entryNameController = TextEditingController();
   final _baseUrlController = TextEditingController();
@@ -200,17 +214,27 @@ class _CopilotConnectSheetState extends State<_CopilotConnectSheet> {
 
   /// The form's Connect button: fetch the endpoint's models, then show the
   /// model step (a fetched list to pick from, or a manual id field when
-  /// the fetch came back empty — no default model exists).
+  /// the fetch came back empty — no default model exists). The report
+  /// callback (gh-1990) names WHY the answer is empty when it knows.
   Future<void> _loadModels() async {
     setState(() {
       _error = null;
       _modelsFetchFailed = false;
+      _modelsEmptyReason = null;
       _step = _Step.model;
       _modelIds = const [];
     });
     List<String> ids;
+    String? emptyReason;
     try {
-      ids = await widget.callbacks.fetchModels(_token, _effectiveBaseUrl);
+      final report = widget.callbacks.fetchModelsReport;
+      if (report != null) {
+        final (fetched, reason) = await report(_token, _effectiveBaseUrl);
+        ids = fetched;
+        emptyReason = reason;
+      } else {
+        ids = await widget.callbacks.fetchModels(_token, _effectiveBaseUrl);
+      }
     } on Object {
       ids = const [];
     }
@@ -218,6 +242,7 @@ class _CopilotConnectSheetState extends State<_CopilotConnectSheet> {
     setState(() {
       _modelIds = ids;
       _modelsFetchFailed = ids.isEmpty;
+      _modelsEmptyReason = ids.isEmpty ? emptyReason : null;
       if (ids.isNotEmpty) _modelId = ids.first;
     });
   }
@@ -444,6 +469,15 @@ class _CopilotConnectSheetState extends State<_CopilotConnectSheet> {
             strings.copilotModelsFetchFailed,
             style: TextStyle(color: Theme.of(context).colorScheme.error),
           ),
+          if (_modelsEmptyReason != null) ...[
+            const SizedBox(height: 4),
+            Text(
+              _modelsEmptyReason!,
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: Theme.of(context).colorScheme.error,
+              ),
+            ),
+          ],
           const SizedBox(height: 8),
           TextField(
             controller: _modelController,
