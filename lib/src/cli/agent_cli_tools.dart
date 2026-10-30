@@ -406,6 +406,15 @@ extension AgentCliTools on AgentCli {
   bool Function() get _readTranscribeAvailable =>
       config.transcribeAvailable ?? (() => config.transcribeConfig != null);
 
+  /// The default /cost sink for the read auto-route (gh-1984 AC2): the
+  /// host's sink wins; without one the CLI's usage meter takes the
+  /// side-call (tokens + cost, no turn bump). Both read-tool construction
+  /// sites (wireAgentCore and the sqlite swap) must ride the SAME sink —
+  /// the swap site reading the raw config field dropped the default and
+  /// untracked every post-swap auto-route.
+  void Function(Usage usage)? get _readOnImageUsage =>
+      config.onImageInspectUsage ?? (usage) => _usage.addSideCall(usage);
+
   /// Swaps the registered `read` tool when the sqlite decision flipped:
   /// same shared snapshot store (hashline anchors recorded by either
   /// variant validate for `edit`), same env, only the description and the
@@ -422,7 +431,7 @@ extension AgentCliTools on AgentCli {
       model: () => _agent.state.model,
       sqlite: wantSqlite ? config.sqliteEngine : null,
       vision: _readVisionResolver,
-      onImageUsage: config.onImageInspectUsage,
+      onImageUsage: _readOnImageUsage,
       mediaFileReadNotes: config.mediaFileReadNotes,
       transcribeAvailable: _readTranscribeAvailable,
     );

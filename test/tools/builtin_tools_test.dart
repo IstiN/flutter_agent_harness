@@ -1942,7 +1942,7 @@ void main() {
           model: () => textOnlyModel(),
           vision: () async => visionConfig(client),
         );
-        final result = await readImage(tool);
+        final result = await tool.execute({'path': '/work/shot.bmp'}, null, null);
         expect(_text(result), contains('[via vision model glm-5.3-flash]'));
         expect(bodies, hasLength(1));
         final params = jsonDecode(bodies.first) as Map<String, dynamic>;
@@ -2034,7 +2034,7 @@ void main() {
             model: () => textOnlyModel(),
             vision: () async => visionConfig(client),
           );
-          final result = await readImage(tool);
+          final result = await tool.execute({'path': '/work/wide.png'}, null, null);
           expect(_text(result), contains('[via vision model glm-5.3-flash]'));
           expect(bodies, hasLength(1));
           final params = jsonDecode(bodies.first) as Map<String, dynamic>;

@@ -575,9 +575,9 @@ class AgentCli {
         visionResolver: config.visionResolver,
         // gh-1984 AC2: the auto-route's side-call spend joins the CLI's
         // /cost meter (tokens + cost, no turn-count bump) unless the host
-        // brought its own sink.
-        onImageInspectUsage:
-            config.onImageInspectUsage ?? (usage) => _usage.addSideCall(usage),
+        // brought its own sink. Same getter the sqlite swap site rides —
+        // both read-tool construction sites must share ONE default.
+        onImageInspectUsage: AgentCliTools(this)._readOnImageUsage,
         mediaFileReadNotes: config.mediaFileReadNotes,
         transcribeAvailable: _readTranscribeAvailable,
         transcribeSessionId: () => _session?.cachedId,

@@ -355,9 +355,15 @@ Future<ToolExecutionResult?> _readImageResult(
       );
     }
     try {
+      // The PROCESSED payload rides (gh-1984 review thread 1): the gate
+      // measured `processed.base64`, the mime names the converted/kept
+      // payload, and the request must carry exactly those bytes — a
+      // resized/converted original (the common photo/screenshot case)
+      // uploaded raw would bypass `images.maxBytesPerRequest` and ship
+      // bytes disagreeing with the declared mime.
       final description = await describeImageWithVisionModel(
         visionConfig,
-        bytes,
+        base64Decode(processed.base64),
         processed.mimeType,
         '',
         cancelToken: cancelToken,
