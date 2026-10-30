@@ -179,6 +179,17 @@ Map<String, String> copilotRequestHeaders({required String copilotToken}) =>
     ? copilotPatApiHeaders(pat: copilotToken)
     : copilotApiHeaders(copilotToken: copilotToken);
 
+/// The response body snippet embedded into the exchange-failure messages
+/// (gh-1990 review): capped at 200 chars — the message now reaches five
+/// single-line UI surfaces (the CLI `fetch notes:`, the connect sheet,
+/// the app model field…), and a misconfigured base URL pointing at an
+/// HTML endpoint (or a verbose gateway error page) must not flood them
+/// with an unbounded blob.
+String _exchangeBodySnippet(String body) {
+  final snippet = body.trim();
+  return snippet.length > 200 ? '${snippet.substring(0, 200)}…' : snippet;
+}
+
 /// Exchanges a GitHub token for a Copilot API token (goal:
 /// copilot-proxy-go internal/auth/github_client.go).
 ///
@@ -231,7 +242,7 @@ Future<CopilotApiToken> fetchCopilotApiToken({
         'must carry the "Copilot Requests" permission (github.com/'
         'settings/personal-access-tokens → edit → Permissions); the '
         'GitHub device flow (/provider copilot) mints a working OAuth '
-        'token. Body: ${response.body.trim()}',
+        'token. Body: ${_exchangeBodySnippet(response.body)}',
         statusCode: 404,
       );
     }
@@ -242,14 +253,14 @@ Future<CopilotApiToken> fetchCopilotApiToken({
       'personal-access-tokens → edit → Permissions); classic PATs '
       '(ghp_…) are not supported by Copilot at all; or the account has '
       'no Copilot seat. The GitHub device flow (/provider copilot) mints '
-      'a working OAuth token. Body: ${response.body.trim()}',
+      'a working OAuth token. Body: ${_exchangeBodySnippet(response.body)}',
       statusCode: 404,
     );
   }
   if (response.statusCode != 200) {
     throw CopilotAuthException(
       'Copilot token exchange failed (HTTP ${response.statusCode}): '
-      '${response.body.trim()}',
+      '${_exchangeBodySnippet(response.body)}',
       statusCode: response.statusCode,
     );
   }

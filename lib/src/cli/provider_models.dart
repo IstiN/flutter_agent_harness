@@ -946,12 +946,9 @@ extension on AgentCli {
   /// empty-answer diagnostic (with its hint), or the partial-filter note.
   /// A report with neither clears the entry's stored reason.
   void _noteProviderFetchReason(String name, ModelsFetchReport report) {
-    final diagnostic = report.diagnostic;
-    final reason = diagnostic == null
-        ? report.note
-        : (diagnostic.hint == null
-              ? diagnostic.message
-              : '${diagnostic.message} — ${diagnostic.hint}');
+    // gh-1990 review (DRY): the canonical formatting rule — no
+    // hand-rolled `message — hint` join.
+    final reason = report.userFacingReason;
     if (reason == null || reason.isEmpty) {
       _providerModelFetchReasons.remove(name);
     } else {

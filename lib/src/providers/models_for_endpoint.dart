@@ -134,7 +134,11 @@ final class ModelsFetchDiagnostic {
   });
 
   /// The stage that produced this: the token exchange, the `/models`
-  /// HTTP call, or the picker filter.
+  /// HTTP call, or the picker filter ([stageExchange], [stageModels],
+  /// [stageFilter]). When BOTH credential paths failed, the dual-path
+  /// combined diagnostic joins the two stage names with [stageDualJoiner]
+  /// (e.g. `exchange+models`) — [stages] splits it back apart for
+  /// programmatic consumers that match on the constants.
   final String stage;
 
   /// The exchange stage — `copilot_internal/v2/token` failed.
@@ -146,6 +150,11 @@ final class ModelsFetchDiagnostic {
   /// The filter stage — `/models` answered, the picker filter dropped
   /// every entry.
   static const stageFilter = 'filter';
+
+  /// The joiner of a dual-path combined [stage] (`exchange+models`) —
+  /// the documented extension of the stage vocabulary for the
+  /// both-credential-paths-failed diagnostic.
+  static const stageDualJoiner = '+';
 
   /// Which credential path produced this: the exchanged-token path or
   /// the raw-PAT path (the dual-path provenance, gh-1606).
@@ -179,6 +188,12 @@ final class ModelsFetchDiagnostic {
 
   /// Optional remediation hint (tier host, PAT remedies, seat check).
   final String? hint;
+
+  /// The individual stages of [stage] — one entry unless the dual-path
+  /// combined diagnostic named both failing credential paths (then two,
+  /// e.g. `[stageExchange, stageModels]`). Splitting on the documented
+  /// [stageDualJoiner] keeps the combined form matchable for consumers.
+  List<String> get stages => stage.split(stageDualJoiner);
 
   @override
   String toString() => message;
@@ -223,6 +238,13 @@ final class ModelsFetchReport {
     if (d == null) return '';
     return d.hint == null ? d.message : '${d.message} — ${d.hint}';
   }
+
+  /// The user-facing reason across BOTH answer kinds (gh-1990 review —
+  /// the single formatting rule, no hand-rolled `message — hint` joins
+  /// at the call sites): the diagnostic's [reasonText] when the fetch
+  /// named a failed branch, else the provenance [note] (fallback path,
+  /// partial filter). Null when neither is present.
+  String? get userFacingReason => diagnostic == null ? note : reasonText;
 }
 
 /// Fetches the model list of [baseUrl] WITH the empty-answer diagnostic
@@ -715,9 +737,57 @@ final class _CopilotDialect extends ModelListDialect {
         ),
       );
     }
-    final (info, fetchedCount, dropped) = _parseCopilotModelsResponse(
+    return _modelsReportFrom200(
+      base,
       response.body,
+      path: path,
+      extraHint: extraHint,
     );
+  }
+
+  /// The HTTP-200 body → report (gh-1990 review): the parse is GUARDED —
+  /// the dialect contract (top of this file) answers an empty info on
+  /// ANY error, so a non-JSON 200 (captive portal, proxy error page,
+  /// shape drift on a misconfigured host) names its branch instead of
+  /// throwing `FormatException` through the dispatch and crashing the
+  /// unguarded CLI `/provider copilot` connect flow — and the "data"
+  /// shape rides the parser result (no second jsonDecode).
+  ModelsFetchReport _modelsReportFrom200(
+    String base,
+    String body, {
+    required String path,
+    String? extraHint,
+  }) {
+    final (ModelsEndpointInfo, int, List<(String, String)>, bool)? parsed;
+    try {
+      parsed = _parseCopilotModelsResponse(body);
+    } on FormatException catch (error) {
+      return ModelsFetchReport(
+        info: _emptyCopilotInfo,
+        diagnostic: ModelsFetchDiagnostic(
+          stage: ModelsFetchDiagnostic.stageModels,
+          path: path,
+          message:
+              '$base/models answered an unparseable payload (HTTP 200): '
+              '$error',
+          hint: extraHint,
+        ),
+      );
+    }
+    final (info, fetchedCount, dropped, dataIsList) = parsed!;
+    } on FormatException catch (error) {
+      return ModelsFetchReport(
+        info: _emptyCopilotInfo,
+        diagnostic: ModelsFetchDiagnostic(
+          stage: ModelsFetchDiagnostic.stageModels,
+          path: path,
+          message:
+              '$base/models answered an unparseable payload (HTTP 200): '
+              '$error',
+          hint: extraHint,
+        ),
+      );
+    }
     if (info.$1.isNotEmpty) {
       // Models listed — the partial-filter summary rides the note.
       return ModelsFetchReport(
@@ -734,8 +804,7 @@ final class _CopilotDialect extends ModelListDialect {
       // endpoint (a filtered answer reports below instead). A payload
       // with no "data" list at all is the shape drift the diagnostic
       // names.
-      final shaped = _copilotModelsShapeValid(response.body);
-      final message = shaped
+      final message = dataIsList
           ? '$base/models answered with no models (HTTP 200, empty list)'
           : '$base/models answered an unexpected payload shape — no '
                 '"data" list (HTTP 200)';
@@ -802,27 +871,24 @@ const _emptyCopilotInfo = (<String>[], <String, int>{}, <String, int>{});
 /// The individual-tier API host (no-proxy-ep tokens serve from here).
 final _individualApiHost = Uri.parse(copilotIndividualBaseUrl).host;
 
-/// Whether the /models body at least carries a "data" list (the shape
-/// check behind the empty-list vs unexpected-shape reasons).
-bool _copilotModelsShapeValid(String body) {
-  final decoded = jsonDecode(body);
-  return decoded is Map<String, dynamic> && decoded['data'] is List;
-}
-
 /// Maps the Copilot `{data: [{id, capabilities.limits.{max_context_window_
 /// tokens, max_output_tokens}}]}` shape into [ModelsEndpointInfo] (the
 /// limits are nested, so [parseModelsResponse] reads only the ids).
 /// Non-chat entries are filtered out — see [_copilotModelDropReason].
-/// Alongside the info it answers the entry count and the per-model
-/// (id, drop reason) pairs for the filter transparency (gh-1990 AC2).
-(ModelsEndpointInfo, int, List<(String, String)>) _parseCopilotModelsResponse(
-  String body,
-) {
+/// Alongside the info it answers the entry count, the per-model
+/// (id, drop reason) pairs for the filter transparency (gh-1990 AC2),
+/// and whether the payload carried a "data" list at all (the
+/// empty-list vs unexpected-shape distinction — decoded ONCE here; the
+/// caller never re-decodes). Throws [FormatException] on a non-JSON
+/// body — the caller guards it (the dialect contract: empty on any
+/// error).
+(ModelsEndpointInfo, int, List<(String, String)>, bool)
+_parseCopilotModelsResponse(String body) {
   final decoded = jsonDecode(body);
   final data = decoded is Map<String, dynamic> ? decoded['data'] : null;
   if (data is! List) {
     const dropped = <(String, String)>[];
-    return (_emptyCopilotInfo, 0, dropped);
+    return (_emptyCopilotInfo, 0, dropped, false);
   }
   final ids = <String>[];
   final windows = <String, int>{};
@@ -853,7 +919,7 @@ bool _copilotModelsShapeValid(String body) {
     if (cap != null) maxTokens[id] = cap;
   }
   ids.sort();
-  return ((ids, windows, maxTokens), data.length, dropped);
+  return ((ids, windows, maxTokens), data.length, dropped, true);
 }
 
 /// WHY [entry] is not picker-eligible — the reason strings of the gh-1990
@@ -865,11 +931,12 @@ bool _copilotModelsShapeValid(String body) {
 /// when the payload declares `supported_endpoints`, `/chat/completions`
 /// must be among them — our provider streams there, and responses-only
 /// models (e.g. `gpt-5.6-sol` on `["/responses", "ws:/responses"]`) 400
-/// with "not accessible via the /chat/completions endpoint". Payloads
-/// without the field (older/self-hosted proxies) are kept — they read as
-/// "picker flag absent", the reason AC2 pins for the individual-tier
-/// shapes. This only NAMES which criterion fired; the criteria themselves
-/// are unchanged.
+/// with "not accessible via the /chat/completions endpoint". Entries
+/// WITHOUT the field (individual-tier shapes, older/self-hosted proxies)
+/// are DROPPED with "picker flag absent" — absence is not an explicit
+/// true; they still count toward the fetched total, and the reason is
+/// the one AC2 pins for the individual-tier shapes. This only NAMES
+/// which criterion fired; the criteria themselves are unchanged.
 String? _copilotModelDropReason(Map<String, dynamic> entry) {
   final picker = entry['model_picker_enabled'];
   if (picker == null) return 'picker flag absent';

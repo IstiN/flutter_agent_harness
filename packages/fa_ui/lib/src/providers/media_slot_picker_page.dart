@@ -529,12 +529,9 @@ class _MediaSlotModelPageState extends State<MediaSlotModelPage> {
               onBundledFallback: () => fromBundledCatalog = true,
             );
       final (ids, _, _) = report.info;
-      final diagnostic = report.diagnostic;
-      emptyReason = diagnostic == null
-          ? null
-          : (diagnostic.hint == null
-                ? diagnostic.message
-                : '${diagnostic.message} — ${diagnostic.hint}');
+      // gh-1990 review (DRY): the canonical formatting rule — no
+      // hand-rolled `message — hint` join.
+      emptyReason = report.userFacingReason;
       if (!mounted) return;
       setState(() {
         _endpointModels = ids;

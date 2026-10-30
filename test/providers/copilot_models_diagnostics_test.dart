@@ -466,6 +466,13 @@ void main() {
       expect(d.message, contains('exchange path:'));
       expect(d.message, contains('pat-direct path:'));
       expect(
+        d.stages,
+        ['exchange', 'models'],
+        reason:
+            'programatic consumers match the documented vocabulary — '
+            'the combined dual-path stage splits back apart',
+      );
+      expect(
         requests,
         hasLength(2),
         reason: 'the exchange + one pat-direct attempt',
@@ -517,6 +524,50 @@ void main() {
       expect(windows, isEmpty);
       expect(caps, isEmpty);
     });
+    test('unparseable HTTP 200 body names its branch — no throw', () async {
+      // gh-1990 review (BLOCKING): the refactor moved the /models parse
+      // out of the dialect's `on Object → empty` catch — a captive
+      // portal / proxy error page (HTTP 200, not JSON) must NOT throw
+      // through the dispatch (the dialect contract at the top of
+      // models_for_endpoint.dart) nor crash the unguarded CLI connect
+      // flow. It names its branch instead.
+      final (client, _) = fakeCopilot(
+        modelsBody: '<html>captive portal</html>',
+      );
+      final report = await fetchModelsForEndpointReport(
+        'https://api.githubcopilot.com',
+        apiKey: '[REDACTED:Sensitive-Value]',
+        provider: 'copilot',
+        client: client,
+      );
+      expect(report.info.$1, isEmpty);
+      final d = report.diagnostic!;
+      expect(d.stage, ModelsFetchDiagnostic.stageModels);
+      expect(d.message, contains('unparseable payload'));
+      expect(d.message, contains('HTTP 200'));
+      expect(
+        d.pathFailed,
+        isTrue,
+        reason: 'a parse failure is a path failure — the dual-path '
+            'fallback may retry the other credential route',
+      );
+    });
+
+    test('unparseable HTTP 200 body answers empty on the legacy API',
+        () async {
+      final (client, _) = fakeCopilot(
+        modelsBody: '<html>captive portal</html>',
+      );
+      final (ids, windows, caps) = await fetchModelsForEndpoint(
+        'https://api.githubcopilot.com',
+        apiKey: '[REDACTED:Sensitive-Value]',
+        provider: 'copilot',
+        client: client,
+      );
+      expect(ids, isEmpty);
+      expect(windows, isEmpty);
+      expect(caps, isEmpty);
+    });
 
     test('non-copilot dialects answer a report with no diagnostic', () async {
       final client = http_testing.MockClient(
@@ -529,6 +580,44 @@ void main() {
       );
       expect(report.info.$1, ['m1']);
       expect(report.diagnostic, isNull);
+    });
+  });
+
+  const testEmptyInfo = (<String>[], <String, int>{}, <String, int>{});
+
+  group('userFacingReason — the one formatting rule (review DRY)', () {
+    test('diagnostic joins its hint; diagnostic-only answers bare', () {
+      const report = ModelsFetchReport(
+        info: testEmptyInfo,
+        diagnostic: ModelsFetchDiagnostic(
+          stage: ModelsFetchDiagnostic.stageModels,
+          path: ModelsFetchDiagnostic.pathExchange,
+          message: 'exchange failed',
+          hint: 're-authorize Copilot',
+        ),
+      );
+      expect(report.userFacingReason, 'exchange failed — re-authorize Copilot');
+
+      const bare = ModelsFetchReport(
+        info: testEmptyInfo,
+        diagnostic: ModelsFetchDiagnostic(
+          stage: ModelsFetchDiagnostic.stageFilter,
+          path: ModelsFetchDiagnostic.pathExchange,
+          message: '3 models fetched, 3 filtered (picker flag absent)',
+        ),
+      );
+      expect(bare.userFacingReason, '3 models fetched, 3 filtered (picker flag absent)');
+    });
+
+    test('no diagnostic falls back to the note; neither answers null', () {
+      const noted = ModelsFetchReport(
+        info: testEmptyInfo,
+        note: 'models via the pat-direct fallback',
+      );
+      expect(noted.userFacingReason, 'models via the pat-direct fallback');
+
+      const silent = ModelsFetchReport(info: testEmptyInfo);
+      expect(silent.userFacingReason, isNull);
     });
   });
 }
