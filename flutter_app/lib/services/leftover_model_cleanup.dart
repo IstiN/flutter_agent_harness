@@ -147,7 +147,11 @@ Future<GemmaLeftoverCleanupReport> _cleanupIo(ExecutionEnv env) async {
       final name = info.name;
       final path = info.path;
       if (info.kind == FileKind.directory) {
-        if (name == _storageDirName) {
+        // The plugin's known layout: a `flutter_gemma` dir directly under
+        // the container root. Exact name + root-level anchor — a
+        // similarly-named dir deeper in the tree (vendored fork, notes)
+        // is not plugin storage and must survive (gh-2004 review).
+        if (depth == 0 && name == _storageDirName) {
           final result = await owned.remove(path, recursive: true);
           (result.isOk ? deleted : failed).add(path);
           continue;

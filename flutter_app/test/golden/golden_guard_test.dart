@@ -174,6 +174,12 @@ const _exempt = <String, String>{
   'lib/apps/session_chat_sheet.dart':
       'floating chat sheet over the launcher; covered indirectly by the '
       'launcher chat sheet tests in test/apps/',
+  'lib/ui/widgets/downloaded_models_quick_start.dart':
+      'quick-start scan rows; behavior covered by '
+      'test/downloaded_models_quick_start_test.dart — its golden baseline '
+      'is pending the pinned-macOS `flutter test test/golden '
+      '--update-goldens` re-bake (gh-2004 follow-up; the linux dev host '
+      'cannot bake it, see memory n_1018_80a7)',
   'lib/ui/screens/app_launcher_screen.dart':
       'test/golden/launcher_golden_test.dart',
   'lib/ui/widgets/apps_panel.dart': 'test/golden/apps_panel_golden_test.dart',

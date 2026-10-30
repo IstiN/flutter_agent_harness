@@ -60,7 +60,7 @@ class OnDeviceConfigStore extends ChangeNotifier {
 
   /// Marks the on-device [kind] as configured and persists. Persistence is
   /// best effort: a failed write must not break the connect flow. Kinds
-  /// whose stack was removed ([_removedKinds]) are ignored — their
+  /// whose stack was removed ([removedOnDeviceKinds]) are ignored — their
   /// providers cannot exist on this build.
   Future<void> markConfigured(String kind) async {
     if (!_isConfigurableKind(kind) || !_kinds.add(kind)) return;
@@ -78,11 +78,14 @@ class OnDeviceConfigStore extends ChangeNotifier {
   }
 }
 
-/// The provider kinds whose on-device stack gh-2004 removed.
-const _removedKinds = {'gemma'};
+/// The provider kinds whose on-device stack gh-2004 removed. Persisted
+/// stores carrying them reset silently on load — the single source shared
+/// by the reset codecs ([OnDeviceConfigStore] and `last_connection.dart`),
+/// so a future stack removal touches one set, never two (gh-2004 review).
+const removedOnDeviceKinds = {'gemma'};
 
 /// Whether [kind] names an on-device provider that still exists.
-bool _isConfigurableKind(String kind) => !_removedKinds.contains(kind);
+bool _isConfigurableKind(String kind) => !removedOnDeviceKinds.contains(kind);
 
 /// Inherited access to the app-wide [OnDeviceConfigStore] (installed in
 /// main.dart next to the other stores).

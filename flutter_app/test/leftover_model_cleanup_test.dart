@@ -287,6 +287,21 @@ void main() {
       expect(store.removed, isNot(contains('session.json')));
     });
 
+    test('a root dir merely containing the vendor name survives', () async {
+      final store = _FakeWebArtifactStore([
+        const GemmaArtifactEntry(name: 'flutter_gemma_foo', directory: true),
+      ]);
+
+      final report = await cleanupGemmaLeftovers(
+        MemoryExecutionEnv(),
+        isWeb: true,
+        webStore: store,
+      );
+
+      expect(report.isEmpty, isTrue);
+      expect(store.removed, isEmpty);
+    });
+
     test('a failing web delete is recorded, not fatal', () async {
       final store = _FakeWebArtifactStore([
         const GemmaArtifactEntry(

@@ -8,6 +8,7 @@ import 'dart:convert';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
 import 'package:fa/services/agent_service.dart';
+import 'package:fa/services/ondevice_config_store.dart';
 import 'package:fa/transformers_js/transformers_js_types.dart';
 import 'package:fa/webllm/webllm_types.dart';
 
@@ -170,6 +171,9 @@ class LastConnectionStore {
   }
 }
 
-/// Provider kinds whose stack gh-2004 removed; records carrying them reset
-/// on load.
-bool _isRemovedKind(String providerKind) => providerKind == 'gemma';
+/// Whether [providerKind] names a stack gh-2004 removed; records carrying
+/// it reset on load. The kind set lives in [removedOnDeviceKinds]
+/// (ondevice_config_store.dart) — the single shared source for both reset
+/// codecs (gh-2004 review).
+bool _isRemovedKind(String providerKind) =>
+    removedOnDeviceKinds.contains(providerKind);
