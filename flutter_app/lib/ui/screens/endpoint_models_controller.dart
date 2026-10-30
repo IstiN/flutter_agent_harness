@@ -100,12 +100,9 @@ final class EndpointModelsController {
             );
       if (generation != _generation) return;
       final (ids, windows, caps) = report.info;
-      final diagnostic = report.diagnostic;
-      reason = diagnostic == null
-          ? null
-          : (diagnostic.hint == null
-                ? diagnostic.message
-                : '${diagnostic.message} — ${diagnostic.hint}');
+      // reasonText joins the remediation hint (gh-1990) — the one-line
+      // user-facing form; null exactly when the dialect named nothing.
+      reason = report.diagnostic == null ? null : report.reasonText;
       mutate(() {
         models = ids;
         contextWindows = windows;

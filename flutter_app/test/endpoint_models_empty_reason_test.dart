@@ -108,4 +108,51 @@ void main() {
       '(picker flag absent)',
     );
   });
+
+  testWidgets('an override fetcher answer lists models with no reason', (
+    tester,
+  ) async {
+    final controller = EndpointModelsController(
+      mutate: (fn) => fn(),
+      baseUrl: () => 'https://acme.example/v1',
+      apiKey: () => 'sk-test',
+      identityKind: () => null,
+      fetchEnabled: () => true,
+      overrideFetcher: () =>
+          (baseUrl, {required apiKey}) async =>
+              (
+                const ['m-1', 'm-2'],
+                const <String, int>{'m-1': 64000},
+                const <String, int>{},
+              ),
+    );
+
+    await controller.fetch();
+    await tester.pump();
+
+    expect(controller.models, ['m-1', 'm-2']);
+    expect(controller.contextWindows['m-1'], 64000);
+    expect(controller.emptyReason, isNull);
+    expect(controller.loading, isFalse);
+  });
+
+  testWidgets('a throwing override lands the catch reset — no reason, no '
+      'stale loading', (tester) async {
+    final controller = EndpointModelsController(
+      mutate: (fn) => fn(),
+      baseUrl: () => 'https://acme.example/v1',
+      apiKey: () => 'sk-test',
+      identityKind: () => null,
+      fetchEnabled: () => true,
+      overrideFetcher: () =>
+          (baseUrl, {required apiKey}) async => throw StateError('boom'),
+    );
+
+    await controller.fetch();
+    await tester.pump();
+
+    expect(controller.models, isEmpty);
+    expect(controller.emptyReason, isNull);
+    expect(controller.loading, isFalse);
+  });
 }

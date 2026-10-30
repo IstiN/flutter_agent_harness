@@ -1,5 +1,5 @@
 // l10n:ignore-file — OAuth flow screens — en-only by design
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart' show kIsWeb, visibleForTesting;
 import 'package:flutter/material.dart';
 
 import 'package:fa/services/agent_service.dart';
@@ -17,6 +17,40 @@ import 'package:fa_ui/fa_ui.dart'
         FaUiSso,
         showCopilotConnectSheet,
         showFahErrorSnack;
+
+/// The production Copilot connect callbacks — the real GitHub device flow
+/// plus the live `/models` fetch of the resolved endpoint (the Copilot
+/// token exchange runs inside the dialect; no default model exists). The
+/// sheet prefers the report form (gh-1990): an empty answer names its
+/// branch (exchange status / HTTP status / filter counts + the remediation
+/// hint) instead of the generic failure string. Top-level (not a closure
+/// inside [runCopilotConnectFlow]) so the report callback stays
+/// unit-testable through the models-dispatch test seam.
+@visibleForTesting
+CopilotConnectCallbacks defaultCopilotCallbacks() => CopilotConnectCallbacks(
+  requestDeviceCode: requestCopilotDeviceCode,
+  pollAccessToken: (deviceCode) =>
+      pollCopilotAccessToken(deviceCode: deviceCode.deviceCode),
+  fetchLogin: (token) => fetchGithubLogin(githubToken: token),
+  fetchModels: (token, baseUrl) async => (await fetchModelsForEndpoint(
+    baseUrl,
+    apiKey: token,
+    provider: 'copilot',
+  )).$1,
+  fetchModelsReport: (token, baseUrl) async {
+    final report = await fetchModelsForEndpointReport(
+      baseUrl,
+      apiKey: token,
+      provider: 'copilot',
+    );
+    // reasonText joins the remediation hint (gh-1990); null exactly when
+    // the dialect named nothing.
+    return (
+      report.info.$1,
+      report.diagnostic == null ? null : report.reasonText,
+    );
+  },
+);
 
 /// Runs the full GitHub Copilot connect flow: the device-flow sheet (real
 /// fa_llm wiring unless [callbacks] is injected — the device flow needs no
@@ -57,41 +91,7 @@ Future<bool> runCopilotConnectFlow({
     return false;
   }
 
-  final resolved =
-      callbacks ??
-      CopilotConnectCallbacks(
-        requestDeviceCode: requestCopilotDeviceCode,
-        pollAccessToken: (deviceCode) =>
-            pollCopilotAccessToken(deviceCode: deviceCode.deviceCode),
-        fetchLogin: (token) => fetchGithubLogin(githubToken: token),
-        // The connect sheet's model step: the live /models of the resolved
-        // endpoint (the Copilot token exchange runs inside the dialect) —
-        // no default model exists.
-        fetchModels: (token, baseUrl) async => (await fetchModelsForEndpoint(
-          baseUrl,
-          apiKey: token,
-          provider: 'copilot',
-        )).$1,
-        // The sheet prefers the report form (gh-1990): an empty answer
-        // names its branch (exchange status / HTTP status / filter counts
-        // + the remediation hint) instead of the generic failure string.
-        fetchModelsReport: (token, baseUrl) async {
-          final report = await fetchModelsForEndpointReport(
-            baseUrl,
-            apiKey: token,
-            provider: 'copilot',
-          );
-          final diagnostic = report.diagnostic;
-          return (
-            report.info.$1,
-            diagnostic == null
-                ? null
-                : (diagnostic.hint == null
-                      ? diagnostic.message
-                      : '${diagnostic.message} — ${diagnostic.hint}'),
-          );
-        },
-      );
+  final resolved = callbacks ?? defaultCopilotCallbacks();
 
   CopilotConnectResult? result;
   await showCopilotConnectSheet(
