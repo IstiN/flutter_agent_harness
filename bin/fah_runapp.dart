@@ -1058,23 +1058,88 @@ Future<void> _runApp(List<String> args) async {
 
   late final Future<void> Function() persistConfig;
 
-  InspectImageConfig? visionConfig;
-  if (effective.visionModel != null) {
-    visionConfig = InspectImageConfig(
-      modelId: effective.visionModel!,
-      apiKey: _resolveApiKey('vision', keyCache, fallback: apiKey),
-      baseUrl: effective.visionBaseUrl,
-    );
+  // Media slots (gh-1984 AC5/AC8): ONE persisted source for every host —
+  // the `models:` slots the app and `/models set` write. The explicit
+  // flags stay the override; without one the persisted slot serves.
+  // Resolution re-runs per image read via the resolver below, so a
+  // `/models set` edit (or a key landing in the secure store) applies
+  // without a restart.
+  Future<String?> resolveMediaSlotKeyName(String name) async {
+    final envValue = Platform.environment[name];
+    if (envValue != null && envValue.isNotEmpty) return envValue;
+    return keyCache.read(name);
   }
 
-  TranscribeAudioConfig? transcribeConfig;
-  if (effective.transcribeModel != null) {
-    transcribeConfig = TranscribeAudioConfig(
-      modelId: effective.transcribeModel!,
-      apiKey: _resolveApiKey('transcribe', keyCache, fallback: apiKey),
-      baseUrl: effective.transcribeBaseUrl,
-    );
-  }
+  // The live models config the slot resolvers read: ONE instance shared
+  // with AgentCliConfig.modelsConfig below, which the `/models set` flow
+  // mutates — on a config with no `models:` section the empty fallback is
+  // the instance the commands mutate, so a mid-session slot edit reaches
+  // the per-read resolvers (gh-1984 review thread 6).
+  final liveModels = saved.models ?? ModelsConfig();
+
+  // The LIVE main connection (gh-1984 review thread 10): the media
+  // generation tools read `AgentCli._apiKey` / `state.model` per call, so
+  // a mid-session `/provider` switch re-points the same-host main-key
+  // reuse — the media read tools follow the same rule. Until the CLI is
+  // constructed (the eager boot resolution below runs first) the
+  // boot-resolved values serve; after, the accessors read the CLI live.
+  AgentCli? mediaMainConnection;
+  String liveMainBaseUrl() =>
+      mediaMainConnection?.agent.state.model.baseUrl ?? model.baseUrl;
+  String liveMainApiKey() => mediaMainConnection?.apiKey ?? apiKey;
+
+  /// The effective vision capability: `--vision-model` (the override,
+  /// hard-failing the boot without a key — unchanged) else the persisted
+  /// `models.slots.vision`, read live with the main connection in scope
+  /// (gh-184 same-host key reuse — review thread 2).
+  Future<InspectImageConfig?> resolveVisionConfig() => cliVisionSlotResolver(
+    flagModel: effective.visionModel,
+    flagBaseUrl: effective.visionBaseUrl,
+    modelsConfig: liveModels,
+    resolveKey: resolveMediaSlotKeyName,
+    // The main connection in scope = the LIVE model's endpoint (the same
+    // accessor MediaToolServices rides: `state.model.baseUrl`) — a
+    // `/models set vision <id>` slot with no apiKeyName on the SAME host
+    // reuses the main key (gh-184; review thread 2), and a mid-session
+    // `/provider` switch re-points the match (review thread 10).
+    mainBaseUrl: liveMainBaseUrl,
+    mainApiKey: liveMainApiKey,
+    flagConfig: (modelId, flagBaseUrl) => InspectImageConfig(
+      modelId: modelId,
+      apiKey: _resolveApiKey('vision', keyCache, fallback: liveMainApiKey()),
+      baseUrl: flagBaseUrl,
+    ),
+  )();
+
+  /// The effective transcription capability: `--transcribe-model` (the
+  /// override, unchanged) else the persisted `models.slots.transcription`
+  /// (same live + main-connection rules).
+  Future<TranscribeAudioConfig?> resolveTranscribeConfig() =>
+      cliTranscriptionSlotResolver(
+        flagModel: effective.transcribeModel,
+        flagBaseUrl: effective.transcribeBaseUrl,
+        modelsConfig: liveModels,
+        resolveKey: resolveMediaSlotKeyName,
+        // The main connection in scope = the LIVE model's endpoint (the
+        // same accessor MediaToolServices rides: `state.model.baseUrl`) —
+        // a `/models set` slot with no apiKeyName on the SAME host reuses
+        // the main key (gh-184; review thread 2), re-pointed live on a
+        // `/provider` switch (review thread 10).
+        mainBaseUrl: liveMainBaseUrl,
+        mainApiKey: liveMainApiKey,
+        flagConfig: (modelId, flagBaseUrl) => TranscribeAudioConfig(
+          modelId: modelId,
+          apiKey: _resolveApiKey(
+            'transcribe',
+            keyCache,
+            fallback: liveMainApiKey(),
+          ),
+          baseUrl: flagBaseUrl,
+        ),
+      )();
+
+  final visionConfig = await resolveVisionConfig();
+  final transcribeConfig = await resolveTranscribeConfig();
 
   // The process's single hub client instance: registered as the `hub`
   // plugin when enabled, and read by the settings-hub DAP / Hub flow's
@@ -1667,6 +1732,11 @@ Future<void> _runApp(List<String> args) async {
         sessionName: effective.session,
         visionConfig: visionConfig,
         transcribeConfig: transcribeConfig,
+        // gh-1984: the read auto-route re-resolves the slot per read
+        // (flag override kept); the audio/video read notes are the CLI
+        // surface's opt-in.
+        visionResolver: resolveVisionConfig,
+        mediaFileReadNotes: true,
         webSearchConfig: WebSearchConfig(secrets: webSearch),
         sqliteEngine: const Sqlite3Engine(),
         // The lsp tool: the io-side process transport spawns `dart
@@ -1745,9 +1815,10 @@ Future<void> _runApp(List<String> args) async {
         providersQueueRuntime: queueRuntime,
         // The live models config (`models:` section): `/models set`/`remove`
         // mutate its media slot overrides and `/model <name>` resolves its
-        // custom model definitions — persisted via persistConfig. An absent
-        // section starts as an empty config so the commands always work.
-        modelsConfig: saved.models ?? ModelsConfig(),
+        // custom model definitions — persisted via persistConfig. The SAME
+        // instance the media-slot resolvers read (liveModels above), so a
+        // mid-session slot edit applies without a restart.
+        modelsConfig: liveModels,
         onModelsConfigChanged: () async => persistConfig(),
         homeDir: home,
         tuiTheme: saved.tuiTheme,
@@ -1917,6 +1988,11 @@ Future<void> _runApp(List<String> args) async {
   } on ConfigException catch (error) {
     await failAfterPlugins(error.message);
   }
+  // The media-slot resolvers' live main connection (gh-1984 review thread
+  // 10): from here the accessors read the CLI's live key/model — a
+  // mid-session `/provider` switch re-points the same-host main-key reuse
+  // instead of leaving the boot-resolved pair pinned.
+  mediaMainConnection = cli;
   if (redactorAttached) attachSecretRedactor(cli.agent, redactor);
 
   // Issue #823: boot builds the queue runtime before the CLI (and its

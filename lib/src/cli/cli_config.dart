@@ -494,12 +494,13 @@ ImageRegistryConfig? parseImagesSection(Object? node) {
   if (node is! YamlMap) {
     throw ConfigException('images must be a map, got: $node');
   }
-  final (registry, maxPerRequest, maxBytesPerRequest, perModel) =
+  final (registry, maxPerRequest, maxBytesPerRequest, perModel, autoInspect) =
       _parseImagesEntries(node);
   if (registry == null &&
       maxPerRequest == null &&
       maxBytesPerRequest == null &&
-      perModel == null) {
+      perModel == null &&
+      autoInspect == null) {
     return null;
   }
   return ImageRegistryConfig(
@@ -507,16 +508,20 @@ ImageRegistryConfig? parseImagesSection(Object? node) {
     maxPerRequest: maxPerRequest ?? defaultMaxImagesPerRequest,
     maxBytesPerRequest: maxBytesPerRequest ?? defaultMaxImageBytesPerRequest,
     perModel: perModel ?? const {},
+    autoInspect: autoInspect ?? true,
   );
 }
 
-/// The four optional images knobs parsed from [node]; unset keys stay
+/// The five optional images knobs parsed from [node]; unset keys stay
 /// null (gh-1713 split of [parseImagesSection]).
-(bool?, int?, int?, Map<String, int>?) _parseImagesEntries(YamlMap node) {
+(bool?, int?, int?, Map<String, int>?, bool?) _parseImagesEntries(
+  YamlMap node,
+) {
   bool? registry;
   int? maxPerRequest;
   int? maxBytesPerRequest;
   Map<String, int>? perModel;
+  bool? autoInspect;
   for (final key in node.keys) {
     switch (key) {
       case 'registry':
@@ -527,11 +532,13 @@ ImageRegistryConfig? parseImagesSection(Object? node) {
         maxBytesPerRequest = _readImagesPositiveInt(node, '$key');
       case 'perModel':
         perModel = _readImagesPerModel(node);
+      case 'autoInspect':
+        autoInspect = _readImagesBool(node, '$key');
       default:
         throw ConfigException('unknown "images" key: $key');
     }
   }
-  return (registry, maxPerRequest, maxBytesPerRequest, perModel);
+  return (registry, maxPerRequest, maxBytesPerRequest, perModel, autoInspect);
 }
 
 bool _readImagesBool(YamlMap node, String key) {
@@ -1663,6 +1670,7 @@ final class CliConfig {
     if (config.maxBytesPerRequest != defaultMaxImageBytesPerRequest) {
       buffer.write('  maxBytesPerRequest: ${config.maxBytesPerRequest}\n');
     }
+    if (!config.autoInspect) buffer.write('  autoInspect: false\n');
     return buffer.toString();
   }
 
