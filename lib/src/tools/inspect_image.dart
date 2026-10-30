@@ -172,23 +172,6 @@ Future<_VisionOutcome> _collectVisionText(
   return (text: text?.trim() ?? '', usage: usage);
 }
 
-/// Streams a vision request and returns the final assistant text.
-Future<String> _inspectWithVisionModel(
-  InspectImageConfig config,
-  Uint8List bytes,
-  String mimeType,
-  String userPrompt, {
-  CancelToken? cancelToken,
-  void Function(Usage usage)? onUsage,
-}) => describeImageWithVisionModel(
-  config,
-  bytes,
-  mimeType,
-  userPrompt,
-  cancelToken: cancelToken,
-  onUsage: onUsage,
-);
-
 /// One vision-model request over [bytes]: the system prompt + the image +
 /// [userPrompt], streamed through [config]'s provider kind. Returns the
 /// final assistant text. Shared by the `inspect_image` tool and the read
@@ -235,7 +218,15 @@ Future<String> describeImageWithVisionModel(
 /// Parameters:
 /// - `path` (string, required): path to the image file.
 /// - `prompt` (string, optional): specific question or instructions.
-AgentTool inspectImageTool(ExecutionEnv env, InspectImageConfig config) {
+///
+/// [onUsage] receives the vision call's response usage (gh-1984 review
+/// thread 7) so the tool's spend is as visible in /cost as the read
+/// auto-route's; hosts without a sink leave it unset (untracked).
+AgentTool inspectImageTool(
+  ExecutionEnv env,
+  InspectImageConfig config, {
+  void Function(Usage usage)? onUsage,
+}) {
   return AgentTool(
     name: 'inspect_image',
     label: 'inspect_image',
@@ -278,11 +269,17 @@ AgentTool inspectImageTool(ExecutionEnv env, InspectImageConfig config) {
         throw StateError('Unsupported image format or not an image: $path');
       }
 
-      final description = await _inspectWithVisionModel(
+      // The shared vision helper direct (gh-1984 review thread 7): the
+      // cancel token aborts a hung vision stream MID-FLIGHT (not only the
+      // pre-call checkpoints), and the tool's spend rides onUsage like the
+      // auto-route's. The pass-through wrapper that dropped both is gone.
+      final description = await describeImageWithVisionModel(
         config,
         bytes,
         mimeType,
         prompt,
+        cancelToken: cancelToken,
+        onUsage: onUsage,
       );
       return ToolExecutionResult(content: [TextContent(text: description)]);
     },

@@ -295,97 +295,106 @@ void main() {
     },
   );
 
-  test('gh-1984: the sqlite read swap keeps the auto-route /cost sink', () async {
-    // The sqlite variant swap REBUILDS the read tool; the rebuilt variant
-    // must ride the SAME default /cost sink as the boot one (AC2): the
-    // auto-route's vision side-call lands in /stats even when the swap
-    // fired mid-session.
-    final img = Image(width: 2, height: 2)..getPixel(0, 0).r = 255;
-    await env.writeBinaryFile('/work/shot.png', Uint8List.fromList(encodePng(img)));
-    var calls = 0;
-    final client = http_testing.MockClient.streaming((request, body) async {
-      calls++;
-      final payload = jsonEncode({
-        'id': 'chatcmpl-test',
-        'object': 'chat.completion.chunk',
-        'created': 1234567890,
-        'model': 'glm-5.3-flash',
-        'choices': [
-          {
-            'index': 0,
-            'delta': {'role': 'assistant', 'content': 'A tiny red pixel.'},
-            'finish_reason': null,
-          },
-        ],
-      });
-      final done = jsonEncode({
-        'id': 'chatcmpl-test',
-        'object': 'chat.completion.chunk',
-        'created': 1234567890,
-        'model': 'glm-5.3-flash',
-        'choices': [
-          {'index': 0, 'delta': {}, 'finish_reason': 'stop'},
-        ],
-        'usage': {
-          'prompt_tokens': 1200,
-          'completion_tokens': 42,
-          'total_tokens': 1242,
-        },
-      });
-      final sse = Stream.fromIterable(['data: $payload\n\n', 'data: $done\n\n']);
-      return http.StreamedResponse(
-        sse.transform(utf8.encoder),
-        200,
-        headers: {'content-type': 'text/event-stream'},
+  test(
+    'gh-1984: the sqlite read swap keeps the auto-route /cost sink',
+    () async {
+      // The sqlite variant swap REBUILDS the read tool; the rebuilt variant
+      // must ride the SAME default /cost sink as the boot one (AC2): the
+      // auto-route's vision side-call lands in /stats even when the swap
+      // fired mid-session.
+      final img = Image(width: 2, height: 2)..getPixel(0, 0).r = 255;
+      await env.writeBinaryFile(
+        '/work/shot.png',
+        Uint8List.fromList(encodePng(img)),
       );
-    });
-    final fake = FakeStreamFunction([]);
-    final cli = AgentCli(
-      config: AgentCliConfig(
-        model: testModel,
-        apiKey: '[REDACTED:Sensitive-Value]',
-        env: env,
-        sessionRoot: '/sessions',
-        // The engine makes the BOOT read the sqlite variant; disabling the
-        // sqlite scope mid-session flips the variant — the swap this test
-        // exercises.
-        sqliteEngine: const Sqlite3Engine(),
-        visionResolver: () async => InspectImageConfig(
-          modelId: 'glm-5.3-flash',
+      var calls = 0;
+      final client = http_testing.MockClient.streaming((request, body) async {
+        calls++;
+        final payload = jsonEncode({
+          'id': 'chatcmpl-test',
+          'object': 'chat.completion.chunk',
+          'created': 1234567890,
+          'model': 'glm-5.3-flash',
+          'choices': [
+            {
+              'index': 0,
+              'delta': {'role': 'assistant', 'content': 'A tiny red pixel.'},
+              'finish_reason': null,
+            },
+          ],
+        });
+        final done = jsonEncode({
+          'id': 'chatcmpl-test',
+          'object': 'chat.completion.chunk',
+          'created': 1234567890,
+          'model': 'glm-5.3-flash',
+          'choices': [
+            {'index': 0, 'delta': {}, 'finish_reason': 'stop'},
+          ],
+          'usage': {
+            'prompt_tokens': 1200,
+            'completion_tokens': 42,
+            'total_tokens': 1242,
+          },
+        });
+        final sse = Stream.fromIterable([
+          'data: $payload\n\n',
+          'data: $done\n\n',
+        ]);
+        return http.StreamedResponse(
+          sse.transform(utf8.encoder),
+          200,
+          headers: {'content-type': 'text/event-stream'},
+        );
+      });
+      final fake = FakeStreamFunction([]);
+      final cli = AgentCli(
+        config: AgentCliConfig(
+          model: testModel,
           apiKey: '[REDACTED:Sensitive-Value]',
-          baseUrl: 'https://api.example.com/v1',
-          httpClient: client,
+          env: env,
+          sessionRoot: '/sessions',
+          // The engine makes the BOOT read the sqlite variant; disabling the
+          // sqlite scope mid-session flips the variant — the swap this test
+          // exercises.
+          sqliteEngine: const Sqlite3Engine(),
+          visionResolver: () async => InspectImageConfig(
+            modelId: 'glm-5.3-flash',
+            apiKey: '[REDACTED:Sensitive-Value]',
+            baseUrl: 'https://api.example.com/v1',
+            httpClient: client,
+          ),
         ),
-      ),
-      io: io,
-      streamFunction: fake.call,
-    );
-    final run = cli.run();
-    await waitForIt(() => cli.agent.state.tools.isNotEmpty);
-    AgentTool readOf() => cli.agent.state.tools
-        .whereType<AgentTool>()
-        .firstWhere((t) => t.name == 'read');
-    expect(readOf().description, contains(readSqliteSectionPrompt));
-    // The flip: the availability refresh swaps the registered read tool.
-    io.sendLine('/tools disable sqlite');
-    await waitForIt(
-      () => !readOf().description.contains(readSqliteSectionPrompt),
-      reason: 'the sqlite swap rebuilt the read tool',
-    );
-    await readOf().execute({'path': '/work/shot.png'}, null, null);
-    expect(calls, 1);
-    io.sendLine('/stats');
-    await waitForIt(() => io.out.toString().contains('total tokens:'));
-    io.sendLine('/exit');
-    await run;
-    expect(
-      io.out.toString(),
-      contains('total tokens: 1242'),
-      reason:
-          'the auto-route spend must join /cost through the default sink '
-          'even after the sqlite swap rebuilt the read tool',
-    );
-  });
+        io: io,
+        streamFunction: fake.call,
+      );
+      final run = cli.run();
+      await waitForIt(() => cli.agent.state.tools.isNotEmpty);
+      AgentTool readOf() => cli.agent.state.tools
+          .whereType<AgentTool>()
+          .firstWhere((t) => t.name == 'read');
+      expect(readOf().description, contains(readSqliteSectionPrompt));
+      // The flip: the availability refresh swaps the registered read tool.
+      io.sendLine('/tools disable sqlite');
+      await waitForIt(
+        () => !readOf().description.contains(readSqliteSectionPrompt),
+        reason: 'the sqlite swap rebuilt the read tool',
+      );
+      await readOf().execute({'path': '/work/shot.png'}, null, null);
+      expect(calls, 1);
+      io.sendLine('/stats');
+      await waitForIt(() => io.out.toString().contains('total tokens:'));
+      io.sendLine('/exit');
+      await run;
+      expect(
+        io.out.toString(),
+        contains('total tokens: 1242'),
+        reason:
+            'the auto-route spend must join /cost through the default sink '
+            'even after the sqlite swap rebuilt the read tool',
+      );
+    },
+  );
 
   test('gh-1984: inspect_image follows the LIVE vision slot (not the boot '
       'config)', () async {
@@ -404,7 +413,10 @@ void main() {
         sessionRoot: '/sessions',
         // No boot visionConfig — the resolver IS the capability.
         visionResolver: () async => slotServes
-            ? InspectImageConfig(modelId: 'glm-5.3-flash', apiKey: '[REDACTED:Sensitive-Value]')
+            ? InspectImageConfig(
+                modelId: 'glm-5.3-flash',
+                apiKey: '[REDACTED:Sensitive-Value]',
+              )
             : null,
       ),
       io: io,

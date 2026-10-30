@@ -865,7 +865,16 @@ List<AgentTool> _buildCoreTools({
     // above) — one rule for every fs-touching tool.
     ...?services.vision == null
         ? null
-        : [inspectImageTool(env, services.vision!)],
+        : [
+            // gh-1984 review thread 7: the tool's own vision spend rides
+            // the host sink (the same default the read auto-route gets),
+            // so /cost sees inspect_image like every other media call.
+            inspectImageTool(
+              env,
+              services.vision!,
+              onUsage: services.onImageInspectUsage,
+            ),
+          ],
     ...?services.transcribe == null
         ? null
         : [

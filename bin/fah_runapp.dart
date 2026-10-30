@@ -1070,38 +1070,56 @@ Future<void> _runApp(List<String> args) async {
     return keyCache.read(name);
   }
 
+  // The live models config the slot resolvers read: ONE instance shared
+  // with AgentCliConfig.modelsConfig below, which the `/models set` flow
+  // mutates — on a config with no `models:` section the empty fallback is
+  // the instance the commands mutate, so a mid-session slot edit reaches
+  // the per-read resolvers (gh-1984 review thread 6).
+  final liveModels = saved.models ?? ModelsConfig();
+
   /// The effective vision capability: `--vision-model` (the override,
   /// hard-failing the boot without a key — unchanged) else the persisted
-  /// `models.slots.vision`.
-  Future<InspectImageConfig?> resolveVisionConfig() async {
-    if (effective.visionModel != null) {
-      return InspectImageConfig(
-        modelId: effective.visionModel!,
-        apiKey: _resolveApiKey('vision', keyCache, fallback: apiKey),
-        baseUrl: effective.visionBaseUrl,
-      );
-    }
-    return resolveVisionSlotInspectConfig(
-      saved.models,
-      resolveKey: resolveMediaSlotKeyName,
-    );
-  }
+  /// `models.slots.vision`, read live with the main connection in scope
+  /// (gh-184 same-host key reuse — review thread 2).
+  Future<InspectImageConfig?> resolveVisionConfig() => cliVisionSlotResolver(
+    flagModel: effective.visionModel,
+    flagBaseUrl: effective.visionBaseUrl,
+    modelsConfig: liveModels,
+    resolveKey: resolveMediaSlotKeyName,
+    // The main connection in scope = the boot model's endpoint (the same
+    // accessor MediaToolServices rides: `state.model.baseUrl`) — a
+    // `/models set vision <id>` slot with no apiKeyName on the SAME host
+    // reuses the main key (gh-184; review thread 2).
+    mainBaseUrl: model.baseUrl,
+    mainApiKey: apiKey,
+    flagConfig: (modelId, flagBaseUrl) => InspectImageConfig(
+      modelId: modelId,
+      apiKey: _resolveApiKey('vision', keyCache, fallback: apiKey),
+      baseUrl: flagBaseUrl,
+    ),
+  )();
 
   /// The effective transcription capability: `--transcribe-model` (the
-  /// override, unchanged) else the persisted `models.slots.transcription`.
-  Future<TranscribeAudioConfig?> resolveTranscribeConfig() async {
-    if (effective.transcribeModel != null) {
-      return TranscribeAudioConfig(
-        modelId: effective.transcribeModel!,
-        apiKey: _resolveApiKey('transcribe', keyCache, fallback: apiKey),
-        baseUrl: effective.transcribeBaseUrl,
-      );
-    }
-    return resolveTranscriptionSlotConfig(
-      saved.models,
-      resolveKey: resolveMediaSlotKeyName,
-    );
-  }
+  /// override, unchanged) else the persisted `models.slots.transcription`
+  /// (same live + main-connection rules).
+  Future<TranscribeAudioConfig?> resolveTranscribeConfig() =>
+      cliTranscriptionSlotResolver(
+        flagModel: effective.transcribeModel,
+        flagBaseUrl: effective.transcribeBaseUrl,
+        modelsConfig: liveModels,
+        resolveKey: resolveMediaSlotKeyName,
+        // The main connection in scope = the boot model's endpoint (the
+        // same accessor MediaToolServices rides: `state.model.baseUrl`) —
+        // a `/models set` slot with no apiKeyName on the SAME host reuses
+        // the main key (gh-184; review thread 2).
+        mainBaseUrl: model.baseUrl,
+        mainApiKey: apiKey,
+        flagConfig: (modelId, flagBaseUrl) => TranscribeAudioConfig(
+          modelId: modelId,
+          apiKey: _resolveApiKey('transcribe', keyCache, fallback: apiKey),
+          baseUrl: flagBaseUrl,
+        ),
+      )();
 
   final visionConfig = await resolveVisionConfig();
   final transcribeConfig = await resolveTranscribeConfig();
@@ -1780,9 +1798,10 @@ Future<void> _runApp(List<String> args) async {
         providersQueueRuntime: queueRuntime,
         // The live models config (`models:` section): `/models set`/`remove`
         // mutate its media slot overrides and `/model <name>` resolves its
-        // custom model definitions — persisted via persistConfig. An absent
-        // section starts as an empty config so the commands always work.
-        modelsConfig: saved.models ?? ModelsConfig(),
+        // custom model definitions — persisted via persistConfig. The SAME
+        // instance the media-slot resolvers read (liveModels above), so a
+        // mid-session slot edit applies without a restart.
+        modelsConfig: liveModels,
         onModelsConfigChanged: () async => persistConfig(),
         homeDir: home,
         tuiTheme: saved.tuiTheme,

@@ -180,6 +180,13 @@ List<AgentTool> builtinTools(
     seconds: defaultShellAutoBackgroundSeconds,
   ),
   Future<InspectImageConfig?> Function()? vision,
+
+  /// TEST SEAM (gh-1984 review thread 8): no production caller passes
+  /// this — hosts read the boot-published process-global
+  /// `images.autoInspect` knob (`imageRegistryConfig`) inside `read`.
+  /// Passing it here would fork a host from the process-global truth;
+  /// it exists so the tests can fault-inject without mutating the
+  /// global (same spirit as [builtinText]).
   bool Function()? autoInspect,
   void Function(Usage usage)? onImageUsage,
   bool mediaFileReadNotes = false,

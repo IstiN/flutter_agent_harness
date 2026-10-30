@@ -334,89 +334,130 @@ Future<ToolExecutionResult?> _readImageResult(
     );
   }
 
-  // Non-vision chat model: resolve the vision capability and route.
-  final visionConfig = await vision?.call();
-  // Default: the process-global `images.autoInspect` knob (published by
-  // hosts at boot, same pattern as the other registry knobs).
-  final inspectOn =
-      visionConfig != null &&
-      (autoInspect?.call() ?? imageRegistryConfig.autoInspect);
-  if (inspectOn) {
-    // The images.maxBytesPerRequest budget (issue #1916) applies to the
-    // auto-route call too: base64 chars are wire bytes 1:1.
-    final budget = imageRegistryConfig.maxBytesPerRequest;
-    if (processed.base64.length > budget) {
-      return _omittedImageResult(
-        path,
-        processed,
-        extra:
-            '\n[Vision inspection skipped: the image exceeds '
-            'images.maxBytesPerRequest ($budget bytes).]',
-      );
-    }
-    try {
-      // The PROCESSED payload rides (gh-1984 review thread 1): the gate
-      // measured `processed.base64`, the mime names the converted/kept
-      // payload, and the request must carry exactly those bytes — a
-      // resized/converted original (the common photo/screenshot case)
-      // uploaded raw would bypass `images.maxBytesPerRequest` and ship
-      // bytes disagreeing with the declared mime.
-      final description = await describeImageWithVisionModel(
-        visionConfig,
-        base64Decode(processed.base64),
-        processed.mimeType,
-        '',
-        cancelToken: cancelToken,
-        onUsage: onImageUsage,
-      );
-      cancelToken?.throwIfCancelled();
-      // The auto-route REPLACES the bare omission note (gh-1984 AC2): the
-      // image bytes are not attached, the vision model's description rides
-      // inline with the attribution marker.
-      return ToolExecutionResult(
-        content: [
-          TextContent(
-            text:
-                '${_imageNoteHeader(path, processed, null)}\n'
-                '[The image is not attached — the current model has no image '
-                'input.]\n'
-                '[via vision model ${visionConfig.modelId}]\n'
-                '$description',
-          ),
-        ],
-      );
-    } on CancelledException {
-      rethrow;
-    } on Object catch (error) {
-      // A cancel surfacing as a provider stream error must stay a cancel
-      // (AC6), not a degrade note.
-      cancelToken?.throwIfCancelled();
-      // Degrade, never fail the read (AC6): the omission note names why.
-      return _omittedImageResult(
-        path,
-        processed,
-        extra:
-            '\n[Vision inspection via vision model '
-            '${visionConfig.modelId} failed: $error. The read continues '
-            'without the image.]',
-      );
-    }
-  }
+  // Non-vision chat model: resolve the vision capability and route
+  // (auto-route, AC3 note, or AC4 note — see the helper).
+  return _routeNonVisionImage(
+    path,
+    processed,
+    vision: vision,
+    autoInspect: autoInspect,
+    onImageUsage: onImageUsage,
+    cancelToken: cancelToken,
+  );
+}
 
-  // Auto-route off (AC3) or no vision model at all (AC4): the omission
-  // note plus the guidance the agent can act on.
-  String extra;
-  if (visionConfig != null) {
-    extra =
-        '\n[A vision model is configured (${visionConfig.modelId}): call '
-        'inspect_image to describe this image.]';
-  } else {
-    extra =
-        '\n[No vision model is configured — set one with /settings → Media '
-        'models → vision (models.slots.vision) or --vision-model <id> to '
-        'let the agent see images.]';
+/// The non-vision branch of [_readImageResult] (gh-1984): resolves the
+/// live vision capability, then either auto-routes the description
+/// (AC2), or builds the guidance note (AC3 autoInspect off / AC4 no
+/// vision model). Split from the dispatcher so the gate's complexity
+/// census stays per-stage (the CI CRAP ratchet measures per function).
+Future<ToolExecutionResult> _routeNonVisionImage(
+  String path,
+  _InlineImageResult processed, {
+  Future<InspectImageConfig?> Function()? vision,
+  bool Function()? autoInspect,
+  void Function(Usage usage)? onImageUsage,
+  CancelToken? cancelToken,
+}) async {
+  final visionConfig = await vision?.call();
+  if (visionConfig == null ||
+      !(autoInspect?.call() ?? imageRegistryConfig.autoInspect)) {
+    return _omittedImageResult(
+      path,
+      processed,
+      extra: _nonVisionGuidance(visionConfig),
+    );
   }
-  return _omittedImageResult(path, processed, extra: extra);
+  return _autoRouteVisionDescription(
+    path,
+    processed,
+    visionConfig,
+    onImageUsage: onImageUsage,
+    cancelToken: cancelToken,
+  );
+}
+
+/// The AC3/AC4 note: how the agent gets the image seen when the
+/// auto-route is not taking it — name the tool + the configured model
+/// (AC3), or the configure hint (AC4).
+String _nonVisionGuidance(InspectImageConfig? visionConfig) {
+  if (visionConfig != null) {
+    return '\n[A vision model is configured (${visionConfig.modelId}): call '
+        'inspect_image to describe this image.]';
+  }
+  return '\n[No vision model is configured — set one with /settings → Media '
+      'models → vision (models.slots.vision) or --vision-model <id> to '
+      'let the agent see images.]';
+}
+
+/// One vision-model call for the read (gh-1984 AC2): the budget gate, the
+/// inline description with the attribution marker, and the AC6 degrades.
+Future<ToolExecutionResult> _autoRouteVisionDescription(
+  String path,
+  _InlineImageResult processed,
+  InspectImageConfig visionConfig, {
+  void Function(Usage usage)? onImageUsage,
+  CancelToken? cancelToken,
+}) async {
+  // The images.maxBytesPerRequest budget (issue #1916) applies to the
+  // auto-route call too: base64 chars are wire bytes 1:1.
+  final budget = imageRegistryConfig.maxBytesPerRequest;
+  if (processed.base64.length > budget) {
+    return _omittedImageResult(
+      path,
+      processed,
+      extra:
+          '\n[Vision inspection skipped: the image exceeds '
+          'images.maxBytesPerRequest ($budget bytes).]',
+    );
+  }
+  try {
+    // The PROCESSED payload rides (gh-1984 review thread 1): the gate
+    // measured `processed.base64`, the mime names the converted/kept
+    // payload, and the request must carry exactly those bytes — a
+    // resized/converted original (the common photo/screenshot case)
+    // uploaded raw would bypass `images.maxBytesPerRequest` and ship
+    // bytes disagreeing with the declared mime.
+    final description = await describeImageWithVisionModel(
+      visionConfig,
+      base64Decode(processed.base64),
+      processed.mimeType,
+      '',
+      cancelToken: cancelToken,
+      onUsage: onImageUsage,
+    );
+    cancelToken?.throwIfCancelled();
+    // The auto-route REPLACES the bare omission note (gh-1984 AC2): the
+    // image bytes are not attached, the vision model's description rides
+    // inline with the attribution marker.
+    return ToolExecutionResult(
+      content: [
+        TextContent(
+          text:
+              '${_imageNoteHeader(path, processed, null)}\n'
+              '[The image is not attached — the current model has no image '
+              'input.]\n'
+              '[via vision model ${visionConfig.modelId}]\n'
+              '$description',
+        ),
+      ],
+    );
+  } on CancelledException {
+    rethrow;
+  } on Object catch (error) {
+    // A cancel surfacing as a provider stream error must stay a cancel
+    // (AC6), not a degrade note.
+    cancelToken?.throwIfCancelled();
+    // Degrade, never fail the read (AC6): the omission note names why.
+    return _omittedImageResult(
+      path,
+      processed,
+      extra:
+          '\n[Vision inspection via vision model '
+          '${visionConfig.modelId} failed: $error. The read continues '
+          'without the image.]',
+    );
+  }
 }
 
 /// The non-vision degrade shape (gh-1984): note header + the pi omission

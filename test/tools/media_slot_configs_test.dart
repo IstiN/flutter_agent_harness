@@ -180,60 +180,66 @@ void main() {
   });
 
   group('cliVisionSlotResolver (the host wiring builder)', () {
-    test('the --vision-model flag is the override even when a slot exists',
-        () async {
-      var flagBuilt = 0;
-      final resolve = cliVisionSlotResolver(
-        flagModel: 'flag-vision',
-        flagBaseUrl: 'https://flag.example.com/v1',
-        modelsConfig: _models('vision'),
-        resolveKey: (_) async => 'slot-key',
-        mainBaseUrl: 'https://main.example.com/v1',
-        mainApiKey: 'main-key',
-        flagConfig: (modelId, baseUrl) {
-          flagBuilt++;
-          return InspectImageConfig(modelId: modelId, apiKey: 'flag-key', baseUrl: baseUrl);
-        },
-      );
-      final config = await resolve();
-      expect(config!.modelId, 'flag-vision');
-      expect(config.baseUrl, 'https://flag.example.com/v1');
-      expect(flagBuilt, 1, reason: 'the flag config is built lazily, once');
-    });
-
     test(
-      'flagless: the slot serves from the LIVE models instance '
-      '(a mid-session set is visible — review thread 6)',
+      'the --vision-model flag is the override even when a slot exists',
       () async {
-        // Fresh install: no `models:` section — the host passes the EMPTY
-        // fallback instance, the same one its `/models set` mutates. The
-        // resolver must read THAT instance at call time, not a snapshot.
-        final liveModels = ModelsConfig();
+        var flagBuilt = 0;
         final resolve = cliVisionSlotResolver(
-          modelsConfig: liveModels,
+          flagModel: 'flag-vision',
+          flagBaseUrl: 'https://flag.example.com/v1',
+          modelsConfig: _models('vision'),
           resolveKey: (_) async => 'slot-key',
           mainBaseUrl: 'https://main.example.com/v1',
           mainApiKey: 'main-key',
-          flagConfig: (modelId, baseUrl) =>
-              InspectImageConfig(modelId: modelId, apiKey: 'flag-key', baseUrl: baseUrl),
-        );
-        expect(await resolve(), isNull, reason: 'no slot yet');
-        liveModels.setSlotOverride(
-          'vision',
-          MediaSlotModelConfig(
-            providerKind: 'openai-completions',
-            baseUrl: 'https://api.example.com/v1',
-            modelId: 'slot-model',
-          ),
+          flagConfig: (modelId, baseUrl) {
+            flagBuilt++;
+            return InspectImageConfig(
+              modelId: modelId,
+              apiKey: 'flag-key',
+              baseUrl: baseUrl,
+            );
+          },
         );
         final config = await resolve();
-        expect(config, isNotNull);
-        expect(config!.modelId, 'slot-model');
-        // …and withdrawing it live degrades to null (no stale config).
-        expect(liveModels.removeSlotOverride('vision'), isTrue);
-        expect(await resolve(), isNull);
+        expect(config!.modelId, 'flag-vision');
+        expect(config.baseUrl, 'https://flag.example.com/v1');
+        expect(flagBuilt, 1, reason: 'the flag config is built lazily, once');
       },
     );
+
+    test('flagless: the slot serves from the LIVE models instance '
+        '(a mid-session set is visible — review thread 6)', () async {
+      // Fresh install: no `models:` section — the host passes the EMPTY
+      // fallback instance, the same one its `/models set` mutates. The
+      // resolver must read THAT instance at call time, not a snapshot.
+      final liveModels = ModelsConfig();
+      final resolve = cliVisionSlotResolver(
+        modelsConfig: liveModels,
+        resolveKey: (_) async => 'slot-key',
+        mainBaseUrl: 'https://main.example.com/v1',
+        mainApiKey: 'main-key',
+        flagConfig: (modelId, baseUrl) => InspectImageConfig(
+          modelId: modelId,
+          apiKey: 'flag-key',
+          baseUrl: baseUrl,
+        ),
+      );
+      expect(await resolve(), isNull, reason: 'no slot yet');
+      liveModels.setSlotOverride(
+        'vision',
+        MediaSlotModelConfig(
+          providerKind: 'openai-completions',
+          baseUrl: 'https://api.example.com/v1',
+          modelId: 'slot-model',
+        ),
+      );
+      final config = await resolve();
+      expect(config, isNotNull);
+      expect(config!.modelId, 'slot-model');
+      // …and withdrawing it live degrades to null (no stale config).
+      expect(liveModels.removeSlotOverride('vision'), isTrue);
+      expect(await resolve(), isNull);
+    });
 
     test(
       'flagless: a same-host slot with no apiKeyName reuses the MAIN key '
@@ -253,8 +259,11 @@ void main() {
           resolveKey: (_) async => 'unused-named',
           mainBaseUrl: 'https://main.example.com/v1',
           mainApiKey: 'main-key',
-          flagConfig: (modelId, baseUrl) =>
-              InspectImageConfig(modelId: modelId, apiKey: 'flag-key', baseUrl: baseUrl),
+          flagConfig: (modelId, baseUrl) => InspectImageConfig(
+            modelId: modelId,
+            apiKey: 'flag-key',
+            baseUrl: baseUrl,
+          ),
         );
         final config = await resolve();
         expect(config, isNotNull);
@@ -269,32 +278,37 @@ void main() {
       },
     );
 
-    test('flagless: a cross-host slot without apiKeyName resolves empty',
-        () async {
-      final liveModels = ModelsConfig(
-        slots: {
-          'vision': MediaSlotModelConfig(
-            providerKind: 'openai-completions',
-            baseUrl: 'https://other.example.com/v1',
-            modelId: 'slot-model',
+    test(
+      'flagless: a cross-host slot without apiKeyName resolves empty',
+      () async {
+        final liveModels = ModelsConfig(
+          slots: {
+            'vision': MediaSlotModelConfig(
+              providerKind: 'openai-completions',
+              baseUrl: 'https://other.example.com/v1',
+              modelId: 'slot-model',
+            ),
+          },
+        );
+        final resolve = cliVisionSlotResolver(
+          modelsConfig: liveModels,
+          resolveKey: (_) async => null,
+          mainBaseUrl: 'https://main.example.com/v1',
+          mainApiKey: 'main-key',
+          flagConfig: (modelId, baseUrl) => InspectImageConfig(
+            modelId: modelId,
+            apiKey: 'flag-key',
+            baseUrl: baseUrl,
           ),
-        },
-      );
-      final resolve = cliVisionSlotResolver(
-        modelsConfig: liveModels,
-        resolveKey: (_) async => null,
-        mainBaseUrl: 'https://main.example.com/v1',
-        mainApiKey: 'main-key',
-        flagConfig: (modelId, baseUrl) =>
-            InspectImageConfig(modelId: modelId, apiKey: 'flag-key', baseUrl: baseUrl),
-      );
-      // Honesty at call time: the config builds (the slot IS configured),
-      // the empty key surfaces as the provider's auth error, and the read
-      // auto-route degrades (AC6) instead of hiding the misconfiguration.
-      final config = await resolve();
-      expect(config, isNotNull);
-      expect(config!.apiKey, isEmpty);
-    });
+        );
+        // Honesty at call time: the config builds (the slot IS configured),
+        // the empty key surfaces as the provider's auth error, and the read
+        // auto-route degrades (AC6) instead of hiding the misconfiguration.
+        final config = await resolve();
+        expect(config, isNotNull);
+        expect(config!.apiKey, isEmpty);
+      },
+    );
   });
 
   group('cliTranscriptionSlotResolver (the host wiring builder)', () {
@@ -306,40 +320,43 @@ void main() {
         resolveKey: (_) async => 'slot-key',
         mainBaseUrl: 'https://main.example.com/v1',
         mainApiKey: 'main-key',
-        flagConfig: (modelId, baseUrl) =>
-            TranscribeAudioConfig(modelId: modelId, apiKey: 'flag-key', baseUrl: baseUrl),
+        flagConfig: (modelId, baseUrl) => TranscribeAudioConfig(
+          modelId: modelId,
+          apiKey: 'flag-key',
+          baseUrl: baseUrl,
+        ),
       );
       final config = await resolve();
       expect(config!.modelId, 'flag-transcribe');
       expect(config.baseUrl, 'https://flag.example.com/v1');
     });
 
-    test(
-      'flagless: the slot serves live and the same-host main-key rule '
-      'applies',
-      () async {
-        final liveModels = ModelsConfig();
-        final resolve = cliTranscriptionSlotResolver(
-          modelsConfig: liveModels,
-          resolveKey: (_) async => 'named',
-          mainBaseUrl: 'https://main.example.com/v1',
-          mainApiKey: 'main-key',
-          flagConfig: (modelId, baseUrl) =>
-              TranscribeAudioConfig(modelId: modelId, apiKey: 'flag-key', baseUrl: baseUrl),
-        );
-        expect(await resolve(), isNull);
-        liveModels.setSlotOverride(
-          'transcription',
-          MediaSlotModelConfig(
-            providerKind: 'openai-completions',
-            baseUrl: 'https://main.example.com/v1',
-            modelId: 'slot-model',
-          ),
-        );
-        final config = await resolve();
-        expect(config!.modelId, 'slot-model');
-        expect(config.apiKey, 'main-key');
-      },
-    );
+    test('flagless: the slot serves live and the same-host main-key rule '
+        'applies', () async {
+      final liveModels = ModelsConfig();
+      final resolve = cliTranscriptionSlotResolver(
+        modelsConfig: liveModels,
+        resolveKey: (_) async => 'named',
+        mainBaseUrl: 'https://main.example.com/v1',
+        mainApiKey: 'main-key',
+        flagConfig: (modelId, baseUrl) => TranscribeAudioConfig(
+          modelId: modelId,
+          apiKey: 'flag-key',
+          baseUrl: baseUrl,
+        ),
+      );
+      expect(await resolve(), isNull);
+      liveModels.setSlotOverride(
+        'transcription',
+        MediaSlotModelConfig(
+          providerKind: 'openai-completions',
+          baseUrl: 'https://main.example.com/v1',
+          modelId: 'slot-model',
+        ),
+      );
+      final config = await resolve();
+      expect(config!.modelId, 'slot-model');
+      expect(config.apiKey, 'main-key');
+    });
   });
 }
