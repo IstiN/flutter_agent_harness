@@ -351,6 +351,8 @@ Future<ToolExecutionResult?> _readImageResult(
 /// (AC2), or builds the guidance note (AC3 autoInspect off / AC4 no
 /// vision model). Split from the dispatcher so the gate's complexity
 /// census stays per-stage (the CI CRAP ratchet measures per function).
+/// [autoInspect] is a test seam (see [readFileTool]); production reads
+/// the boot-published `imageRegistryConfig.autoInspect` global.
 Future<ToolExecutionResult> _routeNonVisionImage(
   String path,
   _InlineImageResult processed, {
