@@ -521,9 +521,7 @@ class _MediaSlotModelPageState extends State<MediaSlotModelPage> {
           );
       final override = widget.modelsFetcher;
       final report = override != null
-          ? ModelsFetchReport(
-              info: await override(baseUrl, apiKey: key),
-            )
+          ? ModelsFetchReport(info: await override(baseUrl, apiKey: key))
           : await fetchModelsForEndpointReport(
               baseUrl,
               apiKey: key,

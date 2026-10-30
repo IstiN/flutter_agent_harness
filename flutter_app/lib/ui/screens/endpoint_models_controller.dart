@@ -91,9 +91,7 @@ final class EndpointModelsController {
       final key = apiKey().trim();
       final override = overrideFetcher();
       final report = override != null
-          ? ModelsFetchReport(
-              info: await override(endpointUrl, apiKey: key),
-            )
+          ? ModelsFetchReport(info: await override(endpointUrl, apiKey: key))
           : await fetchModelsForEndpointReport(
               endpointUrl,
               apiKey: key,

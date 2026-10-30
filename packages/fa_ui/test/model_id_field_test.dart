@@ -175,7 +175,8 @@ void main() {
     final focusNode = FocusNode();
     addTearDown(controller.dispose);
     addTearDown(focusNode.dispose);
-    const reason = 'token exchange failed: GitHub token rejected (401) — '
+    const reason =
+        'token exchange failed: GitHub token rejected (401) — '
         'use the OAuth device flow';
     await tester.pumpWidget(
       MaterialApp(
@@ -194,8 +195,9 @@ void main() {
     expect(find.textContaining('token exchange failed'), findsOneWidget);
   });
 
-  testWidgets('the empty-reason is hidden when models were listed',
-      (tester) async {
+  testWidgets('the empty-reason is hidden when models were listed', (
+    tester,
+  ) async {
     final controller = TextEditingController();
     final focusNode = FocusNode();
     addTearDown(controller.dispose);

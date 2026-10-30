@@ -25,10 +25,8 @@ CopilotConnectCallbacks _fakes({
   Future<String> Function(CopilotDeviceCode deviceCode)? poll,
   Future<String> Function(String githubToken)? login,
   Future<List<String>> Function(String githubToken, String baseUrl)? models,
-  Future<(List<String>, String?)> Function(
-    String githubToken,
-    String baseUrl,
-  )? modelsReport,
+  Future<(List<String>, String?)> Function(String githubToken, String baseUrl)?
+  modelsReport,
 }) {
   return CopilotConnectCallbacks(
     requestDeviceCode: start ?? (() async => _deviceCode),
@@ -337,10 +335,11 @@ void main() {
     await _pump(
       tester,
       _fakes(
-        modelsReport:
-            (_, _) async =>
-                const (<String>[], 'token exchange failed: GitHub token '
-                    'rejected (401) — use the OAuth device flow'),
+        modelsReport: (_, _) async => const (
+          <String>[],
+          'token exchange failed: GitHub token '
+              'rejected (401) — use the OAuth device flow',
+        ),
       ),
       (r) => result = r,
     );
@@ -356,15 +355,13 @@ void main() {
     expect(result, isNull);
   });
 
-  testWidgets('a report callback listing models shows them with no reason',
-      (tester) async {
+  testWidgets('a report callback listing models shows them with no reason', (
+    tester,
+  ) async {
     CopilotConnectResult? result;
     await _pump(
       tester,
-      _fakes(
-        modelsReport:
-            (_, _) async => (const ['copilot-model-x'], null),
-      ),
+      _fakes(modelsReport: (_, _) async => (const ['copilot-model-x'], null)),
       (r) => result = r,
     );
 

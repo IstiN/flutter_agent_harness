@@ -97,8 +97,7 @@ void main() {
   test('/models prints the HTTP branch with the tier-host hint for an '
       'exchanging provider', () async {
     final fake = FakeStreamFunction([]);
-    final store = FakeSecureKeyStore()
-      ..map['FA_KEY_COPILOT_ISTI'] = 'gho_dead';
+    final store = FakeSecureKeyStore()..map['FA_KEY_COPILOT_ISTI'] = 'gho_dead';
     final cache = SecureKeyCache(store);
     await cache.probe();
     final client = http_testing.MockClient((request) async {
@@ -129,41 +128,44 @@ void main() {
     expect(out, contains('github.com/settings/copilot'));
   });
 
-  test('/models of a healthy copilot provider adds no failure section',
-      () async {
-    final fake = FakeStreamFunction([]);
-    final store = FakeSecureKeyStore()
-      ..map['FA_KEY_COPILOT_ISTI'] = 'gho_ok';
-    final cache = SecureKeyCache(store);
-    await cache.probe();
-    final client = http_testing.MockClient((request) async {
-      if (request.url.host == 'api.github.com') {
+  test(
+    '/models of a healthy copilot provider adds no failure section',
+    () async {
+      final fake = FakeStreamFunction([]);
+      final store = FakeSecureKeyStore()..map['FA_KEY_COPILOT_ISTI'] = 'gho_ok';
+      final cache = SecureKeyCache(store);
+      await cache.probe();
+      final client = http_testing.MockClient((request) async {
+        if (request.url.host == 'api.github.com') {
+          return http.Response(
+            '{"token":"cop-tok","expires_at":9999999999}',
+            200,
+          );
+        }
         return http.Response(
-          '{"token":"cop-tok","expires_at":9999999999}',
+          '{"data":[{"id":"gpt-4.1","model_picker_enabled":true,'
+          '"supported_endpoints":["/chat/completions"]}]}',
           200,
         );
-      }
-      return http.Response(
-        '{"data":[{"id":"gpt-4.1","model_picker_enabled":true,'
-        '"supported_endpoints":["/chat/completions"]}]}',
-        200,
+      });
+      final cli = cliFor(
+        fake.call,
+        modelsHttpClient: client,
+        secureKeys: cache,
+        customProviders: copilotRegistry('FA_KEY_COPILOT_ISTI'),
       );
-    });
-    final cli = cliFor(
-      fake.call,
-      modelsHttpClient: client,
-      secureKeys: cache,
-      customProviders: copilotRegistry('FA_KEY_COPILOT_ISTI'),
-    );
-    final run = cli.run();
+      final run = cli.run();
 
-    io.sendLine('/models');
-    await waitForIt(() => io.out.toString().contains('models (provider/model):'));
-    io.sendLine('/exit');
-    await run;
+      io.sendLine('/models');
+      await waitForIt(
+        () => io.out.toString().contains('models (provider/model):'),
+      );
+      io.sendLine('/exit');
+      await run;
 
-    final out = io.out.toString();
-    expect(out, contains('copilot-isti/gpt-4.1'));
-    expect(out, isNot(contains('fetch failures:')));
-  });
+      final out = io.out.toString();
+      expect(out, contains('copilot-isti/gpt-4.1'));
+      expect(out, isNot(contains('fetch failures:')));
+    },
+  );
 }

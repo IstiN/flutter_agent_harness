@@ -19,7 +19,8 @@ import 'codex_transport.dart';
 import 'copilot_oauth.dart';
 import 'dial.dart';
 import 'models_endpoint.dart';
-import 'provider_common.dart' show effectiveProviderConnectTimeout, providerTimeoutsOverride;
+import 'provider_common.dart'
+    show effectiveProviderConnectTimeout, providerTimeoutsOverride;
 import 'remote_catalog.dart';
 
 /// The [fetchModelsForEndpoint] `provider` hints the dialects match on.
@@ -547,7 +548,8 @@ final class _CopilotDialect extends ModelListDialect {
       final failedReason = primary.diagnostic!.message;
       return ModelsFetchReport(
         info: secondary.info,
-        note: 'models via the pat-direct fallback (the exchange path '
+        note:
+            'models via the pat-direct fallback (the exchange path '
             'failed: $failedReason)',
         droppedModels: secondary.droppedModels,
       );
@@ -564,7 +566,8 @@ final class _CopilotDialect extends ModelListDialect {
         path: a.path,
         httpStatus: a.httpStatus ?? b.httpStatus,
         timedOut: a.timedOut || b.timedOut,
-        message: '${a.path} path: ${a.message}; '
+        message:
+            '${a.path} path: ${a.message}; '
             '${b.path} path: ${b.message}',
         hint: a.hint ?? b.hint,
       ),
@@ -604,7 +607,8 @@ final class _CopilotDialect extends ModelListDialect {
           stage: ModelsFetchDiagnostic.stageExchange,
           path: ModelsFetchDiagnostic.pathExchange,
           timedOut: true,
-          message: 'token exchange timed out after '
+          message:
+              'token exchange timed out after '
               '${effectiveProviderConnectTimeout.inSeconds}s',
           hint: _exchangeFailureHint(apiKey),
         ),
@@ -630,11 +634,12 @@ final class _CopilotDialect extends ModelListDialect {
     // Tier sanity (gh-1990): a no-proxy-ep token (individual, by design)
     // aimed at a business/enterprise configured host is the classic
     // misrouting — name it instead of letting the wrong host 404 silently.
-    final String? tierHint = tokenBase == null &&
+    final String? tierHint =
+        tokenBase == null &&
             Uri.tryParse(configuredBase)?.host != _individualApiHost
         ? 'this token carries no proxy-ep (individual tokens serve from '
-            '$copilotIndividualBaseUrl) — check the configured base URL '
-            '($configuredBase)'
+              '$copilotIndividualBaseUrl) — check the configured base URL '
+              '($configuredBase)'
         : null;
     return _fetchModelsList(
       effectiveBase,
@@ -681,7 +686,8 @@ final class _CopilotDialect extends ModelListDialect {
           stage: ModelsFetchDiagnostic.stageModels,
           path: path,
           timedOut: true,
-          message: '$base/models timed out after '
+          message:
+              '$base/models timed out after '
               '${_copilotModelsFetchTimeout.inSeconds}s',
           hint: extraHint,
         ),
@@ -719,7 +725,7 @@ final class _CopilotDialect extends ModelListDialect {
         note: dropped.isEmpty
             ? null
             : '${dropped.length} of $fetchedCount models filtered '
-                '(${_filterReasonSummary(dropped)})',
+                  '(${_filterReasonSummary(dropped)})',
         droppedModels: dropped,
       );
     }
@@ -732,7 +738,7 @@ final class _CopilotDialect extends ModelListDialect {
       final message = shaped
           ? '$base/models answered with no models (HTTP 200, empty list)'
           : '$base/models answered an unexpected payload shape — no '
-              '"data" list (HTTP 200)';
+                '"data" list (HTTP 200)';
       return ModelsFetchReport(
         info: info,
         diagnostic: ModelsFetchDiagnostic(
@@ -753,7 +759,8 @@ final class _CopilotDialect extends ModelListDialect {
         pathFailed: false,
         fetchedCount: fetchedCount,
         filteredCount: dropped.length,
-        message: '$fetchedCount models fetched, ${dropped.length} filtered '
+        message:
+            '$fetchedCount models fetched, ${dropped.length} filtered '
             '(${_filterReasonSummary(dropped)})',
         hint: extraHint,
       ),
@@ -764,12 +771,11 @@ final class _CopilotDialect extends ModelListDialect {
   /// Remediation for a failed token exchange: classic PATs are the known
   /// dead shape — name the two remedies fa supports (gh-1606). OAuth
   /// tokens get the remedy from the [CopilotAuthException] message.
-  String? _exchangeFailureHint(String apiKey) =>
-      isClassicGitHubPat(apiKey)
+  String? _exchangeFailureHint(String apiKey) => isClassicGitHubPat(apiKey)
       ? 'classic PATs (ghp_…) are not accepted by the Copilot token '
-          'exchange — use the OAuth device flow (/provider copilot) or a '
-          'fine-grained PAT (github_pat_…) with the "Copilot Requests" '
-          'permission'
+            'exchange — use the OAuth device flow (/provider copilot) or a '
+            'fine-grained PAT (github_pat_…) with the "Copilot Requests" '
+            'permission'
       : null;
 
   /// Remediation for a failed /models call: the seat and the per-tier
@@ -809,8 +815,9 @@ bool _copilotModelsShapeValid(String body) {
 /// Non-chat entries are filtered out — see [_copilotModelDropReason].
 /// Alongside the info it answers the entry count and the per-model
 /// (id, drop reason) pairs for the filter transparency (gh-1990 AC2).
-(ModelsEndpointInfo, int, List<(String, String)>)
-_parseCopilotModelsResponse(String body) {
+(ModelsEndpointInfo, int, List<(String, String)>) _parseCopilotModelsResponse(
+  String body,
+) {
   final decoded = jsonDecode(body);
   final data = decoded is Map<String, dynamic> ? decoded['data'] : null;
   if (data is! List) {
@@ -892,9 +899,8 @@ String _filterReasonSummary(List<(String, String)> dropped) {
   if (counts.length == 1) return counts.keys.single;
   return counts.entries
       .map(
-        (entry) => entry.value == 1
-            ? entry.key
-            : '${entry.key} ×${entry.value}',
+        (entry) =>
+            entry.value == 1 ? entry.key : '${entry.key} ×${entry.value}',
       )
       .join(', ');
 }

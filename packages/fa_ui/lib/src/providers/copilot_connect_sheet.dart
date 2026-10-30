@@ -44,7 +44,10 @@ class CopilotConnectCallbacks {
   /// filter counts, with the remediation hint) when the endpoint answered
   /// none. When set the sheet prefers it and renders the reason instead
   /// of the generic fetch-failed string.
-  final Future<(List<String>, String?)> Function(String githubToken, String baseUrl)?
+  final Future<(List<String>, String?)> Function(
+    String githubToken,
+    String baseUrl,
+  )?
   fetchModelsReport;
 }
 

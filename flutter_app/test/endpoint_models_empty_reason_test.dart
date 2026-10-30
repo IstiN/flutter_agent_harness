@@ -36,8 +36,9 @@ void main() {
     );
   }
 
-  testWidgets('a failing copilot fetch names the branch on emptyReason',
-      (tester) async {
+  testWidgets('a failing copilot fetch names the branch on emptyReason', (
+    tester,
+  ) async {
     final client = http_testing.MockClient((request) async {
       if (request.url.host == 'api.github.com') {
         return http.Response('{"message":"Bad credentials"}', 401);
@@ -56,8 +57,9 @@ void main() {
     expect(controller.loading, isFalse);
   });
 
-  testWidgets('a healthy copilot fetch lists models with no reason',
-      (tester) async {
+  testWidgets('a healthy copilot fetch lists models with no reason', (
+    tester,
+  ) async {
     final client = http_testing.MockClient((request) async {
       if (request.url.host == 'api.github.com') {
         return http.Response(
@@ -81,8 +83,9 @@ void main() {
     expect(controller.emptyReason, isNull);
   });
 
-  testWidgets('a filter-empty copilot answer carries the filter counts',
-      (tester) async {
+  testWidgets('a filter-empty copilot answer carries the filter counts', (
+    tester,
+  ) async {
     final client = http_testing.MockClient((request) async {
       if (request.url.host == 'api.github.com') {
         return http.Response(
@@ -90,10 +93,7 @@ void main() {
           200,
         );
       }
-      return http.Response(
-        '{"data":[{"id":"embed-1"},{"id":"embed-2"}]}',
-        200,
-      );
+      return http.Response('{"data":[{"id":"embed-1"},{"id":"embed-2"}]}', 200);
     });
     setModelsDispatchClientForTesting(client);
     final controller = controllerFor();
@@ -102,7 +102,10 @@ void main() {
     await tester.pump();
 
     expect(controller.models, isEmpty);
-    expect(controller.emptyReason, '2 models fetched, 2 filtered '
-        '(picker flag absent)');
+    expect(
+      controller.emptyReason,
+      '2 models fetched, 2 filtered '
+      '(picker flag absent)',
+    );
   });
 }
