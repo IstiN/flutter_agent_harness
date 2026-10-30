@@ -93,30 +93,6 @@
     },
     {
       "gate": "duplication",
-      "file": "flutter_app/lib/gemma/gemma_cache_section.dart",
-      "line": 49,
-      "message": "7.97% duplicated lines > 1.0%"
-    },
-    {
-      "gate": "duplication",
-      "file": "flutter_app/lib/gemma/gemma_service_plugin.dart",
-      "line": 205,
-      "message": "1.61% duplicated lines > 1.0%"
-    },
-    {
-      "gate": "duplication",
-      "file": "flutter_app/lib/gemma/gemma_service_stub.dart",
-      "line": 40,
-      "message": "12.50% duplicated lines > 1.0%"
-    },
-    {
-      "gate": "duplication",
-      "file": "flutter_app/lib/gemma/gemma_types.dart",
-      "line": 305,
-      "message": "2.10% duplicated lines > 1.0%"
-    },
-    {
-      "gate": "duplication",
       "file": "flutter_app/lib/network/auth_deep_link.dart",
       "line": 120,
       "message": "9.49% duplicated lines > 1.0%"

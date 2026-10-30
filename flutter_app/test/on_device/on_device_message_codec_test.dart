@@ -1,20 +1,17 @@
 // Copyright (c) 2026, the Flutter Agent Harness authors.
 // Use of this source code is governed by a MIT license that can be found
 // in the LICENSE file.
-import 'dart:convert';
-
-/// Table tests for the shared on-device message walk: ONE fixture set of
-/// harness contexts drives ALL THREE provider codecs (gemma,
-/// transformers.js, WebLLM) — each fixture asserts the exact records the
-/// provider's engine receives. The fixtures ARE the shared conversion
-/// table: a new provider codec joins by adding a column, not by
-/// re-deriving the conversions.
-import 'package:fa/gemma/gemma_stream_function.dart';
 import 'package:fa/prompts.g.dart';
 import 'package:fa/transformers_js/transformers_js_stream_function.dart';
 import 'package:fa/webllm/webllm_stream_function.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+/// Table tests for the shared on-device message walk: ONE fixture set of
+/// harness contexts drives BOTH surviving provider codecs (transformers.js,
+/// WebLLM) — each fixture asserts the exact records the provider's engine
+/// receives. The fixtures ARE the shared conversion table: a new provider
+/// codec joins by adding a column, not by re-deriving the conversions.
 
 /// The `bash` tool every content fixture registers (keeps the no-tools
 /// system note out of content-shape assertions).
