@@ -281,15 +281,29 @@ String _decodeBase64(String name, String encoded) {
 /// above the resolver floors (gh-1471 D4: a capability declaration is
 /// explicit or absent — never a silent catalog default). The caller
 /// guarantees a non-empty declaration.
-({
-  Map<String, String> values,
-  List<String>? input,
-  String? thinkingLevel,
-  String? wire,
-  int? contextWindow,
-  int? maxTokens,
-})
-_parseConfig(String raw) {
+///
+/// The parsed `FA_PROVIDER_CONFIG` payload ([_parseConfig]): the plain
+/// string values plus the typed optional fields. A class, not a record —
+/// 6 fields exceeded the record_size cap (issue #1997).
+final class _EnvConfig {
+  const _EnvConfig({
+    required this.values,
+    required this.input,
+    required this.thinkingLevel,
+    required this.wire,
+    required this.contextWindow,
+    required this.maxTokens,
+  });
+
+  final Map<String, String> values;
+  final List<String>? input;
+  final String? thinkingLevel;
+  final String? wire;
+  final int? contextWindow;
+  final int? maxTokens;
+}
+
+_EnvConfig _parseConfig(String raw) {
   final Object? decoded;
   try {
     decoded = jsonDecode(raw);
@@ -309,7 +323,7 @@ _parseConfig(String raw) {
     // jsonDecode produces string keys for JSON objects.
     _takeConfigEntry(entry.key as String, entry.value, parsed);
   }
-  return (
+  return _EnvConfig(
     values: parsed.values,
     input: parsed.input,
     thinkingLevel: parsed.thinkingLevel,

@@ -66,6 +66,51 @@ part 'fa_tui_kaomoji.dart';
 part 'fa_tui_busy.dart';
 part 'fa_tui_subagent_board.dart';
 
+// Record type aliases (issue #1997, crap4dart record gates): the update
+// pipeline and the composer/viewport geometry shapes are declared once,
+// here, and referenced by name — record literals stay legal values, and
+// `.$N` accesses destructure into locals at the boundary.
+
+/// The internal update-pipeline pair: the next model + an optional
+/// follow-up command. The public [FaTuiModel.update] override keeps the
+/// framework's exact positional `(Model, Cmd?)`; every internal handler
+/// declares this alias.
+typedef UiUpdate = (Model, Cmd?);
+
+/// The [UiUpdate] pair when the model is statically [FaTuiModel].
+typedef FaTuiUpdate = (FaTuiModel, Cmd?);
+
+/// Output-append result: the (possibly rewritten) lines and how many
+/// head lines the history trim dropped.
+typedef OutputAppend = (List<String>, int);
+
+/// The input text soft-wrapped, plus the cursor's row/column inside it.
+typedef WrappedInput = (List<String>, int, int);
+
+/// A menu item window (start inclusive, end exclusive).
+typedef MenuWindow = (int, int);
+
+/// The composer input window (visible rows, first painted row).
+typedef InputWindow = (int, int);
+
+/// A cursor position (row within the window, cell column).
+typedef CursorCell = (int, int);
+
+/// The held follow anchor after a head trim (anchor line, scroll offset).
+typedef HeldAnchor = (int, int);
+
+/// Hidden-rows accounting for the scroll indicators (above, below).
+typedef FoldAccount = (int above, int below);
+
+/// A waiting-row timer (due-at epoch ms, one-line preview).
+typedef WaitingTimer = ({int dueMs, String preview});
+
+/// One rendered status-band span (text, role style key).
+typedef StatusSpan = (String, StatusLineRoleKey);
+
+/// The queue block's progressive yield (visible, header, hint).
+typedef QueueYield = (int, bool, bool);
+
 /// Translates the (web-safe) headless test hooks into dart_tui program
 /// options: a scripted key byte stream replaces stdin, the rendered frames
 /// go to the given byte consumer, and the OS signal handler stays off (the
@@ -366,7 +411,7 @@ final class FaTuiModel extends Model {
   /// preview), pushed by the host on every waiter enter/leave. The row
   /// renders only while idle — the busy row owns the screen while working.
   final List<String> waitingJobs;
-  final List<({int dueMs, String preview})> waitingTimers;
+  final List<WaitingTimer> waitingTimers;
 
   /// Background jobs the previous run of this session left running — the
   /// honesty note under the waiting row after a restart.
@@ -538,7 +583,7 @@ final class FaTuiModel extends Model {
   }
 
   /// The visible window of menu items (start inclusive, end exclusive).
-  (int, int) _menuWindow() {
+  MenuWindow _menuWindow() {
     // Issue #706: the window must fit the glass. The classic fixed
     // 6-row window plus its title/hint/footer chrome could exceed a
     // short terminal; the frame then overran and the hard glass guard
@@ -564,7 +609,7 @@ final class FaTuiModel extends Model {
 
   /// The item window a [maxVisible]-row cap would show (the pure half
   /// of [_menuWindow]; the cap loop re-evaluates it as it shrinks).
-  (int, int) _windowFor(int maxVisible) {
+  MenuWindow _windowFor(int maxVisible) {
     var start = 0;
     if (menuItems.length > maxVisible) {
       start = (menuSelected - (maxVisible ~/ 2)).clamp(
@@ -655,7 +700,7 @@ final class FaTuiModel extends Model {
     List<String>? jobBoardLines,
     List<SubagentBoardRow>? subagentBoardRows,
     List<String>? waitingJobs,
-    List<({int dueMs, String preview})>? waitingTimers,
+    List<WaitingTimer>? waitingTimers,
     int? waitingLostJobs,
     bool? scheduledTickPending,
     bool? runStalled,
@@ -792,7 +837,7 @@ final class FaTuiModel extends Model {
   /// host-pushed count/ETA updates, the minute-boundary tick, the job
   /// board and the waiting row. Returns `null` when [msg] belongs to a
   /// later group.
-  (Model, Cmd?)? _updateScheduled(Msg msg) {
+  UiUpdate? _updateScheduled(Msg msg) {
     if (msg is ScheduledStatusMsg) return _handleScheduledStatus(msg);
     if (msg is ScheduledTickMsg) return _handleScheduledTick();
     if (msg is JobBoardMsg) return _handleJobBoard(msg);
@@ -805,7 +850,7 @@ final class FaTuiModel extends Model {
   /// while a countdown is showing the model also arms a one-shot
   /// minute-boundary tick (issue #213) so the idle "next in Nm" keeps
   /// ticking — [scheduledTickPending] caps the chain at one timer.
-  (Model, Cmd?) _handleScheduledStatus(ScheduledStatusMsg msg) {
+  UiUpdate _handleScheduledStatus(ScheduledStatusMsg msg) {
     final next = copyWith(
       scheduledCount: msg.count,
       scheduledNextDueMs: msg.nextDueMs ?? -1,
@@ -823,7 +868,7 @@ final class FaTuiModel extends Model {
 
   /// The background-job board's live region (issue #429): the host pushes
   /// pre-rendered lines; an empty list hides the region.
-  (Model, Cmd?) _handleJobBoard(JobBoardMsg msg) =>
+  UiUpdate _handleJobBoard(JobBoardMsg msg) =>
       (copyWith(jobBoardLines: msg.lines), null);
 
   /// True while any countdown is on screen (issue #115 scheduled row, and
@@ -836,7 +881,7 @@ final class FaTuiModel extends Model {
   /// The minute-boundary countdown tick fired (issue #213): the row
   /// recomputes from [nowFn] at render time, so the repaint alone refreshes
   /// the ETA; re-arm while there is still a countdown to show ([_hasCountdown]).
-  (Model, Cmd?) _handleScheduledTick() {
+  UiUpdate _handleScheduledTick() {
     final next = copyWith(scheduledTickPending: false);
     if (!next._hasCountdown) {
       return (next, null);
@@ -847,7 +892,7 @@ final class FaTuiModel extends Model {
     );
   }
 
-  (Model, Cmd?) _handleOutputMsg(OutputMsg msg) {
+  UiUpdate _handleOutputMsg(OutputMsg msg) {
     // System-notice blocks and service lines (the compaction report
     // header) render as dim blockquotes, not raw text.
     final displayText = needsSystemNoticeRewrite(msg.text)
@@ -876,10 +921,10 @@ final class FaTuiModel extends Model {
         null,
       );
     }
-    final trimmedRows = _heldAnchorShiftedByCut(cut);
+    final (anchorLine, anchorOffset) = _heldAnchorShiftedByCut(cut);
     final reanchored = next.copyWith(
-      heldAnchorLine: trimmedRows.$1,
-      scrollOffset: trimmedRows.$2,
+      heldAnchorLine: anchorLine,
+      scrollOffset: anchorOffset,
       follow: follow.appended(1),
     );
     return (reanchored, null);
@@ -890,7 +935,7 @@ final class FaTuiModel extends Model {
   /// The diagnostic log names the last armer.
   static const busyWatchdogMs = 10 * 60 * 1000;
 
-  (Model, Cmd?) _handleDrainQueue(DrainQueueMsg msg) {
+  UiUpdate _handleDrainQueue(DrainQueueMsg msg) {
     // The host drains queued messages as separate turns after the run
     // settles; echo them into the history as they are handed out. Flush
     // order is queue order (AC2).
@@ -923,13 +968,13 @@ final class FaTuiModel extends Model {
 
   /// Picker dispatch: atomic open + the gh-1049 reveal hook (extracted so
   /// `_updateAfterExitCheck` stays under the CRAP complexity threshold).
-  (Model, Cmd?)? _handlePickerMsg(Msg msg) {
+  UiUpdate? _handlePickerMsg(Msg msg) {
     if (msg is OpenPickerMsg) return _handleOpenPicker(msg);
     if (msg is _RevealPickerRowsMsg) return _handleRevealPickerRows();
     return null;
   }
 
-  (Model, Cmd?) _handleClearQueue() {
+  UiUpdate _handleClearQueue() {
     if (queue.isEmpty) return (this, null);
     return (copyWith(queue: const []), null);
   }
@@ -938,10 +983,12 @@ final class FaTuiModel extends Model {
   /// `sendInputText`) into the model without a running program, so the
   /// message branch is exercisable headlessly.
   @visibleForTesting
-  FaTuiModel setInputTextForTest(String text) =>
-      update(_SetInputTextMsg(text)).$1 as FaTuiModel;
+  FaTuiModel setInputTextForTest(String text) {
+    final (model, _) = update(_SetInputTextMsg(text));
+    return model as FaTuiModel;
+  }
 
-  (Model, Cmd?) _updateAfterExitCheck(Msg msg) {
+  UiUpdate _updateAfterExitCheck(Msg msg) {
     if (msg is _ModelsRefreshMsg) return _handleModelsRefresh();
     if (msg is _ThemeChangedMsg) return _handleThemeChanged();
     if (msg is _OpenModelMenuMsg) return _handleOpenModelMenu();
@@ -957,7 +1004,7 @@ final class FaTuiModel extends Model {
   /// Mouse and pastes route through the double-press window too (issue
   /// #830 review): the contract says "any other key/input", and a paste
   /// between two presses must never turn press 2 into an exit.
-  (Model, Cmd?) _handleTerminalMsg(Msg msg) {
+  UiUpdate _handleTerminalMsg(Msg msg) {
     if (msg is WindowSizeMsg) return _handleWindowSize(msg);
     if (msg is MouseClickMsg) {
       return _withFreshCtrlCWindow(msg, () => _handleMouseClick(msg));
@@ -981,7 +1028,7 @@ final class FaTuiModel extends Model {
   }
 
   /// Key events: runes split, then every key through the mode-aware clusters.
-  (Model, Cmd?) _handleKeyMsg(Msg msg) {
+  UiUpdate _handleKeyMsg(Msg msg) {
     // dart_tui's input decoder groups up to 4 ASCII bytes into a single rune,
     // and the cursor would advance by 1 instead of the inserted text length.
     // Split multi-character runes into individual key events so pasting plain
@@ -1002,7 +1049,7 @@ final class FaTuiModel extends Model {
     return (this, null);
   }
 
-  (Model, Cmd?) _handleModelsRefresh() {
+  UiUpdate _handleModelsRefresh() {
     // Only refresh while the model picker is actually open — the message
     // also arrives when the slash menu (or no menu) is up and must not
     // clobber its items.
@@ -1014,7 +1061,7 @@ final class FaTuiModel extends Model {
   /// The wrap cache holds text geometry only (colors apply at emit time),
   /// so invalidation is a cache reset plus a redraw on the next frame
   /// boundary — never a torn frame (E1).
-  (Model, Cmd?) _handleThemeChanged() {
+  UiUpdate _handleThemeChanged() {
     final copy = copyWith(menuSelected: menuSelected);
     copy._wrapCache = _WrapCache();
     // The sticky echo caches formatted rows keyed on width+content —
@@ -1033,7 +1080,7 @@ final class FaTuiModel extends Model {
 
   /// Rebuilds the open model picker's items, keeping the selection in
   /// bounds.
-  (Model, Cmd?) _refreshedModelMenu() {
+  UiUpdate _refreshedModelMenu() {
     final items = callbacks.buildModelMenu(modelFilter, termWidth);
     final selected = items.isEmpty
         ? 0
@@ -1041,7 +1088,7 @@ final class FaTuiModel extends Model {
     return (copyWith(menuItems: items, menuSelected: selected), null);
   }
 
-  (Model, Cmd?) _handleOpenModelMenu() {
+  UiUpdate _handleOpenModelMenu() {
     final items = callbacks.buildModelMenu('', termWidth);
     return (
       copyWith(
@@ -1081,7 +1128,7 @@ final class FaTuiModel extends Model {
   @visibleForTesting
   static int? kaomojiFacePinOverride;
 
-  (Model, Cmd?) _handleOpenPicker(OpenPickerMsg msg) {
+  UiUpdate _handleOpenPicker(OpenPickerMsg msg) {
     final reveal = _pickerRevealOpen(msg);
     if (reveal != null) return reveal;
     return (
@@ -1109,7 +1156,7 @@ final class FaTuiModel extends Model {
   /// must survive with content predicates. The selection stays clamped to
   /// the FULL item list so the cursor lands on the initial row once it is
   /// revealed.
-  (Model, Cmd?)? _pickerRevealOpen(OpenPickerMsg msg) {
+  UiUpdate? _pickerRevealOpen(OpenPickerMsg msg) {
     final revealMs = _pickerRevealDelayMs;
     if (revealMs <= 0 || msg.items.length <= 1) return null;
     return (
@@ -1143,7 +1190,7 @@ final class FaTuiModel extends Model {
   /// never clobber it with an unfiltered prefix (a reveal landing on a
   /// closed picker is a no-op — the menu keys rebuilt/cleared [menuItems]
   /// in between).
-  (Model, Cmd?) _handleRevealPickerRows() {
+  UiUpdate _handleRevealPickerRows() {
     final all = menuAllItems;
     if (!menuOpen || modelFilter.isNotEmpty || menuItems.length >= all.length) {
       return (this, null);
@@ -1163,20 +1210,20 @@ final class FaTuiModel extends Model {
     return _schedulePickerReveal(revealMs);
   }
 
-  (Model, Cmd?) _handleMultiCharRunes(KeyPressMsg msg) {
+  UiUpdate _handleMultiCharRunes(KeyPressMsg msg) {
     Model current = this;
     Cmd? lastCmd;
     for (final ch in msg.keyEvent.text.split('')) {
-      final result = current.update(
+      final (next, cmd) = current.update(
         KeyPressMsg(TeaKey(code: KeyCode.rune, text: ch)),
       );
-      current = result.$1;
-      if (result.$2 != null) lastCmd = result.$2;
+      current = next;
+      if (cmd != null) lastCmd = cmd;
     }
     return (current, lastCmd);
   }
 
-  (Model, Cmd?) _handleKey(KeyMsg msg) {
+  UiUpdate _handleKey(KeyMsg msg) {
     // Hub overlay: a full-screen modal owns every key while open (before
     // prompt/menu so the overlay is not shortcut through those zones).
     if (hub != null) return _handleHubKey(msg);
@@ -1210,7 +1257,7 @@ final class FaTuiModel extends Model {
 
   /// Normal-mode control keys (submit/steer/newline/interrupt/abort); null
   /// when the key belongs to another cluster.
-  (Model, Cmd?)? _handleControlKey(KeyMsg msg) {
+  UiUpdate? _handleControlKey(KeyMsg msg) {
     return _handlePasteImageKey(msg) ??
         _handleSubmitKeys(msg) ??
         _handleQueueKeys(msg) ??
@@ -1219,7 +1266,7 @@ final class FaTuiModel extends Model {
 
   /// Normal-mode submit keys (enter/ctrl+s) and the newline-insertion
   /// fallbacks (ctrl+o/ctrl+j); null when the key belongs to another cluster.
-  (Model, Cmd?)? _handleSubmitKeys(KeyMsg msg) {
+  UiUpdate? _handleSubmitKeys(KeyMsg msg) {
     switch (msg.key) {
       case 'enter':
         return _handleEnterKey();
@@ -1231,7 +1278,8 @@ final class FaTuiModel extends Model {
           final pending = inputText.trim();
           var model = this;
           if (pending.isNotEmpty) {
-            model = model._enqueue(pending, steer: true).$1;
+            final (enqueued, _) = model._enqueue(pending, steer: true);
+            model = enqueued;
           }
           return model._steerAll(includePending: false);
         }
@@ -1262,14 +1310,14 @@ final class FaTuiModel extends Model {
   /// Queue-row keys while a run streams: ctrl+x deletes the last queued
   /// row (issue #275 AC2). Idle ctrl+x is NOT handled here — it stays an
   /// unhandled combo that must never insert its letter.
-  (Model, Cmd?)? _handleQueueKeys(KeyMsg msg) {
+  UiUpdate? _handleQueueKeys(KeyMsg msg) {
     if (msg.key != 'ctrl+x') return null;
     if (!busy || queue.isEmpty) return (this, null);
     return (copyWith(queue: queue.sublist(0, queue.length - 1)), null);
   }
 
   /// Normal-mode Enter: submit, queue while busy, or Shift+Enter newline.
-  (Model, Cmd?) _handleEnterKey() {
+  UiUpdate _handleEnterKey() {
     // Enter submits; Shift+Enter inserts a newline. Terminals that do not
     // distinguish Shift+Enter in the input stream use the host modifier
     // check (Core Graphics on macOS, session-gated — issue #355).
@@ -1293,7 +1341,7 @@ final class FaTuiModel extends Model {
 
   /// Normal-mode history scroll keys; null when the key belongs to another
   /// cluster.
-  (Model, Cmd?)? _handleScrollKey(KeyMsg msg) {
+  UiUpdate? _handleScrollKey(KeyMsg msg) {
     return _handleArrowScrollKey(msg) ?? _handlePageScrollKey(msg);
   }
 
@@ -1301,7 +1349,7 @@ final class FaTuiModel extends Model {
   /// entry (stop at the oldest). With an empty input ↑ first pops the
   /// message queue, then browses the submitted-message history, else
   /// nudges the viewport up one row.
-  (Model, Cmd?) _handleArrowScrollUp() {
+  UiUpdate _handleArrowScrollUp() {
     if (historyIndex != -1) {
       if (historyIndex > 0) {
         final index = historyIndex - 1;
@@ -1350,7 +1398,7 @@ final class FaTuiModel extends Model {
   /// another cluster. With an empty input ↑ first pops the message queue,
   /// then browses the submitted-message history; ↓ walks it back.
   /// Viewport scrolling lives on PgUp/PgDn (and the wheel when captured).
-  (Model, Cmd?)? _handleArrowScrollKey(KeyMsg msg) {
+  UiUpdate? _handleArrowScrollKey(KeyMsg msg) {
     switch (msg.key) {
       case 'up':
         return _handleArrowScrollUp();
@@ -1394,7 +1442,7 @@ final class FaTuiModel extends Model {
   /// to another cluster. gh-1439: PgUp parks beyond the near-bottom band
   /// (disengages); PgDn re-engages when it lands inside the band (past
   /// the newest content).
-  (Model, Cmd?)? _handlePageScrollKey(KeyMsg msg) {
+  UiUpdate? _handlePageScrollKey(KeyMsg msg) {
     switch (msg.key) {
       case 'pgup':
         return (
@@ -1414,14 +1462,14 @@ final class FaTuiModel extends Model {
   /// gh-1439 re-engage key: End jumps to live when the composer is empty
   /// (one action, count flushed). With composer text End stays the caret
   /// key — the cluster below owns it.
-  (Model, Cmd?)? _handleJumpLiveKey(KeyMsg msg) {
+  UiUpdate? _handleJumpLiveKey(KeyMsg msg) {
     if (msg.key != 'end' || inputText.isNotEmpty) return null;
     return (_jumpToLive(), null);
   }
 
   /// Normal-mode cursor motion keys; null when the key belongs to another
   /// cluster.
-  (Model, Cmd?)? _handleCursorNavKey(KeyMsg msg) {
+  UiUpdate? _handleCursorNavKey(KeyMsg msg) {
     final result =
         _handleLeftRightKey(msg) ??
         _handleWordNavKey(msg) ??
@@ -1430,12 +1478,13 @@ final class FaTuiModel extends Model {
     // The completion token is cursor-anchored: motion re-evaluates the
     // overlay (issue #275) — moving off a token closes it, moving onto
     // one opens it.
-    return (_updateMenuForInput(result.$1 as FaTuiModel), result.$2);
+    final (navModel, navCmd) = result;
+    return (_updateMenuForInput(navModel as FaTuiModel), navCmd);
   }
 
   /// Normal-mode left/right arrow keys; null when the key belongs to
   /// another cluster.
-  (Model, Cmd?)? _handleLeftRightKey(KeyMsg msg) {
+  UiUpdate? _handleLeftRightKey(KeyMsg msg) {
     switch (msg.key) {
       case 'left':
         return (copyWith(cursor: cursor > 0 ? cursor - 1 : 0), null);
@@ -1451,7 +1500,7 @@ final class FaTuiModel extends Model {
 
   /// Normal-mode word-motion keys; null when the key belongs to another
   /// cluster. Word motion like pi's editor: alt+left/right jump by words.
-  (Model, Cmd?)? _handleWordNavKey(KeyMsg msg) {
+  UiUpdate? _handleWordNavKey(KeyMsg msg) {
     switch (msg.key) {
       case 'alt+left':
         return (copyWith(cursor: _wordStartBefore(inputText, cursor)), null);
@@ -1464,7 +1513,7 @@ final class FaTuiModel extends Model {
 
   /// Normal-mode home/end keys; null when the key belongs to another
   /// cluster.
-  (Model, Cmd?)? _handleHomeEndKey(KeyMsg msg) {
+  UiUpdate? _handleHomeEndKey(KeyMsg msg) {
     switch (msg.key) {
       case 'home':
       case 'ctrl+a': // readline — also what macOS Cmd+Left sends (^A)
@@ -1479,7 +1528,7 @@ final class FaTuiModel extends Model {
 
   /// Normal-mode text-editing keys (deletion and character insert); catches
   /// every key the other clusters did not claim.
-  (Model, Cmd?) _handleEditKey(KeyMsg msg) {
+  UiUpdate _handleEditKey(KeyMsg msg) {
     final result =
         _handleBackspaceKey(msg) ??
         _handleKillKey(msg) ??
@@ -1497,7 +1546,7 @@ final class FaTuiModel extends Model {
   }
 
   /// Normal-mode backspace; null when the key belongs to another cluster.
-  (Model, Cmd?)? _handleBackspaceKey(KeyMsg msg) {
+  UiUpdate? _handleBackspaceKey(KeyMsg msg) {
     switch (msg.key) {
       case 'backspace':
         if (cursor == 0 || inputText.isEmpty) return (this, null);
@@ -1513,7 +1562,7 @@ final class FaTuiModel extends Model {
   /// Normal-mode kill keys on the editor's kill-ring (issue #275): ctrl+u
   /// kills back to the line start, ctrl+w the word before the cursor.
   /// Null when the key belongs to another cluster.
-  (Model, Cmd?)? _handleKillKey(KeyMsg msg) {
+  UiUpdate? _handleKillKey(KeyMsg msg) {
     switch (msg.key) {
       case 'ctrl+u':
         // Kill from the cursor back to the start of the line (readline's
@@ -1537,7 +1586,7 @@ final class FaTuiModel extends Model {
   /// Readline single-key editing beyond kills (issue #275): ctrl+k kill to
   /// line end, ctrl+y yank (consecutive ctrl+y walks the ring older),
   /// ctrl+t transpose, ctrl+z grouped undo. Null when unclaimed.
-  (Model, Cmd?)? _handleReadlineKey(KeyMsg msg) {
+  UiUpdate? _handleReadlineKey(KeyMsg msg) {
     final TuiLineEditor edited;
     switch (msg.key) {
       case 'ctrl+k':
@@ -1560,7 +1609,7 @@ final class FaTuiModel extends Model {
 
   /// Normal-mode forward delete; null when the key belongs to another
   /// cluster.
-  (Model, Cmd?)? _handleDeleteKey(KeyMsg msg) {
+  UiUpdate? _handleDeleteKey(KeyMsg msg) {
     switch (msg.key) {
       case 'delete':
         if (cursor >= inputText.length) return (this, null);
@@ -1590,7 +1639,7 @@ final class FaTuiModel extends Model {
 
   /// Normal-mode character insert: the editing cluster's catch-all for
   /// single-character keys.
-  (Model, Cmd?) _handleCharInsertKey(KeyMsg msg) {
+  UiUpdate _handleCharInsertKey(KeyMsg msg) {
     if (_isCommandKeystroke(msg.key)) return (this, null);
     final text = msg.keyEvent.text;
     if (text.isNotEmpty && text.length == 1) {
@@ -1602,7 +1651,7 @@ final class FaTuiModel extends Model {
   /// Prompt-mode key routing: forwards the key to [handleTuiPromptKey] and
   /// resolves the host completer when it produces an answer (closing the
   /// prompt zone and handing control back to normal input).
-  (Model, Cmd?) _handlePromptKey(KeyMsg msg) {
+  UiUpdate _handlePromptKey(KeyMsg msg) {
     // Ctrl+V inside a prompt sheet (provider key, secret, ask): the sheet owns
     // typed input, so the terminal's paste gesture never reaches the composer's
     // bracketed-paste path — and this key used to be a silent no-op, which read
@@ -1673,7 +1722,7 @@ final class FaTuiModel extends Model {
 
   static bool _isWordBreak(String ch) => ch == ' ' || ch == '\n' || ch == '\t';
 
-  (FaTuiModel, Cmd?) _insertNewlineAtCursor() {
+  FaTuiUpdate _insertNewlineAtCursor() {
     return (copyWith(editor: editor.insert('\n')), null);
   }
 
@@ -1688,7 +1737,7 @@ final class FaTuiModel extends Model {
   /// turn separator — and wraps the input in [tuiUserBubble] (blank band
   /// rows above/below, one leading space per row). The pre-styled contract
   /// is shared: rows carry the bg SGR marker and the view re-pads/repaints.
-  (List<String>, int) _echoAppend(List<String> lines, String text) {
+  OutputAppend _echoAppend(List<String> lines, String text) {
     if (tuiChromeEnabled) {
       final (appended, cut) = _appendOutput(
         lines,
@@ -1721,7 +1770,7 @@ final class FaTuiModel extends Model {
   /// below — the run's thinking/answer flows directly under the user
   /// message), clears the input, snaps the viewport to the bottom, and runs
   /// the host callback.
-  (FaTuiModel, Cmd?) _submit(String text) {
+  FaTuiUpdate _submit(String text) {
     // The TUI-side /mouse toggle executes locally (never reaches the host,
     // never echoes into history) — including while a run streams, since
     // slash commands bypass the busy queue.
@@ -1802,7 +1851,7 @@ final class FaTuiModel extends Model {
   /// Chrome mode pins the bubble's leading band rows (issue #807); the
   /// echo grows by the second band row. Pinned rows are pre-styled bubble
   /// rows, so the sticky painter re-themes them like any echo line.
-  (List<String>, int) _pinnedEcho(String text) {
+  OutputAppend _pinnedEcho(String text) {
     final firstLine = text.split('\n').first;
     // Cell-width math (issue #859 family): UTF-16 length both mis-measures
     // wide glyphs and can split a surrogate pair mid-echo.
@@ -1834,7 +1883,7 @@ final class FaTuiModel extends Model {
   /// through the normal submit path since they execute instantly.
   /// [steer] marks the row as a steering interrupt (ctrl+s later flushes
   /// the whole queue through the steering path); it renders badged.
-  (FaTuiModel, Cmd?) _enqueue(String text, {bool steer = false}) {
+  FaTuiUpdate _enqueue(String text, {bool steer = false}) {
     return (
       copyWith(
         inputText: '',
@@ -1853,7 +1902,7 @@ final class FaTuiModel extends Model {
   /// Busy-mode Ctrl+S: steers the queue into the running agent (each
   /// message becomes a separate user turn), echoing them into the history
   /// first. Steering rows go before follow-ups.
-  (FaTuiModel, Cmd?) _steerAll({bool includePending = true}) {
+  FaTuiUpdate _steerAll({bool includePending = true}) {
     final messages = [
       if (includePending && inputText.trim().isNotEmpty) inputText.trim(),
       // Steering rows interrupt first; follow-ups keep queue order.
@@ -2156,7 +2205,7 @@ final class FaTuiModel extends Model {
   /// first retained slot), 0 when no trim fired. Every append path must
   /// shift the anchored indices by it — the pinned sticky echo and the
   /// boot anchor today (issue #827 review; #1348 retired the turn start).
-  static (List<String>, int) _appendOutput(
+  static OutputAppend _appendOutput(
     List<String> lines,
     String text,
     bool newline,
@@ -2200,7 +2249,7 @@ final class FaTuiModel extends Model {
   /// the flush budget): constant scroll/typing jank for long answers. A
   /// slack window lets ordinary appends stay on the incremental path; one
   /// batch rebuild per [trimSlack] dropped lines is imperceptible.
-  static (List<String>, int) _trimHistoryHead(List<String> result) {
+  static OutputAppend _trimHistoryHead(List<String> result) {
     const maxLines = 2000;
     const trimSlack = 400;
     if (result.length <= maxLines + trimSlack) return (result, 0);
@@ -2577,7 +2626,7 @@ final class FaTuiController {
   /// armed self-wake timers, and jobs a previous run lost.
   void setWaiting({
     required List<String> jobs,
-    required List<({int dueMs, String preview})> timers,
+    required List<WaitingTimer> timers,
     int lostJobs = 0,
   }) {
     _send(WaitingStatusMsg(jobs: jobs, timers: timers, lostJobs: lostJobs));
@@ -2637,7 +2686,8 @@ final class FaTuiController {
     // one per writeln.
     _flushOutput();
     for (final msg in _pending) {
-      model = model.update(msg).$1 as FaTuiModel;
+      final (next, _) = model.update(msg);
+      model = next as FaTuiModel;
     }
     _pending.clear();
     final savedTermios = await _sanitizeTermiosInput();
@@ -2650,7 +2700,8 @@ final class FaTuiController {
       _flushOutput();
       _running = true;
       for (final msg in _pending) {
-        model = model.update(msg).$1 as FaTuiModel;
+        final (next, _) = model.update(msg);
+        model = next as FaTuiModel;
       }
       _pending.clear();
       await _program.run(model);

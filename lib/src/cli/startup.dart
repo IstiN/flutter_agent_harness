@@ -212,8 +212,29 @@ String? _previousArg(List<String> args, int index) =>
 /// `Platform.environment`, tests pass exactly the map they mean —
 /// resolution never reads ambient process state.
 ///
+/// The boot result carrier ([resolveEffectiveCliArgs]'s return type).
+/// A class, not a record — 6 fields exceeded the record_size cap
+/// (issue #1997); the field docs live on the resolver below.
+final class EffectiveCliArgs {
+  const EffectiveCliArgs({
+    required this.args,
+    required this.provider,
+    required this.faPreconfig,
+    required this.unknownSavedProvider,
+    required this.incompatibleSavedEndpoint,
+    required this.bindingWarnings,
+  });
+
+  final CliArgs args;
+  final String provider;
+  final EnvProviderPreconfig? faPreconfig;
+  final String? unknownSavedProvider;
+  final String? incompatibleSavedEndpoint;
+  final List<String> bindingWarnings;
+}
+
 /// Returns the effective [CliArgs], the resolved provider kind — the same
-/// value, the explicit record field saves the caller a re-derivation — the
+/// value, the explicit field saves the caller a re-derivation — the
 /// `FA_PROVIDER_*` declaration when one is active (the caller needs it
 /// for the roles pinning, the key decision and the extra redaction), the
 /// saved provider id when it was unrecognizable, the saved provider id
@@ -223,16 +244,8 @@ String? _previousArg(List<String> args, int index) =>
 /// flag authored an unverified dialect mismatch (gh-1624 review r2 — the
 /// flag path renders them like the FA_PROVIDER notice does; warnings the
 /// active preconfig binding already carries are deduped). Both report
-/// fields are null otherwise.
-({
-  CliArgs args,
-  String provider,
-  EnvProviderPreconfig? faPreconfig,
-  String? unknownSavedProvider,
-  String? incompatibleSavedEndpoint,
-  List<String> bindingWarnings,
-})
-resolveEffectiveCliArgs(
+/// fields are null otherwise. See [EffectiveCliArgs].
+EffectiveCliArgs resolveEffectiveCliArgs(
   CliArgs parsed,
   CliConfig saved, {
   required Map<String, String> env,
@@ -317,7 +330,7 @@ resolveEffectiveCliArgs(
     keepSavedPair: keepSavedPair,
     degradedDefault: degradedDefault,
   );
-  return (
+  return EffectiveCliArgs(
     args: effective,
     provider: provider,
     faPreconfig: faPreconfig,

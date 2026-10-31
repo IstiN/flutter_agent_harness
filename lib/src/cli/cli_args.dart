@@ -508,17 +508,29 @@ CliArgsResult _parseTrajectoryArgs(List<String> args) {
 }
 
 /// The operands collected while walking a trajectory subcommand's
-/// arguments: positional words plus the recognized flags.
-typedef _TrajectoryOperands = ({
-  List<String> positionals,
-  bool json,
-  int? at,
-  String? cwd,
-  String? sessionRoot,
-  String format,
-  bool formatSet,
-  String? output,
-});
+/// arguments: positional words plus the recognized flags. A class, not a
+/// record — 8 fields exceeded the record_size cap (issue #1997).
+final class _TrajectoryOperands {
+  const _TrajectoryOperands({
+    required this.positionals,
+    required this.json,
+    required this.at,
+    required this.cwd,
+    required this.sessionRoot,
+    required this.format,
+    required this.formatSet,
+    required this.output,
+  });
+
+  final List<String> positionals;
+  final bool json;
+  final int? at;
+  final String? cwd;
+  final String? sessionRoot;
+  final String format;
+  final bool formatSet;
+  final String? output;
+}
 
 /// Walks the arguments after the verb, collecting positionals and the
 /// `--json`/`--at`/`--cwd`/`--session-root`/`--format`/`--output` flags.
@@ -560,7 +572,7 @@ _TrajectoryOperands _parseTrajectoryOperands(List<String> args) {
         _addTrajectoryPositional(positionals, arg);
     }
   }
-  return (
+  return _TrajectoryOperands(
     positionals: positionals,
     json: json,
     at: at,
@@ -1014,15 +1026,27 @@ CliArgsResult _parseExtArgs(List<String> args) {
 }
 
 /// The operands collected while walking an ext subcommand's arguments.
-typedef _ExtOperands = ({
-  List<String> positionals,
-  bool json,
-  String? pin,
-  bool trust,
-  bool bundled,
-  String? bundledName,
-  bool strict,
-});
+/// A class, not a record — 7 fields exceeded the record_size cap
+/// (issue #1997).
+final class _ExtOperands {
+  const _ExtOperands({
+    required this.positionals,
+    required this.json,
+    required this.pin,
+    required this.trust,
+    required this.bundled,
+    required this.bundledName,
+    required this.strict,
+  });
+
+  final List<String> positionals;
+  final bool json;
+  final String? pin;
+  final bool trust;
+  final bool bundled;
+  final String? bundledName;
+  final bool strict;
+}
 
 /// Walks the arguments after the verb, collecting positionals and the
 /// ext flags. `--bundled` takes an OPTIONAL value: a following word that
@@ -1090,7 +1114,7 @@ final class _ExtOperandSink {
     return i;
   }
 
-  _ExtOperands freeze() => (
+  _ExtOperands freeze() => _ExtOperands(
     positionals: positionals,
     json: json,
     pin: pin,
