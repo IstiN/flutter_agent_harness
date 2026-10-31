@@ -111,30 +111,6 @@ typedef StatusSpan = (String, StatusLineRoleKey);
 /// The queue block's progressive yield (visible, header, hint).
 typedef QueueYield = (int, bool, bool);
 
-/// The optional sections' wanted row counts
-/// ([FaTuiModel._optionalSectionWants]): one carrier per frame-plan pass
-/// — a class, not a record, because the 7-field shape exceeded the
-/// record_size cap (issue #1997).
-class _SectionWants {
-  const _SectionWants({
-    required this.subagents,
-    required this.board,
-    required this.waiting,
-    required this.scheduled,
-    required this.chips,
-    required this.queue,
-    required this.sticky,
-  });
-
-  final int subagents;
-  final int board;
-  final int waiting;
-  final int scheduled;
-  final int chips;
-  final int queue;
-  final int sticky;
-}
-
 /// Translates the (web-safe) headless test hooks into dart_tui program
 /// options: a scripted key byte stream replaces stdin, the rendered frames
 /// go to the given byte consumer, and the OS signal handler stays off (the

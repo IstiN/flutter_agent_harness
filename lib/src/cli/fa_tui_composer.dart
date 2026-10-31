@@ -1,5 +1,30 @@
 part of 'fa_tui.dart';
 
+/// The optional sections' wanted row counts
+/// ([FaTuiModel._optionalSectionWants]): one carrier per frame-plan pass
+/// — a class, not a record, because the 7-field shape exceeded the
+/// record_size cap (issue #1997). Lives beside the frame-plan pass that
+/// is its only consumer.
+class _SectionWants {
+  const _SectionWants({
+    required this.subagents,
+    required this.board,
+    required this.waiting,
+    required this.scheduled,
+    required this.chips,
+    required this.queue,
+    required this.sticky,
+  });
+
+  final int subagents;
+  final int board;
+  final int waiting;
+  final int scheduled;
+  final int chips;
+  final int queue;
+  final int sticky;
+}
+
 /// FaTuiModel's composer layout — split out of `fa_tui.dart` to keep it
 /// under the repo's 2800-line size gate. Same library (a `part of`), so
 /// the extension sees the model's private members (issue #467).
