@@ -15,6 +15,7 @@ import 'package:fa_ui/src/stores/provider_registry.dart';
 import 'package:fa_ui/src/stores/session_keys_store.dart';
 import 'package:fa_ui/src/strings/fa_ui_strings.dart';
 import 'package:fa_ui/src/utils/page_presentation.dart';
+import 'package:fa_ui/src/widgets/settings_scaffold.dart';
 
 /// Pushes the [ProviderEditorPage] in create mode and saves the result to
 /// [registry] (definition + session key). Returns the added provider, or
@@ -603,11 +604,7 @@ class _ProviderEditorPageState extends State<ProviderEditorPage> {
                   ],
                 ),
               ],
-              if (_error != null) ...[
-                const SizedBox(height: 12),
-                Text(_error!, style: TextStyle(color: theme.colorScheme.error)),
-              ],
-              const SizedBox(height: 24),
+              ...faFormErrorBlock(context, _error),
               Row(
                 children: [
                   if (widget.initial != null)

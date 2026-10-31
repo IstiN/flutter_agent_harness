@@ -2,6 +2,7 @@
 // Use of this source code is governed by a MIT license that can be found
 // in the LICENSE file.
 
+import 'package:fa_ui/fa_ui.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
@@ -36,14 +37,12 @@ class FaBrandTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final isDark = dark ?? Theme.of(context).brightness == Brightness.dark;
-    return SizedBox(
-      width: size,
-      height: size,
-      child: SvgPicture.string(
-        isDark ? kFaBrandTileDarkSvg : kFaBrandTileLightSvg,
-        fit: BoxFit.contain,
-      ),
+    return faBrandSvgTile(
+      context,
+      size: size,
+      dark: dark,
+      darkSvg: kFaBrandTileDarkSvg,
+      lightSvg: kFaBrandTileLightSvg,
     );
   }
 }

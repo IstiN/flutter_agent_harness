@@ -1097,7 +1097,6 @@ class _DapConnectionEditorPageState extends State<DapConnectionEditorPage> {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
     return Scaffold(
       appBar: faAppBar(
         title: Text(
@@ -1143,11 +1142,7 @@ class _DapConnectionEditorPageState extends State<DapConnectionEditorPage> {
                 autocorrect: false,
                 enableSuggestions: false,
               ),
-              if (_error != null) ...[
-                const SizedBox(height: 12),
-                Text(_error!, style: TextStyle(color: theme.colorScheme.error)),
-              ],
-              const SizedBox(height: 24),
+              ...faui.faFormErrorBlock(context, _error),
               Row(
                 children: [
                   const Spacer(),

@@ -90,16 +90,33 @@ class FaAiAvatar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final isDark = dark ?? Theme.of(context).brightness == Brightness.dark;
-    return SizedBox(
-      width: size,
-      height: size,
-      child: SvgPicture.string(
-        isDark ? _kFaAiAvatarDarkSvg : _kFaAiAvatarLightSvg,
-        fit: BoxFit.contain,
-      ),
+    return faBrandSvgTile(
+      context,
+      size: size,
+      dark: dark,
+      darkSvg: _kFaAiAvatarDarkSvg,
+      lightSvg: _kFaAiAvatarLightSvg,
     );
   }
+}
+
+/// The square theme-following brand-tile shell: [dark] forces the dark
+/// form, null follows the ambient brightness; [darkSvg]/[lightSvg] render
+/// centered into a [size] square. Shared by the avatar here and the app's
+/// launcher-geometry brand tile.
+Widget faBrandSvgTile(
+  BuildContext context, {
+  required double size,
+  required bool? dark,
+  required String darkSvg,
+  required String lightSvg,
+}) {
+  final isDark = dark ?? Theme.of(context).brightness == Brightness.dark;
+  return SizedBox(
+    width: size,
+    height: size,
+    child: SvgPicture.string(isDark ? darkSvg : lightSvg, fit: BoxFit.contain),
+  );
 }
 
 /// 24×24 rendering of the brand tile geometry (see `icon/icon.svg`): the

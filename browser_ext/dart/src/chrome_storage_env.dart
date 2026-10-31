@@ -3,8 +3,8 @@
 // same shape as the Flutter sandbox's wrapper.
 import 'dart:async';
 import 'dart:convert';
-import 'dart:typed_data';
 
+import 'package:flutter_agent_harness/src/env/delegating_execution_env.dart';
 import 'package:flutter_agent_harness/src/env/execution_env.dart';
 import 'package:flutter_agent_harness/src/env/memory_execution_env.dart';
 
@@ -45,10 +45,14 @@ import 'chrome_api.dart' show StorageApi;
 /// There is no shell in a browser extension: [exec] answers with a clean
 /// `shellUnavailable` error naming the sandbox — the `browser_*` tools are
 /// the action surface.
-final class ChromeStorageEnv implements ExecutionEnv {
-  ChromeStorageEnv._(this._storage) : _delegate = MemoryExecutionEnv(cwd: '/');
+final class ChromeStorageEnv extends ForwardingFs {
+  ChromeStorageEnv._(this._storage, MemoryExecutionEnv mem)
+    : _mem = mem,
+      super(mem);
 
-  final MemoryExecutionEnv _delegate;
+  /// The in-memory tree under the forwarding view; typed access for the
+  /// synchronous snapshot export ([FsSnapshotExporter]).
+  final MemoryExecutionEnv _mem;
 
   /// The `chrome.storage.local` surface; null when the chrome global is
   /// unavailable (non-extension context) — the env then runs memory-only,
@@ -102,7 +106,7 @@ final class ChromeStorageEnv implements ExecutionEnv {
 
   /// Creates the env and replays the stored snapshot into the memory tree.
   static Future<ChromeStorageEnv> restore({StorageApi? storage}) async {
-    final env = ChromeStorageEnv._(storage);
+    final env = ChromeStorageEnv._(storage, MemoryExecutionEnv(cwd: '/'));
     await env._restore();
     env._booting = false;
     return env;
@@ -122,69 +126,31 @@ final class ChromeStorageEnv implements ExecutionEnv {
     //    save could overwrite it — version bumps must never wipe (issue
     //    #228 vector 2).
     final raw = all[storageKey];
-    if (raw is String && raw.isNotEmpty && !await _restoreEnvelope(raw)) {
-      try {
-        await storage.set({backupKey: raw});
-      } on Object {
-        // Backup failed (blocked storage): boot continues clean either way.
+    if (raw is String && raw.isNotEmpty) {
+      final restoredV1 = await restoreSnapshotEnvelope(
+        delegate,
+        raw,
+        snapshotVersion,
+      );
+      if (restoredV1 == null) {
+        try {
+          await storage.set({backupKey: raw});
+        } on Object {
+          // Backup failed (blocked storage): boot continues clean either
+          // way.
+        }
+      } else {
+        // A v1 envelope just came back to life: until a save pass has
+        // written every session record and replaced it, it stays the only
+        // durable copy of the sessions (issue #238 F1).
+        _envelopeIsV1 = restoredV1;
       }
     }
-    // 2. Session records overlay the envelope: version-independent keys,
-    //    newer-or-equal truth. A corrupt record costs one file, not boot.
-    for (final entry in all.entries) {
-      final path = _sessionPathOfKey(entry.key);
-      if (path == null) continue;
-      _knownSessionKeys.add(entry.key);
-      final data = entry.value;
-      if (data is! String) continue;
-      try {
-        await _delegate.writeBinaryFile(path, base64Decode(data));
-      } on Object {
-        // Torn record → skip this file only (the session layer's own
-        // quarantine handles a broken JSONL from here).
-      }
-    }
-  }
-
-  /// Replays the envelope into the delegate. Returns false when the
-  /// envelope is unreadable or carries an unhandled version — the caller
-  /// then preserves it under [backupKey] instead of discarding it.
-  Future<bool> _restoreEnvelope(String raw) async {
-    Map<String, dynamic> decoded;
-    try {
-      final d = jsonDecode(raw);
-      if (d is! Map<String, dynamic>) return false;
-      decoded = d;
-    } on Object {
-      return false;
-    }
-    final version = decoded['version'];
-    if (version != 1 && version != snapshotVersion) return false;
-    try {
-      // Parse and validate everything before touching the tree so a corrupt
-      // snapshot cannot leave a half-restored filesystem.
-      final dirs = <String>[
-        for (final d in decoded['dirs'] as List) d as String,
-      ];
-      final files = <(String, Uint8List)>[
-        for (final f in decoded['files'] as List)
-          ((f as Map)['path'] as String, base64Decode(f['data'] as String)),
-      ];
-      for (final dir in dirs) {
-        await _delegate.createDir(dir);
-      }
-      for (final (path, bytes) in files) {
-        await _delegate.writeBinaryFile(path, bytes);
-      }
-      // A v1 envelope just came back to life: until a save pass has
-      // written every session record and replaced it, it stays the only
-      // durable copy of the sessions (issue #238 F1).
-      _envelopeIsV1 = version == 1;
-      return true;
-    } on Object {
-      // Corrupt snapshot → clean start, never crash boot.
-      return false;
-    }
+    // 2. Session records overlay the envelope (version-independent keys,
+    //    newer-or-equal truth) and seed the eviction set (#228).
+    _knownSessionKeys.addAll(
+      await restoreSessionRecords(delegate, all, _sessionPathOfKey),
+    );
   }
 
   /// Maps a storage key back to its session path, or null when the key is
@@ -276,7 +242,7 @@ final class ChromeStorageEnv implements ExecutionEnv {
     // Synchronous point-in-time export (issues #201/#228): the old async
     // walk yielded between entries, so a mid-walk append could persist a
     // tree that never existed.
-    final snapshot = _delegate.exportSnapshot();
+    final snapshot = _mem.exportSnapshot();
     final envelopeFiles = <Map<String, String>>[];
     final sessionRecords = <String, String>{};
     for (final file in snapshot.files.entries) {
@@ -348,40 +314,18 @@ final class ChromeStorageEnv implements ExecutionEnv {
     );
   }
 
-  @override
-  String get cwd => _delegate.cwd;
-
   /// True when a mutation at [path] touches session data: the session
   /// files themselves, or the fs root (a recursive wipe takes the sessions
   /// with it). Session-affecting mutations persist eagerly.
   static bool _affectsSessions(String path) =>
       _isSessionPath(path) || path == '/' || path.isEmpty;
 
+  /// Mirrors every successful mutation into storage; session-affecting
+  /// ones persist eagerly. `createDir` stays debounced-only (pre-#1996
+  /// behavior — only file/session mutations skip the debounce).
   @override
-  Future<Result<void, FileError>> writeBinaryFile(
-    String path,
-    Uint8List content,
-  ) async {
-    final result = await _delegate.writeBinaryFile(path, content);
-    if (result.isOk) _schedulePersist(session: _affectsSessions(path));
-    return result;
-  }
-
-  @override
-  Future<Result<void, FileError>> writeFile(String path, String content) async {
-    final result = await _delegate.writeFile(path, content);
-    if (result.isOk) _schedulePersist(session: _affectsSessions(path));
-    return result;
-  }
-
-  @override
-  Future<Result<void, FileError>> appendFile(
-    String path,
-    String content,
-  ) async {
-    final result = await _delegate.appendFile(path, content);
-    if (result.isOk) _schedulePersist(session: _affectsSessions(path));
-    return result;
+  void afterMutation(String path) {
+    _schedulePersist(session: _affectsSessions(path));
   }
 
   @override
@@ -389,56 +333,8 @@ final class ChromeStorageEnv implements ExecutionEnv {
     String path, {
     bool recursive = true,
   }) async {
-    final result = await _delegate.createDir(path, recursive: recursive);
+    final result = await delegate.createDir(path, recursive: recursive);
     if (result.isOk) _schedulePersist();
     return result;
   }
-
-  @override
-  Future<Result<void, FileError>> remove(
-    String path, {
-    bool recursive = false,
-    bool force = false,
-  }) async {
-    final result = await _delegate.remove(
-      path,
-      recursive: recursive,
-      force: force,
-    );
-    if (result.isOk) _schedulePersist(session: _affectsSessions(path));
-    return result;
-  }
-
-  @override
-  Future<Result<String, FileError>> absolutePath(String path) =>
-      _delegate.absolutePath(path);
-
-  @override
-  Future<Result<String, FileError>> joinPath(List<String> parts) =>
-      _delegate.joinPath(parts);
-
-  @override
-  Future<Result<String, FileError>> readTextFile(String path) =>
-      _delegate.readTextFile(path);
-
-  @override
-  Future<Result<Uint8List, FileError>> readBinaryFile(String path) =>
-      _delegate.readBinaryFile(path);
-
-  @override
-  Future<Result<List<String>, FileError>> readTextLines(
-    String path, {
-    int? maxLines,
-  }) => _delegate.readTextLines(path, maxLines: maxLines);
-
-  @override
-  Future<Result<FileInfo, FileError>> fileInfo(String path) =>
-      _delegate.fileInfo(path);
-
-  @override
-  Future<Result<List<FileInfo>, FileError>> listDir(String path) =>
-      _delegate.listDir(path);
-
-  @override
-  Future<Result<bool, FileError>> exists(String path) => _delegate.exists(path);
 }

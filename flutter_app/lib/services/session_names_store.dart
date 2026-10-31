@@ -9,6 +9,7 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:intl/intl.dart';
 
 import 'package:fa/l10n/l10n_ext.dart';
+import 'package:fa_ui/fa_ui.dart';
 
 /// The fallback session title shown when the user gave no custom name: a
 /// localized date+time derived from the session's creation time ("31 Jul
@@ -157,26 +158,21 @@ class SessionNamesStore extends ChangeNotifier {
   }
 
   Future<void> _load() async {
-    final env = _env;
-    if (env == null) return;
-    try {
-      final text = (await env.readTextFile('${env.cwd}/$fileName')).valueOrNull;
-      if (text == null) return;
-      final decoded = jsonDecode(text);
-      if (decoded is! Map<String, dynamic>) return;
-      if (decoded['version'] != _version) return;
-      final names = decoded['names'];
-      if (names is! Map) return;
-      _names
-        ..clear()
-        ..addAll({
-          for (final entry in names.entries)
-            if (entry.value is String && (entry.value as String).isNotEmpty)
-              entry.key as String: entry.value as String,
-        });
-    } on Object {
-      // Corrupt or incompatible file → empty store, never crash boot.
-    }
+    await faLoadVersionedStore(
+      _env,
+      fileName: fileName,
+      version: _version,
+      payloadKey: 'names',
+      decode: (env, names) {
+        _names
+          ..clear()
+          ..addAll({
+            for (final entry in names.entries)
+              if (entry.value is String && (entry.value as String).isNotEmpty)
+                entry.key as String: entry.value as String,
+          });
+      },
+    );
   }
 
   Future<void> _save() async {

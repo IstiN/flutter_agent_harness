@@ -32,6 +32,50 @@ import '../widgets/snackbars.dart';
 typedef FaChatSubmitInterceptor =
     bool Function(BuildContext context, String text);
 
+/// The pill-shaped multiline input decoration shared by every chat
+/// composer (the channel composer included): 16×8 inner air, borderless
+/// 24-radius capsule, filled.
+InputDecoration faComposerFieldDecoration(String hintText) {
+  return InputDecoration(
+    hintText: hintText,
+    contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+    border: const OutlineInputBorder(
+      borderRadius: BorderRadius.all(Radius.circular(24)),
+      borderSide: BorderSide.none,
+    ),
+    enabledBorder: const OutlineInputBorder(
+      borderRadius: BorderRadius.all(Radius.circular(24)),
+      borderSide: BorderSide.none,
+    ),
+    focusedBorder: const OutlineInputBorder(
+      borderRadius: BorderRadius.all(Radius.circular(24)),
+      borderSide: BorderSide.none,
+    ),
+    filled: true,
+  );
+}
+
+/// The circular send/stop shell: light theme a solid indigo circle, dark
+/// theme the brand gradient. [child] is the button itself.
+Widget faSendBubbleShell(
+  BuildContext context,
+  FahColors palette,
+  Widget child,
+) {
+  return Container(
+    decoration: BoxDecoration(
+      color: Theme.of(context).brightness == Brightness.light
+          ? palette.indigo
+          : null,
+      gradient: Theme.of(context).brightness == Brightness.dark
+          ? palette.brandGradient
+          : null,
+      shape: BoxShape.circle,
+    ),
+    child: child,
+  );
+}
+
 /// Backend-agnostic: sends through [FaChatService], picks files/images
 /// through [FaChatHost] hooks (or the constructor overrides, which tests
 /// inject), and reports analytics through [FaChatHost.track]. All strings
@@ -944,29 +988,13 @@ class ChatComposerState extends State<ChatComposer>
         child: TextField(
           controller: _textController,
           focusNode: _focusNode,
-          decoration: InputDecoration(
-            // The host-localized hint (the session surface scopes
-            // FaChatStrings; channel chats override it with "Message
-            // <channel>").
-            hintText: FaChatStrings.of(context).chatInputHint,
-            contentPadding: const EdgeInsets.symmetric(
-              horizontal: 16,
-              vertical: 8,
-            ),
-            border: const OutlineInputBorder(
-              borderRadius: BorderRadius.all(Radius.circular(24)),
-              borderSide: BorderSide.none,
-            ),
-            enabledBorder: const OutlineInputBorder(
-              borderRadius: BorderRadius.all(Radius.circular(24)),
-              borderSide: BorderSide.none,
-            ),
-            focusedBorder: const OutlineInputBorder(
-              borderRadius: BorderRadius.all(Radius.circular(24)),
-              borderSide: BorderSide.none,
-            ),
-            filled: true,
-          ),
+          decoration:
+              // The host-localized hint (the session surface scopes
+              // FaChatStrings; channel chats override it with "Message
+              // <channel>").
+              faComposerFieldDecoration(
+                FaChatStrings.of(context).chatInputHint,
+              ),
           // Multiline: Shift+Enter (hardware) or the touch return key
           // inserts a line break; plain Enter sends (_handleComposerKey).
           // The field grows 1→6 lines and then scrolls internally.
@@ -1027,17 +1055,10 @@ class ChatComposerState extends State<ChatComposer>
   /// field, send (or steer-send mid-stream) otherwise. Light theme paints
   /// a solid indigo circle; dark theme the brand gradient.
   Widget _buildSendStopButton(FahColors palette, FaChatStrings strings) {
-    return Container(
-      decoration: BoxDecoration(
-        color: Theme.of(context).brightness == Brightness.light
-            ? palette.indigo
-            : null,
-        gradient: Theme.of(context).brightness == Brightness.dark
-            ? palette.brandGradient
-            : null,
-        shape: BoxShape.circle,
-      ),
-      child: Builder(
+    return faSendBubbleShell(
+      context,
+      palette,
+      Builder(
         builder: (context) {
           // Stop only while streaming AND nothing typed; with text in the
           // field the button is a steer-send (interrupt the turn and run

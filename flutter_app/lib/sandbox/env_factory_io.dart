@@ -186,17 +186,15 @@ bool get isWebPlatform => false;
 /// is indistinguishable from an already-mapped host path and is treated as
 /// the latter; both readings stay inside the sandbox, so the sandbox
 /// boundary is preserved either way.
-final class SandboxedExecutionEnv
-    implements
-        ExecutionEnv,
-        BackgroundShell,
-        RangedReadFileSystem,
-        RenamableFileSystem {
+final class SandboxedExecutionEnv extends ForwardingFs
+    with
+        ForwardingBackgroundShell,
+        ForwardingRangedReadFs,
+        ForwardingRenamableFs {
   /// Creates an env mapping sandbox-absolute paths onto [_sandboxRoot],
-  /// delegating everything else (relative paths, [exec]) to [_delegate].
-  SandboxedExecutionEnv(this._delegate, this._sandboxRoot);
+  /// delegating everything else (relative paths, [exec]) to the delegate.
+  SandboxedExecutionEnv(super.delegate, this._sandboxRoot);
 
-  final ExecutionEnv _delegate;
   final String _sandboxRoot;
 
   /// Lazily-built matcher sharing the "inside the sandbox host dir"
@@ -204,7 +202,8 @@ final class SandboxedExecutionEnv
   /// cannot drift apart.
   SandboxHostRoot? _hostRoot;
 
-  String _map(String path) {
+  @override
+  String mapPath(String path) {
     final root = _sandboxRoot;
     if (root.isEmpty) return path;
     final hostRoot = _hostRoot ??= SandboxHostRoot(root);
@@ -212,150 +211,4 @@ final class SandboxedExecutionEnv
     if (path.startsWith('/')) return '$root$path';
     return path;
   }
-
-  @override
-  String get cwd => _delegate.cwd;
-
-  @override
-  Future<Result<ShellExecResult, ExecutionError>> exec(
-    String command, {
-    ShellExecOptions? options,
-  }) => _delegate.exec(command, options: options);
-
-  // Background shell jobs: the registry's log path is derived from [cwd]
-  // (already a host path), so it needs no mapping — just forward.
-
-  @override
-  bool get backgroundJobsSupported {
-    final delegate = _delegate;
-    if (delegate case final BackgroundShell bg) {
-      return bg.backgroundJobsSupported;
-    }
-    return false;
-  }
-
-  @override
-  Future<Result<ShellJob, ExecutionError>> startShellJob(
-    String command, {
-    required String id,
-    required String logPath,
-    ShellExecOptions? options,
-  }) {
-    final delegate = _delegate;
-    if (delegate case final BackgroundShell bg) {
-      return bg.startShellJob(
-        command,
-        id: id,
-        logPath: logPath,
-        options: options,
-      );
-    }
-    return Future.value(
-      const Err(
-        ExecutionError(
-          ExecutionErrorCode.shellUnavailable,
-          'background shell jobs are not supported by this shell',
-        ),
-      ),
-    );
-  }
-
-  @override
-  Future<Result<String, FileError>> absolutePath(String path) =>
-      _delegate.absolutePath(_map(path));
-
-  @override
-  Future<Result<String, FileError>> joinPath(List<String> parts) =>
-      _delegate.joinPath(parts);
-
-  @override
-  Future<Result<String, FileError>> readTextFile(String path) =>
-      _delegate.readTextFile(_map(path));
-
-  @override
-  Future<Result<Uint8List, FileError>> readBinaryFile(String path) =>
-      _delegate.readBinaryFile(_map(path));
-
-  @override
-  Future<Result<Uint8List, FileError>> readRange(
-    String path,
-    int start,
-    int end,
-  ) {
-    final delegate = _delegate;
-    if (delegate case final RangedReadFileSystem ranged) {
-      return ranged.readRange(_map(path), start, end);
-    }
-    return Future.value(
-      Err(
-        FileError(
-          FileErrorCode.notSupported,
-          'readRange not supported by $delegate',
-          path: path,
-        ),
-      ),
-    );
-  }
-
-  @override
-  Future<Result<void, FileError>> renamePath(String from, String to) {
-    final delegate = _delegate;
-    if (delegate case final RenamableFileSystem renamable) {
-      return renamable.renamePath(_map(from), _map(to));
-    }
-    return Future.value(
-      Err(
-        FileError(
-          FileErrorCode.notSupported,
-          'renamePath not supported by $delegate',
-          path: from,
-        ),
-      ),
-    );
-  }
-
-  @override
-  Future<Result<List<String>, FileError>> readTextLines(
-    String path, {
-    int? maxLines,
-  }) => _delegate.readTextLines(_map(path), maxLines: maxLines);
-
-  @override
-  Future<Result<void, FileError>> writeBinaryFile(
-    String path,
-    Uint8List content,
-  ) => _delegate.writeBinaryFile(_map(path), content);
-
-  @override
-  Future<Result<void, FileError>> writeFile(String path, String content) =>
-      _delegate.writeFile(_map(path), content);
-
-  @override
-  Future<Result<void, FileError>> appendFile(String path, String content) =>
-      _delegate.appendFile(_map(path), content);
-
-  @override
-  Future<Result<FileInfo, FileError>> fileInfo(String path) =>
-      _delegate.fileInfo(_map(path));
-
-  @override
-  Future<Result<List<FileInfo>, FileError>> listDir(String path) =>
-      _delegate.listDir(_map(path));
-
-  @override
-  Future<Result<bool, FileError>> exists(String path) =>
-      _delegate.exists(_map(path));
-
-  @override
-  Future<Result<void, FileError>> createDir(
-    String path, {
-    bool recursive = true,
-  }) => _delegate.createDir(_map(path), recursive: recursive);
-
-  @override
-  Future<Result<void, FileError>> remove(
-    String path, {
-    bool recursive = false,
-    bool force = false,
-  }) => _delegate.remove(_map(path), recursive: recursive, force: force);
 }

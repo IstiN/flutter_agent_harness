@@ -19,13 +19,38 @@ import 'pi_mode.dart' show isTruthyEnvValue;
 /// and completes with the authorization code from the first `GET /?code=...`
 /// request. The server closes itself automatically after the code is captured
 /// or after a timeout.
+///
+/// The app (flutter_app) shares this class through the
+/// `openrouter_oauth_callback.dart` shim; its pre-fork body carried the
+/// gh-781 chain-safe close, which this class adopted back (issue #1996).
+/// [missingCodeTarget] keeps the two 400-page hints verbatim: the CLI says
+/// "try again in the terminal", the app "try again in the app".
 final class OpenRouterOAuthLocalCallbackServer {
   /// Creates a server that will bind to an ephemeral localhost port.
-  OpenRouterOAuthLocalCallbackServer();
+  ///
+  /// [missingCodeTarget] names the surface in the 400 page shown when the
+  /// callback arrives without a code.
+  OpenRouterOAuthLocalCallbackServer({this.missingCodeTarget = 'terminal'});
+
+  /// The surface named in the missing-code 400 page ("terminal" / "app").
+  final String missingCodeTarget;
 
   HttpServer? _server;
   Completer<String?>? _codeCompleter;
   Timer? _timeoutTimer;
+
+  /// The in-flight socket close, if one is running.
+  ///
+  /// The timeout and code-captured paths call [close] fire-and-forget
+  /// (`unawaited(close())`), and that close nulls [_server] before the
+  /// socket is actually released. A [close] (or [start]) landing on top of
+  /// it must chain that real release instead of no-oping on the nulled
+  /// field — otherwise `await close()` returned with the port still bound
+  /// and a rebind raced the release ("The shared flag to bind() needs to
+  /// be `true` …" under CI load — gh-781). Concurrent closers awaiting the
+  /// same future may all clear it — the cleared field only means "no close
+  /// is pending", never "a close is missing".
+  Future<void>? _closing;
 
   /// The callback URL to pass to OpenRouter, or null before [start].
   String? get callbackUrl {
@@ -39,16 +64,17 @@ final class OpenRouterOAuthLocalCallbackServer {
   /// [timeout] caps how long the server waits for the callback; after it
   /// elapses the server closes and [waitForCode] completes with null.
   Future<String> start({Duration timeout = const Duration(minutes: 5)}) async {
-    await _closeExisting();
+    await close();
     _codeCompleter = Completer<String?>();
 
     _server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     final server = _server!;
-    final url = 'http://127.0.0.1:${server.port}/';
+    final url = callbackUrl!;
 
     _timeoutTimer = Timer(timeout, () {
-      if (_codeCompleter case final c? when !c.isCompleted) {
-        c.complete(null);
+      final completer = _codeCompleter;
+      if (completer != null && !completer.isCompleted) {
+        completer.complete(null);
       }
       unawaited(close());
     });
@@ -78,7 +104,7 @@ final class OpenRouterOAuthLocalCallbackServer {
         success: false,
         message:
             'Missing authorization code. Please close this page and '
-            'try again in the terminal.',
+            'try again in the $missingCodeTarget.',
         statusCode: 400,
       );
     }
@@ -110,7 +136,7 @@ final class OpenRouterOAuthLocalCallbackServer {
     final title = success ? 'Authorized' : 'Authorization failed';
     final body = success
         ? '<p>You can close this tab and return to Fa.</p>'
-        : '<p>${_htmlEscape(message ?? 'Unknown error')}</p>';
+        : '<p>${const HtmlEscape().convert(message ?? 'Unknown error')}</p>';
     response.write(
       '<!DOCTYPE html><html><head><title>$title</title>'
       '<style>body{font-family:system-ui,sans-serif;max-width:600px;margin:4rem auto;text-align:center;}'
@@ -118,10 +144,6 @@ final class OpenRouterOAuthLocalCallbackServer {
       '<body><h1>$title</h1>$body</body></html>',
     );
     unawaited(response.close());
-  }
-
-  String _htmlEscape(String text) {
-    return const HtmlEscape().convert(text);
   }
 
   /// Waits for the callback and returns the authorization code, or null on
@@ -133,19 +155,28 @@ final class OpenRouterOAuthLocalCallbackServer {
   }
 
   /// Closes the server and cancels the timeout.
+  ///
+  /// Idempotent and chain-safe: a call landing while a previous close is
+  /// still in flight awaits that release, so when the returned future
+  /// completes the socket is provably closed and the port is free to
+  /// rebind.
   Future<void> close() async {
     _timeoutTimer?.cancel();
     _timeoutTimer = null;
     final server = _server;
     _server = null;
-    if (server != null) await server.close();
-  }
-
-  Future<void> _closeExisting() async {
-    final server = _server;
     if (server != null) {
-      _server = null;
-      await server.close();
+      _closing = server.close();
+    }
+    final closing = _closing;
+    if (closing != null) {
+      // finally, not after-await: an errored close must not stay pinned in
+      // _closing and rethrow out of every later close()/start().
+      try {
+        await closing;
+      } finally {
+        _closing = null;
+      }
     }
   }
 }

@@ -149,6 +149,7 @@ export 'src/compaction/context_pressure.dart' hide hasAnyReportedUsage;
 export 'src/compaction/context_window_registry.dart';
 export 'src/context.dart';
 export 'src/cube/cube.dart';
+export 'src/env/delegating_execution_env.dart';
 export 'src/env/execution_env.dart';
 export 'src/env/job_log_ceiling.dart';
 export 'src/env/job_log_redaction.dart';

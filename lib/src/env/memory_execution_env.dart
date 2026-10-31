@@ -440,6 +440,88 @@ final class UnavailableShell implements Shell {
   }
 }
 
+/// Replays one stored snapshot envelope into [delegate]: parses and
+/// validates everything BEFORE touching the tree so a corrupt snapshot
+/// cannot leave a half-restored filesystem, then creates the dirs and
+/// writes the files.
+///
+/// Returns the envelope's v1-ness on a successful replay (`true` = the
+/// pre-migration sessions-inline envelope is again the only durable copy
+/// of the sessions until the next full save pass — issue #238 F1), or
+/// null when the envelope is unreadable, carries an unhandled version, or
+/// the replay threw — the caller then preserves the raw record under its
+/// backup key instead of discarding it (version bumps must never wipe).
+///
+/// Shared codec of the snapshot envelope (`version`/`dirs`/`files`
+/// records written by the persistence mirrors); the app's
+/// `PersistentWebExecutionEnv` and the extension's `ChromeStorageEnv`
+/// twin both restore through it (issue #1996 — the decode/replay block
+/// used to live twice).
+Future<bool?> restoreSnapshotEnvelope(
+  ExecutionEnv delegate,
+  String raw,
+  int currentVersion,
+) async {
+  Map<String, dynamic> decoded;
+  try {
+    final d = jsonDecode(raw);
+    if (d is! Map<String, dynamic>) return null;
+    decoded = d;
+  } on Object {
+    return null;
+  }
+  final version = decoded['version'];
+  if (version != 1 && version != currentVersion) return null;
+  try {
+    final dirs = <String>[for (final d in decoded['dirs'] as List) d as String];
+    final files = <(String, Uint8List)>[
+      for (final f in decoded['files'] as List)
+        ((f as Map)['path'] as String, base64Decode(f['data'] as String)),
+    ];
+    for (final dir in dirs) {
+      await delegate.createDir(dir);
+    }
+    for (final (path, bytes) in files) {
+      await delegate.writeBinaryFile(path, bytes);
+    }
+    return version == 1;
+  } on Object {
+    // Corrupt snapshot → clean start, never crash boot.
+    return null;
+  }
+}
+
+/// Overlays version-independent session records onto a restored tree
+/// (newer-or-equal truth): one corrupt record costs that file, not boot.
+/// [sessionPathOf] maps a record key to its session path (null skips the
+/// key); the class-specific key shape stays with each twin.
+///
+/// Returns the record keys seen, so the caller can seed its
+/// stale-record eviction set (issues #237/#238 ordering). Shared by the
+/// app's `PersistentWebExecutionEnv` and the extension's
+/// `ChromeStorageEnv` (issue #1996).
+Future<Set<String>> restoreSessionRecords(
+  ExecutionEnv delegate,
+  Map<String, Object?> records,
+  String? Function(String key) sessionPathOf,
+) async {
+  final keys = <String>{};
+  for (final entry in records.entries) {
+    final path = sessionPathOf(entry.key);
+    if (path == null) continue;
+    keys.add(entry.key);
+    final data = entry.value;
+    if (data is! String) continue;
+    try {
+      await delegate.writeBinaryFile(path, base64Decode(data));
+    } on Object {
+      // Torn record → skip this file only (the session layer's own
+      // quarantine handles a broken JSONL from here).
+    }
+  }
+  return keys;
+}
+
 /// In-memory [ExecutionEnv]: [MemoryFileSystem] plus a [Shell].
 ///
 /// The default shell is [UnavailableShell]; pass a custom [shell] to test
