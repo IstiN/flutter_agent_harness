@@ -113,15 +113,23 @@ jobs:
       # gh-1852: serialize the matrix. Both legs sign with a per-arch
       # keychain but mutate the PER-USER GLOBAL keychain search list
       # (`security default-keychain -s` / `list-keychains -d user -s`) —
-      # gh-1865 model v3: the matrix runs PARALLEL again. The gh-1852
-      # serialization (max-parallel: 1) existed only because the legs
-      # carried per-job keychains whose search-list writes evicted each
-      # other (run 40117288269: x86_64 evicted arm64's keychain 67s after
-      # import). Signing now goes through ~/bin/ci-sign against the
+      # gh-1865 model v3 retired that keychain race (ci-sign against the
       # persistent host keychain — no per-job keychain lifecycle, no
-      # search-list writes — so the eviction class is structurally gone
-      # and the pool's parallelism (#359) is restored. Pinned by
+      # search-list writes), but gh-2013 (run 41172095157, 2026-10-31)
+      # restored max-parallel: 1 on a NEW ground: the fa-m5 pool is ONE
+      # host under ONE user account (fa-m5 / fa-m5-2 / fa-m5-3 runner
+      # registrations on one Mac). A parallel matrix puts BOTH release
+      # legs on that box at the same time as the daily TestFlight leg's
+      # Build iOS IPA gym (#359 dispatches them concurrently) — three
+      # ceiling-bounded Xcode/Flutter builds on one machine. Each build
+      # crawls ~10x its solo time (green 10-27 baseline: Fa.app built in
+      # 12m39s; run 41172095157: both legs sat 2h14m silent and died at
+      # the 150m ceiling; the concurrent gym blew its own 90m ceiling).
+      # Serialization is also what the daily-publish cli leg budget
+      # (#351) documents: "build-macos 150×2 (arm64 + x86_64 SERIALIZE on
+      # the single self-hosted runner)". Pinned by
       # test/ci_macos_keychain_serialization_guard_test.dart AC1.
+      max-parallel: 1
       matrix:
         arch: [arm64, x86_64]
     permissions:
