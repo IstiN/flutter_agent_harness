@@ -224,11 +224,11 @@ sealed class CapabilityState {
   ) => CapabilityTransportState(transports, reason);
 
   /// Non-empty reason for `off`/`transport` states; null for `on`.
-  String? get reason => switch (this) {
-    CapabilityOnState() => null,
-    CapabilityOffState(:final reason) => reason,
-    CapabilityTransportState(:final reason) => reason,
-  };
+  ///
+  /// Only `on` instances run this body: both state subclasses declare a
+  /// `reason` field whose induced getter overrides this one, so the
+  /// switch's off/transport arms were unreachable (dead under coverage).
+  String? get reason => null;
 
   @override
   String toString() => switch (this) {
