@@ -48,9 +48,6 @@ enum SessionSearchScope {
   /// The whole tree, forks included — an abandoned branch still happened.
   tree;
 
-  /// The payload spelling.
-  String get jsonName => name;
-
   /// Tolerant parse: null/unknown falls back to [branch].
   static SessionSearchScope fromName(Object? name) =>
       name == 'tree' ? tree : branch;
@@ -63,9 +60,6 @@ enum SessionSearchMode {
 
   /// Archive structure: counts, hidden totals, checkpoint tree.
   map;
-
-  /// The payload spelling.
-  String get jsonName => name;
 
   /// Tolerant parse: null/unknown falls back to [search].
   static SessionSearchMode fromName(Object? name) =>
