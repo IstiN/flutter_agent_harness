@@ -10,6 +10,7 @@ library;
 import 'dart:async';
 import 'dart:convert' as json_conv;
 import 'dart:math' as math;
+import 'dart:typed_data';
 
 import 'package:meta/meta.dart';
 import '../env/execution_env.dart';
@@ -142,26 +143,31 @@ final RegExp _slugEscape = RegExp(r'%([0-9A-Fa-f]{2})');
 bool _hasReversibleEscape(String inner) => _slugEscape
     .allMatches(inner)
     .any(
-      (m) => const {
-        '25',
-        '2D',
-        '2F',
-        '5C',
-        '3A',
-      }.contains(m.group(1)!.toUpperCase()),
+      (m) => switch (m.group(1)) {
+        final captured? => const {
+          '25',
+          '2D',
+          '2F',
+          '5C',
+          '3A',
+        }.contains(captured.toUpperCase()),
+        _ => false,
+      },
     );
 
 /// Undoes [_encodeCwd]'s percent-escapes in one segment. Unknown `%XX`
 /// sequences stay literal (legacy text).
 String _unescapeSlugPart(String part) => part.replaceAllMapped(
   _slugEscape,
-  (m) => switch (m.group(1)!.toUpperCase()) {
+  (m) => switch (m.group(1)?.toUpperCase()) {
     '25' => '%',
     '2D' => '-',
     '2F' => '/',
     '5C' => r'\',
     '3A' => ':',
-    _ => m.group(0)!,
+    // Unknown %XX stays literal (legacy text); the regex always has a
+    // match body, so the fallback only covers the impossible null group.
+    _ => m.group(0) ?? part.substring(m.start, m.end),
   },
 );
 
@@ -335,19 +341,17 @@ final class JsonlSessionRepo implements SessionRepo {
     );
   }
 
-  T _fsOrThrow<T>(Result<T, FileError> result, String message) {
-    if (result.isErr) {
-      final error = result.errorOrNull!;
-      throw SessionException(
-        '$message: ${error.message}',
-        code: error.code == FileErrorCode.notFound
-            ? SessionErrorCode.notFound
-            : SessionErrorCode.storage,
-        cause: error,
-      );
-    }
-    return result.valueOrNull as T;
-  }
+  T _fsOrThrow<T>(Result<T, FileError> result, String message) =>
+      switch (result) {
+        Ok<T, FileError>(:final value) => value,
+        Err<T, FileError>(:final error) => throw SessionException(
+          '$message: ${error.message}',
+          code: error.code == FileErrorCode.notFound
+              ? SessionErrorCode.notFound
+              : SessionErrorCode.storage,
+          cause: error,
+        ),
+      };
 
   @override
   Future<Session> create(JsonlSessionCreateOptions options) async {
@@ -402,7 +406,8 @@ final class JsonlSessionRepo implements SessionRepo {
     // Resume-timing caller attribution: full opens on big sessions are the
     // expensive kind — the log must name who asked (issue: slow resume
     // investigation). Windowed opens stay caller-less (they are cheap).
-    if (!windowed && timingLog != null) {
+    final log = timingLog;
+    if (!windowed && log != null) {
       final frames = StackTrace.current
           .toString()
           .split('\n')
@@ -410,7 +415,7 @@ final class JsonlSessionRepo implements SessionRepo {
           .take(3)
           .map((l) => l.trim())
           .join(' <- ');
-      timingLog!.call(
+      log.call(
         'resume_timing open-caller file=${metadata.path.split('/').last} $frames',
       );
     }
@@ -610,8 +615,8 @@ final class JsonlSessionRepo implements SessionRepo {
       path,
       trashPath,
     );
-    if (renamed.isErr) {
-      final error = renamed.errorOrNull!;
+    if (renamed is Err<void, FileError>) {
+      final error = renamed.error;
       if (error.code != FileErrorCode.notSupported) {
         _fsOrThrow(renamed, 'Failed to move session $path to trash $trashPath');
       }
@@ -957,12 +962,13 @@ final class JsonlSessionRepo implements SessionRepo {
     // treats them as immutable (read-only payload consumers).
     final fingerprint = await _scanChainFingerprint(scanned);
     final memo = fingerprint == null ? null : _scanMemo[metadata.path];
-    if (memo != null &&
+    if (fingerprint != null &&
+        memo != null &&
         memo.matches(
           types: types,
           lastSegmentOnly: lastSegmentOnly,
           tailCapBytes: cap,
-          fingerprint: fingerprint!,
+          fingerprint: fingerprint,
         )) {
       return List.of(memo.records);
     }
@@ -1085,10 +1091,12 @@ final class JsonlSessionRepo implements SessionRepo {
     int? tailCapBytes,
   ) async {
     final blockBytes = debugCustomRecordScanBlockBytes;
-    final info = await fs.fileInfo(path);
-    if (info.isErr) return const [];
-    if (info.valueOrNull!.kind != FileKind.file) return const [];
-    final size = info.valueOrNull!.size;
+    final info = switch (await fs.fileInfo(path)) {
+      Ok<FileInfo, FileError>(:final value) => value,
+      Err<FileInfo, FileError>() => null,
+    };
+    if (info == null || info.kind != FileKind.file) return const [];
+    final size = info.size;
     final scanner = _CustomRecordBlockScanner(types);
     // Start inside the tail region: a line torn at the boundary simply
     // fails the field-shaped gate (or jsonDecode) and is skipped — the
@@ -1096,9 +1104,15 @@ final class JsonlSessionRepo implements SessionRepo {
     var offset = tailCapBytes == null ? 0 : math.max(0, size - tailCapBytes);
     while (offset < size) {
       final end = (offset + blockBytes).clamp(0, size);
-      final read = await ranged.readRange(path, offset, end);
-      if (read.isErr) return const [];
-      final block = read.valueOrNull!;
+      final Uint8List? block = switch (await ranged.readRange(
+        path,
+        offset,
+        end,
+      )) {
+        Ok<Uint8List, FileError>(:final value) => value,
+        Err<Uint8List, FileError>() => null,
+      };
+      if (block == null) return const [];
       if (block.isEmpty) break;
       offset = end;
       scanner.scanBlock(json_conv.latin1.decode(block));

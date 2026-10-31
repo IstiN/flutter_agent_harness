@@ -19,6 +19,7 @@
 library;
 
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'env/execution_env.dart';
 import 'session/obligations_ledger.dart' show obligationsLedgerRecordType;
@@ -223,17 +224,15 @@ Future<SessionRepairReport> repairSessionLedgers(
   final drops = dropTypes ?? repairDropCustomTypes;
   final keepLatest = keepLatestTypes ?? repairKeepLatestCustomTypes;
   final (:ranged, :renamable) = _repairIoSurface(fs);
-  final stat = await fs.fileInfo(path);
-  if (stat.isErr) {
-    final code = stat.errorOrNull!.code == FileErrorCode.notFound
-        ? SessionRepairErrorCode.notFound
-        : SessionRepairErrorCode.unknown;
-    throw SessionRepairException(
-      'cannot stat session file $path: ${stat.errorOrNull!.message}',
-      code: code,
-    );
-  }
-  final bytesBefore = stat.valueOrNull!.size;
+  final bytesBefore = switch (await fs.fileInfo(path)) {
+    Err<FileInfo, FileError>(:final error) => throw SessionRepairException(
+      'cannot stat session file $path: ${error.message}',
+      code: error.code == FileErrorCode.notFound
+          ? SessionRepairErrorCode.notFound
+          : SessionRepairErrorCode.unknown,
+    ),
+    Ok<FileInfo, FileError>(:final value) => value.size,
+  };
 
   // Rotated segment siblings (gh-1077: `<file>.part-NN` holds the records
   // rotated out of the primary). Repair rewrites ONLY the primary — the
@@ -438,40 +437,44 @@ Future<int> _writeRepairedAndSwap(
   // An existing backup is rotated to `.bak1` first.
   final backupPath = '$path.bak';
   final backupExists = await fs.exists(backupPath);
-  if (backupExists.isErr) {
-    await fs.remove(tempPath, force: true);
-    throw SessionRepairException(
-      'cannot check for an existing backup at $backupPath: '
-      '${backupExists.errorOrNull!.message}',
-      code: SessionRepairErrorCode.unknown,
-    );
+  final bool backupWasThere;
+  switch (backupExists) {
+    case Ok<bool, FileError>(:final value):
+      backupWasThere = value;
+    case Err<bool, FileError>(:final error):
+      await fs.remove(tempPath, force: true);
+      throw SessionRepairException(
+        'cannot check for an existing backup at $backupPath: '
+        '${error.message}',
+        code: SessionRepairErrorCode.unknown,
+      );
   }
-  if (backupExists.valueOrNull!) {
+  if (backupWasThere) {
     final rotated = await renamable.renamePath(backupPath, '$path.bak1');
-    if (rotated.isErr) {
+    if (rotated case Err<void, FileError>(:final error)) {
       await fs.remove(tempPath, force: true);
       throw SessionRepairException(
         'cannot rotate the previous backup $backupPath to $path.bak1: '
-        '${rotated.errorOrNull!.message}',
+        '${error.message}',
         code: SessionRepairErrorCode.unknown,
       );
     }
   }
   final backup = await renamable.renamePath(path, backupPath);
-  if (backup.isErr) {
+  if (backup case Err<void, FileError>(:final error)) {
     await fs.remove(tempPath, force: true);
     throw SessionRepairException(
-      'cannot back up $path to $backupPath: ${backup.errorOrNull!.message}',
+      'cannot back up $path to $backupPath: ${error.message}',
       code: SessionRepairErrorCode.unknown,
     );
   }
   final swap = await renamable.renamePath(tempPath, path);
-  if (swap.isErr) {
+  if (swap case Err<void, FileError>(:final error)) {
     // Roll the original back — never leave the session missing.
     await renamable.renamePath(backupPath, path);
     throw SessionRepairException(
       'cannot move the repaired file into place at $path: '
-      '${swap.errorOrNull!.message}',
+      '${error.message}',
       code: SessionRepairErrorCode.unknown,
     );
   }
@@ -491,22 +494,26 @@ Future<void> _writeSpansToTemp(
 ) async {
   var write = await fs.writeFile(tempPath, '');
   for (final span in spans) {
-    final raw = await ranged.readRange(path, span.$1, span.$2);
-    if (raw.isErr) {
-      await fs.remove(tempPath, force: true);
-      throw SessionRepairException(
-        'read failed during repair of $path: ${raw.errorOrNull!.message}',
-        code: SessionRepairErrorCode.unknown,
-      );
+    final Uint8List bytes;
+    switch (await ranged.readRange(path, span.$1, span.$2)) {
+      case Ok<Uint8List, FileError>(:final value):
+        bytes = value;
+      case Err<Uint8List, FileError>(:final error):
+        await fs.remove(tempPath, force: true);
+        throw SessionRepairException(
+          'read failed during repair of $path: ${error.message}',
+          code: SessionRepairErrorCode.unknown,
+        );
     }
     write = await fs.appendFile(
       tempPath,
-      utf8.decode(raw.valueOrNull!, allowMalformed: true),
+      utf8.decode(bytes, allowMalformed: true),
     );
-    if (write.isErr) {
+    if (write is Err<void, FileError>) {
+      final error = write.error;
       await fs.remove(tempPath, force: true);
       throw SessionRepairException(
-        'write failed during repair of $path: ${write.errorOrNull!.message}',
+        'write failed during repair of $path: ${error.message}',
         code: SessionRepairErrorCode.unknown,
       );
     }
@@ -543,9 +550,13 @@ Future<int> _countPartSiblings(FileSystem fs, String path) async {
   if (dir.isEmpty) return 0;
   final base = path.substring(slash + 1);
   final listed = await fs.listDir(dir);
-  if (listed.isErr) return 0;
+  final List<FileInfo>? entries = switch (listed) {
+    Ok<List<FileInfo>, FileError>(:final value) => value,
+    Err<List<FileInfo>, FileError>() => null,
+  };
+  if (entries == null) return 0;
   var count = 0;
-  for (final entry in listed.valueOrNull!) {
+  for (final entry in entries) {
     if (entry.kind != FileKind.file) continue;
     final name = entry.name;
     if (name.startsWith('$base.part-') &&

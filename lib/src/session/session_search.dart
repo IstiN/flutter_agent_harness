@@ -33,6 +33,7 @@
 library;
 
 import 'dart:convert' as json_conv;
+import 'dart:typed_data';
 
 import '../compaction/structured/projection.dart' show recordPreviewSource;
 import '../env/execution_env.dart';
@@ -1030,10 +1031,13 @@ Future<void> _scanFileBlocks(
   var carry = <int>[];
   while (offset < size) {
     final end = (offset + blockBytes).clamp(0, size);
-    final read = await fs.readRange(path, offset, end);
-    if (read.isErr) return;
+    final Uint8List? block = switch (await fs.readRange(path, offset, end)) {
+      Ok<Uint8List, FileError>(:final value) => value,
+      Err<Uint8List, FileError>() => null,
+    };
+    if (block == null) return;
     offset = end;
-    carry = _scanBlock(accumulator, read.valueOrNull!, carry);
+    carry = _scanBlock(accumulator, block, carry);
     accumulator.checkDeadline();
     if (accumulator.stopped) return;
   }
