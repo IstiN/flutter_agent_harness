@@ -52,30 +52,30 @@ Future<(AssistantMessage, Context)> retryEmptyCompletion(
     }
     if (generic < config.maxEmptyRetries) {
       generic++;
-    } else if (verdict == EmptyCompletionVerdict.cleanEmpty) {
+    } else {
       // A genuine empty final: the host's nudge/settle semantics own it
       // (issue #1085 M2b, pinned unchanged by gh-1577 AC2).
-      break;
-    } else if (hiccup >= config.emptyHiccupRetries) {
+      if (verdict == EmptyCompletionVerdict.cleanEmpty) break;
       // gh-1577 exhaustion verdict: retries are spent and the completion is
       // still empty — end the run LOUDLY instead of settling a silent
       // success. An abort that raced the classification wins instead (E5):
       // the exhaustion error is never printed over an aborted run.
-      current = await _finishWithoutStream(
-        out,
-        emit,
-        _terminalMessage(
-          config.model,
-          StopReason.error,
-          emptyHiccupExhaustedError(
-            retryCount: generic + hiccup,
-            attempts: 1 + generic + hiccup,
-            lastStopReason: current.stopReason,
+      if (hiccup >= config.emptyHiccupRetries) {
+        current = await _finishWithoutStream(
+          out,
+          emit,
+          _terminalMessage(
+            config.model,
+            StopReason.error,
+            emptyHiccupExhaustedError(
+              retryCount: generic + hiccup,
+              attempts: 1 + generic + hiccup,
+              lastStopReason: current.stopReason,
+            ),
           ),
-        ),
-      );
-      break;
-    } else {
+        );
+        break;
+      }
       final delay = emptyHiccupBackoffFor(
         attempt: hiccup,
         baseDelay: config.emptyHiccupBaseDelay,

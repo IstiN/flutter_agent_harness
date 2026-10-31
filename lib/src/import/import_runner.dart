@@ -179,6 +179,7 @@ Future<(int, int)> _importSummary({
   } on ForeignFileError catch (error) {
     emit('warning: skipped ${summary.sourceId}: ${error.message}');
   } on SessionException catch (error) {
+    // ignore:identical_branches — both import-failure types surface the identical skip warning.
     emit('warning: skipped ${summary.sourceId}: ${error.message}');
   }
   return (0, 0);

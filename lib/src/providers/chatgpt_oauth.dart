@@ -337,6 +337,7 @@ Map<String, dynamic>? jwtPayloadClaims(String jwt) {
   } on FormatException {
     return null;
   } on ArgumentError {
+    // ignore:identical_branches — both decode failures mean "not a JWT payload" (null).
     return null;
   }
   return claims is Map ? claims.cast<String, dynamic>() : null;

@@ -250,8 +250,10 @@ class TuiLineEditor {
   /// ctrl-t: swap the char before the caret with the one under it.
   TuiLineEditor transpose() {
     final b = buffer;
-    if (b.cursor < 2 && !(b.cursor == b.text.length && b.text.length >= 2)) {
-      if (b.text.length < 2) return this;
+    if (b.cursor < 2 &&
+        !(b.cursor == b.text.length && b.text.length >= 2) &&
+        b.text.length < 2) {
+      return this;
     }
     var c = b.cursor;
     if (c == 0) return this;

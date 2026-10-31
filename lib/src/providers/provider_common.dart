@@ -199,19 +199,15 @@ List<Message> downgradeAllImages(List<Message> messages) {
 /// pointless second call.
 bool messagesContainImages(List<Message> messages) {
   for (final message in messages) {
-    if (message is UserMessage && message.content is List<ContentBlock>) {
-      if ((message.content as List<ContentBlock>).any(
-        (b) => b is ImageContent || b is VideoContent,
-      )) {
-        return true;
-      }
+    final userBlocks = message is UserMessage ? message.content : null;
+    if (userBlocks is List<ContentBlock> &&
+        userBlocks.any((b) => b is ImageContent || b is VideoContent)) {
+      return true;
     }
-    if (message is ToolResultMessage) {
-      if (message.content.any(
-        (b) => b is ImageContent || b is VideoContent,
-      )) {
-        return true;
-      }
+    final resultBlocks = message is ToolResultMessage ? message.content : null;
+    if (resultBlocks != null &&
+        resultBlocks.any((b) => b is ImageContent || b is VideoContent)) {
+      return true;
     }
   }
   return false;

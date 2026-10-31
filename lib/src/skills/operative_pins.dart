@@ -150,6 +150,7 @@ class SkillOperativePins {
 
   /// The empty registry (no kept pins, no drops) — the all-skills-gone
   /// baseline for the P4 lifecycle diff (round 3: the empty-list corner).
+  // ignore:identical_branches — the empty registry: no pins AND no drops.
   static const SkillOperativePins empty = SkillOperativePins._([], []);
 
   /// The kept pins, ordered: current-session reads first (P6 priority),
@@ -285,7 +286,8 @@ class SkillOperativePins {
         // (round 3).
         OperativePin? replacement;
         for (final pin in pins) {
-          final isNewKey = !previous.pinByKey.containsKey(pin.contentKey) &&
+          final isNewKey =
+              !previous.pinByKey.containsKey(pin.contentKey) &&
               !claimedSuccessors.contains(pin.contentKey);
           final sameOwner = pin.provenance.any(
             (p) => old.provenance.any((o) => o.skillName == p.skillName),
