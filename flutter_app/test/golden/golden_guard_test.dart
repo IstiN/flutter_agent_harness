@@ -67,6 +67,8 @@ const _coverage = <String, String>{
   'lib/ui/widgets/model_mark.dart': 'test/golden/widgets_golden_test.dart',
   'lib/ui/widgets/quick_model_chip.dart':
       'test/golden/launcher_golden_test.dart',
+  'lib/ui/widgets/wide_layout_shell.dart':
+      'test/golden/wide_layout_shell_golden_test.dart',
   'lib/ui/widgets/rename_session_dialog.dart':
       'test/golden/dialogs_golden_test.dart',
   'lib/ui/widgets/file_browser.dart': 'test/golden/files_golden_test.dart',
@@ -159,9 +161,6 @@ const _exempt = <String, String>{
   'lib/ui/widgets/html_preview_web.dart':
       'web-only conditional implementation; the '
       'stub variant (same widget API) is covered instead',
-  'lib/ui/widgets/wide_layout_shell.dart':
-      '3-pane desktop/tablet shell; needs a full app-frame golden '
-      '(planned for a dedicated wide-layout golden test file)',
   'lib/ui/widgets/sidebar_nav_item.dart':
       'sidebar nav row; rendered inside wide_layout_shell (covered indirectly)',
   'lib/ui/widgets/sidebar_sessions_list.dart':

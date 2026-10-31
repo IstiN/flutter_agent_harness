@@ -1209,10 +1209,10 @@ factual: paths, commands, invariants — no essays.
   (`services/clipboard_uploads.dart`: file refs > audio/video/pdf >
   images; native plugin — the desktop/mobile apps need a REBUILD, not a hot
   reload, to register it).
-- `flutter_app/lib/ui/screens/app_launcher_screen.dart` — THE app home on
-  every layout (`faHomeScreen` in main.dart always returns it; the classic
-  sidebar chat home is legacy and `session_sidebar.dart` no longer exists —
-  sessions are managed by the chat sheet's pager/menus).
+- `flutter_app/lib/ui/screens/app_launcher_screen.dart` — the narrow app
+  home and the reusable Apps surface embedded by the wide Fa2 shell. On
+  narrow layouts its Stack hosts the `SessionChatSheet`; on wide layouts the
+  shell presents it only when the Apps section is selected.
   iOS-home-screen grid of the JS apps (fsRevision-refreshed like
   `AppsGridView`) plus Settings/Files system tiles, laid out on the
   icon-unit geometry (`LauncherGridSpec` in
@@ -1235,6 +1235,10 @@ factual: paths, commands, invariants — no essays.
   re-read live on fsRevision; v1 migrates, corrupt file → defaults;
   `syncApps` reconciles with installed apps). Its Stack hosts the
   `SessionChatSheet`.
+- `flutter_app/lib/ui/widgets/wide_layout_shell.dart` — the wide Fa2
+  messenger shell: compact Chats / Activity / Apps tabs over the conversation
+  list, the active chat in the center, live Running/Recent activity, and Apps
+  as a selected center surface (never a permanently open third pane).
 - `flutter_app/lib/apps/session_chat_sheet.dart` — the iMessage-style
   session chat overlay over the launcher, three layers above the app grid:
   the always-visible docked input bar (the shared `ChatComposer` with

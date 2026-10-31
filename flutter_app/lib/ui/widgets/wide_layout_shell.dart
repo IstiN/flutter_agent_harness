@@ -45,10 +45,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart'
     show ExecutionEnv, SessionMetadata, leaseOwnerLabel;
 
-/// The wide-screen adaptive shell: a 3-pane layout with a collapsible
-/// sidebar (sessions list + Settings/Files nav) on the left, the active
-/// session's chat in the center, and the apps launcher panel (with its own
-/// nested [Navigator] so JS apps open inline within the panel) on the right.
+/// The wide-screen messenger shell: a collapsible sidebar with Chats,
+/// Activity and Apps destinations beside one selected center surface.
 /// Used at widths `>=` [kWideLayoutBreakpoint] (900 px).
 class WideLayoutShell extends StatefulWidget {
   const WideLayoutShell({
@@ -101,8 +99,7 @@ class WideLayoutShell extends StatefulWidget {
 bool get faIsMacOSDesktop =>
     !kIsWeb && defaultTargetPlatform == TargetPlatform.macOS;
 
-/// The sessions sidebar's resize handle (tests find it by this key; there
-/// are two [_PaneDragHandle]s in the shell and they look identical).
+/// The sessions sidebar's resize handle (tests find it by this key).
 const Key kSidebarDragHandleKey = ValueKey('sidebar-drag-handle');
 
 /// An [AppBar] with the macOS traffic-light clearance baked in. Pushed
@@ -132,12 +129,14 @@ PreferredSizeWidget faAppBar({
   );
 }
 
+enum _WideShellSection { chats, activity, apps }
+
 class _WideLayoutShellState extends State<WideLayoutShell> {
   bool _sidebarCollapsed = false;
+  _WideShellSection _section = _WideShellSection.chats;
 
-  /// The apps panel's nested Navigator — registered on [FaChatHost] so the
-  /// agent's `open_app` tool launches apps inside the panel instead of
-  /// pushing a full-screen route over the shell.
+  /// The Apps section's nested Navigator — registered on [FaChatHost] so
+  /// JS apps open inside the shell instead of replacing the whole screen.
   final GlobalKey<NavigatorState> _appsNavigatorKey =
       GlobalKey<NavigatorState>();
 
@@ -156,13 +155,6 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
   /// Lazily loaded sessions-tree prefs (issue #426) when the host did not
   /// inject one — per-parent expand/collapse survives an app restart.
   SessionUiPrefsStore? _uiPrefs;
-
-  /// Width of the right-side apps panel (user-resizable via drag handle).
-  double _appsPanelWidth = 380;
-
-  /// Minimum/maximum width for the apps panel drag handle.
-  static const double _appsPanelMinWidth = 240;
-  static const double _appsPanelMaxWidth = 640;
 
   /// The sessions sidebar's width (issue #426 item 4): user-resizable via
   /// a drag handle on its divider, clamped to the store's
@@ -323,6 +315,7 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
       onOpen: (metadata) => _openPersistedSession(metadata),
     );
     FaChatHost.jsAppNavigatorKey = _appsNavigatorKey;
+    FaChatHost.revealJsApps = _revealApps;
   }
 
   @override
@@ -331,6 +324,9 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
     _listenedService?.removeListener(_onServiceChanged);
     if (FaChatHost.jsAppNavigatorKey == _appsNavigatorKey) {
       FaChatHost.jsAppNavigatorKey = null;
+    }
+    if (FaChatHost.revealJsApps == _revealApps) {
+      FaChatHost.revealJsApps = null;
     }
     super.dispose();
   }
@@ -348,13 +344,13 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
   @override
   Widget build(BuildContext context) {
     final colors = FahColors.of(context);
-    // Material ancestor is REQUIRED — without it, Text widgets get the
-    // debug-mode yellow double-underline style.
+    // Scaffold supplies both the required Material ancestor and a snack
+    // host now that no permanent launcher pane owns one.
     final mode = widget.networkMode;
     final sessions = widget.networkSessions;
-    return Material(
-      color: colors.bg,
-      child: mode == null || sessions == null
+    return Scaffold(
+      backgroundColor: colors.bg,
+      body: mode == null || sessions == null
           ? _buildBody(colors)
           : ListenableBuilder(
               // The mode chip toggles local ⇄ network in place: the
@@ -376,9 +372,6 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
 
   Widget _buildBody(FahColors colors) {
     final tokens = FaDesignTokens.of(context);
-    final showBoard =
-        faWindowClassForWidth(MediaQuery.sizeOf(context).width) ==
-        FaWindowClass.large;
     return Row(
       children: [
         // Left: collapsible sidebar (width user-resizable, issue #426).
@@ -406,23 +399,45 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
             }),
             onDragEnd: (_) => _onSidebarDragEnd(),
           ),
-        // Center: chat (always visible when a session is active).
-        Expanded(child: _buildChatArea(colors)),
-        if (showBoard) ...[
-          _PaneDragHandle(
-            onDrag: (dx) => setState(() {
-              _appsPanelWidth = (_appsPanelWidth - dx).clamp(
-                _appsPanelMinWidth,
-                _appsPanelMaxWidth,
-              );
-            }),
-          ),
-          // Permanent third pane is a large-screen privilege; medium keeps
-          // navigation + content and opens Apps as a focused route.
-          SizedBox(width: _appsPanelWidth, child: _buildAppsArea()),
-        ],
+        Expanded(child: _buildCenterSurface(colors)),
       ],
     );
+  }
+
+  Widget _buildCenterSurface(FahColors colors) {
+    if (_inNetworkMode) return _buildChatArea(colors);
+    return switch (_section) {
+      _WideShellSection.chats => _buildChatArea(colors),
+      _WideShellSection.activity => _WideActivitySurface(
+        manager: widget.manager,
+        namesStore: widget.sessionNamesStore ?? _namesStore,
+        onOpenSession: _openActivitySession,
+      ),
+      _WideShellSection.apps => _buildAppsArea(),
+    };
+  }
+
+  void _selectSection(_WideShellSection section) {
+    setState(() => _section = section);
+    if (section != _WideShellSection.chats && _inNetworkMode) {
+      unawaited(widget.networkMode!.exitToLocal());
+    }
+  }
+
+  void _openActivitySession(String sessionId) {
+    setState(() => _section = _WideShellSection.chats);
+    unawaited(_openLiveSession(sessionId));
+  }
+
+  Future<void> _revealApps() async {
+    if (!mounted) return;
+    if (_inNetworkMode) await widget.networkMode!.exitToLocal();
+    if (!mounted) return;
+    if (_section != _WideShellSection.apps ||
+        _appsNavigatorKey.currentState == null) {
+      setState(() => _section = _WideShellSection.apps);
+      await WidgetsBinding.instance.endOfFrame;
+    }
   }
 
   /// Persists the settled sidebar width (drag end — one write per gesture,
@@ -453,6 +468,7 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
         child: Column(
           children: [
             _buildBrandHeader(colors),
+            _buildPrimaryNavItems(),
             Expanded(
               child: _inNetworkMode
                   // Network mode swaps the SIDEBAR CONTENT, not the
@@ -486,6 +502,9 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
                             DapBindingStore.instance.boundSessionId,
                         pendingSessionId: _pendingOpenId,
                         selectedSessionId: _selectedSessionId,
+                        headerLabel: context.l10n.wideNavChats,
+                        searchHint: context.l10n.wideChatsSearchHint,
+                        unnamedTitle: context.l10n.wideChatFallbackTitle,
                       ),
                     ),
             ),
@@ -633,21 +652,49 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
     );
   }
 
+  Widget _buildPrimaryNavItems() {
+    return Row(
+      children: [
+        Expanded(
+          child: SidebarNavItem(
+            icon: Icons.chat_bubble_outline_rounded,
+            label: context.l10n.wideNavChats,
+            selected: _section == _WideShellSection.chats,
+            collapsed: _sidebarCollapsed,
+            compact: true,
+            onTap: () => _selectSection(_WideShellSection.chats),
+          ),
+        ),
+        Expanded(
+          child: SidebarNavItem(
+            icon: Icons.notifications_none_rounded,
+            label: context.l10n.wideNavActivity,
+            selected: _section == _WideShellSection.activity,
+            collapsed: _sidebarCollapsed,
+            compact: true,
+            onTap: () => _selectSection(_WideShellSection.activity),
+          ),
+        ),
+        Expanded(
+          child: SidebarNavItem(
+            icon: Icons.grid_view_rounded,
+            label: context.l10n.appsGridTitle,
+            selected: _section == _WideShellSection.apps,
+            collapsed: _sidebarCollapsed,
+            compact: true,
+            onTap: () => _selectSection(_WideShellSection.apps),
+          ),
+        ),
+      ],
+    );
+  }
+
   Widget _buildNavItems(FahColors colors) {
     return Padding(
       padding: const EdgeInsets.only(top: 4, bottom: 4),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          if (faWindowClassForWidth(MediaQuery.sizeOf(context).width) ==
-              FaWindowClass.medium)
-            SidebarNavItem(
-              icon: Icons.grid_view_rounded,
-              label: context.l10n.appsGridTitle,
-              selected: false,
-              collapsed: _sidebarCollapsed,
-              onTap: _openApps,
-            ),
           SidebarNavItem(
             icon: Icons.folder_outlined,
             label: context.l10n.chatFilesTooltip,
@@ -740,14 +787,13 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
   }
 
   // ---------------------------------------------------------------------------
-  // Apps panel (right) — nested Navigator
+  // Apps section — nested Navigator
   // ---------------------------------------------------------------------------
 
   Widget _buildAppsArea() {
     // The nested Navigator ensures that calls to Navigator.of(context)
-    // from within the apps area (app launches via pushJsApp,
-    // Settings/Files tiles) push within this panel rather than replacing
-    // the whole shell.
+    // from within Apps (app launches via pushJsApp, Settings/Files tiles)
+    // push within the center surface rather than replacing the shell.
     //
     // The MOBILE launcher is the single panel implementation on every
     // form factor (drag&drop folders, live tiles, search, the Widgets /
@@ -1297,21 +1343,6 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
     if (mounted) setState(() {});
   }
 
-  Future<void> _openApps() async {
-    if (!mounted) return;
-    await pushFaPage<void>(
-      context,
-      AppLauncherScreen(
-        manager: widget.manager,
-        registry: widget.registry,
-        lastConnectionStore: widget.lastConnectionStore,
-        appsStore: widget.appsStore,
-        sessionNamesStore: widget.sessionNamesStore,
-        hideChatSheet: true,
-      ),
-    );
-  }
-
   Future<void> _openSettings() async {
     AppAnalytics.instance.settingsOpened();
     if (!mounted) return;
@@ -1369,9 +1400,201 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
   }
 }
 
-/// A draggable vertical divider between panes. The user grabs it and drags
-/// horizontally to resize the adjacent panel. Renders a 1px line that
-/// thickens on hover with a subtle color change.
+class _WideActivitySurface extends StatefulWidget {
+  const _WideActivitySurface({
+    required this.manager,
+    required this.namesStore,
+    required this.onOpenSession,
+  });
+
+  final FlutterSessionManager manager;
+  final SessionNamesStore? namesStore;
+  final ValueChanged<String> onOpenSession;
+
+  @override
+  State<_WideActivitySurface> createState() => _WideActivitySurfaceState();
+}
+
+class _WideActivitySurfaceState extends State<_WideActivitySurface> {
+  final Set<AgentService> _listenedServices = <AgentService>{};
+
+  @override
+  void initState() {
+    super.initState();
+    widget.manager.addListener(_onManagerChanged);
+    widget.namesStore?.addListener(_onActivityChanged);
+    _syncServiceListeners();
+  }
+
+  @override
+  void didUpdateWidget(covariant _WideActivitySurface oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.manager != widget.manager) {
+      oldWidget.manager.removeListener(_onManagerChanged);
+      widget.manager.addListener(_onManagerChanged);
+    }
+    if (oldWidget.namesStore != widget.namesStore) {
+      oldWidget.namesStore?.removeListener(_onActivityChanged);
+      widget.namesStore?.addListener(_onActivityChanged);
+    }
+    _syncServiceListeners();
+  }
+
+  @override
+  void dispose() {
+    widget.manager.removeListener(_onManagerChanged);
+    widget.namesStore?.removeListener(_onActivityChanged);
+    for (final service in _listenedServices) {
+      service.removeListener(_onActivityChanged);
+    }
+    super.dispose();
+  }
+
+  void _onManagerChanged() {
+    _syncServiceListeners();
+    _onActivityChanged();
+  }
+
+  void _onActivityChanged() {
+    if (mounted) setState(() {});
+  }
+
+  void _syncServiceListeners() {
+    final current = widget.manager.sessions
+        .map((session) => session.service)
+        .toSet();
+    for (final service in _listenedServices.difference(current)) {
+      service.removeListener(_onActivityChanged);
+    }
+    for (final service in current.difference(_listenedServices)) {
+      service.addListener(_onActivityChanged);
+    }
+    _listenedServices
+      ..removeWhere((service) => !current.contains(service))
+      ..addAll(current);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final tokens = FaDesignTokens.of(context);
+    final typography = FaTypography.of(context);
+    final sessions = widget.manager.sessions;
+    final running = sessions
+        .where((session) => session.service.isStreaming)
+        .toList();
+    final recent = sessions
+        .where((session) => !session.service.isStreaming)
+        .toList();
+    return ColoredBox(
+      color: tokens.background,
+      child: Padding(
+        padding: EdgeInsets.only(top: faIsMacOSDesktop ? 28 : 0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(28, 24, 28, 12),
+              child: Text(
+                context.l10n.wideNavActivity,
+                style: typography.headline.copyWith(color: tokens.ink1),
+              ),
+            ),
+            Expanded(
+              child: sessions.isEmpty
+                  ? Center(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            Icons.monitor_heart_outlined,
+                            size: 36,
+                            color: tokens.ink3,
+                          ),
+                          const SizedBox(height: 12),
+                          Text(
+                            context.l10n.activityEmpty,
+                            style: typography.body.copyWith(color: tokens.ink2),
+                          ),
+                        ],
+                      ),
+                    )
+                  : ListView(
+                      padding: const EdgeInsets.fromLTRB(24, 4, 24, 24),
+                      children: [
+                        ..._sessionGroup(
+                          context,
+                          label: context.l10n.activityRunning,
+                          sessions: running,
+                          running: true,
+                        ),
+                        ..._sessionGroup(
+                          context,
+                          label: context.l10n.activityRecent,
+                          sessions: recent,
+                          running: false,
+                        ),
+                      ],
+                    ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  List<Widget> _sessionGroup(
+    BuildContext context, {
+    required String label,
+    required List<FlutterManagedSession> sessions,
+    required bool running,
+  }) {
+    if (sessions.isEmpty) return const [];
+    final tokens = FaDesignTokens.of(context);
+    final typography = FaTypography.of(context);
+    return [
+      Padding(
+        padding: const EdgeInsets.fromLTRB(4, 16, 4, 8),
+        child: Text(
+          label,
+          style: typography.label.copyWith(color: tokens.ink2),
+        ),
+      ),
+      for (final session in sessions)
+        Padding(
+          padding: const EdgeInsets.only(bottom: 8),
+          child: Material(
+            color: tokens.surface1,
+            shape: RoundedSuperellipseBorder(
+              borderRadius: BorderRadius.circular(tokens.radiusMd),
+              side: BorderSide(color: tokens.hairline),
+            ),
+            clipBehavior: Clip.antiAlias,
+            child: FaSettingsTile(
+              key: ValueKey('wideActivitySession-${session.id}'),
+              onTap: () => widget.onOpenSession(session.id),
+              leading: Icon(
+                running
+                    ? Icons.play_circle_outline_rounded
+                    : Icons.chat_bubble_outline_rounded,
+                color: running ? tokens.accent : tokens.ink2,
+              ),
+              title: Text(
+                widget.namesStore?.titleFor(session.id) ??
+                    context.l10n.wideChatFallbackTitle,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: typography.body.copyWith(color: tokens.ink1),
+              ),
+              trailing: Icon(Icons.chevron_right_rounded, color: tokens.ink3),
+            ),
+          ),
+        ),
+    ];
+  }
+}
+
+/// A draggable vertical divider between the sidebar and center surface.
+/// Renders a 1px line that thickens on hover with a subtle color change.
 class _PaneDragHandle extends StatefulWidget {
   const _PaneDragHandle({super.key, required this.onDrag, this.onDragEnd});
 

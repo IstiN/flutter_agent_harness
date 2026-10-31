@@ -120,6 +120,27 @@ class AppLocalizationsEn extends AppLocalizations {
   String get appsGridTitle => 'Apps';
 
   @override
+  String get wideNavChats => 'Chats';
+
+  @override
+  String get wideChatsSearchHint => 'Search chats';
+
+  @override
+  String get wideChatFallbackTitle => 'New chat';
+
+  @override
+  String get wideNavActivity => 'Activity';
+
+  @override
+  String get activityRunning => 'Running';
+
+  @override
+  String get activityRecent => 'Recent';
+
+  @override
+  String get activityEmpty => 'No session activity yet.';
+
+  @override
   String get appsHideAppsTooltip => 'Hide apps';
 
   @override

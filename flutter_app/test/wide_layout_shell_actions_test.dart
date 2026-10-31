@@ -9,13 +9,16 @@ import 'package:fa/l10n/app_localizations.dart';
 import 'package:fa/main.dart';
 import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/flutter_session_manager.dart';
+import 'package:fa/services/session_names_store.dart';
 import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/screens/app_launcher_screen.dart';
+import 'package:fa/ui/screens/chat_screen.dart';
+import 'package:fa/ui/widgets/sidebar_nav_item.dart';
+import 'package:fa_ui/fa_ui.dart' show FaChatHost;
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:intl/date_symbol_data_local.dart';
-import 'package:intl/intl.dart';
 
 StreamFunction _singleTextResponse(String text) {
   return (model, context, {cancelToken}) {
@@ -69,6 +72,7 @@ void main() {
   Future<void> pumpShell(
     WidgetTester tester, {
     required FlutterSessionManager manager,
+    SessionNamesStore? sessionNamesStore,
     Size size = const Size(1280, 800),
   }) async {
     tester.view.devicePixelRatio = 1.0;
@@ -80,8 +84,11 @@ void main() {
         localizationsDelegates: AppLocalizations.localizationsDelegates,
         supportedLocales: AppLocalizations.supportedLocales,
         home: Builder(
-          builder: (context) =>
-              faHomeScreen(context: context, manager: manager),
+          builder: (context) => faHomeScreen(
+            context: context,
+            manager: manager,
+            sessionNamesStore: sessionNamesStore,
+          ),
         ),
       ),
     );
@@ -133,14 +140,12 @@ void main() {
       sessionsRoot: '/sessions',
     ).create(const JsonlSessionCreateOptions(cwd: '/tmp', id: 'ghost'));
 
-    await pumpShell(tester, manager: manager);
-    final ghost = (await manager.listPersistedSessions()).single;
-    // The unnamed row shows its derived date title — computed with the
-    // same formatter the sidebar uses.
-    final ghostTitle = DateFormat.MMMd(
-      'en',
-    ).add_Hm().format(ghost.createdAt.toLocal());
-    await tester.tap(find.text(ghostTitle).first);
+    await pumpShell(
+      tester,
+      manager: manager,
+      sessionNamesStore: SessionNamesStore.inMemory({'ghost': 'Ghost chat'}),
+    );
+    await tester.tap(find.text('Ghost chat'));
     await tester.pumpAndSettle();
     // Wind the clock so short deferrals fire before the assertions.
     await tester.pump(const Duration(seconds: 10));
@@ -192,29 +197,153 @@ void main() {
     expect(find.byType(AlertDialog), findsNothing);
   });
 
-  testWidgets('medium shell keeps Apps out of the permanent layout and '
-      'opens them as a focused route', (tester) async {
-    final env = MemoryExecutionEnv();
-    final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
-      ..addSession('fake-session', _fakeService(env));
-
-    await pumpShell(tester, manager: manager, size: const Size(800, 900));
-    expect(find.byType(AppLauncherScreen), findsNothing);
-
-    await tester.tap(find.text('Apps').first);
-    await tester.pumpAndSettle();
-    expect(find.byType(AppLauncherScreen), findsOneWidget);
-  });
-
-  testWidgets('large shell keeps the permanent Apps third pane', (
+  testWidgets('wide shell opens in Chats without a permanent Apps pane', (
     tester,
   ) async {
     final env = MemoryExecutionEnv();
     final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
       ..addSession('fake-session', _fakeService(env));
 
-    await pumpShell(tester, manager: manager, size: const Size(1024, 800));
-    expect(find.byType(AppLauncherScreen), findsOneWidget);
+    await pumpShell(tester, manager: manager);
+
+    expect(find.byType(ChatScreen), findsOneWidget);
+    expect(find.byType(AppLauncherScreen), findsNothing);
+    expect(find.text('CHATS'), findsOneWidget);
+    expect(find.text('Search chats'), findsOneWidget);
+    expect(find.text('New chat'), findsOneWidget);
+    expect(find.text('SESSIONS'), findsNothing);
+    expect(find.text('Search sessions'), findsNothing);
+    final chats = tester.widget<SidebarNavItem>(
+      find.widgetWithText(SidebarNavItem, 'Chats'),
+    );
+    expect(chats.selected, isTrue);
     await tester.pump(const Duration(milliseconds: 100));
+  });
+
+  for (final size in const [Size(800, 900), Size(1440, 900)]) {
+    testWidgets('Apps is a selected full center surface at ${size.width}', (
+      tester,
+    ) async {
+      final env = MemoryExecutionEnv();
+      final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
+        ..addSession('fake-session', _fakeService(env));
+
+      await pumpShell(tester, manager: manager, size: size);
+      expect(find.byType(AppLauncherScreen), findsNothing);
+
+      await tester.tap(find.widgetWithText(SidebarNavItem, 'Apps'));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(AppLauncherScreen), findsOneWidget);
+      expect(find.byType(ChatScreen), findsNothing);
+      expect(tester.getRect(find.byType(AppLauncherScreen)).right, size.width);
+      final apps = tester.widget<SidebarNavItem>(
+        find.widgetWithText(SidebarNavItem, 'Apps'),
+      );
+      expect(apps.selected, isTrue);
+    });
+  }
+
+  testWidgets('open_app reveals Apps before resolving its nested Navigator', (
+    tester,
+  ) async {
+    final env = MemoryExecutionEnv();
+    final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
+      ..addSession('fake-session', _fakeService(env));
+
+    await pumpShell(tester, manager: manager);
+    expect(FaChatHost.jsAppNavigatorKey?.currentState, isNull);
+
+    final revealed = FaChatHost.revealJsApps!.call();
+    await tester.pump();
+    await revealed;
+    await tester.pumpAndSettle();
+
+    expect(find.byType(AppLauncherScreen), findsOneWidget);
+    expect(FaChatHost.jsAppNavigatorKey?.currentState, isNotNull);
+    final apps = tester.widget<SidebarNavItem>(
+      find.widgetWithText(SidebarNavItem, 'Apps'),
+    );
+    expect(apps.selected, isTrue);
+  });
+
+  testWidgets('Activity explains its empty state', (tester) async {
+    final env = MemoryExecutionEnv();
+    final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions');
+
+    await pumpShell(tester, manager: manager);
+    await tester.tap(find.widgetWithText(SidebarNavItem, 'Activity'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('No session activity yet.'), findsOneWidget);
+    expect(find.text('Running'), findsNothing);
+    expect(find.text('Recent'), findsNothing);
+  });
+
+  testWidgets('Activity follows live streaming state and opens its session '
+      'back in Chats', (tester) async {
+    final env = MemoryExecutionEnv();
+    final runningService = _fakeService(env);
+    final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
+      ..addSession('running-session', runningService)
+      ..addSession('recent-session', _fakeService(env));
+    final names = SessionNamesStore.inMemory({
+      'running-session': 'Build release',
+      'recent-session': 'Write docs',
+    });
+
+    await pumpShell(tester, manager: manager, sessionNamesStore: names);
+    await tester.tap(find.widgetWithText(SidebarNavItem, 'Activity'));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('wideActivitySession-running-session')),
+        matching: find.text('Build release'),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('wideActivitySession-recent-session')),
+        matching: find.text('Write docs'),
+      ),
+      findsOneWidget,
+    );
+    expect(find.text('Running'), findsNothing);
+    expect(find.text('Recent'), findsOneWidget);
+
+    runningService.isStreaming = true;
+    runningService.notifyListeners();
+    await tester.pump();
+
+    expect(find.text('Running'), findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('wideActivitySession-running-session')),
+        matching: find.text('Build release'),
+      ),
+      findsOneWidget,
+    );
+
+    await tester.tap(
+      find.byKey(const ValueKey('wideActivitySession-running-session')),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(manager.activeId, 'running-session');
+    expect(find.byType(ChatScreen), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('wideActivitySession-running-session')),
+      findsNothing,
+    );
+    final chats = tester.widget<SidebarNavItem>(
+      find.widgetWithText(SidebarNavItem, 'Chats'),
+    );
+    expect(chats.selected, isTrue);
+    runningService.isStreaming = false;
+    runningService.notifyListeners();
+    await tester.pumpAndSettle();
   });
 }

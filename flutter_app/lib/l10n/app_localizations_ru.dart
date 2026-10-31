@@ -122,6 +122,27 @@ class AppLocalizationsRu extends AppLocalizations {
   String get appsGridTitle => 'Приложения';
 
   @override
+  String get wideNavChats => 'Чаты';
+
+  @override
+  String get wideChatsSearchHint => 'Поиск чатов';
+
+  @override
+  String get wideChatFallbackTitle => 'Новый чат';
+
+  @override
+  String get wideNavActivity => 'Активность';
+
+  @override
+  String get activityRunning => 'В работе';
+
+  @override
+  String get activityRecent => 'Недавние';
+
+  @override
+  String get activityEmpty => 'Пока нет активности сессий.';
+
+  @override
   String get appsHideAppsTooltip => 'Скрыть приложения';
 
   @override

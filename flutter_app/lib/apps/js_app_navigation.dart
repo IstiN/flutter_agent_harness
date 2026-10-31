@@ -325,10 +325,10 @@ Future<void> pushJsApp(
   final store = permissionsStore ?? await AppPermissionsStore.load(service.env);
   final appService = await resolveAppBoundSession(manager, app.id) ?? service;
   if (!context.mounted) return;
-  // Wide screens: the apps side panel owns a nested Navigator registered on
-  // FaChatHost. Push there instead of over the whole shell — the agent's
-  // open_app then refreshes the panel's app in place (and shows the right
-  // panel layout with its own padding), never a full-screen takeover.
+  // Wide screens: reveal the selected Apps section before using its nested
+  // Navigator. The agent's open_app therefore never lands on a hidden pane.
+  await FaChatHost.revealJsApps?.call();
+  if (!context.mounted) return;
   final panelNavigator = FaChatHost.jsAppNavigatorKey?.currentState;
   final navigator = panelNavigator ?? Navigator.of(context);
   await navigator.push(

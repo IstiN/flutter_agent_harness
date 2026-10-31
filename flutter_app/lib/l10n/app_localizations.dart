@@ -296,6 +296,48 @@ abstract class AppLocalizations {
   /// **'Apps'**
   String get appsGridTitle;
 
+  /// No description provided for @wideNavChats.
+  ///
+  /// In en, this message translates to:
+  /// **'Chats'**
+  String get wideNavChats;
+
+  /// No description provided for @wideChatsSearchHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Search chats'**
+  String get wideChatsSearchHint;
+
+  /// No description provided for @wideChatFallbackTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'New chat'**
+  String get wideChatFallbackTitle;
+
+  /// No description provided for @wideNavActivity.
+  ///
+  /// In en, this message translates to:
+  /// **'Activity'**
+  String get wideNavActivity;
+
+  /// No description provided for @activityRunning.
+  ///
+  /// In en, this message translates to:
+  /// **'Running'**
+  String get activityRunning;
+
+  /// No description provided for @activityRecent.
+  ///
+  /// In en, this message translates to:
+  /// **'Recent'**
+  String get activityRecent;
+
+  /// No description provided for @activityEmpty.
+  ///
+  /// In en, this message translates to:
+  /// **'No session activity yet.'**
+  String get activityEmpty;
+
   /// No description provided for @appsHideAppsTooltip.
   ///
   /// In en, this message translates to:
