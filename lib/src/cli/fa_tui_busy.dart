@@ -6,7 +6,7 @@
 part of 'fa_tui.dart';
 
 extension FaTuiModelBusy on FaTuiModel {
-  (Model, Cmd?) _handleBusyMsg(BusyMsg msg) {
+  UiUpdate _handleBusyMsg(BusyMsg msg) {
     // An in-busy phase relabel (silent post-answer work like
     // auto-compaction or durable-memory extraction) takes priority.
     if (msg.busy && msg.phase != null) return _handlePhaseRelabel(msg);
@@ -20,13 +20,13 @@ extension FaTuiModelBusy on FaTuiModel {
   /// The wedge watchdog's liveness push (issue #514): flips the busy row's
   /// label to `Stalled…` (and back) without touching the elapsed window —
   /// the stall is a STATE, not a phase relabel.
-  (Model, Cmd?) _handleRunStalled(RunStalledMsg msg) =>
+  UiUpdate _handleRunStalled(RunStalledMsg msg) =>
       (copyWith(runStalled: msg.stalled), null);
 
   /// A phase relabel on a BUSY model: swap the label over the SAME elapsed
   /// window and never schedule another tick here — extra chains would
   /// multiply repaint timers.
-  (Model, Cmd?) _handlePhaseRelabel(BusyMsg msg) {
+  UiUpdate _handlePhaseRelabel(BusyMsg msg) {
     final phase = msg.phase!;
     if (!busy) {
       // A relabel on an IDLE model is a post-run straggler (a compaction
@@ -40,7 +40,7 @@ extension FaTuiModelBusy on FaTuiModel {
     return (copyWith(busyPhase: phase), null);
   }
 
-  (Model, Cmd?) _ignoreBusyRestart(BusyMsg msg) {
+  UiUpdate _ignoreBusyRestart(BusyMsg msg) {
     faTuiBusyDiagnostics?.call(
       'busy re-start ignored (already busy) source=${msg.source}',
     );
@@ -62,7 +62,7 @@ extension FaTuiModelBusy on FaTuiModel {
   /// the loop stops itself on the first tick that finds the model idle
   /// again. Going idle also unpins the sticky user echo and clears any
   /// phase, so the next run starts as plain "Working…".
-  (Model, Cmd?) _applyBusyTransition(BusyMsg msg) {
+  UiUpdate _applyBusyTransition(BusyMsg msg) {
     _logBusyTransition(msg);
     return (
       copyWith(
@@ -93,7 +93,7 @@ extension FaTuiModelBusy on FaTuiModel {
     };
   }
 
-  (Model, Cmd?) _handleSpinnerTick() {
+  UiUpdate _handleSpinnerTick() {
     if (!busy) return (this, null);
     final now = DateTime.now().millisecondsSinceEpoch;
     if (busyLastEventMs > 0 &&

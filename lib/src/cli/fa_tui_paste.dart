@@ -39,7 +39,7 @@ extension FaTuiPaste on FaTuiModel {
   /// Ctrl+V outcome: image bytes become a composer chip; a TEXT result
   /// (the gh-1575 fallback) is inserted into the composer; failures print
   /// their NAMED reason (unavailable pasteboard, size cap, not an image).
-  (Model, Cmd?) _handlePasteboardResult(PasteboardResultMsg msg) {
+  UiUpdate _handlePasteboardResult(PasteboardResultMsg msg) {
     final read = msg.read;
     // gh-1575: the image probe missed and the text clipboard came back —
     // paste the text the way a terminal's own paste would have.
@@ -75,7 +75,7 @@ extension FaTuiPaste on FaTuiModel {
   /// Fires [reader] off the UI loop, stamping the gesture on the returned
   /// model — or a silent no-op when a gesture probe is already in flight.
   /// [silentFailure] keeps bracketed-paste failures quiet.
-  (FaTuiModel, Cmd?) _firePasteboardProbe(
+  FaTuiUpdate _firePasteboardProbe(
     Future<PasteboardRead> Function() reader, {
     required bool silentFailure,
   }) {
@@ -104,7 +104,7 @@ extension FaTuiPaste on FaTuiModel {
   /// clipboard). Bracketed pastes probe through [_handlePaste] with the
   /// same seam and the same gesture pairing (issue #1067), keeping this
   /// keybinding working identically.
-  (Model, Cmd?)? _handlePasteImageKey(KeyMsg msg) {
+  UiUpdate? _handlePasteImageKey(KeyMsg msg) {
     if (msg.key != 'ctrl+v') return null;
     final reader = callbacks.readClipboardImage;
     if (reader == null) {
@@ -144,7 +144,7 @@ extension FaTuiPaste on FaTuiModel {
   /// stay one implementation. A non-text read, an empty payload, or a sheet
   /// that closed while the read was in flight are no-ops — the pre-existing
   /// silent behaviour for those cases.
-  (Model, Cmd?) _handlePromptClipboardText(PromptClipboardTextMsg msg) {
+  UiUpdate _handlePromptClipboardText(PromptClipboardTextMsg msg) {
     final read = msg.read;
     if (read is! PasteboardText || read.text.isEmpty) return (this, null);
     // The sheet closed while the read was in flight: drop the result rather
@@ -161,7 +161,7 @@ extension FaTuiPaste on FaTuiModel {
   /// (`PromptPaste`: masking, CRLF normalisation, name trimming), resolving the
   /// sheet when the payload completes it. Shared by the bracketed-paste path
   /// and the Ctrl+V clipboard read so both keep ONE insertion contract.
-  (Model, Cmd?) _pasteIntoPrompt(String content) {
+  UiUpdate _pasteIntoPrompt(String content) {
     final (state: next, resolved: answer) = handleTuiPromptKey(
       prompt!,
       PromptPaste(content),
@@ -174,7 +174,7 @@ extension FaTuiPaste on FaTuiModel {
     return (copyWith(prompt: next), null);
   }
 
-  (Model, Cmd?) _handlePaste(PasteMsg msg) {
+  UiUpdate _handlePaste(PasteMsg msg) {
     final content = _fixPasteMojibake(msg.content);
     // Prompt mode: pastes go into the open prompt's buffer (e.g. an API key
     // pasted into the dial/secret prompts), like typed characters do — and

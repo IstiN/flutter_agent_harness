@@ -435,6 +435,28 @@ Future<List<String>> listSessionSegmentPaths(
   return [...?listed?.parts, primaryPath];
 }
 
+/// One streamed segment scan's outcome
+/// ([JsonlSessionStorage._scanSegmentStreamed]): the parsed header, its
+/// raw line and the heal counters. A class, not a record — 6 fields
+/// exceeded the record_size cap (issue #1997).
+final class _SegmentScan {
+  const _SegmentScan({
+    required this.header,
+    required this.headerLine,
+    required this.torn,
+    required this.duplicates,
+    required this.readMs,
+    required this.rewriteMs,
+  });
+
+  final SessionHeader header;
+  final String headerLine;
+  final int torn;
+  final int duplicates;
+  final int readMs;
+  final int rewriteMs;
+}
+
 /// Append-only JSONL session storage on top of a [FileSystem].
 ///
 /// Ported from pi's `JsonlSessionStorage`.
@@ -833,17 +855,7 @@ final class JsonlSessionStorage implements SessionStorage, SessionHeaderCache {
   /// `<segment>.corrupt` sidecar and the segment is rewritten from the
   /// surviving byte spans (temp file + atomic rename) so the NEXT open is
   /// clean; read-only stores skip the writes and still load fine.
-  static Future<
-    ({
-      SessionHeader header,
-      String headerLine,
-      int torn,
-      int duplicates,
-      int readMs,
-      int rewriteMs,
-    })
-  >
-  _scanSegmentStreamed(
+  static Future<_SegmentScan> _scanSegmentStreamed(
     FileSystem fs,
     RangedReadFileSystem ranged,
     String segmentPath,
@@ -956,7 +968,7 @@ final class JsonlSessionStorage implements SessionStorage, SessionHeaderCache {
       tornSpans,
       duplicateSpans,
     );
-    return (
+    return _SegmentScan(
       header: parsedHeader,
       headerLine: parsedHeaderLine,
       torn: tornSpans.length,
