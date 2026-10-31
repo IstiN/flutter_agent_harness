@@ -52,9 +52,9 @@ import 'package:fa/sandbox/fs_persistence.dart';
 /// failure in the pass cannot resurrect a deleted session. Residual: a
 /// crash between the fs removal and the eviction step resurrects that
 /// one session on next boot — deletion metadata, never chat data.
-final class PersistentWebExecutionEnv
-    implements ExecutionEnv, BackgroundShell, RangedReadFileSystem {
-  PersistentWebExecutionEnv._(this._delegate, this._store, this._persistDelay);
+final class PersistentWebExecutionEnv extends ForwardingFs
+    with ForwardingBackgroundShell, ForwardingRangedReadFs {
+  PersistentWebExecutionEnv._(super.delegate, this._store, this._persistDelay);
 
   /// Store key holding the versioned JSON envelope (the whole tree EXCEPT
   /// session files).
@@ -99,7 +99,6 @@ final class PersistentWebExecutionEnv
     return _isSessionPath(path) ? path : null;
   }
 
-  final ExecutionEnv _delegate;
   final FsSnapshotStore _store;
   final Duration _persistDelay;
 
@@ -147,67 +146,31 @@ final class PersistentWebExecutionEnv
     //    BEFORE the first save could overwrite it — version bumps must
     //    never wipe (issue #237 vector 2).
     final raw = all[storageKey];
-    if (raw != null && raw.isNotEmpty && !await _restoreEnvelope(raw)) {
-      try {
-        await _store.save({backupKey: raw});
-      } on Object {
-        // Backup failed (blocked storage): boot continues clean either way.
+    if (raw != null && raw.isNotEmpty) {
+      final restoredV1 = await restoreSnapshotEnvelope(
+        delegate,
+        raw,
+        snapshotVersion,
+      );
+      if (restoredV1 == null) {
+        try {
+          await _store.save({backupKey: raw});
+        } on Object {
+          // Backup failed (blocked storage): boot continues clean either
+          // way.
+        }
+      } else {
+        // A v1 envelope just came back to life: until a save pass has
+        // written every session record and replaced it, it stays the only
+        // durable copy of the sessions (issue #238 F1).
+        _envelopeIsV1 = restoredV1;
       }
     }
-    // 2. Session records overlay the envelope: version-independent keys,
-    //    newer-or-equal truth. A corrupt record costs one file, not boot.
-    for (final entry in all.entries) {
-      final path = _sessionPathOfKey(entry.key);
-      if (path == null) continue;
-      _knownSessionKeys.add(entry.key);
-      try {
-        await _delegate.writeBinaryFile(path, base64Decode(entry.value));
-      } on Object {
-        // Torn record → skip this file only; the session layer's own
-        // quarantine handles a broken JSONL from here.
-      }
-    }
-  }
-
-  /// Replays the envelope into the delegate. Returns false when the
-  /// envelope is unreadable or carries an unhandled version — the caller
-  /// then preserves it under [backupKey] instead of discarding it.
-  Future<bool> _restoreEnvelope(String raw) async {
-    Map<String, dynamic> decoded;
-    try {
-      final d = jsonDecode(raw);
-      if (d is! Map<String, dynamic>) return false;
-      decoded = d;
-    } on Object {
-      return false;
-    }
-    final version = decoded['version'];
-    if (version != 1 && version != snapshotVersion) return false;
-    try {
-      // Parse and validate everything before touching the FS so a corrupt
-      // snapshot cannot leave a half-restored tree.
-      final dirs = <String>[
-        for (final d in decoded['dirs'] as List) d as String,
-      ];
-      final files = <(String, Uint8List)>[
-        for (final f in decoded['files'] as List)
-          ((f as Map)['path'] as String, base64Decode(f['data'] as String)),
-      ];
-      for (final dir in dirs) {
-        await _delegate.createDir(dir);
-      }
-      for (final (path, bytes) in files) {
-        await _delegate.writeBinaryFile(path, bytes);
-      }
-      // A v1 envelope just came back to life: until a save pass has
-      // written every session record and replaced it, it stays the only
-      // durable copy of the sessions (issue #238 F1).
-      _envelopeIsV1 = version == 1;
-      return true;
-    } on Object {
-      // Corrupt snapshot → clean start, never crash boot.
-      return false;
-    }
+    // 2. Session records overlay the envelope (version-independent keys,
+    //    newer-or-equal truth) and seed the eviction set (#237).
+    _knownSessionKeys.addAll(
+      await restoreSessionRecords(delegate, all, _sessionPathOfKey),
+    );
   }
 
   /// Point-in-time copy of the delegate tree: dirs and file bytes. Memory
@@ -215,7 +178,6 @@ final class PersistentWebExecutionEnv
   /// synchronous deep copy with no yield points (#201); anything else
   /// keeps the historical async walk.
   Future<(List<String>, List<(String, Uint8List)>)> _exportTree() async {
-    final delegate = _delegate;
     if (delegate case final FsSnapshotExporter exporter) {
       final snapshot = exporter.exportSnapshot();
       return (
@@ -226,22 +188,20 @@ final class PersistentWebExecutionEnv
     final dirs = <String>[];
     final files = <(String, Uint8List)>[];
     Future<void> walk(String dir) async {
-      final entries = (await _delegate.listDir(dir)).valueOrNull;
+      final entries = (await delegate.listDir(dir)).valueOrNull;
       if (entries == null) return;
       for (final entry in entries) {
         if (entry.kind == FileKind.directory) {
           dirs.add(entry.path);
           await walk(entry.path);
         } else {
-          final bytes = (await _delegate.readBinaryFile(
-            entry.path,
-          )).valueOrNull;
+          final bytes = (await delegate.readBinaryFile(entry.path)).valueOrNull;
           if (bytes != null) files.add((entry.path, bytes));
         }
       }
     }
 
-    await walk(_delegate.cwd);
+    await walk(delegate.cwd);
     return (dirs, files);
   }
 
@@ -403,165 +363,23 @@ final class PersistentWebExecutionEnv
     _timer?.cancel();
   }
 
+  /// Every mutation and every exec may have changed the in-memory tree:
+  /// schedule a debounced snapshot; session-affecting ones persist eagerly.
   @override
-  String get cwd => _delegate.cwd;
+  void afterMutation(String path) {
+    _schedulePersist(session: _affectsSessions(path));
+  }
 
   @override
   Future<Result<ShellExecResult, ExecutionError>> exec(
     String command, {
     ShellExecOptions? options,
   }) async {
-    final result = await _delegate.exec(command, options: options);
+    final result = await delegate.exec(command, options: options);
     // The shell works on the delegate's memory FS directly (it was attached
     // before this wrapper existed), so any command may have mutated the
     // tree — schedule a snapshot regardless of the exit status.
     _schedulePersist();
     return result;
   }
-
-  // Background shell jobs: forwarded to the delegate (the web MemoryShell
-  // supports them). A job's log writes land in the delegate's memory FS
-  // directly, so they join the next scheduled snapshot rather than
-  // triggering one per chunk — jobs are session-lifetime anyway.
-
-  @override
-  bool get backgroundJobsSupported {
-    final delegate = _delegate;
-    if (delegate case final BackgroundShell bg) {
-      return bg.backgroundJobsSupported;
-    }
-    return false;
-  }
-
-  @override
-  Future<Result<ShellJob, ExecutionError>> startShellJob(
-    String command, {
-    required String id,
-    required String logPath,
-    ShellExecOptions? options,
-  }) {
-    final delegate = _delegate;
-    if (delegate case final BackgroundShell bg) {
-      return bg.startShellJob(
-        command,
-        id: id,
-        logPath: logPath,
-        options: options,
-      );
-    }
-    return Future.value(
-      const Err(
-        ExecutionError(
-          ExecutionErrorCode.shellUnavailable,
-          'background shell jobs are not supported by this shell',
-        ),
-      ),
-    );
-  }
-
-  @override
-  Future<Result<void, FileError>> writeBinaryFile(
-    String path,
-    Uint8List content,
-  ) async {
-    final result = await _delegate.writeBinaryFile(path, content);
-    if (result.isOk) _schedulePersist(session: _affectsSessions(path));
-    return result;
-  }
-
-  @override
-  Future<Result<void, FileError>> writeFile(String path, String content) async {
-    final result = await _delegate.writeFile(path, content);
-    if (result.isOk) _schedulePersist(session: _affectsSessions(path));
-    return result;
-  }
-
-  @override
-  Future<Result<void, FileError>> appendFile(
-    String path,
-    String content,
-  ) async {
-    final result = await _delegate.appendFile(path, content);
-    if (result.isOk) _schedulePersist(session: _affectsSessions(path));
-    return result;
-  }
-
-  @override
-  Future<Result<void, FileError>> createDir(
-    String path, {
-    bool recursive = true,
-  }) async {
-    final result = await _delegate.createDir(path, recursive: recursive);
-    if (result.isOk) _schedulePersist(session: _affectsSessions(path));
-    return result;
-  }
-
-  @override
-  Future<Result<void, FileError>> remove(
-    String path, {
-    bool recursive = false,
-    bool force = false,
-  }) async {
-    final result = await _delegate.remove(
-      path,
-      recursive: recursive,
-      force: force,
-    );
-    if (result.isOk) _schedulePersist(session: _affectsSessions(path));
-    return result;
-  }
-
-  @override
-  Future<Result<String, FileError>> absolutePath(String path) =>
-      _delegate.absolutePath(path);
-
-  @override
-  Future<Result<String, FileError>> joinPath(List<String> parts) =>
-      _delegate.joinPath(parts);
-
-  @override
-  Future<Result<String, FileError>> readTextFile(String path) =>
-      _delegate.readTextFile(path);
-
-  @override
-  Future<Result<Uint8List, FileError>> readBinaryFile(String path) =>
-      _delegate.readBinaryFile(path);
-
-  @override
-  Future<Result<Uint8List, FileError>> readRange(
-    String path,
-    int start,
-    int end,
-  ) {
-    final delegate = _delegate;
-    if (delegate case final RangedReadFileSystem ranged) {
-      return ranged.readRange(path, start, end);
-    }
-    return Future.value(
-      Err(
-        FileError(
-          FileErrorCode.notSupported,
-          'readRange not supported by $delegate',
-          path: path,
-        ),
-      ),
-    );
-  }
-
-  @override
-  Future<Result<List<String>, FileError>> readTextLines(
-    String path, {
-    int? maxLines,
-  }) => _delegate.readTextLines(path, maxLines: maxLines);
-
-  @override
-  Future<Result<FileInfo, FileError>> fileInfo(String path) =>
-      _delegate.fileInfo(path);
-
-  @override
-  Future<Result<List<FileInfo>, FileError>> listDir(String path) =>
-      _delegate.listDir(path);
-
-  @override
-  Future<Result<bool, FileError>> exists(String path) => _delegate.exists(path);
 }

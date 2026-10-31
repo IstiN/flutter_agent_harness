@@ -24,6 +24,7 @@ import 'package:http/http.dart' as http;
 import '../agent/agent_loop.dart' show ToolExecutionResult;
 import '../agent/agent_tool.dart';
 import '../approval/approval.dart';
+import '../cancel_token.dart';
 import '../env/execution_env.dart';
 import '../spill/spill.dart';
 import '../types.dart';
@@ -783,6 +784,44 @@ Future<ToolExecutionResult> _emitDocument(
   return ToolExecutionResult(content: [TextContent(text: summary)]);
 }
 
+/// Shared `transcribe_audio` intake, used by both the harness tool
+/// ([transcribeAudioTool]) and the flutter_app mirror
+/// (`asr_tool.dart`'s `transcriptionTool`): validates the path's extension
+/// against [supportedAudioExtensions], reads the file through [env], and
+/// enforces the [maxTranscribeAudioBytes] cap. Returns the base file name
+/// (forwarded to the endpoint) and the payload bytes. Any violation throws
+/// [StateError] with the tool's user-facing message.
+Future<(String, Uint8List)> readTranscribeAudioPayload(
+  ExecutionEnv env,
+  String path, {
+  CancelToken? cancelToken,
+}) async {
+  final filename = path.split(RegExp(r'[/\\]')).last;
+  final dot = filename.lastIndexOf('.');
+  final extension = dot >= 0 ? filename.substring(dot + 1).toLowerCase() : '';
+  if (!supportedAudioExtensions.contains(extension)) {
+    throw StateError(
+      'Unsupported audio format: $filename (supported: '
+      '${(supportedAudioExtensions.toList()..sort()).join(', ')})',
+    );
+  }
+
+  final read = await env.readBinaryFile(path);
+  if (read.isErr) {
+    throw StateError('${read.errorOrNull}');
+  }
+  final bytes = read.valueOrNull!;
+  cancelToken?.throwIfCancelled();
+
+  if (bytes.length > maxTranscribeAudioBytes) {
+    throw StateError(
+      'Audio file too large: ${bytes.length} bytes exceeds the 25MB '
+      'transcription limit',
+    );
+  }
+  return (filename, bytes);
+}
+
 /// Creates the `transcribe_audio` tool.
 ///
 /// Parameters:
@@ -846,31 +885,11 @@ AgentTool transcribeAudioTool(
       final language = (arguments['language'] as String?) ?? config.language;
       final callPrompt = (arguments['prompt'] as String?) ?? config.prompt;
 
-      final filename = path.split(RegExp(r'[/\\]')).last;
-      final dot = filename.lastIndexOf('.');
-      final extension = dot >= 0
-          ? filename.substring(dot + 1).toLowerCase()
-          : '';
-      if (!supportedAudioExtensions.contains(extension)) {
-        throw StateError(
-          'Unsupported audio format: $filename (supported: '
-          '${(supportedAudioExtensions.toList()..sort()).join(', ')})',
-        );
-      }
-
-      final read = await env.readBinaryFile(path);
-      if (read.isErr) {
-        throw StateError('${read.errorOrNull}');
-      }
-      final bytes = read.valueOrNull!;
-      cancelToken?.throwIfCancelled();
-
-      if (bytes.length > maxTranscribeAudioBytes) {
-        throw StateError(
-          'Audio file too large: ${bytes.length} bytes exceeds the 25MB '
-          'transcription limit',
-        );
-      }
+      final (filename, bytes) = await readTranscribeAudioPayload(
+        env,
+        path,
+        cancelToken: cancelToken,
+      );
 
       final adapter = TranscriptionAdapter.forConfig(config);
       final baseUrl = _endpointBase(config.baseUrl);
