@@ -602,9 +602,8 @@ final class WindowedSessionStorage
     _windowTopOffset = chunk.firstOffset;
     _hasOlder = chunk.hasOlder;
     _indexChunk(chunk, prepend: true);
-    _aboveCount = _aboveCount == null
-        ? null
-        : _aboveCount! - chunk.entries.length;
+    final above = _aboveCount;
+    _aboveCount = above == null ? null : above - chunk.entries.length;
   }
 
   /// One page-up pass: reads the chunk above the window, indexes it
@@ -633,9 +632,8 @@ final class WindowedSessionStorage
     _windowTopOffset = chunk.firstOffset;
     _hasOlder = chunk.hasOlder;
     _indexChunk(chunk, prepend: true);
-    _aboveCount = _aboveCount == null
-        ? null
-        : _aboveCount! - chunk.entries.length;
+    final above = _aboveCount;
+    _aboveCount = above == null ? null : above - chunk.entries.length;
     return (chunk, connectId);
   }
 
@@ -658,10 +656,11 @@ final class WindowedSessionStorage
     }
     _indexChunk(chunk);
     _knownFileBytes = chunk.endOffset;
-    if (_belowCount != null) {
+    final below = _belowCount;
+    if (below != null) {
       // 0x80000000 == the VM value of `1 << 31`; the shift form is negative
       // on dart2js and would throw inside clamp (issue #1074).
-      _belowCount = (_belowCount! - chunk.entries.length).clamp(0, 0x80000000);
+      _belowCount = (below - chunk.entries.length).clamp(0, 0x80000000);
     }
     if (chunk.endOffset >= _fileSize) _belowCount = 0;
     final joined = _joinBranchDownward(chunk);
@@ -766,8 +765,9 @@ final class WindowedSessionStorage
       _offsetById[entry.record.id] = entry.offset;
       _appendedBelow[entry.record.id] = entry.record;
     }
-    if (_belowCount != null) {
-      _belowCount = _belowCount! + chunk.entries.length;
+    final below = _belowCount;
+    if (below != null) {
+      _belowCount = below + chunk.entries.length;
     }
     return (reanchored: false, delta: const <SessionRecord>[]);
   }
@@ -784,8 +784,9 @@ final class WindowedSessionStorage
     // Appended lines are new records in the counted total too - a stale
     // memo would drift the banner count downward after every external
     // CLI append.
-    if (chunk.entries.isNotEmpty && _totalRecords != null) {
-      _totalRecords = _totalRecords! + chunk.entries.length;
+    final total = _totalRecords;
+    if (chunk.entries.isNotEmpty && total != null) {
+      _totalRecords = total + chunk.entries.length;
     }
     final delta = <SessionRecord>[];
     final path = await getPathToRoot(_currentLeafId);
@@ -888,11 +889,13 @@ final class WindowedSessionStorage
     }
     final joined = <SessionRecord>[];
     var current = bottom;
-    while (childrenByParent[current]?.length == 1) {
-      final record = childrenByParent[current]!.single;
+    var children = childrenByParent[current] ?? const <SessionRecord>[];
+    while (children.length == 1) {
+      final record = children.single;
       joined.add(record);
       _branchBottomId = record.id;
       current = record.id;
+      children = childrenByParent[current] ?? const <SessionRecord>[];
     }
     return joined;
   }
@@ -910,9 +913,13 @@ final class WindowedSessionStorage
     };
     final ups = <SessionRecord>[target];
     var walker = target;
-    while (walker.parentId != null && byId[walker.parentId!] != null) {
-      walker = byId[walker.parentId!]!;
+    var parentId = walker.parentId;
+    while (parentId != null) {
+      final parent = byId[parentId];
+      if (parent == null) break;
+      walker = parent;
       ups.add(walker);
+      parentId = walker.parentId;
     }
     final childrenByParent = <String, List<SessionRecord>>{};
     for (final entry in chunk.entries) {
@@ -922,10 +929,12 @@ final class WindowedSessionStorage
     }
     final downs = <SessionRecord>[];
     var current = target;
-    while (childrenByParent[current.id]?.length == 1) {
-      final record = childrenByParent[current.id]!.single;
+    var children = childrenByParent[current.id] ?? const <SessionRecord>[];
+    while (children.length == 1) {
+      final record = children.single;
       downs.add(record);
       current = record;
+      children = childrenByParent[current.id] ?? const <SessionRecord>[];
     }
     _branchBottomId = downs.isEmpty ? target.id : downs.last.id;
     return [...ups.reversed, ...downs];
@@ -1187,10 +1196,13 @@ final class WindowedSessionStorage
         _indexEntry(record, start: start, end: _fileSize);
         _knownFileBytes = _fileSize;
         if (chained) _branchBottomId = leaf;
-      } else if (_belowCount != null) {
+      } else {
         // Deep-paged: the record lands below the window and pages in later.
-        _belowCount = _belowCount! + 1;
-        _appendedBelow[record.id] = record;
+        final below = _belowCount;
+        if (below != null) {
+          _belowCount = below + 1;
+          _appendedBelow[record.id] = record;
+        }
       }
       _currentLeafId = leaf;
     });
@@ -1249,8 +1261,8 @@ final class WindowedSessionStorage
 }
 
 void _fsOrThrow(Result<void, FileError> result, String message) {
-  if (result.isErr) {
-    final error = result.errorOrNull!;
+  if (result is Err<void, FileError>) {
+    final error = result.error;
     throw SessionException(
       '$message: ${error.message}',
       code: error.code == FileErrorCode.notFound
