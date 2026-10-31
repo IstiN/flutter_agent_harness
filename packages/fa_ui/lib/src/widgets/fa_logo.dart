@@ -6,7 +6,7 @@ import 'package:flutter/material.dart';
 
 import '../theme/fa2_tokens.dart';
 
-/// The owner-approved Squircle-V4-Minimal identity.
+/// The owner-approved Squircle-V2 identity from `logos.html`.
 ///
 /// This is a vector painting, not a font glyph or raster asset: app icon,
 /// launcher mark and compact brand header therefore share the exact geometry.
@@ -62,19 +62,19 @@ class FaLogoPainter extends CustomPainter {
     );
 
     final bubble = Path()
-      ..moveTo(20, 20)
-      ..lineTo(64, 20)
-      ..arcToPoint(const Offset(72, 28), radius: const Radius.circular(8))
-      ..lineTo(72, 42)
-      ..arcToPoint(const Offset(64, 50), radius: const Radius.circular(8))
-      ..lineTo(38, 50)
-      ..lineTo(26, 58)
-      ..lineTo(26, 50)
-      ..lineTo(20, 50)
-      ..arcToPoint(const Offset(12, 42), radius: const Radius.circular(8))
-      ..lineTo(12, 28)
+      ..moveTo(20, 22)
+      ..lineTo(64, 22)
+      ..arcToPoint(const Offset(72, 30), radius: const Radius.circular(8))
+      ..lineTo(72, 46)
+      ..arcToPoint(const Offset(64, 54), radius: const Radius.circular(8))
+      ..lineTo(38, 54)
+      ..lineTo(26, 62)
+      ..lineTo(26, 54)
+      ..lineTo(20, 54)
+      ..arcToPoint(const Offset(12, 46), radius: const Radius.circular(8))
+      ..lineTo(12, 30)
       ..arcToPoint(
-        const Offset(20, 20),
+        const Offset(20, 22),
         radius: const Radius.circular(8),
         clockwise: true,
       )
@@ -93,24 +93,20 @@ class FaLogoPainter extends CustomPainter {
     );
 
     final prompt = Path()
-      ..moveTo(28, 28)
-      ..lineTo(28 + 7 * .86, 28 + 6 * .86)
-      ..lineTo(28, 28 + 12 * .86);
-    canvas.drawPath(prompt, _linePaint(tokens.accent, 2.8 * .86));
+      ..moveTo(52, 28)
+      ..lineTo(57, 33)
+      ..lineTo(52, 38);
+    canvas.drawPath(prompt, _linePaint(tokens.accent, 2));
     canvas.drawLine(
-      Offset(28 + 10 * .86, 28 + 12 * .86),
-      Offset(28 + 18 * .86, 28 + 12 * .86),
-      _linePaint(tokens.accent, 2.8 * .86),
+      const Offset(59, 38),
+      const Offset(63, 38),
+      _linePaint(tokens.accent, 2),
     );
-    final dotColor = tokens.agentHues.length > 1
-        ? tokens.agentHues[1]
-        : tokens.accent;
-    canvas.drawCircle(const Offset(50, 34), 3.5, Paint()..color = dotColor);
 
-    // Vector F: translate(31,54), scale(.55).
+    // Dominant vector Fa, matching the 22px bold reference without a font.
     canvas.save();
-    canvas.translate(31, 54);
-    canvas.scale(.55);
+    canvas.translate(24, 26);
+    canvas.scale(.72);
     canvas.drawPath(
       Path()
         ..moveTo(0, 28)
@@ -125,10 +121,9 @@ class FaLogoPainter extends CustomPainter {
     );
     canvas.restore();
 
-    // Vector a: translate(43,58), scale(.58), with the agent core in its bowl.
     canvas.save();
-    canvas.translate(43, 58);
-    canvas.scale(.58);
+    canvas.translate(38, 31);
+    canvas.scale(.82);
     canvas.drawCircle(
       const Offset(7, 11),
       6.5,
@@ -142,8 +137,12 @@ class FaLogoPainter extends CustomPainter {
       const Offset(13.5, 17.5),
       _linePaint(tokens.ink1, 3),
     );
-    canvas.drawCircle(const Offset(7, 11), 3.2, Paint()..color = tokens.accent);
     canvas.restore();
+
+    final dotColor = tokens.agentHues.length > 1
+        ? tokens.agentHues[1]
+        : tokens.accent;
+    canvas.drawCircle(const Offset(60, 46), 3, Paint()..color = dotColor);
     canvas.restore();
   }
 

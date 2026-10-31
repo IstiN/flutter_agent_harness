@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Render the canonical Squircle-V4-Minimal Fa logo to every icon asset.
+"""Render the canonical Squircle-V2 Fa logo to every icon asset.
 
 The geometry is the same 84x84 vector contract as fa_ui's FaLogoPainter and
-references/fa-pocs/fa2.0/styleguide_icons.js. Pillow avoids host SVG delegates,
+references/fa-pocs/fa2.0/logos.html. Pillow avoids host SVG delegates,
 so raster output is reproducible. Run through icon/generate_icons.sh, which
 then derives Android and Play assets from the generated iOS master.
 """
@@ -47,14 +47,14 @@ def arc(cx, cy, radius, start, end, steps=16):
 
 def bubble_points():
     return (
-        [(20, 20), (64, 20)]
-        + arc(64, 28, 8, -pi / 2, 0)[1:]
-        + [(72, 42)]
-        + arc(64, 42, 8, 0, pi / 2)[1:]
-        + [(38, 50), (26, 58), (26, 50), (20, 50)]
-        + arc(20, 42, 8, pi / 2, pi)[1:]
-        + [(12, 28)]
-        + arc(20, 28, 8, pi, 3 * pi / 2)[1:]
+        [(20, 22), (64, 22)]
+        + arc(64, 30, 8, -pi / 2, 0)[1:]
+        + [(72, 46)]
+        + arc(64, 46, 8, 0, pi / 2)[1:]
+        + [(38, 54), (26, 62), (26, 54), (20, 54)]
+        + arc(20, 46, 8, pi / 2, pi)[1:]
+        + [(12, 30)]
+        + arc(20, 30, 8, pi, 3 * pi / 2)[1:]
     )
 
 
@@ -97,15 +97,14 @@ def render(palette, full_bleed=False):
     draw.polygon(bubble, fill=bubble_fill)
     draw.line(bubble + [bubble[0]], fill=palette["accent"], width=round(1.8 * scale), joint="curve")
 
-    line([(0, 0), (7, 6), (0, 12)], palette["accent"], 2.8, (28, 28, .86))
-    line([(10, 12), (18, 12)], palette["accent"], 2.8, (28, 28, .86))
-    circle(50, 34, 3.5, fill=palette["agent2"])
+    line([(0, 28), (0, 0), (16, 0)], palette["ink1"], 3.5, (24, 26, .72))
+    line([(0, 12.5), (12, 12.5)], palette["ink1"], 3.5, (24, 26, .72))
+    circle(7, 11, 6.5, outline=palette["ink1"], width=3, transform=(38, 31, .82))
+    line([(13.5, 4.5), (13.5, 17.5)], palette["ink1"], 3, (38, 31, .82))
 
-    line([(0, 28), (0, 0), (16, 0)], palette["ink1"], 3.5, (31, 54, .55))
-    line([(0, 12.5), (12, 12.5)], palette["ink1"], 3.5, (31, 54, .55))
-    circle(7, 11, 6.5, outline=palette["ink1"], width=3, transform=(43, 58, .58))
-    line([(13.5, 4.5), (13.5, 17.5)], palette["ink1"], 3, (43, 58, .58))
-    circle(7, 11, 3.2, fill=palette["accent"], transform=(43, 58, .58))
+    line([(52, 28), (57, 33), (52, 38)], palette["accent"], 2)
+    line([(59, 38), (63, 38)], palette["accent"], 2)
+    circle(60, 46, 3, fill=palette["agent2"])
     return image.resize((MASTER, MASTER), Image.Resampling.LANCZOS)
 
 
@@ -113,11 +112,12 @@ def svg(palette, full_bleed=False, safe=False, foreground=False):
     outer = mix(palette["surface1"], palette["accent"], .09)
     bubble_fill = mix(outer, palette["surface2"], .84)
     body = f'''<rect x="4" y="4" width="76" height="76" rx="22" fill="{outer}" stroke="{palette["hairline"]}" stroke-width="1.5"/>
-  <path d="M20 20 H64 A8 8 0 0 1 72 28 V42 A8 8 0 0 1 64 50 H38 L26 58 V50 H20 A8 8 0 0 1 12 42 V28 A8 8 0 0 1 20 20 Z" fill="{bubble_fill}" stroke="{palette["accent"]}" stroke-width="1.8" stroke-linejoin="round"/>
-  <g transform="translate(28 28) scale(.86)" fill="none" stroke="{palette["accent"]}" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"><path d="M0 0 L7 6 L0 12"/><path d="M10 12 H18"/></g>
-  <circle cx="50" cy="34" r="3.5" fill="{palette["agent2"]}"/>
-  <g transform="translate(31 54) scale(.55)" fill="none" stroke="{palette["ink1"]}" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><path d="M0 28 V0 H16"/><path d="M0 12.5 H12"/></g>
-  <g transform="translate(43 58) scale(.58)"><circle cx="7" cy="11" r="6.5" fill="none" stroke="{palette["ink1"]}" stroke-width="3"/><path d="M13.5 4.5 V17.5" fill="none" stroke="{palette["ink1"]}" stroke-width="3" stroke-linecap="round"/><circle cx="7" cy="11" r="3.2" fill="{palette["accent"]}"/></g>'''
+  <path d="M20 22 H64 A8 8 0 0 1 72 30 V46 A8 8 0 0 1 64 54 H38 L26 62 V54 H20 A8 8 0 0 1 12 46 V30 A8 8 0 0 1 20 22 Z" fill="{bubble_fill}" stroke="{palette["accent"]}" stroke-width="1.8" stroke-linejoin="round"/>
+  <g transform="translate(24 26) scale(.72)" fill="none" stroke="{palette["ink1"]}" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><path d="M0 28 V0 H16"/><path d="M0 12.5 H12"/></g>
+  <g transform="translate(38 31) scale(.82)"><circle cx="7" cy="11" r="6.5" fill="none" stroke="{palette["ink1"]}" stroke-width="3"/><path d="M13.5 4.5 V17.5" fill="none" stroke="{palette["ink1"]}" stroke-width="3" stroke-linecap="round"/></g>
+  <path d="M52 28 L57 33 L52 38" fill="none" stroke="{palette["accent"]}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M59 38 H63" fill="none" stroke="{palette["accent"]}" stroke-width="2" stroke-linecap="round"/>
+  <circle cx="60" cy="46" r="3" fill="{palette["agent2"]}"/>'''
     size = 140 if safe else 84
     background = ""
     if full_bleed and not foreground:

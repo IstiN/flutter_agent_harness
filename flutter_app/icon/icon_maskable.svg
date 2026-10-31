@@ -1,9 +1,10 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 140 140">
  <rect width="140" height="140" fill="#080A10"/>
  <g transform="translate(28 28)"><rect x="4" y="4" width="76" height="76" rx="22" fill="#132233" stroke="#222D46" stroke-width="1.5"/>
-  <path d="M20 20 H64 A8 8 0 0 1 72 28 V42 A8 8 0 0 1 64 50 H38 L26 58 V50 H20 A8 8 0 0 1 12 42 V28 A8 8 0 0 1 20 20 Z" fill="#161C2D" stroke="#38BDF8" stroke-width="1.8" stroke-linejoin="round"/>
-  <g transform="translate(28 28) scale(.86)" fill="none" stroke="#38BDF8" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"><path d="M0 0 L7 6 L0 12"/><path d="M10 12 H18"/></g>
-  <circle cx="50" cy="34" r="3.5" fill="#818CF8"/>
-  <g transform="translate(31 54) scale(.55)" fill="none" stroke="#F0F4FC" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><path d="M0 28 V0 H16"/><path d="M0 12.5 H12"/></g>
-  <g transform="translate(43 58) scale(.58)"><circle cx="7" cy="11" r="6.5" fill="none" stroke="#F0F4FC" stroke-width="3"/><path d="M13.5 4.5 V17.5" fill="none" stroke="#F0F4FC" stroke-width="3" stroke-linecap="round"/><circle cx="7" cy="11" r="3.2" fill="#38BDF8"/></g></g>
+  <path d="M20 22 H64 A8 8 0 0 1 72 30 V46 A8 8 0 0 1 64 54 H38 L26 62 V54 H20 A8 8 0 0 1 12 46 V30 A8 8 0 0 1 20 22 Z" fill="#161C2D" stroke="#38BDF8" stroke-width="1.8" stroke-linejoin="round"/>
+  <g transform="translate(24 26) scale(.72)" fill="none" stroke="#F0F4FC" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><path d="M0 28 V0 H16"/><path d="M0 12.5 H12"/></g>
+  <g transform="translate(38 31) scale(.82)"><circle cx="7" cy="11" r="6.5" fill="none" stroke="#F0F4FC" stroke-width="3"/><path d="M13.5 4.5 V17.5" fill="none" stroke="#F0F4FC" stroke-width="3" stroke-linecap="round"/></g>
+  <path d="M52 28 L57 33 L52 38" fill="none" stroke="#38BDF8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M59 38 H63" fill="none" stroke="#38BDF8" stroke-width="2" stroke-linecap="round"/>
+  <circle cx="60" cy="46" r="3" fill="#818CF8"/></g>
 </svg>

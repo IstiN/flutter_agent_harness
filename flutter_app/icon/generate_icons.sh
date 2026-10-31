@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regenerate every launcher/store icon from the canonical Fa Squircle-V4
+# Regenerate every launcher/store icon from the canonical Fa Squircle-V2
 # geometry. Python + Pillow render the non-Android assets deterministically;
 # the existing Dart image tool then derives Android and Play icons from the
 # exact iOS master (the SSIM guards in test/android_icon_test.dart pin this).
