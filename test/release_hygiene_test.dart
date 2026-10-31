@@ -1710,6 +1710,105 @@ gh release create "v9.9.9" \
         );
       },
     );
+    test(
+      'gh-2008: stale PAT-attributed pipeline draft (release-draft-owner marker, human author) is swept; unmarked human draft stays kept (E1)',
+      () {
+        // Every pipeline draft is created with GH_TOKEN=RELEASE_PAT (the
+        // owner's PAT), so the API reports author=<owner>, type=User — the
+        // author-only bot test buckets the release train's own orphaned
+        // drafts as "human" and they rot forever (gh-2008: v1.0.663 /
+        // v1.0.665). The invisible `release-draft-owner` body marker is the
+        // pipeline-ownership signal the guard and dedupe already parse.
+        final freshDate = DateTime.now()
+            .toUtc()
+            .subtract(const Duration(hours: 1))
+            .toIso8601String()
+            .substring(0, 19);
+        final run = runSweeper('marker', {
+          'releases.json': jsonEncode([
+            {
+              'tag_name': 'v1.0.663',
+              'id': 427501287,
+              'draft': true,
+              'created_at': oldDate,
+              'author': {'login': 'IstiN', 'type': 'User'},
+              'body':
+                  'Release v1.0.663 — see the CHANGELOG.\n'
+                  '<!-- release-draft-owner: run/40822965933/job/release-mobile -->',
+            },
+            {
+              // Same stale age, same human author — but NO marker: a real
+              // human draft must stay listed-not-deleted (E1).
+              'tag_name': 'v1.0.999',
+              'id': 427501288,
+              'draft': true,
+              'created_at': oldDate,
+              'author': {'login': 'IstiN', 'type': 'User'},
+              'body': 'My manual WIP draft — no marker',
+            },
+            {
+              // Fresh + marker: an in-flight run may still own it.
+              'tag_name': 'v1.0.674',
+              'id': 427501289,
+              'draft': true,
+              'created_at': '${freshDate}Z',
+              'author': {'login': 'IstiN', 'type': 'User'},
+              'body':
+                  '<!-- release-draft-owner: run/41172095157/job/build-macos-cli-arm64 -->',
+            },
+          ]),
+          'issues.tsv': '',
+          'runs.tsv': '',
+        });
+        expect(
+          run.log,
+          contains('api -X DELETE repos/OWNER/REPO/releases/427501287'),
+          reason:
+              'a stale draft carrying the pipeline ownership marker is '
+              'pipeline-created (the RELEASE_PAT attribution only makes it '
+              'LOOK human) — the sweeper must reclaim it',
+        );
+        expect(
+          run.log,
+          isNot(contains('releases/427501288')),
+          reason: 'stale human draft with NO marker must never be deleted (E1)',
+        );
+        expect(
+          run.log,
+          isNot(contains('releases/427501289')),
+          reason: 'fresh (<24h) marker draft must be untouched — an in-flight run may own it',
+        );
+        expect(run.body, isNotNull, reason: 'an issue body must have been filed');
+        expect(
+          run.body,
+          contains('v1.0.663'),
+          reason: 'swept draft must be named in the issue',
+        );
+        expect(
+          run.body,
+          contains('actions/runs/40822965933'),
+          reason:
+              'the marker names the exact creating run — the issue must '
+              'point at it (the creating run executed on main, so the '
+              'gh-run-list-on-tag heuristic cannot find it)',
+        );
+        expect(
+          run.body,
+          contains('v1.0.999'),
+          reason: 'kept human draft must be listed in the issue (E1)',
+        );
+        expect(
+          run.body,
+          isNot(contains('v1.0.674')),
+          reason: 'fresh drafts are never named as swept or kept',
+        );
+        expect(
+          run.stdoutText,
+          contains('v1.0.663'),
+          reason: 'swept draft must be named in the report',
+        );
+      },
+    );
 
     test(
       'idempotent re-run: comments on the open issue instead of duplicating',
