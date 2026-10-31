@@ -29,10 +29,10 @@ void main() {
       '(its MediaKeyResolver/MediaEndpoint/generateImageTool names collide '
       'with flutter_app\'s parallel copies)', () {
     final barrel = File(barrelPath).readAsStringSync();
-    final exports = RegExp(r"^export '([^']+)';", multiLine: true)
-        .allMatches(barrel)
-        .map((m) => m.group(1)!)
-        .toList();
+    final exports = RegExp(
+      r"^export '([^']+)';",
+      multiLine: true,
+    ).allMatches(barrel).map((m) => m.group(1)!).toList();
     expect(exports, isNotEmpty, reason: 'sanity: the barrel parses');
     expect(
       exports.where((path) => path.endsWith('generate_image.dart')),

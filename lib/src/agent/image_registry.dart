@@ -462,10 +462,7 @@ List<Message>? _stripAllVideoBlocks(List<Message> messages) {
 /// text-embedded data-URL payloads folded into real [ImageContent] blocks.
 /// Messages without folds ride untouched; the first fold copies the list
 /// (the caller's instance is never mutated).
-List<Message> _foldEmbeddedImagesPass(
-  List<Message> messages,
-  int currentIdx0,
-) {
+List<Message> _foldEmbeddedImagesPass(List<Message> messages, int currentIdx0) {
   var normalized = messages;
   for (var i = 0; i < messages.length; i++) {
     if (i == currentIdx0) continue;
@@ -591,9 +588,7 @@ List<Message> rewriteHistoryImages(
   // its text verbatim (I3) — it degrades on the NEXT turn.
   final normalized = _foldEmbeddedImagesPass(strippedVideos, currentIdx0);
   final hasImages = normalized.any((message) => _imagesOf(message).isNotEmpty);
-  if (!hasImages &&
-      !videoStripped &&
-      !normalized.any(_mentionsImageRef)) {
+  if (!hasImages && !videoStripped && !normalized.any(_mentionsImageRef)) {
     // Nothing to rewrite: return the CALLER'S list instance (the
     // image-free fast-path guarantee) even when the fold pre-pass ran.
     return messages;

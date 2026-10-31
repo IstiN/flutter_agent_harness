@@ -283,9 +283,7 @@ void main() {
         ToolResultMessage(
           toolCallId: 'c1',
           toolName: 'snap',
-          content: const [
-            ImageContent(data: 'aGk=', mimeType: 'image/png'),
-          ],
+          content: const [ImageContent(data: 'aGk=', mimeType: 'image/png')],
           isError: false,
           timestamp: DateTime.utc(2026),
         ),
@@ -300,8 +298,7 @@ void main() {
       );
     });
 
-    test('a video block still downgrades (the fast path never eats it)',
-        () {
+    test('a video block still downgrades (the fast path never eats it)', () {
       final messages = [
         UserMessage(
           content: const [
@@ -317,10 +314,7 @@ void main() {
       expect(blocks.whereType<VideoContent>(), isEmpty);
       expect(
         blocks.whereType<TextContent>().map((b) => b.text),
-        containsAll(<Matcher>[
-          equals('look:'),
-          contains('video omitted'),
-        ]),
+        containsAll(<Matcher>[equals('look:'), contains('video omitted')]),
       );
     });
   });

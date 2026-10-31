@@ -592,12 +592,7 @@ Future<ToolExecutionResult?> _readVideoResult(
   final sizeLabel = formatToolSize(bytes.length);
   final currentModel = model?.call();
   if (currentModel != null && currentModel.input.contains('video')) {
-    return _videoAttachResult(
-      path,
-      payloadBase64,
-      sizeLabel,
-      budget: budget,
-    );
+    return _videoAttachResult(path, payloadBase64, sizeLabel, budget: budget);
   }
 
   // Non-video-capable chat model: the configured media/vision slot

@@ -88,9 +88,7 @@ void main() {
         ToolResultMessage(
           toolCallId: 'c1',
           toolName: 'read',
-          content: [
-            VideoContent(data: 'V' * 512, mimeType: 'video/webm'),
-          ],
+          content: [VideoContent(data: 'V' * 512, mimeType: 'video/webm')],
           isError: false,
           timestamp: DateTime.utc(2026),
         ),

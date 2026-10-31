@@ -245,12 +245,7 @@ List<Message> _replaceMedia(
         onVideo: onVideo,
       );
       replacedAny |= replaced;
-      out.add(
-        UserMessage(
-          content: blocks,
-          timestamp: message.timestamp,
-        ),
-      );
+      out.add(UserMessage(content: blocks, timestamp: message.timestamp));
     } else if (message is ToolResultMessage) {
       final (blocks, replaced) = _replaceMediaWithPlaceholder(
         message.content,

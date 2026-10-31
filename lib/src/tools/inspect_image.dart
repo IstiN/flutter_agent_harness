@@ -355,13 +355,15 @@ AgentTool inspectImageTool(
       'properties': {
         'path': {
           'type': 'string',
-          'description': 'Path to the image file (relative or absolute). '
+          'description':
+              'Path to the image file (relative or absolute). '
               'Exactly one of path/paths.',
         },
         'paths': {
           'type': 'array',
           'items': {'type': 'string'},
-          'description': 'Paths to 1-$inspectImageMaxPaths image files to '
+          'description':
+              'Paths to 1-$inspectImageMaxPaths image files to '
               'inspect together (array models get every image; single-image '
               'models get a stitched composite with tiles labeled A/B/C…). '
               'Exactly one of path/paths.',
@@ -372,14 +374,16 @@ AgentTool inspectImageTool(
         },
         'stitch': {
           'type': 'boolean',
-          'description': 'Force the stitched-composite route even when the '
+          'description':
+              'Force the stitched-composite route even when the '
               'model accepts image arrays (needs ≥2 paths). Deterministic '
               'tile layout for coordinate/compare questions.',
         },
         'resize': {
           'type': 'string',
           'enum': ['original'],
-          'description': '"original" keeps the original bytes for this call '
+          'description':
+              '"original" keeps the original bytes for this call '
               'within the per-request byte budget (an over-budget original '
               'downscales minimally; the note names the applied size). '
               'Default: the configured resize ladder.',
@@ -396,8 +400,8 @@ AgentTool inspectImageTool(
         throw const ToolValidationException(
           'inspect_image',
           'stitch: true needs at least 2 paths (it tiles a multi-image '
-          'composite). Pass `paths` with 2-$inspectImageMaxPaths images, or '
-          'drop `stitch` to inspect a single image.',
+              'composite). Pass `paths` with 2-$inspectImageMaxPaths images, or '
+              'drop `stitch` to inspect a single image.',
         );
       }
 
@@ -461,7 +465,7 @@ AgentTool inspectImageTool(
     throw const ToolValidationException(
       'inspect_image',
       'Pass exactly one of `path` (single image) or `paths` (array of '
-      '1-$inspectImageMaxPaths images) — not both.',
+          '1-$inspectImageMaxPaths images) — not both.',
     );
   }
   if (path != null && path.isNotEmpty) {
@@ -476,7 +480,7 @@ AgentTool inspectImageTool(
       throw const ToolValidationException(
         'inspect_image',
         '`paths` must be an array of image path strings — every element '
-        'must be a string.',
+            'must be a string.',
       );
     }
     final list = paths.cast<String>().toList();
@@ -488,8 +492,8 @@ AgentTool inspectImageTool(
   throw const ToolValidationException(
     'inspect_image',
     'inspect_image needs `path` (a single image file) or `paths` (an array '
-    'of 1-$inspectImageMaxPaths image files). A single-element `paths` rides '
-    'the single-image form.',
+        'of 1-$inspectImageMaxPaths image files). A single-element `paths` rides '
+        'the single-image form.',
   );
 }
 
