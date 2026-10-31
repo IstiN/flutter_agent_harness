@@ -367,7 +367,7 @@ void main() {
     final cisign = File('scripts/ci-sign').readAsStringSync();
     expect(
       cisign,
-      contains('set-keychain-settings -t 0'),
+      contains("security unlock-keychain -p \"\$(kc_password)\" \"\$KC\""),
       reason: 'the signing keychain must NEVER auto-lock: gym runs '
           'xcodebuild -showBuildSettings ~15 min after ci-sign unlock; a '
           'locked keychain means a headless GUI password prompt = timeout',
@@ -421,9 +421,11 @@ void main() {
             'CocoaPods/SPM phase — re-unlock right before build_app');
   });
 
-  test('AC14 — set-keychain-settings is bounded (gh-1954: the command '
-      'hangs on a GUI SecurityAgent prompt on this host — screenshot '
-      'evidence; an unbounded call wedges install forever)', () {
+  test('AC14 — set-keychain-settings is GONE from ci-sign (gh-2008 final: '
+      'the call raises the SecurityAgent password dialog EVEN AFTER '
+      'unlock-keychain -p — proven by wave 05:23:45Z alarm kill; bounding '
+      'it only left an orphan dialog on the host screen; anti-lock is the '
+      'unlock watchdog, so the call is deleted, not bounded)', () {
     final cisign = File('scripts/ci-sign').readAsStringSync();
     final settingsLines = cisign
         .split('\n')
@@ -431,10 +433,9 @@ void main() {
         .join('\n');
     expect(
       settingsLines,
-      contains('alarm'),
-      reason: 'every set-keychain-settings invocation must be wrapped in '
-          'a bounded alarm (perl) — the GUI prompt must never be able to '
-          'hang ci-sign install',
+      '',
+      reason: 'no invocation of set-keychain-settings may exist, bounded '
+          'or not — the GUI prompt must never be spawnable from ci-sign',
     );
   });
 
@@ -467,18 +468,19 @@ void main() {
     );
   });
 
-  test('AC17 — install unlocks BEFORE set-keychain-settings (gh-1972: '
-      'settings on a LOCKED keychain spawns an orphan SecurityAgent '
-      'password dialog on the host screen; the 5s alarm kills the CLI '
-      'but the dialog lingers — nightly run 05:21Z)', () {
+  test('AC17 — NO set-keychain-settings anywhere in ci-sign (gh-2008 '
+      'final: the call raises the SecurityAgent password dialog EVEN '
+      'AFTER unlock-keychain -p — wave 05:23:45Z alarm kill, the orphan '
+      'dialog the owner kept seeing; it never applied non-interactively '
+      'on existing keychains and never provided anti-lock)', () {
     final cisign = File('scripts/ci-sign').readAsStringSync();
-    final unlockAt = cisign.indexOf(r'security unlock-keychain -p "$kcpass" "$KC"');
-    final settingsAt = cisign.indexOf("alarm 5; exec @ARGV' security set-keychain-settings");
-    expect(unlockAt, greaterThan(-1), reason: 'install must unlock');
-    expect(settingsAt, greaterThan(-1), reason: 'settings call must exist');
-    expect(unlockAt, lessThan(settingsAt),
-        reason: 'on an UNLOCKED keychain set-keychain-settings does not '
-            'prompt; unlock first, settings second — no GUI dialog');
+    final code = cisign
+        .split('\n')
+        .where((l) => !l.trimLeft().startsWith('#'))
+        .join('\n');
+    expect(code, isNot(contains('set-keychain-settings')),
+        reason: 'anti-lock = point-of-use unlocks + Fastfile watchdog, '
+            'never settings');
   });
 
   test('AC18 — install rewrites the search list defensively: login kept '
@@ -513,5 +515,22 @@ void main() {
         reason: 'the canonical pin keeps login/System/ci-signing');
     expect(fastfile, contains('ci-signing.keychain-db'),
         reason: 'the canonical pin keeps ci-signing LAST');
+  });
+
+  test('AC20 — install sweeps shadow identities on the up-to-date path '
+      '(gh-2008: Xcode export -allowProvisioningUpdates silently imported '
+      'an extra "Apple Distribution" cert into the persistent keychain, '
+      'shadowing the pinned "iPhone Distribution" same-CN cert — any '
+      'codesigning identity that is not the pinned SHA-1 is deleted, even '
+      'when the pinned one is already current)', () {
+    final cisign = File('scripts/ci-sign').readAsStringSync();
+    expect(cisign, contains('swept shadow identity'),
+        reason: 'the up-to-date fast path must sweep shadows');
+    final sweepAt = cisign.indexOf('swept shadow identity');
+    final upToDateAt = cisign.indexOf("identity for '\$LABEL' is up to date");
+    expect(sweepAt, greaterThan(-1));
+    expect(upToDateAt, greaterThan(-1));
+    expect(sweepAt, lessThan(upToDateAt),
+        reason: 'the sweep runs BEFORE declaring up-to-date');
   });
 }
