@@ -108,111 +108,122 @@ void main() {
       },
     );
 
-    test('upload-artifact is pinned to the current digest-validating line everywhere', () {
-      expect(
-        usesByAction()['actions/upload-artifact'],
-        {'cf430e030ddbb5b0abf93d22962f4752f3646cd9'},
-        reason:
-            'pty-coverage-gate downloads with download-artifact v8 '
-            '(strict SHA256 digest validation); every upload must come '
-            'from the same current action line or the download '
-            'digest-mismatches and the shard merge loses a report',
-      );
-    });
+    test(
+      'upload-artifact is pinned to the current digest-validating line everywhere',
+      () {
+        expect(
+          usesByAction()['actions/upload-artifact'],
+          {'cf430e030ddbb5b0abf93d22962f4752f3646cd9'},
+          reason:
+              'pty-coverage-gate downloads with download-artifact v8 '
+              '(strict SHA256 digest validation); every upload must come '
+              'from the same current action line or the download '
+              'digest-mismatches and the shard merge loses a report',
+        );
+      },
+    );
 
-    test('pty shard coverage artifacts: upload name, download pattern and count check agree', () {
-      // gh-1005: the consolidated leg is pty-integration-linux (the former
-      // mac `pty-integration` shards merged in; there is no mac leg anymore).
-      final jobs = jobsOf('.github/workflows/ci.yml');
-      final integration = jobs['pty-integration-linux'] as YamlMap;
-      final gate = jobs['pty-coverage-gate'] as YamlMap;
+    test(
+      'pty shard coverage artifacts: upload name, download pattern and count check agree',
+      () {
+        // gh-1005: the consolidated leg is pty-integration-linux (the former
+        // mac `pty-integration` shards merged in; there is no mac leg anymore).
+        final jobs = jobsOf('.github/workflows/ci.yml');
+        final integration = jobs['pty-integration-linux'] as YamlMap;
+        final gate = jobs['pty-coverage-gate'] as YamlMap;
 
-      // The matrix width is the source of truth for the expected report count.
-      final shardCount =
-          ((integration['strategy'] as YamlMap)['matrix'] as YamlMap)['shard']
-              as YamlList;
-      expect(shardCount.length, 3, reason: 'the leg is documented as 3 shards');
+        // The matrix width is the source of truth for the expected report count.
+        final shardCount =
+            ((integration['strategy'] as YamlMap)['matrix'] as YamlMap)['shard']
+                as YamlList;
+        expect(
+          shardCount.length,
+          3,
+          reason: 'the leg is documented as 3 shards',
+        );
 
-      // Exactly one coverage upload per shard leg, named pty-coverage-shard-N.
-      // gh-1412: the gh-1412 retry steps (same artifact name, `if` keyed on
-      // the primary upload's failed outcome) re-upload the SAME single
-      // artifact — they must not count as a second coverage upload here.
-      final uploadNames = <String>[];
-      for (final step in integration['steps'] as YamlList) {
-        if (step is YamlMap &&
-            step['uses'].toString().startsWith('actions/upload-artifact') &&
-            !(step['if']?.toString().contains("outcome == 'failure'") ??
-                false)) {
-          uploadNames.add(((step['with'] as YamlMap)['name']).toString());
+        // Exactly one coverage upload per shard leg, named pty-coverage-shard-N.
+        // gh-1412: the gh-1412 retry steps (same artifact name, `if` keyed on
+        // the primary upload's failed outcome) re-upload the SAME single
+        // artifact — they must not count as a second coverage upload here.
+        final uploadNames = <String>[];
+        for (final step in integration['steps'] as YamlList) {
+          if (step is YamlMap &&
+              step['uses'].toString().startsWith('actions/upload-artifact') &&
+              !(step['if']?.toString().contains("outcome == 'failure'") ??
+                  false)) {
+            uploadNames.add(((step['with'] as YamlMap)['name']).toString());
+          }
         }
-      }
-      final coverageUploads = uploadNames
-          .where((n) => n.startsWith('pty-coverage-shard-'))
-          .toList();
-      expect(
-        coverageUploads,
-        hasLength(1),
-        reason: 'exactly one pty-coverage-shard artifact per shard leg',
-      );
+        final coverageUploads = uploadNames
+            .where((n) => n.startsWith('pty-coverage-shard-'))
+            .toList();
+        expect(
+          coverageUploads,
+          hasLength(1),
+          reason: 'exactly one pty-coverage-shard artifact per shard leg',
+        );
 
-      // The gate downloads the pattern; every uploaded shard name matches it.
-      String? pattern;
-      for (final step in gate['steps'] as YamlList) {
-        if (step is YamlMap &&
-            step['uses'].toString().startsWith('actions/download-artifact') &&
-            step['with'] is YamlMap &&
-            ((step['with'] as YamlMap)['pattern'] ?? '').toString().startsWith(
-              'pty-coverage-shard-',
-            )) {
-          pattern = ((step['with'] as YamlMap)['pattern']).toString();
+        // The gate downloads the pattern; every uploaded shard name matches it.
+        String? pattern;
+        for (final step in gate['steps'] as YamlList) {
+          if (step is YamlMap &&
+              step['uses'].toString().startsWith('actions/download-artifact') &&
+              step['with'] is YamlMap &&
+              ((step['with'] as YamlMap)['pattern'] ?? '')
+                  .toString()
+                  .startsWith('pty-coverage-shard-')) {
+            pattern = ((step['with'] as YamlMap)['pattern']).toString();
+          }
         }
-      }
-      expect(
-        pattern,
-        isNotNull,
-        reason: 'the gate must download pty-coverage-shard-*',
-      );
-      final concreteName = coverageUploads.single.replaceAll(
-        r'${{ matrix.shard }}',
-        '0',
-      );
-      expect(
-        globToRegExp(pattern!).hasMatch(concreteName),
-        isTrue,
-        reason:
-            'upload name "${coverageUploads.single}" must match '
-            'download pattern "$pattern"',
-      );
+        expect(
+          pattern,
+          isNotNull,
+          reason: 'the gate must download pty-coverage-shard-*',
+        );
+        final concreteName = coverageUploads.single.replaceAll(
+          r'${{ matrix.shard }}',
+          '0',
+        );
+        expect(
+          globToRegExp(pattern!).hasMatch(concreteName),
+          isTrue,
+          reason:
+              'upload name "${coverageUploads.single}" must match '
+              'download pattern "$pattern"',
+        );
 
-      // The merge step's hard count check must expect the matrix width.
-      final mergeRuns = <String>[];
-      for (final step in gate['steps'] as YamlList) {
-        if (step is YamlMap &&
-            step['run'].toString().contains('pty shard coverage reports')) {
-          mergeRuns.add(step['run'].toString());
+        // The merge step's hard count check must expect the matrix width.
+        final mergeRuns = <String>[];
+        for (final step in gate['steps'] as YamlList) {
+          if (step is YamlMap &&
+              step['run'].toString().contains('pty shard coverage reports')) {
+            mergeRuns.add(step['run'].toString());
+          }
         }
-      }
-      expect(mergeRuns, hasLength(1));
-      final expected = RegExp(r'expected (\d+) pty shard coverage reports')
-          .firstMatch(mergeRuns.single);
-      expect(expected, isNotNull);
-      expect(
-        int.parse(expected!.group(1)!),
-        shardCount.length,
-        reason:
-            'the count check must expect exactly the configured shard count',
-      );
+        expect(mergeRuns, hasLength(1));
+        final expected = RegExp(
+          r'expected (\d+) pty shard coverage reports',
+        ).firstMatch(mergeRuns.single);
+        expect(expected, isNotNull);
+        expect(
+          int.parse(expected!.group(1)!),
+          shardCount.length,
+          reason:
+              'the count check must expect exactly the configured shard count',
+        );
 
-      // A shard report that downloads but carries no SF: records (empty or
-      // truncated upload) must fail the merge LOUDLY — the 2026-09-27
-      // outage also showed a partial merge reading 7.95% against the
-      // 11.00% baseline because a hollow report still satisfied the count.
-      expect(
-        mergeRuns.single,
-        contains("'^SF:'"),
-        reason:
-            'merge must reject hollow per-shard lcov reports before merging',
-      );
-    });
+        // A shard report that downloads but carries no SF: records (empty or
+        // truncated upload) must fail the merge LOUDLY — the 2026-09-27
+        // outage also showed a partial merge reading 7.95% against the
+        // 11.00% baseline because a hollow report still satisfied the count.
+        expect(
+          mergeRuns.single,
+          contains("'^SF:'"),
+          reason:
+              'merge must reject hollow per-shard lcov reports before merging',
+        );
+      },
+    );
   });
 }

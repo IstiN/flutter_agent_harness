@@ -1366,7 +1366,7 @@ jobs:
       # Upload MUST stay on the current upload-artifact line (gh-995): the
       # gate's download-artifact v8 digest-validates every download, so an
       # old-line upload digest-mismatches and the shard merge loses its
-      # report (test/release_hygiene_test.dart pins the pin).
+      # report (test/gh995_artifact_action_pins_test.dart pins the pin).
       #
       # gh-1412: each evidence upload carries a one-shot retry (the step
       # right after it, same pinned action). The gh-1412 validation run
