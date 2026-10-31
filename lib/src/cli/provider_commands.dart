@@ -936,7 +936,7 @@ extension on AgentCli {
       ),
     );
     _activeCustomName = name;
-    io.writeln('saved provider \$name (listed in /provider)');
+    io.writeln('saved provider $name (listed in /provider)');
     await _switchProvider(
       spec,
       baseUrl,
