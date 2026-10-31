@@ -101,8 +101,11 @@ List<String> dropVolatileRows(List<String> screenLines) {
   for (var i = 0; i < screenLines.length; i++) {
     if (!dropped[i]) continue;
     for (final j in [i - 1, i + 1]) {
-      if (j >= 0 && j < screenLines.length && !dropped[j]) {
-        if (_fullWidthRule.hasMatch(screenLines[j])) dropped[j] = true;
+      if (j >= 0 &&
+          j < screenLines.length &&
+          !dropped[j] &&
+          _fullWidthRule.hasMatch(screenLines[j])) {
+        dropped[j] = true;
       }
     }
   }

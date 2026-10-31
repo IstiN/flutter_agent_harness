@@ -361,26 +361,26 @@ final class WindowedSessionStorage
         if (leaf == null) return true; // genuinely empty session
         final branch = await getPathToRoot(leaf);
         if (branch.any(found) && _keptPathResident(branch)) return true;
-        if (tokenBudget != null) {
-          // Projection-aware whole-branch estimate (issue #503 round 3b):
-          // hidden/covered records project as one-line markers or nothing
-          // at all, so the raw tally overshot the real context by ~8x on
-          // structured-compaction marathons and tripped the budget far
-          // too early (under-filled resume window). A whole-branch
-          // recompute per page is a chars/4 fold — negligible next to the
-          // page's decode — and unlike an incremental prefix tally it
-          // sees the hiding markers, which sit LATER on the branch than
-          // the records they hide.
-          if (estimateProjectedBranchTokens(branch) >= tokenBudget) {
-            // gh-968 (AC-R4): the stop fires AFTER a whole doubling block
-            // was paged, so accepting the block wholesale overshoots the
-            // budget by one BLOCK's tokens — a giant tool result in the
-            // last block read the resume tens of thousands of tokens past
-            // it (the reported 127%). Trim back to the parity bound: the
-            // kept tail overshoots by at most ONE record's tokens.
-            _trimTokenBudget(branch, tokenBudget);
-            return true;
-          }
+        // Projection-aware whole-branch estimate (issue #503 round 3b):
+        // hidden/covered records project as one-line markers or nothing
+        // at all, so the raw tally overshot the real context by ~8x on
+        // structured-compaction marathons and tripped the budget far
+        // too early (under-filled resume window). A whole-branch
+        // recompute per page is a chars/4 fold — negligible next to the
+        // page's decode — and unlike an incremental prefix tally it
+        // sees the hiding markers, which sit LATER on the branch than
+        // the records they hide.
+        //
+        // gh-968 (AC-R4): the stop fires AFTER a whole doubling block
+        // was paged, so accepting the block wholesale overshoots the
+        // budget by one BLOCK's tokens — a giant tool result in the
+        // last block read the resume tens of thousands of tokens past
+        // it (the reported 127%). Trim back to the parity bound: the
+        // kept tail overshoots by at most ONE record's tokens.
+        if (tokenBudget != null &&
+            estimateProjectedBranchTokens(branch) >= tokenBudget) {
+          _trimTokenBudget(branch, tokenBudget);
+          return true;
         }
         if (!_hasOlder) return true; // paged everything
         pages++;
@@ -1189,10 +1189,10 @@ final class WindowedSessionStorage
       _offsetById[record.id] = start;
       final leaf = leafIdAfterSessionRecord(record);
       if (_knownFileBytes == start) {
-        // Window bottom is the file tail: the record extends it.
-        final chained =
-            record.parentId == _branchBottomId ||
-            record is LeafRecord && record.parentId == _branchBottomId;
+        // Window bottom is the file tail: the record extends it. The
+        // LeafRecord conjunct was absorbed: its parentId check is the
+        // same comparison (absorption, identical-branches audit #1998).
+        final chained = record.parentId == _branchBottomId;
         _indexEntry(record, start: start, end: _fileSize);
         _knownFileBytes = _fileSize;
         if (chained) _branchBottomId = leaf;

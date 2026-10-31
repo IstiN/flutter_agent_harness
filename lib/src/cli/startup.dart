@@ -956,8 +956,9 @@ Map<String, String> collectRoleSecrets(
   for (final base in baseNames) {
     final suffix = RegExp('^${RegExp.escape(base)}_\\d+\$');
     for (final entry in environment.entries) {
-      if (entry.key == base || suffix.hasMatch(entry.key)) {
-        if (entry.value.isNotEmpty) secrets[entry.key] = entry.value;
+      if ((entry.key == base || suffix.hasMatch(entry.key)) &&
+          entry.value.isNotEmpty) {
+        secrets[entry.key] = entry.value;
       }
     }
     if (!secrets.containsKey(base)) {

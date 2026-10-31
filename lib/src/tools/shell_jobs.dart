@@ -123,8 +123,11 @@ String shellJobCommandLabel(
 String _codepointSafeSlice(String text, int start, int end) {
   var s = start.clamp(0, text.length);
   var e = end.clamp(s, text.length);
-  if (s > 0 && s < text.length) {
-    if (text.codeUnitAt(s) >= 0xDC00 && text.codeUnitAt(s) <= 0xDFFF) s++;
+  if (s > 0 &&
+      s < text.length &&
+      text.codeUnitAt(s) >= 0xDC00 &&
+      text.codeUnitAt(s) <= 0xDFFF) {
+    s++;
   }
   if (e > s && e < text.length) {
     final unit = text.codeUnitAt(e - 1);

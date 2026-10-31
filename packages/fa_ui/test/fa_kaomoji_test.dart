@@ -376,8 +376,8 @@ void main() {
     const blank = KaomojiFace(
       'test-blank',
       [(' ', false)],
-      [(' ', false)],
-      '',
+      fallbackRuns: [(' ', false)],
+      svg: '',
     );
     await tester.pumpWidget(
       Directionality(
