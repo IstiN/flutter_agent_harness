@@ -151,6 +151,13 @@ Future<SkillRenderResult> renderSkillBody(
 
 final _inlineInjectionPattern = RegExp(r'(^|\n)(\s*)!`([^`\n]+)`');
 
+/// Claude-format environment placeholders a skill body may reference —
+/// the portability contract with CLAUDE-style skills, pinned as literals
+/// so renaming anything here can never change rendered bytes.
+const String _claudeSessionIdVar = r'${CLAUDE_SESSION_ID}';
+const String _claudeProjectDirVar = r'${CLAUDE_PROJECT_DIR}';
+const String _claudeSkillDirVar = r'${CLAUDE_SKILL_DIR}';
+
 String _substituteVariables(
   String body, {
   required Skill skill,
@@ -166,9 +173,9 @@ String _substituteVariables(
   String indexed(int i) => i < positional.length ? positional[i] : '';
   // ${CLAUDE_*} environment-style variables first (independent of \$ escape).
   out = out
-      .replaceAll(r'${CLAUDE_SESSION_ID}', sessionId ?? '')
-      .replaceAll(r'${CLAUDE_PROJECT_DIR}', projectDir ?? '')
-      .replaceAll(r'${CLAUDE_SKILL_DIR}', skill.directory);
+      .replaceAll(_claudeSessionIdVar, sessionId ?? '')
+      .replaceAll(_claudeProjectDirVar, projectDir ?? '')
+      .replaceAll(_claudeSkillDirVar, skill.directory);
 
   // $ARGUMENTS[N] and $N (longest first so $ARGUMENTS doesn't eat [N]).
   out = out.replaceAllMapped(RegExp(r'(?<!\\)\$ARGUMENTS\[(\d+)\]'), (m) {

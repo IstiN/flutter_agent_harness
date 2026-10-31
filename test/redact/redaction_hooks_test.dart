@@ -506,4 +506,13 @@ void main() {
       expect(identical(persistRedactMessage(pipeline, clean), clean), isTrue);
     });
   });
+
+  group('credential paths: tilde-prefixed legacy forms (issue #1999)', () {
+    test('`~/` paths stay detected without the dead caret pattern', () {
+      expect(isCredentialFilePath('~/.env'), isTrue);
+      expect(isCredentialFilePath('~/.env.production'), isTrue);
+      expect(isCredentialFilePath('~/.docker/config.json'), isTrue);
+      expect(isCredentialFilePath('~/notes/config.json'), isFalse);
+    });
+  });
 }

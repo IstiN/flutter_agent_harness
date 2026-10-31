@@ -51,7 +51,9 @@ void main() {
 
     test('unknown and unmetered are distinct states', () {
       final unknown = QuotaFetchResult.unknown('HTTP 401');
-      final unmetered = QuotaFetchResult.ok(ProviderQuota.unmetered(updatedAt: now));
+      final unmetered = QuotaFetchResult.ok(
+        ProviderQuota.unmetered(updatedAt: now),
+      );
       expect(unknown.quota, isNull);
       expect(unknown.isUnknown, isTrue);
       expect(unmetered.quota, isNotNull);
@@ -87,10 +89,7 @@ void main() {
       expect(q.toString(), contains(r'$48.20/$150'));
       final unknown = QuotaFetchResult.unknown('HTTP 401');
       expect(unknown.toString(), contains('HTTP 401'));
-      expect(
-        QuotaFetchResult.ok(q).toString(),
-        contains('QuotaFetchResult'),
-      );
+      expect(QuotaFetchResult.ok(q).toString(), contains('QuotaFetchResult'));
     });
   });
 
@@ -127,7 +126,10 @@ void main() {
       expect(formatQuotaReset(now.add(const Duration(days: 11)), now), '11d');
       expect(formatQuotaReset(now.add(const Duration(hours: 5)), now), '5h');
       expect(formatQuotaReset(now.add(const Duration(minutes: 3)), now), '3m');
-      expect(formatQuotaReset(now.add(const Duration(seconds: 30)), now), '<1m');
+      expect(
+        formatQuotaReset(now.add(const Duration(seconds: 30)), now),
+        '<1m',
+      );
     });
 
     test('overdue reset renders reset overdue (E4)', () {
@@ -157,7 +159,10 @@ void main() {
     });
 
     test('badge renders ellipsis on cold cache, silent for unmetered', () {
-      expect(formatQuotaBadge(shortName: 'OR', quota: null, now: now), '[OR …]');
+      expect(
+        formatQuotaBadge(shortName: 'OR', quota: null, now: now),
+        '[OR …]',
+      );
       expect(
         formatQuotaBadge(
           shortName: 'DL',
@@ -236,8 +241,10 @@ void main() {
         ProviderQuota(used: 48.2, limit: 150, updatedAt: now).remaining,
         101.8,
       );
-      expect(ProviderQuota(used: null, limit: 150, updatedAt: now).isDepleted,
-          isFalse);
+      expect(
+        ProviderQuota(used: null, limit: 150, updatedAt: now).isDepleted,
+        isFalse,
+      );
       expect(ProviderQuota.unmetered(updatedAt: now).isDepleted, isFalse);
     });
 
@@ -249,9 +256,33 @@ void main() {
         updatedAt: now,
       );
       expect(q.isResetOverdue(now), isTrue);
-      expect(q.isResetOverdue(now.subtract(const Duration(minutes: 2))), isFalse);
-      expect(ProviderQuota(used: 1, limit: 2, updatedAt: now).isResetOverdue(now),
-          isFalse);
+      expect(
+        q.isResetOverdue(now.subtract(const Duration(minutes: 2))),
+        isFalse,
+      );
+      expect(
+        ProviderQuota(used: 1, limit: 2, updatedAt: now).isResetOverdue(now),
+        isFalse,
+      );
+    });
+  });
+
+  group('UT-4 QuotaUnit persisted-name contract (issue #1999)', () {
+    test('every unit round-trips through its pinned JSON name', () {
+      for (final unit in QuotaUnit.values) {
+        expect(QuotaUnit.fromJson(unit.toJson()), unit);
+      }
+    });
+
+    test('JSON names are pinned literals (rename-safe)', () {
+      expect(QuotaUnit.currencyUsd.toJson(), 'currencyUsd');
+      expect(QuotaUnit.requests.toJson(), 'requests');
+      expect(QuotaUnit.tokens.toJson(), 'tokens');
+      expect(QuotaUnit.unmetered.toJson(), 'unmetered');
+    });
+
+    test('non-string units degrade to currencyUsd, never crash', () {
+      expect(QuotaUnit.fromJson(42), QuotaUnit.currencyUsd);
     });
   });
 }
