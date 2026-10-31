@@ -93,6 +93,120 @@ class ImagePreviewsSection extends StatelessWidget {
   }
 }
 
+/// Selects one of the four canonical Fa 2.0 visual directions. Each preview
+/// is built by the real shared theme builder, so it cannot drift from the
+/// palette the user gets after tapping it.
+class VisualDirectionSection extends StatelessWidget {
+  const VisualDirectionSection({super.key, this.controller});
+
+  final ThemeController? controller;
+
+  @override
+  Widget build(BuildContext context) {
+    final controller = this.controller ?? FahThemeScope.maybeOf(context);
+    if (controller == null) return const SizedBox.shrink();
+    return ListenableBuilder(
+      listenable: controller,
+      builder: (context, _) => Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            context.l10n.visualDirectionTitle,
+            style: Theme.of(context).textTheme.titleSmall,
+          ),
+          const SizedBox(height: 4),
+          Text(
+            context.l10n.visualDirectionSubtitle,
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+          const SizedBox(height: 12),
+          LayoutBuilder(
+            builder: (context, constraints) => Wrap(
+              spacing: 12,
+              runSpacing: 12,
+              children: [
+                for (final direction in faui.FaVisualDirection.values)
+                  SizedBox(
+                    width: (constraints.maxWidth - 12) / 2,
+                    height: 88,
+                    child: _DirectionPreview(
+                      direction: direction,
+                      selected: controller.visualDirection == direction,
+                      onTap: () => controller.setVisualDirection(direction),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _DirectionPreview extends StatelessWidget {
+  const _DirectionPreview({
+    required this.direction,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final faui.FaVisualDirection direction;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final brightness = Theme.of(context).brightness;
+    final name = switch (direction) {
+      faui.FaVisualDirection.glass => 'Liquid Glass',
+      faui.FaVisualDirection.nebula => 'Nebula',
+      faui.FaVisualDirection.graphite => 'Graphite',
+      faui.FaVisualDirection.porcelain => 'Porcelain',
+    };
+    return Theme(
+      data: faui.buildFaTheme(direction: direction, brightness: brightness),
+      child: Builder(
+        builder: (context) {
+          final tokens = faui.FaDesignTokens.of(context);
+          return Semantics(
+            selected: selected,
+            button: true,
+            label: selected
+                ? '$name — ${context.l10n.visualDirectionSelected}'
+                : name,
+            child: faui.FaSurface(
+              onTap: onTap,
+              color: selected ? tokens.accentSoft : tokens.surface1,
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              child: Row(
+                children: [
+                  faui.FaLogo(size: 42, semanticLabel: ''),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      name,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: tokens.ink1,
+                        fontWeight: FontWeight.w700,
+                        fontSize: 13,
+                      ),
+                    ),
+                  ),
+                  if (selected)
+                    Icon(Icons.check_circle, size: 19, color: tokens.accent),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
+
 /// The settings "Theme packs" section (issue #169): the stock look plus
 /// every installed pack as a radio group, `.zip` import through the
 /// platform [UploadPicker], and per-pack removal. Removing the ACTIVE

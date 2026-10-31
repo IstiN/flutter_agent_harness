@@ -10,6 +10,7 @@ import 'package:fa/main.dart';
 import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/flutter_session_manager.dart';
 import 'package:fa/ui/app_theme.dart';
+import 'package:fa/ui/screens/app_launcher_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -68,9 +69,10 @@ void main() {
   Future<void> pumpShell(
     WidgetTester tester, {
     required FlutterSessionManager manager,
+    Size size = const Size(1280, 800),
   }) async {
     tester.view.devicePixelRatio = 1.0;
-    tester.view.physicalSize = const Size(1280, 800);
+    tester.view.physicalSize = size;
     addTearDown(tester.view.reset);
     await tester.pumpWidget(
       MaterialApp(
@@ -188,5 +190,31 @@ void main() {
     await tester.tap(find.text('Close'));
     await tester.pumpAndSettle();
     expect(find.byType(AlertDialog), findsNothing);
+  });
+
+  testWidgets('medium shell keeps Apps out of the permanent layout and '
+      'opens them as a focused route', (tester) async {
+    final env = MemoryExecutionEnv();
+    final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
+      ..addSession('fake-session', _fakeService(env));
+
+    await pumpShell(tester, manager: manager, size: const Size(800, 900));
+    expect(find.byType(AppLauncherScreen), findsNothing);
+
+    await tester.tap(find.text('Apps').first);
+    await tester.pumpAndSettle();
+    expect(find.byType(AppLauncherScreen), findsOneWidget);
+  });
+
+  testWidgets('large shell keeps the permanent Apps third pane', (
+    tester,
+  ) async {
+    final env = MemoryExecutionEnv();
+    final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
+      ..addSession('fake-session', _fakeService(env));
+
+    await pumpShell(tester, manager: manager, size: const Size(1024, 800));
+    expect(find.byType(AppLauncherScreen), findsOneWidget);
+    await tester.pump(const Duration(milliseconds: 100));
   });
 }

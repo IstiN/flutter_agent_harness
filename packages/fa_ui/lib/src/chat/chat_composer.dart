@@ -12,6 +12,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../theme/app_theme.dart';
+import '../theme/fa2_tokens.dart';
+import '../widgets/fa2_controls.dart';
 import 'chat_strings.dart';
 import 'fa_chat_features.dart';
 import 'fa_chat_host.dart';
@@ -804,26 +806,31 @@ class ChatComposerState extends State<ChatComposer>
 
   @override
   Widget build(BuildContext context) {
+    final content = SafeArea(
+      top: false,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (_pendingAttachments.isNotEmpty) _buildAttachmentChipsRow(),
+          if (widget.service.pendingSteerTexts.isNotEmpty) _buildSteerRows(),
+          _buildFieldRow(),
+        ],
+      ),
+    );
+    final tokens = Theme.of(context).extension<FaDesignTokens>();
+    if (tokens != null && tokens.direction == FaVisualDirection.glass) {
+      return FaSurface(
+        glass: true,
+        borderRadius: BorderRadius.circular(tokens.radiusLg),
+        child: content,
+      );
+    }
     return Container(
       decoration: BoxDecoration(
-        // Keep the composer transparent so it inherits the scaffold/sheet
-        // surface underneath. This avoids a color mismatch in the iOS/macOS
-        // overlay/bottom-sheet where the panel background is panelAlt, not
-        // palette.bg.
-        // The top hairline still visually separates it from the transcript.
+        // Keep non-glass composers on the host sheet/scaffold surface.
         border: Border(top: BorderSide(color: Theme.of(context).dividerColor)),
       ),
-      child: SafeArea(
-        top: false,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            if (_pendingAttachments.isNotEmpty) _buildAttachmentChipsRow(),
-            if (widget.service.pendingSteerTexts.isNotEmpty) _buildSteerRows(),
-            _buildFieldRow(),
-          ],
-        ),
-      ),
+      child: content,
     );
   }
 

@@ -1,74 +1,13 @@
 #!/usr/bin/env bash
-# Regenerates every app icon from the brand SVGs in this directory.
-# Requires: rsvg-convert (brew install librsvg) and ImageMagick (brew install imagemagick).
-#
-# Variants:
-#   icon.svg            master (dark form) — dark rounded square + gradient tile + dark ">_" glyph
-#   icon_light.svg      light form — light rounded square + gradient tile + dark ">_" glyph
-#                       (macOS has no per-appearance app icons, so the default
-#                       macOS icon is the light form: it reads on BOTH light
-#                       and dark Docks; the dark form ships as PNGs for reference)
-#   icon_ios.svg        full-bleed opaque square (Apple applies the rounded mask; no alpha)
-#   icon_maskable.svg   full-bleed dark bg, composition fits the maskable safe zone
-#   icon_foreground.svg Android adaptive-icon foreground (glyph only, safe-zone padding)
+# Regenerate every launcher/store icon from the canonical Fa Squircle-V4
+# geometry. Python + Pillow render the non-Android assets deterministically;
+# the existing Dart image tool then derives Android and Play icons from the
+# exact iOS master (the SSIM guards in test/android_icon_test.dart pin this).
 set -euo pipefail
 cd "$(dirname "$0")"
 ROOT="$(cd .. && pwd)"
 
-render() { # render <svg> <size> <out>
-  rsvg-convert -w "$2" -h "$2" "$1" -o "$3"
-}
-
-# Keep the master PNG next to the SVGs for reference.
-render icon.svg 1024 icon_1024.png
-
-# --- Android (issue #289) ---------------------------------------------------
-# Legacy + adaptive launcher layers derive from the iOS release master via
-# the Dart image tool (identical composition on both platforms; the
-# foreground is safe-zone padded and composites over the brand navy
-# @color/ic_launcher_background). No rsvg/ImageMagick needed for Android.
-# The hand-maintained adaptive XMLs live in res/mipmap-anydpi-v26/.
+python3 "$ROOT/tool/generate_fa2_icons.py"
 (cd "$ROOT" && dart run tool/generate_android_adaptive_icons.dart)
 
-# --- iOS (opaque, no alpha) --------------------------------------------------
-IOS="$ROOT/ios/Runner/Assets.xcassets/AppIcon.appiconset"
-for spec in "Icon-App-20x20@1x.png 20" "Icon-App-20x20@2x.png 40" "Icon-App-20x20@3x.png 60" \
-            "Icon-App-29x29@1x.png 29" "Icon-App-29x29@2x.png 58" "Icon-App-29x29@3x.png 87" \
-            "Icon-App-40x40@1x.png 40" "Icon-App-40x40@2x.png 80" "Icon-App-40x40@3x.png 120" \
-            "Icon-App-60x60@2x.png 120" "Icon-App-60x60@3x.png 180" \
-            "Icon-App-76x76@1x.png 76" "Icon-App-76x76@2x.png 152" "Icon-App-83.5x83.5@2x.png 167" \
-            "Icon-App-1024x1024@1x.png 1024"; do
-  set -- $spec
-  rsvg-convert -w "$2" -h "$2" icon_ios.svg -o "$IOS/$1"
-  magick "$IOS/$1" -alpha remove -alpha off "$IOS/$1"
-done
-
-# --- Web ---------------------------------------------------------------------
-WEB="$ROOT/web"
-render icon.svg 192 "$WEB/icons/Icon-192.png"
-render icon.svg 512 "$WEB/icons/Icon-512.png"
-render icon_maskable.svg 192 "$WEB/icons/Icon-maskable-192.png"
-render icon_maskable.svg 512 "$WEB/icons/Icon-maskable-512.png"
-render icon.svg 64 "$WEB/favicon.png"
-
-# --- macOS -------------------------------------------------------------------
-# Default app icon = light form (visible on dark Docks too); the dark form is
-# rendered into this directory for reference / manual swap.
-MAC="$ROOT/macos/Runner/Assets.xcassets/AppIcon.appiconset"
-for size in 16 32 64 128 256 512 1024; do
-  render icon_light.svg "$size" "$MAC/app_icon_$size.png"
-  render icon.svg "$size" "icon_dark_$size.png"
-done
-render icon_light.svg 1024 icon_light_1024.png
-
-# --- Windows (multi-size ICO) -------------------------------------------------
-WIN="$ROOT/windows/runner/resources"
-TMP_ICO="$(mktemp -d)"
-for size in 16 24 32 48 64 128 256; do
-  render icon.svg "$size" "$TMP_ICO/$size.png"
-done
-magick "$TMP_ICO/16.png" "$TMP_ICO/24.png" "$TMP_ICO/32.png" "$TMP_ICO/48.png" \
-       "$TMP_ICO/64.png" "$TMP_ICO/128.png" "$TMP_ICO/256.png" "$WIN/app_icon.ico"
-rm -rf "$TMP_ICO"
-
-echo "All icons regenerated."
+echo "All Fa 2.0 icons regenerated."

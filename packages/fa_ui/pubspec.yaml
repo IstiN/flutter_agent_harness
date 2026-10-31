@@ -50,6 +50,11 @@ dependencies:
   # Brand SVG marks (provider tiles, see providers/provider_marks.dart).
   flutter_svg: ^2.3.0
 
+  # Real refractive Liquid Glass on Impeller/Flutter GPU, with the upstream
+  # FakeGlass fallback on web/Skia. Pinned: the 1.0 dev line matches our
+  # Flutter 3.47 / Dart 3.13 SDK and its API is still explicitly unstable.
+  liquid_glass_renderer: 1.0.0-dev.2
+
   # Shared LLM abstractions and the Flutter on-device Gemma provider. fa_ui
   # stays UI-only for presets/config, but exposes helpers that map its
   # connection config onto the fa_llm types hosts use to build providers.

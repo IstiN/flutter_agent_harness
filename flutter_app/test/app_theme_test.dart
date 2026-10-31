@@ -6,6 +6,7 @@ import 'package:fa/ui/screens/chat_screen.dart';
 import 'package:fa/services/flutter_session_manager.dart';
 import 'package:fa/main.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
+import 'package:fa_ui/fa_ui.dart' show FaDesignTokens, FaVisualDirection;
 import 'package:flutter_test/flutter_test.dart';
 
 StreamFunction _singleTextResponse(String text) {
@@ -75,19 +76,21 @@ void main() {
     expect(theme.dividerColor, FahLightPalette.border);
   });
 
-  testWidgets('app theme is dark and uses the landing palette', (tester) async {
+  testWidgets('app theme defaults to the Fa 2.0 glass palette', (tester) async {
     await tester.pumpWidget(
       MyApp(themeController: ThemeController.inMemory(FahThemeMode.dark)),
     );
 
     final context = tester.element(find.byType(Scaffold));
     final theme = Theme.of(context);
+    final tokens = theme.extension<FaDesignTokens>()!;
     expect(theme.brightness, Brightness.dark);
-    expect(theme.scaffoldBackgroundColor, FahPalette.bg);
-    expect(theme.colorScheme.primary, FahPalette.indigo);
-    expect(theme.colorScheme.secondary, FahPalette.teal);
-    expect(theme.colorScheme.surface, FahPalette.bgAlt);
-    expect(theme.dividerColor, FahPalette.border);
+    expect(tokens.direction, FaVisualDirection.glass);
+    expect(theme.scaffoldBackgroundColor, tokens.background);
+    expect(theme.colorScheme.primary, tokens.accent);
+    expect(theme.colorScheme.secondary, tokens.info);
+    expect(theme.colorScheme.surface, tokens.backgroundAlt);
+    expect(theme.dividerColor, tokens.hairline);
   });
 
   testWidgets('chat bubbles use the dark landing palette', (tester) async {

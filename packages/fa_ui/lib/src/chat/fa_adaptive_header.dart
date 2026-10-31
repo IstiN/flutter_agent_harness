@@ -174,7 +174,7 @@ class FaAdaptiveHeader extends StatelessWidget {
   bool get _hasProject => projectIcon != null || projectLabel != null;
 
   /// The leading slot's width (0 when absent).
-  double get _leadingWidth => leading != null ? _slot : 0.0;
+  double get _leadingWidth => leading != null ? _slot + 4 : 0.0;
 
   /// Width budget the fit arithmetic reserves for the chip (0 when absent).
   double get _chipBudget => chip != null ? chipMaxWidth : 0.0;
@@ -315,7 +315,11 @@ class FaAdaptiveHeader extends StatelessWidget {
           child: _projectPill(context),
         ),
       _titleRegion(_hasProject),
-      if (fit.chipInline) chip!,
+      if (fit.chipInline)
+        ConstrainedBox(
+          constraints: BoxConstraints(maxWidth: chipMaxWidth),
+          child: chip!,
+        ),
       ..._actionsRegion(fit),
       if (fit.showOverflow) _overflowMenu(context, strings, fit),
     ],
@@ -416,6 +420,7 @@ class FaAdaptiveHeader extends StatelessWidget {
       icon: Icon(Icons.more_vert, size: iconSize),
       tooltip: overflowTooltip ?? strings.chatMoreTooltip,
       color: menuColor,
+      style: ButtonStyle(visualDensity: visualDensity),
       itemBuilder: (context) => [
         ?chipItem,
         ..._actionMenuItems(fit),

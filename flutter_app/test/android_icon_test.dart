@@ -7,7 +7,7 @@
 //   * adaptive foreground ic_launcher_foreground.png (108–432 px): the
 //     master scaled into the adaptive safe zone on a transparent canvas;
 //   * the adaptive XML layers reference @mipmap/ic_launcher_foreground over
-//     the @color/ic_launcher_background brand navy (#0b0f16) — no leftover
+//     the @color/ic_launcher_background brand navy (#0f1320) — no leftover
 //     Flutter-template drawables.
 //
 // Regenerate with: dart run tool/generate_android_adaptive_icons.dart
@@ -23,7 +23,7 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:image/image.dart';
 
-final brandNavy = ColorRgb8(0x0B, 0x0F, 0x16);
+final brandNavy = ColorRgb8(0x0F, 0x13, 0x20);
 
 /// The flutter_app root, located by walking up from the cwd (under
 /// `flutter test` the cwd is flutter_app) — Platform.script points into
@@ -68,9 +68,11 @@ double _luminance(Pixel p) => 0.299 * p.r + 0.587 * p.g + 0.114 * p.b;
 
 /// Windowed SSIM (8×8 windows, C1=(0.01)², C2=(0.03)² on the 0–255 scale).
 double _ssim(Image a, Image b) {
-  assert(a.width == b.width && a.height == b.height,
-      'ssim expects same-size images (${a.width}x${a.height} vs '
-      '${b.width}x${b.height})');
+  assert(
+    a.width == b.width && a.height == b.height,
+    'ssim expects same-size images (${a.width}x${a.height} vs '
+    '${b.width}x${b.height})',
+  );
   const window = 8;
   const c1 = 6.5025, c2 = 58.5225;
   var total = 0.0;
@@ -100,7 +102,8 @@ double _ssim(Image a, Image b) {
       varA /= n - 1;
       varB /= n - 1;
       cov /= n - 1;
-      total += ((2 * meanA * meanB + c1) * (2 * cov + c2)) /
+      total +=
+          ((2 * meanA * meanB + c1) * (2 * cov + c2)) /
           ((meanA * meanA + meanB * meanB + c1) * (varA + varB + c2));
       windows++;
     }
@@ -116,14 +119,19 @@ Image _expectedForeground(Image master, {required int size}) {
   final inner = (size * safeZoneFraction).round();
   final canvas = Image(width: size, height: size);
   final scaled = copyResize(master, width: inner, height: inner);
-  compositeImage(canvas, scaled,
-      dstX: (size - inner) ~/ 2, dstY: (size - inner) ~/ 2);
+  compositeImage(
+    canvas,
+    scaled,
+    dstX: (size - inner) ~/ 2,
+    dstY: (size - inner) ~/ 2,
+  );
   return canvas;
 }
 
 void main() {
   final master = _read(
-      'ios/Runner/Assets.xcassets/AppIcon.appiconset/Icon-App-1024x1024@1x.png');
+    'ios/Runner/Assets.xcassets/AppIcon.appiconset/Icon-App-1024x1024@1x.png',
+  );
   final resDir = '$_appRoot/android/app/src/main/res';
 
   test('legacy mipmaps derive from the iOS master (all densities)', () {
@@ -136,14 +144,21 @@ void main() {
     };
     for (final entry in sizes.entries) {
       final icon = _read('$resDir/mipmap-${entry.key}/ic_launcher.png');
-      expect(icon.width, entry.value,
-          reason: 'mipmap-${entry.key} ic_launcher.png size');
+      expect(
+        icon.width,
+        entry.value,
+        reason: 'mipmap-${entry.key} ic_launcher.png size',
+      );
       final expected = _overNavy(master, size: entry.value);
       final actual = _overNavy(icon, size: entry.value);
       final score = _ssim(expected, actual);
-      expect(score, greaterThan(0.95),
-          reason: 'mipmap-${entry.key} ic_launcher.png must match the iOS '
-              'master (SSIM=$score)');
+      expect(
+        score,
+        greaterThan(0.95),
+        reason:
+            'mipmap-${entry.key} ic_launcher.png must match the iOS '
+            'master (SSIM=$score)',
+      );
     }
   });
 
@@ -153,26 +168,40 @@ void main() {
     final icon = _read(playIcon);
     expect(icon.width, 512, reason: 'Play icon must be exactly 512 wide');
     expect(icon.height, 512, reason: 'Play icon must be exactly 512 tall');
-    expect(File('$_appRoot/$playIcon').lengthSync(), lessThan(1000 * 1024),
-        reason: 'Play icon must stay under 1 MB');
+    expect(
+      File('$_appRoot/$playIcon').lengthSync(),
+      lessThan(1000 * 1024),
+      reason: 'Play icon must stay under 1 MB',
+    );
 
     final expected = _overNavy(master, size: 512);
     final actual = _overNavy(icon, size: 512);
     final score = _ssim(expected, actual);
-    expect(score, greaterThan(0.95),
-        reason: 'the Play icon must be the iOS master full-bleed at 512 '
-            '(SSIM=$score)');
+    expect(
+      score,
+      greaterThan(0.95),
+      reason:
+          'the Play icon must be the iOS master full-bleed at 512 '
+          '(SSIM=$score)',
+    );
 
     // The ru-RU listing mirrors the locale-neutral brand icon byte-for-byte.
     final mirror = File(
-        '$_appRoot/fastlane/metadata/android/ru-RU/images/icon.png');
-    expect(mirror.existsSync(), isTrue,
-        reason: 'ru-RU mirrors the brand icon — regenerate with '
-            'dart run tool/generate_android_adaptive_icons.dart');
+      '$_appRoot/fastlane/metadata/android/ru-RU/images/icon.png',
+    );
+    expect(
+      mirror.existsSync(),
+      isTrue,
+      reason:
+          'ru-RU mirrors the brand icon — regenerate with '
+          'dart run tool/generate_android_adaptive_icons.dart',
+    );
     if (mirror.existsSync()) {
-      expect(mirror.readAsBytesSync(),
-          File('$_appRoot/$playIcon').readAsBytesSync(),
-          reason: 'ru-RU icon.png must be the exact en-US bytes');
+      expect(
+        mirror.readAsBytesSync(),
+        File('$_appRoot/$playIcon').readAsBytesSync(),
+        reason: 'ru-RU icon.png must be the exact en-US bytes',
+      );
     }
   });
 
@@ -186,34 +215,52 @@ void main() {
     };
     for (final entry in sizes.entries) {
       final fg = _read(
-          '$resDir/mipmap-${entry.key}/ic_launcher_foreground.png');
-      expect(fg.width, entry.value,
-          reason: 'mipmap-${entry.key} foreground size');
+        '$resDir/mipmap-${entry.key}/ic_launcher_foreground.png',
+      );
+      expect(
+        fg.width,
+        entry.value,
+        reason: 'mipmap-${entry.key} foreground size',
+      );
       final expected = _expectedForeground(master, size: entry.value);
       final actual = _overNavy(fg, size: entry.value);
       final score = _ssim(_overNavy(expected, size: entry.value), actual);
-      expect(score, greaterThan(0.95),
-          reason: 'mipmap-${entry.key} foreground must be the iOS master '
-              'scaled into the safe zone (SSIM=$score)');
+      expect(
+        score,
+        greaterThan(0.95),
+        reason:
+            'mipmap-${entry.key} foreground must be the iOS master '
+            'scaled into the safe zone (SSIM=$score)',
+      );
     }
   });
 
-  test('adaptive XML layers reference the brand resources, not templates',
-      () {
+  test('adaptive XML layers reference the brand resources, not templates', () {
     for (final name in ['ic_launcher.xml', 'ic_launcher_round.xml']) {
       final xml = File('$resDir/mipmap-anydpi-v26/$name').readAsStringSync();
-      expect(xml, contains('@mipmap/ic_launcher_foreground'),
-          reason: '$name foreground must be the brand mipmap layer');
-      expect(xml, contains('@color/ic_launcher_background'),
-          reason: '$name background must be the brand color layer');
-      expect(xml, isNot(contains('@drawable/')),
-          reason: '$name must not reference Flutter-template drawables');
+      expect(
+        xml,
+        contains('@mipmap/ic_launcher_foreground'),
+        reason: '$name foreground must be the brand mipmap layer',
+      );
+      expect(
+        xml,
+        contains('@color/ic_launcher_background'),
+        reason: '$name background must be the brand color layer',
+      );
+      expect(
+        xml,
+        isNot(contains('@drawable/')),
+        reason: '$name must not reference Flutter-template drawables',
+      );
     }
 
-    final colors =
-        File('$resDir/values/colors.xml').readAsStringSync();
-    expect(colors, contains('#0b0f16'),
-        reason: 'ic_launcher_background must stay the brand navy');
+    final colors = File('$resDir/values/colors.xml').readAsStringSync();
+    expect(
+      colors,
+      contains('#0f1320'),
+      reason: 'ic_launcher_background must stay the brand navy',
+    );
 
     // The Flutter-template density drawables must be gone entirely.
     final templateDirs = Directory('$_appRoot/android/app/src/main/res')
@@ -222,11 +269,14 @@ void main() {
         .where((d) => d.path.contains('drawable'))
         .toList();
     for (final dir in templateDirs) {
-      final stale = Directory(dir.path)
-          .listSync()
-          .where((f) => f.path.endsWith('ic_launcher_foreground.png'));
-      expect(stale, isEmpty,
-          reason: 'template foreground leaked in ${dir.path}');
+      final stale = Directory(
+        dir.path,
+      ).listSync().where((f) => f.path.endsWith('ic_launcher_foreground.png'));
+      expect(
+        stale,
+        isEmpty,
+        reason: 'template foreground leaked in ${dir.path}',
+      );
     }
   });
 }

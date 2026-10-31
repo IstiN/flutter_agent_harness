@@ -9,7 +9,6 @@ import 'package:fa/network/network_mode.dart';
 import 'package:fa/network/network_session_manager.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
-import 'package:flutter/services.dart';
 
 import 'package:fa/apps/app_icon.dart';
 import 'package:fa/apps/app_tile_host.dart';
@@ -1131,83 +1130,67 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
           // macOS: extra room so the floating traffic lights don't crowd
           // the brand tile / session chip at the very top edge.
           padding: EdgeInsets.fromLTRB(20, faIsMacOSDesktop ? 32 : 16, 20, 8),
-          child: Row(
-            children: [
-              // The Fa entry (#864): tap ALWAYS continues the active session
-              // (expand the sheet, zero minting); long-press is the ONLY
-              // navigation way to mint a fresh one. The hint tooltip names
-              // both gestures.
-              // Hover-only hint: triggerMode manual — the touch long-press
-              // is deliberately yielded to the InkWell below so it ALWAYS
-              // mints (#864) and can never degrade into a tooltip; the
-              // hint still reaches screen readers via semantics.
-              Tooltip(
-                message: context.l10n.faEntryHintTooltip,
-                triggerMode: TooltipTriggerMode.manual,
-                child: InkWell(
-                  key: const ValueKey('launcherFaBrand'),
-                  borderRadius: BorderRadius.circular(8),
-                  onTap: () => _sheetKey.currentState?.expand(),
-                  onLongPress: () => unawaited(
-                    _sheetKey.currentState?.mintAndOpenNewSession(),
+          child: FaSurface(
+            glass:
+                FaDesignTokens.of(context).direction == FaVisualDirection.glass,
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            child: Row(
+              children: [
+                // The Fa entry (#864): tap ALWAYS continues the active session
+                // (expand the sheet, zero minting); long-press is the ONLY
+                // navigation way to mint a fresh one. The hint tooltip names
+                // both gestures.
+                // Hover-only hint: triggerMode manual — the touch long-press
+                // is deliberately yielded to the InkWell below so it ALWAYS
+                // mints (#864) and can never degrade into a tooltip; the
+                // hint still reaches screen readers via semantics.
+                Tooltip(
+                  message: context.l10n.faEntryHintTooltip,
+                  triggerMode: TooltipTriggerMode.manual,
+                  child: InkWell(
+                    key: const ValueKey('launcherFaBrand'),
+                    borderRadius: BorderRadius.circular(8),
+                    onTap: () => _sheetKey.currentState?.expand(),
+                    onLongPress: () => unawaited(
+                      _sheetKey.currentState?.mintAndOpenNewSession(),
+                    ),
+                    child: const FaBrandTile(size: 28),
                   ),
-                  child: const FaBrandTile(size: 28),
                 ),
-              ),
-              const SizedBox(width: 10),
-              // The screen title yields to the session chip on narrow frames:
-              // it ellipsizes first, the chip keeps a readable width.
-              Flexible(
-                child: Text(
-                  context.l10n.appsGridTitle,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: Theme.of(
-                    context,
-                  ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w600),
+                const SizedBox(width: 10),
+                // The screen title yields to the session chip on narrow frames:
+                // it ellipsizes first, the chip keeps a readable width.
+                Flexible(
+                  child: Text(
+                    context.l10n.appsGridTitle,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
                 ),
-              ),
-              const SizedBox(width: 8),
-              _buildSessionChip(colors),
-              if (widget.networkMode != null &&
-                  widget.networkSessions != null) ...[
                 const SizedBox(width: 8),
-                NetworkModeChip(
-                  controller: widget.networkMode!,
-                  manager: widget.networkSessions!,
-                ),
+                _buildSessionChip(colors),
+                if (widget.networkMode != null &&
+                    widget.networkSessions != null) ...[
+                  const SizedBox(width: 8),
+                  NetworkModeChip(
+                    controller: widget.networkMode!,
+                    manager: widget.networkSessions!,
+                  ),
+                ],
               ],
-            ],
+            ),
           ),
         ),
         // ── Search ───────────────────────────────────────────────
         Padding(
           padding: const EdgeInsets.fromLTRB(20, 0, 20, 6),
-          child: TextField(
+          child: FaTextField(
             controller: _searchController,
-            decoration: InputDecoration(
-              prefixIcon: const Icon(Icons.search, size: 18),
-              hintText: context.l10n.launcherSearchHint,
-              isDense: true,
-              contentPadding: const EdgeInsets.symmetric(
-                horizontal: 12,
-                vertical: 8,
-              ),
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(10),
-                borderSide: BorderSide(color: colors.border),
-              ),
-              enabledBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(10),
-                borderSide: BorderSide(color: colors.border),
-              ),
-              focusedBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(10),
-                borderSide: BorderSide(color: colors.indigo, width: 1.2),
-              ),
-              filled: true,
-              fillColor: colors.panelAlt,
-            ),
+            prefixIcon: const Icon(Icons.search, size: 18),
+            hintText: context.l10n.launcherSearchHint,
           ),
         ),
         // ── Tabs: the app grid or the widgets catalog ────────────
@@ -1442,7 +1425,10 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
                         for (var i = 0; i < keys.length; i++)
                           AnimatedPositioned(
                             key: ValueKey('tilePos:${keys[i]}'),
-                            duration: const Duration(milliseconds: 180),
+                            duration: FaMotion.duration(
+                              context,
+                              FaDesignTokens.of(context).fast,
+                            ),
                             curve: Curves.easeOut,
                             left: rects[i].x,
                             top: rects[i].y,
@@ -1463,10 +1449,16 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
   }
 
   /// The grid column count: the layout's `grid.columns` override when set,
-  /// else 4 on narrow screens / 6 on wide ones — clamped to the store's
+  /// else the Fa 2.0 responsive 4 / 6 / 8 contract — clamped to the store's
   /// 3..8 range and to what actually fits the available width.
   int _crossAxisCount(double width) {
-    final configured = _layout?.gridColumns ?? (width < 600 ? 4 : 6);
+    final configured =
+        _layout?.gridColumns ??
+        switch (faWindowClassForWidth(width)) {
+          FaWindowClass.small => 4,
+          FaWindowClass.medium => 6,
+          FaWindowClass.large => 8,
+        };
     final fits =
         ((width + LauncherGridSpec.spacing) /
                 (LauncherGridSpec.cellCrossExtent + LauncherGridSpec.spacing))
@@ -1630,7 +1622,10 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
                 scale: folderHover
                     ? 1.12
                     : (candidateData.isNotEmpty ? 1.08 : 1),
-                duration: const Duration(milliseconds: 120),
+                duration: FaMotion.duration(
+                  context,
+                  FaDesignTokens.of(context).fast,
+                ),
                 child: _tileContent(colors, key, spacing),
               ),
             );
@@ -1750,10 +1745,12 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
     return Container(
       width: size,
       height: size,
-      decoration: BoxDecoration(
+      decoration: ShapeDecoration(
         color: colors.panelAlt,
-        borderRadius: BorderRadius.circular(size * 0.25),
-        border: Border.all(color: colors.border),
+        shape: RoundedSuperellipseBorder(
+          borderRadius: BorderRadius.circular(size * 0.27),
+          side: BorderSide(color: colors.border),
+        ),
       ),
       child: child,
     );

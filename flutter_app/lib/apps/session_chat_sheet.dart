@@ -1605,14 +1605,18 @@ class SessionChatSheetState extends State<SessionChatSheet>
         return Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text(
-              badge,
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                color: Theme.of(context).colorScheme.onSurfaceVariant,
+            Flexible(
+              child: Text(
+                badge,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
               ),
             ),
             const SizedBox(width: 8),
-            modelChip,
+            Flexible(child: modelChip),
           ],
         );
       },

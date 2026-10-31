@@ -10,14 +10,18 @@ import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart' as url_launcher;
 
 import 'package:fa_ui/fa_ui.dart' as faui;
+import 'package:fa/l10n/l10n_ext.dart';
 import 'package:fa/services/agent_service.dart' show AgentConfig;
 import 'package:fa/services/analytics.dart';
+import 'package:fa/network/network_mode.dart';
+import 'package:fa/network/network_session_manager.dart';
 import 'package:fa/services/aiin_connect_flow.dart';
 import 'package:fa/services/chatgpt_oauth_flow.dart';
 import 'package:fa/services/codemie_sso_flow.dart';
 import 'package:fa/services/last_connection.dart';
 import 'package:fa/services/onboarding_store.dart';
 import 'package:fa/services/openrouter_oauth_coordinator.dart';
+import 'package:fa/ui/network/join_sheet.dart';
 import 'package:fa/ui/widgets/fa_mark.dart';
 
 part 'onboarding_mockups.dart';
@@ -35,6 +39,8 @@ class OnboardingScreen extends StatefulWidget {
     this.onFinished,
     this.registry,
     this.lastConnectionStore,
+    this.networkMode,
+    this.networkSessions,
   });
 
   final OnboardingStore? onboardingStore;
@@ -51,19 +57,18 @@ class OnboardingScreen extends StatefulWidget {
   /// connection (the boot then auto-connects right after onboarding).
   final LastConnectionStore? lastConnectionStore;
 
+  /// Existing network mode/session manager. Joining uses the same sheet and
+  /// credential/key wallet as the rest of the app, never a parallel flow.
+  final NetworkModeController? networkMode;
+  final NetworkSessionManager? networkSessions;
+
   @override
   State<OnboardingScreen> createState() => _OnboardingScreenState();
 }
 
-// Design tokens sampled from the reference prototype.
-const _kBg = Color(0xFFF7F8FC);
-const _kInk = Color(0xFF172033);
-const _kPrimary = Color(0xFF3566FF);
-const _kGray = Color(0xFF6B768B);
-const _kGrayLight = Color(0xFF9AA0B4);
-const _kBorder = Color(0xFFE5EAF2);
+// Decorative colors inside the conversational mockups. App chrome and
+// semantic state colors come from the active Fa 2.0 direction below.
 const _kBubble = Color(0xFFE9EBFC);
-const _kSelBg = Color(0xFFEEF1FE);
 const _kNavy = Color(0xFF191B2E);
 const _kGreen = Color(0xFF10B981);
 const _kCardShadow = [
@@ -75,36 +80,32 @@ const _kCardShadow = [
 /// surrounding theme is dark — a dark-mode OS must never see a blinding
 /// white onboarding with dark popups on top.
 bool _onbDark(BuildContext context) =>
-    Theme.of(context).brightness == Brightness.dark;
+    faui.FaDesignTokens.of(context).brightness == Brightness.dark;
 
 Color _onbBg(BuildContext context) =>
-    _onbDark(context) ? const Color(0xFF070A10) : _kBg;
+    faui.FaDesignTokens.of(context).background;
 
 Color _onbCard(BuildContext context) =>
-    _onbDark(context) ? const Color(0xFF10141F) : Colors.white;
+    faui.FaDesignTokens.of(context).surface1;
 
-Color _onbInk(BuildContext context) =>
-    _onbDark(context) ? const Color(0xFFEAEDF2) : _kInk;
+Color _onbInk(BuildContext context) => faui.FaDesignTokens.of(context).ink1;
 
-Color _onbGray(BuildContext context) =>
-    _onbDark(context) ? const Color(0xFF9AA0B4) : _kGray;
+Color _onbGray(BuildContext context) => faui.FaDesignTokens.of(context).ink2;
 
 Color _onbGrayLight(BuildContext context) =>
-    _onbDark(context) ? const Color(0xFF6B768B) : _kGrayLight;
+    faui.FaDesignTokens.of(context).ink3;
 
 Color _onbBorder(BuildContext context) =>
-    _onbDark(context) ? const Color(0xFF232A3A) : _kBorder;
+    faui.FaDesignTokens.of(context).hairline;
 
 Color _onbSelBg(BuildContext context) =>
-    _onbDark(context) ? const Color(0xFF141A2B) : _kSelBg;
+    faui.FaDesignTokens.of(context).accentSoft;
 
-/// Accent that stays readable on the dark surfaces: the brand blue
-/// (0xFF3566FF) is too dark against 0xFF070A10/0xFF10141F.
 Color _onbPrimary(BuildContext context) =>
-    _onbDark(context) ? const Color(0xFF7DA2FF) : _kPrimary;
+    faui.FaDesignTokens.of(context).accent;
 
 List<BoxShadow> _onbCardShadow(BuildContext context) =>
-    _onbDark(context) ? const [] : _kCardShadow;
+    _onbDark(context) ? [] : _kCardShadow;
 
 class _OnboardingScreenState extends State<OnboardingScreen> {
   /// Step labels in page order.
@@ -127,8 +128,14 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
 
   /// The provider gate applies only in the real app (a registry is wired);
   /// tests pumping the bare screen keep the walkthrough skippable.
+  bool get _networkSelected =>
+      widget.networkMode?.mode == AppMode.network &&
+      widget.networkMode?.networkId != null;
+
   bool get _providerGateActive =>
-      widget.registry != null && !_providerConfigured;
+      (widget.registry != null || widget.networkMode != null) &&
+      !_providerConfigured &&
+      !_networkSelected;
 
   @override
   void initState() {
@@ -144,6 +151,10 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   }
 
   void _finish({required bool skipped}) {
+    // This guard is deliberately not just a disabled button: informational
+    // Skip/Open Fa actions and programmatic page jumps must not bypass the
+    // provider-or-network requirement.
+    if (_providerGateActive) return;
     if (skipped) {
       AppAnalytics.instance.onboardingSkipped(_page);
     } else {
@@ -175,6 +186,16 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     if (_page == 1) _next();
   }
 
+  Future<void> _joinNetwork() async {
+    final controller = widget.networkMode;
+    final manager = widget.networkSessions;
+    if (controller == null || manager == null) return;
+    await showJoinSheet(context, controller: controller, manager: manager);
+    if (!mounted || !_networkSelected) return;
+    setState(() => _providerConfigured = true);
+    if (_page == 1) _next();
+  }
+
   @override
   Widget build(BuildContext context) {
     final wide = MediaQuery.sizeOf(context).width >= 920;
@@ -195,7 +216,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
               labels: _labels,
               wide: wide,
               // The provider step is mandatory — no skipping past it.
-              onSkip: gated ? null : () => _finish(skipped: true),
+              onSkip: _providerGateActive ? null : () => _finish(skipped: true),
             ),
             Expanded(
               child: PageView(
@@ -216,6 +237,12 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                     lastConnectionStore: widget.lastConnectionStore,
                     configuredKey: _configuredProviderKey,
                     onConfigured: _providerDone,
+                    networkSelected: _networkSelected,
+                    onJoinNetwork:
+                        widget.networkMode != null &&
+                            widget.networkSessions != null
+                        ? _joinNetwork
+                        : null,
                   ),
                   _P3(wide: wide),
                   _P4(wide: wide),
@@ -227,7 +254,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
               pageCount: _pageCount,
               wide: wide,
               primaryLabel: primaryLabel,
-              primaryEnabled: !gated,
+              primaryEnabled: !gated && !(last && _providerGateActive),
               onPrimary: last ? () => _finish(skipped: false) : _next,
               onBack: _page > 0 ? _back : null,
             ),
@@ -373,10 +400,12 @@ class _Steps extends StatelessWidget {
                             height: dot,
                             decoration: BoxDecoration(
                               shape: BoxShape.circle,
-                              color: i <= page ? _kPrimary : _onbCard(context),
+                              color: i <= page
+                                  ? _onbPrimary(context)
+                                  : _onbCard(context),
                               border: Border.all(
                                 color: i <= page
-                                    ? _kPrimary
+                                    ? _onbPrimary(context)
                                     : _onbBorder(context),
                                 width: 2,
                               ),
@@ -505,10 +534,10 @@ class _Footer extends StatelessWidget {
         children: [
           Text(
             '${page + 1} of $pageCount',
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 12.5,
               fontWeight: FontWeight.w600,
-              color: _kPrimary,
+              color: _onbPrimary(context),
             ),
           ),
           const SizedBox(height: 10),
@@ -582,7 +611,7 @@ class _ProgressBar extends StatelessWidget {
           widthFactor: fraction,
           child: Container(
             decoration: BoxDecoration(
-              color: _kPrimary,
+              color: _onbPrimary(context),
               borderRadius: BorderRadius.circular(2),
             ),
           ),
@@ -609,7 +638,7 @@ class _PrimaryButton extends StatelessWidget {
   Widget build(BuildContext context) {
     return Material(
       color: enabled
-          ? _kPrimary
+          ? _onbPrimary(context)
           : (_onbDark(context)
                 ? const Color(0xFF2A3350)
                 : const Color(0xFFB9C2D8)),
@@ -884,10 +913,10 @@ class _P1 extends StatelessWidget {
                         color: _onbSelBg(context),
                         borderRadius: BorderRadius.circular(10),
                       ),
-                      child: const Icon(
+                      child: Icon(
                         Icons.lightbulb_outline,
                         size: 18,
-                        color: _kPrimary,
+                        color: _onbPrimary(context),
                       ),
                     ),
                     const SizedBox(width: 12),
@@ -950,7 +979,7 @@ class _IdeaPill extends StatelessWidget {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(Icons.auto_awesome, size: 15, color: _kPrimary),
+          Icon(Icons.auto_awesome, size: 15, color: _onbPrimary(context)),
           SizedBox(width: 8),
           Text(
             'Build a focus timer\nwith work and break sessions.',
@@ -997,9 +1026,13 @@ class _MiniSteps extends StatelessWidget {
                         height: 12,
                         decoration: BoxDecoration(
                           shape: BoxShape.circle,
-                          color: i == 0 ? _kPrimary : _onbCard(context),
+                          color: i == 0
+                              ? _onbPrimary(context)
+                              : _onbCard(context),
                           border: Border.all(
-                            color: i == 0 ? _kPrimary : _onbBorder(context),
+                            color: i == 0
+                                ? _onbPrimary(context)
+                                : _onbBorder(context),
                             width: 2,
                           ),
                         ),
@@ -1263,7 +1296,7 @@ class _Badge extends StatelessWidget {
         style: TextStyle(
           fontSize: 9,
           fontWeight: FontWeight.w700,
-          color: rec ? _kPrimary : const Color(0xFF0E9F6E),
+          color: rec ? _onbPrimary(context) : Color(0xFF0E9F6E),
         ),
       ),
     );
@@ -1281,6 +1314,8 @@ class _P2 extends StatefulWidget {
     this.lastConnectionStore,
     this.configuredKey,
     this.onConfigured,
+    this.networkSelected = false,
+    this.onJoinNetwork,
   });
 
   final bool wide;
@@ -1296,6 +1331,9 @@ class _P2 extends StatefulWidget {
 
   /// Fired with the preset key once a config flow completes successfully.
   final ValueChanged<String>? onConfigured;
+
+  final bool networkSelected;
+  final VoidCallback? onJoinNetwork;
 
   @override
   State<_P2> createState() => _P2State();
@@ -1408,6 +1446,13 @@ class _P2State extends State<_P2> {
             onTap: _busy ? null : () => _configure(preset),
           ),
           const SizedBox(height: 10),
+        ],
+        if (widget.onJoinNetwork != null) ...[
+          const SizedBox(height: 6),
+          _NetworkCard(
+            selected: widget.networkSelected,
+            onTap: _busy ? null : widget.onJoinNetwork,
+          ),
         ],
       ],
     );
@@ -1639,6 +1684,69 @@ class _P2State extends State<_P2> {
   }
 }
 
+class _NetworkCard extends StatelessWidget {
+  const _NetworkCard({required this.selected, required this.onTap});
+
+  final bool selected;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: selected ? _onbSelBg(context) : _onbCard(context),
+      borderRadius: BorderRadius.circular(16),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(16),
+        child: Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            border: Border.all(
+              color: selected ? _onbPrimary(context) : _onbBorder(context),
+            ),
+            borderRadius: BorderRadius.circular(16),
+          ),
+          child: Row(
+            children: [
+              Icon(Icons.hub_outlined, color: _onbPrimary(context), size: 26),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      context.l10n.onboardingJoinNetwork,
+                      style: TextStyle(
+                        color: _onbInk(context),
+                        fontWeight: FontWeight.w700,
+                        fontSize: 15,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      context.l10n.onboardingJoinNetworkSubtitle,
+                      style: TextStyle(
+                        color: _onbGray(context),
+                        fontSize: 12,
+                        height: 1.35,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Icon(
+                selected ? Icons.check_circle : Icons.arrow_forward,
+                color: _onbPrimary(context),
+                size: 20,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _ProviderCard extends StatelessWidget {
   const _ProviderCard({
     required this.preset,
@@ -1663,7 +1771,7 @@ class _ProviderCard extends StatelessWidget {
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(16),
             border: Border.all(
-              color: configured ? _kPrimary : _onbBorder(context),
+              color: configured ? _onbPrimary(context) : _onbBorder(context),
               width: configured ? 1.5 : 1,
             ),
           ),
@@ -1697,7 +1805,7 @@ class _ProviderCard extends StatelessWidget {
                   width: 22,
                   height: 22,
                   decoration: BoxDecoration(
-                    color: _kPrimary,
+                    color: _onbPrimary(context),
                     shape: BoxShape.circle,
                   ),
                   child: Icon(Icons.check, size: 13, color: Colors.white),
@@ -1746,7 +1854,7 @@ class _RequestCard extends StatelessWidget {
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Icon(Icons.auto_awesome, size: 15, color: _kPrimary),
+              Icon(Icons.auto_awesome, size: 15, color: _onbPrimary(context)),
               SizedBox(width: 6),
               Expanded(
                 child: Text(
@@ -1798,7 +1906,7 @@ class _RequestConfirmedCard extends StatelessWidget {
               ),
             ),
           ),
-          const Icon(Icons.auto_awesome, size: 18, color: _kPrimary),
+          Icon(Icons.auto_awesome, size: 18, color: _onbPrimary(context)),
         ],
       ),
     );

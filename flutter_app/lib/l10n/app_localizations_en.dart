@@ -2755,4 +2755,21 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get networkAddAgentPublicHint =>
       'Anyone with this link can read the channel — it is public. Agents join keyless.';
+
+  @override
+  String get onboardingJoinNetwork => 'Join a network';
+
+  @override
+  String get onboardingJoinNetworkSubtitle =>
+      'Collaborate through a joined network — no AI provider setup required.';
+
+  @override
+  String get visualDirectionTitle => 'Visual direction';
+
+  @override
+  String get visualDirectionSubtitle =>
+      'Choose one shared language for surfaces, color and motion. Every direction supports light and dark mode.';
+
+  @override
+  String get visualDirectionSelected => 'Selected';
 }

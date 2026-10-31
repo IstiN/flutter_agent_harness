@@ -11,7 +11,7 @@
 //   * adaptive foreground ic_launcher_foreground.png (108–432 px): the
 //     master scaled into the adaptive safe zone (60% of the canvas width)
 //     centered on a TRANSPARENT canvas — the adaptive background layer is
-//     the brand navy @color/ic_launcher_background (#0b0f16), so the
+//     the brand navy @color/ic_launcher_background (#0f1320), so the
 //     margins composite seamlessly and the glyph survives every launcher
 //     mask/parallax.
 //
@@ -57,8 +57,10 @@ void main() {
     exit(1);
   }
   if (master.width != 1024 || master.height != 1024) {
-    stderr.writeln('unexpected iOS master size: '
-        '${master.width}x${master.height} (want 1024x1024)');
+    stderr.writeln(
+      'unexpected iOS master size: '
+      '${master.width}x${master.height} (want 1024x1024)',
+    );
     exit(1);
   }
 
@@ -76,8 +78,12 @@ void main() {
     final inner = (size * safeZoneFraction).round();
     final canvas = Image(width: size, height: size);
     final scaled = copyResize(master, width: inner, height: inner);
-    compositeImage(canvas, scaled,
-        dstX: (size - inner) ~/ 2, dstY: (size - inner) ~/ 2);
+    compositeImage(
+      canvas,
+      scaled,
+      dstX: (size - inner) ~/ 2,
+      dstY: (size - inner) ~/ 2,
+    );
     final out = '$res/mipmap-${entry.key}/ic_launcher_foreground.png';
     File(out).writeAsBytesSync(encodePng(canvas));
     print('adaptive $out (${size}x$size, master@${inner}px in safe zone)');

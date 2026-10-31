@@ -1652,5 +1652,25 @@
   "networkAddAgentPublicHint": "Anyone with this link can read the channel — it is public. Agents join keyless.",
   "@networkAddAgentPublicHint": {
     "description": "Agent invite dialog hint for public (keyless) channels"
+  },
+  "onboardingJoinNetwork": "Join a network",
+  "@onboardingJoinNetwork": {
+    "description": "Alternative to provider setup during onboarding"
+  },
+  "onboardingJoinNetworkSubtitle": "Collaborate through a joined network — no AI provider setup required.",
+  "@onboardingJoinNetworkSubtitle": {
+    "description": "Explains the network path through onboarding"
+  },
+  "visualDirectionTitle": "Visual direction",
+  "@visualDirectionTitle": {
+    "description": "Fa 2.0 visual direction settings title"
+  },
+  "visualDirectionSubtitle": "Choose one shared language for surfaces, color and motion. Every direction supports light and dark mode.",
+  "@visualDirectionSubtitle": {
+    "description": "Fa 2.0 visual direction settings explanation"
+  },
+  "visualDirectionSelected": "Selected",
+  "@visualDirectionSelected": {
+    "description": "Accessibility label for the selected visual direction"
   }
 }

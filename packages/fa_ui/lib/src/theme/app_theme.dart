@@ -5,6 +5,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_chat_core/flutter_chat_core.dart';
 
+import 'package:fa_ui/src/theme/fa2_tokens.dart';
 import 'package:fa_ui/src/theme/fa_ui_theme.dart';
 
 /// The Fa dark palette, mirroring the landing page (`site/styles.css`):
@@ -338,16 +339,20 @@ const _lightColors = _FahThemeColors(
 ///
 /// [uiTheme] re-skins the result (accent colors, typeface, radii) — see
 /// [FaUiTheme]; null keeps the stock brand look.
-ThemeData buildFahTheme({FaUiTheme? uiTheme}) =>
-    _buildFahTheme(_themedColors(_darkColors, Brightness.dark, uiTheme),
-        Brightness.dark, uiTheme);
+ThemeData buildFahTheme({FaUiTheme? uiTheme}) => _buildFahTheme(
+  _themedColors(_darkColors, Brightness.dark, uiTheme),
+  Brightness.dark,
+  uiTheme,
+);
 
 /// The light counterpart of [buildFahTheme], derived from
 /// [FahLightPalette]: same structure, same brand accents, AA-readable
 /// grays on white surfaces.
-ThemeData buildFahThemeLight({FaUiTheme? uiTheme}) =>
-    _buildFahTheme(_themedColors(_lightColors, Brightness.light, uiTheme),
-        Brightness.light, uiTheme);
+ThemeData buildFahThemeLight({FaUiTheme? uiTheme}) => _buildFahTheme(
+  _themedColors(_lightColors, Brightness.light, uiTheme),
+  Brightness.light,
+  uiTheme,
+);
 
 /// The effective per-brightness color set: the [FaUiTheme] palette slots
 /// (theme packs) over the stock values. A null palette (or an all-default
@@ -746,6 +751,32 @@ final class FahColors {
     required this.brandGradient,
   });
 
+  /// Projects the semantic Fa 2.0 tokens into the legacy fa_ui/chat palette.
+  /// This keeps existing host widgets on the same visual direction as the
+  /// new components without requiring a second set of app-local overrides.
+  factory FahColors.fromDesignTokens(FaDesignTokens tokens) {
+    final base = tokens.brightness == Brightness.dark ? dark : light;
+    return base
+        .override(
+          bg: tokens.background,
+          bgAlt: tokens.backgroundAlt,
+          panel: tokens.surface1,
+          panelAlt: tokens.surface2,
+          border: tokens.hairline,
+          borderBright: tokens.surface3,
+          text: tokens.ink1,
+          dim: tokens.ink2,
+          onAccent: tokens.accentInk,
+          error: tokens.danger,
+          codeBg: tokens.ink3.withValues(alpha: .12),
+        )
+        .withAccents(indigo: tokens.accent, teal: tokens.info)
+        .withUserBubble(
+          color: tokens.accentSoft,
+          border: tokens.accent.withValues(alpha: .4),
+        );
+  }
+
   /// The dark values ([FahPalette]).
   static const dark = FahColors._(
     bg: FahPalette.bg,
@@ -795,8 +826,15 @@ final class FahColors {
   /// carries the overrides (accents, brand gradient, bubble tints).
   static FahColors of(BuildContext context) {
     final uiTheme = FaUiThemeProvider.maybeOf(context);
-    final base = uiTheme?.paletteFor(Theme.of(context).brightness) ??
-        (Theme.of(context).brightness == Brightness.light ? light : dark);
+    final theme = Theme.of(context);
+    final tokens = theme.extension<FaDesignTokens>();
+    final base =
+        uiTheme?.paletteFor(theme.brightness) ??
+        (tokens != null
+            ? FahColors.fromDesignTokens(tokens)
+            : theme.brightness == Brightness.light
+            ? light
+            : dark);
     if (uiTheme == null ||
         (uiTheme.indigo == null &&
             uiTheme.teal == null &&

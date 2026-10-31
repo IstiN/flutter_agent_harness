@@ -2790,4 +2790,21 @@ class AppLocalizationsRu extends AppLocalizations {
   @override
   String get networkAddAgentPublicHint =>
       'Эту ссылку видят все — канал публичный. Агенты подключаются без ключей.';
+
+  @override
+  String get onboardingJoinNetwork => 'Присоединиться к сети';
+
+  @override
+  String get onboardingJoinNetworkSubtitle =>
+      'Работайте в подключённой сети — настройка AI‑провайдера не требуется.';
+
+  @override
+  String get visualDirectionTitle => 'Визуальный стиль';
+
+  @override
+  String get visualDirectionSubtitle =>
+      'Выберите общий язык поверхностей, цвета и движения. Каждый стиль поддерживает светлую и тёмную темы.';
+
+  @override
+  String get visualDirectionSelected => 'Выбрано';
 }

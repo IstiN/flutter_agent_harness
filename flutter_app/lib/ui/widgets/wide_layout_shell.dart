@@ -375,13 +375,17 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
   }
 
   Widget _buildBody(FahColors colors) {
+    final tokens = FaDesignTokens.of(context);
+    final showBoard =
+        faWindowClassForWidth(MediaQuery.sizeOf(context).width) ==
+        FaWindowClass.large;
     return Row(
       children: [
         // Left: collapsible sidebar (width user-resizable, issue #426).
         AnimatedContainer(
           duration: _sidebarDragging
               ? Duration.zero
-              : const Duration(milliseconds: 200),
+              : FaMotion.duration(context, tokens.base),
           curve: Curves.easeInOut,
           width: _sidebarCollapsed ? 60 : _sidebarWidth,
           decoration: BoxDecoration(
@@ -404,18 +408,19 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
           ),
         // Center: chat (always visible when a session is active).
         Expanded(child: _buildChatArea(colors)),
-        // Drag handle: resizes the apps panel.
-        _PaneDragHandle(
-          onDrag: (dx) => setState(() {
-            _appsPanelWidth = (_appsPanelWidth - dx).clamp(
-              _appsPanelMinWidth,
-              _appsPanelMaxWidth,
-            );
-          }),
-        ),
-        // Right: apps panel — a nested Navigator so launched apps push
-        // within the panel instead of replacing the whole screen.
-        SizedBox(width: _appsPanelWidth, child: _buildAppsArea()),
+        if (showBoard) ...[
+          _PaneDragHandle(
+            onDrag: (dx) => setState(() {
+              _appsPanelWidth = (_appsPanelWidth - dx).clamp(
+                _appsPanelMinWidth,
+                _appsPanelMaxWidth,
+              );
+            }),
+          ),
+          // Permanent third pane is a large-screen privilege; medium keeps
+          // navigation + content and opens Apps as a focused route.
+          SizedBox(width: _appsPanelWidth, child: _buildAppsArea()),
+        ],
       ],
     );
   }
@@ -634,6 +639,15 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
+          if (faWindowClassForWidth(MediaQuery.sizeOf(context).width) ==
+              FaWindowClass.medium)
+            SidebarNavItem(
+              icon: Icons.grid_view_rounded,
+              label: context.l10n.appsGridTitle,
+              selected: false,
+              collapsed: _sidebarCollapsed,
+              onTap: _openApps,
+            ),
           SidebarNavItem(
             icon: Icons.folder_outlined,
             label: context.l10n.chatFilesTooltip,
@@ -1281,6 +1295,21 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
   ) async {
     await names.rename(sessionId, value.trim().isEmpty ? null : value.trim());
     if (mounted) setState(() {});
+  }
+
+  Future<void> _openApps() async {
+    if (!mounted) return;
+    await pushFaPage<void>(
+      context,
+      AppLauncherScreen(
+        manager: widget.manager,
+        registry: widget.registry,
+        lastConnectionStore: widget.lastConnectionStore,
+        appsStore: widget.appsStore,
+        sessionNamesStore: widget.sessionNamesStore,
+        hideChatSheet: true,
+      ),
+    );
   }
 
   Future<void> _openSettings() async {

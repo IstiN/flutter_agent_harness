@@ -128,8 +128,11 @@ void main() {
   Directory emptyCwd() => Directory('/nonexistent-fah-test-dir');
 
   group('boot flows', () {
-    testWidgets('first boot: onboarding → skip → setup → connect → launcher '
+    testWidgets('first boot: onboarding → provider → connect → launcher '
         'home; the key never reaches last_connection.json', (tester) async {
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
       await IOOverrides.runZoned(() async {
         final env = MemoryExecutionEnv();
         final lastConnection = await LastConnectionStore.load(env);
@@ -149,8 +152,9 @@ void main() {
         expect(find.byType(OnboardingScreen), findsOneWidget);
         expect(find.byType(SetupScreen), findsNothing);
 
-        // Page 1: Skip is available…
-        expect(find.text('Skip'), findsOneWidget);
+        // The provider-or-network requirement applies from the first page:
+        // informational Skip cannot bypass it.
+        expect(find.text('Skip'), findsNothing);
         await tester.tap(find.text('Continue'));
         await tester.pumpAndSettle();
 
@@ -232,6 +236,9 @@ void main() {
 
     testWidgets('returning boot: saved connection + key auto-connects '
         'without onboarding and resumes the previous session', (tester) async {
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
       await IOOverrides.runZoned(() async {
         final env = MemoryExecutionEnv();
         // A previous run left: a persisted connection (no key), the key in

@@ -539,6 +539,9 @@ void main() {
   group('SetupScreen last-connection persistence', () {
     testWidgets('a successful connect is saved and pre-selects the form '
         'after a reload; the key is never persisted', (tester) async {
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
       // AgentService.create reads the real .env file through dart:io; real
       // IO futures never complete inside the fake test zone, so point the
       // current directory at an empty one (no .env → no real IO).
@@ -572,7 +575,7 @@ void main() {
         await tester.pumpAndSettle();
 
         // Connected: the home replaced the setup screen — on this narrow
-        // (800px) test surface the home is the apps launcher.
+        // (390px) test surface the home is the apps launcher.
         expect(find.byType(AppLauncherScreen), findsOneWidget);
         // …and the connection was saved (non-secret parts only).
         final connection = store.connection;

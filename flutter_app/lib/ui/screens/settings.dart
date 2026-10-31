@@ -1535,6 +1535,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
               // layout / debug logs / onboarding replay below.
               if (service != null)
                 ..._modelsAndAgentsSections(service, taskModels),
+              const VisualDirectionSection(),
+              const SizedBox(height: 20),
               const ThemeModeSection(),
               const ThemePacksSection(),
 

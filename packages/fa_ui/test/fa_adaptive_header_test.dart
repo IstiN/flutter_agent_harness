@@ -14,49 +14,48 @@ void main() {
     List<PopupMenuEntry<String>>? menu,
     void Function()? onChipTap,
     String? chipMenuLabel,
-  }) =>
-      MaterialApp(
-        home: Scaffold(
-          body: SizedBox(
-            width: width,
-            child: Material(
-              child: FaAdaptiveHeader(
-                projectIcon: Icons.folder_outlined,
-                projectLabel: 'Personal',
-                title: 'Fa',
-                chip: const SizedBox(
-                  key: ValueKey('testChip'),
-                  width: 120,
-                  height: 28,
-                ),
-                actions: [
-                  FaHeaderAction(
-                    key: const ValueKey('testFiles'),
-                    icon: Icons.folder_outlined,
-                    label: 'Files',
-                    onPressed: () {},
-                  ),
-                  FaHeaderAction(
-                    key: const ValueKey('testTrajectory'),
-                    icon: Icons.timeline,
-                    label: 'Trajectory',
-                    onPressed: () {},
-                  ),
-                  FaHeaderAction(
-                    key: const ValueKey('testCopy'),
-                    icon: Icons.copy_outlined,
-                    label: 'Copy session',
-                    onPressed: () {},
-                  ),
-                ],
-                menuItems: menu ?? const <PopupMenuEntry<String>>[],
-                onChipTap: onChipTap,
-                chipMenuLabel: chipMenuLabel,
-              ),
+  }) => MaterialApp(
+    home: Scaffold(
+      body: SizedBox(
+        width: width,
+        child: Material(
+          child: FaAdaptiveHeader(
+            projectIcon: Icons.folder_outlined,
+            projectLabel: 'Personal',
+            title: 'Fa',
+            chip: const SizedBox(
+              key: ValueKey('testChip'),
+              width: 120,
+              height: 28,
             ),
+            actions: [
+              FaHeaderAction(
+                key: const ValueKey('testFiles'),
+                icon: Icons.folder_outlined,
+                label: 'Files',
+                onPressed: () {},
+              ),
+              FaHeaderAction(
+                key: const ValueKey('testTrajectory'),
+                icon: Icons.timeline,
+                label: 'Trajectory',
+                onPressed: () {},
+              ),
+              FaHeaderAction(
+                key: const ValueKey('testCopy'),
+                icon: Icons.copy_outlined,
+                label: 'Copy session',
+                onPressed: () {},
+              ),
+            ],
+            menuItems: menu ?? const <PopupMenuEntry<String>>[],
+            onChipTap: onChipTap,
+            chipMenuLabel: chipMenuLabel,
           ),
         ),
-      );
+      ),
+    ),
+  );
 
   testWidgets('wide: project, title, chip and every action render inline '
       '(issue #225 AC1)', (tester) async {
@@ -151,8 +150,9 @@ void main() {
     expect(find.byKey(const ValueKey('testWidgetAction')), findsOneWidget);
   });
 
-  testWidgets('the pinned action never demotes (issue #225 E2)',
-      (tester) async {
+  testWidgets('the pinned action never demotes (issue #225 E2)', (
+    tester,
+  ) async {
     var stopped = 0;
     await tester.pumpWidget(
       MaterialApp(
@@ -194,8 +194,9 @@ void main() {
     expect(find.byKey(const ValueKey('testStop')), findsOneWidget);
   });
 
-  testWidgets('no demotion and no menu items hides the ⋮ (issue #225 E4)',
-      (tester) async {
+  testWidgets('no demotion and no menu items hides the ⋮ (issue #225 E4)', (
+    tester,
+  ) async {
     await tester.pumpWidget(
       MaterialApp(
         home: Scaffold(
@@ -249,5 +250,48 @@ void main() {
     await tester.tap(find.text('New session'));
     await tester.pumpAndSettle();
     expect(selected, 'new');
+  });
+
+  testWidgets('compact phone sheet reserves leading and overflow widths', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SizedBox(
+            width: 374,
+            child: FaAdaptiveHeader(
+              leading: IconButton(
+                visualDensity: VisualDensity.compact,
+                onPressed: () {},
+                icon: const Icon(Icons.menu),
+              ),
+              title: 'Session',
+              chip: const SizedBox(width: 132, height: 28),
+              visualDensity: VisualDensity.compact,
+              iconSize: 20,
+              actions: [
+                FaHeaderAction(
+                  icon: Icons.copy_outlined,
+                  label: 'Copy',
+                  onPressed: () {},
+                ),
+                FaHeaderAction(
+                  icon: Icons.apps,
+                  label: 'Apps',
+                  onPressed: () {},
+                ),
+              ],
+              menuItems: const [
+                PopupMenuItem(value: 'close', child: Text('Close')),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+
+    expect(tester.takeException(), isNull);
+    expect(tester.getSize(find.byType(FaAdaptiveHeader)).width, 374);
   });
 }

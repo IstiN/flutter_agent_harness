@@ -52,7 +52,9 @@ import 'package:fa/transformers_js/transformers_js_types.dart';
 import 'package:fa/webllm/webllm_types.dart';
 import 'package:fa_ui/fa_ui.dart'
     show
-        kWideLayoutBreakpoint,
+        buildFaTheme,
+        faWindowClassForWidth,
+        FaWindowClass,
         MediaModelsScope,
         SandboxAudioControllerFactory,
         SandboxVideoControllerFactory,
@@ -277,8 +279,16 @@ class MyApp extends StatelessWidget {
   Widget _materialApp(ThemeController theme, FaUiTheme? uiTheme) {
     return MaterialApp(
       title: 'Fa',
-      theme: buildFahThemeLight(uiTheme: uiTheme),
-      darkTheme: buildFahTheme(uiTheme: uiTheme),
+      theme: buildFaTheme(
+        direction: theme.visualDirection,
+        brightness: Brightness.light,
+        uiTheme: uiTheme,
+      ),
+      darkTheme: buildFaTheme(
+        direction: theme.visualDirection,
+        brightness: Brightness.dark,
+        uiTheme: uiTheme,
+      ),
       themeMode: theme.themeMode,
       localizationsDelegates: AppLocalizations.localizationsDelegates,
       supportedLocales: AppLocalizations.supportedLocales,
@@ -435,7 +445,9 @@ Widget faHomeScreen({
   /// (issue #224): true for the real production homes, false in tests.
   bool restoreAppsMode = false,
 }) {
-  final isWide = MediaQuery.sizeOf(context).width >= kWideLayoutBreakpoint;
+  final isWide =
+      faWindowClassForWidth(MediaQuery.sizeOf(context).width) !=
+      FaWindowClass.small;
   // The classic local home — built exactly as before; the network gate
   // below swaps the WHOLE surface, never the local tree's structure.
   final localHome = WidgetPublicationResumeRefresher(
@@ -577,7 +589,14 @@ class _BootstrapScreenState extends State<BootstrapScreen> {
   /// flag is still unseen.
   bool get _showOnboarding {
     final store = widget.onboardingStore;
-    return !_onboardingDone && _config == null && store != null && !store.seen;
+    final restorableNetwork =
+        widget.networkMode?.mode == AppMode.network &&
+        widget.networkMode?.networkId != null;
+    return !_onboardingDone &&
+        _config == null &&
+        !restorableNetwork &&
+        store != null &&
+        !store.seen;
   }
 
   @override
@@ -842,6 +861,8 @@ class _BootstrapScreenState extends State<BootstrapScreen> {
       onboardingStore: widget.onboardingStore,
       registry: widget.registry,
       lastConnectionStore: widget.lastConnectionStore,
+      networkMode: widget.networkMode,
+      networkSessions: widget.networkSessions,
       onFinished: ({required bool skipped}) => _onboardingFinished(),
     );
   }

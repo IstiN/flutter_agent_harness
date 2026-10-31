@@ -31,9 +31,13 @@ class _UserBubble extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.end,
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  const Text(
+                  Text(
                     'Build a focus timer with work and break sessions.',
-                    style: TextStyle(fontSize: 13, color: _kInk, height: 1.35),
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: _onbInk(context),
+                      height: 1.35,
+                    ),
                   ),
                   const SizedBox(height: 4),
                   Row(
@@ -41,13 +45,17 @@ class _UserBubble extends StatelessWidget {
                     children: [
                       Text(
                         wide ? 'Just now' : '9:41 AM',
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 10,
-                          color: _kGrayLight,
+                          color: _onbGrayLight(context),
                         ),
                       ),
                       const SizedBox(width: 4),
-                      const Icon(Icons.done_all, size: 12, color: _kPrimary),
+                      Icon(
+                        Icons.done_all,
+                        size: 12,
+                        color: _onbPrimary(context),
+                      ),
                     ],
                   ),
                 ],
@@ -76,7 +84,7 @@ class _TypingBubble extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
         children: [
-          const Row(
+          Row(
             children: [
               _FaAvatar(size: 26),
               SizedBox(width: 8),
@@ -86,7 +94,7 @@ class _TypingBubble extends StatelessWidget {
                   style: TextStyle(
                     fontSize: 13,
                     fontWeight: FontWeight.w500,
-                    color: _kInk,
+                    color: _onbInk(context),
                   ),
                 ),
               ),
@@ -151,19 +159,19 @@ class _ChatInput extends StatelessWidget {
       ),
       child: Row(
         children: [
-          const Icon(Icons.add, size: 18, color: _kGrayLight),
+          Icon(Icons.add, size: 18, color: _onbGrayLight(context)),
           const SizedBox(width: 8),
-          const Expanded(
+          Expanded(
             child: Text(
               'Ask anything…',
-              style: TextStyle(fontSize: 12.5, color: _kGrayLight),
+              style: TextStyle(fontSize: 12.5, color: _onbGrayLight(context)),
             ),
           ),
           Container(
             width: 30,
             height: 30,
-            decoration: const BoxDecoration(
-              color: _kPrimary,
+            decoration: BoxDecoration(
+              color: _onbPrimary(context),
               shape: BoxShape.circle,
             ),
             child: const Icon(
@@ -364,8 +372,8 @@ class _AppTile extends StatelessWidget {
                 ? Container(
                     width: 16,
                     height: 16,
-                    decoration: const BoxDecoration(
-                      color: _kPrimary,
+                    decoration: BoxDecoration(
+                      color: _onbPrimary(context),
                       shape: BoxShape.circle,
                     ),
                     child: const Center(
@@ -387,7 +395,7 @@ class _AppTile extends StatelessWidget {
                     decoration: BoxDecoration(
                       color: badge == 'Demo'
                           ? const Color(0xFF9AA0B4)
-                          : _kPrimary,
+                          : _onbPrimary(context),
                       borderRadius: BorderRadius.circular(4),
                     ),
                     child: Text(
@@ -413,9 +421,9 @@ class _AppTile extends StatelessWidget {
           Text(
             label,
             textAlign: TextAlign.center,
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 9.5,
-              color: _kGray,
+              color: _onbGray(context),
               fontWeight: FontWeight.w500,
             ),
           ),
@@ -602,7 +610,11 @@ class _FlowCard extends StatelessWidget {
                 const SizedBox(height: 5),
                 Row(
                   children: [
-                    const Icon(Icons.timer_outlined, size: 13, color: _kGray),
+                    Icon(
+                      Icons.timer_outlined,
+                      size: 13,
+                      color: _onbGray(context),
+                    ),
                     const SizedBox(width: 5),
                     Flexible(
                       child: Text.rich(
@@ -654,7 +666,7 @@ class _FlowDiagram extends StatelessWidget {
             padding: const EdgeInsets.all(12),
             child: Row(
               children: [
-                const Icon(Icons.auto_awesome, size: 16, color: _kPrimary),
+                Icon(Icons.auto_awesome, size: 16, color: _onbPrimary(context)),
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
@@ -671,9 +683,13 @@ class _FlowDiagram extends StatelessWidget {
             ),
           ),
         ),
-        const Padding(
+        Padding(
           padding: EdgeInsets.symmetric(horizontal: 10),
-          child: Icon(Icons.arrow_forward, size: 18, color: _kGrayLight),
+          child: Icon(
+            Icons.arrow_forward,
+            size: 18,
+            color: _onbGrayLight(context),
+          ),
         ),
         Expanded(
           child: _card(
@@ -681,7 +697,11 @@ class _FlowDiagram extends StatelessWidget {
             padding: const EdgeInsets.all(12),
             child: Row(
               children: [
-                const Icon(Icons.timer_outlined, size: 16, color: _kPrimary),
+                Icon(
+                  Icons.timer_outlined,
+                  size: 16,
+                  color: _onbPrimary(context),
+                ),
                 const SizedBox(width: 8),
                 Expanded(
                   child: Column(
@@ -747,15 +767,15 @@ class _PermCard extends StatelessWidget {
     final askPill = Container(
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
       decoration: BoxDecoration(
-        color: _kSelBg,
+        color: _onbSelBg(context),
         borderRadius: BorderRadius.circular(5),
       ),
-      child: const Text(
+      child: Text(
         'Ask when needed',
         style: TextStyle(
           fontSize: 9.5,
           fontWeight: FontWeight.w600,
-          color: _kPrimary,
+          color: _onbPrimary(context),
         ),
       ),
     );
@@ -763,16 +783,16 @@ class _PermCard extends StatelessWidget {
       width: 62,
       height: 32,
       decoration: BoxDecoration(
-        color: _kSelBg,
+        color: _onbSelBg(context),
         borderRadius: BorderRadius.circular(8),
       ),
-      child: const Center(
+      child: Center(
         child: Text(
           'Allow',
           style: TextStyle(
             fontSize: 11.5,
             fontWeight: FontWeight.w600,
-            color: _kPrimary,
+            color: _onbPrimary(context),
           ),
         ),
       ),
@@ -784,13 +804,13 @@ class _PermCard extends StatelessWidget {
         color: const Color(0xFFF3F4F8),
         borderRadius: BorderRadius.circular(8),
       ),
-      child: const Center(
+      child: Center(
         child: Text(
           'Later',
           style: TextStyle(
             fontSize: 11.5,
             fontWeight: FontWeight.w500,
-            color: _kGray,
+            color: _onbGray(context),
           ),
         ),
       ),
@@ -925,8 +945,8 @@ class _WhatYouGet extends StatelessWidget {
               Container(
                 width: 38,
                 height: 38,
-                decoration: const BoxDecoration(
-                  color: _kPrimary,
+                decoration: BoxDecoration(
+                  color: _onbPrimary(context),
                   shape: BoxShape.circle,
                 ),
                 child: const Icon(
@@ -939,12 +959,12 @@ class _WhatYouGet extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 14),
-        const Text(
+        Text(
           'My Apps',
           style: TextStyle(
             fontSize: 12,
             fontWeight: FontWeight.w600,
-            color: _kGray,
+            color: _onbGray(context),
           ),
         ),
         const SizedBox(height: 10),
@@ -1035,22 +1055,25 @@ class _MyAppsMini extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Row(
+                Row(
                   children: [
                     Text(
                       'My Apps',
                       style: TextStyle(
                         fontSize: 11,
                         fontWeight: FontWeight.w700,
-                        color: _kInk,
+                        color: _onbInk(context),
                       ),
                     ),
                     Spacer(),
-                    Icon(Icons.tune, size: 11, color: _kGrayLight),
+                    Icon(Icons.tune, size: 11, color: _onbGrayLight(context)),
                     SizedBox(width: 3),
                     Text(
                       'Customize',
-                      style: TextStyle(fontSize: 9, color: _kGrayLight),
+                      style: TextStyle(
+                        fontSize: 9,
+                        color: _onbGrayLight(context),
+                      ),
                     ),
                   ],
                 ),
@@ -1136,13 +1159,13 @@ class _TimelineCard extends StatelessWidget {
                   width: 34,
                   height: 34,
                   decoration: BoxDecoration(
-                    color: i == 1 ? const Color(0xFFF3F4F8) : _kSelBg,
+                    color: i == 1 ? Color(0xFFF3F4F8) : _onbSelBg(context),
                     borderRadius: BorderRadius.circular(10),
                   ),
                   child: Icon(
                     _entries[i].$1,
                     size: 16,
-                    color: i == 1 ? _kGray : _kPrimary,
+                    color: i == 1 ? _onbGray(context) : _onbPrimary(context),
                   ),
                 ),
                 const SizedBox(width: 12),
@@ -1201,13 +1224,13 @@ class _CreatedCard extends StatelessWidget {
                 width: 40,
                 height: 40,
                 decoration: BoxDecoration(
-                  color: _kSelBg,
+                  color: _onbSelBg(context),
                   borderRadius: BorderRadius.circular(11),
                 ),
-                child: const Icon(
+                child: Icon(
                   Icons.event_available,
                   size: 20,
-                  color: _kPrimary,
+                  color: _onbPrimary(context),
                 ),
               ),
               const SizedBox(width: 12),
@@ -1252,10 +1275,14 @@ class _CreatedCard extends StatelessWidget {
             ),
             child: Row(
               children: [
-                const Expanded(
+                Expanded(
                   child: Text(
                     'Build a focus timer with work and break sessions.',
-                    style: TextStyle(fontSize: 12, color: _kInk, height: 1.35),
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: _onbInk(context),
+                      height: 1.35,
+                    ),
                   ),
                 ),
                 const SizedBox(width: 8),
@@ -1277,19 +1304,19 @@ class _CreatedCard extends StatelessWidget {
             height: 40,
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: _kPrimary, width: 1.2),
+              border: Border.all(color: _onbPrimary(context), width: 1.2),
             ),
-            child: const Row(
+            child: Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Icon(Icons.open_in_new, size: 14, color: _kPrimary),
+                Icon(Icons.open_in_new, size: 14, color: _onbPrimary(context)),
                 SizedBox(width: 6),
                 Text(
                   'Open Focus Timer',
                   style: TextStyle(
                     fontSize: 12.5,
                     fontWeight: FontWeight.w600,
-                    color: _kPrimary,
+                    color: _onbPrimary(context),
                   ),
                 ),
               ],
@@ -1450,7 +1477,7 @@ class _FocusWidget extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      height: 114,
+      height: 120,
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
         color: _kNavy,
@@ -1489,7 +1516,7 @@ class _WeatherWidget extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      height: 114,
+      height: 120,
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
         gradient: const LinearGradient(
@@ -1543,22 +1570,22 @@ class _UpcomingWidget extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      height: 114,
+      height: 120,
       padding: const EdgeInsets.all(9),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: _kBorder),
+        border: Border.all(color: _onbBorder(context)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
+          Text(
             'Upcoming',
             style: TextStyle(
               fontSize: 9,
               fontWeight: FontWeight.w700,
-              color: _kGray,
+              color: _onbGray(context),
             ),
           ),
           const SizedBox(height: 6),
@@ -1581,18 +1608,18 @@ class _UpcomingWidget extends StatelessWidget {
                       children: [
                         Text(
                           title,
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontSize: 8.5,
                             fontWeight: FontWeight.w600,
-                            color: _kInk,
+                            color: _onbInk(context),
                           ),
                           overflow: TextOverflow.ellipsis,
                         ),
                         Text(
                           time,
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontSize: 7.5,
-                            color: _kGrayLight,
+                            color: _onbGrayLight(context),
                           ),
                         ),
                       ],
@@ -1627,7 +1654,7 @@ class _Suggestions extends StatelessWidget {
           decoration: BoxDecoration(
             color: Colors.white,
             borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: _kBorder),
+            border: Border.all(color: _onbBorder(context)),
           ),
           child: Row(
             children: [
@@ -1636,10 +1663,10 @@ class _Suggestions extends StatelessWidget {
               Expanded(
                 child: Text(
                   label,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 11,
                     fontWeight: FontWeight.w600,
-                    color: _kInk,
+                    color: _onbInk(context),
                     height: 1.25,
                   ),
                 ),

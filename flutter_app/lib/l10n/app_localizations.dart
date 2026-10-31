@@ -4843,6 +4843,36 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Anyone with this link can read the channel — it is public. Agents join keyless.'**
   String get networkAddAgentPublicHint;
+
+  /// Alternative to provider setup during onboarding
+  ///
+  /// In en, this message translates to:
+  /// **'Join a network'**
+  String get onboardingJoinNetwork;
+
+  /// Explains the network path through onboarding
+  ///
+  /// In en, this message translates to:
+  /// **'Collaborate through a joined network — no AI provider setup required.'**
+  String get onboardingJoinNetworkSubtitle;
+
+  /// Fa 2.0 visual direction settings title
+  ///
+  /// In en, this message translates to:
+  /// **'Visual direction'**
+  String get visualDirectionTitle;
+
+  /// Fa 2.0 visual direction settings explanation
+  ///
+  /// In en, this message translates to:
+  /// **'Choose one shared language for surfaces, color and motion. Every direction supports light and dark mode.'**
+  String get visualDirectionSubtitle;
+
+  /// Accessibility label for the selected visual direction
+  ///
+  /// In en, this message translates to:
+  /// **'Selected'**
+  String get visualDirectionSelected;
 }
 
 class _AppLocalizationsDelegate

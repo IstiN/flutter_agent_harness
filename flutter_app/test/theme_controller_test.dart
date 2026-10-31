@@ -1,4 +1,5 @@
 import 'package:fa/services/theme_controller.dart';
+import 'package:fa_ui/fa_ui.dart' show FaVisualDirection;
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -92,6 +93,39 @@ void main() {
       await controller.setPack(null);
       expect(controller.packId, isNull);
       expect(controller.wallpaperPackId, isNull);
+    });
+
+    test(
+      'visual direction defaults to Liquid Glass and notifies once',
+      () async {
+        final controller = ThemeController.inMemory();
+        expect(controller.visualDirection, FaVisualDirection.glass);
+        var notified = 0;
+        controller.addListener(() => notified++);
+        await controller.setVisualDirection(FaVisualDirection.nebula);
+        expect(controller.visualDirection, FaVisualDirection.nebula);
+        expect(notified, 1);
+        await controller.setVisualDirection(FaVisualDirection.nebula);
+        expect(notified, 1);
+      },
+    );
+
+    test('visual direction round-trips and unknown values are safe', () async {
+      final env = MemoryExecutionEnv();
+      final controller = await ThemeController.load(env);
+      await controller.setVisualDirection(FaVisualDirection.porcelain);
+      expect(
+        (await ThemeController.load(env)).visualDirection,
+        FaVisualDirection.porcelain,
+      );
+      await env.writeFile(
+        '${env.cwd}/theme.json',
+        '{"version": 1, "mode": "system", "direction": "unknown"}',
+      );
+      expect(
+        (await ThemeController.load(env)).visualDirection,
+        FaVisualDirection.glass,
+      );
     });
 
     test('the pack and wallpaper ids round-trip through the env', () async {
