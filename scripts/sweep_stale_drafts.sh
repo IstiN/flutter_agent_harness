@@ -2,10 +2,17 @@
 # Daily release-draft sweeper (issue #282), rides daily-publish.yml:
 #
 #   - lists DRAFT releases older than $SWEEP_MAX_AGE_SECONDS (default 24h);
-#   - deletes stale drafts created by bots (author.type == Bot or a
-#     *[bot] login) — draft assets are unpublished by definition and
-#     published releases are the artifact store, so deletion is safe
-#     (issue #282 E2). The git tag is never touched;
+#   - deletes stale drafts created by the pipeline (author.type == Bot, a
+#     *[bot] login, OR the body carries a well-formed
+#     `release-draft-owner: run/<id>/job/<job>` marker — the exact shape
+#     release_lazy_draft.sh / release_attach_or_create.sh stamp and
+#     release_draft_guard.sh parses; since the drafts are created with
+#     GH_TOKEN=RELEASE_PAT the API author is the PAT's human owner, so
+#     the marker is the only ownership proof, gh-2008. Prose that merely
+#     MENTIONS the substring or a malformed marker is NOT ownership —
+#     those drafts stay human/kept, E1) — draft assets are unpublished by
+#     definition and published releases are the artifact store, so
+#     deletion is safe (issue #282 E2). The git tag is never touched;
 #   - stale HUMAN drafts are listed in the summary, never deleted (E1);
 #   - fresh drafts (<24h) are counted, never touched — an in-flight run
 #     may legitimately own them;
@@ -34,22 +41,36 @@ gh label create "$label" --repo "$repo" --color B60205 \
 # gh api --paginate emits one JSON array per page; the jq stream filter
 # flattens them all. Bucketing happens in jq so the whole rule is
 # reviewable in one place:
-#   stale + bot  -> delete      stale + human -> keep, list
-#   fresh        -> untouched
+#   stale + pipeline (bot author or well-formed
+#                    release-draft-owner: run/<id>/job/<job>
+#                    marker in the body) -> delete, name the marker run
+#   stale + human (no marker)          -> keep, list
+#   fresh                              -> untouched
 drafts=$(gh api --paginate "repos/$repo/releases" | jq -r --argjson maxage "$max_age" '
   [ .[] | select(.draft == true)
     | { bucket: (
           if ((now - (.created_at | fromdateiso8601)) > $maxage)
           then (if ((.author.type // "User") == "Bot"
-                    or ((.author.login // "") | test("\\[bot\\]$")))
+                    or ((.author.login // "") | test("\\[bot\\]$"))
+                    or ((.body // "") | test("release-draft-owner: run/[0-9]+/job/")))
                then "bot" else "human" end)
           else "fresh" end),
         tag: (.tag_name // "(untagged)"),
         id: (.id | tostring),
         created: (.created_at // "?"),
-        author: (.author.login // "unknown") } ]
+        author: (.author.login // "unknown"),
+        # Exact creating run parsed from the ownership marker ("" for
+        # non-marker drafts) — the creating run executed on main, so a
+        # tag-ref run lookup cannot find it (gh-2008). The array wrapper
+        # keeps exactly one value: a bare capture(...)? on a non-matching
+        # body yields an EMPTY stream, and an empty field would drop the
+        # whole draft row from the object stream.
+        run: ([ (.body // "")
+                | capture("release-draft-owner: run/(?<run>[0-9]+)/")?
+                | .run ]
+              | .[0] // "") } ]
   | sort_by(.created)[]
-  | [ .bucket, .tag, .id, .created, .author ] | @tsv')
+  | [ .bucket, .tag, .id, .created, .author, .run ] | @tsv')
 
 deleted=""
 deleted_tags=""
@@ -58,7 +79,7 @@ humans=""
 human_tags=""
 fresh_count=0
 
-while IFS=$'\t' read -r bucket tag id created author; do
+while IFS=$'\t' read -r bucket tag id created author marker_run; do
   [ -n "$bucket" ] || continue
   case "$bucket" in
     fresh)
@@ -72,10 +93,14 @@ while IFS=$'\t' read -r bucket tag id created author; do
       gh api -X DELETE "repos/$repo/releases/$id" >/dev/null
       deleted_count=$((deleted_count + 1))
       # Name the creating run so a RECURRING stuck draft points at its
-      # broken step instead of rotting silently (AC2). Dispatch-time
-      # drafts have no run on their ref — then say so.
+      # broken step instead of rotting silently (AC2). Marker drafts name
+      # it exactly (the stamping scripts write run/<id>); untagged
+      # author-bot drafts fall back to the newest run on the tag ref;
+      # dispatch-time drafts have no run on their ref — then say so.
       run_url=""
-      if [ "$tag" != "(untagged)" ]; then
+      if [ -n "$marker_run" ]; then
+        run_url="${GITHUB_SERVER_URL:-https://github.com}/$repo/actions/runs/$marker_run"
+      elif [ "$tag" != "(untagged)" ]; then
         run_url=$(gh run list --repo "$repo" --branch "$tag" --limit 1 \
           --json url --jq '.[0].url // empty' 2>/dev/null || true)
       fi
@@ -101,7 +126,7 @@ if [ "$stale_count" -gt 0 ]; then
   body=$(mktemp)
   {
     echo "**Sweep run:** $daily_url"
-    echo "**Swept:** $deleted_count stale bot draft(s) older than $((max_age / 3600))h"
+    echo "**Swept:** $deleted_count stale pipeline-created draft(s) older than $((max_age / 3600))h"
     printf '%b' "$deleted"
     [ -n "$humans" ] && { echo; echo "**Kept (human drafts, listed not deleted — E1):**"; printf '%b' "$humans"; }
     echo
@@ -136,7 +161,7 @@ fi
 {
   echo "### Release-draft sweeper"
   echo
-  echo "Deleted **$deleted_count** stale bot draft(s) • kept human drafts: **$(printf '%s' "$humans" | grep -c . || true)** • fresh (<$((max_age / 3600))h): **$fresh_count** • issue lifecycle: $issue_action"
+  echo "Deleted **$deleted_count** stale pipeline-created draft(s) • kept human drafts: **$(printf '%s' "$humans" | grep -c . || true)** • fresh (<$((max_age / 3600))h): **$fresh_count** • issue lifecycle: $issue_action"
 } >> "${GITHUB_STEP_SUMMARY:-/dev/stdout}"
 
 echo "sweeper: deleted=${deleted_tags# } human-kept=${human_tags# } fresh=$fresh_count issue=$issue_action"
