@@ -11,6 +11,7 @@ import 'package:fa_ui/src/stores/media_models_store.dart';
 import 'package:fa_ui/src/stores/provider_registry.dart';
 import 'package:fa_ui/src/strings/fa_ui_strings.dart';
 import 'package:fa_ui/src/utils/page_presentation.dart';
+import 'package:fa_ui/src/widgets/settings_scaffold.dart';
 
 /// The settings "Media models" section: one row per [MediaSlot] showing the
 /// slot's override (`model · provider`), the explicit "Same as main
@@ -79,38 +80,26 @@ class MediaModelsSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final strings = FaUiStrings.of(context);
     final store = this.store ?? MediaModelsScope.maybeOf(context);
-    if (store == null) return const SizedBox.shrink();
-    return ListenableBuilder(
-      listenable: store,
-      builder: (context, _) {
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              strings.mediaModelsSectionTitle,
-              style: theme.textTheme.titleSmall,
-            ),
-            const SizedBox(height: 4),
-            Text(
-              strings.mediaModelsSectionNote,
-              style: theme.textTheme.bodySmall,
-            ),
-            const SizedBox(height: 8),
-            for (final slot in MediaSlot.all)
-              _buildSlotRow(context, theme, strings, store, slot),
-          ],
-        );
-      },
-    );
+    return faStoreSection(store, (context, store) {
+      final theme = Theme.of(context);
+      final strings = FaUiStrings.of(context);
+      return [
+        Text(
+          strings.mediaModelsSectionTitle,
+          style: theme.textTheme.titleSmall,
+        ),
+        const SizedBox(height: 4),
+        Text(strings.mediaModelsSectionNote, style: theme.textTheme.bodySmall),
+        const SizedBox(height: 8),
+        for (final slot in MediaSlot.all)
+          _buildSlotRow(context, strings, store, slot),
+      ];
+    });
   }
 
   Widget _buildSlotRow(
     BuildContext context,
-    ThemeData theme,
     FaUiStrings strings,
     MediaModelsStore store,
     String slot,
@@ -134,39 +123,11 @@ class MediaModelsSection extends StatelessWidget {
                 : _hostOf(override.baseUrl),
             override.modelId,
           );
-    return InkWell(
+    return FaSettingsRow(
+      icon: slotIcons[slot] ?? Icons.tune,
+      title: slotLabelFor(strings, slot),
+      subtitle: summary,
       onTap: () => _editSlot(context, store, slot),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 6),
-        child: Row(
-          children: [
-            Icon(
-              slotIcons[slot] ?? Icons.tune,
-              size: 20,
-              color: theme.colorScheme.primary,
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(slotLabelFor(strings, slot)),
-                  Text(
-                    summary,
-                    style: theme.textTheme.bodySmall,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ],
-              ),
-            ),
-            Icon(
-              Icons.chevron_right,
-              size: 18,
-              color: theme.colorScheme.onSurfaceVariant,
-            ),
-          ],
-        ),
-      ),
     );
   }
 
