@@ -1,0 +1,221 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-31T00:12:24.638Z",
+  "ticketKey": "gh-1985",
+  "headSha": "def2788c6aa74c464d0bef8ccded49167060f090",
+  "baseBranch": "main",
+  "reviewDecision": "NONE",
+  "labels": [],
+  "files": {
+    "ci_failures.md": {
+      "hash": "fnv1a64:c5170b9a7ec784a0",
+      "size": 545684
+    },
+    "ci_failures_full.log": {
+      "hash": "fnv1a64:51da010f773fa61c",
+      "size": 3101984
+    },
+    "ci_violations.json": {
+      "hash": "fnv1a64:2ad1baeddfc6f1e5",
+      "size": 3744
+    },
+    "pr_diff.txt": {
+      "hash": "fnv1a64:384658218356564b",
+      "size": 12304
+    },
+    "pr_discussions.md": {
+      "hash": "fnv1a64:c560e5978604533d",
+      "size": 20688
+    },
+    "pr_discussions_raw.json": {
+      "hash": "fnv1a64:c66c131b4f8d7971",
+      "size": 10040
+    },
+    "pr_info.md": {
+      "hash": "fnv1a64:002c7b0cc70344d0",
+      "size": 2834
+    },
+    "request.md": {
+      "hash": "fnv1a64:f08b817cc1184cdd",
+      "size": 6767
+    },
+    "review_state.md": {
+      "hash": "fnv1a64:a82def1867011ddd",
+      "size": 1614
+    },
+    "rework_base_head.txt": {
+      "hash": "fnv1a64:e285fa8ec9f427bd",
+      "size": 40
+    },
+    "ticket.json": {
+      "hash": "fnv1a64:a3991bb76b3997ba",
+      "size": 6864
+    },
+    "ticket.md": {
+      "hash": "fnv1a64:f08b817cc1184cdd",
+      "size": 6767
+    }
+  },
+  "comments": [
+    {
+      "id": "PRRT_kwDOTXdlLc6yLfTY",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "lib/flutter_agent_harness.dart:291",
+      "resolved": false,
+      "body": "🚨 **BLOCKING: barrel-exporting `generate_image.dart` turns 5 CI checks red**\n\nThis PR adds `export 'src/tools/generate_image.dart';` to the public barrel. `generate_image.dart` **defines** `MediaKeyResolver` (line 56), `MediaEndpoint` (line 59), `generateImageToolName` (line 38) and `generateImageTool` — and `flutter_app` has its **own parallel copies** of those exact names (`package:fa/services/media_tools.dart`, `package:fa_ui/src/stores/media_models_store.dart`, `package:fa_ui/src/chat/media_tool_names.dart`) in files that also import this barrel. Before this PR `generate_image.dart` was reachable only via direct `src/` imports, so the names never collided.\n\nCI on commit `def278c` — 5 failed checks, one root cause:\n\n1. **Flutter app analyze (ubuntu)** — ambiguous imports:\n   `Error: 'MediaKeyResolver' is imported from both 'package:fa_ui/src/stores/media_models_store.dart' and 'package:flutter_agent_harness/src/tools/generate_image.dart'` (same for `MediaEndpoint`, `generateImageTool`, `generateImageToolName`) → `Error: Compilation failed.`\n2. **Build web (debug)** — `Target dart2js failed` with the same 7 ambiguous-import errors, `Failed to compile application for the Web.`\n3. **Extension size gate (fa-extension.zip)** — the extension's web build dies at the same `dart compile js` step with the same errors.\n4. **Office add-in suite** — `flutter_app/test/services/office_wiring_test.dart` fails to load with the same errors: `0 tests passed, 1 failed.`\n5. **Static gates** — `dart analyze --fatal-infos --fatal-warnings` fails with 2 infos the export itself creates:\n   - `test/tools/generate_image_test.dart:5:8` — unnecessary_import\n   - `test/tools/generate_media_cancel_test.dart:4:8` — unnecessary_import\n   (both files import the barrel AND the src path; with the export in place the direct import is redundant).\n\n**Fix (one line):** delete this export. Nothing in gh-1985 needs it — the PR's own tests import `src/tools/generate_image.dart` directly, and `image_pipeline.dart` / `inspect_image_stitch.dart` can stay exported (no collisions). Removing the export simultaneously restores the two test files' direct imports to \"necessary\" (clearing the Static-gates infos) and un-breaks all four app-side compile/analyze legs.\n\n(Keeping the export with a `hide MediaKeyResolver, MediaEndpoint, generateImageTool, generateImageToolName` filter would fix the app legs but **not** the 2 analyzer infos, so removal is the minimal complete fix.)"
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6yLfUf",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "lib/src/tools/builtin_tools_read.dart:678",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT: `_videoMimeType` mislabels `.wmv`, `.flv`, `.3gp` as `video/mp4`**\n\nThe route matches 11 video extensions, but the MIME map only names 6:\n\n```dart\nreturn switch (lower.substring(lower.lastIndexOf('.') + 1)) {\n  'webm' => 'video/webm',\n  'mov' => 'video/quicktime',\n  'mkv' => 'video/x-matroska',\n  'avi' => 'video/x-msvideo',\n  'mpeg' || 'mpg' => 'video/mpeg',\n  _ => 'video/mp4',\n};\n```\n\n`.wmv` → `video/mp4`, `.flv` → `video/mp4`, `.3gp` → `video/mp4` (and `.m4v` → `video/mp4`, which is fine — m4v is mp4-family). A WMV/FLV/3GP container is factually not an MP4 container, so the payload rides with a `mimeType` that disagrees with the bytes — the same mismatch the image path explicitly avoids (\"the request must carry exactly those bytes … mime names the converted payload\", `builtin_tools_read.dart:439`). On a video-capable chat model this is a request that is plausibly doomed at provider decode; the failure then degrades to the honest note, but the read wasted the budget slot and the round trip on a mislabeled attach.\n\nPlease either (a) map the real types (`video/x-ms-wmv`, `video/x-flv`, `video/3gpp`) after confirming the targets accept them, or (b) restrict `_videoExtensions` to the extensions whose MIME you can name correctly, and let the rest keep today's AC10 configure-a-model note. Also worth a test asserting mime ↔ extension agreement for every routed extension.\n\nNote the fallback comment (\"OpenRouter/Gemini accept the mp4 spelling\") is an uncited provider-behavior claim — if that's the justification for the catch-all, please cite the provider doc that was checked."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6yLfVk",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "lib/src/agent/image_registry.dart:458",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT: the token and outbound-byte estimators don't count video — up to `maxBytesPerRequest` (~8MB base64) invisible per video**\n\nThis line correctly makes videos budget-bearing for the 413 ladder, but two consumers of the same blocks were not extended and still have video in their `default:` arm:\n\n1. `lib/src/compaction/token_estimation.dart:49-63` (`_textAndImageChars`) and `:500-513` — `ImageContent` adds `estimatedImageChars`; `VideoContent` contributes **0 chars**. A video session's /context estimate and compaction trigger heuristics under-report by megabytes of base64 (videos ride at up to `images.maxBytesPerRequest`, default ~8MB — vs `estimatedImageChars` for a screenshot).\n2. `lib/src/providers/payload_stall.dart:83-97` (`_blocksBytes`) — `ImageContent(:final data)` adds `data.length`; `VideoContent` contributes **0 bytes** to `lastOutboundEstimateBytes`. That estimate is what arms the run-idle stall watchdog (`noteOutboundEstimate` is published by `rewriteRequestImages`, the funnel this PR now pushes videos through) — a big video attach makes the watchdog's picture of the outbound payload wrong on exactly the requests most likely to stall.\n\nNeither file is in this diff, so please follow up: add a video case to both estimators (base64 `data.length` for the stall estimate; a distinct `estimatedVideoChars` — or the payload length — for token estimation), with a test asserting a riding video moves both numbers. The AC7 budget tests cover the ladder's own accounting; nothing currently covers these two seams for video."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6yLfWd",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "lib/src/providers/provider_common.dart:137",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: the vision-model no-op fast path is gone — every request now rebuilds all user/tool messages**\n\nBefore this change, `downgradeUnsupportedImages` returned `messages` untouched whenever the model had `image` input. Now the early return requires **both** `image` and `video`, so for today's whole roster (image-capable, video-incapable) every single request runs `_replaceMedia` — which rebuilds the list and re-allocates every `UserMessage`/`ToolResultMessage` even when there is not a single video block in the conversation. The copies are field-complete (correctness holds), but this is the hottest path in the library and the free fast path for vision models was previously an explicit invariant (cf. the \"caller's list instance\" guarantees nearby in `image_registry.dart`).\n\nCheap fix: have `_replaceMediaWithPlaceholder` signal \"nothing replaced\" (it already tracks whether it wrote anything) and return the original `messages` list when no block was substituted — restoring zero-cost pass-through for image-only sessions while keeping the video downgrade."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6yLfXh",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "lib/src/tools/inspect_image.dart:467",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: `paths` validation is looser than its own schema text**\n\nThe description (and the runtime error messages) promise \"an array of 2–8 image files\", but this branch accepts:\n\n- a **single-element** array — `paths: ['a.png']` passes (it rides the single-image branch later, so behavior is fine, but the contract text and the code disagree; either enforce `>= 2` when `paths` is used, or document 1–8);\n- non-string members **silently dropped** — `paths.whereType<String>()` filters them and `requestedCount` becomes the filtered length, so the cap notice (and the schema-error path above it) never mentions the junk the caller sent. A `paths: [42, 'a.png', 'b.png']` call inspects 2 images and reports nothing about the `42`. Consider validating `every element is String` and throwing the existing `ToolValidationException` instead of filtering — that matches the explicit-refusal style of the `path`+`paths` and empty-array checks right next to this code."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6yLfYX",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "lib/src/tools/inspect_image.dart:540",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: `resize: \"original\"` is silently moot on the stitch route**\n\nWith `stitch: true` (or a single-image-only model), `_stitchedInspectResult` decodes each prepared payload and re-encodes it into the composite, so \"keeps the original bytes for this call\" can never hold on that route — the caller pays the keep-original decode (`keepOriginalImage` decodes + EXIF-bakes) only for the pixels to be re-tiled and re-encoded anyway. Not wrong, but worth one line in the tool description (\"`resize` does not apply to the stitched composite\") so agents don't reach for `resize: \"original\"` expecting byte fidelity from a stitched call. The per-image \"resized to WxH\" notes do stay accurate for the tile payloads."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-31:21748ff4",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-31",
+      "updatedAt": "2026-10-31",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🚨 **BLOCKING: barrel-exporting `generate_image.dart` turns 5 CI checks red**\n\nThis PR adds `export 'src/tools/generate_image.dart';` to the public barrel. `generate_image.dart` **defines** `MediaKeyResolver` (line 56), `MediaEndpoint` (line 59), `generateImageToolName` (line 38) and `generateImageTool` — and `flutter_app` has its **own parallel copies** of those exact names (`package:fa/services/media_tools.dart`, `package:fa_ui/src/stores/media_models_store.dart`, `package:fa_ui/src/chat/media_tool_names.dart`) in files that also import this barrel. Before this PR `generate_image.dart` was reachable only via direct `src/` imports, so the names never collided.\n\nCI on commit `def278c` — 5 failed checks, one root cause:\n\n1. **Flutter app analyze (ubuntu)** — ambiguous imports:\n   `Error: 'MediaKeyResolver' is imported from both 'package:fa_ui/src/stores/media_models_store.dart' and 'package:flutter_agent_harness/src/tools/generate_image.dart'` (same for `MediaEndpoint`, `generateImageTool`, `generateImageToolName`) → `Error: Compilation failed.`\n2. **Build web (debug)** — `Target dart2js failed` with the same 7 ambiguous-import errors, `Failed to compile application for the Web.`\n3. **Extension size gate (fa-extension.zip)** — the extension's web build dies at the same `dart compile js` step with the same errors.\n4. **Office add-in suite** — `flutter_app/test/services/office_wiring_test.dart` fails to load with the same errors: `0 tests passed, 1 failed.`\n5. **Static gates** — `dart analyze --fatal-infos --fatal-warnings` fails with 2 infos the export itself creates:\n   - `test/tools/generate_image_test.dart:5:8` — unnecessary_import\n   - `test/tools/generate_media_cancel_test.dart:4:8` — unnecessary_import\n   (both files import the barrel AND the src path; with the export in place the direct import is redundant).\n\n**Fix (one line):** delete this export. Nothing in gh-1985 needs it — the PR's own tests import `src/tools/generate_image.dart` directly, and `image_pipeline.dart` / `inspect_image_stitch.dart` can stay exported (no collisions). Removing the export simultaneously restores the two test files' direct imports to \"necessary\" (clearing the Static-gates infos) and un-breaks all four app-side compile/analyze legs.\n\n(Keeping the export with a `hide MediaKeyResolver, MediaEndpoint, generateImageTool, generateImageToolName` filter would fix the app legs but **not** the 2 analyzer infos, so removal is the minimal complete fix.)"
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-31:176de409",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-31",
+      "updatedAt": "2026-10-31",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT: `_videoMimeType` mislabels `.wmv`, `.flv`, `.3gp` as `video/mp4`**\n\nThe route matches 11 video extensions, but the MIME map only names 6:\n\n```dart\nreturn switch (lower.substring(lower.lastIndexOf('.') + 1)) {\n  'webm' => 'video/webm',\n  'mov' => 'video/quicktime',\n  'mkv' => 'video/x-matroska',\n  'avi' => 'video/x-msvideo',\n  'mpeg' || 'mpg' => 'video/mpeg',\n  _ => 'video/mp4',\n};\n```\n\n`.wmv` → `video/mp4`, `.flv` → `video/mp4`, `.3gp` → `video/mp4` (and `.m4v` → `video/mp4`, which is fine — m4v is mp4-family). A WMV/FLV/3GP container is factually not an MP4 container, so the payload rides with a `mimeType` that disagrees with the bytes — the same mismatch the image path explicitly avoids (\"the request must carry exactly those bytes … mime names the converted payload\", `builtin_tools_read.dart:439`). On a video-capable chat model this is a request that is plausibly doomed at provider decode; the failure then degrades to the honest note, but the read wasted the budget slot and the round trip on a mislabeled attach.\n\nPlease either (a) map the real types (`video/x-ms-wmv`, `video/x-flv`, `video/3gpp`) after confirming the targets accept them, or (b) restrict `_videoExtensions` to the extensions whose MIME you can name correctly, and let the rest keep today's AC10 configure-a-model note. Also worth a test asserting mime ↔ extension agreement for every routed extension.\n\nNote the fallback comment (\"OpenRouter/Gemini accept the mp4 spelling\") is an uncited provider-behavior claim — if that's the justification for the catch-all, please cite the provider doc that was checked."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-31:a334555a",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-31",
+      "updatedAt": "2026-10-31",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT: the token and outbound-byte estimators don't count video — up to `maxBytesPerRequest` (~8MB base64) invisible per video**\n\nThis line correctly makes videos budget-bearing for the 413 ladder, but two consumers of the same blocks were not extended and still have video in their `default:` arm:\n\n1. `lib/src/compaction/token_estimation.dart:49-63` (`_textAndImageChars`) and `:500-513` — `ImageContent` adds `estimatedImageChars`; `VideoContent` contributes **0 chars**. A video session's /context estimate and compaction trigger heuristics under-report by megabytes of base64 (videos ride at up to `images.maxBytesPerRequest`, default ~8MB — vs `estimatedImageChars` for a screenshot).\n2. `lib/src/providers/payload_stall.dart:83-97` (`_blocksBytes`) — `ImageContent(:final data)` adds `data.length`; `VideoContent` contributes **0 bytes** to `lastOutboundEstimateBytes`. That estimate is what arms the run-idle stall watchdog (`noteOutboundEstimate` is published by `rewriteRequestImages`, the funnel this PR now pushes videos through) — a big video attach makes the watchdog's picture of the outbound payload wrong on exactly the requests most likely to stall.\n\nNeither file is in this diff, so please follow up: add a video case to both estimators (base64 `data.length` for the stall estimate; a distinct `estimatedVideoChars` — or the payload length — for token estimation), with a test asserting a riding video moves both numbers. The AC7 budget tests cover the ladder's own accounting; nothing currently covers these two seams for video."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-31:f148bc34",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-31",
+      "updatedAt": "2026-10-31",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: the vision-model no-op fast path is gone — every request now rebuilds all user/tool messages**\n\nBefore this change, `downgradeUnsupportedImages` returned `messages` untouched whenever the model had `image` input. Now the early return requires **both** `image` and `video`, so for today's whole roster (image-capable, video-incapable) every single request runs `_replaceMedia` — which rebuilds the list and re-allocates every `UserMessage`/`ToolResultMessage` even when there is not a single video block in the conversation. The copies are field-complete (correctness holds), but this is the hottest path in the library and the free fast path for vision models was previously an explicit invariant (cf. the \"caller's list instance\" guarantees nearby in `image_registry.dart`).\n\nCheap fix: have `_replaceMediaWithPlaceholder` signal \"nothing replaced\" (it already tracks whether it wrote anything) and return the original `messages` list when no block was substituted — restoring zero-cost pass-through for image-only sessions while keeping the video downgrade."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-31:cb469b9d",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-31",
+      "updatedAt": "2026-10-31",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: `paths` validation is looser than its own schema text**\n\nThe description (and the runtime error messages) promise \"an array of 2–8 image files\", but this branch accepts:\n\n- a **single-element** array — `paths: ['a.png']` passes (it rides the single-image branch later, so behavior is fine, but the contract text and the code disagree; either enforce `>= 2` when `paths` is used, or document 1–8);\n- non-string members **silently dropped** — `paths.whereType<String>()` filters them and `requestedCount` becomes the filtered length, so the cap notice (and the schema-error path above it) never mentions the junk the caller sent. A `paths: [42, 'a.png', 'b.png']` call inspects 2 images and reports nothing about the `42`. Consider validating `every element is String` and throwing the existing `ToolValidationException` instead of filtering — that matches the explicit-refusal style of the `path`+`paths` and empty-array checks right next to this code."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-31:a6fd1060",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-31",
+      "updatedAt": "2026-10-31",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: `resize: \"original\"` is silently moot on the stitch route**\n\nWith `stitch: true` (or a single-image-only model), `_stitchedInspectResult` decodes each prepared payload and re-encodes it into the composite, so \"keeps the original bytes for this call\" can never hold on that route — the caller pays the keep-original decode (`keepOriginalImage` decodes + EXIF-bakes) only for the pixels to be re-tiled and re-encoded anyway. Not wrong, but worth one line in the tool description (\"`resize` does not apply to the stitched composite\") so agents don't reach for `resize: \"original\"` expecting byte fidelity from a stitched call. The per-image \"resized to WxH\" notes do stay accurate for the tile payloads."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-30:13b34223",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-30",
+      "updatedAt": "2026-10-30",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ Validation CI went red on the head — merge aborted, rework re-queued. (linked issue #1985 re-armed) (approval latch kept — no re-review after fixes)\n🔴 red head def2788c6aa74c464d0bef8ccded49167060f090 — red 1/3 (owner directive 2026-10-04: red yields the slot — after 3 reds on the same head, validation waits for a NEW head)"
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-31:e2a3f376",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-31",
+      "updatedAt": "2026-10-31",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — REQUEST_CHANGES\n\n**Summary**: 5 CI checks are red on the PR head (`def278c`), all from one line: the new `export 'src/tools/generate_image.dart'` in the barrel collides with `flutter_app`'s own `MediaKeyResolver`/`MediaEndpoint`/`generateImageTool`/`generateImageToolName` (Breaks flutter analyze, Build web, Extension size gate, Office add-in suite) and makes 2 direct imports in existing tests redundant (`--fatal-infos` fails Static gates). The feature work itself is solid and well-tested (48 new tests pass in-tree; wire shaping, downgrade notes, read routing, stitch, budgets, AC7 latch all covered).\n\n**Key Issues**:\n- 🚨 BLOCKING: barrel export of `generate_image.dart` → 5 red CI checks (comment 1; one-line fix)\n- ⚠️ `read` video route mislabels `.wmv`/`.flv`/`.3gp` payloads as `video/mp4` (comment 2)\n- ⚠️ `token_estimation.dart` + `payload_stall.dart` ignore `VideoContent` — /context and stall-watchdog estimates under-count riding videos (comment 3)\n- 💡 Vision-model no-op fast path lost in `downgradeUnsupportedImages`; `paths` leniency vs schema text; `resize: \"original\"` moot on stitch route (comments 4–6)\n\n**Next Steps**:\n1. Remove `export 'src/tools/generate_image.dart';` from `lib/flutter_agent_harness.dart` — clears all 5 failed checks\n2. Map or drop the mislabeled video extensions in `_videoMimeType`\n3. Extend the token/outbound estimators (and tests) for `VideoContent`"
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-31:9693d723",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-31",
+      "updatedAt": "2026-10-31",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🔴 red head def2788c6aa74c464d0bef8ccded49167060f090 — red 2/3 (owner directive 2026-10-04: red yields the slot — after 3 reds on the same head, validation waits for a NEW head)\n🔴 Red pre-merge gate on the head with no armed validation — rework armed (gh-917: first validation included, review or no review). The rework runner pushes a fix and validation re-runs on the new head (validate-fresh). After 3 red arming attempts on the SAME head the arm is withheld and a human is escalated (no infinite retry)."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-31:7218e17a",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-31",
+      "updatedAt": "2026-10-31",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🧵 Unresolved review threads — rework armed. This machine-authored PR is reviewed (ai_pr_reviewed) but still has open review threads. The rework leg owns open threads: agent:rework is armed on this PR and the rework runner will work through the threads and push. Validation re-runs automatically afterwards, and once the threads are resolved a fresh re-review is armed (review-threads-resolved)."
+    }
+  ]
+}
