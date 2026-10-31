@@ -889,13 +889,13 @@ final class WindowedSessionStorage
     }
     final joined = <SessionRecord>[];
     var current = bottom;
-    var children = childrenByParent[current];
-    while (children != null && children.length == 1) {
+    var children = childrenByParent[current] ?? const <SessionRecord>[];
+    while (children.length == 1) {
       final record = children.single;
       joined.add(record);
       _branchBottomId = record.id;
       current = record.id;
-      children = childrenByParent[current];
+      children = childrenByParent[current] ?? const <SessionRecord>[];
     }
     return joined;
   }
@@ -929,12 +929,12 @@ final class WindowedSessionStorage
     }
     final downs = <SessionRecord>[];
     var current = target;
-    var children = childrenByParent[current.id];
-    while (children != null && children.length == 1) {
+    var children = childrenByParent[current.id] ?? const <SessionRecord>[];
+    while (children.length == 1) {
       final record = children.single;
       downs.add(record);
       current = record;
-      children = childrenByParent[current.id];
+      children = childrenByParent[current.id] ?? const <SessionRecord>[];
     }
     _branchBottomId = downs.isEmpty ? target.id : downs.last.id;
     return [...ups.reversed, ...downs];
@@ -1196,11 +1196,13 @@ final class WindowedSessionStorage
         _indexEntry(record, start: start, end: _fileSize);
         _knownFileBytes = _fileSize;
         if (chained) _branchBottomId = leaf;
-      } else if (_belowCount != null) {
+      } else {
         // Deep-paged: the record lands below the window and pages in later.
         final below = _belowCount;
-        _belowCount = below == null ? 0 : below + 1;
-        _appendedBelow[record.id] = record;
+        if (below != null) {
+          _belowCount = below + 1;
+          _appendedBelow[record.id] = record;
+        }
       }
       _currentLeafId = leaf;
     });

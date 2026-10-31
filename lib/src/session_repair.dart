@@ -19,7 +19,6 @@
 library;
 
 import 'dart:convert';
-import 'dart:typed_data';
 
 import 'env/execution_env.dart';
 import 'session/obligations_ledger.dart' show obligationsLedgerRecordType;
@@ -437,17 +436,14 @@ Future<int> _writeRepairedAndSwap(
   // An existing backup is rotated to `.bak1` first.
   final backupPath = '$path.bak';
   final backupExists = await fs.exists(backupPath);
-  final bool backupWasThere;
-  switch (backupExists) {
-    case Ok<bool, FileError>(:final value):
-      backupWasThere = value;
-    case Err<bool, FileError>(:final error):
-      await fs.remove(tempPath, force: true);
-      throw SessionRepairException(
-        'cannot check for an existing backup at $backupPath: '
-        '${error.message}',
-        code: SessionRepairErrorCode.unknown,
-      );
+  final backupWasThere = backupExists.valueOrNull;
+  if (backupWasThere == null) {
+    await fs.remove(tempPath, force: true);
+    throw SessionRepairException(
+      'cannot check for an existing backup at $backupPath: '
+      '${backupExists.errorOrNull?.message}',
+      code: SessionRepairErrorCode.unknown,
+    );
   }
   if (backupWasThere) {
     final rotated = await renamable.renamePath(backupPath, '$path.bak1');
@@ -494,16 +490,14 @@ Future<void> _writeSpansToTemp(
 ) async {
   var write = await fs.writeFile(tempPath, '');
   for (final span in spans) {
-    final Uint8List bytes;
-    switch (await ranged.readRange(path, span.$1, span.$2)) {
-      case Ok<Uint8List, FileError>(:final value):
-        bytes = value;
-      case Err<Uint8List, FileError>(:final error):
-        await fs.remove(tempPath, force: true);
-        throw SessionRepairException(
-          'read failed during repair of $path: ${error.message}',
-          code: SessionRepairErrorCode.unknown,
-        );
+    final raw = await ranged.readRange(path, span.$1, span.$2);
+    final bytes = raw.valueOrNull;
+    if (bytes == null) {
+      await fs.remove(tempPath, force: true);
+      throw SessionRepairException(
+        'read failed during repair of $path: ${raw.errorOrNull?.message}',
+        code: SessionRepairErrorCode.unknown,
+      );
     }
     write = await fs.appendFile(
       tempPath,
@@ -550,10 +544,7 @@ Future<int> _countPartSiblings(FileSystem fs, String path) async {
   if (dir.isEmpty) return 0;
   final base = path.substring(slash + 1);
   final listed = await fs.listDir(dir);
-  final List<FileInfo>? entries = switch (listed) {
-    Ok<List<FileInfo>, FileError>(:final value) => value,
-    Err<List<FileInfo>, FileError>() => null,
-  };
+  final entries = listed.valueOrNull;
   if (entries == null) return 0;
   var count = 0;
   for (final entry in entries) {

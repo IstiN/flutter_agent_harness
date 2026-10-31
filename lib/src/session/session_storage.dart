@@ -1495,11 +1495,13 @@ final class JsonlSessionStorage implements SessionStorage, SessionHeaderCache {
   /// the encoded UTF-8 size of the record about to be appended.
   Future<void> _rotateIfNeededLocked(int incomingBytes) async {
     if (!await _recoverHeaderLineLocked()) return;
+    final headerLine = _headerLine;
+    if (headerLine == null) return; // unreachable after recovery
     final size = await _sessionFileSize();
     if (size == null) return;
     var active = size;
     if (active >= _rotateBytes && !_rotationSuspended) {
-      active = await _rotateSegmentLocked(size);
+      active = await _rotateSegmentLocked(size, headerLine);
     }
     if (active + incomingBytes > _hardCapBytes) {
       await _truncateOldestLocked(incomingBytes);
@@ -1520,13 +1522,10 @@ final class JsonlSessionStorage implements SessionStorage, SessionHeaderCache {
   /// Renames the primary to the next `.part-NN` sibling and seeds a fresh
   /// primary with just the header. Returns the new (header-only) size, or
   /// [preCallSize] when the rotation could not complete — the caller then
-  /// still applies the hard cap to the un-rotated segment.
-  Future<int> _rotateSegmentLocked(int preCallSize) async {
-    // The caller recovered the header line first (_recoverHeaderLineLocked);
-    // a null here keeps the plain append path — same contract as any other
-    // rotation failure.
-    final headerLine = _headerLine;
-    if (headerLine == null) return preCallSize;
+  /// still applies the hard cap to the un-rotated segment. [headerLine]
+  /// arrives already recovered (the caller runs [_recoverHeaderLineLocked]
+  /// first), so the callee carries no extra null branch.
+  Future<int> _rotateSegmentLocked(int preCallSize, String headerLine) async {
     final partPath = sessionPartPath(_filePath, _nextPartSeq());
     var renamed = false;
     if (_fs is RenamableFileSystem) {

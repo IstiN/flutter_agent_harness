@@ -1031,10 +1031,8 @@ Future<void> _scanFileBlocks(
   var carry = <int>[];
   while (offset < size) {
     final end = (offset + blockBytes).clamp(0, size);
-    final Uint8List? block = switch (await fs.readRange(path, offset, end)) {
-      Ok<Uint8List, FileError>(:final value) => value,
-      Err<Uint8List, FileError>() => null,
-    };
+    final read = await fs.readRange(path, offset, end);
+    final Uint8List? block = read.valueOrNull;
     if (block == null) return;
     offset = end;
     carry = _scanBlock(accumulator, block, carry);

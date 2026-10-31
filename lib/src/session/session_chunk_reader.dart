@@ -845,10 +845,7 @@ final class SessionChunkReader {
 
   /// File facts for staleness guards; `null` when the file is gone.
   Future<({int size, int mtimeMs})?> stat() async {
-    final info = switch (await fs.fileInfo(path)) {
-      Ok<FileInfo, FileError>(:final value) => value,
-      Err<FileInfo, FileError>() => null,
-    };
+    final info = (await fs.fileInfo(path)).valueOrNull;
     if (info == null || info.kind != FileKind.file) return null;
     _noteParseCacheStamp(info.size, info.mtimeMs);
     return (size: info.size, mtimeMs: info.mtimeMs);

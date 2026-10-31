@@ -961,16 +961,17 @@ final class JsonlSessionRepo implements SessionRepo {
     // and misses. Records are SHARED between callers — the codebase
     // treats them as immutable (read-only payload consumers).
     final fingerprint = await _scanChainFingerprint(scanned);
-    final memo = fingerprint == null ? null : _scanMemo[metadata.path];
-    if (fingerprint != null &&
-        memo != null &&
-        memo.matches(
-          types: types,
-          lastSegmentOnly: lastSegmentOnly,
-          tailCapBytes: cap,
-          fingerprint: fingerprint,
-        )) {
-      return List.of(memo.records);
+    if (fingerprint case final fp?) {
+      final memo = _scanMemo[metadata.path];
+      if (memo != null &&
+          memo.matches(
+            types: types,
+            lastSegmentOnly: lastSegmentOnly,
+            tailCapBytes: cap,
+            fingerprint: fp,
+          )) {
+        return List.of(memo.records);
+      }
     }
     final records = <CustomRecord>[];
     final seen = <String>{};
@@ -1091,12 +1092,10 @@ final class JsonlSessionRepo implements SessionRepo {
     int? tailCapBytes,
   ) async {
     final blockBytes = debugCustomRecordScanBlockBytes;
-    final info = switch (await fs.fileInfo(path)) {
-      Ok<FileInfo, FileError>(:final value) => value,
-      Err<FileInfo, FileError>() => null,
-    };
-    if (info == null || info.kind != FileKind.file) return const [];
-    final size = info.size;
+    final info = await fs.fileInfo(path);
+    final FileInfo? info0 = info.valueOrNull;
+    if (info0 == null || info0.kind != FileKind.file) return const [];
+    final size = info0.size;
     final scanner = _CustomRecordBlockScanner(types);
     // Start inside the tail region: a line torn at the boundary simply
     // fails the field-shaped gate (or jsonDecode) and is skipped — the
@@ -1104,14 +1103,8 @@ final class JsonlSessionRepo implements SessionRepo {
     var offset = tailCapBytes == null ? 0 : math.max(0, size - tailCapBytes);
     while (offset < size) {
       final end = (offset + blockBytes).clamp(0, size);
-      final Uint8List? block = switch (await ranged.readRange(
-        path,
-        offset,
-        end,
-      )) {
-        Ok<Uint8List, FileError>(:final value) => value,
-        Err<Uint8List, FileError>() => null,
-      };
+      final read = await ranged.readRange(path, offset, end);
+      final Uint8List? block = read.valueOrNull;
       if (block == null) return const [];
       if (block.isEmpty) break;
       offset = end;
