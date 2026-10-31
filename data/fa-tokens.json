@@ -77,17 +77,6 @@
       "model": "kimi-for-coding"
     }
   ],
-  "issue-1658": [
-    {
-      "leg": "dev",
-      "at": "2026-10-17T07:37:03Z",
-      "prompt": 143560,
-      "completion": 5406,
-      "total": 148966,
-      "cacheRead": 799552,
-      "model": "glm-5.3-flash"
-    }
-  ],
   "issue-1644": [
     {
       "leg": "dev",
@@ -3951,6 +3940,15 @@
       "completion": 19584,
       "total": 99169,
       "cacheRead": 1652736,
+      "model": "glm-5.3-flash"
+    },
+    {
+      "leg": "review",
+      "at": "2026-10-31T07:50:04Z",
+      "prompt": 116241,
+      "completion": 16188,
+      "total": 132429,
+      "cacheRead": 2275456,
       "model": "glm-5.3-flash"
     }
   ]
