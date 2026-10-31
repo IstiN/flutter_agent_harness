@@ -24,9 +24,9 @@ const String highEntropyLabel = 'High Entropy String';
 
 final RegExp _uuidShape = RegExp(
   r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}'
-  r'-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\$',
+  r'-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$',
 );
-final RegExp _hexRun = RegExp(r'^[0-9a-fA-F][0-9a-fA-F_-]+\$');
+final RegExp _hexRun = RegExp(r'^[0-9a-fA-F][0-9a-fA-F_-]+$');
 final RegExp _isoTimestamp = RegExp(r'^\d{4}-\d{2}-\d{2}T');
 final RegExp _integrityHash = RegExp(r'^sha(256|384|512)-');
 

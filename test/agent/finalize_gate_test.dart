@@ -423,4 +423,25 @@ void main() {
   test('record type constant is the session record discriminator', () {
     expect(taskLedgerRecordType, 'task_ledger');
   });
+
+  group('TaskLedgerItemStatus persisted-name contract (issue #1999)', () {
+    test('statuses round-trip through pinned payload spellings', () {
+      expect(TaskLedgerItemStatus.pass.jsonName, 'pass');
+      expect(TaskLedgerItemStatus.fail.jsonName, 'fail');
+      expect(TaskLedgerItemStatus.fixed.jsonName, 'fixed');
+      for (final status in TaskLedgerItemStatus.values) {
+        expect(TaskLedgerItemStatus.fromName(status.jsonName), status);
+      }
+    });
+
+    test('unknown/legacy statuses degrade to fail, never crash', () {
+      expect(TaskLedgerItemStatus.fromName(null), TaskLedgerItemStatus.fail);
+      expect(TaskLedgerItemStatus.fromName('bogus'), TaskLedgerItemStatus.fail);
+      expect(TaskLedgerItemStatus.fromName('PASS'), TaskLedgerItemStatus.pass);
+      expect(
+        TaskLedgerItemStatus.fromName('fixed it'),
+        TaskLedgerItemStatus.fixed,
+      );
+    });
+  });
 }
