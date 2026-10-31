@@ -24,6 +24,10 @@ import 'tui_prompt.dart';
 import 'tui_repl.dart' show MenuItem, TuiProgramHooks;
 import 'tui_status_line.dart' show StatusLineSnapshot, TuiStatusLine;
 
+/// A waiting-row timer (due-at epoch ms, one-line preview) — mirrors the
+/// VM fa_tui.dart alias (issue #1997).
+typedef WaitingTimer = ({int dueMs, String preview});
+
 /// Stub mirror of fa_tui.dart's busy forensic sink (never fires here).
 void Function(String line)? faTuiBusyDiagnostics;
 
@@ -180,7 +184,7 @@ final class FaTuiController {
   /// BOTH targets.
   void setWaiting({
     required List<String> jobs,
-    required List<({int dueMs, String preview})> timers,
+    required List<WaitingTimer> timers,
     int lostJobs = 0,
   }) {}
 
