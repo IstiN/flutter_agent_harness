@@ -1,0 +1,143 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-31T07:11:57.943Z",
+  "ticketKey": "gh-2008",
+  "headSha": "9f2c9ef3080c2c3e500d8d1a181eea64e7c34ddd",
+  "baseBranch": "main",
+  "reviewDecision": "NONE",
+  "labels": [],
+  "files": {
+    "ci_failures.md": {
+      "hash": "fnv1a64:322b878d3c3c2465",
+      "size": 288
+    },
+    "pr_diff.txt": {
+      "hash": "fnv1a64:24c543e5474025b8",
+      "size": 12302
+    },
+    "pr_discussions.md": {
+      "hash": "fnv1a64:ba5a04c5a792318a",
+      "size": 12566
+    },
+    "pr_discussions_raw.json": {
+      "hash": "fnv1a64:9e2e8b991f76daa7",
+      "size": 2768
+    },
+    "pr_info.md": {
+      "hash": "fnv1a64:84ba8ba3df75db1f",
+      "size": 2382
+    },
+    "request.md": {
+      "hash": "fnv1a64:4eb0b2bdfcd3f308",
+      "size": 1058
+    },
+    "review_state.md": {
+      "hash": "fnv1a64:bbef00873d3f78ed",
+      "size": 839
+    },
+    "rework_base_head.txt": {
+      "hash": "fnv1a64:5e4ce938c9f427bd",
+      "size": 40
+    },
+    "ticket.json": {
+      "hash": "fnv1a64:1ed72ef834ead83c",
+      "size": 1126
+    },
+    "ticket.md": {
+      "hash": "fnv1a64:4eb0b2bdfcd3f308",
+      "size": 1058
+    }
+  },
+  "comments": [
+    {
+      "id": "PRRT_kwDOTXdlLc6yOzIh",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "scripts/sweep_stale_drafts.sh:51",
+      "resolved": false,
+      "body": "🚨 **BLOCKING: E1 invariant — the ownership-marker test is looser than the marker the pipeline actually stamps, so a human draft can be silently deleted**\n\nLine 51 buckets a stale draft as pipeline-created on ANY body substring match of `release-draft-owner:`:\n\n```bash\nor ((.body // \"\") | test(\"release-draft-owner:\")))\n```\n\nBut the marker that `release_lazy_draft.sh:66` and `release_attach_or_create.sh:89` stamp — and that `release_draft_guard.sh:56` parses (`grep -oE 'release-draft-owner: run/[0-9]+/job/[A-Za-z0-9_-]+'`) — has the strict shape `release-draft-owner: run/<id>/job/<job>`, exactly the shape your own `run:` extraction on line 65 requires. The bucket test and the extraction regex in the same object literal disagree: a draft whose body merely *mentions* the substring (human prose quoting/negating the marker, or a malformed marker like `release-draft-owner: unknown`) is bucketed `bot` → **`gh api -X DELETE`**.\n\nDemonstrated live with this PR's production jq filter (three stale human-author drafts):\n\n```\nbot  v9.0.1  111  ... alice   ← body: \"this draft has NO release-draft-owner: marker (prose)\" → DELETED\nbot  v9.0.2  222  ... IstiN   ← body: \"release-draft-owner: unknown\" (no run shape) → DELETED, run=\"\"\nbot  v9.0.3  333  ... IstiN 40822965933 ← proper marker → DELETED, run named ✔\n```\n\nThat is exactly the silent human-draft deletion the E1 invariant (issue #282: \"stale HUMAN drafts are listed in the summary, never deleted\") exists to prevent, and it contradicts this PR's own contract — the ticket says \"Unmarked human drafts stay listed-not-deleted (E1)\" and the `docs/ci.md` hunk here says \"human drafts (no marker) are listed but kept (E1)\". Before this PR the signal was server-controlled (`author.type`); now it is a user-controlled body substring with no shape validation.\n\n**Fix (one line + a negative test):**\n\n```bash\nor ((.body // \"\") | test(\"release-draft-owner: run/[0-9]+/job/\")))\n```\n\nThis keeps every real pipeline draft deletable (all stamped markers carry `run/<id>/job/`), aligns the bucket rule with the guard's parse and line 65's capture, and makes the `docs/ci.md` claim true. Please add a negative test to the new AC2 case: a stale draft whose body contains the loose substring but not the `run/<id>/job/` shape must stay **kept** (E1) — the current suite only covers the proper-marker / no-marker / fresh triad."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-31:7dea6ec9",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-31",
+      "updatedAt": "2026-10-31",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🚨 **BLOCKING: E1 invariant — the ownership-marker test is looser than the marker the pipeline actually stamps, so a human draft can be silently deleted**\n\nLine 51 buckets a stale draft as pipeline-created on ANY body substring match of `release-draft-owner:`:\n\n```bash\nor ((.body // \"\") | test(\"release-draft-owner:\")))\n```\n\nBut the marker that `release_lazy_draft.sh:66` and `release_attach_or_create.sh:89` stamp — and that `release_draft_guard.sh:56` parses (`grep -oE 'release-draft-owner: run/[0-9]+/job/[A-Za-z0-9_-]+'`) — has the strict shape `release-draft-owner: run/<id>/job/<job>`, exactly the shape your own `run:` extraction on line 65 requires. The bucket test and the extraction regex in the same object literal disagree: a draft whose body merely *mentions* the substring (human prose quoting/negating the marker, or a malformed marker like `release-draft-owner: unknown`) is bucketed `bot` → **`gh api -X DELETE`**.\n\nDemonstrated live with this PR's production jq filter (three stale human-author drafts):\n\n```\nbot  v9.0.1  111  ... alice   ← body: \"this draft has NO release-draft-owner: marker (prose)\" → DELETED\nbot  v9.0.2  222  ... IstiN   ← body: \"release-draft-owner: unknown\" (no run shape) → DELETED, run=\"\"\nbot  v9.0.3  333  ... IstiN 40822965933 ← proper marker → DELETED, run named ✔\n```\n\nThat is exactly the silent human-draft deletion the E1 invariant (issue #282: \"stale HUMAN drafts are listed in the summary, never deleted\") exists to prevent, and it contradicts this PR's own contract — the ticket says \"Unmarked human drafts stay listed-not-deleted (E1)\" and the `docs/ci.md` hunk here says \"human drafts (no marker) are listed but kept (E1)\". Before this PR the signal was server-controlled (`author.type`); now it is a user-controlled body substring with no shape validation.\n\n**Fix (one line + a negative test):**\n\n```bash\nor ((.body // \"\") | test(\"release-draft-owner: run/[0-9]+/job/\")))\n```\n\nThis keeps every real pipeline draft deletable (all stamped markers carry `run/<id>/job/`), aligns the bucket rule with the guard's parse and line 65's capture, and makes the `docs/ci.md` claim true. Please add a negative test to the new AC2 case: a stale draft whose body contains the loose substring but not the `run/<id>/job/` shape must stay **kept** (E1) — the current suite only covers the proper-marker / no-marker / fresh triad."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-31:bff6c3ef",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-31",
+      "updatedAt": "2026-10-31",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ Validation CI went red on the head — merge aborted, rework re-queued. (linked issue #2008 re-armed) (approval latch kept — no re-review after fixes)\n🔴 red head d29841a87611e22633359c65fc42d47d3f988f73 — red 1/3 (owner directive 2026-10-04: red yields the slot — after 3 reds on the same head, validation waits for a NEW head)"
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-31:a5b27d1d",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-31",
+      "updatedAt": "2026-10-31",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⏸ ghost-guard defer d29841a87611e22633359c65fc42d47d3f988f73 — run 41174424183 still queued at 2026-10-31T06:39:45.617Z\n\nGhost-guard bookkeeping (gh-848): a stale validation run was left running because its jobs had not materialized yet — a queued cancel orphans its check-runs as `in_progress` ghosts and the merge gate holds on them forever — and/or its orphaned check-runs were concluded `cancelled` via the Checks API. `cancelled` is not a verdict (gh-755): no fail-validation, no zombie re-dispatch is recorded for these heads."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-31:2c5b9959",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-31",
+      "updatedAt": "2026-10-31",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## 🔧 Rework Complete — gh-2008\n\nAll PR review comments have been addressed. See fix summary below."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-31:501c5a01",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-31",
+      "updatedAt": "2026-10-31",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "✅ Rework finished. `pr_approved` is sticky (approved once — never re-reviewed): the new head re-validates and merges directly."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-10-31:57db327b",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-10-31",
+      "updatedAt": "2026-10-31",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — REQUEST_CHANGES\n\n**Summary**: One blocking issue: the sweeper's new ownership-marker test (`test(\"release-draft-owner:\")`) matches any body substring instead of the `release-draft-owner: run/<id>/job/` shape the stamping/guard scripts actually use, so a stale human draft that merely mentions the substring is silently deleted — an E1 (listed-but-kept) regression demonstrated against the production jq filter. One suggestion (wording in unchanged lines): the auto-filed issue/job summary still say \"stale bot draft(s)\" although gh-2008's premise is that these PAT-attributed drafts are human-authored — consider \"stale pipeline-created draft(s)\".\n\n**Key Issues**:\n- 🚨 BLOCKING — `scripts/sweep_stale_drafts.sh:51`: bucket test looser than the guard's marker shape; human-draft data-loss edge; contradicts the ticket's and `docs/ci.md`'s own E1 claim. One-line fix + negative test (see inline thread).\n\n**Next Steps**:\n1. Tighten line 51 to `test(\"release-draft-owner: run/[0-9]+/job/\")` so the delete rule, line 65's capture, and `release_draft_guard.sh` all key on the same shape.\n2. Add the negative AC2 case: stale draft with the loose substring but no `run/<id>/job/` shape stays kept.\n\n**Verified clean**: the gh-2008 fix itself works (new AC2 test fails on `main`'s script, passes on this branch; 53/53 in the two owning suites); the gh-995 test split is a verbatim move (`dart analyze` + `dart format` clean, 2636 + 229 lines, under the 2800 loc ratchet); `ci.yml` comment points at the moved pin test; no workflow/permission changes; head CI green (3 checks pending, 0 failed)."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-31:0f95c3a5",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-31",
+      "updatedAt": "2026-10-31",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚖️ Verdict reconciliation (gh-807): the effective review verdict on head `6bb2a623ddc37c80e9ed1e5aee3dfc6d5f2092b6` is **REQUEST_CHANGES** (at 2026-10-31T07:04:50.981Z, source: pr_review.json).\n\nRemoving `pr_approved` until re-review (approval-gated paths blocked, gh-807)."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-10-31:1cb7c551",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-10-31",
+      "updatedAt": "2026-10-31",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🛑 stale-cancel 6bb2a623ddc37c80e9ed1e5aee3dfc6d5f2092b6 — stale base at 2026-10-31T07:06:28.320Z\n\nCancelled 1 validation run(s) dispatched on a superseded head of this PR — the silent refresh moved the base and their results would be discarded anyway (gh-846). `cancelled` is not a verdict (gh-755): no fail-validation, no zombie re-dispatch, no red-head count is recorded for these heads — validation re-dispatches only on the current head."
+    }
+  ]
+}
