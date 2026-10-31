@@ -291,25 +291,8 @@ class _ChannelChatComposerState extends State<ChannelChatComposer> {
                       child: TextField(
                         controller: _controller,
                         focusNode: _focusNode,
-                        decoration: InputDecoration(
-                          hintText: strings.chatInputHint,
-                          contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 16,
-                            vertical: 8,
-                          ),
-                          border: const OutlineInputBorder(
-                            borderRadius: BorderRadius.all(Radius.circular(24)),
-                            borderSide: BorderSide.none,
-                          ),
-                          enabledBorder: const OutlineInputBorder(
-                            borderRadius: BorderRadius.all(Radius.circular(24)),
-                            borderSide: BorderSide.none,
-                          ),
-                          focusedBorder: const OutlineInputBorder(
-                            borderRadius: BorderRadius.all(Radius.circular(24)),
-                            borderSide: BorderSide.none,
-                          ),
-                          filled: true,
+                        decoration: faComposerFieldDecoration(
+                          strings.chatInputHint,
                         ),
                         keyboardType: TextInputType.multiline,
                         textInputAction: TextInputAction.newline,
@@ -318,17 +301,10 @@ class _ChannelChatComposerState extends State<ChannelChatComposer> {
                       ),
                     ),
                   ),
-                  Container(
-                    decoration: BoxDecoration(
-                      color: Theme.of(context).brightness == Brightness.light
-                          ? palette.indigo
-                          : null,
-                      gradient: Theme.of(context).brightness == Brightness.dark
-                          ? palette.brandGradient
-                          : null,
-                      shape: BoxShape.circle,
-                    ),
-                    child: IconButton(
+                  faSendBubbleShell(
+                    context,
+                    palette,
+                    IconButton(
                       icon: const Icon(Icons.arrow_upward, size: 20),
                       color: palette.onAccent,
                       tooltip: strings.chatSendTooltip,

@@ -1,5 +1,3 @@
-import 'dart:typed_data';
-
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
 /// The mount segment inside the agent's filesystem: the user-selected
@@ -19,16 +17,14 @@ const projectMountSegment = '/project';
 /// Path mapping is idempotent: host paths already under the mounted
 /// directory pass through unchanged, so values the env itself hands out
 /// ([absolutePath]/[joinPath] results, [FileInfo.path]) stay valid input.
-final class ProjectMountEnv
-    implements
-        ExecutionEnv,
-        BackgroundShell,
-        RangedReadFileSystem,
-        RenamableFileSystem {
-  /// Creates an env over [delegate] with no active mount.
-  ProjectMountEnv(this._delegate);
+final class ProjectMountEnv extends ForwardingFs
+    with
+        ForwardingBackgroundShell,
+        ForwardingRangedReadFs,
+        ForwardingRenamableFs {
+  /// Creates an env over the delegate with no active mount.
+  ProjectMountEnv(super.delegate);
 
-  final ExecutionEnv _delegate;
   String? _mountedRoot;
 
   /// The currently mounted host directory, or null when nothing is mounted.
@@ -60,7 +56,10 @@ final class ProjectMountEnv
   }
 
   @override
-  String get cwd => _mountedRoot != null ? projectMountSegment : _delegate.cwd;
+  String get cwd => _mountedRoot != null ? projectMountSegment : delegate.cwd;
+
+  @override
+  String mapPath(String path) => _map(path);
 
   @override
   Future<Result<ShellExecResult, ExecutionError>> exec(
@@ -68,7 +67,7 @@ final class ProjectMountEnv
     ShellExecOptions? options,
   }) {
     final root = _mountedRoot;
-    if (root == null) return _delegate.exec(command, options: options);
+    if (root == null) return delegate.exec(command, options: options);
     final optsCwd = options?.cwd;
     final cwd = optsCwd == null ? root : _map(optsCwd);
     final mappedOptions = ShellExecOptions(
@@ -79,21 +78,12 @@ final class ProjectMountEnv
       onStdout: options?.onStdout,
       onStderr: options?.onStderr,
     );
-    return _delegate.exec(command, options: mappedOptions);
+    return delegate.exec(command, options: mappedOptions);
   }
 
   // Background shell jobs (desktop: the delegate is the real host shell).
   // The log path comes from the registry under env.cwd — already a host path,
   // so it needs no mount mapping.
-
-  @override
-  bool get backgroundJobsSupported {
-    final delegate = _delegate;
-    if (delegate case final BackgroundShell bg) {
-      return bg.backgroundJobsSupported;
-    }
-    return false;
-  }
 
   @override
   Future<Result<ShellJob, ExecutionError>> startShellJob(
@@ -117,7 +107,7 @@ final class ProjectMountEnv
             stdinData: options?.stdinData,
             liveStdin: options?.liveStdin,
           );
-    final delegate = _delegate;
+    final delegate = this.delegate;
     if (delegate case final BackgroundShell bg) {
       return bg.startShellJob(
         command,
@@ -137,105 +127,6 @@ final class ProjectMountEnv
       ),
     );
   }
-
-  @override
-  Future<Result<String, FileError>> absolutePath(String path) =>
-      _delegate.absolutePath(_map(path));
-
-  @override
-  Future<Result<String, FileError>> joinPath(List<String> parts) =>
-      _delegate.joinPath(parts);
-
-  @override
-  Future<Result<String, FileError>> readTextFile(String path) =>
-      _delegate.readTextFile(_map(path));
-
-  @override
-  Future<Result<Uint8List, FileError>> readBinaryFile(String path) =>
-      _delegate.readBinaryFile(_map(path));
-
-  @override
-  Future<Result<Uint8List, FileError>> readRange(
-    String path,
-    int start,
-    int end,
-  ) {
-    final delegate = _delegate;
-    if (delegate case final RangedReadFileSystem ranged) {
-      return ranged.readRange(_map(path), start, end);
-    }
-    return Future.value(
-      Err(
-        FileError(
-          FileErrorCode.notSupported,
-          'readRange not supported by $delegate',
-          path: path,
-        ),
-      ),
-    );
-  }
-
-  @override
-  Future<Result<void, FileError>> renamePath(String from, String to) {
-    final delegate = _delegate;
-    if (delegate case final RenamableFileSystem renamable) {
-      return renamable.renamePath(_map(from), _map(to));
-    }
-    return Future.value(
-      Err(
-        FileError(
-          FileErrorCode.notSupported,
-          'renamePath not supported by $delegate',
-          path: from,
-        ),
-      ),
-    );
-  }
-
-  @override
-  Future<Result<List<String>, FileError>> readTextLines(
-    String path, {
-    int? maxLines,
-  }) => _delegate.readTextLines(_map(path), maxLines: maxLines);
-
-  @override
-  Future<Result<void, FileError>> writeBinaryFile(
-    String path,
-    Uint8List content,
-  ) => _delegate.writeBinaryFile(_map(path), content);
-
-  @override
-  Future<Result<void, FileError>> writeFile(String path, String content) =>
-      _delegate.writeFile(_map(path), content);
-
-  @override
-  Future<Result<void, FileError>> appendFile(String path, String content) =>
-      _delegate.appendFile(_map(path), content);
-
-  @override
-  Future<Result<FileInfo, FileError>> fileInfo(String path) =>
-      _delegate.fileInfo(_map(path));
-
-  @override
-  Future<Result<List<FileInfo>, FileError>> listDir(String path) =>
-      _delegate.listDir(_map(path));
-
-  @override
-  Future<Result<bool, FileError>> exists(String path) =>
-      _delegate.exists(_map(path));
-
-  @override
-  Future<Result<void, FileError>> createDir(
-    String path, {
-    bool recursive = true,
-  }) => _delegate.createDir(_map(path), recursive: recursive);
-
-  @override
-  Future<Result<void, FileError>> remove(
-    String path, {
-    bool recursive = false,
-    bool force = false,
-  }) => _delegate.remove(_map(path), recursive: recursive, force: force);
 }
 
 /// The directory used for session scoping.
@@ -276,7 +167,7 @@ extension AppStorageCwd on ExecutionEnv {
       } else if (env is SessionVarsExecutionEnv) {
         env = env.delegate;
       } else if (env case final ProjectMountEnv mountEnv) {
-        env = mountEnv._delegate;
+        env = mountEnv.delegate;
       } else {
         return env.cwd;
       }
@@ -300,7 +191,7 @@ extension AppOwnedEnv on ExecutionEnv {
       } else if (env is SessionVarsExecutionEnv) {
         env = env.delegate;
       } else if (env case final ProjectMountEnv mountEnv) {
-        env = mountEnv._delegate;
+        env = mountEnv.delegate;
       } else {
         return env;
       }
