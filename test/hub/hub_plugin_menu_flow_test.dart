@@ -10,6 +10,7 @@
 @Timeout(Duration(seconds: 60))
 library;
 
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:fa_hub_client/fa_hub_client.dart' as hub;
@@ -61,6 +62,52 @@ final class _DeadHubPlugin extends hub.HubPlugin {
     String? name,
     String? channel,
   }) async => throw StateError('test hub is disconnected');
+}
+
+/// A deterministic started hub for the `/dap start` pipeline tests: start
+/// is a no-op (never touches the network), status is always connected,
+/// and every `connectTo` is recorded. Lets the password/spawn/connect
+/// steps run end-to-end without a real hub process.
+final class _ScriptedHubPlugin extends hub.HubPlugin {
+  _ScriptedHubPlugin({
+    required Map<String, String> environment,
+    required String home,
+  }) : super(environment: environment, home: home);
+
+  var startCalls = 0;
+  final connectCalls = <String>[];
+
+  @override
+  Future<void> start({hub.HubIdentity? identity}) async {
+    startCalls++;
+  }
+
+  @override
+  Future<hub.HubStatus> status() async => const hub.HubStatus(
+    connected: true,
+    agentId: 'scripted-agent',
+    name: 'scripted',
+    url: 'ws://127.0.0.1:26499/ws',
+    channels: [],
+    welcomes: 0,
+    hellos: 0,
+  );
+
+  @override
+  Future<hub.DapConnection> connectTo(
+    String host, {
+    String? name,
+    String? channel,
+  }) async {
+    connectCalls.add(host);
+    return (
+      ok: true,
+      url: host,
+      name: name,
+      agentId: 'scripted-agent',
+      channels: [?channel],
+    );
+  }
 }
 
 void main() {
@@ -219,6 +266,156 @@ void main() {
     });
   });
 
+  /// Hermetic `/dap start` harness: probe/spawner/connect are all
+  /// injected (no process spawn, no sockets). The probe answers [hubUp]
+  /// until the (scripted) spawner runs, which flips it up — mirroring
+  /// "spawn then poll". [spawnError] makes the spawner throw.
+  (
+    SlashCommand,
+    _CapturingIo,
+    Map<String, String>,
+    _ScriptedHubPlugin,
+    List<int>,
+  )
+  registerStartHost({
+    Map<String, String>? environment,
+    PluginAskLine? askLine,
+    bool hubUp = false,
+    Object? spawnError,
+  }) {
+    final env = environment ?? <String, String>{};
+    final plugin = _ScriptedHubPlugin(environment: env, home: tempHome.path);
+    var up = hubUp;
+    final spawnPorts = <int>[];
+    Future<bool> probe(int port) async => up;
+    Future<void> spawner(int port) async {
+      if (spawnError != null) throw spawnError;
+      spawnPorts.add(port);
+      up = true;
+    }
+
+    final host = HubPluginHost(
+      plugin,
+      environment: env,
+      home: tempHome.path,
+      localHubUrl: 'ws://127.0.0.1:26499/ws',
+      hubHealthProbe: probe,
+      hubSpawner: spawner,
+    );
+    final io = _CapturingIo();
+    final context = PluginContext(
+      env: MemoryExecutionEnv(cwd: '/work'),
+      io: io,
+      askLine: askLine,
+    );
+    host.register(context);
+    return (context.slashCommands['/dap']!, io, env, plugin, spawnPorts);
+  }
+
+  File hubStateFile() => File('${tempHome.path}/.dap/hub.json');
+
+  File dapConfigFile() => File('${tempHome.path}/.dap/config.json');
+
+  group('/dap start pipeline (hermetic)', () {
+    test('one step: generates the secret, prompts, persists the hub '
+        'password, spawns, and connects', () async {
+      final (slash, io, env, plugin, spawnPorts) = registerStartHost(
+        askLine: (question, {secret = false}) async => 'hunter2',
+      );
+      await slash(['start']);
+
+      expect(io.text, contains('master secret generated'));
+      expect(io.text, contains('hub password saved to'));
+      expect(io.text, contains('this session joined the protected hub'));
+      expect(io.text, contains('DAP is up — ws://127.0.0.1:26499/ws'));
+      // The client holds the HUB's password, not the generated session
+      // secret (the prompt wins over the generated value).
+      expect(env['DAP_MASTER_SECRET'], 'hunter2');
+      expect(spawnPorts, [26499]);
+      expect(plugin.connectCalls, ['ws://127.0.0.1:26499/ws']);
+      // The boot dial + the slash-driven start share the serialized start.
+      expect(plugin.startCalls, greaterThanOrEqualTo(1));
+
+      // The hub state file: master secret + empty enrollments, 0600.
+      final state = hubStateFile();
+      expect(await state.exists(), isTrue);
+      final decoded =
+          jsonDecode(await state.readAsString()) as Map<String, dynamic>;
+      expect(decoded['masterSecret'], 'hunter2');
+      expect(decoded['clients'], <String, dynamic>{});
+      expect(state.statSync().mode & 0x1FF, 0x180); // 0600
+
+      // The dap config: pinned url + client secret for the next boot.
+      final config =
+          jsonDecode(await dapConfigFile().readAsString())
+              as Map<String, dynamic>;
+      expect(config['url'], 'ws://127.0.0.1:26499/ws');
+      expect(config['clientSecret'], 'hunter2');
+    });
+
+    test('a saved hub password is reused without prompting and never '
+        're-spawns a running hub', () async {
+      final state = hubStateFile();
+      await state.parent.create(recursive: true);
+      await state.writeAsString(
+        jsonEncode({
+          'masterSecret': 'saved-pass',
+          'clients': <String, String>{},
+        }),
+      );
+      var prompted = false;
+      final (slash, io, env, plugin, spawnPorts) = registerStartHost(
+        environment: {'DAP_MASTER_SECRET': 'session-secret'},
+        hubUp: true,
+        askLine: (question, {secret = false}) async {
+          prompted = true;
+          return 'should-not-be-asked';
+        },
+      );
+      await slash(['start']);
+
+      expect(prompted, isFalse);
+      expect(io.text, isNot(contains('master secret generated')));
+      // The saved state password wins over the session env secret.
+      expect(env['DAP_MASTER_SECRET'], 'saved-pass');
+      final config =
+          jsonDecode(await dapConfigFile().readAsString())
+              as Map<String, dynamic>;
+      expect(config['clientSecret'], 'saved-pass');
+      expect(spawnPorts, isEmpty); // hub already up: no spawn
+      expect(io.text, contains('DAP is up'));
+      expect(plugin.connectCalls, hasLength(1));
+    });
+
+    test('a failed spawn reports the error and never connects', () async {
+      final (slash, io, _, plugin, spawnPorts) = registerStartHost(
+        spawnError: StateError('boom'),
+      );
+      await slash(['start']);
+
+      expect(io.text, contains('could not start a local hub'));
+      expect(io.text, contains('boom'));
+      expect(io.text, isNot(contains('DAP is up')));
+      expect(plugin.connectCalls, isEmpty);
+      expect(spawnPorts, isEmpty);
+    });
+
+    test('a read-only environment refuses with the export hint and '
+        'does nothing else', () async {
+      final (slash, io, _, plugin, spawnPorts) = registerStartHost(
+        environment: const {},
+      );
+      await slash(['start']);
+
+      expect(io.text, contains('environment is read-only'));
+      expect(io.text, contains('export DAP_MASTER_SECRET'));
+      expect(io.text, isNot(contains('master secret generated')));
+      expect(io.text, isNot(contains('DAP is up')));
+      expect(spawnPorts, isEmpty);
+      expect(plugin.connectCalls, isEmpty);
+    });
+  });
+
   group('dap_* tools', () {
     (List<AgentTool>, hub.HubPlugin) registerToolsHost() {
       final env = <String, String>{
@@ -295,6 +492,31 @@ void main() {
         throwsA(isA<StateError>()),
       );
     });
+
+    test('the registry pins names, approval tiers, and required params', () {
+      final (tools, _) = registerToolsHost();
+      expect(
+        [for (final tool in tools) tool.name],
+        ['dap_status', 'dap_peers', 'dap_dm', 'dap_invite', 'dap_connect'],
+      );
+      // Read-only status/peers; anything that reaches the network stays
+      // behind the exec approval gate.
+      expect(
+        [for (final tool in tools) tool.tier],
+        [
+          ApprovalTier.read,
+          ApprovalTier.read,
+          ApprovalTier.exec,
+          ApprovalTier.exec,
+          ApprovalTier.exec,
+        ],
+      );
+      expect(tools[0].parameters['required'], isNull);
+      expect(tools[1].parameters['required'], isNull);
+      expect(tools[2].parameters['required'], ['to', 'text']);
+      expect(tools[3].parameters['required'], ['nameOrId']);
+      expect(tools[4].parameters['required'], ['host']);
+    });
   });
 
   group('publicChannelFor', () {
@@ -344,6 +566,89 @@ void main() {
       final (slash, io) = registerNetworkHost();
       await slash(['join']);
       expect(io.text, contains('usage: /network join'));
+    });
+  });
+
+  const leaveInvite =
+      'wss://hub.fa1.dev/ws?channel=team'
+      '#pub=AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8'
+      '&priv=AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA';
+
+  /// Answers picks by exact menu title; an absent title takes the first
+  /// option, an explicit null cancels the pick.
+  PluginPickOption pickByTitle(Map<String, String?> answers) =>
+      (title, options, {initialKey}) async =>
+          answers.containsKey(title) ? answers[title] : options.first.$1;
+
+  group('/network channels + leave (menu path)', () {
+    (SlashCommand, _CapturingIo, List<Map<String, Object?>>)
+    registerNetworkMenuHost({required PluginPickOption pick}) {
+      final env = <String, String>{};
+      final sessionRecords = <Map<String, Object?>>[];
+      final plugin = hub.HubPlugin(environment: env, home: tempHome.path);
+      final host = HubPluginHost(plugin, environment: env, home: tempHome.path);
+      // Never dial a real hub from unit tests.
+      host.scopedConnectOverride = (hubUrl) async {};
+      final io = _CapturingIo();
+      final context = PluginContext(
+        env: MemoryExecutionEnv(cwd: tempHome.path),
+        io: io,
+        pickOption: pick,
+        askLine: (question, {secret = false}) async => leaveInvite,
+        appendSessionRecord: (type, data) async {
+          sessionRecords.add(Map<String, Object?>.from(data));
+        },
+        readSessionRecords: (type) async => sessionRecords,
+      );
+      host.register(context);
+      return (context.slashCommands['/network']!, io, sessionRecords);
+    }
+
+    test('a single-scope channel leaves directly and records the '
+        'tombstone', () async {
+      final (slash, io, records) = registerNetworkMenuHost(
+        pick: pickByTitle({'Network': 'channels', '#team': 'leave'}),
+      );
+      await slash(['join', leaveInvite]);
+      expect(records.single['channelId'], 'team');
+
+      await slash([]);
+      expect(io.text, contains('network: left #team [session]'));
+      // The leave tombstone: the join record stays, the op is appended.
+      expect(records.where((r) => r['op'] == 'leave'), hasLength(1));
+    });
+
+    test('a multi-scope leave asks which scope; cancelling keeps every '
+        'scope', () async {
+      final answers = <String, String?>{
+        'Network': 'channels',
+        '#team': 'leave',
+        'Leave which scope?': null, // cancelled: nothing is left
+      };
+      final (slash, io, records) = registerNetworkMenuHost(
+        pick: pickByTitle(answers),
+      );
+      // Session scope by args (scope pick falls through to the default),
+      // then project scope via the wizard: #team is joined at two scopes.
+      await slash(['join', leaveInvite]);
+      expect(records.single['channelId'], 'team');
+
+      answers['Network'] = 'join';
+      answers['Scope — members can steer this agent'] = 'project';
+      await slash([]);
+      expect(io.text, contains('joined #team [project]'));
+      expect(records, hasLength(1)); // session join only; project is a file
+
+      answers['Network'] = 'channels';
+      await slash([]); // channels → #team → leave → cancelled scope pick
+      expect(io.text, isNot(contains('network: left')));
+      expect(records, hasLength(1));
+      final project =
+          jsonDecode(
+                await File('${tempHome.path}/.fah/dap.json').readAsString(),
+              )
+              as Map<String, dynamic>;
+      expect((project['channels'] as List).single['channelId'], 'team');
     });
   });
 }
