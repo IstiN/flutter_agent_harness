@@ -592,23 +592,11 @@ Future<ToolExecutionResult?> _readVideoResult(
   final sizeLabel = formatToolSize(bytes.length);
   final currentModel = model?.call();
   if (currentModel != null && currentModel.input.contains('video')) {
-    if (payloadBase64.length > budget) {
-      return ToolExecutionResult.text(
-        '[Video: $path, $sizeLabel — exceeds the video byte budget '
-        '(images.maxBytesPerRequest = $budget bytes). The video is NOT '
-        'attached. Trim/convert the clip (e.g. ffmpeg -i $path -ss 0 -t 30 '
-        'small.mp4) and read the smaller file.]',
-      );
-    }
-    return ToolExecutionResult(
-      content: [
-        TextContent(
-          text:
-              '[Video: $path, $sizeLabel — the video is attached for the '
-              'current video-capable model.]',
-        ),
-        VideoContent(data: payloadBase64, mimeType: _videoMimeType(path)),
-      ],
+    return _videoAttachResult(
+      path,
+      payloadBase64,
+      sizeLabel,
+      budget: budget,
     );
   }
 
@@ -616,6 +604,64 @@ Future<ToolExecutionResult?> _readVideoResult(
   // describes the video (AC2 attribution), same knobs as the image
   // auto-route.
   final visionConfig = await vision?.call();
+  return _videoSlotResult(
+    path,
+    bytes,
+    sizeLabel,
+    visionConfig: visionConfig,
+    autoInspect: autoInspect,
+    budget: budget,
+    cancelToken: cancelToken,
+    onUsage: onImageUsage,
+  );
+}
+
+/// The video-capable chat-model route: the bytes ride as [VideoContent],
+/// size-capped by [budget] (AC7 — an oversized video is NOT attached and
+/// the note names the size + the trim/convert hint).
+ToolExecutionResult _videoAttachResult(
+  String path,
+  String payloadBase64,
+  String sizeLabel, {
+  required int budget,
+}) {
+  if (payloadBase64.length > budget) {
+    return ToolExecutionResult.text(
+      '[Video: $path, $sizeLabel — exceeds the video byte budget '
+      '(images.maxBytesPerRequest = $budget bytes). The video is NOT '
+      'attached. Trim/convert the clip (e.g. ffmpeg -i $path -ss 0 -t 30 '
+      'small.mp4) and read the smaller file.]',
+    );
+  }
+  return ToolExecutionResult(
+    content: [
+      TextContent(
+        text:
+            '[Video: $path, $sizeLabel — the video is attached for the '
+            'current video-capable model.]',
+      ),
+      VideoContent(data: payloadBase64, mimeType: _videoMimeType(path)),
+    ],
+  );
+}
+
+/// The configured media/vision-slot route for a non-video-capable chat
+/// model (AC2 attribution, same knobs as the image auto-route):
+/// - no slot configured → null (the caller keeps today's behavior);
+/// - a slot configured but the auto-route knob off → the honest note
+///   naming the model (the gh-1984 AC3 note shape);
+/// - otherwise ONE video inspection call, failures degrading to an honest
+///   note — the read never fails (AC6 semantics); a cancel stays a cancel.
+Future<ToolExecutionResult?> _videoSlotResult(
+  String path,
+  Uint8List bytes,
+  String sizeLabel, {
+  required InspectImageConfig? visionConfig,
+  required bool Function()? autoInspect,
+  required int budget,
+  required CancelToken? cancelToken,
+  required void Function(Usage usage)? onUsage,
+}) async {
   if (visionConfig == null ||
       !(autoInspect?.call() ?? imageRegistryConfig.autoInspect)) {
     if (visionConfig == null) return null;
@@ -629,7 +675,7 @@ Future<ToolExecutionResult?> _readVideoResult(
       'describe it.]',
     );
   }
-  if (payloadBase64.length > budget) {
+  if (base64Length(bytes) > budget) {
     return ToolExecutionResult.text(
       '[Video: $path, $sizeLabel — exceeds the video byte budget '
       '(images.maxBytesPerRequest = $budget bytes); video inspection '
@@ -643,7 +689,7 @@ Future<ToolExecutionResult?> _readVideoResult(
       _videoMimeType(path),
       '',
       cancelToken: cancelToken,
-      onUsage: onImageUsage,
+      onUsage: onUsage,
     );
     cancelToken?.throwIfCancelled();
     return ToolExecutionResult(

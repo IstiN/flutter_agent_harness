@@ -600,19 +600,13 @@ Future<_PreparedMedia> _prepareInspectMedia(
   var dropped = 0;
   final budget = imageRegistryConfig.maxBytesPerRequest;
   for (final path in paths) {
-    final read = await env.readBinaryFile(path);
-    if (read.isErr) {
-      throw StateError('${read.errorOrNull}');
-    }
-    final bytes = read.valueOrNull!;
-    cancelToken?.throwIfCancelled();
-    final format = detectImageFormat(bytes);
-    if (format == null || !supportedImageFormats.contains(format)) {
-      throw StateError('Unsupported image format or not an image: $path');
-    }
-    final processed = keepOriginal
-        ? keepOriginalImage(bytes, format, maxBase64Bytes: budget)
-        : processImage(bytes, format, maxBase64Bytes: budget);
+    final processed = await _readAndProcessInspectImage(
+      env,
+      path,
+      cancelToken,
+      keepOriginal: keepOriginal,
+      budget: budget,
+    );
     final payloadLength = processed.base64.length;
     if (base64Total + payloadLength > budget && images.isNotEmpty) {
       // The per-request byte budget binds: drop the trailing image(s) —
@@ -654,6 +648,33 @@ Future<_PreparedMedia> _prepareInspectMedia(
     preparedNote: notes.isEmpty ? '' : '${notes.join('\n')}\n',
     droppedCount: dropped,
   );
+}
+
+/// Reads + decodes + processes ONE inspect path: the read and format
+/// checks throw (the caller's schema-error style — "Unsupported image
+/// format" names the path); [keepOriginal] picks the decode pipeline
+/// ([keepOriginalImage] vs [processImage]). The caller owns the AC7
+/// budget math over the returned payload.
+Future<InlineImageResult> _readAndProcessInspectImage(
+  ExecutionEnv env,
+  String path,
+  CancelToken? cancelToken, {
+  required bool keepOriginal,
+  required int budget,
+}) async {
+  final read = await env.readBinaryFile(path);
+  if (read.isErr) {
+    throw StateError('${read.errorOrNull}');
+  }
+  final bytes = read.valueOrNull!;
+  cancelToken?.throwIfCancelled();
+  final format = detectImageFormat(bytes);
+  if (format == null || !supportedImageFormats.contains(format)) {
+    throw StateError('Unsupported image format or not an image: $path');
+  }
+  return keepOriginal
+      ? keepOriginalImage(bytes, format, maxBase64Bytes: budget)
+      : processImage(bytes, format, maxBase64Bytes: budget);
 }
 
 /// The cap notice for an 8+ paths call.

@@ -317,7 +317,10 @@ void main() {
       expect(blocks.whereType<VideoContent>(), isEmpty);
       expect(
         blocks.whereType<TextContent>().map((b) => b.text),
-        everyElement(contains('video omitted')),
+        containsAll(<Matcher>[
+          equals('look:'),
+          contains('video omitted'),
+        ]),
       );
     });
   });

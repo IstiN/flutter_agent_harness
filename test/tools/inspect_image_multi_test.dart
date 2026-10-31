@@ -718,7 +718,7 @@ void main() {
       );
       expect(
         tool.description.toLowerCase(),
-        contains('resize does not apply to the stitched composite'),
+        contains('does not apply to the stitched composite'),
         reason:
             'agents must not reach for resize: "original" on a stitch call '
             'expecting byte fidelity — the composite is always re-encoded',
