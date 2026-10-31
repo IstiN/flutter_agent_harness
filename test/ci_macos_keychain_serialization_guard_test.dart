@@ -1,5 +1,6 @@
-// gh-1852 / gh-1865 — why the build-macos matrix no longer needs
-// serialization, and why it must never regain per-job keychains.
+// gh-1852 / gh-1865 / gh-2013 — why the build-macos matrix is serialized
+// (twice over, for two different reasons), and why it must never regain
+// per-job keychains.
 //
 // HISTORY: the two build-macos matrix legs used to create their own
 // per-arch keychains (build-arm64.keychain / build-x86_64.keychain) and
@@ -15,12 +16,27 @@
 // per-job keychains ENTIRELY in favor of the persistent host keychain
 // managed by scripts/ci-sign.
 //
-// With no keychain lifecycle and no search-list writes left in the
-// workflow, the legs are race-free BY CONSTRUCTION and the matrix runs
-// PARALLEL again — which is the whole point of the pool (#359):
+// gh-2013 (run 41172095157, 2026-10-31): the parallel matrix is retired
+// AGAIN — for a reason that has nothing to do with keychains. The fa-m5
+// pool is ONE host under ONE user account hosting the fa-m5 / fa-m5-2 /
+// fa-m5-3 runner registrations (the retired gh-1852 comment block said it
+// verbatim). With the matrix parallel, the daily run places THREE heavy
+// Xcode/Flutter builds on that single Mac at once: both build-macos
+// release legs (150m job ceilings) plus the TestFlight leg's Build iOS
+// IPA gym (90m ceiling, dispatched concurrently by #359). Each build
+// crawls ~10x its solo time — the green 10-27 baseline built Fa.app in
+// 12m39s; run 41172095157 streamed its last compile line at +14m and then
+// sat silent for 2h14m until the 150m ceiling killed BOTH arch legs, and
+// the concurrent gym independently blew its own 90m ceiling. No repo
+// change explains it: flutter_app/pubspec.yaml + flutter_app/macos/ are
+// byte-identical between the last green tree and the first slow one.
 //
-//   AC1  build-macos matrix is NOT serialized by keychain necessity:
-//        max-parallel is absent or >= 2.
+//   AC1  build-macos matrix IS serialized: max-parallel: 1 — the two
+//        release legs must never share the host with each other. The
+//        daily-publish cli leg budget (#351) documents exactly this shape
+//        ("arm64 + x86_64 SERIALIZE on the single self-hosted runner").
+//        A future parallel restoration must first prove the host can fit
+//        2× build-macos + build-mobile iOS inside every job ceiling.
 //   AC2  audit: NO multi-leg matrix job in ANY workflow contains keychain
 //        lifecycle writes — the gh-1852 class of "a matrix fan-out times
 //        a keychain mutation" must stay structurally impossible.
@@ -63,23 +79,24 @@ final _keychainMutation = RegExp(
 );
 
 void main() {
-  test('AC1 — build-macos matrix runs parallel (no keychain-driven '
-      'max-parallel: 1) (gh-1852 retired by ci-sign)', () {
+  test('AC1 — build-macos matrix is serialized (max-parallel: 1, '
+      'host-saturation, gh-2013)', () {
     final job = jobsOf(workflowPath)['build-macos'] as YamlMap;
     final strategy = job['strategy'] as YamlMap?;
     final maxParallel = strategy?['max-parallel'];
-    if (maxParallel is int) {
-      expect(maxParallel, greaterThanOrEqualTo(2),
-          reason:
-              'build-macos matrix is serialized (max-parallel: '
-              '$maxParallel) but the gh-1852 reason is retired: legs no '
-              'longer create keychains or write the search list — they '
-              'sign via ci-sign against the persistent host keychain. '
-              'Serialization here is pure lost throughput (#359). If a '
-              'NEW race justifies re-serializing, the reason must be '
-              'documented in this test, not inherited from the retired '
-              'per-job-keychain era.');
-    }
+    expect(maxParallel, 1,
+        reason:
+            'build-macos matrix is not serialized (max-parallel: '
+            '$maxParallel) — the two release legs run CONCURRENTLY on the '
+            'fa-m5 pool, which is ONE host under ONE user account '
+            '(fa-m5 / fa-m5-2 / fa-m5-3 registrations). Together with the '
+            'concurrent TestFlight iOS gym that is three ceiling-bounded '
+            'Xcode/Flutter builds on one Mac: each build crawls ~10x its '
+            'solo time (green 10-27 baseline: Fa.app built in 12m39s; run '
+            '41172095157: 2h14m of build silence, both legs killed by the '
+            '150m ceiling, gh-2013). Serialize the matrix, or first prove '
+            'the host fits 2× build-macos + build-mobile iOS inside every '
+            'job ceiling.');
   });
 
   test('AC2 — audit: no multi-leg matrix job mutates keychain state '
