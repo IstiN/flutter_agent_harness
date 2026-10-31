@@ -37,6 +37,7 @@ import '../agent/foreground_call_budget.dart';
 import '../agent/tool_pairing.dart';
 import '../approval/approval.dart';
 import '../context.dart';
+import '../redact/redaction_types.dart';
 import '../tools/ask_tool.dart';
 import '../tools/request_secret_tool.dart';
 import '../trajectory/trajectory_blobs.dart';
@@ -491,6 +492,19 @@ class AgentWireProtocol {
         'providerError': ?e.providerError,
       };
     },
+    // gh-1934: the 413 image-payload recovery ladder — per-pass events
+    // carry the real dropped/stripped counts; `failed` marks the single
+    // actionable exhaustion event (the refusal that ended the ladder).
+    ImagePayloadRecoveryEvent: (event) {
+      final e = event as ImagePayloadRecoveryEvent;
+      return {
+        'pass': e.pass,
+        'dropped': e.dropped,
+        'stripped': e.stripped,
+        'failed': e.failed,
+        'providerError': ?e.providerError,
+      };
+    },
     TaskLedgerEvent: (event) => {
       'ledger': (event as TaskLedgerEvent).ledger.toJson(),
     },
@@ -655,6 +669,7 @@ class AgentWireProtocol {
     'model_request': _decodeModelRequest,
     'tool_pairing_repair': _decodeToolPairingRepair,
     'message_cap_repair': _decodeMessageCapRepair,
+    'image_payload_recovery': _decodeImagePayloadRecovery,
     'task_ledger': _decodeTaskLedger,
     'tool_call_heartbeat': _decodeToolCallHeartbeat,
     'tool_call_stuck': _decodeToolCallStuck,
@@ -971,6 +986,22 @@ class AgentWireProtocol {
     );
   }
 
+  static KnownWireEvent _decodeImagePayloadRecovery(
+    Map<String, dynamic> frame,
+  ) {
+    _requireKind(frame, 'image_payload_recovery');
+    return KnownWireEvent(
+      ImagePayloadRecoveryEvent(
+        pass: _requireInt(frame['pass'], 'pass'),
+        dropped: _requireInt(frame['dropped'], 'dropped'),
+        stripped: _requireInt(frame['stripped'], 'stripped'),
+        failed: frame['failed'] == true,
+        providerError: frame['providerError'] as String?,
+      ),
+      frame,
+    );
+  }
+
   static UnknownWireEvent _decodeUnknownEvent(Map<String, dynamic> frame) =>
       UnknownWireEvent(
         frame['originalKind'] is String
@@ -1232,7 +1263,9 @@ class AgentWireProtocol {
       // for kinds that HAVE a registry entry (secret_response, model_request).
       if ((secretFields?.contains(key) ?? false) ||
           _secretFieldNamesAnywhere.contains(key)) {
-        return MapEntry(key, '[REDACTED:$kindLabel]');
+        // gh-1952 (I2): the shared constructor keeps every rendered
+        // marker single-token, this display path included.
+        return MapEntry(key, redactionMarker(kindLabel));
       }
       final valueCopy = switch (value) {
         Map<String, dynamic> map => _redactForLog(map, kindLabel),
@@ -1291,6 +1324,7 @@ class AgentWireProtocol {
     ModelRequestEvent: 'model_request',
     ToolPairingRepairEvent: 'tool_pairing_repair',
     MessageCapRepairEvent: 'message_cap_repair',
+    ImagePayloadRecoveryEvent: 'image_payload_recovery',
     TaskLedgerEvent: 'task_ledger',
     ToolCallHeartbeatEvent: 'tool_call_heartbeat',
     ToolCallStuckEvent: 'tool_call_stuck',

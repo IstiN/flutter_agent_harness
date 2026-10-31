@@ -205,6 +205,11 @@ const rootSpecs = <PromptSpec>[
     requiredToken: '{{budget}}',
   ),
   PromptSpec(
+    source: 'prompts/task/pure_chunk_contract.md',
+    constName: 'taskPureChunkContractPrompt',
+    requiredToken: '{{budget}}',
+  ),
+  PromptSpec(
     source: 'prompts/task/agent_explore.md',
     constName: 'taskAgentExplorePrompt',
   ),
@@ -260,12 +265,9 @@ const exampleSpecs = <PromptSpec>[
     requiredToken: '{{commands}}',
   ),
   PromptSpec(
-    source: 'flutter_app/prompts/webllm_no_tools_note.md',
-    constName: 'webLlmNoToolsNote',
-  ),
-  PromptSpec(
-    source: 'flutter_app/prompts/transformers_js_no_tools_note.md',
-    constName: 'transformersJsNoToolsNote',
+    source: 'flutter_app/prompts/on_device_no_tools_note.md',
+    constName: 'onDeviceNoToolsNote',
+    requiredToken: '{{engine}}',
   ),
   PromptSpec(
     source: 'flutter_app/prompts/messaging_section.md',

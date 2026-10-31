@@ -154,6 +154,12 @@ const TuiTheme kDefaultTuiTheme = TuiTheme(
   // now a named role (S1) — kept byte-stable so stored pre-#807 cards
   // still resolve their phase at repaint time.
   toolPendingBg: Style(backgroundRgb: RgbColor(49, 50, 68)),
+  // gh-1933 AC7: the diffstat tokens exist in EVERY shipped palette —
+  // the default carries the success/error family pair because it is the
+  // E3 inheritance base for user themes.
+  toolDiffAdded: Style(foregroundRgb: RgbColor(74, 222, 128)), // #4ADE80
+  toolDiffRemoved: Style(foregroundRgb: RgbColor(248, 113, 113)), // #F87171
+  toolDiffContext: Style(foregroundRgb: RgbColor(0x77, 0x7d, 0x88)),
 );
 
 /// The built-in catalog, keyed by config name. `default` wins the
@@ -386,6 +392,10 @@ const TuiTheme _piDark = TuiTheme(
   // the #804 detail-text floor of 4.5. This darker slate clears the
   // floor and keeps a visible band between the settled tints.
   toolPendingBg: Style(backgroundRgb: RgbColor(0x2b, 0x2d, 0x36)),
+  // gh-1933 AC7: the diffstat pair in pi's own success/error family.
+  toolDiffAdded: Style(foregroundRgb: RgbColor(0xb5, 0xbd, 0x68)),
+  toolDiffRemoved: Style(foregroundRgb: RgbColor(0xcc, 0x66, 0x66)),
+  toolDiffContext: Style(foregroundRgb: RgbColor(0x76, 0x76, 0x76)),
 );
 
 /// The roles a user theme JSON may set (values: `#rgb`/`#rrggbb`).
@@ -663,6 +673,9 @@ final Map<String, Style> _defaultRoleStyles = {
   'toolErrorBg': kDefaultTuiTheme.toolErrorBg,
   'kaomojiEye': kDefaultTuiTheme.kaomojiEye,
   'kaomojiMouth': kDefaultTuiTheme.kaomojiMouth,
+  'toolDiffAdded': kDefaultTuiTheme.toolDiffAdded,
+  'toolDiffRemoved': kDefaultTuiTheme.toolDiffRemoved,
+  'toolDiffContext': kDefaultTuiTheme.toolDiffContext,
 };
 
 /// The [role]'s style in the default palette (`null` for roles the

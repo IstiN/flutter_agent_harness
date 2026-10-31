@@ -59,19 +59,35 @@ extension AgentCliRun on AgentCli {
   }) async {
     // herdr pane state (issue #1481): a turn is working.
     _herdrRunWorking();
-    // gh-1241: the owner opens the usage segment lazily at the FIRST
-    // drive — an idle boot or a `/sessions` switch that never drives must
-    // leave the chain byte-untouched (issue #428 invariant), and the
-    // marker must precede this segment's request records. Per-session
-    // idempotent (auto-continuations and later turns skip).
-    await _markUsageSegmentStart();
-    await _beginUserPrompt(isAutoContinue: isAutoContinue);
+    var preFlightCancelled = false;
     try {
+      // gh-1241: the owner opens the usage segment lazily at the FIRST
+      // drive — an idle boot or a `/sessions` switch that never drives
+      // must leave the chain byte-untouched (issue #428 invariant), and
+      // the marker must precede this segment's request records.
+      // Per-session idempotent (auto-continuations and later turns skip).
+      await _markUsageSegmentStart();
+      try {
+        await _beginUserPrompt(isAutoContinue: isAutoContinue);
+      } on CancelledException {
+        // gh-1929: ONLY the PRE-FLIGHT window translates the compaction
+        // layer's deliberate abort (#1085) into a user-cancel outcome —
+        // the submission never went out. Pre-fix the rethrow escaped
+        // [_runPrompt] entirely and crashed the process via `_startRun`'s
+        // unlistened `whenComplete` chain. A cancel DURING the run (the
+        // in-flight relief, the settle funnel) keeps its loud-abort
+        // behavior — the outer catch below.
+        preFlightCancelled = true;
+        _renderUserCancel('submission cancelled');
+        _submissionCancelRestorePending = true;
+      }
+      if (preFlightCancelled) return;
       if (images.isEmpty) {
         await _agent.prompt(_redactUserText(text));
       } else {
         // Clipboard chips (issue #276): the images ride the user message
-        // as ImageContent blocks next to the text — same shape as --attach.
+        // as ImageContent blocks next to the text — same shape as
+        // --attach.
         await _agent.promptMessage(
           UserMessage(
             content: [
@@ -95,6 +111,16 @@ extension AgentCliRun on AgentCli {
     } catch (error) {
       await _handleRunError(error);
     }
+  }
+
+  /// gh-1929: the ONE user-cancel rendering shared by the compaction
+  /// cancel windows — a dim receipt line, never an `error:` line and
+  /// never the process crash. The pre-flight cancel ([_runPrompt]) kills
+  /// a submission that was never sent; the post-run cancel ([_afterRun])
+  /// is bookkeeping over an already-settled turn; the headless pre-flight
+  /// cancel exits with the aborted semantics ([AgentCli.runHeadless]).
+  void _renderUserCancel(String note) {
+    io.writeln(_style.dim(note));
   }
 
   /// [_runPrompt] pre-flight, real user prompts only: fresh over-window
@@ -285,7 +311,7 @@ extension AgentCliRun on AgentCli {
       // rethrowing here would re-enter error handling and print a
       // spurious `error: CancelledException` line over a finished turn.
       // The dim note is the receipt; the next prompt starts clean.
-      io.writeln(_style.dim('compaction interrupted'));
+      _renderUserCancel('compaction interrupted');
     }
   }
 }

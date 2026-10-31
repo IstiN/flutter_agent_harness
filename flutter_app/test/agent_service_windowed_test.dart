@@ -256,6 +256,27 @@ final class GatedFileSystem implements FileSystem, RangedReadFileSystem {
   }
 }
 
+/// Teardown-safe recursive delete (gh-1934 review round 4): a still-
+/// draining async append can re-create a file between the delete's
+/// directory listing and its unlink — errno 39 "Directory not empty"
+/// (live flake: "Flutter app tests (shard 1/2)", validation run
+/// 40703576156, the mid-run-jump fixture's `tmp.delete(recursive: true)`).
+/// Retry bounded; every writer in this suite is short-lived.
+Future<void> deleteTempTree(io.Directory dir) async {
+  for (var attempt = 0; attempt < 100; attempt++) {
+    try {
+      if (!dir.existsSync()) return;
+      dir.deleteSync(recursive: true);
+    } on io.FileSystemException {
+      // A write landed mid-delete — drain a beat and retry.
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+  }
+  if (dir.existsSync()) {
+    fail('temp tree never quiesced for deletion: ${dir.path}');
+  }
+}
+
 void main() {
   /// Builds a big session file in one write — thousands of awaited storage
   /// appends would dominate the test runtime.
@@ -282,7 +303,7 @@ void main() {
     Agent Function()? agentBuilder,
   }) async {
     final tmp = await io.Directory.systemTemp.createTemp('fa_windowed');
-    addTearDown(() => tmp.delete(recursive: true));
+    addTearDown(() => deleteTempTree(tmp));
     await seedRaw('${tmp.path}/big.jsonl', count);
     final counting =
         countingFs ?? CountingFileSystem(LocalFileSystem(cwd: tmp.path));
@@ -317,6 +338,37 @@ void main() {
       '(got ${service.historyAboveCount})',
     );
   }
+
+  test(
+    'deleteTempTree drains a writer that re-creates files mid-delete',
+    () async {
+      final dir = await io.Directory.systemTemp.createTemp('fa_windowed_race');
+      io.File('${dir.path}/seed.jsonl').writeAsStringSync('seed\n');
+      // Simulate the unawaited final append that outlives dispose(): files
+      // keep re-appearing in the tree for ~90ms while the teardown delete
+      // runs. The old one-shot delete leaves the tree behind (probe: 3/3
+      // runs) and throws errno 39 under CI load — the live shard flake.
+      final writer = Timer.periodic(const Duration(milliseconds: 8), (t) {
+        if (t.tick > 10) {
+          t.cancel();
+          return;
+        }
+        final sub = io.Directory('${dir.path}/late-${t.tick}')
+          ..createSync(recursive: true);
+        io.File('${sub.path}/append.jsonl').writeAsStringSync('late\n');
+      });
+      addTearDown(() async {
+        writer.cancel();
+        if (dir.existsSync()) dir.deleteSync(recursive: true);
+      });
+      await deleteTempTree(dir);
+      expect(
+        dir.existsSync(),
+        isFalse,
+        reason: 'the teardown delete must drain in-flight writers',
+      );
+    },
+  );
 
   test('loadSession opens windowed: tail chunk only, count lands', () async {
     final (service, counting) = await loadedService(20000);
@@ -622,7 +674,7 @@ void main() {
     // where the windowed storage opens): the session still loads —
     // through the classic full open (round-4 review, F5b).
     final tmp = await io.Directory.systemTemp.createTemp('fa_fallback');
-    addTearDown(() => tmp.delete(recursive: true));
+    addTearDown(() => deleteTempTree(tmp));
     await seedRaw('${tmp.path}/big.jsonl', 500);
     final flaky = FlakyFileSystem(LocalFileSystem(cwd: tmp.path));
     flaky.failNextReadRange = true;
@@ -649,43 +701,46 @@ void main() {
     await service.loadOlderHistory();
     expect(service.messages, hasLength(500));
   });
-  test('a permanent ranged-read failure still loads (capability-independent fallback)', () async {
-    // The ranged-read capability is BROKEN, not hiccuping: every
-    // readRange throws. gh-1073's default full open streams over ranged
-    // reads, so the windowed→full fallback must force the classic
-    // whole-file read — a retry riding the same capability would fail
-    // the session identically. The whole-file fallback loads everything
-    // through plain bulk reads.
-    final tmp = await io.Directory.systemTemp.createTemp('fa_fallback_dead');
-    addTearDown(() => tmp.delete(recursive: true));
-    await seedRaw('${tmp.path}/big.jsonl', 500);
-    final flaky = FlakyFileSystem(LocalFileSystem(cwd: tmp.path));
-    flaky.failEveryReadRange = true;
-    final service = AgentService(
-      agent: _createAgent(),
-      env: LocalExecutionEnv(cwd: tmp.path),
-      sessionsRoot: tmp.path,
-      repo: JsonlSessionRepo(fs: flaky, sessionsRoot: tmp.path),
-      watchExternalSessions: false,
-      includeSharedSessionRoots: false,
-    );
-    addTearDown(service.dispose);
-    await service.initialize();
-    final stored = (await service.listSessions()).single;
-    await service.loadSession(stored);
+  test(
+    'a permanent ranged-read failure still loads (capability-independent fallback)',
+    () async {
+      // The ranged-read capability is BROKEN, not hiccuping: every
+      // readRange throws. gh-1073's default full open streams over ranged
+      // reads, so the windowed→full fallback must force the classic
+      // whole-file read — a retry riding the same capability would fail
+      // the session identically. The whole-file fallback loads everything
+      // through plain bulk reads.
+      final tmp = await io.Directory.systemTemp.createTemp('fa_fallback_dead');
+      addTearDown(() => deleteTempTree(tmp));
+      await seedRaw('${tmp.path}/big.jsonl', 500);
+      final flaky = FlakyFileSystem(LocalFileSystem(cwd: tmp.path));
+      flaky.failEveryReadRange = true;
+      final service = AgentService(
+        agent: _createAgent(),
+        env: LocalExecutionEnv(cwd: tmp.path),
+        sessionsRoot: tmp.path,
+        repo: JsonlSessionRepo(fs: flaky, sessionsRoot: tmp.path),
+        watchExternalSessions: false,
+        includeSharedSessionRoots: false,
+      );
+      addTearDown(service.dispose);
+      await service.initialize();
+      final stored = (await service.listSessions()).single;
+      await service.loadSession(stored);
 
-    // The whole-file fallback read the file in bulk and loaded it all
-    // (a ranged byte never moved successfully — the capability is dead).
-    expect(flaky.bulkBytes, greaterThan(0));
-    expect(service.messages, hasLength(500));
-    expect(service.historyAboveCount, 0);
-  });
+      // The whole-file fallback read the file in bulk and loaded it all
+      // (a ranged byte never moved successfully — the capability is dead).
+      expect(flaky.bulkBytes, greaterThan(0));
+      expect(service.messages, hasLength(500));
+      expect(service.historyAboveCount, 0);
+    },
+  );
   test('jumpToMessage resolves record ids on fallback-open sessions', () async {
     // The windowed open dies on the first ranged read: the session
     // loads through the FULL open — where a record-id jump must still
     // land (issue #197 defect 4), not silently no-op.
     final tmp = await io.Directory.systemTemp.createTemp('fa_fallback_jump');
-    addTearDown(() => tmp.delete(recursive: true));
+    addTearDown(() => deleteTempTree(tmp));
     await seedRaw('${tmp.path}/big.jsonl', 500);
     final flaky = FlakyFileSystem(LocalFileSystem(cwd: tmp.path));
     flaky.failNextReadRange = true;

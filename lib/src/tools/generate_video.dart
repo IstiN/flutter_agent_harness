@@ -22,6 +22,7 @@ import 'package:http/http.dart' as http;
 
 import '../agent/agent_loop.dart' show ToolExecutionResult, ToolUpdateCallback;
 import '../agent/agent_tool.dart';
+import '../agent/stuck_tool.dart' show stuckBackgroundHandbackSentence;
 import '../approval/approval.dart';
 import '../cancel_token.dart';
 import '../env/execution_env.dart';
@@ -47,6 +48,52 @@ final class VideoException implements Exception {
 
   @override
   String toString() => message;
+}
+
+/// Thrown by a video dialect's poll loop when the tool phase's soft-yield
+/// token has fired (issue #1923 AC2/AC4). Not an error — the poll hand-back
+/// marker: the remote render task keeps running (it is never restarted);
+/// the tool layer catches this and returns the anchored hand-back receipt
+/// ([videoYieldHandbackText]).
+final class VideoYieldHandback implements Exception {
+  /// Creates the hand-back marker for the still-rendering [taskId].
+  VideoYieldHandback(this.taskId);
+
+  /// The provider task id still rendering in the background.
+  final String taskId;
+
+  @override
+  String toString() => 'video render task $taskId handed back';
+}
+
+/// The early hand-back result text for a video render whose polling was
+/// yielded (issue #1923 AC2/AC4). Anchored on
+/// [stuckBackgroundHandbackSentence] so the loop's background-hand-back
+/// recognition (`_isBackgroundHandback`) classifies it as a real
+/// conversion — the same anchor the bash auto-background hand-back uses.
+/// The remote task keeps rendering (never restarted) but its file will not
+/// auto-arrive in this session; a later generate_video call starts a fresh
+/// render.
+String videoYieldHandbackText(String taskId) =>
+    '$stuckBackgroundHandbackSentence'
+    'video render task $taskId — the poll was handed back early '
+    '(the render was NOT restarted or stopped).\n'
+    'Task: $taskId\n'
+    'The rendered file will NOT auto-arrive in this session; calling '
+    'generate_video again starts a FRESH render. Continue other work.';
+
+/// The between-iterations poll checkpoint shared by every video dialect's
+/// poll loop (issue #1923 AC2/AC4): a cancelled run token aborts the call
+/// outright ([CancelledException]); a fired soft-yield token stops the
+/// polling and hands back honestly ([VideoYieldHandback]). The remote task
+/// keeps rendering either way — nothing is restarted.
+void _checkVideoPoll(
+  CancelToken? cancelToken,
+  CancelToken? yieldToken,
+  String taskId,
+) {
+  cancelToken?.throwIfCancelled();
+  if (yieldToken?.isCancelled ?? false) throw VideoYieldHandback(taskId);
 }
 
 /// Resolves a named secret (the slot override's `apiKeyName`) to its value;
@@ -144,6 +191,13 @@ abstract final class VideoDialect {
   /// Generates a video on the given endpoint. The implementation
   /// handles any async polling the provider requires and returns the
   /// downloaded MP4 bytes plus the saved path.
+  ///
+  /// Cancellation checkpoints (issue #1923 AC2/AC4), checked between poll
+  /// iterations: [cancelToken] cancelled aborts the call outright
+  /// ([CancelledException] — the run is going away); [yieldToken] is the
+  /// tool phase's soft-yield token — when it has fired the poll loop STOPS
+  /// and throws [VideoYieldHandback]: the remote task keeps rendering
+  /// (never restarted), the parent gets the hand-back receipt.
   Future<({String path, Uint8List bytes, String detail})> generate({
     required ExecutionEnv env,
     required VideoEndpoint endpoint,
@@ -153,6 +207,8 @@ abstract final class VideoDialect {
     List<ResolvedMediaImage> images = const [],
     required http.Client client,
     Future<void> Function()? onPollProgress,
+    CancelToken? cancelToken,
+    CancelToken? yieldToken,
   });
 }
 
@@ -202,6 +258,8 @@ final class MiniMaxVideoDialect extends VideoDialect {
     List<ResolvedMediaImage> images = const [],
     required http.Client client,
     Future<void> Function()? onPollProgress,
+    CancelToken? cancelToken,
+    CancelToken? yieldToken,
   }) async {
     final base = _trimSlash(endpoint.baseUrl);
     final (resolution: resolution, ratio: ratio) = sizeFor(size);
@@ -221,6 +279,8 @@ final class MiniMaxVideoDialect extends VideoDialect {
       headers,
       taskId,
       onPollProgress,
+      cancelToken: cancelToken,
+      yieldToken: yieldToken,
     );
     final bytes = await _downloadVideo(client, fileUrl);
     final path = await _save(env, 'videos', 'mp4', bytes);
@@ -278,10 +338,15 @@ final class MiniMaxVideoDialect extends VideoDialect {
     String base,
     Map<String, String> headers,
     String taskId,
-    Future<void> Function()? onProgress,
-  ) async {
+    Future<void> Function()? onProgress, {
+    CancelToken? cancelToken,
+    CancelToken? yieldToken,
+  }) async {
     const maxPolls = 20;
     for (var i = 0; i < maxPolls; i++) {
+      // Issue #1923 AC2/AC4: between-iterations checkpoint — cancel aborts,
+      // a fired yield hands the poll back (the task keeps rendering).
+      _checkVideoPoll(cancelToken, yieldToken, taskId);
       final data = await _pollOnce(client, base, headers, taskId);
       final status = data['status'] as String?;
       if (status == 'Success') return _fileUrlFrom(data, taskId);
@@ -392,6 +457,8 @@ final class HailuoVideoDialect extends VideoDialect {
     List<ResolvedMediaImage> images = const [],
     required http.Client client,
     Future<void> Function()? onPollProgress,
+    CancelToken? cancelToken,
+    CancelToken? yieldToken,
   }) async {
     final base = _trimSlash(endpoint.baseUrl);
     final (resolution: resolution, duration: duration) = sizeFor(size);
@@ -411,6 +478,8 @@ final class HailuoVideoDialect extends VideoDialect {
       headers,
       taskId,
       onPollProgress,
+      cancelToken: cancelToken,
+      yieldToken: yieldToken,
     );
     final bytes = await _downloadVideo(client, fileUrl);
     final path = await _save(env, 'videos', 'mp4', bytes);
@@ -466,10 +535,15 @@ final class HailuoVideoDialect extends VideoDialect {
     String base,
     Map<String, String> headers,
     String taskId,
-    Future<void> Function()? onProgress,
-  ) async {
+    Future<void> Function()? onProgress, {
+    CancelToken? cancelToken,
+    CancelToken? yieldToken,
+  }) async {
     const maxPolls = 20;
     for (var i = 0; i < maxPolls; i++) {
+      // Issue #1923 AC2/AC4: between-iterations checkpoint — cancel aborts,
+      // a fired yield hands the poll back (the task keeps rendering).
+      _checkVideoPoll(cancelToken, yieldToken, taskId);
       final data = await _pollOnce(client, base, headers, taskId);
       final status = data['status'] as String?;
       if (status == 'Success') {
@@ -611,6 +685,8 @@ final class OpenRouterVideoDialect extends VideoDialect {
     List<ResolvedMediaImage> images = const [],
     required http.Client client,
     Future<void> Function()? onPollProgress,
+    CancelToken? cancelToken,
+    CancelToken? yieldToken,
   }) async {
     final base = _trimSlash(endpoint.baseUrl);
     final headers = _openRouterHeaders(endpoint);
@@ -631,6 +707,8 @@ final class OpenRouterVideoDialect extends VideoDialect {
       pollUrl,
       jobId,
       onPollProgress,
+      cancelToken: cancelToken,
+      yieldToken: yieldToken,
     );
     final path = await _save(env, 'videos', 'mp4', bytes);
     return (path: path, bytes: bytes, detail: 'saved to $path');
@@ -697,9 +775,14 @@ final class OpenRouterVideoDialect extends VideoDialect {
     Map<String, String> headers,
     String pollUrl,
     String jobId,
-    Future<void> Function()? onProgress,
-  ) async {
+    Future<void> Function()? onProgress, {
+    CancelToken? cancelToken,
+    CancelToken? yieldToken,
+  }) async {
     for (var i = 0; i < maxPolls; i++) {
+      // Issue #1923 AC2/AC4: between-iterations checkpoint — cancel aborts,
+      // a fired yield hands the poll back (the job keeps rendering).
+      _checkVideoPoll(cancelToken, yieldToken, jobId);
       final job = await _pollOnce(client, headers, pollUrl, jobId);
       final status = job['status']?.toString() ?? '';
       if (status == 'completed' || status == 'succeeded') {
@@ -817,6 +900,12 @@ Future<String> _save(
 /// OpenRouter model metadata) BEFORE the submit call. Only the
 /// OpenRouter dialect can carry them.
 ///
+/// [cancelToken]/[yieldToken] feed the dialects' between-polls checkpoints
+/// (issue #1923 AC2/AC4): a cancelled run token rejects up front and at
+/// every poll boundary; a fired soft-yield token surfaces as
+/// [VideoYieldHandback] after the submit (the remote task keeps
+/// rendering).
+///
 /// Dispatches to the first dialect in [videoGenerationDialects] whose
 /// `matches(endpoint)` returns true.
 Future<({String path, Uint8List bytes, String detail})> generateVideoBytes({
@@ -829,7 +918,10 @@ Future<({String path, Uint8List bytes, String detail})> generateVideoBytes({
   List<String> declaredInputModalities = const [],
   http.Client? httpClient,
   Future<void> Function()? onPollProgress,
+  CancelToken? cancelToken,
+  CancelToken? yieldToken,
 }) async {
+  cancelToken?.throwIfCancelled();
   final client = httpClient ?? http.Client();
   try {
     final dialect = videoGenerationDialects
@@ -874,6 +966,8 @@ Future<({String path, Uint8List bytes, String detail})> generateVideoBytes({
       images: resolvedImages,
       client: client,
       onPollProgress: onPollProgress,
+      cancelToken: cancelToken,
+      yieldToken: yieldToken,
     );
   } finally {
     client.close();
@@ -931,6 +1025,11 @@ AgentTool generateVideoTool({
     execute: (arguments, cancelToken, onUpdate) => _runVideoGeneration(
       arguments: arguments,
       cancelToken: cancelToken,
+      // Issue #1923 AC2/AC4: the phase's soft-yield token (zone-published
+      // by the loop) rides down to the dialects' poll checkpoints — a
+      // steering message mid-render hands the poll back instead of
+      // blocking the phase for the whole poll window.
+      yieldToken: currentYieldToken(),
       onUpdate: onUpdate,
       env: env,
       modelsConfig: modelsConfig,
@@ -946,10 +1045,12 @@ AgentTool generateVideoTool({
 /// The `generate_video` execute body: validate the prompt, resolve the
 /// slot endpoint lazily per call (a `/models set videoGeneration …`
 /// switch is picked up without a restart), then delegate to the matching
-/// dialect.
+/// dialect. A [VideoYieldHandback] (the soft-yield token fired mid-render)
+/// resolves to the anchored early-hand-back receipt instead of an error.
 Future<ToolExecutionResult> _runVideoGeneration({
   required Map<String, dynamic> arguments,
   CancelToken? cancelToken,
+  CancelToken? yieldToken,
   ToolUpdateCallback? onUpdate,
   required ExecutionEnv env,
   required ModelsConfig? modelsConfig,
@@ -978,27 +1079,37 @@ Future<ToolExecutionResult> _runVideoGeneration({
       for (final entry in imageArgs)
         if (entry != null) parseMediaImageInput(entry.toString()),
   ];
-  final file = await generateVideoBytes(
-    env: env,
-    endpoint: endpoint,
-    prompt: prompt,
-    size: arguments['size'] as String?,
-    quality: arguments['quality'] as String?,
-    images: images,
-    declaredInputModalities:
-        modelsConfig?.slots['videoGeneration']?.inputModalities ?? const [],
-    httpClient: httpClient,
-    onPollProgress: () async {
-      // Surface progress to the UI — the polling can take up to
-      // ~2 minutes for MiniMax, without a heartbeat the user sees
-      // nothing.
-      onUpdate?.call(
-        ToolExecutionResult(
-          content: [TextContent(text: 'video generation: polling task...')],
-        ),
-      );
-    },
-  );
+  final ({String path, Uint8List bytes, String detail}) file;
+  try {
+    file = await generateVideoBytes(
+      env: env,
+      endpoint: endpoint,
+      prompt: prompt,
+      size: arguments['size'] as String?,
+      quality: arguments['quality'] as String?,
+      images: images,
+      declaredInputModalities:
+          modelsConfig?.slots['videoGeneration']?.inputModalities ?? const [],
+      httpClient: httpClient,
+      onPollProgress: () async {
+        // Surface progress to the UI — the polling can take up to
+        // ~2 minutes for MiniMax, without a heartbeat the user sees
+        // nothing.
+        onUpdate?.call(
+          ToolExecutionResult(
+            content: [TextContent(text: 'video generation: polling task...')],
+          ),
+        );
+      },
+      cancelToken: cancelToken,
+      yieldToken: yieldToken,
+    );
+  } on VideoYieldHandback catch (handback) {
+    // Issue #1923 AC2/AC4: a steering message arrived mid-render — hand
+    // the poll back honestly. The remote task keeps rendering (never
+    // restarted), but its file will not auto-arrive in this session.
+    return ToolExecutionResult.text(videoYieldHandbackText(handback.taskId));
+  }
   cancelToken?.throwIfCancelled();
   return ToolExecutionResult(
     content: [

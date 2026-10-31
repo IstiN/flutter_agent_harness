@@ -72,6 +72,10 @@ import '../agent/stuck_tool.dart';
 import '../agent/foreground_call_budget.dart';
 import '../agent/tool_pairing.dart';
 import '../providers/models_for_endpoint.dart';
+import '../providers/payload_stall.dart'
+    show payloadStallAdvice, payloadStallAdviceLine;
+import '../providers/proxy_connector.dart';
+import '../providers/proxy_connector_io.dart';
 import '../providers/stream_trace.dart';
 import '../agent/tool_registry.dart';
 import '../utils/list_equals.dart';
@@ -148,6 +152,7 @@ import '../model_roles/model_roles.dart';
 import '../model_roles/provider_model_binding.dart';
 import '../session_deadline.dart';
 import 'tool_phase_labels.dart';
+import 'tool_row_content.dart';
 import 'tool_rows.dart';
 import '../model_roles/vision_models.dart';
 import '../providers/chatgpt_codex_models.dart';
@@ -159,6 +164,8 @@ import '../providers/dial.dart';
 import '../providers/models_endpoint.dart';
 import '../providers/openrouter_oauth.dart';
 import '../providers/thinking.dart';
+import '../agent/image_recovery.dart'
+    show imageRecoveryFailedText, imageRecoveryNotice, imageRecoveryNoticeText;
 import '../agent/image_registry.dart'
     show
         ImageRegistryConfig,
@@ -302,6 +309,8 @@ export 'model_presets.dart' show bundledCatalogModelIds, knownModelPresets;
 
 part 'provider_flow_helpers.dart';
 part 'provider_commands.dart';
+part 'provider_codemie_sso.dart';
+part 'provider_proxy_gate.dart';
 part 'provider_key_persist.dart';
 part 'provider_export_command.dart';
 part 'chatgpt_import_command.dart';
@@ -458,7 +467,13 @@ class AgentCli {
     _streamFunction =
         streamFunction ??
         scriptedTestStreamFunction() ??
-        _catalogStreamFunction(config.providerKind, config.apiKey);
+        _catalogStreamFunction(
+          config.providerKind,
+          config.apiKey,
+          providerName:
+              config.activeCustomName ??
+              resolveCliProviderSpec(config.providerKind)?.name,
+        );
     // MCP servers connect lazily in the background; their tools land in
     // the registry via _onMcpChanged (registered after the agent exists).
     _mcp = AgentCliMcpWiring(config: config.mcpConfig, cwd: _env.cwd);
@@ -557,6 +572,14 @@ class AgentCli {
         isUnattended: () => _approval.mode == ApprovalMode.unattended,
         vision: config.visionConfig,
         transcribe: config.transcribeConfig,
+        visionResolver: config.visionResolver,
+        // gh-1984 AC2: the auto-route's side-call spend joins the CLI's
+        // /cost meter (tokens + cost, no turn-count bump) unless the host
+        // brought its own sink. Same getter the sqlite swap site rides —
+        // both read-tool construction sites must share ONE default.
+        onImageInspectUsage: AgentCliTools(this)._readOnImageUsage,
+        mediaFileReadNotes: config.mediaFileReadNotes,
+        transcribeAvailable: _readTranscribeAvailable,
         transcribeSessionId: () => _session?.cachedId,
         media: MediaToolServices(
           modelsConfig: config.modelsConfig,
@@ -607,6 +630,41 @@ class AgentCli {
           deliverableRedactor: config.redactionPipeline == null
               ? null
               : (String text) => config.redactionPipeline!.redact(text),
+          // gh-1956: reply auto-spill is the default delivery; the
+          // kill-switch getter consults the config live, and spilled
+          // artifacts persist as `deliverable_artifact` custom records so
+          // a resumed session re-seeds them (AC6 — pointer survives
+          // restart). The source rides the same RAW file scan as the
+          // registry (side-leaf custom records are invisible to the
+          // windowed boot open).
+          replyAutoSpill: () => config.subagents.replyAutoSpill,
+          deliverableArtifactSink: (artifact) async {
+            final session = _session;
+            if (session == null) {
+              // Best-effort (AC3) — but never silent (gh-1956 review): a
+              // dropped row is discoverable after the fact.
+              deliverableDurabilityLog?.call(
+                '[deliverables] artifact row dropped: '
+                'no open parent session',
+              );
+              return;
+            }
+            await session.appendCustomEntry(
+              customType: deliverableArtifactRecordType,
+              data: artifact,
+            );
+          },
+          deliverableArtifactSource: () async {
+            final session = _session;
+            final repo = _repo;
+            if (session == null || repo is! JsonlSessionRepo) {
+              return const [];
+            }
+            return deliverableArtifactRows(
+              repo: repo,
+              parent: await session.getMetadata(),
+            );
+          },
           homeDir: config.homeDir,
           machineName: config.machineName,
           a2a: config.a2aConfig,
@@ -640,6 +698,20 @@ class AgentCli {
             return subagentRegistryRows(
               repo: repo,
               parent: await session.getMetadata(),
+            );
+          },
+          // gh-1948: task_observe resolves a RUNNING child's real session
+          // file from the sessions tree — the registry handle still carries
+          // the `<parentSessionId>/<id>` placeholder until the first
+          // transcript flush. Same foreign-repo degradation as above.
+          resolveChildSessionPath: (childId) async {
+            final session = _session;
+            final repo = _repo;
+            if (session == null || repo is! JsonlSessionRepo) return null;
+            return resolveChildSessionPath(
+              repo: repo,
+              parent: await session.getMetadata(),
+              childId: childId,
             );
           },
           // Issue #383: the heartbeat rides the steering channel — the
@@ -802,6 +874,13 @@ class AgentCli {
     // Non-draining probe for the same inbox: mid-run mail also triggers the
     // tool phase's soft-yield so a long bash/task call does not delay it.
     _agent.externalSteeringProbe = _mainInboxProbe;
+    // Issue #1923 AC4: the loop's steering-interrupt notices (queued /
+    // delivered) surface as visible transcript lines, same warning styling
+    // as the stall lines in agent_cli_steering.dart. The loop pins the
+    // wording — print verbatim.
+    _agent.onSteeringInterruptNotice = (line) {
+      io.writeln(tuiWarning(line));
+    };
     // Model roles: when the default role resolves, the agent runs through
     // the resolver's fallback stream (rotation/failover per provider call).
     // A resolver without a default role leaves the legacy wiring in place
@@ -965,6 +1044,13 @@ class AgentCli {
 
   /// The active mode.
   AgentMode get currentMode => _currentMode;
+
+  /// The live API key of the active provider connection: boot-resolved,
+  /// replaced by a `/provider` switch. The media-slot resolvers read it
+  /// per resolution so a same-host slot's main-key reuse follows the
+  /// CURRENT connection (the same live accessor `MediaToolServices`
+  /// rides), never a boot-pinned value.
+  String get apiKey => _apiKey;
 
   /// The effective system prompt sent to the model.
   String get systemPrompt => _agent.state.systemPrompt;
@@ -1503,6 +1589,13 @@ class AgentCli {
   /// message buffers here and renders once, whole, at message end.
   final StringBuffer _assistantText = StringBuffer();
 
+  /// The open THINKING window (gh-1933 AC4): on the TUI chrome face the
+  /// per-delta dim stream is replaced by ONE collapsed `> Thought for Ns`
+  /// row — the deltas buffer here, the window opens at the first thinking
+  /// delta and closes (emitting the row, duration = the streamed window)
+  /// at the first answer/tool-call delta or message end. Null = closed.
+  ({DateTime startedAt, StringBuffer buffer})? _thinkingWindow;
+
   /// The AC3 post-tool_use narration holds (gh-1433): once the current
   /// message streams a tool-call block, its later text deltas are
   /// post-call narration — each tool-call block opens a segment, deltas
@@ -1679,6 +1772,12 @@ class AgentCli {
     presenceStore: config.presenceStore,
     processId: config.processId,
     parseExecutor: config.parseExecutor,
+    // gh-1952 review: the record-write mask — appended tool-call
+    // arguments carry masked secrets, never raw bytes (the live message
+    // and the provider context stay untouched).
+    persistTransform: config.redactionPipeline == null
+        ? null
+        : (message) => persistRedactMessage(config.redactionPipeline!, message),
   );
   Session? _session;
 
@@ -1865,10 +1964,12 @@ class AgentCli {
   /// skills (`paths:` frontmatter) enter the prompt once their globs match.
   final Set<String> _touchedPaths = {};
 
-  /// Start wall-clock + rendered detail per in-flight tool call (keyed by
-  /// toolCallId) — the end row repeats the detail and adds the elapsed zone
-  /// (issue #366). Unpaired ends render neither.
-  final Map<String, (DateTime, String)> _toolStarts = {};
+  /// Start wall-clock + rendered detail + args per in-flight tool call
+  /// (keyed by toolCallId) — the end row repeats the detail and adds the
+  /// elapsed zone (issue #366); gh-1933 also re-derives the row's v2
+  /// content (counts, diffstat, preview) from the stashed args. Unpaired
+  /// ends render neither.
+  final Map<String, (DateTime, String, Map<String, dynamic>)> _toolStarts = {};
 
   /// The MCP wiring (manager + re-registration) — see agent_cli_mcp.dart.
   late AgentCliMcpWiring _mcp;
@@ -1928,6 +2029,14 @@ class AgentCli {
   /// providers in one pick.
   final Map<String, List<String>> _allProvidersModelCache = {};
   bool _allProvidersCacheRefreshed = false;
+
+  /// Per-provider fetch notes from the last refresh cycle (gh-1990): a
+  /// provider whose /models answer named something — the failed branch
+  /// (exchange / HTTP / filter + hint) or the partial-filter summary.
+  /// The `/models` fetch-notes section prints these instead of a bare
+  /// (or missing) list. Cleared at the start of every refresh so stale
+  /// notes never linger.
+  final Map<String, String> _providerModelFetchReasons = {};
 
   /// Providers whose cached list is trusted for THIS session: fetched live
   /// here, or loaded from a disk entry younger than 24h. A trusted entry
@@ -2023,7 +2132,9 @@ class AgentCli {
     _logDiagnostic('fa boot sid=$_logSid version=$_version');
     _wireTransientRetryNotice();
     _wireDeliverySloNotice();
+    _wireDeliverableDurabilityLog();
     _wireImageDropNotice();
+    _wirePayloadStallAdvice();
     _wireOperativePinNotice();
     onUnknownFinishReason = (reason) =>
         _logDiagnostic('unknown finish_reason sid=$_logSid reason=$reason');
@@ -2037,6 +2148,10 @@ class AgentCli {
     // would clobber the live row). [SubagentManager.rehydrate] also skips
     // ids already registered by this process, so the race stays closed.
     await _subagentManager.rehydrate();
+    // gh-1956 AC6: kick the durable-artifact restore so an early
+    // parent-side agent:// resolution already sees the re-seeded store
+    // (the capture also restores lazily before any delivery decision).
+    unawaited(_taskConfig.executor.ensureDeliverablesRestored());
     // Phase 2: session-start maintenance trigger — fire-and-forget when the
     // last run is >24h old; never blocks the first turn.
     unawaited(
@@ -2242,6 +2357,9 @@ class AgentCli {
     // before the prompt: any spawn the run triggers must see the loaded
     // registry instead of racing it.
     await _subagentManager.rehydrate();
+    // gh-1956 AC6: same durable-artifact restore kick as the interactive
+    // boot — a headless run may resolve a resumed spill immediately.
+    unawaited(_taskConfig.executor.ensureDeliverablesRestored());
     // Session scope (tools.yaml next to the session file) is live now.
     unawaited(AgentCliTools(this).rebuildToolAvailability());
     // Transient retry voice (issue #1168 review): the interactive boot
@@ -2307,10 +2425,20 @@ class AgentCli {
       // The same pre-flight compaction guard as the REPL's [_runPrompt]:
       // a resumed session already over the threshold must compact BEFORE
       // the first request, or it goes out over-window and gets rejected.
-      // Inside the guarded section (issue #1085 round-4): a cancel here
-      // surfaces through the same loud error line as any run failure —
-      // the listener above is already live for it.
-      await _maybeAutoCompact();
+      // Inside the guarded section (issue #1085 round-4): the listener
+      // above is already live for it. gh-1929: a cancel HERE — the
+      // pre-flight window, the prompt never sent — exits with the
+      // CANCELLED semantics (130, the aborted-run code) and the neutral
+      // dim receipt; a cancel DURING the run (in-flight relief, settle
+      // funnel) keeps its loud abort via the error line + exit 1 below
+      // (the pinned mid-run contract).
+      try {
+        await _maybeAutoCompact();
+      } on CancelledException {
+        _sealReactionRuns();
+        _renderUserCancel('submission cancelled');
+        return 130;
+      }
       if (images.isEmpty) {
         await _agent.prompt(_redactUserText(prompt));
       } else {
@@ -2440,6 +2568,13 @@ class AgentCli {
   /// attempt and before the exhaustion verdict; [_beginUserPrompt] resets
   /// it with the fresh turn.
   bool _runAbortRequested = false;
+
+  /// gh-1929: a submit's pre-flight compaction was cancelled by the user
+  /// (the prompt was never sent) — the TUI submit boundary consumes this
+  /// to hand the typed text back to the composer
+  /// ([FaTuiController.sendInputText]). Line mode and headless never
+  /// read it.
+  bool _submissionCancelRestorePending = false;
 
   /// Every compaction pass that actually STARTED (issue #1085 round-1):
   /// the over-window funnel's exhaustion verdict names how many passes

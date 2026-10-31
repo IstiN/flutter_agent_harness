@@ -57,6 +57,12 @@ upload_all() { # exists-path: upload + (servable-only) publish + latest
   # (the v1.0.630 incident window).
   if release_serves_fa_update; then
     gh release edit "$tag" --draft=false --latest --repo "$repo"
+    # gh-1899: same duplicate-tag race as the tag train — a twin draft
+    # minted by a sibling leg of THIS run would otherwise rot until the
+    # 24h sweeper. The tag is published and servable here (the flip is
+    # gated on the signed checksums), so own-run twin drafts are orphans.
+    bash "$(dirname "$0")/release_draft_dedupe.sh" "$tag" \
+      || echo "::warning::gh-1899 twin-draft dedupe failed — the release is published and servable, so this is cleanup noise only; the 24h sweeper remains the backstop"
   else
     echo "release $tag is not yet servable (no SHA256SUMS on it) — publish+latest left to the release-provenance step (gh-1801)"
   fi

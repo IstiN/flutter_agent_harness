@@ -47,7 +47,7 @@ class ChatComposer extends StatefulWidget {
     this.galleryPicker,
     this.cameraPicker,
     this.voiceInput,
-    this.clipboardImageReader,
+    this.clipboardReader,
     this.dropBridge,
     this.leadingBuilder,
     this.hideMicWhenNotEmpty = false,
@@ -81,10 +81,10 @@ class ChatComposer extends StatefulWidget {
   /// [FaChatHost.voiceInput]. Null (with no host hook) hides the mic.
   final FaChatVoiceInput? voiceInput;
 
-  /// Clipboard image reader for smart paste; overrides
-  /// [FaChatHost.clipboardImageReader]. Null (with no host hook) pastes
-  /// text only.
-  final FaClipboardImageReader? clipboardImageReader;
+  /// Clipboard file reader for smart paste (files / audio / video /
+  /// images); overrides [FaChatHost.clipboardReader]. Null (with no host
+  /// hook) pastes text only.
+  final FaClipboardReader? clipboardReader;
 
   /// OS drag-and-drop consumer (issue #465): the chat surface owns the
   /// [DropTarget] over the transcript + composer and forwards drops here;
@@ -126,6 +126,15 @@ class ChatComposer extends StatefulWidget {
   ChatComposerState createState() => ChatComposerState();
 }
 
+/// Type-aware chip icon for non-raster attachments (issue #1979 AC8):
+/// audio and video get their own marks; everything else stays the generic
+/// file icon (raster images render thumbnails instead).
+IconData chipIconForMimeType(String mimeType) {
+  if (mimeType.startsWith('audio/')) return Icons.audiotrack;
+  if (mimeType.startsWith('video/')) return Icons.movie_outlined;
+  return Icons.insert_drive_file_outlined;
+}
+
 /// Public so the chat surface can hand OS drops to a default composer
 /// through a [GlobalKey] and tests can stage files directly.
 class ChatComposerState extends State<ChatComposer>
@@ -156,9 +165,9 @@ class ChatComposerState extends State<ChatComposer>
   late final FaChatVoiceInput? _voiceInput =
       widget.voiceInput ?? FaChatHost.voiceInput;
 
-  /// Clipboard image reader for smart paste (Cmd/Ctrl+V).
-  late final FaClipboardImageReader? _clipboardImageReader =
-      widget.clipboardImageReader ?? FaChatHost.clipboardImageReader;
+  /// Clipboard file reader for smart paste (Cmd/Ctrl+V).
+  late final FaClipboardReader? _clipboardReader =
+      widget.clipboardReader ?? FaChatHost.clipboardReader;
 
   /// Voice-input state: idle → recording → transcribing → idle.
   bool _micRecording = false;
@@ -442,23 +451,28 @@ class ChatComposerState extends State<ChatComposer>
     return KeyEventResult.ignored;
   }
 
-  /// Smart paste: clipboard image → staged upload chip; long/multi-line
-  /// text → staged `.txt` chip; short single-line text → inserted inline at
-  /// the cursor. Mirrors YoLoIT's SmartClipboardPasteService, except staged
-  /// content lands in the sandbox `uploads/` as an attachment chip instead
-  /// of a pasted temp-file path. A MIXED clipboard (image + text) lands
-  /// both — the chip AND the inline text; the user keeps what they want
-  /// (issue #465 AC2).
+  /// Smart paste: clipboard files (file refs, audio, video, images) →
+  /// staged upload chips through the same [stageDroppedFiles] tail the
+  /// pickers and drops use; long/multi-line text → staged `.txt` chip;
+  /// short single-line text → inserted inline at the cursor. A MIXED
+  /// clipboard (files + text) lands both — the chips AND the inline text;
+  /// the user keeps what they want (issue #465 AC2). An unsupported rich
+  /// flavor surfaces the hint toast, never silence (issue #1979 AC3).
   Future<void> _handleSmartPaste() async {
-    final imageReader = _clipboardImageReader;
-    if (imageReader != null) {
+    final reader = _clipboardReader;
+    if (reader != null) {
       try {
-        final image = await imageReader();
-        if (image != null) {
-          if (mounted) await _stagePending(image.name, image.bytes);
+        final files = await reader();
+        if (files.isNotEmpty) {
+          if (mounted) await stageDroppedFiles(files);
           if (mounted) await _pasteClipboardText();
           return;
         }
+      } on FaClipboardUnsupportedException {
+        if (mounted) {
+          _showSnack(FaChatStrings.of(context).chatClipboardUnsupported);
+        }
+        // Still fall through: text may be stageable/insertable alongside.
       } on Object {
         // Clipboard probing is best effort — fall through to text.
       }
@@ -744,7 +758,7 @@ class ChatComposerState extends State<ChatComposer>
               ),
             )
           else ...[
-            const Icon(Icons.insert_drive_file_outlined, size: 18),
+            Icon(chipIconForMimeType(attachment.mimeType), size: 18),
             const SizedBox(width: 6),
             ConstrainedBox(
               constraints: const BoxConstraints(maxWidth: 200),

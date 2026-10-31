@@ -165,8 +165,11 @@ extension AgentCliRunNotices on AgentCli {
     _wireTransientRetryNotice();
     _wireImageDropNotice();
     _wireImageCapLearnedNotice();
+    _wireImageRecoveryNotice();
     _wireTextOnlyImageDropNotice();
+    _wirePayloadStallAdvice();
     _wireDeliverySloNotice();
+    _wireDeliverableDurabilityLog();
     _wireOperativePinNotice();
   }
 
@@ -282,6 +285,19 @@ extension AgentCliRunNotices on AgentCli {
     };
   }
 
+  /// Repeated identical-payload stalls (issue #1916 AC3): ONE actionable
+  /// advice line per stalled payload instead of endless silent retries —
+  /// the dim `[net]` transcript line + fa.log entry, same as the other
+  /// net notices.
+  void _wirePayloadStallAdvice() {
+    payloadStallAdvice = (bytes, fingerprint) {
+      io.writeln(_style.dim('[net] ${payloadStallAdviceLine(bytes)}'));
+      _logDiagnostic(
+        'payload stall advice sid=$_logSid bytes=$bytes fp=$fingerprint',
+      );
+    };
+  }
+
   /// Adaptive image-cap visibility (issue #1750): when a provider
   /// image-count refusal teaches the loop a smaller cap, say so before
   /// the per-image drop lines follow — never silent.
@@ -294,6 +310,37 @@ extension AgentCliRunNotices on AgentCli {
         ),
       );
       _logDiagnostic('image cap learned sid=$_logSid model=$modelId cap=$cap');
+    };
+  }
+
+  /// gh-1934: the 413 image-payload recovery ladder's voice — the same
+  /// dim transcript line + fa.log entry shape as the other image notices.
+  /// Pass notices print `[images] recovered from 413: dropped N, stripped
+  /// M` once per pass; the exhaustion event prints the actionable failure
+  /// (switch provider / lower the budget) exactly once.
+  void _wireImageRecoveryNotice() {
+    imageRecoveryNotice = (event) {
+      if (event.failed) {
+        final line = imageRecoveryFailedText(event.providerError ?? 'unknown');
+        io.writeln(_style.dim(line));
+        _logDiagnostic(
+          'image 413 recovery failed sid=$_logSid '
+          'error=${event.providerError}',
+        );
+        return;
+      }
+      io.writeln(
+        _style.dim(
+          imageRecoveryNoticeText(
+            dropped: event.dropped,
+            stripped: event.stripped,
+          ),
+        ),
+      );
+      _logDiagnostic(
+        'image 413 recovery pass=${event.pass} sid=$_logSid '
+        'dropped=${event.dropped} stripped=${event.stripped}',
+      );
     };
   }
 
@@ -329,6 +376,17 @@ extension AgentCliRunNotices on AgentCli {
     deliverySloSink = (line) {
       _logDiagnostic('delivery slo sid=$_logSid $line');
       if (line.contains('BREACH')) io.writeln(_style.dim(line));
+    };
+  }
+
+  /// Deliverable durability visibility (gh-1956 review): a failed or
+  /// dropped best-effort artifact row lands in fa.log AND surfaces as a
+  /// dim transcript line — the degradation is otherwise only discovered
+  /// when a post-resume pointer fails to resolve.
+  void _wireDeliverableDurabilityLog() {
+    deliverableDurabilityLog = (line) {
+      _logDiagnostic('deliverable durability sid=$_logSid $line');
+      io.writeln(_style.dim(line));
     };
   }
 }

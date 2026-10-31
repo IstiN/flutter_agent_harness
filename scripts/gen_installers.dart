@@ -50,7 +50,7 @@ final _generatedHeader =
 
 /// Renders every generated installer artifact WITHOUT touching the
 /// filesystem. Keys are repo-relative paths, values are the exact bytes to
-/// commit (the .ps1 entries carry their UTF-8 BOM — see [main]).
+/// commit (gh-1945: the .ps1 entries are BOM-less — see [main]).
 ///
 /// Exposed for the golden drift test (test/site/installer_golden_test.dart):
 /// the test re-renders from the live sources and compares against the
@@ -113,10 +113,23 @@ Map<String, String> renderInstallers() {
       .replaceFirst('{{APPROVAL_MENU}}', _psApprovalMenu(approvalModes))
       .replaceFirst('{{APPROVAL_SWITCH}}', _psApprovalSwitch(approvalModes));
 
-  final bat = File(_batTemplatePath).readAsStringSync().replaceFirst(
-    ':: {{GENERATED_HEADER}}',
-    _generatedHeader.replaceAll('# ', ':: '),
-  );
+  // cmd.exe parses a .bat by BYTE offset and re-reads it as it executes. An
+  // LF-only file makes it resume mid-line, so it runs fragments of the next
+  // comment -- the wrapper dies with `'. was unexpected at this time.'`
+  // before PowerShell ever starts. `.gitattributes` pins the checkout to
+  // CRLF, but the renderer must not depend on that: force CRLF here so the
+  // artifact is cmd-safe however it was produced. Multi-byte UTF-8 glyphs
+  // are what turn the mis-seek into command fragments, so the body stays
+  // ASCII-only too -- the banner box in [_generatedHeader] becomes plain `=`
+  // in this flavour. Verified by test/site/installer_golden_test.dart.
+  final batHeader = _generatedHeader
+      .replaceAll('# ', ':: ')
+      .replaceAll('\u2550', '=');
+  final bat = File(_batTemplatePath)
+      .readAsStringSync()
+      .replaceFirst(':: {{GENERATED_HEADER}}', batHeader)
+      .replaceAll('\r\n', '\n')
+      .replaceAll('\n', '\r\n');
 
   final shSetup = File(_shSetupTemplatePath)
       .readAsStringSync()
@@ -142,8 +155,10 @@ Map<String, String> renderInstallers() {
     _shOut: sh,
     _batOut: bat,
     _shSetupOut: shSetup,
-    // .ps1 content arrives WITHOUT the BOM; main() adds it at write time
-    // (see below) and the golden test asserts the BOM bytes separately.
+    // gh-1945: the .ps1 content is committed BOM-less — the piped
+    // `irm | iex` path decodes the served bytes as ISO-8859-1, where a BOM
+    // becomes literal `ï»¿` text. The golden test asserts bytes 0-2 are NOT
+    // a BOM (see test/site/installer_golden_test.dart).
     _psOut: ps,
     _psSetupOut: psSetup,
   };
@@ -152,14 +167,19 @@ Map<String, String> renderInstallers() {
 void main() {
   final rendered = renderInstallers();
   for (final entry in rendered.entries) {
-    // Windows PowerShell 5.1 parses scripts WITHOUT a BOM in the system ANSI
-    // code page, which mojibakes the UTF-8 banner/glyphs at parse time (the
-    // OutputEncoding line cannot fix already-corrupted literals). Writing the
-    // BOM makes PS 5.1 read the file as UTF-8.
-    final content = entry.key.endsWith('.ps1')
-        ? '\uFEFF${entry.value}'
-        : entry.value;
-    File(entry.key).writeAsStringSync(content);
+    // gh-1945: NO UTF-8 BOM on the .ps1 artifacts. The served file is piped
+    // (`irm https://fa1.dev/install.ps1 | iex`) and GitHub Pages serves .ps1
+    // as application/octet-stream with no charset, so Windows PowerShell 5.1
+    // decodes the body as ISO-8859-1: the BOM bytes become the literal text
+    // `ï»¿` glued to line 1, the leading `#` stops being a comment, and the
+    // install fails with "The term 'ï»¿#' is not recognized". A BOM-less
+    // file starts with plain ASCII `#`, which is decode-invariant in every
+    // ANSI code page; the non-ASCII glyphs sit inside comments/string
+    // literals, where a Latin-1 mis-decode is cosmetic, never syntactic.
+    // (The BOM's parse-time benefit only applied to `powershell -File`
+    // execution, which no documented flow uses; PS 7 decodes UTF-8 either
+    // way. Golden test: test/site/installer_golden_test.dart.)
+    File(entry.key).writeAsStringSync(entry.value);
   }
   print('Generated ${rendered.keys.join(', ')} from $_configPath');
 }
@@ -697,13 +717,37 @@ String _psSetupRecipe(YamlMap install) {
   b.writeln(r'Write-Host ""');
   b.writeln(r'Write-Host "  Configure a provider and API key interactively:"');
   b.writeln(r'Write-Host ""');
-  b.writeln('Write-Host "    irm $setupUrl | iex"');
-  b.writeln(r'Write-Host ""');
-  b.writeln(r'Write-Host "  Or set an environment variable manually:"');
-  b.writeln(r'Write-Host ""');
+  // gh-1945: when install.bat delegated here from cmd.exe, `irm` and
+  // `$env:` do not exist — the recipe must speak the host shell. The bat
+  // sets FA_INSTALL_VIA=cmd before invoking this script.
+  b.writeln(r'if ($env:FA_INSTALL_VIA -eq "cmd") {');
   b.writeln(
-    "Write-Host \"    `\$env:$firstVar = '<your-key>'   # or $restVars\"",
+    "    Write-Host '    powershell -NoProfile -ExecutionPolicy Bypass "
+    '-Command "irm $setupUrl | iex"\'',
   );
+  b.writeln(r'    Write-Host ""');
+  b.writeln(
+    r'    Write-Host "  Or set an environment variable manually (cmd):"',
+  );
+  b.writeln(r'    Write-Host ""');
+  // gh-1945 review: cmd has no comment syntax, so the printed `set` line
+  // must be paste-safe verbatim — the `# or …` tail would be silently
+  // included in the value. The alternatives move to their own hint line
+  // (the PowerShell/sh recipes keep the tail; there it is a real comment).
+  b.writeln("    Write-Host '    set $firstVar=<your-key>'");
+  b.writeln(r'    Write-Host ""');
+  b.writeln("    Write-Host '    (or: set $restVars)'");
+  b.writeln(r'    Write-Host ""');
+  b.writeln("    Write-Host '  (from PowerShell: irm $setupUrl | iex)'");
+  b.writeln(r'} else {');
+  b.writeln('    Write-Host "    irm $setupUrl | iex"');
+  b.writeln(r'    Write-Host ""');
+  b.writeln(r'    Write-Host "  Or set an environment variable manually:"');
+  b.writeln(r'    Write-Host ""');
+  b.writeln(
+    "    Write-Host \"    `\$env:$firstVar = '<your-key>'   # or $restVars\"",
+  );
+  b.writeln(r'}');
   b.writeln(r'Write-Host ""');
   b.writeln(r'Write-Host "  Then start the agent:"');
   b.writeln(r'Write-Host ""');

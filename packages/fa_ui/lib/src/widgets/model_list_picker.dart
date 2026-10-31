@@ -25,6 +25,7 @@ class FaModelListPicker extends StatefulWidget {
     this.label,
     this.focusNode,
     this.fromBundledCatalog = false,
+    this.emptyReason,
   });
 
   /// The model id being edited — its text is also the list filter.
@@ -46,6 +47,11 @@ class FaModelListPicker extends StatefulWidget {
   /// Whether the list answered from the bundled offline catalog (the live
   /// fetch failed) — shows the provenance note.
   final bool fromBundledCatalog;
+
+  /// Why the endpoint answered no models (gh-1990) — the named failure
+  /// branch from the fetch report. Rendered (error color) in the empty
+  /// state instead of the generic note.
+  final String? emptyReason;
 
   @override
   State<FaModelListPicker> createState() => _FaModelListPickerState();
@@ -108,7 +114,13 @@ class _FaModelListPickerState extends State<FaModelListPicker> {
           focusNode: widget.focusNode,
           decoration: InputDecoration(
             labelText: widget.label ?? strings.settingsModelIdLabel,
-            helperText: widget.loading ? strings.settingsModelsFetching : null,
+            prefixIcon: const Icon(Icons.search, size: 20),
+            helperText: widget.loading
+                ? strings.settingsModelsFetching
+                : widget.models.isNotEmpty
+                ? strings.modelPickerSearchHelper
+                : null,
+            helperMaxLines: 2,
             suffixIcon: widget.loading
                 ? const Padding(
                     padding: EdgeInsets.all(12),
@@ -126,9 +138,11 @@ class _FaModelListPickerState extends State<FaModelListPicker> {
           Padding(
             padding: const EdgeInsets.symmetric(vertical: 4),
             child: Text(
-              strings.modelPickerNoEndpointModels,
+              widget.emptyReason ?? strings.modelPickerNoEndpointModels,
               style: theme.textTheme.bodySmall?.copyWith(
-                color: theme.colorScheme.onSurfaceVariant,
+                color: widget.emptyReason == null
+                    ? theme.colorScheme.onSurfaceVariant
+                    : theme.colorScheme.error,
               ),
             ),
           )

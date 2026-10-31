@@ -23,6 +23,7 @@ import '../session_retention.dart';
 import 'headless_config.dart';
 import 'waiting_heartbeat.dart';
 import '../providers/provider_common.dart';
+import '../providers/proxy_connector.dart';
 import '../spill/spill.dart';
 import '../skills/skill_availability.dart';
 import '../skills/skills_access.dart';
@@ -436,9 +437,55 @@ _composeAgentSection({
 bool _isGhostProviderEntry(Object? node) =>
     node is Map && isReservedCustomProviderName('${node['name']}');
 
+/// Parses the `providers:` section (issue #1921): a map of provider name
+/// → per-provider settings whose only key today is `network:` (the proxy
+/// binding). Strict like the rest of the config.
+Map<String, ProviderNetworkConfig> _parseProviderNetworks(Object? node) {
+  if (node == null) return const {};
+  if (node is! YamlMap) {
+    throw ConfigException('providers must be a map, got: $node');
+  }
+  return {
+    // A null value is a user error (the block was started but never
+    // written) — silently dropping it would degrade a binding to direct
+    // egress, which this section's contract forbids.
+    for (final entry in node.entries)
+      ...switch (entry.value) {
+        null => throw ConfigException(
+          'providers.${entry.key} has no value — write the network: block '
+          '(network: { proxy: … }) or remove the entry',
+        ),
+        _ => {
+          '${entry.key}': _parseProviderNetworkEntry(
+            '${entry.key}',
+            entry.value,
+          ),
+        },
+      },
+  };
+}
+
+ProviderNetworkConfig _parseProviderNetworkEntry(String name, Object? node) {
+  if (node is! YamlMap) {
+    throw ConfigException('providers.$name must be a map, got: $node');
+  }
+  for (final key in node.keys) {
+    if ('$key' != 'network') {
+      throw ConfigException(
+        'providers.$name: unknown key "$key" (only "network" is supported)',
+      );
+    }
+  }
+  return ProviderNetworkConfig.fromYaml(
+    node['network'],
+    configLabel: 'providers.$name.network',
+  );
+}
+
 /// Parses the `images:` section (session image registry, issue #171):
 /// `registry` (kill switch), `maxPerRequest` (per-request unique-image
-/// cap) and `perModel` (per-model cap overrides, issue #1750). Strict —
+/// cap), `maxBytesPerRequest` (per-request image byte budget, issue
+/// #1916) and `perModel` (per-model cap overrides, issue #1750). Strict —
 /// a bad schema throws [ConfigException] instead of silently keeping the
 /// defaults. Public so the settings flow's reload-after-write (issue
 /// #395) reuses the same parser the boot runs.
@@ -447,36 +494,51 @@ ImageRegistryConfig? parseImagesSection(Object? node) {
   if (node is! YamlMap) {
     throw ConfigException('images must be a map, got: $node');
   }
-  final (registry, maxPerRequest, perModel) = _parseImagesEntries(node);
-  if (registry == null && maxPerRequest == null && perModel == null) {
+  final (registry, maxPerRequest, maxBytesPerRequest, perModel, autoInspect) =
+      _parseImagesEntries(node);
+  if (registry == null &&
+      maxPerRequest == null &&
+      maxBytesPerRequest == null &&
+      perModel == null &&
+      autoInspect == null) {
     return null;
   }
   return ImageRegistryConfig(
     enabled: registry ?? true,
     maxPerRequest: maxPerRequest ?? defaultMaxImagesPerRequest,
+    maxBytesPerRequest: maxBytesPerRequest ?? defaultMaxImageBytesPerRequest,
     perModel: perModel ?? const {},
+    autoInspect: autoInspect ?? true,
   );
 }
 
-/// The three optional images knobs parsed from [node]; unset keys stay
+/// The five optional images knobs parsed from [node]; unset keys stay
 /// null (gh-1713 split of [parseImagesSection]).
-(bool?, int?, Map<String, int>?) _parseImagesEntries(YamlMap node) {
+(bool?, int?, int?, Map<String, int>?, bool?) _parseImagesEntries(
+  YamlMap node,
+) {
   bool? registry;
   int? maxPerRequest;
+  int? maxBytesPerRequest;
   Map<String, int>? perModel;
+  bool? autoInspect;
   for (final key in node.keys) {
     switch (key) {
       case 'registry':
         registry = _readImagesBool(node, '$key');
       case 'maxPerRequest':
         maxPerRequest = _readImagesPositiveInt(node, '$key');
+      case 'maxBytesPerRequest':
+        maxBytesPerRequest = _readImagesPositiveInt(node, '$key');
       case 'perModel':
         perModel = _readImagesPerModel(node);
+      case 'autoInspect':
+        autoInspect = _readImagesBool(node, '$key');
       default:
         throw ConfigException('unknown "images" key: $key');
     }
   }
-  return (registry, maxPerRequest, perModel);
+  return (registry, maxPerRequest, maxBytesPerRequest, perModel, autoInspect);
 }
 
 bool _readImagesBool(YamlMap node, String key) {
@@ -576,6 +638,7 @@ final class CliConfig {
     this.links = const LinksConfig(),
     this.streamThinking = false,
     this.autoUpdate = AutoUpdateMode.notify,
+    this.providerNetworks = const {},
   });
 
   factory CliConfig.fromYaml(YamlMap map) {
@@ -670,6 +733,10 @@ final class CliConfig {
           'customProviders must be a list, got: $other',
         ),
       },
+      // The providers section (issue #1921): per-provider `network:` proxy
+      // blocks, keyed by provider name. Strict — bad config must surface,
+      // never silently degrade to direct egress.
+      providerNetworks: _parseProviderNetworks(map['providers']),
       // The models section (media slot overrides + custom model
       // definitions) is parsed strictly too.
       models: map['models'] == null
@@ -851,6 +918,12 @@ final class CliConfig {
   /// in the `/provider` picker and appended to by the `/provider custom`
   /// wizard. Parsed strictly: a malformed entry throws [ConfigException].
   final List<CustomProviderEntry> customProviders;
+
+  /// Per-provider proxy network config (`providers:` yaml section, issue
+  /// #1921): name → its `network:` block. A provider with a block rides
+  /// that proxy fail-closed; every other provider stays byte-identical
+  /// direct. Parsed strictly: a malformed block throws [ConfigException].
+  final Map<String, ProviderNetworkConfig> providerNetworks;
 
   /// Optional models config (`models:` yaml section): per-slot media model
   /// overrides (managed by `/models set`/`/models remove`) and named custom
@@ -1128,6 +1201,7 @@ final class CliConfig {
     String? approvalMode,
     List<String>? allowedTools,
     Map<String, String>? promptOverrides,
+    Map<String, ProviderNetworkConfig>? providerNetworks,
     ModelRolesConfig? modelRoles,
     TtsrConfig? ttsr,
     int? contextWindowCap,
@@ -1201,6 +1275,7 @@ final class CliConfig {
       skillsLiveRediscovery:
           skillsLiveRediscovery ?? this.skillsLiveRediscovery,
       skillToggles: skillToggles ?? this.skillToggles,
+      providerNetworks: providerNetworks ?? this.providerNetworks,
       memory: memory ?? this.memory,
       fabric: fabric ?? this.fabric,
       cube: cube ?? this.cube,
@@ -1306,6 +1381,7 @@ final class CliConfig {
     final ttsrConfig = ttsr;
     if (ttsrConfig != null) buffer.write(ttsrConfig.toYaml());
     buffer.write(_customProvidersYaml());
+    buffer.write(_providerNetworksYaml());
     final modelsConfig = models;
     if (modelsConfig != null && !modelsConfig.isEmpty) {
       buffer.write(modelsConfig.toYaml());
@@ -1336,11 +1412,13 @@ final class CliConfig {
     buffer.write(_sessionsYaml());
     buffer.write(_projectContextYaml());
     buffer.write(_agentSectionYaml());
-    // The subagents heartbeat section (issue #383), only when explicitly
-    // configured; defaults are never written so the file stays minimal.
+    // The subagents section (issue #383 heartbeat, gh-1956 spill
+    // switch), only when explicitly configured; defaults are never
+    // written so the file stays minimal.
     final subagentsConfig = subagents;
     if (subagentsConfig.heartbeatMinutes != defaultSubagentHeartbeatMinutes ||
-        subagentsConfig.stallMinutes != defaultSubagentStallMinutes) {
+        subagentsConfig.stallMinutes != defaultSubagentStallMinutes ||
+        subagentsConfig.replyAutoSpill != defaultReplyAutoSpill) {
       buffer.write(subagentsConfig.toYaml());
     }
     buffer.write(_jobsYaml());
@@ -1589,6 +1667,10 @@ final class CliConfig {
     if (config.maxPerRequest != defaultMaxImagesPerRequest) {
       buffer.write('  maxPerRequest: ${config.maxPerRequest}\n');
     }
+    if (config.maxBytesPerRequest != defaultMaxImageBytesPerRequest) {
+      buffer.write('  maxBytesPerRequest: ${config.maxBytesPerRequest}\n');
+    }
+    if (!config.autoInspect) buffer.write('  autoInspect: false\n');
     return buffer.toString();
   }
 
@@ -1639,6 +1721,27 @@ final class CliConfig {
     final buffer = StringBuffer('prompts:\n');
     for (final entry in promptOverrides.entries) {
       buffer.write('  ${entry.key}: ${jsonEncode(entry.value)}\n');
+    }
+    return buffer.toString();
+  }
+
+  /// The `providers:` yaml section (issue #1921) — written back verbatim
+  /// so config edits never drop a user's proxy binding.
+  String _providerNetworksYaml() {
+    if (providerNetworks.isEmpty) return '';
+    final buffer = StringBuffer('providers:\n');
+    for (final MapEntry(key: name, value: network)
+        in providerNetworks.entries) {
+      buffer.write('  ${_yamlScalar(name)}:\n    network:\n');
+      buffer.write('      proxy: ${_yamlScalar(network.proxy.toString())}\n');
+      final username = network.proxyUsername;
+      if (username != null) {
+        buffer.write('      proxyUsername: ${_yamlScalar(username)}\n');
+      }
+      final passwordEnv = network.proxyPasswordEnv;
+      if (passwordEnv != null) {
+        buffer.write('      proxyPasswordEnv: ${_yamlScalar(passwordEnv)}\n');
+      }
     }
     return buffer.toString();
   }

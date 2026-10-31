@@ -566,45 +566,6 @@ class AppLocalizationsEn extends AppLocalizations {
   String get filesUploadTooltip => 'Upload files here';
 
   @override
-  String gemmaCacheDeleteOrphan(Object size, Object storage) {
-    return 'Removes the file ($size) from $storage. Installed models are not affected.';
-  }
-
-  @override
-  String gemmaCacheDeleteWeights(Object size, Object storage) {
-    return 'Removes the downloaded weights ($size) from $storage. The model downloads again the next time you use it.';
-  }
-
-  @override
-  String get gemmaCacheMobileOnly =>
-      'On-device (Gemma) models are available in the iOS/Android builds only (on web the transformers.js provider covers on-device Gemma).';
-
-  @override
-  String gemmaCacheScanError(Object error) {
-    return 'Could not scan the model cache: $error';
-  }
-
-  @override
-  String gemmaCacheSubtitle(Object storage) {
-    return 'Gemma weights stored $storage. Deleting frees space; a model re-downloads on next use.';
-  }
-
-  @override
-  String get gemmaCacheTitle => 'On-device models (Gemma)';
-
-  @override
-  String get gemmaStorageFromBrowser => 'the browser storage';
-
-  @override
-  String get gemmaStorageFromDevice => 'the device';
-
-  @override
-  String get gemmaStorageInBrowser => 'in your browser';
-
-  @override
-  String get gemmaStorageOnDevice => 'on this device';
-
-  @override
   String get keysAddButton => 'Add key';
 
   @override
@@ -1405,12 +1366,6 @@ class AppLocalizationsEn extends AppLocalizations {
       'A key is saved for this provider — leave the field empty to keep it.';
 
   @override
-  String get settingsHfTokenHint => 'hf_… — needed if the repo is gated';
-
-  @override
-  String get settingsHfTokenLabel => 'HuggingFace token (optional)';
-
-  @override
   String get settingsKeyNoteCustom =>
       'The provider definition (name, URL, model) is saved — no secrets. The API key stays in memory for this session only and is gone on reload.';
 
@@ -1460,17 +1415,13 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settingsPresetCustom => 'Custom';
 
   @override
-  String get settingsPresetGemma => 'On-device (Gemma)';
-
-  @override
   String get settingsPresetOllama => 'Ollama';
 
   @override
   String get settingsPresetOpenrouter => 'OpenRouter';
 
   @override
-  String get settingsPresetTransformersJs =>
-      'On-device (Gemma, transformers.js)';
+  String get settingsPresetTransformersJs => 'On-device (transformers.js)';
 
   @override
   String get settingsPresetWebllm => 'On-device (WebLLM)';
@@ -1498,11 +1449,6 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String settingsStaleModelCache(Object model) {
     return 'The previously used model ($model) was removed from the cache — pick a model to download it again.';
-  }
-
-  @override
-  String settingsStaleModelDevice(Object model) {
-    return 'The previously used model ($model) was removed from this device — pick a model to download it again.';
   }
 
   @override
@@ -2290,6 +2236,13 @@ class AppLocalizationsEn extends AppLocalizations {
       'Join an existing network or create your own — channels and showcases open here.';
 
   @override
+  String get networkNeedsPasswordTitle => 'This network needs your password';
+
+  @override
+  String get networkNeedsPasswordBody =>
+      'Account sync listed this network, but its password is stored only after you join once. Enter it to open the network.';
+
+  @override
   String get networkNetworksTitle => 'Networks';
 
   @override
@@ -2374,7 +2327,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String get networkJoinFill => 'Fill';
 
   @override
-  String get networkIdLabel => 'Network id';
+  String get networkIdLabel => 'Network id or name';
 
   @override
   String get networkDisplayNameLabel => 'Display name';
@@ -2383,7 +2336,8 @@ class AppLocalizationsEn extends AppLocalizations {
   String get networkDisplayNameLocked => 'Display name locked to your account.';
 
   @override
-  String get networkJoinRequired => 'Network id and password are required.';
+  String get networkJoinRequired =>
+      'Network id or name and password are required.';
 
   @override
   String networkJoinInvalidCredentials(Object message) {
@@ -2521,6 +2475,10 @@ class AppLocalizationsEn extends AppLocalizations {
       'Read-only preview — tap to join the network and write.';
 
   @override
+  String get networkShowcaseMemberReadOnly =>
+      'Only the owner and admins can post in this showcase.';
+
+  @override
   String get networkConnecting => 'Connecting…';
 
   @override
@@ -2576,6 +2534,35 @@ class AppLocalizationsEn extends AppLocalizations {
       'No channel keys in this wallet — the agent will see channels only after a key invite';
 
   @override
+  String get networkChannelKeyMissing =>
+      'This device needs the private channel key to read and write.';
+
+  @override
+  String get networkChannelKeyImport => 'Import channel key';
+
+  @override
+  String get networkChannelKeyInviteLabel => 'Channel key invite';
+
+  @override
+  String get networkChannelKeyImportHint =>
+      'Paste the private-channel invite from a device that already has the key.';
+
+  @override
+  String get networkChannelKeyWrongChannel =>
+      'This invite is for a different channel.';
+
+  @override
+  String get networkChannelKeyWrongHub => 'This invite is for a different hub.';
+
+  @override
+  String get networkChannelKeyMismatch =>
+      'The invite public and private keys do not match.';
+
+  @override
+  String get networkChannelKeyImportFailed =>
+      'The channel key could not be imported. Try again.';
+
+  @override
   String get networkAddAgentScopeChannel => 'This channel';
 
   @override
@@ -2621,7 +2608,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get networkAddAgentEnrollHint =>
-      'Enrollment mints a unique, revocable credential — the secret is shown ONCE: copy it now. Re-enrolling the same name rotates it.';
+      'Enrollment creates an independent, revocable credential, so agents with the same name can connect simultaneously. The secret is shown ONCE: copy it now.';
 
   @override
   String get networkAddAgentEnrollNeedSignIn =>

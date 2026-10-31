@@ -14,6 +14,7 @@ import '../session/session_repo.dart';
 import '../session/session_tree.dart';
 import '../session_io_retry.dart';
 import '../types.dart';
+import 'deliverables.dart' show deliverableArtifactRecordType, deliverableToolNames;
 import 'subagent_manager.dart' show subagentRegistryRecordType;
 import 'subagent_tools.dart' show ChildMessageReader;
 
@@ -83,12 +84,42 @@ Future<List<Map<String, dynamic>>> subagentRegistryRows({
   return rows;
 }
 
+/// The durable deliverable artifact rows of a parent session (gh-1956,
+/// AC6): every spilled artifact persisted one `deliverable_artifact`
+/// custom record per row, read back by RAW file scan (the windowed boot
+/// open drops side-leaf custom records out of `getEntries` — the same
+/// restart-time loss the registry healed in issue #488). Rows restore in
+/// order; the capture's first-write-wins rule keeps a live spill newer.
+Future<List<Map<String, dynamic>>> deliverableArtifactRows({
+  required JsonlSessionRepo repo,
+  required SessionMetadata parent,
+}) async {
+  final records = await repo.readCustomRecordsOfType(parent, {
+    deliverableArtifactRecordType,
+  });
+  return [
+    for (final record in records)
+      if (record.data is Map<String, dynamic>)
+        record.data as Map<String, dynamic>,
+  ];
+}
+
 /// A [ChildMessageReader] over plain JSONL session files: reads the active
 /// branch's conversation messages and returns the last [tail] as
 /// `(role, text)` pairs (`user` / `assistant` / `toolResult`).
-ChildMessageReader jsonlChildMessageReader(FileSystem fs) {
+///
+/// [ioRetry] wires the transient-ENOENT retry of the open (issue #427):
+/// observing a child's transcript rides the same brief file disappearance
+/// every other session open does (gh-1948 reads run while the executor
+/// appends to the same file).
+ChildMessageReader jsonlChildMessageReader(
+  FileSystem fs, {
+  SessionIoRetryConfig ioRetry = const SessionIoRetryConfig(),
+}) {
   return (sessionId, {tail = 10}) async {
-    final session = Session(await JsonlSessionStorage.open(fs, sessionId));
+    final session = Session(
+      await JsonlSessionStorage.open(fs, sessionId, ioRetry: ioRetry),
+    );
     final branch = await session.getBranch();
     final messages = <(String, String)>[
       for (final record in branch)
@@ -100,8 +131,36 @@ ChildMessageReader jsonlChildMessageReader(FileSystem fs) {
   };
 }
 
+/// Resolves a child's REAL session JSONL path from the sessions tree
+/// (gh-1948): scans the parent's project directory for a child session
+/// whose header carries `agent: subagent`, `parent: [parent.id]` and
+/// `id: [childId]` — the same header contract [subagentRegistryRows]
+/// adopts missing registry rows from at boot. Returns the newest match,
+/// or null when the child has no transcript yet (a RUNNING child before
+/// its first turn-boundary flush).
+Future<String?> resolveChildSessionPath({
+  required JsonlSessionRepo repo,
+  required SessionMetadata parent,
+  required String childId,
+}) async {
+  for (final meta in await repo.list(cwd: parent.cwd)) {
+    final header = meta.metadata;
+    if (header == null || header['agent'] != 'subagent') continue;
+    if (header['parent'] != parent.id) continue;
+    if (header['id'] != childId) continue;
+    if (meta.path == parent.path) continue;
+    return meta.path;
+  }
+  return null;
+}
+
 /// Plain-text projection of one conversation message for `task_observe`:
 /// text blocks joined, tool calls named, everything else skipped.
+///
+/// gh-1951 AC1: a deliverable call (`reply` / `agent_message`) echoes its
+/// bounded `message` payload — the parent can see the reply payload (or
+/// its head) from the transcript too, not just the completion notice.
+/// Non-deliverable tool arguments are NEVER echoed.
 String childMessageText(Message message) {
   final buffer = StringBuffer();
   void writeBlock(ContentBlock block) {
@@ -111,6 +170,8 @@ String childMessageText(Message message) {
     } else if (block is ToolCall) {
       if (buffer.isNotEmpty) buffer.write('\n');
       buffer.write('[tool call: ${block.name}]');
+      final echo = _deliverableEcho(block);
+      if (echo != null) buffer.write('\n$echo');
     }
   }
 
@@ -127,4 +188,24 @@ String childMessageText(Message message) {
       content.forEach(writeBlock);
   }
   return buffer.toString();
+}
+
+/// Char cap of the echoed deliverable payload in a `task_observe` line
+/// (gh-1951): the default report budget — a budget-sized reply echoes
+/// whole; anything longer shows the head + an explicit truncation marker.
+const int childObserveDeliverableEchoChars = 800;
+
+/// The bounded payload echo for a deliverable tool call (gh-1951), or
+/// null for any other tool — non-deliverable arguments are never echoed
+/// into the observe surface.
+String? _deliverableEcho(ToolCall call) {
+  if (!deliverableToolNames.contains(call.name)) return null;
+  final message = call.arguments['message'];
+  if (message is! String || message.isEmpty) return null;
+  final echo = message.length > childObserveDeliverableEchoChars
+      ? '${message.substring(0, childObserveDeliverableEchoChars)}…'
+            '[truncated ${message.length - childObserveDeliverableEchoChars} '
+            'chars]'
+      : message;
+  return '[${call.name} message] $echo';
 }

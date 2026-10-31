@@ -310,7 +310,7 @@ class AddProviderPresetPickerPage extends StatelessWidget {
   /// debug mode).
   final FaUiSso? sso;
 
-  /// On-device engine routes (Gemma/WebLLM/…): each renders a tile after
+  /// On-device engine routes (WebLLM/…): each renders a tile after
   /// the hosted presets so a never-configured engine is discoverable here
   /// instead of cluttering the Providers list.
   final List<FaOnDeviceRoute> onDeviceRoutes;

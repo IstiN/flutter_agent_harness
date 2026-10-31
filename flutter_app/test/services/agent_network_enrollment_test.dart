@@ -4,8 +4,10 @@
 
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:fa/services/agent_network_controller.dart';
+import 'package:fa/services/agent_network_transport.dart';
 import 'package:fa/services/dap_enrollment_service.dart';
 import 'package:fa/services/dap_service_web_core.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
@@ -95,6 +97,110 @@ void main() {
       final mail = await fabric.drain('main');
       expect(mail.single.text, 'channel reply');
       expect(mail.single.toId, '#$channel');
+    },
+  );
+
+  test(
+    'same-name instances keep distinct identities and restore them on reboot',
+    () async {
+      const otherChannel =
+          'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff';
+      const instanceA = '0123456789abcdef';
+      const instanceB = 'fedcba9876543210';
+      const credentialB = 'test-only-enrollment-credential-b';
+      final temp = await Directory.systemTemp.createTemp(
+        'agent-instance-reconnect',
+      );
+      addTearDown(() async {
+        if (await temp.exists()) await temp.delete(recursive: true);
+      });
+      final env = MemoryExecutionEnv(cwd: temp.path);
+      final paths = <String, List<String?>>{'a': [], 'b': []};
+      final identities = <String, List<HubIdentity>>{'a': [], 'b': []};
+
+      AgentNetworkController controller(
+        String label,
+        String projectCwd,
+        _FakeTransport transport,
+      ) {
+        final file = _fileLayer(env);
+        return AgentNetworkController(
+          env: env,
+          fileLayer: file,
+          fileFabric: SwappableMessagingRepository(file),
+          transport: transport,
+          loadIdentity: (env, path) async {
+            paths[label]!.add(path);
+            final identity = await loadOrCreateIdentity(env, path);
+            identities[label]!.add(identity!);
+            return identity;
+          },
+          projectCwd: projectCwd,
+        );
+      }
+
+      Future<void> join(
+        AgentNetworkController controller,
+        String channel,
+        String credential,
+        String instance,
+      ) => controller.joinEnrollment(
+        parseDapJoinBundle(
+          "fa dap import 'wss://hub.fa1.dev/ws?channel=$channel' && "
+          'DAP_HUB_URL=wss://hub.fa1.dev/ws '
+          "DAP_CLIENT_SECRET='$credential' DAP_AGENT_NAME=same-name "
+          'DAP_AGENT_INSTANCE=$instance fa',
+        ),
+      );
+
+      final transportA = _FakeTransport(expectedCredential: credential);
+      final transportB = _FakeTransport(expectedCredential: credentialB);
+      final firstA = controller('a', '/work/project-a', transportA);
+      final firstB = controller('b', '/work/project-b', transportB);
+      await firstA.start();
+      await firstB.start();
+      await join(firstA, channel, credential, instanceA);
+      await join(firstB, otherChannel, credentialB, instanceB);
+
+      final pathA = paths['a']!.single;
+      final pathB = paths['b']!.single;
+      final idA = identities['a']!.single.agentId;
+      final idB = identities['b']!.single.agentId;
+      expect(idA, isNot(idB));
+      expect(pathA, isNot(pathB));
+      expect(pathA, contains('/dap/${dapEnrollmentProjectScope(instanceA)}'));
+      expect(
+        (await DapEnrollmentStore.load(
+          env,
+          projectCwd: '/work/project-a',
+        )).enrollment?.agentInstance,
+        instanceA,
+      );
+      firstA.dispose();
+      firstB.dispose();
+      await Future<void>.delayed(Duration.zero);
+
+      final restartedA = controller(
+        'a',
+        '/work/project-a',
+        _FakeTransport(expectedCredential: credential),
+      );
+      final restartedB = controller(
+        'b',
+        '/work/project-b',
+        _FakeTransport(expectedCredential: credentialB),
+      );
+      addTearDown(restartedA.dispose);
+      addTearDown(restartedB.dispose);
+      await restartedA.start();
+      await restartedB.start();
+
+      expect(paths['a'], [pathA, pathA]);
+      expect(paths['b'], [pathB, pathB]);
+      expect(identities['a']!.last.agentId, idA);
+      expect(identities['b']!.last.agentId, idB);
+      expect(restartedA.state, HubLinkState.connected);
+      expect(restartedB.state, HubLinkState.connected);
     },
   );
 

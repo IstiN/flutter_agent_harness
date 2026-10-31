@@ -410,6 +410,9 @@ extension on AgentCli {
     final completer = Completer<void>();
     _modelCacheFuture = completer.future;
     try {
+      // A fresh cycle recomputes every reason (gh-1990) — stale fetch
+      // failures never outlive the refresh that produced them.
+      _providerModelFetchReasons.clear();
       await _fetchAllSavedProviderModels();
       // Also fetch the active catalog provider's live /models list (e.g.
       // OpenRouter) so the model picker is never empty just because the user
@@ -422,6 +425,11 @@ extension on AgentCli {
             activeSpec.name,
             _agent.state.model.baseUrl,
             _apiKey,
+            // The named failure rides to `/models` here too (gh-1990
+            // review round 2): an unsaved active Copilot's empty answer
+            // is never a silent seed fallback.
+            onCopilotReport: (report) =>
+                _noteProviderFetchReason(activeProvider, report),
           );
           _allProvidersModelCache[activeProvider] = ids.isEmpty
               ? (knownModelPresets[activeProvider] ?? [_agent.state.model.id])
@@ -450,7 +458,9 @@ extension on AgentCli {
   /// Fetches model lists for the env-keyed catalog providers (a key in the
   /// environment but no saved entry — the FA_PROVIDER_* / out-of-the-box
   /// path). Split out of [_refreshAllProvidersModelCache] to keep its
-  /// cyclomatic complexity under the CRAP ratchet; behavior unchanged.
+  /// cyclomatic complexity under the CRAP ratchet. The gh-1990 review
+  /// round 2 wiring adds the fetch-note report (the Copilot empty-answer
+  /// reason) — the cached ids themselves are unchanged.
   Future<void> _refreshEnvKeyedProviders(String activeProvider) async {
     // Env-keyed catalog providers: a provider whose key sits in the
     // environment (ZAI_API_KEY, MINIMAX_API_KEY, ...) is usable out of
@@ -470,6 +480,10 @@ extension on AgentCli {
           spec.name,
           spec.defaultBaseUrl,
           envKey.$2,
+          // Same surface as the saved-entry path (gh-1990 review round
+          // 2): an env-keyed Copilot's empty answer names its branch.
+          onCopilotReport: (report) =>
+              _noteProviderFetchReason(spec.name, report),
         );
         if (ids.isNotEmpty) {
           _allProvidersModelCache[spec.name] = ids;
@@ -516,13 +530,25 @@ extension on AgentCli {
     String cookieOrKey,
   ) async {
     if (entry.baseUrl.contains('/code-assistant-api/')) {
-      return fetchCodeMieModels(entry.baseUrl, cookieOrKey);
+      // The saved entry's project scopes the list (issue #1941).
+      return fetchCodeMieModels(
+        entry.baseUrl,
+        cookieOrKey,
+        project: entry.project,
+      );
     }
     if (entry.spec.kind == 'dial') {
       return fetchDialModels(entry.baseUrl, cookieOrKey);
     }
     if (entry.spec.kind == 'copilot') {
-      return _fetchCopilotModelsAndLimits(entry.baseUrl, apiKey: cookieOrKey);
+      final (ids, report) = await _fetchCopilotModelsAndLimits(
+        entry.baseUrl,
+        apiKey: cookieOrKey,
+      );
+      // The named failure rides to `/models` (gh-1990) — an empty
+      // provider answer is never a silent hole in the list.
+      _noteProviderFetchReason(entry.name, report);
+      return ids;
     }
     if (entry.spec.kind == 'chatgpt-codex') {
       // The Codex backend's /models — the list call codex-rs'
@@ -553,8 +579,13 @@ extension on AgentCli {
     String cookieOrKey,
   ) async {
     if (entry.spec.api != 'openai-completions') return const [];
-    final fetch = config.modelsFetcher ?? _fetchOpenAiCompatibleModels;
-    return fetch(entry.baseUrl, apiKey: cookieOrKey);
+    final override = config.modelsFetcher;
+    if (override != null) return override(entry.baseUrl, apiKey: cookieOrKey);
+    return _fetchOpenAiCompatibleModels(
+      entry.baseUrl,
+      apiKey: cookieOrKey,
+      client: modelFetchClient(entry.name),
+    );
   }
 
   /// Returns cross-provider model candidates as `(providerName, modelId)`
@@ -780,7 +811,16 @@ extension on AgentCli {
   /// ([_fetchProviderModelIds]): CodeMie `/llm_models`, DIAL deployments,
   /// everything else OpenAI `/models`.
   Future<List<String>> _fetchActiveProviderModels(Model model) {
-    return _fetchProviderModelIds(model.provider, model.baseUrl, _apiKey);
+    // The SAME identity the stream bind used: for a custom entry the
+    // binding keys the ENTRY name, while `model.provider` carries the
+    // catalog spec name (buildCatalogModel(spec.name, …)) — keying the
+    // fetch on model.provider alone let a bound custom entry's /models
+    // refresh ride direct (PR #1927 round-2 review).
+    return _fetchProviderModelIds(
+      _activeCustomName ?? model.provider,
+      model.baseUrl,
+      _apiKey,
+    );
   }
 
   /// Whether the roles chain pins explicit limits for [model]: a chain
@@ -879,7 +919,7 @@ extension on AgentCli {
     final (ids, cacheSupported, windows, maxTokens) = await fetchDialModelsInfo(
       baseUrl,
       apiKey ?? _apiKey,
-      client: config.modelsHttpClient,
+      client: modelFetchClient('dial'),
     );
     if (cacheSupported.isNotEmpty) _dialCacheModels = cacheSupported;
     if (windows.isNotEmpty) _modelContextWindows = windows;
@@ -891,34 +931,72 @@ extension on AgentCli {
   /// GitHub key is exchanged for the short-lived Copilot token first — a
   /// raw Bearer GET would 401): records the endpoint-reported limits
   /// (context window / max output from `capabilities.limits`) and answers
-  /// the plain id list.
-  Future<List<String>> _fetchCopilotModelsAndLimits(
+  /// [fetchModelsForEndpointReport] wrapper routing Copilot to its dialect
+  /// (the GitHub key is exchanged for the short-lived Copilot token first —
+  /// a raw Bearer GET would 401): records the endpoint-reported limits
+  /// (context window / max output from `capabilities.limits`) and answers
+  /// the plain id list PLUS the report — the empty-answer reason (gh-1990)
+  /// rides to the callers that surface it (`/models`, the connect flow).
+  Future<(List<String>, ModelsFetchReport)> _fetchCopilotModelsAndLimits(
     String baseUrl, {
     String? apiKey,
   }) async {
-    final (ids, windows, maxTokens) = await fetchModelsForEndpoint(
+    final report = await fetchModelsForEndpointReport(
       baseUrl,
       apiKey: apiKey ?? _apiKey,
       provider: 'copilot',
-      client: config.modelsHttpClient,
+      client: modelFetchClient('copilot'),
     );
+    final (ids, windows, maxTokens) = report.info;
     if (windows.isNotEmpty) _modelContextWindows = windows;
     if (maxTokens.isNotEmpty) _modelMaxTokens = maxTokens;
-    return ids;
+    return (ids, report);
+  }
+
+  /// Records [report]'s user-facing reason for [name] (gh-1990): the
+  /// empty-answer diagnostic (with its hint), or the partial-filter note.
+  /// A report with neither clears the entry's stored reason.
+  void _noteProviderFetchReason(String name, ModelsFetchReport report) {
+    // gh-1990 review (DRY): the canonical formatting rule — no
+    // hand-rolled `message — hint` join.
+    final reason = report.userFacingReason;
+    if (reason == null || reason.isEmpty) {
+      _providerModelFetchReasons.remove(name);
+    } else {
+      _providerModelFetchReasons[name] = reason;
+    }
+  }
+
+  /// The `/models` fetch-notes section (gh-1990): one line per provider
+  /// whose live answer named something — the failed branch (exchange /
+  /// HTTP / filter with the remediation hint) or the partial-filter
+  /// summary — so a provider's model list is never silent about why it
+  /// is (or isn't) what the endpoint serves.
+  void _printProviderFetchReasons() {
+    if (_providerModelFetchReasons.isEmpty) return;
+    io.writeln('fetch notes:');
+    final names = _providerModelFetchReasons.keys.toList()..sort();
+    for (final name in names) {
+      io.writeln('  $name: ${_providerModelFetchReasons[name]}');
+    }
   }
 
   Future<List<String>> _fetchOpenAiCompatibleModels(
     String baseUrl, {
     required String apiKey,
+    http.Client? client,
   }) async {
     final normalized = baseUrl.replaceAll(RegExp(r'/+$'), '');
     final uri = Uri.parse('$normalized/models');
     final headers = <String, String>{'Accept': 'application/json'};
     if (apiKey.isNotEmpty) headers['Authorization'] = 'Bearer $apiKey';
     try {
-      final response = await http
-          .get(uri, headers: headers)
-          .timeout(const Duration(seconds: 15));
+      final request = http.Request('GET', uri)..headers.addAll(headers);
+      final response =
+          await (client == null
+                  ? http.get(uri, headers: headers)
+                  : client.send(request).then(http.Response.fromStream))
+              .timeout(const Duration(seconds: 15));
       if (response.statusCode != 200) return const [];
       final (ids, windows, maxTokens) = parseModelsResponse(response.body);
       _modelContextWindows = windows;
@@ -941,6 +1019,7 @@ extension on AgentCli {
     if (entries.isEmpty) return io.writeln('no models available');
     io.writeln('models (provider/model):');
     _printNumberedModels(entries);
+    _printProviderFetchReasons();
     io.writeln('use /model <n> or /model <provider>/<id> to switch');
   }
 
@@ -1078,6 +1157,11 @@ extension on AgentCli {
     );
     io.writeln('slot $slot → ${parts[1]} @ $baseUrl (openai-completions)');
     config.onModelsConfigChanged?.call();
+    // gh-1984 (review thread 5): the availability pass follows the live
+    // slot — a mid-session `/models set vision|transcription` must not
+    // leave /tools (or the tool registrations) contradicting the read
+    // auto-route until some unrelated rebuild happens to run.
+    unawaited(AgentCliTools(this).rebuildToolAvailability());
   }
 
   /// `/models remove <slot>`: drops a media slot override, returning the
@@ -1104,6 +1188,8 @@ extension on AgentCli {
     }
     io.writeln('slot $slot → main connection');
     config.onModelsConfigChanged?.call();
+    // Same live-slot rule as `/models set` (gh-1984 review thread 5).
+    unawaited(AgentCliTools(this).rebuildToolAvailability());
   }
 
   Future<void> _handleModelCommand(String rest) async {
@@ -1268,7 +1354,13 @@ extension on AgentCli {
       _providerKind = spec.kind;
       _apiKey = key;
       _explicitToken = false;
-      _streamFunction = _catalogStreamFunction(spec.kind, key);
+      // The catalog identity binds the proxy gate — the PREVIOUSLY active
+      // custom entry's name must not leak into this lookup.
+      _streamFunction = _catalogStreamFunction(
+        spec.kind,
+        key,
+        providerName: spec.name,
+      );
       _agent.streamFunction = _streamFunction;
       final built = buildCatalogModel(
         spec.name,
@@ -1415,6 +1507,10 @@ extension on AgentCli {
           // A saved entry's authHeader must survive /model switches
           // (issue #964) — the pin rebuilds the model.
           authHeader: current.authHeader,
+          // Same for the CodeMie project (issue #1941): the JWT path
+          // (no cookie header) rides the roles chain, and a header-less
+          // pin bills the DEFAULT project.
+          project: current.codeMieProject,
         ),
       ]);
       rolesResolver.applyToAgent(_agent);

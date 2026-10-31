@@ -73,6 +73,7 @@ import '../mcp/mcp_manager.dart';
 import '../model_roles/models_config.dart';
 import '../model_roles/provider_key_resolver.dart';
 import '../redact/redaction_types.dart';
+import '../types.dart' show Usage;
 import '../session/session_tree.dart' show Session;
 import '../session_io_retry.dart' show SessionIoRetryConfig;
 import '../task/child_session_io.dart'
@@ -85,7 +86,8 @@ import '../task/subagent_manager.dart'
         SubagentRegistrySink,
         SubagentRegistrySource,
         childInboxWakePrompt;
-import '../task/subagent_tools.dart' show subagentMonitoringTools;
+import '../task/subagent_tools.dart'
+    show ChildSessionPathResolver, subagentMonitoringTools;
 import '../task/task_tool.dart' show TaskToolConfig, taskTool;
 import '../telemetry/agent_telemetry.dart';
 import '../tools/ask_tool.dart';
@@ -217,11 +219,34 @@ final class SubagentServices {
   /// text before it lands in the session output store. Null = no pipeline.
   final String Function(String text)? deliverableRedactor;
 
+  /// The reply auto-spill kill switch (gh-1956, `subagents.replyAutoSpill`):
+  /// live getter consulted per delivery and per child-prompt build. Null
+  /// or true = auto-spill on (the default); false = pure-chunk behavior.
+  final bool Function()? replyAutoSpill;
+
+  /// The durable-artifact sink (gh-1956, AC6): one append row per spill
+  /// (the host writes it into the parent session). Best-effort.
+  final Future<void> Function(Map<String, dynamic> artifact)?
+  deliverableArtifactSink;
+
+  /// The durable-artifact source backing resume-time restore (gh-1956,
+  /// AC6). Null keeps artifacts session-lifetime only.
+  final Future<List<Map<String, dynamic>>> Function()?
+  deliverableArtifactSource;
+
   /// Real JSONL child sessions, created at child COMPLETION (fast
   /// register keeps the steering race away; the transcript lands when the
   /// child finishes).
   final Future<Session> Function(String parentId, String childId)?
   childSessionFactory;
+
+  /// Resolves a child's REAL session JSONL path from its id (gh-1948):
+  /// the registry handle carries a `<parentSessionId>/<id>` placeholder
+  /// until the first transcript flush, so `task_observe` on a live child
+  /// needs the sessions-tree scan to find the file. Null keeps observe's
+  /// honest "no transcript available yet" answer on hosts without the
+  /// scan.
+  final ChildSessionPathResolver? resolveChildSessionPath;
 
   /// Transient-ENOENT retry for the child-session reopen (issue #427);
   /// the builder derives the JSONL opener from it.
@@ -243,7 +268,11 @@ final class SubagentServices {
     this.contextWindowCap,
     this.misuseBreaker = true,
     this.deliverableRedactor,
+    this.replyAutoSpill,
+    this.deliverableArtifactSink,
+    this.deliverableArtifactSource,
     this.childSessionFactory,
+    this.resolveChildSessionPath,
     this.sessionIoRetry,
   });
 }
@@ -310,6 +339,27 @@ final class AgentCoreServices {
   final ObligationClose? obligationsClose;
   final InspectImageConfig? vision;
   final TranscribeAudioConfig? transcribe;
+
+  /// The live vision-slot resolver for the read auto-route (gh-1984
+  /// AC5/AC8): invoked PER image read so slot edits and a later-arriving
+  /// key apply without a restart. Null = the boot [vision] value is the
+  /// capability (no live re-read).
+  final Future<InspectImageConfig?> Function()? visionResolver;
+
+  /// Receives the read auto-route's vision-model usage (gh-1984 AC2) so
+  /// the host can surface the spend in /cost. Null = untracked.
+  final void Function(Usage usage)? onImageInspectUsage;
+
+  /// Audio/video read notes (gh-1984 AC10): the host opts in when its
+  /// media surface matches the note text (CLI + headless name
+  /// `transcribe_audio`; the app's transcriptionTool/read_video differ, so
+  /// it keeps today's byte-identical read behavior).
+  final bool mediaFileReadNotes;
+
+  /// Whether the `transcribe_audio` tool is (or will be) registered —
+  /// steers the audio read note between "call the tool" and "configure the
+  /// slot". Null = [transcribe] presence decides.
+  final bool Function()? transcribeAvailable;
 
   /// Resolves the live session id for the transcribe tool's sidecar
   /// placement (issue #1890 review: sidecars must ride the session-scoped
@@ -393,7 +443,7 @@ final class AgentCoreServices {
   /// kind of marker for `js_extensions`).
   final Object? dynamicMessageSink;
 
-  /// The on-device inference bridges (webllm / gemma / transformers.js):
+  /// The on-device inference bridges (webllm / transformers.js):
   /// a presence marker like [dynamicMessageSink] — the stream functions
   /// are per-connection host choices, the marker keeps the
   /// `on_device_providers` cell honest on the hosts that ship the
@@ -450,6 +500,10 @@ final class AgentCoreServices {
     this.obligationsClose,
     this.vision,
     this.transcribe,
+    this.visionResolver,
+    this.onImageInspectUsage,
+    this.mediaFileReadNotes = false,
+    this.transcribeAvailable,
     this.transcribeSessionId,
     this.media,
     this.decisions,
@@ -760,6 +814,15 @@ List<AgentTool> _buildCoreTools({
       networkGate: networkGate,
       config: configService,
       model: () => currentAgent()?.state.model,
+      // gh-1984: the read auto-route rides the live vision-slot resolver
+      // (per-read so slot edits apply without a restart), falling back to
+      // the boot value; the side-call's usage joins the host's /cost
+      // meter; the audio/video notes are a host opt-in.
+      vision: services.visionResolver ?? (() async => services.vision),
+      onImageUsage: services.onImageInspectUsage,
+      mediaFileReadNotes: services.mediaFileReadNotes,
+      transcribeAvailable:
+          services.transcribeAvailable ?? (() => services.transcribe != null),
       sqlite: services.sqlite,
       lsp: services.lsp,
       mcp: services.mcp,
@@ -802,7 +865,16 @@ List<AgentTool> _buildCoreTools({
     // above) — one rule for every fs-touching tool.
     ...?services.vision == null
         ? null
-        : [inspectImageTool(env, services.vision!)],
+        : [
+            // gh-1984 review thread 7: the tool's own vision spend rides
+            // the host sink (the same default the read auto-route gets),
+            // so /cost sees inspect_image like every other media call.
+            inspectImageTool(
+              env,
+              services.vision!,
+              onUsage: services.onImageInspectUsage,
+            ),
+          ],
     ...?services.transcribe == null
         ? null
         : [
@@ -1016,6 +1088,12 @@ _WiredTaskSurface? _wireTaskSurface({
     contextWindowCap: bundle.contextWindowCap,
     misuseBreaker: bundle.misuseBreaker,
     deliverableRedactor: bundle.deliverableRedactor,
+    // gh-1956: reply auto-spill is the default delivery for oversized
+    // reports; the kill switch getter and the durable-artifact seam ride
+    // the same config surface.
+    replyAutoSpill: bundle.replyAutoSpill,
+    deliverableArtifactSink: bundle.deliverableArtifactSink,
+    deliverableArtifactSource: bundle.deliverableArtifactSource,
     childSessionFactory: bundle.childSessionFactory,
     // Issue #222: the resume path reopens a child's JSONL session by
     // path so task_resume/task_send continue the child in the SAME file.
@@ -1042,7 +1120,15 @@ _WiredTaskSurface? _wireTaskSurface({
     ...subagentMonitoringTools(
       manager: manager,
       jobs: taskConfig.jobManager,
-      readMessages: jsonlChildMessageReader(services.baseEnv),
+      // gh-1948: observe resolves a RUNNING child's real JSONL (the
+      // registry handle still carries the `<parentId>/<id>` placeholder
+      // mid-run) and reads ride the transient-ENOENT retry — the file is
+      // being appended to while it is read.
+      readMessages: jsonlChildMessageReader(
+        services.baseEnv,
+        ioRetry: bundle.sessionIoRetry ?? const SessionIoRetryConfig(),
+      ),
+      resolveSessionPath: bundle.resolveChildSessionPath,
       resumeChild: taskConfig.executor.resumeChild,
       executor: taskConfig.executor,
     ),

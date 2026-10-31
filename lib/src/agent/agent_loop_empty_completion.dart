@@ -33,8 +33,11 @@ Future<(AssistantMessage, Context)> retryEmptyCompletion(
   AgentLoopConfig config,
   AgentEventSink emit,
   StreamFunction streamFunction,
-  CancelToken? cancelToken,
-) async {
+  CancelToken? cancelToken, {
+  required List<Message> newMessages,
+  required Future<List<Message>> Function() drainSteering,
+  CancelTokenSource? cancelTokenSource,
+}) async {
   var generic = 0;
   var hiccup = 0;
   var current = message;
@@ -110,6 +113,9 @@ Future<(AssistantMessage, Context)> retryEmptyCompletion(
       emit,
       streamFunction,
       cancelToken,
+      newMessages: newMessages,
+      drainSteering: drainSteering,
+      cancelTokenSource: cancelTokenSource,
     );
     cancelled = _isCancelRequested(cancelToken);
   }

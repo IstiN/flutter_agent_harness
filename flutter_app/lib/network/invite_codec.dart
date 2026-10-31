@@ -151,6 +151,49 @@ String buildAgentInvite({
       .toString();
 }
 
+/// True when [inviteHub] identifies the same hub deployment as
+/// [sessionBase] — the REST base the importing session connects through
+/// (e.g. `https://network.fa1.dev`).
+///
+/// One deployment is reachable under two names: the REST base host and
+/// the `hub.`-aliased WebSocket host its agent invites carry
+/// (`AddAgentDialog.hubUrl`, `wss://hub.fa1.dev/ws`). Matching is
+/// origin-level — http(s)↔ws(s) scheme, host (with the alias folded),
+/// and effective port. An invite for any OTHER deployment (staging vs.
+/// production, a foreign fa_network hub) must be rejected before its
+/// channel key is persisted: the key would encrypt outgoing traffic no
+/// peer on this hub could decrypt.
+bool isSameHubDeployment(Uri inviteHub, Uri sessionBase) {
+  if (!_sameHubHost(inviteHub.host, sessionBase.host)) return false;
+  final sessionScheme = sessionBase.scheme == 'https' ? 'wss' : 'ws';
+  final inviteScheme = switch (inviteHub.scheme) {
+    'https' => 'wss',
+    'http' => 'ws',
+    final other => other,
+  };
+  if (inviteScheme != sessionScheme) return false;
+  return _effectivePort(inviteHub, inviteScheme) ==
+      _effectivePort(sessionBase, sessionScheme);
+}
+
+/// One deployment is reachable under two names: the REST base host and
+/// its `hub.`-aliased first label — `network.fa1.dev` the session connects
+/// to vs. `hub.fa1.dev` its agent invites carry (AddAgentDialog.hubUrl).
+bool _sameHubHost(String a, String b) {
+  if (a == b) return true;
+  return _hubAlias(a) == b || _hubAlias(b) == a;
+}
+
+/// `<x>.<rest>` → `hub.<rest>`; a bare host maps to itself.
+String _hubAlias(String host) {
+  final dot = host.indexOf('.');
+  if (dot <= 0) return host;
+  return 'hub.${host.substring(dot + 1)}';
+}
+
+int _effectivePort(Uri uri, String wsScheme) =>
+    uri.hasPort ? uri.port : (wsScheme == 'wss' ? 443 : 80);
+
 /// Builds a PUBLIC-channel agent invite: `wss://<hub>?channel=<id>` with
 /// NO key material (public channels have no chankey — payloads are raw
 /// by the showcase contract). Strict on the same invariants.

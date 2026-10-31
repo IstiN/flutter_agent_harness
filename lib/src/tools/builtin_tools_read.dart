@@ -112,6 +112,11 @@ AgentTool readFileTool(
   Model? Function()? model,
   SqliteEngine? sqlite,
   String? Function(String path)? builtinText,
+  Future<InspectImageConfig?> Function()? vision,
+  bool Function()? autoInspect,
+  void Function(Usage usage)? onImageUsage,
+  bool mediaFileReadNotes = false,
+  bool Function()? transcribeAvailable,
 }) {
   final store = snapshots ?? HashlineSnapshotStore();
   return AgentTool(
@@ -219,9 +224,48 @@ AgentTool readFileTool(
           final bytes = binaryRead.valueOrNull!;
           cancelToken?.throwIfCancelled();
 
-          final imageResult = _readImageResult(path, bytes, parsed, model);
+          final imageResult = await _readImageResult(
+            path,
+            bytes,
+            parsed,
+            model,
+            vision: vision,
+            autoInspect: autoInspect,
+            onImageUsage: onImageUsage,
+            cancelToken: cancelToken,
+          );
           if (imageResult != null) {
             return _withNotice(imageResult, windowNotice);
+          }
+          // gh-1985 C1: a video extension routes the bytes natively — to a
+          // video-capable chat model (VideoContent rides), else to the
+          // configured media/vision slot with attribution; without either,
+          // today's behavior (the AC10 note when the host opted in, else
+          // the plain fall-through) keeps byte-identical.
+          final videoResult = await _readVideoResult(
+            path,
+            bytes,
+            parsed,
+            model,
+            vision: vision,
+            autoInspect: autoInspect,
+            onImageUsage: onImageUsage,
+            cancelToken: cancelToken,
+          );
+          if (videoResult != null) {
+            return _withNotice(videoResult, windowNotice);
+          }
+          // Audio/video files (gh-1984 AC10): an honest note naming the
+          // tool/slot/host instead of a bare fall-through. The gate keeps
+          // hosts without media wiring byte-identical to today.
+          final mediaNote = mediaFileReadNotes
+              ? _mediaFileNote(path, transcribeAvailable: transcribeAvailable)
+              : null;
+          if (mediaNote != null) {
+            return _withNotice(
+              ToolExecutionResult(content: [TextContent(text: mediaNote)]),
+              windowNotice,
+            );
           }
         }
       }
@@ -270,12 +314,23 @@ Future<ToolExecutionResult?> _readExtendedTarget(
 /// Renders an image read: decodes/resizes to the inline limits and builds
 /// the note header. Returns null when [bytes] are not a supported image, so
 /// the caller falls through to a text read.
-ToolExecutionResult? _readImageResult(
+///
+/// gh-1984: with a non-vision chat model and a configured vision model
+/// ([vision]) plus the auto-route enabled ([autoInspect], the
+/// `images.autoInspect` knob), the read returns the vision model's
+/// description inline with an attribution marker instead of the bare
+/// omission note. Provider failures degrade to the omission note + reason —
+/// never a failed read (AC6).
+Future<ToolExecutionResult?> _readImageResult(
   String path,
   Uint8List bytes,
   ReadSelector parsed,
-  Model? Function()? model,
-) {
+  Model? Function()? model, {
+  Future<InspectImageConfig?> Function()? vision,
+  bool Function()? autoInspect,
+  void Function(Usage usage)? onImageUsage,
+  CancelToken? cancelToken,
+}) async {
   final format = _detectImageFormat(bytes);
   if (format == null || !_supportedImageFormats.contains(format)) return null;
   if (parsed is! ReadSelectorNone) {
@@ -285,13 +340,417 @@ ToolExecutionResult? _readImageResult(
     );
   }
   final processed = _processImage(bytes, format);
+  final currentModel = model?.call();
+  final chatModelSeesImages =
+      currentModel == null || currentModel.input.contains('image');
+  if (chatModelSeesImages) {
+    return ToolExecutionResult(
+      content: [
+        TextContent(text: _imageNoteHeader(path, processed, model)),
+        ImageContent(data: processed.base64, mimeType: processed.mimeType),
+      ],
+    );
+  }
+
+  // Non-vision chat model: resolve the vision capability and route
+  // (auto-route, AC3 note, or AC4 note — see the helper).
+  return _routeNonVisionImage(
+    path,
+    processed,
+    vision: vision,
+    autoInspect: autoInspect,
+    onImageUsage: onImageUsage,
+    cancelToken: cancelToken,
+  );
+}
+
+/// The non-vision branch of [_readImageResult] (gh-1984): resolves the
+/// live vision capability, then either auto-routes the description
+/// (AC2), or builds the guidance note (AC3 autoInspect off / AC4 no
+/// vision model). Split from the dispatcher so the gate's complexity
+/// census stays per-stage (the CI CRAP ratchet measures per function).
+/// [autoInspect] is a test seam (see [readFileTool]); production reads
+/// the boot-published `imageRegistryConfig.autoInspect` global.
+Future<ToolExecutionResult> _routeNonVisionImage(
+  String path,
+  _InlineImageResult processed, {
+  Future<InspectImageConfig?> Function()? vision,
+  bool Function()? autoInspect,
+  void Function(Usage usage)? onImageUsage,
+  CancelToken? cancelToken,
+}) async {
+  final visionConfig = await vision?.call();
+  if (visionConfig == null ||
+      !(autoInspect?.call() ?? imageRegistryConfig.autoInspect)) {
+    return _omittedImageResult(
+      path,
+      processed,
+      extra: _nonVisionGuidance(visionConfig),
+    );
+  }
+  return _autoRouteVisionDescription(
+    path,
+    processed,
+    visionConfig,
+    onImageUsage: onImageUsage,
+    cancelToken: cancelToken,
+  );
+}
+
+/// The AC3/AC4 note: how the agent gets the image seen when the
+/// auto-route is not taking it — name the tool + the configured model
+/// (AC3), or the configure hint (AC4).
+String _nonVisionGuidance(InspectImageConfig? visionConfig) {
+  if (visionConfig != null) {
+    return '\n[A vision model is configured (${visionConfig.modelId}): call '
+        'inspect_image to describe this image.]';
+  }
+  return '\n[No vision model is configured — set one with /settings → Media '
+      'models → vision (models.slots.vision) or --vision-model <id> to '
+      'let the agent see images.]';
+}
+
+/// One vision-model call for the read (gh-1984 AC2): the budget gate, the
+/// inline description with the attribution marker, and the AC6 degrades.
+Future<ToolExecutionResult> _autoRouteVisionDescription(
+  String path,
+  _InlineImageResult processed,
+  InspectImageConfig visionConfig, {
+  void Function(Usage usage)? onImageUsage,
+  CancelToken? cancelToken,
+}) async {
+  // The images.maxBytesPerRequest budget (issue #1916) applies to the
+  // auto-route call too: base64 chars are wire bytes 1:1.
+  final budget = imageRegistryConfig.maxBytesPerRequest;
+  if (processed.base64.length > budget) {
+    return _omittedImageResult(
+      path,
+      processed,
+      extra:
+          '\n[Vision inspection skipped: the image exceeds '
+          'images.maxBytesPerRequest ($budget bytes).]',
+    );
+  }
+  try {
+    // The PROCESSED payload rides (gh-1984 review thread 1): the gate
+    // measured `processed.base64`, the mime names the converted/kept
+    // payload, and the request must carry exactly those bytes — a
+    // resized/converted original (the common photo/screenshot case)
+    // uploaded raw would bypass `images.maxBytesPerRequest` and ship
+    // bytes disagreeing with the declared mime.
+    final description = await describeImageWithVisionModel(
+      visionConfig,
+      base64Decode(processed.base64),
+      processed.mimeType,
+      '',
+      cancelToken: cancelToken,
+      onUsage: onImageUsage,
+    );
+    cancelToken?.throwIfCancelled();
+    // The auto-route REPLACES the bare omission note (gh-1984 AC2): the
+    // image bytes are not attached, the vision model's description rides
+    // inline with the attribution marker.
+    return ToolExecutionResult(
+      content: [
+        TextContent(
+          text:
+              '${_imageNoteHeader(path, processed, null)}\n'
+              '[The image is not attached — the current model has no image '
+              'input.]\n'
+              '[via vision model ${visionConfig.modelId}]\n'
+              '$description',
+        ),
+      ],
+    );
+  } on CancelledException {
+    rethrow;
+  } on Object catch (error) {
+    // A cancel surfacing as a provider stream error must stay a cancel
+    // (AC6), not a degrade note.
+    cancelToken?.throwIfCancelled();
+    // Degrade, never fail the read (AC6): the omission note names why.
+    return _omittedImageResult(
+      path,
+      processed,
+      extra:
+          '\n[Vision inspection via vision model '
+          '${visionConfig.modelId} failed: $error. The read continues '
+          'without the image.]',
+    );
+  }
+}
+
+/// The non-vision degrade shape (gh-1984): note header + the pi omission
+/// note + [extra] guidance, with the image bytes still attached (providers
+/// substitute an explicit placeholder at request time — unchanged).
+ToolExecutionResult _omittedImageResult(
+  String path,
+  _InlineImageResult processed, {
+  required String extra,
+}) {
   return ToolExecutionResult(
     content: [
-      TextContent(text: _imageNoteHeader(path, processed, model)),
+      TextContent(
+        text:
+            '${_imageNoteHeader(path, processed, null)}'
+            '${_nonVisionNoteSuffix()}$extra',
+      ),
       ImageContent(data: processed.base64, mimeType: processed.mimeType),
     ],
   );
 }
+
+/// pi's `getNonVisionImageNote`, exactly as today.
+String _nonVisionNoteSuffix() =>
+    '\n[Current model does not support images. The image will be '
+    'omitted from this request.]';
+
+/// The audio/video read notes (gh-1984 AC10): a matching extension returns
+/// an honest hint naming the tool, the slot to configure, or the host that
+/// reads the media — instead of a bare fall-through. Null keeps today's
+/// text-path behavior.
+String? _mediaFileNote(
+  String path, {
+  required bool Function()? transcribeAvailable,
+}) {
+  final lower = path.toLowerCase();
+  if (_audioExtensions.any(lower.endsWith)) {
+    final dot = lower.lastIndexOf('.');
+    final ext = dot < 0 ? '' : lower.substring(dot + 1);
+    return transcribeAvailable?.call() ?? false
+        ? '[Audio file: $path (.$ext) — text content is not shown. Call '
+              'transcribe_audio to transcribe it.]'
+        : '[Audio file: $path (.$ext) — text content is not shown. No '
+              'transcription endpoint is configured: set '
+              'models.slots.transcription (/settings → Media models → '
+              'transcription) or pass --transcribe-model <id> to enable the '
+              'transcribe_audio tool.]';
+  }
+  if (_videoExtensions.any(lower.endsWith)) {
+    return '[Video file: $path — the current model has no video input and '
+        'no video model is configured. Configure a video-capable model as '
+        'the vision slot (models.slots.vision via /settings → Media models '
+        '→ vision, or --vision-model <id>, e.g. a gemini or glm-5.3-flash '
+        'model) and the read describes the video; a video-capable chat '
+        'model receives the bytes directly.]';
+  }
+  return null;
+}
+
+/// Audio file extensions the AC10 note names.
+const _audioExtensions = [
+  '.mp3',
+  '.wav',
+  '.m4a',
+  '.aac',
+  '.flac',
+  '.ogg',
+  '.opus',
+  '.wma',
+  '.aiff',
+  '.amr',
+];
+
+/// The video read route (gh-1985 C1/AC2): a matching video extension routes
+/// the bytes to a video-capable target —
+///
+/// - a chat model whose `input` modalities contain `video` gets the bytes
+///   attached ([VideoContent]); the ride is size-capped by
+///   `images.maxBytesPerRequest` (AC7) — an oversized video is NOT attached
+///   and the note names the size + the trim/convert hint, with no endless
+///   retry;
+/// - else the configured media/vision slot describes the video (AC2,
+///   `[via video model <id>]` attribution), honoring the same
+///   `autoInspect` knob and CancelToken as the image auto-route; provider
+///   failures degrade to an honest note — the read never fails (AC6
+///   semantics);
+/// - with neither target present, returns null so the caller keeps today's
+///   behavior (the AC10 note when the host opted in, else the plain
+///   fall-through) — byte-identical (REG).
+Future<ToolExecutionResult?> _readVideoResult(
+  String path,
+  Uint8List bytes,
+  ReadSelector parsed,
+  Model? Function()? model, {
+  Future<InspectImageConfig?> Function()? vision,
+  bool Function()? autoInspect,
+  void Function(Usage usage)? onImageUsage,
+  CancelToken? cancelToken,
+}) async {
+  if (!(_videoExtensions.any(path.toLowerCase().endsWith))) {
+    return null;
+  }
+  if (parsed is! ReadSelectorNone) {
+    // Line selectors apply to text files only — same refusal as images.
+    throw StateError(
+      'Line selectors (:N, :A-B, :raw) apply to text files; '
+      "'$path' is a video.",
+    );
+  }
+  final budget = imageRegistryConfig.maxBytesPerRequest;
+  final payloadBase64 = base64Encode(bytes);
+  final sizeLabel = formatToolSize(bytes.length);
+  final currentModel = model?.call();
+  if (currentModel != null && currentModel.input.contains('video')) {
+    return _videoAttachResult(path, payloadBase64, sizeLabel, budget: budget);
+  }
+
+  // Non-video-capable chat model: the configured media/vision slot
+  // describes the video (AC2 attribution), same knobs as the image
+  // auto-route.
+  final visionConfig = await vision?.call();
+  return _videoSlotResult(
+    path,
+    bytes,
+    sizeLabel,
+    visionConfig: visionConfig,
+    autoInspect: autoInspect,
+    budget: budget,
+    cancelToken: cancelToken,
+    onUsage: onImageUsage,
+  );
+}
+
+/// The video-capable chat-model route: the bytes ride as [VideoContent],
+/// size-capped by [budget] (AC7 — an oversized video is NOT attached and
+/// the note names the size + the trim/convert hint).
+ToolExecutionResult _videoAttachResult(
+  String path,
+  String payloadBase64,
+  String sizeLabel, {
+  required int budget,
+}) {
+  if (payloadBase64.length > budget) {
+    return ToolExecutionResult.text(
+      '[Video: $path, $sizeLabel — exceeds the video byte budget '
+      '(images.maxBytesPerRequest = $budget bytes). The video is NOT '
+      'attached. Trim/convert the clip (e.g. ffmpeg -i $path -ss 0 -t 30 '
+      'small.mp4) and read the smaller file.]',
+    );
+  }
+  return ToolExecutionResult(
+    content: [
+      TextContent(
+        text:
+            '[Video: $path, $sizeLabel — the video is attached for the '
+            'current video-capable model.]',
+      ),
+      VideoContent(data: payloadBase64, mimeType: _videoMimeType(path)),
+    ],
+  );
+}
+
+/// The configured media/vision-slot route for a non-video-capable chat
+/// model (AC2 attribution, same knobs as the image auto-route):
+/// - no slot configured → null (the caller keeps today's behavior);
+/// - a slot configured but the auto-route knob off → the honest note
+///   naming the model (the gh-1984 AC3 note shape);
+/// - otherwise ONE video inspection call, failures degrading to an honest
+///   note — the read never fails (AC6 semantics); a cancel stays a cancel.
+Future<ToolExecutionResult?> _videoSlotResult(
+  String path,
+  Uint8List bytes,
+  String sizeLabel, {
+  required InspectImageConfig? visionConfig,
+  required bool Function()? autoInspect,
+  required int budget,
+  required CancelToken? cancelToken,
+  required void Function(Usage usage)? onUsage,
+}) async {
+  if (visionConfig == null ||
+      !(autoInspect?.call() ?? imageRegistryConfig.autoInspect)) {
+    if (visionConfig == null) return null;
+    // A video model IS configured but the auto-route knob is off (the
+    // gh-1984 AC3 note shape): name the model instead of staying silent.
+    return ToolExecutionResult.text(
+      '[Video file: $path — a video model is configured '
+      '(${visionConfig.modelId}) but the read auto-route is off '
+      '(images.autoInspect: false). The video is not attached; switch to a '
+      'video-capable chat model or enable the auto-route to have the read '
+      'describe it.]',
+    );
+  }
+  if (base64Length(bytes) > budget) {
+    return ToolExecutionResult.text(
+      '[Video: $path, $sizeLabel — exceeds the video byte budget '
+      '(images.maxBytesPerRequest = $budget bytes); video inspection '
+      'skipped. Trim/convert the clip and read the smaller file.]',
+    );
+  }
+  try {
+    final description = await describeVideoWithVisionModel(
+      visionConfig,
+      bytes,
+      _videoMimeType(path),
+      '',
+      cancelToken: cancelToken,
+      onUsage: onUsage,
+    );
+    cancelToken?.throwIfCancelled();
+    return ToolExecutionResult(
+      content: [
+        TextContent(
+          text:
+              '[Video: $path, $sizeLabel]\n'
+              '[The video is not attached — the current model has no video '
+              'input.]\n'
+              '[via video model ${visionConfig.modelId}]\n'
+              '$description',
+        ),
+      ],
+    );
+  } on CancelledException {
+    rethrow;
+  } on Object catch (error) {
+    // A cancel surfacing as a provider stream error must stay a cancel,
+    // not a degrade note (gh-1984 AC6 semantics).
+    cancelToken?.throwIfCancelled();
+    return ToolExecutionResult.text(
+      '[Video: $path, $sizeLabel]\n'
+      '[Video inspection via video model ${visionConfig.modelId} failed: '
+      '$error. The read continues without the video.]',
+    );
+  }
+}
+
+/// The video MIME type for a path. Every routed extension maps to the
+/// MIME its container actually has — no catch-all mislabel (gh-2007
+/// review thread 2): the google-shaped target documents the supported
+/// video MIME types as video/mp4, video/mpeg, video/mpg, video/webm,
+/// video/quicktime, video/wmv, video/x-flv, video/3gpp
+/// (ai.google.dev/gemini-api/docs/video-understanding, mirrored by
+/// firebase.google.com/docs/ai-logic/live-api/limits-and-specs);
+/// x-matroska/x-msvideo ride the openai-completions `video_url`
+/// passthrough verbatim. `.m4v` is mp4-family and rides the mp4 spelling.
+String _videoMimeType(String path) {
+  final lower = path.toLowerCase();
+  return switch (lower.substring(lower.lastIndexOf('.') + 1)) {
+    'webm' => 'video/webm',
+    'mov' => 'video/quicktime',
+    'mkv' => 'video/x-matroska',
+    'avi' => 'video/x-msvideo',
+    'mpeg' || 'mpg' => 'video/mpeg',
+    'wmv' => 'video/wmv',
+    'flv' => 'video/x-flv',
+    '3gp' => 'video/3gpp',
+    _ => 'video/mp4',
+  };
+}
+
+/// Video file extensions the AC10 note names.
+const _videoExtensions = [
+  '.mp4',
+  '.mov',
+  '.mkv',
+  '.webm',
+  '.avi',
+  '.m4v',
+  '.mpg',
+  '.mpeg',
+  '.wmv',
+  '.flv',
+  '.3gp',
+];
 
 /// Builds the note header of an image read: the `[Image: …]` line plus the
 /// conversion, resize-mapping, and non-vision hints (pi's `conversionHint`,
@@ -326,13 +785,12 @@ String _imageNoteHeader(
       'original image.]',
     );
   }
-  // pi's `getNonVisionImageNote`.
+  // pi's `getNonVisionImageNote` — the final omission note rides the
+  // resolver-driven suffixes below (gh-1984); the ride-in-place path keeps
+  // today's shape byte-identically.
   final currentModel = model?.call();
   if (currentModel != null && !currentModel.input.contains('image')) {
-    note.write(
-      '\n[Current model does not support images. The image will be '
-      'omitted from this request.]',
-    );
+    note.write(_nonVisionNoteSuffix());
   }
   return note.toString();
 }

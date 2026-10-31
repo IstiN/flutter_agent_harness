@@ -65,7 +65,7 @@ typedef _FetchProvider = ({
 /// - Fetches `/models` from every saved [CustomProvider] in parallel.
 /// - Search field at the top filters by provider name OR model id.
 /// - Each row shows `provider / model-id` with a vision marker.
-/// - On-device routes (WebLLM, Gemma, …) appear as separate tiles at the
+/// - On-device routes (WebLLM, …) appear as separate tiles at the
 ///   bottom.
 /// - An "Add provider" tile opens the preset picker.
 ///
@@ -98,7 +98,7 @@ class UnifiedModelPickerPage extends StatefulWidget {
   /// [fetchModelsForEndpoint] dispatch directly.
   final ModelsEndpointFetcher? modelsFetcher;
 
-  /// On-device provider routes (Gemma, WebLLM, …), appended to the list.
+  /// On-device provider routes (WebLLM, …), appended to the list.
   final List<FaOnDeviceRoute> onDeviceProviders;
 
   /// Display labels for non-endpoint provider kinds (on-device backends).

@@ -69,7 +69,7 @@ void main() {
     final cli = AgentCli(
       config: AgentCliConfig(
         model: model,
-        apiKey: '[REDACTED:Sensitive Value]',
+        apiKey: '[REDACTED:Sensitive-Value]',
         env: MemoryExecutionEnv(cwd: '/work', shell: const UnavailableShell()),
         sessionRoot: '/sessions',
         approvalMode: ApprovalMode.yolo,

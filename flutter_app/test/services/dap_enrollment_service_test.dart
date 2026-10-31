@@ -19,6 +19,10 @@ void main() {
       "fa dap import '$invite' && DAP_HUB_URL=wss://hub.fa1.dev/ws "
       "DAP_CLIENT_SECRET='test-only-enrollment-credential' "
       'DAP_AGENT_NAME=app-agent fa';
+  const instanceBlock =
+      "fa dap import '$invite' && DAP_HUB_URL=wss://hub.fa1.dev/ws "
+      "DAP_CLIENT_SECRET='test-only-enrollment-credential' "
+      'DAP_AGENT_NAME=app-agent DAP_AGENT_INSTANCE=0123456789abcdef fa';
 
   test('full enrollment paste is recognized and mapped to joined', () async {
     DapJoinBundle? joined;
@@ -27,7 +31,7 @@ void main() {
       join: (bundle) async => joined = bundle,
     );
 
-    final attempt = service.startPaste(block);
+    final attempt = service.startPaste(instanceBlock);
     expect(attempt, isNotNull);
     final result = await attempt!.result;
 
@@ -36,6 +40,7 @@ void main() {
     expect(result.plaintextStorage, isFalse);
     expect(joined!.invite.channel, channel);
     expect(joined!.agentName, 'app-agent');
+    expect(joined!.agentInstance, '0123456789abcdef');
     expect(
       joined!.clientSecret == 'test-only-enrollment-credential',
       isTrue,
@@ -117,6 +122,7 @@ void main() {
     expect(enrollment, isNotNull);
     expect(enrollment!.invite.channel, channel);
     expect(enrollment.clientSecret == bundle.clientSecret, isTrue);
+    expect(enrollment.agentInstance, isNull);
     expect(
       DapEnrollmentStore.fileName('/work/project') ==
           DapEnrollmentStore.fileName('/work/other'),
@@ -131,6 +137,41 @@ void main() {
       projectCwd: '/work/project',
     );
     expect(cleared.enrollment, isNull);
+  });
+
+  test('instance enrollment round-trips for reconnect', () async {
+    final env = MemoryExecutionEnv(cwd: '/app');
+    final store = await DapEnrollmentStore.load(
+      env,
+      projectCwd: '/work/project',
+    );
+    await store.save(parseDapJoinBundle(instanceBlock));
+
+    final restored = await DapEnrollmentStore.load(
+      env,
+      projectCwd: '/work/project',
+    );
+    expect(restored.enrollment?.agentInstance, '0123456789abcdef');
+    expect(restored.enrollment?.agentName, 'app-agent');
+  });
+
+  test('identity scope uses only the instance when present', () {
+    const instance = '0123456789abcdef';
+    final scoped = dapEnrollmentIdentityScope('/work/project-a', instance);
+    expect(scoped, dapEnrollmentIdentityScope('/work/project-b', instance));
+    expect(scoped, dapEnrollmentProjectScope(instance));
+    expect(
+      scoped,
+      isNot(dapEnrollmentIdentityScope('/work/project-a', 'fedcba9876543210')),
+    );
+    expect(
+      dapEnrollmentIdentityScope('/work/project-a', null),
+      dapEnrollmentProjectScope('/work/project-a'),
+    );
+    expect(
+      dapEnrollmentIdentityScope('/work/project-a', ''),
+      dapEnrollmentProjectScope('/work/project-a'),
+    );
   });
 
   group('DapEnrollmentStore secure backend', () {
@@ -173,7 +214,7 @@ void main() {
 
     test('secure storage round-trips without a legacy file', () async {
       final env = MemoryExecutionEnv(cwd: '/app');
-      final bundle = parseDapJoinBundle(block);
+      final bundle = parseDapJoinBundle(instanceBlock);
       final store = await DapEnrollmentStore.load(
         env,
         projectCwd: '/work/project',
@@ -197,6 +238,7 @@ void main() {
       );
       expect(restored.enrollment?.invite.channel, channel);
       expect(restored.enrollment?.clientSecret, bundle.clientSecret);
+      expect(restored.enrollment?.agentInstance, '0123456789abcdef');
       await restored.clear();
       expect(restored.enrollment, isNull);
       expect(backend, isEmpty);

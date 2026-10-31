@@ -27,14 +27,23 @@ const defaultSubagentHeartbeatMinutes = 10;
 /// (`subagents.stallMinutes`; `0` = stall flagging off).
 const defaultSubagentStallMinutes = 20;
 
-/// The `subagents:` yaml section: heartbeat cadence and stall threshold.
-/// Parsed strictly — a bad schema throws [ConfigException]-shaped errors
-/// (the config layer surfaces them at boot). `0` disables the respective
-/// mechanism; negative values are rejected.
+/// Default reply delivery mode (gh-1956): oversized child replies
+/// auto-spill to an artifact (excerpt + `agent://` pointer + completeness
+/// delivered to the parent). `subagents.replyAutoSpill: false` restores
+/// the pure-chunk behavior — manual chunking becomes the only path for
+/// oversized reports.
+const defaultReplyAutoSpill = true;
+
+/// The `subagents:` yaml section: heartbeat cadence, stall threshold, and
+/// the reply auto-spill kill switch (gh-1956). Parsed strictly — a bad
+/// schema throws [ConfigException]-shaped errors (the config layer
+/// surfaces them at boot). `0` disables the respective mechanism;
+/// negative values are rejected.
 final class SubagentsConfig {
   const SubagentsConfig({
     this.heartbeatMinutes = defaultSubagentHeartbeatMinutes,
     this.stallMinutes = defaultSubagentStallMinutes,
+    this.replyAutoSpill = defaultReplyAutoSpill,
   });
 
   /// Digest cadence in minutes; `0` disables the heartbeat entirely.
@@ -43,6 +52,11 @@ final class SubagentsConfig {
   /// Minutes without provider activity before a running child is flagged
   /// `[WARN] STALLED`; `0` disables stall flagging.
   final int stallMinutes;
+
+  /// Whether oversized child replies auto-spill to an artifact (gh-1956).
+  /// `false` restores pure-chunk behavior: the harness never spills, the
+  /// child must chunk long reports manually.
+  final bool replyAutoSpill;
 
   factory SubagentsConfig.fromYaml(Object? node) {
     if (node == null) return const SubagentsConfig();
@@ -61,8 +75,16 @@ final class SubagentsConfig {
       return value;
     }
 
+    final spillValue = node['replyAutoSpill'];
+    if (spillValue != null && spillValue is! bool) {
+      throw ConfigException('"subagents.replyAutoSpill" must be a boolean');
+    }
     for (final key in node.keys) {
-      if (!{'heartbeatMinutes', 'stallMinutes'}.contains('$key')) {
+      if (!{
+        'heartbeatMinutes',
+        'stallMinutes',
+        'replyAutoSpill',
+      }.contains('$key')) {
         throw ConfigException('unknown "subagents" key: $key');
       }
     }
@@ -72,13 +94,15 @@ final class SubagentsConfig {
         defaultSubagentHeartbeatMinutes,
       ),
       stallMinutes: parse('stallMinutes', defaultSubagentStallMinutes),
+      replyAutoSpill: spillValue as bool? ?? defaultReplyAutoSpill,
     );
   }
 
   String toYaml() =>
       'subagents:\n'
       '  heartbeatMinutes: $heartbeatMinutes\n'
-      '  stallMinutes: $stallMinutes\n';
+      '  stallMinutes: $stallMinutes\n'
+      '  replyAutoSpill: $replyAutoSpill\n';
 }
 
 /// Periodic status digests for running background subagents.
@@ -177,9 +201,12 @@ final class SubagentHeartbeat {
     final label = '${handle.id} (${handle.agentType})';
     final requests = handle.requests + handle.liveRequests;
     final tokens = handle.tokens + handle.liveTokens;
+    // Issue #1924: the token figure is lifetime cumulative usage — label it
+    // and ride the live ctx% so the two bases never blur.
     final facts =
         'age ${_minutes(now.difference(_parse(handle.createdAt)))} · '
-        '$requests requests · $tokens tokens · '
+        '$requests requests · $tokens lifetime tokens · '
+        '${handle.contextPressureText ?? 'ctx n/a'} · '
         'last activity '
         '${_minutes(now.difference(_parse(handle.lastActivity)))} ago';
     if (stall <= 0) return '$label — $facts · healthy';

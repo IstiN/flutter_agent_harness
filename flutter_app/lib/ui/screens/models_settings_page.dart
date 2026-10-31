@@ -2,7 +2,6 @@
 // Use of this source code is governed by a MIT license that can be found
 // in the LICENSE file.
 
-import 'package:fa/gemma/gemma_types.dart';
 import 'package:fa/l10n/l10n_ext.dart';
 import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/analytics.dart';
@@ -35,7 +34,6 @@ class ModelsSettingsPage extends StatefulWidget {
     this.modelsFetcher,
     this.taskModelsStore,
     this.webLlmEngine,
-    this.gemmaEngine,
     this.transformersJsEngine,
     this.queueSection,
   });
@@ -60,7 +58,6 @@ class ModelsSettingsPage extends StatefulWidget {
   /// Engine overrides for the on-device provider rows (tests); the platform
   /// singletons are the defaults.
   final WebLlmEngineApi? webLlmEngine;
-  final GemmaEngineApi? gemmaEngine;
   final TransformersJsEngineApi? transformersJsEngine;
 
   /// The provider-queue editor (issue #693) — the ordered main-model
@@ -109,7 +106,6 @@ class _ModelsSettingsPageState extends State<ModelsSettingsPage> {
                 lastConnectionStore: widget.lastConnectionStore,
                 modelsFetcher: widget.modelsFetcher,
                 webLlmEngine: widget.webLlmEngine,
-                gemmaEngine: widget.gemmaEngine,
                 transformersJsEngine: widget.transformersJsEngine,
                 onDeviceConfigStore: onDeviceConfig,
               ),

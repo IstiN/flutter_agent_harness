@@ -884,7 +884,7 @@ jobs:
         with:
           sdk: stable
 
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
         with:
           python-version: '3.x'
@@ -1366,7 +1366,7 @@ jobs:
       # Upload MUST stay on the current upload-artifact line (gh-995): the
       # gate's download-artifact v8 digest-validates every download, so an
       # old-line upload digest-mismatches and the shard merge loses its
-      # report (test/release_hygiene_test.dart pins the pin).
+      # report (test/gh995_artifact_action_pins_test.dart pins the pin).
       #
       # gh-1412: each evidence upload carries a one-shot retry (the step
       # right after it, same pinned action). The gh-1412 validation run
@@ -1463,7 +1463,7 @@ jobs:
       issues: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: '3.x'
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
@@ -1660,7 +1660,7 @@ jobs:
         with:
           sdk: stable
 
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
         with:
           python-version: '3.x'
@@ -1715,7 +1715,7 @@ jobs:
         with:
           sdk: stable
 
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
         with:
           python-version: '3.x'
@@ -1971,8 +1971,8 @@ jobs:
       # generated .flutter-plugins-dependencies; the gate fails the PR when a
       # native iOS/macOS plugin resolved by the committed pubspec.lock has no
       # pod in the platform's Podfile.lock, or its pod is pinned at a stale
-      # version vs the resolved podspec (the gh-1274 class, plus the
-      # flutter_gemma 1.8.0-vs-1.11.3 skew this PR fixed). Self-tested in
+      # version vs the resolved podspec (the gh-1274 class; the historical
+      # flutter_gemma 1.8.0-vs-1.11.3 skew motivated it). Self-tested in
       # Static gates (AC2).
       - name: Lockfile pod-sync gate (gh-1296 NG1)
         run: bash scripts/check_lockfiles.sh pod-sync
@@ -2342,6 +2342,24 @@ jobs:
           # wrapper's bounded-retry shape.
           install_ok=false
           for attempt in 1 2 3; do
+            # The `timeout` below kills the npx wrapper but can orphan its
+            # apt-get child, which keeps /var/lib/dpkg/lock-frontend
+            # (2026-10-26: attempts 2 and 3 died in ~16s on "Could not get
+            # lock ... held by process 4135" — the retry could never
+            # recover from the very kill this loop was built for). Wait,
+            # bounded, for a stale holder: it is doing the same install we
+            # want, so let it finish; kill it only if still wedged; then
+            # clear any half-configured state the kill left.
+            for _ in $(seq 1 24); do
+              pgrep -x apt-get >/dev/null 2>&1 || break
+              sleep 5
+            done
+            if pgrep -x apt-get >/dev/null 2>&1; then
+              echo "::warning::stale apt-get still holds the dpkg lock — stopping it before the retry"
+              sudo pkill -x apt-get || true
+              sleep 3
+            fi
+            sudo dpkg --configure -a || true
             if timeout 600 npx playwright install --with-deps chromium webkit; then
               install_ok=true
               break
@@ -2442,7 +2460,7 @@ jobs:
           fetch-depth: 0 # only-down guard diffs thresholds against the base
           # gh-1477: blobless — historical blobs are never read.
           filter: blob:none
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         if: needs.changes.outputs.app == 'true' || needs.changes.outputs.shared == 'true'
         with:
           python-version: '3.x'
@@ -2539,7 +2557,7 @@ jobs:
           channel: stable
           cache: true
 
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: '3.x'
 
@@ -2632,7 +2650,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: '3.x'
 
@@ -2872,12 +2890,6 @@ jobs:
       - run: cp flutter_app/firebase_options.template.dart flutter_app/lib/firebase_options.dart
 
       - uses: ./.github/actions/flutter-pub-get
-
-      # gh-1468: pre-seed the flutter_gemma LiteRT-LM Android cache so the
-      # build hook never downloads litertlm-android_arm64.tar.gz mid-build
-      # — one release-asset CDN 500 red'd this leg and the aggregate
-      # Quality gate. Same hardening as the macOS companion-dylibs step.
-      - uses: ./.github/actions/flutter-gemma-android-seed
 
       # gh-1655: pre-install the Flutter-pinned NDK so Gradle configuration
       # never auto-installs it mid-build — that path has no retry, and one
@@ -3127,27 +3139,6 @@ jobs:
           ls -la "$DEST/WasmRun.xcframework"
 
       - uses: ./.github/actions/flutter-pub-get
-
-      # The macOS Podfile bundles the LiteRT-LM companion dylibs via a
-      # Runner script phase that fails on a fresh runner ("Could not find
-      # macOS companion dylibs") — seed from the pinned upstream native
-      # release, sha256-verified (same incantation as build-macos.yml).
-      - name: Ensure flutter_gemma macOS companion dylibs
-        run: |
-          set -euo pipefail
-          GEMMA_CACHE="$HOME/Library/Caches/flutter_gemma/native/macos_arm64"
-          if [ -f "$GEMMA_CACHE/libGemmaModelConstraintProvider.dylib" ]; then
-            echo "companion dylibs already cached"
-          else
-            echo "seeding companion dylibs from flutter_gemma native-v0.16.0"
-            mkdir -p "$GEMMA_CACHE"
-            curl -L --retry 3 --retry-all-errors --retry-delay 10 --max-time 600 \
-              -o /tmp/litertlm-macos_arm64.tar.gz \
-              https://github.com/DenisovAV/flutter_gemma/releases/download/native-v0.16.0/litertlm-macos_arm64.tar.gz
-            echo "c597554a7a5cdf099658227099a54ef4916c5802b9182757e656e1788f9426b6  /tmp/litertlm-macos_arm64.tar.gz" | shasum -a 256 -c -
-            tar xzf /tmp/litertlm-macos_arm64.tar.gz -C "$GEMMA_CACHE"
-          fi
-          ls -la "$GEMMA_CACHE"
 
       - name: flutter build macos (debug)
         run: |
@@ -4512,6 +4503,25 @@ jobs:
           # instead of stranding a provenance-less one (the v1.0.630
           # empty/partial-latest window class).
           gh release edit "${GITHUB_REF_NAME}" --draft=false --latest --repo "${GITHUB_REPOSITORY}"
+
+      # gh-1899: the flip above publishes exactly ONE release object, but
+      # GitHub does not atomically enforce one release per tag — two train
+      # legs racing the lazy draft create can BOTH succeed (v1.0.641, run
+      # 40163369302: twin drafts 87 ms apart), and the unpicked twin then
+      # rots until the 24h sweeper deletes it and files a recurring sweep
+      # issue. The tag is published and servable now: reclaim this run's
+      # twin drafts. Success-path only — a red provenance keeps the draft
+      # as the rerun --failed recovery vessel.
+      # Best-effort by design (gh-1899 review): the flip above already
+      # published the release — a cleanup-only API blip here must NOT fail
+      # the provenance job (release-asset-smoke gates on its result and
+      # would silently skip for a release that is actually fine). Warn
+      # and stay green; the 24h sweeper remains the backstop.
+      - name: Reclaim orphaned draft twins (gh-1899)
+        if: success()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash scripts/release_draft_dedupe.sh "${GITHUB_REF_NAME}" || echo "::warning::gh-1899 twin-draft dedupe failed — the 24h sweeper remains the backstop"
 
   # gh-1832 AC3: post-publish smoke. Probes (1) EVERY releases/(latest/)?
   # download/ URL the fa1.dev landing page exposes (site/index.html) and

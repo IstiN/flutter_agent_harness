@@ -15,6 +15,7 @@
 /// base64-staged [ImageContent] are returned. Web-safe.
 library;
 
+import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
 import 'dart:typed_data';
@@ -24,6 +25,7 @@ import 'package:http/http.dart' as http;
 import '../agent/agent_loop.dart' show ToolExecutionResult;
 import '../agent/agent_tool.dart';
 import '../approval/approval.dart';
+import '../cancel_token.dart' show CancelToken, cancellable;
 import '../env/execution_env.dart';
 import '../model_roles/media_model_slots.dart';
 import '../model_roles/models_config.dart';
@@ -569,6 +571,14 @@ int _gcd(int a, int b) {
 /// an actionable error instead of a provider 400. Only the OpenRouter
 /// dialect can carry them; other dialects refuse them up front.
 ///
+/// [cancelToken] honors cancellation checkpoints (issue #1923 AC2): a
+/// token cancelled before the call rejects up front with no HTTP at all;
+/// after that each unbounded HTTP await races [CancelToken.onCancel] and
+/// rejects with [CancelledException] when it fires — the request itself
+/// is not aborted (the provider keeps the paid work; only the wait
+/// rejects). The soft-yield token is deliberately NOT consulted: a
+/// mid-POST abort would lose paid API work.
+///
 /// Dispatches to the first dialect in [imageGenerationDialects] whose
 /// `matches(endpoint)` returns true.
 Future<({String path, Uint8List bytes, String detail})> generateImageBytes({
@@ -580,8 +590,22 @@ Future<({String path, Uint8List bytes, String detail})> generateImageBytes({
   List<MediaImageInput> images = const [],
   List<String> declaredInputModalities = const [],
   http.Client? httpClient,
+  CancelToken? cancelToken,
 }) async {
+  cancelToken?.throwIfCancelled();
   final client = httpClient ?? http.Client();
+  // Finish-or-detach (r1 blocker): a cancel rejects the WAIT below while
+  // the paid POST is still on the wire — closing the client in `finally`
+  // at that moment ABORTS the in-flight request, and aborting saves
+  // nothing (the money is spent). `inFlight` therefore chains the close
+  // to the newest work's own settlement; the cancelled wait's result is
+  // discarded, never its wire work.
+  Future<void>? inFlight;
+  Future<T> track<T>(Future<T> work) {
+    inFlight = work.then((_) {}, onError: (Object _, StackTrace _) {});
+    return work;
+  }
+
   try {
     final dialect = imageGenerationDialects
         .where((d) => d.matches(endpoint))
@@ -603,26 +627,42 @@ Future<({String path, Uint8List bytes, String detail})> generateImageBytes({
       ensureImageInputSupported(
         slot: 'imageGeneration',
         modelId: endpoint.modelId,
-        inputModalities: await resolveInputModalities(
-          baseUrl: endpoint.baseUrl,
-          apiKey: endpoint.apiKey,
-          modelId: endpoint.modelId,
-          declared: declaredInputModalities,
-          client: client,
+        inputModalities: await cancellable(
+          cancelToken,
+          () => track(
+            resolveInputModalities(
+              baseUrl: endpoint.baseUrl,
+              apiKey: endpoint.apiKey,
+              modelId: endpoint.modelId,
+              declared: declaredInputModalities,
+              client: client,
+            ),
+          ),
         ),
       );
     }
-    return await dialect.generate(
-      env: env,
-      endpoint: endpoint,
-      prompt: prompt,
-      size: size,
-      quality: quality,
-      images: resolvedImages,
-      client: client,
+    return await cancellable(
+      cancelToken,
+      () => track(
+        dialect.generate(
+          env: env,
+          endpoint: endpoint,
+          prompt: prompt,
+          size: size,
+          quality: quality,
+          images: resolvedImages,
+          client: client,
+        ),
+      ),
     );
   } finally {
-    client.close();
+    final pending = inFlight;
+    if (pending == null) {
+      client.close();
+    } else {
+      // Detach, never abort: close only once the wire work settles.
+      unawaited(pending.then((_) => client.close()));
+    }
   }
 }
 
@@ -758,6 +798,7 @@ AgentTool generateImageTool({
         images: images,
         declaredInputModalities: override?.inputModalities ?? const [],
         httpClient: httpClient,
+        cancelToken: cancelToken,
       );
       cancelToken?.throwIfCancelled();
       return ToolExecutionResult(

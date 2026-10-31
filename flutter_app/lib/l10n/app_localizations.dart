@@ -1034,66 +1034,6 @@ abstract class AppLocalizations {
   /// **'Upload files here'**
   String get filesUploadTooltip;
 
-  /// No description provided for @gemmaCacheDeleteOrphan.
-  ///
-  /// In en, this message translates to:
-  /// **'Removes the file ({size}) from {storage}. Installed models are not affected.'**
-  String gemmaCacheDeleteOrphan(Object size, Object storage);
-
-  /// No description provided for @gemmaCacheDeleteWeights.
-  ///
-  /// In en, this message translates to:
-  /// **'Removes the downloaded weights ({size}) from {storage}. The model downloads again the next time you use it.'**
-  String gemmaCacheDeleteWeights(Object size, Object storage);
-
-  /// No description provided for @gemmaCacheMobileOnly.
-  ///
-  /// In en, this message translates to:
-  /// **'On-device (Gemma) models are available in the iOS/Android builds only (on web the transformers.js provider covers on-device Gemma).'**
-  String get gemmaCacheMobileOnly;
-
-  /// No description provided for @gemmaCacheScanError.
-  ///
-  /// In en, this message translates to:
-  /// **'Could not scan the model cache: {error}'**
-  String gemmaCacheScanError(Object error);
-
-  /// No description provided for @gemmaCacheSubtitle.
-  ///
-  /// In en, this message translates to:
-  /// **'Gemma weights stored {storage}. Deleting frees space; a model re-downloads on next use.'**
-  String gemmaCacheSubtitle(Object storage);
-
-  /// No description provided for @gemmaCacheTitle.
-  ///
-  /// In en, this message translates to:
-  /// **'On-device models (Gemma)'**
-  String get gemmaCacheTitle;
-
-  /// No description provided for @gemmaStorageFromBrowser.
-  ///
-  /// In en, this message translates to:
-  /// **'the browser storage'**
-  String get gemmaStorageFromBrowser;
-
-  /// No description provided for @gemmaStorageFromDevice.
-  ///
-  /// In en, this message translates to:
-  /// **'the device'**
-  String get gemmaStorageFromDevice;
-
-  /// No description provided for @gemmaStorageInBrowser.
-  ///
-  /// In en, this message translates to:
-  /// **'in your browser'**
-  String get gemmaStorageInBrowser;
-
-  /// No description provided for @gemmaStorageOnDevice.
-  ///
-  /// In en, this message translates to:
-  /// **'on this device'**
-  String get gemmaStorageOnDevice;
-
   /// No description provided for @keysAddButton.
   ///
   /// In en, this message translates to:
@@ -2528,18 +2468,6 @@ abstract class AppLocalizations {
   /// **'A key is saved for this provider — leave the field empty to keep it.'**
   String get settingsEditorKeepKeyNote;
 
-  /// No description provided for @settingsHfTokenHint.
-  ///
-  /// In en, this message translates to:
-  /// **'hf_… — needed if the repo is gated'**
-  String get settingsHfTokenHint;
-
-  /// No description provided for @settingsHfTokenLabel.
-  ///
-  /// In en, this message translates to:
-  /// **'HuggingFace token (optional)'**
-  String get settingsHfTokenLabel;
-
   /// No description provided for @settingsKeyNoteCustom.
   ///
   /// In en, this message translates to:
@@ -2630,12 +2558,6 @@ abstract class AppLocalizations {
   /// **'Custom'**
   String get settingsPresetCustom;
 
-  /// No description provided for @settingsPresetGemma.
-  ///
-  /// In en, this message translates to:
-  /// **'On-device (Gemma)'**
-  String get settingsPresetGemma;
-
   /// No description provided for @settingsPresetOllama.
   ///
   /// In en, this message translates to:
@@ -2651,7 +2573,7 @@ abstract class AppLocalizations {
   /// No description provided for @settingsPresetTransformersJs.
   ///
   /// In en, this message translates to:
-  /// **'On-device (Gemma, transformers.js)'**
+  /// **'On-device (transformers.js)'**
   String get settingsPresetTransformersJs;
 
   /// No description provided for @settingsPresetWebllm.
@@ -2701,12 +2623,6 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'The previously used model ({model}) was removed from the cache — pick a model to download it again.'**
   String settingsStaleModelCache(Object model);
-
-  /// No description provided for @settingsStaleModelDevice.
-  ///
-  /// In en, this message translates to:
-  /// **'The previously used model ({model}) was removed from this device — pick a model to download it again.'**
-  String settingsStaleModelDevice(Object model);
 
   /// No description provided for @settingsSkillsAccess.
   ///
@@ -4052,6 +3968,18 @@ abstract class AppLocalizations {
   /// **'Join an existing network or create your own — channels and showcases open here.'**
   String get networkWelcomeBody;
 
+  /// Selected membership synced from the account without a stored password
+  ///
+  /// In en, this message translates to:
+  /// **'This network needs your password'**
+  String get networkNeedsPasswordTitle;
+
+  /// Body under networkNeedsPasswordTitle; the join button follows
+  ///
+  /// In en, this message translates to:
+  /// **'Account sync listed this network, but its password is stored only after you join once. Enter it to open the network.'**
+  String get networkNeedsPasswordBody;
+
   /// Network picker header / sidebar title
   ///
   /// In en, this message translates to:
@@ -4208,10 +4136,10 @@ abstract class AppLocalizations {
   /// **'Fill'**
   String get networkJoinFill;
 
-  /// Join sheet: network id field label
+  /// Join sheet: network id-or-name field label
   ///
   /// In en, this message translates to:
-  /// **'Network id'**
+  /// **'Network id or name'**
   String get networkIdLabel;
 
   /// Display name field label
@@ -4229,7 +4157,7 @@ abstract class AppLocalizations {
   /// Join sheet validation error
   ///
   /// In en, this message translates to:
-  /// **'Network id and password are required.'**
+  /// **'Network id or name and password are required.'**
   String get networkJoinRequired;
 
   /// Join sheet error when the server rejects the credentials
@@ -4430,6 +4358,12 @@ abstract class AppLocalizations {
   /// **'Read-only preview — tap to join the network and write.'**
   String get networkShowcaseReadOnly;
 
+  /// Composer replacement for a joined guest or member viewing a public showcase
+  ///
+  /// In en, this message translates to:
+  /// **'Only the owner and admins can post in this showcase.'**
+  String get networkShowcaseMemberReadOnly;
+
   /// Channel rail placeholder while the session connects
   ///
   /// In en, this message translates to:
@@ -4532,6 +4466,54 @@ abstract class AppLocalizations {
   /// **'No channel keys in this wallet — the agent will see channels only after a key invite'**
   String get networkAddAgentNoChannelKeys;
 
+  /// Composer replacement when a joined private channel has no key in this device's wallet
+  ///
+  /// In en, this message translates to:
+  /// **'This device needs the private channel key to read and write.'**
+  String get networkChannelKeyMissing;
+
+  /// Button and dialog title for importing a private channel key invite
+  ///
+  /// In en, this message translates to:
+  /// **'Import channel key'**
+  String get networkChannelKeyImport;
+
+  /// Input label for the private channel invite carrying its keypair
+  ///
+  /// In en, this message translates to:
+  /// **'Channel key invite'**
+  String get networkChannelKeyInviteLabel;
+
+  /// Helper text explaining where to obtain a channel key invite
+  ///
+  /// In en, this message translates to:
+  /// **'Paste the private-channel invite from a device that already has the key.'**
+  String get networkChannelKeyImportHint;
+
+  /// Validation error when the invite channel id differs from the open channel
+  ///
+  /// In en, this message translates to:
+  /// **'This invite is for a different channel.'**
+  String get networkChannelKeyWrongChannel;
+
+  /// Validation error when the invite targets another hub deployment than the connected session
+  ///
+  /// In en, this message translates to:
+  /// **'This invite is for a different hub.'**
+  String get networkChannelKeyWrongHub;
+
+  /// Validation error for an inconsistent X25519 channel keypair
+  ///
+  /// In en, this message translates to:
+  /// **'The invite public and private keys do not match.'**
+  String get networkChannelKeyMismatch;
+
+  /// Generic safe channel-key import failure
+  ///
+  /// In en, this message translates to:
+  /// **'The channel key could not be imported. Try again.'**
+  String get networkChannelKeyImportFailed;
+
   /// Agent invite scope segment: channel-only access
   ///
   /// In en, this message translates to:
@@ -4604,10 +4586,10 @@ abstract class AppLocalizations {
   /// **'Enroll agent'**
   String get networkAddAgentEnroll;
 
-  /// Agent invite note under the pure-DAP format explaining the one-time secret and rotation
+  /// Agent invite note under the pure-DAP format explaining the one-time secret and independent same-name enrollment
   ///
   /// In en, this message translates to:
-  /// **'Enrollment mints a unique, revocable credential — the secret is shown ONCE: copy it now. Re-enrolling the same name rotates it.'**
+  /// **'Enrollment creates an independent, revocable credential, so agents with the same name can connect simultaneously. The secret is shown ONCE: copy it now.'**
   String get networkAddAgentEnrollHint;
 
   /// Agent invite note shown on the DAP format when there is no signed-in network account

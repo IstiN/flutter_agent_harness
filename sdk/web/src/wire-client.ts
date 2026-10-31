@@ -45,6 +45,7 @@ export const KNOWN_EVENT_KINDS: readonly string[] = [
   'model_request',
   'tool_pairing_repair',
   'task_ledger',
+  'image_payload_recovery',
   'tool_call_heartbeat',
   'tool_call_stuck',
   'tool_call_budget',
@@ -423,7 +424,15 @@ function redact(
       (secretFields?.includes(key) ?? false) ||
       SECRET_FIELD_NAMES_ANYWHERE.includes(key)
     ) {
-      out[key] = `[REDACTED:${kindLabel}]`;
+      // gh-1952 (I2): every rendered `[REDACTED:<kind>]` marker is ONE
+      // shell token — whitespace runs in the kind label become single
+      // hyphens, exactly like the Dart-side shared constructor
+      // (`redactionMarker` in redaction_types.dart). A marker that leaks
+      // into a shell string can then never split into several argv items.
+      // Today's wire kinds contain no whitespace, so this only bites a
+      // future kind label that does — the two runtimes must render it
+      // identically, not diverge the way the gh-1952 incident marker did.
+      out[key] = `[REDACTED:${kindLabel.replace(/\s+/g, '-')}]`;
     } else if (isPlainObject(value)) {
       out[key] = redact(value, kindLabel);
     } else if (Array.isArray(value)) {

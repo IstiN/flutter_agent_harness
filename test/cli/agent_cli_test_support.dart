@@ -196,18 +196,42 @@ class FakeSecureKeyStore implements SecureKeyStore {
   Future<void> delete(String name) async => map.remove(name);
 }
 
+/// The text carried by a transcript message or a fabric mail record —
+/// the shared message-text extractor the routing/record-asserting suites
+/// read contexts and mail entries with (hoisted from file-local copies,
+/// gh-1947 review).
+String messageText(Object message) {
+  final content = switch (message) {
+    UserMessage() => message.content,
+    AssistantMessage() => message.content,
+    ToolResultMessage() => message.content,
+    AgentMessage() => message.text,
+    _ => '',
+  };
+  return content is String
+      ? content
+      : content is List<ContentBlock>
+      ? [
+          for (final block in content)
+            if (block is TextContent) block.text,
+        ].join('\n')
+      : '';
+}
+
+/// Polls [condition] until it holds or the [seconds] budget expires.
 Future<void> waitForIt(
   FutureOr<bool> Function() condition, {
   String? reason,
+  int seconds = 25,
 }) async {
   // Generous budget: startup discovery + prompt composition must finish
   // within this window even on a LOADED machine (coverage instrumentation
   // roughly doubles run time; parallel builds/other projects' test runners
-  // eat the rest). 25s of polling; the condition is checked every 5ms so
-  // tests still finish as soon as the awaited state actually appears.
-  // Async conditions are awaited (polling a Future beats a silent
-  // fall-through on timeout — the failure must name the wait).
-  for (var i = 0; i < 5000; i++) {
+  // eat the rest). [seconds] of polling; the condition is checked every
+  // 5ms so tests still finish as soon as the awaited state actually
+  // appears. Async conditions are awaited (polling a Future beats a
+  // silent fall-through on timeout — the failure must name the wait).
+  for (var i = 0; i < seconds * 200; i++) {
     if (await condition()) return;
     await Future<void>.delayed(const Duration(milliseconds: 5));
   }

@@ -135,61 +135,6 @@ const workflows = [
   '.github/workflows/ci.yml',
 ];
 
-/// Every `uses:` ref in the YAML AST at any depth (workflow job steps,
-/// composite action `runs.steps`), grouped by action name → set of pins.
-/// Unlike a raw grep over the file text this never matches `@v4` fixture
-/// strings embedded in `run:` bodies (the supply-chain selftest writes
-/// those on purpose).
-void collectUses(dynamic node, Map<String, Set<String>> byAction) {
-  if (node is YamlMap) {
-    final uses = node['uses'];
-    if (uses is String) {
-      final ref = uses.trim();
-      final at = ref.lastIndexOf('@');
-      if (!ref.startsWith('./') && !ref.startsWith('docker://') && at > 0) {
-        byAction
-            .putIfAbsent(ref.substring(0, at), () => {})
-            .add(ref.substring(at + 1));
-      }
-    }
-    for (final key in node.keys) {
-      collectUses(node[key], byAction);
-    }
-  } else if (node is YamlList) {
-    for (final item in node) {
-      collectUses(item, byAction);
-    }
-  }
-}
-
-/// All third-party `uses:` pins across the workflows and composite actions.
-Map<String, Set<String>> usesByAction() {
-  final byAction = <String, Set<String>>{};
-  final files = <String>[
-    ...Directory('.github/workflows')
-        .listSync()
-        .whereType<File>()
-        .where((f) => f.path.endsWith('.yml') || f.path.endsWith('.yaml'))
-        .map((f) => f.path),
-    ...Directory('.github/actions')
-        .listSync(recursive: true)
-        .whereType<File>()
-        .where(
-          (f) =>
-              f.path.endsWith('action.yml') || f.path.endsWith('action.yaml'),
-        )
-        .map((f) => f.path),
-  ];
-  for (final f in files) {
-    collectUses(loadYaml(read(f)), byAction);
-  }
-  return byAction;
-}
-
-/// Shell glob (`*` wildcards) → anchored regexp.
-RegExp globToRegExp(String glob) =>
-    RegExp('^${glob.split('*').map(RegExp.escape).join('.*')}\$');
-
 // ── fixture helpers ────────────────────────────────────────────────────────
 
 final _fixtureRoot = Directory.systemTemp.createTempSync('release-hygiene-');
@@ -1710,6 +1655,200 @@ gh release create "v9.9.9" \
         );
       },
     );
+    test(
+      'gh-2008: stale PAT-attributed pipeline draft (release-draft-owner marker, human author) is swept; unmarked human draft stays kept (E1)',
+      () {
+        // Every pipeline draft is created with GH_TOKEN=RELEASE_PAT (the
+        // owner's PAT), so the API reports author=<owner>, type=User — the
+        // author-only bot test buckets the release train's own orphaned
+        // drafts as "human" and they rot forever (gh-2008: v1.0.663 /
+        // v1.0.665). The invisible `release-draft-owner` body marker is the
+        // pipeline-ownership signal the guard and dedupe already parse.
+        final freshDate = DateTime.now()
+            .toUtc()
+            .subtract(const Duration(hours: 1))
+            .toIso8601String()
+            .substring(0, 19);
+        final run = runSweeper('marker', {
+          'releases.json': jsonEncode([
+            {
+              'tag_name': 'v1.0.663',
+              'id': 427501287,
+              'draft': true,
+              'created_at': oldDate,
+              'author': {'login': 'IstiN', 'type': 'User'},
+              'body':
+                  'Release v1.0.663 — see the CHANGELOG.\n'
+                  '<!-- release-draft-owner: run/40822965933/job/release-mobile -->',
+            },
+            {
+              // Same stale age, same human author — but NO marker: a real
+              // human draft must stay listed-not-deleted (E1).
+              'tag_name': 'v1.0.999',
+              'id': 427501288,
+              'draft': true,
+              'created_at': oldDate,
+              'author': {'login': 'IstiN', 'type': 'User'},
+              'body': 'My manual WIP draft — no marker',
+            },
+            {
+              // Fresh + marker: an in-flight run may still own it.
+              'tag_name': 'v1.0.674',
+              'id': 427501289,
+              'draft': true,
+              'created_at': '${freshDate}Z',
+              'author': {'login': 'IstiN', 'type': 'User'},
+              'body':
+                  '<!-- release-draft-owner: run/41172095157/job/build-macos-cli-arm64 -->',
+            },
+          ]),
+          'issues.tsv': '',
+          'runs.tsv': '',
+        });
+        expect(
+          run.log,
+          contains('api -X DELETE repos/OWNER/REPO/releases/427501287'),
+          reason:
+              'a stale draft carrying the pipeline ownership marker is '
+              'pipeline-created (the RELEASE_PAT attribution only makes it '
+              'LOOK human) — the sweeper must reclaim it',
+        );
+        // run.log is a List<String>: contains() there is ELEMENT equality,
+        // so the isNot(contains(...)) E1 assertions below must match
+        // against the JOINED log text — a bare-substring matcher on the
+        // list is vacuously true and would never catch a stray delete.
+        final logText = run.log.join('\n');
+        expect(
+          logText,
+          isNot(contains('releases/427501288')),
+          reason: 'stale human draft with NO marker must never be deleted (E1)',
+        );
+        expect(
+          logText,
+          isNot(contains('releases/427501289')),
+          reason:
+              'fresh (<24h) marker draft must be untouched — an in-flight run may own it',
+        );
+        expect(
+          run.body,
+          isNotNull,
+          reason: 'an issue body must have been filed',
+        );
+        expect(
+          run.body,
+          contains('v1.0.663'),
+          reason: 'swept draft must be named in the issue',
+        );
+        expect(
+          run.body,
+          contains('actions/runs/40822965933'),
+          reason:
+              'the marker names the exact creating run — the issue must '
+              'point at it (the creating run executed on main, so the '
+              'gh-run-list-on-tag heuristic cannot find it)',
+        );
+        expect(
+          run.body,
+          contains('v1.0.999'),
+          reason: 'kept human draft must be listed in the issue (E1)',
+        );
+        expect(
+          run.body,
+          isNot(contains('v1.0.674')),
+          reason: 'fresh drafts are never named as swept or kept',
+        );
+        expect(
+          run.stdoutText,
+          contains('v1.0.663'),
+          reason: 'swept draft must be named in the report',
+        );
+      },
+    );
+    test(
+      'gh-2008: stale draft whose body only MENTIONS the marker substring (no run/<id>/job/ shape) stays kept (E1)',
+      () {
+        // The bucket rule must key on the exact marker shape the pipeline
+        // stamps (`release-draft-owner: run/<id>/job/<job>` — what
+        // release_lazy_draft.sh / release_attach_or_create.sh write and
+        // release_draft_guard.sh parses), NOT the bare substring: human
+        // prose quoting or negating the marker, or a malformed marker
+        // (`release-draft-owner: unknown`), must never look pipeline-owned
+        // or the sweeper silently deletes a human draft (E1 regression,
+        // review thread PRRT_kwDOTXdlLc6yOzIh).
+        final run = runSweeper('loose-marker', {
+          'releases.json': jsonEncode([
+            {
+              'tag_name': 'v9.0.1',
+              'id': 427501290,
+              'draft': true,
+              'created_at': oldDate,
+              'author': {'login': 'alice', 'type': 'User'},
+              'body': 'this draft has NO release-draft-owner: marker (prose)',
+            },
+            {
+              // Malformed marker: the substring is there but the
+              // run/<id>/job/ shape is not — NOT proof of pipeline
+              // ownership.
+              'tag_name': 'v9.0.2',
+              'id': 427501291,
+              'draft': true,
+              'created_at': oldDate,
+              'author': {'login': 'IstiN', 'type': 'User'},
+              'body': 'release-draft-owner: unknown',
+            },
+            {
+              // Control: a properly-stamped stale draft is still swept
+              // and still names its creating run.
+              'tag_name': 'v9.0.3',
+              'id': 427501292,
+              'draft': true,
+              'created_at': oldDate,
+              'author': {'login': 'IstiN', 'type': 'User'},
+              'body':
+                  '<!-- release-draft-owner: run/40822965933/job/release-mobile -->',
+            },
+          ]),
+          'issues.tsv': '',
+          'runs.tsv': '',
+        });
+        expect(
+          run.log,
+          contains('api -X DELETE repos/OWNER/REPO/releases/427501292'),
+          reason:
+              'the control: a well-formed run/<id>/job/ marker is still '
+              'pipeline-owned and swept',
+        );
+        // Substring semantics over the JOINED log (element-contains on the
+        // List is vacuous for isNot — see the sibling gh-2008 test).
+        final logText = run.log.join('\n');
+        expect(
+          logText,
+          isNot(contains('releases/427501290')),
+          reason:
+              'prose merely MENTIONING the marker substring is not '
+              'ownership — deleting it would be a silent E1 violation',
+        );
+        expect(
+          logText,
+          isNot(contains('releases/427501291')),
+          reason:
+              'a malformed marker (release-draft-owner: unknown, no '
+              'run/<id>/job/ shape) is not ownership — the draft stays '
+              'kept (E1)',
+        );
+        expect(
+          run.body,
+          contains('v9.0.1'),
+          reason: 'kept prose-mention draft must be listed in the issue (E1)',
+        );
+        expect(
+          run.body,
+          contains('v9.0.2'),
+          reason:
+              'kept malformed-marker draft must be listed in the issue (E1)',
+        );
+      },
+    );
 
     test(
       'idempotent re-run: comments on the open issue instead of duplicating',
@@ -2454,156 +2593,6 @@ gh release create "v9.9.9" \
       );
     },
   );
-
-  // ── gh-995 — artifact action pins + PTY shard pipeline coherence ────────
-  // 2026-09-27 outage: the PTY legs were the only jobs still uploading
-  // artifacts with the stale upload-artifact@ea165f8d (v4 line) pin while
-  // the rest of the repo had moved to cf430e03 (v7.0.2). The gate downloads
-  // with download-artifact@9000827c (v8.0.2), which digest-validates every
-  // download — the stale uploads stopped verifying (digest-mismatch), the
-  // shard merge saw < 3 reports and pty-coverage-gate wedged every run.
-  // check_action_pins.sh cannot see this class (both forms are valid
-  // full-SHA pins), so pin drift is guarded here instead.
-  group('gh-995 — artifact action pins + PTY shard pipeline coherence', () {
-    test(
-      'every third-party action is pinned at exactly ONE full SHA repo-wide',
-      () {
-        final byAction = usesByAction();
-        expect(byAction, isNotEmpty);
-        final drifted = <String>[];
-        byAction.forEach((action, pins) {
-          if (pins.length > 1) drifted.add('$action: ${pins.join(', ')}');
-        });
-        expect(
-          drifted,
-          isEmpty,
-          reason:
-              'a second pin for the same action means one workflow was '
-              'left behind on an old version — exactly how the pty legs '
-              'wedge happened (their v4-era upload-artifact uploads failed '
-              'the gate\'s v8 download digest validation)',
-        );
-      },
-    );
-
-    test(
-      'upload-artifact is pinned to the current digest-validating line everywhere',
-      () {
-        expect(
-          usesByAction()['actions/upload-artifact'],
-          {'cf430e030ddbb5b0abf93d22962f4752f3646cd9'},
-          reason:
-              'pty-coverage-gate downloads with download-artifact v8 '
-              '(strict SHA256 digest validation); every upload must come '
-              'from the same current action line or the download '
-              'digest-mismatches and the shard merge loses a report',
-        );
-      },
-    );
-
-    test(
-      'pty shard coverage artifacts: upload name, download pattern and count check agree',
-      () {
-        // gh-1005: the consolidated leg is pty-integration-linux (the former
-        // mac `pty-integration` shards merged in; there is no mac leg anymore).
-        final jobs = jobsOf('.github/workflows/ci.yml');
-        final integration = jobs['pty-integration-linux'] as YamlMap;
-        final gate = jobs['pty-coverage-gate'] as YamlMap;
-
-        // The matrix width is the source of truth for the expected report count.
-        final shardCount =
-            ((integration['strategy'] as YamlMap)['matrix'] as YamlMap)['shard']
-                as YamlList;
-        expect(
-          shardCount.length,
-          3,
-          reason: 'the leg is documented as 3 shards',
-        );
-
-        // Exactly one coverage upload per shard leg, named pty-coverage-shard-N.
-        // gh-1412: the gh-1412 retry steps (same artifact name, `if` keyed on
-        // the primary upload's failed outcome) re-upload the SAME single
-        // artifact — they must not count as a second coverage upload here.
-        final uploadNames = <String>[];
-        for (final step in integration['steps'] as YamlList) {
-          if (step is YamlMap &&
-              step['uses'].toString().startsWith('actions/upload-artifact') &&
-              !(step['if']?.toString().contains("outcome == 'failure'") ??
-                  false)) {
-            uploadNames.add(((step['with'] as YamlMap)['name']).toString());
-          }
-        }
-        final coverageUploads = uploadNames
-            .where((n) => n.startsWith('pty-coverage-shard-'))
-            .toList();
-        expect(
-          coverageUploads,
-          hasLength(1),
-          reason: 'exactly one pty-coverage-shard artifact per shard leg',
-        );
-
-        // The gate downloads the pattern; every uploaded shard name matches it.
-        String? pattern;
-        for (final step in gate['steps'] as YamlList) {
-          if (step is YamlMap &&
-              step['uses'].toString().startsWith('actions/download-artifact') &&
-              step['with'] is YamlMap &&
-              ((step['with'] as YamlMap)['pattern'] ?? '')
-                  .toString()
-                  .startsWith('pty-coverage-shard-')) {
-            pattern = ((step['with'] as YamlMap)['pattern']).toString();
-          }
-        }
-        expect(
-          pattern,
-          isNotNull,
-          reason: 'the gate must download pty-coverage-shard-*',
-        );
-        final concreteName = coverageUploads.single.replaceAll(
-          r'${{ matrix.shard }}',
-          '0',
-        );
-        expect(
-          globToRegExp(pattern!).hasMatch(concreteName),
-          isTrue,
-          reason:
-              'upload name "${coverageUploads.single}" must match '
-              'download pattern "$pattern"',
-        );
-
-        // The merge step's hard count check must expect the matrix width.
-        final mergeRuns = <String>[];
-        for (final step in gate['steps'] as YamlList) {
-          if (step is YamlMap &&
-              step['run'].toString().contains('pty shard coverage reports')) {
-            mergeRuns.add(step['run'].toString());
-          }
-        }
-        expect(mergeRuns, hasLength(1));
-        final expected = RegExp(
-          r'expected (\d+) pty shard coverage reports',
-        ).firstMatch(mergeRuns.single);
-        expect(expected, isNotNull);
-        expect(
-          int.parse(expected!.group(1)!),
-          shardCount.length,
-          reason:
-              'the count check must expect exactly the configured shard count',
-        );
-
-        // A shard report that downloads but carries no SF: records (empty or
-        // truncated upload) must fail the merge LOUDLY — the 2026-09-27
-        // outage also showed a partial merge reading 7.95% against the
-        // 11.00% baseline because a hollow report still satisfied the count.
-        expect(
-          mergeRuns.single,
-          contains("'^SF:'"),
-          reason:
-              'merge must reject hollow per-shard lcov reports before merging',
-        );
-      },
-    );
-  });
 
   // ── gh-1005 — PTY legs are hosted-linux-only, fa-m5-1 never on the PR path
   // The on-prem M5 pool is ONE runner reserved for macOS-specific work

@@ -257,17 +257,28 @@ extension SlashCommandDispatch on AgentCli {
       _quotaService ??= ProviderQuotaService(
         adapters: {
           'openrouter': OpenRouterQuotaAdapter(
-            client: config.quotaHttpClient ?? sharedProviderHttpClient(),
+            // OQ2 (issue #1921): a bound provider's quota requests honor
+            // the same proxy gate as its chat traffic.
+            client:
+                config.quotaHttpClient ??
+                proxiedProviderClient('openrouter') ??
+                sharedProviderHttpClient(),
             resolveApiKey: () async {
               final spec = providerCatalog['openrouter']!;
               return _providerKeyFor(spec, spec.defaultBaseUrl);
             },
           ),
           'codemie': CodeMieQuotaAdapter(
-            client: config.quotaHttpClient ?? sharedProviderHttpClient(),
+            client:
+                config.quotaHttpClient ??
+                proxiedProviderClient('codemie') ??
+                sharedProviderHttpClient(),
             // OQ1 lean (b): no pinned limits endpoint — the adapter stays
             // dark until the endpoint is confirmed, and renders its reason.
             resolveSessionCookie: _resolveCodeMieSessionCookie,
+            // The selected project scopes the fetch too (issue #1941) —
+            // display and billing must name the same project.
+            resolveProject: _resolveCodeMieProject,
           ),
         },
         // DIAL-class endpoints carry no per-key billing surface.
@@ -285,6 +296,16 @@ extension SlashCommandDispatch on AgentCli {
         .firstOrNull;
     return entry == null ? null : _resolveCodeMieCookie(entry.keyName);
   }
+
+  /// The CodeMie project of the saved entry serving the LIVE model's
+  /// endpoint (issue #1941): the quota fetch must name the SAME project
+  /// the model requests bill — resolved through the ONE resolver
+  /// ([projectHeaderForBaseUrl]), never a first-match-with-project scan
+  /// that can name a different account's pick.
+  String? _resolveCodeMieProject() => projectHeaderForBaseUrl(
+    config.customProviders?.entries ?? const [],
+    _agent.state.model.baseUrl,
+  );
 
   /// The `/quota` table (AC4): one row per configured provider, rendered
   /// cache-only. Cold rows show `…`; unknown rows carry the adapter's
@@ -336,7 +357,7 @@ extension SlashCommandDispatch on AgentCli {
     return '${delta.inDays}d';
   }
 
-  /// `/exit`, `/help`, `/stats`, `/tasks`.
+  /// `/exit`, `/help`, `/stats`, `/tasks`, `/transcript`.
   bool _handleInfoCommandBasic(String command, String rest) {
     switch (command) {
       case '/exit':
@@ -348,10 +369,51 @@ extension SlashCommandDispatch on AgentCli {
         _printStats();
       case '/tasks':
         _listTaskJobs(rest);
+      case '/transcript':
+        _handleTranscriptCommand(rest);
       default:
         return false;
     }
     return true;
+  }
+
+  /// `/transcript expand all|none` (gh-1933 interaction): the collapsed
+  /// thinking/detail rows respond — `all` renders the persisted detail
+  /// under every collapsed row (rows emitted after the switch, and the
+  /// replay on the next resume), `none` restores the collapsed default.
+  /// Bare `/transcript` reports the current state. Review thread
+  /// PRRT_kwDOTXdlLc6w5WG8: outside the TUI chrome face nothing observable
+  /// responds to the flag (line mode streams thinking per-delta or never;
+  /// the line-mode replay renders thinking never), so the mutating arms
+  /// say so instead of confirming a silent no-op — and leave the render
+  /// state alone.
+  void _handleTranscriptCommand(String rest) {
+    final arg = rest.trim().toLowerCase();
+    switch (arg) {
+      case 'expand all' || 'expand none' || 'collapse':
+        if (!_useTui || !tuiChromeEnabled) {
+          io.writeln(
+            'transcript expand only affects the TUI chrome transcript',
+          );
+          return;
+        }
+        final expanded = arg == 'expand all';
+        transcriptExpandDetails = expanded;
+        io.writeln(
+          expanded
+              ? 'transcript: expanded — collapsed rows render their '
+                    'persisted detail (thinking text) until '
+                    '`/transcript expand none`'
+              : 'transcript: collapsed (default)',
+        );
+      case 'expand' || '':
+        io.writeln(
+          'transcript rows are ${transcriptExpandDetails ? 'expanded' : 'collapsed'} — '
+          'usage: /transcript expand all|none',
+        );
+      default:
+        io.writeln('usage: /transcript expand all|none');
+    }
   }
 
   /// `/timer [<duration|epoch-ms>|clear]` — the live session deadline

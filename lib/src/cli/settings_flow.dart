@@ -198,7 +198,6 @@ extension SettingsFlow on AgentCli {
       apply: (choice) async {
         final entry = choice.savedEntry;
         if (entry != null) {
-          _activeCustomName = entry.name;
           final keyName = entry.keyName;
           final token = keyName != null
               ? config.secureKeys?.read(keyName)
@@ -210,6 +209,12 @@ extension SettingsFlow on AgentCli {
             token: token,
             tokenKeyName: keyName,
             authHeader: entry.authHeader,
+            // The saved entry's project rides the rebuilt model (issue
+            // #1941) — a settings-flow switch must not drop the selection.
+            project: entry.project,
+            // The switch WRITES the pin: the saved entry binds the gate
+            // (issue #1921) and stays the active custom name after it.
+            customName: entry.name,
           );
           // Keep the entry's last-used model in sync (the flow bypasses
           // _switchModel, which normally records it).
@@ -306,6 +311,10 @@ extension SettingsFlow on AgentCli {
               ? choice.baseUrl
               : null,
           apiKeyName: entry?.keyName,
+          // The role chain SERVES from this pin: the saved entry's CodeMie
+          // project must ride it (issue #1941) or role traffic bills the
+          // user's DEFAULT project.
+          project: entry?.project,
         );
         _ensureRolesResolver().setRoleChain(roleId, [ref]);
         config.onModelsConfigChanged?.call();
@@ -1742,11 +1751,12 @@ extension SettingsFlow on AgentCli {
 
   /// The settings-hub row and `/settings` summary label for the image
   /// registry (issue #395): the kill-switch state (what `registry: false`
-  /// means — byte-identical legacy requests) and the per-request cap.
+  /// means — byte-identical legacy requests) and the per-request caps.
   String _imagesStatusLabel() {
     final cfg = imageRegistryConfig;
     return '${cfg.enabled ? 'on' : 'off · legacy request shape'} · '
-        'cap ${cfg.maxPerRequest}';
+        'cap ${cfg.maxPerRequest} · '
+        '~${(cfg.maxBytesPerRequest / (1024 * 1024)).toStringAsFixed(0)}MB';
   }
 
   /// Settings → Images: the `images:` config section (issue #395) — the
@@ -1778,6 +1788,8 @@ extension SettingsFlow on AgentCli {
         ], '${!imageRegistryConfig.enabled}');
       case 'maxPerRequest':
         await _askImagesCap();
+      case 'maxBytesPerRequest':
+        await _askImagesByteCap();
     }
   }
 
@@ -1795,6 +1807,12 @@ extension SettingsFlow on AgentCli {
         'maxPerRequest',
         'Per-request cap',
         '${cfg.maxPerRequest} unique image(s) per request',
+      ),
+      (
+        'maxBytesPerRequest',
+        'Per-request image budget',
+        '~${(cfg.maxBytesPerRequest / (1024 * 1024)).toStringAsFixed(0)}MB '
+            'of base64 per request',
       ),
       ('done', 'Done', ''),
     ];
@@ -1960,6 +1978,20 @@ extension SettingsFlow on AgentCli {
     final value = answer.trim();
     if (value.isEmpty) return;
     await _writeImagesKey(const ['images', 'maxPerRequest'], value);
+  }
+
+  /// The per-request image byte budget prompt (issue #1916): a plain
+  /// integer of base64 chars (the wire size of one request's images).
+  Future<void> _askImagesByteCap() async {
+    final current = imageRegistryConfig.maxBytesPerRequest;
+    final currentMb = (current / (1024 * 1024)).toStringAsFixed(0);
+    final answer = await _askLine(
+      "per-request image budget in bytes (empty keeps '$current, ~$currentMb MB'): ",
+    );
+    if (answer == null) return;
+    final value = answer.trim();
+    if (value.isEmpty) return;
+    await _writeImagesKey(const ['images', 'maxBytesPerRequest'], value);
   }
 
   /// The shared write path: a USER-file upsert of [segments] → [value]

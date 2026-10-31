@@ -40,6 +40,7 @@ import '../model.dart';
 import '../overflow.dart' show isContextOverflow;
 import '../types.dart';
 import 'provider_common.dart' show providerStreamIdleTimeout;
+import 'payload_stall.dart' show lastOutboundEstimateBytes, payloadStallLatch;
 import 'provider_tuning.dart'
     show
         explicitConnectForModel,
@@ -708,6 +709,16 @@ Future<bool> _afterTransientFailure(
   // billing dedup for the abandoned generation is the provider's job;
   // fa never replays into a cancel that has not landed.
   state.zeroByteKills = watchdogReplay ? state.zeroByteKills + 1 : 0;
+  // Issue #1916 AC3: a watchdog kill of a request that produced nothing
+  // feeds the payload-stall latch — repeated stalls of the SAME payload
+  // (model + outbound estimate) fire ONE actionable advice line instead
+  // of an endless silent re-upload loop.
+  if (watchdogReplay) {
+    payloadStallLatch.noteStall(
+      '${model.id}|$lastOutboundEstimateBytes',
+      lastOutboundEstimateBytes,
+    );
+  }
   final zeroByteBudget = zeroByteAttemptBudget(
     ladderBound: maxZeroByteWatchdogAttempts,
     idleWindow: windowStory.window,

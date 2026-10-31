@@ -205,9 +205,9 @@ void main() {
     // Stdout is exactly the assistant text (+ its trailing newline) — no
     // tool indicators, banner, or prompt markers pollute the pipe.
     expect(io.out.toString(), 'done reading\n');
-    // Diagnostics carry the tool one-liners.
-    expect(io.diag.toString(), contains('• read · notes.txt'));
-    expect(io.diag.toString(), contains('✓ read'));
+    // Diagnostics carry the tool one-liner — gh-1931: the single end row
+    // (the old start row `• read · …` was the duplicate print).
+    expect(io.diag.toString(), contains('✓ read · notes.txt 0s'));
     expect(io.diag.toString(), isNot(contains('fa — flutter_agent_harness')));
     expect(io.diag.toString(), isNot(contains('fa> ')));
 

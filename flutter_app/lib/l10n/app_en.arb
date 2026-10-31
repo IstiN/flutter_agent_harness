@@ -175,16 +175,6 @@
   "filesUploadFailures": ", {count} failed: {names}",
   "filesUploadSummary": "{uploaded, plural, =1{Uploaded 1 file} other{Uploaded {uploaded} files}}{failures}",
   "filesUploadTooltip": "Upload files here",
-  "gemmaCacheDeleteOrphan": "Removes the file ({size}) from {storage}. Installed models are not affected.",
-  "gemmaCacheDeleteWeights": "Removes the downloaded weights ({size}) from {storage}. The model downloads again the next time you use it.",
-  "gemmaCacheMobileOnly": "On-device (Gemma) models are available in the iOS/Android builds only (on web the transformers.js provider covers on-device Gemma).",
-  "gemmaCacheScanError": "Could not scan the model cache: {error}",
-  "gemmaCacheSubtitle": "Gemma weights stored {storage}. Deleting frees space; a model re-downloads on next use.",
-  "gemmaCacheTitle": "On-device models (Gemma)",
-  "gemmaStorageFromBrowser": "the browser storage",
-  "gemmaStorageFromDevice": "the device",
-  "gemmaStorageInBrowser": "in your browser",
-  "gemmaStorageOnDevice": "on this device",
   "keysAddButton": "Add key",
   "keysAddDialogTitle": "Add key",
   "keysAddNameDuplicate": "A key with this name already exists.",
@@ -498,8 +488,6 @@
   "settingsEditorKeyNote": "Name, URL and model are saved; the key is kept in memory for this session only — never persisted.",
   "settingsEditorKeyNoteSecure": "Name, URL and model are saved; the key is stored in the device's secure key store (Keychain/Keystore) while it's available.",
   "settingsEditorKeepKeyNote": "A key is saved for this provider — leave the field empty to keep it.",
-  "settingsHfTokenHint": "hf_… — needed if the repo is gated",
-  "settingsHfTokenLabel": "HuggingFace token (optional)",
   "settingsKeyNoteCustom": "The provider definition (name, URL, model) is saved — no secrets. The API key stays in memory for this session only and is gone on reload.",
   "settingsKeyNoteCustomSecure": "The provider definition (name, URL, model) is saved — no secrets. Saved keys are stored in the device's secure key store (Keychain/Keystore) while it's available; an unsaved key stays in memory for this session only.",
   "settingsKeyNoteHosted": "In-memory only: your key is never persisted and is gone on reload. Calls go straight from your browser to the provider — nothing is proxied or stored.",
@@ -515,10 +503,9 @@
   "settingsPickModelTitle": "Choose model",
   "settingsPickProviderTitle": "Choose provider",
   "settingsPresetCustom": "Custom",
-  "settingsPresetGemma": "On-device (Gemma)",
   "settingsPresetOllama": "Ollama",
   "settingsPresetOpenrouter": "OpenRouter",
-  "settingsPresetTransformersJs": "On-device (Gemma, transformers.js)",
+  "settingsPresetTransformersJs": "On-device (transformers.js)",
   "settingsPresetWebllm": "On-device (WebLLM)",
   "settingsProviderLabel": "Provider",
   "settingsProviderModelSummary": "{model} · {provider}",
@@ -527,7 +514,6 @@
   "settingsProvidersSectionTitle": "Providers",
   "settingsSaveButton": "Save",
   "settingsStaleModelCache": "The previously used model ({model}) was removed from the cache — pick a model to download it again.",
-  "settingsStaleModelDevice": "The previously used model ({model}) was removed from this device — pick a model to download it again.",
   "settingsSkillsAccess": "Skills access",
   "settingsSkillsAccessHint": "Reuse skills Claude, Copilot or Codex left in the project folder (.claude, .github, .codex)",
   "settingsSkillsToggles": "Built-in skills",
@@ -1066,6 +1052,14 @@
   "@networkWelcomeBody": {
     "description": "Network mode welcome body (wide empty state)"
   },
+  "networkNeedsPasswordTitle": "This network needs your password",
+  "@networkNeedsPasswordTitle": {
+    "description": "Selected membership synced from the account without a stored password"
+  },
+  "networkNeedsPasswordBody": "Account sync listed this network, but its password is stored only after you join once. Enter it to open the network.",
+  "@networkNeedsPasswordBody": {
+    "description": "Body under networkNeedsPasswordTitle; the join button follows"
+  },
   "networkNetworksTitle": "Networks",
   "@networkNetworksTitle": {
     "description": "Network picker header / sidebar title"
@@ -1176,9 +1170,9 @@
   "@networkJoinFill": {
     "description": "Join sheet: fill form from pasted link"
   },
-  "networkIdLabel": "Network id",
+  "networkIdLabel": "Network id or name",
   "@networkIdLabel": {
-    "description": "Join sheet: network id field label"
+    "description": "Join sheet: network id-or-name field label"
   },
   "networkDisplayNameLabel": "Display name",
   "@networkDisplayNameLabel": {
@@ -1188,7 +1182,7 @@
   "@networkDisplayNameLocked": {
     "description": "Join sheet note when a JWT pins the display name"
   },
-  "networkJoinRequired": "Network id and password are required.",
+  "networkJoinRequired": "Network id or name and password are required.",
   "@networkJoinRequired": {
     "description": "Join sheet validation error"
   },
@@ -1356,6 +1350,10 @@
   "@networkShowcaseReadOnly": {
     "description": "Composer replacement in the anonymous showcase"
   },
+  "networkShowcaseMemberReadOnly": "Only the owner and admins can post in this showcase.",
+  "@networkShowcaseMemberReadOnly": {
+    "description": "Composer replacement for a joined guest or member viewing a public showcase"
+  },
   "networkConnecting": "Connecting…",
   "@networkConnecting": {
     "description": "Channel rail placeholder while the session connects"
@@ -1424,6 +1422,38 @@
   "@networkAddAgentNoChannelKeys": {
     "description": "Network-scope agent invite note when the wallet can produce no channel invites to bundle"
   },
+  "networkChannelKeyMissing": "This device needs the private channel key to read and write.",
+  "@networkChannelKeyMissing": {
+    "description": "Composer replacement when a joined private channel has no key in this device's wallet"
+  },
+  "networkChannelKeyImport": "Import channel key",
+  "@networkChannelKeyImport": {
+    "description": "Button and dialog title for importing a private channel key invite"
+  },
+  "networkChannelKeyInviteLabel": "Channel key invite",
+  "@networkChannelKeyInviteLabel": {
+    "description": "Input label for the private channel invite carrying its keypair"
+  },
+  "networkChannelKeyImportHint": "Paste the private-channel invite from a device that already has the key.",
+  "@networkChannelKeyImportHint": {
+    "description": "Helper text explaining where to obtain a channel key invite"
+  },
+  "networkChannelKeyWrongChannel": "This invite is for a different channel.",
+  "@networkChannelKeyWrongChannel": {
+    "description": "Validation error when the invite channel id differs from the open channel"
+  },
+  "networkChannelKeyWrongHub": "This invite is for a different hub.",
+  "@networkChannelKeyWrongHub": {
+    "description": "Validation error when the invite targets another hub deployment than the connected session"
+  },
+  "networkChannelKeyMismatch": "The invite public and private keys do not match.",
+  "@networkChannelKeyMismatch": {
+    "description": "Validation error for an inconsistent X25519 channel keypair"
+  },
+  "networkChannelKeyImportFailed": "The channel key could not be imported. Try again.",
+  "@networkChannelKeyImportFailed": {
+    "description": "Generic safe channel-key import failure"
+  },
   "networkAddAgentScopeChannel": "This channel",
   "@networkAddAgentScopeChannel": {
     "description": "Agent invite scope segment: channel-only access"
@@ -1487,9 +1517,9 @@
   "@networkAddAgentEnroll": {
     "description": "Agent invite: button that enrolls the typed agent name against the fa_network backend (DAP format)"
   },
-  "networkAddAgentEnrollHint": "Enrollment mints a unique, revocable credential — the secret is shown ONCE: copy it now. Re-enrolling the same name rotates it.",
+  "networkAddAgentEnrollHint": "Enrollment creates an independent, revocable credential, so agents with the same name can connect simultaneously. The secret is shown ONCE: copy it now.",
   "@networkAddAgentEnrollHint": {
-    "description": "Agent invite note under the pure-DAP format explaining the one-time secret and rotation"
+    "description": "Agent invite note under the pure-DAP format explaining the one-time secret and independent same-name enrollment"
   },
   "networkAddAgentEnrollNeedSignIn": "Sign in to the network to enroll agents",
   "@networkAddAgentEnrollNeedSignIn": {

@@ -175,6 +175,99 @@ String redactPrompt(RedactionPipeline pipeline, String prompt) {
   return redacted;
 }
 
+/// The persist-path mask over a [message] about to become a session
+/// record: secrets inside `AssistantMessage.toolCalls[].arguments` are
+/// masked so the session JSONL — the persisted, shareable record — never
+/// carries raw secret bytes (gh-1952 review; the hooks above mask content
+/// blocks and tool RESULTS but never call arguments, and the #1408
+/// `approvedSecretLiterals` hatch explicitly allows authored commands to
+/// carry registered secrets).
+///
+/// STRICTLY record-write path: the LIVE message is never touched —
+/// execution already received the arguments byte-identically (gh-1952
+/// I1) and the provider context keeps the raw arguments (masking there
+/// would change what the model sees, so `transformContext` must not do
+/// this). Write-side-exempt tools ([redactionExemptTools], issue #24
+/// AC7) are skipped: their arguments are the model-authored deliverable
+/// and must persist exactly as written. Stats are intentionally not
+/// recorded — the content a call's arguments overlap with its result is
+/// already counted once by `afterToolCall`.
+Message persistRedactMessage(RedactionPipeline pipeline, Message message) {
+  if (message is! AssistantMessage) return message;
+  var changed = false;
+  final content = [
+    for (final block in message.content)
+      if (block is ToolCall && !isRedactionExemptTool(block.name))
+        _redactToolCallArguments(pipeline, block, () => changed = true)
+      else
+        block,
+  ];
+  return changed ? message.copyWith(content: content) : message;
+}
+
+/// A [value] walk that returns the (possibly masked) value plus whether
+/// anything changed underneath — string leaves go through the pipeline,
+/// maps and lists recurse, every other leaf passes through.
+(dynamic, bool) _redactArgumentValue(
+  RedactionPipeline pipeline,
+  dynamic value,
+) {
+  if (value is String) {
+    final redacted = pipeline.redact(value);
+    return (redacted, redacted != value);
+  }
+  if (value is Map) {
+    var changed = false;
+    final copy = <String, dynamic>{
+      for (final MapEntry(:key, :value) in value.entries)
+        key: (() {
+          final (walked, walkedChanged) = _redactArgumentValue(pipeline, value);
+          changed |= walkedChanged;
+          return walked;
+        })(),
+    };
+    return (copy, changed);
+  }
+  if (value is List) {
+    var changed = false;
+    final copy = <dynamic>[
+      for (final element in value)
+        (() {
+          final (walked, walkedChanged) = _redactArgumentValue(
+            pipeline,
+            element,
+          );
+          changed |= walkedChanged;
+          return walked;
+        })(),
+    ];
+    return (copy, changed);
+  }
+  return (value, false);
+}
+
+ToolCall _redactToolCallArguments(
+  RedactionPipeline pipeline,
+  ToolCall call,
+  void Function() onChange,
+) {
+  var changed = false;
+  final arguments = <String, dynamic>{
+    for (final entry in call.arguments.entries)
+      entry.key: (() {
+        final (walked, walkedChanged) = _redactArgumentValue(
+          pipeline,
+          entry.value,
+        );
+        changed |= walkedChanged;
+        return walked;
+      })(),
+  };
+  if (!changed) return call;
+  onChange();
+  return call.copyWith(arguments: arguments);
+}
+
 /// Composes the pipeline hooks onto [agent], preserving hooks already
 /// registered. `beforeToolCall`: existing hooks run first; if any of them
 /// blocks, that verdict stands. `afterToolCall`/`transformContext`:

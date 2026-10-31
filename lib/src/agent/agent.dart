@@ -27,8 +27,11 @@ import '../context.dart';
 import '../model.dart';
 import '../skills/skills.dart' show Skill;
 import '../types.dart';
+import '../providers/payload_stall.dart'
+    show lastOutboundEstimateBytes, payloadStallScaleFor;
 import '../providers/provider_tuning.dart';
 import 'agent_loop.dart';
+import 'image_recovery.dart' show ImagePayloadRecoveryState;
 import 'message_cap.dart' show MessageCapPolicy;
 import 'misuse_breaker.dart';
 import 'stuck_tool.dart';
@@ -324,6 +327,13 @@ class Agent {
   /// runtime-only, never persisted.
   final Map<String, int> _imageCapLatches = {};
 
+  /// gh-1934: the session-scoped 413 image-payload recovery state — the
+  /// loop's ladder halves the adaptive budget and latches the strip-all
+  /// here on a payload-size refusal; every later request build of the
+  /// session rides the recovered state (runtime-only, never persisted —
+  /// session-scoped v1 per the ticket's open question 1).
+  final ImagePayloadRecoveryState imageRecovery = ImagePayloadRecoveryState();
+
   /// Provider adapter used for every model call. See [StreamFunction].
   StreamFunction streamFunction;
 
@@ -389,8 +399,11 @@ class Agent {
   /// threaded into every [AgentLoopConfig]. The task executor wires the
   /// deliverable capture here so a truncated `reply`/`agent_message` body
   /// survives as a partial artifact; the calls themselves stay failed
-  /// unexecuted. Mutable like the other late-wirable knobs.
-  void Function(ToolCall call)? onTruncatedToolCall;
+  /// unexecuted. Mutable like the other late-wirable knobs. The loop
+  /// awaits the observer (gh-1956 review): the capture's salvage persist
+  /// must finish its restore-before-id-allocation dance before the
+  /// failure result is emitted.
+  Future<void> Function(ToolCall call)? onTruncatedToolCall;
 
   /// Stuck-call supervision (gh-1054), threaded into every
   /// [AgentLoopConfig]: liveness heartbeats for long-running tool calls
@@ -486,6 +499,31 @@ class Agent {
   /// itself still happens once, at the boundary drain.
   void pokeSteering() {
     if (!_steeringArrived.isClosed) _steeringArrived.add(null);
+  }
+
+  /// Host-visible notices for the provider-phase steering interrupt
+  /// (issue #1923 AC4). Null keeps the core silent; interactive hosts
+  /// print the lines verbatim (the copy is pinned by the issue).
+  void Function(String line)? onSteeringInterruptNotice;
+
+  /// The mid-stream steering stall window PROVIDER (issue #1923 AC1):
+  /// re-EVALUATED at every steering signal and stall re-arm — never a
+  /// per-run snapshot (bot r2, thread `PRRT_kwDOTXdlLc6wfxlV`: the
+  /// watchdog re-windows on every arm, so the steering interrupt must
+  /// chase the window that is actually armed or a mid-run failover to a
+  /// shorter entry lets the whole-run kill win the race AC1 says steering
+  /// always wins). Prefers [_armedRunIdleInfo] — the window the watchdog
+  /// timer is ACTUALLY armed with — over a fresh derivation, and keeps
+  /// the 30s margin (payload scaling included, since the armed window was
+  /// resolved through [runIdleWindow]). `Duration.zero` when the watchdog
+  /// is disabled: the mid-stream interrupt stays off, the zero-byte
+  /// immediate interrupt is unaffected.
+  Duration get _steeringStallWindowNow {
+    if (runIdleTimeout == Duration.zero) return Duration.zero;
+    final armed = _armedRunIdleInfo.window;
+    final base = armed > Duration.zero ? armed : runIdleWindow.window;
+    final window = base - const Duration(seconds: 30);
+    return window <= Duration.zero ? Duration.zero : window;
   }
 
   /// Remove all queued steering messages.
@@ -639,7 +677,7 @@ class Agent {
     // same-tick abort() and busy-gate reads).
     final guard = userMessageGuard;
     if (guard == null) {
-      return _runWithLifecycle((token) {
+      return _runWithLifecycle((token, source) {
         return runAgentLoop(
           prompts: messages,
           context: _createContextSnapshot(),
@@ -650,10 +688,11 @@ class Agent {
           streamFunction: streamFunction,
           toolExecutor: toolExecutor,
           cancelToken: token,
+          cancelTokenSource: source,
         );
       });
     }
-    return _runWithLifecycle((token) async {
+    return _runWithLifecycle((token, source) async {
       final guarded = await _guardIncomingUserMessages(messages);
       await runAgentLoop(
         prompts: guarded,
@@ -665,12 +704,13 @@ class Agent {
         streamFunction: streamFunction,
         toolExecutor: toolExecutor,
         cancelToken: token,
+        cancelTokenSource: source,
       );
     });
   }
 
   Future<void> _runContinuation() {
-    return _runWithLifecycle((token) {
+    return _runWithLifecycle((token, source) {
       return runAgentLoopContinue(
         context: _createContextSnapshot(),
         config: _createLoopConfig(),
@@ -678,6 +718,7 @@ class Agent {
         streamFunction: streamFunction,
         toolExecutor: toolExecutor,
         cancelToken: token,
+        cancelTokenSource: source,
       );
     });
   }
@@ -744,6 +785,7 @@ class Agent {
       toolMisuseBreaker: toolMisuseBreaker,
       reportedOrphanKeys: _reportedOrphanKeys,
       imageCapLatches: _imageCapLatches,
+      imageRecovery: imageRecovery,
       getSteeringMessages: () async {
         if (skip) {
           skip = false;
@@ -770,6 +812,14 @@ class Agent {
         return _guardIncomingUserMessages(_followUpQueue.drain());
       },
       steeringNotifications: _steeringArrived.stream,
+      // Issue #1923 AC1: the mid-stream steering stall window rides the
+      // SAME window the run-idle watchdog uses, margin'd 30s below it so
+      // the steering interrupt (drain + inject + resubmit) always wins
+      // the race against the watchdog's whole-run kill. Watchdog-disabled
+      // hosts keep `Duration.zero` — the mid-stream interrupt stays off,
+      // the zero-byte immediate interrupt stays armed.
+      steeringStallWindow: () => _steeringStallWindowNow,
+      steeringInterruptNotice: onSteeringInterruptNotice,
       // The in-process queue notifies via [steeringArrived]; the probe is
       // only needed for the external (file-inbox) source, which cannot
       // notify on its own.
@@ -785,7 +835,7 @@ class Agent {
   }
 
   Future<void> _runWithLifecycle(
-    Future<void> Function(CancelToken token) executor,
+    Future<void> Function(CancelToken token, CancelTokenSource source) executor,
   ) async {
     if (_activeRun != null) {
       throw StateError('Agent is already processing.');
@@ -799,7 +849,7 @@ class Agent {
     _armRunWatchdog();
 
     try {
-      await executor(run.source.token);
+      await executor(run.source.token, run.source);
     } catch (error) {
       await _handleRunFailure(error, run.source.token.isCancelled);
     } finally {
@@ -912,18 +962,36 @@ class Agent {
   /// patience — a warming-up model gets exactly the patience its
   /// `providerTimeouts.streamIdleTimeoutMs` declares. `source` names the
   /// precedence layer (`role <role> override` / `provider:<name>` /
-  /// `global`), `raised` is true when a config governs (window > floor).
-  /// Hosts render this on the stall surfaces so a wide configured window
+  /// `global`) and — when payload scaling moved the window — says so,
+  /// because a wide patience must name its real governor (#1916 review:
+  /// `raised`/`source` never silently re-purpose). `raised` is true when
+  /// anything governs above the floor (a configured window OR payload
+  /// scaling). Hosts render this on the stall surfaces so a wide window
   /// never reads as a hang.
+  ///
+  /// Issue #1916 AC3: the resolved window then scales for the outbound
+  /// payload size ([lastOutboundEstimateBytes]) — a multi-MB image upload
+  /// legitimately needs more first-token patience than a text request,
+  /// and starving it produced the submit livelock. Capped at 2x; no
+  /// request build yet (or a text-sized request) keeps the window
+  /// byte-for-byte.
   ({Duration window, String source, bool raised}) get runIdleWindow {
     final explicit = explicitStreamIdleForModel(_state.model);
-    final window = runIdleWatchdogWindow(
+    final resolved = runIdleWatchdogWindow(
       floor: runIdleTimeout,
       explicitIdle: explicit?.$1,
     );
+    final scale = payloadStallScaleFor(lastOutboundEstimateBytes);
+    final window = Duration(
+      milliseconds: (resolved.inMilliseconds * scale).round(),
+    );
+    final payloadNote = scale > 1.0
+        ? ', payload-scaled for a ~${(lastOutboundEstimateBytes / (1024 * 1024)).toStringAsFixed(0)}MB '
+              'request'
+        : '';
     return (
       window: window,
-      source: explicit?.$2 ?? 'default',
+      source: '${explicit?.$2 ?? 'default'}$payloadNote',
       raised: window > runIdleTimeout,
     );
   }

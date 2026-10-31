@@ -20,6 +20,14 @@ import '../exceptions.dart';
 /// The hosted CodeMie default (an on-prem org URL can always be typed).
 const defaultCodeMieBaseUrl = 'https://codemie.lab.epam.com';
 
+/// The `x-codemie-project` header name — the CodeMie backend attributes
+/// every model request (billing, budget limits) to the project this header
+/// names. A MISSING (or non-Latin-1) header falls back to the user's
+/// DEFAULT project (codemie-code `header-injection.plugin.ts`, issue
+/// #1941): requests without it bill the wrong project even though the UI
+/// shows another one selected.
+const codeMieProjectHeader = 'x-codemie-project';
+
 /// Normalizes an organization URL to the API base:
 /// `https://host` → `https://host/code-assistant-api` (idempotent).
 String codeMieApiBase(String rawUrl) {
@@ -278,12 +286,15 @@ Future<List<String>> _fetchCodeMieProjects(
 
 /// Fetches the model ids from `<apiBase>/llm_models?include_all=true`
 /// ([apiBase] is `<org>/code-assistant-api/v1`), authenticating with the
-/// full cookie string as a `Cookie:` header. The response is a list of
-/// descriptors whose id lives in `id`, `base_name`, or `deployment_name`
-/// (first non-empty wins).
+/// full cookie string as a `Cookie:` header. [project] rides the
+/// `x-codemie-project` header (issue #1941) so the list is scoped (and
+/// attributed) to the selected project, never the default one. The
+/// response is a list of descriptors whose id lives in `id`, `base_name`,
+/// or `deployment_name` (first non-empty wins).
 Future<List<String>> fetchCodeMieModels(
   String apiBase,
   String cookie, {
+  String? project,
   http.Client? client,
 }) async {
   final httpClient = client ?? http.Client();
@@ -292,7 +303,7 @@ Future<List<String>> fetchCodeMieModels(
     final response = await httpClient
         .get(
           Uri.parse('$apiBase/llm_models?include_all=true'),
-          headers: {'cookie': cookie},
+          headers: {'cookie': cookie, codeMieProjectHeader: ?project},
         )
         .timeout(const Duration(seconds: 30));
     if (response.statusCode == 401 || response.statusCode == 403) {
@@ -327,10 +338,12 @@ String? _modelId(Map<dynamic, dynamic> model) {
 }
 
 /// Fetches the model ids from `<apiBase>/llm_models?include_all=true` using
-/// JWT Bearer authorization (`Authorization: Bearer <jwtToken>`).
+/// JWT Bearer authorization (`Authorization: Bearer <jwtToken>`). [project]
+/// rides the `x-codemie-project` header (issue #1941).
 Future<List<String>> fetchCodeMieModelsWithJwt(
   String apiBase,
   String jwtToken, {
+  String? project,
   http.Client? client,
 }) async {
   final httpClient = client ?? http.Client();
@@ -339,7 +352,10 @@ Future<List<String>> fetchCodeMieModelsWithJwt(
     final response = await httpClient
         .get(
           Uri.parse('$apiBase/llm_models?include_all=true'),
-          headers: {'authorization': 'Bearer $jwtToken'},
+          headers: {
+            'authorization': 'Bearer $jwtToken',
+            codeMieProjectHeader: ?project,
+          },
         )
         .timeout(const Duration(seconds: 30));
     if (response.statusCode == 401 || response.statusCode == 403) {

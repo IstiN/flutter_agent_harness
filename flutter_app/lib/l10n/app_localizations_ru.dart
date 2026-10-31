@@ -572,45 +572,6 @@ class AppLocalizationsRu extends AppLocalizations {
   String get filesUploadTooltip => 'Загрузить файлы сюда';
 
   @override
-  String gemmaCacheDeleteOrphan(Object size, Object storage) {
-    return 'Удаляет файл ($size) из $storage. Установленные модели не затрагиваются.';
-  }
-
-  @override
-  String gemmaCacheDeleteWeights(Object size, Object storage) {
-    return 'Удаляет скачанные веса ($size) из $storage. Модель скачается снова при следующем использовании.';
-  }
-
-  @override
-  String get gemmaCacheMobileOnly =>
-      'On-device модели (Gemma) доступны только в iOS/Android сборках (в вебе on-device Gemma покрывает провайдер transformers.js).';
-
-  @override
-  String gemmaCacheScanError(Object error) {
-    return 'Не удалось просканировать кэш моделей: $error';
-  }
-
-  @override
-  String gemmaCacheSubtitle(Object storage) {
-    return 'Веса Gemma хранятся $storage. Удаление освобождает место; модель скачается снова при следующем использовании.';
-  }
-
-  @override
-  String get gemmaCacheTitle => 'Модели на устройстве (Gemma)';
-
-  @override
-  String get gemmaStorageFromBrowser => 'хранилища браузера';
-
-  @override
-  String get gemmaStorageFromDevice => 'устройства';
-
-  @override
-  String get gemmaStorageInBrowser => 'в вашем браузере';
-
-  @override
-  String get gemmaStorageOnDevice => 'на этом устройстве';
-
-  @override
   String get keysAddButton => 'Добавить ключ';
 
   @override
@@ -1419,12 +1380,6 @@ class AppLocalizationsRu extends AppLocalizations {
       'Для этого провайдера сохранён ключ — оставьте поле пустым, чтобы не менять его.';
 
   @override
-  String get settingsHfTokenHint => 'hf_… — нужен, если репозиторий закрытый';
-
-  @override
-  String get settingsHfTokenLabel => 'Токен HuggingFace (необязательно)';
-
-  @override
   String get settingsKeyNoteCustom =>
       'Определение провайдера (имя, URL, модель) сохраняется — без секретов. Ключ API хранится в памяти только в течение этого сеанса и исчезает после перезагрузки.';
 
@@ -1474,17 +1429,13 @@ class AppLocalizationsRu extends AppLocalizations {
   String get settingsPresetCustom => 'Пользовательский';
 
   @override
-  String get settingsPresetGemma => 'На устройстве (Gemma)';
-
-  @override
   String get settingsPresetOllama => 'Ollama';
 
   @override
   String get settingsPresetOpenrouter => 'OpenRouter';
 
   @override
-  String get settingsPresetTransformersJs =>
-      'На устройстве (Gemma, transformers.js)';
+  String get settingsPresetTransformersJs => 'На устройстве (transformers.js)';
 
   @override
   String get settingsPresetWebllm => 'На устройстве (WebLLM)';
@@ -1512,11 +1463,6 @@ class AppLocalizationsRu extends AppLocalizations {
   @override
   String settingsStaleModelCache(Object model) {
     return 'Ранее использованная модель ($model) удалена из кеша — выберите модель, чтобы скачать её снова.';
-  }
-
-  @override
-  String settingsStaleModelDevice(Object model) {
-    return 'Ранее использованная модель ($model) удалена с этого устройства — выберите модель, чтобы скачать её снова.';
   }
 
   @override
@@ -2318,6 +2264,13 @@ class AppLocalizationsRu extends AppLocalizations {
       'Присоединитесь к существующей сети или создайте свою — каналы и витрины откроются здесь.';
 
   @override
+  String get networkNeedsPasswordTitle => 'Этой сети нужен ваш пароль';
+
+  @override
+  String get networkNeedsPasswordBody =>
+      'Синхронизация аккаунта нашла эту сеть, но её пароль сохранится только после первого входа. Введите его, чтобы открыть сеть.';
+
+  @override
   String get networkNetworksTitle => 'Сети';
 
   @override
@@ -2402,7 +2355,7 @@ class AppLocalizationsRu extends AppLocalizations {
   String get networkJoinFill => 'Заполнить';
 
   @override
-  String get networkIdLabel => 'Идентификатор сети';
+  String get networkIdLabel => 'Идентификатор или название сети';
 
   @override
   String get networkDisplayNameLabel => 'Отображаемое имя';
@@ -2412,7 +2365,8 @@ class AppLocalizationsRu extends AppLocalizations {
       'Отображаемое имя привязано к вашему аккаунту.';
 
   @override
-  String get networkJoinRequired => 'Укажите идентификатор сети и пароль.';
+  String get networkJoinRequired =>
+      'Укажите идентификатор или название сети и пароль.';
 
   @override
   String networkJoinInvalidCredentials(Object message) {
@@ -2556,6 +2510,10 @@ class AppLocalizationsRu extends AppLocalizations {
       'Только чтение — нажмите, чтобы войти в сеть и писать.';
 
   @override
+  String get networkShowcaseMemberReadOnly =>
+      'Писать в эту витрину могут только владелец и администраторы.';
+
+  @override
   String get networkConnecting => 'Подключение…';
 
   @override
@@ -2612,6 +2570,36 @@ class AppLocalizationsRu extends AppLocalizations {
       'В кошельке нет ключей каналов — агент увидит каналы только после инвайта ключа';
 
   @override
+  String get networkChannelKeyMissing =>
+      'Чтобы читать и писать в этом закрытом канале, на устройстве нужен его ключ.';
+
+  @override
+  String get networkChannelKeyImport => 'Импортировать ключ канала';
+
+  @override
+  String get networkChannelKeyInviteLabel => 'Приглашение с ключом канала';
+
+  @override
+  String get networkChannelKeyImportHint =>
+      'Вставьте приглашение в закрытый канал с устройства, где уже есть ключ.';
+
+  @override
+  String get networkChannelKeyWrongChannel =>
+      'Это приглашение относится к другому каналу.';
+
+  @override
+  String get networkChannelKeyWrongHub =>
+      'Это приглашение относится к другому хабу.';
+
+  @override
+  String get networkChannelKeyMismatch =>
+      'Открытый и закрытый ключи приглашения не соответствуют друг другу.';
+
+  @override
+  String get networkChannelKeyImportFailed =>
+      'Не удалось импортировать ключ канала. Повторите попытку.';
+
+  @override
   String get networkAddAgentScopeChannel => 'Этот канал';
 
   @override
@@ -2657,7 +2645,7 @@ class AppLocalizationsRu extends AppLocalizations {
 
   @override
   String get networkAddAgentEnrollHint =>
-      'Выдача создаёт уникальный отзываемый секрет — он показывается ОДИН раз: скопируйте его сейчас. Повторная выдача с тем же именем меняет секрет.';
+      'Выдача создаёт независимый отзываемый секрет: агенты с одинаковым именем могут подключаться одновременно. Секрет показывается ОДИН раз: скопируйте его сейчас.';
 
   @override
   String get networkAddAgentEnrollNeedSignIn =>

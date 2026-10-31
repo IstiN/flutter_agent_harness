@@ -17,9 +17,15 @@
 ///   its images in place, never as references (I3) — the model must see
 ///   what the user just sent; each in-place image carries its `[Image N]`
 ///   label so the model can cite it back (F3).
-/// - A per-request cap on unique images drops by priority (current >
-///   newest history > older history); every drop is reported through the
-///   drop notice — never silent.
+/// - A per-request cap on unique images and a per-request byte budget on
+///   image payloads (`images.maxPerRequest` + `images.maxBytesPerRequest`,
+///   issue #1916) drop by priority (current > newest history > older
+///   history); every drop is reported through the drop notice — never
+///   silent, with the reason (count or bytes) named.
+/// - History text that carries a whole image as an inline `data:image/…`
+///   URL (legacy shapes — issue #1916 AC2) is folded into a real image
+///   block first, so those bytes ride the same once-only registry path
+///   instead of replaying raw forever.
 /// - No dangling refs (I4): an `[Image N]` mention whose original is not
 ///   in the request (compacted away, outside the window, or dropped by
 ///   the cap) resolves to the plain-text note [unavailableImageNote].
@@ -41,6 +47,10 @@ import 'dart:convert';
 import 'package:crypto/crypto.dart';
 
 import '../context.dart';
+import '../providers/payload_stall.dart' show noteOutboundEstimate;
+import '../providers/provider_common.dart'
+    show nonVisionToolVideoPlaceholder, nonVisionUserVideoPlaceholder;
+import 'image_recovery.dart' show ImagePayloadRecoveryState;
 import '../skills/operative_pins.dart' show isPinRenumberingBoundary;
 import '../types.dart';
 
@@ -49,6 +59,13 @@ import '../types.dart';
 /// threads stay flat instead of growing linearly. ~20 inline images is
 /// well inside every current vision model's budget.
 const defaultMaxImagesPerRequest = 20;
+
+/// Default per-request byte budget on image payloads
+/// (`images.maxBytesPerRequest`, issue #1916): ~8MB of base64 — sane for
+/// slow uplinks, where a max-count batch of screenshots (~26MB) blew the
+/// stall watchdogs and livelocked the submit. Base64 chars are wire bytes
+/// 1:1, so the budget IS the upload size.
+const int defaultMaxImageBytesPerRequest = 8 * 1024 * 1024;
 
 /// The note replacing image refs whose original is not in the request
 /// (compaction interplay / cap drops — never a dangling ref).
@@ -65,7 +82,9 @@ final class ImageRegistryConfig {
   const ImageRegistryConfig({
     this.enabled = true,
     this.maxPerRequest = defaultMaxImagesPerRequest,
+    this.maxBytesPerRequest = defaultMaxImageBytesPerRequest,
     this.perModel = const {},
+    this.autoInspect = true,
   });
 
   /// Kill switch: `images.registry: false` reproduces today's request
@@ -75,10 +94,22 @@ final class ImageRegistryConfig {
   /// Per-request cap on unique images (`images.maxPerRequest`).
   final int maxPerRequest;
 
+  /// Per-request byte budget on image payloads
+  /// (`images.maxBytesPerRequest`, issue #1916) — layered onto
+  /// [maxPerRequest]: whichever limit binds first drops the image.
+  final int maxBytesPerRequest;
+
   /// Per-model cap overrides (`images.perModel.<modelId>`, issue #1750):
   /// user truth beats the catalog and the global default; a
   /// ceiling-setter only — never raises a cap above provider reality.
   final Map<String, int> perModel;
+
+  /// Image-read auto-route (gh-1984 AC2/AC3): with a vision model
+  /// configured, an image `read` under a non-vision chat model describes
+  /// the image through the vision model inline instead of returning the
+  /// bare omission note. `false` keeps today's note but names the
+  /// `inspect_image` tool + model so the agent can call it deliberately.
+  final bool autoInspect;
 }
 
 /// Process-wide image-registry settings, published by hosts at boot from
@@ -86,6 +117,26 @@ final class ImageRegistryConfig {
 /// `providerTimeoutsOverride`): the rewrite happens deep inside the agent
 /// loop's request build, far from any host config object.
 ImageRegistryConfig imageRegistryConfig = const ImageRegistryConfig();
+
+/// Why a request dropped an image (issue #1916 AC1): the count cap
+/// (`images.maxPerRequest`) or the byte budget
+/// (`images.maxBytesPerRequest`) — surfaces name which. gh-1934 adds the
+/// eviction class: images replaced by placeholders because the payload
+/// was evicted (compaction boundary / 413 recovery), not because a cap
+/// bound.
+enum ImageDropReason {
+  /// The per-request unique-image count cap bound first.
+  count,
+
+  /// The per-request base64 byte budget bound first.
+  bytes,
+
+  /// gh-1934: the image was EVICTED to a placeholder — every image block
+  /// outside the current message once a renumbering boundary sits in the
+  /// window (compaction eviction, AC2), every image block period under
+  /// the 413 recovery strip-all, or a session-latched evicted key.
+  evicted,
+}
 
 /// One image dropped by the per-request cap (issue #1889): the registry
 /// label index, the full content key (detail surfaces only — default
@@ -97,6 +148,7 @@ final class ImageDropEvent {
     required this.index,
     required this.key,
     required this.fromCurrentMessage,
+    this.reason = ImageDropReason.count,
   });
 
   /// The `[Image N]` index of the dropped image.
@@ -107,6 +159,9 @@ final class ImageDropEvent {
 
   /// Whether the dropped occurrence sat in the current user message.
   final bool fromCurrentMessage;
+
+  /// Which limit bound first (#1916 AC1).
+  final ImageDropReason reason;
 
   /// Short stable preview of the content key.
   String get keyPreview => imageKeyPreview(key);
@@ -126,6 +181,10 @@ final class ImageDropReport {
     required this.currentImageCount,
     required this.registryCount,
     required this.ridingCount,
+    this.maxBytes = 0,
+    this.strippedCount = 0,
+    this.evictedCount = 0,
+    this.evictedKeys = const {},
   });
 
   /// Every dropped image of the request, in drop order.
@@ -146,6 +205,22 @@ final class ImageDropReport {
   /// Images that rode the request (`registryCount - drops` when the
   /// current batch fit under the cap; kept explicit for the surface).
   final int ridingCount;
+
+  /// The byte budget the request was built under (#1916 AC1); 0 = no
+  /// budget info (legacy constructors) — surfaces omit byte mentions.
+  final int maxBytes;
+
+  /// The content keys this build EVICTED to placeholders (gh-1934) —
+  /// boundary evictions and strip-all; hosts latch them session-wide.
+  final Set<String> evictedKeys;
+
+  /// gh-1934: unique images replaced by placeholders under the 413
+  /// recovery strip-all in this build (0 = no strip ran).
+  final int strippedCount;
+
+  /// gh-1934: unique images evicted to placeholders by the compaction
+  /// boundary rule or a session-latched evicted key (0 = none).
+  final int evictedCount;
 }
 
 /// Set by hosts that surface drops (the CLI aggregates + latches into one
@@ -257,36 +332,212 @@ String imageContentKey(ImageContent image) => sha256
     .convert(utf8.encode('data:${image.mimeType};base64,${image.data}'))
     .toString();
 
-/// The agent loop's request-payload image rewrite (#171 + #1889): the
-/// kill switch skips it entirely (byte-identical legacy — no rewrite,
-/// no reports), the cap resolves per model (`#1750` learned latch >
-/// `perModel` config > catalog maxImages > the global maxPerRequest),
-/// and the host-facing seam is the per-request [ImageDropReport] (one
-/// call per build, zero drops included). Lives beside the seam it fans
-/// out to so the loop's call site stays one expression.
+/// The agent loop's request-payload image rewrite (#171 + #1889 + #1916 +
+/// gh-1934): the kill switch skips it entirely (byte-identical legacy — no
+/// rewrite, no reports), the cap resolves per model (`#1750` learned latch >
+/// `perModel` config > catalog maxImages > the global maxPerRequest), the
+/// byte budget resolves per session (`images.maxBytesPerRequest`, lowered
+/// by the 413 recovery state's learned budget), and the host-facing seam is
+/// the per-request [ImageDropReport] (one call per build, zero drops
+/// included). Also publishes the outbound-size estimate for the
+/// payload-aware stall watchdogs ([noteOutboundEstimate] — every provider
+/// call funnels through here, so the estimate never goes stale). Lives
+/// beside the seam it fans out to so the loop's call site stays one
+/// expression. [recovery] (gh-1934) arms the compaction/413 eviction rules
+/// and feeds the build's drop/strip counts back to the recovery state.
 List<Message> rewriteRequestImages(
   List<Message> messages, {
   required String modelId,
   required int? catalogMaxImages,
   required int? capOverride,
+  ImagePayloadRecoveryState? recovery,
 }) {
+  noteOutboundEstimate(messages);
   if (!imageRegistryConfig.enabled) return messages;
-  return rewriteHistoryImages(
+  final configuredBytes = imageRegistryConfig.maxBytesPerRequest;
+  ImageDropReport? report;
+  final rewritten = rewriteHistoryImages(
     messages,
     maxPerRequest:
         capOverride ??
         resolveImageCap(modelId: modelId, catalogMaxImages: catalogMaxImages),
+    maxBytesPerRequest:
+        recovery?.effectiveByteBudget(configuredBytes) ?? configuredBytes,
     modelId: modelId,
-    onReport: imageDropReportNotice,
+    onReport: (r) {
+      report = r;
+      // Once-evicted keys never ride again this session (E4): boundary
+      // evictions re-derive from the persisted boundary anyway, the latch
+      // covers the window where that boundary is no longer visible.
+      recovery?.evictedKeys.addAll(r.evictedKeys);
+      imageDropReportNotice?.call(r);
+    },
+    stripAll: recovery?.stripAll ?? false,
+    evictedKeys: recovery?.evictedKeys,
   );
+  // gh-1934 review: EVERY build records what the payload rode — the
+  // image-free fast path included (it reports no drops by the #1889
+  // contract, but the recovery gate must still learn the image-free
+  // fact). The 413 gate evaluates the REQUEST that was refused, never
+  // the transcript: the transcript keeps image bytes forever under the
+  // payload-only rewrite, so a stale observation would re-run the ladder
+  // on every later 413 of a latched session.
+  recovery?.observeBuild(
+    dropped:
+        report?.drops
+            .where((drop) => drop.reason == ImageDropReason.bytes)
+            .length ??
+        0,
+    stripped: report?.strippedCount ?? 0,
+    carriedImages: payloadCarriesImageBytes(rewritten),
+  );
+  return rewritten;
+}
+
+/// gh-1985 AC7: strips every [VideoContent] block to its omission note
+/// (the gh-1934 strip-all semantics for video). Returns null when nothing
+/// had to change — the fast path keeps the caller's list instance.
+List<Message>? _stripAllVideoBlocks(List<Message> messages) {
+  var changed = false;
+  List<ContentBlock> stripBlocks(List<ContentBlock> blocks, String note) {
+    if (!blocks.any((block) => block is VideoContent)) return blocks;
+    changed = true;
+    return [
+      for (final block in blocks)
+        if (block is VideoContent) TextContent(text: note) else block,
+    ];
+  }
+
+  final out = <Message>[];
+  for (final message in messages) {
+    if (message is UserMessage && message.content is List<ContentBlock>) {
+      final blocks = stripBlocks(
+        message.content as List<ContentBlock>,
+        nonVisionUserVideoPlaceholder,
+      );
+      if (!identical(blocks, message.content)) {
+        out.add(
+          UserMessage(content: blocks, timestamp: message.timestamp),
+        );
+        continue;
+      }
+    } else if (message is ToolResultMessage) {
+      final blocks = stripBlocks(
+        message.content,
+        nonVisionToolVideoPlaceholder,
+      );
+      if (!identical(blocks, message.content)) {
+        out.add(
+          ToolResultMessage(
+            toolCallId: message.toolCallId,
+            toolName: message.toolName,
+            content: blocks,
+            isError: message.isError,
+            timestamp: message.timestamp,
+          ),
+        );
+        continue;
+      }
+    }
+    out.add(message);
+  }
+  return changed ? out : null;
+}
+
+/// The strip-all VIDEO pre-pass of [rewriteHistoryImages]: with [stripAll]
+/// set, every [VideoContent] block becomes its omission note
+/// ([_stripAllVideoBlocks]); returns the (possibly same) list plus whether
+/// anything was stripped.
+(List<Message>, bool) _stripAllVideosPass(
+  List<Message> messages, {
+  required bool stripAll,
+}) {
+  if (!stripAll) return (messages, false);
+  final stripped = _stripAllVideoBlocks(messages);
+  return stripped == null ? (messages, false) : (stripped, true);
+}
+
+/// The #1916 AC2 fold pre-pass of [rewriteHistoryImages]: every HISTORY
+/// message (never [currentIdx0], the current user message) has its
+/// text-embedded data-URL payloads folded into real [ImageContent] blocks.
+/// Messages without folds ride untouched; the first fold copies the list
+/// (the caller's instance is never mutated).
+List<Message> _foldEmbeddedImagesPass(List<Message> messages, int currentIdx0) {
+  var normalized = messages;
+  for (var i = 0; i < messages.length; i++) {
+    if (i == currentIdx0) continue;
+    final (folded, changed) = _extractEmbeddedImages(messages[i]);
+    if (!changed) continue;
+    if (identical(normalized, messages)) normalized = List.of(messages);
+    normalized[i] = folded;
+  }
+  return normalized;
+}
+
+/// Whether a request payload still carries image bytes the 413 ladder
+/// could shed (gh-1934 review): riding [ImageContent] blocks, plus the
+/// current message's text-embedded `data:image/` payloads at the fold
+/// threshold (the #1916 fold never touches the current message, so a
+/// giant inline screenshot there stays text and stays real payload
+/// weight). Sub-threshold inline icons are legitimate text and never
+/// count — a text-only session must not engage the ladder (AC6).
+bool payloadCarriesImageBytes(List<Message> messages) {
+  bool blocksCarry(List<ContentBlock> blocks) => blocks.any(
+    (block) =>
+        block is ImageContent ||
+        block is VideoContent ||
+        (block is TextContent &&
+            block.text.length >= embeddedImageMinChars &&
+            block.text.contains('data:image/')),
+  );
+  for (final message in messages) {
+    switch (message) {
+      case UserMessage(:final content):
+        if (content is String) {
+          if (content.length >= embeddedImageMinChars &&
+              content.contains('data:image/')) {
+            return true;
+          }
+        } else if (blocksCarry(content as List<ContentBlock>)) {
+          return true;
+        }
+      case ToolResultMessage(:final content):
+        if (blocksCarry(content)) return true;
+      case AssistantMessage(:final content):
+        if (blocksCarry(content)) return true;
+      default:
+    }
+  }
+  return false;
 }
 
 /// A short, stable preview of a content key for drop notices.
 String imageKeyPreview(String key) => key.substring(0, 8);
 
+/// The placeholder replacing an evicted image block (gh-1934): names the
+/// same 8-hex content-key preview the drop notices and `/images` carry —
+/// an honest label, never a silent rebinding of `[Image N]` numbers (AC7).
+String imageDroppedPlaceholder(String key) =>
+    '[image dropped: ${imageKeyPreview(key)}]';
+
+/// The text-embedded image shape (issue #1916 AC2): legacy session
+/// records, pre-#171 transcripts and hosts that paste screenshots as
+/// markdown carry screenshots INSIDE TextContent as a `data:image/…`
+/// URL — invisible to the ImageContent scan, so the raw bytes replayed
+/// on every request forever (the #1916 evidence: 9 history user
+/// messages, 14.2MB, 1 registered image block).
+final RegExp _embeddedImagePattern = RegExp(
+  r'data:image/(png|jpeg|jpg|gif|webp);base64,([A-Za-z0-9+/=]+)',
+);
+
+/// Text data-URL payloads smaller than this are left as text: icons and
+/// separators are legitimate inline content; the MB-scale screenshot
+/// blobs are what must never replay.
+const int embeddedImageMinChars = 64 * 1024;
+
 /// Rewrites the OUTGOING request payload (never the transcript): image
 /// blocks become `[Image N]` refs, unique originals ride once as carriers,
-/// the current user message rides in place, and the per-request cap drops
+/// the current user message rides in place, and the per-request caps drop
 /// by priority (current > newest > older) reporting every drop.
 ///
 /// [onReport] fires ONCE per call with the request's [ImageDropReport]
@@ -295,39 +546,73 @@ String imageKeyPreview(String key) => key.substring(0, 8);
 /// fast path (nothing to rewrite) skips it: an image-free session pays
 /// nothing and never registers as a drop-situation change.
 ///
+/// gh-1934 eviction rules (payload-only — the transcript keeps the bytes):
+/// - [stripAll] (the 413 ladder's pass 2) replaces EVERY image block
+///   period — current message included — with the
+///   `[image dropped: <key preview>]` placeholder.
+/// - When the window carries a renumbering boundary (compaction summary /
+///   structured marker / local-trim note), every HISTORY image block
+///   outside the current user message is evicted the same way (AC2):
+///   /compact provably restores sendability on a poisoned session, the
+///   placeholders ride token accounting, and no boundary can re-carriage
+///   old image bytes.
+/// - [evictedKeys] pins additional content keys to the placeholder (the
+///   session recovery latch).
+///
 /// Returns the SAME list instance when there is nothing to rewrite (no
 /// images and no `[Image N]` mentions), so image-free sessions pay
 /// nothing.
 List<Message> rewriteHistoryImages(
   List<Message> messages, {
   int? maxPerRequest,
+  int? maxBytesPerRequest,
   String? modelId,
   void Function(ImageDropReport report)? onReport,
+  bool stripAll = false,
+  Set<String>? evictedKeys,
 }) {
-  var hasImages = false;
-  for (final message in messages) {
-    if (_imagesOf(message).isNotEmpty) {
-      hasImages = true;
-      break;
-    }
+  final currentIdx0 = _lastUserMessageIndex(messages);
+  // gh-1985 AC7: the strip-all latch strips VIDEO blocks too (the gh-1934
+  // pass-2 semantics — every later request of a latched session rides
+  // media-free, so neither the ladder nor a compaction⇄413 cycle can
+  // re-engage on the same bytes). The placeholder text keeps the omission
+  // visible; the bytes stay in the session transcript.
+  final (strippedVideos, videoStripped) = _stripAllVideosPass(
+    messages,
+    stripAll: stripAll,
+  );
+  // #1916 AC2 pre-pass: fold text-embedded data-URL images into real
+  // ImageContent blocks on HISTORY messages — the scan, dedup, caps and
+  // refs below then treat them exactly like pasted images, and legacy
+  // shapes can never replay raw bytes again. The current message keeps
+  // its text verbatim (I3) — it degrades on the NEXT turn.
+  final normalized = _foldEmbeddedImagesPass(strippedVideos, currentIdx0);
+  final hasImages = normalized.any((message) => _imagesOf(message).isNotEmpty);
+  if (!hasImages && !videoStripped && !normalized.any(_mentionsImageRef)) {
+    // Nothing to rewrite: return the CALLER'S list instance (the
+    // image-free fast-path guarantee) even when the fold pre-pass ran.
+    return messages;
   }
-  if (!hasImages && !messages.any(_mentionsImageRef)) return messages;
 
   // F2 pre-pass: when the window carries a renumbering boundary, history
   // citations may name a different image than their number does now —
   // degrade AUTHORED text mentions before assembly. Block rewrites,
   // carrier labels and the current message are generated content-keyed
   // (or provably fresh) and must survive.
-  final currentIdx0 = _lastUserMessageIndex(messages);
-  final degraded = messages.any(_isRenumberingBoundary)
+  final degraded = normalized.any(_isRenumberingBoundary)
       ? [
-          for (var i = 0; i < messages.length; i++)
+          for (var i = 0; i < normalized.length; i++)
             i == currentIdx0
-                ? messages[i]
-                : _resolveMentions(messages[i], const <int>{}, trusted: false),
+                ? normalized[i]
+                : _resolveMentions(
+                    normalized[i],
+                    const <int>{},
+                    trusted: false,
+                  ),
         ]
-      : messages;
+      : normalized;
   final cap = maxPerRequest ?? imageRegistryConfig.maxPerRequest;
+  final maxBytes = maxBytesPerRequest ?? imageRegistryConfig.maxBytesPerRequest;
   final entryByKey = <String, ImageRegistryEntry>{};
   final occurrences = <String, List<int>>{};
   _scanImages(degraded, entryByKey, occurrences);
@@ -338,12 +623,15 @@ List<Message> rewriteHistoryImages(
     occurrences,
     currentIdx,
     cap,
+    maxBytes,
+    stripAll: stripAll,
+    latchedEvicted: evictedKeys,
   );
   final carriers = _planCarriers(degraded, entryByKey, occurrences, riding);
 
-  // Emit: rewritten history (image blocks → refs/notes), the current
-  // message in place with fresh `[Image N]` labels (F3), carriers at
-  // their anchors.
+  // Emit: rewritten history (image blocks → refs/notes/placeholders), the
+  // current message in place with fresh `[Image N]` labels (F3), carriers
+  // at their anchors.
   final out = _emitRewritten(degraded, currentIdx, riding, carriers);
 
   // Mention pass (I4): every remaining `[Image N]` in text that does not
@@ -362,9 +650,91 @@ List<Message> rewriteHistoryImages(
       currentImageCount: riding.currentImageCount,
       registryCount: entryByKey.length,
       ridingCount: riding.ridingKeys.length,
+      maxBytes: maxBytes,
+      strippedCount: riding.strippedCount,
+      evictedCount: riding.evictedCount,
+      evictedKeys: riding.evictedKeys,
     ),
   );
   return rewritten;
+}
+
+/// The #1916 AC2 fold: every TextContent data-URL payload at or above
+/// [embeddedImageMinChars] becomes an [ImageContent] block (text around
+/// the URL is kept, split at the URL edges). Returns the original message
+/// untouched when nothing folded — the common case pays one
+/// `contains('data:image/')` scan per text block.
+(Message, bool) _extractEmbeddedImages(Message message) {
+  (List<ContentBlock>, bool)? foldBlocks(List<ContentBlock> blocks) {
+    var changed = false;
+    final out = <ContentBlock>[];
+    for (final block in blocks) {
+      if (block is! TextContent || !block.text.contains('data:image/')) {
+        out.add(block);
+        continue;
+      }
+      final text = block.text;
+      var cursor = 0;
+      var localChanged = false;
+      for (final match in _embeddedImagePattern.allMatches(text)) {
+        final payload = match.group(2)!;
+        if (payload.length < embeddedImageMinChars) continue;
+        final mime = match.group(1)! == 'jpg'
+            ? 'image/jpeg'
+            : 'image/${match.group(1)!}';
+        if (match.start > cursor) {
+          out.add(TextContent(text: text.substring(cursor, match.start)));
+        }
+        out.add(ImageContent(data: payload, mimeType: mime));
+        cursor = match.end;
+        localChanged = true;
+      }
+      if (!localChanged) {
+        out.add(block);
+        continue;
+      }
+      if (cursor < text.length) {
+        out.add(TextContent(text: text.substring(cursor)));
+      }
+      changed = true;
+    }
+    return changed ? (out, true) : null;
+  }
+
+  switch (message) {
+    case UserMessage(:final content, :final timestamp):
+      if (content is String) {
+        if (!content.contains('data:image/')) return (message, false);
+        final folded = foldBlocks([TextContent(text: content)]);
+        if (folded == null) return (message, false);
+        return (UserMessage(content: folded.$1, timestamp: timestamp), true);
+      }
+      final folded = foldBlocks(content as List<ContentBlock>);
+      return folded == null
+          ? (message, false)
+          : (UserMessage(content: folded.$1, timestamp: timestamp), true);
+    case ToolResultMessage():
+      final folded = foldBlocks(message.content);
+      return folded == null
+          ? (message, false)
+          : (
+              ToolResultMessage(
+                toolCallId: message.toolCallId,
+                toolName: message.toolName,
+                content: folded.$1,
+                isError: message.isError,
+                timestamp: message.timestamp,
+              ),
+              true,
+            );
+    case AssistantMessage():
+      final folded = foldBlocks(message.content);
+      return folded == null
+          ? (message, false)
+          : (message.copyWith(content: folded.$1), true);
+    default:
+      return (message, false);
+  }
 }
 
 /// Whether [message] is a projected renumbering boundary: a classic
@@ -412,6 +782,16 @@ int _lastUserMessageIndex(List<Message> messages) {
   return -1;
 }
 
+/// The LAST renumbering boundary in the window — the kept region starts
+/// after it (gh-1934 AC2 eviction scope). -1 when the window was never
+/// renumbered.
+int _lastRenumberingBoundaryIndex(List<Message> messages) {
+  for (var i = messages.length - 1; i >= 0; i--) {
+    if (_isRenumberingBoundary(messages[i])) return i;
+  }
+  return -1;
+}
+
 /// The riding-set selection result.
 final class _RidingSelection {
   const _RidingSelection(
@@ -419,8 +799,11 @@ final class _RidingSelection {
     this.ridingKeys,
     this.indexByKey,
     this.drops,
-    this.currentImageCount,
-  );
+    this.currentImageCount, {
+    this.evictedKeys = const {},
+    this.strippedCount = 0,
+    this.evictedCount = 0,
+  });
 
   /// Keys occurring in the current message (ride in place, up to the cap).
   final Set<String> currentKeys;
@@ -431,78 +814,280 @@ final class _RidingSelection {
   /// `{key → [Image N] index}` for riding keys.
   final Map<String, int> indexByKey;
 
-  /// Every cap drop of the request, current-message drops first.
+  /// Every cap drop AND eviction of the request, evictions first.
   final List<ImageDropEvent> drops;
 
   /// Unique images the current message carried (rode or dropped).
   final int currentImageCount;
+
+  /// gh-1934: every key replaced by the `[image dropped: …]` placeholder
+  /// in this build (eviction + strip-all).
+  final Set<String> evictedKeys;
+
+  /// Of those, how many were stripped by the recovery strip-all.
+  final int strippedCount;
+
+  /// Of those, how many were evicted by the boundary rule or the latch.
+  final int evictedCount;
 }
 
-/// Riding set. The cap applies to the whole request (issue #1889 R2): the
-/// current message's images claim slots FIRST — first-seen order within
-/// the message — and a batch bigger than the cap drops its extras as
-/// current-message drops (just attached, immediately capped — the
-/// actionable case). The remaining slots go to the newest history keys,
-/// ties by first-seen order; history overflow drops as history drops.
-/// Every drop is reported — never silent.
+/// Riding set. The caps apply to the whole request (#1889 R2 + #1916
+/// AC1): the current message's images claim slots FIRST — first-seen
+/// order within the message — and a batch bigger than the count cap or
+/// the byte budget drops its extras as current-message drops (just
+/// attached, immediately capped — the actionable case). The remaining
+/// slots go to the newest history keys, ties by first-seen order;
+/// history overflow drops as history drops. Both limits ride the same
+/// greedy pass — whichever binds first names the drop's reason; a
+/// byte-drop never stops the scan (a smaller older image still fits).
+/// Every drop is reported — never silent. Phases live in the helpers
+/// below; this orchestrator only sequences them.
+///
+/// gh-1934 eviction runs BEFORE the caps: [stripAll] evicts every key
+/// period; keys first seen before the LAST renumbering boundary (outside
+/// the kept region) evict too; [latchedEvicted] pins individual keys.
+/// Evicted keys never ride, never re-claim cap slots — they are payload
+/// placeholders from here on.
 _RidingSelection _selectRiding(
   List<Message> messages,
   Map<String, ImageRegistryEntry> entryByKey,
   Map<String, List<int>> occurrences,
   int currentIdx,
   int cap,
-) {
+  int maxBytes, {
+  required bool stripAll,
+  Set<String>? latchedEvicted,
+}) {
   // Current-message keys in first-seen (document) order, deduped.
-  final currentOrdered = <String>[];
-  if (currentIdx >= 0) {
-    final seen = <String>{};
-    for (final image in _imagesOf(messages[currentIdx])) {
-      final key = imageContentKey(image);
-      if (seen.add(key)) currentOrdered.add(key);
-    }
-  }
-  final currentRide = currentOrdered.take(cap).toSet();
-  final drops = [
-    for (final key in currentOrdered.skip(cap))
+  final currentOrdered = _currentKeysInOrder(messages, currentIdx);
+  final currentSet = currentOrdered.toSet();
+  final evicted = <String>{};
+  final evictedDrops = <ImageDropEvent>[];
+  var strippedCount = 0;
+  var evictedCount = 0;
+
+  void evict(String key, {required bool fromCurrent, required bool strip}) {
+    if (!evicted.add(key)) return;
+    evictedDrops.add(
       ImageDropEvent(
         index: entryByKey[key]!.index,
         key: key,
-        fromCurrentMessage: true,
+        fromCurrentMessage: fromCurrent,
+        reason: ImageDropReason.evicted,
       ),
+    );
+    if (strip) {
+      strippedCount++;
+    } else {
+      evictedCount++;
+    }
+  }
+
+  // Strip-all (pass 2): every unique key period, current included.
+  if (stripAll) {
+    for (final key in entryByKey.keys) {
+      evict(key, fromCurrent: currentSet.contains(key), strip: true);
+    }
+    return _RidingSelection(
+      const {},
+      const {},
+      const {},
+      evictedDrops,
+      currentOrdered.length,
+      evictedKeys: evicted,
+      strippedCount: strippedCount,
+      evictedCount: evictedCount,
+    );
+  }
+
+  // Session-latched evicted keys never ride again (any position).
+  for (final key in entryByKey.keys) {
+    if (latchedEvicted != null && latchedEvicted.contains(key)) {
+      evict(key, fromCurrent: currentSet.contains(key), strip: false);
+    }
+  }
+
+  // Compaction boundary eviction (AC2): images OUTSIDE the kept region —
+  // first seen in a message before the LAST renumbering boundary marker —
+  // evict to placeholders. Kept-region images ride under the normal caps:
+  // gh-195 F2 pins that post-boundary history keeps riding with trusted
+  // recency selection, so the eviction cuts only what the boundary
+  // already redrew.
+  final lastBoundary = _lastRenumberingBoundaryIndex(messages);
+  if (lastBoundary >= 0) {
+    for (final key in entryByKey.keys) {
+      if (currentSet.contains(key)) continue;
+      if (occurrences[key]!.first < lastBoundary) {
+        evict(key, fromCurrent: false, strip: false);
+      }
+    }
+  }
+
+  final currentRideable = [
+    for (final key in currentOrdered)
+      if (!evicted.contains(key)) key,
   ];
-  final currentDropped = currentOrdered.skip(cap).toSet();
-  final historyKeys = [
-    for (final entry in entryByKey.values)
-      if (!currentRide.contains(entry.key) &&
-          !currentDropped.contains(entry.key))
-        entry.key,
-  ];
+  final current = _claimCurrentBatch(
+    currentRideable,
+    entryByKey,
+    cap,
+    maxBytes,
+  );
+  final historyKeys = _recencyOrderedHistoryKeys(
+    entryByKey,
+    occurrences,
+    exclude: {...current.ride, ...current.droppedKeys, ...evicted},
+  ).where((key) => !evicted.contains(key)).toList();
+  final history = _fillHistorySlots(
+    historyKeys,
+    entryByKey,
+    countSlots: (cap - current.ride.length).clamp(0, historyKeys.length),
+    remainingBytes: current.remainingBytes,
+    maxBytes: maxBytes,
+  );
+  final drops = [...evictedDrops, ...current.drops, ...history.drops];
+  final ridingKeys = {...current.ride, ...history.ride};
+  return _RidingSelection(
+    current.ride,
+    ridingKeys,
+    {for (final key in ridingKeys) key: entryByKey[key]!.index},
+    drops,
+    currentOrdered.length,
+    evictedKeys: evicted,
+    strippedCount: strippedCount,
+    evictedCount: evictedCount,
+  );
+}
+
+/// Which limit overflowed a candidate: the count cap binds first
+/// (structural — the reason a byte-drop alone can still ride later),
+/// bytes name the drop only when the count allowed it.
+ImageDropReason _dropReason({
+  required bool overCount,
+  required bool overBytes,
+}) => overCount ? ImageDropReason.count : ImageDropReason.bytes;
+
+/// The current message's image keys in first-seen (document) order,
+/// deduped by content key.
+List<String> _currentKeysInOrder(List<Message> messages, int currentIdx) {
+  if (currentIdx < 0) return const <String>[];
+  final ordered = <String>[];
+  final seen = <String>{};
+  for (final image in _imagesOf(messages[currentIdx])) {
+    final key = imageContentKey(image);
+    if (seen.add(key)) ordered.add(key);
+  }
+  return ordered;
+}
+
+/// One batch's claim on the caps: the keys that ride, the drops in
+/// encounter order, and the byte budget left for history.
+final class _BatchClaim {
+  const _BatchClaim(this.ride, this.drops, this.remainingBytes);
+
+  final Set<String> ride;
+  final List<ImageDropEvent> drops;
+  final int remainingBytes;
+
+  /// Keys this batch dropped — history must never re-claim them.
+  Set<String> get droppedKeys => {for (final drop in drops) drop.key};
+}
+
+/// The current batch's claim (#1889 R2 + #1916 AC1): slots first-come
+/// first-seen; over-count or over-budget images drop as current-message
+/// drops (just attached, immediately capped — the actionable case).
+_BatchClaim _claimCurrentBatch(
+  List<String> ordered,
+  Map<String, ImageRegistryEntry> entryByKey,
+  int cap,
+  int maxBytes,
+) {
+  final ride = <String>{};
+  final drops = <ImageDropEvent>[];
+  var remaining = maxBytes;
+  for (final key in ordered) {
+    final size = entryByKey[key]!.data.length;
+    final overCount = ride.length >= cap;
+    final overBytes = maxBytes > 0 && size > remaining;
+    if (overCount || overBytes) {
+      drops.add(
+        ImageDropEvent(
+          index: entryByKey[key]!.index,
+          key: key,
+          fromCurrentMessage: true,
+          reason: _dropReason(overCount: overCount, overBytes: overBytes),
+        ),
+      );
+      continue;
+    }
+    ride.add(key);
+    if (maxBytes > 0) remaining -= size;
+  }
+  return _BatchClaim(ride, drops, remaining);
+}
+
+/// History keys newest-first (last occurrence recency, ties by
+/// first-seen index), minus every key the current batch claimed.
+List<String> _recencyOrderedHistoryKeys(
+  Map<String, ImageRegistryEntry> entryByKey,
+  Map<String, List<int>> occurrences, {
+  required Set<String> exclude,
+}) {
   int lastSeen(String key) => occurrences[key]!.last;
-  historyKeys.sort((a, b) {
+  final keys = [
+    for (final entry in entryByKey.values)
+      if (!exclude.contains(entry.key)) entry.key,
+  ];
+  keys.sort((a, b) {
     final byRecency = lastSeen(b).compareTo(lastSeen(a));
     return byRecency != 0
         ? byRecency
         : entryByKey[a]!.index.compareTo(entryByKey[b]!.index);
   });
-  final historySlots = (cap - currentRide.length).clamp(0, historyKeys.length);
-  for (final key in historyKeys.skip(historySlots)) {
+  return keys;
+}
+
+/// The history fill's outcome: the keys that rode and the drops in
+/// scan (newest-first) order.
+final class _HistoryFill {
+  const _HistoryFill(this.ride, this.drops);
+  final Set<String> ride;
+  final List<ImageDropEvent> drops;
+}
+
+/// The greedy history fill (#1916 AC1): newest-first while count slots
+/// and the byte budget hold; a byte drop never stops the scan — a
+/// smaller older image still fits. Drop order and reasons are pinned by
+/// tests (drop order stays current-first-then-newest).
+_HistoryFill _fillHistorySlots(
+  List<String> historyKeys,
+  Map<String, ImageRegistryEntry> entryByKey, {
+  required int countSlots,
+  required int remainingBytes,
+  required int maxBytes,
+}) {
+  final ride = <String>{};
+  final drops = <ImageDropEvent>[];
+  var remaining = remainingBytes;
+  for (final key in historyKeys) {
     final entry = entryByKey[key]!;
-    drops.add(
-      ImageDropEvent(
-        index: entry.index,
-        key: entry.key,
-        fromCurrentMessage: false,
-      ),
-    );
+    final overCount = ride.length >= countSlots;
+    final overBytes = maxBytes > 0 && entry.data.length > remaining;
+    if (overCount || overBytes) {
+      drops.add(
+        ImageDropEvent(
+          index: entry.index,
+          key: entry.key,
+          fromCurrentMessage: false,
+          reason: _dropReason(overCount: overCount, overBytes: overBytes),
+        ),
+      );
+      continue;
+    }
+    ride.add(key);
+    remaining -= entry.data.length;
   }
-  final ridingKeys = {...currentRide, ...historyKeys.take(historySlots)};
-  return _RidingSelection(
-    currentRide,
-    ridingKeys,
-    {for (final key in ridingKeys) key: entryByKey[key]!.index},
-    drops,
-    currentOrdered.length,
-  );
+  return _HistoryFill(ride, drops);
 }
 
 /// The carrier insertion plan: index → carriers before/after that message.
@@ -551,8 +1136,9 @@ _CarrierPlan _planCarriers(
   return _CarrierPlan(before, after);
 }
 
-/// Emit pass: rewritten history (image blocks → refs/notes), the current
-/// message with its RIDING images in place (over-cap extras → the note),
+/// Emit pass: rewritten history (image blocks → refs/notes/placeholders),
+/// the current message with its RIDING images in place (evicted → the
+/// `[image dropped: …]` placeholder, over-cap extras → the note),
 /// carriers at their anchors.
 List<Message> _emitRewritten(
   List<Message> messages,
@@ -560,23 +1146,29 @@ List<Message> _emitRewritten(
   _RidingSelection riding,
   _CarrierPlan carriers,
 ) {
+  final evicted = riding.evictedKeys;
   final out = <Message>[];
   for (var i = 0; i < messages.length; i++) {
     out.addAll(carriers.before[i] ?? const <Message>[]);
     final message = messages[i];
     if (i == currentIdx) {
       out.add(
-        _labelCurrentImages(message, riding.indexByKey, riding.ridingKeys),
+        _labelCurrentImages(
+          message,
+          riding.indexByKey,
+          riding.ridingKeys,
+          evicted,
+        ),
       );
     } else if (message is UserMessage) {
       final content = message.content;
       out.add(
         content is List<ContentBlock>
-            ? _rewriteUserBlocks(message, content, riding.indexByKey)
+            ? _rewriteUserBlocks(message, content, riding.indexByKey, evicted)
             : message,
       );
     } else if (message is ToolResultMessage) {
-      out.add(_rewriteResultBlocks(message, riding.indexByKey));
+      out.add(_rewriteResultBlocks(message, riding.indexByKey, evicted));
     } else {
       out.add(message);
     }
@@ -588,12 +1180,15 @@ List<Message> _emitRewritten(
 /// F3: the current message's RIDING images stay in place AND carry their
 /// `[Image N]` label as a preceding text block — the model can cite the
 /// image it is looking at with the number the registry will honor.
-/// Over-cap current images (issue #1889 R2) resolve to the unavailable
-/// note, exactly like dropped history occurrences.
+/// Strip-all-evicted current images (gh-1934 pass 2) resolve to the
+/// `[image dropped: …]` placeholder; over-cap current images (issue
+/// #1889 R2) resolve to the unavailable note, exactly like dropped
+/// history occurrences.
 Message _labelCurrentImages(
   Message message,
   Map<String, int> indexByKey,
   Set<String> ridingKeys,
+  Set<String> evictedKeys,
 ) {
   if (message is! UserMessage) return message;
   final content = message.content;
@@ -608,7 +1203,10 @@ Message _labelCurrentImages(
             text: imageRefLabel(indexByKey[imageContentKey(block)] ?? 0),
           ),
           block,
-        ] else if (block is ImageContent)
+        ] else if (block is ImageContent &&
+            evictedKeys.contains(imageContentKey(block)))
+          TextContent(text: imageDroppedPlaceholder(imageContentKey(block)))
+        else if (block is ImageContent)
           TextContent(text: unavailableImageNote)
         else
           block,
@@ -659,10 +1257,11 @@ UserMessage _rewriteUserBlocks(
   UserMessage message,
   List<ContentBlock> content,
   Map<String, int> ridingIndexByKey,
+  Set<String> evictedKeys,
 ) {
   if (!content.any((block) => block is ImageContent)) return message;
   return UserMessage(
-    content: _replaceImageBlocks(content, ridingIndexByKey),
+    content: _replaceImageBlocks(content, ridingIndexByKey, evictedKeys),
     timestamp: message.timestamp,
   );
 }
@@ -670,27 +1269,37 @@ UserMessage _rewriteUserBlocks(
 ToolResultMessage _rewriteResultBlocks(
   ToolResultMessage message,
   Map<String, int> ridingIndexByKey,
+  Set<String> evictedKeys,
 ) {
   if (!message.content.any((block) => block is ImageContent)) return message;
   return ToolResultMessage(
     toolCallId: message.toolCallId,
     toolName: message.toolName,
-    content: _replaceImageBlocks(message.content, ridingIndexByKey),
+    content: _replaceImageBlocks(
+      message.content,
+      ridingIndexByKey,
+      evictedKeys,
+    ),
     isError: message.isError,
     timestamp: message.timestamp,
   );
 }
 
-/// Swaps image blocks for refs (riding) or the unavailable note (dropped).
+/// Swaps image blocks for refs (riding), the `[image dropped: …]`
+/// placeholder (gh-1934 evicted), or the unavailable note (dropped).
 List<ContentBlock> _replaceImageBlocks(
   List<ContentBlock> content,
   Map<String, int> ridingIndexByKey,
+  Set<String> evictedKeys,
 ) {
   return [
     for (final block in content)
       switch (block) {
         ImageContent() => switch (ridingIndexByKey[imageContentKey(block)]) {
           final index? => TextContent(text: imageRefLabel(index)),
+          null when evictedKeys.contains(imageContentKey(block)) => TextContent(
+            text: imageDroppedPlaceholder(imageContentKey(block)),
+          ),
           null => const TextContent(text: unavailableImageNote),
         },
         _ => block,

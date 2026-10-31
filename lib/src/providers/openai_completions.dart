@@ -1301,6 +1301,28 @@ String _normalizeToolCallId(String id, Model model) {
   return id;
 }
 
+/// Audio MIME type → OpenAI `input_audio.format` tag. mp3/wav are the
+/// OpenAI-documented ones; OpenRouter's Gemini route additionally accepts
+/// m4a/aac/flac/ogg (verified against AIIN). Unknown mime types fall back
+/// to `mp3` — a table keeps the lookup O(1) and the complexity gate green
+/// (a 13-case switch measured CRAP 21.91 against the 12.0 ratchet).
+const _openAiAudioFormats = <String, String>{
+  'audio/mpeg': 'mp3',
+  'audio/mp3': 'mp3',
+  'audio/wav': 'wav',
+  'audio/x-wav': 'wav',
+  'audio/mp4': 'm4a',
+  'audio/x-m4a': 'm4a',
+  'audio/m4a': 'm4a',
+  'audio/aac': 'aac',
+  'audio/x-aac': 'aac',
+  'audio/flac': 'flac',
+  'audio/ogg': 'ogg',
+};
+
+String _openAiAudioFormat(String mimeType) =>
+    _openAiAudioFormats[mimeType.toLowerCase()] ?? 'mp3';
+
 Map<String, dynamic>? _convertUserMessage(UserMessage message) {
   final content = message.content;
   if (content is String) {
@@ -1315,6 +1337,27 @@ Map<String, dynamic>? _convertUserMessage(UserMessage message) {
         parts.add({
           'type': 'image_url',
           'image_url': {'url': 'data:${item.mimeType};base64,${item.data}'},
+        });
+      case AudioContent():
+        // OpenAI/OpenRouter audio input (AIIN routes Gemini through this
+        // dialect too). Senders attach audio only for audio-capable
+        // models; mime type reduces to the wire `format` tag.
+        parts.add({
+          'type': 'input_audio',
+          'input_audio': {
+            'data': item.data,
+            'format': _openAiAudioFormat(item.mimeType),
+          },
+        });
+      case VideoContent():
+        // gh-1985 C1: video input rides the OpenRouter `video_url` content
+        // part with a base64 data URL (the only video wire in this
+        // dialect — OpenRouter routes it to the video-capable providers).
+        // Senders attach video only for video-capable models; the
+        // downgrade pre-pass strips it for the rest.
+        parts.add({
+          'type': 'video_url',
+          'video_url': {'url': 'data:${item.mimeType};base64,${item.data}'},
         });
       case ThinkingContent() || ToolCall():
         // Not valid in user messages; skip defensively.
@@ -1430,6 +1473,7 @@ int _convertToolResultRun(
   List<Map<String, dynamic>> params,
 ) {
   final imageBlocks = <Map<String, dynamic>>[];
+  final videoBlocks = <Map<String, dynamic>>[];
   var j = start;
 
   for (; j < messages.length && messages[j] is ToolResultMessage; j++) {
@@ -1437,6 +1481,9 @@ int _convertToolResultRun(
     params.add(_convertToolResult(toolMessage, model, compat));
     if (model.input.contains('image')) {
       imageBlocks.addAll(_toolResultImageParts(toolMessage));
+    }
+    if (model.input.contains('video')) {
+      videoBlocks.addAll(_toolResultVideoParts(toolMessage));
     }
   }
 
@@ -1446,6 +1493,15 @@ int _convertToolResultRun(
       'content': [
         {'type': 'text', 'text': 'Attached image(s) from tool result:'},
         ...imageBlocks,
+      ],
+    });
+  }
+  if (videoBlocks.isNotEmpty) {
+    params.add({
+      'role': 'user',
+      'content': [
+        {'type': 'text', 'text': 'Attached video(s) from tool result:'},
+        ...videoBlocks,
       ],
     });
   }
@@ -1492,6 +1548,21 @@ List<Map<String, dynamic>> _toolResultImageParts(
         {
           'type': 'image_url',
           'image_url': {'url': 'data:${block.mimeType};base64,${block.data}'},
+        },
+  ];
+}
+
+/// gh-1985 C1: tool-result videos ride the OpenRouter `video_url` shape in
+/// a dedicated "Attached video(s)" user turn, mirroring the image path.
+List<Map<String, dynamic>> _toolResultVideoParts(
+  ToolResultMessage toolMessage,
+) {
+  return [
+    for (final block in toolMessage.content)
+      if (block is VideoContent)
+        {
+          'type': 'video_url',
+          'video_url': {'url': 'data:${block.mimeType};base64,${block.data}'},
         },
   ];
 }

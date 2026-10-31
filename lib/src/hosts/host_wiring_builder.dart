@@ -231,12 +231,12 @@ hostCapabilityCatalog = Map.unmodifiable({
   ),
   HostCapability.onDeviceProviders: CapabilitySpec(
     capability: HostCapability.onDeviceProviders,
-    title: 'On-device providers (webllm/gemma)',
+    title: 'On-device providers (webllm/transformers.js)',
     note:
         'NOT CLI-wired (matrix ❌ on the VM); wired in the Flutter app '
         '(flutter_app/lib/main.dart).',
     requiredServices: {'onDeviceProviderFactory'},
-    surface: CapabilitySurface(tokens: {'webllm', 'gemma'}),
+    surface: CapabilitySurface(tokens: {'webllm', 'transformers_js'}),
   ),
   HostCapability.jsApps: CapabilitySpec(
     capability: HostCapability.jsApps,
@@ -298,7 +298,8 @@ hostCapabilityCatalog = Map.unmodifiable({
         'ride per-tool config presence inside the assembly — the row '
         'narrows only when a host profile declares it off.',
     cliWiringSites: [
-      'bin/fah.dart (visionConfig, transcribeConfig)',
+      'bin/fah.dart (visionConfig, transcribeConfig + the models.slots.* '
+          'resolvers of media_slot_configs.dart)',
       'lib/src/cli/agent_cli.dart',
     ],
     surface: CapabilitySurface(

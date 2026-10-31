@@ -29,9 +29,14 @@ AssistantMessage _assistant({
   );
 }
 
-/// A stream function whose first turn blocks mid-stream until [gate]
-/// completes — the simulated provider stream is in flight while the test
+/// A stream function whose first turn is PRODUCTIVE while it blocks: it
+/// streams its first bytes, then gates mid-stream until [gate] completes —
+/// the simulated provider stream is healthy and in flight while the test
 /// steers. Records whether the loop cancelled the in-flight token.
+///
+/// Issue #1923 AC1: a productive stream is never cancelled (the assertions
+/// below pin that); the ZERO-BYTE variant of this scenario is the
+/// steering-interrupt path covered by agent_loop_steering_yield_test.dart.
 class _BlockingStream {
   Completer<void> gate = Completer<void>();
   final Completer<void> started = Completer<void>();
@@ -49,6 +54,17 @@ class _BlockingStream {
     unawaited(() async {
       if (first) {
         started.complete();
+        // Stream the first bytes BEFORE gating: the steering interrupt
+        // watches this exact signal — bytes flowing means the stream is
+        // productive and must run to natural completion (issue #1923).
+        final empty = _assistant();
+        final partial = _assistant(content: const [TextContent(text: 'str')]);
+        events
+          ..push(StartEvent(partial: empty))
+          ..push(TextStartEvent(contentIndex: 0, partial: empty))
+          ..push(
+            TextDeltaEvent(contentIndex: 0, delta: 'str', partial: partial),
+          );
         await gate.future;
       }
       // A real provider turns a fired token into an aborted error event
@@ -96,6 +112,10 @@ void main() {
 
     final run = agent.prompt('weather?');
     await stream.started.future;
+    // Let the loop consume the first bytes: the stream is PRODUCTIVE and
+    // in flight (issue #1923: bytes flowing = the interrupt watch stands
+    // down).
+    await Future<void>.delayed(const Duration(milliseconds: 20));
     // Mid-stream: steer arrives while the provider call is in flight.
     agent.steer(UserMessage.text('actually, in Berlin'));
 

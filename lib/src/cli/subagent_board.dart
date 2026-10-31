@@ -112,8 +112,22 @@ SubagentStatusRecord subagentRecordOf(SubagentHandle handle, {String? task}) {
         ? null
         : DateTime.tryParse(handle.lastActivity),
     tokens: total > 0 ? total : null,
-    preview: previewSource.isEmpty ? null : previewSource,
+    preview: _previewWithPressure(previewSource, handle.contextPressureText),
   );
+}
+
+/// Issue #1924: the live ctx% rides the row (prefixed to the preview) so
+/// an over-window child is visible BEFORE it stalls — the cost cell is
+/// lifetime cumulative usage and must never be misread as context. An
+/// empty task renders the bare pressure marker so the basis is never
+/// lost; both-empty stays null (the row renders `–`).
+String? _previewWithPressure(String previewSource, String? pressure) {
+  final text = pressure == null
+      ? previewSource
+      : previewSource.isEmpty
+      ? '[$pressure]'
+      : '[$pressure] $previewSource';
+  return text.isEmpty ? null : text;
 }
 
 // ---------------------------------------------------------------------------

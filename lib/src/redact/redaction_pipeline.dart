@@ -6,7 +6,7 @@
 /// is idempotent and line-count preserving. Everything here is pure
 /// synchronous Dart — no `dart:io`, no Flutter.
 ///
-/// Marker format: `[REDACTED:<kindLabel>]`, e.g. `[REDACTED:GitHub Token]`.
+/// Marker format: `[REDACTED:<kindLabel>]`, e.g. `[REDACTED:GitHub-Token]`.
 library;
 
 import 'layer_asn1.dart';

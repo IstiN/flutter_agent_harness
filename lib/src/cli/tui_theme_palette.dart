@@ -333,6 +333,10 @@ final class TuiTheme {
     userMessageText: Style(foregroundRgb: RgbColor(205, 214, 244)), // Text
     toolSuccessBg: Style(backgroundRgb: RgbColor(35, 48, 40)),
     toolErrorBg: Style(backgroundRgb: RgbColor(58, 42, 48)),
+    // gh-1933 AC7: diffstat tokens in the Mocha green/red pair.
+    toolDiffAdded: Style(foregroundRgb: RgbColor(166, 227, 161)), // #A6E3A1
+    toolDiffRemoved: Style(foregroundRgb: RgbColor(243, 139, 168)), // #F38BA8
+    toolDiffContext: Style(foregroundRgb: RgbColor(108, 112, 134)), // Overlay0
   );
 
   /// Nord — cool arctic blues.
@@ -394,6 +398,10 @@ final class TuiTheme {
     // gh-671 readability: darkened so the #BF616A error rail clears 3:1
     // (was 2.87:1 on the old tint).
     toolErrorBg: Style(backgroundRgb: RgbColor(48, 36, 42)),
+    // gh-1933 AC7: diffstat tokens in the Nord aurora green/red pair.
+    toolDiffAdded: Style(foregroundRgb: RgbColor(163, 190, 140)), // #A3BE8C
+    toolDiffRemoved: Style(foregroundRgb: RgbColor(191, 97, 106)), // #BF616A
+    toolDiffContext: Style(foregroundRgb: RgbColor(160, 170, 192)), // #A0AAC0
   );
 
   /// Dracula — vivid purples and vibrant accents.
@@ -451,6 +459,10 @@ final class TuiTheme {
     userMessageText: Style(foregroundRgb: RgbColor(248, 248, 242)), // F8F8F2
     toolSuccessBg: Style(backgroundRgb: RgbColor(40, 56, 46)),
     toolErrorBg: Style(backgroundRgb: RgbColor(62, 40, 48)),
+    // gh-1933 AC7: diffstat tokens in the Dracula green/red pair.
+    toolDiffAdded: Style(foregroundRgb: RgbColor(80, 250, 123)), // #50FA7B
+    toolDiffRemoved: Style(foregroundRgb: RgbColor(255, 85, 85)), // #FF5555
+    toolDiffContext: Style(foregroundRgb: RgbColor(98, 114, 164)), // #6272A4
   );
 
   /// Alias for [catppuccin] — the default theme applied to all component styles.

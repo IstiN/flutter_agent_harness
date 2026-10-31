@@ -2,6 +2,9 @@
 // Use of this source code is governed by an MIT license that can be found
 // in the LICENSE file.
 
+import 'dart:convert';
+
+import 'package:crypto/crypto.dart';
 import 'package:fa_ui/fa_ui.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show Clipboard, ClipboardData;
@@ -25,6 +28,11 @@ enum AgentInviteScope { channel, network }
 /// set for clients that know nothing about fa_network (a self-hosted DAP
 /// hub + `fa dap`).
 enum AgentInviteFormat { link, cli, env, dap }
+
+/// The non-secret scoped-identity discriminator for an enrolled credential:
+/// the first 16 lowercase hex characters of SHA-256 over its UTF-8 secret.
+String dapAgentInstance(String clientSecret) =>
+    sha256.convert(utf8.encode(clientSecret)).toString().substring(0, 16);
 
 /// The AC-B17 minimal agent pairing (issue #955): the agent invite
 /// string for a channel or the whole network, as a link or a CLI
@@ -102,6 +110,7 @@ class _AddAgentDialogState extends State<AddAgentDialog> {
   static const hubUrlPrefix = 'DAP_HUB_URL=';
   static const clientSecretPrefix = 'DAP_CLIENT_SECRET=';
   static const agentNamePrefix = 'DAP_AGENT_NAME=';
+  static const agentInstancePrefix = 'DAP_AGENT_INSTANCE=';
 
   bool get _agentNameValid => _agentNamePattern.hasMatch(_agentNameCtrl.text);
 
@@ -247,11 +256,12 @@ class _AddAgentDialogState extends State<AddAgentDialog> {
   /// `FA_CHANNEL_URL='…' FA_AGENT_NAME=… fa` (reserved for the CLI
   /// network mode). The DAP format is for pure-DAP clients that know
   /// nothing about fa_network: the DEPLOYED agent-enrollment backend
-  /// mints a one-time, name-bound credential (`POST
-  /// /api/networks/{id}/agents/enroll`, owner/admin only) — the payload
-  /// is the DAP env launch line built from THAT response
-  /// (`DAP_HUB_URL` / `DAP_CLIENT_SECRET` / `DAP_AGENT_NAME`). The hub
-  /// master secret is banned from this UI: enrollment replaces it.
+  /// creates an additional one-time, name-bound credential (`POST
+  /// /api/networks/{id}/agents/enrollments`, owner/admin only) — the payload
+  /// is the DAP env launch line built from THAT response (`DAP_HUB_URL` /
+  /// `DAP_CLIENT_SECRET` / `DAP_AGENT_NAME` / `DAP_AGENT_INSTANCE`). The
+  /// instance keeps simultaneous same-name agents on distinct identities.
+  /// The hub master secret is banned from this UI: enrollment replaces it.
   String? get _payload {
     final invite = _invite;
     if (invite == null) return null;
@@ -285,24 +295,27 @@ class _AddAgentDialogState extends State<AddAgentDialog> {
                 "fa dap import '$channelInvite'",
             ];
       final import = imports.isEmpty ? '' : "${imports.join(' && ')} && ";
+      final instance = dapAgentInstance(enrollment.clientSecret);
       return '$import$hubUrlPrefix${enrollment.hubUrl} '
           "$clientSecretPrefix'${enrollment.clientSecret}' "
-          '$agentNamePrefix${enrollment.name} fa';
+          '$agentNamePrefix${enrollment.name} '
+          '$agentInstancePrefix$instance fa';
     }
     if (_scope == AgentInviteScope.network) return invite;
     return "fa dap import '$invite'";
   }
 
-  /// Enrolls the typed agent name through the session manager (management
-  /// route — owner/admin JWT required). The one-time credential lands in
-  /// [_enrollment]; failures surface inline as [_enrollError].
+  /// Creates an independent credential for the typed agent name through the
+  /// session manager (owner/admin JWT required). Existing same-name agents
+  /// keep their credentials. The one-time secret lands in [_enrollment];
+  /// failures surface inline as [_enrollError].
   Future<void> _enroll() async {
     setState(() {
       _enrolling = true;
       _enrollError = null;
     });
     try {
-      final enrollment = await widget.manager.enrollAgent(
+      final enrollment = await widget.manager.createAgentCredential(
         widget.networkId,
         _agentNameCtrl.text,
       );
@@ -391,55 +404,141 @@ class _AddAgentDialogState extends State<AddAgentDialog> {
       ? colors.dim
       : colors.error;
 
+  /// Compact windows cannot fit even the two scope segments without
+  /// shrinking their labels to a few characters. Wrapping ChoiceChips keep
+  /// the same single-select semantics at their intrinsic, readable widths.
+  bool get _useCompactLayout => MediaQuery.sizeOf(context).width < 600;
+
   List<Widget> _buildScopeSelector(AppLocalizations l10n) => [
-    SegmentedButton<AgentInviteScope>(
-      key: const ValueKey('inviteScope'),
-      segments: [
-        ButtonSegment(
-          value: AgentInviteScope.channel,
-          icon: const Icon(Icons.tag, size: 16),
-          label: Text(l10n.networkAddAgentScopeChannel),
-        ),
-        ButtonSegment(
-          value: AgentInviteScope.network,
-          icon: const Icon(Icons.hub, size: 16),
-          label: Text(l10n.networkAddAgentScopeNetwork),
-        ),
-      ],
-      selected: {_scope},
-      onSelectionChanged: (s) => setState(() => _scope = s.first),
-    ),
+    if (_useCompactLayout)
+      Wrap(
+        key: const ValueKey('inviteScope'),
+        spacing: 8,
+        runSpacing: 8,
+        children: [
+          _scopeChoice(
+            value: AgentInviteScope.channel,
+            icon: Icons.tag,
+            label: l10n.networkAddAgentScopeChannel,
+          ),
+          _scopeChoice(
+            value: AgentInviteScope.network,
+            icon: Icons.hub,
+            label: l10n.networkAddAgentScopeNetwork,
+          ),
+        ],
+      )
+    else
+      SegmentedButton<AgentInviteScope>(
+        key: const ValueKey('inviteScope'),
+        segments: [
+          ButtonSegment(
+            value: AgentInviteScope.channel,
+            icon: const Icon(Icons.tag, size: 16),
+            label: Text(l10n.networkAddAgentScopeChannel),
+          ),
+          ButtonSegment(
+            value: AgentInviteScope.network,
+            icon: const Icon(Icons.hub, size: 16),
+            label: Text(l10n.networkAddAgentScopeNetwork),
+          ),
+        ],
+        selected: {_scope},
+        onSelectionChanged: (s) => setState(() => _scope = s.first),
+      ),
     const SizedBox(height: 8),
   ];
 
-  Widget _buildFormatSelector(AppLocalizations l10n) =>
-      SegmentedButton<AgentInviteFormat>(
+  ChoiceChip _scopeChoice({
+    required AgentInviteScope value,
+    required IconData icon,
+    required String label,
+  }) => ChoiceChip(
+    key: ValueKey('inviteScope:${value.name}'),
+    avatar: Icon(icon, size: 16),
+    label: Text(label),
+    selected: _scope == value,
+    showCheckmark: false,
+    padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+    onSelected: (selected) {
+      if (selected) setState(() => _scope = value);
+    },
+  );
+
+  Widget _buildFormatSelector(AppLocalizations l10n) {
+    if (_useCompactLayout) {
+      return Wrap(
         key: const ValueKey('inviteFormat'),
-        segments: [
-          ButtonSegment(
+        spacing: 8,
+        runSpacing: 8,
+        children: [
+          _formatChoice(
             value: AgentInviteFormat.dap,
-            icon: const Icon(Icons.dns, size: 16),
-            label: Text(l10n.networkAddAgentFormatDap),
+            icon: Icons.dns,
+            label: l10n.networkAddAgentFormatDap,
           ),
-          ButtonSegment(
+          _formatChoice(
             value: AgentInviteFormat.link,
-            icon: const Icon(Icons.link, size: 16),
-            label: Text(l10n.networkAddAgentFormatLink),
+            icon: Icons.link,
+            label: l10n.networkAddAgentFormatLink,
           ),
-          ButtonSegment(
+          _formatChoice(
             value: AgentInviteFormat.cli,
-            icon: const Icon(Icons.terminal, size: 16),
-            label: Text(l10n.networkAddAgentFormatCli),
+            icon: Icons.terminal,
+            label: l10n.networkAddAgentFormatCli,
           ),
-          ButtonSegment(
+          _formatChoice(
             value: AgentInviteFormat.env,
-            icon: const Icon(Icons.settings_ethernet, size: 16),
-            label: Text(l10n.networkAddAgentFormatEnv),
+            icon: Icons.settings_ethernet,
+            label: l10n.networkAddAgentFormatEnv,
           ),
         ],
-        selected: {_format},
-        onSelectionChanged: (s) => setState(() => _format = s.first),
       );
+    }
+    return SegmentedButton<AgentInviteFormat>(
+      key: const ValueKey('inviteFormat'),
+      segments: [
+        ButtonSegment(
+          value: AgentInviteFormat.dap,
+          icon: const Icon(Icons.dns, size: 16),
+          label: Text(l10n.networkAddAgentFormatDap),
+        ),
+        ButtonSegment(
+          value: AgentInviteFormat.link,
+          icon: const Icon(Icons.link, size: 16),
+          label: Text(l10n.networkAddAgentFormatLink),
+        ),
+        ButtonSegment(
+          value: AgentInviteFormat.cli,
+          icon: const Icon(Icons.terminal, size: 16),
+          label: Text(l10n.networkAddAgentFormatCli),
+        ),
+        ButtonSegment(
+          value: AgentInviteFormat.env,
+          icon: const Icon(Icons.settings_ethernet, size: 16),
+          label: Text(l10n.networkAddAgentFormatEnv),
+        ),
+      ],
+      selected: {_format},
+      onSelectionChanged: (s) => setState(() => _format = s.first),
+    );
+  }
+
+  ChoiceChip _formatChoice({
+    required AgentInviteFormat value,
+    required IconData icon,
+    required String label,
+  }) => ChoiceChip(
+    key: ValueKey('inviteFormat:${value.name}'),
+    avatar: Icon(icon, size: 16),
+    label: Text(label),
+    selected: _format == value,
+    showCheckmark: false,
+    padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+    onSelected: (selected) {
+      if (selected) setState(() => _format = value);
+    },
+  );
 
   List<Widget> _buildNoPasswordNote(FahColors colors, AppLocalizations l10n) =>
       [
@@ -537,46 +636,59 @@ class _AddAgentDialogState extends State<AddAgentDialog> {
       )
     else ...[
       ..._enrollForm(colors, l10n),
-      // The one-time credential panel — the secret is shown
-      // here, once; re-enrolling the same name rotates it.
+      // The one-time credential panel — another enrollment adds an
+      // independent identity instead of rotating same-name credentials.
       if (_enrollment != null) ..._enrollmentRows(l10n),
     ],
   ];
 
-  List<Widget> _enrollForm(FahColors colors, AppLocalizations l10n) => [
-    Row(
-      children: [
-        Expanded(
-          child: TextField(
-            key: const ValueKey('agentNameField'),
-            controller: _agentNameCtrl,
-            onChanged: (_) => setState(() {}),
-            style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
-            decoration: InputDecoration(
-              isDense: true,
-              errorText: _agentNameValid
-                  ? null
-                  : l10n.networkAddAgentNameInvalid,
-            ),
+  List<Widget> _enrollForm(FahColors colors, AppLocalizations l10n) {
+    final nameField = TextField(
+      key: const ValueKey('agentNameField'),
+      controller: _agentNameCtrl,
+      onChanged: (_) => setState(() {}),
+      style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+      decoration: InputDecoration(
+        isDense: true,
+        errorText: _agentNameValid ? null : l10n.networkAddAgentNameInvalid,
+      ),
+    );
+    final enrollButton = FilledButton(
+      key: const ValueKey('enrollAgent'),
+      onPressed: _agentNameValid && !_enrolling ? _enroll : null,
+      child: Text(l10n.networkAddAgentEnroll),
+    );
+    return [
+      if (_useCompactLayout)
+        SizedBox(
+          width: double.infinity,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              nameField,
+              const SizedBox(height: 8),
+              SizedBox(height: 48, child: enrollButton),
+            ],
           ),
+        )
+      else
+        Row(
+          children: [
+            Expanded(child: nameField),
+            const SizedBox(width: 8),
+            enrollButton,
+          ],
         ),
-        const SizedBox(width: 8),
-        FilledButton(
-          key: const ValueKey('enrollAgent'),
-          onPressed: _agentNameValid && !_enrolling ? _enroll : null,
-          child: Text(l10n.networkAddAgentEnroll),
+      if (_enrollError != null) ...[
+        const SizedBox(height: 8),
+        Text(
+          _enrollError!,
+          key: const ValueKey('enrollError'),
+          style: TextStyle(color: colors.error, fontSize: 12),
         ),
       ],
-    ),
-    if (_enrollError != null) ...[
-      const SizedBox(height: 8),
-      Text(
-        _enrollError!,
-        key: const ValueKey('enrollError'),
-        style: TextStyle(color: colors.error, fontSize: 12),
-      ),
-    ],
-  ];
+    ];
+  }
 
   List<Widget> _enrollmentRows(AppLocalizations l10n) => [
     const SizedBox(height: 8),
@@ -604,6 +716,14 @@ class _AddAgentDialogState extends State<AddAgentDialog> {
       keyName: 'DAP_AGENT_NAME',
       display: '$agentNamePrefix${_enrollment!.name}',
       copyText: '$agentNamePrefix${_enrollment!.name}',
+    ),
+    _envCopyRow(
+      context,
+      keyName: 'DAP_AGENT_INSTANCE',
+      display:
+          '$agentInstancePrefix${dapAgentInstance(_enrollment!.clientSecret)}',
+      copyText:
+          '$agentInstancePrefix${dapAgentInstance(_enrollment!.clientSecret)}',
     ),
     // The network scope: the identity alone cannot read or
     // post — hand over every channel invite this wallet can

@@ -228,4 +228,78 @@ void main() {
       );
     });
   });
+
+  group('isSameHubDeployment', () {
+    const sessionBase = 'https://network.fa1.dev';
+
+    test('same host matches across http(s) and ws(s) schemes', () {
+      expect(
+        isSameHubDeployment(
+          Uri.parse('wss://network.fa1.dev/ws'),
+          Uri.parse(sessionBase),
+        ),
+        isTrue,
+      );
+    });
+
+    test('the hub. alias of the session host matches', () {
+      // Production invites carry wss://hub.fa1.dev/ws
+      // (AddAgentDialog.hubUrl) while the session's REST base is
+      // https://network.fa1.dev — one deployment, two names.
+      expect(
+        isSameHubDeployment(
+          Uri.parse('wss://hub.fa1.dev/ws'),
+          Uri.parse(sessionBase),
+        ),
+        isTrue,
+      );
+    });
+
+    test('the reverse alias matches too', () {
+      expect(
+        isSameHubDeployment(
+          Uri.parse('wss://network.fa1.dev/ws'),
+          Uri.parse('https://hub.fa1.dev'),
+        ),
+        isTrue,
+      );
+    });
+
+    test('a foreign hub is rejected', () {
+      expect(
+        isSameHubDeployment(
+          Uri.parse('wss://hub.other-hub.example/ws'),
+          Uri.parse(sessionBase),
+        ),
+        isFalse,
+      );
+      expect(
+        isSameHubDeployment(
+          Uri.parse('wss://hub.staging.fa1.dev/ws'),
+          Uri.parse(sessionBase),
+        ),
+        isFalse,
+      );
+    });
+
+    test('a different effective port is rejected', () {
+      expect(
+        isSameHubDeployment(
+          Uri.parse('wss://hub.fa1.dev:8443/ws'),
+          Uri.parse(sessionBase),
+        ),
+        isFalse,
+      );
+    });
+
+    test('an insecure ws scheme against an https session is rejected', () {
+      expect(
+        isSameHubDeployment(
+          Uri.parse('ws://network.fa1.dev/ws'),
+          Uri.parse(sessionBase),
+        ),
+        isFalse,
+      );
+    });
+  });
 }

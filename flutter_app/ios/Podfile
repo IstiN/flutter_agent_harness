@@ -1,5 +1,6 @@
 # Uncomment this line to define a global platform for this project
-# iOS 16 is required by flutter_gemma (MediaPipe GenAI / LiteRT-LM engines).
+# iOS 16 is the app's floor (kept after the on-device Gemma removal —
+# gh-2004; a pre-gemma floor revert is a deliberate follow-up card).
 platform :ios, '16.0'
 
 # CocoaPods analytics sends network stats synchronously affecting flutter build latency.
@@ -29,8 +30,9 @@ require File.expand_path(File.join('packages', 'flutter_tools', 'bin', 'podhelpe
 flutter_ios_podfile_setup
 
 target 'Runner' do
-  # flutter_gemma requires statically linked pods (its LiteRT-LM frameworks
-  # are bundled via Native Assets, not as dynamic pod frameworks).
+  # Statically linked pods: the validated configuration for this app's
+  # pods (kept after the on-device Gemma removal — gh-2004; its LiteRT-LM
+  # native-asset frameworks motivated the original switch).
   use_frameworks! :linkage => :static
 
   flutter_install_all_ios_pods File.dirname(File.realpath(__FILE__))
@@ -144,7 +146,7 @@ post_install do |installer|
   # to link a missing slice.
   exclude_x86_64_sim = { 'EXCLUDED_ARCHS[sdk=iphonesimulator*]' => 'x86_64' }
 
-  # iOS 16 floor everywhere (pods + app target) for flutter_gemma.
+  # iOS 16 floor everywhere (pods + app target).
   # Project-level configs alone are not enough: pod TARGET-level build
   # settings (declared by podspecs, e.g. Firebase's 15.0) override them, and
   # newer Swift toolchains error when a 15.0 target imports a module built

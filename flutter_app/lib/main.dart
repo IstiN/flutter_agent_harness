@@ -29,7 +29,6 @@ import 'package:fa/ui/widgets/fa_mark.dart';
 import 'package:fa/sandbox/env_factory.dart';
 import 'package:fa/services/analytics.dart';
 import 'package:fa/services/flutter_session_manager.dart';
-import 'package:fa/gemma/gemma_types.dart';
 import 'package:fa/services/last_connection.dart';
 import 'package:fa/l10n/app_localizations.dart';
 import 'package:fa/l10n/l10n_ext.dart';
@@ -164,7 +163,6 @@ class MyApp extends StatelessWidget {
     this.chatTextStore,
     this.imagePreviewStore,
     this.webLlmEngine,
-    this.gemmaEngine,
     this.transformersJsEngine,
     this.analytics,
     this.networkMode,
@@ -227,7 +225,6 @@ class MyApp extends StatelessWidget {
   /// Engine overrides for the on-device providers (tests); default to the
   /// platform singletons.
   final WebLlmEngineApi? webLlmEngine;
-  final GemmaEngineApi? gemmaEngine;
   final TransformersJsEngineApi? transformersJsEngine;
 
   /// Firebase Analytics instance; null when Firebase is not initialized
@@ -319,7 +316,6 @@ class MyApp extends StatelessWidget {
         sessionKeysStore: sessionKeysStore,
         taskModelsStore: taskModelsStore,
         webLlmEngine: webLlmEngine,
-        gemmaEngine: gemmaEngine,
         transformersJsEngine: transformersJsEngine,
         networkMode: networkMode,
         networkSessions: networkSessions,
@@ -524,7 +520,6 @@ class BootstrapScreen extends StatefulWidget {
     this.sessionKeysStore,
     this.taskModelsStore,
     this.webLlmEngine,
-    this.gemmaEngine,
     this.transformersJsEngine,
     this.networkMode,
     this.networkSessions,
@@ -557,7 +552,6 @@ class BootstrapScreen extends StatefulWidget {
 
   /// Engine overrides for the on-device providers (tests).
   final WebLlmEngineApi? webLlmEngine;
-  final GemmaEngineApi? gemmaEngine;
   final TransformersJsEngineApi? transformersJsEngine;
 
   /// Network mode (issue #955), forwarded to [faHomeScreen].
@@ -851,7 +845,6 @@ class _BootstrapScreenState extends State<BootstrapScreen> {
       lastConnectionStore: widget.lastConnectionStore,
       sessionKeysStore: widget.sessionKeysStore,
       webLlmEngine: widget.webLlmEngine,
-      gemmaEngine: widget.gemmaEngine,
       transformersJsEngine: widget.transformersJsEngine,
       networkMode: widget.networkMode,
       networkSessions: widget.networkSessions,
@@ -1108,7 +1101,6 @@ class SetupScreen extends StatelessWidget {
     this.lastConnectionStore,
     this.sessionKeysStore,
     this.webLlmEngine,
-    this.gemmaEngine,
     this.transformersJsEngine,
     this.isWeb,
     this.networkMode,
@@ -1132,7 +1124,6 @@ class SetupScreen extends StatelessWidget {
   /// Engine overrides for the on-device providers (tests); default to the
   /// platform singletons.
   final WebLlmEngineApi? webLlmEngine;
-  final GemmaEngineApi? gemmaEngine;
   final TransformersJsEngineApi? transformersJsEngine;
 
   /// Overrides `kIsWeb` for tests that need to exercise the web provider
@@ -1151,7 +1142,6 @@ class SetupScreen extends StatelessWidget {
     // appears in the settings list from now on.
     const onDeviceKinds = {
       webLlmProviderKind,
-      gemmaProviderKind,
       transformersJsProviderKind,
     };
     if (onDeviceKinds.contains(config.providerKind)) {
@@ -1248,7 +1238,6 @@ class SetupScreen extends StatelessWidget {
                 DownloadedModelsQuickStart(
                   onConnect: (config) => _connect(context, config),
                   webLlmEngine: webLlmEngine,
-                  gemmaEngine: gemmaEngine,
                   transformersJsEngine: transformersJsEngine,
                 ),
                 AgentSettingsForm(
@@ -1256,7 +1245,6 @@ class SetupScreen extends StatelessWidget {
                   initialConnection: lastConnectionStore?.connection,
                   keysStore: sessionKeysStore,
                   webLlmEngine: webLlmEngine,
-                  gemmaEngine: gemmaEngine,
                   transformersJsEngine: transformersJsEngine,
                   isWeb: isWeb,
                   onConnect: (config) => _connect(context, config),

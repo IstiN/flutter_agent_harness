@@ -2,12 +2,13 @@
 // Use of this source code is governed by a MIT license that can be found
 // in the LICENSE file.
 
+import 'dart:async' show unawaited;
 import 'dart:convert';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
 import 'package:fa/services/agent_service.dart';
-import 'package:fa/gemma/gemma_types.dart';
+import 'package:fa/services/ondevice_config_store.dart';
 import 'package:fa/transformers_js/transformers_js_types.dart';
 import 'package:fa/webllm/webllm_types.dart';
 
@@ -26,17 +27,17 @@ final class LastConnection {
     required this.modelId,
     this.baseUrl,
     this.webllmPresetId,
-    this.gemmaPresetId,
     this.transformersJsPresetId,
   });
 
-  /// Restores a record from its JSON form (see [toJson]).
+  /// Restores a record from its JSON form (see [toJson]). Unknown fields
+  /// (e.g. the removed gemma stacks's `gemmaPresetId`) are skipped, never
+  /// a parse error.
   factory LastConnection.fromJson(Map<String, dynamic> json) => LastConnection(
     providerKind: json['providerKind'] as String,
     modelId: json['modelId'] as String,
     baseUrl: json['baseUrl'] as String?,
     webllmPresetId: json['webllmPresetId'] as String?,
-    gemmaPresetId: json['gemmaPresetId'] as String?,
     transformersJsPresetId: json['transformersJsPresetId'] as String?,
   );
 
@@ -49,16 +50,13 @@ final class LastConnection {
     webllmPresetId: config.providerKind == webLlmProviderKind
         ? config.modelId
         : null,
-    gemmaPresetId: config.providerKind == gemmaProviderKind
-        ? config.modelId
-        : null,
     transformersJsPresetId: config.providerKind == transformersJsProviderKind
         ? config.modelId
         : null,
   );
 
   /// [AgentConfig.providerKind] of the connection (`openai-completions`,
-  /// `webllm`, `gemma`, `transformers_js`, ...).
+  /// `webllm`, `transformers_js`, ...).
   final String providerKind;
 
   /// Model id passed to the provider; for on-device kinds this is the preset
@@ -71,9 +69,6 @@ final class LastConnection {
   /// Selected WebLLM preset (only for [webLlmProviderKind]).
   final String? webllmPresetId;
 
-  /// Selected Gemma preset (only for [gemmaProviderKind]).
-  final String? gemmaPresetId;
-
   /// Selected transformers.js preset (only for [transformersJsProviderKind]).
   final String? transformersJsPresetId;
 
@@ -84,7 +79,6 @@ final class LastConnection {
     'modelId': modelId,
     if (baseUrl != null) 'baseUrl': baseUrl,
     if (webllmPresetId != null) 'webllmPresetId': webllmPresetId,
-    if (gemmaPresetId != null) 'gemmaPresetId': gemmaPresetId,
     if (transformersJsPresetId != null)
       'transformersJsPresetId': transformersJsPresetId,
   };
@@ -158,9 +152,28 @@ class LastConnectionStore {
       if (decoded['version'] != _version) return;
       final connection = decoded['connection'];
       if (connection is! Map) return;
-      _connection = LastConnection.fromJson(connection.cast<String, dynamic>());
+      final restored = LastConnection.fromJson(
+        connection.cast<String, dynamic>(),
+      );
+      if (_isRemovedKind(restored.providerKind)) {
+        // gh-2004: the gemma stack is gone — a persisted gemma connection
+        // resets SILENTLY to the default (no last connection), no notice,
+        // no migration. The stale file is dropped best-effort so the next
+        // save starts clean.
+        _connection = null;
+        unawaited(env.remove('${env.cwd}/$fileName', force: true));
+        return;
+      }
+      _connection = restored;
     } on Object {
       // Corrupt or incompatible file → empty store, never crash boot.
     }
   }
 }
+
+/// Whether [providerKind] names a stack gh-2004 removed; records carrying
+/// it reset on load. The kind set lives in [removedOnDeviceKinds]
+/// (ondevice_config_store.dart) — the single shared source for both reset
+/// codecs (gh-2004 review).
+bool _isRemovedKind(String providerKind) =>
+    removedOnDeviceKinds.contains(providerKind);

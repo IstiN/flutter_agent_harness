@@ -410,8 +410,16 @@ final class HubPluginHost implements FahPlugin {
         _pluginIo?.writeln('[hub] $warning');
       }
     }
-    if (preferred?.hubClientSecret != null) {
-      await _tryScopedBootConnect(preferred!.hubUrl);
+    final hasScopedCredential =
+        (preferred?.hubClientSecret ?? '').isNotEmpty ||
+        (_environment['DAP_CLIENT_SECRET'] ?? '').isNotEmpty;
+    if (hasScopedCredential) {
+      await _tryScopedBootConnect(
+        preferred?.hubUrl ??
+            _environment['DAP_HUB_URL'] ??
+            scoped?.defaultHubUrl ??
+            hub.defaultDapUrl,
+      );
     } else {
       await _startHub();
     }
@@ -424,13 +432,18 @@ final class HubPluginHost implements FahPlugin {
     // (process env only, ~/.dap/config.json untouched), with the enrolled
     // name-bound credential when one is stored.
     _environment['DAP_HUB_URL'] = preferred.hubUrl;
-    _applyScopedIdentity(preferred.hubClientSecret, preferred.agentName);
+    _applyScopedIdentity(
+      preferred.hubClientSecret,
+      preferred.agentName,
+      preferred.agentInstance,
+    );
     _connectedHubUrl = preferred.hubUrl;
   }
 
-  void _applyScopedIdentity(String? secret, String? name) {
+  void _applyScopedIdentity(String? secret, String? name, String? instance) {
     _setEnvironmentValue('DAP_CLIENT_SECRET', secret);
     _setEnvironmentValue('DAP_AGENT_NAME', name);
+    _setEnvironmentValue('DAP_AGENT_INSTANCE', instance, clearWhenEmpty: true);
     // A join-bundle / boot credential just entered the process env —
     // mask it like the startup-registered DAP env values (AC8/AC14).
     if (secret != null && secret.isNotEmpty) {
@@ -442,8 +455,17 @@ final class HubPluginHost implements FahPlugin {
     }
   }
 
-  void _setEnvironmentValue(String key, String? value) {
-    if (value == null || value.isEmpty) return;
+  void _setEnvironmentValue(
+    String key,
+    String? value, {
+    bool clearWhenEmpty = false,
+  }) {
+    if (value == null || value.isEmpty) {
+      if (clearWhenEmpty && _environment.containsKey(key)) {
+        _environment.remove(key);
+      }
+      return;
+    }
     _environment[key] = value;
   }
 
@@ -569,7 +591,11 @@ final class HubPluginHost implements FahPlugin {
     // frame auto-keygens a pair nobody can read.
     final throttled = _runtimeDialThrottled();
     if (!throttled) _markChannelDialed();
-    _applyScopedIdentity(preferred.hubClientSecret, preferred.agentName);
+    _applyScopedIdentity(
+      preferred.hubClientSecret,
+      preferred.agentName,
+      preferred.agentInstance,
+    );
     if (!throttled) await _ensureChannelConnection(preferred.hubUrl);
   }
 
@@ -656,6 +682,18 @@ final class HubPluginHost implements FahPlugin {
     _runtimeConnectNotBefore = DateTime.now().add(const Duration(seconds: 10));
   }
 
+  String _scopedIdentityPath(
+    hub.HubConfig liveConfig,
+    hub.DapSettings settings,
+  ) => scopedIdentityKeyPath(
+    defaultKeyPath: settings.keyPath,
+    explicitKeyPath:
+        liveConfig.keyPath != null ||
+        (_environment[hub.HubConfig.envKeyPath] ?? '').isNotEmpty,
+    projectCwd: _pluginEnv?.cwd ?? _home ?? '',
+    instanceId: _environment['DAP_AGENT_INSTANCE'],
+  );
+
   /// Dials [normalized] with the process-local enrolled credential on a
   /// client THIS host owns (the vendored plugin's client keeps the
   /// secret it was constructed with — it can never learn a new one).
@@ -685,13 +723,7 @@ final class HubPluginHost implements FahPlugin {
     final client = hub.HubClient(
       config: hub.HubConfig(url: normalized, name: settings.name),
       identity: await hub.HubIdentity.load(
-        scopedIdentityKeyPath(
-          defaultKeyPath: settings.keyPath,
-          explicitKeyPath:
-              liveConfig.keyPath != null ||
-              (_environment[hub.HubConfig.envKeyPath] ?? '').isNotEmpty,
-          projectCwd: _pluginEnv?.cwd ?? _home ?? '',
-        ),
+        _scopedIdentityPath(liveConfig, settings),
       ),
       channelStore: store,
       clientSecret: (scopedSecret.isEmpty ? null : scopedSecret),
@@ -866,6 +898,7 @@ final class HubPluginHost implements FahPlugin {
       invite,
       scope,
       agentName: bundle.agentName,
+      agentInstance: bundle.agentInstance,
       hubClientSecret: bundle.clientSecret,
     );
     await _connectJoinedChannel(context, bundle);
@@ -889,9 +922,14 @@ final class HubPluginHost implements FahPlugin {
     DapJoinBundle bundle,
   ) async {
     // Process-local enrolled credential: the vendored client resolves
-    // DAP_CLIENT_SECRET / DAP_AGENT_NAME at start, so the (re)start
-    // below authenticates with the name-bound secret. Never printed.
-    _applyScopedIdentity(bundle.clientSecret, bundle.agentName);
+    // DAP_CLIENT_SECRET / DAP_AGENT_NAME at start, while the scoped loader
+    // also reads DAP_AGENT_INSTANCE, so the (re)start below authenticates
+    // with the name-bound secret and independent identity. Never printed.
+    _applyScopedIdentity(
+      bundle.clientSecret,
+      bundle.agentName,
+      bundle.agentInstance,
+    );
     // AC1/AC9: dial the INVITE hub live (never persisting it over the
     // configured default); a down hub leaves the membership stored and
     // the reconnect path picks it up.
@@ -1373,7 +1411,7 @@ final class HubPluginHost implements FahPlugin {
   Future<void> _startHub() {
     final inFlight = _starting;
     if (inFlight != null) return inFlight;
-    final future = _hub.start();
+    final future = _startHubWithConfiguredIdentity();
     _starting = future;
     // The tracked reference consumes the outcome: a caller that timed out
     // (`start().timeout(8s)`) drops its own subscription, and a later
@@ -1385,6 +1423,32 @@ final class HubPluginHost implements FahPlugin {
     });
     unawaited(tracked.then((_) {}, onError: (_) {}));
     return future;
+  }
+
+  /// The vendored start path also honors an explicitly supplied instance.
+  /// Without this, a direct/headless env boot bypassed [_connectScoped]
+  /// and loaded the legacy name-derived key, recreating same-name
+  /// collisions before any scoped membership had been persisted.
+  Future<void> _startHubWithConfiguredIdentity() async {
+    final instance = _environment['DAP_AGENT_INSTANCE'];
+    if (!_dapEnabled || instance == null || instance.isEmpty) {
+      await _hub.start();
+      return;
+    }
+    final liveConfig = hub.HubConfig.fromMap(
+      const <String, dynamic>{},
+      _environment,
+    );
+    final settings = hub.resolveDapSettings(
+      config: liveConfig,
+      environment: _environment,
+      home: _home,
+    );
+    await _hub.start(
+      identity: await hub.HubIdentity.load(
+        _scopedIdentityPath(liveConfig, settings),
+      ),
+    );
   }
 
   /// The one-line status, friendly when DAP is disabled.

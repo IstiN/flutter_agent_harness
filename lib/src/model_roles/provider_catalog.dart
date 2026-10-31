@@ -7,6 +7,8 @@
 /// from CLI flags), so provider defaults live in exactly one place.
 library;
 
+import 'package:http/http.dart' as http;
+
 import '../agent/agent_loop.dart';
 import '../cancel_token.dart';
 import '../context.dart';
@@ -504,6 +506,7 @@ Model buildCatalogModel(
   List<String>? input,
   String? thinkingLevel,
   String? authHeader,
+  String? projectHeader,
   Duration? connectTimeout,
   Duration? streamIdleTimeout,
   String? timeoutScopeLabel,
@@ -539,6 +542,12 @@ Model buildCatalogModel(
     contextWindow: caps.contextWindow,
     maxTokens: caps.maxTokens,
     authHeader: authHeader,
+    // The CodeMie project the model bills (issue #1941): the selected
+    // project rides EVERY request — a header-less model falls back to the
+    // user's DEFAULT project on the backend.
+    headers: projectHeader == null
+        ? null
+        : {codeMieProjectHeader: projectHeader},
     // The omit-compat flag rides the model compat (AC7); every other
     // compat field stays null so the adapter's auto-detection applies.
     compat: caps.omitMaxOutputTokens
@@ -670,6 +679,7 @@ Model buildCliDefaultModel(
   List<String>? input,
   String? thinkingLevel,
   String? authHeader,
+  String? projectHeader,
   int? contextWindow,
   int? maxTokens,
 }) {
@@ -724,6 +734,12 @@ Model buildCliDefaultModel(
     // Folder-state restores adopt the matching saved entry's authHeader
     // (issue #964) — a restored gateway endpoint without its header 401s.
     authHeader: authHeader,
+    // Restores adopt the matching saved entry's CodeMie project (issue
+    // #1941) — a restored CodeMie endpoint without its project header
+    // bills the user's DEFAULT project, not the selected one.
+    headers: projectHeader == null
+        ? null
+        : {codeMieProjectHeader: projectHeader},
     // The omit-compat flag rides the model compat (AC7, gh-1426).
     compat: caps.omitMaxOutputTokens
         ? const OpenAICompletionsCompat(omitMaxOutputTokens: true)
@@ -755,6 +771,7 @@ StreamFunction providerStreamFunction(
   String? dialApiVersion,
   bool? dialCacheMarkersSupported,
   ChatGptCredentialsPersist? onChatGptCredentialsRefreshed,
+  http.Client? httpClient,
 }) {
   if (kind != 'openai-completions' &&
       kind != 'anthropic' &&
@@ -776,6 +793,7 @@ StreamFunction providerStreamFunction(
     dialApiVersion,
     dialCacheMarkersSupported,
     onChatGptCredentialsRefreshed,
+    httpClient,
   );
   // Every provider call (chat turns, compaction summaries, memory
   // extraction, media) rides the transient-network retry: a Wi-Fi switch
@@ -808,6 +826,7 @@ final class _CatalogStreamFunction {
     this._dialApiVersion,
     this._dialCacheMarkersSupported,
     this._onChatGptCredentialsRefreshed,
+    this._httpClient,
   );
 
   final String _kind;
@@ -817,6 +836,11 @@ final class _CatalogStreamFunction {
   final String? _dialApiVersion;
   final bool? _dialCacheMarkersSupported;
   final ChatGptCredentialsPersist? _onChatGptCredentialsRefreshed;
+
+  /// The pre-built HTTP client a bound provider runs on (issue #1921 —
+  /// the per-provider proxy). Null keeps the adapters on the shared
+  /// direct client, byte-identical to the unbound behavior.
+  final http.Client? _httpClient;
 
   /// Route table: provider kind → adapter builder (gh-1713). The four
   /// OpenAI-compatible kinds share one builder; each builder keeps CC 1 —
@@ -873,6 +897,7 @@ final class _CatalogStreamFunction {
       sessionId: sessionId,
       cacheRetention: cacheRetention,
     ),
+    self._httpClient,
   );
 
   static AssistantMessageEventStream _streamAnthropic(
@@ -890,6 +915,7 @@ final class _CatalogStreamFunction {
       cancelToken: cancelToken,
       cacheRetention: cacheRetention,
     ),
+    self._httpClient,
   );
 
   static AssistantMessageEventStream _streamGoogle(
@@ -903,6 +929,7 @@ final class _CatalogStreamFunction {
     model,
     context,
     GoogleOptions(apiKey: self._apiKey, cancelToken: cancelToken),
+    self._httpClient,
   );
 
   static AssistantMessageEventStream _streamDial(
@@ -923,6 +950,7 @@ final class _CatalogStreamFunction {
       cacheRetention: cacheRetention,
       cacheMarkersSupported: self._dialCacheMarkersSupported,
     ),
+    self._httpClient,
   );
 
   static AssistantMessageEventStream _streamCopilot(
@@ -941,6 +969,7 @@ final class _CatalogStreamFunction {
       sessionId: sessionId,
       cacheRetention: cacheRetention,
     ),
+    self._httpClient,
   );
 
   static AssistantMessageEventStream _streamChatGptCodex(
@@ -956,5 +985,6 @@ final class _CatalogStreamFunction {
     credentials: self._apiKey,
     onCredentialsRefreshed: self._onChatGptCredentialsRefreshed,
     cancelToken: cancelToken,
+    client: self._httpClient,
   );
 }

@@ -86,6 +86,7 @@ const _nestedKeySources = <String, String>{
   'providerTimeouts.streamIdleTimeoutMs': 'lib/src/cli/cli_config.dart',
   'images.registry': 'lib/src/cli/cli_config.dart',
   'images.maxPerRequest': 'lib/src/cli/cli_config.dart',
+  'images.maxBytesPerRequest': 'lib/src/cli/cli_config.dart',
   'skills.access': 'lib/src/cli/cli_config.dart',
   'skills.disableShellExecution': 'lib/src/cli/cli_config.dart',
   'redact.enabled': 'lib/src/cli/cli_config.dart',
@@ -189,6 +190,7 @@ const _nestedKeySources = <String, String>{
   'projectContext.maxBytes': 'lib/src/prompts/project_context.dart',
   'subagents.heartbeatMinutes': 'lib/src/task/subagent_heartbeat.dart',
   'subagents.stallMinutes': 'lib/src/task/subagent_heartbeat.dart',
+  'subagents.replyAutoSpill': 'lib/src/task/subagent_heartbeat.dart',
   'output.streamThinking': 'lib/src/cli/cli_config.dart',
 };
 

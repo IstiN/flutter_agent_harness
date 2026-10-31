@@ -633,6 +633,80 @@ void main() {
       },
     );
 
+    test(
+      'sender identity: private send wraps the plaintext, decode unwraps',
+      () async {
+        final httpClient = FakeHttpClient()
+          ..respond(200, body: channelsBody)
+          ..respond(200, body: membersBody)
+          ..respond(200, body: '{"items":[],"nextCursor":""}');
+        final connector = FakeWsConnector();
+        final wallet = await walletWithChannel(
+          channelPub: channelKeys.pub,
+          channelPriv: channelKeys.priv,
+        );
+        final session = buildSession(
+          httpClient: httpClient,
+          connector: connector,
+          wallet: wallet,
+        );
+        addTearDown(session.close);
+        await session.start();
+        await session.openChannel('c1');
+        await pumpEventQueue();
+
+        // Own send: the fanet1 plaintext names the member, so DAP agents
+        // in the channel can attribute the human behind the relay.
+        await session.sendText('c1', 'hello from the app');
+        final frame = connector.channels.single.sentFrames.lastWhere(
+          (f) => f['type'] == 'envelope.send',
+        );
+        final channelKeyPair = await testCodec.keyPairFromPriv(
+          channelKeys.priv,
+        );
+        final decrypted = await testCodec.decrypt(
+          channelKeyPair: channelKeyPair,
+          frameId: frame['id']! as String,
+          aadTarget: 'c1',
+          payloadB64: frame['payload']! as String,
+        );
+        final asJson = jsonDecode(decrypted.plaintext) as Map<String, dynamic>;
+        expect(asJson['text'], 'hello from the app');
+        expect((asJson['sender'] as Map)['name'], 'Me');
+        expect((asJson['sender'] as Map)['id'], 'me-1');
+        // The optimistic own bubble keeps the raw text (no JSON leak).
+        expect(
+          session.channelStates['c1']!.messages.single.text,
+          'hello from the app',
+        );
+
+        // Inbound from another app member (envelope without senderName —
+        // e.g. a relay that could not resolve the roster): the payload
+        // sender names the bubble.
+        final otherPayload = await encryptAs(
+          sender: otherIdentity,
+          channelPub: channelKeys.pub,
+          envelopeId: 'e-named',
+          plaintext: jsonEncode({
+            'text': 'hi there',
+            'sender': {'name': 'Olya', 'id': 'other-1'},
+          }),
+        );
+        connector.channels.single.serverEvent('envelope', {
+          'id': 'e-named',
+          'channelId': 'c1',
+          'senderId': 'other-1',
+          'payload': otherPayload,
+        });
+        await pumpEventQueue();
+        final named = session.channelStates['c1']!.messages.lastWhere(
+          (m) => m.envelopeId == 'e-named',
+        );
+        expect(named.text, 'hi there');
+        expect(named.senderName, 'Olya');
+      },
+    );
+
     test('presence.changed updates the roster', () async {
       final httpClient = FakeHttpClient()
         ..respond(200, body: channelsBody)
@@ -1007,6 +1081,29 @@ void main() {
         expect(rig.chat.messages[1].content, contains('from olya'));
       },
     );
+
+    test('an undecryptable own message never becomes a blank bubble', () async {
+      final rig = await buildChat();
+      addTearDown(rig.session.close);
+      rig.session.channelStates['c1']!.add(
+        const ChannelMessage(
+          envelopeId: 'e-own-undecryptable',
+          senderId: 'me-1',
+          senderPub: '',
+          text: null,
+          isOwn: true,
+        ),
+      );
+
+      final last = rig.chat.messages.last;
+      expect(last.role, 'user');
+      expect(last.content, contains('unable to decrypt this message'));
+      expect(last.content.trim(), isNotEmpty);
+      expect(
+        rig.chat.transcriptMarkdown(),
+        contains('**You**: (unable to decrypt this message)'),
+      );
+    });
 
     test(
       'sendText goes through the session; own message is a user bubble',

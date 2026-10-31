@@ -21,6 +21,10 @@ import 'package:flutter_test/flutter_test.dart';
 /// lib file (relative to flutter_app/) → golden test file covering it.
 const _coverage = <String, String>{
   'lib/main.dart': 'test/golden/setup_golden_test.dart',
+  'lib/ui/network/add_agent_dialog.dart':
+      'test/golden/add_agent_dialog_golden_test.dart',
+  'lib/ui/network/channel_key_import_dialog.dart':
+      'test/golden/channel_key_import_dialog_golden_test.dart',
   'lib/ui/screens/settings.dart': 'test/golden/settings_golden_test.dart',
   'lib/ui/screens/skills_toggles_section.dart':
       'test/golden/settings_golden_test.dart',
@@ -88,11 +92,8 @@ const _coverage = <String, String>{
       'test/golden/dynamic_messages_golden_test.dart',
   'lib/apps/dynamic_messages_sheet.dart':
       'test/golden/dynamic_messages_golden_test.dart',
-  'lib/ui/widgets/downloaded_models_quick_start.dart':
-      'test/golden/sections_golden_test.dart',
   'lib/ui/widgets/session_search_field.dart':
       'test/golden/session_search_golden_test.dart',
-  'lib/gemma/gemma_cache_section.dart': 'test/golden/sections_golden_test.dart',
   'lib/webllm/webllm_cache_section.dart':
       'test/golden/sections_golden_test.dart',
   'lib/transformers_js/transformers_js_cache_section.dart':
@@ -123,7 +124,6 @@ const _exempt = <String, String>{
   // #955/#999 fa_network feature widgets merged from main without golden
   // coverage (main's own guard is red for these); goldens belong to the
   // network feature work — waived here so the guard reflects #947 only.
-  'lib/ui/network/add_agent_dialog.dart': 'fa_network #955: no goldens yet',
   'lib/ui/network/channel_rail.dart': 'fa_network #955: no goldens yet',
   'lib/ui/network/channel_composer.dart':
       'fa_network #955: no goldens yet (#1888 added the composer; goldens '
@@ -174,6 +174,12 @@ const _exempt = <String, String>{
   'lib/apps/session_chat_sheet.dart':
       'floating chat sheet over the launcher; covered indirectly by the '
       'launcher chat sheet tests in test/apps/',
+  'lib/ui/widgets/downloaded_models_quick_start.dart':
+      'quick-start scan rows; behavior covered by '
+      'test/downloaded_models_quick_start_test.dart — its golden baseline '
+      'is pending the pinned-macOS `flutter test test/golden '
+      '--update-goldens` re-bake (gh-2004 follow-up; the linux dev host '
+      'cannot bake it, see memory n_1018_80a7)',
   'lib/ui/screens/app_launcher_screen.dart':
       'test/golden/launcher_golden_test.dart',
   'lib/ui/widgets/apps_panel.dart': 'test/golden/apps_panel_golden_test.dart',

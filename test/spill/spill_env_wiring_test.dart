@@ -24,7 +24,7 @@ void main() {
   }) => AgentCli(
     config: AgentCliConfig(
       model: testModel,
-      apiKey: '[REDACTED:Sensitive Value]',
+      apiKey: '[REDACTED:Sensitive-Value]',
       env: MemoryExecutionEnv(cwd: '/work', shell: FakeShell()),
       sessionRoot: '/sessions',
       sessionName: 'spill-wiring',

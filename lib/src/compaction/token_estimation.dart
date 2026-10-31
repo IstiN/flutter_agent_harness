@@ -50,6 +50,12 @@ int _textAndImageChars(Object content) {
         chars += text.length;
       case ImageContent():
         chars += estimatedImageChars;
+      case VideoContent(:final data):
+        // gh-2007 thread 3: a video rides up to
+        // images.maxBytesPerRequest (~8MB base64) and REPLAYS those bytes
+        // every request (videos have no registry placeholder rewrite), so
+        // the honest price is the payload itself, not a fixed constant.
+        chars += data.length;
       default:
     }
   }
@@ -507,6 +513,11 @@ int _estimateTokensDedup(Message message, Set<String> seenImages) {
         chars += seenImages.add(estimationImageKey(block))
             ? estimatedImageChars
             : estimatedRepeatImageChars;
+      case VideoContent(:final data):
+        // gh-2007 thread 3: videos replay their bytes every request (no
+        // registry placeholder rewrite) — every occurrence charges full
+        // payload, no dedup discount.
+        chars += data.length;
       default:
     }
   }

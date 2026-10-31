@@ -1,0 +1,106 @@
+# gh-1865 model v3 (owner decision 2026-10-28) — host signing
+# provisioning. Installs/refreshes the PERSISTENT host keychain
+# (~/Library/Keychains/ci-signing.keychain-db) with every distribution
+# identity the repo's signing legs need, and sweeps the per-job keychains
+# left behind by the retired workflows (their orphans produced interactive
+# SecurityAgent keychain-password prompts in the owner's GUI session).
+#
+# Dispatch-only by design: this touches persistent host state, never a
+# push/schedule. Idempotent — re-running with the SAME certificates is a
+# no-op; after a certificate rotation re-run installs the new serial and
+# retires the old identity for the label.
+#
+# First run performs the actual provisioning; every signing workflow also
+# re-verifies its label via `ci-sign install <label>` (a no-op when
+# up-to-date), so a drift between host and repo self-heals on the next
+# signing run.
+name: Host signing provision (ci-sign)
+
+on:
+  workflow_dispatch:
+    inputs:
+      force:
+        description: 'Recreate signing keychains from scratch (gh-1954: applies never-auto-lock settings; re-imports identities from repo secrets)'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  provision:
+    name: Provision ci-sign host keychain
+    # The keychain is HOST-global state (~/Library/Keychains/), and the
+    # fa-m5 pool is three registrations on ONE host under ONE user — the
+    # macos-m5 pool is correct routing (gh-1906: no workflow pins fa-m5-*
+    # runner-NAME labels; a name label would silently match zero runners
+    # and queue forever). Concurrent provisioning across registrations is
+    # safe: ci-sign install is idempotent and serializes on its lock dir.
+    runs-on: [self-hosted, macos-m5]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install ci-sign onto the host PATH
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/bin"
+          cp scripts/ci-sign "$HOME/bin/ci-sign"
+          chmod +x "$HOME/bin/ci-sign"
+          "$HOME/bin/ci-sign" path
+
+      - name: Provision iOS distribution identity
+        env:
+          IOS_P12_BASE64: ${{ secrets.IOS_P12_BASE64 }}
+          IOS_P12_PASSWORD: ${{ secrets.IOS_P12_PASSWORD }}
+          CI_SIGN_P12_B64_ENV: IOS_P12_BASE64
+          CI_SIGN_P12_PASSWORD_ENV: IOS_P12_PASSWORD
+        run: |
+          set -euo pipefail
+          if [ -z "${IOS_P12_BASE64:-}" ]; then
+            echo "::warning::IOS_P12_BASE64 not set — iOS label not provisioned"
+            exit 0
+          fi
+          if [ "${{ inputs.force }}" = "true" ]; then
+            ~/bin/ci-sign install fa-ios --force
+          else
+            ~/bin/ci-sign install fa-ios
+          fi
+          echo "ios sha1=$(~/bin/ci-sign sha1 fa-ios) serial=$(~/bin/ci-sign serial fa-ios) name=$(~/bin/ci-sign name fa-ios)"
+
+      - name: Provision macOS distribution identity
+        env:
+          MACOS_CERTIFICATE_P12_BASE64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          CI_SIGN_P12_B64_ENV: MACOS_CERTIFICATE_P12_BASE64
+          CI_SIGN_P12_PASSWORD_ENV: MACOS_CERTIFICATE_PASSWORD
+        run: |
+          set -euo pipefail
+          if [ -z "${MACOS_CERTIFICATE_P12_BASE64:-}" ]; then
+            echo "::warning::MACOS_CERTIFICATE_P12_BASE64 not set — macOS label not provisioned"
+            exit 0
+          fi
+          ~/bin/ci-sign install fa-macos
+          echo "macos sha1=$(~/bin/ci-sign sha1 fa-macos) serial=$(~/bin/ci-sign serial fa-macos) name=$(~/bin/ci-sign name fa-macos)"
+
+      - name: Provision macOS installer identity
+        env:
+          MACOS_INSTALLER_P12_BASE64: ${{ secrets.MACOS_INSTALLER_P12_BASE64 }}
+          MACOS_INSTALLER_P12_PASSWORD: ${{ secrets.MACOS_INSTALLER_P12_PASSWORD }}
+          CI_SIGN_P12_B64_ENV: MACOS_INSTALLER_P12_BASE64
+          CI_SIGN_P12_PASSWORD_ENV: MACOS_INSTALLER_P12_PASSWORD
+        run: |
+          set -euo pipefail
+          if [ -z "${MACOS_INSTALLER_P12_BASE64:-}" ]; then
+            echo "::notice::MACOS_INSTALLER_P12_BASE64 not set — macos-installer label not provisioned (TestFlight PKG leg skips itself)"
+            exit 0
+          fi
+          ~/bin/ci-sign install fa-macos-installer
+          echo "macos-installer sha1=$(~/bin/ci-sign sha1 fa-macos-installer) serial=$(~/bin/ci-sign serial fa-macos-installer)"
+
+      - name: Sweep legacy per-job keychains
+        run: |
+          set -euo pipefail
+          ~/bin/ci-sign cleanup-legacy
+          echo "--- final state ---"
+          ~/bin/ci-sign list

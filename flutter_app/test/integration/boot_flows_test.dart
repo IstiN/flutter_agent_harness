@@ -50,7 +50,6 @@ Widget _bootApp({
       // Engine fakes keep the quick-start scan off the real plugin
       // singletons (their method channels have no answer in host tests).
       webLlmEngine: FakeWebLlmEngine({}),
-      gemmaEngine: FakeGemmaEngine(const []),
       transformersJsEngine: FakeTransformersJsEngine({}),
     ),
   );

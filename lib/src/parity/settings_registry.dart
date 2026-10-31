@@ -421,6 +421,14 @@ const fileOnlyConfigKeys = <String, String>{
   'sessions':
       'Session retention (gh-1746) is boot-time disk hygiene for the '
       'CLI-owned sessions root; no app surface edits it interactively.',
+
+  // Per-provider proxy bindings (issue #1921): network infrastructure
+  // wiring (proxy URL + env-secret references), provisioned per
+  // environment in the file; no surface edits it interactively.
+  'providers':
+      'Per-provider proxy bindings (issue #1921) are network '
+      'infrastructure (proxy URLs with env-secret references), '
+      'provisioned per environment in the file.',
 };
 
 /// Which app surfaces carry a shared setting: the Flutter app on macOS,

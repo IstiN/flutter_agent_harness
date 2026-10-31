@@ -182,14 +182,14 @@ abstract class FaUiStrings {
   /// Label of the on-device WebLLM preset.
   String get settingsPresetWebllm;
 
-  /// Label of the on-device Gemma preset.
-  String get settingsPresetGemma;
-
   /// Label of the on-device transformers.js preset.
   String get settingsPresetTransformersJs;
 
   /// Helper shown while the `/models` fetch is in flight.
   String get settingsModelsFetching;
+
+  /// Visible hint that the model-id field also filters the fetched list.
+  String get modelPickerSearchHelper;
 
   /// The model picker's manual-entry escape row (the typed id stays valid
   /// even when the endpoint's list lacks it).
@@ -459,12 +459,12 @@ class FaUiStringsEn extends FaUiStrings {
   @override
   String get settingsPresetWebllm => 'On-device (WebLLM)';
   @override
-  String get settingsPresetGemma => 'On-device (Gemma)';
-  @override
-  String get settingsPresetTransformersJs =>
-      'On-device (Gemma, transformers.js)';
+  String get settingsPresetTransformersJs => 'On-device (transformers.js)';
   @override
   String get settingsModelsFetching => 'Fetching models from the endpoint…';
+  @override
+  String get modelPickerSearchHelper =>
+      'Type to filter models by name, or enter any model id';
   @override
   String modelPickerUseManual(String query) => 'Use "$query"';
   @override
@@ -703,12 +703,13 @@ class FaUiStringsRu extends FaUiStrings {
   @override
   String get settingsPresetWebllm => 'На устройстве (WebLLM)';
   @override
-  String get settingsPresetGemma => 'На устройстве (Gemma)';
-  @override
   String get settingsPresetTransformersJs =>
-      'На устройстве (Gemma, transformers.js)';
+      'На устройстве (transformers.js)';
   @override
   String get settingsModelsFetching => 'Загрузка списка моделей с эндпоинта…';
+  @override
+  String get modelPickerSearchHelper =>
+      'Введите текст для фильтрации моделей или любой ID модели';
   @override
   String modelPickerUseManual(String query) => 'Использовать «$query»';
   @override

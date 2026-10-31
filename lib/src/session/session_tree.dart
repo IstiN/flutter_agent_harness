@@ -11,6 +11,7 @@ library;
 
 import '../compaction/structured/projection.dart';
 import '../compaction/summary_sanitizer.dart';
+import '../compaction/token_estimation.dart';
 import '../context.dart';
 import '../exceptions.dart';
 import '../session_seal.dart';
@@ -93,9 +94,18 @@ final class Session {
   /// below-tail records from `getEntries()` (issue #488 class), while the
   /// raw scan streams the whole file chain. The obligations ledger's
   /// projection fallback is the consumer.
-  Session(this._storage, {this.customRecordScan});
+  ///
+  /// [persistTransform], when given (the JSONL repo injects the host's
+  /// redaction pipeline), shapes every message about to become a
+  /// [MessageRecord] — the record-write mask over tool-call arguments
+  /// (gh-1952 review: the persisted record must not carry raw secret
+  /// bytes in `toolCalls[].arguments`). Runs ONLY on the record; the
+  /// caller's in-memory message stays untouched.
+  Session(this._storage, {this.customRecordScan, this._persistTransform});
 
   final SessionStorage _storage;
+
+  final Message Function(Message message)? _persistTransform;
 
   /// gh-1589: the run-lifecycle seal (null while the session is open for
   /// writing). Set by the run teardown paths (`runHeadless`' finally, the
@@ -124,7 +134,7 @@ final class Session {
   /// it (direct constructions in tools/tests) — consumers then degrade to
   /// the resident view only.
   final Future<List<CustomRecord>> Function(Set<String> types)?
-      customRecordScan;
+  customRecordScan;
 
   /// Cached result of the one-time obligations scan fallback (null =
   /// not scanned yet; a scanned-empty result is cached too). Resident
@@ -301,14 +311,18 @@ final class Session {
   }
 
   /// Appends a conversation message at the active leaf. Returns the new
-  /// record id.
+  /// record id. The [persistTransform] (when the session was built with
+  /// one) runs on the RECORD copy only — the caller's message object is
+  /// not re-shaped.
   Future<String> appendMessage(Message message) {
+    final transform = _persistTransform;
+    final persisted = transform == null ? message : transform(message);
     return _append(
       (id, parentId) => MessageRecord(
         id: id,
         parentId: parentId,
         timestamp: DateTime.now(),
-        message: message,
+        message: persisted,
       ),
       sealClass: 'message',
     );
@@ -589,7 +603,12 @@ final class Session {
   Future<List<Message>> buildContextMessages() async {
     final path = await getBranch();
     final (kept, dropped) = _applyCompactionTransform(path);
-    return _projectMessages(kept, classicHidden: dropped);
+    final messages = await _projectMessages(kept, classicHidden: dropped);
+    return _resetStaleUsageAnchors(
+      messages,
+      sourcePath: path,
+      staleEntryIds: _staleUsageAnchorEntryIds(path),
+    );
   }
 
   /// Projects an explicit record path (root-first) into messages — the
@@ -608,8 +627,13 @@ final class Session {
     final path = await getBranch();
     final state = _deriveState(path);
     final (kept, dropped) = _applyCompactionTransform(path);
+    final messages = await _projectMessages(kept, classicHidden: dropped);
     return SessionContext(
-      messages: await _projectMessages(kept, classicHidden: dropped),
+      messages: _resetStaleUsageAnchors(
+        messages,
+        sourcePath: path,
+        staleEntryIds: _staleUsageAnchorEntryIds(path),
+      ),
       thinkingLevel: state.thinkingLevel,
       model: state.model,
       activeToolNames: state.activeToolNames,
@@ -736,6 +760,53 @@ final class Session {
       model: model,
       activeToolNames: activeToolNames,
     );
+  }
+
+  /// Entries whose assistant usage predates the latest compaction boundary.
+  ///
+  /// Provider usage describes the request in which an assistant message was
+  /// generated, not the smaller context reconstructed after a compaction.
+  /// Resetting only the prefix before the boundary gives hosts the safe CLI
+  /// behavior by default while preserving fresh usage reported afterwards.
+  Set<String> _staleUsageAnchorEntryIds(List<SessionRecord> path) {
+    var boundary = -1;
+    for (var i = 0; i < path.length; i++) {
+      final entry = path[i];
+      if (entry is CompactionRecord ||
+          entry is HiddenRangeRecord ||
+          entry is CompactCheckpointRecord) {
+        boundary = i;
+      }
+    }
+    if (boundary < 0) return const {};
+    return {for (var i = 0; i < boundary; i++) path[i].id};
+  }
+
+  /// Clears generation-time usage on the projected instances that came from
+  /// stale entries. Structured projection emits visible message records
+  /// directly, so identity (rather than text/timestamp) is the reliable link
+  /// back to their source records. Custom projections remain available via
+  /// [projectPath], which intentionally performs no usage normalization.
+  List<Message> _resetStaleUsageAnchors(
+    List<Message> messages, {
+    required List<SessionRecord> sourcePath,
+    required Set<String> staleEntryIds,
+  }) {
+    if (staleEntryIds.isEmpty) return messages;
+    final staleMessages = Set<Message>.identity();
+    for (final entry in sourcePath) {
+      if (entry is MessageRecord && staleEntryIds.contains(entry.id)) {
+        staleMessages.add(entry.message);
+      }
+    }
+    if (staleMessages.isEmpty) return messages;
+    return [
+      for (final message in messages)
+        if (staleMessages.contains(message))
+          resetLoadedUsageAnchors([message]).single
+        else
+          message,
+    ];
   }
 
   /// The classic compaction cut: everything before the LAST

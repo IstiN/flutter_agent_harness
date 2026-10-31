@@ -18,6 +18,23 @@
 /// - Every forced rewrite produces a [BashCommandRewrite.notice] naming
 ///   exactly what changed; the bash tool surfaces it in the tool result so
 ///   the agent sees the rewrite instead of discovering it by failure.
+/// - The rendered `[REDACTED:<kind>]` markers are single shell tokens
+///   (gh-1952 I2: `redactionMarker` normalizes whitespace), so even a
+///   rewritten value can never split into several argv items.
+///
+/// gh-1952 site audit (AC5): this rewriter is the ONLY site that may feed
+/// redacted text into execution — [shellTool]'s `_rewriteShellCommand`
+/// applies it, and nothing else transforms a bash command on the way to
+/// `env.exec`. Its rewrites are bounded to vendor-shaped secrets; a
+/// non-secret value (a define, a path, a URL, a base64 fragment) matches
+/// no shape and stays byte-identical — pinned by the argv-equality
+/// property tests here, in `test/integration/redaction_e2e_test.dart`
+/// (the exact gh-1952 repro command), and in the entropy layer's
+/// define-carve-out suite. Persisted-call replay and steering rewrites
+/// are comment-verified impossibilities: session records reload as CONTEXT
+/// only (no record is ever re-executed), and steering (the soft-yield
+/// token, gh-1835 auto-background) moves a running command to a background
+/// job as the SAME process — no re-execution, no re-authored argv.
 ///
 /// Pure and synchronous: [layerVendor] does the detection, this module only
 /// slices the command around the (non-overlapping, position-sorted)
@@ -112,9 +129,8 @@ BashCommandRewrite? redactBashCommandSecretShapes(
   matches.sort((a, b) => a.start.compareTo(b.start));
   if (approvedLiterals.isNotEmpty) {
     matches.removeWhere(
-      (match) => approvedLiterals.contains(
-        command.substring(match.start, match.end),
-      ),
+      (match) =>
+          approvedLiterals.contains(command.substring(match.start, match.end)),
     );
     if (matches.isEmpty) return null;
   }

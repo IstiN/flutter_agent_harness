@@ -13,8 +13,9 @@ import 'models.dart';
 ///
 /// [code] is the server error code (`unauthorized`, `invalid_credentials`,
 /// `forbidden_by_class`, `channel_read_only`, `throttled`, `not_found`,
-/// `conflict`). When the body does not match the Error schema, [code] is
-/// `http_5xx` for server errors and `http_<status>` otherwise.
+/// `conflict`). The client maps a retired hub's unknown `enroll_create` to
+/// `enrollment_unsupported`. When the body does not match the Error schema,
+/// [code] is `http_5xx` for server errors and `http_<status>` otherwise.
 class FaNetworkException implements Exception {
   const FaNetworkException({
     required this.statusCode,
@@ -34,6 +35,28 @@ class FaNetworkException implements Exception {
   String toString() =>
       'FaNetworkException($statusCode, $code): $message'
       '${retryAfterSeconds != null ? ' (retry after ${retryAfterSeconds}s)' : ''}';
+}
+
+/// Turns the retired hub's explicit `enroll_create` rejection into an
+/// actionable compatibility error. Other failures pass through unchanged;
+/// most importantly, this never retries through the legacy rotating route.
+FaNetworkException _independentEnrollmentError(FaNetworkException error) {
+  final message = error.message.toLowerCase();
+  final unsupported =
+      error.statusCode == 503 &&
+      message.contains('enroll_create') &&
+      (message.contains('unknown op') ||
+          message.contains('unknown enrollment operation'));
+  if (!unsupported) return error;
+  return FaNetworkException(
+    statusCode: error.statusCode,
+    code: 'enrollment_unsupported',
+    message:
+        'This DAP hub does not support independent agent enrollment. '
+        'Update the DAP hub and try again; existing agent credentials were '
+        'not changed.',
+    retryAfterSeconds: error.retryAfterSeconds,
+  );
 }
 
 /// REST client for the fa_network edge (fa_network/docs/openapi.yaml).
@@ -199,6 +222,37 @@ class FaNetworkClient {
     } on FaNetworkException {
       return null;
     }
+  }
+
+  /// `GET /api/networks/mine` — the signed-in account's memberships
+  /// (management route: the ai-native JWT; newest network first, order
+  /// preserved). The server returns NO password — a synced membership
+  /// has no locally stored password until the user joins once. Unlike
+  /// [listPublicNetworks] this is NOT tolerant here: an error (including
+  /// the 404 of an older backend without the route) throws
+  /// [FaNetworkException] and the caller decides to ignore it.
+  Future<List<AccountNetworkInfo>> listAccountNetworks() async {
+    final res = await _request(
+      'GET',
+      '/api/networks/mine',
+      management: true,
+      expected: {200},
+    );
+    final json = _decodeMap(res);
+    final rawItems = json['items'] is List ? json['items']! as List : null;
+    if (rawItems == null) return <AccountNetworkInfo>[];
+    final items = <AccountNetworkInfo>[];
+    for (final row in rawItems) {
+      if (row is! Map) continue;
+      try {
+        items.add(AccountNetworkInfo.fromJson(row.cast<String, Object?>()));
+      } on FormatException catch (e) {
+        // One malformed row must not cost the user every other
+        // membership — skip it, keep the server order of the rest.
+        AppLog.i('fa_network', 'skipping malformed account network: $e');
+      }
+    }
+    return items;
   }
 
   // ---------------------------------------------------------------- admins
@@ -406,6 +460,28 @@ class FaNetworkClient {
       expected: {201},
     );
     return AgentEnrollment.fromJson(_decodeMap(res));
+  }
+
+  /// `POST /api/networks/{id}/agents/enrollments` — creates an ADDITIONAL
+  /// independent, name-bound DAP credential (owner/admin). Repeating this
+  /// call for the same name does not rotate earlier credentials, so those
+  /// agents can connect simultaneously. The secret is returned exactly once.
+  Future<AgentEnrollment> createAgentCredential(
+    String networkId, {
+    required String name,
+  }) async {
+    try {
+      final res = await _request(
+        'POST',
+        '/api/networks/$networkId/agents/enrollments',
+        body: {'name': name},
+        management: true,
+        expected: {201},
+      );
+      return AgentEnrollment.fromJson(_decodeMap(res));
+    } on FaNetworkException catch (error) {
+      throw _independentEnrollmentError(error);
+    }
   }
 
   /// `DELETE /api/networks/{id}/agents/{agentId}` (owner/admin).

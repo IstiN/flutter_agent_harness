@@ -17,7 +17,8 @@ description: >-
   to drift), the CMake version is the AGP default cross-checked against
   the AGP pin by the guard test, both installs are skipped when the
   component is already present, and each download is bounded-retried —
-  the same hardening the flutter_gemma Android seed carries (gh-1468).
+  the same hardening the (since-removed) flutter_gemma Android seed
+  carried (gh-1468).
   Companion guard: test/ci_android_ndk_preinstall_guard_test.dart.
 runs:
   using: composite

@@ -19,6 +19,7 @@ import 'package:flutter_agent_harness/src/messaging/messaging_repository.dart';
 import '../agent/agent_loop.dart';
 import '../agent/agent_tool.dart';
 import '../approval/approval.dart';
+import '../session/ledger_caps.dart' show capLedgerText;
 import 'deliverables.dart';
 import 'subagent.dart';
 import 'subagent_manager.dart';
@@ -31,6 +32,14 @@ typedef ChildMessageReader =
       String sessionId, {
       int tail,
     });
+
+/// Callback resolving a child's REAL session JSONL path from its id
+/// (gh-1948): the handle's `sessionId` is a synthetic
+/// `<parentSessionId>/<id>` placeholder until the first transcript flush
+/// attaches the real file, so a live child is otherwise unobservable.
+/// Null on hosts without a sessions tree — observe then reports the
+/// placeholder cleanly instead of resolving.
+typedef ChildSessionPathResolver = Future<String?> Function(String childId);
 
 /// Callback to resume a child IN ITS OWN SESSION with a follow-up message
 /// (issue #222): the run appends to the same JSONL transcript, keeping the
@@ -68,14 +77,16 @@ const childInjectedToolNames = <String>{'reply', 'agent_message'};
 List<AgentTool> subagentMonitoringTools({
   required SubagentManager? manager,
   ChildMessageReader? readMessages,
+  ChildSessionPathResolver? resolveSessionPath,
   ChildResumeRunner? resumeChild,
   CurrentSubagentIdProvider? currentSubagentId,
   TaskJobManager? jobs,
   TaskExecutor? executor,
   DeliverableCaptureProvider? capture,
 
-  /// How long `task_send` waits for a resumed child to acknowledge before
-  /// reporting (issue #647). The default equals the delivery SLO: the
+  /// How long `task_send` and `task_resume` wait for a resumed child to
+  /// acknowledge before reporting (issue #647; #1923 extends the cap to
+  /// `task_resume`). The default equals the delivery SLO: the
   /// warm wake consumes the message before the boot, so the wait never
   /// blocks on session load. A wedged child's wake keeps running in the
   /// background either way.
@@ -84,9 +95,9 @@ List<AgentTool> subagentMonitoringTools({
   if (manager == null) return const [];
   return [
     _taskStatusTool(manager),
-    _taskObserveTool(manager, readMessages),
+    _taskObserveTool(manager, readMessages, resolveSessionPath),
     _taskSendTool(manager, resumeChild, taskSendWaitCap),
-    _taskResumeTool(manager, resumeChild),
+    _taskResumeTool(manager, resumeChild, taskSendWaitCap),
     if (jobs != null) _taskCancelTool(jobs, manager, executor),
     _replyTool(manager, currentSubagentId, capture),
     _agentMessageTool(manager, currentSubagentId, capture),
@@ -461,12 +472,61 @@ String _shortCwd(String cwd, String? homeDir) {
   return cwd;
 }
 
+/// The honest child-facing result when the parent-visible record could
+/// NOT be written (gh-1951 AC2): an error, never a false "delivered" —
+/// the child knows to retry or fall back to agent_message chunks.
+ToolExecutionResult _replyNotRecorded(String id) => ToolExecutionResult.text(
+  'error: reply NOT delivered — no retained record for subagent "$id" '
+  '(a parent-visible record must exist before a reply can be acked); '
+  'retry the reply, or deliver the content via agent_message chunks to '
+  'main',
+);
+
+/// The child-facing result for a double `reply` (gh-1951 edge case:
+/// idempotent — the first reply stays the deliverable, this call was
+/// noted but did not replace it).
+ToolExecutionResult _replyDuplicateNoted(String id) => ToolExecutionResult.text(
+  'a reply was already recorded for subagent "$id" — the FIRST reply '
+  'stays the deliverable and this reply was noted but did not replace '
+  'it; no further replies are needed',
+);
+
+/// The truthful ack for a recorded reply body (gh-1951 AC2): maps the
+/// [ReplyRecordOutcome] to the child-facing result — an error when nothing
+/// was recorded, a noted-not-replaced result for a duplicate, and the
+/// [ack] "delivered" text only after the parent-visible record is durable
+/// ([SubagentManager.persistNow]). Shared by the artifact-envelope and
+/// plain-reply paths of the `reply` tool (extracted so the tool closure
+/// stays under the CRAP ratchet — review round 2).
+Future<ToolExecutionResult> _ackRecordedReply(
+  SubagentManager manager,
+  String id,
+  String body,
+  String ack,
+) async {
+  final outcome = await manager.recordReply(id, body);
+  switch (outcome) {
+    case ReplyRecordOutcome.noHandle:
+      return _replyNotRecorded(id);
+    case ReplyRecordOutcome.duplicateNoted:
+      return _replyDuplicateNoted(id);
+    case ReplyRecordOutcome.recorded:
+      // AC2 ordering: the ack rides only after the parent-visible record
+      // is durable.
+      await manager.persistNow();
+      return ToolExecutionResult.text(ack);
+  }
+}
+
 /// `reply` — the CHILD-only tool: delivers the child's explicit answer to
 /// the parent (prime-agent's `reply`). A reply replaces the default
 /// completed_without_reply notice: the parent event/envelope carries the
-/// reply text verbatim. Over-cap replies go through the durable deliverable
-/// path (issue #1829): the full redacted report is stored as an `agent://`
-/// artifact and a bounded envelope is delivered in its place.
+/// reply text verbatim. Oversized replies auto-spill (gh-1956): the full
+/// redacted report is stored as an `agent://` artifact and a bounded
+/// envelope is delivered in its place. When auto-spill is unavailable
+/// (the `subagents.replyAutoSpill` kill switch, or a host without
+/// artifact storage) the legacy budget cap applies and the tool result
+/// teaches the chunk fallback — never a false "delivered".
 AgentTool _replyTool(
   SubagentManager manager,
   CurrentSubagentIdProvider? currentSubagentId,
@@ -481,11 +541,15 @@ AgentTool _replyTool(
         'message as a completion notice, but an explicit reply is the '
         'reliable channel.\n\n'
         'REPORT SIZE: per-message budget ${manager.maxReplyChars} chars — '
-        'split longer reports into ordered agent_message parts '
-        '(report_id, 0-based part_index, more=false on the last), then a '
-        'short final manifest reply (report_id + report_parts); the '
-        'harness validates it. See REPORT SIZE CONTRACT in your system '
-        'prompt. Never probe the output limit.',
+        'you may send one complete reply even when it is larger: the '
+        'harness auto-spills it (the full text is stored as an agent:// '
+        'artifact; the parent gets an excerpt + pointer + completeness, '
+        'and this tool result names the reference). Manual chunking '
+        '(ordered agent_message parts with report_id + 0-based '
+        'part_index, more=false on the last, then a final manifest reply '
+        'carrying report_id + report_parts) is the FALLBACK for when '
+        'auto-spill is unavailable. See REPORT SIZE CONTRACT in your '
+        'system prompt. Never probe the output limit.',
     parameters: {
       'type': 'object',
       'properties': {
@@ -529,6 +593,9 @@ AgentTool _replyTool(
         );
       }
       final deliverable = capture?.call();
+      // gh-1956 AC6: restore the durable artifacts before any delivery
+      // decision so resumed ids stay reserved (no post-resume clobber).
+      if (deliverable != null) await deliverable.ensureRestored();
       if (deliverable != null) {
         try {
           final record = deliverable.deliverReply(
@@ -538,14 +605,17 @@ AgentTool _replyTool(
             reportParts: reportParts,
           );
           if (record != null) {
-            // Core flow A: the envelope — bounded excerpt + pointer +
-            // explicit completeness — replaces the bare body.
+            // Auto-spill (the default): the envelope — bounded excerpt +
+            // pointer + explicit completeness — replaces the bare body;
+            // the ack names the reference and the byte count.
             final envelope = deliverable.envelopeText(record);
-            await manager.recordReply(id, envelope);
-            return ToolExecutionResult.text(
+            return await _ackRecordedReply(
+              manager,
+              id,
+              envelope,
               'reply delivered to the parent via artifact '
               'agent://${record.outputId} (${record.status!.name}, '
-              '${record.chars} chars)',
+              '${record.chars} chars, ${record.bytes} bytes)',
             );
           }
         } on StateError catch (error) {
@@ -561,8 +631,31 @@ AgentTool _replyTool(
           );
         }
       }
-      await manager.recordReply(id, message);
-      return ToolExecutionResult.text('reply delivered to the parent');
+      // Over budget with no spill available (kill switch or a host
+      // without artifact storage): the legacy bare cap applies and the
+      // result truthfully names it — never a false "delivered" — and
+      // teaches the chunk fallback (gh-1956 graceful degradation). The
+      // ack still rides gh-1951's truthful outcome mapping (a duplicate
+      // is noted-not-replaced, a missing handle is an error) and the
+      // AC2 durability ordering.
+      if (message.length > manager.maxReplyChars) {
+        return _ackRecordedReply(
+          manager,
+          id,
+          message,
+          'reply delivered truncated to the ${manager.maxReplyChars}-char '
+          'delivery budget (auto-spill unavailable here) — send the full '
+          'text as ordered agent_message parts to the parent (shared '
+          'report_id + 0-based part_index, more=false on the last), then '
+          'a final manifest reply',
+        );
+      }
+      return _ackRecordedReply(
+        manager,
+        id,
+        message,
+        'reply delivered to the parent',
+      );
     },
   );
 }
@@ -594,9 +687,12 @@ AgentTool _agentMessageTool(
         'live mailbox. The recipient sees the message in its inbox on its '
         'next turn; completed siblings are resumed. Unknown ids and full '
         'queues are rejected.\n\n'
-        'REPORT SIZE: budget ${manager.maxReplyChars} chars — split long '
-        'report bodies into ordered parts (report_id + 0-based '
-        'part_index). See REPORT SIZE CONTRACT in your system prompt.',
+        'REPORT SIZE: budget ${manager.maxReplyChars} chars — oversized '
+        'same-session bodies auto-spill (stored as an agent:// artifact '
+        'and delivered as a bounded envelope). Manual chunking (ordered '
+        'report_id + part_index parts) is the FALLBACK for when '
+        'auto-spill is unavailable. See REPORT SIZE CONTRACT in your '
+        'system prompt.',
     parameters: {
       'type': 'object',
       'properties': {
@@ -655,8 +751,12 @@ AgentTool _agentMessageTool(
       }
       final reportId = args['report_id'] as String?;
       final partIndex = args['part_index'] as int?;
+      final deliverable = capture?.call();
+      // gh-1956 AC6: restore before any delivery decision so resumed ids
+      // stay reserved.
+      if (deliverable != null) await deliverable.ensureRestored();
       final (body, artifactNote, deliverError) = _applyDeliverableEnvelope(
-        capture?.call(),
+        deliverable,
         manager: manager,
         childId: fromId,
         target: target,
@@ -735,7 +835,21 @@ String? _validateMessageSend(
       return (
         deliverable.envelopeText(record),
         ' Report body stored as agent://${record.outputId} '
-            '(${record.chars} chars).',
+            '(${record.chars} chars, ${record.bytes} bytes).',
+        null,
+      );
+    }
+    // gh-1956: an over-cap same-session body with spill unavailable
+    // (kill switch) keeps the legacy bare cap at delivery and gets the
+    // graceful chunk-fallback notice — never a silent loss.
+    if (message.length > manager.maxReplyChars &&
+        !deliverable.spillEnabled &&
+        deliverable.spillAppliesTo(target)) {
+      return (
+        message,
+        ' Note: the body exceeds the ${manager.maxReplyChars}-char budget '
+            'and auto-spill is unavailable — delivery caps it. Split long '
+            'bodies into ordered report parts (report_id + part_index).',
         null,
       );
     }
@@ -1019,13 +1133,22 @@ AgentTool _taskStatusTool(SubagentManager manager) {
         if (handle == null) {
           return ToolExecutionResult.text('no subagent with id "$id"');
         }
-        return ToolExecutionResult.text(_formatHandleDetail(handle));
+        return ToolExecutionResult.text(
+          await _formatHandleDetail(manager, handle),
+        );
       }
       final handles = manager.handles;
       if (handles.isEmpty) {
         return ToolExecutionResult.text('no subagents spawned');
       }
-      final lines = [for (final h in handles) h.statusLine];
+      // Issue #1923 AC3 (bot r2): the sweep is the path an agent actually
+      // uses to scan children — past-SLO pending mail must be visible
+      // here too, from the SAME formatter as the detail view.
+      final lines = [
+        for (final h in handles)
+          '${h.statusLine}'
+              '${(await undeliveredMailLine(manager, h, compact: true)) ?? ''}',
+      ];
       return ToolExecutionResult.text(
         '${handles.length} subagent${handles.length == 1 ? '' : 's'}:\n'
         '${lines.join('\n')}',
@@ -1038,6 +1161,7 @@ AgentTool _taskStatusTool(SubagentManager manager) {
 AgentTool _taskObserveTool(
   SubagentManager manager,
   ChildMessageReader? readMessages,
+  ChildSessionPathResolver? resolveSessionPath,
 ) {
   return AgentTool(
     name: 'task_observe',
@@ -1069,12 +1193,58 @@ AgentTool _taskObserveTool(
           'status: ${handle.status.name}',
         );
       }
-      final messages = await readMessages(handle.sessionId, tail: tail);
-      if (messages.isEmpty) {
-        return ToolExecutionResult.text('no messages in session for "$id"');
+      // gh-1948: the handle's sessionId is a `<parentSessionId>/<id>`
+      // PLACEHOLDER until the first transcript flush attaches the real
+      // path — a RUNNING background child may not have flushed yet (and a
+      // rehydrated row can still carry the placeholder). Observing the
+      // placeholder used to escape as an uncaught SessionException.
+      // Resolve the real file from the sessions tree first; when the
+      // resolver runs and finds none, say so cleanly. Hosts without a
+      // resolver keep the pass-through: their reader owns the session id
+      // shape, and read failures degrade to the structured error below.
+      var sessionPath = handle.sessionId;
+      final isPlaceholder =
+          sessionPath.isEmpty ||
+          sessionPath == '${manager.parentSessionId}/${handle.id}';
+      if (isPlaceholder && resolveSessionPath != null) {
+        String? resolved;
+        try {
+          resolved = await resolveSessionPath(handle.id);
+        } on Object {
+          // Resolution is best-effort — the read below reports honestly.
+        }
+        if (resolved != null) {
+          sessionPath = resolved;
+          // Heal the handle so later observes (and task_status /
+          // task_send reopen paths) skip the scan — the same attach the
+          // executor performs at flush time, idempotent on the path.
+          if (handle.sessionId != resolved) {
+            await manager.attachSession(handle.id, resolved);
+          }
+        } else {
+          return ToolExecutionResult.text(
+            'no transcript available yet for "$id" (status: '
+            '${handle.status.name}) — the child session file appears at '
+            'its first turn boundary; try again shortly',
+          );
+        }
       }
-      final lines = [for (final m in messages) '${m.$1}: ${m.$2}'];
-      return ToolExecutionResult.text(lines.join('\n'));
+      try {
+        final messages = await readMessages(sessionPath, tail: tail);
+        if (messages.isEmpty) {
+          return ToolExecutionResult.text('no messages in session for "$id"');
+        }
+        final lines = [for (final m in messages) '${m.$1}: ${m.$2}'];
+        return ToolExecutionResult.text(lines.join('\n'));
+      } on Object catch (error) {
+        // gh-1948: a read-only observation must degrade to a structured
+        // error — an uncaught exception here surfaces as a harness bug,
+        // not as something the parent agent can act on.
+        return ToolExecutionResult.text(
+          'transcript unavailable for "$id" (status: '
+          '${handle.status.name}): $error',
+        );
+      }
     },
   );
 }
@@ -1103,7 +1273,7 @@ AgentTool _taskSendTool(
         'Send a follow-up message to a subagent. A running child receives '
         'it in its inbox at the next turn boundary; an idle (waiting for '
         'input) or completed child is resumed in its SAME session with the '
-        'message. The resume wait is capped (${taskSendWaitCap.inSeconds}s): '
+        'message. The resume wait is capped (${_describeWaitCap(taskSendWaitCap)}): '
         'a child that does not respond in time reports the message queued '
         'and keeps waking in the background (check task_status). Failed '
         'children are continued with task_resume instead. Remote '
@@ -1294,6 +1464,7 @@ Future<ToolExecutionResult> _resumeIdleChild(
 AgentTool _taskResumeTool(
   SubagentManager manager,
   ChildResumeRunner? resumeChild,
+  Duration taskSendWaitCap,
 ) {
   final unavailableNote = resumeChild == null
       ? ' UNAVAILABLE on this host (capability: child-resume).'
@@ -1304,7 +1475,10 @@ AgentTool _taskResumeTool(
         'Resume a FAILED subagent, continuing the SAME session: the run '
         'appends to the existing JSONL transcript, keeps the same mailbox '
         'id and display name, and never mints a cloned "name-2" session. '
-        'Use this after transient failures (provider quota, network). '
+        'Use this after transient failures (provider quota, network). The '
+        'resume wait is capped (${_describeWaitCap(taskSendWaitCap)}): a child '
+        'that does not confirm in time reports the resume continuing in '
+        'the background — it is never restarted (check task_status). '
         'Steering running/idle/completed children is task_send; respawning '
         'a fresh agent is task (the new child links supersedes).'
         '$unavailableNote',
@@ -1323,7 +1497,7 @@ AgentTool _taskResumeTool(
     },
     tier: ApprovalTier.write,
     execute: (args, cancelToken, onUpdate) =>
-        _runTaskResume(manager, resumeChild, args),
+        _runTaskResume(manager, resumeChild, args, taskSendWaitCap),
   );
 }
 
@@ -1334,6 +1508,7 @@ Future<ToolExecutionResult> _runTaskResume(
   SubagentManager manager,
   ChildResumeRunner? resumeChild,
   Map<String, dynamic> args,
+  Duration taskSendWaitCap,
 ) async {
   final id = args['id'] as String;
   final message = _resumeInstruction(args);
@@ -1351,7 +1526,22 @@ Future<ToolExecutionResult> _runTaskResume(
       'task text.',
     );
   }
-  return _resumeByChildStatus(manager, resumeChild, id, handle, message);
+  return _resumeByChildStatus(
+    manager,
+    resumeChild,
+    id,
+    handle,
+    message,
+    taskSendWaitCap,
+  );
+}
+
+/// The wait-cap renderer for the tool descriptions: fractional seconds
+/// stay truthful (the 1500ms default reads "1.5s", bot r2 suggestion —
+/// `.inSeconds` truncation told the model a wrong bound).
+String _describeWaitCap(Duration cap) {
+  final tenths = (cap.inMilliseconds / 100).round() / 10;
+  return '${tenths}s';
 }
 
 /// The `task_resume` instruction: an explicit non-blank message, else the
@@ -1371,6 +1561,7 @@ Future<ToolExecutionResult> _resumeByChildStatus(
   String id,
   SubagentHandle handle,
   String message,
+  Duration taskSendWaitCap,
 ) async {
   switch (handle.status) {
     case SubagentStatus.queued:
@@ -1389,17 +1580,26 @@ Future<ToolExecutionResult> _resumeByChildStatus(
         'aborted subagent "$id" cannot be resumed',
       );
     case SubagentStatus.failed:
-      return _resumeFailedChild(manager, resumeChild, id, message);
+      return _resumeFailedChild(
+        manager,
+        resumeChild,
+        id,
+        message,
+        taskSendWaitCap,
+      );
   }
 }
 
 /// Resumes a failed child in its SAME session; a failed resume leaves the
-/// child failed and resumable.
+/// child failed and resumable. The wait is capped (issue #1923 AC2 — the
+/// same bound `task_send` already applies, issue #647): a child wedged in
+/// session boot cannot hang the parent for the length of a full boot.
 Future<ToolExecutionResult> _resumeFailedChild(
   SubagentManager manager,
   ChildResumeRunner? resumeChild,
   String id,
   String message,
+  Duration taskSendWaitCap,
 ) async {
   if (resumeChild == null) {
     return ToolExecutionResult.text(
@@ -1407,8 +1607,25 @@ Future<ToolExecutionResult> _resumeFailedChild(
       '(capability: child-resume) — the child stays failed',
     );
   }
+  // Issue #1923 AC2: the resume await was UNBOUNDED — a child wedged in
+  // session boot hung the parent for minutes (343s in the issue). Same
+  // shape as _resumeIdleChild (issue #488 AC3 + #647): past the cap the
+  // receipt reports and the resume KEEPS RUNNING in the background — it
+  // is never restarted. A late failure is recorded on the child by
+  // resumeChild itself, which returns the child to failed-and-resumable
+  // (task_status shows it); only its rethrow is swallowed here.
+  Future<void>? resumed;
   try {
-    await resumeChild(id, message);
+    resumed = resumeChild(id, message);
+    await resumed.timeout(taskSendWaitCap);
+  } on TimeoutException {
+    unawaited(resumed!.catchError((Object _) {}));
+    return ToolExecutionResult.text(
+      'resume of "$id" not responding within the wait cap — the resumed '
+      'run keeps going in the background and will NOT be restarted; a '
+      'late failure is recorded on the child, which returns to failed '
+      'and resumable (see task_status)',
+    );
   } on Object catch (error) {
     final detail = error is StateError ? error.message : '$error';
     return ToolExecutionResult.text(
@@ -1424,8 +1641,42 @@ Future<ToolExecutionResult> _resumeFailedChild(
   );
 }
 
+/// The AC3 UNDELIVERED-mail escalation for one child — the ONE source both
+/// `task_status` views render from (bot r2, thread `PRRT_kwDOTXdlLc6wfxj3`:
+/// the bare sweep path is the one agents actually use to scan children, so
+/// the marker must live there too, and a shared formatter keeps the two
+/// views from drifting). One fabric read yields age AND count (no
+/// disagreeing snapshots). Null when mail is absent or within the SLO.
+Future<String?> undeliveredMailLine(
+  SubagentManager manager,
+  SubagentHandle h, {
+  bool compact = false,
+}) async {
+  final fabric = await manager.pendingInbox(h.id);
+  final local = h.pendingMessages;
+  if (fabric.isEmpty && local.isEmpty) return null;
+  // One snapshot per source, both read HERE — age and count can never
+  // disagree with each other.
+  final stamps = <DateTime>[
+    for (final m in fabric) ?DateTime.tryParse(m.sentAt),
+    for (final m in local) ?DateTime.tryParse(m.sentAt),
+  ].whereType<DateTime>();
+  if (stamps.isEmpty) return null;
+  final oldest = stamps.reduce((a, b) => a.isBefore(b) ? a : b);
+  final age = DateTime.now().difference(oldest);
+  if (age <= deliverySlo) return null;
+  final n = fabric.length + local.length;
+  return compact
+      ? ' mail:$n@${age.inSeconds}s UNDELIVERED'
+      : 'mail: $n pending — UNDELIVERED ${age.inSeconds}s '
+            '(past the ${deliverySlo.inSeconds}s delivery SLO)';
+}
+
 /// Formats a detailed view of one handle for `task_status`.
-String _formatHandleDetail(SubagentHandle h) {
+Future<String> _formatHandleDetail(
+  SubagentManager manager,
+  SubagentHandle h,
+) async {
   final parts = <String>[
     'id: ${h.id}',
     'type: ${h.agentType}',
@@ -1434,16 +1685,30 @@ String _formatHandleDetail(SubagentHandle h) {
     'session: ${h.sessionId}',
     'created: ${h.createdAt}',
     'last activity: ${h.lastActivity}',
-    'tokens: ${h.tokens}',
+    // Issue #1924: name the basis of every figure — `tokens` is cumulative
+    // billed usage over the child's whole life, never the live context.
+    'tokens: ${h.tokens} (lifetime — cumulative billed usage, not live '
+        'context)',
     'requests: ${h.requests}',
     if (h.estTokens != null && h.windowTokens != null && h.windowTokens! > 0)
       'context: ~${h.estTokens}/${h.windowTokens} tokens '
-          '(${(h.estTokens! * 100 / h.windowTokens!).round()}%)'
+          '(${(h.estTokens! * 100 / h.windowTokens!).round()}%'
+          '${h.estTokens! >= h.windowTokens! ? ' OVER WINDOW — parent: task_resume or respawn' : ''})'
     else
       'context: n/a',
     'last compaction: ${h.lastCompactionText ?? 'n/a'}',
+    if (h.compactionError != null) 'compaction: ${h.compactionError}',
     if (h.modelId != null) 'model: ${h.modelId}',
     if (h.error != null) 'error: ${h.error}',
+    // gh-1951 AC5: the recorded reply is discoverable from every parent
+    // surface — task_status detail previews it (full text rides the task
+    // result; the transcript carries the call itself).
+    if (h.lastReply != null)
+      'last reply: ${capLedgerText(h.lastReply, maxChars: subagentRegistryReplyCapChars)}',
   ];
+  // Issue #1923 AC3: pending mail sitting past the delivery SLO escalates
+  // to a visible UNDELIVERED line — no silent queues (shared formatter).
+  final escalation = await undeliveredMailLine(manager, h);
+  if (escalation != null) parts.add(escalation);
   return parts.join('\n');
 }

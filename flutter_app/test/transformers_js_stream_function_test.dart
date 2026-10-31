@@ -162,6 +162,13 @@ const _ortRunDump =
     "Failed to execute 'mapAsync' on 'GPUBuffer': "
     '[invalid Buffer (unlabeled)] is invalid due to a previous error.';
 
+/// The note as the transformers.js codec emits it: the shared on-device
+/// source with the engine placeholder filled.
+final _noToolsNote = onDeviceNoToolsNote.replaceAll(
+  '{{engine}}',
+  'transformers.js',
+);
+
 void main() {
   group('streamTransformersJs event mapping', () {
     test(
@@ -570,7 +577,7 @@ void main() {
       expect(system.content, contains('"cmd"'));
       expect(system.content, contains('```tool_call'));
       // Tools exist, so the no-tools note must NOT appear.
-      expect(system.content, isNot(contains(transformersJsNoToolsNote)));
+      expect(system.content, isNot(contains(_noToolsNote)));
     });
 
     test('a fenced tool_call block becomes start/delta/end and StopReason.'
@@ -671,7 +678,7 @@ void main() {
       final system = engine.lastMessages!.first;
       expect(system.role, 'system');
       expect(system.content, startsWith('You are Fa.'));
-      expect(system.content, contains(transformersJsNoToolsNote));
+      expect(system.content, contains(_noToolsNote));
       expect(system.content, isNot(contains('## Available tools')));
 
       expect(events.whereType<ToolCallStartEvent>(), isEmpty);
@@ -720,16 +727,13 @@ void main() {
         supportsVision: true,
       );
       expect(noTools.first.role, 'system');
-      expect(
-        noTools.first.content,
-        'You are Fa.\n\n$transformersJsNoToolsNote',
-      );
+      expect(noTools.first.content, 'You are Fa.\n\n$_noToolsNote');
 
       final emptyTools = convertTransformersJsMessages(
         _context(systemPrompt: 'You are Fa.', tools: const []),
         supportsVision: true,
       );
-      expect(emptyTools.first.content, contains(transformersJsNoToolsNote));
+      expect(emptyTools.first.content, contains(_noToolsNote));
     });
 
     test('no system message when there is no prompt and tools exist', () {

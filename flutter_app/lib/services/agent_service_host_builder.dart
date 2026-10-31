@@ -24,6 +24,7 @@ extension AgentServiceHostBuilder on AgentService {
     childSessionFactory,
     required ModelRolesResolver? rolesResolver,
     required OfficeApi? officeApi,
+    required SubagentsConfig? subagentsConfig,
   }) => AgentCoreServices(
     baseEnv: env,
     // Session-correlation vars: the builder appends the layer (base →
@@ -50,10 +51,16 @@ extension AgentServiceHostBuilder on AgentService {
     scheduledMessages: _scheduledMessages,
     scheduleSenderMailbox: () {
       // Inside a subagent run "your own mailbox" is the CHILD's — the
-      // queue's selfMailbox always resolves main (gh-970).
+      // queue's selfMailbox always resolves main (gh-970). gh-1947 guard:
+      // the scope is trusted only while the child is genuinely in flight —
+      // a stale zone value (a settle continuation outliving the child's
+      // run) must never re-address MAIN's self-reminders into the
+      // finished child's mailbox.
       final id = activeSubagentId();
       final manager = _subagentManager;
       if (id == null || manager == null) return null;
+      final executor = _taskConfig?.executor;
+      if (executor != null && !executor.isInFlight(id)) return null;
       return manager.mailboxOf(id);
     },
     onAsk: (questions) => _answerAskQuestions(questions),
@@ -73,6 +80,14 @@ extension AgentServiceHostBuilder on AgentService {
       notifyHeartbeat: (digest) => AppLog.i('subagents', digest),
       heartbeatMinutes: () => 0,
       stallMinutes: () => 0,
+      // gh-1956 review: the reply auto-spill kill switch is honored here
+      // too — the parsed `subagents:` section (the CLI's own parser, via
+      // loadAppFahConfig) consulted live per delivery. Null (absent
+      // section) = the default (spill on); an explicit
+      // `subagents.replyAutoSpill: false` restores pure-chunk behavior on
+      // the app host exactly like on the CLI.
+      replyAutoSpill: () =>
+          subagentsConfig?.replyAutoSpill ?? defaultReplyAutoSpill,
       rolesResolver: rolesResolver,
       childSessionFactory: childSessionFactory,
     ),
@@ -199,13 +214,7 @@ extension AgentServiceHostBuilder on AgentService {
 }
 
 /// Whether the on-device inference runtimes ship with THIS build
-/// (webllm + transformers.js on web, gemma on iOS/Android): the honest
-/// `on_device_providers` marker, per platform. Desktop builds target
-/// server providers only.
-bool get _onDeviceRuntimesShip {
-  if (kIsWeb) return true;
-  return switch (defaultTargetPlatform) {
-    TargetPlatform.iOS || TargetPlatform.android => true,
-    _ => false,
-  };
-}
+/// (webllm + transformers.js on web): the honest `on_device_providers`
+/// marker, per platform. Mobile and desktop builds target server providers
+/// only — the on-device iOS/Android engine was removed (gh-2004).
+bool get _onDeviceRuntimesShip => kIsWeb;

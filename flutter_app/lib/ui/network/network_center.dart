@@ -110,8 +110,17 @@ class _NetworkCenterPaneState extends State<NetworkCenterPane> {
         }
         final session = widget.manager.sessions[networkId];
         if (session == null) {
-          // A restored selection waiting for the silent resume (or a
-          // failed one — the snackbar already said why).
+          // A restored selection waiting for the silent resume — or an
+          // account-synced membership whose password is not stored yet
+          // (join once to record it), which must never dead-end on a
+          // spinner.
+          if (widget.manager.wallet.networks[networkId]?.password == null) {
+            return NetworkNeedsPasswordPane(
+              controller: widget.controller,
+              manager: widget.manager,
+              networkId: networkId,
+            );
+          }
           return const Center(child: CircularProgressIndicator());
         }
         final channelId = widget.controller.channelId;
@@ -141,6 +150,70 @@ class _NetworkCenterPaneState extends State<NetworkCenterPane> {
           ],
         );
       },
+    );
+  }
+}
+
+/// The pane for a selected membership the account sync listed but the
+/// wallet holds no password for: a short explanation plus the join sheet
+/// prefilled with the network id. Shared by the wide center and the
+/// narrow home — neither may show an endless resume spinner here.
+class NetworkNeedsPasswordPane extends StatelessWidget {
+  const NetworkNeedsPasswordPane({
+    super.key,
+    required this.controller,
+    required this.manager,
+    required this.networkId,
+  });
+
+  final NetworkModeController controller;
+  final NetworkSessionManager manager;
+  final String networkId;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 360),
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Icon(Icons.key, size: 28, color: FahColors.of(context).dim),
+              const SizedBox(height: 12),
+              Text(
+                context.l10n.networkNeedsPasswordTitle,
+                textAlign: TextAlign.center,
+                style: Theme.of(
+                  context,
+                ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                context.l10n.networkNeedsPasswordBody,
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+              const SizedBox(height: 16),
+              FilledButton.icon(
+                key: const ValueKey('networkNeedsPasswordJoin'),
+                onPressed: () => unawaited(
+                  showJoinSheet(
+                    context,
+                    controller: controller,
+                    manager: manager,
+                    initialNetworkId: networkId,
+                  ),
+                ),
+                icon: const Icon(Icons.login, size: 18),
+                label: Text(context.l10n.networkJoinTitle),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }

@@ -41,6 +41,7 @@ final class AgentCliConfig {
     this.herdrSpawn,
     this.modelsFetcher,
     this.modelsHttpClient,
+    this.providerNetworks = const {},
     this.tuiMouseCapture = true,
     this.tuiSyncOutput,
     this.tuiClassic = false,
@@ -51,6 +52,10 @@ final class AgentCliConfig {
     this.promptOverrides,
     this.visionConfig,
     this.transcribeConfig,
+    this.visionResolver,
+    this.onImageInspectUsage,
+    this.mediaFileReadNotes = false,
+    this.transcribeAvailable,
     this.webSearchConfig,
     this.sqliteEngine,
     this.lspConfig,
@@ -840,6 +845,10 @@ final class AgentCliConfig {
   /// the fetchers create their own client; tests inject a `MockClient`.
   final http.Client? modelsHttpClient;
 
+  /// Per-provider proxy bindings (`providers:` → `network:`, issue #1921),
+  /// carried from the loaded [CliConfig]. Empty = every provider direct.
+  final Map<String, ProviderNetworkConfig> providerNetworks;
+
   /// Whether the TUI captures the mouse for wheel scrolling. Default true:
   /// the session renders in the alternate screen, where the terminal has no
   /// native scrollback — without capture a two-finger scroll does nothing
@@ -907,6 +916,26 @@ final class AgentCliConfig {
   /// Prefer using the `transcribe_audio` plugin via [plugins] /
   /// [pluginConfig].
   final TranscribeAudioConfig? transcribeConfig;
+
+  /// The live vision-slot resolver (gh-1984 AC5/AC8): invoked per image
+  /// read so the persisted `models.slots.vision` (and a later-arriving
+  /// key) applies without a restart. Null = the boot [visionConfig] is
+  /// the capability.
+  final Future<InspectImageConfig?> Function()? visionResolver;
+
+  /// Receives the read auto-route's vision-model usage (gh-1984 AC2) so
+  /// the executable can surface the spend in /cost. Null = untracked.
+  final void Function(Usage usage)? onImageInspectUsage;
+
+  /// Audio/video read notes (gh-1984 AC10) — the plain CLI + headless opt
+  /// in (their media surface is `transcribe_audio`); hosts with a
+  /// different media surface keep today's read behavior.
+  final bool mediaFileReadNotes;
+
+  /// Whether `transcribe_audio` is registered — steers the audio read
+  /// note between "call the tool" and "configure the slot". Null = the
+  /// [transcribeConfig] presence decides.
+  final bool Function()? transcribeAvailable;
 
   /// Optional web search configuration. When provided, `web_search` and
   /// `web_fetch` are registered (see [builtinTools]); keyless DuckDuckGo

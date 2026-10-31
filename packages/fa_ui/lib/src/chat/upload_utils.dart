@@ -38,13 +38,29 @@ bool isInlineImageMimeType(String mimeType) =>
 
 /// Guesses a MIME type from a file [name]'s extension; anything
 /// unrecognized (including `.svg`) is `application/octet-stream`, which
-/// never inlines as an image.
+/// never inlines as an image. The audio/video/pdf rows exist for the
+/// type-aware attachment chips (issue #1979 AC8) and the outgoing
+/// message's MIME metadata — they never qualify for image inlining.
 String mimeTypeForUploadName(String name) {
   final lower = name.toLowerCase();
   if (lower.endsWith('.png')) return 'image/png';
   if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) return 'image/jpeg';
   if (lower.endsWith('.gif')) return 'image/gif';
   if (lower.endsWith('.webp')) return 'image/webp';
+  if (lower.endsWith('.pdf')) return 'application/pdf';
+  if (lower.endsWith('.mp3')) return 'audio/mpeg';
+  if (lower.endsWith('.m4a')) return 'audio/mp4';
+  if (lower.endsWith('.wav')) return 'audio/wav';
+  if (lower.endsWith('.flac')) return 'audio/flac';
+  if (lower.endsWith('.aac')) return 'audio/aac';
+  if (lower.endsWith('.ogg') || lower.endsWith('.oga')) return 'audio/ogg';
+  if (lower.endsWith('.opus')) return 'audio/opus';
+  if (lower.endsWith('.mp4')) return 'video/mp4';
+  if (lower.endsWith('.mov')) return 'video/quicktime';
+  if (lower.endsWith('.webm')) return 'video/webm';
+  if (lower.endsWith('.avi')) return 'video/x-msvideo';
+  if (lower.endsWith('.mkv')) return 'video/x-matroska';
+  if (lower.endsWith('.mpeg') || lower.endsWith('.mpg')) return 'video/mpeg';
   return 'application/octet-stream';
 }
 

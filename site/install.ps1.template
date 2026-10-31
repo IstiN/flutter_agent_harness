@@ -53,6 +53,37 @@ $assetName = "fa-windows-$arch.zip"
 # DMTools-style: keep every binary in a dedicated bin directory and prepend
 # that directory to the user PATH. This guarantees the command is available
 # immediately after installation in the current PowerShell session.
+#
+# LOCALAPPDATA / APPDATA are supplied by the per-logon "Volatile Environment"
+# (HKCU\Volatile Environment), not by HKCU\Environment: a process started by
+# a service, a scheduled task or a supervisor app can legitimately inherit
+# neither. `Join-Path $env:LOCALAPPDATA "Fa"` then throws ("Cannot bind
+# argument to parameter 'Path' because it is null") and
+# `$ErrorActionPreference = "Stop"` aborts the install before anything is
+# downloaded. Resolve the shell folders instead of trusting the environment;
+# the abort stays fatal only once every fallback is exhausted.
+if (-not $env:LOCALAPPDATA) {
+    $env:LOCALAPPDATA = [Environment]::GetFolderPath('LocalApplicationData')
+}
+if (-not $env:LOCALAPPDATA -and $env:USERPROFILE) {
+    $env:LOCALAPPDATA = Join-Path $env:USERPROFILE 'AppData\Local'
+}
+if (-not $env:APPDATA) {
+    $env:APPDATA = [Environment]::GetFolderPath('ApplicationData')
+}
+if (-not $env:APPDATA -and $env:USERPROFILE) {
+    $env:APPDATA = Join-Path $env:USERPROFILE 'AppData\Roaming'
+}
+if (-not $env:LOCALAPPDATA) {
+    Write-Err "cannot resolve LOCALAPPDATA - it is unset and no user profile folder is known."
+    # throw, not exit: `exit` closes the caller's console under `irm | iex`.
+    throw "cannot resolve LOCALAPPDATA - set it, then rerun the installer."
+}
+# TEMP is the same class of hazard: the archive and the extraction directory
+# both hang off it.
+if (-not $env:TEMP) {
+    $env:TEMP = [IO.Path]::GetTempPath()
+}
 $installDir = Join-Path $env:LOCALAPPDATA "Fa"
 $binDir = Join-Path $installDir "bin"
 
@@ -62,49 +93,120 @@ if (-not (Test-Path $binDir)) {
 $target = Join-Path $binDir "$BinaryName.exe"
 
 # ── 3. Resolve download URL ──────────────────────────────────────────────────
-$downloadUrl = "https://github.com/$Repo/releases/latest/download/$assetName"
 
 # ── 4. Install bundle (or fall back to Dart) ────────────────────────────────
-Write-Info "Downloading Fa for windows-$arch..."
-$archivePath = Join-Path $env:TEMP "fa-windows-$arch.zip"
-try {
-    $progressPreference = 'silentlyContinue'
-    Invoke-WebRequest -Uri $downloadUrl -OutFile $archivePath -UseBasicParsing -MaximumRedirection 5
-    $progressPreference = 'Continue'
-
-    # dart build cli produces: bundle/{bin/fah.exe, lib/*.dll}
-    # We rename to fa.exe and extract into the install directory.
+# Only windows-x64 is published (scripts/release_required_assets.txt), so an
+# arm64 miss must retry x64 -- that binary runs under Windows' x64 emulation
+# -- instead of sending the user off to install the Dart SDK.
+# An unexpected bundle layout used to be reported as a successful install
+# (lib/ copied, no executable, "Installation complete"); it is fatal now.
+function Install-FaBundle([string]$archName) {
+    $url = "https://github.com/$Repo/releases/latest/download/fa-windows-$archName.zip"
+    $archive = Join-Path $env:TEMP "fa-windows-$archName.zip"
     $extractDir = Join-Path $env:TEMP "fa-extract-$(Get-Random)"
-    Expand-Archive -Path $archivePath -DestinationPath $extractDir -Force
-    $bundleDir = Join-Path $extractDir "bundle"
-    $srcExe = Join-Path $bundleDir "bin\fah.exe"
-    if (Test-Path $srcExe) {
-        Copy-Item $srcExe $target -Force
-    } else {
-        # Fallback: try fa.exe directly
-        $srcFa = Join-Path $bundleDir "bin\fa.exe"
-        if (Test-Path $srcFa) {
-            Copy-Item $srcFa $target -Force
+    Write-Info "Downloading Fa for windows-$archName..."
+    Invoke-WebRequest -Uri $url -OutFile $archive -UseBasicParsing -MaximumRedirection 5
+    try {
+        # dart build cli produces: bundle/{bin/fa.exe, lib/*.dll}
+        # We rename it to fa.exe and extract into the install directory.
+        Expand-Archive -Path $archive -DestinationPath $extractDir -Force
+        $bundleDir = Join-Path $extractDir "bundle"
+        $srcExe = Join-Path $bundleDir "bin\fa.exe"
+        if (-not (Test-Path $srcExe)) {
+            # Older bundles shipped the binary as fah.exe.
+            $srcExe = Join-Path $bundleDir "bin\fah.exe"
         }
-    }
-    $srcLib = Join-Path $bundleDir "lib"
-    if (Test-Path $srcLib) {
-        $libDir = Join-Path $installDir "lib"
-        if (-not (Test-Path $libDir)) {
-            New-Item -ItemType Directory -Force -Path $libDir | Out-Null
+        if (-not (Test-Path $srcExe)) {
+            $listing = @(
+                Get-ChildItem $bundleDir -Recurse -File -ErrorAction SilentlyContinue |
+                    ForEach-Object { $_.FullName.Substring($bundleDir.Length + 1) }
+            )
+            throw "the downloaded bundle has no bin\fa.exe (contents: $($listing -join ', '))"
         }
-        Copy-Item "$srcLib\*" $libDir -Force -Recurse
+        try {
+            Copy-Item $srcExe $target -Force
+        } catch [System.IO.IOException] {
+            throw "cannot replace $target - a running Fa process is using it. Close every Fa window, then rerun the installer."
+        }
+        $srcLib = Join-Path $bundleDir "lib"
+        if (Test-Path $srcLib) {
+            $libDir = Join-Path $installDir "lib"
+            if (-not (Test-Path $libDir)) {
+                New-Item -ItemType Directory -Force -Path $libDir | Out-Null
+            }
+            Copy-Item "$srcLib\*" $libDir -Force -Recurse
+        }
+        # Copy version.txt next to the binary so `fa --version` reports the real
+        # release (gh-1945: without it the CLI falls back to a hardcoded 0.1.0 —
+        # the installer layout probe reads <exe_dir>\version.txt).
+        $srcVersion = Join-Path $bundleDir "version.txt"
+        if (Test-Path $srcVersion) {
+            Copy-Item $srcVersion (Join-Path $binDir "version.txt") -Force
+        }
+    } finally {
+        Remove-Item -Recurse -Force $extractDir -ErrorAction SilentlyContinue
+        Remove-Item $archive -ErrorAction SilentlyContinue
     }
-    Remove-Item -Recurse -Force $extractDir -ErrorAction SilentlyContinue
-    Remove-Item $archivePath -ErrorAction SilentlyContinue
     Write-Ok "Downloaded and installed $target"
-} catch {
-    # A 404 usually means no binary was published for this platform yet.
-    $status = $_.Exception.Response.StatusCode.value__
+}
+
+# Windows PowerShell 5.1 on a host whose .NET default still offers only older
+# protocols fails the download with "underlying connection was closed".
+try {
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 -bor [Net.ServicePointManager]::SecurityProtocol
+} catch { }
+
+# Windows locks a running executable, so an in-place upgrade over an open TUI
+# fails with a bare "being used by another process" (and then wrongly walks
+# into the Dart fallback). Say what to do instead.
+$faRunning = @(
+    Get-Process -Name fa, fah -ErrorAction SilentlyContinue |
+        Where-Object { $_.Path -and $_.Path.StartsWith($installDir, [StringComparison]::OrdinalIgnoreCase) }
+)
+if ($faRunning.Count -gt 0) {
+    Write-Err "Fa is running from $installDir (PID $($faRunning.Id -join ', '))."
+    Write-Host ""
+    Write-Host "  Close every Fa window, then run the installer again."
+    Write-Host ""
+    throw "Fa is running - close it before reinstalling."
+}
+
+# arm64 first, then the published x64 build (emulated). ia32 has no fallback:
+# a 32-bit binary cannot run the x64 build.
+$candidates = if ($arch -eq 'arm64') { @('arm64', 'x64') } else { @($arch) }
+$ProgressPreference = 'SilentlyContinue'
+$installed = $false
+$bundleError = $null
+foreach ($candidate in $candidates) {
+    if ($candidate -ne $arch) {
+        Write-Warn "No prebuilt bundle for windows-$arch; trying windows-$candidate (runs under x64 emulation)."
+    }
+    try {
+        Install-FaBundle $candidate
+        $arch = $candidate
+        $installed = $true
+        break
+    } catch {
+        $bundleError = $_
+        $status = $null
+        try { $status = [int]$_.Exception.Response.StatusCode } catch { }
+        # 404 means "nothing published for this platform": the next candidate
+        # is worth a try. Anything else (TLS, disk, truncated zip) is a real
+        # failure and must not be masked by the fallback candidate.
+        if ($status -ne 404) { break }
+    }
+}
+
+if (-not $installed) {
+    $status = $null
+    if ($bundleError) { try { $status = [int]$bundleError.Exception.Response.StatusCode } catch { } }
     if ($status -eq 404) {
         Write-Warn "No prebuilt bundle found for windows-$arch. Falling back to Dart pub global activate."
-    } else {
+    } elseif ($status) {
         Write-Warn "Bundle download failed (HTTP $status). Falling back to Dart pub global activate."
+    } else {
+        Write-Warn "Bundle install failed: $($bundleError.Exception.Message)"
+        Write-Warn "Falling back to Dart pub global activate."
     }
     $dart = Get-Command dart -ErrorAction SilentlyContinue
     if (-not $dart) {
@@ -114,7 +216,10 @@ try {
         Write-Host ""
         Write-Host "    https://docs.flutter.dev/get-started/install"
         Write-Host ""
-        exit 1
+        # `exit` would close the caller's console when this runs through
+        # `irm ... | iex`; throw keeps the session alive and still makes
+        # `powershell -File` exit non-zero (install.bat checks that code).
+        throw "Fa was not installed: no prebuilt bundle for windows-$arch and no Dart SDK on PATH."
     }
     Write-Info "Activating flutter_agent_harness from pub.dev..."
     & dart pub global activate flutter_agent_harness
@@ -122,6 +227,21 @@ try {
     if (-not (Test-Path $pubCacheBin)) { $pubCacheBin = Join-Path $env:APPDATA "Pub\Cache\bin" }
     $binDir = $pubCacheBin
     $target = Join-Path $binDir "$BinaryName.bat"
+}
+
+# Smoke: a bundle can install and still not run (antivirus ate lib/, blocked
+# binary). The installer used to print "Installation complete" blind.
+if ($installed) {
+    try {
+        $probeOut = & $target --version 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            Write-Warn "the installed binary exited $LASTEXITCODE on --version: $probeOut"
+            Write-Warn "check that $installDir\lib\sqlite3.dll survived your antivirus, then reinstall."
+        }
+    } catch {
+        Write-Warn "the installed binary did not run: $($_.Exception.Message)"
+        Write-Warn "check that $installDir\lib\sqlite3.dll survived your antivirus, then reinstall."
+    }
 }
 
 # ── 5. Ensure the bin directory is on the user PATH ──────────────────────────

@@ -74,16 +74,17 @@ class ScriptedThenHangStream {
 
 void main() {
   test(
-    'exhaustion after two real compaction passes names them',
+    'two fruitless compaction passes recover through the local trim',
     timeout: const Timeout(Duration(seconds: 120)),
     () async {
       final env = MemoryExecutionEnv(cwd: '/work');
       await env.writeFile('/work/.fah/memory/.last_maintenance', '');
       env.writeFile('big.txt', List.filled(1000, 'x' * 45).join('\n'));
       final io = FakeCliIO();
-      // Keep-recent covers the whole transcript: the classic pass runs but
-      // frees nothing — the funnel burns both bounded passes and must land
-      // the loud verdict naming exactly two passes.
+      // Keep-recent covers the whole transcript: both classic passes run but
+      // free nothing — and the funnel now RECOVERS instead of killing the
+      // task (issue #1914): the mechanical local trim bounds the context and
+      // the interrupted task continues on it.
       final fake = FakeStreamFunction([
         toolTurn([
           const ToolCall(
@@ -94,6 +95,7 @@ void main() {
         ]),
         textTurn('summary pass one'),
         textTurn('summary pass two'),
+        textTurn('continuing the task after the trim'),
       ]);
       final cli = AgentCli(
         config: AgentCliConfig(
@@ -123,16 +125,72 @@ void main() {
       final exitCode = await cli.runHeadless('count the words');
       await io.close();
 
-      expect(exitCode, 1, reason: 'the task was NOT continued — loud failure');
-      // Both bounded passes ran (guard + two summarizer calls)…
-      expect(fake.calls, 3, reason: 'bounded retry: no third pass');
-      // …and the verdict names what actually happened.
+      expect(exitCode, 0, reason: 'the task continued on the trimmed context');
+      // Both bounded passes ran (tool turn + two summarizer calls) and the
+      // continuation consumed exactly one more — no third compaction pass.
+      expect(fake.calls, 4, reason: 'bounded retry: no third LM compaction');
       final output = io.out.toString();
-      expect(output, contains('error: the transcript is still'));
-      expect(output, contains('2 compaction passes did not free it'));
-      expect(output, contains('The task was NOT continued'));
-      expect(output, isNot(contains('[resuming]')));
-      expect(output, isNot(contains('compaction did not run')));
+      expect(output, contains('auto-compacted'));
+      // The trim recovery note names the honest numbers…
+      expect(output, contains('[context trimmed]'));
+      // …and the loud terminal verdict is GONE: the task was continued.
+      expect(output, isNot(contains('did not free it')));
+      expect(output, isNot(contains('The task was NOT continued')));
+    },
+  );
+
+  test(
+    'a huge prompt over a tiny window still recovers (issue #1914)',
+    timeout: const Timeout(Duration(seconds: 120)),
+    () async {
+      final env = MemoryExecutionEnv(cwd: '/work');
+      await env.writeFile('/work/.fah/memory/.last_maintenance', '');
+      final io = FakeCliIO();
+      // One huge prompt over a tiny window: the first pass keeps everything
+      // (the never-crossing backward walk) and the retry must NOT repeat the
+      // identical cut — it escalates past the previous kept boundary. The
+      // weight rides the newest (tail) messages, which a prefix fold cannot
+      // drop, so the mechanical local trim bounds the context and the task
+      // continues — no terminal abort.
+      final fake = FakeStreamFunction([
+        textTurn('summary pass one'),
+        textTurn('summary pass two'),
+        textTurn('continuing after the trim'),
+      ]);
+      final cli = AgentCli(
+        config: AgentCliConfig(
+          model: const Model(
+            id: 'tiny-window',
+            api: 'test-api',
+            provider: 'test-provider',
+            baseUrl: 'https://example.test',
+            contextWindow: 12000,
+            maxTokens: 4096,
+          ),
+          apiKey: 'test-key',
+          env: env,
+          sessionRoot: '/sessions',
+          providerKind: 'openai-completions',
+          compactionEngine: CompactionEngine.classic,
+          compactionSettings: const CompactionSettings(
+            enabled: true,
+            reserveTokens: 100,
+            keepRecentTokens: 100000,
+          ),
+        ),
+        io: io,
+        streamFunction: fake.call,
+      );
+
+      final exitCode = await cli.runHeadless('x' * 50000);
+      await io.close();
+
+      expect(exitCode, 0, reason: 'the task continued on the trimmed context');
+      final output = io.out.toString();
+      expect(output, contains('auto-compacted'));
+      expect(output, contains('[context trimmed]'));
+      expect(output, isNot(contains('did not free it')));
+      expect(output, isNot(contains('The task was NOT continued')));
     },
   );
 

@@ -525,6 +525,8 @@ final class HubMessagingRepository
         sentAt: DateTime.fromMillisecondsSinceEpoch(
           frame['ts'] as int? ?? 0,
         ).toUtc().toIso8601String(),
+        // A hub peer's presence name, when the whois above resolved one.
+        fromName: _whoisCache[from]?.name,
       ),
     );
   }
@@ -540,19 +542,26 @@ final class HubMessagingRepository
     if (from == agentId || !_channels.containsKey(channel)) return;
     final keys = _channels[channel];
     String text;
+    ({String name, String id})? sender;
     try {
       if (keys == null) {
-        text = _decodePublicChannelPayload(
-          frame['ciphertext'] as String? ?? '',
+        final raw = utf8.decode(
+          base64Decode(frame['ciphertext'] as String? ?? ''),
         );
+        final unwrapped = _unwrapChannelPayload(raw);
+        text = unwrapped.text;
+        sender = unwrapped.sender;
       } else {
-        text = await _decryptKeyedChannelMail(
+        final plaintext = await _decryptKeyedChannelMail(
           keys,
           channel,
           from,
           id,
           frame['ciphertext'] as String? ?? '',
         );
+        final unwrapped = _unwrapChannelPayload(plaintext);
+        text = unwrapped.text;
+        sender = unwrapped.sender;
       }
     } on Object {
       // Never print the error here: base64 parsers can echo their input,
@@ -569,6 +578,8 @@ final class HubMessagingRepository
         sentAt: DateTime.fromMillisecondsSinceEpoch(
           frame['ts'] as int? ?? 0,
         ).toUtc().toIso8601String(),
+        // The human behind the relay wins over the relay's agent id.
+        fromName: sender?.name,
       ),
     );
   }
@@ -932,18 +943,43 @@ final class HubMessagingRepository
   }
 }
 
-/// PUBLIC showcase payload: base64(JSON text), with raw UTF-8 tolerated
-/// for foreign producers. Invalid bytes throw and are dropped by the
-/// caller; nothing is downgraded for keyed channels.
-String _decodePublicChannelPayload(String payloadB64) {
-  final raw = utf8.decode(base64Decode(payloadB64));
+/// The channel-payload sender block an app member's message carries:
+/// `{"text": …, "sender": {"name": …, "id": …}}`. The wire `from` on a
+/// relayed frame is the fa_network relay's hub agent id — without this
+/// block the human author is invisible to DAP agents. Null when the
+/// payload predates the convention or names no one.
+({String name, String id})? _payloadSender(String plaintext) {
+  if (!plaintext.startsWith('{')) return null;
   try {
-    final decoded = jsonDecode(raw);
-    if (decoded is Map && decoded['text'] is String) {
-      return decoded['text'] as String;
-    }
+    final decoded = jsonDecode(plaintext);
+    if (decoded is! Map) return null;
+    final sender = decoded['sender'];
+    if (sender is! Map) return null;
+    final name = sender['name'];
+    if (name is! String || name.trim().isEmpty) return null;
+    final id = sender['id'];
+    return (name: name, id: id is String && id.isNotEmpty ? id : '');
   } on Object {
-    // Raw UTF-8 from a foreign producer.
+    return null;
   }
-  return raw;
+}
+
+/// Unwraps the channel-payload envelope: the text, plus the human sender
+/// when present. Raw plaintext (pure-DAP agents, older apps) passes
+/// through untouched — the text IS the payload.
+({String text, ({String name, String id})? sender}) _unwrapChannelPayload(
+  String plaintext,
+) {
+  if (plaintext.startsWith('{')) {
+    try {
+      final decoded = jsonDecode(plaintext);
+      if (decoded is Map && decoded['text'] is String) {
+        final text = decoded['text'] as String;
+        return (text: text, sender: _payloadSender(plaintext));
+      }
+    } on Object {
+      // Not a JSON envelope — raw text below.
+    }
+  }
+  return (text: plaintext, sender: null);
 }

@@ -91,7 +91,7 @@ class MediaSlotProviderPickerPage extends StatelessWidget {
   /// clearing it makes no sense there.
   final bool allowMainConnection;
 
-  /// On-device engine routes (Gemma/WebLLM/…), rendered as tiles before the
+  /// On-device engine routes (WebLLM/…), rendered as tiles before the
   /// Add provider row (the default-chat flow offers them; role/media
   /// overrides don't).
   final List<FaOnDeviceRoute> onDeviceRoutes;
@@ -404,6 +404,10 @@ class _MediaSlotModelPageState extends State<MediaSlotModelPage> {
   /// fetch failed) — drives the picker's provenance note.
   var _fromBundledCatalog = false;
 
+  /// WHY the endpoint answered no models (gh-1990) — the named failure
+  /// from the fetch report, shown in the picker's empty state.
+  String? _endpointModelsEmptyReason;
+
   String? _error;
 
   /// The provider kind for a save: DIAL endpoints get 'dial' (their own
@@ -506,6 +510,7 @@ class _MediaSlotModelPageState extends State<MediaSlotModelPage> {
     if (baseUrl.isEmpty) return;
     setState(() => _modelsLoading = true);
     var fromBundledCatalog = false;
+    String? emptyReason;
     try {
       final key =
           widget.apiKeyOverride ??
@@ -515,24 +520,30 @@ class _MediaSlotModelPageState extends State<MediaSlotModelPage> {
             keysStore: SessionKeysScope.maybeOf(context),
           );
       final override = widget.modelsFetcher;
-      final (ids, _, _) = override != null
-          ? await override(baseUrl, apiKey: key)
-          : await fetchModelsForEndpoint(
+      final report = override != null
+          ? ModelsFetchReport(info: await override(baseUrl, apiKey: key))
+          : await fetchModelsForEndpointReport(
               baseUrl,
               apiKey: key,
               provider: modelsDispatchHintForEntry(_entryKind, baseUrl),
               onBundledFallback: () => fromBundledCatalog = true,
             );
+      final (ids, _, _) = report.info;
+      // gh-1990 review (DRY): the canonical formatting rule — no
+      // hand-rolled `message — hint` join.
+      emptyReason = report.userFacingReason;
       if (!mounted) return;
       setState(() {
         _endpointModels = ids;
         _fromBundledCatalog = fromBundledCatalog;
+        _endpointModelsEmptyReason = ids.isEmpty ? emptyReason : null;
       });
     } on Object {
       if (mounted) {
         setState(() {
           _endpointModels = const [];
           _fromBundledCatalog = false;
+          _endpointModelsEmptyReason = null;
         });
       }
     } finally {
@@ -635,6 +646,7 @@ class _MediaSlotModelPageState extends State<MediaSlotModelPage> {
                 models: _endpointModels,
                 loading: _modelsLoading,
                 fromBundledCatalog: _fromBundledCatalog,
+                emptyReason: _endpointModelsEmptyReason,
               ),
               if (widget.slot == MediaSlot.audioTts) ...[
                 const SizedBox(height: 16),

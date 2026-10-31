@@ -16,6 +16,7 @@ import 'package:fa/network/network_session_manager.dart';
 
 import 'add_agent_dialog.dart';
 import 'channel_composer.dart';
+import 'channel_key_import_dialog.dart';
 
 /// The channel chat surface (issue #955): the shared [FaChatScreen] over a
 /// [ChannelChatService] with `FaChatFeatures.minimal()` — plain text
@@ -110,6 +111,18 @@ class _NetworkChatPageState extends State<NetworkChatPage> {
     return _regularMember(session);
   }
 
+  /// A private channel is writable only when this device's wallet holds its
+  /// E2E key. Network ownership/membership cannot substitute for that key.
+  bool _isMissingPrivateKey(NetworkSession session, String channelId) {
+    final channel = _lastChannel(session, channelId);
+    if (channel == null || channel.isPublic) return false;
+    return widget.manager.wallet.channelKeysFor(
+          widget.controller.networkId!,
+          channelId,
+        ) ==
+        null;
+  }
+
   /// The channel row for [channelId]; ids are unique per session but the
   /// scan keeps the LAST match, exactly like the lookup it replaces.
   Channel? _lastChannel(NetworkSession session, String channelId) {
@@ -169,6 +182,20 @@ class _NetworkChatPageState extends State<NetworkChatPage> {
                   composerBuilder: _isReadOnlyShowcase(session, chatFor.$2)
                       ? (context, service, drop) =>
                             const _ShowcaseReadOnlyNote()
+                      : _isMissingPrivateKey(session, chatFor.$2)
+                      ? (context, service, drop) => _MissingChannelKeyComposer(
+                          manager: widget.manager,
+                          session: session,
+                          networkId: widget.controller.networkId!,
+                          channelId: chatFor.$2,
+                          // A successful import swaps this composer for
+                          // the real one; rebuild deterministically from
+                          // the dialog result instead of relying on the
+                          // session-notify relay.
+                          onKeyImported: () {
+                            if (mounted) setState(() {});
+                          },
+                        )
                       : (context, service, drop) =>
                             ChannelChatComposer(service: chat),
                 ),
@@ -217,6 +244,73 @@ class _OfflineBanner extends StatelessWidget {
   }
 }
 
+/// Composer replacement for a private channel whose E2E key exists only on
+/// another device. The network password grants membership, never this key.
+class _MissingChannelKeyComposer extends StatelessWidget {
+  const _MissingChannelKeyComposer({
+    required this.manager,
+    required this.session,
+    required this.networkId,
+    required this.channelId,
+    required this.onKeyImported,
+  });
+
+  final NetworkSessionManager manager;
+  final NetworkSession session;
+  final String networkId;
+  final String channelId;
+
+  /// Called when the import dialog reported success — the page rebuilds
+  /// so the composer swap does not depend on the session-notify relay.
+  final VoidCallback onKeyImported;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = FahColors.of(context);
+    return SafeArea(
+      top: false,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 6, 12, 12),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.lock_outline, size: 16, color: colors.dim),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    context.l10n.networkChannelKeyMissing,
+                    style: TextStyle(color: colors.dim, fontSize: 12),
+                  ),
+                ),
+              ],
+            ),
+            Align(
+              alignment: Alignment.centerRight,
+              child: TextButton.icon(
+                onPressed: () async {
+                  final imported = await showChannelKeyImportDialog(
+                    context,
+                    wallet: manager.wallet,
+                    session: session,
+                    networkId: networkId,
+                    channelId: channelId,
+                  );
+                  if (imported && context.mounted) onKeyImported();
+                },
+                icon: const Icon(Icons.key_outlined, size: 18),
+                label: Text(context.l10n.networkChannelKeyImport),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 /// The read-only note replacing the composer in a showcase (public
 /// channel) for regular members — only the owner/admins post.
 class _ShowcaseReadOnlyNote extends StatelessWidget {
@@ -236,7 +330,7 @@ class _ShowcaseReadOnlyNote extends StatelessWidget {
             const SizedBox(width: 8),
             Flexible(
               child: Text(
-                context.l10n.networkShowcaseReadOnly,
+                context.l10n.networkShowcaseMemberReadOnly,
                 textAlign: TextAlign.center,
                 style: TextStyle(fontSize: 12, color: colors.dim),
               ),

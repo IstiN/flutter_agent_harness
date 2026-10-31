@@ -17,7 +17,7 @@ graph TD
   Lib --> Sandbox[sandbox/]
   Lib --> Apps[apps/]
   Lib --> L10n[l10n/]
-  Lib --> Feats[gemma, webllm, transformers_js]
+  Lib --> Feats[webllm, transformers_js]
   UI --> Screens[ui/screens/]
   UI --> Widgets[ui/widgets/]
   UI --> Theme[ui/app_theme.dart — shim]

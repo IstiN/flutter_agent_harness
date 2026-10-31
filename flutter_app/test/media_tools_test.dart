@@ -136,9 +136,9 @@ void main() {
       final onDeviceGateway = MediaGateway(
         env: env,
         fallback: () => const MediaFallback(
-          providerKind: 'gemma',
+          providerKind: 'webllm',
           baseUrl: '',
-          modelId: 'gemma3n',
+          modelId: 'SmolLM2-1.7B-Instruct-q4f16_1-MLC',
           apiKey: '',
         ),
         store: MediaModelsStore.inMemory(),

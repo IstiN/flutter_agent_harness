@@ -219,18 +219,13 @@ jobs:
       - name: Setup Ruby
         # ubuntu-24.04 runner images ship no Ruby — `bundle: command not
         # found` exit 127 (issue #353). Same setup as store-metadata.yml.
-        uses: ruby/setup-ruby@651ff0d62c5c79bed6d53ec518387aae20e72c1a # v1.328.0 (branch head; v1 moves)
+        uses: ruby/setup-ruby@26e5b7d197ebf60545ee9667bcbace0be11ccaec # v1.328.0 (branch head; v1 moves)
         with:
           ruby-version: '3.2'
 
       - name: Install fastlane
         working-directory: flutter_app
         run: bundle install
-
-      # gh-1468: same seed as ci.yml build-android — the release lane runs
-      # the same flutter_gemma_litertlm hook download and rides the same
-      # release-asset CDN roulette without it.
-      - uses: ./.github/actions/flutter-gemma-android-seed
 
       # gh-1655: same NDK pre-install as ci.yml build-android — the
       # release lane's Gradle configuration auto-installs the
@@ -323,7 +318,7 @@ jobs:
       - name: Setup Ruby
         # ubuntu-24.04 runner images ship no Ruby — `bundle: command not
         # found` exit 127 (issue #353). Same setup as store-metadata.yml.
-        uses: ruby/setup-ruby@651ff0d62c5c79bed6d53ec518387aae20e72c1a # v1.328.0 (branch head; v1 moves)
+        uses: ruby/setup-ruby@26e5b7d197ebf60545ee9667bcbace0be11ccaec # v1.328.0 (branch head; v1 moves)
         with:
           ruby-version: '3.2'
 
@@ -454,10 +449,6 @@ jobs:
           else
             echo "GOOGLE_SERVICES_JSON_BASE64 not set — building with the committed placeholder google-services.json"
           fi
-
-      # gh-1468: same seed as the ci.yml/ci AAB jobs — the flavor matrix
-      # runs the same flutter_gemma_litertlm hook download per leg.
-      - uses: ./.github/actions/flutter-gemma-android-seed
 
       # gh-1655: same NDK pre-install as ci.yml build-android — the
       # flavor matrix's Gradle configuration auto-installs the
@@ -623,16 +614,17 @@ jobs:
   build-ios:
     name: Build iOS IPA
     needs: version
-    # gh-1600 F-A + gh-1692: pin the ONE self-hosted macOS runner (fa-m5-1)
-    # via its unique registration label PLUS its runner-name label. The old
-    # generic [self-hosted, macOS, ARM64] list also matched the Linux
-    # self-hosted box's labels, and this job ran on Linux (`bundle: command
-    # not found`, exit 127; later steps died on `security: command not
-    # found`). `macos-m5` alone was still a coin flip: it matches BOTH
-    # fa-m5-1 (proven good 10-16) AND fa-m5-2 (10-17/10-18 `** ARCHIVE
-    # FAILED **`, signing env unverified) — the runner-name label `fa-m5-1`
-    # resolves the job to the known-good box until fa-m5-2 is fixed.
-    runs-on: [self-hosted, macos-m5, fa-m5-1]
+    # gh-1906: route to the shared `macos-m5` POOL. The gh-1692 pin of the
+    # ONE known-good box (`fa-m5-1` runner-name label) is dead — no m5
+    # runner carries a runner-name label anymore, so a set containing one
+    # matched ZERO runners and both iOS legs queued forever (live
+    # 2026-10-26, blocked v1.0.648 TestFlight). The gh-1692 fa-m5-2
+    # signing-env concern is retired: fa-m5-2/fa-m5-3 signed desktop green.
+    # The generic [self-hosted, macOS, ARM64] list stays banned (gh-1600
+    # F-A: it also matches the Linux box) — see
+    # test/workflow_selfhosted_legs_test.dart, which audits this exact
+    # label set and bans `fa-m5-*` name labels repo-wide.
+    runs-on: [self-hosted, macos-m5]
     # Issue #344: a wedged self-hosted worker (lost completion report)
     # otherwise holds the slot AND the in_progress status until the 300m
     # daily-publish watcher times out; a job-level timeout lets GitHub
@@ -951,34 +943,43 @@ jobs:
           fi
           echo "All required iOS secrets are present"
 
-      - name: Import certificates and provisioning profile
+      - name: Provision signing via ci-sign (persistent host keychain)
+        id: ios_signing
         env:
           IOS_P12_BASE64: ${{ secrets.IOS_P12_BASE64 }}
           IOS_P12_PASSWORD: ${{ secrets.IOS_P12_PASSWORD }}
+          CI_SIGN_P12_B64_ENV: IOS_P12_BASE64
+          CI_SIGN_P12_PASSWORD_ENV: IOS_P12_PASSWORD
           IOS_PROVISIONING_PROFILE_BASE64: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
           IOS_LIVE_ACTIVITY_PROFILE_BASE64: ${{ secrets.IOS_LIVE_ACTIVITY_PROFILE_BASE64 }}
         run: |
           set -euo pipefail
-          # Create a temporary keychain for this run (same pattern as learn.ai).
-          security delete-keychain build.keychain 2>/dev/null || true
-          security create-keychain -p "" build.keychain
-          security default-keychain -s build.keychain
-          security unlock-keychain -p "" build.keychain
-          security set-keychain-settings -t 3600 -u build.keychain
-          # gh-1866: publish the search list ADDITIVELY, never with a fixed
-          # list — this job runs CONCURRENTLY with the daily cli leg's
-          # build-macos legs on the same host/user (fa-m5 registrations
-          # share one account), and this exact fixed-list write evicted
-          # build-arm64.keychain 75 s after its import on 2026-10-25
-          # (runs 40165497544 → 40165498619, "No certificate for team
-          # YP9HC3USZ3 matching ... found"). The helper unions the current
-          # list and verifies this keychain survived the write.
-          bash scripts/keychain_searchlist_add.sh \
-            "$HOME/Library/Keychains/build.keychain-db"
-
-          echo "$IOS_P12_BASE64" | base64 --decode > certificate.p12
-          security import certificate.p12 -k build.keychain -P "$IOS_P12_PASSWORD" -T /usr/bin/codesign
-          security set-key-partition-list -S apple-tool:,apple: -s -k "" build.keychain
+          # gh-1865: the repo copy of ci-sign is authoritative —
+          # re-install it to the host PATH on every signing job so
+          # ~/bin/ci-sign can never drift from the reviewed source.
+          # gh-1954: install(1) does not create parent directories —
+          # on a fresh runner $HOME/bin does not exist (run 40822964468,
+          # "install: invalid target .../bin/ci-sign: No such file").
+          mkdir -p "$HOME/bin"
+          install -m 755 scripts/ci-sign "$HOME/bin/ci-sign"
+          # gh-1865 model v3 (owner decision 2026-10-28): NO per-job
+          # keychains and NO user-global keychain writes. ~/bin/ci-sign
+          # provisions the PERSISTENT ci-signing.keychain-db (idempotent —
+          # a re-run with the same certificate is a no-op), resolves the
+          # identity by SHA-1 (never the generic name — the additive
+          # search list can hold a concurrent leg's same-subject
+          # certificate, run 40455401630), and never triggers interactive
+          # keychain prompts (partition list set at install).
+          if [ -z "$IOS_P12_BASE64" ]; then
+            echo "::error::IOS_P12_BASE64 secret is not set — cannot sign"
+            exit 1
+          fi
+          ~/bin/ci-sign install fa-ios
+          IOS_CERT_SHA1=$(~/bin/ci-sign sha1 fa-ios)
+          IOS_CERT_NAME=$(~/bin/ci-sign name fa-ios)
+          echo "identity_sha1=$IOS_CERT_SHA1" >> $GITHUB_OUTPUT
+          echo "identity_name=$IOS_CERT_NAME" >> $GITHUB_OUTPUT
+          echo "gh-1865: signing identity pinned by SHA-1: $IOS_CERT_NAME ($IOS_CERT_SHA1)"
 
           mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
           echo "$IOS_PROVISIONING_PROFILE_BASE64" | base64 --decode > ~/Library/MobileDevice/Provisioning\ Profiles/profile.mobileprovision
@@ -992,6 +993,16 @@ jobs:
             echo "::error::IOS_LIVE_ACTIVITY_PROFILE_BASE64 secret is not set (App Store profile for dev.fa1.app.FaLiveActivity)"
             exit 1
           fi
+
+          # gh-1865 fail-fast precheck (option B): every profile must embed
+          # the provisioned certificate. A mismatch aborts in seconds,
+          # BEFORE the ~24-minute archive (run 40455519923 died at gym on
+          # BOTH targets). Decoding goes through ci-sign plist —
+          # `security cms -D` needs a default keychain, which the
+          # persistent-keychain model does not set (default-keychain
+          # writes are user-global state, part of the retired model).
+          ~/bin/ci-sign doctor ~/Library/MobileDevice/Provisioning\ Profiles/profile.mobileprovision fa-ios
+          ~/bin/ci-sign doctor ~/Library/MobileDevice/Provisioning\ Profiles/liveactivity.mobileprovision fa-ios
 
       - name: Ensure iOS device SDK is available
         run: |
@@ -1042,27 +1053,37 @@ jobs:
           # so the daily train stalled forever. Ship the derived next-tag
           # version (e.g. 0.1.446), which strictly increases.
           BUILD_NAME: ${{ needs.version.outputs.version }}
+          # gh-1865: CODE_SIGN_IDENTITY as a SHA-1 fingerprint (read from
+          # THIS job's own keychain right after import) instead of the
+          # generic "iPhone Distribution" — a concurrent signing leg's
+          # same-CN cert in the shared additive search list can no longer
+          # shadow the identity at codesign time.
+          IOS_CERT_SHA1: ${{ steps.ios_signing.outputs.identity_sha1 }}
         run: |
           set -euo pipefail
           export PATH="/opt/homebrew/opt/ruby/bin:/opt/homebrew/bin:$PATH"
           bundle install
 
           PROFILE=~/Library/MobileDevice/Provisioning\ Profiles/profile.mobileprovision
-          UUID=$(security cms -D -i "$PROFILE" 2>/dev/null | plutil -extract UUID raw -)
-          TEAM_ID=$(security cms -D -i "$PROFILE" 2>/dev/null | plutil -extract TeamIdentifier.0 raw -)
-          BUNDLE_ID=$(security cms -D -i "$PROFILE" 2>/dev/null | plutil -extract Entitlements.application-identifier raw - | sed "s/^$TEAM_ID.//")
-          PROFILE_NAME=$(security cms -D -i "$PROFILE" 2>/dev/null | plutil -extract Name raw -)
+          # gh-1865 model v3: profile decoding via ci-sign plist —
+          # `security cms -D` requires a default keychain and the
+          # persistent-keychain model never sets one (default-keychain
+          # writes are user-global state, part of the retired model).
+          UUID=$(~/bin/ci-sign plist "$PROFILE" | plutil -extract UUID raw -)
+          TEAM_ID=$(~/bin/ci-sign plist "$PROFILE" | plutil -extract TeamIdentifier.0 raw -)
+          BUNDLE_ID=$(~/bin/ci-sign plist "$PROFILE" | plutil -extract Entitlements.application-identifier raw - | sed "s/^$TEAM_ID.//")
+          PROFILE_NAME=$(~/bin/ci-sign plist "$PROFILE" | plutil -extract Name raw -)
           echo "PROFILE_NAME=$PROFILE_NAME"
 
           LA_PROFILE=~/Library/MobileDevice/Provisioning\ Profiles/liveactivity.mobileprovision
-          LA_PROFILE_NAME=$(security cms -D -i "$LA_PROFILE" 2>/dev/null | plutil -extract Name raw -)
+          LA_PROFILE_NAME=$(~/bin/ci-sign plist "$LA_PROFILE" | plutil -extract Name raw -)
           echo "LA_PROFILE_NAME=$LA_PROFILE_NAME"
 
           IOS_TEAM_ID="$TEAM_ID" \
           IOS_BUNDLE_ID="$BUNDLE_ID" \
           IOS_PROVISIONING_PROFILE_NAME="$PROFILE_NAME" \
           IOS_LIVE_ACTIVITY_PROFILE_NAME="$LA_PROFILE_NAME" \
-          IOS_SIGNING_IDENTITY="iPhone Distribution" \
+          IOS_SIGNING_IDENTITY="$IOS_CERT_SHA1" \
           bundle exec fastlane ios build_only
 
       # gh-1692 AC2: the gym log holds the REAL xcodebuild error — without
@@ -1135,7 +1156,8 @@ jobs:
       # re-adds above 5% of TOTAL (Symbols/ qualifies at 99 MB; the 5.6 MB
       # glb does not — +3.8% TOTAL, sub-share NEW), so a returning evicted
       # artifact fails via --forbid in the same step. Also pins the owner
-      # hard constraint: the js-apps WASM runtime and LiteRT LM always ship.
+      # hard constraint: the js-apps WASM runtime always ships (the on-device
+      # LiteRT LM keep-set ended with the gemma stack removal — gh-2004).
       - name: Size manifest ratchet + wasm keep-set (#1331)
         run: |
           set -euo pipefail
@@ -1156,11 +1178,7 @@ jobs:
               exit 1
             }
           done
-          grep -q "LiteRtLm.framework/LiteRtLm" "$MANIFEST" || {
-            echo "::error::LiteRtLm.framework missing from the IPA — on-device LLM stack must always ship (owner directive, #1331)"
-            exit 1
-          }
-          echo "✅ wasm runtime + LiteRT keep-set present; iOS size ratchet green"
+          echo "✅ wasm runtime keep-set present; iOS size ratchet green"
 
       - name: Verify IPA and FFI symbols
         run: |
@@ -1211,17 +1229,20 @@ jobs:
       - name: Cleanup
         if: always()
         run: |
-          security delete-keychain build.keychain || true
+          # gh-1865 model v3: no per-job keychain to clean up — the
+          # persistent ci-signing keychain is host state, never deleted
+          # from jobs. Only the decoded p12 scratch file goes.
           rm -f certificate.p12
 
   submit-ios:
     name: Submit iOS to TestFlight
     needs: [build-ios]
-    # gh-1600 F-A + gh-1692: same runner-name pin as build-ios above — the
-    # generic [self-hosted, macOS, ARM64] list also matched the Linux box,
-    # and `macos-m5` alone is a coin flip between fa-m5-1 (good) and
-    # fa-m5-2 (broken signing env).
-    runs-on: [self-hosted, macos-m5, fa-m5-1]
+    # gh-1906: same shared `macos-m5` pool as build-ios above — the gh-1692
+    # fa-m5-1 name pin is dead (no runner carries a name label; the set
+    # matched zero runners and queued forever). The generic [self-hosted,
+    # macOS, ARM64] list stays banned (gh-1600 F-A: it also matches the
+    # Linux box).
+    runs-on: [self-hosted, macos-m5]
     # Issue #344 wedge bound + #351 arithmetic: the submit_only lane waits
     # for Apple processing (TESTFLIGHT_WAIT_TIMEOUT_SECONDS, default 5400s
     # = 90m — a healthy slow ASC processing is NOT a wedge); distribution

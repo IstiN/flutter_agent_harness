@@ -60,7 +60,10 @@ final class ChannelChatService implements FaChatService {
   List<FaChatMessage> get messages => [
     for (final message in _state.messages)
       if (message.isOwn)
-        FaChatMessage(role: 'user', content: message.text ?? '')
+        FaChatMessage(
+          role: 'user',
+          content: message.text ?? '_(unable to decrypt this message)_',
+        )
       else
         FaChatMessage(
           role: 'assistant',
@@ -84,7 +87,7 @@ final class ChannelChatService implements FaChatService {
   String transcriptMarkdown() => _state.messages
       .map(
         (m) => m.isOwn
-            ? '**You**: ${m.text ?? ''}'
+            ? '**You**: ${m.text ?? '(unable to decrypt this message)'}'
             : '**${_senderName(m)}**: ${m.text ?? '(undecryptable)'}',
       )
       .join('\n\n');

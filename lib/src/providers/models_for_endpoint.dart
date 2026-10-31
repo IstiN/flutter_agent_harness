@@ -5,6 +5,7 @@
 /// [modelListDialects], never by adding a branch here.
 library;
 
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;
@@ -18,6 +19,8 @@ import 'codex_transport.dart';
 import 'copilot_oauth.dart';
 import 'dial.dart';
 import 'models_endpoint.dart';
+import 'provider_common.dart'
+    show effectiveProviderConnectTimeout, providerTimeoutsOverride;
 import 'remote_catalog.dart';
 
 /// The [fetchModelsForEndpoint] `provider` hints the dialects match on.
@@ -56,6 +59,25 @@ abstract final class ModelListDialect {
     http.Client? client,
     void Function()? onBundledFallback,
   });
+
+  /// Fetches the model list WITH the empty-answer diagnostic (gh-1990):
+  /// the same answer as [fetch], carrying WHY it is empty when it is.
+  /// The default wraps [fetch] with no diagnostic; dialects with named
+  /// failure branches override it. [fetchModelsForEndpointReport]
+  /// dispatches here.
+  Future<ModelsFetchReport> fetchReport(
+    String baseUrl,
+    String apiKey, {
+    http.Client? client,
+    void Function()? onBundledFallback,
+  }) async => ModelsFetchReport(
+    info: await fetch(
+      baseUrl,
+      apiKey,
+      client: client,
+      onBundledFallback: onBundledFallback,
+    ),
+  );
 }
 
 /// The registered dialects, in precedence order. First match wins.
@@ -81,10 +103,181 @@ Future<ModelsEndpointInfo> fetchModelsForEndpoint(
   http.Client? client,
   void Function()? onBundledFallback,
 }) async {
+  final report = await fetchModelsForEndpointReport(
+    baseUrl,
+    apiKey: apiKey,
+    provider: provider,
+    client: client,
+    onBundledFallback: onBundledFallback,
+  );
+  return report.info;
+}
+
+/// Why a `/models` fetch answered empty — the named failure branch
+/// (gh-1990): no picker may show a bare empty list again, every
+/// silent-empty exit (token exchange / HTTP / tier routing / filter)
+/// carries its reason.
+@immutable
+final class ModelsFetchDiagnostic {
+  /// Creates the diagnostic; [stage] and [message] are the contract, the
+  /// rest is best-effort structure for programmatic surfacing.
+  const ModelsFetchDiagnostic({
+    required this.stage,
+    required this.message,
+    this.path,
+    this.httpStatus,
+    this.timedOut = false,
+    this.pathFailed = true,
+    this.fetchedCount = 0,
+    this.filteredCount = 0,
+    this.hint,
+  });
+
+  /// The stage that produced this: the token exchange, the `/models`
+  /// HTTP call, or the picker filter ([stageExchange], [stageModels],
+  /// [stageFilter]). When BOTH credential paths failed, the dual-path
+  /// combined diagnostic joins the two stage names with [stageDualJoiner]
+  /// (e.g. `exchange+models`) — [stages] splits it back apart for
+  /// programmatic consumers that match on the constants.
+  final String stage;
+
+  /// The exchange stage — `copilot_internal/v2/token` failed.
+  static const stageExchange = 'exchange';
+
+  /// The models stage — the `/models` HTTP call failed or answered empty.
+  static const stageModels = 'models';
+
+  /// The filter stage — `/models` answered, the picker filter dropped
+  /// every entry.
+  static const stageFilter = 'filter';
+
+  /// The joiner of a dual-path combined [stage] (`exchange+models`) —
+  /// the documented extension of the stage vocabulary for the
+  /// both-credential-paths-failed diagnostic.
+  static const stageDualJoiner = '+';
+
+  /// Which credential path produced this: the exchanged-token path or
+  /// the raw-PAT path (the dual-path provenance, gh-1606).
+  final String? path;
+
+  /// The exchanged-token path (the default credential route).
+  static const pathExchange = 'exchange';
+
+  /// The raw-PAT path (fine-grained PATs, the gh-1606 PAT mode).
+  static const pathPatDirect = 'pat-direct';
+
+  /// The one-line user-facing reason.
+  final String message;
+
+  /// The HTTP status when a request failed with one.
+  final int? httpStatus;
+
+  /// Whether the failure was the watchdog firing instead of an answer.
+  final bool timedOut;
+
+  /// Whether THIS path failed (exchange throw, non-200, timeout,
+  /// transport) — as opposed to answering and the filter dropping the
+  /// entries. The dual-path fallback retries only failed paths.
+  final bool pathFailed;
+
+  /// Entries the payload carried (the filter stage).
+  final int fetchedCount;
+
+  /// Entries the picker filter dropped (the filter stage).
+  final int filteredCount;
+
+  /// Optional remediation hint (tier host, PAT remedies, seat check).
+  final String? hint;
+
+  /// The individual stages of [stage] — one entry unless the dual-path
+  /// combined diagnostic named both failing credential paths (then two,
+  /// e.g. `[stageExchange, stageModels]`). Splitting on the documented
+  /// [stageDualJoiner] keeps the combined form matchable for consumers.
+  List<String> get stages => stage.split(stageDualJoiner);
+
+  @override
+  String toString() => message;
+}
+
+/// A `/models` fetch answer plus its provenance (gh-1990): the parsed
+/// [ModelsEndpointInfo], the empty-answer [diagnostic], an optional
+/// human-facing [note] (path fallback, partial filtering), and the
+/// per-model filter drops.
+///
+/// The diagnostic contract is SCOPED (gh-1990 review round 2): dialects
+/// that override [ModelListDialect.fetchReport] with named failure
+/// branches (today the Copilot dialect) attach a diagnostic on every
+/// empty answer; the DEFAULT keeps the legacy diagnostic-less shape
+/// (null even when empty). A consumer must not assume
+/// `diagnostic != null ⇔ isEmpty`.
+@immutable
+final class ModelsFetchReport {
+  /// Creates the report. Dialects that override
+  /// [ModelListDialect.fetchReport] with named failure branches (today
+  /// the Copilot dialect) attach a [diagnostic] on every empty answer;
+  /// the default keeps the legacy diagnostic-less shape (null even when
+  /// empty) — an empty answer names its reason only where a dialect
+  /// names it.
+  const ModelsFetchReport({
+    required this.info,
+    this.diagnostic,
+    this.note,
+    this.droppedModels = const <(String, String)>[],
+  });
+
+  /// The parsed model list (ids, context windows, output caps).
+  final ModelsEndpointInfo info;
+
+  /// Why the answer is empty — set by dialects that name their failure
+  /// branches (the Copilot dialect today); the default `fetchReport`
+  /// answers null even when [isEmpty].
+  final ModelsFetchDiagnostic? diagnostic;
+
+  /// Optional provenance note even on success: the dual-path fallback
+  /// note (which credential path answered), a partial-filter summary.
+  final String? note;
+
+  /// Per-model filter drops as (model id, drop reason) — populated even
+  /// when some models were listed (AC2 transparency).
+  final List<(String, String)> droppedModels;
+
+  /// Whether the fetch answered no models.
+  bool get isEmpty => info.$1.isEmpty;
+
+  /// The one-line user-facing reason for an empty answer, with the
+  /// remediation hint appended when present.
+  String get reasonText {
+    final d = diagnostic;
+    if (d == null) return '';
+    return d.hint == null ? d.message : '${d.message} — ${d.hint}';
+  }
+
+  /// The user-facing reason across BOTH answer kinds (gh-1990 review —
+  /// the single formatting rule, no hand-rolled `message — hint` joins
+  /// at the call sites): the diagnostic's [reasonText] when the fetch
+  /// named a failed branch, else the provenance [note] (fallback path,
+  /// partial filter). Null when neither is present — in particular for
+  /// the default `fetchReport`'s legacy diagnostic-less empty answers
+  /// (the non-Copilot dialects), which carry neither.
+  String? get userFacingReason => diagnostic == null ? note : reasonText;
+}
+
+/// Fetches the model list of [baseUrl] WITH the empty-answer diagnostic
+/// (gh-1990): the same dispatch as [fetchModelsForEndpoint], but the
+/// answer carries WHY it is empty — the failed stage (token exchange /
+/// HTTP / filter), the HTTP status, the timeout flag, the per-model
+/// filter drops, and any remediation hint.
+Future<ModelsFetchReport> fetchModelsForEndpointReport(
+  String baseUrl, {
+  required String apiKey,
+  String? provider,
+  http.Client? client,
+  void Function()? onBundledFallback,
+}) async {
   final effectiveClient = client ?? _dispatchHttpClientForTesting;
   for (final dialect in modelListDialects) {
     if (dialect.matches(baseUrl, provider)) {
-      return dialect.fetch(
+      return dialect.fetchReport(
         baseUrl,
         apiKey,
         client: effectiveClient,
@@ -92,7 +285,13 @@ Future<ModelsEndpointInfo> fetchModelsForEndpoint(
       );
     }
   }
-  return (const <String>[], const <String, int>{}, const <String, int>{});
+  return ModelsFetchReport(
+    info: (const <String>[], const <String, int>{}, const <String, int>{}),
+    diagnostic: ModelsFetchDiagnostic(
+      stage: ModelsFetchDiagnostic.stageModels,
+      message: 'no model-list dialect handles this endpoint',
+    ),
+  );
 }
 
 http.Client? _dispatchHttpClientForTesting;
@@ -310,6 +509,15 @@ final class _GoogleDialect extends ModelListDialect {
 
 // ── GitHub Copilot (token exchange + Bearer /models) ───────────────────
 
+/// The /models GET watchdog (gh-1990): 15 s by default — a model picker
+/// must never hang the flow — tightened by the ops/test fetch-read
+/// override ([providerTimeoutsOverride], the documented "model lists"
+/// scope of FA_PROVIDER_TIMEOUT_SECONDS).
+Duration get _copilotModelsFetchTimeout =>
+    providerTimeoutsOverride?.fetchRead ?? const Duration(seconds: 15);
+
+final _copilotTrailingSlashes = RegExp(r'/+$');
+
 final class _CopilotDialect extends ModelListDialect {
   @override
   bool matches(String baseUrl, String? provider) =>
@@ -321,68 +529,425 @@ final class _CopilotDialect extends ModelListDialect {
     String apiKey, {
     http.Client? client,
     void Function()? onBundledFallback,
+  }) async => (await fetchReport(baseUrl, apiKey, client: client)).info;
+
+  @override
+  Future<ModelsFetchReport> fetchReport(
+    String baseUrl,
+    String apiKey, {
+    http.Client? client,
+    void Function()? onBundledFallback,
   }) async {
     final gClient = client ?? http.Client();
     final gOwnsClient = client == null;
     try {
-      // PAT mode (gh-1606): a fine-grained PAT IS the Copilot API
-      // credential — no exchange, no proxy-ep; the configured base URL
-      // (the seat's tier host, what the official CLI picks for a PAT) is
-      // the target, with the first-party CLI identity headers.
-      final Map<String, String> headers;
-      final String effectiveBase;
-      if (isFineGrainedGitHubPat(apiKey)) {
-        headers = copilotPatApiHeaders(pat: apiKey);
-        effectiveBase = baseUrl.replaceAll(RegExp(r'/+$'), '');
-      } else {
-        // The GitHub key is worthless to the Copilot API itself: exchange
-        // it for the short-lived Copilot token first
-        // (goal/copilot_provider.md, /models section).
-        final apiToken = await fetchCopilotApiToken(
-          githubToken: apiKey,
-          client: gClient,
-        );
-        // Same proxy-ep derivation as the chat path: the token names the
-        // tenant's API host; the configured tier host is only the
-        // fallback.
-        effectiveBase = (copilotApiBaseUrlFromToken(apiToken.token) ?? baseUrl)
-            .replaceAll(RegExp(r'/+$'), '');
-        headers = copilotApiHeaders(copilotToken: apiToken.token);
-      }
-      final uri = Uri.parse('$effectiveBase/models');
-      final response = await gClient
-          .get(uri, headers: headers)
-          .timeout(const Duration(seconds: 15));
-      if (response.statusCode != 200) {
-        return (const <String>[], const <String, int>{}, const <String, int>{});
-      }
-      return _parseCopilotModelsResponse(response.body);
-    } on Object {
-      return (const <String>[], const <String, int>{}, const <String, int>{});
+      return await _fetchWithDualPath(baseUrl, apiKey, gClient);
     } finally {
       if (gOwnsClient) gClient.close();
     }
   }
+
+  /// One credential path with the other as the fallback (gh-1990 AC3):
+  /// PAT-shaped keys try PAT-direct first (the exchange is known-dead for
+  /// them), everything else tries the exchange first. A FAILED primary
+  /// path gets exactly one attempt on the other path before the combined
+  /// reason is reported; an OAuth token never retries as a direct PAT
+  /// Bearer, and a fine-grained PAT never retries into the exchange
+  /// (GitHub 404s every PAT exchange by design — see
+  /// [fetchCopilotApiToken]).
+  Future<ModelsFetchReport> _fetchWithDualPath(
+    String baseUrl,
+    String apiKey,
+    http.Client client,
+  ) async {
+    final configuredBase = baseUrl.replaceAll(_copilotTrailingSlashes, '');
+    final patDirectFirst = isFineGrainedGitHubPat(apiKey);
+    Future<ModelsFetchReport> runPath({required bool patDirect}) => patDirect
+        ? _fetchModelsDirectPat(configuredBase, apiKey, client)
+        : _fetchModelsViaExchange(configuredBase, apiKey, client);
+
+    final primary = await runPath(patDirect: patDirectFirst);
+    if (!(primary.diagnostic?.pathFailed ?? false)) return primary;
+
+    // The primary credential route is dead — the other path gets one
+    // attempt when the key could plausibly work on it.
+    final canFallback = !patDirectFirst && !isOAuthShapedGitHubToken(apiKey);
+    if (!canFallback) return primary;
+
+    final secondary = await _fetchModelsDirectPat(
+      configuredBase,
+      apiKey,
+      client,
+    );
+    if (secondary.diagnostic == null) {
+      // The fallback path LISTED models — the rescue landed, and the
+      // provenance note says which path answered (AC3).
+      final failedReason = primary.diagnostic!.message;
+      return ModelsFetchReport(
+        info: secondary.info,
+        note:
+            'models via the pat-direct fallback (the exchange path '
+            'failed: $failedReason)',
+        droppedModels: secondary.droppedModels,
+      );
+    }
+    // Both paths came up empty — one combined reason (AC3), never a bare
+    // empty list: the primary's failure and the fallback's answer both
+    // name themselves.
+    final a = primary.diagnostic!;
+    final b = secondary.diagnostic!;
+    return ModelsFetchReport(
+      info: secondary.info,
+      diagnostic: ModelsFetchDiagnostic(
+        stage: '${a.stage}+${b.stage}',
+        path: a.path,
+        httpStatus: a.httpStatus ?? b.httpStatus,
+        timedOut: a.timedOut || b.timedOut,
+        message:
+            '${a.path} path: ${a.message}; '
+            '${b.path} path: ${b.message}',
+        hint: a.hint ?? b.hint,
+      ),
+    );
+  }
+
+  /// The exchange path: the GitHub key is worthless to the Copilot API
+  /// itself — exchange it for the short-lived Copilot token first
+  /// (goal/copilot_provider.md, /models section), then follow the token's
+  /// proxy-ep host with the configured tier host as the fallback.
+  Future<ModelsFetchReport> _fetchModelsViaExchange(
+    String configuredBase,
+    String apiKey,
+    http.Client client,
+  ) async {
+    final CopilotApiToken apiToken;
+    try {
+      apiToken = await fetchCopilotApiToken(
+        githubToken: apiKey,
+        client: client,
+      );
+    } on CopilotAuthException catch (error) {
+      return ModelsFetchReport(
+        info: _emptyCopilotInfo,
+        diagnostic: ModelsFetchDiagnostic(
+          stage: ModelsFetchDiagnostic.stageExchange,
+          path: ModelsFetchDiagnostic.pathExchange,
+          httpStatus: error.statusCode,
+          message: 'token exchange failed: ${error.message}',
+          hint: _exchangeFailureHint(apiKey),
+        ),
+      );
+    } on TimeoutException {
+      return ModelsFetchReport(
+        info: _emptyCopilotInfo,
+        diagnostic: ModelsFetchDiagnostic(
+          stage: ModelsFetchDiagnostic.stageExchange,
+          path: ModelsFetchDiagnostic.pathExchange,
+          timedOut: true,
+          message:
+              'token exchange timed out after '
+              '${effectiveProviderConnectTimeout.inSeconds}s',
+          hint: _exchangeFailureHint(apiKey),
+        ),
+      );
+    } on Object catch (error) {
+      return ModelsFetchReport(
+        info: _emptyCopilotInfo,
+        diagnostic: ModelsFetchDiagnostic(
+          stage: ModelsFetchDiagnostic.stageExchange,
+          path: ModelsFetchDiagnostic.pathExchange,
+          message: 'token exchange failed: $error',
+          hint: _exchangeFailureHint(apiKey),
+        ),
+      );
+    }
+    // Same proxy-ep derivation as the chat path: the token names the
+    // tenant's API host; the configured tier host is only the fallback.
+    final tokenBase = copilotApiBaseUrlFromToken(apiToken.token);
+    final effectiveBase = (tokenBase ?? configuredBase).replaceAll(
+      _copilotTrailingSlashes,
+      '',
+    );
+    // Tier sanity (gh-1990): a no-proxy-ep token (individual, by design)
+    // aimed at a business/enterprise configured host is the classic
+    // misrouting — name it instead of letting the wrong host 404 silently.
+    final String? tierHint =
+        tokenBase == null &&
+            Uri.tryParse(configuredBase)?.host != _individualApiHost
+        ? 'this token carries no proxy-ep (individual tokens serve from '
+              '$copilotIndividualBaseUrl) — check the configured base URL '
+              '($configuredBase)'
+        : null;
+    // Tier-aware picker-flag fallback (gh-2003): a no-proxy-ep token is
+    // individual-tier by design, and a token serving from an individual
+    // host answers the flag-omitting /models shape either way — see
+    // [_copilotModelFilterVerdict].
+    final individualTier =
+        tokenBase == null || _isIndividualCopilotApiHost(effectiveBase);
+    return _fetchModelsList(
+      effectiveBase,
+      copilotApiHeaders(copilotToken: apiToken.token),
+      client,
+      path: ModelsFetchDiagnostic.pathExchange,
+      extraHint: tierHint,
+      individualTier: individualTier,
+    );
+  }
+
+  /// The PAT-direct path (gh-1606): a fine-grained PAT IS the Copilot API
+  /// credential — no exchange, no proxy-ep; the configured base URL (the
+  /// seat's tier host) is the target.
+  Future<ModelsFetchReport> _fetchModelsDirectPat(
+    String configuredBase,
+    String pat,
+    http.Client client,
+  ) => _fetchModelsList(
+    configuredBase.replaceAll(_copilotTrailingSlashes, ''),
+    copilotPatApiHeaders(pat: pat),
+    client,
+    path: ModelsFetchDiagnostic.pathPatDirect,
+    individualTier: _isIndividualCopilotApiHost(configuredBase),
+  );
+
+  /// GETs `{base}/models` under [headers] and parses the answer with the
+  /// per-model filter diagnostics (AC2) — never a bare empty answer.
+  Future<ModelsFetchReport> _fetchModelsList(
+    String base,
+    Map<String, String> headers,
+    http.Client client, {
+    required String path,
+    String? extraHint,
+    required bool individualTier,
+  }) async {
+    final uri = Uri.parse('$base/models');
+    final http.Response response;
+    try {
+      response = await client
+          .get(uri, headers: headers)
+          .timeout(_copilotModelsFetchTimeout);
+    } on TimeoutException {
+      return ModelsFetchReport(
+        info: _emptyCopilotInfo,
+        diagnostic: ModelsFetchDiagnostic(
+          stage: ModelsFetchDiagnostic.stageModels,
+          path: path,
+          timedOut: true,
+          message:
+              '$base/models timed out after '
+              '${_copilotModelsFetchTimeout.inSeconds}s',
+          hint: extraHint,
+        ),
+      );
+    } on Object catch (error) {
+      return ModelsFetchReport(
+        info: _emptyCopilotInfo,
+        diagnostic: ModelsFetchDiagnostic(
+          stage: ModelsFetchDiagnostic.stageModels,
+          path: path,
+          message: '$base/models request failed: $error',
+          hint: extraHint,
+        ),
+      );
+    }
+    if (response.statusCode != 200) {
+      return ModelsFetchReport(
+        info: _emptyCopilotInfo,
+        diagnostic: ModelsFetchDiagnostic(
+          stage: ModelsFetchDiagnostic.stageModels,
+          path: path,
+          httpStatus: response.statusCode,
+          message: '$base/models answered HTTP ${response.statusCode}',
+          hint: _modelsFailureHint(path, extraHint),
+        ),
+      );
+    }
+    return _modelsReportFrom200(
+      base,
+      response.body,
+      path: path,
+      extraHint: extraHint,
+      individualTier: individualTier,
+    );
+  }
+
+  /// The HTTP-200 body → report (gh-1990 review): the parse is GUARDED —
+  /// the dialect contract (top of this file) answers an empty info on
+  /// ANY error, so a non-JSON 200 (captive portal, proxy error page,
+  /// shape drift on a misconfigured host) names its branch instead of
+  /// throwing `FormatException` through the dispatch and crashing the
+  /// unguarded CLI `/provider copilot` connect flow — and the "data"
+  /// shape rides the parser result (no second jsonDecode).
+  ModelsFetchReport _modelsReportFrom200(
+    String base,
+    String body, {
+    required String path,
+    String? extraHint,
+    required bool individualTier,
+  }) {
+    final (ModelsEndpointInfo, int, List<(String, String)>, bool, int)? parsed;
+    try {
+      parsed = _parseCopilotModelsResponse(
+        body,
+        individualTier: individualTier,
+      );
+    } on FormatException catch (error) {
+      return ModelsFetchReport(
+        info: _emptyCopilotInfo,
+        diagnostic: ModelsFetchDiagnostic(
+          stage: ModelsFetchDiagnostic.stageModels,
+          path: path,
+          message:
+              '$base/models answered an unparseable payload (HTTP 200): '
+              '$error',
+          hint: extraHint,
+        ),
+      );
+    }
+    final (info, fetchedCount, dropped, dataIsList, keptByTierFallback) =
+        parsed;
+    if (info.$1.isNotEmpty) {
+      // Models listed — the partial-filter summary rides the note
+      // (AC2), and so does the tier-aware keep (gh-2003): the
+      // fallback rescued flag-absent entries and the note names it.
+      return ModelsFetchReport(
+        info: info,
+        note: _filterTransparencyNote(
+          dropped,
+          fetchedCount,
+          keptByTierFallback,
+        ),
+        droppedModels: dropped,
+      );
+    }
+    if (dropped.isEmpty && fetchedCount == 0) {
+      // HTTP 200 with no entries at all — an honest empty from the
+      // endpoint (a filtered answer reports below instead). A payload
+      // with no "data" list at all is the shape drift the diagnostic
+      // names.
+      final message = dataIsList
+          ? '$base/models answered with no models (HTTP 200, empty list)'
+          : '$base/models answered an unexpected payload shape — no '
+                '"data" list (HTTP 200)';
+      return ModelsFetchReport(
+        info: info,
+        diagnostic: ModelsFetchDiagnostic(
+          stage: ModelsFetchDiagnostic.stageModels,
+          path: path,
+          pathFailed: false,
+          message: message,
+          hint: extraHint,
+        ),
+      );
+    }
+    // The filter dropped EVERY entry (AC2) — the counts name the reasons.
+    return ModelsFetchReport(
+      info: info,
+      diagnostic: ModelsFetchDiagnostic(
+        stage: ModelsFetchDiagnostic.stageFilter,
+        path: path,
+        pathFailed: false,
+        fetchedCount: fetchedCount,
+        filteredCount: dropped.length,
+        message:
+            '$fetchedCount models fetched, ${dropped.length} filtered '
+            '(${_filterReasonSummary(dropped)})',
+        hint: extraHint,
+      ),
+      droppedModels: dropped,
+    );
+  }
+
+  /// Remediation for a failed token exchange: classic PATs are the known
+  /// dead shape — name the two remedies fa supports (gh-1606). OAuth
+  /// tokens get the remedy from the [CopilotAuthException] message.
+  String? _exchangeFailureHint(String apiKey) => isClassicGitHubPat(apiKey)
+      ? 'classic PATs (ghp_…) are not accepted by the Copilot token '
+            'exchange — use the OAuth device flow (/provider copilot) or a '
+            'fine-grained PAT (github_pat_…) with the "Copilot Requests" '
+            'permission'
+      : null;
+
+  /// Remediation for a failed /models call: the seat and the per-tier
+  /// hosts (PAT mode adds the permission check).
+  String _modelsFailureHint(String path, String? extraHint) {
+    final hints = [
+      if (path == ModelsFetchDiagnostic.pathPatDirect)
+        'check the PAT\'s "Copilot Requests" permission '
+            '(github.com/settings/personal-access-tokens → edit → '
+            'Permissions) and the account\'s Copilot seat'
+      else
+        'check the Copilot seat (github.com/settings/copilot) and the '
+            'configured base URL — individual: $copilotIndividualBaseUrl, '
+            'business: $copilotBusinessBaseUrl, enterprise: '
+            '$copilotEnterpriseBaseUrl',
+      ?extraHint,
+    ];
+    return hints.join('; ');
+  }
+}
+
+const _emptyCopilotInfo = (<String>[], <String, int>{}, <String, int>{});
+
+/// The individual-tier API host (no-proxy-ep tokens serve from here).
+final _individualApiHost = Uri.parse(copilotIndividualBaseUrl).host;
+
+/// Whether [baseUrl] serves the individual tier: the
+/// [copilotIndividualBaseUrl] host, or pi-mono's spelling
+/// `api.individual.githubcopilot.com` — the host an individual token's
+/// `proxy-ep=proxy.individual.githubcopilot.com` resolves to via
+/// [copilotApiBaseUrlFromToken]. Business/enterprise tenants never
+/// match, so their /models answers keep the strict picker list.
+bool _isIndividualCopilotApiHost(String baseUrl) {
+  final host = Uri.tryParse(baseUrl)?.host;
+  return host == _individualApiHost ||
+      host == 'api.individual.githubcopilot.com';
 }
 
 /// Maps the Copilot `{data: [{id, capabilities.limits.{max_context_window_
 /// tokens, max_output_tokens}}]}` shape into [ModelsEndpointInfo] (the
 /// limits are nested, so [parseModelsResponse] reads only the ids).
-/// Non-chat entries are filtered out — see [_isSelectableCopilotModel].
-ModelsEndpointInfo _parseCopilotModelsResponse(String body) {
+/// Non-chat entries are filtered out — see [_copilotModelFilterVerdict].
+/// Alongside the info it answers the entry count, the per-model
+/// (id, drop reason) pairs for the filter transparency (gh-1990 AC2),
+/// and whether the payload carried a "data" list at all (the
+/// empty-list vs unexpected-shape distinction — decoded ONCE here; the
+/// caller never re-decodes). gh-2003 adds the fifth element: how many
+/// entries were kept ONLY via the tier-aware picker-flag fallback (so
+/// the report note can name the keep). Throws [FormatException] on a
+/// non-JSON body — the caller guards it (the dialect contract: empty
+/// on any error).
+(ModelsEndpointInfo, int, List<(String, String)>, bool, int)
+_parseCopilotModelsResponse(String body, {required bool individualTier}) {
   final decoded = jsonDecode(body);
   final data = decoded is Map<String, dynamic> ? decoded['data'] : null;
   if (data is! List) {
-    return (const <String>[], const <String, int>{}, const <String, int>{});
+    const dropped = <(String, String)>[];
+    return (_emptyCopilotInfo, 0, dropped, false, 0);
   }
   final ids = <String>[];
   final windows = <String, int>{};
   final maxTokens = <String, int>{};
+  final dropped = <(String, String)>[];
+  var keptByTierFallback = 0;
   for (final entry in data) {
-    if (entry is! Map<String, dynamic>) continue;
+    if (entry is! Map<String, dynamic>) {
+      dropped.add(const ('(malformed entry)', 'malformed entry'));
+      continue;
+    }
     final id = entry['id'];
-    if (id is! String || id.isEmpty) continue;
-    if (!_isSelectableCopilotModel(entry)) continue;
+    if (id is! String || id.isEmpty) {
+      dropped.add(const ('(no id)', 'no id'));
+      continue;
+    }
+    final (dropReason, tierFallbackKeep) = _copilotModelFilterVerdict(
+      entry,
+      individualTier: individualTier,
+    );
+    if (dropReason != null) {
+      dropped.add((id, dropReason));
+      continue;
+    }
+    if (tierFallbackKeep) keptByTierFallback++;
     ids.add(id);
     final limits =
         ((entry['capabilities'] as Map<String, dynamic>?)?['limits']
@@ -393,31 +958,105 @@ ModelsEndpointInfo _parseCopilotModelsResponse(String body) {
     if (cap != null) maxTokens[id] = cap;
   }
   ids.sort();
-  return (ids, windows, maxTokens);
+  return (
+    (ids, windows, maxTokens),
+    data.length,
+    dropped,
+    true,
+    keptByTierFallback,
+  );
 }
 
-/// The picker-eligibility filter — pi-mono parity
+/// WHY [entry] is not picker-eligible — the reason strings of the
+/// gh-1990 filter transparency. Answers `(dropReason,
+/// tierFallbackKeep)`: null dropReason = selectable, and
+/// [individualTier] flags the entries selectable ONLY via the gh-2003
+/// fallback so the report note can name the keep.
+///
+/// The criteria are pi-mono parity
 /// (`packages/ai/src/auth/oauth/github-copilot.ts`
-/// `isSelectableCopilotModel`): the entry must be picker-enabled, not
-/// policy-disabled, and tool-call capable (embeddings and completion-only
-/// entries carry `model_picker_enabled: false` already). On top of pi:
-/// when the payload declares `supported_endpoints`, `/chat/completions`
-/// must be among them — our provider streams there, and responses-only
-/// models (e.g. `gpt-5.6-sol` on `["/responses", "ws:/responses"]`) 400
-/// with "not accessible via the /chat/completions endpoint". Payloads
-/// without the field (older/self-hosted proxies) are kept.
-bool _isSelectableCopilotModel(Map<String, dynamic> entry) {
-  if (entry['model_picker_enabled'] != true) return false;
+/// `parseGitHubCopilotModelCatalog`/`isSelectableCopilotModel`): the
+/// entry must be picker-enabled, not policy-disabled, and tool-call
+/// capable (embeddings and completion-only entries carry
+/// `model_picker_enabled: false` already). On top of pi: when the
+/// payload declares `supported_endpoints`, `/chat/completions` must be
+/// among them — our provider streams there, and responses-only models
+/// (e.g. `gpt-5.6-sol` on `["/responses", "ws:/responses"]`) 400 with
+/// "not accessible via the /chat/completions endpoint".
+///
+/// gh-2003 (gh-1990 phase 2, the individual-tier gap): an entry with
+/// the `model_picker_enabled` KEY ABSENT is kept when the response
+/// comes from the individual tier ([individualTier] — the individual
+/// host or a no-proxy-ep token; pi-mono's trigger is
+/// `allowPolicyFallback = baseUrl === "https://api.individual.githubcopilot.com"`
+/// in `fetchGitHubCopilotModels`): individual-tier /models responses
+/// omit the flag entirely, and absence ≠ an explicit `false`. An
+/// explicit `false` still drops everywhere, business/enterprise
+/// responses keep the strict picker list, and off the individual tier
+/// an absent key still drops with "picker flag absent" (the AC2
+/// wording). The keep is never silent — the parser counts it and the
+/// report note names it.
+(String?, bool) _copilotModelFilterVerdict(
+  Map<String, dynamic> entry, {
+  required bool individualTier,
+}) {
+  final picker = entry['model_picker_enabled'];
+  if (picker == null) {
+    return individualTier ? (null, true) : ('picker flag absent', false);
+  }
+  if (picker != true) return ('picker flag false', false);
   final policy = entry['policy'];
-  if (policy is Map && policy['state'] == 'disabled') return false;
+  if (policy is Map && policy['state'] == 'disabled') {
+    return ('policy disabled', false);
+  }
   final capabilities = entry['capabilities'];
   final supports = capabilities is Map ? capabilities['supports'] : null;
-  if (supports is Map && supports['tool_calls'] == false) return false;
+  if (supports is Map && supports['tool_calls'] == false) {
+    return ('no tool_calls', false);
+  }
   final endpoints = entry['supported_endpoints'];
   if (endpoints is List && !endpoints.contains('/chat/completions')) {
-    return false;
+    return ('endpoint unsupported', false);
   }
-  return true;
+  return (null, false);
+}
+
+/// The grouped drop-reason summary for the filter messages: a single
+/// distinct reason reads bare («picker flag absent» — the AC2 wording),
+/// several carry counts («picker flag absent ×10, policy disabled ×2»).
+String _filterReasonSummary(List<(String, String)> dropped) {
+  final counts = <String, int>{};
+  for (final (_, reason) in dropped) {
+    counts[reason] = (counts[reason] ?? 0) + 1;
+  }
+  if (counts.length == 1) return counts.keys.single;
+  return counts.entries
+      .map(
+        (entry) =>
+            entry.value == 1 ? entry.key : '${entry.key} ×${entry.value}',
+      )
+      .join(', ');
+}
+
+/// The transparency note for a listed answer: the partial-filter
+/// summary (gh-1990 AC2) and — when the gh-2003 tier-aware fallback
+/// kept flag-absent entries — the keep, never one without the other.
+/// Null when neither fired (every entry plainly selectable).
+String? _filterTransparencyNote(
+  List<(String, String)> dropped,
+  int fetchedCount,
+  int keptByTierFallback,
+) {
+  final parts = <String>[
+    if (dropped.isNotEmpty)
+      '${dropped.length} of $fetchedCount models filtered '
+          '(${_filterReasonSummary(dropped)})',
+    if (keptByTierFallback > 0)
+      '$keptByTierFallback of $fetchedCount models kept via the '
+          'individual-tier fallback (picker flag absent)',
+  ];
+  if (parts.isEmpty) return null;
+  return parts.join('; ');
 }
 
 // ── OpenAI-compatible (Bearer + /models) — the default fallback ────────

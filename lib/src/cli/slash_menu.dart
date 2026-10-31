@@ -147,6 +147,9 @@ const builtinSlashCommands = <String, String>{
   '/compact': 'summarize history to free context',
   '/stats': 'show token and cost totals',
   '/tasks': '[cancel <id>] — list background agents',
+  '/transcript':
+      '[expand all|none] — collapsed thinking rows: render or hide the '
+      'persisted text (gh-1933)',
   '/queue': '[clear] — queued follow-up messages (strip above the input)',
   '/memory': '[maintain] — memory stats or run consolidation',
   '/power': 'show sleep prevention (caffeinate) level and state',

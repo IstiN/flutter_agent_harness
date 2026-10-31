@@ -28,9 +28,11 @@ leak, measure the settled live set (below).
   (allocated-volume basis). Badge budget starts at **3,000 MB** for the
   subset. The whole app suite does not fit a hosted job (every test is a
   fresh flutter_tester), so the subset is the standing proxy.
-- Artifacts: `memory-churn-report` (both JSONs + badges), 90-day
-  retention. A red leg files the deduped `nightly-red` issue like the
-  other nightly legs.
+- Artifacts: `memory-churn-report-core` / `memory-churn-report-app`
+  (each leg's JSON + badge), 90-day retention. The legs are separate
+  jobs with independent timeouts (the app leg needs ≥3h incl. the 2GB
+  fixture generation; hosted-job cap 360m). A red leg files the deduped
+  `nightly-red` issue like the other nightly legs.
 
 A PR that changes allocation behavior quotes before/after from the
 **targeted files** (never a whole-suite re-run — the core pass is slow by

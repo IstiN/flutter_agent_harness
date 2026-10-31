@@ -13,6 +13,203 @@ block a release again.
 
 ## Unreleased
 
+- fix(gh-2003): the Copilot picker filter is tier-aware. Individual-tier
+  `/models` responses omit `model_picker_enabled` entirely, so phase 1
+  dropped every such entry as «picker flag absent» and individual/OAuth
+  accounts still listed zero usable models. When the response comes from
+  the individual tier — the individual host (`api.githubcopilot.com` or
+  pi-mono's `api.individual.githubcopilot.com` spelling) or a
+  no-proxy-ep token (individual by design) — an ABSENT flag is now
+  selectable: absence ≠ an explicit `false`, which still drops
+  everywhere (embeddings, completion-only). Business/enterprise answers
+  keep the strict picker list unchanged, and the keep is never silent:
+  the fetch note names it («2 of 2 models kept via the individual-tier
+  fallback (picker flag absent)») through the existing `fetch notes:`
+  surfacing. pi-mono parity: the trigger mirrors `allowPolicyFallback =
+  baseUrl === "https://api.individual.githubcopilot.com"` in
+  `packages/ai/src/auth/oauth/github-copilot.ts`.
+- fix(gh-1990): the Copilot `/models` dialect never answers a silent
+  empty list again. Every silent-empty exit names its branch through the
+  new `fetchModelsForEndpointReport` dispatch (`ModelsFetchReport` +
+  `ModelsFetchDiagnostic`): the token-exchange HTTP status (with the
+  OAuth device-flow / fine-grained PAT remedies for classic `ghp_…`
+  keys), the `/models` HTTP status or timeout (with the seat + per-tier
+  host hint), proxy-ep-less individual tokens aimed at a business/
+  enterprise configured host (the tier-misrouting hint), and the picker
+  filter with per-model drop reasons (`picker flag absent`, `picker flag
+  false`, `policy disabled`, `no tool_calls`, `endpoint unsupported`) —
+  «12 models fetched, 12 filtered (picker flag absent)». A failed
+  primary credential path retries the other path ONCE before declaring
+  empty (dual-path fallback, gh-1606): an exchange-401 classic PAT tries
+  PAT-direct (the provenance note names which path answered), a
+  fine-grained PAT never falls into the exchange, an OAuth token never
+  becomes a direct PAT Bearer. Surfacing: `/models` prints a `fetch
+  notes:` section per provider, the `/provider copilot` connect flow
+  prints the named failure before manual entry, the app's model
+  quick-select (`EndpointModelsController.emptyReason`) renders it under
+  the field, and the Copilot connect sheet shows the reason above the
+  manual model id. The legacy `fetchModelsForEndpoint` answers are
+  unchanged (parity); the filter criteria themselves are unchanged
+  (pi-mono parity — only the reporting is new). Review round 2: the
+  `fetch notes:` wiring covers the unsaved sibling paths too (the
+  active-catalog and env-keyed Copilot fetches surface the same named
+  failure instead of a silent seed fallback), the connect flow's
+  `no models:` line reuses `ModelsFetchReport.reasonText` (the last
+  hand-rolled `message — hint` join), and the `ModelsFetchReport`
+  docs scope the diagnostic contract to the dialects that name their
+  failure branches.
+- feat(network): channel payload sender block — app members' channel
+  messages carry `{"text": …, "sender": {"name": …, "id": …}}` (public
+  base64 JSON and keyed fanet1 plaintext alike), so DAP agents can
+  attribute the HUMAN author behind the fa_network relay's hub id. The
+  harness unwraps it tolerantly (raw text passes through), rides the
+  name as `AgentMessage.fromName` through the fabric, and the CLI
+  steering line greets people again: `from Uladzimir (<relay id>) in
+  #channel: hello` instead of `from 3cfaee1aa054fe6e…`. The app falls
+  back to the payload sender for bubble names when the envelope carries
+  none; DMs also name hub peers from the whois cache. Legacy payloads
+  without the block decode exactly as before.
+- feat(gh-1956): reply auto-spill — oversized child `reply` / `agent_message`
+  payloads spill to an `agent://` artifact automatically; the parent receives a
+  bounded excerpt + pointer + completeness marker with char AND byte counts.
+  Manual chunking degrades to a documented fallback, restorable across parent
+  resume via durable `deliverable_artifact` records, behind the
+  `subagents.replyAutoSpill` kill switch (default on; honored on the CLI and
+  the app host alike). Rework round: the salvage hook (output-truncated
+  deliverable calls) restores the durable ids before allocating its own
+  (no post-resume pointer shadowing), durability losses emit a
+  `[deliverables]` diagnostic line, the app host honors the kill switch, the
+  spill-reach gate is renamed `spillAppliesTo` (was `spillApliesTo`), byte
+  counts are encoded once per spill, and `DeliverableRecord.artifact(bytes)`
+  is optional again so external constructors keep compiling.
+- fix(#1947): `schedule_message` from the orchestrator no longer misroutes
+  into a finished subagent's mailbox. A background shell job started by a
+  CHILD registered its settle continuation inside the child's subagent
+  zone; when the job settled after the child's run ended, the CLI's
+  settle-wake (`_onShellJobSettled` → `_startRun`) started MAIN's reaction
+  run still carrying the finished child's `activeSubagentId()`, and every
+  identity consumer of that run misattributed it — the reported shape was
+  a self-reminder scheduled "in <session>/<child>" that auto-resumed the
+  completed child (duplicate-release risk). Three layers: the
+  `ShellJobRegistry` now binds its settle continuation to the
+  construction-time (boot) zone (`_bootZone.run`), both hosts'
+  `scheduleSenderMailbox` wiring trusts the zone scope only while the
+  child is genuinely in flight on the session executor
+  (`TaskExecutor.isInFlight`), and the tool response names the RECIPIENT
+  the record carries — an explicit `to:` used to be shadowed in the reply
+  by the sender's mailbox, which read as "the override was ignored" even
+  when it was honored. E2E repro drives the real AgentCli
+  (test/cli/agent_cli_schedule_recipient_test.dart) plus a registry-level
+  zone pin (test/tools/shell_job_settle_zone_test.dart).
+- fix(gh-1948): `task_observe` works on a RUNNING background subagent
+  instead of crashing with an uncaught `SessionException` on the
+  `<parentSessionId>/<agentName>` placeholder. Three legs: the executor
+  flushes each child's transcript incrementally at every turn boundary
+  (the JSONL exists and grows mid-run — also crash-resilience for
+  aborted children), `task_observe` resolves a placeholder handle's real
+  session file from the sessions tree (the same `agent: subagent` /
+  `parent:` / `id:` header scan the boot adoption uses) and heals the
+  handle onto the found path, and every read failure degrades to a
+  structured "transcript unavailable" / "no transcript available yet"
+  message instead of an uncaught tool error. The child-transcript reader
+  rides the transient-ENOENT retry (issue #427) — it reads while the
+  executor appends.
+- fix(#1941): the selected CodeMie project now rides EVERY model request.
+  The header is baked into `Model.headers` only by the connect-time
+  switches (gh-1809), so every other rebuild silently dropped
+  `x-codemie-project` — and the backend bills a header-less request against
+  the user's DEFAULT project (codemie-code `header-injection.plugin.ts`
+  contract): the reported symptom is limit-exhausted from the exhausted
+  default project despite picking a budgeted one. Rebuilds now re-resolve
+  the project from the saved entry through one helper
+  (`projectHeaderForBaseUrl`): the boot folder-state restore (JWT entries
+  previously booted header-less — the SSO cookie patch was the only boot
+  carrier), the session-resume re-apply (`_buildRestoredModel`), the
+  roles-chain failover (`ModelRef.project`, mirroring the #964 authHeader
+  leg), the roles-mode `/model` + settings-flow pins, and the generic
+  `/provider` switch. The models list (`/llm_models`, SSO + JWT + guided
+  setup + entry dispatch) and the quota adapter (dark until pinned) scope
+  themselves to the same project, so display and billing can never diverge.
+  Tests pin the header VALUE on the wire (real adapter over a fake
+  endpoint) for the restored and failed-over models.
+- feat(network): private networks created outside the app surface after
+  sign-in. `GET /api/networks/mine` (fa_network#16) is synced into the
+  wallet after OAuth/dev sign-in and both restore paths — best-effort,
+  silent on older backends (404) and any failure, and never destructive.
+  Synced memberships keep the server's name/class, preserve local
+  passwords/join facts, and land without a password (the endpoint never
+  returns one) until the first join. Entering such a network — sidebar,
+  ⌘K/⌘3-9, or a restored selection — opens the join sheet prefilled with
+  the network id instead of a resume error or endless spinner; joining by
+  name now keys the wallet/session by the echoed canonical id and migrates
+  legacy name-keyed rows (password + channel keys) instead of duplicating
+  them. A malformed `/mine` row is skipped, not the whole list.
+- fix(gh-1931): one render per tool call on the non-TUI console. Line mode
+  and the headless `-p` log printed every executed call twice — a start row
+  (`• bash · cmd`, no elapsed) followed by the end row (`✓/✗ bash · cmd
+  0s`). The duplicate start-row print is gone from `_onToolExecutionStart`;
+  the end row (command, status glyph, elapsed, failure news) is the single
+  render per call. The TUI keeps its running card + settled card, start
+  bookkeeping stays (`_toolStarts` feeds the end row's detail/elapsed, the
+  waiting coordinator still arms per-call liveness), and persisted
+  artifacts (session JSONL, trajectory records) are untouched —
+  rendering-only change. Long foreground calls keep the gh-1055 liveness
+  reminders past `waiting.toolLivenessSeconds` (default 60s).
+- fix(gh-1929): esc during the pre-flight auto-compaction no longer crashes
+  the CLI. The compaction layer's deliberate abort (#1085) used to escape
+  `_runPrompt` outside its guarded body and reach the root zone handler via
+  an unlistened `whenComplete` chain — `fa crashed: CancelledException` +
+  crash.log + a lost session view. The pre-flight window (submit on an
+  over-window transcript) now translates the cancel into a user-cancel
+  outcome: neutral dim `submission cancelled` receipt (never `error:`), the
+  TUI composer hands the typed text back (`sendInputText`) so a resubmit is
+  one Enter away, headless exits 130 with the same receipt, and the next
+  prompt works (the funnel's local-trim recovery or a retried compaction).
+  Cancels DURING the run — in-flight relief, settle funnel — keep their
+  pinned loud-abort surfaces, and the post-run window keeps its
+  `compaction interrupted` receipt via the shared `_renderUserCancel`
+  helper.
+- feat(1923): stall-proof steering. Steering arriving while the loop awaits
+  an UNPRODUCTIVE provider submit (zero bytes, or silent past the steering
+  stall window) now cancels the attempt via a `SteeringInterruptFire`
+  cancel, injects the pending steering into the rebuilt request, and
+  resubmits — the #1916-class submit stalls can no longer queue user or
+  agent mail invisibly. Productive streams keep next-boundary semantics;
+  the interrupt never consumes a retry attempt, and the run latch re-arms
+  in place so watchdog replays and user aborts keep working. `task_resume`
+  caps its foreground wait (like `task_send`) and continues in the
+  background; video polling honors soft-yield checkpoints (remote render
+  never restarted, honest hand-back text) and media generation honors run
+  cancellation; SLO-breached undelivered child mail surfaces in
+  `task_status` (`UNDELIVERED … past the 2s delivery SLO`); the TUI prints
+  `steering queued — provider stalled Ns, interrupting to deliver` plus the
+  delivered ack.
+- feat(1916): image-heavy submits no longer livelock — byte-based
+  `images.maxBytesPerRequest` (default 8MB, layered onto the count cap;
+  `/images` names both drop reasons), legacy text-embedded data-URL
+  screenshots in history fold into the once-only registry instead of
+  replaying raw forever, stall watchdog windows scale with the outbound
+  payload (capped at 2x; explicit connect clamps untouched), abandoned
+  connect attempts answering during the retry backoff are adopted, and
+  repeated identical-payload stalls fire ONE actionable /compact +
+  image-budget advice. TUI stall banner + docs/images.md carry the
+  image-heavy playbook.
+- fix(gh-1912): Add an agent → DAP now turns a retired hub's unknown
+  `enroll_create` response into an actionable upgrade message instead of
+  exposing `bad_frame`. Independent enrollment never falls back to the
+  legacy same-name credential rotation endpoint, and existing credentials
+  remain untouched on failure.
+
+- fix(gh-1913): Add an agent is usable on narrow phone screens: scope and
+  format choices wrap without per-character labels, enrollment controls
+  stack at full width, and actions remain reachable by scrolling. Desktop
+  keeps the segmented layout; phone/desktop light/dark goldens guard both.
+
+- fix(gh-1825): DAP agent enrollments carry a stable, independent
+  `agentInstance` through app/CLI bundles, persistence, direct boot and
+  reconnect. Independent same-name agents keep distinct identities and stay
+  online together, while legacy bundles retain their project-scoped identity.
+
 - feat(gh-1825): DAP private-channel sends now use self-describing
   `fanet1` frames (sender X25519 key in the frame, channel-bound AAD) via
   `fa_hub_client` 0.2.11, so fa_network app members decrypt them without

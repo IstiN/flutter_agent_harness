@@ -69,6 +69,7 @@ final class ModelRef {
     this.input,
     this.thinkingLevel,
     this.authHeader,
+    this.project,
     this.connectTimeout,
     this.streamIdleTimeout,
     this.keyless = false,
@@ -121,6 +122,18 @@ final class ModelRef {
             'model chain entry${role == null ? '' : ' in role "$role"'}';
         final authHeader = parseAuthHeaderName(entry['authHeader'], where);
         validateAuthHeaderDialect(authHeader, catalogProvider(provider), where);
+        // The project rides the wire RAW (issue #1941): a non-Latin-1 value
+        // makes Dart reject the header MID-CHAT — refuse it at parse time
+        // (the codemie-code daemon omits the header instead; a chain ref
+        // explicitly DEMANDS the project, so loud beats silent).
+        final project = _optionalString(entry, 'project', role);
+        if (project != null &&
+            !RegExp(r'^[\x20-\x7E\xA0-\xFF]*$').hasMatch(project)) {
+          throw ConfigException(
+            '$where: "project" must be a Latin-1 '
+            'header value (0x20-0x7E, 0xA0-0xFF), got: $project',
+          );
+        }
         final keyless = _optionalBool(entry, 'keyless', role);
         final keyName = _optionalString(entry, 'apiKeyName', role);
         if (keyless && keyName != null) {
@@ -140,6 +153,10 @@ final class ModelRef {
           input: _optionalInput(entry, role),
           thinkingLevel: _optionalThinkingLevel(entry, role),
           authHeader: authHeader,
+          // The CodeMie project the chain bills (issue #1941): a pin
+          // without it serves from the chain and bills the user's DEFAULT
+          // project — the selected one is silently ignored.
+          project: project,
           // Per-provider stall-recovery tuning (issue #1398): the watchdog
           // knobs ride the chain entry, same place baseUrl/keys live.
           connectTimeout: parseProviderTimeoutMs(
@@ -283,6 +300,11 @@ final class ModelRef {
   /// Null keeps the Bearer default.
   final String? authHeader;
 
+  /// The CodeMie project the entry's requests bill (`project:`, issue
+  /// #1941) — rides the chain model as the `x-codemie-project` header. Null
+  /// keeps the backend's default-project fallback.
+  final String? project;
+
   /// Per-provider connect/first-headers watchdog override
   /// (`connectTimeoutMs`, issue #1398). Null keeps the global
   /// `providerTimeouts:` value, then the 180 s default.
@@ -303,35 +325,44 @@ final class ModelRef {
   String get label => '$provider/$modelId';
 
   /// Serializes to the map form (round-trips with [ModelRef.fromYaml]).
+  ///
+  /// The per-field emission funnels through one [writeIf] seam: a flat,
+  /// branchless field list (one line per optional field, byte-identical
+  /// output) instead of an if-block per field — the block-per-field shape
+  /// pushed this method past the CRAP gate with the `project:` addition
+  /// (issue #1941 review).
   String toYaml() {
     final buffer = StringBuffer()
       ..write('provider: $provider\n')
       ..write('model: $modelId\n');
-    if (apiKeyName != null) buffer.write('apiKeyName: $apiKeyName\n');
-    if (baseUrl != null) buffer.write('baseUrl: $baseUrl\n');
-    if (contextWindow != null) buffer.write('contextWindow: $contextWindow\n');
-    if (maxTokens != null) buffer.write('maxTokens: $maxTokens\n');
-    if (thinkingLevel != null) {
-      buffer.write('thinkingLevel: $thinkingLevel\n');
+    void writeIf(bool present, String line) {
+      if (present) buffer.write(line);
     }
-    if (input != null) {
-      buffer.write('input: [${input!.join(', ')}]\n');
-    }
-    if (authHeader != null) {
-      // RFC 7230 tokens may lead with yaml specials (`#`, `*`, `!`): a raw
-      // scalar would round-trip as a comment/alias. JSON quoting keeps the
-      // round-trip lossless (issue #964 review).
-      buffer.write('authHeader: ${jsonEncode(authHeader)}\n');
-    }
-    if (connectTimeout != null) {
-      buffer.write('connectTimeoutMs: ${connectTimeout!.inMilliseconds}\n');
-    }
-    if (streamIdleTimeout != null) {
-      buffer.write(
-        'streamIdleTimeoutMs: ${streamIdleTimeout!.inMilliseconds}\n',
-      );
-    }
-    if (keyless) buffer.write('keyless: true\n');
+
+    writeIf(apiKeyName != null, 'apiKeyName: $apiKeyName\n');
+    writeIf(baseUrl != null, 'baseUrl: $baseUrl\n');
+    writeIf(contextWindow != null, 'contextWindow: $contextWindow\n');
+    writeIf(maxTokens != null, 'maxTokens: $maxTokens\n');
+    writeIf(thinkingLevel != null, 'thinkingLevel: $thinkingLevel\n');
+    // The `?.` interpolations build a throwaway string when the field is
+    // absent — writeIf decides the EMISSION, so the null branch never
+    // reaches the buffer (and `!` here would crash before the check).
+    writeIf(input != null, 'input: [${input?.join(', ')}]\n');
+    // RFC 7230 tokens may lead with yaml specials (`#`, `*`, `!`): a raw
+    // scalar would round-trip as a comment/alias. JSON quoting keeps the
+    // round-trip lossless (issue #964 review). Project names are free text
+    // too (issue #1941) — same quoting.
+    writeIf(authHeader != null, 'authHeader: ${jsonEncode(authHeader)}\n');
+    writeIf(project != null, 'project: ${jsonEncode(project)}\n');
+    writeIf(
+      connectTimeout != null,
+      'connectTimeoutMs: ${connectTimeout?.inMilliseconds}\n',
+    );
+    writeIf(
+      streamIdleTimeout != null,
+      'streamIdleTimeoutMs: ${streamIdleTimeout?.inMilliseconds}\n',
+    );
+    writeIf(keyless, 'keyless: true\n');
     return buffer.toString();
   }
 }

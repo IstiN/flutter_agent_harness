@@ -450,7 +450,9 @@ Precedence, highest first (`dap_settings.dart` `resolveDapSettings`,
 
 1. **Environment**: `DAP_HUB_URL`, `DAP_KEY_PATH`, `DAP_AGENT_NAME`,
    `DAP_CHANNELS_FILE` — env beats the yaml section for url/keyPath/name
-   (`fromMap`: `environment[envUrl] ?? scalar('url')`).
+   (`fromMap`: `environment[envUrl] ?? scalar('url')`). Scoped enrolled
+   connections also honor the optional non-secret `DAP_AGENT_INSTANCE`
+   identity discriminator (§15.4).
 2. **`.fah/packages.yaml`** `hub:` section:
 
    ```yaml
@@ -659,6 +661,25 @@ fa_hub_client with the public-payload fallback (0.2.11+ /
 feat/public-channel-payloads); on older clients inbound public frames
 surface as "undecryptable".
 
+### Channel payload sender block (human attribution across the relay)
+
+App members write through the fa_network relay: on the hub wire the
+frame's `from` is the RELAY's agent id, so a bare payload leaves the
+human author invisible — agents greet the relay
+("Hello 3cfaee1aa054fe6e!"). Channel payloads therefore carry an
+OPTIONAL sender block next to the text (public base64 JSON and keyed
+fanet1 plaintext alike):
+
+```json
+{"text": "hello", "sender": {"name": "Uladzimir", "id": "<memberId>"}}
+```
+
+Producers embed the block when they know the author's display name
+(the app always does post-join); legacy payloads without it stay valid
+forever. Receivers unwrap it tolerantly (raw text passes through) and
+surface the name as the mail's `fromName` — the CLI steering line
+reads `from Uladzimir (<relay-agent-id>) in #channel: …`.
+
 ### Enrolled hub credentials (the app's DAP tab)
 
 A bare invite link is enough only on hubs that accept the machine's
@@ -669,17 +690,34 @@ enrolled secret`). Therefore `/network` accepts the WHOLE DAP block from
 Add an agent → DAP (or the one-line CLI command):
 
 ```
-fa dap import 'wss://hub…/ws?channel=<id>' && DAP_HUB_URL=wss://hub…/ws DAP_CLIENT_SECRET='…' DAP_AGENT_NAME=<name> fa
+fa dap import 'wss://hub…/ws?channel=<id>' && DAP_HUB_URL=wss://hub…/ws DAP_CLIENT_SECRET='…' DAP_AGENT_NAME=<name> DAP_AGENT_INSTANCE=<instance> fa
 ```
 
-Paste it into the composer or `/network` — the invite, the client secret
-and the agent name are parsed together (the command is never executed).
-The secret is stored `dapkey1.`-encrypted for session/project scopes and
-decrypted only into the live connection; at global scope it stays in
-memory (the legacy files have no per-hub credential field). Boot and
-resume reconnect with the stored credential automatically. After every
+The app's DAP action creates an additional independent credential instead of
+rotating earlier credentials for the same display name. It calls
+`POST /api/networks/{id}/agents/enrollments`, which requires a hub with the
+`enroll_create` operation; it never falls back to legacy `/agents/enroll`.
+A hub that answers `unknown op enroll_create` must be upgraded — the app
+reports that existing credentials were not changed. The action also emits
+`DAP_AGENT_INSTANCE`, the first 16 lowercase hex characters of SHA-256 over
+the UTF-8 client secret. This discriminator is not a secret;
+`DAP_AGENT_NAME` remains the unchanged display name.
+
+Paste it into the composer or `/network` — the invite, client secret,
+agent name and instance are parsed together (the command is never executed).
+CLI session/project memberships and native/plain-web app enrollment records
+retain the instance, so paste and every later reconnect select the same
+independent identity. The secret is stored `dapkey1.`-encrypted for
+session/project scopes and decrypted only into the live connection; at global
+scope it stays in memory (the legacy files have no per-hub credential field).
+Boot and resume reconnect with the stored credential automatically. After every
 join the wizard prints an explicit LIVE / NOT-live verdict — a stored
 membership is never presented as a working connection.
+
+The browser extension has ONE service-worker DAP runtime and one active
+enrollment/identity. Pasting another bundle replaces that enrollment; it does
+not host simultaneous same-name agents inside that worker. Use independent
+CLI or native/plain-web runtimes for simultaneous independent identities.
 
 ## 15. Scoped channel membership + `/network` (issue #1825)
 
@@ -736,10 +774,16 @@ pid guard files (no secret content) keep the shared overlay while another
 live agent uses it, and the last exiting agent deletes it. Stale guards
 and legacy per-pid overlays from older builds are swept at boot. A live
 pid is authoritative regardless of guard age (no wall-clock TTL: agents
-may run for days without rewriting their boot guard); recycled-pid-proof
-cleanup needs a boot nonce, not a timeout that can delete live keys.
-Embedded hosts with their own lifecycle must call
-`HubPluginHost.dispose()`.
+may run for days without rewriting their boot guard). Each guard also
+records the writer's process-start identity (`/proc/<pid>/stat` starttime
+on Linux, parsed `ps lstart` on macOS — process metadata, never secret
+material), so a guard whose pid is alive but whose recorded identity
+differs from the current incarnation is a RECYCLED pid: the writer
+crashed, the cleanup reclaims the guard, and the shared plaintext overlay
+is not pinned forever. Probe, listing, or identity-parse failures keep
+the keep-on-doubt behavior (the overlay survives); guards written by
+older builds (pid only) are kept on the same doubt. Embedded hosts with
+their own lifecycle must call `HubPluginHost.dispose()`.
 The pure-env CI path also carries plaintext values in process memory and
 its environment; those values are registered with both redaction systems.
 **Global scope is the deliberate exception** (see the table above): it
@@ -760,12 +804,27 @@ All optional, all zero-prompt:
 - `DAP_HUB_URL` — the hub websocket url.
 - `DAP_CLIENT_SECRET` — the hub-issued per-client secret (enables the
   plugin via the boot credential mirror; no `DAP_MASTER_SECRET` needed).
+- `DAP_AGENT_NAME` — the display name bound to that credential.
+- `DAP_AGENT_INSTANCE` — an optional NON-SECRET identity discriminator for
+  independent same-name agents.
 - `DAP_CHANNELS_JSON` —
   `[{"channel":"<id>","pub":"…","priv":"…"}, …]`, joined AT BOOT before
   the first turn. Keyless entries are public channels; `priv` may be
   plaintext from the CI secret store OR a `dapkey1.` envelope (mixed sets
   join together); an optional per-entry `hubUrl` overrides the default.
 - `DAP_KEY_PASSPHRASE` — decrypts envelope entries.
+
+For scoped enrolled connections, an absent or empty `DAP_AGENT_INSTANCE`
+keeps the legacy project-derived identity-key path byte-for-byte. A nonempty
+value is hashed WITHOUT the project cwd into the key-path suffix: one instance
+keeps the same Ed25519 identity and agentId across projects and restarts,
+while different instances produce different identities even when
+`DAP_AGENT_NAME` is identical. An explicit `DAP_KEY_PATH` still wins verbatim.
+Direct environment boots apply the discriminator before the first dial too,
+whether they carry a client secret or use the master-secret enrollment flow;
+no previously persisted membership is required. Independent enrollment
+configs can stay online simultaneously; reusing one config reconnects that
+same identity rather than minting another.
 
 Identity = session name: `fa --session goal_builder` already sets the hub
 display name to `goal_builder`, stable across resumes, addressable via

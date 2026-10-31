@@ -67,6 +67,7 @@ abstract class FaChatStrings {
   String get chatLoadEarlier;
   String chatAttachmentCap(int skipped);
   String chatDropFolderRejected(String name);
+  String get chatClipboardUnsupported;
   String get chatCollapse;
   String chatLoadEarlierCount(String count);
   String get chatLoadEarlierFailed;
@@ -236,6 +237,9 @@ class FaChatStringsEn extends FaChatStrings {
   @override
   String chatDropFolderRejected(String name) =>
       'Folders cannot be attached — "$name" skipped.';
+  @override
+  String get chatClipboardUnsupported =>
+      'Clipboard holds content this platform cannot attach.';
   @override
   String get chatCollapse => 'Collapse';
   @override
@@ -454,6 +458,9 @@ class FaChatStringsRu extends FaChatStrings {
   @override
   String chatDropFolderRejected(String name) =>
       'Папки прикрепить нельзя — «$name» пропущена.';
+  @override
+  String get chatClipboardUnsupported =>
+      'В буфере обмена содержимое, которое здесь нельзя прикрепить.';
   @override
   String get chatCollapse => 'Свернуть';
   @override

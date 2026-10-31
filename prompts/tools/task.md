@@ -46,7 +46,7 @@ Subagents start blank — no conversation history. Put everything they need into
 # Acceptance   ← observable result; no project-wide commands
 
 # Results
-Each item's full output is addressable as `agent://<id>`. For items with an `outputSchema`, the stored output IS the validated JSON object, so typed fields are addressable as `agent://<id>/<dot.path>` (e.g. `agent://Explore/findings.0.path`).
+Each item's full output is addressable as `agent://<id>`. An explicit child `reply` is the deliverable — verbatim within the budget, else a bounded `agent://` envelope (excerpt + pointer + completeness); never a silent stub. Resumed children carry their final answer on the completion notice; a reply acked before a kill survives the resume. For items with an `outputSchema`, the stored output IS the validated JSON object, so typed fields are addressable as `agent://<id>/<dot.path>` (e.g. `agent://Explore/findings.0.path`).
 
 # Report Size
 A child report above the per-message budget is never silently truncated: the full redacted text is stored as an `agent://` artifact and the result carries a bounded excerpt, the pointer, and explicit completeness (`complete`/`partial`). Resolve the pointer for the whole report. Chunked reports get a final manifest `reply` the harness validates against the observed parts; missing, duplicated, or out-of-order sets are marked INCOMPLETE.

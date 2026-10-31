@@ -9,7 +9,6 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:http/http.dart' as http;
 
-import '../gemma/gemma_types.dart' show gemmaProviderKind;
 import 'provider_registry.dart';
 import '../transformers_js/transformers_js_types.dart'
     show transformersJsProviderKind;
@@ -48,7 +47,6 @@ class QuotaStore extends ChangeNotifier {
           },
           unmeteredProviders: {
             webLlmProviderKind,
-            gemmaProviderKind,
             transformersJsProviderKind,
             'dial',
           },

@@ -18,6 +18,7 @@ final class SubagentMessage {
     this.hops = 0,
     this.isUserInput = false,
     this.toId = '',
+    this.fromName,
   });
 
   /// Sender id (`parent` for parent-originated messages).
@@ -42,6 +43,10 @@ final class SubagentMessage {
   /// own words, not agent chat.
   final bool isUserInput;
 
+  /// The sender's display name when the transport knows it (hub channel
+  /// mail names the human author behind the fa_network relay's id).
+  final String? fromName;
+
   SubagentMessage decayed() => SubagentMessage(
     fromId: fromId,
     text: text,
@@ -49,6 +54,7 @@ final class SubagentMessage {
     hops: hops - 1,
     isUserInput: isUserInput,
     toId: toId,
+    fromName: fromName,
   );
 
   Map<String, dynamic> toJson() => {
@@ -58,6 +64,7 @@ final class SubagentMessage {
     'hops': hops,
     if (isUserInput) 'isUserInput': true,
     if (toId.isNotEmpty) 'toId': toId,
+    if (fromName != null && fromName!.isNotEmpty) 'fromName': fromName,
   };
 
   factory SubagentMessage.fromJson(Map<String, dynamic> json) =>
@@ -68,6 +75,9 @@ final class SubagentMessage {
         hops: json['hops'] as int? ?? 0,
         isUserInput: json['isUserInput'] as bool? ?? false,
         toId: json['toId'] as String? ?? '',
+        fromName: (json['fromName'] as String?)?.trim() == ''
+            ? null
+            : json['fromName'] as String?,
       );
 }
 
@@ -162,6 +172,14 @@ final class SubagentHandle {
   /// Completed proactive compactions (issue #439).
   int compactions = 0;
 
+  /// The actionable parent-visible compaction-failure stamp (issue #1924):
+  /// set when the child's boundary compaction fails repeatedly
+  /// (consecutively, bounded latch in the executor) — the parent should
+  /// `task_resume` the child (its resume compacts before the first
+  /// request) or respawn it. Cleared by the next successful pass. Null =
+  /// compaction is healthy (or has never run).
+  String? compactionError;
+
   /// Tokens freed by the most recent compaction (see [compactions]).
   int lastCompactionFreed = 0;
 
@@ -169,11 +187,14 @@ final class SubagentHandle {
   String? lastCompactionAt;
 
   /// `~NN%` context pressure for status lines, or null when unknown.
+  /// Issue #1924: an at-or-over-window child is marked `OVER WINDOW` so an
+  /// over-wall child reads differently from a mere high-pressure one.
   String? get contextPressureText {
     final est = estTokens;
     final window = windowTokens;
     if (est == null || window == null || window <= 0) return null;
-    return '~${(est * 100 / window).round()}% ctx';
+    final pct = (est * 100 / window).round();
+    return '~$pct% ctx${est >= window ? ' OVER WINDOW' : ''}';
   }
 
   /// One-line last-compaction summary, or null when never compacted.
@@ -191,6 +212,12 @@ final class SubagentHandle {
   /// the parent gets a `completed_without_reply` notice with the final-text
   /// preview instead (prime-agent semantics).
   String? lastReply;
+
+  /// Duplicate `reply` calls observed after the first (gh-1951 edge case:
+  /// double reply is idempotent — the first reply stays the deliverable,
+  /// later ones are noted here and never overwrite it). Reset per run at
+  /// resume start. In-memory like [deliverables].
+  int duplicateReplies = 0;
 
   /// The id of the previous same-named handle this child supersedes
   /// (issue #222): an explicit fresh respawn after a failure links back to
@@ -251,6 +278,7 @@ final class SubagentHandle {
     if (observedTokens != null) 'observedTokens': observedTokens,
     if (windowVerified) 'windowVerified': true,
     'compactions': compactions,
+    if (compactionError != null) 'compactionError': compactionError,
     'lastCompactionFreed': lastCompactionFreed,
     'lastCompactionAt': lastCompactionAt,
     if (supersedes != null) 'supersedes': supersedes,
@@ -283,6 +311,7 @@ final class SubagentHandle {
     handle.observedTokens = json['observedTokens'] as int?;
     handle.windowVerified = json['windowVerified'] as bool? ?? false;
     handle.compactions = json['compactions'] as int? ?? 0;
+    handle.compactionError = json['compactionError'] as String?;
     handle.lastCompactionFreed = json['lastCompactionFreed'] as int? ?? 0;
     handle.lastCompactionAt = json['lastCompactionAt'] as String?;
     handle.lastReply = json['lastReply'] as String?;
@@ -314,9 +343,14 @@ final class SubagentHandle {
       case SubagentStatus.aborted:
         parts.add('🛑 aborted');
     }
-    if (tokens > 0) parts.add('${tokens}t');
+    // Issue #1924: the figure is CUMULATIVE billed usage across the child's
+    // whole life (input+output+cacheWrite per request) — never the live
+    // context. Label it, so a long-running child's 667k lifetime total is
+    // not misread against the model window; the live basis is the ctx%.
+    if (tokens > 0) parts.add('lifetime ${tokens}t');
     final pressure = contextPressureText;
     if (pressure != null) parts.add(pressure);
+    if (compactionError != null) parts.add('compaction failing');
     if (modelId != null) parts.add(modelId!);
     return parts.join(' · ');
   }

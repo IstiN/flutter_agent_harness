@@ -143,10 +143,23 @@ factual: paths, commands, invariants — no essays.
   citations degrade to that note too — after renumbering an `[Image N]`
   may name a different image, so silent rebinding is never allowed
   (issue #195 F2; generated refs/labels stay content-keyed and fresh).
+  gh-1934 (413-proof sessions): image blocks OUTSIDE the kept region —
+  first seen before the LAST renumbering boundary — evict to
+  `[image dropped: <key8>]` placeholders (payload-only, JSONL
+  byte-identical); kept-region images ride on under the normal caps; the 413 recovery ladder
+  (`agent_loop_image_recovery.dart` + `image_recovery.dart`, bounded at
+  2 passes per response, each 413 halving the session's adaptive
+  `images.maxBytesPerRequest`) drops the oldest images (pass 1), then
+  strips ALL images including the current message (pass 2, latched
+  session-wide), carrying the `[images] recovered from 413:` notice +
+  model-visible note; classification lives in `image_overflow.dart`
+  (`isPayloadTooLargeError`), surface wording in `image_drop_ux.dart`
+  (`ImageDropReason.evicted`).
   Stateless per-request rebuild — determinism, compaction eviction and
   resume come free. Kill switch `images.registry: false` → byte-for-byte
-  legacy shape. `agent_loop.dart` applies it in `_buildRequestContext`
-  after `transformContext`, before tool-pairing repair.
+  legacy shape (no eviction, no ladder). `agent_loop.dart` applies it in
+  `_buildRequestContext` after `transformContext`, before tool-pairing
+  repair.
 - `lib/src/trajectory/` — the trajectory ledger core (issue #10): finalized
   session records project into an immutable `TrajectorySnapshot` through
   `TrajectorySnapshotBuilder.append`/`applyEvent` — streamed agent events
@@ -483,7 +496,32 @@ factual: paths, commands, invariants — no essays.
   addressable: real JSONL child sessions, `task_status`/`task_observe`/
   `task_send`/`task_cancel` (model-facing job abort), child-only `reply` +
   sibling `agent_message` (pending-queue + hop-capped),
-  `completed_without_reply` notice. Child IDENTITY for tool calls is
+  `completed_without_reply` notice. gh-1951 (deliverable guarantee): the
+  explicit reply rides BOTH parent-visible renders verbatim when in
+  budget (`_renderResultBody` — the #1829 envelope when over); the
+  `completed_without_reply` notice actually renders when no reply was
+  recorded; the `reply` ack is truthful (`ReplyRecordOutcome` — a missing
+  handle or a duplicate reply is an error/`duplicateNoted` result, never
+  a false "delivered"; the ack waits out `persistNow`), double reply is
+  idempotent (first wins), `task_observe` echoes the deliverable payload
+  (`childMessageText`, bounded at the report budget), and a resumed
+  child's completion is PUBLISHED through the same
+  `TaskJobManager.completions` async-result envelope every host consumes
+  (`TaskExecutor.resultPublisher` → `publishResumed`): the resumed final
+  answer replaces the stored `agent://<id>` output, and a reply acked in
+  a killed previous life is carried onto the resume as a resolvable
+  artifact (`peekPendingReply` → `DeliverableCapture.persistCarriedReply`
+  → `clearPendingReply` — the handle clears only after the artifact is
+  durable, so a failed carry leaves the reply resumable)
+  — never silence. gh-1948: the executor flushes each
+  child's transcript at every turn boundary (the JSONL exists and grows
+  mid-run), and `task_observe` resolves a placeholder-handle child
+  (`<parentSessionId>/<id>` until the first flush) through
+  `resolveChildSessionPath` (`child_session_io.dart` — the sessions-tree
+  header scan) wired by the CLI via `SubagentServices.resolveChildSessionPath`,
+  healing the handle onto the real path; read failures degrade to a
+  structured "no transcript available yet"/"transcript unavailable"
+  message, never an uncaught exception. Child IDENTITY for tool calls is
   zone-scoped (`subagent_scope.dart`, gh-970): `runSpawn`/`resumeChild`
   publish the running child's id via `runWithSubagentScope`, and
   `TaskExecutor.currentSubagentId` reads the zone FIRST — the executor's
@@ -1037,12 +1075,15 @@ factual: paths, commands, invariants — no essays.
   secret-request sheets, the
   transcript message tile (`chat_message_tile.dart`), the composer
   (`chat_composer.dart` — file/gallery/camera picking through the
-  `FaChatHost.uploadPicker`/`galleryPicker`/`cameraPicker` hooks, voice
+  `FaChatHost.uploadPicker`/`galleryPicker`/`cameraPicker` hooks — the
+  upload hook is the any-type multi-select system picker on every platform
+  (issue #1979), voice
   input through `FaChatHost.voiceInput`; desktop keys: Enter sends and
   Shift+Enter inserts a newline (issue #973 — the Focus ancestor swallows
   plain Enter before the IME turns it into a break; the touch return key
-  keeps its IME newline path), Cmd/Ctrl+V is smart paste — a clipboard image
-  (via the `FaChatHost.clipboardImageReader` hook) or long/multi-line text
+  keeps its IME newline path), Cmd/Ctrl+V is smart paste — clipboard FILES
+  (type-aware via the `FaChatHost.clipboardReader` hook: copied file refs,
+  audio/video, images — issue #1979) or long/multi-line text
   is staged as an `uploads/` attachment chip, short single-line text pastes
   inline), and the single-service chat
   screen (`fa_chat_screen.dart` — `FaChatScreen(service:, features:,
@@ -1117,7 +1158,7 @@ factual: paths, commands, invariants — no essays.
   `media_models_store.dart`/`vision_models.dart` are shim re-exports of the
   fa_ui stores), `lib/sandbox/` (env,
   shells, wasm, git, fs persistence), feature dirs
-  `lib/apps|gemma|webllm|transformers_js|l10n/`. All lib-internal imports
+  `lib/apps|webllm|transformers_js|l10n/`. All lib-internal imports
   are absolute `package:fa/...` — no relative imports.
 - `flutter_app/lib/ui/markdown_style.dart` (shim re-export of
   `packages/fa_ui/lib/src/chat/markdown_style.dart`) — beyond
@@ -1157,14 +1198,17 @@ factual: paths, commands, invariants — no essays.
 - `flutter_app/lib/ui/widgets/chat_composer.dart` (ADAPTER over
   `packages/fa_ui/lib/src/chat/chat_composer.dart`) — keeps the app's
   constructor surface (`AgentService` + injectable `uploadPicker`/`asr`/
-  `asrTranscriber`/`clipboardImageReader` test fakes) and bridges it to the
-  shared composer's hooks: the `UploadPicker` becomes a `FaChatUploadPicker`,
+  `asrTranscriber`/`clipboardReader` test fakes) and bridges it to the
+  shared composer's hooks: the `UploadPicker` becomes a `FaChatUploadPicker`
+  (native any-type multi-select chooser via `file_selector` on iOS/Android/
+  desktop, the `<input type=file multiple>` on web — issue #1979),
   gallery/camera come from `image_picker`, the ASR stack is wrapped in a
   `FaChatVoiceInput` (transcriber resolved per take via the session's
   media gateway, falling back to the active provider), and the smart-paste
-  clipboard image probe rides `pasteboard` (`Pasteboard.image` → PNG bytes;
-  native plugin — the desktop/mobile apps need a REBUILD, not a hot reload,
-  to register it).
+  clipboard probe is type-aware via `super_clipboard`
+  (`services/clipboard_uploads.dart`: file refs > audio/video/pdf >
+  images; native plugin — the desktop/mobile apps need a REBUILD, not a hot
+  reload, to register it).
 - `flutter_app/lib/ui/screens/app_launcher_screen.dart` — THE app home on
   every layout (`faHomeScreen` in main.dart always returns it; the classic
   sidebar chat home is legacy and `session_sidebar.dart` no longer exists —
@@ -1862,7 +1906,7 @@ and `scripts/check_goldens.py --quick` (skipped for docs-only commits).
     `_testBuiltin` 132→9, `_duBuiltin` 132→3, `_expandTrSet` 110→gone,
     `_tacBuiltin` 90→6, `_pipBuiltin` 72→3 — spec/table-driven parse
     helpers in `wasm_shell_builtins.dart` + tested exec halves) → next
-    milestone 210-class (`GemmaService.chatStream`, `_statBuiltin` 156,
+    milestone 210-class (`GemmaService.chatStream` — gh-2004 since removed, `_statBuiltin` 156,
     wide_layout 156 pair) → … → **40**, each step "fix the code, then
     lower the threshold" — never lower first.
   - Guards (`scripts/check_crap_guards.py`): README badge == config
@@ -2068,7 +2112,7 @@ workspace.
   when a native iOS/macOS plugin resolved by pubspec.lock has no pod in the
   platform's `Podfile.lock` (the gh-1274 class), or its pod is pinned at a
   stale version vs the resolved plugin podspec's `s.version` (the
-  flutter_gemma 1.8.0-vs-1.11.3 skew; the podspec is the comparison target,
+  historical flutter_gemma 1.8.0-vs-1.11.3 skew; the podspec is the comparison target,
   not the pubspec version — vendored/beta pods legitimately differ from the
   Dart package version). The inventory also enforces the gh-1303 path-pin
   sync: `flutter_app/pubspec.lock` pins this repo as a path dependency, so

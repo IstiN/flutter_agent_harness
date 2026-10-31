@@ -16,11 +16,27 @@ typedef FaChatUploadFile = ({String name, Uint8List bytes, String mimeType});
 /// when the user cancels.
 typedef FaChatUploadPicker = Future<List<FaChatUploadFile>> Function();
 
-/// Reads an image from the system clipboard for smart paste (host
-/// capability — fa backs it with super_clipboard). Returns null when the
-/// clipboard holds no image. Null hook = clipboard images are ignored and
+/// Reads storable files off the system clipboard for smart paste (host
+/// capability — fa backs it with super_clipboard). Type-aware per issue
+/// #1979: copied file references (Finder/Explorer/Files) first, then
+/// audio/video/pdf flavors, then images — the composer stages whatever
+/// comes back as `uploads/` chips and still pastes text alongside.
+/// Returns an empty list when the clipboard holds no storable file (paste
+/// falls back to text); throws [FaClipboardUnsupportedException] when the
+/// clipboard holds rich flavors the platform cannot stage. Null hook =
 /// paste falls back to text.
-typedef FaClipboardImageReader = Future<FaChatUploadFile?> Function();
+typedef FaClipboardReader = Future<List<FaChatUploadFile>> Function();
+
+/// The clipboard holds flavors a [FaClipboardReader] recognized but could
+/// not stage (e.g. bare HTML, or an image flavor that failed to extract).
+/// The composer surfaces it as a hint toast — never silence (AC3) — and
+/// still applies the text-paste rules.
+class FaClipboardUnsupportedException implements Exception {
+  const FaClipboardUnsupportedException();
+
+  @override
+  String toString() => 'FaClipboardUnsupportedException';
+}
 
 /// Analytics sink for chat events (`message_sent`, `approval_mode_changed`,
 /// `voice_input_used`, ...). Optional; events are dropped when unset.
@@ -131,9 +147,10 @@ abstract final class FaChatHost {
   /// entry.
   static FaChatUploadPicker? cameraPicker;
 
-  /// Clipboard image reader for the composer's smart paste (Cmd/Ctrl+V);
-  /// null skips the image probe and pastes text only.
-  static FaClipboardImageReader? clipboardImageReader;
+  /// Clipboard file reader for the composer's smart paste (Cmd/Ctrl+V);
+  /// type-aware (files / audio / video / images). Null skips the probe and
+  /// pastes text only.
+  static FaClipboardReader? clipboardReader;
 
   /// Voice input for the composer mic button; null hides the mic.
   static FaChatVoiceInput? voiceInput;
