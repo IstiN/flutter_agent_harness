@@ -1324,15 +1324,21 @@ double themeLuminance(RgbColor c) => _relativeLuminance(c);
 /// WCAG contrast ratio between two colors (1:1–21:1).
 double themeColorContrast(RgbColor a, RgbColor b) => _contrastRatio(a, b);
 
+/// Reference-terminal fallback colors shared by the contrast helpers: a
+/// light terminal is pure white with near-black text, a dark one the
+/// oh-my-pi dark background with light gray text.
+const RgbColor _refTerminalWhite = RgbColor(0xff, 0xff, 0xff);
+const RgbColor _refTerminalDarkBg = RgbColor(0x1e, 0x1e, 0x28);
+const RgbColor _refTerminalDarkFg = RgbColor(0x1a, 0x1a, 0x1a);
+const RgbColor _refTerminalLightFg = RgbColor(204, 204, 204);
+
 /// The terminal background [theme] was designed against: light palettes
 /// (a bright userMessageBg) reference a light terminal, dark ones a dark
 /// one (gh-671 floors — muted/accent text is judged on its own home
 /// terminal, the way [themeContrast] already frames base text).
 RgbColor themeReferenceTerminalBg(TuiTheme theme) {
   final bg = theme.userMessageBg.backgroundRgb ?? const RgbColor(0, 0, 0);
-  return _relativeLuminance(bg) > 0.5
-      ? const RgbColor(0xff, 0xff, 0xff)
-      : const RgbColor(0x1e, 0x1e, 0x28);
+  return _relativeLuminance(bg) > 0.5 ? _refTerminalWhite : _refTerminalDarkBg;
 }
 
 /// WCAG-ish sanity floor for E2: base fg must stay readable against the
@@ -1344,9 +1350,7 @@ double themeContrast(TuiTheme theme) {
   // the terminal bg is: dark-on-light palettes, light-on-dark ones.
   final fg =
       theme.base.foregroundRgb ??
-      (_relativeLuminance(bg) > 0.5
-          ? const RgbColor(0x1a, 0x1a, 0x1a)
-          : const RgbColor(204, 204, 204));
+      (_relativeLuminance(bg) > 0.5 ? _refTerminalDarkFg : _refTerminalLightFg);
   return _contrastRatio(fg, bg);
 }
 
@@ -1358,9 +1362,7 @@ double themeUserMessageContrast(TuiTheme theme) {
   final fg =
       theme.userMessageText.foregroundRgb ??
       theme.base.foregroundRgb ??
-      (_relativeLuminance(bg) > 0.5
-          ? const RgbColor(0x1a, 0x1a, 0x1a)
-          : const RgbColor(204, 204, 204));
+      (_relativeLuminance(bg) > 0.5 ? _refTerminalDarkFg : _refTerminalLightFg);
   return _contrastRatio(fg, bg);
 }
 
