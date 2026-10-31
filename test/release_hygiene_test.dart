@@ -1759,6 +1759,88 @@ gh release create "v9.9.9" \
         );
       },
     );
+    test(
+      'gh-2008: stale draft whose body only MENTIONS the marker substring (no run/<id>/job/ shape) stays kept (E1)',
+      () {
+        // The bucket rule must key on the exact marker shape the pipeline
+        // stamps (`release-draft-owner: run/<id>/job/<job>` — what
+        // release_lazy_draft.sh / release_attach_or_create.sh write and
+        // release_draft_guard.sh parses), NOT the bare substring: human
+        // prose quoting or negating the marker, or a malformed marker
+        // (`release-draft-owner: unknown`), must never look pipeline-owned
+        // or the sweeper silently deletes a human draft (E1 regression,
+        // review thread PRRT_kwDOTXdlLc6yOzIh).
+        final run = runSweeper('loose-marker', {
+          'releases.json': jsonEncode([
+            {
+              'tag_name': 'v9.0.1',
+              'id': 427501290,
+              'draft': true,
+              'created_at': oldDate,
+              'author': {'login': 'alice', 'type': 'User'},
+              'body': 'this draft has NO release-draft-owner: marker (prose)',
+            },
+            {
+              // Malformed marker: the substring is there but the
+              // run/<id>/job/ shape is not — NOT proof of pipeline
+              // ownership.
+              'tag_name': 'v9.0.2',
+              'id': 427501291,
+              'draft': true,
+              'created_at': oldDate,
+              'author': {'login': 'IstiN', 'type': 'User'},
+              'body': 'release-draft-owner: unknown',
+            },
+            {
+              // Control: a properly-stamped stale draft is still swept
+              // and still names its creating run.
+              'tag_name': 'v9.0.3',
+              'id': 427501292,
+              'draft': true,
+              'created_at': oldDate,
+              'author': {'login': 'IstiN', 'type': 'User'},
+              'body':
+                  '<!-- release-draft-owner: run/40822965933/job/release-mobile -->',
+            },
+          ]),
+          'issues.tsv': '',
+          'runs.tsv': '',
+        });
+        expect(
+          run.log,
+          contains('api -X DELETE repos/OWNER/REPO/releases/427501292'),
+          reason:
+              'the control: a well-formed run/<id>/job/ marker is still '
+              'pipeline-owned and swept',
+        );
+        expect(
+          run.log,
+          isNot(contains('releases/427501290')),
+          reason:
+              'prose merely MENTIONING the marker substring is not '
+              'ownership — deleting it would be a silent E1 violation',
+        );
+        expect(
+          run.log,
+          isNot(contains('releases/427501291')),
+          reason:
+              'a malformed marker (release-draft-owner: unknown, no '
+              'run/<id>/job/ shape) is not ownership — the draft stays '
+              'kept (E1)',
+        );
+        expect(
+          run.body,
+          contains('v9.0.1'),
+          reason: 'kept prose-mention draft must be listed in the issue (E1)',
+        );
+        expect(
+          run.body,
+          contains('v9.0.2'),
+          reason:
+              'kept malformed-marker draft must be listed in the issue (E1)',
+        );
+      },
+    );
 
     test(
       'idempotent re-run: comments on the open issue instead of duplicating',
