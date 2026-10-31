@@ -672,9 +672,15 @@ Future<ToolExecutionResult?> _readVideoResult(
   }
 }
 
-/// The video MIME type for a path (the extension table the route matches;
-/// unknown extensions fall back to `video/mp4` — OpenRouter/Gemini accept
-/// the mp4 spelling and the route only reaches here for video extensions).
+/// The video MIME type for a path. Every routed extension maps to the
+/// MIME its container actually has — no catch-all mislabel (gh-2007
+/// review thread 2): the google-shaped target documents the supported
+/// video MIME types as video/mp4, video/mpeg, video/mpg, video/webm,
+/// video/quicktime, video/wmv, video/x-flv, video/3gpp
+/// (ai.google.dev/gemini-api/docs/video-understanding, mirrored by
+/// firebase.google.com/docs/ai-logic/live-api/limits-and-specs);
+/// x-matroska/x-msvideo ride the openai-completions `video_url`
+/// passthrough verbatim. `.m4v` is mp4-family and rides the mp4 spelling.
 String _videoMimeType(String path) {
   final lower = path.toLowerCase();
   return switch (lower.substring(lower.lastIndexOf('.') + 1)) {
@@ -683,6 +689,9 @@ String _videoMimeType(String path) {
     'mkv' => 'video/x-matroska',
     'avi' => 'video/x-msvideo',
     'mpeg' || 'mpg' => 'video/mpeg',
+    'wmv' => 'video/wmv',
+    'flv' => 'video/x-flv',
+    '3gp' => 'video/3gpp',
     _ => 'video/mp4',
   };
 }

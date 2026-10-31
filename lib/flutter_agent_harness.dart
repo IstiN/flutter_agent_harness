@@ -288,7 +288,6 @@ export 'src/tools/bash_auto_background.dart';
 export 'src/tools/builtin_tools.dart';
 export 'src/tools/checkpoint_tool.dart';
 export 'src/tools/dynamic_message_tool.dart';
-export 'src/tools/generate_image.dart';
 export 'src/tools/image_pipeline.dart';
 export 'src/tools/inspect_image.dart';
 export 'src/tools/inspect_image_stitch.dart';

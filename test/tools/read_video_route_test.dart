@@ -304,6 +304,48 @@ void main() {
           reason: 'without notes and without capability nothing new rides');
     });
   });
+  group('video mime ↔ extension agreement (gh-2007 thread 2)', () {
+    // Every routed extension must ride the MIME its container actually
+    // has — the Gemini-side target documents the supported video MIME
+    // types (ai.google.dev/gemini-api/docs/video-understanding, mirrored
+    // by firebase.google.com/docs/ai-logic/live-api/limits-and-specs):
+    // video/mp4, video/mpeg, video/mpg, video/webm, video/quicktime,
+    // video/wmv, video/x-flv, video/3gpp (+ x-matroska / x-msvideo ride
+    // OpenRouter's video_url passthrough). A `video/mp4` catch-all for a
+    // WMV/FLV/3GP container mislabels the payload the same way the image
+    // path explicitly avoids.
+    const expectedMimes = {
+      '.mp4': 'video/mp4',
+      '.m4v': 'video/mp4',
+      '.mov': 'video/quicktime',
+      '.mkv': 'video/x-matroska',
+      '.webm': 'video/webm',
+      '.avi': 'video/x-msvideo',
+      '.mpg': 'video/mpeg',
+      '.mpeg': 'video/mpeg',
+      '.wmv': 'video/wmv',
+      '.flv': 'video/x-flv',
+      '.3gp': 'video/3gpp',
+    };
+
+    test('every routed extension carries its real container MIME', () async {
+      for (final entry in expectedMimes.entries) {
+        final path = '/work/clip${entry.key}';
+        await env.writeBinaryFile(path, _makeFakeMp4());
+        final tool = readFileTool(env, model: () => videoChatModel);
+        final result = await tool.execute({'path': path}, null, null);
+        final videos = blocks(result);
+        expect(videos, hasLength(1), reason: 'extension ${entry.key}');
+        expect(
+          videos.single.mimeType,
+          entry.value,
+          reason:
+              'extension ${entry.key} must ride its real container MIME '
+              '(${entry.value}), not a catch-all',
+        );
+      }
+    });
+  });
 }
 
 List<VideoContent> blocks(dynamic result) =>

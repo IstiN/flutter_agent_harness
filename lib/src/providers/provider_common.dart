@@ -80,8 +80,11 @@ TextOnlyImageDropNotice? textOnlyImageDropNotice;
 /// pi's `replaceImagesWithPlaceholder`, generalized over the media blocks:
 /// consecutive images (resp. videos) collapse into a single placeholder, and
 /// a text block already equal to the placeholder suppresses a duplicate.
-/// [onImage]/[onVideo] fire once per replaced block.
-List<ContentBlock> _replaceMediaWithPlaceholder(
+/// [onImage]/[onVideo] fire once per replaced block. Returns the CALLER'S
+/// list content unchanged (identical instance) when nothing was replaced —
+/// the zero-cost pass-through image-only sessions pay (gh-2007 review
+/// thread 4).
+(List<ContentBlock>, bool replaced) _replaceMediaWithPlaceholder(
   List<ContentBlock> content,
   String? userImagePlaceholder,
   String? userVideoPlaceholder, {
@@ -89,6 +92,7 @@ List<ContentBlock> _replaceMediaWithPlaceholder(
   void Function()? onVideo,
 }) {
   final result = <ContentBlock>[];
+  var replaced = false;
   var previousWasImagePlaceholder = false;
   var previousWasVideoPlaceholder = false;
   for (final block in content) {
@@ -96,6 +100,7 @@ List<ContentBlock> _replaceMediaWithPlaceholder(
       if (!previousWasImagePlaceholder) {
         result.add(TextContent(text: userImagePlaceholder));
         onImage?.call();
+        replaced = true;
       }
       previousWasImagePlaceholder = true;
       previousWasVideoPlaceholder = false;
@@ -105,6 +110,7 @@ List<ContentBlock> _replaceMediaWithPlaceholder(
       if (!previousWasVideoPlaceholder) {
         result.add(TextContent(text: userVideoPlaceholder));
         onVideo?.call();
+        replaced = true;
       }
       previousWasVideoPlaceholder = true;
       previousWasImagePlaceholder = false;
@@ -116,7 +122,7 @@ List<ContentBlock> _replaceMediaWithPlaceholder(
     previousWasVideoPlaceholder =
         block is TextContent && block.text == userVideoPlaceholder;
   }
-  return result;
+  return (result, replaced);
 }
 
 /// Replaces image blocks with explicit placeholder text when [model] has no
@@ -215,7 +221,9 @@ bool messagesContainImages(List<Message> messages) {
 /// [downgradeUndecodableImages] and [downgradeAllImages]: swap image blocks
 /// for the given per-kind placeholder text (null = keep riding), keeping
 /// every other field of the message intact. Videos strip symmetrically to
-/// their own placeholders (gh-1985 C1).
+/// their own placeholders (gh-1985 C1). When NO block was substituted the
+/// CALLER'S list instance returns untouched — the zero-cost pass-through
+/// image-only sessions pay (gh-2007 review thread 4).
 List<Message> _replaceMedia(
   List<Message> messages,
   String? userImagePlaceholder,
@@ -225,36 +233,47 @@ List<Message> _replaceMedia(
   void Function()? onImage,
   void Function()? onVideo,
 }) {
-  return [
-    for (final message in messages)
-      if (message is UserMessage && message.content is List<ContentBlock>)
+  var replacedAny = false;
+  final out = <Message>[];
+  for (final message in messages) {
+    if (message is UserMessage && message.content is List<ContentBlock>) {
+      final (blocks, replaced) = _replaceMediaWithPlaceholder(
+        message.content as List<ContentBlock>,
+        userImagePlaceholder,
+        userVideoPlaceholder,
+        onImage: onImage,
+        onVideo: onVideo,
+      );
+      replacedAny |= replaced;
+      out.add(
         UserMessage(
-          content: _replaceMediaWithPlaceholder(
-            message.content as List<ContentBlock>,
-            userImagePlaceholder,
-            userVideoPlaceholder,
-            onImage: onImage,
-            onVideo: onVideo,
-          ),
+          content: blocks,
           timestamp: message.timestamp,
-        )
-      else if (message is ToolResultMessage)
+        ),
+      );
+    } else if (message is ToolResultMessage) {
+      final (blocks, replaced) = _replaceMediaWithPlaceholder(
+        message.content,
+        toolImagePlaceholder,
+        toolVideoPlaceholder,
+        onImage: onImage,
+        onVideo: onVideo,
+      );
+      replacedAny |= replaced;
+      out.add(
         ToolResultMessage(
           toolCallId: message.toolCallId,
           toolName: message.toolName,
-          content: _replaceMediaWithPlaceholder(
-            message.content,
-            toolImagePlaceholder,
-            toolVideoPlaceholder,
-            onImage: onImage,
-            onVideo: onVideo,
-          ),
+          content: blocks,
           isError: message.isError,
           timestamp: message.timestamp,
-        )
-      else
-        message,
-  ];
+        ),
+      );
+    } else {
+      out.add(message);
+    }
+  }
+  return replacedAny ? out : messages;
 }
 
 /// Whether [headers] contains a non-empty value for [name]

@@ -6,7 +6,7 @@
 /// the primary model does not need vision support — only the derived text
 /// enters the conversation.
 ///
-/// gh-1985 C2/C3: the tool takes `paths` (2–8 images) alongside the original
+/// gh-1985 C2/C3: the tool takes `paths` (1–8 images) alongside the original
 /// single `path`. A model that accepts image parts rides the ARRAY in one
 /// call (per-image description, or `compare` framing when a question is
 /// given); a single-image-only model (or an explicit `stitch: true`) gets a
@@ -301,7 +301,7 @@ Future<String> describeVideoWithVisionModel(
 ///
 /// Parameters:
 /// - `path` (string): path to ONE image file (the single-image form).
-/// - `paths` (string array, 2–8): paths to several image files. Exactly one
+/// - `paths` (string array, 1–8; a single-element array rides the single-image form): paths to several image files. Exactly one
 ///   of `path`/`paths` must be given.
 /// - `prompt` (string, optional): specific question or instructions. With
 ///   several `paths` and a question the request takes the compare framing.
@@ -331,7 +331,8 @@ AgentTool inspectImageTool(
         'context. Supported formats: PNG, JPEG, GIF, WebP, BMP.\n'
         'Pass exactly ONE of:\n'
         '- `path` — a single image file; or\n'
-        '- `paths` — an array of 2-$inspectImageMaxPaths image files. '
+        '- `paths` — an array of 1-$inspectImageMaxPaths image files '
+        '(a single-element array is the single-image form). '
         'Array-capable models receive all images in one call (per-image '
         'description, or a comparison when `prompt` asks one). Models that '
         'take a single image get the images programmatically stitched into '
@@ -346,7 +347,9 @@ AgentTool inspectImageTool(
         '(max-size downscale, format conversion, per-request byte budget). '
         '`resize: "original"` keeps the original bytes for this call, '
         'best-effort: an original over the byte budget downscales minimally '
-        'and the result note names the applied size.',
+        'and the result note names the applied size. `resize` does not '
+        'apply to the stitched composite — a stitch call always re-encodes '
+        'its tiles, so byte fidelity only holds on the array/single route.',
     parameters: const {
       'type': 'object',
       'properties': {
@@ -358,7 +361,7 @@ AgentTool inspectImageTool(
         'paths': {
           'type': 'array',
           'items': {'type': 'string'},
-          'description': 'Paths to 2-$inspectImageMaxPaths image files to '
+          'description': 'Paths to 1-$inspectImageMaxPaths image files to '
               'inspect together (array models get every image; single-image '
               'models get a stitched composite with tiles labeled A/B/C…). '
               'Exactly one of path/paths.',
@@ -458,20 +461,25 @@ AgentTool inspectImageTool(
     throw const ToolValidationException(
       'inspect_image',
       'Pass exactly one of `path` (single image) or `paths` (array of '
-      '2-$inspectImageMaxPaths images) — not both.',
+      '1-$inspectImageMaxPaths images) — not both.',
     );
   }
   if (path != null && path.isNotEmpty) {
     return (paths: [path], requestedCount: 1);
   }
   if (paths is List && paths.isNotEmpty) {
-    final list = paths.whereType<String>().toList();
-    if (list.isEmpty) {
+    // gh-2007 review thread 5: every element must be a path STRING — junk
+    // members are refused explicitly (the schema-error style of the
+    // path+paths / empty-array checks above), never silently filtered out.
+    final allStrings = paths.every((element) => element is String);
+    if (!allStrings) {
       throw const ToolValidationException(
         'inspect_image',
-        '`paths` must be an array of image path strings.',
+        '`paths` must be an array of image path strings — every element '
+        'must be a string.',
       );
     }
+    final list = paths.cast<String>().toList();
     return (
       paths: list.sublist(0, list.length.clamp(0, inspectImageMaxPaths)),
       requestedCount: list.length,
@@ -480,7 +488,8 @@ AgentTool inspectImageTool(
   throw const ToolValidationException(
     'inspect_image',
     'inspect_image needs `path` (a single image file) or `paths` (an array '
-    'of 2-$inspectImageMaxPaths image files).',
+    'of 1-$inspectImageMaxPaths image files). A single-element `paths` rides '
+    'the single-image form.',
   );
 }
 

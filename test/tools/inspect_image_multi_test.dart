@@ -630,4 +630,99 @@ void main() {
       }
     });
   });
+
+  group('paths validation contract (gh-2007 review thread 5)', () {
+    test('a non-string member is refused explicitly — nothing is silently '
+        'dropped', () async {
+      // `paths.whereType<String>()` used to filter junk members: a
+      // [42, a, b] call inspected 2 images and never mentioned the 42.
+      // The contract now matches the explicit-refusal style of the
+      // path+paths and empty-array checks.
+      await env.writeBinaryFile('/work/a.png', _makePng());
+      await env.writeBinaryFile('/work/b.png', _makePng());
+      final calls = _CapturedCalls();
+      final config = InspectImageConfig(
+        modelId: 'gpt-4o',
+        apiKey: '[REDACTED:Sensitive-Value]',
+        httpClient: calls.client('x'),
+      );
+      await expectLater(
+        runTool(config, {
+          'paths': [42, '/work/a.png', '/work/b.png'],
+        }),
+        throwsA(
+          isA<ToolValidationException>().having(
+            (e) => e.message,
+            'message',
+            allOf(contains('paths'), contains('string')),
+          ),
+        ),
+      );
+      expect(calls.bodies, isEmpty, reason: 'no model call may fire');
+    });
+
+    test('a single-element paths array still works (documented 1-8 range)',
+        () async {
+      // The schema documents 1-$inspectImageMaxPaths (a single-element
+      // array rides the single-image branch); the text and the code agree.
+      await env.writeBinaryFile('/work/a.png', _makePng());
+      final calls = _CapturedCalls();
+      final config = InspectImageConfig(
+        modelId: 'gpt-4o',
+        apiKey: '[REDACTED:Sensitive-Value]',
+        httpClient: calls.client('one'),
+      );
+      final result = await runTool(config, {
+        'paths': ['/work/a.png'],
+      });
+      expect(calls.bodies, hasLength(1));
+      expect(_imagePartCount(calls.bodies.single), 1);
+      expect(_resultText(result), 'one');
+    });
+
+    test('the schema docs the 1-$inspectImageMaxPaths range the code '
+        'enforces', () {
+      final tool = inspectImageTool(
+        MemoryExecutionEnv(),
+        InspectImageConfig(
+          modelId: 'gpt-4o',
+          apiKey: '[REDACTED:Sensitive-Value]',
+          httpClient: _CapturedCalls().client('x'),
+        ),
+      );
+      final pathsSchema =
+          (tool.parameters['properties'] as Map)['paths'] as Map;
+      expect(
+        pathsSchema['description'],
+        contains('1-$inspectImageMaxPaths'),
+        reason: 'schema text and validation must agree (thread 5)',
+      );
+    });
+  });
+
+  group('stitch × resize doc contract (gh-2007 review thread 6)', () {
+    test('the tool description says resize does not apply to the stitched '
+        'composite', () {
+      final tool = inspectImageTool(
+        MemoryExecutionEnv(),
+        InspectImageConfig(
+          modelId: 'gpt-4o',
+          apiKey: '[REDACTED:Sensitive-Value]',
+          httpClient: _CapturedCalls().client('x'),
+        ),
+      );
+      expect(
+        tool.description,
+        contains('stitched'),
+        reason: 'sanity',
+      );
+      expect(
+        tool.description.toLowerCase(),
+        contains('resize does not apply to the stitched composite'),
+        reason:
+            'agents must not reach for resize: "original" on a stitch call '
+            'expecting byte fidelity — the composite is always re-encoded',
+      );
+    });
+  });
 }

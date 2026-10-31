@@ -84,6 +84,10 @@ int _blocksBytes(List<ContentBlock> blocks) {
         bytes += text.length;
       case ImageContent(:final data):
         bytes += data.length;
+      case VideoContent(:final data):
+        // gh-2007 thread 3: videos ride at up to
+        // images.maxBytesPerRequest — the watchdog must see them.
+        bytes += data.length;
       case ThinkingContent(:final thinking):
         bytes += thinking.length;
       default:

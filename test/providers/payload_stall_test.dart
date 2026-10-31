@@ -71,6 +71,32 @@ void main() {
       ]);
       expect(bytes, 5 + 100 + 2 + 3 + 50);
     });
+
+    test('the estimate counts video payloads (gh-2007 thread 3)', () {
+      // gh-1985 funnels videos through rewriteRequestImages, which
+      // publishes this estimate; a VideoContent block must add its
+      // base64 length or the run-idle watchdog arms on a wrong payload
+      // picture for exactly the requests most likely to stall.
+      final bytes = estimateOutboundBytes([
+        UserMessage(
+          content: [
+            const TextContent(text: 'hello'), // 5
+            VideoContent(data: 'V' * 4096, mimeType: 'video/mp4'),
+          ],
+          timestamp: DateTime.utc(2026),
+        ),
+        ToolResultMessage(
+          toolCallId: 'c1',
+          toolName: 'read',
+          content: [
+            VideoContent(data: 'V' * 512, mimeType: 'video/webm'),
+          ],
+          isError: false,
+          timestamp: DateTime.utc(2026),
+        ),
+      ]);
+      expect(bytes, 5 + 4096 + 512);
+    });
   });
 
   group('payload stall latch (#1916 AC3: ONE advice, not endless retries)', () {
