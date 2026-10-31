@@ -345,15 +345,28 @@ int _parseAgentContextWindowCapValue(Object? value) {
 /// (issue #679: bare prompt, 4-tool sweep, boot print) the executable
 /// re-resolves through its flag > env > config ladder. `omp` carries no
 /// harness behavior, so it never reaches that ladder.
-({
-  int? contextWindowCap,
-  String? mode,
-  String? agentMode,
-  bool? misuseBreaker,
-  StuckToolConfig? stuckTool,
-  ForegroundCallBudgetConfig? foregroundCall,
-})?
-_parseAgentSection(Object? node) {
+/// The parsed `agent:` section leaves ([_parseAgentSection] →
+/// [_composeAgentSection]). A class, not a record — 6 fields exceeded
+/// the record_size cap (issue #1997).
+final class _AgentSection {
+  const _AgentSection({
+    required this.contextWindowCap,
+    required this.mode,
+    required this.agentMode,
+    required this.misuseBreaker,
+    required this.stuckTool,
+    required this.foregroundCall,
+  });
+
+  final int? contextWindowCap;
+  final String? mode;
+  final String? agentMode;
+  final bool? misuseBreaker;
+  final StuckToolConfig? stuckTool;
+  final ForegroundCallBudgetConfig? foregroundCall;
+}
+
+_AgentSection? _parseAgentSection(Object? node) {
   if (node == null) return null;
   if (node is! YamlMap) {
     throw ConfigException('agent must be a map, got: $node');
@@ -399,15 +412,7 @@ _parseAgentSection(Object? node) {
 /// #1786: both budget leaves absent → null (the loop's defaults apply);
 /// one present keeps the other's default via
 /// [ForegroundCallBudgetConfig.fromLeaves].
-({
-  int? contextWindowCap,
-  String? mode,
-  String? agentMode,
-  bool? misuseBreaker,
-  StuckToolConfig? stuckTool,
-  ForegroundCallBudgetConfig? foregroundCall,
-})
-_composeAgentSection({
+_AgentSection _composeAgentSection({
   required int? contextWindowCap,
   required String? mode,
   required bool? misuseBreaker,
@@ -415,7 +420,7 @@ _composeAgentSection({
   required Object? budgetSeconds,
   required Object? autoConvert,
 }) {
-  return (
+  return _AgentSection(
     contextWindowCap: contextWindowCap,
     mode: mode,
     agentMode: mode == 'pi' ? 'pi' : null,

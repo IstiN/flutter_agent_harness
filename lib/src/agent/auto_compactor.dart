@@ -537,18 +537,7 @@ final class AutoCompactor {
   /// [runFallback] is true. Returns the outcome, the fallback label used and
   /// the winning attempt's record data (summary + hidden/summarized counts)
   /// for the pass report.
-  Future<
-    ({
-      bool ok,
-      Object? error,
-      bool noWork,
-      String? fallback,
-      String? summary,
-      int hiddenRecords,
-      int summarizedMessages,
-    })
-  >
-  _pickAttempt(
+  Future<_PickOutcome> _pickAttempt(
     int pass, {
     required bool runFallback,
     required String mainLabel,
@@ -566,7 +555,7 @@ final class AutoCompactor {
         summarizerWindow: smolModel?.contextWindow,
       );
       if (smolOk.ok) {
-        return (
+        return _PickOutcome(
           ok: true,
           error: null,
           noWork: smolOk.noWork,
@@ -584,7 +573,7 @@ final class AutoCompactor {
         summarizerWindow: window,
       );
       if (mainOk.ok) {
-        return (
+        return _PickOutcome(
           ok: true,
           error: null,
           noWork: mainOk.noWork,
@@ -594,7 +583,7 @@ final class AutoCompactor {
           summarizedMessages: mainOk.summarizedMessages,
         );
       }
-      return (
+      return _PickOutcome(
         ok: false,
         error: mainOk.error ?? smolOk.error,
         noWork: false,
@@ -614,7 +603,7 @@ final class AutoCompactor {
       summarizerWindow: window,
     );
     if (mainOk.ok) {
-      return (
+      return _PickOutcome(
         ok: true,
         error: null,
         noWork: mainOk.noWork,
@@ -624,7 +613,7 @@ final class AutoCompactor {
         summarizedMessages: mainOk.summarizedMessages,
       );
     }
-    return (
+    return _PickOutcome(
       ok: false,
       error: mainOk.error,
       noWork: false,
@@ -642,17 +631,7 @@ final class AutoCompactor {
   /// nothing left to compact (already compacted at the leaf) — the caller
   /// stops the pass loop instead of spinning identical no-op passes to
   /// [maxPasses].
-  Future<
-    ({
-      bool ok,
-      Object? error,
-      bool noWork,
-      String? summary,
-      int hiddenRecords,
-      int summarizedMessages,
-    })
-  >
-  _attempt(
+  Future<_AttemptOutcome> _attempt(
     String label, {
     required SummarizeFn summarize,
     required int pass,
@@ -664,7 +643,7 @@ final class AutoCompactor {
     }
     for (var attempt = 1; attempt <= maxAttempts; attempt++) {
       if (clock.elapsed >= totalBudget) {
-        return (
+        return _AttemptOutcome(
           ok: false,
           error: TimeoutException(
             'compaction total budget (${totalBudget.inSeconds}s) exhausted '
@@ -726,7 +705,7 @@ final class AutoCompactor {
           },
         );
         if (record == null) {
-          return (
+          return _AttemptOutcome(
             ok: true,
             error: null,
             noWork: true,
@@ -736,7 +715,7 @@ final class AutoCompactor {
           );
         }
         final (hidden, summarized) = await _compactionCounts(record);
-        return (
+        return _AttemptOutcome(
           ok: true,
           error: null,
           noWork: false,
@@ -754,7 +733,7 @@ final class AutoCompactor {
         // 400 in a transient-shaped message.
         final isOverflow = _overflow.hasMatch(errorText);
         if (isOverflow || attempt >= maxAttempts || !isTransient) {
-          return (
+          return _AttemptOutcome(
             ok: false,
             error: error,
             noWork: false,
@@ -768,7 +747,7 @@ final class AutoCompactor {
         await Future<void>.delayed(backoff);
       }
     }
-    return (
+    return _AttemptOutcome(
       ok: false,
       error: StateError('unreachable: compact attempt loop'),
       noWork: false,
@@ -794,6 +773,51 @@ final class AutoCompactor {
 }
 
 String _modelLabel(Model m) => '${m.provider}/${m.id}';
+
+/// One summarizer attempt's outcome: the ok/error verdict plus, on
+/// success, the compaction record's summary and hidden/summarized
+/// counts. A class, not a record — 6 fields exceeded the record_size
+/// cap (issue #1997).
+final class _AttemptOutcome {
+  const _AttemptOutcome({
+    required this.ok,
+    required this.error,
+    required this.noWork,
+    required this.summary,
+    required this.hiddenRecords,
+    required this.summarizedMessages,
+  });
+
+  final bool ok;
+  final Object? error;
+  final bool noWork;
+  final String? summary;
+  final int hiddenRecords;
+  final int summarizedMessages;
+}
+
+/// [_AttemptOutcome] plus the fallback label that won (smol/main), for
+/// the pass report. A class for the same record_size reason (issue
+/// #1997).
+final class _PickOutcome {
+  const _PickOutcome({
+    required this.ok,
+    required this.error,
+    required this.noWork,
+    required this.fallback,
+    required this.summary,
+    required this.hiddenRecords,
+    required this.summarizedMessages,
+  });
+
+  final bool ok;
+  final Object? error;
+  final bool noWork;
+  final String? fallback;
+  final String? summary;
+  final int hiddenRecords;
+  final int summarizedMessages;
+}
 
 /// The mechanical over-window valve, host-callable (the resume boot cap
 /// applies it INSTANTLY when a resumed transcript cannot fit the window:
