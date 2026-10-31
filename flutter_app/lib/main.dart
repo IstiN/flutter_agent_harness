@@ -15,7 +15,6 @@ import 'package:fa/network/network_mode.dart';
 import 'package:fa/network/network_session_manager.dart';
 import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/network/network_home.dart';
-import 'package:fa/ui/screens/app_launcher_screen.dart';
 import 'package:fa/ui/widgets/widget_publication_resume_refresh.dart';
 import 'package:fa/ui/widgets/wide_layout_shell.dart';
 import 'package:fa/ui/widgets/downloaded_models_quick_start.dart';
@@ -411,9 +410,9 @@ class _MacOSDragStrip extends StatelessWidget {
   }
 }
 
-/// The app home after a successful connect: on wide screens (≥900px) the
-/// [WideLayoutShell] (sidebar + content area), otherwise the [AppLauncherScreen]
-/// with the floating session chat sheet.
+/// The app home after a successful connect. [WideLayoutShell] owns both
+/// responsive forms: the messenger conversation list and bottom navigation
+/// on phones, and the sidebar + content area on wider screens.
 Widget faHomeScreen({
   required BuildContext context,
   required FlutterSessionManager manager,
@@ -438,52 +437,30 @@ Widget faHomeScreen({
   /// byte-identical to the classic local tree (AC-N1).
   NetworkModeController? networkMode,
   NetworkSessionManager? networkSessions,
-
-  /// Restore the persisted apps↔chat surface mode on the narrow home
-  /// (issue #224): true for the real production homes, false in tests.
-  bool restoreAppsMode = false,
 }) {
   final isWide =
       faWindowClassForWidth(MediaQuery.sizeOf(context).width) !=
       FaWindowClass.small;
-  // The classic local home — built exactly as before; the network gate
-  // below swaps the WHOLE surface, never the local tree's structure.
+  // The local home keeps one stateful shell across responsive layouts; the
+  // network gate below still swaps the WHOLE narrow surface when requested.
   final localHome = WidgetPublicationResumeRefresher(
     env: manager.env,
-    child: isWide
-        ? WideLayoutShell(
-            manager: manager,
-            registry: registry,
-            lastConnectionStore: lastConnectionStore,
-            sessionNamesStore: sessionNamesStore,
-            uploadPicker: uploadPicker,
-            asr: asr,
-            asrTranscriber: asrTranscriber,
-            audioControllerFactory: audioControllerFactory,
-            videoControllerFactory: videoControllerFactory,
-            tileEngineFactory: tileEngineFactory,
-            layoutStore: layoutStore,
-            appsStore: appsStore,
-            networkMode: networkMode,
-            networkSessions: networkSessions,
-          )
-        : AppLauncherScreen(
-            manager: manager,
-            registry: registry,
-            lastConnectionStore: lastConnectionStore,
-            sessionNamesStore: sessionNamesStore,
-            uploadPicker: uploadPicker,
-            asr: asr,
-            asrTranscriber: asrTranscriber,
-            audioControllerFactory: audioControllerFactory,
-            videoControllerFactory: videoControllerFactory,
-            tileEngineFactory: tileEngineFactory,
-            layoutStore: layoutStore,
-            appsStore: appsStore,
-            restoreAppsMode: restoreAppsMode,
-            networkMode: networkMode,
-            networkSessions: networkSessions,
-          ),
+    child: WideLayoutShell(
+      manager: manager,
+      registry: registry,
+      lastConnectionStore: lastConnectionStore,
+      sessionNamesStore: sessionNamesStore,
+      uploadPicker: uploadPicker,
+      asr: asr,
+      asrTranscriber: asrTranscriber,
+      audioControllerFactory: audioControllerFactory,
+      videoControllerFactory: videoControllerFactory,
+      tileEngineFactory: tileEngineFactory,
+      layoutStore: layoutStore,
+      appsStore: appsStore,
+      networkMode: networkMode,
+      networkSessions: networkSessions,
+    ),
   );
   final mode = networkMode;
   final sessions = networkSessions;
@@ -706,7 +683,6 @@ class _BootstrapScreenState extends State<BootstrapScreen> {
                 context: navigator.context,
                 manager: manager,
                 registry: registry,
-                restoreAppsMode: true,
                 networkMode: widget.networkMode,
                 networkSessions: widget.networkSessions,
               ),
@@ -786,7 +762,6 @@ class _BootstrapScreenState extends State<BootstrapScreen> {
             manager: manager,
             registry: widget.registry,
             lastConnectionStore: widget.lastConnectionStore,
-            restoreAppsMode: true,
             networkMode: widget.networkMode,
             networkSessions: widget.networkSessions,
           ),
@@ -1042,7 +1017,6 @@ class _EmptyManagerHomeState extends State<_EmptyManagerHome> {
         manager: manager,
         registry: widget.registry,
         lastConnectionStore: widget.lastConnectionStore,
-        restoreAppsMode: true,
         networkMode: widget.networkMode,
         networkSessions: widget.networkSessions,
       );
@@ -1140,10 +1114,7 @@ class SetupScreen extends StatelessWidget {
   Future<void> _connect(BuildContext context, AgentConfig config) async {
     // An on-device connect marks the engine configured — its provider row
     // appears in the settings list from now on.
-    const onDeviceKinds = {
-      webLlmProviderKind,
-      transformersJsProviderKind,
-    };
+    const onDeviceKinds = {webLlmProviderKind, transformersJsProviderKind};
     if (onDeviceKinds.contains(config.providerKind)) {
       await OnDeviceConfigScope.maybeOf(
         context,
@@ -1215,7 +1186,6 @@ class SetupScreen extends StatelessWidget {
           manager: manager,
           registry: registry,
           lastConnectionStore: lastConnectionStore,
-          restoreAppsMode: true,
           networkMode: networkMode,
           networkSessions: networkSessions,
         ),

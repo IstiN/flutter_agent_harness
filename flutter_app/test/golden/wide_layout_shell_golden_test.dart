@@ -6,6 +6,7 @@ import 'package:fa/services/flutter_session_manager.dart';
 import 'package:fa/services/session_names_store.dart';
 import 'package:fa/ui/widgets/sidebar_nav_item.dart';
 import 'package:fa/ui/widgets/wide_layout_shell.dart';
+import 'package:flutter/material.dart' show Size;
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -58,7 +59,11 @@ AgentService _fakeService(ExecutionEnv env) {
 void main() {
   setUpAll(ensureGoldenFonts);
 
-  Future<FlutterSessionManager> pumpShell(WidgetTester tester) async {
+  Future<FlutterSessionManager> pumpShell(
+    WidgetTester tester, {
+    Size size = goldenSizeDesktop,
+    bool populateChats = false,
+  }) async {
     final env = MemoryExecutionEnv();
     final service = _fakeService(env);
     service.messages
@@ -122,13 +127,30 @@ void main() {
         createdAt: DateTime.utc(2020, 1, 2, 15, 4),
         lastUpdatedAt: DateTime.utc(2020, 1, 2, 15, 4),
       );
-    final names = SessionNamesStore.inMemory({
-      'design-session': 'Fa 2.0 redesign',
-    });
+    final titles = <String, String>{'design-session': 'Fa 2.0 redesign'};
+    if (populateChats) {
+      final conversations = [
+        ('release-planning', 'Release planning', DateTime.utc(2020, 1, 5, 9)),
+        ('research-notes', 'Research notes', DateTime.utc(2020, 1, 4, 14)),
+        ('website-copy', 'Website copy review', DateTime.utc(2020, 1, 3, 11)),
+        ('weekly-plan', 'Weekly planning', DateTime.utc(2020, 1, 1, 16)),
+      ];
+      for (final (id, title, createdAt) in conversations) {
+        manager.addSession(
+          id,
+          _fakeService(env),
+          createdAt: createdAt,
+          lastUpdatedAt: createdAt,
+        );
+        titles[id] = title;
+      }
+      manager.switchTo('design-session');
+    }
+    final names = SessionNamesStore.inMemory(titles);
     await pumpGolden(
       tester,
       WideLayoutShell(manager: manager, sessionNamesStore: names),
-      size: goldenSizeDesktop,
+      size: size,
       wrap: (child) => child,
     );
     return manager;
@@ -144,5 +166,12 @@ void main() {
     await tester.tap(find.widgetWithText(SidebarNavItem, 'Activity'));
     await tester.pumpAndSettle();
     await expectGolden(tester, 'wide_layout_shell_activity');
+  });
+
+  testWidgets('mobile Chats shell with populated conversations', (
+    tester,
+  ) async {
+    await pumpShell(tester, size: goldenSizePhone, populateChats: true);
+    await expectGolden(tester, 'narrow_layout_shell_chats');
   });
 }

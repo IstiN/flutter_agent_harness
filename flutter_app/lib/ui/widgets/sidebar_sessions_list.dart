@@ -50,6 +50,7 @@ class SidebarSessionsList extends StatefulWidget {
     this.headerLabel,
     this.searchHint,
     this.unnamedTitle,
+    this.showHeader = true,
   });
 
   /// The session the user just asked to open (a `session_open` dispatch is
@@ -72,6 +73,10 @@ class SidebarSessionsList extends StatefulWidget {
   final String? headerLabel;
   final String? searchHint;
   final String? unnamedTitle;
+
+  /// Whether the list draws its own heading and inline New chat button.
+  /// The narrow shell supplies a compact Fa header and floating action.
+  final bool showHeader;
 
   final FlutterSessionManager manager;
   final SessionNamesStore? sessionNamesStore;
@@ -324,33 +329,37 @@ class _SidebarSessionsListState extends State<SidebarSessionsList> {
     );
     return Column(
       children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 8, 8, 4),
-          child: Row(
-            children: [
-              Text(
-                (widget.headerLabel ?? context.l10n.sidebarSessionsHeader)
-                    .toUpperCase(),
-                style: TextStyle(
-                  color: colors.dim,
-                  fontSize: 12,
-                  fontWeight: FontWeight.bold,
-                  letterSpacing: 0.5,
+        if (widget.showHeader)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 8, 4),
+            child: Row(
+              children: [
+                Text(
+                  (widget.headerLabel ?? context.l10n.sidebarSessionsHeader)
+                      .toUpperCase(),
+                  style: TextStyle(
+                    color: colors.dim,
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                    letterSpacing: 0.5,
+                  ),
                 ),
-              ),
-              const Spacer(),
-              IconButton(
-                icon: const Icon(Icons.add_circle_outline),
-                onPressed: widget.onNewSession,
-                tooltip: context.l10n.sidebarNewSessionTooltip,
-                iconSize: 20,
-                color: colors.dim,
-                padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-              ),
-            ],
+                const Spacer(),
+                IconButton(
+                  icon: const Icon(Icons.add_circle_outline),
+                  onPressed: widget.onNewSession,
+                  tooltip: context.l10n.sidebarNewSessionTooltip,
+                  iconSize: 20,
+                  color: colors.dim,
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(
+                    minWidth: 32,
+                    minHeight: 32,
+                  ),
+                ),
+              ],
+            ),
           ),
-        ),
         // The search row sits pinned between the header and the list —
         // it does not scroll away.
         Padding(

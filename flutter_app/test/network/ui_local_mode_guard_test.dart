@@ -80,7 +80,7 @@ void main() {
       expect(home, isA<WidgetPublicationResumeRefresher>());
       expect(
         (home as WidgetPublicationResumeRefresher).child,
-        isA<AppLauncherScreen>(),
+        isA<WideLayoutShell>(),
       );
       // Not a single network widget in the tree — no gate, no chip.
       expect(find.byType(NetworkHomePage), findsNothing);
@@ -115,7 +115,7 @@ void main() {
       );
       // The gate wraps the local home in a ListenableBuilder; the local
       // surface itself is intact below it.
-      expect(find.byType(AppLauncherScreen), findsOneWidget);
+      expect(find.byType(WideLayoutShell), findsOneWidget);
       expect(find.byType(NetworkHomePage), findsNothing);
       expect(find.byType(NetworksSidebar), findsNothing);
       expect(find.byType(ChannelRail), findsNothing);

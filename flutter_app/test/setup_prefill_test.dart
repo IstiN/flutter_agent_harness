@@ -1,9 +1,8 @@
 import 'dart:async';
 import 'dart:io';
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:fa/ui/screens/app_launcher_screen.dart';
+import 'package:fa/ui/widgets/wide_layout_shell.dart';
 import 'package:fa/services/last_connection.dart';
 import 'package:fa/main.dart';
 import 'package:fa/services/provider_registry.dart';
@@ -432,8 +431,8 @@ void main() {
         await tester.pumpAndSettle();
 
         // Connected: the home replaced the setup screen — on this narrow
-        // (390px) test surface the home is the apps launcher.
-        expect(find.byType(AppLauncherScreen), findsOneWidget);
+        // (390px) test surface the home is the messenger shell.
+        expect(find.byType(WideLayoutShell), findsOneWidget);
         // …and the connection was saved (non-secret parts only).
         final connection = store.connection;
         expect(connection, isNotNull);

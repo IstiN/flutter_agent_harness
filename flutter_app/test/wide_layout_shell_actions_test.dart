@@ -14,6 +14,8 @@ import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/screens/app_launcher_screen.dart';
 import 'package:fa/ui/screens/chat_screen.dart';
 import 'package:fa/ui/widgets/sidebar_nav_item.dart';
+import 'package:fa/ui/widgets/sidebar_sessions_list.dart';
+import 'package:fa/ui/widgets/wide_layout_shell.dart';
 import 'package:fa_ui/fa_ui.dart' show FaChatHost;
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
@@ -345,5 +347,117 @@ void main() {
     runningService.isStreaming = false;
     runningService.notifyListeners();
     await tester.pumpAndSettle();
+  });
+
+  group('narrow messenger home', () {
+    testWidgets('boots to the Chats conversation list, not the launcher', (
+      tester,
+    ) async {
+      final env = MemoryExecutionEnv();
+      final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
+        ..addSession('design-session', _fakeService(env));
+
+      await pumpShell(
+        tester,
+        manager: manager,
+        sessionNamesStore: SessionNamesStore.inMemory({
+          'design-session': 'Fa 2.0 redesign',
+        }),
+        size: const Size(390, 844),
+      );
+
+      expect(find.byType(WideLayoutShell), findsOneWidget);
+      expect(find.byType(SidebarSessionsList), findsOneWidget);
+      expect(find.byType(NavigationBar), findsOneWidget);
+      expect(find.text('Fa 2.0 redesign'), findsOneWidget);
+      expect(find.text('Search chats'), findsOneWidget);
+      expect(find.byType(ChatScreen), findsNothing);
+      expect(find.byType(AppLauncherScreen), findsNothing);
+      expect(find.byKey(const ValueKey('narrowShellNewChat')), findsOneWidget);
+    });
+
+    testWidgets('bottom navigation opens Apps and the live Activity surface', (
+      tester,
+    ) async {
+      final env = MemoryExecutionEnv();
+      final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
+        ..addSession('design-session', _fakeService(env));
+
+      await pumpShell(tester, manager: manager, size: const Size(390, 844));
+
+      await tester.tap(find.text('Apps'));
+      await tester.pumpAndSettle();
+      final launcher = tester.widget<AppLauncherScreen>(
+        find.byType(AppLauncherScreen),
+      );
+      expect(launcher.hideChatSheet, isTrue);
+      expect(find.byType(ChatScreen), findsNothing);
+      expect(find.byType(NavigationBar), findsOneWidget);
+
+      await tester.tap(find.text('Activity'));
+      await tester.pumpAndSettle();
+      expect(find.text('Recent'), findsOneWidget);
+      expect(find.byType(AppLauncherScreen), findsNothing);
+      expect(find.byType(NavigationBar), findsOneWidget);
+    });
+
+    testWidgets('conversation tap pushes the full chat and back returns', (
+      tester,
+    ) async {
+      final env = MemoryExecutionEnv();
+      final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
+        ..addSession('design-session', _fakeService(env));
+
+      await pumpShell(
+        tester,
+        manager: manager,
+        sessionNamesStore: SessionNamesStore.inMemory({
+          'design-session': 'Fa 2.0 redesign',
+        }),
+        size: const Size(390, 844),
+      );
+      await tester.tap(find.text('Fa 2.0 redesign'));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(ChatScreen), findsOneWidget);
+      expect(find.byType(NavigationBar), findsNothing);
+      expect(manager.activeId, 'design-session');
+
+      await tester.tap(find.byType(BackButton).first);
+      await tester.pumpAndSettle();
+      expect(find.byType(ChatScreen), findsNothing);
+      expect(find.byType(SidebarSessionsList), findsOneWidget);
+      expect(find.text('Fa 2.0 redesign'), findsOneWidget);
+    });
+
+    testWidgets('New chat keeps the session-folder flow', (tester) async {
+      final env = MemoryExecutionEnv();
+      final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
+        ..addSession('design-session', _fakeService(env));
+
+      await pumpShell(tester, manager: manager, size: const Size(390, 844));
+      await tester.tap(find.byKey(const ValueKey('narrowShellNewChat')));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(SimpleDialog), findsOneWidget);
+      expect(find.text('New session — folder'), findsOneWidget);
+      await tester.tapAt(const Offset(20, 20));
+      await tester.pumpAndSettle();
+      expect(manager.sessions.length, 1);
+    });
+
+    testWidgets('wide keeps the sidebar and inline chat', (tester) async {
+      final env = MemoryExecutionEnv();
+      final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
+        ..addSession('design-session', _fakeService(env));
+
+      await pumpShell(tester, manager: manager, size: const Size(1280, 800));
+
+      expect(find.byType(SidebarNavItem), findsWidgets);
+      expect(find.byType(ChatScreen), findsOneWidget);
+      expect(find.byType(NavigationBar), findsNothing);
+      expect(find.byType(AppLauncherScreen), findsNothing);
+      await tester.pump(const Duration(milliseconds: 100));
+    });
   });
 }

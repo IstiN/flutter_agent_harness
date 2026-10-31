@@ -949,7 +949,7 @@ void main() {
       return home;
     }
 
-    testWidgets('narrow (< 900px) boots into the apps launcher', (
+    testWidgets('narrow (< 900px) boots into the messenger shell', (
       tester,
     ) async {
       final home = await homeAt(tester, const Size(390, 844));
@@ -958,7 +958,7 @@ void main() {
       expect(home, isA<WidgetPublicationResumeRefresher>());
       expect(
         (home as WidgetPublicationResumeRefresher).child,
-        isA<AppLauncherScreen>(),
+        isA<WideLayoutShell>(),
       );
     });
 
