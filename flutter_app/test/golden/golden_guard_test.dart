@@ -66,7 +66,9 @@ const _coverage = <String, String>{
   'lib/ui/widgets/fa_mark.dart': 'test/golden/chat_golden_test.dart',
   'lib/ui/widgets/model_mark.dart': 'test/golden/widgets_golden_test.dart',
   'lib/ui/widgets/quick_model_chip.dart':
-      'test/golden/launcher_golden_test.dart',
+      'test/golden/chat_header_widths_golden_test.dart',
+  'lib/ui/widgets/sessions_glyph.dart':
+      'test/golden/sessions_glyph_golden_test.dart',
   'lib/ui/widgets/wide_layout_shell.dart':
       'test/golden/wide_layout_shell_golden_test.dart',
   'lib/ui/widgets/rename_session_dialog.dart':
@@ -170,9 +172,6 @@ const _exempt = <String, String>{
   'lib/apps/app_tile_host.dart':
       'tile widget engine; live JS tiles — no host golden (the engine '
       'needs a real JSRuntime, exercised in widget tests instead)',
-  'lib/apps/session_chat_sheet.dart':
-      'floating chat sheet over the launcher; covered indirectly by the '
-      'launcher chat sheet tests in test/apps/',
   'lib/ui/widgets/downloaded_models_quick_start.dart':
       'quick-start scan rows; behavior covered by '
       'test/downloaded_models_quick_start_test.dart — its golden baseline '

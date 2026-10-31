@@ -9,7 +9,7 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 /// Whether the app's agent joins the DAP hub network as a live member
 /// (issue #402 AC3), and with which connection. Persisted as JSON at
 /// `agent_network.json` in the root of the sandbox filesystem
-/// ([ExecutionEnv.cwd]) — same tiny-store pattern as `apps_home_mode.json`.
+/// ([ExecutionEnv.cwd]), following the app's other tiny JSON stores.
 ///
 /// The hub URL and pairing token ride the same shape as the CLI's
 /// `~/.dap/config.json` connection, but live app-side: the agent

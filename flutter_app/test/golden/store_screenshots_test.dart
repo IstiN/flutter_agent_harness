@@ -15,12 +15,10 @@
 ///  1. store_chat — THE ASK: the user asks Fa to build a personal weather
 ///     app with a dashboard widget; tool-call tiles write the manifest,
 ///     the app and the widget, then `open_app` opens it.
-///  2. store_apps — THE DASHBOARD: the apps-launcher home grid with LIVE
-///     widget tiles (the just-built weather app as a 4x2 widget) and the
-///     mini session-chat bar docked at the bottom.
-///  3. store_inapp — THE APP + FA INSIDE: the weather app open with the
-///     session chat sheet pulled up over it — a follow-up ("add a weekly
-///     forecast") without leaving the app.
+///  2. store_apps — THE DASHBOARD: the selected Apps grid with LIVE widget
+///     tiles (the just-built weather app as a 4x2 widget).
+///  3. store_inapp — THE FOLLOW-UP: the current ChatScreen conversation
+///     asks for a weekly forecast after the weather app has been built.
 ///  4. store_media — generation capabilities: an inline generated
 ///     wallpaper, a video clip tile and a voice-summary player in chat.
 ///  5. store_providers — any provider, keys in the Keychain.
@@ -38,18 +36,15 @@ library;
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:fa/apps/app_icon.dart';
 import 'package:fa/apps/app_tile_host.dart';
 import 'package:fa/apps/apps_store.dart';
 import 'package:fa/apps/js_app_engine.dart';
-import 'package:fa/apps/session_chat_sheet.dart';
 import 'package:fa/l10n/app_localizations.dart';
 import 'package:fa/l10n/l10n_ext.dart';
 import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/flutter_session_manager.dart';
 import 'package:fa/services/launcher_layout_store.dart';
 import 'package:fa/services/provider_registry.dart';
-import 'package:fa/services/session_names_store.dart';
 import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/screens/app_launcher_screen.dart';
 import 'package:fa/ui/screens/chat_screen.dart';
@@ -173,7 +168,7 @@ const _notesSessionId = 'c33ce003-notes';
 /// The story sessions shown in the chat sheet header (and kept in the
 /// manager for realism): the app-build chat, the wallpaper session and a
 /// persisted one. Titles ride the `session_names.json` overlay the stores
-/// load from the env (or `SessionNamesStore.inMemory` where a store can be
+/// load from the env (or an in-memory session-names store where one can be
 /// injected).
 Map<String, String> _sessionNames(String lang) => lang == 'ru'
     ? {
@@ -187,7 +182,7 @@ Map<String, String> _sessionNames(String lang) => lang == 'ru'
         _notesSessionId: 'Notes widget ideas',
       };
 
-/// Writes the session-titles overlay exactly where `SessionNamesStore`
+/// Writes the session-titles overlay exactly where the session-names store
 /// reads it (`<cwd>/session_names.json`, envelope version 1).
 Future<void> _seedSessionNames(MemoryExecutionEnv env, String lang) {
   return env.writeFile(
@@ -428,9 +423,7 @@ List<FahChatMessage> _mediaConversation(String lang) {
 
 // --- Frame 1: store_chat — the ask ------------------------------------------
 
-/// store_chat: the full ChatScreen with the app-build conversation (the
-/// session sidebar is gone — sessions live in the launcher's chat sheet —
-/// so the shot is the pure conversation on every device).
+/// store_chat: the full current ChatScreen with the app-build conversation.
 Future<void> _chatShot(
   WidgetTester tester,
   _Device device,
@@ -757,10 +750,10 @@ String _jsonString(String value) {
   return buffer.toString();
 }
 
-/// store_apps: the apps-launcher home — live widget tiles (the just-built
-/// weather app as a 4x2 widget, reminders 2x2), static app icons, the
-/// system tiles and the mini session-chat bar docked at the bottom. Also
-/// serves the square promo shot ([golden] = `store_promo`).
+/// store_apps: the selected Apps surface — live widget tiles (the just-built
+/// weather app as a 4x2 widget, reminders 2x2), static app icons and the
+/// system tiles. Also serves the square promo shot ([golden] =
+/// `store_promo`).
 Future<void> _appsShot(
   WidgetTester tester,
   _Device device,
@@ -800,7 +793,6 @@ Future<void> _appsShot(
             throw StateError('no bundled assets in this test'),
         seedDemoIds: const [],
       ),
-      sessionNamesStore: SessionNamesStore.inMemory(_sessionNames(lang)),
       tileEngineFactory: _fakeTileEngineFactory(lang),
     ),
     device: device,
@@ -818,217 +810,10 @@ Future<void> _promoShot(WidgetTester tester, Locale locale) {
   return _appsShot(tester, device, locale, golden: 'store_promo');
 }
 
-// --- Frame 3: store_inapp — Fa inside the weather app -----------------------
+// --- Frame 3: store_inapp — the follow-up in the current chat ----------
 
-/// One hourly-forecast cell in the hand-built weather canvas.
-Widget _hourCell(FahColors colors, String hour, IconData icon, String temp) {
-  return Column(
-    mainAxisSize: MainAxisSize.min,
-    children: [
-      Text(hour, style: TextStyle(fontSize: 11, color: colors.dim)),
-      const SizedBox(height: 6),
-      Icon(icon, size: 20, color: FahPalette.text),
-      const SizedBox(height: 6),
-      Text(
-        temp,
-        style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
-      ),
-    ],
-  );
-}
-
-/// One daily-forecast row in the weather canvas.
-Widget _dayRow(
-  FahColors colors,
-  String day,
-  IconData icon,
-  Color iconColor,
-  String temps,
-) {
-  return Padding(
-    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 7),
-    child: Row(
-      children: [
-        SizedBox(
-          width: 44,
-          child: Text(
-            day,
-            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
-          ),
-        ),
-        Icon(icon, size: 18, color: iconColor),
-        const Spacer(),
-        Text(temps, style: TextStyle(fontSize: 13, color: colors.dim)),
-      ],
-    ),
-  );
-}
-
-/// The hand-built weather app canvas (same trick as the calculator canvas
-/// in the apps golden tests — no JS engine): hero block on top, an hourly
-/// strip and the week the frame-3 follow-up added.
-Widget _weatherCanvas(String lang) {
-  const colors = FahColors.dark;
-  final ru = lang == 'ru';
-  return ColoredBox(
-    color: colors.bg,
-    child: SingleChildScrollView(
-      physics: const NeverScrollableScrollPhysics(),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Container(
-            padding: const EdgeInsets.fromLTRB(20, 28, 20, 24),
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-                colors: [
-                  FahPalette.indigo.withValues(alpha: 0.28),
-                  colors.bg.withValues(alpha: 0),
-                ],
-              ),
-            ),
-            child: Column(
-              children: [
-                Text(
-                  ru ? 'Минск' : 'Minsk',
-                  style: TextStyle(fontSize: 15, color: colors.dim),
-                ),
-                const SizedBox(height: 2),
-                const Text(
-                  '21°',
-                  style: TextStyle(fontSize: 64, fontWeight: FontWeight.w700),
-                ),
-                Text(
-                  ru ? 'Переменная облачность' : 'Partly cloudy',
-                  style: const TextStyle(fontSize: 14),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  ru ? 'Макс. 23° · мин. 15°' : 'H 23° · L 15°',
-                  style: TextStyle(fontSize: 12, color: colors.dim),
-                ),
-              ],
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                _hourCell(colors, ru ? 'Сейчас' : 'Now', Icons.wb_sunny, '21°'),
-                _hourCell(colors, '15:00', Icons.wb_sunny, '22°'),
-                _hourCell(colors, '16:00', Icons.wb_cloudy, '22°'),
-                _hourCell(colors, '17:00', Icons.cloud, '20°'),
-                _hourCell(colors, '18:00', Icons.cloud, '19°'),
-              ],
-            ),
-          ),
-          Divider(height: 16, color: colors.border),
-          _dayRow(
-            colors,
-            ru ? 'Вт' : 'Tue',
-            Icons.wb_sunny,
-            const Color(0xFFFBBF24),
-            '24° / 16°',
-          ),
-          _dayRow(
-            colors,
-            ru ? 'Ср' : 'Wed',
-            Icons.wb_cloudy,
-            const Color(0xFF94A3B8),
-            '21° / 14°',
-          ),
-          _dayRow(
-            colors,
-            ru ? 'Чт' : 'Thu',
-            Icons.umbrella,
-            const Color(0xFF60A5FA),
-            '18° / 12°',
-          ),
-          _dayRow(
-            colors,
-            ru ? 'Пт' : 'Fri',
-            Icons.wb_sunny,
-            const Color(0xFFFBBF24),
-            '23° / 15°',
-          ),
-        ],
-      ),
-    ),
-  );
-}
-
-/// A JsAppView-like scaffold for the weather app with the session chat
-/// sheet hosted over the canvas (the launcher pattern, reused in-app).
-/// The sheet sizes its expanded panel off its LayoutBuilder constraints
-/// (expanded = [SessionChatSheet.panelFraction] of the available height),
-/// so the fraction is picked to land the expanded panel's top edge right
-/// below the canvas's hourly strip ([_kSheetTopInset] px from the body
-/// top) — the hero block and the hourly forecast stay fully visible above
-/// the sheet on every device, under the sheet's full-area scrim.
-Widget _weatherAppHost(
-  MemoryExecutionEnv env,
-  FlutterSessionManager manager,
-  String lang, {
-  GlobalKey<SessionChatSheetState>? sheetKey,
-}) {
-  final weatherApp = JsAppInfo.fromManifest(
-    {'id': 'weather', 'name': 'Weather', 'icon': _weatherSvgIcon},
-    bundled: false,
-    fallbackId: 'weather',
-  );
-  return Scaffold(
-    appBar: AppBar(
-      title: Row(
-        children: [
-          AppIcon(app: weatherApp, env: env, size: 24),
-          const SizedBox(width: 8),
-          const Flexible(
-            child: Text('Weather', overflow: TextOverflow.ellipsis),
-          ),
-        ],
-      ),
-      actions: [
-        IconButton(icon: const Icon(Icons.shield_outlined), onPressed: () {}),
-        IconButton(icon: const Icon(Icons.refresh), onPressed: () {}),
-      ],
-    ),
-    body: LayoutBuilder(
-      builder: (context, constraints) {
-        // Panel height = fraction * body height = body height minus the
-        // inset, so the expanded panel's top edge parks _kSheetTopInset px
-        // below the body top.
-        final fraction =
-            (constraints.maxHeight - _kSheetTopInset) / constraints.maxHeight;
-        return Stack(
-          children: [
-            Positioned.fill(child: _weatherCanvas(lang)),
-            Positioned.fill(
-              child: SessionChatSheet(
-                key: sheetKey,
-                manager: manager,
-                sessionNamesStore: SessionNamesStore.inMemory(
-                  _sessionNames(lang),
-                ),
-                panelFraction: fraction < 0 ? 0.0 : fraction,
-              ),
-            ),
-          ],
-        );
-      },
-    ),
-  );
-}
-
-/// Body-top inset where the expanded chat sheet's top edge lands in the
-/// store_inapp frame: just below the weather canvas's hourly strip
-/// (hero block + hourly row + divider).
-const _kSheetTopInset = 292.0;
-
-/// store_inapp: the follow-up edit ("add a weekly forecast") done from the
-/// session chat sheet pulled up over the weather app.
+/// store_inapp: the follow-up edit ("add a weekly forecast") in the same
+/// current ChatScreen presentation used by the mobile conversation route.
 Future<void> _inappShot(
   WidgetTester tester,
   _Device device,
@@ -1036,27 +821,25 @@ Future<void> _inappShot(
 ) async {
   final lang = locale.languageCode;
   final env = MemoryExecutionEnv();
+  await _seedSessionNames(env, lang);
   final service = _fakeService(env);
   service.messages.addAll(_inappConversation(lang));
   final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
     ..addSession(_weatherSessionId, service);
-  final sheetKey = GlobalKey<SessionChatSheetState>();
 
   await _pumpStore(
     tester,
-    _weatherAppHost(env, manager, lang, sheetKey: sheetKey),
+    ChatScreen(manager: manager),
     device: device,
     locale: locale,
     screen: 'store_inapp',
   );
-  await tester.pumpAndSettle();
-  // The new session-chat sheet starts with the panel closed; expand it
-  // programmatically so the in-app screenshot shows the transcript over the
-  // weather canvas (same visual intent as the old mini-bar tap).
-  sheetKey.currentState?.expand();
-  await tester.pumpAndSettle();
+  for (var i = 0; i < 6; i++) {
+    await tester.pump(const Duration(milliseconds: 500));
+  }
   _jumpScrollablesToTail(tester);
   await tester.pump();
+  await tester.pump(const Duration(milliseconds: 400));
   await _expectStore(tester, device, locale, 'store_inapp');
 }
 
@@ -1246,7 +1029,7 @@ void main() {
       }
     });
 
-    testWidgets('store_inapp — the session chat sheet over the weather app', (
+    testWidgets('store_inapp — the follow-up in the current ChatScreen', (
       tester,
     ) async {
       for (final device in _devices) {

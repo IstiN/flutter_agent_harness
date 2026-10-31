@@ -85,7 +85,6 @@ Iterable<String> _trackedFiles() sync* {
   }
   yield 'lib/ui/widgets/chat_composer.dart';
   yield 'lib/apps/js_app_view.dart';
-  yield 'lib/apps/session_chat_sheet.dart';
 }
 
 /// `  void name(` method declarations on AppAnalytics (two-space indent).

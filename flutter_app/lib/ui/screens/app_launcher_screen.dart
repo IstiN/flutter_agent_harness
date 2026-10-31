@@ -17,24 +17,20 @@ import 'package:fa/apps/apps_store.dart';
 import 'package:fa/apps/catalog_auto_update.dart';
 import 'package:fa/apps/catalog_service.dart';
 import 'package:fa/apps/js_app_navigation.dart';
-import 'package:fa/apps/session_chat_sheet.dart';
 import 'package:fa/apps/unpacked_load_flow.dart';
 import 'package:fa/apps/unpacked_loader.dart';
 import 'package:fa/apps/widgets_catalog_sheet.dart';
 import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/app_log.dart';
 import 'package:fa/services/analytics.dart';
-import 'package:fa/services/asr_service.dart';
 import 'package:fa/services/flutter_session_manager.dart';
 import 'package:fa/services/folder_picker.dart';
 import 'package:fa/services/last_connection.dart';
 import 'package:fa/services/launcher_layout_store.dart';
-import 'package:fa/services/session_names_store.dart';
 import 'package:fa/services/widget_publication_store.dart';
 import 'package:fa/services/widget_publish_service.dart';
 import 'package:fa/ui/widgets/github_account_section.dart';
 import 'package:fa/ui/widgets/widget_publish_sheet.dart';
-import 'package:fa/services/upload.dart';
 import 'package:fa/ui/screens/settings.dart';
 import 'package:fa/ui/widgets/fa_mark.dart';
 import 'package:fa/ui/network/network_mode_chip.dart';
@@ -58,8 +54,7 @@ import 'package:fa/ui/widgets/wide_layout_shell.dart'
 ///
 /// The layout (order, folders) persists through [LauncherLayoutStore]; the
 /// apps list refreshes on the active session's [AgentService.fsRevision]
-/// bumps, so apps the agent creates appear without a restart. The collapsed
-/// session chat sheet (P2) floats above this grid in the same [Stack].
+/// bumps, so apps the agent creates appear without a restart.
 class AppLauncherScreen extends StatefulWidget {
   const AppLauncherScreen({
     super.key,
@@ -68,15 +63,7 @@ class AppLauncherScreen extends StatefulWidget {
     this.lastConnectionStore,
     this.layoutStore,
     this.appsStore,
-    this.sessionNamesStore,
-    this.uploadPicker,
-    this.asr,
-    this.asrTranscriber,
-    this.audioControllerFactory,
-    this.videoControllerFactory,
     this.tileEngineFactory,
-    this.hideChatSheet = false,
-    this.restoreAppsMode = false,
     this.networkMode,
     this.networkSessions,
   });
@@ -97,38 +84,9 @@ class AppLauncherScreen extends StatefulWidget {
   /// App discovery/seeding; tests inject one with canned assets.
   final AppsStore? appsStore;
 
-  /// The user-given session titles shown in the chat sheet header;
-  /// forwarded to [SessionChatSheet].
-  final SessionNamesStore? sessionNamesStore;
-
-  /// File chooser for the chat sheet's composer; forwarded to
-  /// [SessionChatSheet].
-  final UploadPicker? uploadPicker;
-
-  /// Microphone backend override for the chat sheet's composer (tests).
-  final AsrApi? asr;
-
-  /// Transcriber override for the chat sheet's composer (tests).
-  final AsrTranscriber? asrTranscriber;
-
-  /// Playback engine factory for inline audio in the chat sheet transcript.
-  final SandboxAudioControllerFactory? audioControllerFactory;
-
-  /// Playback engine factory for inline video in the chat sheet transcript.
-  final SandboxVideoControllerFactory? videoControllerFactory;
-
   /// Test seam for live tiles: substitutes the [AppTileHost] engine so
   /// widget tests and goldens render a deterministic tile tree.
   final TileEngineFactory? tileEngineFactory;
-
-  /// When true the [SessionChatSheet] floating overlay is NOT rendered —
-  /// the wide-screen [WideLayoutShell] owns chat instead.
-  final bool hideChatSheet;
-
-  /// Restore the persisted apps↔chat surface mode (issue #224) in the
-  /// chat sheet; forwarded from [faHomeScreen]. Tests/goldens keep the
-  /// default false — the apps grid stays the deterministic resting state.
-  final bool restoreAppsMode;
 
   /// Network mode (issue #955): when both are provided, the launcher
   /// header carries the Local | Network mode chip. Null (tests, non-
@@ -167,10 +125,6 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
 
   /// The active content tab: the app grid or the widgets catalog.
   _LauncherTab _tab = _LauncherTab.widgets;
-
-  /// Key into the session chat sheet so the header's session chip can
-  /// expand it (the chip shows WHICH session is active — the sheet hosts it).
-  final _sheetKey = GlobalKey<SessionChatSheetState>();
 
   /// Live reorder preview while dragging: the order the grid animates to
   /// (the persisted order is only mutated on drop).
@@ -1028,82 +982,18 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
 
   // --- build ---------------------------------------------------------------
 
-  /// The active-session indicator in the header: which conversation the
-  /// agent is in right now (custom or date-derived title); tapping expands
-  /// the session sheet. Rebuilds on every manager change (switch/rename).
-  Widget _buildSessionChip(FahColors colors) {
-    final active = widget.manager.active;
-    if (active == null) return const SizedBox.shrink();
-    final title =
-        widget.sessionNamesStore?.titleFor(active.id) ??
-        derivedSessionTitle(
-          context,
-          id: active.id,
-          createdAt: active.createdAt,
-        );
-    return GestureDetector(
-      onTap: () => _sheetKey.currentState?.expand(),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-        constraints: const BoxConstraints(maxWidth: 220),
-        decoration: BoxDecoration(
-          color: colors.panel,
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: colors.border),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          mainAxisAlignment: MainAxisAlignment.end,
-          children: [
-            Icon(Icons.chat_bubble_outline, size: 13, color: colors.dim),
-            const SizedBox(width: 6),
-            Flexible(
-              child: Text(
-                title,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: Theme.of(
-                  context,
-                ).textTheme.bodySmall?.copyWith(color: colors.dim),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     final colors = FahColors.of(context);
     return Scaffold(
-      // Bottom false: the stack reaches the screen's bottom edge so the
-      // floating mini chat bar hovers over the GRID (not over an empty
-      // scaffold-colored band) and the expanded sheet docks edge-to-edge;
-      // the grid keeps its own bottom clearance below.
+      // Let the Apps surface and wallpaper reach the bottom edge; the grid
+      // applies its own safe-area clearance.
       body: SafeArea(
         bottom: false,
         child: Stack(
           children: [
             const Positioned.fill(child: FahWallpaper()),
             _buildGridArea(colors),
-            // The iMessage-style session chat overlay: the always-visible
-            // input bar, the sessions drawer (from the left) and the session
-            // panel sliding up under the bar.
-            if (!widget.hideChatSheet)
-              SessionChatSheet(
-                key: _sheetKey,
-                manager: widget.manager,
-                registry: widget.registry,
-                lastConnectionStore: widget.lastConnectionStore,
-                sessionNamesStore: widget.sessionNamesStore,
-                uploadPicker: widget.uploadPicker,
-                asr: widget.asr,
-                asrTranscriber: widget.asrTranscriber,
-                audioControllerFactory: widget.audioControllerFactory,
-                videoControllerFactory: widget.videoControllerFactory,
-                restoreAppsMode: widget.restoreAppsMode,
-              ),
             if (_openFolderId != null) ...[
               _buildFolderBarrier(colors),
               _buildFolderPanel(colors),
@@ -1128,7 +1018,7 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
       children: [
         Padding(
           // macOS: extra room so the floating traffic lights don't crowd
-          // the brand tile / session chip at the very top edge.
+          // the brand tile at the very top edge.
           padding: EdgeInsets.fromLTRB(20, faIsMacOSDesktop ? 32 : 16, 20, 8),
           child: FaSurface(
             glass:
@@ -1136,30 +1026,9 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
             child: Row(
               children: [
-                // The Fa entry (#864): tap ALWAYS continues the active session
-                // (expand the sheet, zero minting); long-press is the ONLY
-                // navigation way to mint a fresh one. The hint tooltip names
-                // both gestures.
-                // Hover-only hint: triggerMode manual — the touch long-press
-                // is deliberately yielded to the InkWell below so it ALWAYS
-                // mints (#864) and can never degrade into a tooltip; the
-                // hint still reaches screen readers via semantics.
-                Tooltip(
-                  message: context.l10n.faEntryHintTooltip,
-                  triggerMode: TooltipTriggerMode.manual,
-                  child: InkWell(
-                    key: const ValueKey('launcherFaBrand'),
-                    borderRadius: BorderRadius.circular(8),
-                    onTap: () => _sheetKey.currentState?.expand(),
-                    onLongPress: () => unawaited(
-                      _sheetKey.currentState?.mintAndOpenNewSession(),
-                    ),
-                    child: const FaBrandTile(size: 28),
-                  ),
-                ),
+                const FaBrandTile(size: 28),
                 const SizedBox(width: 10),
-                // The screen title yields to the session chip on narrow frames:
-                // it ellipsizes first, the chip keeps a readable width.
+                // Ellipsize the title before any trailing network-mode chip.
                 Flexible(
                   child: Text(
                     context.l10n.appsGridTitle,
@@ -1170,8 +1039,6 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
                     ),
                   ),
                 ),
-                const SizedBox(width: 8),
-                _buildSessionChip(colors),
                 if (widget.networkMode != null &&
                     widget.networkSessions != null) ...[
                   const SizedBox(width: 8),
@@ -1369,13 +1236,11 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
                   crossAxisCount * LauncherGridSpec.cellCrossExtent +
                   (crossAxisCount - 1) * spacing;
               return SingleChildScrollView(
-                // Bottom clearance for the floating mini chat bar (bar
-                // height + its margin above the home indicator).
                 padding: EdgeInsets.fromLTRB(
                   16,
                   8,
                   16,
-                  MediaQuery.viewPaddingOf(context).bottom + 128,
+                  MediaQuery.viewPaddingOf(context).bottom + 16,
                 ),
                 child: Center(
                   child: SizedBox(

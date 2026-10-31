@@ -3,16 +3,16 @@
 // in the LICENSE file.
 
 /// Goldens for the session search field pinned at the top of the session
-/// lists (issue #200): the macOS wide sidebar and the mobile drawer.
+/// lists (issue #200): the macOS wide sidebar and the current narrow chats
+/// surface.
 library;
 
 import 'dart:convert';
-import 'dart:typed_data';
 
-import 'package:fa/apps/session_chat_sheet.dart';
+import 'package:fa/main.dart' show faHomeScreen;
 import 'package:fa/services/agent_service.dart';
-import 'package:fa/services/asr_service.dart';
 import 'package:fa/services/flutter_session_manager.dart';
+import 'package:fa/services/session_names_store.dart';
 import 'package:fa/ui/widgets/session_search_field.dart';
 import 'package:fa/ui/widgets/sidebar_sessions_list.dart';
 import 'package:flutter/material.dart';
@@ -61,26 +61,6 @@ AgentService _fakeService(ExecutionEnv env) {
       apiKey: '',
     ),
   );
-}
-
-/// Widget tests never touch the real ASR method channel.
-final class _FakeAsrApi implements AsrApi {
-  @override
-  Future<bool> get isAvailable async => true;
-
-  @override
-  Future<bool> requestAccess() async => true;
-
-  @override
-  Future<void> startRecording() async {}
-
-  @override
-  Future<AsrRecording> stopRecording() async =>
-      (path: '/tmp/fah-mic-test.m4a', durationMs: 5000, sampleRate: 44100);
-
-  @override
-  Future<Uint8List> readRecording(String path) async =>
-      Uint8List.fromList(const [1, 2, 3]);
 }
 
 /// Writes a disk session backdated to the fixed instant [at].
@@ -205,7 +185,7 @@ void main() {
     await expectGolden(tester, 'session_search_sidebar_no_results');
   });
 
-  testWidgets('mobile drawer: the field filters the drawer list', (
+  testWidgets('narrow chats: the field filters the conversation list', (
     tester,
   ) async {
     // Live sessions with FIXED creation dates — the default would stamp
@@ -227,22 +207,23 @@ void main() {
       );
     await pumpGolden(
       tester,
-      SessionChatSheet(manager: manager, asr: _FakeAsrApi()),
+      Builder(
+        builder: (context) => faHomeScreen(
+          context: context,
+          manager: manager,
+          sessionNamesStore: SessionNamesStore.inMemory({
+            'sess-a': 'Alpha chat',
+            'sess-b': 'Beta chat',
+          }),
+        ),
+      ),
       size: goldenSizePhone,
-      wrap: (child) => Scaffold(body: child),
+      wrap: (child) => child,
     );
-    await tester.tap(find.byKey(const ValueKey('sessionChatDrawerButton')));
-    await tester.pumpAndSettle();
 
-    await typeAndBlur(tester, 'sess-a');
-    expect(
-      find.byKey(const ValueKey('sessionChatDrawerEntry:sess-a')),
-      findsOneWidget,
-    );
-    expect(
-      find.byKey(const ValueKey('sessionChatDrawerEntry:sess-b')),
-      findsNothing,
-    );
-    await expectGolden(tester, 'session_search_drawer');
+    await typeAndBlur(tester, 'alpha');
+    expect(find.text('Alpha chat'), findsOneWidget);
+    expect(find.text('Beta chat'), findsNothing);
+    await expectGolden(tester, 'session_search_narrow_chats');
   });
 }

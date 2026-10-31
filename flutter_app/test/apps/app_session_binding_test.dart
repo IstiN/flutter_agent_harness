@@ -36,8 +36,8 @@ StreamFunction _singleTextResponse(String text) {
   };
 }
 
-/// A hung stream honoring aborts (the session_chat_sheet_test.dart
-/// pattern): the provider stream stays open until aborted, so
+/// A hung stream honoring aborts: the provider stream stays open until
+/// aborted, so
 /// `isStreaming` stays true.
 StreamFunction _hungResponse() {
   fn(Model model, dynamic context, {cancelToken}) {

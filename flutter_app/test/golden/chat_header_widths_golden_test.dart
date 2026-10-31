@@ -4,9 +4,9 @@
 /// (actions demote into the ⋮ menu, nothing overflows) instead of
 /// relying on the two historical fixed sizes only.
 ///
-/// The pump mirrors the session sheet's pushed full-chat route payload
-/// (project identity + quick-model chip + apps toggle + files drawer),
-/// so the snapshots show the real narrow-phone header shape.
+/// The pump uses the current narrow full-chat route payload (project
+/// identity + quick-model chip + apps toggle + files drawer), so the
+/// snapshots show the real narrow-phone header shape.
 library;
 
 import 'package:fa/services/agent_service.dart';
@@ -78,14 +78,16 @@ Future<void> _pumpHeaderWidth(WidgetTester tester, double width) async {
     ..add(
       FahChatMessage(
         role: 'user',
-        content: 'the auth integration test fails after my refactor — can '
+        content:
+            'the auth integration test fails after my refactor — can '
             'you take a look?',
       ),
     )
     ..add(
       FahChatMessage(
         role: 'assistant',
-        content: 'Found it — the test still calls the old two-argument '
+        content:
+            'Found it — the test still calls the old two-argument '
             '`signIn`. The suite is green again.',
       ),
     );
@@ -97,7 +99,7 @@ Future<void> _pumpHeaderWidth(WidgetTester tester, double width) async {
     tester,
     ChatScreen(
       manager: manager,
-      // The pushed full-chat route payload (session_chat_sheet).
+      // The current narrow full-chat route payload.
       projectIcon: Icons.folder_outlined,
       projectLabel: 'Personal',
       modelChip: QuickModelChip(

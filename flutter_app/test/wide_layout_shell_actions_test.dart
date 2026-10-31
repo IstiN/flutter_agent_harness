@@ -387,10 +387,7 @@ void main() {
 
       await tester.tap(find.text('Apps'));
       await tester.pumpAndSettle();
-      final launcher = tester.widget<AppLauncherScreen>(
-        find.byType(AppLauncherScreen),
-      );
-      expect(launcher.hideChatSheet, isTrue);
+      expect(find.byType(AppLauncherScreen), findsOneWidget);
       expect(find.byType(ChatScreen), findsNothing);
       expect(find.byType(NavigationBar), findsOneWidget);
 

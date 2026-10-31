@@ -13,14 +13,12 @@ import 'package:fa/apps/dynamic_messages.dart';
 import 'package:fa/apps/dynamic_messages_sheet.dart';
 import 'package:fa/apps/dynamic_widget_tile.dart';
 import 'package:fa/apps/js_app_engine.dart';
-import 'package:fa/apps/session_chat_sheet.dart';
 import 'package:fa/services/agent_service.dart';
-import 'package:fa/services/asr_service.dart';
 import 'package:fa/services/flutter_session_manager.dart';
 import 'package:fa/ui/app_theme.dart';
+import 'package:fa/ui/screens/chat_screen.dart';
 import 'package:fa_ui/fa_ui.dart' show FaChatMessage;
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -62,13 +60,12 @@ void main() {
     asrTranscriberOf: () async => null,
   );
 
-  testWidgets('dynamic message mounted in the launcher chat transcript', (
+  testWidgets('dynamic message mounted in the current chat transcript', (
     tester,
   ) async {
-    // Issue #336: the launcher sheet is the iOS home chat surface; the
-    // interactive tile renders INLINE in the transcript (not the plain
-    // tool card). Deterministic booting state via the debugAdd engine
-    // shell — no JS runtime.
+    // The interactive tile renders INLINE in the current ChatScreen
+    // transcript (not the plain tool card). Deterministic booting state via
+    // the debugAdd engine shell — no JS runtime.
     final env = MemoryExecutionEnv();
     final service = AgentService(
       agent: Agent(
@@ -115,18 +112,14 @@ void main() {
     ]);
     final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
       ..addSession('sess-a', service);
-    final sheetKey = GlobalKey<SessionChatSheetState>();
     await pumpGolden(
       tester,
-      SessionChatSheet(key: sheetKey, manager: manager, asr: _GoldenAsr()),
+      ChatScreen(manager: manager),
       size: goldenSizePhone,
       settle: false,
-      wrap: (child) => Scaffold(body: child),
+      wrap: (child) => child,
     );
-    // The launcher panel starts collapsed: slide it open, past the panel
-    // animation, without pumpAndSettle (the tile's boot spinner never
-    // settles).
-    sheetKey.currentState!.expand();
+    // Bound the frames: the tile's boot spinner never settles.
     await tester.pump(const Duration(milliseconds: 100));
     await tester.pump(const Duration(milliseconds: 400));
     await expectGolden(tester, 'dynamic_message_in_transcript');
@@ -387,24 +380,4 @@ void main() {
     );
     await expectGolden(tester, 'dynamic_messages_sheet');
   });
-}
-
-/// Fake [AsrApi] — goldens never touch the real method channel.
-final class _GoldenAsr implements AsrApi {
-  @override
-  Future<bool> get isAvailable async => true;
-
-  @override
-  Future<bool> requestAccess() async => true;
-
-  @override
-  Future<void> startRecording() async {}
-
-  @override
-  Future<AsrRecording> stopRecording() async =>
-      (path: '/tmp/golden.m4a', durationMs: 1000, sampleRate: 44100);
-
-  @override
-  Future<Uint8List> readRecording(String path) async =>
-      Uint8List.fromList(const [1]);
 }

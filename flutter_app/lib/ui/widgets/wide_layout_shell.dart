@@ -974,8 +974,7 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
     //
     // The MOBILE launcher is the single panel implementation on every
     // form factor (drag&drop folders, live tiles, search, the Widgets /
-    // Get widgets tabs); the chat sheet stays off here — the wide shell
-    // owns chat itself.
+    // Get widgets tabs); conversation UI stays in the shell's chat route.
     return Navigator(
       key: _appsNavigatorKey,
       onGenerateRoute: (settings) => MaterialPageRoute(
@@ -985,9 +984,7 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
           lastConnectionStore: widget.lastConnectionStore,
           layoutStore: widget.layoutStore,
           appsStore: widget.appsStore,
-          sessionNamesStore: widget.sessionNamesStore ?? _namesStore,
           tileEngineFactory: widget.tileEngineFactory,
-          hideChatSheet: true,
           networkMode: _isNarrow ? widget.networkMode : null,
           networkSessions: _isNarrow ? widget.networkSessions : null,
         ),
@@ -1289,8 +1286,7 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
 
   /// Opens the shared quick model picker (the same two-step provider →
   /// model flow the settings "Default chat model" row uses) — see
-  /// [openQuickModelPicker]; the mobile session panel's chip routes
-  /// through the same function (issue #167 parity).
+  /// [openQuickModelPicker].
   Future<void> _openModelPicker(FlutterManagedSession session) async {
     final registry = widget.registry;
     if (registry == null) return;

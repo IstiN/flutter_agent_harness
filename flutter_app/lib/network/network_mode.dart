@@ -22,9 +22,8 @@ enum AppMode {
 
 /// Tiny persisted store for the network-mode shell state: the current
 /// [AppMode] plus the last selected network/channel, so a relaunch lands
-/// the human exactly where they left (AC-N1). Same tiny-JSON pattern as
-/// `AppsHomeModeStore` (`apps_home_mode.json`) — non-secret by design
-/// (session tokens and channel keys live in the KeyWallet, never here).
+/// the human exactly where they left (AC-N1). Non-secret by design:
+/// session tokens and channel keys live in the KeyWallet, never here.
 class NetworkModeStore {
   NetworkModeStore._(
     this._env,

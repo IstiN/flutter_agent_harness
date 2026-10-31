@@ -10,12 +10,9 @@
 library;
 
 import 'dart:io' as io;
-import 'dart:typed_data';
-
-import 'package:fa/apps/session_chat_sheet.dart';
 import 'package:fa/l10n/app_localizations.dart';
+import 'package:fa/main.dart' show faHomeScreen;
 import 'package:fa/services/agent_service.dart';
-import 'package:fa/services/asr_service.dart';
 import 'package:fa/services/flutter_session_manager.dart';
 import 'package:fa/services/session_names_store.dart';
 import 'package:fa/ui/app_theme.dart';
@@ -357,13 +354,16 @@ void main() {
     },
   );
 
-  // AC5 E2E (sidebar half): through the real sheet surface — drawer-open
-  // an over-budget session and the chat opens with the tail window
-  // instead of the old "Session too large" refusal.
+  // AC5 E2E (conversation-list half): through the current narrow shell,
+  // open an over-budget persisted session and its full chat route shows the
+  // tail window instead of the old "Session too large" refusal.
   testWidgets(
-    'E2E-sidebar-open: drawer-open of an over-budget session opens its '
-    'windowed chat (no refusal)',
+    'E2E-current-narrow-open: an over-budget persisted session opens its '
+    'windowed ChatScreen route (no refusal)',
     (tester) async {
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
       final env = MemoryExecutionEnv();
       await env.writeFile('/sessions/giant.jsonl', _sessionBody('giant', 300));
       final service = AgentService(
@@ -387,24 +387,26 @@ void main() {
           theme: buildFahTheme(),
           localizationsDelegates: AppLocalizations.localizationsDelegates,
           supportedLocales: AppLocalizations.supportedLocales,
-          home: Scaffold(
-            body: SessionChatSheet(manager: manager, asr: _FakeAsrApi()),
+          home: Builder(
+            builder: (context) => faHomeScreen(
+              context: context,
+              manager: manager,
+              sessionNamesStore: SessionNamesStore.inMemory({
+                'giant': 'Giant chat',
+              }),
+            ),
           ),
         ),
       );
       await tester.pumpAndSettle();
 
-      // Drawer → persisted giant row.
-      await tester.tap(find.byKey(const ValueKey('sessionChatDrawerButton')));
-      await tester.pumpAndSettle();
-      await tester.tap(
-        find.byKey(const ValueKey('sessionChatDrawerEntry:giant')),
-      );
+      await tester.tap(find.text('Giant chat'));
       await tester.pumpAndSettle();
 
-      // The chat opened: composer live, tail window loaded — newest
-      // record visible, the file's head NOT bulk-read into memory, and
-      // none of the old "too large" refusal snackbar.
+      // The current chat route opened: composer live, tail window loaded —
+      // newest record visible, the file's head NOT bulk-read into memory,
+      // and none of the old "too large" refusal snackbar.
+      expect(find.byType(ChatScreen), findsOneWidget);
       expect(find.byType(ChatComposer), findsOneWidget);
       expect(find.textContaining('message 299'), findsOneWidget);
       expect(find.textContaining('message 0 '), findsNothing);
@@ -489,25 +491,4 @@ void main() {
     expect(find.textContaining('Load earlier'), findsNothing);
     expect(find.textContaining('Beginning of session'), findsOneWidget);
   });
-}
-
-/// Fake [AsrApi] — widget tests never touch the real method channel (the
-/// session_chat_sheet_test pattern).
-final class _FakeAsrApi implements AsrApi {
-  @override
-  Future<bool> get isAvailable async => true;
-
-  @override
-  Future<bool> requestAccess() async => true;
-
-  @override
-  Future<void> startRecording() async {}
-
-  @override
-  Future<AsrRecording> stopRecording() async =>
-      (path: '/tmp/fah-mic-test.m4a', durationMs: 5000, sampleRate: 44100);
-
-  @override
-  Future<Uint8List> readRecording(String path) async =>
-      Uint8List.fromList(const [1, 2, 3]);
 }

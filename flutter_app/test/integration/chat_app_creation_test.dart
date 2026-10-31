@@ -3,9 +3,9 @@
 // in the LICENSE file.
 
 /// Integration coverage for the flagship chat round-trip: a message typed
-/// into the launcher's mini chat bar drives a (fake) model that writes a
-/// new JS app into the sandbox; the mutating write bumps `fsRevision` and
-/// the app appears in the home grid — live tile included.
+/// into the current ChatScreen drives a (fake) model that writes a new JS
+/// app into the sandbox; the mutating write bumps `fsRevision` and the app
+/// appears in the selected Apps grid — live tile included.
 library;
 
 import 'dart:async';
@@ -18,6 +18,7 @@ import 'package:fa/services/flutter_session_manager.dart';
 import 'package:fa/services/launcher_layout_store.dart';
 import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/screens/app_launcher_screen.dart';
+import 'package:fa/ui/screens/chat_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -44,7 +45,7 @@ class _Harness {
 
 /// Pumps the launcher with a real builtin-tools service whose model stream
 /// is scripted: one tool-call turn writing the todo app, then a text reply.
-Future<_Harness> _pumpLauncher(WidgetTester tester) async {
+Future<_Harness> _pumpLauncher(WidgetTester tester, {bool chat = false}) async {
   final env = MemoryExecutionEnv();
   final service = AgentService(
     agent: Agent(
@@ -87,17 +88,19 @@ Future<_Harness> _pumpLauncher(WidgetTester tester) async {
       theme: buildFahTheme(),
       localizationsDelegates: AppLocalizations.localizationsDelegates,
       supportedLocales: AppLocalizations.supportedLocales,
-      home: AppLauncherScreen(
-        manager: manager,
-        layoutStore: LauncherLayoutStore.inMemory(),
-        appsStore: AppsStore(
-          env,
-          readAsset: (path) async =>
-              throw StateError('no bundled assets in this test'),
-          seedDemoIds: const [],
-        ),
-        tileEngineFactory: fakeTileEngineFactory(),
-      ),
+      home: chat
+          ? ChatScreen(manager: manager)
+          : AppLauncherScreen(
+              manager: manager,
+              layoutStore: LauncherLayoutStore.inMemory(),
+              appsStore: AppsStore(
+                env,
+                readAsset: (path) async =>
+                    throw StateError('no bundled assets in this test'),
+                seedDemoIds: const [],
+              ),
+              tileEngineFactory: fakeTileEngineFactory(),
+            ),
     ),
   );
   await tester.pumpAndSettle();
@@ -106,9 +109,10 @@ Future<_Harness> _pumpLauncher(WidgetTester tester) async {
 
 void main() {
   group('chat round-trip', () {
-    testWidgets('a message typed into the mini bar reaches the active '
-        'session', (tester) async {
-      final harness = await _pumpLauncher(tester);
+    testWidgets('a message typed into ChatScreen reaches the active session', (
+      tester,
+    ) async {
+      final harness = await _pumpLauncher(tester, chat: true);
       await tester.enterText(find.byType(TextField).last, 'make me a todo app');
       // On macOS the empty composer's one-action slot holds the mic
       // (asrPlatformSupported = Platform.isMacOS || isIOS); the send button

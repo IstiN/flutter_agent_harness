@@ -1232,60 +1232,12 @@ factual: paths, commands, invariants — no essays.
   `launcher_layout.json` v2: ordered keys `app:<id>`/`system:*`/`folder:<id>`
   + `grid.columns` + `tileSizes` {appId: "WxH"} overrides — agent-editable,
   re-read live on fsRevision; v1 migrates, corrupt file → defaults;
-  `syncApps` reconciles with installed apps). Its Stack hosts the
-  `SessionChatSheet`.
+  `syncApps` reconciles with installed apps).
 - `flutter_app/lib/ui/widgets/wide_layout_shell.dart` — the responsive Fa2
   messenger shell: compact Chats / Activity / Apps navigation, the shared
   conversation list, live Running/Recent activity, and Apps as a selected
   surface. Wide layouts keep the active chat in the center; narrow layouts
   open conversations as full routes with bottom navigation.
-- `flutter_app/lib/apps/session_chat_sheet.dart` — the iMessage-style
-  session chat overlay over the launcher, three layers above the app grid:
-  the always-visible docked input bar (the shared `ChatComposer` with
-  `autofocus: false` — the bar never pops the keyboard at app start;
-  leading slot = sessions-drawer toggle with the custom `SessionsGlyph`
-  stacked-bubbles icon, turning into the attach button once a session is
-  open; trailing = exactly ONE action — the mic while the field is empty
-  and idle, stop while streaming-empty, send once text is entered, swapped
-  via AnimatedSwitcher scale+fade (the composer's `hideMicWhenNotEmpty`;
-  the idle mic sits in the same pill-colored circle the send/stop button
-  occupies); the composer carries a stable key so the status-row slot
-  toggling never recreates it (that killed the field's focus after send),
-  and `_send` restores focus past the IME send action's own unfocus —
-  the keyboard stays up for the follow-up message. Focusing the field
-  opens the panel right away via
-  `onFocusChanged`, `onSent` does too), the sessions drawer sliding in from
-  the LEFT (New-session tile + live then persisted sessions rendered with
-  the SAME `SessionTile`/`sessionTileSubtitle`/`sessionTileCwdLabel`/
-  `showSessionActionsMenu` the wide sidebar exports from
-  `sidebar_sessions_list.dart`, persisted open lazily via
-  `manager.openSession`; a tile's folder label always comes from the
-  session's OWN on-disk metadata cwd — a live session's env reports the
-  app's CURRENT mount for every session, so reading
-  `service.env.sessionCwd` would flip the label the moment a persisted
-  session opens; its header clears the floating macOS traffic
-  lights via `faIsMacOSDesktop`; a scrim tap on the exposed part dismisses
-  the top layer, and the drawer carries its OWN scrim ABOVE the panel so an
-  outside tap still closes it while a session is open), and the session
-  panel sliding up UNDER
-  the bar to 92% (drag-handle header: sessions-drawer button with the
-  `SessionsGlyph`, title via `SessionNamesStore`, 3-dots menu New / Rename /
-  Open full chat / Copy / Close — Rename opens the shared
-  `showRenameSessionDialog`; the shared `ChatMessageTile` transcript padded
-  above the bar by its measured height; pull-down on the header zone or a
-  scrim tap closes). While streaming with the panel closed a slim
-  `FaWorkBar(embedded:)` status row sits above the composer. There is no
-  collapsed/mini state and no pager — session switching is the drawer.
-  Sizing: the expanded panel height and all drag math come from the sheet's
-  own `LayoutBuilder` constraints (`panelFraction`, default
-  `defaultPanelFraction` 0.92 — hosts like the store-inapp shot pass a
-  smaller fraction to park the panel lower), NEVER from
-  `MediaQueryData.fromView(View.of(...))` — `View.of` subscribes to
-  `_ViewScope`, whose `updateShouldNotify` compares only the view instance,
-  so it never rebuilds on viewInsets changes and the keyboard opening used
-  to push the panel header off the top edge; the host Scaffold's
-  `resizeToAvoidBottomInset` shrinks the body constraints around the
-  keyboard, which DOES rebuild the LayoutBuilder.
 - `flutter_app/lib/ui/screens/chat_screen.dart` (ADAPTER over
   `packages/fa_ui/lib/src/chat/fa_chat_screen.dart`; also re-exports
   `chatImageMessageSource`/`kWideLayoutBreakpoint`) — keeps the app's
