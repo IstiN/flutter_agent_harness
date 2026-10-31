@@ -434,7 +434,6 @@ final class TracedProviderClient extends http.BaseClient {
       _blameSendFailure(request.url, error.message, connectPhase: false);
       throw http.ClientException(error.message, request.url);
     } on HttpException catch (error) {
-      // ignore:identical_branches — same blame+wrap as the SocketException arm (no common supertype without widening).
       // dart:io's "Connection closed before response" surfaces as
       // HttpException, not SocketException — same transport-failure class;
       // the traced client must never leak a dart:io exception type.

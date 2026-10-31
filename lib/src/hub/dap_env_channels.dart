@@ -48,7 +48,6 @@ DapEnvChannelsResult parseDapEnvChannels(
 }) {
   final now = joinedAt ?? DateTime.now().toUtc();
   if (raw == null || raw.trim().isEmpty) {
-    // ignore:identical_branches — no channels AND no warnings: both empty.
     return const DapEnvChannelsResult([], []);
   }
   final Object? decoded;

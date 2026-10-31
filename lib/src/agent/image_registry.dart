@@ -888,9 +888,7 @@ _RidingSelection _selectRiding(
     }
     return _RidingSelection(
       const {},
-      // ignore:identical_branches — strip-all pass: every key set starts empty.
       const {},
-      // ignore:identical_branches — index map likewise starts empty.
       const {},
       evictedDrops,
       currentOrdered.length,

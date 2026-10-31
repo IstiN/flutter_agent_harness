@@ -698,7 +698,6 @@ class AgentWireProtocol {
     } on FormatException catch (error) {
       // Nested fromJson layers signal malformed payloads as FormatException
       // (e.g. an unknown message role) — surface the declared type.
-      // ignore:identical_branches — same malformed-frame wrap as the TypeError arm (no common supertype without widening).
       throw WireProtocolException('malformed "$kind" event frame: $error');
     }
   }
@@ -1126,7 +1125,6 @@ class AgentWireProtocol {
     } on TypeError catch (error) {
       throw WireProtocolException('malformed "$kind" command frame: $error');
     } on FormatException catch (error) {
-      // ignore:identical_branches — same malformed-frame wrap as the TypeError arm (no common supertype without widening).
       throw WireProtocolException('malformed "$kind" command frame: $error');
     }
   }

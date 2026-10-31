@@ -191,7 +191,6 @@ Future<JsrPackageResolution> _resolveJsrRoot(
       detail: '$configPath: rootUri "$rootUriRaw" is not a file URI',
     );
   } on ArgumentError {
-    // ignore:identical_branches — same not-a-file-URI detail as UnsupportedError (no common supertype without widening).
     return JsrPackageMissing(
       detail: '$configPath: rootUri "$rootUriRaw" is not a file URI',
     );

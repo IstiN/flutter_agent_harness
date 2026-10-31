@@ -146,13 +146,6 @@ gates:
   magic_constants: {enabled: false}
   test_assertions: {enabled: false}
   folder_structure: {enabled: false}
-  # `// ignore:identical_branches` = a JUSTIFIED intentional twin (multi-type
-  # catches with deliberately equal handling, deliberate same-value call
-  # args) — audit issue #1998.
-  identical_branches:
-    enabled: true
-    severity: warning
-    ignorable: true
   external: {enabled: false}
   public_docs: {enabled: false}
   golden: {enabled: false} # flutter-only gate (core is not a Flutter project)

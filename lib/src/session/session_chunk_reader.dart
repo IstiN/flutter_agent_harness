@@ -638,7 +638,6 @@ final class SessionChunkReader {
     if (info.size == 0) return null;
     if (info.size <= _nameProbeBytes) {
       // One window covers the file - the whole name history is probed.
-      // ignore:identical_branches — fileSize repeats the window end by design.
       return _newestSessionInfoInWindow(0, info.size, info.size);
     }
     final head = await _newestSessionInfoInWindow(
@@ -649,7 +648,6 @@ final class SessionChunkReader {
     final tail = await _newestSessionInfoInWindow(
       info.size - _nameProbeBytes,
       info.size,
-      // ignore:identical_branches — fileSize repeats the window end by design.
       info.size,
     );
     return tail ?? head;

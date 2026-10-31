@@ -1062,7 +1062,6 @@ List<String> _renderBlockLines(Object? node, {required int keyIndent}) {
   }
   if (node is Map) {
     if (node.isEmpty) return const ['{}'];
-    // ignore:identical_branches — block map: every line shares the child indent.
     return _mapLines(node, child, child);
   }
   return [renderYamlScalar('$node')];
