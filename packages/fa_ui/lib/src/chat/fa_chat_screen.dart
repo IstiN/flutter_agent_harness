@@ -25,6 +25,7 @@ import 'package:flutter_chat_core/flutter_chat_core.dart';
 import 'package:flutter_chat_ui/flutter_chat_ui.dart';
 
 import '../theme/app_theme.dart';
+import '../theme/fa2_typography.dart';
 import '../theme/fa_ui_theme.dart';
 import '../trajectory/trajectory_controller.dart';
 import '../trajectory/trajectory_panel.dart';
@@ -2054,6 +2055,7 @@ class _FaChatScreenState extends State<FaChatScreen>
   Widget _trajectorySwitcher(BuildContext context) {
     final trajectoryStrings = TrajectoryStrings.of(context);
     final colors = FahColors.of(context);
+    final typography = FaTypography.of(context);
     return SegmentedButton<bool>(
       segments: [
         ButtonSegment(
@@ -2086,7 +2088,13 @@ class _FaChatScreenState extends State<FaChatScreen>
         // goldens). Same contract as the button themes in app_theme.dart.
         textStyle: WidgetStatePropertyAll(
           TextStyle(
-            fontFamily: FaUiThemeProvider.of(context).fontFamily ?? 'Inter',
+            fontFamily:
+                FaUiThemeProvider.of(context).fontFamily ??
+                Theme.of(context).textTheme.bodyMedium?.fontFamily ??
+                typography.uiFamily,
+            fontFamilyFallback:
+                Theme.of(context).textTheme.bodyMedium?.fontFamilyFallback ??
+                typography.body.fontFamilyFallback,
             fontSize: 13,
             fontWeight: FontWeight.w600,
           ),

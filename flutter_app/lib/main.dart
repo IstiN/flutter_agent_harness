@@ -283,11 +283,13 @@ class MyApp extends StatelessWidget {
         direction: theme.visualDirection,
         brightness: Brightness.light,
         uiTheme: uiTheme,
+        fontPreset: theme.fontPreset,
       ),
       darkTheme: buildFaTheme(
         direction: theme.visualDirection,
         brightness: Brightness.dark,
         uiTheme: uiTheme,
+        fontPreset: theme.fontPreset,
       ),
       themeMode: theme.themeMode,
       localizationsDelegates: AppLocalizations.localizationsDelegates,

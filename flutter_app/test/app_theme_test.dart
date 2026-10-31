@@ -6,7 +6,8 @@ import 'package:fa/ui/screens/chat_screen.dart';
 import 'package:fa/services/flutter_session_manager.dart';
 import 'package:fa/main.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
-import 'package:fa_ui/fa_ui.dart' show FaDesignTokens, FaVisualDirection;
+import 'package:fa_ui/fa_ui.dart'
+    show FaDesignTokens, FaFontPreset, FaTypography, FaVisualDirection;
 import 'package:flutter_test/flutter_test.dart';
 
 StreamFunction _singleTextResponse(String text) {
@@ -91,6 +92,29 @@ void main() {
     expect(theme.colorScheme.secondary, tokens.info);
     expect(theme.colorScheme.surface, tokens.backgroundAlt);
     expect(theme.dividerColor, tokens.hairline);
+  });
+
+  testWidgets('font preset reaches and rebuilds both Material themes', (
+    tester,
+  ) async {
+    final controller = ThemeController.inMemory(FahThemeMode.dark);
+    await controller.setFontPreset(FaFontPreset.geist);
+    await tester.pumpWidget(MyApp(themeController: controller));
+
+    MaterialApp app() => tester.widget<MaterialApp>(find.byType(MaterialApp));
+    expect(app().theme?.extension<FaTypography>()?.preset, FaFontPreset.geist);
+    expect(
+      app().darkTheme?.extension<FaTypography>()?.preset,
+      FaFontPreset.geist,
+    );
+
+    await controller.setFontPreset(FaFontPreset.outfit);
+    await tester.pump();
+    expect(app().theme?.extension<FaTypography>()?.preset, FaFontPreset.outfit);
+    expect(
+      app().darkTheme?.extension<FaTypography>()?.preset,
+      FaFontPreset.outfit,
+    );
   });
 
   testWidgets('chat bubbles use the dark landing palette', (tester) async {

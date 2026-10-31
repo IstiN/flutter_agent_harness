@@ -2772,4 +2772,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get visualDirectionSelected => 'Selected';
+
+  @override
+  String get fontPresetTitle => 'Font';
 }

@@ -1,5 +1,5 @@
 import 'package:fa/services/theme_controller.dart';
-import 'package:fa_ui/fa_ui.dart' show FaVisualDirection;
+import 'package:fa_ui/fa_ui.dart' show FaFontPreset, FaVisualDirection;
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -127,6 +127,36 @@ void main() {
         FaVisualDirection.glass,
       );
     });
+
+    test(
+      'font preset defaults, notifies once and round-trips safely',
+      () async {
+        final env = MemoryExecutionEnv();
+        final controller = await ThemeController.load(env);
+        expect(controller.fontPreset, FaFontPreset.system);
+        var notified = 0;
+        controller.addListener(() => notified++);
+
+        await controller.setFontPreset(FaFontPreset.geist);
+        expect(controller.fontPreset, FaFontPreset.geist);
+        expect(notified, 1);
+        await controller.setFontPreset(FaFontPreset.geist);
+        expect(notified, 1);
+        expect(
+          (await ThemeController.load(env)).fontPreset,
+          FaFontPreset.geist,
+        );
+
+        await env.writeFile(
+          '${env.cwd}/theme.json',
+          '{"version": 1, "mode": "system", "font": "unknown"}',
+        );
+        expect(
+          (await ThemeController.load(env)).fontPreset,
+          FaFontPreset.system,
+        );
+      },
+    );
 
     test('the pack and wallpaper ids round-trip through the env', () async {
       final env = MemoryExecutionEnv();

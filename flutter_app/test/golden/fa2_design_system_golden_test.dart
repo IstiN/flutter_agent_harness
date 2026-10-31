@@ -32,7 +32,7 @@ void main() {
   }
 
   for (final brightness in Brightness.values) {
-    testWidgets('settings direction previews ${brightness.name}', (
+    testWidgets('settings direction and font previews ${brightness.name}', (
       tester,
     ) async {
       final controller = ThemeController.inMemory(
@@ -41,7 +41,7 @@ void main() {
       await pumpGolden(
         tester,
         VisualDirectionSection(controller: controller),
-        size: const Size(500, 360),
+        size: const Size(500, 560),
         theme: buildFaTheme(
           direction: FaVisualDirection.glass,
           brightness: brightness,

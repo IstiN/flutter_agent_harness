@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_chat_core/flutter_chat_core.dart';
 
 import 'package:fa_ui/src/theme/fa2_tokens.dart';
+import 'package:fa_ui/src/theme/fa2_typography.dart';
 import 'package:fa_ui/src/theme/fa_ui_theme.dart';
 
 /// The Fa dark palette, mirroring the landing page (`site/styles.css`):
@@ -412,7 +413,12 @@ ThemeData _buildFahTheme(
   // a null [uiTheme] produces the exact brand theme).
   final indigo = uiTheme?.indigo ?? c.indigo;
   final teal = uiTheme?.teal ?? c.teal;
-  final fontFamily = uiTheme?.fontFamily ?? 'Inter';
+  final fontFamily =
+      uiTheme?.fontFamily ??
+      FaTypography.forDirection(
+        FaVisualDirection.glass,
+        preset: FaFontPreset.inter,
+      ).uiFamily;
   final cardRadius = uiTheme?.cardRadius ?? 14;
   final inputRadius = uiTheme?.inputRadius ?? 10;
   final buttonRadius = uiTheme?.buttonRadius ?? 10;
@@ -465,8 +471,9 @@ ThemeData _buildFahTheme(
               : ThemeData.light(useMaterial3: true))
           .textTheme
           .apply(bodyColor: c.text, displayColor: c.text)
-          // Inter is bundled by the host app: one UI typeface on every
-          // platform — consistent brand look and host-deterministic goldens.
+          // The legacy brand theme defaults to bundled Inter. buildFaTheme
+          // supplies the active styleguide preset and projects its full
+          // display/UI/mono scale over this base text theme.
           .apply(fontFamily: fontFamily);
 
   final inputBorder = OutlineInputBorder(

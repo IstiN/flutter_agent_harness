@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 
 import 'app_theme.dart';
 import 'fa2_tokens.dart';
+import 'fa2_typography.dart';
 import 'fa_ui_theme.dart';
 
 /// Builds a complete Material theme for an approved Fa 2.0 direction.
@@ -18,15 +19,17 @@ ThemeData buildFaTheme({
   required FaVisualDirection direction,
   required Brightness brightness,
   FaUiTheme? uiTheme,
+  FaFontPreset fontPreset = FaFontPreset.system,
 }) {
   final tokens = FaDesignTokens.forDirection(direction, brightness);
+  final typography = FaTypography.forDirection(direction, preset: fontPreset);
   final packPalette = uiTheme?.paletteFor(brightness);
   final directionPalette = FahColors.fromDesignTokens(tokens);
   final palette = packPalette ?? directionPalette;
   final customized = FaUiTheme(
     indigo: uiTheme?.indigo ?? palette.indigo,
     teal: uiTheme?.teal ?? palette.teal,
-    fontFamily: uiTheme?.fontFamily,
+    fontFamily: uiTheme?.fontFamily ?? typography.uiFamily,
     cardRadius: uiTheme?.cardRadius ?? tokens.radiusLg,
     inputRadius: uiTheme?.inputRadius ?? tokens.radiusMd,
     buttonRadius: uiTheme?.buttonRadius ?? tokens.radiusMd,
@@ -41,8 +44,37 @@ ThemeData buildFaTheme({
   final base = brightness == Brightness.dark
       ? buildFahTheme(uiTheme: customized)
       : buildFahThemeLight(uiTheme: customized);
+  final presetTextTheme = typography.applyTo(base.textTheme);
+  final customFamily = uiTheme?.fontFamily;
+  final textTheme = customFamily == null
+      ? presetTextTheme
+      : presetTextTheme.apply(fontFamily: customFamily);
+  final label = textTheme.labelLarge!;
+  final actionTextStyle = TextStyle(
+    fontFamily: label.fontFamily,
+    fontFamilyFallback: label.fontFamilyFallback,
+    fontSize: label.fontSize,
+    height: label.height,
+    fontWeight: label.fontWeight,
+    letterSpacing: label.letterSpacing,
+  );
   return base.copyWith(
-    extensions: [...base.extensions.values, tokens],
+    textTheme: textTheme,
+    primaryTextTheme: textTheme,
+    appBarTheme: base.appBarTheme.copyWith(
+      titleTextStyle: textTheme.titleLarge,
+    ),
+    filledButtonTheme: FilledButtonThemeData(
+      style: base.filledButtonTheme.style?.copyWith(
+        textStyle: WidgetStatePropertyAll(actionTextStyle),
+      ),
+    ),
+    elevatedButtonTheme: ElevatedButtonThemeData(
+      style: base.elevatedButtonTheme.style?.copyWith(
+        textStyle: WidgetStatePropertyAll(actionTextStyle),
+      ),
+    ),
+    extensions: [...base.extensions.values, tokens, typography],
     splashFactory: direction == FaVisualDirection.glass
         ? InkSparkle.splashFactory
         : InkRipple.splashFactory,

@@ -76,6 +76,7 @@ export 'src/theme/app_theme.dart';
 export 'src/theme/fa_ui_theme.dart';
 export 'src/theme/fa2_theme.dart';
 export 'src/theme/fa2_tokens.dart';
+export 'src/theme/fa2_typography.dart';
 export 'src/utils/page_presentation.dart';
 export 'src/utils/vision_models.dart';
 export 'src/widgets/model_id_field.dart';

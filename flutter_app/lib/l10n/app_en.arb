@@ -1672,5 +1672,9 @@
   "visualDirectionSelected": "Selected",
   "@visualDirectionSelected": {
     "description": "Accessibility label for the selected visual direction"
+  },
+  "fontPresetTitle": "Font",
+  "@fontPresetTitle": {
+    "description": "Fa 2.0 font preset settings title"
   }
 }

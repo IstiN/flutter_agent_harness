@@ -4873,6 +4873,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Selected'**
   String get visualDirectionSelected;
+
+  /// Fa 2.0 font preset settings title
+  ///
+  /// In en, this message translates to:
+  /// **'Font'**
+  String get fontPresetTitle;
 }
 
 class _AppLocalizationsDelegate

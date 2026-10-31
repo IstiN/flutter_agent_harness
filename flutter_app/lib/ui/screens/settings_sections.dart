@@ -131,12 +131,46 @@ class VisualDirectionSection extends StatelessWidget {
                     height: 88,
                     child: _DirectionPreview(
                       direction: direction,
+                      fontPreset: controller.fontPreset,
                       selected: controller.visualDirection == direction,
                       onTap: () => controller.setVisualDirection(direction),
                     ),
                   ),
               ],
             ),
+          ),
+          const SizedBox(height: 20),
+          Text(
+            context.l10n.fontPresetTitle,
+            style: Theme.of(context).textTheme.titleSmall,
+          ),
+          const SizedBox(height: 8),
+          DropdownButtonFormField<faui.FaFontPreset>(
+            key: ValueKey<faui.FaFontPreset>(controller.fontPreset),
+            initialValue: controller.fontPreset,
+            isExpanded: true,
+            items: [
+              for (final preset in faui.FaFontPreset.values)
+                DropdownMenuItem(
+                  value: preset,
+                  child: Text(
+                    switch (preset) {
+                      faui.FaFontPreset.system => 'System SF',
+                      faui.FaFontPreset.geist => 'Geist',
+                      faui.FaFontPreset.jakarta => 'Jakarta',
+                      faui.FaFontPreset.inter => 'Inter',
+                      faui.FaFontPreset.outfit => 'Outfit + Inter',
+                    },
+                    style: faui.FaTypography.forDirection(
+                      controller.visualDirection,
+                      preset: preset,
+                    ).body.copyWith(fontSize: 14),
+                  ),
+                ),
+            ],
+            onChanged: (preset) {
+              if (preset != null) controller.setFontPreset(preset);
+            },
           ),
         ],
       ),
@@ -147,11 +181,13 @@ class VisualDirectionSection extends StatelessWidget {
 class _DirectionPreview extends StatelessWidget {
   const _DirectionPreview({
     required this.direction,
+    required this.fontPreset,
     required this.selected,
     required this.onTap,
   });
 
   final faui.FaVisualDirection direction;
+  final faui.FaFontPreset fontPreset;
   final bool selected;
   final VoidCallback onTap;
 
@@ -165,7 +201,11 @@ class _DirectionPreview extends StatelessWidget {
       faui.FaVisualDirection.porcelain => 'Porcelain',
     };
     return Theme(
-      data: faui.buildFaTheme(direction: direction, brightness: brightness),
+      data: faui.buildFaTheme(
+        direction: direction,
+        brightness: brightness,
+        fontPreset: fontPreset,
+      ),
       child: Builder(
         builder: (context) {
           final tokens = faui.FaDesignTokens.of(context);

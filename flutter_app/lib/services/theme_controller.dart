@@ -4,7 +4,7 @@
 
 import 'dart:convert';
 
-import 'package:fa_ui/fa_ui.dart' show FaVisualDirection;
+import 'package:fa_ui/fa_ui.dart' show FaFontPreset, FaVisualDirection;
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
@@ -53,6 +53,7 @@ class ThemeController extends ChangeNotifier {
   final ExecutionEnv? _env;
   FahThemeMode _mode = FahThemeMode.system;
   FaVisualDirection _visualDirection = FaVisualDirection.glass;
+  FaFontPreset _fontPreset = FaFontPreset.system;
   String? _packId;
   String? _wallpaperPackId;
 
@@ -69,6 +70,18 @@ class ThemeController extends ChangeNotifier {
 
   /// The selected Fa 2.0 visual direction (Liquid Glass by default).
   FaVisualDirection get visualDirection => _visualDirection;
+
+  /// The active styleguide font preset (native system typography by default).
+  FaFontPreset get fontPreset => _fontPreset;
+
+  /// Selects and persists a font preset without touching the direction or
+  /// brightness. An explicit theme-pack `fontFamily` still takes precedence.
+  Future<void> setFontPreset(FaFontPreset preset) async {
+    if (preset == _fontPreset) return;
+    _fontPreset = preset;
+    await _persist();
+    notifyListeners();
+  }
 
   /// Selects and persists a visual direction without touching brightness or
   /// theme-pack choices.
@@ -134,6 +147,7 @@ class ThemeController extends ChangeNotifier {
           'version': _version,
           'mode': _mode.name,
           'direction': _visualDirection.name,
+          'font': _fontPreset.name,
           if (_packId != null) 'pack': _packId,
           if (_wallpaperPackId != null) 'wallpaper': _wallpaperPackId,
         }),
@@ -156,6 +170,9 @@ class ThemeController extends ChangeNotifier {
       _visualDirection =
           FaVisualDirection.values.asNameMap()[decoded['direction']] ??
           FaVisualDirection.glass;
+      _fontPreset =
+          FaFontPreset.values.asNameMap()[decoded['font']] ??
+          FaFontPreset.system;
       final pack = decoded['pack'];
       if (pack is String && pack.isNotEmpty) _packId = pack;
       final wallpaper = decoded['wallpaper'];

@@ -1171,5 +1171,9 @@
   "visualDirectionSelected": "Выбрано",
   "@visualDirectionSelected": {
     "description": "Accessibility label for the selected visual direction"
+  },
+  "fontPresetTitle": "Шрифт",
+  "@fontPresetTitle": {
+    "description": "Fa 2.0 font preset settings title"
   }
 }

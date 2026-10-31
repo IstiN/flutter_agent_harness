@@ -2807,4 +2807,7 @@ class AppLocalizationsRu extends AppLocalizations {
 
   @override
   String get visualDirectionSelected => 'Выбрано';
+
+  @override
+  String get fontPresetTitle => 'Шрифт';
 }

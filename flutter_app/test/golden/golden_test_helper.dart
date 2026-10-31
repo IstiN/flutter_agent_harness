@@ -61,41 +61,123 @@ Future<void> ensureGoldenFonts() async {
   // mirrors this) so every frame is deterministic: `>_o`, everywhere.
   KaomojiFacePicker.debugPin = 0;
   if (_fontsLoaded) return;
-  final inter = FontLoader('Inter')
-    ..addFont(rootBundle.load('assets/fonts/Inter-Regular.ttf'))
-    ..addFont(rootBundle.load('assets/fonts/Inter-Medium.ttf'))
-    ..addFont(rootBundle.load('assets/fonts/Inter-SemiBold.ttf'))
-    ..addFont(rootBundle.load('assets/fonts/Inter-Bold.ttf'));
+  const familyAssets = <String, List<String>>{
+    'Inter': [
+      'Inter-Regular.ttf',
+      'Inter-Medium.ttf',
+      'Inter-SemiBold.ttf',
+      'Inter-Bold.ttf',
+      'Inter-ExtraBold.ttf',
+    ],
+    'Geist': [
+      'Geist-Regular.ttf',
+      'Geist-Medium.ttf',
+      'Geist-SemiBold.ttf',
+      'Geist-Bold.ttf',
+      'Geist-ExtraBold.ttf',
+    ],
+    'Geist Mono': [
+      'GeistMono-Regular.ttf',
+      'GeistMono-Medium.ttf',
+      'GeistMono-SemiBold.ttf',
+    ],
+    'Plus Jakarta Sans': [
+      'PlusJakartaSans-Regular.ttf',
+      'PlusJakartaSans-Medium.ttf',
+      'PlusJakartaSans-SemiBold.ttf',
+      'PlusJakartaSans-Bold.ttf',
+      'PlusJakartaSans-ExtraBold.ttf',
+    ],
+    'Outfit': [
+      'Outfit-Regular.ttf',
+      'Outfit-Medium.ttf',
+      'Outfit-SemiBold.ttf',
+      'Outfit-Bold.ttf',
+      'Outfit-ExtraBold.ttf',
+    ],
+    'DM Mono': ['DMMono-Regular.ttf', 'DMMono-Medium.ttf'],
+    'Space Grotesk': [
+      'SpaceGrotesk-Regular.ttf',
+      'SpaceGrotesk-Medium.ttf',
+      'SpaceGrotesk-SemiBold.ttf',
+      'SpaceGrotesk-Bold.ttf',
+    ],
+    'IBM Plex Sans': [
+      'IBMPlexSans-Regular.ttf',
+      'IBMPlexSans-Medium.ttf',
+      'IBMPlexSans-SemiBold.ttf',
+      'IBMPlexSans-Bold.ttf',
+    ],
+    'IBM Plex Mono': [
+      'IBMPlexMono-Regular.ttf',
+      'IBMPlexMono-Medium.ttf',
+      'IBMPlexMono-SemiBold.ttf',
+      'IBMPlexMono-Bold.ttf',
+    ],
+    'Manrope': [
+      'Manrope-Regular.ttf',
+      'Manrope-Medium.ttf',
+      'Manrope-SemiBold.ttf',
+      'Manrope-Bold.ttf',
+      'Manrope-ExtraBold.ttf',
+    ],
+  };
+  for (final entry in familyAssets.entries) {
+    final loader = FontLoader(entry.key);
+    for (final asset in entry.value) {
+      loader.addFont(rootBundle.load('assets/fonts/$asset'));
+    }
+    await loader.load();
+  }
+  // System SF is intentionally NOT redistributed. Goldens alias native
+  // family names to the bundled Inter bytes, just as the mono aliases below
+  // use JetBrainsMono; production resolves the real platform faces.
+  for (final family in const [
+    '.AppleSystemUIFont',
+    'SF Pro Text',
+    'SF Pro Display',
+    'Segoe UI',
+    'Roboto',
+    'system-ui',
+  ]) {
+    final loader = FontLoader(family);
+    for (final asset in familyAssets['Inter']!) {
+      loader.addFont(rootBundle.load('assets/fonts/$asset'));
+    }
+    await loader.load();
+  }
   final jbm = [
     rootBundle.load('assets/fonts/JetBrainsMono-Regular.ttf'),
+    rootBundle.load('assets/fonts/JetBrainsMono-Medium.ttf'),
+    rootBundle.load('assets/fonts/JetBrainsMono-SemiBold.ttf'),
     rootBundle.load('assets/fonts/JetBrainsMono-Bold.ttf'),
+    rootBundle.load('assets/fonts/JetBrainsMono-ExtraBold.ttf'),
   ];
   // The theme's terminal-ish styles resolve `JetBrainsMono` and fall
   // back through FahPalette.monoFallback — host system fonts (SF Mono
   // only exists on macOS, Menlo/Consolas are platform-bound…). Register
   // the whole stack against the same JetBrainsMono bytes so a mono-path
   // glyph resolves identically on every host (see the contract above).
-  final monoLoaders = <FontLoader>[
-    for (final family in const [
-      'JetBrainsMono',
-      'SF Mono',
-      'Menlo',
-      'Consolas',
-      'Roboto Mono',
-      'Courier',
-    ])
-      FontLoader(family)
-        ..addFont(jbm[0])
-        ..addFont(jbm[1]),
-  ];
+  for (final family in const [
+    'JetBrainsMono',
+    'SF Mono',
+    'Menlo',
+    'Consolas',
+    'monospace',
+    'ui-monospace',
+    'Roboto Mono',
+    'Courier',
+  ]) {
+    final loader = FontLoader(family);
+    for (final font in jbm) {
+      loader.addFont(font);
+    }
+    await loader.load();
+  }
   // Icon fonts are not registered from the test asset bundle either, but
   // `uses-material-design: true` places MaterialIcons under fonts/.
   final icons = FontLoader('MaterialIcons')
     ..addFont(rootBundle.load('fonts/MaterialIcons-Regular.otf'));
-  await inter.load();
-  for (final loader in monoLoaders) {
-    await loader.load();
-  }
   await icons.load();
   _fontsLoaded = true;
 }
