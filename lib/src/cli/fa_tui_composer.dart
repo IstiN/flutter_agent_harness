@@ -15,7 +15,10 @@ extension _TuiComposerLayout on FaTuiModel {
   /// terminal width, so a long single line occupies several rows. All
   /// layout math (viewport height, cursor homing) must use this count —
   /// the raw `\n` count lies once a line wraps.
-  int get _inputLineCount => _wrappedInput().$1.length;
+  int get _inputLineCount {
+    final (rows, _, _) = _wrappedInput();
+    return rows.length;
+  }
 
   /// Truncates [text] to [maxWidth] (default: the terminal width) with an
   /// ellipsis. Every chrome row (status, menu items) must fit on one
@@ -64,29 +67,22 @@ extension _TuiComposerLayout on FaTuiModel {
   /// (issue #496): subagents, board, waiting, scheduled, chips, queue,
   /// sticky. The subagent board (gh-1415) sits in FRONT of the job board:
   /// the card's rows are the region the whole frame exists to show.
-  (int, int, int, int, int, int, int) _optionalSectionWants(int width) {
-    final subagentsWanted = subagentBoardRows.length;
-    final boardWanted = jobBoardLines.length;
-    final waitingWanted = _waitingRowLines().length;
-    final scheduledWanted = scheduledCount > 0 ? 1 : 0;
-    final chipsWanted = attachments.isEmpty ? 0 : attachments.length + 1;
-    final queueWanted = queue.isEmpty ? 0 : queue.length + 2;
-    final stickyWanted = _stickyArmed ? _formattedStickyRows(width).length : 0;
-    return (
-      subagentsWanted,
-      boardWanted,
-      waitingWanted,
-      scheduledWanted,
-      chipsWanted,
-      queueWanted,
-      stickyWanted,
-    );
-  }
+  /// A class, not a record — 7 fields exceeded the record_size cap
+  /// (issue #1997).
+  _SectionWants _optionalSectionWants(int width) => _SectionWants(
+    subagents: subagentBoardRows.length,
+    board: jobBoardLines.length,
+    waiting: _waitingRowLines().length,
+    scheduled: scheduledCount > 0 ? 1 : 0,
+    chips: attachments.isEmpty ? 0 : attachments.length + 1,
+    queue: queue.isEmpty ? 0 : queue.length + 2,
+    sticky: _stickyArmed ? _formattedStickyRows(width).length : 0,
+  );
 
   /// The queue block's progressive yield: the hint row drops first, then
   /// the OLDEST queued rows — the `queued (N)` header is the "your typing
   /// is not lost" contract and yields last within the block.
-  (int, bool, bool) _queueYield(int take, int wanted) => (
+  QueueYield _queueYield(int take, int wanted) => (
     take >= wanted ? queue.length : (take - 1).clamp(0, queue.length),
     take > 0,
     take >= wanted,
@@ -117,25 +113,15 @@ extension _TuiComposerLayout on FaTuiModel {
         _menuReservedLines +
         promptH +
         inputVisible;
-    final (
-      subagentsWanted,
-      boardWanted,
-      waitingWanted,
-      scheduledWanted,
-      chipsWanted,
-      queueWanted,
-      stickyWanted,
-    ) = _optionalSectionWants(
-      width,
-    );
+    final wants = _optionalSectionWants(width);
     final optionalWanted =
-        subagentsWanted +
-        boardWanted +
-        waitingWanted +
-        scheduledWanted +
-        chipsWanted +
-        queueWanted +
-        stickyWanted;
+        wants.subagents +
+        wants.board +
+        wants.waiting +
+        wants.scheduled +
+        wants.chips +
+        wants.queue +
+        wants.sticky;
     var budget = (height - fixed).clamp(0, height);
     // Reserve a small live-edge tail (the sent echo lines + the newest
     // tool card) ONLY when the optional chrome would otherwise swallow the
@@ -150,15 +136,15 @@ extension _TuiComposerLayout on FaTuiModel {
       return take;
     }
 
-    final subagents = section(subagentsWanted);
-    final board = section(boardWanted);
-    final waiting = section(waitingWanted);
-    final scheduled = section(scheduledWanted);
-    final chips = section(chipsWanted);
-    final queueTake = section(queueWanted);
+    final subagents = section(wants.subagents);
+    final board = section(wants.board);
+    final waiting = section(wants.waiting);
+    final scheduled = section(wants.scheduled);
+    final chips = section(wants.chips);
+    final queueTake = section(wants.queue);
     final (queueVisible, queueHeader, queueHint) = _queueYield(
       queueTake,
-      queueWanted,
+      wants.queue,
     );
     // The pinned echo is quantized all-or-nothing: a lone pin rule reads
     // as a glitch. When it does not fit, the row stays with history.
@@ -170,7 +156,7 @@ extension _TuiComposerLayout on FaTuiModel {
     // height, the 14-row frame overran a 12-row terminal and the guard
     // dropped rows from the TOP — the echo first).
     final historyNoSticky = consumable + reserve;
-    var sticky = stickyWanted <= consumable ? stickyWanted : 0;
+    var sticky = wants.sticky <= consumable ? wants.sticky : 0;
     // The wrap-turn dedupe (issue #917): pin only when the echo is above
     // the window THIS frame paints — the follow bottom, or the stored
     // offset detached — computed with the pin's own rows taken. The old
@@ -224,7 +210,7 @@ extension _TuiComposerLayout on FaTuiModel {
   /// paste-length draft yields rows — at least one row (the one the caret
   /// is on) always stays painted, never more than the chrome leaves room
   /// for. Returns the painted row count and the first painted row.
-  (int, int) _visibleInputRows(int fixedChrome, int height) {
+  InputWindow _visibleInputRows(int fixedChrome, int height) {
     // Issue #503: the input zone is a YIELDING section, not an unbounded
     // fixed one. A paste-length draft (many composer rows) used to blow
     // `fixed` past the physical height — the budget floored at 0, the
@@ -311,14 +297,15 @@ extension _TuiComposerLayout on FaTuiModel {
   /// band tint behind it unless the band is transparent.
   void _writeBandSpan(
     StringBuffer row,
-    (String, StatusLineRoleKey) span,
+    StatusSpan span,
     TuiTheme theme, {
     required bool idle,
     required double brandT,
     required RgbColor? bandBg,
   }) {
+    final (spanText, spanRole) = span;
     final style = statusLineStyle(
-      span.$2,
+      spanRole,
       theme: theme,
       idle: idle,
       brandT: brandT,
@@ -330,7 +317,7 @@ extension _TuiComposerLayout on FaTuiModel {
           bandBg == null ? style : style.copyWith(backgroundRgb: bandBg),
         ),
       )
-      ..write(span.$1);
+      ..write(spanText);
   }
 
   /// The trailing gap: a transparent band resets and pads plain (the
@@ -367,7 +354,10 @@ extension _TuiComposerLayout on FaTuiModel {
     final snapshot = callbacks.statusSnapshot!();
     final engine = callbacks.statusLineEngine!;
     final spans = engine.renderSpans(snapshot, termWidth);
-    final raw = spans.map((s) => s.$1).join();
+    final raw = spans.map((s) {
+      final (spanText, _) = s;
+      return spanText;
+    }).join();
     if (tuiTextWidth(raw) > termWidth) {
       _writeBeltRow(b, raw);
       return 1;
@@ -422,7 +412,7 @@ extension _TuiComposerLayout on FaTuiModel {
   /// window's last). Returns the cursor's input line index INSIDE THE
   /// WINDOW and the screen column for the cursor home. Registers the
   /// composer hit-region (issue #278): click = caret move.
-  (int, int) _writeInputLines(StringBuffer b, int baseRow, _FramePlan plan) {
+  CursorCell _writeInputLines(StringBuffer b, int baseRow, _FramePlan plan) {
     final (rows, cursorRow, cursorCol) = _wrappedInput();
     final start = plan.inputOffset.clamp(0, rows.length);
     final end = (plan.inputOffset + plan.input).clamp(start, rows.length);
@@ -482,7 +472,7 @@ extension _TuiComposerLayout on FaTuiModel {
   /// code-unit arithmetic lies once wide graphemes or dropped break
   /// spaces enter the line (issue #467), so the column measures the text
   /// width of the row's prefix.
-  (int, int) _cursorCellInRows(
+  CursorCell _cursorCellInRows(
     List<WrappedComposerRow> lineRows,
     String logicalLine,
     int cursorColInLine,
@@ -517,7 +507,7 @@ extension _TuiComposerLayout on FaTuiModel {
   /// cursor's row/column inside the wrapped block. A cursor sitting exactly
   /// past a full-width chunk gets the empty trailing row it points at, so
   /// the row count is cursor-dependent.
-  (List<String>, int, int) _wrappedInput() {
+  WrappedInput _wrappedInput() {
     final width = _lineWrapWidth;
     final logical = inputText.split('\n');
     final beforeCursor = inputText.substring(0, cursor);

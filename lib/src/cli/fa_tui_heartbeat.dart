@@ -8,7 +8,7 @@
 part of 'fa_tui.dart';
 
 extension FaTuiModelHeartbeat on FaTuiModel {
-  (Model, Cmd?) _updateWithHeartbeat(Msg msg) =>
+  UiUpdate _updateWithHeartbeat(Msg msg) =>
       _updatePreExit(msg) ?? _updateRunPulse(msg) ?? _updateTail(msg);
 
   /// Groups that must run before the exit check. Output first so trailing
@@ -21,7 +21,7 @@ extension FaTuiModelHeartbeat on FaTuiModel {
   /// Issue #804: the vendored program's OSC 11 background reply lands before
   /// the exit check — a late reply must still re-resolve the palette (and
   /// paint via the theme-swap cache reset) even while busy.
-  (Model, Cmd?)? _updatePreExit(Msg msg) {
+  UiUpdate? _updatePreExit(Msg msg) {
     final scheduled = _updateScheduled(msg);
     if (scheduled != null) return scheduled;
     if (msg is OutputMsg) return _handleOutputMsg(msg);
@@ -32,7 +32,7 @@ extension FaTuiModelHeartbeat on FaTuiModel {
 
   /// Run-machinery pulses: stall recovery, spinner ticks, and the queue
   /// drain/clear pairs.
-  (Model, Cmd?)? _updateRunPulse(Msg msg) {
+  UiUpdate? _updateRunPulse(Msg msg) {
     if (msg is RunStalledMsg) return _handleRunStalled(msg);
     if (msg is SpinnerTickMsg) return _handleSpinnerTick();
     if (msg is DrainQueueMsg) return _handleDrainQueue(msg);
@@ -43,7 +43,7 @@ extension FaTuiModelHeartbeat on FaTuiModel {
   /// The tail past the run pulses: the double-press ctrl+c states (issue
   /// #830), the prompt-zone grab, and finally the exit check — an already
   /// exited model only quits; everything else takes the main dispatch.
-  (Model, Cmd?) _updateTail(Msg msg) {
+  UiUpdate _updateTail(Msg msg) {
     if (msg is InterruptArmedMsg) return _handleInterruptArmed();
     if (msg is CtrlCWindowExpiredMsg) return _handleWindowExpired(msg);
     if (msg is OpenPromptMsg) {
