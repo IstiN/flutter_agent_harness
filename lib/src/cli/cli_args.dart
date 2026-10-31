@@ -879,11 +879,12 @@ _ProviderOperands _parseProviderOperands(List<String> args) {
   for (final arg in args) {
     if (arg == '--check') {
       check = true;
-    } else if (arg.startsWith('-')) {
-      throw CliArgsException('unknown argument: $arg\n$_providerUsage');
-    } else {
-      positionals.add(arg);
+      continue;
     }
+    if (arg.startsWith('-')) {
+      throw CliArgsException('unknown argument: $arg\n$_providerUsage');
+    }
+    positionals.add(arg);
   }
   return (
     name: positionals.length == 1 ? positionals.single : null,
@@ -1057,11 +1058,12 @@ _ExtOperands _parseExtOperands(String verb, List<String> args) {
     final arg = args[i];
     if (_isExtFlag(arg)) {
       i = operands.applyFlag(verb, arg, args, i);
-    } else if (arg.startsWith('-')) {
-      throw CliArgsException('unknown argument: $arg');
-    } else {
-      operands.positionals.add(arg);
+      continue;
     }
+    if (arg.startsWith('-')) {
+      throw CliArgsException('unknown argument: $arg');
+    }
+    operands.positionals.add(arg);
   }
   return operands.freeze();
 }

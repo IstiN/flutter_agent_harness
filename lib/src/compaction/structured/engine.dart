@@ -467,11 +467,9 @@ final class StructuredCompactor {
             ? const CompactionException('hide judge failed call')
             : null,
       );
-    } on TimeoutException catch (error) {
-      return (answer: null, failure: error);
     } on Object catch (error) {
-      // The adapter threw (provider error) — a judge failure like any
-      // other; the run must not die on it.
+      // Timeout and adapter/provider failures alike: a judge failure like
+      // any other; the run must not die on it.
       return (answer: null, failure: error);
     }
   }

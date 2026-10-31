@@ -517,16 +517,17 @@ Future<ToolExecutionResult?> _settleHealthyOrThrow({
   required AgentEventSink emit,
   required List<String> marks,
 }) async {
-  if (outcome.error != null) {
+  final error = outcome.error;
+  if (error != null && !outcome.cancelledBySupervisor) {
     // A failure before the threshold is the executor's own — rethrow.
     // A failure after the supervisor's cancel is that cancel's
     // consequence (bash's `Command aborted` once the job registry kills
     // the process, a token-obeying executor's throw): it follows the
     // same stage logic as a hang below, so the follow-up (retry /
     // background conversion / escalation) still runs.
-    if (!outcome.cancelledBySupervisor) throw outcome.error!;
-    return null;
+    throw error;
   }
+  if (error != null) return null;
   if (outcome.hung) return null;
   final mark = _completedStuckMark(
     attempt: attempt,

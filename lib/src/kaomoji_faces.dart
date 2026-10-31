@@ -22,13 +22,18 @@ import 'dart:math';
 typedef KaomojiRun = (String text, bool mouth);
 
 /// One kaomoji face: the primary text runs plus the ASCII-safe fallback
-/// runs (narrow terminals, fonts without ◕‿¬), and the approved sprite
-/// frame ([svg], the face group's inner shape content with the sprite's
+/// runs (narrow terminals, fonts without ◕‿¬; defaults to [runs] when the
+/// primary text is already ASCII), and the approved sprite frame ([svg],
+/// the face group's inner shape content with the sprite's
 /// `.t`/`.b` classes intact — [kaomojiFaceSvg] resolves them to inline
-/// strokes). Faces whose primary text is already ASCII carry the same
-/// runs twice.
+/// strokes).
 final class KaomojiFace {
-  const KaomojiFace(this.id, this.runs, this.fallbackRuns, this.svg);
+  const KaomojiFace(
+    this.id,
+    this.runs, {
+    List<KaomojiRun>? fallbackRuns,
+    required this.svg,
+  }) : fallbackRuns = fallbackRuns ?? runs;
 
   /// The approved sprite's group id (`f->o` … `f-hm`).
   final String id;
@@ -74,63 +79,66 @@ const List<KaomojiFace> kKaomojiFaces = [
   KaomojiFace(
     'f->o',
     [('>', false), ('_', true), ('o', false)],
-    [('>', false), ('_', true), ('o', false)],
-    '<path class="t" d="M5 9.5l2.6 1.7L5 12.9"/>'
+    svg:
+        '<path class="t" d="M5 9.5l2.6 1.7L5 12.9"/>'
         '<circle class="t" cx="16.8" cy="11" r="1.8"/>'
         '<path class="b" d="M9.5 14.8h3"/>',
   ),
   KaomojiFace(
     'f---',
     [('-', false), ('_', true), ('-', false)],
-    [('-', false), ('_', true), ('-', false)],
-    '<path class="t" d="M5 11h3.6"/><path class="t" d="M14 11h3.6"/>'
+    svg:
+        '<path class="t" d="M5 11h3.6"/><path class="t" d="M14 11h3.6"/>'
         '<path class="b" d="M9.5 15h5"/>',
   ),
   KaomojiFace(
     'f-oo',
     [('o', false), ('_', true), ('o', false)],
-    [('o', false), ('_', true), ('o', false)],
-    '<circle class="t" cx="6.8" cy="10.6" r="2.1"/>'
+    svg:
+        '<circle class="t" cx="6.8" cy="10.6" r="2.1"/>'
         '<circle class="t" cx="16.8" cy="11.2" r="1.3"/>'
         '<path class="b" d="M10.4 15h3.2"/>',
   ),
   KaomojiFace(
     'f-><',
     [('>', false), ('_', true), ('<', false)],
-    [('>', false), ('_', true), ('<', false)],
-    '<path class="t" d="M5 9.6l2.6 1.7L5 13"/>'
+    svg:
+        '<path class="t" d="M5 9.6l2.6 1.7L5 13"/>'
         '<path class="t" d="M18.6 9.6L16 11.3l2.6 1.7"/>'
         '<path class="b" d="M10 15.2h4.2"/>',
   ),
   KaomojiFace(
     'f-o<',
     [('o', false), ('_', true), ('<', false)],
-    [('o', false), ('_', true), ('<', false)],
-    '<circle class="t" cx="6.8" cy="10.8" r="2"/>'
+    svg:
+        '<circle class="t" cx="6.8" cy="10.8" r="2"/>'
         '<path class="t" d="M14.2 9.8l2.8 1.5-2.8 1.5"/>'
         '<path class="b" d="M10 15.4c.9.9 2.4.9 3.3 0"/>',
   ),
   KaomojiFace(
     'f-sm',
     [('◕', false), ('‿', true), ('◕', false)],
-    [('^', false), ('.', true), ('^', false)],
-    '<circle class="t" cx="6.8" cy="10.4" r="1.7"/>'
+    fallbackRuns: [('^', false), ('.', true), ('^', false)],
+    svg:
+        '<circle class="t" cx="6.8" cy="10.4" r="1.7"/>'
         '<circle class="t" cx="16.8" cy="10.9" r="1.1"/>'
         '<path class="b" d="M8.4 14.4c1 1.3 2.3 2 3.6 2s2.6-.7 3.6-2"/>',
   ),
   KaomojiFace(
     'f-nt',
     [('¬', false), ('_', true), ('¬', false)],
-    [('-', false), ('_', false), ('/', true)],
-    '<path class="t" d="M5 9.4v1.7h2.3"/>'
+    fallbackRuns: [('-', false), ('_', false), ('/', true)],
+    svg:
+        '<path class="t" d="M5 9.4v1.7h2.3"/>'
         '<path class="t" d="M14.8 10.4h3.2"/>'
         '<path class="b" d="M9.6 15.8l4.8-.7"/>',
   ),
   KaomojiFace(
     'f-hm',
     [('o', false), ('_', true), ('o', false), ('?', true)],
-    [('o', false), ('_', true), ('o', false)],
-    '<circle class="t" cx="6.8" cy="10.6" r="2"/>'
+    fallbackRuns: [('o', false), ('_', true), ('o', false)],
+    svg:
+        '<circle class="t" cx="6.8" cy="10.6" r="2"/>'
         '<circle class="t" cx="16.8" cy="11.3" r="1.2"/>'
         '<path class="b" d="M10.2 15.9c.5-1.3 1.3-2 1.8-2.7"/>',
   ),
@@ -163,8 +171,7 @@ final class KaomojiFacePicker {
   static int? debugPin;
 
   /// The face a fresh run opens on: uniform over all eight.
-  KaomojiFace first() =>
-      kKaomojiFaces[_current = _draw(kKaomojiFaces.length)];
+  KaomojiFace first() => kKaomojiFaces[_current = _draw(kKaomojiFaces.length)];
 
   /// The face a swap boundary shows next: uniform over the other seven.
   KaomojiFace next() {

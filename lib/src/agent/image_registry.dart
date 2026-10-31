@@ -416,9 +416,7 @@ List<Message>? _stripAllVideoBlocks(List<Message> messages) {
         nonVisionUserVideoPlaceholder,
       );
       if (!identical(blocks, message.content)) {
-        out.add(
-          UserMessage(content: blocks, timestamp: message.timestamp),
-        );
+        out.add(UserMessage(content: blocks, timestamp: message.timestamp));
         continue;
       }
     } else if (message is ToolResultMessage) {
