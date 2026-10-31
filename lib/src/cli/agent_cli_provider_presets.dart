@@ -79,7 +79,7 @@ extension _AgentCliProviderPresets on AgentCli {
       description: 'Gemini models — API key',
     ),
     const MenuItem(
-      key: 'custom',
+      key: _cubePickCustom,
       label: 'Custom',
       description: 'any OpenAI-compatible endpoint',
     ),
@@ -87,7 +87,7 @@ extension _AgentCliProviderPresets on AgentCli {
 
   /// Routes a preset-picker selection to the matching setup flow.
   Future<void> _tuiPickAddProvider(String key) async {
-    if (key == 'custom') return _startProviderFlow();
+    if (key == _cubePickCustom) return _startProviderFlow();
     if (!key.startsWith('preset:')) return;
     await _addProviderHandlers[key.substring('preset:'.length)]?.call();
   }
@@ -119,7 +119,7 @@ extension _AgentCliProviderPresets on AgentCli {
       _providerFlowActive = false;
       if (choice == null) {
         io.writeln('provider setup cancelled');
-      } else if (choice == 'custom') {
+      } else if (choice == _cubePickCustom) {
         await _startProviderFlow();
       } else {
         await _addProviderHandlers[choice]?.call();

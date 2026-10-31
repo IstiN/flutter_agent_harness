@@ -261,7 +261,7 @@ extension on AgentCli {
         client: modelFetchClient(providerName),
       );
     }
-    if (providerName == 'dial') {
+    if (providerName == dialDispatchHint) {
       return _fetchDialModelsAndFeatures(baseUrl, apiKey: key);
     }
     // Identity by kind, not a name literal (issue #772): the branch fires
@@ -275,7 +275,7 @@ extension on AgentCli {
       );
       return ids;
     }
-    if (providerName == 'copilot') {
+    if (providerName == copilotDispatchHint) {
       final (ids, report) = await _fetchCopilotModelsAndLimits(
         baseUrl,
         apiKey: key,
@@ -637,7 +637,7 @@ extension on AgentCli {
   /// same one the `+ Add provider → DIAL` preset opens). Returns true when
   /// the command targeted the flow.
   bool _startDialSetupArg(List<String> args) {
-    if (args.length < 2 || args[0] != 'dial' || args[1] != 'setup') {
+    if (args.length < 2 || args[0] != dialDispatchHint || args[1] != 'setup') {
       return false;
     }
     if (args.length > 2) {
@@ -680,7 +680,7 @@ extension on AgentCli {
   /// (device flow, or pasting an existing GitHub token) and saves it as a
   /// named registry entry. Returns true when the command targeted the flow.
   bool _startCopilotArg(List<String> args) {
-    if (args.first != 'copilot') return false;
+    if (args.first != copilotDispatchHint) return false;
     if (args.length > 1) {
       io.writeln('usage: /provider copilot');
       return true;
@@ -708,7 +708,7 @@ extension on AgentCli {
     // multi-account is not an option).
     final accounts = [
       for (final entry in registry?.entries ?? const <CustomProviderEntry>[])
-        if (entry.apiType == 'copilot') entry,
+        if (entry.apiType == copilotDispatchHint) entry,
     ];
     if (accounts.isNotEmpty) {
       final choice = await _pickOption('Copilot account', [
@@ -853,7 +853,7 @@ extension on AgentCli {
     final name =
         await _askConnectProviderName(
           fallback,
-          allowClash: (entry) => entry.apiType == 'copilot',
+          allowClash: (entry) => entry.apiType == copilotDispatchHint,
         ) ??
         fallback;
 
@@ -880,7 +880,7 @@ extension on AgentCli {
       try {
         await fetchCopilotApiToken(
           githubToken: githubToken,
-          client: modelFetchClient('copilot'),
+          client: modelFetchClient(copilotDispatchHint),
         );
       } on CopilotAuthException catch (error) {
         io.writeln('warning: ${error.message}');
@@ -929,7 +929,7 @@ extension on AgentCli {
     registry?.add(
       CustomProviderEntry(
         name: name,
-        apiType: 'copilot',
+        apiType: copilotDispatchHint,
         baseUrl: baseUrl,
         modelId: picked,
         keyName: keyName,
@@ -954,7 +954,7 @@ extension on AgentCli {
       ('individual', 'individual', copilotIndividualBaseUrl),
       ('business', 'business', copilotBusinessBaseUrl),
       ('enterprise', 'enterprise', copilotEnterpriseBaseUrl),
-      ('custom', 'custom base URL', 'a corporate/new Copilot endpoint'),
+      (_cubePickCustom, 'custom base URL', 'a corporate/new Copilot endpoint'),
     ]);
     return switch (plan) {
       null => null,
@@ -1670,10 +1670,12 @@ extension on AgentCli {
           kind,
           key,
           sessionId: () => _session?.cachedId,
-          dialApiVersion: kind == 'dial'
+          dialApiVersion: kind == dialDispatchHint
               ? config.envVarValue?.call('DIAL_API_VERSION')
               : null,
-          dialCacheMarkersSupported: kind == 'dial' ? _dialCacheFlag : null,
+          dialCacheMarkersSupported: kind == dialDispatchHint
+              ? _dialCacheFlag
+              : null,
           onChatGptCredentialsRefreshed: kind == 'chatgpt-codex'
               ? _persistChatGptCredentials
               : null,
@@ -1940,7 +1942,7 @@ extension on AgentCli {
       registry.add(
         CustomProviderEntry(
           name: name,
-          apiType: 'dial',
+          apiType: dialDispatchHint,
           baseUrl: baseUrl,
           modelId: deployment,
           keyName: keyName,
