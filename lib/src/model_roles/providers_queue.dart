@@ -639,15 +639,24 @@ String providersQueueYamlBody(List<ProviderQueueEntry> entries) {
   return buffer.toString().trimRight();
 }
 
-String _typeName(Object? value) => switch (value) {
-  null => 'nothing',
-  String() => 'a string',
-  int() || double() => 'a number',
-  bool() => 'a boolean',
-  Map() => 'an object',
-  List() => 'an array',
-  _ => value.runtimeType.toString(),
+/// The JSON-scalar names parse errors quote; containers cannot ride the
+/// table because a generic value's runtimeType (`Map<String, dynamic>`)
+/// never equals the bare key.
+const _scalarTypeNames = <Type, String>{
+  String: 'a string',
+  int: 'a number',
+  double: 'a number',
+  bool: 'a boolean',
 };
+
+String _typeName(Object? value) {
+  if (value == null) return 'nothing';
+  final named = _scalarTypeNames[value.runtimeType];
+  if (named != null) return named;
+  if (value is Map) return 'an object';
+  if (value is List) return 'an array';
+  return value.runtimeType.toString();
+}
 
 String _quote(String path) => "'$path'";
 

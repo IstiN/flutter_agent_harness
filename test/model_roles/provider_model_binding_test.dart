@@ -583,4 +583,12 @@ void main() {
       );
     });
   });
+
+  group('BindingProvenance.label (issue #1992 CRAP tier)', () {
+    test('every provenance renders its own enum name', () {
+      for (final provenance in BindingProvenance.values) {
+        expect(provenance.label, provenance.name, reason: '$provenance');
+      }
+    });
+  });
 }
