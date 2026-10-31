@@ -71,7 +71,7 @@ final class OpenRouterOAuthCoordinator {
   final String nativeCallbackUrl;
 
   Completer<String?>? _completer;
-  OpenRouterOAuthCallbackServer? _server;
+  OpenRouterOAuthLocalCallbackServer? _server;
 
   /// The callback URL of the running localhost server, or `null` when no
   /// desktop capture is in progress. Exposed for tests.
@@ -143,7 +143,7 @@ final class OpenRouterOAuthCoordinator {
         usesLocalServerCapture ?? defaultUsesLocalServerCapture;
 
     if (localServerCapture()) {
-      _server = OpenRouterOAuthCallbackServer();
+      _server = OpenRouterOAuthLocalCallbackServer(missingCodeTarget: 'app');
       final server = _server!;
       final callbackUrl = await server.start();
       authUrl = authUrl.replace(

@@ -302,48 +302,42 @@ class ChatTextSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final store = ChatTextScope.maybeOf(context);
-    if (store == null) return const SizedBox.shrink();
-    return ListenableBuilder(
-      listenable: store,
-      builder: (context, _) {
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          mainAxisSize: MainAxisSize.min,
+    return faui.faStoreSection(ChatTextScope.maybeOf(context), (
+      context,
+      store,
+    ) {
+      final theme = Theme.of(context);
+      return [
+        Text(
+          context.l10n.settingsChatTextLabel,
+          style: theme.textTheme.titleSmall,
+        ),
+        Row(
           children: [
-            Text(
-              context.l10n.settingsChatTextLabel,
-              style: theme.textTheme.titleSmall,
+            Expanded(
+              child: Slider(
+                value: store.fontSize,
+                min: ChatTextStore.minFontSize,
+                max: ChatTextStore.maxFontSize,
+                divisions:
+                    (ChatTextStore.maxFontSize - ChatTextStore.minFontSize)
+                        .round(),
+                label: store.fontSize.toStringAsFixed(0),
+                onChanged: store.setFontSize,
+              ),
             ),
-            Row(
-              children: [
-                Expanded(
-                  child: Slider(
-                    value: store.fontSize,
-                    min: ChatTextStore.minFontSize,
-                    max: ChatTextStore.maxFontSize,
-                    divisions:
-                        (ChatTextStore.maxFontSize - ChatTextStore.minFontSize)
-                            .round(),
-                    label: store.fontSize.toStringAsFixed(0),
-                    onChanged: store.setFontSize,
-                  ),
-                ),
-                SizedBox(
-                  width: 32,
-                  child: Text(
-                    store.fontSize.toStringAsFixed(0),
-                    style: theme.textTheme.bodyMedium,
-                    textAlign: TextAlign.end,
-                  ),
-                ),
-              ],
+            SizedBox(
+              width: 32,
+              child: Text(
+                store.fontSize.toStringAsFixed(0),
+                style: theme.textTheme.bodyMedium,
+                textAlign: TextAlign.end,
+              ),
             ),
           ],
-        );
-      },
-    );
+        ),
+      ];
+    });
   }
 }
 
@@ -966,40 +960,12 @@ class _QueueEntryTile extends StatelessWidget {
             ),
           ),
           Expanded(
-            child: InkWell(
+            child: faui.FaSettingsRow(
+              icon: Icons.cloud_outlined,
+              title: entry.model,
+              subtitle: subtitle,
               onTap: enabled ? onEdit : null,
               borderRadius: BorderRadius.circular(8),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 6),
-                child: Row(
-                  children: [
-                    Icon(
-                      Icons.cloud_outlined,
-                      size: 20,
-                      color: theme.colorScheme.primary,
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(entry.model),
-                          Text(
-                            subtitle,
-                            style: theme.textTheme.bodySmall,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ],
-                      ),
-                    ),
-                    Icon(
-                      Icons.chevron_right,
-                      size: 18,
-                      color: theme.colorScheme.onSurfaceVariant,
-                    ),
-                  ],
-                ),
-              ),
             ),
           ),
           IconButton(

@@ -16,8 +16,8 @@
 library;
 
 import 'dart:async';
-import 'dart:typed_data';
 
+import 'delegating_execution_env.dart';
 import 'execution_env.dart';
 
 /// Env var name carrying the current session id.
@@ -34,34 +34,23 @@ const modelEnvVar = 'FAH_MODEL';
 
 /// An [ExecutionEnv] that injects session-correlation env vars into every
 /// [exec]. See the library doc for the contract.
-final class SessionVarsExecutionEnv
-    implements
-        ExecutionEnv,
-        BackgroundShell,
-        RangedReadFileSystem,
-        RenamableFileSystem {
+final class SessionVarsExecutionEnv extends ForwardingFs
+    with
+        ForwardingBackgroundShell,
+        ForwardingRangedReadFs,
+        ForwardingRenamableFs {
   /// Creates a decorator over [delegate] injecting the vars returned by
   /// [vars] (consulted live on every [exec]).
-  SessionVarsExecutionEnv(this._delegate, this._vars);
+  SessionVarsExecutionEnv(super.delegate, this._vars);
 
-  final ExecutionEnv _delegate;
   final FutureOr<Map<String, String>> Function() _vars;
 
-  /// The wrapped environment.
-  ExecutionEnv get delegate => _delegate;
-
   @override
-  String get cwd => _delegate.cwd;
-
-  @override
-  Future<Result<ShellExecResult, ExecutionError>> exec(
-    String command, {
-    ShellExecOptions? options,
-  }) async {
+  Future<ShellExecOptions?> mergeExecOptions(ShellExecOptions? options) async {
     final vars = await _vars();
-    if (vars.isEmpty) return _delegate.exec(command, options: options);
+    if (vars.isEmpty) return options;
     // Per-call env entries win over the injected session vars.
-    final merged = ShellExecOptions(
+    return ShellExecOptions(
       cwd: options?.cwd,
       env: {...vars, ...?options?.env},
       timeout: options?.timeout,
@@ -74,46 +63,14 @@ final class SessionVarsExecutionEnv
       stdinData: options?.stdinData,
       liveStdin: options?.liveStdin,
     );
-    return _delegate.exec(command, options: merged);
   }
 
   @override
-  bool get backgroundJobsSupported {
-    final delegate = _delegate;
-    if (delegate case final BackgroundShell bg) {
-      return bg.backgroundJobsSupported;
-    }
-    return false;
-  }
-
-  @override
-  Future<Result<ShellJob, ExecutionError>> startShellJob(
-    String command, {
-    required String id,
-    required String logPath,
-    ShellExecOptions? options,
-  }) async {
-    final delegate = _delegate;
-    if (delegate is! BackgroundShell) {
-      return const Err(
-        ExecutionError(
-          ExecutionErrorCode.shellUnavailable,
-          'background shell jobs are not supported by this shell',
-        ),
-      );
-    }
-    final bg = delegate as BackgroundShell;
+  Future<ShellExecOptions?> mergeJobOptions(ShellExecOptions? options) async {
     final vars = await _vars();
-    if (vars.isEmpty) {
-      return bg.startShellJob(
-        command,
-        id: id,
-        logPath: logPath,
-        options: options,
-      );
-    }
+    if (vars.isEmpty) return options;
     // Per-call env entries win over the injected session vars.
-    final merged = ShellExecOptions(
+    return ShellExecOptions(
       cwd: options?.cwd,
       env: {...vars, ...?options?.env},
       timeout: options?.timeout,
@@ -127,104 +84,5 @@ final class SessionVarsExecutionEnv
       onJobLogWarning: options?.onJobLogWarning,
       jobLogRedactor: options?.jobLogRedactor,
     );
-    return bg.startShellJob(command, id: id, logPath: logPath, options: merged);
   }
-
-  @override
-  Future<Result<String, FileError>> absolutePath(String path) =>
-      _delegate.absolutePath(path);
-
-  @override
-  Future<Result<String, FileError>> joinPath(List<String> parts) =>
-      _delegate.joinPath(parts);
-
-  @override
-  Future<Result<String, FileError>> readTextFile(String path) =>
-      _delegate.readTextFile(path);
-
-  @override
-  Future<Result<Uint8List, FileError>> readBinaryFile(String path) =>
-      _delegate.readBinaryFile(path);
-
-  @override
-  Future<Result<Uint8List, FileError>> readRange(
-    String path,
-    int start,
-    int end,
-  ) {
-    final delegate = _delegate;
-    if (delegate case final RangedReadFileSystem ranged) {
-      return ranged.readRange(path, start, end);
-    }
-    return Future.value(
-      Err(
-        FileError(
-          FileErrorCode.notSupported,
-          'readRange not supported by $_delegate',
-          path: path,
-        ),
-      ),
-    );
-  }
-
-  @override
-  Future<Result<void, FileError>> renamePath(String from, String to) {
-    final delegate = _delegate;
-    if (delegate case final RenamableFileSystem renamable) {
-      return renamable.renamePath(from, to);
-    }
-    return Future.value(
-      Err(
-        FileError(
-          FileErrorCode.notSupported,
-          'renamePath not supported by $_delegate',
-          path: from,
-        ),
-      ),
-    );
-  }
-
-  @override
-  Future<Result<List<String>, FileError>> readTextLines(
-    String path, {
-    int? maxLines,
-  }) => _delegate.readTextLines(path, maxLines: maxLines);
-
-  @override
-  Future<Result<void, FileError>> writeBinaryFile(
-    String path,
-    Uint8List content,
-  ) => _delegate.writeBinaryFile(path, content);
-
-  @override
-  Future<Result<void, FileError>> writeFile(String path, String content) =>
-      _delegate.writeFile(path, content);
-
-  @override
-  Future<Result<void, FileError>> appendFile(String path, String content) =>
-      _delegate.appendFile(path, content);
-
-  @override
-  Future<Result<FileInfo, FileError>> fileInfo(String path) =>
-      _delegate.fileInfo(path);
-
-  @override
-  Future<Result<List<FileInfo>, FileError>> listDir(String path) =>
-      _delegate.listDir(path);
-
-  @override
-  Future<Result<bool, FileError>> exists(String path) => _delegate.exists(path);
-
-  @override
-  Future<Result<void, FileError>> createDir(
-    String path, {
-    bool recursive = true,
-  }) => _delegate.createDir(path, recursive: recursive);
-
-  @override
-  Future<Result<void, FileError>> remove(
-    String path, {
-    bool recursive = false,
-    bool force = false,
-  }) => _delegate.remove(path, recursive: recursive, force: force);
 }
