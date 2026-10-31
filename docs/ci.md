@@ -165,9 +165,13 @@ No orphan drafts, one naming scheme, a truthful `Latest`, useful notes:
   `scripts/sweep_stale_drafts.sh` on **every** daily invocation (leg
   results and change-gating never gate hygiene): drafts older than 24h
   are deleted when the PIPELINE created them — a Bot author / `*[bot]`
-  login, or the body carries the `release-draft-owner` marker (the drafts
+  login, or the body carries a well-formed
+  `release-draft-owner: run/<id>/job/<job>` marker (the drafts
   are created with the owner's RELEASE_PAT, so the API author is a human
-  and the marker is the only ownership proof — gh-2008; id-based API
+  and the marker is the only ownership proof — gh-2008; the bucket rule
+  keys on the exact stamped shape, so prose merely mentioning the
+  substring or a malformed marker stays human — review thread
+  PRRT_kwDOTXdlLc6yOzIh; id-based API
   delete, tag and git history untouched — draft assets are unpublished by
   definition, E2), human drafts (no marker) are listed but kept (E1),
   fresh (<24h) drafts are left for their in-flight run. The job grants

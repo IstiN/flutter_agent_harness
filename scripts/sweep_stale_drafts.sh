@@ -3,11 +3,14 @@
 #
 #   - lists DRAFT releases older than $SWEEP_MAX_AGE_SECONDS (default 24h);
 #   - deletes stale drafts created by the pipeline (author.type == Bot, a
-#     *[bot] login, OR the body carries the release-draft-owner marker —
-#     release_lazy_draft.sh / release_attach_or_create.sh stamp it, and
-#     since the drafts are created with GH_TOKEN=RELEASE_PAT the API
-#     author is the PAT's human owner, so the marker is the only
-#     ownership proof, gh-2008) — draft assets are unpublished by
+#     *[bot] login, OR the body carries a well-formed
+#     `release-draft-owner: run/<id>/job/<job>` marker — the exact shape
+#     release_lazy_draft.sh / release_attach_or_create.sh stamp and
+#     release_draft_guard.sh parses; since the drafts are created with
+#     GH_TOKEN=RELEASE_PAT the API author is the PAT's human owner, so
+#     the marker is the only ownership proof, gh-2008. Prose that merely
+#     MENTIONS the substring or a malformed marker is NOT ownership —
+#     those drafts stay human/kept, E1) — draft assets are unpublished by
 #     definition and published releases are the artifact store, so
 #     deletion is safe (issue #282 E2). The git tag is never touched;
 #   - stale HUMAN drafts are listed in the summary, never deleted (E1);
@@ -38,7 +41,8 @@ gh label create "$label" --repo "$repo" --color B60205 \
 # gh api --paginate emits one JSON array per page; the jq stream filter
 # flattens them all. Bucketing happens in jq so the whole rule is
 # reviewable in one place:
-#   stale + pipeline (bot author or release-draft-owner
+#   stale + pipeline (bot author or well-formed
+#                    release-draft-owner: run/<id>/job/<job>
 #                    marker in the body) -> delete, name the marker run
 #   stale + human (no marker)          -> keep, list
 #   fresh                              -> untouched
@@ -48,7 +52,7 @@ drafts=$(gh api --paginate "repos/$repo/releases" | jq -r --argjson maxage "$max
           if ((now - (.created_at | fromdateiso8601)) > $maxage)
           then (if ((.author.type // "User") == "Bot"
                     or ((.author.login // "") | test("\\[bot\\]$"))
-                    or ((.body // "") | test("release-draft-owner:")))
+                    or ((.body // "") | test("release-draft-owner: run/[0-9]+/job/")))
                then "bot" else "human" end)
           else "fresh" end),
         tag: (.tag_name // "(untagged)"),
@@ -122,7 +126,7 @@ if [ "$stale_count" -gt 0 ]; then
   body=$(mktemp)
   {
     echo "**Sweep run:** $daily_url"
-    echo "**Swept:** $deleted_count stale bot draft(s) older than $((max_age / 3600))h"
+    echo "**Swept:** $deleted_count stale pipeline-created draft(s) older than $((max_age / 3600))h"
     printf '%b' "$deleted"
     [ -n "$humans" ] && { echo; echo "**Kept (human drafts, listed not deleted — E1):**"; printf '%b' "$humans"; }
     echo
@@ -157,7 +161,7 @@ fi
 {
   echo "### Release-draft sweeper"
   echo
-  echo "Deleted **$deleted_count** stale bot draft(s) • kept human drafts: **$(printf '%s' "$humans" | grep -c . || true)** • fresh (<$((max_age / 3600))h): **$fresh_count** • issue lifecycle: $issue_action"
+  echo "Deleted **$deleted_count** stale pipeline-created draft(s) • kept human drafts: **$(printf '%s' "$humans" | grep -c . || true)** • fresh (<$((max_age / 3600))h): **$fresh_count** • issue lifecycle: $issue_action"
 } >> "${GITHUB_STEP_SUMMARY:-/dev/stdout}"
 
 echo "sweeper: deleted=${deleted_tags# } human-kept=${human_tags# } fresh=$fresh_count issue=$issue_action"

@@ -1713,13 +1713,18 @@ gh release create "v9.9.9" \
               'pipeline-created (the RELEASE_PAT attribution only makes it '
               'LOOK human) — the sweeper must reclaim it',
         );
+        // run.log is a List<String>: contains() there is ELEMENT equality,
+        // so the isNot(contains(...)) E1 assertions below must match
+        // against the JOINED log text — a bare-substring matcher on the
+        // list is vacuously true and would never catch a stray delete.
+        final logText = run.log.join('\n');
         expect(
-          run.log,
+          logText,
           isNot(contains('releases/427501288')),
           reason: 'stale human draft with NO marker must never be deleted (E1)',
         );
         expect(
-          run.log,
+          logText,
           isNot(contains('releases/427501289')),
           reason:
               'fresh (<24h) marker draft must be untouched — an in-flight run may own it',
@@ -1813,15 +1818,18 @@ gh release create "v9.9.9" \
               'the control: a well-formed run/<id>/job/ marker is still '
               'pipeline-owned and swept',
         );
+        // Substring semantics over the JOINED log (element-contains on the
+        // List is vacuous for isNot — see the sibling gh-2008 test).
+        final logText = run.log.join('\n');
         expect(
-          run.log,
+          logText,
           isNot(contains('releases/427501290')),
           reason:
               'prose merely MENTIONING the marker substring is not '
               'ownership — deleting it would be a silent E1 violation',
         );
         expect(
-          run.log,
+          logText,
           isNot(contains('releases/427501291')),
           reason:
               'a malformed marker (release-draft-owner: unknown, no '
