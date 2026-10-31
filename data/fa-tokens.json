@@ -39,27 +39,7 @@
       "model": "kimi-for-coding"
     }
   ],
-  "pr-1631": [
-    {
-      "leg": "rework",
-      "at": "2026-10-17T07:13:59Z",
-      "prompt": 82675,
-      "completion": 11471,
-      "total": 94146,
-      "cacheRead": 4943936,
-      "model": "glm-5.3-flash"
-    }
-  ],
   "issue-1600": [
-    {
-      "leg": "dev",
-      "at": "2026-10-17T07:31:12Z",
-      "prompt": 117741,
-      "completion": 48542,
-      "total": 166283,
-      "cacheRead": 19724800,
-      "model": "glm-5.3-flash"
-    },
     {
       "leg": "review",
       "at": "2026-10-17T08:33:38Z",
@@ -3951,6 +3931,15 @@
       "completion": 36930,
       "total": 328148,
       "cacheRead": 5789632,
+      "model": "glm-5.3-flash"
+    },
+    {
+      "leg": "rework",
+      "at": "2026-10-31T07:33:18Z",
+      "prompt": 159367,
+      "completion": 23096,
+      "total": 182463,
+      "cacheRead": 5861696,
       "model": "glm-5.3-flash"
     }
   ],
