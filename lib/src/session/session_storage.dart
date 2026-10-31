@@ -212,19 +212,17 @@ Never _invalidEntry(
   );
 }
 
-T _fsOrThrow<T>(Result<T, FileError> result, String message) {
-  if (result.isErr) {
-    final error = result.errorOrNull!;
-    throw SessionException(
-      '$message: ${error.message}',
-      code: error.code == FileErrorCode.notFound
-          ? SessionErrorCode.notFound
-          : SessionErrorCode.storage,
-      cause: error,
-    );
-  }
-  return result.valueOrNull as T;
-}
+T _fsOrThrow<T>(Result<T, FileError> result, String message) =>
+    switch (result) {
+      Ok<T, FileError>(:final value) => value,
+      Err<T, FileError>(:final error) => throw SessionException(
+        '$message: ${error.message}',
+        code: error.code == FileErrorCode.notFound
+            ? SessionErrorCode.notFound
+            : SessionErrorCode.storage,
+        cause: error,
+      ),
+    };
 
 /// Parses the header line of a session file into its [SessionHeader].
 ///
@@ -461,6 +459,7 @@ final class JsonlSessionStorage implements SessionStorage, SessionHeaderCache {
     int? hardCapBytes,
     this._rotationSuspended = false,
   }) : _metadata = headerToSessionMetadata(header, _filePath),
+       _header = header,
        _partSeq = nextPartSeq,
        _rotateBytes = rotateBytes ?? kSessionSegmentRotateBytes,
        _hardCapBytes = hardCapBytes ?? kSessionSegmentHardCapBytes,
@@ -469,7 +468,6 @@ final class JsonlSessionStorage implements SessionStorage, SessionHeaderCache {
        _currentLeafId = leafId,
        _quarantinedEntries = quarantined {
     _headerLine = headerLine;
-    _header = header;
     // Assigned in the body: the lint prefers an initializing formal, which
     // a private named parameter cannot be.
     _healedLeafEntries = healedLeafEntries;
@@ -501,8 +499,8 @@ final class JsonlSessionStorage implements SessionStorage, SessionHeaderCache {
   String? _headerLine;
 
   /// The parsed session header — kept so [withRotationLimits] can rebuild
-  /// an equivalent storage.
-  SessionHeader? _header;
+  /// an equivalent storage. Non-null: the constructor always receives one.
+  final SessionHeader _header;
 
   /// Rotation sequence: continues after the `.part-NN` segments observed
   /// at open.
@@ -545,7 +543,7 @@ final class JsonlSessionStorage implements SessionStorage, SessionHeaderCache {
     return JsonlSessionStorage._(
       _fs,
       _filePath,
-      _header!,
+      _header,
       [..._entries],
       _currentLeafId,
       quarantined: _quarantinedEntries,
@@ -916,10 +914,7 @@ final class JsonlSessionStorage implements SessionStorage, SessionHeaderCache {
       batchSpans = <(int, int)>[];
     }
 
-    await SessionLineScanner(
-      fs: fs,
-      path: segmentPath,
-    ).scan((line) async {
+    await SessionLineScanner(fs: fs, path: segmentPath).scan((line) async {
       lineNumber++;
       // Blank lines are skipped — INCLUDING before the header, matching
       // the whole-file path (which filters blanks before taking
@@ -942,7 +937,11 @@ final class JsonlSessionStorage implements SessionStorage, SessionHeaderCache {
         await flushBatch();
       }
     }, fileSize: fileSize);
-    if (header == null) {
+    // Hoisted to fresh locals: `header`/`headerLine` are mutated inside the
+    // scan closure, so flow analysis cannot promote them past the guard.
+    final parsedHeader = header;
+    final parsedHeaderLine = headerLine;
+    if (parsedHeader == null || parsedHeaderLine == null) {
       _invalidSession(segmentPath, 'missing session header');
     }
     await flushBatch();
@@ -958,8 +957,8 @@ final class JsonlSessionStorage implements SessionStorage, SessionHeaderCache {
       duplicateSpans,
     );
     return (
-      header: header!,
-      headerLine: headerLine!,
+      header: parsedHeader,
+      headerLine: parsedHeaderLine,
       torn: tornSpans.length,
       duplicates: duplicateSpans.length,
       readMs: readMs,
@@ -997,9 +996,10 @@ final class JsonlSessionStorage implements SessionStorage, SessionHeaderCache {
     try {
       for (final (start, end) in tornSpans) {
         final raw = await ranged.readRange(segmentPath, start, end);
-        final text = raw.isErr
+        final bytes = raw.valueOrNull;
+        final text = bytes == null
             ? null
-            : utf8.decode(raw.valueOrNull!, allowMalformed: true);
+            : utf8.decode(bytes, allowMalformed: true);
         if (text != null) {
           // The span already carries the line's trailing newline
           // (SessionScannedLine.byteLength — "trailing newline
@@ -1050,10 +1050,11 @@ final class JsonlSessionStorage implements SessionStorage, SessionHeaderCache {
     Result<void, FileError> wrote = await fs.writeFile(tempPath, '');
     for (final (start, end) in goodSpans) {
       final raw = await ranged.readRange(segmentPath, start, end);
-      if (raw.isErr) break;
+      final bytes = raw.valueOrNull;
+      if (bytes == null) break;
       wrote = await fs.appendFile(
         tempPath,
-        utf8.decode(raw.valueOrNull!, allowMalformed: true),
+        utf8.decode(bytes, allowMalformed: true),
       );
       if (wrote.isErr) break;
     }
@@ -1494,11 +1495,13 @@ final class JsonlSessionStorage implements SessionStorage, SessionHeaderCache {
   /// the encoded UTF-8 size of the record about to be appended.
   Future<void> _rotateIfNeededLocked(int incomingBytes) async {
     if (!await _recoverHeaderLineLocked()) return;
+    final headerLine = _headerLine;
+    if (headerLine == null) return; // unreachable after recovery
     final size = await _sessionFileSize();
     if (size == null) return;
     var active = size;
     if (active >= _rotateBytes && !_rotationSuspended) {
-      active = await _rotateSegmentLocked(size);
+      active = await _rotateSegmentLocked(size, headerLine);
     }
     if (active + incomingBytes > _hardCapBytes) {
       await _truncateOldestLocked(incomingBytes);
@@ -1519,8 +1522,10 @@ final class JsonlSessionStorage implements SessionStorage, SessionHeaderCache {
   /// Renames the primary to the next `.part-NN` sibling and seeds a fresh
   /// primary with just the header. Returns the new (header-only) size, or
   /// [preCallSize] when the rotation could not complete — the caller then
-  /// still applies the hard cap to the un-rotated segment.
-  Future<int> _rotateSegmentLocked(int preCallSize) async {
+  /// still applies the hard cap to the un-rotated segment. [headerLine]
+  /// arrives already recovered (the caller runs [_recoverHeaderLineLocked]
+  /// first), so the callee carries no extra null branch.
+  Future<int> _rotateSegmentLocked(int preCallSize, String headerLine) async {
     final partPath = sessionPartPath(_filePath, _nextPartSeq());
     var renamed = false;
     if (_fs is RenamableFileSystem) {
@@ -1535,8 +1540,9 @@ final class JsonlSessionStorage implements SessionStorage, SessionHeaderCache {
       // segment out, then truncate the primary in place.
       try {
         final content = await _fs.readTextFile(_filePath);
-        if (content.isErr) return preCallSize;
-        final written = await _fs.writeFile(partPath, content.valueOrNull!);
+        final text = content.valueOrNull;
+        if (text == null) return preCallSize;
+        final written = await _fs.writeFile(partPath, text);
         if (written.isErr) return preCallSize;
       } on Object {
         return preCallSize;
@@ -1548,13 +1554,13 @@ final class JsonlSessionStorage implements SessionStorage, SessionHeaderCache {
     // rotated-format version into the header line — it rides verbatim
     // into every segment from here on, so an older binary fails at
     // header parse with a clear "unsupported session version".
-    final rotatedLine = _rotatedHeaderLine(_headerLine!);
+    final rotatedLine = _rotatedHeaderLine(headerLine);
     if (rotatedLine != null) {
       _headerLine = rotatedLine;
       await _markSegmentRotatedLocked(partPath, rotatedLine);
     }
     final seeded = await retryTransientSessionFileIo(
-      () => _fs.writeFile(_filePath, '${_headerLine!}\n'),
+      () => _fs.writeFile(_filePath, '${rotatedLine ?? headerLine}\n'),
       op: 'rotate',
       path: _filePath,
       config: _ioRetry,
@@ -1564,8 +1570,9 @@ final class JsonlSessionStorage implements SessionStorage, SessionHeaderCache {
       // a header and the next open would fail). Restore it from the part.
       try {
         final content = await _fs.readTextFile(partPath);
-        if (content.isOk) {
-          final restored = await _fs.writeFile(_filePath, content.valueOrNull!);
+        final text = content.valueOrNull;
+        if (text != null) {
+          final restored = await _fs.writeFile(_filePath, text);
           if (restored.isOk) {
             // The part is now an exact copy of the restored primary.
             // Deleting it would route around the session-deletion gate
@@ -1593,7 +1600,7 @@ final class JsonlSessionStorage implements SessionStorage, SessionHeaderCache {
       'session rotation: ${_filePath.split('/').last} -> '
       '${partPath.split('/').last}',
     );
-    return utf8.encode(_headerLine!).length + 1;
+    return utf8.encode(rotatedLine ?? headerLine).length + 1;
   }
 
   /// The header line stamped with [SessionHeader.rotatedVersion]. Null
@@ -1620,8 +1627,9 @@ final class JsonlSessionStorage implements SessionStorage, SessionHeaderCache {
   ) async {
     try {
       final content = await _fs.readTextFile(partPath);
-      if (content.isErr) return;
-      final lines = content.valueOrNull!.split('\n');
+      final text = content.valueOrNull;
+      if (text == null) return;
+      final lines = text.split('\n');
       if (lines.isEmpty) return;
       lines[0] = rotatedLine;
       await _fs.writeFile(partPath, lines.join('\n'));
@@ -1638,9 +1646,10 @@ final class JsonlSessionStorage implements SessionStorage, SessionHeaderCache {
   Future<void> _truncateOldestLocked(int incomingBytes) async {
     try {
       final read = await _fs.readTextFile(_filePath);
-      if (read.isErr) return;
+      final text = read.valueOrNull;
+      if (text == null) return;
       final lines = [
-        for (final line in read.valueOrNull!.split('\n'))
+        for (final line in text.split('\n'))
           if (line.trim().isNotEmpty) line,
       ];
       // header + at most one record — nothing safe to drop.
