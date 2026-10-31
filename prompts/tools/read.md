@@ -2,7 +2,7 @@
 name: read
 description: Description of the read tool — text/image reads with offset/limit, the trailing-selector grammar (:A-B, :A+C, multi-range, :raw), hashline mode, archive inner paths, and SQLite targets.
 ---
-Read the contents of a text file or image. Text output is truncated to {{maxLines}} lines or {{maxBytesKb}}KB (whichever is hit first). Use offset/limit for large text files. Images are returned as base64 content.
+Read the contents of a text file or image. Text output is truncated to {{maxLines}} lines or {{maxBytesKb}}KB (whichever is hit first). Use offset/limit for large text files. Images are returned as base64 content. Video files route to a video-capable model when one is available (the bytes are attached or described with attribution); otherwise a note names how to configure video reading.
 
 ## Path selectors
 

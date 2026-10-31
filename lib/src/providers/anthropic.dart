@@ -892,7 +892,7 @@ Object _convertContentBlocks(List<ContentBlock> content) {
             'data': block.data,
           },
         });
-      case ThinkingContent() || ToolCall() || AudioContent():
+      case ThinkingContent() || ToolCall() || AudioContent() || VideoContent():
         // Not valid in tool results; skip defensively.
         break;
     }
@@ -1012,6 +1012,11 @@ List<Map<String, dynamic>> _convertUserContentBlocks(
       case AudioContent():
         // Anthropic has no audio input; skip defensively.
         break;
+      case VideoContent():
+        // gh-1985: Anthropic has no video input; skip defensively. The
+        // downgrade pre-pass already replaced the block for models without
+        // the `video` modality; this arm keeps the converter total.
+        break;
       case ThinkingContent() || ToolCall():
         // Not valid in user messages; skip defensively.
         break;
@@ -1080,7 +1085,7 @@ void _addAssistantBlock(
         'name': block.name,
         'input': block.arguments,
       });
-    case ImageContent() || AudioContent():
+    case ImageContent() || AudioContent() || VideoContent():
       // Not valid in assistant messages; skip defensively.
       break;
   }

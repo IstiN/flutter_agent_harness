@@ -44,6 +44,17 @@ const nonVisionUserImagePlaceholder =
 const nonVisionToolImagePlaceholder =
     '(tool image omitted: model does not support images)';
 
+/// Placeholder substituted for user-message videos when the target model has
+/// no `video` input (gh-1985 AC1: the standard omission note, same shape as
+/// the image placeholders).
+const nonVisionUserVideoPlaceholder =
+    '(video omitted: model does not support video)';
+
+/// Placeholder substituted for tool-result videos when the target model has
+/// no `video` input (gh-1985 AC1).
+const nonVisionToolVideoPlaceholder =
+    '(tool video omitted: model does not support video)';
+
 /// Placeholder substituted for user-message images after the backend
 /// rejected the request as undecodable (e.g. Gemini's 400 `Unable to
 /// process input image`): the retry tells the model WHY the image is gone
@@ -66,49 +77,82 @@ typedef TextOnlyImageDropNotice = void Function(int droppedCount);
 /// The active text-only drop reporter - wired once by the host at boot.
 TextOnlyImageDropNotice? textOnlyImageDropNotice;
 
-/// pi's `replaceImagesWithPlaceholder`: consecutive images collapse into a
-/// single placeholder, and a text block already equal to the placeholder
-/// suppresses a duplicate. [onImage] fires once per replaced image block.
-List<ContentBlock> _replaceImagesWithPlaceholder(
+/// pi's `replaceImagesWithPlaceholder`, generalized over the media blocks:
+/// consecutive images (resp. videos) collapse into a single placeholder, and
+/// a text block already equal to the placeholder suppresses a duplicate.
+/// [onImage]/[onVideo] fire once per replaced block. Returns the CALLER'S
+/// list content unchanged (identical instance) when nothing was replaced —
+/// the zero-cost pass-through image-only sessions pay (gh-2007 review
+/// thread 4).
+(List<ContentBlock>, bool replaced) _replaceMediaWithPlaceholder(
   List<ContentBlock> content,
-  String placeholder, {
+  String? userImagePlaceholder,
+  String? userVideoPlaceholder, {
   void Function()? onImage,
+  void Function()? onVideo,
 }) {
   final result = <ContentBlock>[];
-  var previousWasPlaceholder = false;
+  var replaced = false;
+  var previousWasImagePlaceholder = false;
+  var previousWasVideoPlaceholder = false;
   for (final block in content) {
-    if (block is ImageContent) {
-      if (!previousWasPlaceholder) {
-        result.add(TextContent(text: placeholder));
+    if (block is ImageContent && userImagePlaceholder != null) {
+      if (!previousWasImagePlaceholder) {
+        result.add(TextContent(text: userImagePlaceholder));
         onImage?.call();
+        replaced = true;
       }
-      previousWasPlaceholder = true;
+      previousWasImagePlaceholder = true;
+      previousWasVideoPlaceholder = false;
+      continue;
+    }
+    if (block is VideoContent && userVideoPlaceholder != null) {
+      if (!previousWasVideoPlaceholder) {
+        result.add(TextContent(text: userVideoPlaceholder));
+        onVideo?.call();
+        replaced = true;
+      }
+      previousWasVideoPlaceholder = true;
+      previousWasImagePlaceholder = false;
       continue;
     }
     result.add(block);
-    previousWasPlaceholder = block is TextContent && block.text == placeholder;
+    previousWasImagePlaceholder =
+        block is TextContent && block.text == userImagePlaceholder;
+    previousWasVideoPlaceholder =
+        block is TextContent && block.text == userVideoPlaceholder;
   }
-  return result;
+  return (result, replaced);
 }
 
 /// Replaces image blocks with explicit placeholder text when [model] has no
-/// `image` input, so nothing is dropped silently at request time.
+/// `image` input, and video blocks ([VideoContent], gh-1985 C1) when it has
+/// no `video` input — so nothing is dropped silently at request time.
 ///
 /// Ported from the `downgradeUnsupportedImages` half of pi's
 /// `transformMessages` pre-pass (transform-messages.ts): user messages and
-/// tool results get distinct placeholders; the image bytes stay in the
+/// tool results get distinct placeholders; the media bytes stay in the
 /// session transcript, only the request payload is rewritten. Each adapter
-/// runs this at the top of its message conversion.
+/// runs this at the top of its message conversion. The video half keeps the
+/// image behavior byte-identical for every model that ships image input and
+/// nothing else (today's whole roster): a model with `video` in its input
+/// modalities rides its video blocks untouched.
 List<Message> downgradeUnsupportedImages(List<Message> messages, Model model) {
-  if (model.input.contains('image')) {
+  final wantsImage = model.input.contains('image');
+  final wantsVideo = model.input.contains('video');
+  if (wantsImage && wantsVideo) {
     return messages;
   }
   var dropped = 0;
-  final out = _replaceImages(
+  void onDrop() => dropped++;
+  final out = _replaceMedia(
     messages,
-    nonVisionUserImagePlaceholder,
-    nonVisionToolImagePlaceholder,
-    onImage: () => dropped++,
+    wantsImage ? null : nonVisionUserImagePlaceholder,
+    wantsImage ? null : nonVisionToolImagePlaceholder,
+    wantsVideo ? null : nonVisionUserVideoPlaceholder,
+    wantsVideo ? null : nonVisionToolVideoPlaceholder,
+    onImage: wantsImage ? null : onDrop,
+    onVideo: wantsVideo ? null : onDrop,
   );
   if (dropped > 0) textOnlyImageDropNotice?.call(dropped);
   return out;
@@ -119,12 +163,15 @@ List<Message> downgradeUnsupportedImages(List<Message> messages, Model model) {
 /// modalities. Used when a vision-capable backend rejected the request as
 /// undecodable (Gemini's 400 `Unable to process input image`): the adapter
 /// retries once with the images downgraded, so the turn survives and the
-/// model can tell the user the image was unreadable.
+/// model can tell the user the image was unreadable. Video blocks ride the
+/// same eviction (the backend refused the media payload as a whole).
 List<Message> downgradeUndecodableImages(List<Message> messages) {
-  return _replaceImages(
+  return _replaceMedia(
     messages,
     undecodableUserImagePlaceholder,
     undecodableToolImagePlaceholder,
+    nonVisionUserVideoPlaceholder,
+    nonVisionToolVideoPlaceholder,
   );
 }
 
@@ -134,69 +181,94 @@ List<Message> downgradeUndecodableImages(List<Message> messages) {
 /// `messages.content.type is invalid, allowed values: ['text']`): the
 /// adapter retries once with the images downgraded, so the turn survives
 /// and the model can explain the swap instead of dying with a raw API
-/// error.
+/// error. Video blocks strip to the video placeholders under the same
+/// rule (the backend rejected the media content types).
 List<Message> downgradeAllImages(List<Message> messages) {
-  return _replaceImages(
+  return _replaceMedia(
     messages,
     nonVisionUserImagePlaceholder,
     nonVisionToolImagePlaceholder,
+    nonVisionUserVideoPlaceholder,
+    nonVisionToolVideoPlaceholder,
   );
 }
 
-/// Whether [messages] contains any [ImageContent] (user messages and tool
-/// results) — guards the undecodable-image retry so image-shaped backend
-/// errors on image-free requests don't trigger a pointless second call.
+/// Whether [messages] contains any [ImageContent] or [VideoContent] (user
+/// messages and tool results) — guards the undecodable-image retry so
+/// media-shaped backend errors on media-free requests don't trigger a
+/// pointless second call.
 bool messagesContainImages(List<Message> messages) {
   for (final message in messages) {
     if (message is UserMessage && message.content is List<ContentBlock>) {
       if ((message.content as List<ContentBlock>).any(
-        (b) => b is ImageContent,
+        (b) => b is ImageContent || b is VideoContent,
       )) {
         return true;
       }
     }
     if (message is ToolResultMessage) {
-      if (message.content.any((b) => b is ImageContent)) return true;
+      if (message.content.any(
+        (b) => b is ImageContent || b is VideoContent,
+      )) {
+        return true;
+      }
     }
   }
   return false;
 }
 
-/// Shared machinery of [downgradeUnsupportedImages] and
-/// [downgradeUndecodableImages]: swap image blocks for the given per-kind
-/// placeholder text, keeping every other field of the message intact.
-List<Message> _replaceImages(
+/// Shared machinery of [downgradeUnsupportedImages],
+/// [downgradeUndecodableImages] and [downgradeAllImages]: swap image blocks
+/// for the given per-kind placeholder text (null = keep riding), keeping
+/// every other field of the message intact. Videos strip symmetrically to
+/// their own placeholders (gh-1985 C1). When NO block was substituted the
+/// CALLER'S list instance returns untouched — the zero-cost pass-through
+/// image-only sessions pay (gh-2007 review thread 4).
+List<Message> _replaceMedia(
   List<Message> messages,
-  String userPlaceholder,
-  String toolPlaceholder, {
+  String? userImagePlaceholder,
+  String? toolImagePlaceholder,
+  String? userVideoPlaceholder,
+  String? toolVideoPlaceholder, {
   void Function()? onImage,
+  void Function()? onVideo,
 }) {
-  return [
-    for (final message in messages)
-      if (message is UserMessage && message.content is List<ContentBlock>)
-        UserMessage(
-          content: _replaceImagesWithPlaceholder(
-            message.content as List<ContentBlock>,
-            userPlaceholder,
-            onImage: onImage,
-          ),
-          timestamp: message.timestamp,
-        )
-      else if (message is ToolResultMessage)
+  var replacedAny = false;
+  final out = <Message>[];
+  for (final message in messages) {
+    if (message is UserMessage && message.content is List<ContentBlock>) {
+      final (blocks, replaced) = _replaceMediaWithPlaceholder(
+        message.content as List<ContentBlock>,
+        userImagePlaceholder,
+        userVideoPlaceholder,
+        onImage: onImage,
+        onVideo: onVideo,
+      );
+      replacedAny |= replaced;
+      out.add(UserMessage(content: blocks, timestamp: message.timestamp));
+    } else if (message is ToolResultMessage) {
+      final (blocks, replaced) = _replaceMediaWithPlaceholder(
+        message.content,
+        toolImagePlaceholder,
+        toolVideoPlaceholder,
+        onImage: onImage,
+        onVideo: onVideo,
+      );
+      replacedAny |= replaced;
+      out.add(
         ToolResultMessage(
           toolCallId: message.toolCallId,
           toolName: message.toolName,
-          content: _replaceImagesWithPlaceholder(
-            message.content,
-            toolPlaceholder,
-            onImage: onImage,
-          ),
+          content: blocks,
           isError: message.isError,
           timestamp: message.timestamp,
-        )
-      else
-        message,
-  ];
+        ),
+      );
+    } else {
+      out.add(message);
+    }
+  }
+  return replacedAny ? out : messages;
 }
 
 /// Whether [headers] contains a non-empty value for [name]

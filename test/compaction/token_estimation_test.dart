@@ -247,6 +247,59 @@ void main() {
       // (40 + 2 * 4800) / 4 = 2410 — per-message calls stay as before.
       expect(estimateTokens(message), 2410);
     });
+
+    test('a riding video charges its base64 payload (gh-2007 thread 3)', () {
+      // gh-1985 rides videos at up to images.maxBytesPerRequest (~8MB
+      // base64); the estimator must see those megabytes — a VideoContent
+      // block contributes its payload chars, not 0.
+      final message = UserMessage(
+        content: [
+          TextContent(text: 'a' * 40),
+          VideoContent(data: 'V' * 800, mimeType: 'video/mp4'),
+        ],
+        timestamp: DateTime.utc(2026),
+      );
+      // (40 + 800) / 4 = 210.
+      expect(estimateTokens(message), 210);
+    });
+
+    test('a video in a tool result charges its payload too', () {
+      final message = ToolResultMessage(
+        toolCallId: 'c1',
+        toolName: 'read',
+        content: [
+          TextContent(text: 'a' * 8),
+          VideoContent(data: 'V' * 64, mimeType: 'video/mp4'),
+        ],
+        isError: false,
+        timestamp: DateTime.utc(2026),
+      );
+      // (8 + 64) / 4 = 18.
+      expect(estimateTokens(message), 18);
+    });
+
+    test('estimateContextTokens (dedup estimator) prices video payloads — '
+        'videos replay their bytes every request (no registry placeholder '
+        'rewrite), so every occurrence charges full', () {
+      final messages = [
+        UserMessage(
+          content: [
+            TextContent(text: 'a' * 40),
+            VideoContent(data: 'V' * 100, mimeType: 'video/mp4'),
+          ],
+          timestamp: DateTime.utc(2026),
+        ),
+        UserMessage(
+          content: [
+            TextContent(text: 'b' * 40),
+            VideoContent(data: 'V' * 100, mimeType: 'video/mp4'),
+          ],
+          timestamp: DateTime.utc(2026),
+        ),
+      ];
+      // (40 + 100 + 40 + 100) / 4 = 70 — both occurrences ride the wire.
+      expect(estimateContextTokens(messages).tokens, 70);
+    });
   });
 
   group('estimateRequestOverheadTokens', () {

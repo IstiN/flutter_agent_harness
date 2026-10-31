@@ -931,6 +931,14 @@ Map<String, dynamic>? _convertUserMessage(UserMessage message) {
         parts.add({
           'inlineData': {'mimeType': item.mimeType, 'data': item.data},
         });
+      case VideoContent():
+        // gh-1985 C1: Gemini video understanding rides the same inlineData
+        // shape (video/mp4, video/webm, video/quicktime, video/mpeg).
+        // Senders attach video only for video-capable models; the
+        // downgrade pre-pass strips it for the rest.
+        parts.add({
+          'inlineData': {'mimeType': item.mimeType, 'data': item.data},
+        });
       case ThinkingContent() || ToolCall():
         // Not valid in user messages; skip defensively.
         break;
@@ -993,7 +1001,7 @@ Map<String, dynamic>? _convertAssistantBlock(
       includeId,
     ),
     // Not valid in assistant messages; skip defensively.
-    ImageContent() || AudioContent() => null,
+    ImageContent() || AudioContent() || VideoContent() => null,
   };
 }
 
@@ -1081,6 +1089,15 @@ List<ImageContent> _toolResultImages(ToolResultMessage message, Model model) {
   ];
 }
 
+/// Extracts the videos of a tool result when the model accepts video input
+/// (gh-1985 C1 — the `read` tool attaches a video for video-capable models).
+List<VideoContent> _toolResultVideos(ToolResultMessage message, Model model) {
+  return [
+    for (final block in message.content)
+      if (block is VideoContent && model.input.contains('video')) block,
+  ];
+}
+
 /// Builds the `functionResponse` part for a tool result. Uses the "output"
 /// key for success, the "error" key for errors, per the SDK documentation.
 /// Ported from pi's `convertMessages` tool-result branch.
@@ -1136,9 +1153,10 @@ void _appendToolResultMessage(
 ) {
   final textResult = _toolResultText(message);
   final imageContent = _toolResultImages(message, model);
+  final videoContent = _toolResultVideos(message, model);
 
   final hasText = textResult.isNotEmpty;
-  final hasImages = imageContent.isNotEmpty;
+  final hasImages = imageContent.isNotEmpty || videoContent.isNotEmpty;
 
   // Gemini 3+ supports images nested inside functionResponse.parts;
   // Gemini < 3 needs a separate user image turn (ported from pi).
@@ -1152,6 +1170,11 @@ void _appendToolResultMessage(
 
   final imageParts = [
     for (final image in imageContent) _convertImageContent(image),
+    // gh-1985 C1: videos ride the same inlineData part list.
+    for (final video in videoContent)
+      {
+        'inlineData': {'mimeType': video.mimeType, 'data': video.data},
+      },
   ];
 
   final functionResponsePart = _buildFunctionResponsePart(

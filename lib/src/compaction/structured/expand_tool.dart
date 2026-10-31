@@ -769,6 +769,8 @@ String _assistantText(AssistantMessage message) {
         parts.add('[image]');
       case AudioContent():
         parts.add('[audio]');
+      case VideoContent():
+        parts.add('[video]');
     }
   }
   return parts.join('\n');

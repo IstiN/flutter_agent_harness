@@ -254,6 +254,71 @@ void main() {
     });
   });
 
+  group('vision-model no-op fast path (gh-2007 review thread 4)', () {
+    // The hottest path in the library: every request of an
+    // image-capable/video-incapable model (today's whole roster) with no
+    // video block anywhere must be a zero-cost pass-through — the same
+    // list INSTANCE out (the invariant `rewriteHistoryImages` documents
+    // as "the caller's list instance" for image-free sessions), no
+    // per-message re-allocation.
+    final visionModel = Model(
+      id: 'glm-5.3-flash',
+      api: 'openai-completions',
+      provider: 'zai',
+      baseUrl: 'https://api.z.ai/api/coding/paas/v4',
+      input: const ['text', 'image'],
+      contextWindow: 128000,
+      maxTokens: 16384,
+    );
+
+    test('an image-only session returns the caller\'s list instance', () {
+      final messages = [
+        UserMessage(
+          content: const [
+            TextContent(text: 'look:'),
+            ImageContent(data: 'aGk=', mimeType: 'image/png'),
+          ],
+          timestamp: DateTime.utc(2026),
+        ),
+        ToolResultMessage(
+          toolCallId: 'c1',
+          toolName: 'snap',
+          content: const [ImageContent(data: 'aGk=', mimeType: 'image/png')],
+          isError: false,
+          timestamp: DateTime.utc(2026),
+        ),
+      ];
+      final out = downgradeUnsupportedImages(messages, visionModel);
+      expect(identical(out, messages), isTrue);
+      // The blocks ride untouched.
+      expect(
+        ((out[0] as UserMessage).content as List<ContentBlock>)
+            .whereType<ImageContent>(),
+        isNotEmpty,
+      );
+    });
+
+    test('a video block still downgrades (the fast path never eats it)', () {
+      final messages = [
+        UserMessage(
+          content: const [
+            TextContent(text: 'look:'),
+            VideoContent(data: 'aGk=', mimeType: 'video/mp4'),
+          ],
+          timestamp: DateTime.utc(2026),
+        ),
+      ];
+      final out = downgradeUnsupportedImages(messages, visionModel);
+      expect(identical(out, messages), isFalse);
+      final blocks = (out.single as UserMessage).content as List<ContentBlock>;
+      expect(blocks.whereType<VideoContent>(), isEmpty);
+      expect(
+        blocks.whereType<TextContent>().map((b) => b.text),
+        containsAll(<Matcher>[equals('look:'), contains('video omitted')]),
+      );
+    });
+  });
+
   group('sendProviderFetch watchdogs (issue #1036)', () {
     tearDown(() => providerTimeoutsOverride = null);
 

@@ -48,6 +48,8 @@ import 'package:crypto/crypto.dart';
 
 import '../context.dart';
 import '../providers/payload_stall.dart' show noteOutboundEstimate;
+import '../providers/provider_common.dart'
+    show nonVisionToolVideoPlaceholder, nonVisionUserVideoPlaceholder;
 import 'image_recovery.dart' show ImagePayloadRecoveryState;
 import '../skills/operative_pins.dart' show isPinRenumberingBoundary;
 import '../types.dart';
@@ -392,6 +394,86 @@ List<Message> rewriteRequestImages(
   return rewritten;
 }
 
+/// gh-1985 AC7: strips every [VideoContent] block to its omission note
+/// (the gh-1934 strip-all semantics for video). Returns null when nothing
+/// had to change — the fast path keeps the caller's list instance.
+List<Message>? _stripAllVideoBlocks(List<Message> messages) {
+  var changed = false;
+  List<ContentBlock> stripBlocks(List<ContentBlock> blocks, String note) {
+    if (!blocks.any((block) => block is VideoContent)) return blocks;
+    changed = true;
+    return [
+      for (final block in blocks)
+        if (block is VideoContent) TextContent(text: note) else block,
+    ];
+  }
+
+  final out = <Message>[];
+  for (final message in messages) {
+    if (message is UserMessage && message.content is List<ContentBlock>) {
+      final blocks = stripBlocks(
+        message.content as List<ContentBlock>,
+        nonVisionUserVideoPlaceholder,
+      );
+      if (!identical(blocks, message.content)) {
+        out.add(
+          UserMessage(content: blocks, timestamp: message.timestamp),
+        );
+        continue;
+      }
+    } else if (message is ToolResultMessage) {
+      final blocks = stripBlocks(
+        message.content,
+        nonVisionToolVideoPlaceholder,
+      );
+      if (!identical(blocks, message.content)) {
+        out.add(
+          ToolResultMessage(
+            toolCallId: message.toolCallId,
+            toolName: message.toolName,
+            content: blocks,
+            isError: message.isError,
+            timestamp: message.timestamp,
+          ),
+        );
+        continue;
+      }
+    }
+    out.add(message);
+  }
+  return changed ? out : null;
+}
+
+/// The strip-all VIDEO pre-pass of [rewriteHistoryImages]: with [stripAll]
+/// set, every [VideoContent] block becomes its omission note
+/// ([_stripAllVideoBlocks]); returns the (possibly same) list plus whether
+/// anything was stripped.
+(List<Message>, bool) _stripAllVideosPass(
+  List<Message> messages, {
+  required bool stripAll,
+}) {
+  if (!stripAll) return (messages, false);
+  final stripped = _stripAllVideoBlocks(messages);
+  return stripped == null ? (messages, false) : (stripped, true);
+}
+
+/// The #1916 AC2 fold pre-pass of [rewriteHistoryImages]: every HISTORY
+/// message (never [currentIdx0], the current user message) has its
+/// text-embedded data-URL payloads folded into real [ImageContent] blocks.
+/// Messages without folds ride untouched; the first fold copies the list
+/// (the caller's instance is never mutated).
+List<Message> _foldEmbeddedImagesPass(List<Message> messages, int currentIdx0) {
+  var normalized = messages;
+  for (var i = 0; i < messages.length; i++) {
+    if (i == currentIdx0) continue;
+    final (folded, changed) = _extractEmbeddedImages(messages[i]);
+    if (!changed) continue;
+    if (identical(normalized, messages)) normalized = List.of(messages);
+    normalized[i] = folded;
+  }
+  return normalized;
+}
+
 /// Whether a request payload still carries image bytes the 413 ladder
 /// could shed (gh-1934 review): riding [ImageContent] blocks, plus the
 /// current message's text-embedded `data:image/` payloads at the fold
@@ -403,6 +485,7 @@ bool payloadCarriesImageBytes(List<Message> messages) {
   bool blocksCarry(List<ContentBlock> blocks) => blocks.any(
     (block) =>
         block is ImageContent ||
+        block is VideoContent ||
         (block is TextContent &&
             block.text.length >= embeddedImageMinChars &&
             block.text.contains('data:image/')),
@@ -489,27 +572,23 @@ List<Message> rewriteHistoryImages(
   Set<String>? evictedKeys,
 }) {
   final currentIdx0 = _lastUserMessageIndex(messages);
+  // gh-1985 AC7: the strip-all latch strips VIDEO blocks too (the gh-1934
+  // pass-2 semantics — every later request of a latched session rides
+  // media-free, so neither the ladder nor a compaction⇄413 cycle can
+  // re-engage on the same bytes). The placeholder text keeps the omission
+  // visible; the bytes stay in the session transcript.
+  final (strippedVideos, videoStripped) = _stripAllVideosPass(
+    messages,
+    stripAll: stripAll,
+  );
   // #1916 AC2 pre-pass: fold text-embedded data-URL images into real
   // ImageContent blocks on HISTORY messages — the scan, dedup, caps and
   // refs below then treat them exactly like pasted images, and legacy
   // shapes can never replay raw bytes again. The current message keeps
   // its text verbatim (I3) — it degrades on the NEXT turn.
-  var normalized = messages;
-  for (var i = 0; i < messages.length; i++) {
-    if (i == currentIdx0) continue;
-    final (folded, changed) = _extractEmbeddedImages(messages[i]);
-    if (!changed) continue;
-    if (identical(normalized, messages)) normalized = List.of(messages);
-    normalized[i] = folded;
-  }
-  var hasImages = false;
-  for (final message in normalized) {
-    if (_imagesOf(message).isNotEmpty) {
-      hasImages = true;
-      break;
-    }
-  }
-  if (!hasImages && !normalized.any(_mentionsImageRef)) {
+  final normalized = _foldEmbeddedImagesPass(strippedVideos, currentIdx0);
+  final hasImages = normalized.any((message) => _imagesOf(message).isNotEmpty);
+  if (!hasImages && !videoStripped && !normalized.any(_mentionsImageRef)) {
     // Nothing to rewrite: return the CALLER'S list instance (the
     // image-free fast-path guarantee) even when the fold pre-pass ran.
     return messages;

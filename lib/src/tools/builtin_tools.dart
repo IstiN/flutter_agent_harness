@@ -66,6 +66,7 @@ import '../agent/image_registry.dart' show imageRegistryConfig;
 import 'archive_reader.dart';
 import 'bash_auto_background.dart';
 import 'inspect_image.dart';
+import 'image_pipeline.dart';
 import 'job_id_resolution.dart';
 import 'misuse_policy.dart';
 import 'read_selector.dart';
@@ -73,6 +74,25 @@ import 'password_prompt.dart';
 import 'shell_jobs.dart';
 import 'sqlite/sqlite_reader.dart';
 import 'tool_format.dart';
+
+// gh-1985 C3: the inline-image ladder lives in `image_pipeline.dart` now;
+// these re-exports keep this library's public surface (and the existing
+// tests that import it directly) stable.
+export 'image_pipeline.dart'
+    show
+        InlineImageResult,
+        bakeExifOrientation,
+        base64Length,
+        clampToMaxDimension,
+        decodeImageOrThrow,
+        detectImageFormat,
+        fitImageAtSize,
+        mimeTypeForImageFormat,
+        nextShrinkStep,
+        processImage,
+        resizeInlineImage,
+        shrinkInlineImageToFit,
+        shrinkStepStalls;
 
 export 'tool_format.dart' show formatToolSize;
 
