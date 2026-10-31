@@ -285,7 +285,8 @@ class SkillOperativePins {
         // (round 3).
         OperativePin? replacement;
         for (final pin in pins) {
-          final isNewKey = !previous.pinByKey.containsKey(pin.contentKey) &&
+          final isNewKey =
+              !previous.pinByKey.containsKey(pin.contentKey) &&
               !claimedSuccessors.contains(pin.contentKey);
           final sameOwner = pin.provenance.any(
             (p) => old.provenance.any((o) => o.skillName == p.skillName),

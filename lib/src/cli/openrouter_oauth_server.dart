@@ -219,11 +219,11 @@ bool isHeadlessOrRemoteSession({
     return v == null || v.isEmpty ? null : v;
   }
 
-  if (isLinux ?? Platform.isLinux) {
-    // Linux: a graphical display is mandatory for a visible browser.
-    if (value('DISPLAY') == null && value('WAYLAND_DISPLAY') == null) {
-      return true;
-    }
+  // Linux: a graphical display is mandatory for a visible browser.
+  if ((isLinux ?? Platform.isLinux) &&
+      value('DISPLAY') == null &&
+      value('WAYLAND_DISPLAY') == null) {
+    return true;
   }
   if (value('SSH_TTY') != null || value('SSH_CONNECTION') != null) {
     return true;

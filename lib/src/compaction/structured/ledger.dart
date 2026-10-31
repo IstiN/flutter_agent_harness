@@ -114,7 +114,7 @@ final class ContextLedger {
   }
 
   String _line(LedgerEntry entry) {
-    final kind = entry.toolNames.isEmpty ? entry.kind : entry.kind;
+    final kind = entry.kind;
     final exempt = entry.exempt ? '·exempt' : '';
     final detail = entry.preview.isEmpty ? '' : ' · ${entry.preview}';
     return '[${entry.seq}] $kind$exempt ~${entry.tokens}tok$detail';

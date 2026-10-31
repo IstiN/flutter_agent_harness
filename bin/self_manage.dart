@@ -117,10 +117,9 @@ Install classifyInstall({
     return Install(InstallKind.devRun, scriptPath);
   }
   final lower = executablePath.toLowerCase();
-  if (lower.contains('pub-cache') || lower.contains(r'pub\cache')) {
-    if (!_isNativeExecutable(executablePath)) {
-      return Install(InstallKind.pubGlobal, executablePath);
-    }
+  if ((lower.contains('pub-cache') || lower.contains(r'pub\cache')) &&
+      !_isNativeExecutable(executablePath)) {
+    return Install(InstallKind.pubGlobal, executablePath);
   }
   return Install(InstallKind.binary, executablePath);
 }
@@ -809,10 +808,8 @@ void _clearConvergence(String? statePath) {
   if (statePath == null) return;
   try {
     File(statePath).deleteSync();
-  } on FileSystemException {
-    // Nothing to clear.
   } catch (_) {
-    // The guard must never break the boot.
+    // Nothing to clear; the guard must never break the boot.
   }
 }
 
