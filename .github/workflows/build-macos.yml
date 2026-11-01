@@ -552,6 +552,22 @@ jobs:
           CI_SIGN_P12_PASSWORD_ENV: MACOS_CERTIFICATE_PASSWORD
           MACOS_PROVISIONING_PROFILE_BASE64: ${{ secrets.MACOS_PROVISIONING_PROFILE_BASE64 }}
         run: |
+          # gh-1865: the repo copy of ci-sign is authoritative —
+          # re-install it to the host PATH on every signing job so
+          # ~/bin/ci-sign can never drift from the reviewed source.
+          # gh-1954: install(1) does not create parent directories —
+          # on a fresh runner $HOME/bin does not exist (run 40822964468,
+          # "install: invalid target .../bin/ci-sign: No such file").
+          # gh-2030: this install used to live ONLY in the ubuntu-latest
+          # `version` job, which never executes ci-sign — the one job that
+          # runs it on the signing hosts (this one) never refreshed the
+          # copy, so fa-m5 executed a stale pre-gh-2008 script whose
+          # set-keychain-settings still raised orphan SecurityAgent dialogs
+          # and wedged the x86_64 `security import` for 2h27m (run
+          # 41276487426: "User canceled the operation"). Same shape the
+          # build-mobile.yml iOS signing step has always used.
+          mkdir -p "$HOME/bin"
+          install -m 755 scripts/ci-sign "$HOME/bin/ci-sign"
           if [ -z "$MACOS_CERTIFICATE_P12_BASE64" ]; then
             echo "⚠️  No signing certificate found — building unsigned (development only)"
             signed=false
