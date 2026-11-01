@@ -533,4 +533,25 @@ void main() {
     expect(sweepAt, lessThan(upToDateAt),
         reason: 'the sweep runs BEFORE declaring up-to-date');
   });
+  test('AC21 — sweep spares OTHER labels pinned identities + no undefined vars '
+      '(gh-2026 hotfix: the persistent keychain is shared by fa-ios, fa-macos '
+      'and fa-macos-installer — the #2009 sweep deleted every identity that '
+      'was not the CURRENT label pin, i.e. the other labels live identities; '
+      'run 41276487426 arm64 attempt 2 then died on the sweep echo: '
+      '"KC_BASE: unbound variable" under set -u)', () {
+    final cisign = File('scripts/ci-sign').readAsStringSync();
+    expect(cisign, isNot(contains('KC_BASE')),
+        reason: 'KC_BASE was never assigned — set -u kills the sweep echo');
+    final sweepAt = cisign.indexOf('swept shadow identity');
+    expect(sweepAt, greaterThan(-1));
+    final crossLabelGuard = cisign.indexOf('ALL_PINNED');
+    expect(crossLabelGuard, greaterThan(-1),
+        reason: 'the sweep must collect every label manifest sha1');
+    expect(crossLabelGuard, lessThan(sweepAt),
+        reason: 'ALL_PINNED is computed before the sweep loop');
+    expect(cisign, contains('grep -qxF "\$FP"'),
+        reason: 'an identity pinned by ANY label is never a shadow');
+    expect(cisign, contains("from '\$(basename \"\$KC\")'"),
+        reason: 'the echo names the keychain via defined variables only');
+  });
 }
