@@ -1,14 +1,14 @@
 // Behavioral missing-ref tests for scripts/release_lazy_draft.sh
 // (gh-2026): `gh release create --draft` for a MISSING tag REST-mints a
 // lightweight API tag with NO push event — the v0.1.408 silent class
-// (issue #597). When the fast ci.yml-adjacent legs (build-macos.yml
-// build-extension / build-macos-cli, ubuntu/hosted, ~10 min) beat the
-// attach legs (release-macos / release-mobile), the silent mint wins the
-// race, every attach leg finds the tag existing and skips the
-// CI-firing annotated push, and the draft is stranded forever (swept by
-// the daily sweeper, gh-2026 recurrence). The lazy create must mint the
-// missing tag through the same CI-firing annotated push the attach path
-// uses (scripts/release_tag_mint.sh) BEFORE creating the draft.
+// (issue #597). When the fast build-macos.yml legs (build-extension /
+// build-macos-cli, ubuntu/hosted, ~10 min) beat the attach legs
+// (release-macos / release-mobile), the silent mint wins the race, every
+// attach leg finds the tag existing and skips the CI-firing annotated
+// push, and the draft is stranded forever (swept by the daily sweeper —
+// the gh-2026 recurrence). The lazy create must mint the missing tag
+// through the same CI-firing annotated push the attach path uses
+// (scripts/release_tag_mint.sh) BEFORE creating the draft.
 import 'dart:io';
 
 import 'package:test/test.dart';
@@ -27,18 +27,16 @@ String _resolveRealGit() {
   return '/usr/bin/git';
 }
 
-/// Fixture in the shape the build-macos.yml lazy-draft call sites run:
-/// a work clone whose origin lacks the tag, the persisted checkout
-/// extraheader present, `gh release view` answering "missing" (the lazy
-/// create path) and `gh run list` answering per [trainRunning].
-({
-  int exitCode,
-  String output,
-  List<String> ghLogLines,
-  List<String> capturedPushLines,
-  List<String> gitLogLines,
-})
-_runLazyMint(String name, {required bool trainRunning}) {
+class LazyMintRun {
+  LazyMintRun(this.exitCode, this.output, this.ghLog, this.pushes, this.gitLog);
+  final int exitCode;
+  final String output;
+  final List<String> ghLog;
+  final List<String> pushes;
+  final List<String> gitLog;
+}
+
+LazyMintRun _runLazyMint(String name, {required bool trainRunning}) {
   final dir = Directory(
     '${_fixtureRoot.path}/lazy-$name-${DateTime.now().microsecondsSinceEpoch}',
   )..createSync(recursive: true);
@@ -113,22 +111,22 @@ exit 0
   };
   final res = Process.runSync(
     'bash',
-    [
-      File('scripts/release_lazy_draft.sh').absolute.path,
-      'v1.2.3',
-    ],
+    [File('scripts/release_lazy_draft.sh').absolute.path, 'v1.2.3'],
     workingDirectory: work,
     environment: env,
   );
   List<String> lines(String path) => File(path).existsSync()
-      ? File(path).readAsLinesSync().where((l) => l.isNotEmpty).toList()
+      ? File(path)
+            .readAsLinesSync()
+            .where((l) => l.isNotEmpty)
+            .toList()
       : <String>[];
-  return (
-    exitCode: res.exitCode,
-    output: '${res.stdout}${res.stderr}',
-    ghLogLines: lines('${dir.path}/gh.log'),
-    capturedPushLines: lines('${dir.path}/push.log'),
-    gitLogLines: lines('${dir.path}/git.log'),
+  return LazyMintRun(
+    res.exitCode,
+    '${res.stdout}${res.stderr}',
+    lines('${dir.path}/gh.log'),
+    lines('${dir.path}/push.log'),
+    lines('${dir.path}/git.log'),
   );
 }
 
@@ -136,23 +134,22 @@ void main() {
   test(
     'gh-2026: a lazy draft for a MISSING tag mints it via the CI-firing annotated push first',
     () {
-      final (:exitCode, :output, :ghLogLines, :capturedPushLines, :gitLogLines) =
-          _runLazyMint('with-token', trainRunning: true);
-      expect(exitCode, 0, reason: output);
-      expect(capturedPushLines, hasLength(1));
-      expect(capturedPushLines.single, contains('x-access-token:'));
-      expect(capturedPushLines.single, contains('pat-token-for-test'));
-      expect(capturedPushLines.single, contains('refs/tags/v1.2.3'));
+      final r = _runLazyMint('with-token', trainRunning: true);
+      expect(r.exitCode, 0, reason: r.output);
+      expect(r.pushes, hasLength(1));
+      expect(r.pushes.single, contains('x-access-token:'));
+      expect(r.pushes.single, contains('pat-token-for-test'));
+      expect(r.pushes.single, contains('refs/tags/v1.2.3'));
       // The silent REST mint would let `gh release create` create the tag;
       // the annotated push must precede the draft create.
-      final pushIdx = gitLogLines.indexWhere((l) => l.startsWith('push '));
-      final createIdx = ghLogLines.indexWhere(
+      final pushIdx = r.gitLog.indexWhere((l) => l.startsWith('push '));
+      final createIdx = r.ghLog.indexWhere(
         (l) => l.contains('release create v1.2.3'),
       );
       expect(pushIdx, greaterThanOrEqualTo(0));
       expect(createIdx, greaterThanOrEqualTo(0));
       expect(
-        ghLogLines
+        r.ghLog
             .take(createIdx)
             .where((l) => l.contains('run list'))
             .isNotEmpty,
@@ -165,16 +162,15 @@ void main() {
   test(
     'gh-2026: a lazy draft whose mint fired no workflow run fails loud, no draft',
     () {
-      final (:exitCode, :output, :ghLogLines, :capturedPushLines) =
-          _runLazyMint('silent-train', trainRunning: false);
-      expect(exitCode, isNot(0), reason: output);
-      expect(output, contains('::error::'));
+      final r = _runLazyMint('silent-train', trainRunning: false);
+      expect(r.exitCode, isNot(0), reason: r.output);
+      expect(r.output, contains('::error::'));
       expect(
-        ghLogLines.where((l) => l.contains('release create v1.2.3')),
+        r.ghLog.where((l) => l.contains('release create v1.2.3')),
         isEmpty,
         reason: 'no draft may be created for a tag with no train',
       );
-      expect(capturedPushLines, hasLength(1));
+      expect(r.pushes, hasLength(1));
     },
   );
 }

@@ -48,14 +48,16 @@ String _resolveRealGit() {
 /// always missing → the mint + create path; `run list` answers per
 /// [trainRunning]) and a git shim that captures the token-URL push and
 /// logs every git invocation instead of contacting github.com.
-({
-  int exitCode,
-  String output,
-  List<String> ghLogLines,
-  List<String> capturedPushLines,
-  List<String> gitLogLines,
-})
-_runMint(
+class MintRun {
+  MintRun(this.exitCode, this.output, this.ghLog, this.pushes, this.gitLog);
+  final int exitCode;
+  final String output;
+  final List<String> ghLog; // every gh invocation the script made
+  final List<String> pushes; // captured token-URL push command lines
+  final List<String> gitLog; // every git invocation, in order
+}
+
+MintRun _runMint(
   String name, {
   required String? ghToken,
   bool seedExtraheader = false,
@@ -155,14 +157,17 @@ exit 0
     environment: env,
   );
   List<String> lines(String path) => File(path).existsSync()
-      ? File(path).readAsLinesSync().where((l) => l.isNotEmpty).toList()
+      ? File(path)
+            .readAsLinesSync()
+            .where((l) => l.isNotEmpty)
+            .toList()
       : <String>[];
-  return (
-    exitCode: res.exitCode,
-    output: '${res.stdout}${res.stderr}',
-    ghLogLines: lines('${dir.path}/gh.log'),
-    capturedPushLines: lines('${dir.path}/push.log'),
-    gitLogLines: lines('${dir.path}/git.log'),
+  return MintRun(
+    res.exitCode,
+    '${res.stdout}${res.stderr}',
+    lines('${dir.path}/gh.log'),
+    lines('${dir.path}/push.log'),
+    lines('${dir.path}/git.log'),
   );
 }
 
@@ -174,19 +179,16 @@ void main() {
       // cryptic `fatal: bad repository ''` — the push URL collapses to ''
       // when GH_TOKEN is unset. The script must self-explain BEFORE the
       // push.
-      final (:exitCode, :output, :capturedPushLines) = _runMint(
-        'no-token',
-        ghToken: null,
-      );
-      expect(exitCode, isNot(0));
+      final r = _runMint('no-token', ghToken: null);
+      expect(r.exitCode, isNot(0));
       expect(
-        output,
+        r.output,
         contains('::error::'),
         reason: 'the failure must be a self-explaining Actions error',
       );
-      expect(output, contains('GH_TOKEN is not set'));
+      expect(r.output, contains('GH_TOKEN is not set'));
       expect(
-        capturedPushLines,
+        r.pushes,
         isEmpty,
         reason: 'no push may be attempted without a credential',
       );
@@ -196,18 +198,15 @@ void main() {
   test(
     'tag mint with GH_TOKEN set pushes the annotated tag through the token URL, then creates the release',
     () {
-      final (:exitCode, :output, :ghLogLines, :capturedPushLines) = _runMint(
-        'with-token',
-        ghToken: 'pat-token-for-test',
-      );
-      expect(exitCode, 0, reason: output);
-      expect(capturedPushLines, hasLength(1));
-      expect(capturedPushLines.single, contains('x-access-token:'));
-      expect(capturedPushLines.single, contains('pat-token-for-test'));
-      expect(capturedPushLines.single, contains('@github.com/OWNER/REPO.git'));
-      expect(capturedPushLines.single, contains('refs/tags/v1.2.3'));
+      final r = _runMint('with-token', ghToken: 'pat-token-for-test');
+      expect(r.exitCode, 0, reason: r.output);
+      expect(r.pushes, hasLength(1));
+      expect(r.pushes.single, contains('x-access-token:'));
+      expect(r.pushes.single, contains('pat-token-for-test'));
+      expect(r.pushes.single, contains('@github.com/OWNER/REPO.git'));
+      expect(r.pushes.single, contains('refs/tags/v1.2.3'));
       expect(
-        ghLogLines.where((l) => l.contains('release create v1.2.3')),
+        r.ghLog.where((l) => l.contains('release create v1.2.3')),
         hasLength(1),
         reason: 'the mint ends in the release create',
       );
@@ -223,27 +222,26 @@ void main() {
       // suppressed the tag train (v1.0.663 / v1.0.665 — green runs, zero
       // workflow runs on the tag refs, drafts swept 24h later). The mint
       // must unset the persisted extraheader(s) before pushing.
-      final (:exitCode, :output, :capturedPushLines, :gitLogLines) = _runMint(
+      final r = _runMint(
         'strip-header',
         ghToken: 'pat-token-for-test',
         seedExtraheader: true,
       );
-      expect(exitCode, 0, reason: output);
-      expect(capturedPushLines, hasLength(1), reason: output);
-      final configIdx = gitLogLines.indexWhere(
+      expect(r.exitCode, 0, reason: r.output);
+      expect(r.pushes, hasLength(1), reason: r.output);
+      final configIdx = r.gitLog.indexWhere(
         (l) =>
             l.contains('config') &&
             l.contains('--unset-all') &&
             l.contains('http.https://github.com/.extraheader'),
       );
-      final pushIdx = gitLogLines.indexWhere((l) => l.startsWith('push '));
-      expect(configIdx, greaterThanOrEqualTo(0), reason: output);
+      final pushIdx = r.gitLog.indexWhere((l) => l.startsWith('push '));
+      expect(configIdx, greaterThanOrEqualTo(0), reason: r.output);
       expect(
         configIdx < pushIdx,
         isTrue,
-        reason:
-            'the extraheader strip must precede the push (git log: '
-            '$gitLogLines)',
+        reason: 'the extraheader strip must precede the push '
+            '(git log: ${r.gitLog})',
       );
     },
   );
@@ -251,7 +249,7 @@ void main() {
   test(
     'gh-2026: the mint verifies the tag train started before creating the draft',
     () {
-      final (:exitCode, :output, :ghLogLines, :gitLogLines) = _runMint(
+      final r = _runMint(
         'verify-happy',
         ghToken: 'pat-token-for-test',
         trainRunning: true,
@@ -260,26 +258,25 @@ void main() {
           'RELEASE_TRAIN_VERIFY_SLEEP': '0',
         },
       );
-      expect(exitCode, 0, reason: output);
+      expect(r.exitCode, 0, reason: r.output);
       expect(
-        gitLogLines.any((l) => l.startsWith('push ')),
+        r.gitLog.any((l) => l.startsWith('push ')),
         isTrue,
         reason: 'the push precedes the verification',
       );
       expect(
-        ghLogLines.any(
+        r.ghLog.any(
           (l) =>
               l.contains('run list') &&
               l.contains('--branch v1.2.3') &&
               l.contains('OWNER/REPO'),
         ),
         isTrue,
-        reason:
-            'the mint must poll for a workflow run on the tag ref '
-            '(gh log: $ghLogLines)',
+        reason: 'the mint must poll for a workflow run on the tag ref '
+            '(gh log: ${r.ghLog})',
       );
       expect(
-        ghLogLines.where((l) => l.contains('release create v1.2.3')),
+        r.ghLog.where((l) => l.contains('release create v1.2.3')),
         hasLength(1),
         reason: 'the draft create follows a verified train',
       );
@@ -293,7 +290,7 @@ void main() {
       // appears, the leg stays green, and the draft is swept a day later.
       // The mint must fail the step instead — the caller's draft lifecycle
       // guard and the red leg then own the failure.
-      final (:exitCode, :output, :ghLogLines, :capturedPushLines) = _runMint(
+      final r = _runMint(
         'verify-silent',
         ghToken: 'pat-token-for-test',
         trainRunning: false,
@@ -302,20 +299,20 @@ void main() {
           'RELEASE_TRAIN_VERIFY_SLEEP': '0',
         },
       );
-      expect(exitCode, isNot(0), reason: output);
-      expect(output, contains('::error::'));
-      expect(output, contains('v1.2.3'));
+      expect(r.exitCode, isNot(0), reason: r.output);
+      expect(r.output, contains('::error::'));
+      expect(r.output, contains('v1.2.3'));
       expect(
-        output.contains('no workflow run'),
+        r.output.contains('no workflow run'),
         isTrue,
         reason: 'the error must name the suppressed-train failure shape',
       );
       expect(
-        ghLogLines.where((l) => l.contains('release create v1.2.3')),
+        r.ghLog.where((l) => l.contains('release create v1.2.3')),
         isEmpty,
         reason: 'no draft may be created for a tag with no train',
       );
-      expect(pushes, hasLength(1), reason: 'the push itself was attempted');
+      expect(r.pushes, hasLength(1), reason: 'the push itself was attempted');
     },
   );
 }
