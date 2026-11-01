@@ -573,4 +573,23 @@ void main() {
     expect(envAt, lessThan(firstLaneAt),
         reason: 'file-scope ENV must be set before any lane can run');
   });
+  test('AC23 — identity VALIDITY checks must not filter by codesigning '
+      'policy (gh-2026: the fa-macos-installer P12 imports fine but its '
+      '"3rd Party Mac Developer Installer" identity NEVER matches '
+      'find-identity -p codesigning — that policy lists only codesign '
+      'certs, not productsign/installer ones. All three label checks '
+      '(verify, idempotent, post-import) died on run 41276487426 arm64 '
+      'attempt 3 with "imported P12 ... not a valid codesigning identity" '
+      'while plain find-identity -v lists it as VALID identity #1. The '
+      'SWEEP enumeration keeps -p codesigning on purpose: installer '
+      'identities are not shadow candidates)', () {
+    final cisign = File('scripts/ci-sign').readAsStringSync();
+    expect(cisign, isNot(contains('find-identity -v -p codesigning "\$KC" | grep -qi')),
+        reason: 'no VALIDITY check may use the codesigning-only policy');
+    final sweepLoopAt = cisign.indexOf('for FP in \$(security find-identity -v -p codesigning');
+    expect(sweepLoopAt, greaterThan(-1),
+        reason: 'the sweep enumeration stays codesigning-scoped');
+    expect(cisign, contains('security find-identity -v "\$KC" | grep -qi "\$NEW_FP"'),
+        reason: 'post-import validity uses the policy-free valid list');
+  });
 }
