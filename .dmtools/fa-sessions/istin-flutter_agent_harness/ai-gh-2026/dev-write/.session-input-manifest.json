@@ -1,0 +1,391 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-11-01T11:52:41.494Z",
+  "ticketKey": "gh-2026",
+  "headSha": "d32ef13ea717377905b86ea4d1d64fd8a187ea23",
+  "baseBranch": "main",
+  "reviewDecision": "NONE",
+  "labels": [],
+  "files": {
+    "ci_failures.md": {
+      "hash": "fnv1a64:ec0f45727501d79c",
+      "size": 171751
+    },
+    "ci_failures_full.log": {
+      "hash": "fnv1a64:1b61724dd5474bb1",
+      "size": 2635882
+    },
+    "ci_violations.json": {
+      "hash": "fnv1a64:08e92194f0c42cc2",
+      "size": 1114
+    },
+    "pr_diff.txt": {
+      "hash": "fnv1a64:9321d88b047bd03d",
+      "size": 12304
+    },
+    "pr_discussions.md": {
+      "hash": "fnv1a64:ee9611f0d12ff35f",
+      "size": 78100
+    },
+    "pr_discussions_raw.json": {
+      "hash": "fnv1a64:befa39f2fef5b77a",
+      "size": 5682
+    },
+    "pr_info.md": {
+      "hash": "fnv1a64:4a45ac508a692225",
+      "size": 3045
+    },
+    "request.md": {
+      "hash": "fnv1a64:735f0865d514f3bf",
+      "size": 2229
+    },
+    "review_state.md": {
+      "hash": "fnv1a64:1a669127ace12361",
+      "size": 1319
+    },
+    "rework_base_head.txt": {
+      "hash": "fnv1a64:2eea9de2c9f427bd",
+      "size": 40
+    },
+    "ticket.json": {
+      "hash": "fnv1a64:d1534ca6d7e849e8",
+      "size": 2303
+    },
+    "ticket.md": {
+      "hash": "fnv1a64:735f0865d514f3bf",
+      "size": 2229
+    }
+  },
+  "comments": [
+    {
+      "id": "PRRT_kwDOTXdlLc6yZlM2",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "scripts/release_tag_mint.sh:112",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT: the fixed probe merges stderr into the SUCCESS value — a gh warning on a healthy call corrupts the numeric check and rolls back a possibly-live tag**\n\nThe lap-3 fix (correct on the failure path) captures both streams into one variable and then uses it as a number:\n\n```bash\nprobe_out=\"$(gh run list --repo \"$repo\" --branch \"$tag\" --limit 10 \\\n  --json databaseId --jq 'length' 2>&1)\" || { …fail fast… }\nif [ \"${probe_out:-0}\" -gt 0 ]; then …\n```\n\nIf `gh` exits 0 but writes **anything** to stderr (a deprecation/upgrade notice, a config warning), `probe_out` is no longer a bare integer → `[ … -gt 0 ]` errors (`integer expression expected`, swallowed inside the `if`) → read as \"no train\" → the full budget burns → and the **rollback deletes the pushed ref while its train may genuinely be running** (the pushed tag was fine; only the probe's output was noisy). That converts a benign warning into a deleted tag and a red train checkout.\n\nFix: keep stderr out of the success value and surface it only in the failure branch:\n\n```bash\nprobe_err=\"$(mktemp)\"\nif ! probe_out=\"$(gh run list --repo \"$repo\" --branch \"$tag\" --limit 10 \\\n    --json databaseId --jq 'length' 2>\"$probe_err\")\"; then\n  echo \"::error::train verification probe failed for $tag (gh run list): $(cat \"$probe_err\") …\" >&2\n  rm -f \"$probe_err\"; exit 1\nfi\nrm -f \"$probe_err\"\nif [ \"${probe_out:-0}\" -gt 0 ]; then …\n```\n\nThe 4th mint test (`GH_STUB_PROBE_FAILS`) covers the non-zero path; worth adding a stub leg for exit-0-with-stderr asserting the train is still recognized."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6yZlNb",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "docs/ci.md:126",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: the App-token exception note quietly narrows AGENTS.md's gh-1402 scope**\n\n\"…the App-token invariant continues to govern everything that commits release-path **FILES**\" — but `AGENTS.md`'s gh-1402 rule literally lists *\"(store metadata fixes, **release tags/releases**)\"* in scope, i.e. tags are inside the invariant, not outside it. The exception itself is reasonable (pre-existing pattern, App token would behave identically, swap is a follow-up — agreed in the earlier thread), but the framing should not imply the invariant never covered tags. Suggested rewording of the last clause:\n\n> \"…swapping the credential is a follow-up not owned by the gh-2026 fix; until then, leg-time tag mints are a documented exception to gh-1402's release-tags scope, which continues to govern release-path file commits.\"\n\nThat keeps the docs honest for the next reader auditing the mint's credential identity."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6yZlOF",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "test/release_tag_mint_test.dart:62",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: `buildFixture`'s `sha` parameter is dead**\n\n`RaceMinter.buildFixture(String sha)` never uses `sha` — the fixture's environment takes the target from `withSha()` (`GITHUB_SHA`/`RELEASE_TARGET_SHA` in `env()`). Both call sites (`_racePair`, `_singleMinter`) pass the same value they then hand to `withSha`, so the parameter only suggests a wiring that doesn't exist. Drop the parameter (and its arguments) or fold the `withSha` assignment into `buildFixture` so there is one way to set the target."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6yZ1DK",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "scripts/size_budget/fa-extension.tsv:1",
+      "resolved": false,
+      "body": "🚨 **BLOCKING: the merge from main reverted gh-2030's size-floor reseed — main's new byte-exact drift-guard test fails on this head**\n\nThe merge `d32ef13ea7` (Merge origin/main into ai/gh-2026) resolved `scripts/size_budget/fa-extension.tsv` in favor of **this branch's pre-merge rows**, discarding the newer floors main's gh-2030 (#2031, commit `9abc95e633`) had already landed:\n\n| row | this PR (merged tree) | main (gh-2030 reseed) |\n|---|---|---|\n| `TOTAL` | 155539998 | **155887040** |\n| `panel/app/assets/NOTICES` | 1590098 | **1574782** |\n| `panel/app/main.dart.js` | 12117285 | **12343041** |\n\n(`sw/agent.js` is consistent on both sides — main independently reseeded it to the same 2040013 this PR chose in lap 1 — so only these three rows need flipping.)\n\nThis is not hypothetical: main's gh-2030 shipped a drift-guard for exactly this file — `test/ci_2030_extension_size_floor_test.dart` (came in with the same merge) pins the tsv as the **byte-exact `--reseed` output** (\"any hand-edit drift desyncs the floor from what the gate would have seeded\"). It **fails on this head** — verified locally:\n\n```\n$ dart test test/ci_2030_extension_size_floor_test.dart\n::error::2 tests passed, 1 failed.   ← the byte-exact row comparison\n```\n\nA red test on the head → reddens the CI test legs on the next validation dispatch.\n\nFix: take main's three rows (the values above) so the tsv matches `origin/main`'s reseed; keep `sw/agent.js: 2040013` (identical on both sides). Then `dart test test/ci_2030_extension_size_floor_test.dart` must be 3/3 before pushing."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-11-01:0f99dc83",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-11-01",
+      "updatedAt": "2026-11-01",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ Validation CI went red on the head — merge aborted, rework re-queued. (linked issue #2026 re-armed) (approval latch kept — no re-review after fixes)\n🔴 red head 272441ce3fde134d81fafee85e0e8e2567ff49f9 — red 1/3 (owner directive 2026-10-04: red yields the slot — after 3 reds on the same head, validation waits for a NEW head)"
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-01:844c9a68",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-01",
+      "updatedAt": "2026-11-01",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT: a failed mint leaves the orphan tag pushed — the prescribed \"re-run\" recreates the stranded-draft bug silently**\n\nWhen the train verification fails (lines 89-99), the tag **has already been pushed** and is left on the remote. The error tells the operator to *\"fix the push credential and re-run\"* — but that recovery path can never repair the state:\n\n1. attempt 1: push succeeds, no run appears → mint fails loud, leg red, no draft ✓;\n2. attempt 2 (re-run): `git ls-remote --exit-code` now finds the tag (rc 0) → **no mint, no extraheader strip needed, no train check** → the caller falls through to the plain `gh release create --draft` → **green leg + a draft attached to a ref whose train never ran** → swept a day later. That is the exact gh-2026 shape (green runs, stranded draft), silently re-armed, and the error message actively instructs the operator into it.\n\nAlso note the mint leaves the **local** tag object behind in the checkout between the `git tag -a` and the push/failure — on self-hosted legs with a reused workspace (release-macos/release-mobile), a re-run can additionally die at `git tag -a` with `fatal: tag 'v9.9.9' already exists` (observed in the same reproduction).\n\nSuggested remedy: roll the pushed ref back before failing the verification, so the state before the failed mint is restored and a fixed re-run actually re-mints:\n\n```bash\nif [ \"$runs_seen\" -ne 1 ]; then\n  echo \"::warning::rolling back the untrained tag ref so a fixed re-run can re-mint\" >&2\n  git push \"${GH_TOKEN:+https://x-access-token:${GH_TOKEN}@github.com/${repo}.git}\" \":refs/tags/$tag\" \\\n    || echo \"::warning::rollback of refs/tags/$tag failed — a re-run will skip the mint (tag exists) and can strand the draft\" >&2\n  echo \"::error::tag train did not start for $tag: …\" >&2\n  exit 1\nfi\n```\n\n(The tiny late-train race — a run appearing just after the budget — is acceptable: the pushed-before-failure window is the same one that today strands drafts for a day.) Alternatively, keep the ref but make the callers verify the train before their plain create too."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-01:55f66097",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-01",
+      "updatedAt": "2026-11-01",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT: the train probe swallows its own failures — a denied probe is indistinguishable from \"no train\", and the `actions: read` grants don't cover the probe as wired**\n\n`2>/dev/null || echo 0` collapses three different situations into \"no train\":\n\n1. the push fired nothing (the case this guard exists for);\n2. the probe itself failed — 403 (fine-grained `RELEASE_PAT` without Actions:read), expired PAT, rate limit, gh not authenticated;\n3. gh exited non-zero for any transient reason.\n\nIn case 2/3 the leg burns the full 12×10s budget and then fails with the **\"push likely authenticated as a CI-suppressed token\"** diagnosis while the real cause (probe denied) was discarded to /dev/null — a misleading RCA on a red release leg.\n\nNote the probe authenticates with **GH_TOKEN (RELEASE_PAT), not the job's GITHUB_TOKEN**: `gh` prefers the `GH_TOKEN` env var, and every mint-reachable call site exports it (enforced by the hygiene lints). The `actions: read` grants added in this PR only govern the job's automatic token, so they neither cause nor fix this — if `RELEASE_PAT` is (or becomes) a fine-grained PAT without Actions:read, **every** mint fails spuriously ~2 minutes in. Nothing in this PR or its tests exercises the probe against the real API (the fixture stubs `gh`).\n\nSuggested remedy — make a probe failure loud and distinct:\n\n```bash\nprobe_out=\"$(gh run list --repo \"$repo\" --branch \"$tag\" --limit 10 \\\n  --json databaseId --jq 'length' 2>&1)\" || {\n  echo \"::error::train verification probe failed for $tag (gh run list): $probe_out — distinguish this from 'no train' before blaming the push credential\" >&2\n  exit 1\n}\nif [ \"$probe_out\" -gt 0 ]; then …\n```\n\n…and document on the `RELEASE_PAT` secret (and in `docs/ci.md`) that it needs Actions:read for the probe. Please also consider asserting `checked` grants for `build-macos-cli` / `build-extension` in the hygiene test if the intent is that every mint-reachable job carry the grant — the new lint only pins `release-macos` / `release-mobile`, while the lazy legs are the minters most likely to win the race."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-01:d12483ab",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-01",
+      "updatedAt": "2026-11-01",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: duplicated comment line**\n\nThis added line duplicates the pre-existing line directly below it (line 92), so the comment now reads the same sentence twice:\n\n```\n# DRAFT-first (gh-1801): a create here must never publish — the resolved\n# DRAFT-first (gh-1801): a create here must never publish — the resolved\n# asset list at this point can never include the signed checksums. The\n```\n\nThe `+` line was (re)typed as part of the new gh-2026 block and collides with the original comment's first line. Drop one of the two."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-01:de89f058",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-01",
+      "updatedAt": "2026-11-01",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: the \"403 without the grant\" rationale doesn't hold for the probe as wired**\n\nThe comment states the mint's `gh run list` needs this `actions: read` grant or it 403s. But the probe inherits `GH_TOKEN: ${{ secrets.RELEASE_PAT }}` from the calling step (every mint-reachable call site exports it — that's what the hygiene lints pin), and `gh` prefers `GH_TOKEN` over everything else. Job-level `permissions:` only govern the job's automatic `GITHUB_TOKEN`, which `gh` never uses here — so this grant is inert for the probe as currently wired (harmless defense-in-depth, and consistent with the daily sweeper's grant).\n\nTwo follow-ups worth considering:\n\n1. reword the comment (here and in `build-mobile.yml`) to \"defense-in-depth for the mint probe; the probe authenticates with RELEASE_PAT\" — the current causality will mislead the next reader, and the new hygiene test cements the wrong story;\n2. if the real intent is a grant-guaranteed probe, pass the job token to the probe explicitly (e.g. `GH_TOKEN: ${{ github.token }}` for the `run list` call) — then this grant becomes load-bearing and would also need to be added to `build-macos-cli` / `build-extension`, the minters most likely to win the race and which currently lack it."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-01:2b67db30",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-01",
+      "updatedAt": "2026-11-01",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: PAT mint vs the AGENTS.md gh-1402 release-identity invariant**\n\n`AGENTS.md` (release section) states: *\"ANY automation that commits/pushes release-path changes (store metadata fixes, **release tags/releases**) MUST use the fa-release-bot GitHub App token — never a PAT, never the default `GITHUB_TOKEN`\"*, and hangs tag auditability on that identity (\"the gh-1172 App pushes the annotated tag, so the App identity is what auditability hangs on\"). This bullet codifies the mint's `RELEASE_PAT` push as the contract — carrying forward the pre-existing `release_attach_or_create.sh` pattern rather than the App token.\n\nNot a regression (the pattern predates this PR and the PR description documents it), but since this bullet is where the contract gets written down: either switch the mint call sites to the fa-release-bot App token (an App token also fires workflow runs, so the train guarantee is preserved), or add a line here explaining why the PAT exception is acceptable for leg-time tag mints — otherwise the docs contradict AGENTS.md's stated MUST for future readers."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-01:7850a3a1",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-01",
+      "updatedAt": "2026-11-01",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread `PRRT_kwDOTXdlLc6yY6gc` — BLOCKING: concurrent mints collide (release_tag_mint.sh:78)\n\n**Fixed** — the mint now tolerates the raced push instead of dying under `set -euo pipefail`.\n\n`scripts/release_tag_mint.sh` (push site): after a failed `git push refs/tags/$tag`, the mint re-probes `git ls-remote --exit-code origin`:\n\n- ref present → `tag $tag was minted concurrently by a sibling leg — continuing to train verification` (the loser proceeds to the train verification, which sees the winner's run; its `gh release create` race loss stays tolerated by both callers, as you noted);\n- ref still absent → `::error::tag $tag push failed and the ref is still missing — the push itself failed (credential, permissions, or a GitHub incident), not a race with a sibling leg` (the tolerance deliberately does NOT swallow genuine push failures).\n\n**Behavioral test** (was missing — the 7 existing tests covered single-minter paths only): `test/release_tag_mint_test.dart`, \"a mint that loses the push race to a sibling leg continues to train verification\" — two `release_tag_mint.sh` runs **concurrently** (`Future.wait`) against one shared bare origin with **real git push semantics** (the fixture's git shim routes token-URL pushes to the real origin) and distinct `GIT_COMMITTER_DATE`s per minter (annotated tag objects hash differently → deterministic rejection for the loser, no same-second no-op). Asserts both minters exit 0, exactly one reports the raced-mint line, and the loser reaches (and passes) train verification. The RED run reproduced your repro verbatim: `! [rejected] v9.9.9 -> v9.9.9 (already exists)`, rc 1 on the loser."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-01:b6c55463",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-01",
+      "updatedAt": "2026-11-01",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread `PRRT_kwDOTXdlLc6yY6hJ` — IMPORTANT: failed mint leaves the orphan tag pushed (release_tag_mint.sh:98)\n\n**Fixed** — the mint rolls the untrained tag back before failing, so the prescribed \"fix the credential and re-run\" actually re-mints instead of silently re-arming the stranded-draft shape.\n\n`scripts/release_tag_mint.sh` (verification-failure branch):\n\n- `::warning::rolling back the untrained tag ref so a fixed re-run can re-mint`, then `git push <token-URL> \":refs/tags/$tag\"`;\n- if the rollback itself fails: `::warning::rollback of refs/tags/$tag failed — a re-run will skip the mint (tag exists) and can strand the draft; delete refs/tags/$tag manually before re-running` (the failure is named, never silent);\n- the **local** tag object is dropped too (`git tag -d`) — your reproduction's reused-workspace `fatal: tag already exists` at `git tag -a` on a self-hosted re-run is covered;\n- then the loud `::error::tag train did not start …` and exit 1.\n\nThe late-train race you flagged as acceptable is accepted as-is (same pushed-before-failure window as today).\n\n**Behavioral test**: `test/release_tag_mint_test.dart`, \"a failed train verification rolls the pushed tag back so a fixed re-run re-mints\" — attempt 1 (`GH_STUB_TRAIN_RUNNING=0`) asserts the error + the rollback warning, `ls-remote --exit-code` rc 2 on the bare origin (ref gone), and an empty `git tag -l` in the work clone (local object gone); attempt 2 on a fresh minter with the train visible then **re-mints end-to-end (exit 0)** — exactly the recovery path the orphan tag used to break. The two caller-suite silent-train tests (`release_attach_or_create_mint_test.dart`, `release_lazy_draft_mint_test.dart`) now also assert the rollback delete-push was captured next to the mint push."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-01:eae79c69",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-01",
+      "updatedAt": "2026-11-01",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread `PRRT_kwDOTXdlLc6yY6ht` — IMPORTANT: the train probe swallows its own failures (release_tag_mint.sh:92)\n\n**Fixed** — probe failures are now loud, distinct, and fast.\n\n`scripts/release_tag_mint.sh` (probe loop): the probe is captured with its stderr (`probe_out=\"$(gh run list … 2>&1)\"`); a non-zero exit aborts the budget immediately with `::error::train verification probe failed for $tag (gh run list): <probe output> — a failing probe (RELEASE_PAT without Actions:read, expired PAT, rate limit) is NOT evidence of a suppressed train; fix the probe credential before re-running.` The empty-output-but-zero-exit case still reads as \"no train\" and keeps polling, as before.\n\n**Behavioral test**: `test/release_tag_mint_test.dart`, \"a failing train probe (403 / expired PAT) fails fast and is diagnosed as a probe failure, never as a suppressed train\" — a gh stub whose `run list` exits 7 with a 403 message: asserts the `::error::train verification probe failed` line, the probe's own text surfacing (the RCA), **exactly one `run list` call** (the budget is not burned), and that neither `tag train did not start` nor the `CI-suppressed token` diagnosis appears. (RED run confirmed the old behavior burned the budget and blamed the credential.)\n\n**Docs**: `docs/ci.md` (release section) now states the probe authenticates with the RELEASE_PAT (`gh` prefers `GH_TOKEN`), so the **PAT itself needs `actions: read`**; a failing probe is reported as its own error, never read as \"no train\".\n\n**Grants lint** (your \"please also consider\"): extended in `test/release_hygiene_test.dart` — **all four mint-reachable jobs** (`release-macos`, `release-mobile`, `build-macos-cli`, `build-extension`) must grant `actions: read`; the two lazy legs were missing it and now carry it (RED proven: the lint failed on `build-macos-cli: null` before the workflow change)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-01:29ab55db",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-01",
+      "updatedAt": "2026-11-01",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread `PRRT_kwDOTXdlLc6yY6ig` — SUGGESTION: duplicated comment line (release_lazy_draft.sh:91)\n\n**Fixed** — the duplicated line is dropped. `scripts/release_lazy_draft.sh` now reads the comment once:\n\n```bash\n# DRAFT-first (gh-1801): a create here must never publish — the resolved\n# asset list at this point can never include the signed checksums. The\n# race-lost create is tolerated (the winner owns the release).\n```\n\nNo code change — pure comment cleanup (1 line removed), verified by the shell-syntax check and the unchanged lazy-draft suite (`test/release_lazy_draft_mint_test.dart`, 2/2 green)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-01:f139bc72",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-01",
+      "updatedAt": "2026-11-01",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread `PRRT_kwDOTXdlLc6yY6je` — SUGGESTION: the \"403 without the grant\" rationale doesn't hold for the probe (build-macos.yml:1291)\n\n**Fixed** — your follow-up 1 (reword) plus the uniform-grant half of follow-up 2.\n\n- **Comments reworded** in both places the rationale appeared — `.github/workflows/build-macos.yml` (release-macos) and `.github/workflows/build-mobile.yml` (release-mobile) now say: *\"gh-2026: defense-in-depth for the release_tag_mint.sh train-verification probe (`gh run list` on the tag ref); the probe itself authenticates with RELEASE_PAT (gh prefers GH_TOKEN, which every mint-reachable call site exports), so this grant matters only if the probe is ever switched to the job token.\"* The wrong causality (\"403 without the grant\") is gone.\n- **The grant is now uniform on every mint-reachable job**: `build-macos-cli` and `build-extension` carried only `contents: write` — both now grant `actions: read` with the same corrected comment, so the defense holds no matter which minter wins the race. `test/release_hygiene_test.dart` pins all four jobs (\"every mint-reachable job grants actions:read\"), so the new comment's story is enforced, not just written down. We deliberately did NOT pass `GH_TOKEN: ${{ github.token }}` to the probe (your follow-up 2's full form): the RELEASE_PAT probe is the working, tested configuration, and switching the probe credential is a design change this PR shouldn't smuggle in.\n\nWorkflow YAML parses clean; the hygiene suite (53 tests) and the mint suites are green with the new grants."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-01:6389bbbc",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-01",
+      "updatedAt": "2026-11-01",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread `PRRT_kwDOTXdlLc6yY6kY` — SUGGESTION: PAT mint vs the AGENTS.md gh-1402 release-identity invariant (docs/ci.md:106)\n\n**Fixed** via your second option — the exception is now written down where the contract is written down.\n\n`docs/ci.md` (release section, the bullet codifying the mint) gained an explicit identity note: leg-time tag mints keep the pre-existing `release_attach_or_create.sh` RELEASE_PAT pattern because the PAT is what the dispatch-time call sites already hold; an App token would work identically (it also fires workflow runs, so the train guarantee is preserved); swapping the credential is a follow-up not owned by the gh-2026 fix; and the gh-1402 App-token invariant continues to govern everything that commits release-path **files**.\n\nThe docs no longer contradict AGENTS.md's MUST — they scope it. We did not switch the call sites to the fa-release-bot App token in this pass: the mint's push path, its tests, and the hygiene lints all key on `GH_TOKEN=RELEASE_PAT` today, and a credential swap would change the auditability surface without a behavioral win this PR needs (your own framing: \"not a regression — the pattern predates this PR\")."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-01:d8959221",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-01",
+      "updatedAt": "2026-11-01",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🚨 **BLOCKING: this PR's own edits push `test/release_hygiene_test.dart` past the repo's hard 2800-line ceiling — the head's CI is red on it**\n\nValidation run 41297837635 (head `8bd0430c`) — `CRAP + duplication` leg, exit 2:\n\n```\n[FAIL] loc: 1/1075 files over their limit\n  test/release_hygiene_test.dart: 2811 lines > max 2800\n```\n\n→ `R_GUARDS: failure` → **Quality gate FAILED: a leg is failure (guards)** → exit 1. `similarity` PASSES (19 files / 9 clusters — the lap-2 dedup held); the loc ceiling is the only finding in the leg.\n\nReproduced locally on this tree with the CI's exact invocation — byte-identical:\n\n```\n$ dart pub global run crap4dart check --config crap4dart.loc-scope.yaml --only loc\nRC=2\n[FAIL] loc: 1/1075 files over their limit\n  test/release_hygiene_test.dart: 2811 lines > max 2800\n```\n\n`main` carries the file at **2726** lines; this diff adds **+85** (the two gh-2026 lint tests below this thread) and crosses the ceiling. `AGENTS.md` (god-file ceiling, gh-1232): *\"no Dart file over 2800 lines anywhere (crap4dart loc gate, max_lines: 2800 …) enforced whole-tree in CI\"*, remedy *\"split by concern into `part` files … never by extracting public API.\"*\n\nSuggested fix (keeps every guard, drops the file back under the ceiling): move both `gh-2026:` lint tests (~85 lines, lines 1271-1355) into their own suite — the repo's established pattern of per-concern `test/release_*_test.dart` files (cf. `release_tag_mint_test.dart`), e.g. `test/release_mint_workflow_lint_test.dart`. They use only `jobsOf`/`YamlList`/`YamlMap` (shared helpers via a small support import or a `part`), so the similarity gate stays green (no fixture duplication — that's what put lap 2 red). Then `dart pub global run crap4dart check --config crap4dart.loc-scope.yaml --only loc` must return 0 locally before pushing."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-01:df0f3646",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-01",
+      "updatedAt": "2026-11-01",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT: the fixed probe merges stderr into the SUCCESS value — a gh warning on a healthy call corrupts the numeric check and rolls back a possibly-live tag**\n\nThe lap-3 fix (correct on the failure path) captures both streams into one variable and then uses it as a number:\n\n```bash\nprobe_out=\"$(gh run list --repo \"$repo\" --branch \"$tag\" --limit 10 \\\n  --json databaseId --jq 'length' 2>&1)\" || { …fail fast… }\nif [ \"${probe_out:-0}\" -gt 0 ]; then …\n```\n\nIf `gh` exits 0 but writes **anything** to stderr (a deprecation/upgrade notice, a config warning), `probe_out` is no longer a bare integer → `[ … -gt 0 ]` errors (`integer expression expected`, swallowed inside the `if`) → read as \"no train\" → the full budget burns → and the **rollback deletes the pushed ref while its train may genuinely be running** (the pushed tag was fine; only the probe's output was noisy). That converts a benign warning into a deleted tag and a red train checkout.\n\nFix: keep stderr out of the success value and surface it only in the failure branch:\n\n```bash\nprobe_err=\"$(mktemp)\"\nif ! probe_out=\"$(gh run list --repo \"$repo\" --branch \"$tag\" --limit 10 \\\n    --json databaseId --jq 'length' 2>\"$probe_err\")\"; then\n  echo \"::error::train verification probe failed for $tag (gh run list): $(cat \"$probe_err\") …\" >&2\n  rm -f \"$probe_err\"; exit 1\nfi\nrm -f \"$probe_err\"\nif [ \"${probe_out:-0}\" -gt 0 ]; then …\n```\n\nThe 4th mint test (`GH_STUB_PROBE_FAILS`) covers the non-zero path; worth adding a stub leg for exit-0-with-stderr asserting the train is still recognized."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-01:7b32a2f7",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-01",
+      "updatedAt": "2026-11-01",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: the App-token exception note quietly narrows AGENTS.md's gh-1402 scope**\n\n\"…the App-token invariant continues to govern everything that commits release-path **FILES**\" — but `AGENTS.md`'s gh-1402 rule literally lists *\"(store metadata fixes, **release tags/releases**)\"* in scope, i.e. tags are inside the invariant, not outside it. The exception itself is reasonable (pre-existing pattern, App token would behave identically, swap is a follow-up — agreed in the earlier thread), but the framing should not imply the invariant never covered tags. Suggested rewording of the last clause:\n\n> \"…swapping the credential is a follow-up not owned by the gh-2026 fix; until then, leg-time tag mints are a documented exception to gh-1402's release-tags scope, which continues to govern release-path file commits.\"\n\nThat keeps the docs honest for the next reader auditing the mint's credential identity."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-01:42b2f7ef",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-01",
+      "updatedAt": "2026-11-01",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: `buildFixture`'s `sha` parameter is dead**\n\n`RaceMinter.buildFixture(String sha)` never uses `sha` — the fixture's environment takes the target from `withSha()` (`GITHUB_SHA`/`RELEASE_TARGET_SHA` in `env()`). Both call sites (`_racePair`, `_singleMinter`) pass the same value they then hand to `withSha`, so the parameter only suggests a wiring that doesn't exist. Drop the parameter (and its arguments) or fold the `withSha` assignment into `buildFixture` so there is one way to set the target."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-01:01c829e8",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-01",
+      "updatedAt": "2026-11-01",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🚨 **BLOCKING: the merge from main reverted gh-2030's size-floor reseed — main's new byte-exact drift-guard test fails on this head**\n\nThe merge `d32ef13ea7` (Merge origin/main into ai/gh-2026) resolved `scripts/size_budget/fa-extension.tsv` in favor of **this branch's pre-merge rows**, discarding the newer floors main's gh-2030 (#2031, commit `9abc95e633`) had already landed:\n\n| row | this PR (merged tree) | main (gh-2030 reseed) |\n|---|---|---|\n| `TOTAL` | 155539998 | **155887040** |\n| `panel/app/assets/NOTICES` | 1590098 | **1574782** |\n| `panel/app/main.dart.js` | 12117285 | **12343041** |\n\n(`sw/agent.js` is consistent on both sides — main independently reseeded it to the same 2040013 this PR chose in lap 1 — so only these three rows need flipping.)\n\nThis is not hypothetical: main's gh-2030 shipped a drift-guard for exactly this file — `test/ci_2030_extension_size_floor_test.dart` (came in with the same merge) pins the tsv as the **byte-exact `--reseed` output** (\"any hand-edit drift desyncs the floor from what the gate would have seeded\"). It **fails on this head** — verified locally:\n\n```\n$ dart test test/ci_2030_extension_size_floor_test.dart\n::error::2 tests passed, 1 failed.   ← the byte-exact row comparison\n```\n\nA red test on the head → reddens the CI test legs on the next validation dispatch.\n\nFix: take main's three rows (the values above) so the tsv matches `origin/main`'s reseed; keep `sw/agent.js: 2040013` (identical on both sides). Then `dart test test/ci_2030_extension_size_floor_test.dart` must be 3/3 before pushing."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-01:751c6a8b",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-01",
+      "updatedAt": "2026-11-01",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🚨 **BLOCKING: concurrent mints collide → red release leg (git push is not race-idempotent)**\n\n`build-macos-cli` is a 2-arch matrix that runs both legs **in parallel on GitHub-hosted runners** (the workflow's own comment at `build-macos.yml:1119`), and both legs call `release_lazy_draft.sh`, which now delegates to this mint. On the daily flow the tag is definitely missing when the legs arrive, so **both arch legs enter the mint at nearly the same instant** (identical step lists → near-zero arrival skew), and both `git push refs/tags/$tag`:\n\n- both create local annotated tag objects for the same target SHA, but `git tag -a` stamps different timestamps → different tag objects;\n- the winner's push lands; the loser's push is rejected (`! [rejected] ... already exists` — tags never fast-forward) → `set -euo pipefail` kills the mint → the leg goes red with a bare cryptic `fatal:` line, no self-explaining `::error::`;\n- `build-extension`, `release-macos` and `release-mobile` are additional racers on the same fresh tag (the pre-existing attach-vs-attach race is now widened to ~4-5 minters).\n\nReproduced empirically with two concurrent `release_tag_mint.sh` runs against a shared bare origin: one leg died with `fatal: tag 'v9.9.9' already exists`, rc 128. In CI the collision lands on the remote ref with the same outcome: a spurious red required release leg on the very flow this PR fixes, recoverable only by a manual re-run (on re-run the tag exists → mint skipped → plain create succeeds).\n\nSuggested remedy (cheap): after a failed push, re-probe before failing —\n\n```bash\nif ! git push \"${GH_TOKEN:+https://x-access-token:${GH_TOKEN}@github.com/${repo}.git}\" \"refs/tags/$tag\"; then\n  if git ls-remote --exit-code origin \"refs/tags/$tag\" >/dev/null 2>&1; then\n    echo \"tag $tag was minted concurrently by a sibling leg — continuing to train verification\"\n  else\n    echo \"::error::tag $tag push failed and the ref is still missing\" >&2\n    exit 1\n  fi\nfi\n```\n\nThe loser then proceeds to the train verification, which will see the winner's run and succeed, and its `gh release create` race loss is already tolerated by both callers. Please also add a behavioral test for the raced-mint case to the mint suite (the current 7 tests cover single-minter paths only)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-01:89d50611",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-01",
+      "updatedAt": "2026-11-01",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## 🔧 Rework Complete — gh-2026\n\nAll PR review comments have been addressed. See fix summary below."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-11-01:b71518e0",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-11-01",
+      "updatedAt": "2026-11-01",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ Validation CI went red on the head — merge aborted, rework re-queued. (linked issue #2026 re-armed) (approval latch kept — no re-review after fixes)\n🔴 red head 67edbef9f60abf3f74f28150addba8c2c4e05901 — red 1/3 (owner directive 2026-10-04: red yields the slot — after 3 reds on the same head, validation waits for a NEW head)"
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-11-01:35d5c116",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-11-01",
+      "updatedAt": "2026-11-01",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🔄 zombie re-dispatch 8b5424b46db9a58e318417b74ad14be982999583 — zombie 1/3 at 2026-11-01T09:00:53.333Z\n\nThis head carried no dispatched validation run at all — the dispatch was lost (gh-821). CI was re-dispatched automatically (bounded: 1 per head per hour; 3 in a row on the same head park the PR validation_failed)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-01:d484908b",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-01",
+      "updatedAt": "2026-11-01",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — REQUEST_CHANGES\n\n**Summary**: The gh-2026 fix is well-engineered (RED→GREEN proven, 7/7 mint + 53/53 hygiene tests green here, extraheader strip and loud train verification verified end-to-end), but the mint's `git push` is not race-idempotent: the two parallel `build-macos-cli` arch legs (plus `build-extension` and the attach legs) can mint the same missing tag simultaneously, and the loser's rejected push turns a healthy release into a red leg — reproduced locally. Two important issues: a failed mint leaves the pushed orphan tag so the prescribed \"fix the credential and re-run\" silently recreates the stranded-draft bug, and the train probe swallows its own failures (403/expiry read as \"no train\") while the added `actions: read` grants don't apply to the PAT-authenticated probe.\n\n**Key Issues**:\n- 🚨 BLOCKING — concurrent mints reject-push → spurious red release leg (`scripts/release_tag_mint.sh:78`), repro'd\n- ⚠️ IMPORTANT — no rollback of the pushed tag on verification failure → retry re-strands the draft (`scripts/release_tag_mint.sh:98`)\n- ⚠️ IMPORTANT — probe errors (`2>/dev/null || echo 0`) misdiagnosed as suppressed-token push (`scripts/release_tag_mint.sh:92`)\n- 💡 SUGGESTION — duplicated `# DRAFT-first…` comment line (`scripts/release_lazy_draft.sh:91`); grant-rationale comment accuracy (`build-macos.yml:1291`); `RELEASE_PAT` vs AGENTS.md gh-1402 App-token invariant (`docs/ci.md:106`)\n\n**Next Steps**:\n1. Make the mint tolerate the raced-mint push (re-probe `ls-remote`; continue to verification) + add a raced-mint test\n2. Roll back the untrained tag ref (or re-verify on the retry path) before failing the mint\n3. Surface probe errors distinctly; document Actions:read requirement for `RELEASE_PAT`\n4. Minor: drop the duplicated comment line; reword the two grant comments; note the App-token question\n\nNote: the PR description's coverage section still calls `test/tools/archive_read_test.dart` \"untouched by this diff\" and omits the lap-1/lap-2 rework changes that ARE in this diff (the `hide ArchiveFormat` fix, the `fa-extension.tsv` reseed, the mint-fixture dedup) — worth refreshing the body so reviewers aren't misled. No `ci_failures.md` was provided in `input/`, so no CI-derived blockers; the discussions show the last reds were fixed at `1996033298` with a zombie re-dispatch on `8b5424b`."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-11-01:7218e17a",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-11-01",
+      "updatedAt": "2026-11-01",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🧵 Unresolved review threads — rework armed. This machine-authored PR is reviewed (ai_pr_reviewed) but still has open review threads. The rework leg owns open threads: agent:rework is armed on this PR and the rework runner will work through the threads and push. Validation re-runs automatically afterwards, and once the threads are resolved a fresh re-review is armed (review-threads-resolved)."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-11-01:c8528455",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-11-01",
+      "updatedAt": "2026-11-01",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ Validation CI went red on the head — merge aborted, rework re-queued. (linked issue #2026 re-armed) (approval latch kept — no re-review after fixes)\n🔴 red head e6a67885504f115cb13da8c703aab2042fff14fb — red 1/3 (owner directive 2026-10-04: red yields the slot — after 3 reds on the same head, validation waits for a NEW head)"
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-11-01:3297fa34",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-11-01",
+      "updatedAt": "2026-11-01",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ Validation CI went red on the head — merge aborted, rework re-queued. (linked issue #2026 re-armed) (approval latch kept — no re-review after fixes)\n🔴 red head e6a67885504f115cb13da8c703aab2042fff14fb — red 2/3 (owner directive 2026-10-04: red yields the slot — after 3 reds on the same head, validation waits for a NEW head)\n🌀 empty rework lap 1/1 — head e6a67885504f115cb13da8c703aab2042fff14fb unchanged since the previous red (owner finding 2026-10-04: the rework lap closed itself successful without pushing a fix) — LAST CHANCE: one more red on this unchanged head WITHHOLDS the rework arm and escalates to a human"
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-11-01:b60242e9",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-11-01",
+      "updatedAt": "2026-11-01",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ Validation CI went red on the head — merge aborted, rework re-queued. (linked issue #2026 re-armed) (approval latch kept — no re-review after fixes)\nFailed run: https://github.com/IstiN/flutter_agent_harness/actions/runs/41297837635\n🔴 red head 8bd0430c29aacb009ec3829bfb3f215a3c00e509 — red 1/3 (owner directive 2026-10-04: red yields the slot — after 3 reds on the same head, validation waits for a NEW head)"
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-01:45c27c84",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-01",
+      "updatedAt": "2026-11-01",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — REQUEST_CHANGES (re-review after rework laps 3–4)\n\n**Summary**: All six threads from the previous review are demonstrably fixed in this diff (raced-mint tolerance + concurrency test, orphan-tag rollback + re-mint test, loud probe failures + docs + uniform grants, dup comment, grant comments, App-token note) — verified by re-running the suites here: 11/11 mint, 53/53 hygiene, `dart analyze` clean. But the head `8bd0430c` is **red**: this PR's own +85 lines push `test/release_hygiene_test.dart` to 2811 lines over the repo's hard 2800 ceiling (`CRAP + duplication` leg → `R_GUARDS` → Quality gate, run 41297837635) — reproduced locally byte-identical — and three more failed checks carry unfetchable (404) logs.\n\n**Key Issues**:\n- 🚨 BLOCKING — `test/release_hygiene_test.dart` 2811 > 2800 (crap4dart loc gate, red on the head; PR-owned: main has 2726, this diff +85) → split the two gh-2026 lint tests into their own suite (`comment1`)\n- 🚨 BLOCKING — 3 failed checks on the head with unfetchable logs (Binaries smoke gate, JS engine integration quickjs-ng, a second Quality gate — `ci_failures.md` §1–3, all `{\"message\":\"Not Found\",…,\"status\":\"404\"}`): unattributable from the artifacts; the diff touches no `lib/`, so drift/flake is plausible — re-run/triage to green or root-cause before merge\n- ⚠️ IMPORTANT — the fixed probe's `2>&1` capture corrupts the numeric check on a gh warning with exit 0 → \"no train\" → rollback deletes a possibly-live ref (`comment2`)\n- 💡 SUGGESTION — docs/ci.md's App-token note narrows AGENTS.md gh-1402's literal scope (tags ARE listed in it) (`comment3`); dead `buildFixture(sha)` parameter (`comment4`)\n\n**Next Steps**:\n1. Move the two gh-2026 lint tests out of `release_hygiene_test.dart` (≤2800 again) and re-run the loc gate locally\n2. Re-run / triage the three 404-log checks on a fresh dispatch\n3. Split the probe's stdout/stderr capture; add an exit-0-with-stderr stub leg\n4. Reword the gh-1402 clause; drop the dead fixture parameter\n\nResolved threads: raced mints (`PRRT_kwDOTXdlLc6yY6gc`), orphan-tag rollback (`PRRT_kwDOTXdlLc6yY6hJ`), swallowed probe failures (`PRRT_kwDOTXdlLc6yY6ht`), duplicated comment (`PRRT_kwDOTXdlLc6yY6ig`), grant rationale (`PRRT_kwDOTXdlLc6yY6je`), App-token note (`PRRT_kwDOTXdlLc6yY6kY`) — all fixed and re-verified here. The PR description's coverage section remains pre-rework (acknowledged by the author in the rework comment — the posted rework summaries are the accurate map)."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-11-01:b8f41ebe",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-11-01",
+      "updatedAt": "2026-11-01",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ Merge conflict with main — the silent branch update could not merge main (conflict). (head `456aac0ca389a772ad4873cee404654d47af5e8c`) Rework re-queued (linked issue #2026 re-armed): resolve the conflicts and push — validation re-runs automatically. (approval latch kept — no re-review after the fix)"
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-01:37ab8b9a",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-01",
+      "updatedAt": "2026-11-01",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — REQUEST_CHANGES (re-review after rework lap 5 + main merge)\n\n**Summary**: Thread 7 (loc ceiling) is fixed and verified — the harness extraction dropped `release_hygiene_test.dart` to 1975 lines, the exact CI-failing gate now passes locally (rc=0, 1078/1078 files), and hygiene+mint suites are 64/64 with a clean analyze and no new similarity cluster. But the follow-up merge from main (`d32ef13ea7`) resolved `scripts/size_budget/fa-extension.tsv` to this branch's pre-merge rows, reverting gh-2030's landed reseed of `TOTAL`/`NOTICES`/`main.dart.js` — and main's new byte-exact drift-guard test (`ci_2030_extension_size_floor_test.dart`, shipped in the same merge) **fails on this head** (verified locally).\n\n**Key Issues**:\n- 🚨 BLOCKING — merge resolution reverted main's gh-2030 size floors; `test/ci_2030_extension_size_floor_test.dart` fails 1/3 on the head (`comment1`) — take main's three rows\n- Threads 8 (probe stderr→success-value merge), 9 (gh-1402 framing), 10 (dead `buildFixture(sha)` param) remain open and unfixed on the tip — no change to report, the rework lap still owns them\n\n**Next Steps**:\n1. Restore main's tsv rows (TOTAL 155887040 / NOTICES 1574782 / main.dart.js 12343041); `dart test test/ci_2030_extension_size_floor_test.dart` → 3/3\n2. Re-dispatch validation; the three earlier 404-log checks are arbitrated by the fresh run\n\nResolved threads: 7 (`PRRT_kwDOTXdlLc6yZlMM`, loc ceiling — fixed by the lap-5 extraction, re-verified here: loc gate rc=0, suites 64/64, analyze clean, similarity unchanged). Threads 8/9/10 stay open as posted."
+    }
+  ]
+}
