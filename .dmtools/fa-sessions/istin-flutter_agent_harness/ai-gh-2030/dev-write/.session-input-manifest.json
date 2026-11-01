@@ -1,0 +1,211 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-11-01T09:51:24.017Z",
+  "ticketKey": "gh-2030",
+  "headSha": "d7c4963052ffcf47956bb026b95456e11cc7d893",
+  "baseBranch": "main",
+  "reviewDecision": "NONE",
+  "labels": [],
+  "files": {
+    "ci_failures.md": {
+      "hash": "fnv1a64:8c1b87af27f1f010",
+      "size": 214343
+    },
+    "ci_failures_full.log": {
+      "hash": "fnv1a64:b47650aaa1a27517",
+      "size": 2927201
+    },
+    "ci_violations.json": {
+      "hash": "fnv1a64:70aca34b852410f9",
+      "size": 10284
+    },
+    "pr_diff.txt": {
+      "hash": "fnv1a64:4c36655f9c14d3d6",
+      "size": 12301
+    },
+    "pr_discussions.md": {
+      "hash": "fnv1a64:01f6c1b2b76d68f3",
+      "size": 20269
+    },
+    "pr_discussions_raw.json": {
+      "hash": "fnv1a64:9afcdf694a886aad",
+      "size": 8339
+    },
+    "pr_info.md": {
+      "hash": "fnv1a64:351b83516258e889",
+      "size": 3525
+    },
+    "request.md": {
+      "hash": "fnv1a64:826a69dc0afa8641",
+      "size": 936
+    },
+    "review_state.md": {
+      "hash": "fnv1a64:7404d33180cb8209",
+      "size": 1555
+    },
+    "rework_base_head.txt": {
+      "hash": "fnv1a64:17a1b08fc9f427bd",
+      "size": 40
+    },
+    "ticket.json": {
+      "hash": "fnv1a64:4b63c8fd076c2a62",
+      "size": 1002
+    },
+    "ticket.md": {
+      "hash": "fnv1a64:826a69dc0afa8641",
+      "size": 936
+    }
+  },
+  "comments": [
+    {
+      "id": "PRRT_kwDOTXdlLc6yY7hp",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "scripts/size_budget/fa-extension.tsv:1",
+      "resolved": false,
+      "body": "🚨 **BLOCKING: merge gate is red on this head — 3 failed checks, one root cause (pre-existing, not introduced by this diff, but it blocks the merge)**\n\n`ci_failures.md` reports 3 failed checks on `d7c4963052` — **Core tests (shard 0/4)**, **Static gates**, **Hostile ambient env**. All three share a single root cause: `test/tools/archive_read_test.dart` fails to LOAD with `ArchiveFormat` ambiguous-import errors (`ci_failures_full.log` lines 2471–2509 and 3155–3167):\n\n```\nThe name 'ArchiveFormat' is defined in the libraries\n'package:archive/src/util/codecs_recognizer.dart (via package:archive/archive.dart)'\nand 'package:flutter_agent_harness/src/tools/archive_reader.dart (via\npackage:flutter_agent_harness/flutter_agent_harness.dart)'.\n```\n\n**Verified in this review run** (not taken from the PR description):\n\n- Reproduced locally: `dart analyze test/tools/archive_read_test.dart` → 13 `ambiguous_import` errors (lines 140–305); resolved `archive` is **4.6.0**. The root `pubspec.lock` is gitignored (`050314f8`), so `archive: ^4.0.9` floats — the new release exports `ArchiveFormat`, colliding with the repo's own `lib/src/tools/archive_reader.dart:34` via the barrel.\n- **Not introduced by this diff**: `test/tools/archive_read_test.dart` last changed on main in `51bfcbbc2f`; this PR touches neither it, `lib/`, nor any `pubspec*` (4 files, verified via `git diff origin/main...HEAD --stat`). The claim \"fails identically on base `73d297aa`\" is consistent with all of the above.\n- Log-noise clarification for whoever reads the Static gates log: the three `##[error]size budget regression …` annotations there are **expected stderr** from `scripts/test_size_manifest.py` negative fixtures (see line 149: `MB + MB // 10` = the deliberate +10% case). They are not a real size regression — that job died on the analyzer errors (exit 3).\n\n**Why this is BLOCKING even though it is pre-existing**: the merge invariant is green-only (AGENTS.md, Quality gates — the SM validation \"merges only when green\"), and rework is already armed on this red head (\"red 1/3\"). Nothing else in this PR is wrong; this is the only thing between it and a merge.\n\n**Suggested fix (one line)** — in `test/tools/archive_read_test.dart`:\n\n```dart\nimport 'package:archive/archive.dart' hide ArchiveFormat;\n```\n\n(or import it with a prefix). Then re-run; validation goes green again on the new head. Please reference #2028 in the fix commit so the two tickets stay linked."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6yY7im",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "test/ci_2030_extension_size_floor_test.dart:158",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: the advertised \"+10% inflated artifact still rejected\" negative check is not in this file**\n\nThe PR description's Test Coverage bullet for this file claims: *\"Negative check: a +10% inflated artifact is still rejected (`GREW +10.0% … , exit 1`) — the ratchet stays armed.\"* The file as written contains exactly **two** tests, both happy-path:\n\n1. `extension size floor gates the run-41276487426 artifact shape green` — gate accepts the fixture, exit 0.\n2. `committed floor is the byte-exact --reseed output for that shape` — reseed round-trip pin.\n\nNo negative case exists here. The +10% negative coverage the description refers to actually lives in the pre-existing `scripts/test_size_manifest.py` (line 149: `{\"panel/app/main.dart.js\": MB + MB // 10}`), which did run and pass in the Static gates job.\n\nTwo ways to reconcile (either is fine):\n\n- **Add the negative case to this file** — one more fixture with sizes ×1.1 expecting `exitCode == 1` and `GREW +10.0%` in output. This makes the floor test self-contained exactly as the description promises and pins the ratchet at the level this file owns (a future edit that weakens `size_manifest.py`'s growth check would not be caught here today).\n- **Or correct the description** so the negative check is attributed to `scripts/test_size_manifest.py` — otherwise future maintainers will look for that coverage in this file and not find it.\n\nEverything else in this file verified clean in review: `dart analyze` clean, `dart format` clean, both tests pass, and the byte-exact reseed round-trip proves the committed TSV is the gate's own output for the failing run's manifest (no hand-edited rows)."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6yY8GJ",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "test/ci_2030_extension_size_floor_test.dart:159",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT: PR description claims a negative-path test that is not in the committed file**\n\nThe PR description's Test Coverage section states:\n\n> Negative check: a +10% inflated artifact is still rejected (`GREW +10.0% …, exit 1`) — the ratchet stays armed.\n\nThe committed `test/ci_2030_extension_size_floor_test.dart` contains only the two green-path tests (gate-green on the run-41276487426 shape, byte-exact `--reseed` round-trip). I grepped the file: there is no inflated-fixture variant and no `GREW +10.0%` assertion anywhere in the diff.\n\nEither add the test — it is cheap and belongs exactly here, e.g. rebuild the fixture with `sw/agent.js` inflated past the +5% budget and expect `exitCode == 1` with the `GREW` line — or amend the description so the claimed coverage matches the diff. The production ratchet itself is still armed (the CI gate enforces it), so this is not a correctness bug — but a review must be able to trust the Test Coverage section, and today it cannot."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6yY8HW",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "test/ci_2030_extension_size_floor_test.dart:179",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: side-effecting `createTempSync` buried in a string interpolation**\n\n```dart\nfinal reseeded =\n    '${Directory.systemTemp.createTempSync('gh2030_reseed').path}/'\n    'reseed.tsv';\naddTearDown(() => File(reseeded).parent.deleteSync(recursive: true));\n```\n\nA directory is created as a side effect inside a path string, and the teardown then re-derives that directory via `File(reseeded).parent`. It works, but two hops separate creation from cleanup. Clearer (and desync-proof):\n\n```dart\nfinal reseedDir = Directory.systemTemp.createTempSync('gh2030_reseed');\naddTearDown(() => reseedDir.deleteSync(recursive: true));\nfinal reseeded = '${reseedDir.path}/reseed.tsv';\n```\n\n`buildArtifactFixture()` above already uses exactly this shape — consistency argues for it here too."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6yY8IS",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "test/ci_2030_ci_sign_authoritative_copy_test.dart:47",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: blind casts in `stepsOf` give a cryptic failure if the job key is renamed**\n\n```dart\nYamlList stepsOf(String workflowPath, String job) {\n  final body = File(workflowPath).readAsStringSync();\n  final jobs = loadYaml(body)['jobs'] as YamlMap;\n  return (jobs[job] as YamlMap)['steps'] as YamlList;\n}\n```\n\nIf the `build-macos` job key in `build-macos.yml` is ever renamed, `jobs[job]` returns `null` and this dies with a null-aware cast error — the test goes red, but with a message that names nothing. The rest of this file is careful to attach a `reason:` to every expect (e.g. \"the job this guard protects disappeared\"). Consider doing the same here:\n\n```dart\nfinal jobBody = (loadYaml(body)['jobs'] as YamlMap)[job] as YamlMap?;\nexpect(jobBody, isNotNull,\n    reason: 'job \"$job\" disappeared from $workflowPath — the guard has '\n        'nothing left to protect');\nreturn jobBody!['steps'] as YamlList;\n```\n\nPolish only — the guard's ordering logic itself is sound."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-01:30f49af7",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-01",
+      "updatedAt": "2026-11-01",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🚨 **BLOCKING: merge gate is red on this head — 3 failed checks, one root cause (pre-existing, not introduced by this diff, but it blocks the merge)**\n\n`ci_failures.md` reports 3 failed checks on `d7c4963052` — **Core tests (shard 0/4)**, **Static gates**, **Hostile ambient env**. All three share a single root cause: `test/tools/archive_read_test.dart` fails to LOAD with `ArchiveFormat` ambiguous-import errors (`ci_failures_full.log` lines 2471–2509 and 3155–3167):\n\n```\nThe name 'ArchiveFormat' is defined in the libraries\n'package:archive/src/util/codecs_recognizer.dart (via package:archive/archive.dart)'\nand 'package:flutter_agent_harness/src/tools/archive_reader.dart (via\npackage:flutter_agent_harness/flutter_agent_harness.dart)'.\n```\n\n**Verified in this review run** (not taken from the PR description):\n\n- Reproduced locally: `dart analyze test/tools/archive_read_test.dart` → 13 `ambiguous_import` errors (lines 140–305); resolved `archive` is **4.6.0**. The root `pubspec.lock` is gitignored (`050314f8`), so `archive: ^4.0.9` floats — the new release exports `ArchiveFormat`, colliding with the repo's own `lib/src/tools/archive_reader.dart:34` via the barrel.\n- **Not introduced by this diff**: `test/tools/archive_read_test.dart` last changed on main in `51bfcbbc2f`; this PR touches neither it, `lib/`, nor any `pubspec*` (4 files, verified via `git diff origin/main...HEAD --stat`). The claim \"fails identically on base `73d297aa`\" is consistent with all of the above.\n- Log-noise clarification for whoever reads the Static gates log: the three `##[error]size budget regression …` annotations there are **expected stderr** from `scripts/test_size_manifest.py` negative fixtures (see line 149: `MB + MB // 10` = the deliberate +10% case). They are not a real size regression — that job died on the analyzer errors (exit 3).\n\n**Why this is BLOCKING even though it is pre-existing**: the merge invariant is green-only (AGENTS.md, Quality gates — the SM validation \"merges only when green\"), and rework is already armed on this red head (\"red 1/3\"). Nothing else in this PR is wrong; this is the only thing between it and a merge.\n\n**Suggested fix (one line)** — in `test/tools/archive_read_test.dart`:\n\n```dart\nimport 'package:archive/archive.dart' hide ArchiveFormat;\n```\n\n(or import it with a prefix). Then re-run; validation goes green again on the new head. Please reference #2028 in the fix commit so the two tickets stay linked."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-01:d5443176",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-01",
+      "updatedAt": "2026-11-01",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: the advertised \"+10% inflated artifact still rejected\" negative check is not in this file**\n\nThe PR description's Test Coverage bullet for this file claims: *\"Negative check: a +10% inflated artifact is still rejected (`GREW +10.0% … , exit 1`) — the ratchet stays armed.\"* The file as written contains exactly **two** tests, both happy-path:\n\n1. `extension size floor gates the run-41276487426 artifact shape green` — gate accepts the fixture, exit 0.\n2. `committed floor is the byte-exact --reseed output for that shape` — reseed round-trip pin.\n\nNo negative case exists here. The +10% negative coverage the description refers to actually lives in the pre-existing `scripts/test_size_manifest.py` (line 149: `{\"panel/app/main.dart.js\": MB + MB // 10}`), which did run and pass in the Static gates job.\n\nTwo ways to reconcile (either is fine):\n\n- **Add the negative case to this file** — one more fixture with sizes ×1.1 expecting `exitCode == 1` and `GREW +10.0%` in output. This makes the floor test self-contained exactly as the description promises and pins the ratchet at the level this file owns (a future edit that weakens `size_manifest.py`'s growth check would not be caught here today).\n- **Or correct the description** so the negative check is attributed to `scripts/test_size_manifest.py` — otherwise future maintainers will look for that coverage in this file and not find it.\n\nEverything else in this file verified clean in review: `dart analyze` clean, `dart format` clean, both tests pass, and the byte-exact reseed round-trip proves the committed TSV is the gate's own output for the failing run's manifest (no hand-edited rows)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-01:89a0c085",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-01",
+      "updatedAt": "2026-11-01",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT: PR description claims a negative-path test that is not in the committed file**\n\nThe PR description's Test Coverage section states:\n\n> Negative check: a +10% inflated artifact is still rejected (`GREW +10.0% …, exit 1`) — the ratchet stays armed.\n\nThe committed `test/ci_2030_extension_size_floor_test.dart` contains only the two green-path tests (gate-green on the run-41276487426 shape, byte-exact `--reseed` round-trip). I grepped the file: there is no inflated-fixture variant and no `GREW +10.0%` assertion anywhere in the diff.\n\nEither add the test — it is cheap and belongs exactly here, e.g. rebuild the fixture with `sw/agent.js` inflated past the +5% budget and expect `exitCode == 1` with the `GREW` line — or amend the description so the claimed coverage matches the diff. The production ratchet itself is still armed (the CI gate enforces it), so this is not a correctness bug — but a review must be able to trust the Test Coverage section, and today it cannot."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-01:1c8d67b1",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-01",
+      "updatedAt": "2026-11-01",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: side-effecting `createTempSync` buried in a string interpolation**\n\n```dart\nfinal reseeded =\n    '${Directory.systemTemp.createTempSync('gh2030_reseed').path}/'\n    'reseed.tsv';\naddTearDown(() => File(reseeded).parent.deleteSync(recursive: true));\n```\n\nA directory is created as a side effect inside a path string, and the teardown then re-derives that directory via `File(reseeded).parent`. It works, but two hops separate creation from cleanup. Clearer (and desync-proof):\n\n```dart\nfinal reseedDir = Directory.systemTemp.createTempSync('gh2030_reseed');\naddTearDown(() => reseedDir.deleteSync(recursive: true));\nfinal reseeded = '${reseedDir.path}/reseed.tsv';\n```\n\n`buildArtifactFixture()` above already uses exactly this shape — consistency argues for it here too."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-01:1e9e07a1",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-01",
+      "updatedAt": "2026-11-01",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: blind casts in `stepsOf` give a cryptic failure if the job key is renamed**\n\n```dart\nYamlList stepsOf(String workflowPath, String job) {\n  final body = File(workflowPath).readAsStringSync();\n  final jobs = loadYaml(body)['jobs'] as YamlMap;\n  return (jobs[job] as YamlMap)['steps'] as YamlList;\n}\n```\n\nIf the `build-macos` job key in `build-macos.yml` is ever renamed, `jobs[job]` returns `null` and this dies with a null-aware cast error — the test goes red, but with a message that names nothing. The rest of this file is careful to attach a `reason:` to every expect (e.g. \"the job this guard protects disappeared\"). Consider doing the same here:\n\n```dart\nfinal jobBody = (loadYaml(body)['jobs'] as YamlMap)[job] as YamlMap?;\nexpect(jobBody, isNotNull,\n    reason: 'job \"$job\" disappeared from $workflowPath — the guard has '\n        'nothing left to protect');\nreturn jobBody!['steps'] as YamlList;\n```\n\nPolish only — the guard's ordering logic itself is sound."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-11-01:c11aa98f",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-11-01",
+      "updatedAt": "2026-11-01",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🔴 red head d7c4963052ffcf47956bb026b95456e11cc7d893 — red 1/3 (owner directive 2026-10-04: red yields the slot — after 3 reds on the same head, validation waits for a NEW head)\n🔴 Red pre-merge gate on the head with no armed validation — rework armed (gh-917: first validation included, review or no review). The rework runner pushes a fix and validation re-runs on the new head (validate-fresh). After 3 red arming attempts on the SAME head the arm is withheld and a human is escalated (no infinite retry)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-01:0c32dd50",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-01",
+      "updatedAt": "2026-11-01",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — REQUEST_CHANGES\n\n**Summary**: Both repo-side fixes are correct and fully verified (new tests pass, `dart analyze`/`dart format` clean, the TSV reseed is a byte-exact `--reseed` round-trip, and the ci-sign install ordering matches the `build-mobile.yml` iOS pattern with a shape guard). The PR is blocked only by the red merge gate on this head — a pre-existing, unrelated load failure in `test/tools/archive_read_test.dart` (see inline thread for the one-line fix).\n\n**Key Issues**:\n- 🚨 BLOCKING — 3 failed checks (Core tests shard 0/4, Static gates, Hostile ambient env), all from `ArchiveFormat` ambiguous-import errors in `test/tools/archive_read_test.dart` (floating `archive ^4.0.9` → 4.6.0 now exports the name; root `pubspec.lock` is gitignored). Not introduced by this diff (file untouched since `51bfcbbc2f`), but the green-only merge invariant keeps this head red until fixed: add `hide ArchiveFormat` to the `package:archive` import (link #2028).\n- Note: the `##[error]size budget regression …` lines in the Static gates log are expected stderr from `scripts/test_size_manifest.py` negative fixtures — not a real regression.\n- 💡 The description attributes a \"+10% inflated artifact still rejected\" negative check to the new size-floor test; that coverage actually lives in `scripts/test_size_manifest.py` — add the case or fix the description.\n- Owner action (disclosed, not repo-fixable): expired `MACOS_INSTALLER_P12_BASE64`/`_PASSWORD` keep the arm64 PKG lane red after merge — consider keeping #2030 open or filing the rotation as its own tracked action before \"Closes #2030\" auto-closes it.\n\n**Next Steps**:\n1. Rework: `hide ArchiveFormat` on the `package:archive` import in `test/tools/archive_read_test.dart` → validation re-runs on the new head.\n2. Optional: add the +10% negative case to `test/ci_2030_extension_size_floor_test.dart` (or amend the description).\n3. Owner: rotate the expired macOS installer P12 secrets to clear the arm64 PKG lane."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-01:e9c5f985",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-01",
+      "updatedAt": "2026-11-01",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — REQUEST_CHANGES\n\n**Summary**: The two repo-side fixes verify green — I re-ran the new tests (3/3 pass, analyzer- and format-clean) and reproduced the exact RED (`GREW +7.9% sw/agent.js 1890859 -> 2040013`, exit 1) against the old floor with the real gate — but the PR head is red on its own validation CI, and all three failed checks share one root cause: `test/tools/archive_read_test.dart` fails to load (`ArchiveFormat` ambiguous import, `package:archive` vs the repo's own export; 13 `dart analyze` errors, exit 3).\n\n**Key Issues**:\n- 🚨 **BLOCKING — red validation CI** (Core tests shard 0/4 \"1 failed\", Static gates exit 3, Hostile ambient env \"1 failed\"; run 41291933619, head d7c49630). Root cause pre-exists this diff — none of the involved files are touched, and the root `pubspec.lock` is gitignored so `package:archive: ^4.0.9` floats (tracked upstream as #2028) — but \"all checks must pass\" is the merge gate and gh-2030 only auto-closes when the leg goes green. Minimal fix: `import 'package:archive/archive.dart' hide ArchiveFormat;` in `test/tools/archive_read_test.dart` (same one-line shape as the quarantine precedent on the base commit), then validation re-runs.\n- ⚠️ **IMPORTANT — claimed test coverage is missing**: the description's \"negative check: a +10% inflated artifact is still rejected\" does not exist in the committed test file (see inline thread). Add it or amend the description.\n- Owner action (not repo-fixable, disclosed in the PR): the arm64 PKG lane still fails on the expired `MACOS_INSTALLER_P12_BASE64`/`MACOS_INSTALLER_P12_PASSWORD` secrets — rotate them for a fully green leg.\n\n**Next Steps**:\n1. Fix the `ArchiveFormat` import collision in `test/tools/archive_read_test.dart` (or pin `package:archive`) so the PR's own validation goes green\n2. Add the claimed +10% negative ratchet test (or correct the PR description)\n3. Rotate the expired macOS installer P12 (owner)"
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-11-01:66dcb5da",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-11-01",
+      "updatedAt": "2026-11-01",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🔴 red head d7c4963052ffcf47956bb026b95456e11cc7d893 — red 2/3 (owner directive 2026-10-04: red yields the slot — after 3 reds on the same head, validation waits for a NEW head)\n🔴 Red pre-merge gate on the head with no armed validation — rework armed (gh-917: first validation included, review or no review). The rework runner pushes a fix and validation re-runs on the new head (validate-fresh). After 3 red arming attempts on the SAME head the arm is withheld and a human is escalated (no infinite retry)."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-11-01:7218e17a",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-11-01",
+      "updatedAt": "2026-11-01",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🧵 Unresolved review threads — rework armed. This machine-authored PR is reviewed (ai_pr_reviewed) but still has open review threads. The rework leg owns open threads: agent:rework is armed on this PR and the rework runner will work through the threads and push. Validation re-runs automatically afterwards, and once the threads are resolved a fresh re-review is armed (review-threads-resolved)."
+    }
+  ]
+}
