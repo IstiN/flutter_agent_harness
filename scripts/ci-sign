@@ -295,16 +295,19 @@ case "$CMD" in
       # valid identity (covers partial imports), then we are done.
       if security find-identity -v -p codesigning "$KC" | grep -qi "$NEW_FP"; then
         # gh-2008 shadow sweep: Xcode's export -allowProvisioningUpdates
-        # silently imports Apple-issued certs into the persistent keychain
-        # (observed: an extra "Apple Distribution" shadowing the pinned
-        # "iPhone Distribution" same-CN cert). Any codesigning identity
-        # that is NOT the pinned SHA-1 is a shadow — remove it so the
-        # search list can never resolve the wrong one (gh-1865 class).
+        # silently imports Apple-issued certs into the persistent keychain.
+        # gh-2026 hotfix: the keychain is SHARED by all labels (fa-ios,
+        # fa-macos, fa-macos-installer) — an identity is a shadow ONLY if
+        # no label manifest in $LABELS_DIR pins its SHA-1. The #2009 form
+        # ("not the current label pin") deleted the other labels' live
+        # identities (run 41276487426 arm64 attempt 2), and its echo died
+        # under set -u on a never-assigned variable in the echo.
+        ALL_PINNED="$(sed -n 's/^sha1=//p' "$LABELS_DIR"/* 2>/dev/null | tr 'a-f' 'A-F')"
         for FP in $(security find-identity -v -p codesigning "$KC" | sed -n 's/^ *[0-9]*) \([0-9A-F]\{40\}\) .*/\1/p'); do
-          if [ "$FP" != "$NEW_FP" ]; then
+          if [ "$FP" != "$NEW_FP" ] && ! printf '%s\n' "$ALL_PINNED" | grep -qxF "$FP"; then
             security delete-identity -Z "$FP" "$KC" 2>/dev/null \
               || err "could not remove shadow identity $FP (continuing)"
-            echo "ci-sign: swept shadow identity $FP from '$KC_BASE'"
+            echo "ci-sign: swept shadow identity $FP from '$(basename "$KC")'"
           fi
         done
         echo "ci-sign: identity for '$LABEL' is up to date ($NEW_FP)"
