@@ -75,7 +75,22 @@ git fetch origin "$target" --depth=1 2>/dev/null || git fetch origin main --dept
 git -c user.name="github-actions[bot]" \
     -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
     tag -a "$tag" -m "Release $tag" "$target"
-git push "${GH_TOKEN:+https://x-access-token:${GH_TOKEN}@github.com/${repo}.git}" "refs/tags/$tag"
+# The push is NOT race-idempotent: tags never fast-forward, and the daily
+# flow has up to ~5 parallel minters converging on the same missing tag
+# (build-macos-cli's two arch legs plus build-extension and both attach
+# legs). The loser's push is rejected ("already exists") — that is a WIN
+# (a sibling leg minted the same commit), never a failure. Re-probe the
+# ref before failing: present → continue to train verification; still
+# absent → the push genuinely failed (credential, perms, incident) and
+# the leg must go red with a self-explaining error.
+if ! git push "${GH_TOKEN:+https://x-access-token:${GH_TOKEN}@github.com/${repo}.git}" "refs/tags/$tag"; then
+  if git ls-remote --exit-code origin "refs/tags/$tag" >/dev/null 2>&1; then
+    echo "tag $tag was minted concurrently by a sibling leg — continuing to train verification"
+  else
+    echo "::error::tag $tag push failed and the ref is still missing — the push itself failed (credential, permissions, or a GitHub incident), not a race with a sibling leg. No draft will be created; fix the push and re-run." >&2
+    exit 1
+  fi
+fi
 
 # Guard 2 — the train must actually start. A push that fires no workflow
 # run (a GITHUB_TOKEN-classed credential on the wire, a GitHub incident, a
@@ -88,13 +103,35 @@ sleep_s="${RELEASE_TRAIN_VERIFY_SLEEP:-10}"
 runs_seen=0
 for _ in $(seq 1 "$tries"); do
   sleep "$sleep_s"
-  if [ "$(gh run list --repo "$repo" --branch "$tag" --limit 10 \
-    --json databaseId --jq 'length' 2>/dev/null || echo 0)" -gt 0 ]; then
+  # A probe failure must NOT read as "no train": gh prefers GH_TOKEN (the
+  # RELEASE_PAT) for this call, so a fine-grained PAT without Actions:read,
+  # an expired PAT, or a rate limit all land here. Swallowing the error
+  # (2>/dev/null || echo 0) burns the whole budget and then blames the push
+  # credential — a misleading RCA on a red release leg. Fail fast and
+  # surface the probe's own output instead.
+  probe_out="$(gh run list --repo "$repo" --branch "$tag" --limit 10 \
+    --json databaseId --jq 'length' 2>&1)" || {
+    echo "::error::train verification probe failed for $tag (gh run list): $probe_out — a failing probe (RELEASE_PAT without Actions:read, expired PAT, rate limit) is NOT evidence of a suppressed train; fix the probe credential before re-running." >&2
+    exit 1
+  }
+  if [ "${probe_out:-0}" -gt 0 ]; then
     runs_seen=1
     break
   fi
 done
 if [ "$runs_seen" -ne 1 ]; then
+  # Roll the untrained tag back before failing: the pushed ref left in
+  # place would make the prescribed "fix the credential and re-run" skip
+  # the mint (and its train check) entirely — the caller's plain
+  # `gh release create --draft` would then attach a draft to a ref whose
+  # train never ran, silently re-arming the exact stranded-draft shape
+  # this script exists to prevent (v1.0.663 / v1.0.665). Drop the LOCAL
+  # tag object too: a reused self-hosted workspace would otherwise die at
+  # `git tag -a` on the re-run.
+  echo "::warning::rolling back the untrained tag ref so a fixed re-run can re-mint" >&2
+  git push "${GH_TOKEN:+https://x-access-token:${GH_TOKEN}@github.com/${repo}.git}" ":refs/tags/$tag" ||
+    echo "::warning::rollback of refs/tags/$tag failed — a re-run will skip the mint (tag exists) and can strand the draft; delete refs/tags/$tag manually before re-running" >&2
+  git tag -d "$tag" >/dev/null 2>&1 || true
   echo "::error::tag train did not start for $tag: pushed refs/tags/$tag to ${repo} but no workflow run appeared on the ref within the verification budget — the push likely authenticated as a CI-suppressed token (GitHub never fires workflows for GITHUB_TOKEN pushes; the persisted actions/checkout extraheader must not outrank the GH_TOKEN push credentials), or the tag-trigger filter does not match. No draft was created; fix the push credential and re-run." >&2
   exit 1
 fi

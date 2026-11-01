@@ -105,10 +105,25 @@ the tag-scoped `publish`/`binaries` jobs. The daily:
   pushed via token-URL with the PAT the job already carries
   (`GH_TOKEN=RELEASE_PAT` on the dispatch-time call sites), the persisted
   extraheader stripped, and the train start verified with
-  `gh run list --branch <tag>` (needs `actions: read`, granted on
-  release-macos / release-mobile) BEFORE any draft is created — a mint
-  whose train does not start fails the leg loudly instead of stranding a
-  draft for the sweeper;
+  `gh run list --branch <tag>` BEFORE any draft is created — a mint whose
+  train does not start fails the leg loudly instead of stranding a draft
+  for the sweeper. The probe authenticates with the RELEASE_PAT (`gh`
+  prefers `GH_TOKEN`), so the PAT itself needs `actions: read`; the job
+  tokens carry the grant too (uniformly on every mint-reachable job) as
+  defense-in-depth in case the probe is ever switched to the job token,
+  and a failing probe is reported as its own error — never read as "no
+  train". The mint tolerates the raced-mint push (a sibling leg landing
+  the same tag first — the 2-arch `build-macos-cli` matrix plus
+  `build-extension` race the same fresh tag) by re-probing the ref, and
+  rolls an untrained tag back before failing so the prescribed re-run
+  re-mints instead of stranding the draft. Identity note (vs the AGENTS.md
+  gh-1402 invariant that release-path automation uses the fa-release-bot
+  App token): leg-time tag mints keep the pre-existing
+  `release_attach_or_create.sh` RELEASE_PAT pattern because the PAT is
+  what the dispatch-time call sites already hold, an App token would work
+  identically (it also fires workflow runs), and swapping the credential
+  is a follow-up not owned by the gh-2026 fix; the App-token invariant
+  continues to govern everything that commits release-path FILES;
 - never publishes to pub.dev itself (see the pub.dev row above) — pub.dev
   movement stays 100% in the auto_release → ci.yml tag job path, with the
   daily as verifier and rerun-recovery;

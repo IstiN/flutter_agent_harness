@@ -186,7 +186,22 @@ void main() {
         isEmpty,
         reason: 'no draft may be created for a tag with no train',
       );
-      expect(r.pushes, hasLength(1), reason: 'the push itself was attempted');
+      // The mint push itself was attempted, and the failed verification
+      // rolls the untrained ref back (PR #2029 review) — the second
+      // captured push is the rollback delete.
+      expect(
+        r.pushes.where(
+          (l) => l.contains('refs/tags/v1.2.3') && !l.contains(':refs/tags/'),
+        ),
+        hasLength(1),
+        reason: 'the tag push itself was attempted',
+      );
+      expect(
+        r.pushes.where((l) => l.contains(':refs/tags/')),
+        hasLength(1),
+        reason: 'the untrained ref must be rolled back (no orphan tag '
+            're-arming the stranded-draft shape)',
+      );
     },
   );
 }

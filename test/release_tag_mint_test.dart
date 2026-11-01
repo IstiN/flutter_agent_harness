@@ -46,7 +46,8 @@ class RaceMinter {
   final String origin; // the shared bare origin
   final String name;
   final String committerDate; // distinct per minter → distinct tag objects
-  final bool pushLands; // false → the push fails without landing (genuine failure)
+  final bool
+  pushLands; // false → the push fails without landing (genuine failure)
 
   late final String work;
   late final int gitCalls;
@@ -147,10 +148,12 @@ exec "\$FA_REAL_GIT" "\$@"
   void withEnv(Map<String, String> extra) => _extraEnv = extra;
 
   Future<void> run(String tag) {
-    final p = Process.start('bash', [
-      File('scripts/release_tag_mint.sh').absolute.path,
-      tag,
-    ], workingDirectory: work, environment: env());
+    final p = Process.start(
+      'bash',
+      [File('scripts/release_tag_mint.sh').absolute.path, tag],
+      workingDirectory: work,
+      environment: env(),
+    );
     return p.then((proc) async {
       final out = <String>[];
       out.add(await proc.stdout.transform(systemEncoding.decoder).join());
@@ -159,10 +162,7 @@ exec "\$FA_REAL_GIT" "\$@"
       output = out.join();
       final log = File(_ghLog);
       ghRunListCalls = log.existsSync()
-          ? log
-                .readAsLinesSync()
-                .where((l) => l.contains('run list'))
-                .length
+          ? log.readAsLinesSync().where((l) => l.contains('run list')).length
           : 0;
       final g = File(_gitLog);
       gitCalls = g.existsSync() ? g.readAsLinesSync().length : 0;
@@ -219,6 +219,49 @@ Future<(RaceMinter, RaceMinter)> _racePair(String tag) async {
   return (a, b);
 }
 
+/// A seeded single-minter fixture: bare origin with one seed commit, one
+/// work clone, stubs wired. [name] namespaces the minter's dirs.
+Future<(RaceMinter, String)> _singleMinter(String name) async {
+  final root = Directory.systemTemp.createTempSync('mint-$name-');
+  final realGit = resolveRealGit();
+  final origin = '${root.path}/origin.git';
+  Process.runSync(realGit, [
+    'init',
+    '-q',
+    '--bare',
+    '-b',
+    'main',
+    origin,
+  ], workingDirectory: root.path);
+  final seed = '${root.path}/seed';
+  void git(List<String> args, {String? cwd}) {
+    final r = Process.runSync(realGit, args, workingDirectory: cwd ?? seed);
+    expect(r.exitCode, 0, reason: 'fixture git $args failed: ${r.stderr}');
+  }
+
+  git(['clone', '-q', origin, seed], cwd: root.path);
+  git(['config', 'user.email', 't@t']);
+  git(['config', 'user.name', 't']);
+  File('$seed/README.md').writeAsStringSync('seed\n');
+  git(['add', '-A']);
+  git(['commit', '-q', '-m', 'seed']);
+  git(['push', '-q', 'origin', 'main']);
+  final sha = Process.runSync(realGit, [
+    'rev-parse',
+    'HEAD',
+  ], workingDirectory: seed).stdout.toString().trim();
+  final m = RaceMinter(
+    root: root,
+    origin: origin,
+    name: name,
+    committerDate: '2026-01-01T00:00:01Z',
+    pushLands: name == 'noland' ? false : true,
+  );
+  m.buildFixture(sha);
+  m.withSha(sha);
+  return (m, sha);
+}
+
 void main() {
   test(
     'PR #2029 review: a mint that loses the push race to a sibling leg continues to train verification instead of dying on the rejected push',
@@ -241,22 +284,20 @@ void main() {
         expect(
           m.exitCode,
           0,
-          reason: 'the ${m.name} minter must survive the race '
+          reason:
+              'the ${m.name} minter must survive the race '
               '(output: ${m.output})',
         );
       }
       // Exactly one push can land; the other must have been tolerated as
       // the raced-mint case (never a bare fatal / never a red exit).
-      final raced = [a, b].where(
-        (m) => m.output.contains('minted concurrently by a sibling leg'),
-      );
+      final raced = [
+        a,
+        b,
+      ].where((m) => m.output.contains('minted concurrently by a sibling leg'));
       expect(raced, hasLength(1), reason: 'exactly one minter lost the push');
       expect(
-        [a, b].any(
-          (m) => m.output.contains(
-            '✅ tag train for v9.9.9 started',
-          ),
-        ),
+        [a, b].any((m) => m.output.contains('✅ tag train for v9.9.9 started')),
         isTrue,
         reason: 'the loser continues to (and passes) train verification',
       );
@@ -265,54 +306,28 @@ void main() {
 
   test(
     'PR #2029 review: a push that fails with the ref still missing fails loud with a self-explaining error',
-    () {
+    () async {
       // The race tolerance must not swallow genuine push failures: if the
       // push fails AND the ref is still absent, nothing minted the tag —
       // the leg must go red naming the real problem, not exit 0.
-      final root = Directory.systemTemp.createTempSync('mint-noland-');
-      final realGit = resolveRealGit();
-      final origin = '${root.path}/origin.git';
-      Process.runSync(realGit, [
-        'init',
-        '-q',
-        '--bare',
-        '-b',
-        'main',
-        origin,
-      ], workingDirectory: root.path);
-      final m = RaceMinter(
-        root: root,
-        origin: origin,
-        name: 'noland',
-        committerDate: '2026-01-01T00:00:01Z',
-        pushLands: false,
-      );
-      m.buildFixture('');
-      final sha = Process.runSync(realGit, [
-        'rev-parse',
-        'HEAD',
-      ], workingDirectory: m.work).stdout.toString().trim();
-      m.withSha(sha);
+      final (m, sha) = await _singleMinter('noland');
       m.withEnv(const {'GH_STUB_TRAIN_RUNNING': '1'});
-      final done = m.run('v9.9.8');
-      // The mint is fully synchronous (Process.runSync inside); the
-      // future completes on the next microtask.
-      return done.then((_) {
-        expect(m.exitCode, isNot(0), reason: m.output);
-        expect(m.output, contains('::error::'));
-        expect(
-          m.output,
-          contains('push failed and the ref is still missing'),
-          reason: 'the error must distinguish the no-land push failure '
-              'from the raced-mint case',
-        );
-      });
+      await m.run('v9.9.8');
+      expect(m.exitCode, isNot(0), reason: m.output);
+      expect(m.output, contains('::error::'));
+      expect(
+        m.output,
+        contains('push failed and the ref is still missing'),
+        reason:
+            'the error must distinguish the no-land push failure '
+            'from the raced-mint case',
+      );
     },
   );
 
   test(
     'PR #2029 review: a failed train verification rolls the pushed tag back so a fixed re-run re-mints instead of stranding the draft',
-    () {
+    () async {
       // The v1.0.663 / v1.0.665 recovery trap: attempt 1 pushes the tag,
       // no run appears, the mint fails loud — but the tag stays on the
       // remote. The prescribed "fix the credential and re-run" then finds
@@ -321,33 +336,11 @@ void main() {
       // stranded-draft shape (green leg, sweep a day later). The mint
       // must roll the untrained ref back (remote + the local tag object
       // that would break a reused-workspace re-tag) before failing.
-      final root = Directory.systemTemp.createTempSync('mint-rollback-');
-      final realGit = resolveRealGit();
-      final origin = '${root.path}/origin.git';
-      Process.runSync(realGit, [
-        'init',
-        '-q',
-        '--bare',
-        '-b',
-        'main',
-        origin,
-      ], workingDirectory: root.path);
-      final m = RaceMinter(
-        root: root,
-        origin: origin,
-        name: 'rollback',
-        committerDate: '2026-01-01T00:00:01Z',
-      );
-      m.buildFixture('');
-      final sha = Process.runSync(realGit, [
-        'rev-parse',
-        'HEAD',
-      ], workingDirectory: m.work).stdout.toString().trim();
-      m.withSha(sha);
+      final (m, sha) = await _singleMinter('rollback');
       m.withEnv(const {'GH_STUB_TRAIN_RUNNING': '0'});
 
       // Attempt 1: push lands, no run ever appears → loud failure + rollback.
-      m.run('v9.9.7');
+      await m.run('v9.9.7');
       expect(m.exitCode, isNot(0), reason: m.output);
       expect(m.output, contains('::error::tag train did not start'));
       expect(
@@ -355,16 +348,18 @@ void main() {
         contains('rolling back the untrained tag ref'),
         reason: 'the operator must see the rollback in the log',
       );
+      final realGit = resolveRealGit();
       final remoteRef = Process.runSync(realGit, [
         'ls-remote',
         '--exit-code',
-        origin,
+        m.origin,
         'refs/tags/v9.9.7',
       ]);
       expect(
         remoteRef.exitCode,
         2,
-        reason: 'the untrained tag ref must be rolled back on the remote '
+        reason:
+            'the untrained tag ref must be rolled back on the remote '
             '(stdout: ${remoteRef.stdout})',
       );
       // Local tag object must be gone too (a reused self-hosted workspace
@@ -378,16 +373,10 @@ void main() {
       // Attempt 2 ("fix the credential and re-run"): the ref is absent
       // again, so the mint re-mints and — with the train now visible —
       // succeeds. This is the recovery path the orphan tag used to break.
-      final m2 = RaceMinter(
-        root: root,
-        origin: origin,
-        name: 'rollback-retry',
-        committerDate: '2026-01-01T00:00:03Z',
-      );
-      m2.buildFixture('');
+      final (m2, _) = await _singleMinter('rollback-retry');
       m2.withSha(sha);
       m2.withEnv(const {'GH_STUB_TRAIN_RUNNING': '1'});
-      m2.run('v9.9.7');
+      await m2.run('v9.9.7');
       expect(m2.exitCode, 0, reason: m2.output);
       expect(m2.output, contains('✅ tag train for v9.9.7 started'));
     },
@@ -395,38 +384,16 @@ void main() {
 
   test(
     'PR #2029 review: a failing train probe (403 / expired PAT) fails fast and is diagnosed as a probe failure, never as a suppressed train',
-    () {
+    () async {
       // `2>/dev/null || echo 0` used to collapse a denied/failing probe
       // into "no train": the leg burned the full 12×10s budget and then
       // blamed the push credential (CI-suppressed token) while the real
       // cause — RELEASE_PAT without Actions:read, an expired PAT, a rate
       // limit — was discarded to /dev/null. A probe failure must abort
       // the budget immediately with a distinct, self-explaining error.
-      final root = Directory.systemTemp.createTempSync('mint-probe-');
-      final realGit = resolveRealGit();
-      final origin = '${root.path}/origin.git';
-      Process.runSync(realGit, [
-        'init',
-        '-q',
-        '--bare',
-        '-b',
-        'main',
-        origin,
-      ], workingDirectory: root.path);
-      final m = RaceMinter(
-        root: root,
-        origin: origin,
-        name: 'probe',
-        committerDate: '2026-01-01T00:00:01Z',
-      );
-      m.buildFixture('');
-      final sha = Process.runSync(realGit, [
-        'rev-parse',
-        'HEAD',
-      ], workingDirectory: m.work).stdout.toString().trim();
-      m.withSha(sha);
+      final (m, _) = await _singleMinter('probe');
       m.withEnv(const {'GH_STUB_PROBE_FAILS': '1'});
-      m.run('v9.9.6');
+      await m.run('v9.9.6');
       expect(m.exitCode, isNot(0), reason: m.output);
       expect(m.output, contains('::error::train verification probe failed'));
       expect(
@@ -437,7 +404,8 @@ void main() {
       expect(
         m.ghRunListCalls,
         1,
-        reason: 'a failing probe must abort immediately, not burn the '
+        reason:
+            'a failing probe must abort immediately, not burn the '
             'verification budget',
       );
       expect(

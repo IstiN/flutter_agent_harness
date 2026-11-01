@@ -89,7 +89,6 @@ if [ "$ls_remote_rc" -eq 2 ]; then
 fi
 
 # DRAFT-first (gh-1801): a create here must never publish — the resolved
-# DRAFT-first (gh-1801): a create here must never publish — the resolved
 # asset list at this point can never include the signed checksums. The
 # race-lost create is tolerated (the winner owns the release).
 gh release create "$tag" \

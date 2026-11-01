@@ -76,7 +76,15 @@ void main() {
         isEmpty,
         reason: 'no draft may be created for a tag with no train',
       );
-      expect(r.pushes, hasLength(1));
+      // The mint push ran, and the failed verification rolled the
+      // untrained ref back (PR #2029 review) — captured as the delete push.
+      expect(
+        r.pushes.where(
+          (l) => l.contains('refs/tags/v1.2.3') && !l.contains(':refs/tags/'),
+        ),
+        hasLength(1),
+      );
+      expect(r.pushes.where((l) => l.contains(':refs/tags/')), hasLength(1));
     },
   );
 }

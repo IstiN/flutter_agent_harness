@@ -1316,25 +1316,38 @@ jobs:
     );
 
     test(
-      'gh-2026: release-macos / release-mobile grant actions:read (the mint train-verification probe)',
+      'gh-2026: every mint-reachable job grants actions:read (the mint train-verification probe)',
       () {
         // scripts/release_tag_mint.sh polls `gh run list --branch <tag>`
-        // after the minted push; without actions:read GitHub answers 403,
-        // the probe reads as "no train" and every mint fails spuriously
-        // (same grant rationale as the daily sweeper, review of #294).
+        // after the minted push. The probe authenticates with the RELEASE_PAT
+        // (gh prefers GH_TOKEN, and every mint-reachable call site exports
+        // it — the lints above pin that), so the job-level grant is
+        // defense-in-depth, not the probe's credential (PR #2029 review).
+        // It is granted UNIFORMLY on every job that can reach the mint —
+        // a mint that wins the race runs from any of them, and a missing
+        // grant turns into a spurious red leg the day the probe is ever
+        // switched to the job token.
         const expected = {
-          '.github/workflows/build-macos.yml': 'release-macos',
-          '.github/workflows/build-mobile.yml': 'release-mobile',
+          '.github/workflows/build-macos.yml': {
+            'release-macos',
+            'build-macos-cli',
+            'build-extension',
+          },
+          '.github/workflows/build-mobile.yml': {'release-mobile'},
         };
-        expected.forEach((wf, jobId) {
-          final job = jobsOf(wf)[jobId] as YamlMap;
-          final perms = job['permissions'] as YamlMap;
-          expect(
-            perms['actions']?.toString(),
-            'read',
-            reason: '$wf job "$jobId" must grant actions:read for the '
-                'mint train-verification probe',
-          );
+        expected.forEach((wf, jobIds) {
+          final jobs = jobsOf(wf);
+          for (final jobId in jobIds) {
+            final job = jobs[jobId] as YamlMap;
+            final perms = job['permissions'] as YamlMap;
+            expect(
+              perms['actions']?.toString(),
+              'read',
+              reason: '$wf job "$jobId" must grant actions:read for the '
+                  'mint train-verification probe (defense-in-depth; the '
+                  'probe authenticates with RELEASE_PAT)',
+            );
+          }
         });
       },
     );
