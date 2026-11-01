@@ -66,6 +66,29 @@ fi
 marker="<!-- release-draft-owner: $identity -->"
 grep -qF "$marker" "$notes_file" || printf '\n%s\n' "$marker" >>"$notes_file"
 
+# gh-2026: a `gh release create` for a MISSING ref REST-mints a
+# lightweight API tag with NO push event — the v0.1.408 silent class
+# (issue #597). The fast legs (build-macos.yml build-extension /
+# build-macos-cli) can reach this create before the attach legs
+# (release-macos / release-mobile): the silent mint wins the race, every
+# attach leg then finds the tag existing and skips the CI-firing
+# annotated push, no tag train ever runs, and the draft is stranded
+# (swept a day later — the v1.0.663 / v1.0.665 shape). When the ref is
+# DEFINITELY missing, mint it through the CI-firing annotated push and
+# verify the train started BEFORE creating the draft (dispatch-time call
+# sites export GH_TOKEN=RELEASE_PAT for exactly this; the ci.yml tag-run
+# call sites always see the tag of their own push event and never enter
+# the mint). An indeterminable verdict (no origin remote, rc 128 —
+# sandboxed fixtures) falls through to the plain create path.
+set +e
+git ls-remote --exit-code origin "refs/tags/$tag" >/dev/null 2>&1
+ls_remote_rc=$?
+set -e
+if [ "$ls_remote_rc" -eq 2 ]; then
+  bash "$(dirname "$0")/release_tag_mint.sh" "$tag"
+fi
+
+# DRAFT-first (gh-1801): a create here must never publish — the resolved
 # DRAFT-first (gh-1801): a create here must never publish — the resolved
 # asset list at this point can never include the signed checksums. The
 # race-lost create is tolerated (the winner owns the release).

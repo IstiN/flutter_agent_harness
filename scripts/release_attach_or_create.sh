@@ -92,11 +92,18 @@ grep -qF "$marker" "$notes" || printf '\n%s\n' "$marker" >> "$notes"
 
 # A `gh release create` for a MISSING tag mints a lightweight API tag:
 # no push event → no ci.yml tag run → no publish/binaries (the v0.1.408
-# silent class, issue #597). If the ref is absent, create it as an
+# silent class, issue #597). If the ref is absent, mint it as an
 # ANNOTATED tag and push it with the PAT the job already carries
-# (GH_TOKEN=RELEASE_PAT in build-macos) so the tag CI fires. A push with
-# the workflow's default github.token would be equally dead — GitHub
-# suppresses events triggered by GITHUB_TOKEN.
+# (GH_TOKEN=RELEASE_PAT in build-macos) so the tag CI fires. The mint
+# itself (GH_TOKEN guard, persisted-checkout-extraheader strip, push,
+# train-start verification) lives in scripts/release_tag_mint.sh —
+# gh-2026: the v1.0.663 / v1.0.665 minted pushes rode actions/checkout's
+# persisted GITHUB_TOKEN extraheader (it outranks the URL credentials),
+# GitHub suppresses workflow triggers for GITHUB_TOKEN pushes, no tag run
+# ever existed on those refs, and the drafts rotted behind green legs.
+# A mint whose train does not start now fails loud BEFORE any draft is
+# created, so the leg goes red and the failure-path draft guard has
+# nothing to reclaim.
 # Gate on the DEFINITE missing verdict (ls-remote --exit-code rc 2):
 # sandboxes without an origin remote fatal with 128 — indeterminable
 # falls through to the plain create path (test fixtures rely on it).
@@ -105,25 +112,7 @@ git ls-remote --exit-code origin "refs/tags/$tag" >/dev/null 2>&1
 ls_remote_rc=$?
 set -e
 if [ "$ls_remote_rc" -eq 2 ]; then
-  # Fail fast BEFORE the cryptic crash: the push URL below collapses to ''
-  # when GH_TOKEN is unset, and git's `fatal: bad repository ''` does not
-  # point at the env gap (run 39766453580, v1.0.626 mobile leg). Callers
-  # must export GH_TOKEN=RELEASE_PAT (or a job-scoped App token) — the
-  # workflow GITHUB_TOKEN is not a substitute (GitHub suppresses events it
-  # triggers, so the tag CI would never fire).
-  if [ -z "${GH_TOKEN:-}" ]; then
-    echo "::error::tag $tag is missing but GH_TOKEN is not set — the annotated-tag push would run 'git push \"\"'. Set GH_TOKEN (PAT/App token) on the calling step, or the tag can never be minted here." >&2
-    exit 1
-  fi
-  target="${RELEASE_TARGET_SHA:-${GITHUB_SHA:?}}"
-  echo "tag $tag missing — creating annotated tag at $target (PAT push, fires tag CI)"
-  git fetch origin "$target" --depth=1 2>/dev/null || git fetch origin main --depth=50
-  # CI checkout carries no identity; annotate as the actions bot without
-  # touching global config (empty ident → exit 128, run 35426119831).
-  git -c user.name="github-actions[bot]" \
-      -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
-      tag -a "$tag" -m "Release $tag" "$target"
-  git push "${GH_TOKEN:+https://x-access-token:${GH_TOKEN}@github.com/${repo}.git}" "refs/tags/$tag"
+  bash "$(dirname "$0")/release_tag_mint.sh" "$tag"
 fi
 
 # Bare vX.Y.Z title (#282): matches the tag, matches pub.dev. gh-1801

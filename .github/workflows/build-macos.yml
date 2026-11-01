@@ -1287,6 +1287,10 @@ jobs:
     if: inputs.create_release == 'true'
     permissions:
       contents: write
+      # gh-2026: the attach-or-create mint verifies the tag train actually
+      # started via `gh run list` on the tag ref — 403 without the grant
+      # (same rationale as the daily sweeper's, review of #294).
+      actions: read
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

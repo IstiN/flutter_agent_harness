@@ -1438,6 +1438,10 @@ jobs:
       (needs.build-ios.result == 'success' || needs.build-ios.result == 'skipped')
     permissions:
       contents: write
+      # gh-2026: the attach-or-create mint verifies the tag train actually
+      # started via `gh run list` on the tag ref — 403 without the grant
+      # (same rationale as the daily sweeper's, review of #294).
+      actions: read
     steps:
       - name: Nothing to release
         # Both platforms picked a no-binary content mode (none /

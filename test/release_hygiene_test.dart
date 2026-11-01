@@ -1268,6 +1268,76 @@ jobs:
         );
       },
     );
+
+    test(
+      'gh-2026: build-macos lazy-draft call sites export GH_TOKEN (they can reach the missing-ref mint)',
+      () {
+        // release_lazy_draft.sh now mints a missing tag through the same
+        // CI-firing annotated push (scripts/release_tag_mint.sh) instead of
+        // letting `gh release create` REST-mint a push-event-less
+        // lightweight tag (v0.1.408 class, issue #597) that strands the
+        // draft (v1.0.663 / v1.0.665 recurrence). Only the dispatch-time
+        // call sites can reach the mint — the ci.yml tag-run sites always
+        // see their own push event's tag — so the lint scopes to
+        // build-macos.yml, whose build-macos-cli / build-extension steps
+        // must carry the PAT, never the job token.
+        var checked = 0;
+        const wf = '.github/workflows/build-macos.yml';
+        jobsOf(wf).forEach((jobId, job) {
+          if (job is! Map || !job.containsKey('steps')) return;
+          for (final step in (job['steps'] as YamlList)) {
+            if (step is! YamlMap) continue;
+            final run = step['run']?.toString() ?? '';
+            if (!run.contains('release_lazy_draft.sh')) continue;
+            checked++;
+            final ghToken =
+                (step['env'] as YamlMap?)?['GH_TOKEN']?.toString();
+            expect(
+              ghToken,
+              isNotNull,
+              reason: '$wf job "$jobId": the lazy-draft call site can mint a '
+                  'missing tag (token-URL push) — it must export GH_TOKEN '
+                  '(PAT/App token)',
+            );
+            expect(
+              ghToken,
+              isNot(contains('secrets.GITHUB_TOKEN')),
+              reason: '$wf job "$jobId": GH_TOKEN must be a PAT/App token — '
+                  'a GITHUB_TOKEN push can never trigger the tag train',
+            );
+          }
+        });
+        expect(
+          checked,
+          greaterThanOrEqualTo(2),
+          reason: 'the lint must see build-macos-cli + build-extension',
+        );
+      },
+    );
+
+    test(
+      'gh-2026: release-macos / release-mobile grant actions:read (the mint train-verification probe)',
+      () {
+        // scripts/release_tag_mint.sh polls `gh run list --branch <tag>`
+        // after the minted push; without actions:read GitHub answers 403,
+        // the probe reads as "no train" and every mint fails spuriously
+        // (same grant rationale as the daily sweeper, review of #294).
+        const expected = {
+          '.github/workflows/build-macos.yml': 'release-macos',
+          '.github/workflows/build-mobile.yml': 'release-mobile',
+        };
+        expected.forEach((wf, jobId) {
+          final job = jobsOf(wf)[jobId] as YamlMap;
+          final perms = job['permissions'] as YamlMap;
+          expect(
+            perms['actions']?.toString(),
+            'read',
+            reason: '$wf job "$jobId" must grant actions:read for the '
+                'mint train-verification probe',
+          );
+        });
+      },
+    );
   });
 
   // ── AC3 — one naming scheme: bare vX.Y.Z (UT-naming) ────────────────────
