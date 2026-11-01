@@ -199,7 +199,8 @@ void main() {
       expect(
         r.pushes.where((l) => l.contains(':refs/tags/')),
         hasLength(1),
-        reason: 'the untrained ref must be rolled back (no orphan tag '
+        reason:
+            'the untrained ref must be rolled back (no orphan tag '
             're-arming the stranded-draft shape)',
       );
     },

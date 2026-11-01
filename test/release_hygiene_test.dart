@@ -1290,19 +1290,20 @@ jobs:
             final run = step['run']?.toString() ?? '';
             if (!run.contains('release_lazy_draft.sh')) continue;
             checked++;
-            final ghToken =
-                (step['env'] as YamlMap?)?['GH_TOKEN']?.toString();
+            final ghToken = (step['env'] as YamlMap?)?['GH_TOKEN']?.toString();
             expect(
               ghToken,
               isNotNull,
-              reason: '$wf job "$jobId": the lazy-draft call site can mint a '
+              reason:
+                  '$wf job "$jobId": the lazy-draft call site can mint a '
                   'missing tag (token-URL push) — it must export GH_TOKEN '
                   '(PAT/App token)',
             );
             expect(
               ghToken,
               isNot(contains('secrets.GITHUB_TOKEN')),
-              reason: '$wf job "$jobId": GH_TOKEN must be a PAT/App token — '
+              reason:
+                  '$wf job "$jobId": GH_TOKEN must be a PAT/App token — '
                   'a GITHUB_TOKEN push can never trigger the tag train',
             );
           }
@@ -1343,7 +1344,8 @@ jobs:
             expect(
               perms['actions']?.toString(),
               'read',
-              reason: '$wf job "$jobId" must grant actions:read for the '
+              reason:
+                  '$wf job "$jobId" must grant actions:read for the '
                   'mint train-verification probe (defense-in-depth; the '
                   'probe authenticates with RELEASE_PAT)',
             );
