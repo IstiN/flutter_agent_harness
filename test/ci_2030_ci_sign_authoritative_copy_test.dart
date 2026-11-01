@@ -44,7 +44,15 @@ const macos = '.github/workflows/build-macos.yml';
 YamlList stepsOf(String workflowPath, String job) {
   final body = File(workflowPath).readAsStringSync();
   final jobs = loadYaml(body)['jobs'] as YamlMap;
-  return (jobs[job] as YamlMap)['steps'] as YamlList;
+  final jobBody = jobs[job] as YamlMap?;
+  expect(
+    jobBody,
+    isNotNull,
+    reason:
+        'job "$job" disappeared from $workflowPath — the guard has '
+        'nothing left to protect',
+  );
+  return jobBody!['steps'] as YamlList;
 }
 
 /// The executable view of a step's run block: comment lines dropped, so a

@@ -101,17 +101,23 @@ const artifactManifest = [
 /// Builds a directory artifact with the run's exact shape: one sparse file
 /// (st_size is all `size_manifest.py` reads) per manifest row + filler
 /// files (< the 64 KiB tracking floor, so they only move the TOTAL)
-/// carrying the sub-floor payload the real zip had.
-Directory buildArtifactFixture() {
+/// carrying the sub-floor payload the real zip had. [swAgentExtraBytes]
+/// inflates `sw/agent.js` past the +5% budget for the negative case (the
+/// TOTAL grows by the same delta, as a real artifact would).
+Directory buildArtifactFixture({int swAgentExtraBytes = 0}) {
   final dir = Directory.systemTemp.createTempSync('gh2030_ext_artifact');
   addTearDown(() => dir.deleteSync(recursive: true));
   for (final row in artifactManifest) {
-    writeSparseFile(File('${dir.path}/${row[1] as String}'), row[0] as int);
+    final isAgentSw = (row[1] as String) == 'sw/agent.js';
+    writeSparseFile(
+      File('${dir.path}/${row[1] as String}'),
+      (row[0] as int) + (isAgentSw ? swAgentExtraBytes : 0),
+    );
   }
   // Sub-floor payload: TOTAL − Σ(tracked rows), spread over files each
   // below the 64 KiB manifest floor (62,183 < 65,536 bytes).
   final trackedSum = artifactManifest.fold<int>(0, (s, r) => s + (r[0] as int));
-  final fillerBytes = artifactTotalBytes - trackedSum;
+  final fillerBytes = artifactTotalBytes + swAgentExtraBytes - trackedSum;
   expect(fillerBytes, greaterThanOrEqualTo(0));
   const fillerChunk = 62183;
   final fillerCount = (fillerBytes / fillerChunk).ceil();
@@ -172,17 +178,41 @@ void main() {
     );
     expect(result.stdout, contains('size budget OK'));
   });
+  test('a +10% inflated artifact is still rejected — the ratchet stays '
+      'armed (gh-2030)', () {
+    // sw/agent.js grown ×1.1 (2,040,013 → 2,244,014 = +10.0%): double the
+    // +5% budget, shaped like a next real regression. The committed floor
+    // must refuse it — a floor that accepts anything would not have
+    // caught run 41276487426's `GREW +7.9% sw/agent.js` in the first
+    // place.
+    final artifact = buildArtifactFixture(swAgentExtraBytes: 204001);
+    final result = runGate(artifact: artifact, baselinePath: baseline);
+    expect(
+      result.exitCode,
+      1,
+      reason:
+          'an artifact past the +5% budget must still be rejected by the '
+          'committed floor — the ratchet stays armed. Gate output:\n'
+          '${result.stdout}\n${result.stderr}',
+    );
+    expect(
+      result.stdout,
+      matches(RegExp(r'GREW\s+\+\s*10\.0%\s+sw/agent\.js')),
+      reason:
+          'the rejection must name the regressing line and its measured '
+          'growth (+10.0% on sw/agent.js), not fail for some unrelated '
+          'reason',
+    );
+  });
 
   test('committed floor is the byte-exact --reseed output for that shape '
       '(gh-2030)', () {
     final artifact = buildArtifactFixture();
-    final reseeded =
-        '${Directory.systemTemp.createTempSync('gh2030_reseed').path}/'
-        'reseed.tsv';
-    addTearDown(() => File(reseeded).parent.deleteSync(recursive: true));
+    final reseedDir = Directory.systemTemp.createTempSync('gh2030_reseed');
+    addTearDown(() => reseedDir.deleteSync(recursive: true));
     // --reseed requires an EXISTING baseline file to overwrite; the old
     // content is irrelevant (it rewrites from the artifact manifest).
-    File(reseeded).parent.createSync(recursive: true);
+    final reseeded = '${reseedDir.path}/reseed.tsv';
     File(reseeded).writeAsStringSync('0\tseed\n0\tTOTAL\n');
     final result = runGate(
       artifact: artifact,
