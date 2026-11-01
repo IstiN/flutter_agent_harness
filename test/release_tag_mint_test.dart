@@ -221,18 +221,30 @@ Future<(RaceMinter, RaceMinter)> _racePair(String tag) async {
 
 /// A seeded single-minter fixture: bare origin with one seed commit, one
 /// work clone, stubs wired. [name] namespaces the minter's dirs.
-Future<(RaceMinter, String)> _singleMinter(String name) async {
+/// [attachOrigin] reuses an EXISTING fixture origin (fresh work clone
+/// only) — the shape of a real re-run: same repository, same target
+/// commit, new checkout. The seed commit's date is deterministic per
+/// fixture name, so two independently created origins can never collide
+/// on the same commit sha by wall-clock accident (that collision is
+/// exactly what made a cross-origin target sha pass locally and fail in
+/// CI with `fatal: bad object type`).
+Future<(RaceMinter, String)> _singleMinter(
+  String name, {
+  String? attachOrigin,
+}) async {
   final root = Directory.systemTemp.createTempSync('mint-$name-');
   final realGit = resolveRealGit();
-  final origin = '${root.path}/origin.git';
-  Process.runSync(realGit, [
-    'init',
-    '-q',
-    '--bare',
-    '-b',
-    'main',
-    origin,
-  ], workingDirectory: root.path);
+  final origin = attachOrigin ?? '${root.path}/origin.git';
+  if (attachOrigin == null) {
+    Process.runSync(realGit, [
+      'init',
+      '-q',
+      '--bare',
+      '-b',
+      'main',
+      origin,
+    ], workingDirectory: root.path);
+  }
   final seed = '${root.path}/seed';
   void git(List<String> args, {String? cwd}) {
     final r = Process.runSync(realGit, args, workingDirectory: cwd ?? seed);
@@ -242,10 +254,22 @@ Future<(RaceMinter, String)> _singleMinter(String name) async {
   git(['clone', '-q', origin, seed], cwd: root.path);
   git(['config', 'user.email', 't@t']);
   git(['config', 'user.name', 't']);
-  File('$seed/README.md').writeAsStringSync('seed\n');
-  git(['add', '-A']);
-  git(['commit', '-q', '-m', 'seed']);
-  git(['push', '-q', 'origin', 'main']);
+  if (attachOrigin == null) {
+    File('$seed/README.md').writeAsStringSync('seed\n');
+    git(['add', '-A']);
+    final seedR = Process.runSync(
+      realGit,
+      ['commit', '-q', '-m', 'seed'],
+      workingDirectory: seed,
+      environment: {
+        'GIT_COMMITTER_DATE': _seedDate(name),
+        'GIT_AUTHOR_DATE': _seedDate(name),
+        ...Platform.environment,
+      },
+    );
+    expect(seedR.exitCode, 0, reason: 'seed commit failed: ${seedR.stderr}');
+  }
+  git(['push', '-q', 'origin', 'HEAD:main']);
   final sha = Process.runSync(realGit, [
     'rev-parse',
     'HEAD',
@@ -262,162 +286,177 @@ Future<(RaceMinter, String)> _singleMinter(String name) async {
   return (m, sha);
 }
 
+/// Distinct deterministic commit date per fixture name — two origins
+/// seeded for different names hash differently, always.
+String _seedDate(String name) {
+  final n = name.codeUnits.fold(0, (a, c) => a + c) % 200;
+  final day = (n % 28) + 1;
+  final hour = n % 24;
+  return '2026-02-'
+      '${day.toString().padLeft(2, '0')}T'
+      '${hour.toString().padLeft(2, '0')}:00:00Z';
+}
+
 void main() {
-  test(
-    'PR #2029 review: a mint that loses the push race to a sibling leg continues to train verification instead of dying on the rejected push',
-    () async {
-      // build-macos-cli runs both arch legs in parallel on hosted
-      // runners; on the daily flow the tag is definitely missing when
-      // they arrive, so both enter the mint at nearly the same instant.
-      // Tags never fast-forward: the loser's push is rejected and, under
-      // `set -euo pipefail`, the mint used to die with a bare
-      // `fatal: tag 'v9.9.9' already exists` — a spurious red required
-      // leg on the very flow this PR fixes. The mint must re-probe the
-      // ref after a failed push and continue when a sibling leg won.
-      final (a, b) = await _racePair('v9.9.9');
-      a.withEnv(const {'GH_STUB_TRAIN_RUNNING': '1'});
-      b.withEnv(const {'GH_STUB_TRAIN_RUNNING': '1'});
-      // True concurrency: both minters are mid-flight simultaneously —
-      // the exact shape the 2-arch matrix produces on the daily flow.
-      await Future.wait([a.run('v9.9.9'), b.run('v9.9.9')]);
-      for (final m in [a, b]) {
-        expect(
-          m.exitCode,
-          0,
-          reason:
-              'the ${m.name} minter must survive the race '
-              '(output: ${m.output})',
-        );
-      }
-      // Exactly one push can land; the other must have been tolerated as
-      // the raced-mint case (never a bare fatal / never a red exit).
-      final raced = [
-        a,
-        b,
-      ].where((m) => m.output.contains('minted concurrently by a sibling leg'));
-      expect(raced, hasLength(1), reason: 'exactly one minter lost the push');
+  test('PR #2029 review: a mint that loses the push race to a sibling leg continues to train verification instead of dying on the rejected push', () async {
+    // build-macos-cli runs both arch legs in parallel on hosted
+    // runners; on the daily flow the tag is definitely missing when
+    // they arrive, so both enter the mint at nearly the same instant.
+    // Tags never fast-forward: the loser's push is rejected and, under
+    // `set -euo pipefail`, the mint used to die with a bare
+    // `fatal: tag 'v9.9.9' already exists` — a spurious red required
+    // leg on the very flow this PR fixes. The mint must re-probe the
+    // ref after a failed push and continue when a sibling leg won.
+    final (a, b) = await _racePair('v9.9.9');
+    a.withEnv(const {'GH_STUB_TRAIN_RUNNING': '1'});
+    b.withEnv(const {'GH_STUB_TRAIN_RUNNING': '1'});
+    // True concurrency: both minters are mid-flight simultaneously —
+    // the exact shape the 2-arch matrix produces on the daily flow.
+    await Future.wait([a.run('v9.9.9'), b.run('v9.9.9')]);
+    for (final m in [a, b]) {
       expect(
-        [a, b].any((m) => m.output.contains('✅ tag train for v9.9.9 started')),
-        isTrue,
-        reason: 'the loser continues to (and passes) train verification',
-      );
-    },
-  );
-
-  test(
-    'PR #2029 review: a push that fails with the ref still missing fails loud with a self-explaining error',
-    () async {
-      // The race tolerance must not swallow genuine push failures: if the
-      // push fails AND the ref is still absent, nothing minted the tag —
-      // the leg must go red naming the real problem, not exit 0.
-      final (m, sha) = await _singleMinter('noland');
-      m.withEnv(const {'GH_STUB_TRAIN_RUNNING': '1'});
-      await m.run('v9.9.8');
-      expect(m.exitCode, isNot(0), reason: m.output);
-      expect(m.output, contains('::error::'));
-      expect(
-        m.output,
-        contains('push failed and the ref is still missing'),
+        m.exitCode,
+        0,
         reason:
-            'the error must distinguish the no-land push failure '
-            'from the raced-mint case',
+            'the ${m.name} minter must survive the race '
+            '(output: ${m.output})',
       );
-    },
-  );
+    }
+    // Exactly one push can land; the other must have been tolerated as
+    // the raced-mint case (never a bare fatal / never a red exit).
+    final raced = [
+      a,
+      b,
+    ].where((m) => m.output.contains('minted concurrently by a sibling leg'));
+    expect(raced, hasLength(1), reason: 'exactly one minter lost the push');
+    expect(
+      [a, b].any((m) => m.output.contains('✅ tag train for v9.9.9 started')),
+      isTrue,
+      reason: 'the loser continues to (and passes) train verification',
+    );
+  });
 
-  test(
-    'PR #2029 review: a failed train verification rolls the pushed tag back so a fixed re-run re-mints instead of stranding the draft',
-    () async {
-      // The v1.0.663 / v1.0.665 recovery trap: attempt 1 pushes the tag,
-      // no run appears, the mint fails loud — but the tag stays on the
-      // remote. The prescribed "fix the credential and re-run" then finds
-      // the tag existing, skips the mint AND its train check, and the
-      // caller's plain `gh release create --draft` re-arms the exact
-      // stranded-draft shape (green leg, sweep a day later). The mint
-      // must roll the untrained ref back (remote + the local tag object
-      // that would break a reused-workspace re-tag) before failing.
-      final (m, sha) = await _singleMinter('rollback');
-      m.withEnv(const {'GH_STUB_TRAIN_RUNNING': '0'});
+  test('PR #2029 review: a push that fails with the ref still missing fails loud with a self-explaining error', () async {
+    // The race tolerance must not swallow genuine push failures: if the
+    // push fails AND the ref is still absent, nothing minted the tag —
+    // the leg must go red naming the real problem, not exit 0.
+    final (m, sha) = await _singleMinter('noland');
+    m.withEnv(const {'GH_STUB_TRAIN_RUNNING': '1'});
+    await m.run('v9.9.8');
+    expect(m.exitCode, isNot(0), reason: m.output);
+    expect(m.output, contains('::error::'));
+    expect(
+      m.output,
+      contains('push failed and the ref is still missing'),
+      reason:
+          'the error must distinguish the no-land push failure '
+          'from the raced-mint case',
+    );
+  });
 
-      // Attempt 1: push lands, no run ever appears → loud failure + rollback.
-      await m.run('v9.9.7');
-      expect(m.exitCode, isNot(0), reason: m.output);
-      expect(m.output, contains('::error::tag train did not start'));
-      expect(
-        m.output,
-        contains('rolling back the untrained tag ref'),
-        reason: 'the operator must see the rollback in the log',
-      );
-      final realGit = resolveRealGit();
-      final remoteRef = Process.runSync(realGit, [
-        'ls-remote',
-        '--exit-code',
-        m.origin,
-        'refs/tags/v9.9.7',
-      ]);
-      expect(
-        remoteRef.exitCode,
-        2,
-        reason:
-            'the untrained tag ref must be rolled back on the remote '
-            '(stdout: ${remoteRef.stdout})',
-      );
-      // Local tag object must be gone too (a reused self-hosted workspace
-      // would otherwise die at `git tag -a` on the re-run).
-      final localTags = Process.runSync(realGit, [
-        'tag',
-        '-l',
-      ], workingDirectory: m.work).stdout.toString().trim();
-      expect(localTags, isEmpty, reason: 'the local tag must be dropped');
+  test('PR #2029 review: a failed train verification rolls the pushed tag back so a fixed re-run re-mints instead of stranding the draft', () async {
+    // The v1.0.663 / v1.0.665 recovery trap: attempt 1 pushes the tag,
+    // no run appears, the mint fails loud — but the tag stays on the
+    // remote. The prescribed "fix the credential and re-run" then finds
+    // the tag existing, skips the mint AND its train check, and the
+    // caller's plain `gh release create --draft` re-arms the exact
+    // stranded-draft shape (green leg, sweep a day later). The mint
+    // must roll the untrained ref back (remote + the local tag object
+    // that would break a reused-workspace re-tag) before failing.
+    final (m, sha) = await _singleMinter('rollback');
+    m.withEnv(const {'GH_STUB_TRAIN_RUNNING': '0'});
 
-      // Attempt 2 ("fix the credential and re-run"): the ref is absent
-      // again, so the mint re-mints and — with the train now visible —
-      // succeeds. This is the recovery path the orphan tag used to break.
-      final (m2, _) = await _singleMinter('rollback-retry');
-      m2.withSha(sha);
-      m2.withEnv(const {'GH_STUB_TRAIN_RUNNING': '1'});
-      await m2.run('v9.9.7');
-      expect(m2.exitCode, 0, reason: m2.output);
-      expect(m2.output, contains('✅ tag train for v9.9.7 started'));
-    },
-  );
+    // Attempt 1: push lands, no run ever appears → loud failure + rollback.
+    await m.run('v9.9.7');
+    expect(m.exitCode, isNot(0), reason: m.output);
+    expect(m.output, contains('::error::tag train did not start'));
+    expect(
+      m.output,
+      contains('rolling back the untrained tag ref'),
+      reason: 'the operator must see the rollback in the log',
+    );
+    final realGit = resolveRealGit();
+    final remoteRef = Process.runSync(realGit, [
+      'ls-remote',
+      '--exit-code',
+      m.origin,
+      'refs/tags/v9.9.7',
+    ]);
+    expect(
+      remoteRef.exitCode,
+      2,
+      reason:
+          'the untrained tag ref must be rolled back on the remote '
+          '(stdout: ${remoteRef.stdout})',
+    );
+    // Local tag object must be gone too (a reused self-hosted workspace
+    // would otherwise die at `git tag -a` on the re-run).
+    final localTags = Process.runSync(realGit, [
+      'tag',
+      '-l',
+    ], workingDirectory: m.work).stdout.toString().trim();
+    expect(localTags, isEmpty, reason: 'the local tag must be dropped');
 
-  test(
-    'PR #2029 review: a failing train probe (403 / expired PAT) fails fast and is diagnosed as a probe failure, never as a suppressed train',
-    () async {
-      // `2>/dev/null || echo 0` used to collapse a denied/failing probe
-      // into "no train": the leg burned the full 12×10s budget and then
-      // blamed the push credential (CI-suppressed token) while the real
-      // cause — RELEASE_PAT without Actions:read, an expired PAT, a rate
-      // limit — was discarded to /dev/null. A probe failure must abort
-      // the budget immediately with a distinct, self-explaining error.
-      final (m, _) = await _singleMinter('probe');
-      m.withEnv(const {'GH_STUB_PROBE_FAILS': '1'});
-      await m.run('v9.9.6');
-      expect(m.exitCode, isNot(0), reason: m.output);
-      expect(m.output, contains('::error::train verification probe failed'));
-      expect(
-        m.output,
-        contains('HTTP 403'),
-        reason: 'the probe failure detail must surface (it is the RCA)',
-      );
-      expect(
-        m.ghRunListCalls,
-        1,
-        reason:
-            'a failing probe must abort immediately, not burn the '
-            'verification budget',
-      );
-      expect(
-        m.output.contains('tag train did not start'),
-        isFalse,
-        reason: 'a probe failure is NOT evidence of a suppressed train',
-      );
-      expect(
-        m.output.contains('CI-suppressed token'),
-        isFalse,
-        reason: 'the misleading push-credential diagnosis must not fire',
-      );
-    },
-  );
+    // Attempt 2 ("fix the credential and re-run"): the ref is absent
+    // again, so the mint re-mints and — with the train now visible —
+    // succeeds. This is the recovery path the orphan tag used to break.
+    // The retry attaches to the SAME origin with a fresh work clone —
+    // the real re-run shape (same repository, same target commit, new
+    // checkout). A cross-origin sha here is unfaithful AND flaky: two
+    // independently seeded origins only shared a commit sha when their
+    // wall-clock seed commits landed in the same second, which held
+    // locally and broke in CI with `fatal: bad object type` at
+    // `git tag -a` (validation run 41295498327, shard 3/4).
+    final (m2, sha2) = await _singleMinter(
+      'rollback-retry',
+      attachOrigin: m.origin,
+    );
+    expect(
+      sha2,
+      sha,
+      reason:
+          'the retry checkout must carry the same '
+          'target commit — same repository, new checkout',
+    );
+    m2.withEnv(const {'GH_STUB_TRAIN_RUNNING': '1'});
+    await m2.run('v9.9.7');
+    expect(m2.exitCode, 0, reason: m2.output);
+    expect(m2.output, contains('✅ tag train for v9.9.7 started'));
+  });
+
+  test('PR #2029 review: a failing train probe (403 / expired PAT) fails fast and is diagnosed as a probe failure, never as a suppressed train', () async {
+    // `2>/dev/null || echo 0` used to collapse a denied/failing probe
+    // into "no train": the leg burned the full 12×10s budget and then
+    // blamed the push credential (CI-suppressed token) while the real
+    // cause — RELEASE_PAT without Actions:read, an expired PAT, a rate
+    // limit — was discarded to /dev/null. A probe failure must abort
+    // the budget immediately with a distinct, self-explaining error.
+    final (m, _) = await _singleMinter('probe');
+    m.withEnv(const {'GH_STUB_PROBE_FAILS': '1'});
+    await m.run('v9.9.6');
+    expect(m.exitCode, isNot(0), reason: m.output);
+    expect(m.output, contains('::error::train verification probe failed'));
+    expect(
+      m.output,
+      contains('HTTP 403'),
+      reason: 'the probe failure detail must surface (it is the RCA)',
+    );
+    expect(
+      m.ghRunListCalls,
+      1,
+      reason:
+          'a failing probe must abort immediately, not burn the '
+          'verification budget',
+    );
+    expect(
+      m.output.contains('tag train did not start'),
+      isFalse,
+      reason: 'a probe failure is NOT evidence of a suppressed train',
+    );
+    expect(
+      m.output.contains('CI-suppressed token'),
+      isFalse,
+      reason: 'the misleading push-credential diagnosis must not fire',
+    );
+  });
 }
