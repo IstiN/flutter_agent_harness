@@ -1438,6 +1438,12 @@ jobs:
       (needs.build-ios.result == 'success' || needs.build-ios.result == 'skipped')
     permissions:
       contents: write
+      # gh-2026: defense-in-depth for the release_tag_mint.sh
+      # train-verification probe (`gh run list` on the tag ref); the probe
+      # itself authenticates with RELEASE_PAT (gh prefers GH_TOKEN, which
+      # every mint-reachable call site exports), so this grant matters
+      # only if the probe is ever switched to the job token.
+      actions: read
     steps:
       - name: Nothing to release
         # Both platforms picked a no-binary content mode (none /
