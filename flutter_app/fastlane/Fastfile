@@ -29,6 +29,15 @@ require_relative "play_upload_preflight"
 require_relative "store_version_create"
 require_relative "version_floor"
 
+# gh-2026: fastlane probes `xcodebuild -showBuildSettings` with a 3 s base
+# timeout. This host is ONE Mac shared by three runner registrations, and
+# the nightly wave runs build-macos + build-mobile + the extension build
+# concurrently — run 41276490153 attempts 1-2 completed the 663 s archive
+# and then died timing the probe out at 3/6/12/24 s. Give the probe a real
+# budget (||= keeps an explicit CI override possible).
+ENV["FASTLANE_XCODEBUILD_SETTINGS_TIMEOUT"] ||= "45"
+ENV["FASTLANE_XCODEBUILD_SETTINGS_RETRIES"] ||= "8"
+
 def asc_api_key
   app_store_connect_api_key(
     key_id: ENV["APP_STORE_CONNECT_KEY_ID"],
