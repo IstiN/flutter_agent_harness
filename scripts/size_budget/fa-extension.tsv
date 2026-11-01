@@ -24,7 +24,7 @@
 1813030	panel/app/canvaskit/<rev>/wimp.js.symbols
 3581677	panel/app/canvaskit/<rev>/wimp.wasm
 12117285	panel/app/main.dart.js
-1890859	sw/agent.js
+2040013	sw/agent.js
 1070863	vendor/interpreters/asyncify/emscripten-module.wasm
 2224743	vendor/interpreters/index.global.js
 106335	vendor/interpreters/pyodide-lock.json

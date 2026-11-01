@@ -1,7 +1,10 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
-import 'package:archive/archive.dart';
+// hide ArchiveFormat: archive 4.6.0 exports its own ArchiveFormat
+// (codecs_recognizer.dart) — ambiguous with the harness enum this test
+// passes to ArchiveReader.decode.
+import 'package:archive/archive.dart' hide ArchiveFormat;
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:test/test.dart';
 
