@@ -3,7 +3,7 @@
 // block extraction, job iteration) and the behavioral fixture sandboxes.
 // Extracted verbatim when the loc-scope gate capped the test file at 2800
 // lines — no behavioral change; the library-privacy renames are mechanical.
-import 'dart:convert';
+import 'dart:io';
 
 import 'package:test/test.dart';
 import 'package:yaml/yaml.dart';

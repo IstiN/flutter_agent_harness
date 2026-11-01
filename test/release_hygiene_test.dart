@@ -8,6 +8,7 @@
 // `gh` (same style as store_automation_guard_test.dart). The stub enforces
 // the GITHUB_TOKEN permissions declared in the workflows, so a missing
 // grant fails tests instead of silently killing a production feature.
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:test/test.dart';
