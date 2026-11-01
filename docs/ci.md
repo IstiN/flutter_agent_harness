@@ -122,8 +122,9 @@ the tag-scoped `publish`/`binaries` jobs. The daily:
   `release_attach_or_create.sh` RELEASE_PAT pattern because the PAT is
   what the dispatch-time call sites already hold, an App token would work
   identically (it also fires workflow runs), and swapping the credential
-  is a follow-up not owned by the gh-2026 fix; the App-token invariant
-  continues to govern everything that commits release-path FILES;
+  is a follow-up not owned by the gh-2026 fix; until then, leg-time tag
+  mints are a documented exception to gh-1402's release-tags scope, which
+  continues to govern release-path file commits;
 - never publishes to pub.dev itself (see the pub.dev row above) — pub.dev
   movement stays 100% in the auto_release → ci.yml tag job path, with the
   daily as verifier and rerun-recovery;

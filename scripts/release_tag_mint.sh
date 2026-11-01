@@ -109,11 +109,20 @@ for _ in $(seq 1 "$tries"); do
   # (2>/dev/null || echo 0) burns the whole budget and then blames the push
   # credential — a misleading RCA on a red release leg. Fail fast and
   # surface the probe's own output instead.
+  # gh can exit 0 yet write a warning to stderr (deprecation/upgrade
+  # notice, config warning); merging stderr into the captured value would
+  # corrupt the numeric check below ("integer expression expected") and
+  # read as "no train" — rolling back a possibly-live tag over a benign
+  # warning. Keep stderr OUT of the success value; surface it only on the
+  # failure path.
+  probe_err="$(mktemp)"
   probe_out="$(gh run list --repo "$repo" --branch "$tag" --limit 10 \
-    --json databaseId --jq 'length' 2>&1)" || {
-    echo "::error::train verification probe failed for $tag (gh run list): $probe_out — a failing probe (RELEASE_PAT without Actions:read, expired PAT, rate limit) is NOT evidence of a suppressed train; fix the probe credential before re-running." >&2
+    --json databaseId --jq 'length' 2>"$probe_err")" || {
+    echo "::error::train verification probe failed for $tag (gh run list): $(cat "$probe_err") — a failing probe (RELEASE_PAT without Actions:read, expired PAT, rate limit) is NOT evidence of a suppressed train; fix the probe credential before re-running." >&2
+    rm -f "$probe_err"
     exit 1
   }
+  rm -f "$probe_err"
   if [ "${probe_out:-0}" -gt 0 ]; then
     runs_seen=1
     break

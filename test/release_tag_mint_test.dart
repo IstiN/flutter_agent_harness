@@ -60,6 +60,7 @@ class RaceMinter {
   String get _gitLog => '${root.path}/git-$name.log';
 
   void buildFixture(String sha) {
+    withSha(sha);
     work = '${root.path}/work-$name';
     Directory(_bin).createSync(recursive: true);
     final realGit = resolveRealGit();
@@ -87,6 +88,9 @@ if [ "\$1" = "run" ] && [ "\$2" = "list" ]; then
   if [ "\${GH_STUB_PROBE_FAILS:-0}" = "1" ]; then
     echo "gh: Resource not accessible by integration (HTTP 403)" >&2
     exit 7
+  fi
+  if [ "\${GH_STUB_PROBE_STDERR:-0}" = "1" ]; then
+    echo "gh: API warning: deprecation notice for a field you never asked for" >&2
   fi
   if [ "\${GH_STUB_TRAIN_RUNNING:-0}" = "1" ]; then echo 1; fi
   exit 0
@@ -207,13 +211,13 @@ Future<(RaceMinter, RaceMinter)> _racePair(String tag) async {
     origin: origin,
     name: 'a',
     committerDate: '2026-01-01T00:00:01Z',
-  )..withSha(sha);
+  );
   final b = RaceMinter(
     root: root,
     origin: origin,
     name: 'b',
     committerDate: '2026-01-01T00:00:02Z',
-  )..withSha(sha);
+  );
   a.buildFixture(sha);
   b.buildFixture(sha);
   return (a, b);
@@ -282,7 +286,6 @@ Future<(RaceMinter, String)> _singleMinter(
     pushLands: name == 'noland' ? false : true,
   );
   m.buildFixture(sha);
-  m.withSha(sha);
   return (m, sha);
 }
 
@@ -457,6 +460,43 @@ void main() {
       m.output.contains('CI-suppressed token'),
       isFalse,
       reason: 'the misleading push-credential diagnosis must not fire',
+    );
+  });
+
+  test('re-review lap 6: a gh warning on a healthy probe (exit 0, stderr noise) must not corrupt the numeric check — the train is still recognized, no rollback', () async {
+    // The lap-3 fix captured stdout+stderr into one value; a gh warning
+    // with exit 0 made `probe_out` a non-integer → "integer expression
+    // expected" inside the if → read as "no train" → the budget burned
+    // and the ROLLBACK DELETED a pushed tag whose train was actually
+    // running. The probe must keep stderr out of the success value.
+    final (m, _) = await _singleMinter('probe-warn');
+    m.withEnv(const {
+      'GH_STUB_PROBE_STDERR': '1',
+      'GH_STUB_TRAIN_RUNNING': '1',
+    });
+    await m.run('v9.9.5');
+    expect(m.exitCode, 0, reason: m.output);
+    expect(
+      m.output,
+      isNot(contains('::error::train verification probe failed')),
+      reason: 'exit 0 is a healthy probe — a warning is not a failure',
+    );
+    expect(
+      m.output.contains('rolling back the untrained tag ref'),
+      isFalse,
+      reason: 'a noisy-but-healthy probe must never roll back the tag '
+          '(output: ${m.output})',
+    );
+    expect(
+      m.output.contains('integer expression'),
+      isFalse,
+      reason: 'the numeric check must hold despite the stderr noise',
+    );
+    expect(
+      m.output,
+      contains('✅ tag train for v9.9.5 started'),
+      reason: 'the train is recognized despite the stderr noise '
+          '(output: ${m.output})',
     );
   });
 }
