@@ -201,7 +201,7 @@ verify_label_identity() { # verify_label_identity <label>; echoes sha1
   sha1="$(sed -n 's/^sha1=//p' "$mf")"
   [ -n "$sha1" ] || die "corrupt manifest for '$label'"
   do_unlock
-  if ! security find-identity -v -p codesigning "$KC" | grep -qi "$sha1"; then
+  if ! security find-identity -v "$KC" | grep -qi "$sha1"; then
     die "identity $sha1 (label '$label') is not a VALID codesigning identity in the signing keychain — re-run 'ci-sign install $label --force'"
   fi
   printf '%s' "$sha1"
@@ -293,7 +293,7 @@ case "$CMD" in
     if [ "$FORCE" -eq 0 ] && [ "$NEW_FP" = "$OLD_FP" ]; then
       # Same certificate as the manifest claims — make sure it is REALLY a
       # valid identity (covers partial imports), then we are done.
-      if security find-identity -v -p codesigning "$KC" | grep -qi "$NEW_FP"; then
+      if security find-identity -v "$KC" | grep -qi "$NEW_FP"; then
         # gh-2008 shadow sweep: Xcode's export -allowProvisioningUpdates
         # silently imports Apple-issued certs into the persistent keychain.
         # gh-2026 hotfix: the keychain is SHARED by all labels (fa-ios,
@@ -332,7 +332,7 @@ case "$CMD" in
     # (this is what prevents GUI keychain prompts).
     security set-key-partition-list -S apple-tool:,apple: -s -k "$(kc_password)" "$KC" >/dev/null
 
-    if ! security find-identity -v -p codesigning "$KC" | grep -qi "$NEW_FP"; then
+    if ! security find-identity -v "$KC" | grep -qi "$NEW_FP"; then
       die "imported P12 for '$LABEL' but it is not a valid codesigning identity (expired, revoked, or key/cert mismatch). Try 'ci-sign install $LABEL --force', then check the certificate in Apple Developer Portal."
     fi
 

@@ -161,10 +161,12 @@ void main() {
     );
     expect(
       script,
-      contains(RegExp(r'find-identity -v -p codesigning[^\n]*grep -qi "\$sha1"')),
+      contains(RegExp(r'find-identity -v[^\n]*grep -qi "\$sha1"')),
       reason:
           'the validity gate must check the EXACT fingerprint is a valid '
-          'codesigning identity (expired/revoked/mismatched key = loud '
+          'identity of ANY kind — codesign or productsign/installer '
+          '(gh-2026: the -p codesigning policy hid installer identities; '
+          'expired/revoked/mismatched key = loud '
           'abort with an install --force hint).',
     );
   });
