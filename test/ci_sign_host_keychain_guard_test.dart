@@ -554,4 +554,23 @@ void main() {
     expect(cisign, contains("from '\$(basename \"\$KC\")'"),
         reason: 'the echo names the keychain via defined variables only');
   });
+  test('AC22 — Fastfile gives xcodebuild -showBuildSettings a real budget '
+      '(gh-2026: fastlane probes build settings with a 3 s base timeout; on '
+      'this one-Mac/three-runner host the nightly wave runs build-macos, '
+      'build-mobile and the extension build concurrently — run 41276490153 '
+      'attempts 1-2 completed the 663 s archive and then died timing out at '
+      '3/6/12/24 s. A healthy build must not fail on a contended probe)', () {
+    final fastfile = File('flutter_app/fastlane/Fastfile').readAsStringSync();
+    expect(
+        fastfile, contains('ENV["FASTLANE_XCODEBUILD_SETTINGS_TIMEOUT"] ||='),
+        reason: 'the probe timeout must be raised above the 3 s default');
+    expect(
+        fastfile, contains('ENV["FASTLANE_XCODEBUILD_SETTINGS_RETRIES"] ||='),
+        reason: 'retries widen the window the same way');
+    final envAt =
+        fastfile.indexOf('FASTLANE_XCODEBUILD_SETTINGS_TIMEOUT');
+    final firstLaneAt = fastfile.indexOf('lane :');
+    expect(envAt, lessThan(firstLaneAt),
+        reason: 'file-scope ENV must be set before any lane can run');
+  });
 }
