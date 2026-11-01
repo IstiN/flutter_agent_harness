@@ -1148,6 +1148,13 @@ jobs:
             arch: x64
     permissions:
       contents: write
+      # gh-2026: defense-in-depth for the release_tag_mint.sh
+      # train-verification probe (`gh run list` on the tag ref); the
+      # probe itself authenticates with RELEASE_PAT (gh prefers
+      # GH_TOKEN, which every mint-reachable call site exports), so
+      # this grant matters only if the probe is ever switched to the
+      # job token. Granted on every mint-reachable job.
+      actions: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -1220,6 +1227,13 @@ jobs:
     if: inputs.create_release == 'true'
     permissions:
       contents: write
+      # gh-2026: defense-in-depth for the release_tag_mint.sh
+      # train-verification probe (`gh run list` on the tag ref); the
+      # probe itself authenticates with RELEASE_PAT (gh prefers
+      # GH_TOKEN, which every mint-reachable call site exports), so
+      # this grant matters only if the probe is ever switched to the
+      # job token. Granted on every mint-reachable job.
+      actions: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -1303,6 +1317,12 @@ jobs:
     if: inputs.create_release == 'true'
     permissions:
       contents: write
+      # gh-2026: defense-in-depth for the release_tag_mint.sh
+      # train-verification probe (`gh run list` on the tag ref); the probe
+      # itself authenticates with RELEASE_PAT (gh prefers GH_TOKEN, which
+      # every mint-reachable call site exports), so this grant matters
+      # only if the probe is ever switched to the job token.
+      actions: read
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
