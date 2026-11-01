@@ -1,7 +1,11 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
-import 'package:archive/archive.dart';
+// `ArchiveFormat` must resolve to the repo's own enum
+// (lib/src/tools/archive_reader.dart, via the package barrel) — the
+// floating `package:archive: ^4.0.9` now also exports that name (4.6.0),
+// which made every use below an ambiguous_import load error (#2028).
+import 'package:archive/archive.dart' hide ArchiveFormat;
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:test/test.dart';
 
