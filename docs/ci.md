@@ -93,6 +93,22 @@ the tag-scoped `publish`/`binaries` jobs. The daily:
   code. Self-derivation keeps tag and code consistent; the two children
   derive within minutes of each other and converge on the same tag
   (`gh release create` attaches to an existing tag rather than moving it);
+- **never lets a leg REST-mint a missing release tag** (gh-2026): a
+  `gh release create vX --draft` on a tag that does not exist yet mints a
+  lightweight API tag with NO push event, so the ci.yml tag train never
+  fires and the draft is stranded (the v0.1.408 silent class, issue #597 —
+  recurred as v1.0.663 / v1.0.665, whose minted pushes also rode
+  actions/checkout's persisted GITHUB_TOKEN extraheader). Both
+  `scripts/release_attach_or_create.sh` and `scripts/release_lazy_draft.sh`
+  probe `git ls-remote --exit-code` first and, when the ref is definitely
+  missing, mint through `scripts/release_tag_mint.sh`: an annotated tag
+  pushed via token-URL with the PAT the job already carries
+  (`GH_TOKEN=RELEASE_PAT` on the dispatch-time call sites), the persisted
+  extraheader stripped, and the train start verified with
+  `gh run list --branch <tag>` (needs `actions: read`, granted on
+  release-macos / release-mobile) BEFORE any draft is created — a mint
+  whose train does not start fails the leg loudly instead of stranding a
+  draft for the sweeper;
 - never publishes to pub.dev itself (see the pub.dev row above) — pub.dev
   movement stays 100% in the auto_release → ci.yml tag job path, with the
   daily as verifier and rerun-recovery;
