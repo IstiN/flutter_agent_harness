@@ -46,7 +46,7 @@ final class FlutterManagedSession {
 ///
 /// The load budget ([maxSessionLoadBytes], issue #381) is the instant-open
 /// ceiling: sessions over it open through the windowed loader (tail window
-/// + paged history) and boot never auto-resumes them — the typed
+/// + paged history), including last-active restore at boot — the typed
 /// [SessionTooLargeException] survives only as the guard on the one path
 /// that would still whole-file read them: a failed windowed open degrading
 /// to a FULL open (the 2026-09-10 macOS freeze mode).
@@ -143,9 +143,9 @@ final class FlutterSessionManager extends ChangeNotifier {
   /// The default per-session load budget (64 MiB): beyond it the session
   /// file would balloon to many times its size as Dart objects and wedge a
   /// host in a GC storm. Over-budget sessions still OPEN — windowed, only
-  /// the tail chunk materializes (issue #381) — but boot never resumes
-  /// them and a failed windowed open is refused instead of falling back
-  /// to the whole-file load.
+  /// the tail chunk materializes (issue #381), including at boot — and a
+  /// failed windowed open is refused instead of falling back to the
+  /// whole-file load.
   static const int defaultMaxSessionLoadBytes = 64 * 1024 * 1024;
 
   /// The execution environment shared by all sessions.
@@ -155,9 +155,8 @@ final class FlutterSessionManager extends ChangeNotifier {
   final String sessionsRoot;
 
   /// The instant-open budget: sessions whose file exceeds this many bytes
-  /// are never auto-resumed at boot (a one-shot notice says why) and their
-  /// [openSession] refuses the full-open fallback of a failed windowed
-  /// open with [SessionTooLargeException].
+  /// use the windowed loader, and their [openSession] refuses the full-open
+  /// fallback of a failed windowed open with [SessionTooLargeException].
   final int maxSessionLoadBytes;
 
   /// The ownership-lease store (from the shared env); null disables
@@ -186,9 +185,8 @@ final class FlutterSessionManager extends ChangeNotifier {
   bool _tooLarge(SessionMetadata metadata) =>
       (metadata.sizeBytes ?? 0) > maxSessionLoadBytes;
 
-  /// The last-active session boot skipped for size (issue #381), or null.
-  /// The shells surface it once as a notice — a fresh session plus a
-  /// tap-to-open-windowed action — instead of the old silent swap.
+  /// Legacy boot-notice payload retained for shell compatibility. Boot now
+  /// opens an oversized last-active session windowed and leaves this null.
   SessionMetadata? bootSkippedOversize;
 
   final JsonlSessionRepo _repo;
@@ -625,27 +623,15 @@ final class FlutterSessionManager extends ChangeNotifier {
             .where((m) => m.id == lastActiveId)
             .firstOrNull;
         if (metadata != null) {
-          if (_tooLarge(metadata)) {
-            bootSkippedOversize = metadata;
-            debugPrint(
-              '[fah][sessions] boot: last active $lastActiveId is '
-              '${metadata.sizeBytes} bytes — over the '
-              '$maxSessionLoadBytes-byte load budget, NOT resuming. '
-              'Starting fresh; the UI surfaces a notice to open it '
-              'windowed.',
-            );
-            // Fall through to the reusable pick below.
-          } else {
-            debugPrint(
-              '[fah][sessions] boot: resuming last active '
-              '$lastActiveId (${cachedList.length} persisted)',
-            );
-            return await openSession(
-              metadata,
-              config: config,
-              serviceFactory: openFactory,
-            );
-          }
+          debugPrint(
+            '[fah][sessions] boot: resuming last active '
+            '$lastActiveId (${cachedList.length} persisted)',
+          );
+          return await openSession(
+            metadata,
+            config: config,
+            serviceFactory: openFactory,
+          );
         }
         debugPrint(
           '[fah][sessions] boot: last active $lastActiveId is gone '

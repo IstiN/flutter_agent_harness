@@ -254,41 +254,58 @@ void main() {
     expect(flaky.bulkBytes, greaterThan(0));
   });
 
-  // AC4 UT-boot-toast (manager half): boot skips the oversized last-active
-  // and records it for the UI notice instead of silently swapping.
-  test('UT-boot-skipped: an oversized last-active session is not resumed at '
-      'boot; the skip is surfaced on the manager', () async {
-    final env = MemoryExecutionEnv();
-    final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
-    await env.writeFile('/sessions/giant.jsonl', _sessionBody('giant', 50));
-    await env.writeFile(
-      '/sessions/${FlutterSessionManager.lastActiveFile}',
-      '{"version":1,"id":"giant"}',
-    );
+  // Boot must use the same windowed route as an explicit open. Falling
+  // through to a fresh session both loses the user's place and surfaces the
+  // oversize notice even though the existing loader can open the session.
+  test('UT-boot-windowed: an oversized last-active session opens windowed '
+      'without a fresh fallback or notice', () async {
+    final tmp = await io.Directory.systemTemp.createTemp('fa_boot_windowed');
+    addTearDown(() => _deleteTmpDir(tmp));
+    await io.File(
+      '${tmp.path}/giant.jsonl',
+    ).writeAsString(_sessionBody('giant', 300));
+    await io.File(
+      '${tmp.path}/${FlutterSessionManager.lastActiveFile}',
+    ).writeAsString('{"version":1,"id":"giant"}');
+    final counting = CountingFileSystem(LocalFileSystem(cwd: tmp.path));
     final manager = FlutterSessionManager(
-      env: env,
-      sessionsRoot: '/sessions',
-      repo: repo,
+      env: LocalExecutionEnv(cwd: tmp.path),
+      sessionsRoot: tmp.path,
+      repo: JsonlSessionRepo(fs: counting, sessionsRoot: tmp.path),
       maxSessionLoadBytes: 1024,
+      includeSharedSessionRoots: false,
     );
+    final service = _service(tmp.path, counting);
+    addTearDown(service.dispose);
+    var createCalls = 0;
+    var openCalls = 0;
 
     final booted = await manager.createOrResumeSession(
       config: _config,
-      createFactory: () async => AgentService(
-        agent: _createAgent(),
-        env: env,
-        sessionsRoot: '/sessions',
-        config: _config,
-        watchExternalSessions: false,
-      ),
-      openFactory: () async => throw StateError('must not open the giant'),
+      createFactory: () async {
+        createCalls++;
+        throw StateError('fresh fallback must not be created');
+      },
+      openFactory: () async {
+        openCalls++;
+        return service;
+      },
     );
 
-    // A fresh session, not the giant; the skip is on the manager for
-    // the shell notice.
-    expect(booted.id, isNot('giant'));
-    expect(manager.bootSkippedOversize?.id, 'giant');
-    expect(manager.bootSkippedOversize?.sizeBytes, greaterThan(1024));
+    expect(booted.id, 'giant');
+    expect(manager.activeId, 'giant');
+    expect(manager.sessions.map((session) => session.id), ['giant']);
+    expect(createCalls, 0);
+    expect(openCalls, 1);
+    expect(booted.service.messages, hasLength(200));
+    expect(booted.service.messages.last.content, contains('message 299'));
+    expect(counting.rangedBytes, greaterThan(0));
+    expect(
+      manager.bootSkippedOversize,
+      isNull,
+      reason: 'no boot oversize notice should be shown',
+    );
+    expect(await manager.listPersistedSessions(), hasLength(1));
   });
 
   // AC4 UT-boot-toast (UI half): the notice names the skipped session and
@@ -400,6 +417,11 @@ void main() {
       );
       await tester.pumpAndSettle();
 
+      // The messenger list groups persisted sessions by working directory.
+      await tester.tap(
+        find.byKey(const ValueKey('chatFolder-folder::/work')),
+      );
+      await tester.pumpAndSettle();
       await tester.tap(find.text('Giant chat'));
       await tester.pumpAndSettle();
 

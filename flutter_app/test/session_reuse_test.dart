@@ -289,7 +289,7 @@ void main() {
     );
 
     test(
-      'boot skips an oversized last-active session and creates a fresh one',
+      'boot opens an oversized last-active session without a fresh fallback',
       () async {
         final big = await _persistSession(repo, userText: 'x' * 2048);
         await env.writeFile(
@@ -297,14 +297,25 @@ void main() {
           '{"version":1,"id":"${big.id}"}',
         );
         final manager = limitedManager();
+        var createCalls = 0;
+        var openCalls = 0;
         final booted = await manager.createOrResumeSession(
           config: _config,
-          createFactory: () async => _fakeService(env),
-          openFactory: () async => _fakeService(env),
+          createFactory: () async {
+            createCalls++;
+            return _fakeService(env);
+          },
+          openFactory: () async {
+            openCalls++;
+            return _fakeService(env);
+          },
         );
-        // The giant session was NOT resumed — a fresh id took over.
-        expect(booted.id, isNot(big.id));
-        expect(manager.active?.id, booted.id);
+        expect(booted.id, big.id);
+        expect(manager.active?.id, big.id);
+        expect(createCalls, 0);
+        expect(openCalls, 1);
+        expect(manager.bootSkippedOversize, isNull);
+        expect(await repo.list(), hasLength(1));
       },
     );
 
