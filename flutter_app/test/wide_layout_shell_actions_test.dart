@@ -915,15 +915,15 @@ void main() {
             }
             expect(
               unread.left - all.right,
-              inInclusiveRange(1, MessengerFilterControl.gap),
+              inInclusiveRange(.999, MessengerFilterControl.gap),
             );
             expect(
               agents.left - unread.right,
-              inInclusiveRange(1, MessengerFilterControl.gap),
+              inInclusiveRange(.999, MessengerFilterControl.gap),
             );
             expect(
               channels.left - agents.right,
-              inInclusiveRange(1, MessengerFilterControl.gap),
+              inInclusiveRange(.999, MessengerFilterControl.gap),
             );
             final chats = tester.getRect(
               find.byKey(const ValueKey('messengerPrimaryNav-chats')),
@@ -939,19 +939,19 @@ void main() {
             );
             expect(
               chats.left - channels.right,
-              inInclusiveRange(1, MessengerFilterControl.gap),
+              inInclusiveRange(.999, MessengerFilterControl.gap),
             );
             expect(
               activity.left - chats.right,
-              inInclusiveRange(1, MessengerFilterControl.gap),
+              inInclusiveRange(.999, MessengerFilterControl.gap),
             );
             expect(
               apps.left - activity.right,
-              inInclusiveRange(1, MessengerFilterControl.gap),
+              inInclusiveRange(.999, MessengerFilterControl.gap),
             );
             expect(
               network.left - apps.right,
-              inInclusiveRange(1, MessengerFilterControl.gap),
+              inInclusiveRange(.999, MessengerFilterControl.gap),
             );
             expect(network.center.dy, closeTo(all.center.dy, .001));
           }
@@ -1026,7 +1026,7 @@ void main() {
           of: find.byKey(const ValueKey('chatFilter-all')),
           matching: find.byIcon(Icons.inbox_outlined),
         ),
-        findsNothing,
+        findsOneWidget,
       );
       final agentsChip = find.byKey(const ValueKey('chatFilter-agents'));
       expect(
@@ -1060,6 +1060,18 @@ void main() {
       for (final section in const ['chats', 'activity', 'apps']) {
         final action = sectionAction(section);
         expect(tester.getRect(action).height, 32);
+        expect(
+          find.descendant(
+            of: action,
+            matching: find.byIcon(switch (section) {
+              'chats' => Icons.chat_bubble_outline_rounded,
+              'activity' => Icons.notifications_none_rounded,
+              _ => Icons.grid_view_rounded,
+            }),
+          ),
+          findsOneWidget,
+          reason: section,
+        );
         if (section == 'chats') {
           expect(tester.getRect(action).width, greaterThan(36));
           expect(

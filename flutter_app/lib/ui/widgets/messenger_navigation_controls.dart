@@ -304,11 +304,11 @@ class MessengerFilterControl extends StatelessWidget {
                   ? MessengerFilterControl.gap
                   : 1.0;
               // Two segmented groups can be selected at once (a chat filter
-              // and a shell section). Keep both text-led slots usable while
-              // quiet icon slots retain a fixed hit rect. The section label
-              // gets the larger share so localized names stay readable.
-              const minSelectedWidth = 56.0;
-              const minSelectedExtraWidth = 84.0;
+              // and a shell section). Both keep their icon and gain a text
+              // slot; quiet icon slots retain a fixed hit rect. The section
+              // label gets the larger share so localized names stay readable.
+              const minSelectedWidth = 64.0;
+              const minSelectedExtraWidth = 72.0;
               final minimumExpandedWidth =
                   minSelectedWidth +
                   (hasSelectedExtra ? minSelectedExtraWidth : 0);
@@ -622,7 +622,7 @@ class MessengerCategoryChip extends StatelessWidget {
     this.expanded = false,
     this.compact = false,
     this.iconOnly = false,
-    this.labelOnly = false,
+    this.textLed = false,
     this.animateLabel = false,
     this.selectionBackground = true,
   });
@@ -644,9 +644,10 @@ class MessengerCategoryChip extends StatelessWidget {
   /// Icon-only segments still expose their label through tooltip/semantics.
   final bool iconOnly;
 
-  /// Text-only segments: the label replaces the icon. Selected compact
-  /// segments use this so two selected labels fit beside the quiet icons.
-  final bool labelOnly;
+  /// Text-led selected segments: the icon stays visible and the label gets an
+  /// expanded slot. Used by the dense shared sidebar toolbar so a selected
+  /// destination communicates both its glyph and its name.
+  final bool textLed;
 
   /// Restarts the two directional label fades only for a real filter change.
   final bool animateLabel;
@@ -686,19 +687,8 @@ class MessengerCategoryChip extends StatelessWidget {
             : Opacity(opacity: opacity, child: labelText),
       ),
     );
-    final targetIconOpacity = labelOnly ? 0.0 : 1.0;
-    Widget animatedIcon(double size) => TweenAnimationBuilder<double>(
-      tween: Tween(
-        begin: animateLabel ? 1 - targetIconOpacity : targetIconOpacity,
-        end: targetIconOpacity,
-      ),
-      duration: duration,
-      curve: Curves.easeInOutCubic,
-      builder: (context, opacity, child) => opacity <= .001
-          ? const SizedBox.shrink()
-          : Opacity(opacity: opacity, child: child),
-      child: Icon(icon, size: size, color: foreground),
-    );
+    Widget animatedIcon(double size) =>
+        Icon(icon, size: size, color: foreground);
     return Tooltip(
       message: label,
       child: Semantics(
@@ -741,13 +731,13 @@ class MessengerCategoryChip extends StatelessWidget {
                         : EdgeInsets.symmetric(
                             horizontal: dense
                                 ? 0
-                                : (labelOnly ? 4 : (compact ? 6 : 14)),
+                                : (textLed ? 4 : (compact ? 6 : 14)),
                           ),
                     child: Row(
                       mainAxisSize: expanded || compact
                           ? MainAxisSize.max
                           : MainAxisSize.min,
-                      mainAxisAlignment: iconOnly || labelOnly
+                      mainAxisAlignment: iconOnly
                           ? MainAxisAlignment.center
                           : MainAxisAlignment.start,
                       children: [
@@ -761,9 +751,7 @@ class MessengerCategoryChip extends StatelessWidget {
                         AnimatedContainer(
                           duration: duration,
                           curve: Curves.easeInOutCubic,
-                          width: iconOnly || labelOnly || dense
-                              ? 0
-                              : (compact ? 4 : 6),
+                          width: iconOnly || dense ? 0 : (compact ? 4 : 6),
                         ),
                         if (expanded || compact)
                           Expanded(
