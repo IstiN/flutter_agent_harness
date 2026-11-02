@@ -59,6 +59,8 @@ class ChatListPanel extends StatefulWidget {
     this.filterActions = const <Widget>[],
     this.filterSelectedExtraIndex,
     this.filterSelectionTextLed = false,
+    this.filterSelectionHighlighted = true,
+    this.filterSelectedExtraHighlighted = true,
     this.searchController,
     this.searchFocusNode,
     this.searchHint,
@@ -101,6 +103,15 @@ class ChatListPanel extends StatefulWidget {
   /// Text-led selected categories: the label replaces the icon while quiet
   /// categories remain icon-only. Used by the dense shared sidebar toolbar.
   final bool filterSelectionTextLed;
+
+  /// Whether the selected category paints the shared selection pill. The wide
+  /// shell turns this off while Activity/Apps own the toolbar's selection.
+  final bool filterSelectionHighlighted;
+
+  /// Whether the selected [filterActions] slot paints an expanded segment.
+  /// The wide shell keeps its implicit Chats destination quiet even though
+  /// it remains the active section.
+  final bool filterSelectedExtraHighlighted;
 
   /// Optional shared-shell search state. Defaults retain the standalone chat
   /// list behaviour; section bodies can replace only the list below chrome.
@@ -426,6 +437,8 @@ class _ChatListPanelState extends State<ChatListPanel> {
         ],
         extraActions: widget.filterActions,
         selectedExtraIndex: widget.filterSelectedExtraIndex,
+        highlightSelectedCategory: widget.filterSelectionHighlighted,
+        highlightSelectedExtra: widget.filterSelectedExtraHighlighted,
         trailing: _networkFilter(colors),
       ),
     );
@@ -444,6 +457,8 @@ class _ChatListPanelState extends State<ChatListPanel> {
     ChatListFilter selected,
     bool animateLabels,
   ) {
+    final selectedVisible = widget.filterSelectionHighlighted;
+    final isSelected = value == selected && selectedVisible;
     return MessengerCategoryChip(
       chipKey: ValueKey('chatFilter-${value.name}'),
       icon: switch (value) {
@@ -453,11 +468,11 @@ class _ChatListPanelState extends State<ChatListPanel> {
         ChatListFilter.channels => Icons.tag_rounded,
       },
       label: label,
-      selected: value == selected,
-      expanded: value == selected,
+      selected: isSelected,
+      expanded: isSelected,
       compact: true,
-      iconOnly: value != selected,
-      textLed: widget.filterSelectionTextLed && value == selected,
+      iconOnly: !isSelected,
+      textLed: widget.filterSelectionTextLed && isSelected,
       animateLabel: animateLabels,
       selectionBackground: false,
       onTap: () => widget.controller.setFilter(value),

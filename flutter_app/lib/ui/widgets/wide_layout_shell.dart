@@ -697,6 +697,10 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
           : _buildChatFilterActions(),
       filterSelectedExtraIndex: compact || collapsed ? null : _section.index,
       filterSelectionTextLed: !(compact || collapsed),
+      filterSelectionHighlighted:
+          !(compact || collapsed) && _section == _WideShellSection.chats,
+      filterSelectedExtraHighlighted:
+          !(compact || collapsed) && _section != _WideShellSection.chats,
       searchController: switch (_section) {
         _WideShellSection.chats => null,
         _WideShellSection.activity => _activitySearchController,
@@ -1345,10 +1349,13 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
             _WideShellSection.activity => context.l10n.wideNavActivity,
             _WideShellSection.apps => context.l10n.appsGridTitle,
           },
-          selected: _section == section,
+          // Chats is the implicit home: it stays a quiet destination while
+          // the active chat filter carries the visible selection. Activity
+          // and Apps own the selection whenever they are active.
+          selected: _section == section && section != _WideShellSection.chats,
           compact: true,
-          iconOnly: _section != section,
-          textLed: _section == section,
+          iconOnly: _section != section || section == _WideShellSection.chats,
+          textLed: _section == section && section != _WideShellSection.chats,
           selectionBackground: true,
           onTap: () => _selectSection(section),
         ),

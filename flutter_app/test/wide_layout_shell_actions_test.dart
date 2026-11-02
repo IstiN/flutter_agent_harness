@@ -267,7 +267,9 @@ void main() {
 
     expect(find.byType(ChatScreen), findsOneWidget);
     expect(find.byType(AppLauncherScreen), findsNothing);
-    expect(find.text('Chats'), findsOneWidget);
+    // Chats is the implicit home and stays a quiet destination; the selected
+    // filter owns the toolbar's text.
+    expect(find.text('Chats'), findsNothing);
     expect(find.text('Search chats'), findsOneWidget);
     expect(find.byKey(const ValueKey('messengerNewButton')), findsOneWidget);
     expect(find.text('SESSIONS'), findsNothing);
@@ -1057,6 +1059,8 @@ void main() {
         'activity' => 'Activity',
         _ => 'Apps',
       };
+      // Chats is the implicit home: its destination stays icon-only while the
+      // active chat filter carries the selection.
       for (final section in const ['chats', 'activity', 'apps']) {
         final action = sectionAction(section);
         expect(tester.getRect(action).height, 32);
@@ -1072,26 +1076,19 @@ void main() {
           findsOneWidget,
           reason: section,
         );
-        if (section == 'chats') {
-          expect(tester.getRect(action).width, greaterThan(36));
-          expect(
-            find.descendant(of: action, matching: find.text('Chats')),
-            findsOneWidget,
-          );
-        } else {
-          expect(tester.getRect(action).width, inInclusiveRange(12, 36));
-          expect(
-            find.descendant(
-              of: action,
-              matching: find.text(sectionLabel(section)),
-            ),
-            findsNothing,
-          );
-        }
+        expect(tester.getRect(action).width, inInclusiveRange(12, 36));
+        expect(
+          find.descendant(
+            of: action,
+            matching: find.text(sectionLabel(section)),
+          ),
+          findsNothing,
+          reason: section,
+        );
       }
       await tester.pumpAndSettle();
 
-      for (final selected in const ['activity', 'apps', 'chats']) {
+      for (final selected in const ['activity', 'apps']) {
         await tester.tap(sectionAction(selected));
         await tester.pumpAndSettle();
         expect(
@@ -1119,10 +1116,22 @@ void main() {
             reason: quiet,
           );
         }
+        // The chat-filter group defers its selection while a section outside
+        // Chats is active: no pill text and no selected semantics.
+        expect(chip('All').properties.selected, isFalse, reason: selected);
+        expect(find.text('All'), findsNothing, reason: selected);
+        expect(
+          tester.getRect(find.byKey(const ValueKey('chatFilter-all'))).width,
+          inInclusiveRange(12, 36),
+          reason: selected,
+        );
         expect(tester.takeException(), isNull, reason: selected);
       }
       await tester.tap(sectionAction('chats'));
       await tester.pumpAndSettle();
+      expect(find.text('Chats'), findsNothing);
+      expect(chip('All').properties.selected, isTrue);
+      expect(find.text('All'), findsOneWidget);
 
       for (final label in const ['Unread', 'Agents', 'Channels', 'All']) {
         await tester.tap(

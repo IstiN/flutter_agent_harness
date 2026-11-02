@@ -248,6 +248,8 @@ class MessengerFilterControl extends StatelessWidget {
     this.extraActions = const <Widget>[],
     this.selectedExtraIndex,
     required this.trailing,
+    this.highlightSelectedCategory = true,
+    this.highlightSelectedExtra = true,
   }) : assert(categories.length > 0),
        assert(selectedIndex >= 0 && selectedIndex < categories.length),
        assert(
@@ -269,6 +271,16 @@ class MessengerFilterControl extends StatelessWidget {
   /// selection (for example the shell's section destinations). It shares the
   /// remaining width with the selected category.
   final int? selectedExtraIndex;
+
+  /// Whether the selected category gets the selection pill and an expanded
+  /// slot. An outer section can own the toolbar's one visible selection (for
+  /// example Activity/Apps) while the filter value itself stays active but
+  /// visually quiet.
+  final bool highlightSelectedCategory;
+
+  /// Whether the selected extra action gets an expanded slot. The shell keeps
+  /// its implicit home destination quiet while a category owns the selection.
+  final bool highlightSelectedExtra;
 
   final Widget trailing;
 
@@ -297,8 +309,12 @@ class MessengerFilterControl extends StatelessWidget {
               // The trailing selector is a control too: it occupies the final
               // fixed slot and therefore participates in the width budget.
               final controlCount = count + extraActions.length + 1;
-              final hasSelectedExtra = selectedExtraIndex != null;
-              final expandedCount = hasSelectedExtra ? 2 : 1;
+              final selectedExtraVisible =
+                  selectedExtraIndex != null && highlightSelectedExtra;
+              final selectedCategoryVisible = highlightSelectedCategory;
+              final expandedCount =
+                  (selectedCategoryVisible ? 1 : 0) +
+                  (selectedExtraVisible ? 1 : 0);
               final fixedCount = controlCount - expandedCount;
               final gap = constraints.maxWidth >= 300
                   ? MessengerFilterControl.gap
@@ -310,8 +326,8 @@ class MessengerFilterControl extends StatelessWidget {
               const minSelectedWidth = 64.0;
               const minSelectedExtraWidth = 72.0;
               final minimumExpandedWidth =
-                  minSelectedWidth +
-                  (hasSelectedExtra ? minSelectedExtraWidth : 0);
+                  (selectedCategoryVisible ? minSelectedWidth : 0.0) +
+                  (selectedExtraVisible ? minSelectedExtraWidth : 0.0);
               final slot =
                   ((constraints.maxWidth -
                               gap * (controlCount - 1) -
@@ -323,12 +339,12 @@ class MessengerFilterControl extends StatelessWidget {
                           gap * (controlCount - 1) -
                           slot * fixedCount)
                       .clamp(0.0, constraints.maxWidth);
-              final selectedWidth = hasSelectedExtra
+              final selectedWidth = selectedExtraVisible
                   ? expandedBudget *
                         minSelectedWidth /
                         (minSelectedWidth + minSelectedExtraWidth)
                   : expandedBudget;
-              final selectedExtraWidth = hasSelectedExtra
+              final selectedExtraWidth = selectedExtraVisible
                   ? expandedBudget *
                         minSelectedExtraWidth /
                         (minSelectedWidth + minSelectedExtraWidth)
@@ -336,13 +352,17 @@ class MessengerFilterControl extends StatelessWidget {
               final positions = <({double left, double width})>[];
               var left = 0.0;
               for (var index = 0; index < count; index++) {
-                final width = index == selectedIndex ? selectedWidth : slot;
+                final isSelected = index == selectedIndex;
+                final width = isSelected && selectedCategoryVisible
+                    ? selectedWidth
+                    : slot;
                 positions.add((left: left, width: width));
                 left += width + gap;
               }
               final extraPositions = <({double left, double width})>[];
               for (var index = 0; index < extraActions.length; index++) {
-                final width = index == selectedExtraIndex
+                final width =
+                    index == selectedExtraIndex && selectedExtraVisible
                     ? selectedExtraWidth
                     : slot;
                 extraPositions.add((left: left, width: width));
@@ -352,27 +372,28 @@ class MessengerFilterControl extends StatelessWidget {
               return Stack(
                 clipBehavior: Clip.hardEdge,
                 children: [
-                  AnimatedPositioned(
-                    key: const ValueKey('chatFilterSelectionPill'),
-                    duration: duration,
-                    curve: curve,
-                    left: selected.left,
-                    width: selected.width,
-                    top: 0,
-                    bottom: 0,
-                    child: IgnorePointer(
-                      child: DecoratedBox(
-                        decoration: ShapeDecoration(
-                          color: tokens.accent.withValues(alpha: .12),
-                          shape: StadiumBorder(
-                            side: BorderSide(
-                              color: tokens.accent.withValues(alpha: .18),
+                  if (selectedCategoryVisible)
+                    AnimatedPositioned(
+                      key: const ValueKey('chatFilterSelectionPill'),
+                      duration: duration,
+                      curve: curve,
+                      left: selected.left,
+                      width: selected.width,
+                      top: 0,
+                      bottom: 0,
+                      child: IgnorePointer(
+                        child: DecoratedBox(
+                          decoration: ShapeDecoration(
+                            color: tokens.accent.withValues(alpha: .12),
+                            shape: StadiumBorder(
+                              side: BorderSide(
+                                color: tokens.accent.withValues(alpha: .18),
+                              ),
                             ),
                           ),
                         ),
                       ),
                     ),
-                  ),
                   for (var index = 0; index < count; index++)
                     AnimatedPositioned(
                       key: ValueKey('chatFilterSlot-$index'),
