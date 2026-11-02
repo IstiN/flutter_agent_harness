@@ -9,9 +9,12 @@ cov-*/
 # VM coverage scratch (lcov.info + per-test .vm.json) from the quality-gate
 # coverage runs — same artifact class as coverage/; WIP auto-saves swept it
 # onto the branch repeatedly (gh-1033 review thread 11, gh-1449 review
-# thread 14: coverage_cov/; gh-1439 rework: coverage-verify/).
+# thread 14: coverage_cov/; gh-1439 rework: coverage-verify/;
+# gh-2044 rework: coverage_tmp/ — 89 MB of .vm.json swept onto the branch
+# and blew the staged-package gate past pub.dev's 100 MB cap).
 coverage_cov/
 coverage-verify/
+coverage_tmp/
 # Redirect artifacts with a Win32-invalid character in the name (e.g.
 # ":debug," from a mangled word-split loop): a WIP auto-save swept two of
 # them onto the gh-1800 rework branch and EVERY windows-latest job failed

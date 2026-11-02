@@ -13,22 +13,41 @@ block a release again.
 
 ## Unreleased
 
-- fix(gh-2043): `fa update` no longer dies on slow links. The 2-minute
-  TOTAL archive wall clock (`kFaUpdateArchiveTimeout`) aborted downloads
-  that were progressing fine (~70–100 KB/s corporate links need 135s+
-  for the 9.5 MB macOS archive). The body is now bounded by NO-PROGRESS
-  (`kFaUpdateStallTimeout`, 45s — a body delivering no bytes for 45s
-  aborts with "no progress for 45s", gh-1377 hang protection intact),
-  the total cap is raised to a 15-minute per-attempt backstop
-  (`kFaUpdateTotalTimeout`), progress prints every 2 MB
-  (`downloading… 4.2/9.5 MB` plus a final elapsed + average-speed line),
-  and a mid-body connection reset/clean early close resumes with an HTTP
-  Range request from the received offset (max 3 retries; a server
-  answering 200 to the Range restarts from zero) — the reassembled bytes
-  still pass the same provenance hash check. Metadata bound unchanged
-  (`kFaUpdateNetworkTimeout` 15s), provenance failure keeps its distinct
-  wording, and the macOS fallback zip path (AC5) gets the same
-  stall/progress/resume treatment.
+- fix(gh-2044): the auto-compact fragile-band escalation could fold the
+  ENTIRE visible projection when the remaining path fit inside
+  `keepRecentTokens` — the keep-recent walk defaulted to folding
+  everything when its budget never exhausted, swallowing the live tail
+  (the newest user ask and assistant turn included). Real-world trigger:
+  resumed subagent runs ended with no assistant message at all
+  (`subagent produced no assistant message` — CI cores shards 1/4 and
+  3/4, hostile-env, both red). `_pickCheckpointRange` now declines the
+  fold when the whole foldable path fits the keep-recent region and
+  still carries live records; all-marker paths keep the lossless
+  deterministic consolidation (issue #387). The escalation receipt also
+  reports the REAL summarizer call count (a #729 chunked fold makes N
+  calls, not 1), and the factory wires its run token into the engine's
+  `cancelToken` so a watchdog-shaped cancel reason (any
+  `TimeoutException`) can no longer dissolve a user abort into a
+  "summarizer returned no text" failed receipt while the run reports
+  success (#1085). Follow-up CI red on the same branch: the decline
+  moved tiny-transcript runs to the classic residual engine, where an
+  EMPTY summarizable region folded zero #729 chunks into a blank
+  summary that still landed as a junk CompactionRecord and a hollow
+  `success: true` through the no-work terminal — `compactSession` now
+  refuses that empty-region blank fold (gh-1743's failure-verdict
+  contract kept; a dialed blank answer over a real region still lands
+  as a record, issue #578 unchanged). Third CI red on the same branch
+  (flutter-app over-window relief, both shards): the whole-world decline
+  lived in the shared `_pickCheckpointRange`, so it also starved the
+  checkpoint LADDER — a tool-result-heavy transcript whose every ledger
+  token fits `keepRecentTokens` (the request estimate is far over the
+  trigger) lost its only summarizer-based relief, and the hosted app's
+  over-window guard ended the turn instead of continuing it. The decline
+  is now escalation-only: ladder passes run over the trigger, where the
+  fold IS the relief (the escalation still declines — semantic 5 — and
+  its pass body was extracted below the CRAP ratchet's 12.00).
+  (gh-2044 rework, UT-ESC-13)
+
 - fix(gh-2003): the Copilot picker filter is tier-aware. Individual-tier
   `/models` responses omit `model_picker_enabled` entirely, so phase 1
   dropped every such entry as «picker flag absent» and individual/OAuth
