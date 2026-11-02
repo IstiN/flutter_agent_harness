@@ -27,11 +27,24 @@ Directory _fixture(
   assetContents.forEach((assetName, content) {
     File('${dir.path}/$assetName').writeAsStringSync(content);
   });
-  final args = ['sha256sum', ...manifestNames];
-  final res = Process.runSync('sha256sum', manifestNames,
+  // Hash the files that exist; manifest entries with no file behind them
+  // (the "release no longer serves it" shape) get a dummy digest — the
+  // check must catch them via the digest mismatch/set-diff either way.
+  final present = manifestNames
+      .where((n) => File('${dir.path}/$n').existsSync())
+      .toList();
+  final res = Process.runSync('sha256sum', present,
       workingDirectory: dir.path);
   if (res.exitCode != 0) fail('fixture sha256sum failed: ${res.stderr}');
-  File('${dir.path}/SHA256SUMS').writeAsStringSync(res.stdout as String);
+  final manifest = StringBuffer(res.stdout as String);
+  for (final n in manifestNames) {
+    if (!present.contains(n)) {
+      manifest.writeln(
+        '${'0' * 64}  $n',
+      );
+    }
+  }
+  File('${dir.path}/SHA256SUMS').writeAsStringSync(manifest.toString());
   File('${dir.path}/SHA256SUMS.sig').writeAsStringSync('dummy-signature');
   return dir;
 }
@@ -131,11 +144,46 @@ void main() {
       'fa-linux-x64.tar.gz',
       'fa-windows-x64.zip',
     ]);
-    File('${dir.path}/fa-windows-x64.zip').deleteSync();
     final r = _runCheck(dir);
     expect(r.exitCode, isNot(0), reason: _out(r));
     expect(_out(r), contains('fa-windows-x64.zip'));
     dir.deleteSync(recursive: true);
+  });
+
+  test('drift writes the details file the remediation pages from; a clean check leaves none', () {
+    final tmp = Directory.systemTemp.createTempSync('drift-details-');
+    final cleanDir = _fixture('details-clean', {
+      'fa-linux-x64.tar.gz': 'linux-bytes',
+    }, ['fa-linux-x64.tar.gz']);
+    Process.runSync('bash', ['scripts/release_drift_check.sh', 'v1.2.3'],
+        environment: {
+          'GITHUB_REPOSITORY': 'OWNER/REPO',
+          'GH_TOKEN': 'stub',
+          'FA_DRIFT_LOCAL_DIR': cleanDir.path,
+          'FA_DRIFT_DETAILS': '${tmp.path}/details.md',
+        });
+    expect(File('${tmp.path}/details.md').existsSync(), isFalse,
+        reason: 'a clean check must not leave drift details behind');
+    cleanDir.deleteSync(recursive: true);
+
+    final dirtyDir = _fixture('details-drift', {
+      'fa-linux-x64.tar.gz': 'linux-bytes',
+    }, ['fa-linux-x64.tar.gz']);
+    File('${dirtyDir.path}/fa-linux-x64.tar.gz').writeAsStringSync('REPLACED');
+    final r = Process.runSync('bash', ['scripts/release_drift_check.sh', 'v1.2.3'],
+        environment: {
+          'GITHUB_REPOSITORY': 'OWNER/REPO',
+          'GH_TOKEN': 'stub',
+          'FA_DRIFT_LOCAL_DIR': dirtyDir.path,
+          'FA_DRIFT_DETAILS': '${tmp.path}/details.md',
+        });
+    expect(r.exitCode, isNot(0));
+    final detailsFile = File('${tmp.path}/details.md');
+    expect(detailsFile.existsSync(), isTrue,
+        reason: 'the remediation step pages from this file');
+    expect(detailsFile.readAsStringSync(), contains('fa-linux-x64.tar.gz'));
+    tmp.deleteSync(recursive: true);
+    dirtyDir.deleteSync(recursive: true);
   });
 
   test('the script downloads from the release when no local dir is given', () {

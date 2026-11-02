@@ -1,0 +1,2 @@
+digest drift: fa-windows-x64.zip: FAILED open or read
+missing asset: SHA256SUMS lists fa-windows-x64.zip but the release no longer serves it (gh-1832 shape)

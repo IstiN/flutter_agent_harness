@@ -1,0 +1,158 @@
+// gh-2042 — workflow + wiring shape guards.
+//
+// AC1: a published release is immutable for `fa-*` assets — every workflow
+// attach path of an fa-* asset routes through scripts/release_asset_gate.sh
+// (the only place `gh release upload` of an fa-* asset may happen), and the
+// attach-or-create script routes through the gate too.
+// AC2: a release-drift-watch workflow re-verifies the published assets
+// against the signed SHA256SUMS after every publish AND on a schedule, and
+// pages + auto re-requests release-provenance on drift.
+// AC4 (REG): the gh-1832 required-assets gate, the gh-814 trust-anchor drift
+// gate and the signature self-check stay exactly where they are, and the
+// provenance publish point keeps its signed-manifest precondition.
+//
+// Static lint over the workflows/scripts — the repo's workflow-shape
+// never-again pattern (see ci_release_pending_guard_test.dart).
+import 'dart:io';
+
+import 'package:test/test.dart';
+import 'package:yaml/yaml.dart';
+
+String read(String path) => File(path).readAsStringSync();
+
+YamlMap jobsOf(String workflowPath) =>
+    (loadYaml(read(workflowPath))['jobs']) as YamlMap;
+
+/// `gh release upload` invocations (line-level) in a workflow body.
+List<String> uploadLines(String workflowPath) => read(workflowPath)
+    .split('\n')
+    .where((l) => l.contains('gh release upload'))
+    .toList();
+
+void main() {
+  group('AC1 — every fa-* attach path routes through the immutability gate', () {
+    test('scripts/release_asset_gate.sh exists and uploads with --clobber', () {
+      final gate = read('scripts/release_asset_gate.sh');
+      expect(gate, contains('--clobber'),
+          reason: 'the gate performs the attach (or the immutable skip)');
+      expect(gate, contains('isDraft'),
+          reason: 'the gate decides on the draft/published state');
+      expect(gate, contains('fa-'),
+          reason: 'the immutability class is exactly the fa-* asset set');
+    });
+
+    test('release_attach_or_create.sh routes uploads through the gate', () {
+      final attach = read('scripts/release_attach_or_create.sh');
+      expect(attach, contains('release_asset_gate.sh'),
+          reason: 'the attach-or-create upload path is the v1.0.680 hole — '
+              'every upload must pass the gate');
+    });
+
+    test('ci.yml + build-macos.yml: bare `gh release upload` lines are SHA256SUMS-only (provenance)', () {
+      // The provenance manifest upload is the ONLY raw upload allowed in
+      // these workflows: SHA256SUMS(.sig) is not an fa-* asset, and
+      // re-uploading it is the sanctioned post-publish remediation
+      // (re-running release-provenance for the tag).
+      for (final wf in [
+        '.github/workflows/ci.yml',
+        '.github/workflows/build-macos.yml',
+      ]) {
+        final uploads = uploadLines(wf);
+        expect(uploads, isNotEmpty, reason: '$wf keeps its provenance upload');
+        for (final line in uploads) {
+          expect(
+            line,
+            contains('SHA256SUMS'),
+            reason:
+                '$wf: "$line" uploads an fa-* asset raw — route it through '
+                'scripts/release_asset_gate.sh (gh-2042 AC1: a published '
+                'release is immutable for fa-* assets)',
+          );
+        }
+      }
+    });
+
+    test('every fa-* upload call site invokes the gate (ci.yml binaries/web-spa/extension, build-macos legs)', () {
+      for (final wf in [
+        '.github/workflows/ci.yml',
+        '.github/workflows/build-macos.yml',
+      ]) {
+        expect(read(wf), contains('release_asset_gate.sh'),
+            reason: '$wf attaches fa-* assets — the gate must guard them');
+      }
+    });
+  });
+
+  group('AC2 — the release drift watch workflow', () {
+    const wfPath = '.github/workflows/release-drift-watch.yml';
+
+    test('workflow exists with publish + schedule + dispatch triggers', () {
+      expect(File(wfPath).existsSync(), isTrue,
+          reason: '$wfPath must exist (gh-2042 AC2)');
+      final y = loadYaml(read(wfPath)) as YamlMap;
+      final on = y['on'] as YamlMap;
+      expect((on['release'] as YamlMap)['types'].toString(), contains('published'),
+          reason: 'after every release publish');
+      expect(on['schedule'], isNotNull, reason: 'and on a schedule — drift must not linger');
+      expect((on['workflow_dispatch'] as YamlMap)['inputs'], isNotNull,
+          reason: 'dispatch is the manual remediation vehicle (any tag)');
+    });
+
+    test('the job is bounded, least-privileged, and runs the check + remediation', () {
+      final jobs = jobsOf(wfPath);
+      expect(jobs, hasLength(1));
+      final job = jobs.values.first as YamlMap;
+      expect(job['timeout-minutes'], isNotNull, reason: 'every job carries an explicit ceiling');
+      final perms = job['permissions'] as YamlMap;
+      expect(perms['contents'].toString(), contains('read'),
+          reason: 'downloads the release assets');
+      expect(perms['actions'].toString(), contains('write'),
+          reason: 'the drift auto re-request reruns the provenance job');
+      expect(perms['issues'].toString(), contains('write'),
+          reason: 'drift pages via a deduplicated issue');
+      final steps = (job['steps'] as YamlList).map((s) => s.toString()).join('\n');
+      expect(steps, contains('release_drift_check.sh'),
+          reason: 'the digest diff runs in the repo-owned script');
+      expect(steps, contains('release_drift_remediate.sh'),
+          reason: 'the drift path pages + re-requests provenance');
+      expect(steps, contains('if: failure()'),
+          reason: 'remediation fires exactly on a red check');
+      expect(steps, contains('gh release download'),
+          reason: 're-download from the release (never trust the build tree)');
+    });
+  });
+
+  group('AC4 (REG) — the existing release gates stay exactly where they are', () {
+    test('gh-1832 required-assets gate stays a publish-blocking provenance step', () {
+      final prov = jobsOf('.github/workflows/ci.yml')['release-provenance'] as YamlMap;
+      final steps = (prov['steps'] as YamlList)
+          .map((s) => s['name']?.toString() ?? '')
+          .toList();
+      expect(steps, contains('Assert required release assets (gh-1832 gate)'),
+          reason: 'no path publishes assets without the required set');
+    });
+
+    test('gh-814 trust-anchor drift gate + signature self-check stay in the sign step', () {
+      final prov = jobsOf('.github/workflows/ci.yml')['release-provenance'] as YamlMap;
+      final signStep = (prov['steps'] as YamlList)
+          .whereType<YamlMap>()
+          .firstWhere((s) => s['name'] == 'Build and sign SHA256SUMS');
+      final body = signStep['run'].toString();
+      expect(body, contains('openssl dgst -sha256 -verify'),
+          reason: 'the signature self-check stays');
+      expect(body, contains('site/install.sh'),
+          reason: 'the gh-814 trust-anchor drift gate stays');
+    });
+
+    test('the provenance publish point keeps its signed-manifest precondition', () {
+      final prov = jobsOf('.github/workflows/ci.yml')['release-provenance'] as YamlMap;
+      final uploadStep = (prov['steps'] as YamlList)
+          .whereType<YamlMap>()
+          .firstWhere((s) => s['name'] == 'Upload provenance assets');
+      final body = uploadStep['run'].toString();
+      expect(body, contains('SHA256SUMS'));
+      expect(body, contains('--draft=false --latest'),
+          reason: 'the flip stays provenance-owned (gh-1801)');
+    });
+  });
+}

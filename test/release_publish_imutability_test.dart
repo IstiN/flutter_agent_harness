@@ -22,6 +22,7 @@ void main() {
     String? releaseState,
     List<String> attachedNames = const [],
     List<String> viewSeq = const ['exists'],
+    List<String> assets = const ['fa-macos-arm64-mac.zip', 'fa-macos-arm64'],
   }) {
     final dir = Directory(
       '${hygieneFixtureRoot.path}/immutable-$name-${DateTime.now().microsecondsSinceEpoch}',
@@ -36,15 +37,15 @@ void main() {
       ).writeAsStringSync('${attachedNames.join('\n')}\n');
     }
     File('${dir.path}/view-seq.txt').writeAsStringSync('${viewSeq.join('\n')}\n');
-    File('${dir.path}/a.zip').writeAsStringSync('asset-a');
-    File('${dir.path}/b.zip').writeAsStringSync('asset-b');
+    for (final asset in assets) {
+      File('${dir.path}/$asset').writeAsStringSync('bytes of $asset');
+    }
     File('${dir.path}/release-notes.md').writeAsStringSync('curated notes\n');
     File('${dir.path}/log').writeAsStringSync('');
     final res = Process.runSync('bash', [
       File('scripts/release_attach_or_create.sh').absolute.path,
       'v1.2.3',
-      'a.zip',
-      'b.zip',
+      ...assets,
     ], workingDirectory: dir.path, environment: {
       'PATH': '$bin:${Platform.environment['PATH']}',
       'GITHUB_REPOSITORY': 'OWNER/REPO',
@@ -82,7 +83,7 @@ void main() {
 
   test('published release + already-attached assets → immutable skip, exit 0, no upload', () {
     final run = runAttach('published-skip', releaseState: 'false',
-        attachedNames: ['a.zip', 'b.zip']);
+        attachedNames: ['fa-macos-arm64-mac.zip', 'fa-macos-arm64']);
     expect(run.exitCode, 0, reason: run.out);
     expect(run.log.where((l) => l.contains('release upload')), isEmpty);
     expect(run.out.toLowerCase(), contains('skip'));
@@ -92,10 +93,11 @@ void main() {
     // The mobile leg (AAB/IPA/APK — not provenance-covered) keeps its
     // store-refresh contract on published releases.
     final run = runAttach('published-nonfa', releaseState: 'false',
-        attachedNames: ['fa-linux-x64.tar.gz']);
+        attachedNames: ['fa-linux-x64.tar.gz'],
+        assets: ['app-release.aab', 'app-store-release.apk']);
     expect(run.exitCode, 0, reason: run.out);
     expect(
-      run.log.where((l) => l.contains('release upload v1.2.3 a.zip')),
+      run.log.where((l) => l.contains('release upload v1.2.3 app-release.aab')),
       isNotEmpty,
       reason: 'non-fa assets keep the clobber-refresh path',
     );
@@ -107,7 +109,8 @@ void main() {
     // release_hygiene_test.dart); on a PUBLISHED one the flip must stay
     // off — `--latest` here would move the badge to an older release.
     final run = runAttach('published-servable', releaseState: 'false',
-        attachedNames: ['fa-linux-x64.tar.gz', 'SHA256SUMS', 'SHA256SUMS.sig']);
+        attachedNames: ['fa-linux-x64.tar.gz', 'SHA256SUMS', 'SHA256SUMS.sig'],
+        assets: ['app-release.aab']);
     expect(run.exitCode, 0, reason: run.out);
     expect(
       run.log.where((l) => l.contains('release edit')),
@@ -124,7 +127,9 @@ void main() {
     expect(run.exitCode, 0, reason: run.out);
     expect(
       run.log,
-      contains('release upload v1.2.3 a.zip --clobber --repo OWNER/REPO'),
+      contains(
+        'release upload v1.2.3 fa-macos-arm64-mac.zip --clobber --repo OWNER/REPO',
+      ),
     );
     expect(run.log.where((l) => l.contains('release edit')), isEmpty,
         reason: 'un-servable draft stays unflipped (gh-1801, unchanged)');

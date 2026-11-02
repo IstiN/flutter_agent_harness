@@ -41,28 +41,36 @@ if [ "${#assets[@]}" -eq 0 ]; then
   exit 1
 fi
 
-upload_all() { # exists-path: upload + (servable-only) publish + latest
+upload_all() { # exists-path: gate-guarded attach + (servable DRAFT-only) publish + latest
+  # gh-2042 (AC1): every upload passes the immutability gate — on a
+  # PUBLISHED release an unattached fa-* asset refuses the whole call loud,
+  # an already-attached one skips, and non-fa store/DMG refreshers keep
+  # their clobber-refresh contract. Drafts attach exactly as before.
   for asset in "${assets[@]}"; do
-    gh release upload "$tag" "$asset" --clobber --repo "$repo"
+    bash "$(dirname "$0")/release_asset_gate.sh" "$tag" "$asset"
   done
-  # Latest policy (#282 + gh-1801 rework): publish + latest ONLY when the
-  # release can actually serve `fa update` — that means the signed
+  # Latest policy (#282 + gh-1801 rework + gh-2042): publish + latest ONLY
+  # when the release can actually serve `fa update` — that means the signed
   # checksums are already on it (`fa update` hard-fails without
-  # SHA256SUMS(.sig), bin/self_manage.dart provenance gate). A release
-  # carrying them but still draft means provenance ran and its own flip
-  # failed — recover it here. Any other case stays draft/unflipped: the
-  # tag-run release-provenance job (ci.yml) is the single owner of the
-  # --draft=false --latest flip, and a red provenance must leave the
-  # PREVIOUS release as latest instead of stranding a provenance-less one
-  # (the v1.0.630 incident window).
+  # SHA256SUMS(.sig), bin/self_manage.dart provenance gate) — AND it is
+  # still a DRAFT (the provenance-flip recovery window). A PUBLISHED
+  # release is never re-flaged `--latest` here: on an older release that
+  # would drag the latest badge (and `fa update`) backwards to a downgrade.
   if release_serves_fa_update; then
-    gh release edit "$tag" --draft=false --latest --repo "$repo"
-    # gh-1899: same duplicate-tag race as the tag train — a twin draft
-    # minted by a sibling leg of THIS run would otherwise rot until the
-    # 24h sweeper. The tag is published and servable here (the flip is
-    # gated on the signed checksums), so own-run twin drafts are orphans.
-    bash "$(dirname "$0")/release_draft_dedupe.sh" "$tag" \
-      || echo "::warning::gh-1899 twin-draft dedupe failed — the release is published and servable, so this is cleanup noise only; the 24h sweeper remains the backstop"
+    case "$(gh release view "$tag" --repo "$repo" --json isDraft --jq .isDraft 2>/dev/null || echo false)" in
+      true)
+        gh release edit "$tag" --draft=false --latest --repo "$repo"
+        # gh-1899: same duplicate-tag race as the tag train — a twin draft
+        # minted by a sibling leg of THIS run would otherwise rot until the
+        # 24h sweeper. The tag is published and servable here (the flip is
+        # gated on the signed checksums), so own-run twin drafts are orphans.
+        bash "$(dirname "$0")/release_draft_dedupe.sh" "$tag" \
+          || echo "::warning::gh-1899 twin-draft dedupe failed — the release is published and servable, so this is cleanup noise only; the 24h sweeper remains the backstop"
+        ;;
+      *)
+        echo "release $tag is already published — publish/latest flip skipped (gh-2042: latest never moves backwards; the signed SHA256SUMS re-upload is release-provenance's job)"
+        ;;
+    esac
   else
     echo "release $tag is not yet servable (no SHA256SUMS on it) — publish+latest left to the release-provenance step (gh-1801)"
   fi
