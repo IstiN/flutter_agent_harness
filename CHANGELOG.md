@@ -29,7 +29,14 @@ block a release again.
   `cancelToken` so a watchdog-shaped cancel reason (any
   `TimeoutException`) can no longer dissolve a user abort into a
   "summarizer returned no text" failed receipt while the run reports
-  success (#1085).
+  success (#1085). Follow-up CI red on the same branch: the decline
+  moved tiny-transcript runs to the classic residual engine, where an
+  EMPTY summarizable region folded zero #729 chunks into a blank
+  summary that still landed as a junk CompactionRecord and a hollow
+  `success: true` through the no-work terminal — `compactSession` now
+  refuses that empty-region blank fold (gh-1743's failure-verdict
+  contract kept; a dialed blank answer over a real region still lands
+  as a record, issue #578 unchanged).
 
 - fix(gh-2003): the Copilot picker filter is tier-aware. Individual-tier
   `/models` responses omit `model_picker_enabled` entirely, so phase 1
