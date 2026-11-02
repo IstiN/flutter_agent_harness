@@ -139,8 +139,9 @@ const String _ghStub = '''
 echo "\$*" >> "\$GH_LOG_FILE"
 case "\$1 \$2" in
   "run list")
-    if [ -f "\$GH_STUB_DIR/no-runs" ]; then echo '[]'; exit 0; fi
-    echo '[{"databaseId": 123, "conclusion": "success"}, {"databaseId": 99, "conclusion": null}]'
+    if [ -f "\$GH_STUB_DIR/no-runs" ]; then canned='[]'; else canned='[{"databaseId": 123, "conclusion": "success"}, {"databaseId": 99, "conclusion": null}]'; fi
+    # Emulate gh's --jq (the script filters server-side JSON through it).
+    printf '%s' "\$canned" | jq '[.[] | select(.conclusion != null)] | first | .databaseId // 0'
     ;;
   "run rerun")
     if [ -f "\$GH_STUB_DIR/rerun-fails" ]; then
@@ -148,14 +149,27 @@ case "\$1 \$2" in
       exit 1
     fi
     ;;
-  api)
+  "api "*)
     if printf '%s' "\$*" | grep -q '/jobs'; then
-      echo '{"jobs":[{"name":"Build native binaries","id":1},{"name":"Sign release checksums","id":77}]}'
+      printf '%s' '{"jobs":[{"name":"Build native binaries","id":1},{"name":"Sign release checksums","id":77}]}' \\
+        | jq '.jobs[] | select(.name == "Sign release checksums") | .id'
     fi
     ;;
-  issue)
+  "issue "*)
     if [ "\$2" = "list" ]; then
-      cat "\$GH_STUB_DIR/open-issues.tsv" 2>/dev/null || true
+      # Emulate gh's --json number,title + --jq title-match: answer the
+      # number of an OPEN issue whose title matches --arg t exactly.
+      if [ -f "\$GH_STUB_DIR/open-issues.tsv" ]; then
+        want=""
+        capture=0
+        title=""
+        for a in "\$@"; do
+          if [ "\$capture" = "1" ]; then title="\$a"; capture=0; fi
+          [ "\$prev" = "--arg" ] && [ "\$a" = "t" ] && capture=1
+          prev="\$a"
+        done
+        awk -F '\\t' -v t="\$title" '\$2 == t { print \$1 }' "\$GH_STUB_DIR/open-issues.tsv"
+      fi
       exit 0
     fi
     if [ "\$2" = "create" ]; then

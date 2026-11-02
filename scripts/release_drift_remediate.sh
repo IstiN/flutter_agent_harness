@@ -31,10 +31,12 @@ details="(drift details unavailable)"
 [ -f "$details_file" ] && details=$(cat "$details_file")
 
 rerun_status="(re-request not possible: no completed workflow run found for tag $tag on ci.yml)"
+# `// 0` (not `// ""`): jq encodes the empty STRING as `""` — with quotes —
+# which would defeat the emptiness guard. 0 is never a real run id.
 run_id=$(gh run list --repo "$repo" --workflow ci.yml --branch "$tag" \
   --limit 30 --json databaseId,conclusion \
-  --jq '[.[] | select(.conclusion != null)] | first | .databaseId // ""' 2>/dev/null || echo "")
-if [ -n "$run_id" ]; then
+  --jq '[.[] | select(.conclusion != null)] | first | .databaseId // 0' 2>/dev/null || echo 0)
+if [ "$run_id" != "0" ] && [ -n "$run_id" ]; then
   job_id=$(gh api "repos/$repo/actions/runs/$run_id/jobs" --paginate \
     --jq '.jobs[] | select(.name == "Sign release checksums") | .id' 2>/dev/null | head -1 || true)
   if [ -n "${job_id:-}" ]; then
@@ -66,11 +68,13 @@ trap 'rm -f "$body"' EXIT
 existing=$(gh issue list --repo "$repo" --state open --limit 200 \
   --json number,title --jq '.[] | select(.title == $t) | .number' --arg t "$title" 2>/dev/null | head -1 || true)
 if [ -n "$existing" ]; then
-  gh issue comment "$existing" --repo "$repo" --body-file "$body" >/dev/null
+  gh issue comment "$existing" --repo "$repo" --body-file "$body" >/dev/null \
+    || { echo "::error::drift on $tag: could not comment the open drift issue #$existing — page the release owner manually" >&2; exit 1; }
   echo "✅ drift issue updated: #$existing (dedup — no duplicate filed)"
 else
   gh label create release-drift --repo "$repo" --color D97706 --description "Published release assets drifted from the signed SHA256SUMS" >/dev/null 2>&1 || true
   gh issue create --repo "$repo" --title "$title" --label release-drift \
-    --body-file "$body" >/dev/null
+    --body-file "$body" >/dev/null \
+    || { echo "::error::drift on $tag: could not file the drift issue — page the release owner manually" >&2; exit 1; }
   echo "✅ drift issue filed for $tag — paged (gh-2042 AC2: drift must not linger)"
 fi
