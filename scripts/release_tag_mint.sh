@@ -67,6 +67,47 @@ while IFS= read -r extraheader_key; do
   git config --local --unset-all "$extraheader_key" || true
 done < <(git config --local --name-only --get-regexp 'http\..*\.extraheader' 2>/dev/null || true)
 
+# Guard 1b — actions/checkout ≥ v7 (gh-2039, run 41393469972) no longer
+# writes the job token as a repo-local extraheader key at all: it writes
+# a `git-credentials-<uuid>.config` file under RUNNER_TEMP and references
+# it from repo-local `includeIf.gitdir:<gitdir>.path` entries. The sweep
+# above then no-ops: `--get-regexp` LISTS the key (git resolves it
+# through the include) but the key only EXISTS in the included file, so
+# the repo-local unset fails silently under `|| true`. Remove every
+# includeIf entry pointing at a credentials config file and delete the
+# file — exactly what the runner's post-job cleanup does ("Removing
+# includeIf entries pointing to credentials config files").
+stripped_v7=0
+while IFS= read -r include_key; do
+  [ -n "$include_key" ] || continue
+  while IFS= read -r include_val; do
+    [ -n "$include_val" ] || continue
+    case "$include_val" in
+      *git-credentials-*.config)
+        git config --local --unset-all "$include_key" '.*git-credentials-[^/]*\.config$' || true
+        rm -f "$include_val" 2>/dev/null || true
+        stripped_v7=1
+        ;;
+    esac
+  done < <(git config --local --get-all "$include_key" 2>/dev/null || true)
+done < <(git config --local --name-only --get-regexp 'includeIf\.gitdir:' 2>/dev/null || true)
+if [ "$stripped_v7" -eq 1 ]; then
+  echo "stripped checkout v7 persisted credentials (includeIf entries + git-credentials config files)"
+fi
+
+# Guard 1c — fail loud if an Authorization header STILL resolves for
+# github.com after both strips (a scope this script cannot unset: the
+# runner user's global/system gitconfig, or a brand-new checkout
+# persistence shape). Pushing anyway would authenticate as the
+# GITHUB_TOKEN class and strand the release for the sweeper a day later;
+# a red leg naming the residual header is the actionable outcome.
+residual_header="$(git config --get http.https://github.com/.extraheader 2>/dev/null || true)"
+if [ -n "$residual_header" ]; then
+  residual_origin="$(git config --show-origin --get http.https://github.com/.extraheader 2>/dev/null | sed 's/\t.*//' | head -n1)"
+  echo "::error::a persisted Authorization header still resolves for github.com after the strip (${residual_origin:-unknown origin}) — the minted push would authenticate as the CI-suppressed token and no tag train could fire. Remove it (e.g. git config --global --unset-all http.https://github.com/.extraheader) and re-run." >&2
+  exit 1
+fi
+
 target="${RELEASE_TARGET_SHA:-${GITHUB_SHA:?}}"
 echo "tag $tag missing — minting annotated tag at $target (token-URL push, fires the tag train)"
 git fetch origin "$target" --depth=1 2>/dev/null || git fetch origin main --depth=50

@@ -40,6 +40,7 @@ class RaceMinter {
     required this.name,
     required this.committerDate,
     this.pushLands = true,
+    this.checkoutV7 = false,
   });
 
   final Directory root;
@@ -48,6 +49,17 @@ class RaceMinter {
   final String committerDate; // distinct per minter → distinct tag objects
   final bool
   pushLands; // false → the push fails without landing (genuine failure)
+
+  /// Persist the job token the way actions/checkout **v7** does (gh-2039,
+  /// run 41393469972): no repo-local extraheader key at all — a separate
+  /// `git-credentials-<uuid>.config` file under RUNNER_TEMP referenced by
+  /// repo-local `includeIf.gitdir:<gitdir>.path` entries. The old ≤v6
+  /// local key remains in the default fixture (older checkout pins).
+  final bool checkoutV7;
+
+  /// The credentials file the v7 fixture writes (deleted by the mint's
+  /// strip, mirroring the runner post-job cleanup).
+  String? credentialsFile;
 
   late final String work;
   late final int gitCalls;
@@ -74,11 +86,38 @@ class RaceMinter {
     git(['config', 'user.name', 't']);
     // What actions/checkout persists (both CI legs carry it): the job
     // token extraheader the mint must strip before its push.
-    git([
-      'config',
-      'http.https://github.com/.extraheader',
-      'AUTHORIZATION: basic am9iLXRva2Vu',
-    ]);
+    if (checkoutV7) {
+      // checkout v7 shape: the extraheader lives ONLY in a referenced
+      // credentials config file; the repo-local config carries includeIf
+      // entries pointing at it. (Observed verbatim in the run
+      // 41393469972 post-job cleanup: "Removing includeIf entries
+      // pointing to credentials config files".)
+      final credsDir = '${root.path}/runner-temp';
+      Directory(credsDir).createSync(recursive: true);
+      final credsFile =
+          '$credsDir/git-credentials-abc12df3-99aa-4c55-9d33-77c8ee52b111.config';
+      File(credsFile).writeAsStringSync(
+        '[http "https://github.com/"]\n'
+        '\textraheader = AUTHORIZATION: basic am9iLXRva2Vu\n',
+      );
+      credentialsFile = credsFile;
+      git([
+        'config',
+        'includeIf.gitdir:$work/.git.path',
+        credsFile,
+      ]);
+      git([
+        'config',
+        'includeIf.gitdir:$work/.git/worktrees/*.path',
+        credsFile,
+      ]);
+    } else {
+      git([
+        'config',
+        'http.https://github.com/.extraheader',
+        'AUTHORIZATION: basic am9iLXRva2Vu',
+      ]);
+    }
     // gh stub: release always missing, `run list` answers per
     // GH_STUB_TRAIN_RUNNING (or fails, for the probe-failure case).
     File('$_bin/gh').writeAsStringSync('''
@@ -235,6 +274,7 @@ Future<(RaceMinter, RaceMinter)> _racePair(String tag) async {
 Future<(RaceMinter, String)> _singleMinter(
   String name, {
   String? attachOrigin,
+  bool checkoutV7 = false,
 }) async {
   final root = Directory.systemTemp.createTempSync('mint-$name-');
   final realGit = resolveRealGit();
@@ -284,6 +324,7 @@ Future<(RaceMinter, String)> _singleMinter(
     name: name,
     committerDate: '2026-01-01T00:00:01Z',
     pushLands: name == 'noland' ? false : true,
+    checkoutV7: checkoutV7,
   );
   m.buildFixture(sha);
   return (m, sha);
@@ -497,6 +538,143 @@ void main() {
       contains('✅ tag train for v9.9.5 started'),
       reason: 'the train is recognized despite the stderr noise '
           '(output: ${m.output})',
+    );
+  });
+
+  test('gh-2039: checkout v7 includeIf-persisted credentials are stripped — the extraheader must no longer resolve and the credentials file must be deleted', () async {
+    // Run 41393469972 (v1.0.682, 2026-11-02): actions/checkout v7 no
+    // longer writes the job token as a repo-local extraheader key. It
+    // writes a `git-credentials-<uuid>.config` file under RUNNER_TEMP
+    // and references it from repo-local `includeIf.gitdir:<gitdir>.path`
+    // entries. Guard 1's `git config --local --unset-all` then had
+    // nothing to unset — `--get-regexp` LISTS the key (git resolves it
+    // through the include) but the key only EXISTS in the included file,
+    // so the repo-local unset silently no-op'd (`|| true`), the
+    // Authorization header still rode the push, GitHub classed the
+    // credential as GITHUB_TOKEN, and no tag train ever fired.
+    //
+    // The strip must mirror the runner's post-job cleanup: remove every
+    // includeIf entry pointing at a git-credentials-*.config file,
+    // delete that file, and leave the effective extraheader resolving to
+    // nothing. The wire-observable is `git config --get` (local +
+    // includes + global) — exactly what git puts on the wire.
+    final (m, _) = await _singleMinter('v7creds', checkoutV7: true);
+    final realGit = resolveRealGit();
+    String effectiveExtraheader() {
+      final r = Process.runSync(realGit, [
+        'config',
+        '--get',
+        'http.https://github.com/.extraheader',
+      ], workingDirectory: m.work);
+      return r.stdout.toString().trim();
+    }
+
+    // Fixture sanity: without any strip the header resolves through the
+    // includeIf chain — the pre-fix failure shape.
+    expect(
+      effectiveExtraheader(),
+      'AUTHORIZATION: basic am9iLXRva2Vu',
+      reason: 'the v7 fixture must carry a RESOLVING extraheader '
+          '(nothing stripped yet)',
+    );
+
+    m.withEnv(const {'GH_STUB_TRAIN_RUNNING': '1'});
+    await m.run('v9.9.4');
+    expect(m.exitCode, 0, reason: m.output);
+    expect(m.output, contains('✅ tag train for v9.9.4 started'));
+    expect(
+      effectiveExtraheader(),
+      isEmpty,
+      reason:
+          'the extraheader must no longer resolve after the strip — '
+          'this is the credential GitHub sees on the wire. Residual: '
+          'the mint would push as GITHUB_TOKEN and the train would '
+          'never fire (gh-2039).',
+    );
+    expect(
+      m.credentialsFile,
+      isNotNull,
+    );
+    expect(
+      File(m.credentialsFile!).existsSync(),
+      isFalse,
+      reason: 'the referenced credentials config file must be deleted '
+          '(the runner post-job cleanup deletes it too)',
+    );
+    final includeKeys = Process.runSync(realGit, [
+      'config',
+      '--local',
+      '--name-only',
+      '--get-regexp',
+      'includeIf\\.gitdir:',
+    ], workingDirectory: m.work);
+    expect(
+      (includeKeys.stdout as String).trim(),
+      isEmpty,
+      reason: 'includeIf entries pointing at git-credentials files must '
+          'be removed from the repo-local config '
+          '(stderr: ${includeKeys.stderr})',
+    );
+    // The push must still land with the URL credentials (the strip must
+    // not break the mint itself): the train check passed above AND the
+    // ref exists on the shared origin.
+    final ref = Process.runSync(realGit, [
+      'ls-remote',
+      '--exit-code',
+      m.origin,
+      'refs/tags/v9.9.4',
+    ]);
+    expect(ref.exitCode, 0, reason: 'the minted tag must be on the remote');
+  });
+
+  test('gh-2039 Guard 1c: an Authorization header that STILL resolves after the strips (global gitconfig scope) fails loud BEFORE the push — no tag is pushed, no probe runs', () async {
+    // The strips can only unset the LOCAL config; a header persisted in
+    // a scope the mint must not touch (the runner user's global
+    // gitconfig, or a future checkout persistence shape) would ride the
+    // wire exactly like the v7 include did — pushing anyway mints a
+    // GITHUB_TOKEN-classed tag that rolls back only after the full
+    // verification budget. The residual header must abort the mint
+    // before the push, naming the residual origin.
+    final (m, _) = await _singleMinter('residual');
+    // Runner-user scope: a GLOBAL extraheader the local strip cannot
+    // reach (HOME is the fixture root).
+    File('${m.root.path}/.gitconfig').writeAsStringSync(
+      '[http "https://github.com/"]\n'
+      '\textraheader = AUTHORIZATION: basic am9iLXRva2Vu\n',
+    );
+    m.withEnv(const {'GH_STUB_TRAIN_RUNNING': '1'});
+    await m.run('v9.9.3');
+    expect(m.exitCode, isNot(0), reason: m.output);
+    expect(
+      m.output,
+      contains('persisted Authorization header still resolves'),
+    );
+    expect(
+      m.output,
+      contains('.gitconfig'),
+      reason: 'the error must name the residual origin (show-origin) '
+          'so the operator can remove exactly that header',
+    );
+    expect(
+      m.output,
+      contains('::error::'),
+    );
+    final realGit = resolveRealGit();
+    final ref = Process.runSync(realGit, [
+      'ls-remote',
+      '--exit-code',
+      m.origin,
+      'refs/tags/v9.9.3',
+    ]);
+    expect(
+      ref.exitCode,
+      2,
+      reason: 'the mint must abort BEFORE the push — no tag on the remote',
+    );
+    expect(
+      m.ghRunListCalls,
+      0,
+      reason: 'aborting before the push means no train verification budget',
     );
   });
 }

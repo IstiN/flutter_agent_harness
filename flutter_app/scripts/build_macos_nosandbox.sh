@@ -57,6 +57,20 @@ export FA_CODE_SIGN_IDENTITY="$identity"
 export FA_DEVELOPMENT_TEAM="$team"
 export FA_PROVISIONING_PROFILE_SPECIFIER="${FA_PROVISIONING_PROFILE_SPECIFIER:-}"
 
+# gh-2039 pre-flight — the pinned identity must be resolvable by the
+# SAME search list codesign reads, BEFORE the multi-minute flutter
+# build whose xcode_backend codesign is the first real consumer. A
+# missing/locked identity used to surface as `error: no identity found`
+# 5+ minutes into the build (run 41393469972); fail here in ~1s with
+# the exact remediation instead.
+if [[ "$identity" != "-" ]]; then
+  if ! security find-identity -v -p codesigning 2>/dev/null | grep -F -- "$identity" >/dev/null; then
+    echo "::error::signing identity '$identity' is not resolvable via 'security find-identity -v -p codesigning' (missing, expired, or the signing keychain is locked) — codesign inside 'flutter build' would fail after a full build. Re-assert the signing state first: ~/bin/ci-sign install fa-macos (unlock + identity verify + search-list rewrite), then re-run." >&2
+    exit 1
+  fi
+  echo "[build_macos_nosandbox] identity pre-flight OK: '$identity' resolvable for codesigning"
+fi
+
 readonly APP="build/macos/Build/Products/Release/Fa.app"
 readonly ENTITLEMENTS="macos/Runner/ReleaseNoSandbox.entitlements"
 
