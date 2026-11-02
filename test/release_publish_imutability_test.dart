@@ -81,6 +81,24 @@ void main() {
     expect(run.log.where((l) => l.contains('release edit')), isEmpty);
   });
 
+  test('the WHOLE asset list is judged against ONE state snapshot (gh-2042 review: one gate call, all-or-nothing)', () {
+    // The gate's documented contract is per-CALL all-or-nothing. If the
+    // caller invoked it once per asset, each asset would be judged against
+    // its own `gh release view` snapshot (N round-trips, a wider
+    // draft→published TOCTOU window, and a partial mutation when an early
+    // non-fa asset uploads before a later fa-* refusal). Pin: one gate call
+    // = exactly ONE release-view verdict for the whole list.
+    final run = runAttach('gate-batched', releaseState: 'false',
+        attachedNames: ['fa-macos-arm64-mac.zip', 'fa-web-spa.zip']);
+    expect(run.exitCode, isNot(0), reason: run.out);
+    final gateVerdicts = run.log
+        .where((l) => l.contains('--json isDraft,assets'))
+        .toList();
+    expect(gateVerdicts, hasLength(1),
+        reason: 'the gate must receive the whole asset list in ONE call '
+            'and refuse before any upload — never once per asset');
+  });
+
   test('published release + already-attached assets → immutable skip, exit 0, no upload', () {
     final run = runAttach('published-skip', releaseState: 'false',
         attachedNames: ['fa-macos-arm64-mac.zip', 'fa-macos-arm64']);
