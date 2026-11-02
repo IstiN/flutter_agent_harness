@@ -367,24 +367,40 @@ class _ChatListPanelState extends State<ChatListPanel> {
       sigmaX: tokens.glassBlur,
       sigmaY: tokens.glassBlur,
     );
-    // The tint only fades in once rows actually scroll beneath the glass —
-    // at rest the chrome is plain and no underlay band is visible.
-    final child = AnimatedOpacity(
+    // The frost layer (blur + tint) is a separate layer UNDER the controls:
+    // it fades in only once rows actually scroll beneath the glass. At rest
+    // the chrome controls stay fully visible on plain background — no band,
+    // and never a hidden toolbar.
+    final frost = AnimatedOpacity(
       duration: FaMotion.duration(context, const Duration(milliseconds: 160)),
       opacity: _hasScrollUnder ? 1 : 0,
-      child: ColoredBox(
-        color: tokens.surface1.withValues(alpha: .45),
-        child: chrome,
-      ),
+      child: BackdropGroup.of(context) != null
+          ? BackdropFilter.grouped(
+              filter: filter,
+              child: ColoredBox(
+                color: tokens.surface1.withValues(alpha: .45),
+                child: const SizedBox.expand(),
+              ),
+            )
+          : BackdropFilter(
+              filter: filter,
+              child: ColoredBox(
+                color: tokens.surface1.withValues(alpha: .45),
+                child: const SizedBox.expand(),
+              ),
+            ),
     );
     // A large rectangular LiquidGlass surface adds refractive highlights and
     // shadows that look like artefacts over dense conversation rows. This
     // chrome needs only frost: a clean backdrop blur + tint, with no shadow.
     return ClipRect(
       key: const ValueKey('chatListGlassChrome'),
-      child: BackdropGroup.of(context) != null
-          ? BackdropFilter.grouped(filter: filter, child: child)
-          : BackdropFilter(filter: filter, child: child),
+      child: Stack(
+        children: [
+          Positioned.fill(child: frost),
+          chrome,
+        ],
+      ),
     );
   }
 

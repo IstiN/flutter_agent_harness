@@ -877,6 +877,24 @@ void main() {
           .first,
     );
     expect(chromeFade.opacity, 0);
+    // The gate only ever wraps the frost layer — the controls themselves
+    // (segment panel, search) must never be inside the opacity fade.
+    expect(
+      find
+          .descendant(
+            of: find
+                .ancestor(
+                  of: find.byType(ColoredBox),
+                  matching: find.byType(AnimatedOpacity),
+                )
+                .first,
+            matching: find.byKey(const ValueKey('chatCategoryChips')),
+          )
+          .evaluate()
+          .isEmpty,
+      isTrue,
+      reason: 'chrome controls must live outside the scroll-under frost gate',
+    );
   });
 
   testWidgets('centered header uses the selected folder and session name', (
