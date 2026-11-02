@@ -695,6 +695,58 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
       filterActions: compact || collapsed
           ? const <Widget>[]
           : _buildChatFilterActions(),
+      searchController: switch (_section) {
+        _WideShellSection.chats => null,
+        _WideShellSection.activity => _activitySearchController,
+        _WideShellSection.apps => _appLauncherController.searchController,
+      },
+      searchFocusNode: _section == _WideShellSection.apps
+          ? _appLauncherController.searchFocusNode
+          : null,
+      searchHint: switch (_section) {
+        _WideShellSection.chats => null,
+        _WideShellSection.activity => context.l10n.activitySearchHint,
+        _WideShellSection.apps => context.l10n.launcherSearchHint,
+      },
+      onSearch: switch (_section) {
+        _WideShellSection.chats => null,
+        _WideShellSection.activity => _activityController.setSearch,
+        _WideShellSection.apps => (_) {},
+      },
+      bodyKey: _section == _WideShellSection.chats
+          ? null
+          : ValueKey('wide-sidebar-${_section.name}'),
+      bodyBuilder: switch (_section) {
+        _WideShellSection.chats => null,
+        _WideShellSection.activity => _buildActivitySidebarBody,
+        _WideShellSection.apps => _buildAppsSidebarBody,
+      },
+      showCurrentDirectory: _section == _WideShellSection.chats,
+    );
+  }
+
+  Widget _buildActivitySidebarBody(double topPadding) {
+    return Padding(
+      padding: EdgeInsets.only(top: topPadding),
+      child: ActivityListPanel(controller: _activityController),
+    );
+  }
+
+  Widget _buildAppsSidebarBody(double topPadding) {
+    return Padding(
+      padding: EdgeInsets.only(top: topPadding),
+      child: ListenableBuilder(
+        listenable: _appLauncherController,
+        builder: (context, _) => AppsDirectoryPanel(
+          controller: _appLauncherController,
+          appsStore: _appsStore,
+          runningAppName: _appPresentation?.app.name,
+          showSearch: false,
+          onOpenRunning: () => setState(() {
+            _appPresentation?.fullScreen = false;
+          }),
+        ),
+      ),
     );
   }
 
@@ -943,20 +995,10 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
             // frame; on other platforms it stays inside the panel.
             final toggleShift = _isMacOS ? 48 * progress : 0.0;
             final toggleLeft = sidebarWidth - 40 + toggleShift;
-            final sidebarContent = switch (_section) {
-              _WideShellSection.chats => _buildSidebar(
-                colors,
-                collapsed: contentCollapsed,
-              ),
-              _WideShellSection.activity => _buildActivitySidebar(
-                colors,
-                collapsed: contentCollapsed,
-              ),
-              _WideShellSection.apps => _buildAppsSidebar(
-                colors,
-                collapsed: contentCollapsed,
-              ),
-            };
+            final sidebarContent = _buildSidebar(
+              colors,
+              collapsed: contentCollapsed,
+            );
             return Stack(
               children: [
                 Row(
@@ -1221,75 +1263,10 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
   // Sidebar
   // ---------------------------------------------------------------------------
 
-  Widget _buildAppsSidebar(FahColors colors, {required bool collapsed}) {
-    return ColoredBox(
-      color: colors.panel,
-      child: Column(
-        children: [
-          MessengerSectionHeader(
-            title: context.l10n.appsGridTitle,
-            searchController: _appLauncherController.searchController,
-            searchFocusNode: _appLauncherController.searchFocusNode,
-            searchHint: context.l10n.launcherSearchHint,
-            onProfile: _openNarrowProfile,
-            onNew: _newSession,
-            collapsed: collapsed,
-            onExpand: () => setState(() => _sidebarCollapsed = false),
-            onCollapse: () => setState(() => _sidebarCollapsed = true),
-          ),
-          _buildPrimaryNavItems(collapsed: collapsed),
-          if (!collapsed)
-            Expanded(
-              child: ListenableBuilder(
-                listenable: _appLauncherController,
-                builder: (context, _) => AppsDirectoryPanel(
-                  controller: _appLauncherController,
-                  appsStore: _appsStore,
-                  runningAppName: _appPresentation?.app.name,
-                  showSearch: false,
-                  onOpenRunning: () => setState(() {
-                    _appPresentation?.fullScreen = false;
-                  }),
-                ),
-              ),
-            )
-          else
-            const Spacer(),
-        ],
-      ),
-    );
-  }
-
   Color _sidebarSurfaceColor(FahColors colors) =>
       FaDesignTokens.of(context).direction == FaVisualDirection.glass
       ? Colors.transparent
       : colors.panel;
-
-  Widget _buildActivitySidebar(FahColors colors, {required bool collapsed}) {
-    return ColoredBox(
-      color: _sidebarSurfaceColor(colors),
-      child: Column(
-        children: [
-          MessengerSectionHeader(
-            title: context.l10n.wideNavActivity,
-            searchController: _activitySearchController,
-            searchHint: context.l10n.activitySearchHint,
-            onSearch: _activityController.setSearch,
-            onProfile: _openNarrowProfile,
-            onNew: _newSession,
-            collapsed: collapsed,
-            onExpand: () => setState(() => _sidebarCollapsed = false),
-            onCollapse: () => setState(() => _sidebarCollapsed = true),
-          ),
-          _buildPrimaryNavItems(collapsed: collapsed),
-          if (!collapsed)
-            Expanded(child: ActivityListPanel(controller: _activityController))
-          else
-            const Spacer(),
-        ],
-      ),
-    );
-  }
 
   Widget _buildSidebar(FahColors colors, {required bool collapsed}) {
     // SelectionContainer.disabled prevents macOS spell-check squiggly
@@ -1305,29 +1282,31 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
             ],
             Expanded(
               child: collapsed
-                  ? ListenableBuilder(
-                      listenable: DapBindingStore.instance,
-                      builder: (context, _) => SidebarSessionsList(
-                        manager: widget.manager,
-                        sessionNamesStore:
-                            widget.sessionNamesStore ?? _namesStore,
-                        prefsStore: widget.sessionPrefsStore ?? _uiPrefs,
-                        collapsed: true,
-                        onNewSession: _newSession,
-                        onSessionTap: () => setState(() {}),
-                        persistedSessions: _persistedSessions,
-                        sessionInfoNames: _jsonlNames,
-                        onOpenPersisted: _openPersistedSession,
-                        onOpenLiveSession: _openLiveSession,
-                        hubBoundSessionId:
-                            DapBindingStore.instance.boundSessionId,
-                        pendingSessionId: _pendingOpenId,
-                        selectedSessionId: _selectedSessionId,
-                        headerLabel: context.l10n.wideNavChats,
-                        searchHint: context.l10n.wideChatsSearchHint,
-                        unnamedTitle: context.l10n.wideChatFallbackTitle,
-                      ),
-                    )
+                  ? _section != _WideShellSection.chats
+                        ? const SizedBox.shrink()
+                        : ListenableBuilder(
+                            listenable: DapBindingStore.instance,
+                            builder: (context, _) => SidebarSessionsList(
+                              manager: widget.manager,
+                              sessionNamesStore:
+                                  widget.sessionNamesStore ?? _namesStore,
+                              prefsStore: widget.sessionPrefsStore ?? _uiPrefs,
+                              collapsed: true,
+                              onNewSession: _newSession,
+                              onSessionTap: () => setState(() {}),
+                              persistedSessions: _persistedSessions,
+                              sessionInfoNames: _jsonlNames,
+                              onOpenPersisted: _openPersistedSession,
+                              onOpenLiveSession: _openLiveSession,
+                              hubBoundSessionId:
+                                  DapBindingStore.instance.boundSessionId,
+                              pendingSessionId: _pendingOpenId,
+                              selectedSessionId: _selectedSessionId,
+                              headerLabel: context.l10n.wideNavChats,
+                              searchHint: context.l10n.wideChatsSearchHint,
+                              unnamedTitle: context.l10n.wideChatFallbackTitle,
+                            ),
+                          )
                   : _buildChatPanel(collapsed: collapsed),
             ),
           ],
@@ -1351,19 +1330,20 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
 
   List<Widget> _buildChatFilterActions() {
     return [
-      for (final section in const [
-        _WideShellSection.activity,
-        _WideShellSection.apps,
-      ])
+      for (final section in _WideShellSection.values)
         MessengerCategoryChip(
           chipKey: ValueKey('messengerPrimaryNav-${section.name}'),
-          icon: section == _WideShellSection.activity
-              ? Icons.notifications_none_rounded
-              : Icons.grid_view_rounded,
-          label: section == _WideShellSection.activity
-              ? context.l10n.wideNavActivity
-              : context.l10n.appsGridTitle,
-          selected: false,
+          icon: switch (section) {
+            _WideShellSection.chats => Icons.chat_bubble_outline_rounded,
+            _WideShellSection.activity => Icons.notifications_none_rounded,
+            _WideShellSection.apps => Icons.grid_view_rounded,
+          },
+          label: switch (section) {
+            _WideShellSection.chats => context.l10n.wideNavChats,
+            _WideShellSection.activity => context.l10n.wideNavActivity,
+            _WideShellSection.apps => context.l10n.appsGridTitle,
+          },
+          selected: _section == section,
           compact: true,
           iconOnly: true,
           selectionBackground: false,

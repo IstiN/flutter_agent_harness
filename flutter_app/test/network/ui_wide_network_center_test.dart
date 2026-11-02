@@ -199,7 +199,7 @@ void main() {
       addTearDown(manager.disconnectAll);
       await _pumpWideHome(tester, controller: controller, manager: manager);
 
-      await tester.tap(find.text('Apps'));
+      await tester.tap(find.byKey(const ValueKey('messengerPrimaryNav-apps')));
       await tester.pumpAndSettle();
       expect(find.text('Networks'), findsOneWidget);
       await tester.ensureVisible(find.text('Networks'));

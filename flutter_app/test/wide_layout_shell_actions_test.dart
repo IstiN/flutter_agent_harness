@@ -27,6 +27,7 @@ import 'package:fa/ui/widgets/wide_layout_shell.dart';
 import 'package:fa_ui/fa_ui.dart'
     show
         FaChatHost,
+        FaDesignTokens,
         FaLogo,
         FaSurface,
         FaVisualDirection,
@@ -275,12 +276,8 @@ void main() {
     // Secondary utilities live in Apps, not as a second navigation stack.
     expect(find.widgetWithText(SidebarNavItem, 'Files'), findsNothing);
     expect(find.widgetWithText(SidebarNavItem, 'Settings'), findsNothing);
-    expect(
-      find.byKey(const ValueKey('messengerPrimaryNav-chats')),
-      findsNothing,
-    );
     final toolbar = find.byKey(const ValueKey('chatCategoryChips'));
-    for (final section in const ['activity', 'apps']) {
+    for (final section in const ['chats', 'activity', 'apps']) {
       expect(
         find.descendant(
           of: toolbar,
@@ -312,7 +309,7 @@ void main() {
 
         expect(find.byType(AppLauncherScreen), findsOneWidget);
         expect(find.byType(ChatScreen), findsNothing);
-        expect(find.byType(ChatListPanel), findsNothing);
+        expect(find.byType(ChatListPanel), findsOneWidget);
         expect(find.byKey(const ValueKey('appsDirectory')), findsOneWidget);
         expect(
           find.byKey(const ValueKey('appsDirectoryMyApps')),
@@ -352,10 +349,19 @@ void main() {
         );
         expect(search.focusNode?.hasFocus, isTrue);
 
-        final apps = tester.widget<SidebarNavItem>(
-          find.byKey(const ValueKey('messengerPrimaryNav-apps')),
+        final appsAction = find.byKey(
+          const ValueKey('messengerPrimaryNav-apps'),
         );
-        expect(apps.selected, isTrue);
+        final appsIcon = tester.widget<Icon>(
+          find.descendant(
+            of: appsAction,
+            matching: find.byIcon(Icons.grid_view_rounded),
+          ),
+        );
+        expect(
+          appsIcon.color,
+          FaDesignTokens.of(tester.element(appsAction)).accent,
+        );
       },
     );
   }
@@ -377,10 +383,17 @@ void main() {
 
     expect(find.byType(AppLauncherScreen), findsOneWidget);
     expect(FaChatHost.jsAppNavigatorKey?.currentState, isNotNull);
-    final apps = tester.widget<SidebarNavItem>(
-      find.byKey(const ValueKey('messengerPrimaryNav-apps')),
+    final appsAction = find.byKey(const ValueKey('messengerPrimaryNav-apps'));
+    final appsIcon = tester.widget<Icon>(
+      find.descendant(
+        of: appsAction,
+        matching: find.byIcon(Icons.grid_view_rounded),
+      ),
     );
-    expect(apps.selected, isTrue);
+    expect(
+      appsIcon.color,
+      FaDesignTokens.of(tester.element(appsAction)).accent,
+    );
   });
 
   testWidgets('Apps full-window brand opens the shared profile', (
@@ -550,7 +563,7 @@ void main() {
       ),
       findsOneWidget,
     );
-    expect(find.byType(ChatListPanel), findsNothing);
+    expect(find.byType(ChatListPanel), findsOneWidget);
     expect(find.byType(ActivityListPanel), findsOneWidget);
     expect(find.byType(ActivityDetailPanel), findsOneWidget);
     expect(find.text('Recent'), findsWidgets);
@@ -593,6 +606,7 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 100));
     expect(find.byType(ChatScreen), findsNothing);
+    expect(find.byType(ChatListPanel), findsOneWidget);
 
     await tester.tap(find.byKey(const ValueKey('activityOpenChat')));
     await tester.pump();
@@ -600,10 +614,8 @@ void main() {
 
     expect(manager.activeId, 'running-session');
     expect(find.byType(ChatScreen), findsOneWidget);
-    expect(
-      find.byKey(const ValueKey('activitySession-running-session')),
-      findsNothing,
-    );
+    expect(find.byType(ActivityDetailPanel), findsNothing);
+    expect(find.byType(ChatListPanel), findsOneWidget);
     expect(
       find.byKey(const ValueKey('wideShellPrimaryNavigation')),
       findsNothing,
@@ -898,6 +910,9 @@ void main() {
             expect(unread.left - all.right, MessengerFilterControl.gap);
             expect(agents.left - unread.right, MessengerFilterControl.gap);
             expect(channels.left - agents.right, MessengerFilterControl.gap);
+            final chats = tester.getRect(
+              find.byKey(const ValueKey('messengerPrimaryNav-chats')),
+            );
             final activity = tester.getRect(
               find.byKey(const ValueKey('messengerPrimaryNav-activity')),
             );
@@ -908,7 +923,11 @@ void main() {
               find.byKey(const ValueKey('chatNetworkFilter')),
             );
             expect(
-              activity.left - channels.right,
+              chats.left - channels.right,
+              closeTo(MessengerFilterControl.gap, .001),
+            );
+            expect(
+              activity.left - chats.right,
               closeTo(MessengerFilterControl.gap, .001),
             );
             expect(
@@ -1041,55 +1060,62 @@ void main() {
   );
 
   testWidgets(
-    'wide primary pill animates and narrow shell keeps wide tabs absent',
+    'wide sections rebuild only the list and keep the shared panel chrome',
     (tester) async {
       final env = MemoryExecutionEnv();
       final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
         ..addSession('design-session', _fakeService(env));
       await pumpShell(tester, manager: manager);
       await tester.pumpAndSettle();
+
+      final panel = find.byType(ChatListPanel);
+      expect(find.byKey(const ValueKey('chatListScroll')), findsOneWidget);
+      final toolbar = tester.getRect(
+        find.byKey(const ValueKey('chatCategoryChips')),
+      );
+      final search = tester.getRect(
+        find.byKey(const ValueKey('messengerSearchField')),
+      );
+      final newButton = tester.getRect(
+        find.byKey(const ValueKey('messengerNewButton')),
+      );
+      final panelElement = tester.element(panel);
+
       await tester.tap(
         find.byKey(const ValueKey('messengerPrimaryNav-activity')),
       );
       await tester.pumpAndSettle();
-      final pill = find.byKey(const ValueKey('wideShellPrimarySelectionPill'));
+      expect(panel, findsOneWidget);
+      expect(tester.element(panel), same(panelElement));
+      expect(find.byType(ActivityListPanel), findsOneWidget);
+      expect(find.byKey(const ValueKey('chatListScroll')), findsNothing);
+      expect(
+        find.byKey(const ValueKey('wideShellPrimaryNavigation')),
+        findsNothing,
+      );
 
-      Future<void> verify(String target, bool forward) async {
-        var previous = tester.getRect(pill);
-        await tester.tap(find.byKey(ValueKey('messengerPrimaryNav-$target')));
-        await tester.pump();
-        for (final milliseconds in [0, 50, 100, 200]) {
-          if (milliseconds > 0) {
-            await tester.pump(
-              Duration(milliseconds: milliseconds == 200 ? 100 : 50),
-            );
-          }
-          final current = tester.getRect(pill);
-          expect(current.height, 32);
-          expect(current.width, closeTo(previous.width, .001));
-          expect(
-            forward
-                ? current.left >= previous.left
-                : current.left <= previous.left,
-            isTrue,
-            reason: '$target at $milliseconds ms',
-          );
-          expect(tester.takeException(), isNull);
-          expect(pill, findsOneWidget);
-          previous = current;
-        }
-        expect(
-          tester
-              .widget<SidebarNavItem>(
-                find.byKey(ValueKey('messengerPrimaryNav-$target')),
-              )
-              .selected,
-          isTrue,
-        );
-      }
+      await tester.tap(find.byKey(const ValueKey('messengerPrimaryNav-apps')));
+      await tester.pumpAndSettle();
+      expect(panel, findsOneWidget);
+      expect(tester.element(panel), same(panelElement));
+      expect(find.byKey(const ValueKey('appsDirectory')), findsOneWidget);
+      expect(find.byType(ActivityListPanel), findsNothing);
 
-      await verify('apps', true);
-      await verify('activity', false);
+      await tester.tap(find.byKey(const ValueKey('messengerPrimaryNav-chats')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('chatListScroll')), findsOneWidget);
+      expect(
+        tester.getRect(find.byKey(const ValueKey('chatCategoryChips'))),
+        toolbar,
+      );
+      expect(
+        tester.getRect(find.byKey(const ValueKey('messengerSearchField'))),
+        search,
+      );
+      expect(
+        tester.getRect(find.byKey(const ValueKey('messengerNewButton'))),
+        newButton,
+      );
 
       await pumpShell(tester, manager: manager, size: const Size(390, 844));
       await tester.pumpAndSettle();
@@ -1101,7 +1127,6 @@ void main() {
         find.byKey(const ValueKey('messengerPrimaryTab-Chats')),
         findsNothing,
       );
-      expect(pill, findsNothing);
       expect(tester.takeException(), isNull);
     },
   );

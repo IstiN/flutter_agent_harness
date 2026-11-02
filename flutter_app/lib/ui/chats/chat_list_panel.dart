@@ -122,7 +122,6 @@ class ChatListPanel extends StatefulWidget {
 class _ChatListPanelState extends State<ChatListPanel> {
   final TextEditingController _searchController = TextEditingController();
   final FocusNode _searchFocus = FocusNode(debugLabel: 'chat-list-search');
-  final ScrollController _scrollController = ScrollController();
   bool _hasScrollUnder = false;
   String? _localDirectory;
   ChatListFilter? _renderedFilter;
@@ -152,24 +151,24 @@ class _ChatListPanelState extends State<ChatListPanel> {
   void initState() {
     super.initState();
     HardwareKeyboard.instance.addHandler(_onKey);
-    _scrollController.addListener(_onScrollUnderChanged);
+  }
+
+  @override
+  void didUpdateWidget(covariant ChatListPanel oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.bodyKey != widget.bodyKey) _hasScrollUnder = false;
   }
 
   @override
   void dispose() {
     HardwareKeyboard.instance.removeHandler(_onKey);
-    _scrollController.removeListener(_onScrollUnderChanged);
-    _scrollController.dispose();
     _searchController.dispose();
     _searchFocus.dispose();
     super.dispose();
   }
 
-  void _onScrollUnderChanged() {
-    final hasScrollUnder =
-        _scrollController.hasClients &&
-        _scrollController.positions.length == 1 &&
-        _scrollController.offset > 0.5;
+  void _onScrollUnderChanged(double pixels) {
+    final hasScrollUnder = pixels > 0.5;
     if (hasScrollUnder == _hasScrollUnder) return;
     setState(() => _hasScrollUnder = hasScrollUnder);
   }
@@ -210,7 +209,7 @@ class _ChatListPanelState extends State<ChatListPanel> {
   }
 
   Future<void> _open(ChatListEntry entry) async {
-    _searchFocus.unfocus();
+    _effectiveSearchFocusNode.unfocus();
     await widget.onOpen(entry);
     if (!mounted) return;
     if (widget.didOpen?.call(entry) ?? true) {
@@ -219,9 +218,13 @@ class _ChatListPanelState extends State<ChatListPanel> {
   }
 
   void _clearSearch() {
-    _searchController.clear();
-    widget.controller.setSearch('');
-    _searchFocus.unfocus();
+    _effectiveSearchController.clear();
+    if (widget.onSearch case final onSearch?) {
+      onSearch('');
+    } else {
+      widget.controller.setSearch('');
+    }
+    _effectiveSearchFocusNode.unfocus();
   }
 
   Color _panelColor(FahColors colors) =>
@@ -272,18 +275,28 @@ class _ChatListPanelState extends State<ChatListPanel> {
             children: [
               Positioned.fill(
                 child: ClipRect(
-                  child: AnimatedSwitcher(
-                    duration: FaMotion.duration(
-                      context,
-                      const Duration(milliseconds: 200),
-                    ),
-                    switchInCurve: Curves.easeInOutCubic,
-                    switchOutCurve: Curves.easeInOutCubic,
-                    child: KeyedSubtree(
-                      key: ValueKey(
-                        'chat-directory-${_currentDirectory ?? 'root'}',
+                  child: NotificationListener<ScrollNotification>(
+                    onNotification: (notification) {
+                      _onScrollUnderChanged(notification.metrics.pixels);
+                      return false;
+                    },
+                    child: AnimatedSwitcher(
+                      duration: FaMotion.duration(
+                        context,
+                        const Duration(milliseconds: 200),
                       ),
-                      child: _buildBody(colors, topPadding: _chromeHeight),
+                      switchInCurve: Curves.easeInOutCubic,
+                      switchOutCurve: Curves.easeInOutCubic,
+                      child: KeyedSubtree(
+                        key:
+                            widget.bodyKey ??
+                            ValueKey(
+                              'chat-directory-${_currentDirectory ?? 'root'}',
+                            ),
+                        child:
+                            widget.bodyBuilder?.call(_chromeHeight) ??
+                            _buildBody(colors, topPadding: _chromeHeight),
+                      ),
                     ),
                   ),
                 ),
@@ -300,6 +313,7 @@ class _ChatListPanelState extends State<ChatListPanel> {
                 right: 0,
                 child: IgnorePointer(
                   child: AnimatedOpacity(
+                    key: const ValueKey('chatListScrollUnderFadeOverlay'),
                     duration: FaMotion.duration(
                       context,
                       const Duration(milliseconds: 160),
@@ -372,10 +386,10 @@ class _ChatListPanelState extends State<ChatListPanel> {
   Widget _buildHeader() {
     return MessengerSectionHeader(
       title: context.l10n.wideNavChats,
-      searchController: _searchController,
-      searchFocusNode: _searchFocus,
-      searchHint: context.l10n.wideChatsSearchHint,
-      onSearch: widget.controller.setSearch,
+      searchController: _effectiveSearchController,
+      searchFocusNode: _effectiveSearchFocusNode,
+      searchHint: widget.searchHint ?? context.l10n.wideChatsSearchHint,
+      onSearch: widget.onSearch ?? widget.controller.setSearch,
       onProfile: widget.onProfile,
       onNew: widget.onNew,
       onBrandTap: widget.onBrandTap,
@@ -616,7 +630,6 @@ class _ChatListPanelState extends State<ChatListPanel> {
     final recent = controller.recentEntries.where(inCurrentDirectory).toList();
     return ListView(
       key: const ValueKey('chatListScroll'),
-      controller: _scrollController,
       padding: EdgeInsets.only(
         top: topPadding + 2,
         bottom: widget.compact ? 76 : 10,
