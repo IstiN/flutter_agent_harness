@@ -154,9 +154,10 @@ void main() {
     required int keptPairs,
     required int margin,
     int hiddenFillerTokens = 100,
+    int userTokens = 100,
   }) async {
     final session = await repo.create(JsonlSessionCreateOptions(cwd: '/work'));
-    await session.appendMessage(UserMessage.text('u' * 400));
+    await session.appendMessage(UserMessage.text('u' * (userTokens * 4)));
     await session.appendMessage(_filler(hiddenFillerTokens));
     for (var i = 0; i < hiddenPairs + keptPairs; i++) {
       await session.appendMessage(_carrier('c$i'));
@@ -207,7 +208,7 @@ void main() {
     // kept filler: settle = user 100 + 102*keptPairs + filler + markers
     //            = 600 - margin
     final keptFiller =
-        600 - margin - 100 - (102 * keptPairs) - markerTotal;
+        600 - margin - userTokens - (102 * keptPairs) - markerTotal;
     assert(keptFiller > 0, 'fixture degenerate: keptFiller=$keptFiller');
     await session.appendMessage(_filler(keptFiller));
 
@@ -886,9 +887,13 @@ void main() {
   group('UT-ESC-11 — multi-chunk escalation stays one pass (AC9/IT-ESC-2)', () {
     test('a range needing several chunked summarizer calls reports exactly '
         'one escalation record', () async {
+      // A foldable prefix > 256 tokens (the chunker's floor) so the
+      // #729 chunked fold actually splits — the exempt user ask and the
+      // keep-recent tail are outside the range, so the marker-rich middle
+      // plus the kept filler must carry the weight.
       final (session, state, hiddenIds) = await boundarySession(
-        hiddenPairs: 3,
-        keptPairs: 2,
+        hiddenPairs: 6,
+        keptPairs: 1,
         margin: 0,
       );
       final hooks = _Hooks();
@@ -912,6 +917,13 @@ void main() {
         summarizerWindow: 128,
       );
       final ok = await compactor.run();
+      // ignore: avoid_print
+      for (final p in hooks.passes) {
+        // ignore: avoid_print
+        print('DBG pass ${p.kind} ${p.tokensBefore}->${p.tokensAfter} ok=${p.ok} sum=${p.summarizedCount} hidden=${p.hiddenCount}');
+      }
+      // ignore: avoid_print
+      print('DBG calls=$summarizerCalls');
       expect(ok, isTrue);
       expect(summarizerCalls, greaterThanOrEqualTo(2),
           reason: 'the range must actually need multiple chunks');
