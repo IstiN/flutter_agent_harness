@@ -1828,6 +1828,93 @@ void main() {
       expect(requests, 2);
     });
 
+    test(
+      'AC2: a resumed 206 totals from Content-Range, not the remainder',
+      () async {
+        final body = filler(chunk * 3);
+        var requests = 0;
+        final client = streamingClient((request) {
+          requests++;
+          if (requests == 1) {
+            // Chunked first attempt: no content length at all.
+            return http.StreamedResponse(
+              resetsAfter([body.sublist(0, chunk)]),
+              200,
+            );
+          }
+          expect(request.headers['range'], 'bytes=${chunk}-');
+          // 206 promising the REMAINING 2 chunks; Content-Range names
+          // the full size — the progress denominator must be 1.2 MB,
+          // not 0.8 MB.
+          return http.StreamedResponse(
+            steady([body.sublist(chunk, chunk * 2), body.sublist(chunk * 2)]),
+            206,
+            contentLength: body.length - chunk,
+            headers: {
+              'content-range':
+                  'bytes $chunk-${body.length - 1}/${body.length}',
+            },
+          );
+        });
+        final lines = <String>[];
+        final outcome = await downloadArchiveBody(
+          client,
+          Uri.parse(archiveUrl),
+          log: lines.add,
+          progressStep: chunk,
+          stallTimeout: const Duration(seconds: 5),
+        );
+        expect(outcome.ok, isTrue);
+        expect(outcome.bytes, body);
+        expect(
+          lines.where((line) => line.startsWith('downloading… ')),
+          contains('downloading… 0.8/1.2 MB'),
+        );
+      },
+    );
+
+    test(
+      'AC3: a resumed 206 without Content-Range totals received + remainder',
+      () async {
+        final body = filler(chunk * 3);
+        var requests = 0;
+        final client = streamingClient((request) {
+          requests++;
+          if (requests == 1) {
+            return http.StreamedResponse(
+              resetsAfter([body.sublist(0, chunk)]),
+              200,
+            );
+          }
+          if (requests == 2) {
+            // 206 promising 2 more chunks but closing after 1 — only a
+            // CORRECT full total can classify this as an early close and
+            // resume again; a remainder-as-total would "complete" here
+            // with truncated bytes.
+            return http.StreamedResponse(
+              steady([body.sublist(chunk, chunk * 2)]),
+              206,
+              contentLength: body.length - chunk,
+            );
+          }
+          return http.StreamedResponse(
+            steady([body.sublist(chunk * 2)]),
+            206,
+            contentLength: body.length - chunk * 2,
+          );
+        });
+        final outcome = await downloadArchiveBody(
+          client,
+          Uri.parse(archiveUrl),
+          log: (_) {},
+          stallTimeout: const Duration(seconds: 5),
+        );
+        expect(outcome.ok, isTrue);
+        expect(outcome.bytes, body);
+        expect(requests, 3);
+      },
+    );
+
     test('AC3: a corrupted resume is caught by the provenance hash', () async {
       final target = File('${temp.path}/fa')..writeAsStringSync('old');
       final body = _fixtureTarGz;
