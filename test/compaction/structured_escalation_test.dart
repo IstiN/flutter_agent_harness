@@ -130,7 +130,7 @@ void main() {
       await session.appendMessage(_carrier('c$i'));
       await session.appendMessage(_result('c$i', 1000));
     }
-    return (session, _stateFor(await session.buildContextMessages(), contextWindow: 400));
+    return (session, _stateFor(await session.buildContextMessages(), contextWindow: 400000));
   }
 
   /// A boundary fixture settling at EXACTLY `600 - margin` tokens with a
@@ -184,12 +184,17 @@ void main() {
     final hiddenIds = keepVisible;
 
     // Marker overhead of the hidden set (projection helpers, not guesses):
-    // the projected total with hidden records at marker size minus their
-    // full record cost.
-    final markerTotal = _settledTokens(entries, hiddenIds) -
-        entries
-            .whereType<MessageRecord>()
-            .fold<int>(0, (sum, r) => sum + recordTokens(r));
+    // projected total with hidden records at marker size, minus what the
+    // kept records plus the hidden records cost in full.
+    final allFull = entries
+        .whereType<MessageRecord>()
+        .fold<int>(0, (sum, r) => sum + recordTokens(r));
+    final hiddenFull = entries
+        .whereType<MessageRecord>()
+        .where((r) => hiddenIds.contains(r.id))
+        .fold<int>(0, (sum, r) => sum + recordTokens(r));
+    final markerTotal =
+        _settledTokens(entries, hiddenIds) - allFull + hiddenFull;
 
     // kept filler: settle = user 100 + 102*keptPairs + filler + markers
     //            = 600 - margin
@@ -229,13 +234,13 @@ void main() {
   group('UT-ESC-1/REG-ESC-2 — incident replay', () {
     test('385,619→360,497-shaped relief escalates on the same run '
         '(judge dead twice, fallback hide, no hides-exhausted gate)', () async {
-      final (session, state) = await incidentSession(40);
+      final (session, state) = await incidentSession();
       var judgeCalls = 0;
       final hooks = _Hooks();
       final compactor = StructuredCompactor(
         session: session,
         state: state,
-        window: 400,
+        window: 400000,
         settings: _incidentSettings,
         judge: (_) async {
           judgeCalls++;
@@ -291,7 +296,7 @@ void main() {
       final compactor = StructuredCompactor(
         session: session,
         state: state,
-        window: 400,
+        window: 400000,
         settings: _incidentSettings,
         judge: (_) async {
           judgeCalls++;
@@ -320,14 +325,14 @@ void main() {
 
     test('IT-ESC-4: the next run starting under the trigger performs no '
         'judge call and no escalation', () async {
-      final (session, state) = await incidentSession(40);
+      final (session, state) = await incidentSession();
       var judgeCalls = 0;
       var summarizeCalls = 0;
       final hooks = _Hooks();
       final compactor = StructuredCompactor(
         session: session,
         state: state,
-        window: 400,
+        window: 400000,
         settings: _incidentSettings,
         judge: (_) async {
           judgeCalls++;
@@ -867,12 +872,12 @@ void main() {
   group('UT-ESC-10 — observability is content-safe', () {
     test('the escalation report carries margin/band/outcome and never '
         'ledger content in its diagnostics', () async {
-      final (session, state) = await incidentSession(40);
+      final (session, state) = await incidentSession();
       final hooks = _Hooks();
       final compactor = StructuredCompactor(
         session: session,
         state: state,
-        window: 400,
+        window: 400000,
         settings: _incidentSettings,
         judge: (_) async => null,
         summarize: (_) => Future.value(SummarizationResult.success('ESCALATED')),
@@ -941,14 +946,14 @@ void main() {
 
     test('IT-ESC-1: a dead judge + deterministic fallback hide still '
         'escalates in the same structured run', () async {
-      final (session, state) = await incidentSession(40);
+      final (session, state) = await incidentSession();
       final hooks = _CapturingAutoHooks();
       var judgeStreamCalls = 0;
       var checkpointStreamCalls = 0;
       final ok = await AutoCompactorFactory(
         session: session,
         state: state,
-        window: 400,
+        window: 400000,
         settings: _incidentSettings,
         sources: AutoCompactorSources(
           smolStream: (m, c, {cancelToken}) {
@@ -1037,7 +1042,7 @@ const _factoryModel = Model(
   api: 'test-api',
   provider: 'test-provider',
   baseUrl: 'https://example.test',
-  contextWindow: 400,
+  contextWindow: 400000,
   maxTokens: 4096,
 );
 
