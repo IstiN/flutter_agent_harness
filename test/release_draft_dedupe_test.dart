@@ -154,8 +154,8 @@ if [ "\$1" = "release" ]; then
       # flip check's isDraft — this fixture models a DRAFT release carrying
       # the signed checksums (the recovery-flip shape under test).
       case "\$*" in
-        *--json\ isDraft,assets*) echo '{"isDraft":true,"assets":[{"name":"a.zip"},{"name":"SHA256SUMS"}]}' ;;
-        *--json\ isDraft*) echo "true" ;;
+        *--json\\ isDraft,assets*) echo '{"isDraft":true,"assets":[{"name":"a.zip"},{"name":"SHA256SUMS"}]}' ;;
+        *--json\\ isDraft*) echo "true" ;;
         *--json*) echo "SHA256SUMS" ;;
       esac
       exit 0 ;;
