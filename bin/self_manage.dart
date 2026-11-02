@@ -7,10 +7,11 @@
 /// library cannot touch directly (process env, the registry, files).
 library;
 
+import 'dart:async' show Completer, StreamSubscription, TimeoutException, Timer;
 import 'dart:convert';
 import 'dart:ffi' show Abi;
 import 'dart:io';
-import 'dart:typed_data' show Uint8List;
+import 'dart:typed_data' show BytesBuilder, Uint8List;
 
 import 'package:http/http.dart' as http;
 
@@ -29,16 +30,482 @@ const _repo = 'IstiN/flutter_agent_harness';
 
 /// Network bounds for the self-update paths: metadata answers (latest
 /// tag, manifest, signature) within [kFaUpdateNetworkTimeout]; the
-/// archive body gets [kFaUpdateArchiveTimeout] (tens of MB on slow
-/// links). Anything exceeding its bound aborts the update — fail-closed,
-/// never a hang (issue #1377 review r4).
+/// archive body is bounded by NO-PROGRESS, not by a wall clock
+/// (gh-2043). Anything exceeding its bound aborts the update —
+/// fail-closed, never a hang (issue #1377 review r4).
 
 /// Metadata answers (latest tag, manifest, signature) must land within
 /// this bound; slower means the update aborts, fail-closed.
 const Duration kFaUpdateNetworkTimeout = Duration(seconds: 15);
 
-/// The archive body bound (tens of MB on slow links).
-const Duration kFaUpdateArchiveTimeout = Duration(minutes: 2);
+/// The no-progress bound for the archive body (gh-2043): a body that
+/// delivers NO bytes for this long aborts with a "no progress for Ns"
+/// message. The hang protection of the old 2-minute total cap survives;
+/// a slow-but-steady link (~70–100 KB/s on corporate proxies) now
+/// finishes its tens of MB, which the old TOTAL wall clock killed.
+const Duration kFaUpdateStallTimeout = Duration(seconds: 45);
+
+/// The generous backstop for one body attempt (gh-2043): the old
+/// 2-minute total wall clock, raised. A pathological trickle that never
+/// stalls but never finishes still cannot hang the update forever.
+const Duration kFaUpdateTotalTimeout = Duration(minutes: 15);
+
+/// Bytes between progress lines on the archive body (gh-2043): a slow
+/// update must never look dead.
+const int kFaUpdateProgressStepBytes = 2 * 1024 * 1024;
+
+/// `9.5 MB`-style byte counts (MB = MiB, one decimal; KB below 1 MiB).
+String _formatBytes(int bytes) {
+  if (bytes >= 1024 * 1024) {
+    return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+  }
+  if (bytes >= 1024) return '${(bytes / 1024).round()} KB';
+  return '$bytes B';
+}
+
+/// `45s` / `2m15s` / `250ms`-style spans.
+String _formatSpan(Duration span) {
+  if (span.inMinutes >= 1) {
+    return '${span.inMinutes}m${span.inSeconds % 60}s';
+  }
+  if (span.inSeconds >= 1) return '${span.inSeconds}s';
+  return '${span.inMilliseconds}ms';
+}
+
+/// `2.1 MB/s` / `350 KB/s`-style average speed over [elapsed].
+String _formatSpeed(int bytes, Duration elapsed) {
+  final perSecond = elapsed.inMilliseconds > 0
+      ? bytes * 1000 / elapsed.inMilliseconds
+      : 0.0;
+  if (perSecond >= 1024 * 1024) {
+    return '${(perSecond / (1024 * 1024)).toStringAsFixed(1)} MB/s';
+  }
+  return '${perSecond.round()} KB/s';
+}
+
+/// One MiB — the MB/KB unit boundary of the progress line.
+const int _mib = 1024 * 1024;
+
+/// The `4.2`/`9.5` side of a progress line (one decimal in MB, rounded
+/// KB below one MiB) — one shared unit for both sides.
+String _progressSide(int bytes, bool asMb) => asMb
+    ? (bytes / _mib).toStringAsFixed(1)
+    : (bytes / 1024).round().toString();
+
+/// A progress line (`downloading… 4.2/9.5 MB`, gh-2043 AC2): the
+/// denominator is the full archive size when known — `downloading… 400
+/// KB` when it is not.
+String _progressLine(int receivedNow, int? totalBytes) {
+  if (totalBytes == null) return 'downloading… ${_formatBytes(receivedNow)}';
+  final asMb = receivedNow >= _mib || totalBytes >= _mib;
+  return 'downloading… '
+      '${_progressSide(receivedNow, asMb)}/${_progressSide(totalBytes, asMb)} '
+      '${asMb ? 'MB' : 'KB'}';
+}
+
+/// The FULL archive size implied by a resume response: the Content-Range
+/// total (`bytes 100-999/1234`) is the truth when the server sends one;
+/// `received + remainder` is the fallback — a 206's contentLength is the
+/// REMAINDER, never the total (gh-2043 AC2/AC3).
+int? _resumeTotalBytes(http.StreamedResponse response, int received) {
+  final range = response.headers['content-range'];
+  final ranged = range == null ? null : int.tryParse(range.split('/').last);
+  if (ranged != null) return ranged;
+  final remainder = response.contentLength;
+  if (remainder == null || remainder < 0) return null;
+  return received + remainder;
+}
+
+/// The outcome of a release-archive body download ([downloadArchiveBody],
+/// gh-2043): [bytes] on success — otherwise [failureMessage] names why,
+/// plus the HTTP [statusCode] when the failure happened at HTTP level.
+final class ArchiveDownloadOutcome {
+  const ArchiveDownloadOutcome.success(this.bytes, this.elapsed)
+    : statusCode = null,
+      failureMessage = null;
+
+  /// A stall ("no progress for Ns") or the raised total backstop.
+  const ArchiveDownloadOutcome.timedOut(this.failureMessage)
+    : bytes = const [],
+      elapsed = null,
+      statusCode = null;
+
+  /// A transport failure (connect failure, mid-body reset after the
+  /// resume retries ran out, clean close below the promised length) —
+  /// including a non-[Exception] `Error` thrown by the transport, which
+  /// is mapped here instead of crashing the update with a stack trace.
+  const ArchiveDownloadOutcome.transport(this.failureMessage)
+    : bytes = const [],
+      elapsed = null,
+      statusCode = null;
+
+  /// A non-200/206 answer: the caller may still have a fallback asset.
+  ArchiveDownloadOutcome.http(int code)
+    : bytes = const [],
+      elapsed = null,
+      statusCode = code,
+      failureMessage = 'HTTP $code';
+
+  /// The archive bytes; empty exactly on failure.
+  final List<int> bytes;
+
+  /// Wall time of the successful body transfer (failures: null).
+  final Duration? elapsed;
+
+  /// The HTTP status of the final attempt; null on success and when the
+  /// failure happened below HTTP.
+  final int? statusCode;
+
+  /// The failure wording; null on success.
+  final String? failureMessage;
+
+  bool get ok => failureMessage == null;
+
+  /// Whether the failure carries an HTTP status — the caller's signal to
+  /// try a fallback asset (a stall or reset would fail it the same way).
+  bool get isHttpFailure => statusCode != null;
+}
+
+/// Drains one response body segment into [builder], resetting a stall
+/// timer on every chunk. Completes when the stream is done; throws
+/// [TimeoutException] when no bytes arrive for [stallTimeout] ("no
+/// progress for Ns", gh-2043 AC1) or the segment outlives [totalTimeout]
+/// (the raised total backstop); rethrows any stream error (the resume
+/// loop decides) — the bytes that arrived before the error STAY in
+/// [builder], so a resume can continue from the true offset.
+/// [onProgress] receives the absolute received count.
+Future<void> _drainBody(
+  Stream<List<int>> stream,
+  BytesBuilder builder, {
+  required Duration stallTimeout,
+  required Duration totalTimeout,
+  required void Function(int receivedNow) onProgress,
+}) {
+  final completer = Completer<void>();
+  // Nullable, not `late final` (review r6): if `stream.listen` throws
+  // synchronously, `fail` runs before any assignment — a `late final`
+  // read there would crash the zone long after the outcome resolved.
+  StreamSubscription<List<int>>? subscription;
+  Timer? stallTimer;
+  Timer? totalTimer;
+
+  void fail(Object error) {
+    if (completer.isCompleted) return;
+    stallTimer?.cancel();
+    totalTimer?.cancel();
+    subscription?.cancel();
+    completer.completeError(error);
+  }
+
+  // No-progress bound (gh-2043 AC1): armed before the first byte and
+  // reset on every chunk — a slow-but-steady link keeps resetting it, a
+  // hung body dies with the stall message.
+  void armStall() {
+    stallTimer?.cancel();
+    stallTimer = Timer(stallTimeout, () {
+      fail(
+        TimeoutException(
+          'no progress for ${_formatSpan(stallTimeout)}',
+          stallTimeout,
+        ),
+      );
+    });
+  }
+
+  try {
+    // The raised total backstop (was the 2-minute wall clock, gh-2043).
+    totalTimer = Timer(totalTimeout, () {
+      fail(
+        TimeoutException(
+          'download exceeded ${_formatSpan(totalTimeout)}',
+          totalTimeout,
+        ),
+      );
+    });
+    armStall();
+    subscription = stream.listen(
+      (chunk) {
+        armStall();
+        builder.add(chunk);
+        onProgress(builder.length);
+      },
+      onError: fail,
+      onDone: () {
+        if (completer.isCompleted) return;
+        stallTimer?.cancel();
+        totalTimer?.cancel();
+        completer.complete();
+      },
+      cancelOnError: true,
+    );
+  } on Object catch (error) {
+    // A synchronous `listen` throw (review r6) must unwind through the
+    // same fail path: the armed timers are cancelled and the error
+    // becomes the drain failure, not a stray timer firing later.
+    fail(error);
+  }
+  return completer.future;
+}
+
+/// The mutable state of one archive-body download (gh-2043): the bytes
+/// received so far, the resume budget, and the full size once known.
+/// One attempt = open (headers bound) + drain (stall/backstop bounds).
+/// The loop lives in [run]; each decision is a small method so no single
+/// function carries the whole complexity (crap4dart ratchet).
+///
+/// The behavioral contract — the bounds, the resume policy, the
+/// progress output, "never throws" — is the one on the public
+/// [downloadArchiveBody] and is NOT duplicated here (review r7).
+final class _BodyDownload {
+  _BodyDownload({
+    required this.say,
+    required this.progressStep,
+    required this.maxResumeAttempts,
+  }) : nextProgressAt = progressStep;
+
+  final void Function(String message) say;
+  final int progressStep;
+  final int maxResumeAttempts;
+
+  final builder = BytesBuilder(copy: false);
+  final _wall = Stopwatch();
+  var received = 0;
+  var nextProgressAt = 0;
+  int? totalBytes;
+  var resumeAttempts = 0;
+
+  /// Wall time across every attempt; valid once [run] returned null.
+  var elapsed = Duration.zero;
+
+  /// Prints a progress line at every [progressStep] crossing (AC2).
+  void _progress(int receivedNow) {
+    if (receivedNow < nextProgressAt) return;
+    nextProgressAt = receivedNow + progressStep;
+    say(_progressLine(receivedNow, totalBytes));
+  }
+
+  /// The shared soft-failure policy (send failure, mid-body reset, clean
+  /// early close): retry from the received offset while the budget
+  /// allows — [maxResumeAttempts] resume attempts — else the terminal
+  /// transport outcome naming [exhaustedMessage]. Null means retry.
+  ArchiveDownloadOutcome? _resumeOrGiveUp(String exhaustedMessage) {
+    if (resumeAttempts >= maxResumeAttempts) {
+      return ArchiveDownloadOutcome.transport(exhaustedMessage);
+    }
+    resumeAttempts++;
+    say(
+      'connection lost after ${_formatBytes(received)} — '
+      'resuming (attempt $resumeAttempts/$maxResumeAttempts)…',
+    );
+    return null;
+  }
+
+  /// One attempt's headers phase: the request (Range from the received
+  /// offset when resuming), the metadata bound on the status line (AC4),
+  /// and the status classification. Returns `(response, failure)`: a
+  /// non-null [failure] is terminal (an HTTP miss — the caller may have
+  /// a fallback asset — or an exhausted resume budget); a null pair
+  /// means the budget allows a retry.
+  Future<(http.StreamedResponse?, ArchiveDownloadOutcome?)> _open(
+    http.Client client,
+    Uri url,
+    Duration headersTimeout,
+  ) async {
+    final request = http.Request('GET', url);
+    if (received > 0) request.headers['range'] = 'bytes=$received-';
+    final http.StreamedResponse response;
+    try {
+      response = await client.send(request).timeout(headersTimeout);
+    } catch (error) {
+      // Any thrown object — `Exception` or `Error` (a misbehaving client
+      // wrapper) — is a transport failure, never a crash (review r1).
+      // Without bytes there is nothing to resume from: fail now.
+      if (received == 0) {
+        return (null, ArchiveDownloadOutcome.transport('$error'));
+      }
+      return (null, _resumeOrGiveUp('$error'));
+    }
+    if (response.statusCode != 200 && response.statusCode != 206) {
+      return (null, ArchiveDownloadOutcome.http(response.statusCode));
+    }
+    return (response, null);
+  }
+
+  /// The total-bytes bookkeeping for a fresh response: a 200 answering a
+  /// Range request is the WHOLE archive again (discard the partial
+  /// prefix and restart from zero — appending would duplicate it); a
+  /// first attempt takes contentLength; a 206 resume derives the full
+  /// size from Content-Range / received + remainder (never the
+  /// remainder itself).
+  void _noteOpen(http.StreamedResponse response) {
+    if (received > 0 && response.statusCode == 200) {
+      builder.clear();
+      received = 0;
+      nextProgressAt = progressStep;
+      totalBytes = response.contentLength;
+      return;
+    }
+    if (received == 0) {
+      totalBytes = response.contentLength;
+      return;
+    }
+    totalBytes ??= _resumeTotalBytes(response, received);
+  }
+
+  /// Drains one attempt's body under the stall/backstop bounds (AC1).
+  /// A stall or the backstop is terminal — fail-closed, never a resume
+  /// case (gh-1377). Any other thrown failure — `Exception` or
+  /// non-[Exception] `Error` (review r1) — goes through the resume
+  /// policy, keeping the bytes that arrived in the builder so the retry
+  /// continues from the true offset. Returns `(failure, retry)`: a
+  /// non-null [failure] is terminal; `(null, true)` means retry with the
+  /// resume budget spent — the loop must `continue`, never fall through
+  /// to the early-close check.
+  Future<(ArchiveDownloadOutcome?, bool)> _drain(
+    http.StreamedResponse response, {
+    required Duration stallTimeout,
+    required Duration totalTimeout,
+  }) async {
+    try {
+      await _drainBody(
+        response.stream,
+        builder,
+        stallTimeout: stallTimeout,
+        totalTimeout: totalTimeout,
+        onProgress: _progress,
+      );
+    } on TimeoutException catch (error) {
+      // Fail-closed (gh-1377): a body that stops delivering bytes — or a
+      // trickle that outlives the raised backstop — is a dead download,
+      // not a resume case.
+      return (
+        ArchiveDownloadOutcome.timedOut(error.message ?? 'timed out'),
+        false,
+      );
+    } catch (error) {
+      received = builder.length;
+      final total = totalBytes;
+      if (total != null && received >= total) {
+        // Every promised byte is already in the builder (review r5): a
+        // tail error — a reset racing the final byte, a proxy that
+        // over-sends then dies — must not waste the complete archive on
+        // a resume a well-behaved server answers 416.
+        return (null, false);
+      }
+      if (error is! Exception) {
+        // A non-network failure (a TypeError from a callback, a
+        // StateError from a misbehaving wrapper) must surface, not
+        // masquerade as a bad-link day (review r4.2).
+        say(
+          'download body failed with a non-network '
+          '${error.runtimeType}: $error',
+        );
+      }
+      final giveUp = _resumeOrGiveUp(
+        'connection lost at ${_formatBytes(received)} '
+        '($maxResumeAttempts resume attempts exhausted): $error',
+      );
+      return (giveUp, giveUp == null);
+    }
+    received = builder.length;
+    return (null, false);
+  }
+
+  /// The attempt loop. Null = the archive is complete ([takeBytes]);
+  /// non-null = the terminal failure.
+  Future<ArchiveDownloadOutcome?> run(
+    http.Client client,
+    Uri url, {
+    required Duration stallTimeout,
+    required Duration totalTimeout,
+    required Duration headersTimeout,
+  }) async {
+    _wall.start();
+    while (true) {
+      final (response, failure) = await _open(client, url, headersTimeout);
+      if (failure != null) return failure;
+      if (response == null) continue; // resume budget left — retry.
+      _noteOpen(response);
+      final (drained, retry) = await _drain(
+        response,
+        stallTimeout: stallTimeout,
+        totalTimeout: totalTimeout,
+      );
+      if (drained != null) return drained;
+      if (retry) continue; // resume budget spent on a mid-body death.
+      final total = totalBytes;
+      if (total != null && received < total) {
+        // A clean close below the promised length is the same
+        // broken-link family as a mid-body reset: resume if allowed.
+        final giveUp = _resumeOrGiveUp(
+          'connection closed early at ${_formatBytes(received)} '
+          '($maxResumeAttempts resume attempts exhausted)',
+        );
+        if (giveUp != null) return giveUp;
+        continue;
+      }
+      elapsed = _wall.elapsed;
+      return null;
+    }
+  }
+
+  /// The reassembled archive bytes (call only after [run] returned null).
+  List<int> takeBytes() => builder.takeBytes();
+}
+
+/// Downloads a release-archive body with the gh-2043 bounds:
+///
+/// - Headers (the status line) must land within [headersTimeout] — the
+///   metadata bound, unchanged (AC4).
+/// - The body aborts when NO bytes arrive for [stallTimeout] — a slow
+///   but steady link keeps receiving, a hung one dies with a
+///   "no progress for Ns" message (AC1).
+/// - [totalTimeout] stays as a generous per-attempt backstop for a
+///   trickle that never stalls but never finishes (the old 2-minute
+///   total wall clock, raised; AC1).
+/// - Progress prints every [progressStep] bytes (`downloading… 4.2/9.5
+///   MB`) and a final line reports elapsed + average speed (AC2), via
+///   [log] (default [_say]).
+/// - A mid-body transport error (reset) or a clean close below the
+///   promised length retries with an HTTP `Range` from the received
+///   offset at most [maxResumeAttempts] times; a server that answers
+///   200 to a Range request restarts from zero (AC3). A stall is NOT a
+///   resume case — fail-closed (gh-1377).
+///
+/// Never throws: every failure — an HTTP miss, a stall or backstop
+/// timeout, or a transport death (including a non-[Exception] `Error`
+/// thrown by the client) — is an [ArchiveDownloadOutcome] (review r1).
+Future<ArchiveDownloadOutcome> downloadArchiveBody(
+  http.Client client,
+  Uri url, {
+  void Function(String message)? log,
+  Duration stallTimeout = kFaUpdateStallTimeout,
+  Duration totalTimeout = kFaUpdateTotalTimeout,
+  int progressStep = kFaUpdateProgressStepBytes,
+  int maxResumeAttempts = 3,
+  Duration headersTimeout = kFaUpdateNetworkTimeout,
+}) async {
+  final download = _BodyDownload(
+    say: log ?? _say,
+    progressStep: progressStep,
+    maxResumeAttempts: maxResumeAttempts,
+  );
+  final failure = await download.run(
+    client,
+    url,
+    stallTimeout: stallTimeout,
+    totalTimeout: totalTimeout,
+    headersTimeout: headersTimeout,
+  );
+  if (failure != null) return failure;
+  final bytes = download.takeBytes();
+  final elapsed = download.elapsed;
+  download.say(
+    'downloaded ${_formatBytes(bytes.length)} in ${_formatSpan(elapsed)} '
+    '(${_formatSpeed(bytes.length, elapsed)})',
+  );
+  return ArchiveDownloadOutcome.success(bytes, elapsed);
+}
 
 void _say(String text) => stdout.writeln(text);
 void _warn(String text) => stderr.writeln('fa: $text');
@@ -347,13 +814,16 @@ Future<bool> verifyReleaseProvenance({
 /// Windows). Pub-global installs re-activate; dev runs are refused.
 ///
 /// [detectInstall], [newClient], and [runProcess] are test seams; the
-/// defaults are the real platform behavior.
+/// defaults are the real platform behavior. [stallTimeout]/[totalTimeout]
+/// are the gh-2043 body bounds (see [downloadArchiveBody]).
 Future<int> runSelfUpdate({
   required String currentVersion,
   Install Function() detectInstall = _detectInstall,
   http.Client Function() newClient = http.Client.new,
   Future<ProcessResult> Function(String, List<String>) runProcess = Process.run,
   String pem = kFaReleaseSigningPem,
+  Duration stallTimeout = kFaUpdateStallTimeout,
+  Duration totalTimeout = kFaUpdateTotalTimeout,
 }) async {
   final install = detectInstall();
   if (install.kind == InstallKind.devRun) {
@@ -384,7 +854,16 @@ Future<int> runSelfUpdate({
       )).$1;
     }
 
-    return await _binaryUpdate(client, install, tag, latest, runProcess, pem);
+    return await _binaryUpdate(
+      client,
+      install,
+      tag,
+      latest,
+      runProcess,
+      pem,
+      stallTimeout: stallTimeout,
+      totalTimeout: totalTimeout,
+    );
   } finally {
     client.close();
   }
@@ -451,8 +930,10 @@ Future<int> _binaryUpdate(
   String tag,
   String latest,
   Future<ProcessResult> Function(String, List<String>) runProcess,
-  String pem,
-) async {
+  String pem, {
+  Duration stallTimeout = kFaUpdateStallTimeout,
+  Duration totalTimeout = kFaUpdateTotalTimeout,
+}) async {
   final archive = _archiveName();
   if (archive == null) {
     _warn('no prebuilt archive for this platform — install via Dart instead');
@@ -462,34 +943,26 @@ Future<int> _binaryUpdate(
   final installDir = File(target).parent;
   final url = 'https://github.com/$_repo/releases/download/$tag/$archive';
   _say('downloading $archive…');
-  final request = http.Request('GET', Uri.parse(url));
-  final http.StreamedResponse streamed;
-  try {
-    streamed = await client.send(request).timeout(kFaUpdateNetworkTimeout);
-  } on Exception catch (error) {
-    _warn('download failed (network): $error');
-    return 1;
-  }
-  if (streamed.statusCode == 200) {
-    final List<int> bytes;
-    try {
-      bytes = await streamed.stream.toBytes().timeout(kFaUpdateArchiveTimeout);
-    } on Exception catch (error) {
-      _warn('download failed (network): $error');
-      return 1;
-    }
+  final outcome = await downloadArchiveBody(
+    client,
+    Uri.parse(url),
+    log: _say,
+    stallTimeout: stallTimeout,
+    totalTimeout: totalTimeout,
+  );
+  if (outcome.ok) {
     if (!await verifyReleaseProvenance(
       client: client,
       tag: tag,
       archiveName: archive,
-      archiveBytes: bytes,
+      archiveBytes: outcome.bytes,
       pem: pem,
     )) {
       _warn('update aborted: release provenance check failed for $archive');
       return 1;
     }
     return _extractAndSwap(
-      bytes,
+      outcome.bytes,
       archive,
       target,
       installDir,
@@ -498,8 +971,10 @@ Future<int> _binaryUpdate(
     );
   }
   // Fallback: macOS release may only have the versioned .zip (the sandboxed
-  // app bundle). Try the stable zip name and extract the binary from the app bundle.
-  if (Platform.isMacOS) {
+  // app bundle). Try the stable zip name and extract the binary from the app
+  // bundle — but only for a real HTTP miss: a stalled/reset link would fail
+  // the zip the same way.
+  if (outcome.isHttpFailure && Platform.isMacOS) {
     final zipAsset = _zipAssetName();
     if (zipAsset != null) {
       _say('archive not found — trying $zipAsset…');
@@ -510,10 +985,17 @@ Future<int> _binaryUpdate(
         target,
         latest,
         runProcess,
+        pem: pem,
+        stallTimeout: stallTimeout,
+        totalTimeout: totalTimeout,
       );
     }
   }
-  _warn('download failed (HTTP ${streamed.statusCode}): $url');
+  if (outcome.isHttpFailure) {
+    _warn('download failed (HTTP ${outcome.statusCode}): $url');
+  } else {
+    _warn('download failed (network): ${outcome.failureMessage}');
+  }
   return 1;
 }
 
@@ -703,39 +1185,37 @@ Future<int> fallbackZipUpdate(
   String latest,
   Future<ProcessResult> Function(String, List<String>) runProcess, {
   String pem = kFaReleaseSigningPem,
+  Duration stallTimeout = kFaUpdateStallTimeout,
+  Duration totalTimeout = kFaUpdateTotalTimeout,
 }) async {
   final zipUrl = 'https://github.com/$_repo/releases/download/$tag/$zipAsset';
-  final request = http.Request('GET', Uri.parse(zipUrl));
-  final http.StreamedResponse streamed;
-  try {
-    streamed = await client.send(request).timeout(kFaUpdateNetworkTimeout);
-  } on Exception catch (error) {
-    _warn('download failed (network): $error');
-    return 1;
-  }
-  if (streamed.statusCode != 200) {
-    _warn('download failed (HTTP ${streamed.statusCode}): $zipUrl');
+  final outcome = await downloadArchiveBody(
+    client,
+    Uri.parse(zipUrl),
+    log: _say,
+    stallTimeout: stallTimeout,
+    totalTimeout: totalTimeout,
+  );
+  if (!outcome.ok) {
+    if (outcome.isHttpFailure) {
+      _warn('download failed (HTTP ${outcome.statusCode}): $zipUrl');
+    } else {
+      _warn('download failed (network): ${outcome.failureMessage}');
+    }
     return 1;
   }
   _say('extracting $zipAsset…');
-  final List<int> bytes;
-  try {
-    bytes = await streamed.stream.toBytes().timeout(kFaUpdateArchiveTimeout);
-  } on Exception catch (error) {
-    _warn('download failed (network): $error');
-    return 1;
-  }
   if (!await verifyReleaseProvenance(
     client: client,
     tag: tag,
     archiveName: zipAsset,
-    archiveBytes: bytes,
+    archiveBytes: outcome.bytes,
     pem: pem,
   )) {
     _warn('update aborted: release provenance check failed for $zipAsset');
     return 1;
   }
-  final archive = ZipDecoder().decodeBytes(bytes.toList());
+  final archive = ZipDecoder().decodeBytes(outcome.bytes.toList());
   final data = _extractMacBinary(archive);
   if (data == null) {
     _warn('could not find Fa binary inside $zipAsset');
@@ -848,6 +1328,8 @@ Future<ApplyUpdateOutcome> applyUpdate({
   void Function(String message)? logLine,
   String? statePath,
   Duration networkTimeout = kFaUpdateNetworkTimeout,
+  Duration stallTimeout = kFaUpdateStallTimeout,
+  Duration totalTimeout = kFaUpdateTotalTimeout,
 }) async {
   final install = (detectInstall ?? _detectInstall)();
   if (install.kind == InstallKind.devRun) {
@@ -898,7 +1380,10 @@ Future<ApplyUpdateOutcome> applyUpdate({
       tag: tag,
       archive: archive,
       pem: pem,
+      log: log,
       networkTimeout: networkTimeout,
+      stallTimeout: stallTimeout,
+      totalTimeout: totalTimeout,
     );
     final failed = download.stop;
     if (failed != null) return failed;
@@ -1018,34 +1503,43 @@ Future<ApplyUpdateOutcome> _applyPubGlobalUpdate({
 
 /// Downloads the prebuilt archive and verifies its provenance before any
 /// byte is trusted (issue #1377 round 7): a non-200 is a download
-/// failure, a failed signature check is a provenance failure.
+/// failure, a failed signature check is a provenance failure. The body
+/// itself runs under the gh-2043 stall/progress/resume bounds.
 Future<({ApplyUpdateOutcome? stop, List<int> bytes})> _downloadVerifiedArchive({
   required http.Client client,
   required String tag,
   required String archive,
   required String pem,
+  required void Function(String message) log,
   required Duration networkTimeout,
+  required Duration stallTimeout,
+  required Duration totalTimeout,
 }) async {
   final url = 'https://github.com/$_repo/releases/download/$tag/$archive';
-  final streamed = await client
-      .send(http.Request('GET', Uri.parse(url)))
-      .timeout(networkTimeout);
-  if (streamed.statusCode != 200) {
+  final outcome = await downloadArchiveBody(
+    client,
+    Uri.parse(url),
+    // The same seam every other message on this path uses (review r3):
+    // the boot hook logs the body phase to fa.log, the /update slash
+    // command renders it in-session — never raw stdout.
+    log: log,
+    stallTimeout: stallTimeout,
+    totalTimeout: totalTimeout,
+    headersTimeout: networkTimeout,
+  );
+  if (!outcome.ok) {
     return (stop: ApplyUpdateOutcome.downloadFailed, bytes: const <int>[]);
   }
-  final bytes = await streamed.stream.toBytes().timeout(
-    kFaUpdateArchiveTimeout,
-  );
   if (!await verifyReleaseProvenance(
     client: client,
     tag: tag,
     archiveName: archive,
-    archiveBytes: bytes,
+    archiveBytes: outcome.bytes,
     pem: pem,
   )) {
     return (stop: ApplyUpdateOutcome.provenanceFailed, bytes: const <int>[]);
   }
-  return (stop: null, bytes: bytes);
+  return (stop: null, bytes: outcome.bytes);
 }
 
 /// Extracts and swaps in the verified archive, then restarts onto it (the
