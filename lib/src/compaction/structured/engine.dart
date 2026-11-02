@@ -668,7 +668,12 @@ final class StructuredCompactor {
     for (var i = 0; i < maxCheckpointPasses; i++) {
       final before = _requestTokens();
       if (before <= trigger) return true;
-      final range = await _pickCheckpointRange();
+      // Relief is required here (the pass only runs over the trigger), so
+      // the whole-world decline does not apply: a transcript whose every
+      // ledger token fits keepRecentTokens — typically one huge tool
+      // result — still folds, or the flutter_app over-window relief AC
+      // starves (gh-2044 rework, UT-ESC-13).
+      final range = await _pickCheckpointRange(wholeWorldDeclines: false);
       if (range == null) break;
 
       final flattened = _flattenForDepthCap(range);
@@ -750,9 +755,7 @@ final class StructuredCompactor {
     final before = _requestTokens();
     final view = await _buildView();
     // Diagnostic count only — never rendered content.
-    final hideableRemaining = view == null
-        ? 0
-        : _hideableEntries(view.ledger).length;
+    final hideableRemaining = _hideableRemainingOf(view);
     void emit({
       required int after,
       required bool ok,
@@ -762,24 +765,28 @@ final class StructuredCompactor {
       String? summary,
     }) {
       hooks?.onPass(
-        StructuredCompactionPass(
-          kind: 'checkpoint-escalation',
-          pass: ++_pass,
-          tokensBefore: before,
-          tokensAfter: after,
+        _escalationReceipt(
+          before: before,
+          after: after,
           ok: ok,
           error: error,
           judgeCalls: judgeCalls,
           summarizedCount: summarizedCount,
           summary: summary,
-          marginTokens: margin,
-          bandTokens: band,
+          margin: margin,
+          band: band,
           hideableRemaining: hideableRemaining,
         ),
       );
     }
 
-    final range = await _pickCheckpointRange(view: view);
+    // The deepening pass declines the whole-world regime unconditionally
+    // (gh-2044 semantic 5): it only runs under the trigger, so folding the
+    // live world would be pure live-tail destruction.
+    final range = await _pickCheckpointRange(
+      view: view,
+      wholeWorldDeclines: true,
+    );
     if (range == null) {
       // Bounded no-op (gh-2044 semantic 5): nothing foldable below the
       // keep-recent boundary — e.g. an entirely pinned/exempt foldable
@@ -823,35 +830,14 @@ final class StructuredCompactor {
       );
       return true;
     }
-    try {
-      await session.appendCompactCheckpoint(
-        firstRecordId: range.firstRecordId,
-        lastRecordId: range.lastRecordId,
-        text: text,
-        coversRecordIds: range.coveredRecordIds,
-        flattenedRecordIds: [for (final ckpt in flattened) ckpt.id],
-      );
-    } on TimeoutException {
-      rethrow;
-    } on Object catch (error) {
+    final appended = await _appendEscalationCheckpoint(range, flattened, text);
+    if (appended != null) {
       if (_runCancelled) return false;
-      emit(after: before, ok: false, error: error);
+      emit(after: before, ok: false, error: appended);
       return true;
     }
     final after = await _refreshState();
-    var summarizedCount = 0;
-    var visibleMessages = 0;
-    for (final id in range.coveredRecordIds) {
-      final seq = range.seqs.seqOf(id);
-      if (seq == null) continue;
-      if (range.seqs.recordAt(seq) is MessageRecord) summarizedCount++;
-    }
-    for (final record in range.visible) {
-      if (record is MessageRecord &&
-          range.coveredRecordIds.contains(record.id)) {
-        visibleMessages++;
-      }
-    }
+    final (:summarizedCount, :visibleMessages) = _escalationCounts(range);
     emit(
       after: after,
       ok: true,
@@ -864,6 +850,86 @@ final class StructuredCompactor {
       summary: text,
     );
     return true;
+  }
+
+  /// The escalation receipt (kind + the fragile-band metadata), extracted
+  /// so the pass's report shape stays in one place (gh-2044 rework: CRAP
+  /// ratchet — the pass body keeps its decision flow only).
+  StructuredCompactionPass _escalationReceipt({
+    required int before,
+    required int after,
+    required bool ok,
+    required int margin,
+    required int band,
+    required int hideableRemaining,
+    Object? error,
+    int judgeCalls = 0,
+    int summarizedCount = 0,
+    String? summary,
+  }) => StructuredCompactionPass(
+    kind: 'checkpoint-escalation',
+    pass: ++_pass,
+    tokensBefore: before,
+    tokensAfter: after,
+    ok: ok,
+    error: error,
+    judgeCalls: judgeCalls,
+    summarizedCount: summarizedCount,
+    summary: summary,
+    marginTokens: margin,
+    bandTokens: band,
+    hideableRemaining: hideableRemaining,
+  );
+
+  /// Diagnostic count only — never rendered content.
+  int _hideableRemainingOf(_LedgerView? view) =>
+      view == null ? 0 : _hideableEntries(view.ledger).length;
+
+  /// Failure-safety append: returns the append error, or `null` on
+  /// success. A [TimeoutException] still propagates (issue #515 — the
+  /// budget kill is the factory's outcome, never an ordinary append
+  /// failure).
+  Future<Object?> _appendEscalationCheckpoint(
+    _CkptRange range,
+    List<CompactCheckpointRecord> flattened,
+    String text,
+  ) async {
+    try {
+      await session.appendCompactCheckpoint(
+        firstRecordId: range.firstRecordId,
+        lastRecordId: range.lastRecordId,
+        text: text,
+        coversRecordIds: range.coveredRecordIds,
+        flattenedRecordIds: [for (final ckpt in flattened) ckpt.id],
+      );
+      return null;
+    } on TimeoutException {
+      rethrow;
+    } on Object catch (error) {
+      return error;
+    }
+  }
+
+  /// Covered MessageRecord count and the covered-and-visible message
+  /// count the receipt's real `judgeCalls` decision reads (gh-2044 review
+  /// thread 4).
+  ({int summarizedCount, int visibleMessages}) _escalationCounts(
+    _CkptRange range,
+  ) {
+    var summarizedCount = 0;
+    for (final id in range.coveredRecordIds) {
+      final seq = range.seqs.seqOf(id);
+      if (seq == null) continue;
+      if (range.seqs.recordAt(seq) is MessageRecord) summarizedCount++;
+    }
+    var visibleMessages = 0;
+    for (final record in range.visible) {
+      if (record is MessageRecord &&
+          range.coveredRecordIds.contains(record.id)) {
+        visibleMessages++;
+      }
+    }
+    return (summarizedCount: summarizedCount, visibleMessages: visibleMessages);
   }
 
   List<LedgerEntry> _hideableEntries(ContextLedger ledger) {
@@ -931,7 +997,26 @@ final class StructuredCompactor {
   /// without bound. Without this, hide passes accumulate one-line
   /// markers that no later pass ever folds (they are invisible to the
   /// ledger), and the wire payload creeps back toward the window.
-  Future<_CkptRange?> _pickCheckpointRange({_LedgerView? view}) async {
+  /// Whether the whole-world regime declines. The escalation's deepening
+  /// pass (gh-2044 semantic 5) must never fold the live world: when its
+  /// foldable path fits keepRecentTokens entirely, folding would swallow
+  /// the live tail for zero needed relief (the escalation only runs under
+  /// the trigger). Ladder passes waive the decline — they run only over
+  /// the trigger, where the fold IS the relief (UT-ESC-13).
+  bool _wholeWorldDeclines(
+    _LedgerView view_,
+    List<_ProjectedEntry> foldable,
+    bool wholeWorldDeclines,
+  ) {
+    if (!wholeWorldDeclines) return false;
+    final hiddenIds = view_.state.hiddenRecordIds;
+    return foldable.any((entry) => !hiddenIds.contains(entry.recordId));
+  }
+
+  Future<_CkptRange?> _pickCheckpointRange({
+    _LedgerView? view,
+    required bool wholeWorldDeclines,
+  }) async {
     final view_ = view ?? await _buildView();
     if (view_ == null) return null;
     final projected = _projectedEntries(view_);
@@ -969,19 +1054,15 @@ final class StructuredCompactor {
     // its budget, the ENTIRE foldable path fits INSIDE the keep-recent
     // region — the default `cut = foldable.length` then folds everything
     // and keeps zero recent context, swallowing the live tail (the newest
-    // user ask and assistant turn included). The fragile-band escalation
-    // reaches that regime whenever the remaining projection is smaller
-    // than keepRecentTokens, and the swallowed live turn surfaced as
-    // resumed child runs ending without any assistant message. Nothing
-    // below the keep-recent boundary means nothing to fold — except an
-    // all-markers path (every record already hidden), whose deterministic
-    // consolidation (issue #387) is lossless and touches no live content.
-    if (cut == foldable.length) {
-      final hiddenIds = view_.state.hiddenRecordIds;
-      final coversLiveRecords = foldable.any(
-        (entry) => !hiddenIds.contains(entry.recordId),
-      );
-      if (coversLiveRecords) return null;
+    // user ask and assistant turn included). Nothing below the keep-recent
+    // boundary means nothing to fold — except an all-markers path (every
+    // record already hidden), whose deterministic consolidation (issue
+    // #387) is lossless and touches no live content. The decline applies
+    // only to the escalation's deepening (semantic 5); ladder passes run
+    // over the trigger and fold for relief (UT-ESC-13).
+    if (cut == foldable.length &&
+        _wholeWorldDeclines(view_, foldable, wholeWorldDeclines)) {
+      return null;
     }
     // Snap inward at group boundaries: a range never splits a pair.
     while (cut > 1 && _sharesGroup(foldable, cut, view_.ledger)) {

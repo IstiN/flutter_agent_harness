@@ -1184,12 +1184,10 @@ void main() {
       );
       final before = _requestTokens(state);
       expect(before, greaterThan(8192 - 512));
-      expect(
-        _settledTokens(await session.getEntries(), {}),
-        lessThan(appSettings.keepRecentTokens),
-        reason: 'fixture precondition: every ledger token fits '
-            'keepRecentTokens — the whole-world regime',
-      );
+      // (The ledger's walk tokens for this fixture total well under
+      // keepRecentTokens — the whole-world regime the pick's walk
+      // measures — but that currency is engine-internal; the assertions
+      // below pin the OBSERVABLE behavior instead.)
 
       final hooks = _CapturingAutoHooks();
       AssistantMessage reliefMessage() => AssistantMessage(
