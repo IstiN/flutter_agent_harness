@@ -85,7 +85,10 @@ void main() {
       final buildAt =
           steps.indexOf('bash scripts/build_browser_ext.sh --with-app');
       final gateAt = steps.indexOf(gateInvocation);
-      final uploadAt = steps.indexOf('gh release upload');
+      // gh-2042: the attach rides the immutability gate (which performs the
+      // --clobber upload itself — no raw `gh release upload` left in the
+      // workflow).
+      final uploadAt = steps.indexOf('release_asset_gate.sh');
       expect(buildAt, isNonNegative, reason: 'must build the real artifact');
       expect(gateAt, isNonNegative,
           reason: 'gh-1684 AC5: gate before upload — a budget regression '
@@ -100,7 +103,8 @@ void main() {
           reason: 'gh-1801: draft-first create via the helper (curated '
               'notes + ownership marker), never an inline create');
       expect(steps, contains('fa-extension.zip'));
-      expect(steps, contains('--clobber'));
+      expect(read('scripts/release_asset_gate.sh'), contains('--clobber'),
+          reason: 'the gate keeps the --clobber stable-asset-name refresh');
       expect(steps, isNot(contains('--draft=false')),
           reason: 'the publish flip is provenance-owned and rides ONLY '
               'the SHA256SUMS upload (gh-1801 rework)');
@@ -144,7 +148,11 @@ void main() {
       final dailySteps =
           (daily!['steps'] as YamlList).map((s) => s.toString()).join('\n');
       expect(dailySteps, contains(gateInvocation));
-      expect(dailySteps, contains('gh release upload'));
+      expect(dailySteps, contains('release_asset_gate.sh'),
+          reason: 'the attach rides the gh-2042 immutability gate: a '
+              'PUBLISHED release (same-tag convergence race) skips attached '
+              'assets and refuses unattached fa-* assets loud — the daily '
+              'leg can no longer drift the signed SHA256SUMS');
     });
   });
 }

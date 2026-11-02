@@ -1229,7 +1229,11 @@ jobs:
           # draft-owner marker the guard below can reclaim), upload, and
           # let provenance own the --draft=false --latest flip.
           bash scripts/release_lazy_draft.sh "$RELEASE_TAG"
-          gh release upload "$RELEASE_TAG" "$asset" --clobber --repo "${GITHUB_REPOSITORY}"
+          # gh-2042 AC1: the immutability gate owns the attach — a
+          # PUBLISHED release (the same-tag convergence race) skips
+          # attached assets and refuses unattached fa-* assets loud
+          # instead of silently drifting the signed SHA256SUMS.
+          bash scripts/release_asset_gate.sh "$RELEASE_TAG" "$asset"
 
       # Draft lifecycle invariant (issue #282): this job creates releases,
       # so a failed/cancelled run must not leave one behind as a draft.
@@ -1321,7 +1325,11 @@ jobs:
           # with the curated notes + the draft-owner marker (so the guard
           # step below can reclaim it on failure) and upload.
           bash scripts/release_lazy_draft.sh "$RELEASE_TAG"
-          gh release upload "$RELEASE_TAG" "$asset" --clobber --repo "${GITHUB_REPOSITORY}"
+          # gh-2042 AC1: the immutability gate owns the attach — a
+          # PUBLISHED release (the same-tag convergence race) skips
+          # attached assets and refuses unattached fa-* assets loud
+          # instead of silently drifting the signed SHA256SUMS.
+          bash scripts/release_asset_gate.sh "$RELEASE_TAG" "$asset"
 
       # Draft lifecycle invariant (issue #282): this job creates releases,
       # so a failed/cancelled run must not leave one behind as a draft.
