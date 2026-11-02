@@ -362,8 +362,11 @@ final class _BodyDownload {
   /// case (gh-1377). Any other thrown failure — `Exception` or
   /// non-[Exception] `Error` (review r1) — goes through the resume
   /// policy, keeping the bytes that arrived in the builder so the retry
-  /// continues from the true offset. Null means the body is complete.
-  Future<ArchiveDownloadOutcome?> _drain(
+  /// continues from the true offset. Returns `(failure, retry)`: a
+  /// non-null [failure] is terminal; `(null, true)` means retry with the
+  /// resume budget spent — the loop must `continue`, never fall through
+  /// to the early-close check.
+  Future<(ArchiveDownloadOutcome?, bool)> _drain(
     http.StreamedResponse response, {
     required Duration stallTimeout,
     required Duration totalTimeout,
@@ -380,16 +383,20 @@ final class _BodyDownload {
       // Fail-closed (gh-1377): a body that stops delivering bytes — or a
       // trickle that outlives the raised backstop — is a dead download,
       // not a resume case.
-      return ArchiveDownloadOutcome.timedOut(error.message ?? 'timed out');
+      return (
+        ArchiveDownloadOutcome.timedOut(error.message ?? 'timed out'),
+        false,
+      );
     } catch (_) {
       received = builder.length;
-      return _resumeOrGiveUp(
+      final giveUp = _resumeOrGiveUp(
         'connection lost at ${_formatBytes(received)} '
         '($maxResumeAttempts resume attempts exhausted)',
       );
+      return (giveUp, giveUp == null);
     }
     received = builder.length;
-    return null;
+    return (null, false);
   }
 
   /// The attempt loop. Null = the archive is complete ([takeBytes]);
@@ -407,12 +414,13 @@ final class _BodyDownload {
       if (failure != null) return failure;
       if (response == null) continue; // resume budget left — retry.
       _noteOpen(response);
-      final drained = await _drain(
+      final (drained, retry) = await _drain(
         response,
         stallTimeout: stallTimeout,
         totalTimeout: totalTimeout,
       );
       if (drained != null) return drained;
+      if (retry) continue; // resume budget spent on a mid-body death.
       final total = totalBytes;
       if (total != null && received < total) {
         // A clean close below the promised length is the same

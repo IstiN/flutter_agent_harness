@@ -2049,10 +2049,19 @@ void main() {
         var requests = 0;
         final client = streamingClient((_) {
           requests++;
+          if (requests == 1) {
+            return http.StreamedResponse(
+              errorsAfter([filler(chunk)]),
+              200,
+              contentLength: chunk * 99,
+            );
+          }
+          // The retry honors the Range (206): one more chunk arrives,
+          // then the same non-Exception death — the offset accumulates.
           return http.StreamedResponse(
-            errorsAfter([filler(chunk)]),
-            200,
-            contentLength: chunk * 99,
+            errorsAfter([filler(chunk, 1)]),
+            206,
+            contentLength: chunk * 98,
           );
         });
         final outcome = await downloadArchiveBody(
