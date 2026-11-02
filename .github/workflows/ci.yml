@@ -4160,7 +4160,11 @@ jobs:
           # fa-*.tar.gz/zip, and let release-provenance own the
           # --draft=false --latest flip after the checksums land.
           bash scripts/release_lazy_draft.sh "${GITHUB_REF_NAME}"
-          gh release upload "${GITHUB_REF_NAME}" "$asset" --clobber --repo "${GITHUB_REPOSITORY}"
+          # gh-2042 AC1: the immutability gate owns the attach — a
+          # PUBLISHED release skips already-attached assets, refuses
+          # unattached fa-* assets loud, and re-signing goes through
+          # release-provenance only.
+          bash scripts/release_asset_gate.sh "${GITHUB_REF_NAME}" "$asset"
 
       # Draft lifecycle invariant (issue #282 / gh-1801): this job creates
       # release drafts — a failed/cancelled leg must not leave its own
@@ -4281,7 +4285,9 @@ jobs:
           # must find the draft alive; a genuinely orphaned draft is
           # reclaimed by the 24h sweeper (GITHUB_TOKEN-authored → bot).
           bash scripts/release_lazy_draft.sh "${GITHUB_REF_NAME}"
-          gh release upload "${GITHUB_REF_NAME}" fa-web-spa.zip --clobber --repo "${GITHUB_REPOSITORY}"
+          # gh-2042 AC1: the immutability gate owns the attach (published
+          # releases are immutable for fa-* assets — skip/refuse, never clobber).
+          bash scripts/release_asset_gate.sh "${GITHUB_REF_NAME}" fa-web-spa.zip
 
       # continue-on-error keeps the job/check green even on failure — a
       # release can then only be gated on a MISSING asset. Surface the miss
@@ -4387,7 +4393,11 @@ jobs:
           cp build/fa-extension.zip "$asset"
           ls -lh "$asset"
           bash scripts/release_lazy_draft.sh "${GITHUB_REF_NAME}"
-          gh release upload "${GITHUB_REF_NAME}" "$asset" --clobber --repo "${GITHUB_REPOSITORY}"
+          # gh-2042 AC1: the immutability gate owns the attach — a
+          # PUBLISHED release skips already-attached assets, refuses
+          # unattached fa-* assets loud, and re-signing goes through
+          # release-provenance only.
+          bash scripts/release_asset_gate.sh "${GITHUB_REF_NAME}" "$asset"
 
       # Mirror of the web-spa summary flag: surface the miss in the run's
       # step summary (covers build/size-gate/upload flakes); the failed
@@ -4502,7 +4512,28 @@ jobs:
           # leaves the previous release as latest (safe degradation)
           # instead of stranding a provenance-less one (the v1.0.630
           # empty/partial-latest window class).
-          gh release edit "${GITHUB_REF_NAME}" --draft=false --latest --repo "${GITHUB_REPOSITORY}"
+          #
+          # gh-2042 (BLOCKING review thread): the flip must never drag the
+          # `latest` badge backwards. The drift remediation
+          # (scripts/release_drift_remediate.sh) re-requests THIS job for
+          # an old drifted tag; a job rerun re-executes this step with the
+          # original run's ref, and an unconditional --latest would
+          # re-flag that older release as Latest — pointing every
+          # `fa update` client DOWN at it (the re-signed manifest would
+          # make the downgrade pass provenance). Carry --latest ONLY when
+          # the release is still a draft (the normal publish point,
+          # gh-1801) or already the current latest; otherwise publish the
+          # re-signed state without touching the badge.
+          is_draft=$(gh release view "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" --json isDraft --jq .isDraft)
+          current_latest=$(gh api "repos/${GITHUB_REPOSITORY}/releases/latest" --jq .tag_name 2>/dev/null || true)
+          if [ "$is_draft" = "true" ] || [ "$current_latest" = "${GITHUB_REF_NAME}" ]; then
+            gh release edit "${GITHUB_REF_NAME}" --draft=false --latest --repo "${GITHUB_REPOSITORY}"
+          else
+            # Re-sign remediation of a non-latest tag: publish state is
+            # already correct — never drag the latest badge backwards
+            # (gh-2042).
+            gh release edit "${GITHUB_REF_NAME}" --draft=false --repo "${GITHUB_REPOSITORY}"
+          fi
 
       # gh-1899: the flip above publishes exactly ONE release object, but
       # GitHub does not atomically enforce one release per tag — two train

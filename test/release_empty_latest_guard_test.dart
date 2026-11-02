@@ -456,8 +456,17 @@ void main() {
       ghLogPath = '${root.path}/gh.log';
 
       // gh stub: log + exit 0 (any create would land in the log).
+      // gh-2042: the attach upload path routes through the immutability
+      // gate, whose --json isDraft,assets probe must get a structured
+      // answer — the fixture models a DRAFT release (the pre-gate shape
+      // these tests pin).
       File('$bin/gh').writeAsStringSync(
-        '#!/usr/bin/env bash\necho "\$*" >> "\$FA_GH_LOG"\nexit 0\n',
+        '#!/usr/bin/env bash\n'
+        'echo "\$*" >> "\$FA_GH_LOG"\n'
+        'case "\$*" in\n'
+        '  *"--json isDraft,assets"*) echo \'{"isDraft":true,"assets":[]}\' ;;\n'
+        'esac\n'
+        'exit 0\n',
       );
       // git shim → real binary (session PATH may carry push-guard shims).
       File(
@@ -811,7 +820,9 @@ void main() {
       () {
         // Provenance landed (servable) but its own flip failed / a draft
         // was left behind — the attach may recover it: publish + latest is
-        // safe exactly when the release can serve `fa update`.
+        // safe exactly when the release can serve `fa update` AND is still
+        // a draft (gh-2042: a PUBLISHED release is never re-flaged latest).
+        plant('draft-state.txt', 'true');
         plant('view-seq.txt', 'exists\n');
         plant(
           'asset-names.txt',
@@ -1063,6 +1074,21 @@ case "\$1 \$2" in
     # them before the view-seq sequencing (the attach path queries the
     # asset list of a release it has already confirmed exists).
     case "\$*" in
+      # gh-2042: the immutability gate's ONE-CALL probe (isDraft + assets).
+      # Absent draft-state.txt defaults to DRAFT — the historical shape
+      # these fixtures pin; published paths plant draft-state.txt=false.
+      *"--json isDraft,assets"*)
+        d="true"
+        [ -f "\$FA_GH_DIR/draft-state.txt" ] && d="\$(cat "\$FA_GH_DIR/draft-state.txt")"
+        objs=""
+        if [ -f "\$FA_GH_DIR/asset-names.txt" ]; then
+          while IFS= read -r n; do
+            [ -n "\$n" ] && objs="\$objs{\\"name\\":\\"\$n\\"},"
+          done < "\$FA_GH_DIR/asset-names.txt"
+        fi
+        objs="\${objs%,}"
+        printf '{"isDraft":%s,"assets":[%s]}\n' "\$d" "\$objs"
+        exit 0 ;;
       *"--json isDraft"*) cat "\$FA_GH_DIR/draft-state.txt" 2>/dev/null || echo "false"; exit 0 ;;
       *"--json body"*) cat "\$FA_GH_DIR/release-body.txt" 2>/dev/null || echo ""; exit 0 ;;
       *"--json assets"*) cat "\$FA_GH_DIR/asset-names.txt" 2>/dev/null || echo ""; exit 0 ;;
