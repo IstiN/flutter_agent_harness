@@ -327,9 +327,18 @@ case "$CMD" in
     # ("SecKeychainItemImport: User canceled the operation", run
     # 40857357741). unlock-keychain -p never prompts.
     security unlock-keychain -p "$(kc_password)" "$KC"
-    security import "$TMP/cert.p12" -k "$KC" -P "$P12_PW" -T /usr/bin/codesign
+    # gh-2026: -T grants import-time key ACL per consumer binary. codesign alone
+    # is NOT enough — productbuild (TestFlight PKG) is not covered by the
+    # apple-tool:/apple: partition list and its first signing raised a modal
+    # SecurityAgent dialog that hung the arm64 leg 1h42m (run 41354303751).
+    security import "$TMP/cert.p12" -k "$KC" -P "$P12_PW" \
+      -T /usr/bin/codesign -T /usr/bin/productbuild \
+      -T /usr/bin/productsign -T /usr/bin/security
     # Partition the private key so codesign never needs interactive auth
     # (this is what prevents GUI keychain prompts).
+    # applied twice: the first apply does not always stick on a fresh
+    # import (fastlane folklore, cheap and harmless).
+    security set-key-partition-list -S apple-tool:,apple: -s -k "$(kc_password)" "$KC" >/dev/null
     security set-key-partition-list -S apple-tool:,apple: -s -k "$(kc_password)" "$KC" >/dev/null
 
     if ! security find-identity -v "$KC" | grep -qi "$NEW_FP"; then
