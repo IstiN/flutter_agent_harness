@@ -802,6 +802,48 @@ final class StructuredCompactor {
       );
       return true;
     }
+    final outcome = await _runEscalationFold(range);
+    // gh-2044 semantic 7: the factory's total-budget kill is the
+    // authoritative outcome — no append and no report after it, whether
+    // the in-flight call died with the budget or raced it.
+    if (outcome.budgetSpent) return true;
+    if (outcome.cancelled) return false;
+    if (outcome.error != null) {
+      emit(after: before, ok: false, error: outcome.error);
+      return true;
+    }
+    final after = await _refreshState();
+    final (:summarizedCount, :visibleMessages) = _escalationCounts(range);
+    emit(
+      after: after,
+      ok: true,
+      // The REAL call count: 0 for the marker-only deterministic
+      // consolidation (issue #387, gh-2044 semantic 9), 1 for a single
+      // in-window fold, N for a #729 chunked fold — observability is this
+      // pass's whole purpose (gh-2044 review thread 4).
+      judgeCalls: visibleMessages == 0 ? 0 : outcome.summarizerCalls,
+      summarizedCount: summarizedCount,
+      summary: outcome.text,
+    );
+    return true;
+  }
+
+  /// The escalation's fold work, extracted so the pass body keeps only
+  /// its decision flow (gh-2044 rework: CRAP ratchet). [budgetSpent] is
+  /// the factory's authoritative total-budget kill (gh-2044 semantic 7 —
+  /// no receipt may follow it); [cancelled] outranks any error receipt
+  /// (issue #1085 — a cancelled run is never a mere failed pass);
+  /// [error] is the failure-safety receipt error, `null` on success.
+  Future<
+    ({
+      bool budgetSpent,
+      bool cancelled,
+      Object? error,
+      String? text,
+      int summarizerCalls,
+    })
+  >
+  _runEscalationFold(_CkptRange range) async {
     final flattened = _flattenForDepthCap(range);
     final String? text;
     int summarizerCalls = 0;
@@ -815,41 +857,61 @@ final class StructuredCompactor {
       // outcome path owns it.
       rethrow;
     }
-    // gh-2044 semantic 7: the factory's total-budget kill is the
-    // authoritative outcome — no append and no report after it, whether
-    // the in-flight call died with the budget or raced it.
-    if (_totalBudgetSpent) return true;
+    if (_totalBudgetSpent) {
+      return (
+        budgetSpent: true,
+        cancelled: false,
+        error: null,
+        text: null,
+        summarizerCalls: summarizerCalls,
+      );
+    }
     if (text == null || text.isEmpty) {
-      if (_runCancelled) return false;
-      emit(
-        after: before,
-        ok: false,
+      if (_runCancelled) {
+        return (
+          budgetSpent: false,
+          cancelled: true,
+          error: null,
+          text: null,
+          summarizerCalls: summarizerCalls,
+        );
+      }
+      return (
+        budgetSpent: false,
+        cancelled: false,
         error: const CompactionException(
           'checkpoint escalation summarizer returned no text',
         ),
+        text: null,
+        summarizerCalls: summarizerCalls,
       );
-      return true;
     }
     final appended = await _appendEscalationCheckpoint(range, flattened, text);
     if (appended != null) {
-      if (_runCancelled) return false;
-      emit(after: before, ok: false, error: appended);
-      return true;
+      if (_runCancelled) {
+        return (
+          budgetSpent: false,
+          cancelled: true,
+          error: null,
+          text: null,
+          summarizerCalls: summarizerCalls,
+        );
+      }
+      return (
+        budgetSpent: false,
+        cancelled: false,
+        error: appended,
+        text: null,
+        summarizerCalls: summarizerCalls,
+      );
     }
-    final after = await _refreshState();
-    final (:summarizedCount, :visibleMessages) = _escalationCounts(range);
-    emit(
-      after: after,
-      ok: true,
-      // The REAL call count: 0 for the marker-only deterministic
-      // consolidation (issue #387, gh-2044 semantic 9), 1 for a single
-      // in-window fold, N for a #729 chunked fold — observability is this
-      // pass's whole purpose (gh-2044 review thread 4).
-      judgeCalls: visibleMessages == 0 ? 0 : summarizerCalls,
-      summarizedCount: summarizedCount,
-      summary: text,
+    return (
+      budgetSpent: false,
+      cancelled: false,
+      error: null,
+      text: text,
+      summarizerCalls: summarizerCalls,
     );
-    return true;
   }
 
   /// The escalation receipt (kind + the fragile-band metadata), extracted
