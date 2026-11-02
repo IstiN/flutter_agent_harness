@@ -180,6 +180,50 @@ void main() {
       expect(await manager.compactSession(session), isNull);
     });
 
+    test(
+      // gh-2044 rework CI fix (core shard 1/4 + hostile-env reds): an
+      // empty summarizable region with a blank answer must NOT land as a
+      // junk CompactionRecord — the #729 chunked path folds zero chunks
+      // into '' without an LM call, the record made the transcript look
+      // compacted while nothing was folded (and bricked every later
+      // prepareCompaction via the leaf rule), and the classic pass ladder
+      // reported a hollow success through its no-work terminal while the
+      // context was still over the trigger. The refusal is the
+      // empty-REGION case only; a dialed blank answer over a real region
+      // keeps landing as a record (issue #578 contract, pinned above).
+      'empty summarizable region + blank answer: refused, history '
+      'preserved (gh-2044 CI regression)',
+      () async {
+        final session = await newSession();
+        // One ~10-token user message; keepRecent (150) covers the whole
+        // transcript, so findCutPoint keeps everything and the region to
+        // summarize is empty — the CI fixture's exact shape.
+        await session.appendMessage(UserMessage.text('a' * 40));
+        final before = await session.getBranch();
+        final fake = _FakeSummarizer([SummarizationResult.success('')]);
+        final manager = CompactionManager(
+          summarize: fake.call,
+          settings: settings,
+        );
+
+        await expectLater(
+          manager.compactSession(session),
+          throwsA(
+            isA<CompactionException>().having(
+              (e) => e.code,
+              'code',
+              CompactionErrorCode.invalidSession,
+            ),
+          ),
+        );
+
+        // No compaction record appended; the branch is byte-identical.
+        final after = await session.getBranch();
+        expect(after.map((e) => e.id), before.map((e) => e.id));
+        expect(after.whereType<CompactionRecord>(), isEmpty);
+      },
+    );
+
     test('second compaction updates the previous summary', () async {
       final session = await sessionWithHistory();
       final fake = _FakeSummarizer([
