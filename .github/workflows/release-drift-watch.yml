@@ -16,13 +16,17 @@
 #     vehicle — dispatching it for v1.0.680 IS the AC3 remediation: the
 #     check detects the stale manifest and the remediation step auto
 #     re-requests the release-provenance job, which re-hashes the CURRENT
-#     assets and re-signs.
+#     assets and re-signs. The provenance flip is guarded (gh-2042
+#     review): re-signing an OLD tag publishes the corrected manifest
+#     without ever dragging the `latest` badge backwards onto it.
 #
 # On drift the run goes red, a deduplicated issue pages the owner, and the
 # "Sign release checksums" job of the tag's ci.yml run is re-requested
 # (scripts/release_drift_remediate.sh — job-scoped rerun, never a full run:
 # a full rerun would rebuild + re-attach, which the AC1 gate refuses on a
-# published release).
+# published release). Only DRIFT pages: a transport/infra blip fails the
+# check red WITHOUT a details file and the remediation step stays silent —
+# an infra error is not drift evidence (gh-2042 review).
 name: Release drift watch
 
 on:
@@ -64,13 +68,20 @@ jobs:
 
       - name: Resolve target release
         id: target
+        env:
+          # gh-2042 review: untrusted template values ride env-var
+          # indirection, never direct ${{ }} interpolation into the run:
+          # shell (the GitHub Actions security-hardening guide's script
+          # injection pattern — this job holds actions:write + issues:write).
+          DISPATCH_TAG: ${{ inputs.tag }}
+          RELEASE_EVENT_TAG: ${{ github.event.release.tag_name }}
         run: |
           set -euo pipefail
-          if [ -n "${{ inputs.tag }}" ]; then
-            tag="${{ inputs.tag }}"
+          if [ -n "$DISPATCH_TAG" ]; then
+            tag="$DISPATCH_TAG"
             echo "source=dispatch"
           elif [ "${{ github.event_name }}" = "release" ]; then
-            tag="${{ github.event.release.tag_name }}"
+            tag="$RELEASE_EVENT_TAG"
             echo "source=release event"
           else
             tag=$(gh api "repos/${GITHUB_REPOSITORY}/releases/latest" --jq .tag_name)
@@ -80,11 +91,23 @@ jobs:
           echo "verifying $tag"
 
       - name: Verify assets against the signed manifest (gh-2042 AC2)
-        run: bash scripts/release_drift_check.sh "${{ steps.target.outputs.tag }}"
+        env:
+          TAG: ${{ steps.target.outputs.tag }}
+          FA_DRIFT_DETAILS: drift-details.txt
+        run: bash scripts/release_drift_check.sh "$TAG"
 
       - name: Page + auto re-request release-provenance (drift never lingers)
         if: failure()
+        env:
+          TAG: ${{ steps.target.outputs.tag }}
         run: |
-          bash scripts/release_drift_remediate.sh \
-            "${{ steps.target.outputs.tag }}" \
-            drift-details.txt
+          set -euo pipefail
+          # gh-2042 review: only DRIFT pages. A transport/infra failure
+          # exits the check red WITHOUT writing the details file — the run
+          # stays red but files no issue and re-requests nothing (the next
+          # scheduled run re-checks; the release's provenance is intact).
+          if [ -s drift-details.txt ]; then
+            bash scripts/release_drift_remediate.sh "$TAG" drift-details.txt
+          else
+            echo "red WITHOUT drift details — transport/infra failure, not drift: no page, no re-request (the next scheduled run re-checks)"
+          fi

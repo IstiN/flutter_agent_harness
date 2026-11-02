@@ -282,24 +282,24 @@ void main() {
             block.contains('{{ steps.target.outputs.'),
             isFalse,
             reason:
-                'step outputs must be env-indirected (env: TAG: ... → "$TAG")',
+                r'step outputs must be env-indirected (env: TAG: ... → "$TAG")',
           );
         }
         // The indirection itself must exist.
         final wf = read(wfPath);
         expect(
           wf,
-          contains('DISPATCH_TAG: ${{inputs.tag}}'),
+          contains(r'DISPATCH_TAG: ${{ inputs.tag }}'),
           reason: 'the dispatch input rides an env var',
         );
         expect(
           wf,
-          contains('RELEASE_EVENT_TAG: ${{github.event.release.tag_name}}'),
+          contains(r'RELEASE_EVENT_TAG: ${{ github.event.release.tag_name }}'),
           reason: 'the release-event tag rides an env var',
         );
         expect(
           wf,
-          contains('TAG: ${{steps.target.outputs.tag}}'),
+          contains(r'TAG: ${{ steps.target.outputs.tag }}'),
           reason: 'the resolved tag reaches the check/remediate steps via env',
         );
       },
