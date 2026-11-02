@@ -11,6 +11,8 @@ import 'package:fa/ui/widgets/messenger_navigation_controls.dart';
 import 'package:fa/ui/widgets/messenger_section_header.dart';
 import 'package:fa/ui/widgets/subagent_mark.dart';
 import 'package:fa_ui/fa_ui.dart';
+import 'package:liquid_glass_widgets/liquid_glass_widgets.dart'
+    show ProgressiveBlur, ProgressiveBlurDirection;
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -295,24 +297,51 @@ class _ChatListPanelState extends State<ChatListPanel> {
               children: [
                 _buildChromeSurface(colors, chrome),
                 Expanded(
-                  child: ClipRect(
-                    child: AnimatedSwitcher(
-                      duration: FaMotion.duration(
-                        context,
-                        const Duration(milliseconds: 200),
-                      ),
-                      switchInCurve: Curves.easeInOutCubic,
-                      switchOutCurve: Curves.easeInOutCubic,
-                      child: KeyedSubtree(
-                        key:
-                            widget.bodyKey ??
-                            ValueKey(
-                              'chat-directory-${_currentDirectory ?? 'root'}',
+                  child: Stack(
+                    children: [
+                      Positioned.fill(
+                        child: ClipRect(
+                          child: AnimatedSwitcher(
+                            duration: FaMotion.duration(
+                              context,
+                              const Duration(milliseconds: 200),
                             ),
-                        child:
-                            widget.bodyBuilder?.call(0) ?? _buildBody(colors),
+                            switchInCurve: Curves.easeInOutCubic,
+                            switchOutCurve: Curves.easeInOutCubic,
+                            child: KeyedSubtree(
+                              key:
+                                  widget.bodyKey ??
+                                  ValueKey(
+                                    'chat-directory-${_currentDirectory ?? 'root'}',
+                                  ),
+                              child:
+                                  widget.bodyBuilder?.call(0) ??
+                                  _buildBody(colors),
+                            ),
+                          ),
+                        ),
                       ),
-                    ),
+                      // The glass ceiling: rows (and the scrollbar's very
+                      // top) dissolve into a graduated blur as they ride
+                      // up to the chrome band — they never enter the
+                      // controls themselves.
+                      if (FaDesignTokens.of(context).direction ==
+                          FaVisualDirection.glass)
+                        Positioned(
+                          top: 0,
+                          left: 0,
+                          right: 0,
+                          height: 28,
+                          child: const IgnorePointer(
+                            child: ProgressiveBlur(
+                              key: ValueKey('chatListTopMelt'),
+                              maxSigma: 14,
+                              direction: ProgressiveBlurDirection.topToBottom,
+                              falloff: 1.0,
+                            ),
+                          ),
+                        ),
+                    ],
                   ),
                 ),
               ],
@@ -914,7 +943,12 @@ class _ConversationRowState extends State<_ConversationRow> {
               child: Stack(
                 children: [
                   Padding(
-                    padding: EdgeInsets.fromLTRB(10 + widget.indent, 10, 4, 10),
+                    padding: EdgeInsets.fromLTRB(
+                      10 + widget.indent,
+                      10,
+                      10,
+                      10,
+                    ),
                     child: Row(
                       crossAxisAlignment: CrossAxisAlignment.center,
                       children: [

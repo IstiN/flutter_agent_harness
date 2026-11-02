@@ -437,6 +437,13 @@ void main() {
     // even fully scrolled the rows (and the scrollbar track) stay below
     // the selectors — iMessage-style chrome band.
     expect(find.byKey(const ValueKey('chatListChromeUnderlay')), findsNothing);
+    // The glass ceiling: a graduated blur at the list's top edge — rows
+    // dissolve as they ride up instead of hitting the chrome flat.
+    final melt = tester.widget<ProgressiveBlur>(
+      find.byKey(const ValueKey('chatListTopMelt')),
+    );
+    expect(melt.direction, ProgressiveBlurDirection.topToBottom);
+    expect(melt.maxSigma, greaterThan(0));
     final scrollable = tester.widget<Scrollable>(
       find
           .descendant(

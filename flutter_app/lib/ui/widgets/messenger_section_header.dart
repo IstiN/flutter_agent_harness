@@ -90,7 +90,7 @@ final class MessengerSectionHeader extends StatelessWidget {
             SizedBox(
               height: contentHeight,
               child: Padding(
-                padding: EdgeInsets.fromLTRB(compact ? 12 : 10, 7, 8, 7),
+                padding: EdgeInsets.fromLTRB(compact ? 12 : 10, 7, 10, 7),
                 child: Row(
                   children: [
                     brand,
@@ -132,7 +132,7 @@ final class MessengerSectionHeader extends StatelessWidget {
                       ),
                     ),
                     if (!compact) ...[
-                      const SizedBox(width: 4),
+                      const SizedBox(width: 8),
                       SizedBox.square(
                         dimension: 32,
                         child: IconButton.filled(
