@@ -13,6 +13,24 @@ block a release again.
 
 ## Unreleased
 
+- fix(gh-2044): the auto-compact fragile-band escalation could fold the
+  ENTIRE visible projection when the remaining path fit inside
+  `keepRecentTokens` — the keep-recent walk defaulted to folding
+  everything when its budget never exhausted, swallowing the live tail
+  (the newest user ask and assistant turn included). Real-world trigger:
+  resumed subagent runs ended with no assistant message at all
+  (`subagent produced no assistant message` — CI cores shards 1/4 and
+  3/4, hostile-env, both red). `_pickCheckpointRange` now declines the
+  fold when the whole foldable path fits the keep-recent region and
+  still carries live records; all-marker paths keep the lossless
+  deterministic consolidation (issue #387). The escalation receipt also
+  reports the REAL summarizer call count (a #729 chunked fold makes N
+  calls, not 1), and the factory wires its run token into the engine's
+  `cancelToken` so a watchdog-shaped cancel reason (any
+  `TimeoutException`) can no longer dissolve a user abort into a
+  "summarizer returned no text" failed receipt while the run reports
+  success (#1085).
+
 - fix(gh-2003): the Copilot picker filter is tier-aware. Individual-tier
   `/models` responses omit `model_picker_enabled` entirely, so phase 1
   dropped every such entry as «picker flag absent» and individual/OAuth

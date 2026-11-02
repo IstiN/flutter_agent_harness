@@ -1078,7 +1078,8 @@ final class StructuredCompactor {
     // never invoked on marker-only ranges.
     if (rangeRecords.isEmpty) {
       return (
-        text: 'Earlier records already hidden behind expand markers '
+        text:
+            'Earlier records already hidden behind expand markers '
             '(${idsToRanges(coversSeqs)}) were consolidated here to bound '
             'marker overhead. Use compact_expand on any id to reopen a '
             'record.',

@@ -140,7 +140,10 @@ void main() {
       await session.appendMessage(_carrier('c$i'));
       await session.appendMessage(_result('c$i', 1000));
     }
-    return (session, _stateFor(await session.buildContextMessages(), contextWindow: 400000));
+    return (
+      session,
+      _stateFor(await session.buildContextMessages(), contextWindow: 400000),
+    );
   }
 
   /// A boundary fixture settling at EXACTLY `600 - margin` tokens with a
@@ -195,9 +198,10 @@ void main() {
     // Marker overhead of the hidden set (projection helpers, not guesses):
     // projected total with hidden records at marker size, minus what the
     // kept records plus the hidden records cost in full.
-    final allFull = entries
-        .whereType<MessageRecord>()
-        .fold<int>(0, (sum, r) => sum + recordTokens(r));
+    final allFull = entries.whereType<MessageRecord>().fold<int>(
+      0,
+      (sum, r) => sum + recordTokens(r),
+    );
     final hiddenFull = entries
         .whereType<MessageRecord>()
         .where((r) => hiddenIds.contains(r.id))
@@ -280,7 +284,10 @@ void main() {
       expect(escalation.ok, isTrue);
       expect(escalation.marginTokens, isNotNull);
       expect(escalation.marginTokens!, greaterThan(0));
-      expect(escalation.marginTokens!, lessThan(_incidentSettings.reserveTokens));
+      expect(
+        escalation.marginTokens!,
+        lessThan(_incidentSettings.reserveTokens),
+      );
       expect(escalation.bandTokens, _incidentSettings.reserveTokens);
       expect(escalation.hideableRemaining, greaterThan(0));
       expect(escalation.judgeCalls, 1, reason: 'one summarizer call');
@@ -311,7 +318,8 @@ void main() {
           judgeCalls++;
           return null;
         },
-        summarize: (_) => Future.value(SummarizationResult.success('ESCALATED')),
+        summarize: (_) =>
+            Future.value(SummarizationResult.success('ESCALATED')),
         checkpointPrompt: 'P',
         hooks: hooks,
       );
@@ -365,9 +373,7 @@ void main() {
       expect(judgeCalls, 2, reason: 'the second run adds no judge call');
       expect(summarizeCalls, 1, reason: 'the second run adds no checkpoint');
       expect(
-        hooks.passes
-            .where((p) => p.kind == 'checkpoint-escalation')
-            .length,
+        hooks.passes.where((p) => p.kind == 'checkpoint-escalation').length,
         escalationsAfterFirst,
         reason: 'no escalation on an under-trigger run',
       );
@@ -440,7 +446,9 @@ void main() {
     test('negative margin (still over the trigger) is not a thin '
         'settlement: no escalation, verdict fails', () async {
       // Judge declines: nothing relieves, settle == entry over the trigger.
-      final session = await repo.create(JsonlSessionCreateOptions(cwd: '/work'));
+      final session = await repo.create(
+        JsonlSessionCreateOptions(cwd: '/work'),
+      );
       await session.appendMessage(UserMessage.text('u' * 400));
       await session.appendMessage(_filler(4));
       for (var i = 0; i < 5; i++) {
@@ -506,12 +514,13 @@ void main() {
   });
 
   group('UT-ESC-6 — bounded work', () {
-    test('exactly one escalation; a still-thin result does not loop',
-        () async {
+    test('exactly one escalation; a still-thin result does not loop', () async {
       // user 100 + 9 pairs of 56 = 604 (over the 600 trigger); the ladder
       // checkpoint folds user+pair1, the escalation folds pair2 — the
       // result is still in the band and must NOT re-escalate.
-      final session = await repo.create(JsonlSessionCreateOptions(cwd: '/work'));
+      final session = await repo.create(
+        JsonlSessionCreateOptions(cwd: '/work'),
+      );
       await session.appendMessage(UserMessage.text('u' * 400));
       for (var i = 0; i < 9; i++) {
         await session.appendMessage(_carrier('c$i'));
@@ -603,7 +612,11 @@ void main() {
         protectLastN: 4,
       );
       final ok = await compactor.run();
-      expect(ok, isTrue, reason: 'optional deepening must not flip the verdict');
+      expect(
+        ok,
+        isTrue,
+        reason: 'optional deepening must not flip the verdict',
+      );
       final escalations = hooks.passes
           .where((p) => p.kind == 'checkpoint-escalation')
           .toList();
@@ -684,7 +697,10 @@ void main() {
             )
             .map((r) => r.id),
       };
-      await session.appendSegmentPin(recordIds: pinnedIds.toList(), pinned: true);
+      await session.appendSegmentPin(
+        recordIds: pinnedIds.toList(),
+        pinned: true,
+      );
 
       final hooks = _Hooks();
       final compactor = StructuredCompactor(
@@ -702,10 +718,7 @@ void main() {
       expect(ok, isTrue);
       for (final record in await session.getBranch()) {
         if (record is CompactCheckpointRecord) {
-          expect(
-            record.coversRecordIds,
-            anyElement(isNot(pinnedPair.id)),
-          );
+          expect(record.coversRecordIds, anyElement(isNot(pinnedPair.id)));
           expect(
             record.coversRecordIds.where(pinnedIds.contains),
             isEmpty,
@@ -722,7 +735,9 @@ void main() {
       // the judge hides the pair, the settle rides the user's own 500
       // tokens into the band, and the only foldable projection left is
       // the pair's marker.
-      final session = await repo.create(JsonlSessionCreateOptions(cwd: '/work'));
+      final session = await repo.create(
+        JsonlSessionCreateOptions(cwd: '/work'),
+      );
       await session.appendMessage(UserMessage.text('u' * 2000));
       await session.appendMessage(_carrier('c0'));
       await session.appendMessage(_result('c0', 100));
@@ -737,9 +752,8 @@ void main() {
         state: state,
         window: 800,
         settings: _boundarySettings,
-        judge: (_) async => '["${RecordSeqIndex(entries).seqOf(
-              entries.whereType<MessageRecord>().elementAt(1).id,
-            )}"]',
+        judge: (_) async =>
+            '["${RecordSeqIndex(entries).seqOf(entries.whereType<MessageRecord>().elementAt(1).id)}"]',
         summarize: (_) {
           summarizeCalls++;
           return Future.value(SummarizationResult.success('must not run'));
@@ -808,10 +822,7 @@ void main() {
       final ok = await compactor.run();
       expect(ok, isFalse, reason: 'a cancelled run is never a success');
       expect(
-        hooks.passes
-            .where(
-              (p) => p.kind == 'checkpoint-escalation' && !p.ok,
-            ),
+        hooks.passes.where((p) => p.kind == 'checkpoint-escalation' && !p.ok),
         isEmpty,
         reason: 'no failed-escalation receipt may mask the abort',
       );
@@ -821,36 +832,38 @@ void main() {
       );
     });
 
-    test('an already-cancelled run token skips the escalation entirely',
-        () async {
-      final (session, state, hiddenIds) = await boundarySession(
-        hiddenPairs: 1,
-        keptPairs: 4,
-        margin: 0,
-      );
-      final cancelSource = CancelTokenSource()..cancel('user abort');
-      final hooks = _Hooks();
-      final entries = await session.getEntries();
-      var summarizeCalls = 0;
-      final compactor = StructuredCompactor(
-        session: session,
-        state: state,
-        window: 800,
-        settings: _boundarySettings,
-        judge: (_) async => judgeAnswerFor(entries, hiddenIds),
-        summarize: (_) {
-          summarizeCalls++;
-          return Future.value(SummarizationResult.success('CKPT'));
-        },
-        checkpointPrompt: 'P',
-        hooks: hooks,
-        protectLastN: 4,
-        cancelToken: cancelSource.token,
-      );
-      final ok = await compactor.run();
-      expect(ok, isFalse);
-      expect(summarizeCalls, 0, reason: 'a cancelled run never deepens');
-    });
+    test(
+      'an already-cancelled run token skips the escalation entirely',
+      () async {
+        final (session, state, hiddenIds) = await boundarySession(
+          hiddenPairs: 1,
+          keptPairs: 4,
+          margin: 0,
+        );
+        final cancelSource = CancelTokenSource()..cancel('user abort');
+        final hooks = _Hooks();
+        final entries = await session.getEntries();
+        var summarizeCalls = 0;
+        final compactor = StructuredCompactor(
+          session: session,
+          state: state,
+          window: 800,
+          settings: _boundarySettings,
+          judge: (_) async => judgeAnswerFor(entries, hiddenIds),
+          summarize: (_) {
+            summarizeCalls++;
+            return Future.value(SummarizationResult.success('CKPT'));
+          },
+          checkpointPrompt: 'P',
+          hooks: hooks,
+          protectLastN: 4,
+          cancelToken: cancelSource.token,
+        );
+        final ok = await compactor.run();
+        expect(ok, isFalse);
+        expect(summarizeCalls, 0, reason: 'a cancelled run never deepens');
+      },
+    );
 
     test('an attempt-budget expiry during the escalation propagates as '
         'the named TimeoutException (no chunk after it)', () async {
@@ -867,16 +880,15 @@ void main() {
         window: 800,
         settings: _boundarySettings,
         judge: (_) async => judgeAnswerFor(entries, hiddenIds),
-        summarize: (_) async =>
-            throw TimeoutException('checkpoint summarizer deadline', const Duration(seconds: 1)),
+        summarize: (_) async => throw TimeoutException(
+          'checkpoint summarizer deadline',
+          const Duration(seconds: 1),
+        ),
         checkpointPrompt: 'P',
         hooks: hooks,
         protectLastN: 4,
       );
-      await expectLater(
-        compactor.run(),
-        throwsA(isA<TimeoutException>()),
-      );
+      await expectLater(compactor.run(), throwsA(isA<TimeoutException>()));
       expect(
         (await session.getEntries()).whereType<CompactCheckpointRecord>(),
         isEmpty,
@@ -921,21 +933,30 @@ void main() {
       );
       final ok = await compactor.run();
       expect(ok, isTrue);
-      expect(summarizerCalls, greaterThanOrEqualTo(2),
-          reason: 'the range must actually need multiple chunks');
+      expect(
+        summarizerCalls,
+        greaterThanOrEqualTo(2),
+        reason: 'the range must actually need multiple chunks',
+      );
       final escalations = hooks.passes
           .where((p) => p.kind == 'checkpoint-escalation')
           .toList();
-      expect(escalations, hasLength(1),
-          reason: 'N summarizer calls fold into ONE escalation pass record');
+      expect(
+        escalations,
+        hasLength(1),
+        reason: 'N summarizer calls fold into ONE escalation pass record',
+      );
       expect(escalations.single.ok, isTrue);
       expect(escalations.single.marginTokens, 0);
       expect(escalations.single.bandTokens, 200);
       // gh-2044 rework (review thread 4): the receipt's judgeCalls must
       // report the REAL summarizer call count — a #729 chunked fold makes
       // N calls, and the old hardcoded `1` under-reported them.
-      expect(escalations.single.judgeCalls, summarizerCalls,
-          reason: 'the receipt carries the real chunked call count');
+      expect(
+        escalations.single.judgeCalls,
+        summarizerCalls,
+        reason: 'the receipt carries the real chunked call count',
+      );
       expect(escalations.single.judgeCalls, greaterThanOrEqualTo(2));
     });
   });
@@ -951,7 +972,8 @@ void main() {
         window: 400000,
         settings: _incidentSettings,
         judge: (_) async => null,
-        summarize: (_) => Future.value(SummarizationResult.success('ESCALATED')),
+        summarize: (_) =>
+            Future.value(SummarizationResult.success('ESCALATED')),
         checkpointPrompt: 'P',
         hooks: hooks,
       );
@@ -993,7 +1015,9 @@ void main() {
       // (leaving hosts a projection with no live turn at all — the
       // resumed-child "subagent produced no assistant message" CI
       // regression).
-      final session = await repo.create(JsonlSessionCreateOptions(cwd: '/work'));
+      final session = await repo.create(
+        JsonlSessionCreateOptions(cwd: '/work'),
+      );
       await session.appendMessage(UserMessage.text('u' * 400));
       await session.appendMessage(_filler(300));
       await session.appendMessage(_carrier('c0'));
@@ -1014,8 +1038,11 @@ void main() {
         entries.whereType<MessageRecord>().elementAt(5).id,
       };
       final state = _stateFor(await session.buildContextMessages());
-      expect(_requestTokens(state), greaterThan(600),
-          reason: 'fixture precondition: the run enters over the trigger');
+      expect(
+        _requestTokens(state),
+        greaterThan(600),
+        reason: 'fixture precondition: the run enters over the trigger',
+      );
 
       final hooks = _Hooks();
       var summarizeCalls = 0;
@@ -1050,8 +1077,11 @@ void main() {
       );
       expect(escalations.single.marginTokens, 105);
       expect(escalations.single.bandTokens, 200);
-      expect(summarizeCalls, 0,
-          reason: 'no LM call may summarize the live tail away');
+      expect(
+        summarizeCalls,
+        0,
+        reason: 'no LM call may summarize the live tail away',
+      );
       expect(
         (await session.getEntries()).whereType<CompactCheckpointRecord>(),
         isEmpty,
@@ -1063,10 +1093,10 @@ void main() {
       expect(userAsk, isNotNull, reason: 'the live user ask survives');
       expect(
         state.messages.whereType<AssistantMessage>().where(
-              (m) => m.content.whereType<TextContent>().any(
-                    (b) => b.text.startsWith('ffff'),
-                  ),
-            ),
+          (m) => m.content.whereType<TextContent>().any(
+            (b) => b.text.startsWith('ffff'),
+          ),
+        ),
         isNotEmpty,
         reason: 'the live tail filler survives',
       );
@@ -1103,8 +1133,11 @@ void main() {
           .where((p) => p.kind == 'checkpoint-escalation')
           .toList();
       expect(escalations, hasLength(1));
-      expect(escalations.single.hideableRemaining, 0,
-          reason: 'every hideable entry is exempt or tail-protected');
+      expect(
+        escalations.single.hideableRemaining,
+        0,
+        reason: 'every hideable entry is exempt or tail-protected',
+      );
     });
   });
 
@@ -1164,7 +1197,10 @@ void main() {
               checkpointStreamCalls++;
               final message = streamMessage(StopReason.stop, 'ESCALATED');
               return streamOf(message, [
-                TextStartEvent(contentIndex: 0, partial: streamMessage(StopReason.stop, '')),
+                TextStartEvent(
+                  contentIndex: 0,
+                  partial: streamMessage(StopReason.stop, ''),
+                ),
                 DoneEvent(reason: StopReason.stop, message: message),
               ]);
             }
@@ -1190,11 +1226,73 @@ void main() {
       expect(hooks.doneCount, 1, reason: 'the host bracket closes once');
     });
 
+    test('IT-ESC-6: a user abort mid-escalation through the factory '
+        'surfaces — even when the cancel reason is a TimeoutException '
+        '(gh-2044 review thread 3)', () async {
+      // The production abort path: _runStructured links the factory's
+      // runToken into the budget token (budgetSource.cancel(runToken
+      // .cancelReason)). A watchdog-shaped cancel reason (any
+      // TimeoutException) used to defeat the engine's reason-type
+      // heuristic — the escalation proceeded, its LM call died, and the
+      // abort dissolved into a "summarizer returned no text" failed
+      // receipt while run() reported SUCCESS (the #1085 shape). The
+      // wired cancelToken makes _runCancelled authoritative instead.
+      final (session, state) = await incidentSession();
+      final runSource = CancelTokenSource();
+      final hooks = _CapturingAutoHooks();
+      var checkpointStreamCalls = 0;
+      final run = AutoCompactorFactory(
+        session: session,
+        state: state,
+        window: 400000,
+        settings: _incidentSettings,
+        runToken: runSource.token,
+        sources: AutoCompactorSources(
+          smolStream: (m, c, {cancelToken}) {
+            if (promptText(c).contains('<conversation>')) {
+              checkpointStreamCalls++;
+              // The user (or a watchdog) aborts mid-deepening.
+              runSource.cancel(
+                TimeoutException('watchdog fired', const Duration(seconds: 5)),
+              );
+              final message = streamMessage(StopReason.aborted, '');
+              return streamOf(message, [
+                ErrorEvent(reason: StopReason.aborted, error: message),
+              ]);
+            }
+            // The incident's dead judge: two stalls, then the fallback.
+            final message = streamMessage(StopReason.error, '');
+            return streamOf(message, [
+              ErrorEvent(reason: StopReason.error, error: message),
+            ]);
+          },
+          smolModel: null,
+          mainStream: (m, c, {cancelToken}) => throw UnimplementedError(),
+          mainModel: _factoryModel,
+        ),
+        hooks: hooks,
+      ).run();
+
+      // The abort must surface as an exception (#1085), never as a
+      // success or a failed-optional-pass receipt.
+      await expectLater(run, throwsA(isA<CancelledException>()));
+      expect(checkpointStreamCalls, 1, reason: 'the escalation was entered');
+      expect(
+        hooks.passes.where(
+          (p) => p.fallback == 'structured·ckpt-escalation' && !p.ok,
+        ),
+        isEmpty,
+        reason: 'no failed-escalation receipt may mask the abort',
+      );
+    });
+
     test('IT-ESC-5: a cap-forced run does not escalate (cap channel keeps '
         'its existing classic fall-through)', () async {
       // 4 messages at ~100 tok each: under the 600 token trigger, over
       // the message-cap trigger (cap 4, margin 2 → fires at count >= 2).
-      final session = await repo.create(JsonlSessionCreateOptions(cwd: '/work'));
+      final session = await repo.create(
+        JsonlSessionCreateOptions(cwd: '/work'),
+      );
       for (var i = 0; i < 2; i++) {
         await session.appendMessage(UserMessage.text('u' * 400));
         await session.appendMessage(_filler(100));
@@ -1212,7 +1310,10 @@ void main() {
           mainStream: (m, c, {cancelToken}) {
             final message = streamMessage(StopReason.stop, 'classic fold');
             return streamOf(message, [
-              TextStartEvent(contentIndex: 0, partial: streamMessage(StopReason.stop, '')),
+              TextStartEvent(
+                contentIndex: 0,
+                partial: streamMessage(StopReason.stop, ''),
+              ),
               DoneEvent(reason: StopReason.stop, message: message),
             ]);
           },

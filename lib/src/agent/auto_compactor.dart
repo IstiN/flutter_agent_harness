@@ -1161,6 +1161,20 @@ class AutoCompactorFactory {
       state: state,
       window: window,
       settings: settings,
+      // gh-2044 rework (review thread 3): the factory's run token is the
+      // AUTHORITATIVE user-abort signal for the engine's `_runCancelled`.
+      // Before this wiring the engine inferred "user abort" from a
+      // cancel-REASON type heuristic on the budget token
+      // (`cancelReason is! TimeoutException`), so a watchdog-shaped
+      // cancel (any TimeoutException reason — the link forwards
+      // `runToken.cancelReason` verbatim) was silently misclassified as
+      // a budget kill: the escalation proceeded, its LM call died, and
+      // the abort dissolved into a "summarizer returned no text" failed
+      // receipt while the run reported success (#1085). With the token
+      // wired, the first `_runCancelled` clause decides and the
+      // reason-type heuristic degrades to a harmless fallback for
+      // callers that only pass budgetSource.
+      cancelToken: runToken,
       judge: streamFunctionHideJudge(
         smolStream,
         smolModel,
