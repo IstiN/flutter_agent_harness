@@ -147,10 +147,15 @@ echo "\$*" >> "\$GH_LOG_FILE"
 if [ "\$1" = "release" ]; then
   case "\$2" in
     view)
-      # Both call shapes: `gh release view <tag> --repo R` (existence) and
+      # Call shapes: `gh release view <tag> --repo R` (existence),
       # `gh release view <tag> --repo R --json assets --jq ...`
-      # (servability probe — must report the signed checksums).
+      # (servability probe — must report the signed checksums), and the
+      # gh-2042 immutability gate's ONE-CALL isDraft+assets probe plus the
+      # flip check's isDraft — this fixture models a DRAFT release carrying
+      # the signed checksums (the recovery-flip shape under test).
       case "\$*" in
+        *--json\ isDraft,assets*) echo '{"isDraft":true,"assets":[{"name":"a.zip"},{"name":"SHA256SUMS"}]}' ;;
+        *--json\ isDraft*) echo "true" ;;
         *--json*) echo "SHA256SUMS" ;;
       esac
       exit 0 ;;

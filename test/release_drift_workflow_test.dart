@@ -23,11 +23,21 @@ String read(String path) => File(path).readAsStringSync();
 YamlMap jobsOf(String workflowPath) =>
     (loadYaml(read(workflowPath))['jobs']) as YamlMap;
 
-/// `gh release upload` invocations (line-level) in a workflow body.
-List<String> uploadLines(String workflowPath) => read(workflowPath)
-    .split('\n')
-    .where((l) => l.contains('gh release upload'))
-    .toList();
+/// `gh release upload` invocations (continuation lines joined) in a workflow.
+List<String> uploadBlocks(String workflowPath) {
+  final lines = read(workflowPath).split('\n');
+  final blocks = <String>[];
+  for (var i = 0; i < lines.length; i++) {
+    if (!lines[i].contains('gh release upload')) continue;
+    final block = <String>[lines[i]];
+    while (block.last.trimRight().endsWith(r'\') && i < lines.length - 1) {
+      i++;
+      block.add(lines[i]);
+    }
+    blocks.add(block.join(' '));
+  }
+  return blocks;
+}
 
 void main() {
   group('AC1 — every fa-* attach path routes through the immutability gate', () {
@@ -53,18 +63,26 @@ void main() {
       // these workflows: SHA256SUMS(.sig) is not an fa-* asset, and
       // re-uploading it is the sanctioned post-publish remediation
       // (re-running release-provenance for the tag).
-      for (final wf in [
-        '.github/workflows/ci.yml',
-        '.github/workflows/build-macos.yml',
-      ]) {
-        final uploads = uploadLines(wf);
-        expect(uploads, isNotEmpty, reason: '$wf keeps its provenance upload');
+      // The provenance manifest upload is the ONLY raw upload allowed:
+      // SHA256SUMS(.sig) is not an fa-* asset, and re-uploading it is the
+      // sanctioned post-publish remediation (re-running release-provenance
+      // for the tag, gh-2042 AC3). build-macos.yml has no provenance job —
+      // it must have NO raw upload at all.
+      {
+        final uploads = uploadBlocks('.github/workflows/build-macos.yml');
+        expect(uploads, isEmpty,
+            reason: 'build-macos.yml: raw `gh release upload` must not exist — '
+                'every fa-* attach routes through scripts/release_asset_gate.sh');
+      }
+      {
+        final uploads = uploadBlocks('.github/workflows/ci.yml');
+        expect(uploads, isNotEmpty, reason: 'ci.yml keeps its provenance upload');
         for (final line in uploads) {
           expect(
             line,
             contains('SHA256SUMS'),
             reason:
-                '$wf: "$line" uploads an fa-* asset raw — route it through '
+                'ci.yml: "$line" uploads an fa-* asset raw — route it through '
                 'scripts/release_asset_gate.sh (gh-2042 AC1: a published '
                 'release is immutable for fa-* assets)',
           );
@@ -111,14 +129,15 @@ void main() {
       expect(perms['issues'].toString(), contains('write'),
           reason: 'drift pages via a deduplicated issue');
       final steps = (job['steps'] as YamlList).map((s) => s.toString()).join('\n');
+      expect(steps, contains('if: failure()'),
+          reason: 'remediation fires exactly on a red check');
       expect(steps, contains('release_drift_check.sh'),
-          reason: 'the digest diff runs in the repo-owned script');
+          reason: 'the re-download + digest diff live in the repo-owned script '
+              '(asserted behaviorally in release_drift_check_test.dart)');
       expect(steps, contains('release_drift_remediate.sh'),
           reason: 'the drift path pages + re-requests provenance');
       expect(steps, contains('if: failure()'),
           reason: 'remediation fires exactly on a red check');
-      expect(steps, contains('gh release download'),
-          reason: 're-download from the release (never trust the build tree)');
     });
   });
 

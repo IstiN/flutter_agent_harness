@@ -4160,7 +4160,11 @@ jobs:
           # fa-*.tar.gz/zip, and let release-provenance own the
           # --draft=false --latest flip after the checksums land.
           bash scripts/release_lazy_draft.sh "${GITHUB_REF_NAME}"
-          gh release upload "${GITHUB_REF_NAME}" "$asset" --clobber --repo "${GITHUB_REPOSITORY}"
+          # gh-2042 AC1: the immutability gate owns the attach — a
+          # PUBLISHED release skips already-attached assets, refuses
+          # unattached fa-* assets loud, and re-signing goes through
+          # release-provenance only.
+          bash scripts/release_asset_gate.sh "${GITHUB_REF_NAME}" "$asset"
 
       # Draft lifecycle invariant (issue #282 / gh-1801): this job creates
       # release drafts — a failed/cancelled leg must not leave its own
@@ -4281,7 +4285,9 @@ jobs:
           # must find the draft alive; a genuinely orphaned draft is
           # reclaimed by the 24h sweeper (GITHUB_TOKEN-authored → bot).
           bash scripts/release_lazy_draft.sh "${GITHUB_REF_NAME}"
-          gh release upload "${GITHUB_REF_NAME}" fa-web-spa.zip --clobber --repo "${GITHUB_REPOSITORY}"
+          # gh-2042 AC1: the immutability gate owns the attach (published
+          # releases are immutable for fa-* assets — skip/refuse, never clobber).
+          bash scripts/release_asset_gate.sh "${GITHUB_REF_NAME}" fa-web-spa.zip
 
       # continue-on-error keeps the job/check green even on failure — a
       # release can then only be gated on a MISSING asset. Surface the miss
@@ -4387,7 +4393,11 @@ jobs:
           cp build/fa-extension.zip "$asset"
           ls -lh "$asset"
           bash scripts/release_lazy_draft.sh "${GITHUB_REF_NAME}"
-          gh release upload "${GITHUB_REF_NAME}" "$asset" --clobber --repo "${GITHUB_REPOSITORY}"
+          # gh-2042 AC1: the immutability gate owns the attach — a
+          # PUBLISHED release skips already-attached assets, refuses
+          # unattached fa-* assets loud, and re-signing goes through
+          # release-provenance only.
+          bash scripts/release_asset_gate.sh "${GITHUB_REF_NAME}" "$asset"
 
       # Mirror of the web-spa summary flag: surface the miss in the run's
       # step summary (covers build/size-gate/upload flakes); the failed
