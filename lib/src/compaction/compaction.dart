@@ -1579,6 +1579,29 @@ final class CompactionManager {
     ).tokens;
     final preparation = prepareCompaction(path, tokensBefore: tokensBefore);
     if (preparation == null) return null;
+    // gh-2044 rework CI fix: an EMPTY summarizable region must not fold.
+    // generateSummary's #729 chunked path over zero messages returns ''
+    // without a single LM call, and this method used to append that empty
+    // summary as a junk CompactionRecord — the transcript then LOOKED
+    // compacted while nothing was folded, the leaf record made every
+    // later prepareCompaction decline ("last entry is already a
+    // compaction"), and the classic pass ladder reported a hollow
+    // `success: true` through its no-work terminal while the context was
+    // still over the trigger (CI red, core shard 1/4 + hostile-env:
+    // "gh-1743: when nothing is droppable the budget timeout keeps the
+    // failure verdict" — the branch settled under the trigger, fell
+    // through to the classic engine, and that hollow success flipped the
+    // failure verdict). A run that cannot produce relief fails honestly
+    // instead (gh-1743's failure-verdict contract); `null` stays reserved
+    // for the genuinely already-compacted leaf (no-work success).
+    if (preparation.messagesToSummarize.isEmpty &&
+        preparation.turnPrefixMessages.isEmpty) {
+      throw const CompactionException(
+        'nothing to summarize above the keep-recent cut — the foldable '
+        'region is empty',
+        code: CompactionErrorCode.invalidSession,
+      );
+    }
     final result = await compact(
       preparation,
       customInstructions: customInstructions,
