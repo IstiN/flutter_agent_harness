@@ -931,6 +931,12 @@ void main() {
       expect(escalations.single.ok, isTrue);
       expect(escalations.single.marginTokens, 0);
       expect(escalations.single.bandTokens, 200);
+      // gh-2044 rework (review thread 4): the receipt's judgeCalls must
+      // report the REAL summarizer call count — a #729 chunked fold makes
+      // N calls, and the old hardcoded `1` under-reported them.
+      expect(escalations.single.judgeCalls, summarizerCalls,
+          reason: 'the receipt carries the real chunked call count');
+      expect(escalations.single.judgeCalls, greaterThanOrEqualTo(2));
     });
   });
 
@@ -967,6 +973,138 @@ void main() {
         expect(errorText.contains('xxxx'), isFalse);
         expect(errorText.contains('uuuu'), isFalse);
       }
+    });
+  });
+
+  group('UT-ESC-12 — the keep-recent boundary cannot fold the whole live '
+      'world (gh-2044 rework)', () {
+    test('an escalation whose foldable path fits keepRecentTokens with live '
+        'records left declines: no fold, no live-tail swallow, honest '
+        'no-range receipt, verdict stands', () async {
+      // Layout (file order): user ask (100 tok, LIVE), one pinned filler
+      // (300 tok — absorbs the weight so the settle stays in the band),
+      // two read pairs the judge hides (102 tok full → 35 tok markers),
+      // one live 25-tok filler tail. Entry 629 > 600; after the hides the
+      // settle is 495 → margin 105 rides into the band and the escalation
+      // fires. Its foldable path — user + both marker pairs + the tail —
+      // is 195 tokens, INSIDE keepRecentTokens (200): the keep-recent
+      // region covers the whole path, so NOTHING may fold. The old
+      // whole-world fold swallowed the live user ask and the tail filler
+      // (leaving hosts a projection with no live turn at all — the
+      // resumed-child "subagent produced no assistant message" CI
+      // regression).
+      final session = await repo.create(JsonlSessionCreateOptions(cwd: '/work'));
+      await session.appendMessage(UserMessage.text('u' * 400));
+      await session.appendMessage(_filler(300));
+      await session.appendMessage(_carrier('c0'));
+      await session.appendMessage(_result('c0', 100));
+      await session.appendMessage(_carrier('c1'));
+      await session.appendMessage(_result('c1', 100));
+      await session.appendMessage(_filler(25));
+      final entries = await session.getEntries();
+      // Pin the big filler: it can never fold, and it keeps the settle
+      // inside the fragile band after the hides.
+      final pinnedId = entries.whereType<MessageRecord>().elementAt(1).id;
+      await session.appendSegmentPin(recordIds: [pinnedId], pinned: true);
+      // The judge hides both pairs (whole groups, carrier seqs).
+      final hiddenIds = <String>{
+        entries.whereType<MessageRecord>().elementAt(2).id,
+        entries.whereType<MessageRecord>().elementAt(3).id,
+        entries.whereType<MessageRecord>().elementAt(4).id,
+        entries.whereType<MessageRecord>().elementAt(5).id,
+      };
+      final state = _stateFor(await session.buildContextMessages());
+      expect(_requestTokens(state), greaterThan(600),
+          reason: 'fixture precondition: the run enters over the trigger');
+
+      final hooks = _Hooks();
+      var summarizeCalls = 0;
+      final compactor = StructuredCompactor(
+        session: session,
+        state: state,
+        window: 800,
+        settings: _boundarySettings,
+        judge: (_) async => judgeAnswerFor(entries, hiddenIds),
+        summarize: (_) {
+          summarizeCalls++;
+          return Future.value(SummarizationResult.success('SWALLOWED'));
+        },
+        checkpointPrompt: 'P',
+        hooks: hooks,
+        protectLastN: 0,
+      );
+      final ok = await compactor.run();
+
+      // The verdict stands: the run settled at 495, under the trigger.
+      expect(ok, isTrue);
+      final escalations = hooks.passes
+          .where((p) => p.kind == 'checkpoint-escalation')
+          .toList();
+      expect(escalations, hasLength(1));
+      // The bounded no-op receipt (gh-2044 semantic 5): nothing foldable
+      // below the keep-recent boundary.
+      expect(escalations.single.ok, isFalse);
+      expect(
+        escalations.single.error.toString(),
+        contains('no foldable range'),
+      );
+      expect(escalations.single.marginTokens, 105);
+      expect(escalations.single.bandTokens, 200);
+      expect(summarizeCalls, 0,
+          reason: 'no LM call may summarize the live tail away');
+      expect(
+        (await session.getEntries()).whereType<CompactCheckpointRecord>(),
+        isEmpty,
+        reason: 'the whole-live-world fold must not append a checkpoint',
+      );
+      // The live projection survives: the user ask and the tail filler
+      // are still rendered messages, never checkpoint-covered.
+      final userAsk = state.messages.whereType<UserMessage>().firstOrNull;
+      expect(userAsk, isNotNull, reason: 'the live user ask survives');
+      expect(
+        state.messages.whereType<AssistantMessage>().where(
+              (m) => m.content.whereType<TextContent>().any(
+                    (b) => b.text.startsWith('ffff'),
+                  ),
+            ),
+        isNotEmpty,
+        reason: 'the live tail filler survives',
+      );
+    });
+
+    test('the hideableRemaining diagnostic reads 0 when every entry is '
+        'exempt or inside the protected tail', () async {
+      // Same shape as the pinned-pair fixture (UT-ESC-8) but with
+      // protectLastN 16: every visible non-exempt record (9 after the
+      // hide) sits inside the protected tail, so the diagnostic count
+      // rides 0 — the count-only diagnostic branch the review thread
+      // flagged.
+      final (session, state, hiddenIds) = await boundarySession(
+        hiddenPairs: 1,
+        keptPairs: 4,
+        margin: 0,
+      );
+      final entries = await session.getEntries();
+      final hooks = _Hooks();
+      final compactor = StructuredCompactor(
+        session: session,
+        state: state,
+        window: 800,
+        settings: _boundarySettings,
+        judge: (_) async => judgeAnswerFor(entries, hiddenIds),
+        summarize: (_) => Future.value(SummarizationResult.success('CKPT')),
+        checkpointPrompt: 'P',
+        hooks: hooks,
+        protectLastN: 16,
+      );
+      final ok = await compactor.run();
+      expect(ok, isTrue);
+      final escalations = hooks.passes
+          .where((p) => p.kind == 'checkpoint-escalation')
+          .toList();
+      expect(escalations, hasLength(1));
+      expect(escalations.single.hideableRemaining, 0,
+          reason: 'every hideable entry is exempt or tail-protected');
     });
   });
 

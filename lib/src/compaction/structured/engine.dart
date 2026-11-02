@@ -674,7 +674,9 @@ final class StructuredCompactor {
       final flattened = _flattenForDepthCap(range);
       final String text;
       try {
-        text = await _summarizeRange(range, flattened) ?? '';
+        // The ladder receipt keeps its historical `judgeCalls: 1` shape;
+        // the call counts ride the escalation receipt (gh-2044 thread 4).
+        text = (await _summarizeRange(range, flattened)).text ?? '';
       } on TimeoutException {
         // A budget kill must surface as a named error (issue #515), not
         // dissolve into the ordinary failure-safety null.
@@ -795,8 +797,11 @@ final class StructuredCompactor {
     }
     final flattened = _flattenForDepthCap(range);
     final String? text;
+    int summarizerCalls = 0;
     try {
-      text = await _summarizeRange(range, flattened);
+      final summarized = await _summarizeRange(range, flattened);
+      text = summarized.text;
+      summarizerCalls = summarized.summarizerCalls;
     } on TimeoutException {
       // A budget kill must surface as a named error (issue #515), not
       // dissolve into the optional-pass null — the factory's #515/#1425
@@ -850,9 +855,11 @@ final class StructuredCompactor {
     emit(
       after: after,
       ok: true,
-      // Marker-only ranges consolidate deterministically (issue #387) —
-      // no LLM call happened, and none is reported (gh-2044 semantic 9).
-      judgeCalls: visibleMessages == 0 ? 0 : 1,
+      // The REAL call count: 0 for the marker-only deterministic
+      // consolidation (issue #387, gh-2044 semantic 9), 1 for a single
+      // in-window fold, N for a #729 chunked fold — observability is this
+      // pass's whole purpose (gh-2044 review thread 4).
+      judgeCalls: visibleMessages == 0 ? 0 : summarizerCalls,
       summarizedCount: summarizedCount,
       summary: text,
     );
@@ -958,6 +965,24 @@ final class StructuredCompactor {
         break;
       }
     }
+    // gh-2044 rework (CI regression): when the walk above never exhausts
+    // its budget, the ENTIRE foldable path fits INSIDE the keep-recent
+    // region — the default `cut = foldable.length` then folds everything
+    // and keeps zero recent context, swallowing the live tail (the newest
+    // user ask and assistant turn included). The fragile-band escalation
+    // reaches that regime whenever the remaining projection is smaller
+    // than keepRecentTokens, and the swallowed live turn surfaced as
+    // resumed child runs ending without any assistant message. Nothing
+    // below the keep-recent boundary means nothing to fold — except an
+    // all-markers path (every record already hidden), whose deterministic
+    // consolidation (issue #387) is lossless and touches no live content.
+    if (cut == foldable.length) {
+      final hiddenIds = view_.state.hiddenRecordIds;
+      final coversLiveRecords = foldable.any(
+        (entry) => !hiddenIds.contains(entry.recordId),
+      );
+      if (coversLiveRecords) return null;
+    }
     // Snap inward at group boundaries: a range never splits a pair.
     while (cut > 1 && _sharesGroup(foldable, cut, view_.ledger)) {
       cut--;
@@ -1023,7 +1048,13 @@ final class StructuredCompactor {
     return depth;
   }
 
-  Future<String?> _summarizeRange(
+  /// Summarizes one checkpoint range. Returns the summary text (`null` on
+  /// failure-safety) together with the REAL number of summarizer calls the
+  /// fold made — 0 for the deterministic marker-only consolidation
+  /// (issue #387), 1 for a single in-window call, N for a #729 chunked
+  /// fold — so pass receipts can report actual work instead of a hardcoded
+  /// `1` (gh-2044 review thread 4).
+  Future<({String? text, int summarizerCalls})> _summarizeRange(
     _CkptRange range,
     List<CompactCheckpointRecord> flattened,
   ) async {
@@ -1046,10 +1077,13 @@ final class StructuredCompactor {
     // expandable (the covers list still names them); the summarizer is
     // never invoked on marker-only ranges.
     if (rangeRecords.isEmpty) {
-      return 'Earlier records already hidden behind expand markers '
-          '(${idsToRanges(coversSeqs)}) were consolidated here to bound '
-          'marker overhead. Use compact_expand on any id to reopen a '
-          'record.';
+      return (
+        text: 'Earlier records already hidden behind expand markers '
+            '(${idsToRanges(coversSeqs)}) were consolidated here to bound '
+            'marker overhead. Use compact_expand on any id to reopen a '
+            'record.',
+        summarizerCalls: 0,
+      );
     }
     final openAsks = userRequestCandidateLines(
       messages,
@@ -1139,14 +1173,14 @@ final class StructuredCompactor {
       );
     }
     final text = await _callSummarizer(prompt);
-    return text;
+    return (text: text, summarizerCalls: 1);
   }
 
   /// The #729 chunked fold: splits [messages] into budget-sized chunks and
   /// folds them chunk-wise — each chunk's summary rides the next prompt via
   /// [priorFold] (`<folded-checkpoint>`), the last fold becomes the range
   /// summary. A summarizer failure mid-fold is failure-safe (`null`).
-  Future<String?> _chunkedFold(
+  Future<({String? text, int summarizerCalls})> _chunkedFold(
     List<Message> messages, {
     required String Function(
       String conversation,
@@ -1158,6 +1192,7 @@ final class StructuredCompactor {
     required int budget,
   }) async {
     var priorFold = '';
+    var calls = 0;
     final chunks = chunkSummarizableMessages(
       messages,
       max(budget - _checkpointEnvelopeReserveTokens, 256),
@@ -1178,10 +1213,11 @@ final class StructuredCompactor {
           priorFold.isEmpty ? null : priorFold,
         ),
       );
-      if (text == null) return null;
+      calls++;
+      if (text == null) return (text: null, summarizerCalls: calls);
       priorFold = text;
     }
-    return priorFold;
+    return (text: priorFold, summarizerCalls: calls);
   }
 
   /// One summarizer call under the attempt budget (issue #515). Returns
