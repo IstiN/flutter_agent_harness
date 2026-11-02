@@ -1537,12 +1537,12 @@ class _FaChatScreenState extends State<FaChatScreen>
             top: 0,
             left: 0,
             right: 0,
-            height: _glassHeaderExtent + 24,
+            height: _glassHeaderExtent + 12,
             child: IgnorePointer(
               child: tokens.direction == FaVisualDirection.glass
                   ? const ProgressiveBlur(
                       key: ValueKey('faChatTopMelt'),
-                      maxSigma: 20,
+                      maxSigma: 12,
                       direction: ProgressiveBlurDirection.topToBottom,
                     )
                   : DecoratedBox(
@@ -1566,12 +1566,12 @@ class _FaChatScreenState extends State<FaChatScreen>
             left: 0,
             right: 0,
             bottom: 0,
-            height: math.max(96, _glassComposerExtent + 40),
+            height: math.max(72, _glassComposerExtent + 12),
             child: IgnorePointer(
               child: tokens.direction == FaVisualDirection.glass
                   ? const ProgressiveBlur(
                       key: ValueKey('faChatBottomMelt'),
-                      maxSigma: 20,
+                      maxSigma: 10,
                       direction: ProgressiveBlurDirection.bottomToTop,
                     )
                   : DecoratedBox(
