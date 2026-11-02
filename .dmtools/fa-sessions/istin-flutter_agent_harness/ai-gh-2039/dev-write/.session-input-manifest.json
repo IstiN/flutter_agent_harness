@@ -1,0 +1,171 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-11-02T08:22:13.341Z",
+  "ticketKey": "pr-2041",
+  "headSha": "69c86304a14e6fb786479eecd24b2c73912918b6",
+  "baseBranch": "main",
+  "reviewDecision": "NONE",
+  "labels": [],
+  "files": {
+    "ci_failures.md": {
+      "hash": "fnv1a64:b6e6c40421587e0c",
+      "size": 72655
+    },
+    "ci_failures_full.log": {
+      "hash": "fnv1a64:718ec67197cc4cf2",
+      "size": 103947
+    },
+    "ci_violations.json": {
+      "hash": "fnv1a64:8e48471134bd48c2",
+      "size": 890
+    },
+    "pr_diff.txt": {
+      "hash": "fnv1a64:71362867516242cd",
+      "size": 12302
+    },
+    "pr_discussions.md": {
+      "hash": "fnv1a64:b460d1b194deb6d8",
+      "size": 12390
+    },
+    "pr_discussions_raw.json": {
+      "hash": "fnv1a64:187b82fe520cd34c",
+      "size": 5735
+    },
+    "pr_info.md": {
+      "hash": "fnv1a64:b6f344702332c723",
+      "size": 3320
+    },
+    "request.md": {
+      "hash": "fnv1a64:a0414c1bab4be684",
+      "size": 2984
+    },
+    "review_state.md": {
+      "hash": "fnv1a64:688319659582b847",
+      "size": 1331
+    },
+    "rework_base_head.txt": {
+      "hash": "fnv1a64:9a1358a0c9f427bd",
+      "size": 40
+    },
+    "ticket.json": {
+      "hash": "fnv1a64:dc0cbfa291cfcfc8",
+      "size": 3056
+    },
+    "ticket.md": {
+      "hash": "fnv1a64:a0414c1bab4be684",
+      "size": 2984
+    }
+  },
+  "comments": [
+    {
+      "id": "PRRT_kwDOTXdlLc6ylGhT",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "flutter_app/scripts/build_macos_nosandbox.sh:67",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT: pre-flight matches invalid identities too — the \"expired\" case it claims to catch slips through**\n\n`security find-identity -v` lists **invalid** identities as well (each with its failure reason, e.g. `(CSSMERR_TP_CERT_EXPIRED)`) and still prints their SHA-1 — so for an expired pinned identity, `grep -F -- \"$identity\"` matches the invalid row and the pre-flight **passes**, sending the leg into the 5-minute build before codesign fails — exactly the failure mode this guard exists to compress to ~1s. The error text promises coverage for \"(missing, expired, or the signing keychain is locked)\", but only *missing/locked* is actually enforced; the certificate is valid to 2026-12-30, so today the happy path is unaffected — the gap opens when it expires.\n\nFix (one character): drop `-v` — without it `find-identity` lists **valid** identities only, which is also the closer approximation of what `codesign` will accept:\n\n```bash\nif ! security find-identity -p codesigning 2>/dev/null | grep -F -- \"$identity\" >/dev/null; then\n```\n\nTwo secondary nits while touching this line:\n\n1. The match is case-sensitive (`grep -F`), while `codesign --sign <SHA1>` and ci-sign's own validity check (`scripts/ci-sign:204`, `grep -qi \"$sha1\"`) are case-insensitive. In practice the manifest stores uppercase (`import_fingerprint` derives it from `openssl x509 -fingerprint`, which prints uppercase), so this works today — `grep -Fiq` would make the pre-flight no stricter than its consumers.\n2. Remember to update the AC2 assertion in `test/ci_macos_nosandbox_point_of_use_sign_test.dart`, which pins the exact string `security find-identity -v -p codesigning`."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6ylGj8",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "scripts/release_tag_mint.sh:93",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: Guard 1b's sweep regexp misses the `gitdir/i:` variant and non-conditional `include.path` shapes**\n\n`--get-regexp 'includeIf\\.gitdir:'` only matches conditional includes of the exact `gitdir:` form (the matching itself is case-insensitive, so `includeif.` lowercase is fine — I verified against git 2.x). If a future/variant checkout writes the case-insensitive form `includeIf.gitdir/i:<pattern>.path`, or a plain `include.path`, the sweep skips it. That is not a credential-leak risk — Guard 1c fails the leg closed before the push whenever the header still resolves — but it converts \"strip + green\" into \"red release leg\" for that shape until the regexp is widened.\n\nCheap hardening now, while the context is fresh:\n\n```bash\ndone < <(git config --local --name-only --get-regexp 'includeIf\\.gitdir(/i)?:|^include\\.path$' 2>/dev/null || true)\n```\n\nThe inner value-scoped `case`/`--unset-all` already guarantees only `git-credentials-*.config`-referencing entries are touched, so widening the outer sweep cannot over-strip a benign include."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6ylGmr",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "scripts/release_tag_mint.sh:87",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: no negative test that a benign includeIf survives the Guard 1b strip**\n\nThe strip is deliberately value-scoped (`--unset-all \"$include_key\" '.*git-credentials-[^/]*\\.config$'`), but the new test only asserts the credentials-pointing entries and file are **gone**. A regression that drops the value regex and unset-alls the *entire* key (or removes unrelated `includeIf.gitdir:` entries — e.g. a developer-configured include on a self-hosted persistent workspace) would pass every current test while breaking unrelated behavior.\n\nOne fixture line + one expect closes it:\n\n```dart\n// in buildFixture (checkoutV7 branch):\ngit(['config', 'includeIf.gitdir:$work/.git/benign.path', '${root.path}/not-credentials.config']);\n\n// in the v7creds test:\nfinal benign = Process.runSync(realGit, ['config', '--local', '--get-all',\n    'includeIf.gitdir:$work/.git/benign.path'], workingDirectory: m.work);\nexpect((benign.stdout as String).trim(), isNotEmpty,\n    reason: 'the strip must be value-scoped — benign includes survive');\n```"
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6ylGpS",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": ".github/workflows/build-macos.yml:1060",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: P12 secret + password sit in the step env for every child process of the multi-minute build**\n\nWith this change, `MACOS_CERTIFICATE_P12_BASE64` / `MACOS_CERTIFICATE_PASSWORD` are exported into the environment of the *whole* \"Build and package no-sandbox release\" step — flutter, dart, hdiutil, the prune script and every other child inherit them for the multi-minute build window — while `ci-sign` only needs them on the degraded re-import path. GitHub log-masking applies and the env-var indirection (`CI_SIGN_P12_B64_ENV`) mirrors the existing provisioning step (line 549) exactly, so this is informational: if `ci-sign` ever grows a file-based secret channel (`CI_SIGN_P12_B64_FILE`), scoping the P12 to the `identity gone` branch would shrink the blast radius of any env-dumping child. No action required for this PR."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-02:90793252",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-02",
+      "updatedAt": "2026-11-02",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT: pre-flight matches invalid identities too — the \"expired\" case it claims to catch slips through**\n\n`security find-identity -v` lists **invalid** identities as well (each with its failure reason, e.g. `(CSSMERR_TP_CERT_EXPIRED)`) and still prints their SHA-1 — so for an expired pinned identity, `grep -F -- \"$identity\"` matches the invalid row and the pre-flight **passes**, sending the leg into the 5-minute build before codesign fails — exactly the failure mode this guard exists to compress to ~1s. The error text promises coverage for \"(missing, expired, or the signing keychain is locked)\", but only *missing/locked* is actually enforced; the certificate is valid to 2026-12-30, so today the happy path is unaffected — the gap opens when it expires.\n\nFix (one character): drop `-v` — without it `find-identity` lists **valid** identities only, which is also the closer approximation of what `codesign` will accept:\n\n```bash\nif ! security find-identity -p codesigning 2>/dev/null | grep -F -- \"$identity\" >/dev/null; then\n```\n\nTwo secondary nits while touching this line:\n\n1. The match is case-sensitive (`grep -F`), while `codesign --sign <SHA1>` and ci-sign's own validity check (`scripts/ci-sign:204`, `grep -qi \"$sha1\"`) are case-insensitive. In practice the manifest stores uppercase (`import_fingerprint` derives it from `openssl x509 -fingerprint`, which prints uppercase), so this works today — `grep -Fiq` would make the pre-flight no stricter than its consumers.\n2. Remember to update the AC2 assertion in `test/ci_macos_nosandbox_point_of_use_sign_test.dart`, which pins the exact string `security find-identity -v -p codesigning`."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-02:71229ee2",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-02",
+      "updatedAt": "2026-11-02",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: Guard 1b's sweep regexp misses the `gitdir/i:` variant and non-conditional `include.path` shapes**\n\n`--get-regexp 'includeIf\\.gitdir:'` only matches conditional includes of the exact `gitdir:` form (the matching itself is case-insensitive, so `includeif.` lowercase is fine — I verified against git 2.x). If a future/variant checkout writes the case-insensitive form `includeIf.gitdir/i:<pattern>.path`, or a plain `include.path`, the sweep skips it. That is not a credential-leak risk — Guard 1c fails the leg closed before the push whenever the header still resolves — but it converts \"strip + green\" into \"red release leg\" for that shape until the regexp is widened.\n\nCheap hardening now, while the context is fresh:\n\n```bash\ndone < <(git config --local --name-only --get-regexp 'includeIf\\.gitdir(/i)?:|^include\\.path$' 2>/dev/null || true)\n```\n\nThe inner value-scoped `case`/`--unset-all` already guarantees only `git-credentials-*.config`-referencing entries are touched, so widening the outer sweep cannot over-strip a benign include."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-02:75e7dd44",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-02",
+      "updatedAt": "2026-11-02",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: no negative test that a benign includeIf survives the Guard 1b strip**\n\nThe strip is deliberately value-scoped (`--unset-all \"$include_key\" '.*git-credentials-[^/]*\\.config$'`), but the new test only asserts the credentials-pointing entries and file are **gone**. A regression that drops the value regex and unset-alls the *entire* key (or removes unrelated `includeIf.gitdir:` entries — e.g. a developer-configured include on a self-hosted persistent workspace) would pass every current test while breaking unrelated behavior.\n\nOne fixture line + one expect closes it:\n\n```dart\n// in buildFixture (checkoutV7 branch):\ngit(['config', 'includeIf.gitdir:$work/.git/benign.path', '${root.path}/not-credentials.config']);\n\n// in the v7creds test:\nfinal benign = Process.runSync(realGit, ['config', '--local', '--get-all',\n    'includeIf.gitdir:$work/.git/benign.path'], workingDirectory: m.work);\nexpect((benign.stdout as String).trim(), isNotEmpty,\n    reason: 'the strip must be value-scoped — benign includes survive');\n```"
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-02:1b53ed62",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-02",
+      "updatedAt": "2026-11-02",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: P12 secret + password sit in the step env for every child process of the multi-minute build**\n\nWith this change, `MACOS_CERTIFICATE_P12_BASE64` / `MACOS_CERTIFICATE_PASSWORD` are exported into the environment of the *whole* \"Build and package no-sandbox release\" step — flutter, dart, hdiutil, the prune script and every other child inherit them for the multi-minute build window — while `ci-sign` only needs them on the degraded re-import path. GitHub log-masking applies and the env-var indirection (`CI_SIGN_P12_B64_ENV`) mirrors the existing provisioning step (line 549) exactly, so this is informational: if `ci-sign` ever grows a file-based secret channel (`CI_SIGN_P12_B64_FILE`), scoping the P12 to the `identity gone` branch would shrink the blast radius of any env-dumping child. No action required for this PR."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-11-02:a67fba4f",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-11-02",
+      "updatedAt": "2026-11-02",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ Validation CI went red on the head — merge aborted, rework re-queued. (linked issue #2039 re-armed) (approval latch kept — no re-review after fixes)\nFailed run: https://github.com/IstiN/flutter_agent_harness/actions/runs/41409232519\n🔴 red head 69c86304a14e6fb786479eecd24b2c73912918b6 — red 1/3 (owner directive 2026-10-04: red yields the slot — after 3 reds on the same head, validation waits for a NEW head)"
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-11-02:d60c1894",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-11-02",
+      "updatedAt": "2026-11-02",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🔴 red head 69c86304a14e6fb786479eecd24b2c73912918b6 — red 1/3 (owner directive 2026-10-04: red yields the slot — after 3 reds on the same head, validation waits for a NEW head)\n🔴 Red pre-merge gate on the head with no armed validation — rework armed (gh-917: first validation included, review or no review). The rework runner pushes a fix and validation re-runs on the new head (validate-fresh). After 3 red arming attempts on the SAME head the arm is withheld and a human is escalated (no infinite retry)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-02:8282bf7c",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-02",
+      "updatedAt": "2026-11-02",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — APPROVE\n\n**Summary**: Solid, well-tested fix for both gh-2039 failure modes — the v7 includeIf credential strip is verified down to the wire-observable (`git config --get` post-strip, credentials file deleted, tag still lands) and Guard 1c fail-closes any residual header before the push; the point-of-use `ci-sign` re-assert plus ~1s pre-flight covers both arch legs. Verified locally: 7/7 mint tests, 2/2 new point-of-use tests, caller suites 2/2 lazy-draft + 53/53 hygiene pass; shellcheck and workflow YAML clean. No CI failure logs were provided in `input/`.\n\n**Key Issues** (none blocking):\n1. ⚠️ Pre-flight `find-identity -v` matches *invalid/expired* identities too — the \"(missing, expired, …)\" contract is only enforced for missing/locked; drop `-v` to fix (opens when the cert expires 2026-12-30).\n2. 💡 Guard 1b regexp misses `includeIf.gitdir/i:` / plain `include.path` shapes (fail-closed via Guard 1c, but reds legs needlessly); 💡 no negative test that a benign includeIf survives the value-scoped strip; 💡 P12 secret in step env for the whole build (consistent with existing provisioning step).\n\n**Next Steps**:\n1. Drop `-v` in the pre-flight `find-identity` (one char + AC2 string update) or confirm the wording is intentionally aspirational.\n2. Optionally broaden the Guard 1b regexp and add the benign-include survival test."
+    }
+  ]
+}
