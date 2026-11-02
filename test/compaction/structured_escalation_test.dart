@@ -46,7 +46,17 @@ ToolResultMessage _result(String callId, int tokens) => ToolResultMessage(
   timestamp: DateTime.utc(2026),
 );
 
-UserMessage _filler(int tokens) => UserMessage.text('f' * (tokens * 4));
+/// An assistant text filler — a hideable singleton group. (A user-role
+/// filler would be `exempt` and the judge could never hide it.)
+AssistantMessage _filler(int tokens) => AssistantMessage(
+  content: [TextContent(text: 'f' * (tokens * 4))],
+  api: 'anthropic-messages',
+  provider: 'p',
+  model: 'm1',
+  usage: Usage.zero,
+  stopReason: StopReason.stop,
+  timestamp: DateTime.utc(2026),
+);
 
 final class _Hooks implements StructuredCompactorHooks {
   final passes = <StructuredCompactionPass>[];
@@ -143,7 +153,7 @@ void main() {
     required int hiddenPairs,
     required int keptPairs,
     required int margin,
-    int hiddenFillerTokens = 4,
+    int hiddenFillerTokens = 100,
     int protectLastN = 4,
   }) async {
     final session = await repo.create(JsonlSessionCreateOptions(cwd: '/work'));
@@ -439,6 +449,10 @@ void main() {
         await session.appendMessage(_result('c$i', 100));
       }
       await session.appendMessage(_filler(28));
+      assert(
+        _requestTokens(_stateFor(await session.buildContextMessages())) > 600,
+        'fixture must enter over the trigger',
+      );
       final state = _stateFor(await session.buildContextMessages());
       final hooks = _Hooks();
       final compactor = StructuredCompactor(
