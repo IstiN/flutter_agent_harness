@@ -1,0 +1,1070 @@
+// Copyright (c) 2026, the Flutter Agent Harness authors.
+// Use of this source code is governed by a MIT license that can be found in
+// the LICENSE file.
+
+/// gh-2044 — auto-compact fragile-band escalation. An automatic structured
+/// run (`force == false`) that settles with less than one full reserve of
+/// headroom (`0 <= trigger - settled < settings.reserveTokens`) performs
+/// exactly ONE extra checkpoint pass through the existing checkpoint
+/// machinery — whether or not hideable entries remain. Deep relief, forced
+/// runs (manual and message-cap) and the whole failure-safety contract are
+/// unchanged.
+///
+/// Fixture math: the estimator is 4 chars/token, so every payload below is
+/// an exact multiple and the settled margin is pinned exactly. Hidden
+/// records ride one-line markers on the wire, so the expected settled count
+/// is computed with the SAME projection helpers the engine uses
+/// (`recordTokens` + `hiddenMarkerTokens`), not hand-derived.
+library;
+
+import 'dart:async';
+
+import 'package:flutter_agent_harness/flutter_agent_harness.dart';
+import 'package:flutter_agent_harness/src/compaction/structured/engine.dart';
+import 'package:flutter_agent_harness/src/compaction/structured/projection.dart'
+    show RecordSeqIndex, hiddenMarkerTokens, recordTokens;
+import 'package:test/test.dart';
+
+AssistantMessage _carrier(String callId) => AssistantMessage(
+  content: [
+    const TextContent(text: 'a'),
+    ToolCall(id: callId, name: 'read', arguments: {}),
+  ],
+  api: 'anthropic-messages',
+  provider: 'p',
+  model: 'm1',
+  usage: Usage.zero,
+  stopReason: StopReason.stop,
+  timestamp: DateTime.utc(2026),
+);
+
+ToolResultMessage _result(String callId, int tokens) => ToolResultMessage(
+  toolCallId: callId,
+  toolName: 'read',
+  content: [TextContent(text: 'x' * (tokens * 4))],
+  isError: false,
+  timestamp: DateTime.utc(2026),
+);
+
+UserMessage _filler(int tokens) => UserMessage.text('f' * (tokens * 4));
+
+final class _Hooks implements StructuredCompactorHooks {
+  final passes = <StructuredCompactionPass>[];
+  int summarizeCalls = 0;
+
+  @override
+  void onDelta(String delta) {}
+
+  @override
+  void onPass(StructuredCompactionPass pass) => passes.add(pass);
+}
+
+/// gh-1742 scaled settings at the incident's 400k window:
+/// reserve 25000, keepRecent 500 → trigger 375000, band 25000.
+const _incidentSettings = CompactionSettings(
+  enabled: true,
+  reserveTokens: 25000,
+  keepRecentTokens: 500,
+);
+
+/// Window 800, reserve 200 → trigger 600, band 200.
+const _boundarySettings = CompactionSettings(
+  enabled: true,
+  reserveTokens: 200,
+  keepRecentTokens: 200,
+);
+
+AgentState _stateFor(List<Message> messages, {int contextWindow = 800}) =>
+    AgentState(
+      model: Model(
+        id: 'm1',
+        name: 'm1',
+        api: 'anthropic-messages',
+        provider: 'p',
+        baseUrl: 'http://localhost:1',
+        contextWindow: contextWindow,
+        maxTokens: 4096,
+      ),
+      messages: messages,
+    );
+
+/// The request-size estimate the engine gates on (no system prompt, no
+/// tools → pure transcript estimate).
+int _requestTokens(AgentState state) => estimateRequestTokens(state.messages);
+
+/// The projected wire cost of [entries] with [hidden] records rendered at
+/// their marker size — the exact basis the settled-margin gate reads after
+/// the engine's `_refreshState`.
+int _settledTokens(List<SessionRecord> entries, Set<String> hidden) {
+  final seqs = RecordSeqIndex(entries);
+  var total = 0;
+  for (final record in entries) {
+    if (record is! MessageRecord) continue;
+    final seq = seqs.seqOf(record.id)!;
+    total += hidden.contains(record.id)
+        ? hiddenMarkerTokens(record, seq)
+        : recordTokens(record);
+  }
+  return total;
+}
+
+void main() {
+  late MemoryFileSystem fs;
+  late JsonlSessionRepo repo;
+
+  setUp(() {
+    fs = MemoryFileSystem();
+    repo = JsonlSessionRepo(fs: fs, sessionsRoot: '/sessions');
+  });
+
+  /// The incident shape at the 400k settings: user ask (100 tok) +
+  /// [pairs] read pairs of 1002 tok each. Entry ≈ 380k–400k, over the
+  /// 375000 trigger; a deterministic fallback hide of [fallbackPairs]
+  /// pairs lands the settle in the fragile band.
+  Future<(Session, AgentState)> incidentSession(int pairs) async {
+    final session = await repo.create(JsonlSessionCreateOptions(cwd: '/work'));
+    await session.appendMessage(UserMessage.text('u' * 400));
+    for (var i = 0; i < pairs; i++) {
+      await session.appendMessage(_carrier('c$i'));
+      await session.appendMessage(_result('c$i', 100));
+    }
+    return (session, _stateFor(await session.buildContextMessages(), contextWindow: 400));
+  }
+
+  /// A boundary fixture settling at EXACTLY `600 - margin` tokens with a
+  /// scripted judge hide. Layout (file order): user (100 tok), one filler
+  /// the judge hides, [hiddenPairs] pairs of 102 tok the judge hides,
+  /// [keptPairs] pairs of 102 tok kept, then one kept filler sized so the
+  /// settle (kept records + hidden markers) hits the margin exactly.
+  /// Returns the session, state, and the hidden id set.
+  Future<(Session, AgentState, Set<String>)> boundarySession({
+    required int hiddenPairs,
+    required int keptPairs,
+    required int margin,
+    int hiddenFillerTokens = 4,
+    int protectLastN = 4,
+  }) async {
+    final session = await repo.create(JsonlSessionCreateOptions(cwd: '/work'));
+    await session.appendMessage(UserMessage.text('u' * 400));
+    await session.appendMessage(_filler(hiddenFillerTokens));
+    for (var i = 0; i < hiddenPairs + keptPairs; i++) {
+      await session.appendMessage(_carrier('c$i'));
+      await session.appendMessage(_result('c$i', 100));
+    }
+    final entries = await session.getEntries();
+    // The records the judge hides: the filler + the first [hiddenPairs]
+    // pair groups (file seqs, header is line 1).
+    final seqs = RecordSeqIndex(entries);
+    final hidden = <String>{for (final r in entries) r.id};
+    hidden.retainWhere((id) {
+      final record = entries.firstWhere((r) => r.id == id);
+      return record is MessageRecord;
+    });
+    // Keep only the filler + first [hiddenPairs] pairs.
+    final keepVisible = <String>{};
+    final pairRecordCount = hiddenPairs * 2;
+    var seenPairRecords = 0;
+    for (final record in entries) {
+      if (record is! MessageRecord) continue;
+      final seq = seqs.seqOf(record.id)!;
+      if (record.message is UserMessage && seq == 3) {
+        keepVisible.add(record.id); // the hidden filler
+        continue;
+      }
+      if (record.message is AssistantMessage ||
+          record.message is ToolResultMessage) {
+        if (seenPairRecords < pairRecordCount) {
+          keepVisible.add(record.id);
+          seenPairRecords++;
+        }
+      }
+    }
+    final hiddenIds = keepVisible;
+
+    // Marker overhead of the hidden set (projection helpers, not guesses).
+    final markerTotal = _settledTokens(entries, hiddenIds) -
+        entries
+            .whereType<MessageRecord>()
+            .where((r) => hiddenIds.contains(r.id))
+            .fold<int>(0, (sum, r) => sum + recordTokens(r));
+
+    // kept filler: settle = user 100 + 102*keptPairs + filler + markers
+    //            = 600 - margin
+    final keptFiller =
+        600 - margin - 100 - (102 * keptPairs) - markerTotal;
+    assert(keptFiller > 0, 'fixture degenerate: keptFiller=$keptFiller');
+    await session.appendMessage(_filler(keptFiller));
+
+    final finalEntries = await session.getEntries();
+    final settled = _settledTokens(finalEntries, hiddenIds);
+    assert(settled == 600 - margin, 'settled $settled != ${600 - margin}');
+    assert(
+      _requestTokens(_stateFor(await session.buildContextMessages())) > 600,
+      'fixture must enter over the trigger',
+    );
+    final state = _stateFor(await session.buildContextMessages());
+    return (session, state, hiddenIds);
+  }
+
+  /// The judge answer lines (file seqs) hiding exactly [hiddenIds] via
+  /// whole groups: the filler's seq plus each hidden pair's carrier seq.
+  String judgeAnswerFor(List<SessionRecord> entries, Set<String> hiddenIds) {
+    final seqs = RecordSeqIndex(entries);
+    final picks = <int>[];
+    for (final record in entries) {
+      if (record is! MessageRecord) continue;
+      if (!hiddenIds.contains(record.id)) continue;
+      final message = record.message;
+      if (message is UserMessage || message is AssistantMessage) {
+        picks.add(seqs.seqOf(record.id)!);
+      }
+    }
+    picks.sort();
+    return '[${picks.join(',')}]';
+  }
+
+  group('UT-ESC-1/REG-ESC-2 — incident replay', () {
+    test('385,619→360,497-shaped relief escalates on the same run '
+        '(judge dead twice, fallback hide, no hides-exhausted gate)', () async {
+      final (session, state) = await incidentSession(40);
+      var judgeCalls = 0;
+      final hooks = _Hooks();
+      final compactor = StructuredCompactor(
+        session: session,
+        state: state,
+        window: 400,
+        settings: _incidentSettings,
+        judge: (_) async {
+          judgeCalls++;
+          return null; // the incident's dead judge
+        },
+        summarize: (_) {
+          hooks.summarizeCalls++;
+          return Future.value(SummarizationResult.success('ESCALATED'));
+        },
+        checkpointPrompt: 'P',
+        hooks: hooks,
+      );
+
+      final ok = await compactor.run();
+
+      expect(ok, isTrue, reason: 'escalated relief lands under the trigger');
+      expect(judgeCalls, 2, reason: 'the incident burns two judge attempts');
+      final fallback = hooks.passes.where((p) => p.kind == 'hide-fallback');
+      expect(fallback, hasLength(1), reason: 'deterministic hide receipt');
+      // The fallback is minimal: hideables REMAIN (66 non-exempt visible
+      // records outside the protected tail) — the rejected exhaustion gate
+      // would have suppressed the escalation.
+      final escalations = hooks.passes
+          .where((p) => p.kind == 'checkpoint-escalation')
+          .toList();
+      expect(escalations, hasLength(1));
+      final escalation = escalations.single;
+      expect(escalation.ok, isTrue);
+      expect(escalation.marginTokens, isNotNull);
+      expect(escalation.marginTokens!, greaterThan(0));
+      expect(escalation.marginTokens!, lessThan(_incidentSettings.reserveTokens));
+      expect(escalation.bandTokens, _incidentSettings.reserveTokens);
+      expect(escalation.hideableRemaining, greaterThan(0));
+      expect(escalation.judgeCalls, 1, reason: 'one summarizer call');
+      // One escalation checkpoint appended in the SAME run.
+      final ckpts = (await session.getEntries())
+          .whereType<CompactCheckpointRecord>()
+          .toList();
+      expect(ckpts, hasLength(1));
+      expect(ckpts.single.text, 'ESCALATED');
+      // No hide-pass re-entry after the escalation.
+      expect(hooks.summarizeCalls, 1);
+    });
+
+    test('375,609→360,010-shaped relief escalates too (second incident '
+        'transition is a merge-blocking fixture)', () async {
+      // 38 pairs + one 1003-token pair: entry 385177, fallback frees 2004
+      // → settled 365173, margin 9827 — in the band.
+      final session = await repo.create(JsonlSessionCreateOptions(cwd: '/work'));
+      await session.appendMessage(UserMessage.text('u' * 400));
+      for (var i = 0; i < 37; i++) {
+        await session.appendMessage(_carrier('c$i'));
+        await session.appendMessage(_result('c$i', 100));
+      }
+      await session.appendMessage(_carrier('cbig'));
+      await session.appendMessage(_result('cbig', 1001));
+      final state = _stateFor(await session.buildContextMessages(), contextWindow: 400);
+      expect(_requestTokens(state), greaterThan(375000));
+      var judgeCalls = 0;
+      final hooks = _Hooks();
+      final compactor = StructuredCompactor(
+        session: session,
+        state: state,
+        window: 400,
+        settings: _incidentSettings,
+        judge: (_) async {
+          judgeCalls++;
+          return null;
+        },
+        summarize: (_) => Future.value(SummarizationResult.success('ESCALATED')),
+        checkpointPrompt: 'P',
+        hooks: hooks,
+      );
+
+      final ok = await compactor.run();
+
+      expect(ok, isTrue);
+      expect(judgeCalls, 2);
+      final escalations = hooks.passes
+          .where((p) => p.kind == 'checkpoint-escalation')
+          .toList();
+      expect(escalations, hasLength(1));
+      expect(escalations.single.ok, isTrue);
+      expect(escalations.single.marginTokens!, lessThan(25000));
+      expect(
+        (await session.getEntries()).whereType<CompactCheckpointRecord>(),
+        hasLength(1),
+      );
+    });
+
+    test('IT-ESC-4: the next run starting under the trigger performs no '
+        'judge call and no escalation', () async {
+      final (session, state) = await incidentSession(40);
+      var judgeCalls = 0;
+      var summarizeCalls = 0;
+      final hooks = _Hooks();
+      final compactor = StructuredCompactor(
+        session: session,
+        state: state,
+        window: 400,
+        settings: _incidentSettings,
+        judge: (_) async {
+          judgeCalls++;
+          return null;
+        },
+        summarize: (_) {
+          summarizeCalls++;
+          return Future.value(SummarizationResult.success('ESCALATED'));
+        },
+        checkpointPrompt: 'P',
+        hooks: hooks,
+      );
+      expect(await compactor.run(), isTrue);
+      final escalationsAfterFirst = hooks.passes
+          .where((p) => p.kind == 'checkpoint-escalation')
+          .length;
+
+      final ok = await compactor.run();
+
+      expect(ok, isTrue);
+      expect(judgeCalls, 2, reason: 'the second run adds no judge call');
+      expect(summarizeCalls, 1, reason: 'the second run adds no checkpoint');
+      expect(
+        hooks.passes
+            .where((p) => p.kind == 'checkpoint-escalation')
+            .length,
+        escalationsAfterFirst,
+        reason: 'no escalation on an under-trigger run',
+      );
+    });
+  });
+
+  group('UT-ESC-4 — exact boundary table', () {
+    Future<(bool, _Hooks, Session)> runBoundary(int margin) async {
+      final (session, state, hiddenIds) = await boundarySession(
+        hiddenPairs: margin == 0 ? 1 : 2,
+        keptPairs: margin == 0 ? 4 : 2,
+        margin: margin,
+      );
+      final hooks = _Hooks();
+      final entries = await session.getEntries();
+      final compactor = StructuredCompactor(
+        session: session,
+        state: state,
+        window: 800,
+        settings: _boundarySettings,
+        judge: (_) async => judgeAnswerFor(entries, hiddenIds),
+        summarize: (_) => Future.value(SummarizationResult.success('CKPT')),
+        checkpointPrompt: 'P',
+        hooks: hooks,
+        protectLastN: 4,
+      );
+      final ok = await compactor.run();
+      return (ok, hooks, session);
+    }
+
+    test('margin == 0 escalates', () async {
+      final (ok, hooks, _) = await runBoundary(0);
+      final escalations = hooks.passes
+          .where((p) => p.kind == 'checkpoint-escalation')
+          .toList();
+      expect(escalations, hasLength(1));
+      expect(escalations.single.marginTokens, 0);
+      expect(escalations.single.bandTokens, 200);
+      expect(ok, isTrue);
+    });
+
+    test('margin == reserve - 1 escalates', () async {
+      final (ok, hooks, _) = await runBoundary(199);
+      final escalations = hooks.passes
+          .where((p) => p.kind == 'checkpoint-escalation')
+          .toList();
+      expect(escalations, hasLength(1));
+      expect(escalations.single.marginTokens, 199);
+      expect(ok, isTrue);
+    });
+
+    test('margin == reserve does not escalate', () async {
+      final (ok, hooks, _) = await runBoundary(200);
+      expect(
+        hooks.passes.where((p) => p.kind == 'checkpoint-escalation'),
+        isEmpty,
+      );
+      expect(ok, isTrue);
+    });
+
+    test('margin == reserve + 1 does not escalate', () async {
+      final (ok, hooks, _) = await runBoundary(201);
+      expect(
+        hooks.passes.where((p) => p.kind == 'checkpoint-escalation'),
+        isEmpty,
+      );
+      expect(ok, isTrue);
+    });
+
+    test('negative margin (still over the trigger) is not a thin '
+        'settlement: no escalation, verdict fails', () async {
+      // Judge declines: nothing relieves, settle == entry over the trigger.
+      final session = await repo.create(JsonlSessionCreateOptions(cwd: '/work'));
+      await session.appendMessage(UserMessage.text('u' * 400));
+      await session.appendMessage(_filler(4));
+      for (var i = 0; i < 5; i++) {
+        await session.appendMessage(_carrier('c$i'));
+        await session.appendMessage(_result('c$i', 100));
+      }
+      await session.appendMessage(_filler(28));
+      final state = _stateFor(await session.buildContextMessages());
+      final hooks = _Hooks();
+      final compactor = StructuredCompactor(
+        session: session,
+        state: state,
+        window: 800,
+        settings: _boundarySettings,
+        judge: (_) async => '[]',
+        summarize: (_) => Future.value(SummarizationResult.success('CKPT')),
+        checkpointPrompt: 'P',
+        hooks: hooks,
+      );
+      final ok = await compactor.run();
+      expect(
+        hooks.passes.where((p) => p.kind == 'checkpoint-escalation'),
+        isEmpty,
+        reason: 'a settle still over the trigger never escalates',
+      );
+      expect(ok, isFalse);
+    });
+  });
+
+  group('UT-ESC-5 — automatic-only gating', () {
+    test('manual force == true skips the escalation', () async {
+      final (session, state, hiddenIds) = await boundarySession(
+        hiddenPairs: 1,
+        keptPairs: 4,
+        margin: 0,
+      );
+      final hooks = _Hooks();
+      final entries = await session.getEntries();
+      final compactor = StructuredCompactor(
+        session: session,
+        state: state,
+        window: 800,
+        settings: _boundarySettings,
+        judge: (_) async => judgeAnswerFor(entries, hiddenIds),
+        summarize: (_) => Future.value(SummarizationResult.success('CKPT')),
+        checkpointPrompt: 'P',
+        hooks: hooks,
+        protectLastN: 4,
+      );
+      await compactor.run(force: true);
+      expect(
+        hooks.passes.where((p) => p.kind == 'checkpoint-escalation'),
+        isEmpty,
+        reason: 'forced runs keep their existing behavior',
+      );
+    });
+  });
+
+  group('UT-ESC-6 — bounded work', () {
+    test('exactly one escalation; a still-thin result does not loop',
+        () async {
+      // user 100 + 9 pairs of 56 = 604 (over the 600 trigger); the ladder
+      // checkpoint folds user+pair1, the escalation folds pair2 — the
+      // result is still in the band and must NOT re-escalate.
+      final session = await repo.create(JsonlSessionCreateOptions(cwd: '/work'));
+      await session.appendMessage(UserMessage.text('u' * 400));
+      for (var i = 0; i < 9; i++) {
+        await session.appendMessage(_carrier('c$i'));
+        await session.appendMessage(_result('c$i', 54));
+      }
+      final state = _stateFor(await session.buildContextMessages());
+      final hooks = _Hooks();
+      final compactor = StructuredCompactor(
+        session: session,
+        state: state,
+        window: 800,
+        settings: const CompactionSettings(
+          enabled: true,
+          reserveTokens: 200,
+          keepRecentTokens: 400,
+        ),
+        judge: (_) async => '[]',
+        summarize: (_) => Future.value(SummarizationResult.success('CKPT')),
+        checkpointPrompt: 'P',
+        hooks: hooks,
+      );
+      final ok = await compactor.run();
+      expect(
+        hooks.passes.where((p) => p.kind == 'checkpoint-escalation'),
+        hasLength(1),
+        reason: 'at most one escalation per run()',
+      );
+      expect(ok, isTrue, reason: 'still under the trigger after one pass');
+    });
+
+    test('maxCheckpointPasses == 0 produces no checkpoint call and no '
+        'escalation', () async {
+      final (session, state, hiddenIds) = await boundarySession(
+        hiddenPairs: 1,
+        keptPairs: 4,
+        margin: 0,
+      );
+      final hooks = _Hooks();
+      final entries = await session.getEntries();
+      final compactor = StructuredCompactor(
+        session: session,
+        state: state,
+        window: 800,
+        settings: _boundarySettings,
+        judge: (_) async => judgeAnswerFor(entries, hiddenIds),
+        summarize: (_) {
+          hooks.summarizeCalls++;
+          return Future.value(SummarizationResult.success('CKPT'));
+        },
+        checkpointPrompt: 'P',
+        hooks: hooks,
+        protectLastN: 4,
+        maxCheckpointPasses: 0,
+      );
+      final ok = await compactor.run();
+      expect(hooks.summarizeCalls, 0, reason: 'no checkpoint call at all');
+      expect(
+        (await session.getEntries()).whereType<CompactCheckpointRecord>(),
+        isEmpty,
+      );
+      expect(
+        hooks.passes.where((p) => p.kind == 'checkpoint-escalation'),
+        isEmpty,
+      );
+      expect(ok, isTrue, reason: 'the fallback hide already settled thin');
+    });
+  });
+
+  group('UT-ESC-7 — failure safety', () {
+    test('empty summary: the failed escalation report fires and the '
+        'pre-escalation under-trigger success stands', () async {
+      final (session, state, hiddenIds) = await boundarySession(
+        hiddenPairs: 1,
+        keptPairs: 4,
+        margin: 0,
+      );
+      final hooks = _Hooks();
+      final entries = await session.getEntries();
+      final messagesBefore = [...state.messages];
+      final compactor = StructuredCompactor(
+        session: session,
+        state: state,
+        window: 800,
+        settings: _boundarySettings,
+        judge: (_) async => judgeAnswerFor(entries, hiddenIds),
+        summarize: (_) => Future.value(SummarizationResult.success('')),
+        checkpointPrompt: 'P',
+        hooks: hooks,
+        protectLastN: 4,
+      );
+      final ok = await compactor.run();
+      expect(ok, isTrue, reason: 'optional deepening must not flip the verdict');
+      final escalations = hooks.passes
+          .where((p) => p.kind == 'checkpoint-escalation')
+          .toList();
+      expect(escalations, hasLength(1));
+      expect(escalations.single.ok, isFalse);
+      expect(escalations.single.error, isA<CompactionException>());
+      expect(
+        (await session.getEntries()).whereType<CompactCheckpointRecord>(),
+        isEmpty,
+      );
+      expect(state.messages.length, messagesBefore.length);
+    });
+
+    test('failed processing (throwing summarizer): verdict stands, '
+        'failure reported', () async {
+      final (session, state, hiddenIds) = await boundarySession(
+        hiddenPairs: 1,
+        keptPairs: 4,
+        margin: 0,
+      );
+      final hooks = _Hooks();
+      final entries = await session.getEntries();
+      final compactor = StructuredCompactor(
+        session: session,
+        state: state,
+        window: 800,
+        settings: _boundarySettings,
+        judge: (_) async => judgeAnswerFor(entries, hiddenIds),
+        summarize: (_) async => throw StateError('smol endpoint down'),
+        checkpointPrompt: 'P',
+        hooks: hooks,
+        protectLastN: 4,
+      );
+      final ok = await compactor.run();
+      expect(ok, isTrue);
+      final escalations = hooks.passes
+          .where((p) => p.kind == 'checkpoint-escalation')
+          .toList();
+      expect(escalations, hasLength(1));
+      expect(escalations.single.ok, isFalse);
+      expect(
+        (await session.getEntries()).whereType<CompactCheckpointRecord>(),
+        isEmpty,
+      );
+    });
+  });
+
+  group('UT-ESC-8 — projection invariants inherited', () {
+    test('escalation never swallows pinned records and the wire stays '
+        'pair-safe', () async {
+      final (session, state, hiddenIds) = await boundarySession(
+        hiddenPairs: 1,
+        keptPairs: 4,
+        margin: 0,
+      );
+      // Pin the second kept pair: no checkpoint may ever cover it.
+      final entries = await session.getEntries();
+      final visiblePairs = entries
+          .whereType<MessageRecord>()
+          .where((r) => !hiddenIds.contains(r.id))
+          .toList();
+      final pinnedPair = visiblePairs
+          .where((r) => r.message is AssistantMessage)
+          .skip(1)
+          .first;
+      final pinnedIds = <String>{
+        pinnedPair.id,
+        ...entries
+            .whereType<MessageRecord>()
+            .where(
+              (r) =>
+                  r.message is ToolResultMessage &&
+                  (r.message as ToolResultMessage).toolCallId ==
+                      (pinnedPair.message as AssistantMessage).content
+                          .whereType<ToolCall>()
+                          .first
+                          .id,
+            )
+            .map((r) => r.id),
+      };
+      await session.appendSegmentPin(recordIds: pinnedIds.toList(), pinned: true);
+
+      final hooks = _Hooks();
+      final compactor = StructuredCompactor(
+        session: session,
+        state: state,
+        window: 800,
+        settings: _boundarySettings,
+        judge: (_) async => judgeAnswerFor(entries, hiddenIds),
+        summarize: (_) => Future.value(SummarizationResult.success('CKPT')),
+        checkpointPrompt: 'P',
+        hooks: hooks,
+        protectLastN: 4,
+      );
+      final ok = await compactor.run();
+      expect(ok, isTrue);
+      for (final record in await session.getBranch()) {
+        if (record is CompactCheckpointRecord) {
+          expect(
+            record.coversRecordIds,
+            anyElement(isNot(pinnedPair.id)),
+          );
+          expect(
+            record.coversRecordIds.where(pinnedIds.contains),
+            isEmpty,
+            reason: 'no checkpoint may swallow a pinned record',
+          );
+        }
+      }
+      expect(validateToolPairing(state.messages), isEmpty);
+    });
+
+    test('a marker-only escalation range consolidates deterministically '
+        'with NO summarizer call', () async {
+      // user (500 tok) + one 102-tok pair, protectLastN 0, user pinned:
+      // the judge hides the pair, the settle rides the user's own 500
+      // tokens into the band, and the only foldable projection left is
+      // the pair's marker.
+      final session = await repo.create(JsonlSessionCreateOptions(cwd: '/work'));
+      await session.appendMessage(UserMessage.text('u' * 2000));
+      await session.appendMessage(_carrier('c0'));
+      await session.appendMessage(_result('c0', 100));
+      final entries = await session.getEntries();
+      final userId = entries.whereType<MessageRecord>().first.id;
+      await session.appendSegmentPin(recordIds: [userId], pinned: true);
+      final state = _stateFor(await session.buildContextMessages());
+      final hooks = _Hooks();
+      var summarizeCalls = 0;
+      final compactor = StructuredCompactor(
+        session: session,
+        state: state,
+        window: 800,
+        settings: _boundarySettings,
+        judge: (_) async => '["${RecordSeqIndex(entries).seqOf(
+              entries.whereType<MessageRecord>().elementAt(1).id,
+            )}"]',
+        summarize: (_) {
+          summarizeCalls++;
+          return Future.value(SummarizationResult.success('must not run'));
+        },
+        checkpointPrompt: 'P',
+        hooks: hooks,
+        protectLastN: 0,
+      );
+      final ok = await compactor.run();
+      expect(ok, isTrue);
+      final escalations = hooks.passes
+          .where((p) => p.kind == 'checkpoint-escalation')
+          .toList();
+      expect(escalations, hasLength(1));
+      expect(escalations.single.ok, isTrue);
+      expect(escalations.single.judgeCalls, 0, reason: 'no fake LM call');
+      expect(summarizeCalls, 0, reason: 'marker-only ranges never call the LM');
+      expect(
+        escalations.single.summary,
+        contains('already hidden behind expand markers'),
+      );
+      final ckpts = (await session.getEntries())
+          .whereType<CompactCheckpointRecord>()
+          .toList();
+      expect(ckpts, hasLength(1));
+      // The hidden pair ids stay expandable through the covers list.
+      final hiddenIds = entries
+          .whereType<MessageRecord>()
+          .skip(1)
+          .map((r) => r.id)
+          .toSet();
+      expect(
+        ckpts.single.coversRecordIds.toSet().containsAll(hiddenIds),
+        isTrue,
+      );
+    });
+  });
+
+  group('UT-ESC-9/AC9-AC10 — cancellation and budgets', () {
+    test('a cancellation during the escalation surfaces: run() reports '
+        'failure instead of swallowing the abort', () async {
+      final (session, state, hiddenIds) = await boundarySession(
+        hiddenPairs: 1,
+        keptPairs: 4,
+        margin: 0,
+      );
+      final cancelSource = CancelTokenSource();
+      final hooks = _Hooks();
+      final entries = await session.getEntries();
+      final compactor = StructuredCompactor(
+        session: session,
+        state: state,
+        window: 800,
+        settings: _boundarySettings,
+        judge: (_) async => judgeAnswerFor(entries, hiddenIds),
+        summarize: (request) async {
+          // The user aborts mid-deepening; the adapter lands aborted.
+          cancelSource.cancel('user abort');
+          return SummarizationResult.failure('aborted', aborted: true);
+        },
+        checkpointPrompt: 'P',
+        hooks: hooks,
+        protectLastN: 4,
+        cancelToken: cancelSource.token,
+      );
+      final ok = await compactor.run();
+      expect(ok, isFalse, reason: 'a cancelled run is never a success');
+      expect(
+        hooks.passes
+            .where(
+              (p) => p.kind == 'checkpoint-escalation' && !p.ok,
+            ),
+        isEmpty,
+        reason: 'no failed-escalation receipt may mask the abort',
+      );
+      expect(
+        (await session.getEntries()).whereType<CompactCheckpointRecord>(),
+        isEmpty,
+      );
+    });
+
+    test('an already-cancelled run token skips the escalation entirely',
+        () async {
+      final (session, state, hiddenIds) = await boundarySession(
+        hiddenPairs: 1,
+        keptPairs: 4,
+        margin: 0,
+      );
+      final cancelSource = CancelTokenSource()..cancel('user abort');
+      final hooks = _Hooks();
+      final entries = await session.getEntries();
+      var summarizeCalls = 0;
+      final compactor = StructuredCompactor(
+        session: session,
+        state: state,
+        window: 800,
+        settings: _boundarySettings,
+        judge: (_) async => judgeAnswerFor(entries, hiddenIds),
+        summarize: (_) {
+          summarizeCalls++;
+          return Future.value(SummarizationResult.success('CKPT'));
+        },
+        checkpointPrompt: 'P',
+        hooks: hooks,
+        protectLastN: 4,
+        cancelToken: cancelSource.token,
+      );
+      final ok = await compactor.run();
+      expect(ok, isFalse);
+      expect(summarizeCalls, 0, reason: 'a cancelled run never deepens');
+    });
+
+    test('an attempt-budget expiry during the escalation propagates as '
+        'the named TimeoutException (no chunk after it)', () async {
+      final (session, state, hiddenIds) = await boundarySession(
+        hiddenPairs: 1,
+        keptPairs: 4,
+        margin: 0,
+      );
+      final hooks = _Hooks();
+      final entries = await session.getEntries();
+      final compactor = StructuredCompactor(
+        session: session,
+        state: state,
+        window: 800,
+        settings: _boundarySettings,
+        judge: (_) async => judgeAnswerFor(entries, hiddenIds),
+        summarize: (_) async =>
+            throw TimeoutException('checkpoint summarizer deadline', const Duration(seconds: 1)),
+        checkpointPrompt: 'P',
+        hooks: hooks,
+        protectLastN: 4,
+      );
+      await expectLater(
+        compactor.run(),
+        throwsA(isA<TimeoutException>()),
+      );
+      expect(
+        (await session.getEntries()).whereType<CompactCheckpointRecord>(),
+        isEmpty,
+      );
+    });
+  });
+
+  group('UT-ESC-10 — observability is content-safe', () {
+    test('the escalation report carries margin/band/outcome and never '
+        'ledger content in its diagnostics', () async {
+      final (session, state) = await incidentSession(40);
+      final hooks = _Hooks();
+      final compactor = StructuredCompactor(
+        session: session,
+        state: state,
+        window: 400,
+        settings: _incidentSettings,
+        judge: (_) async => null,
+        summarize: (_) => Future.value(SummarizationResult.success('ESCALATED')),
+        checkpointPrompt: 'P',
+        hooks: hooks,
+      );
+      await compactor.run();
+      final escalations = hooks.passes
+          .where((p) => p.kind == 'checkpoint-escalation')
+          .toList();
+      expect(escalations, hasLength(1));
+      final escalation = escalations.single;
+      expect(escalation.pass, greaterThan(0));
+      expect(escalation.tokensBefore, greaterThan(0));
+      expect(escalation.tokensAfter, lessThan(escalation.tokensBefore));
+      expect(escalation.marginTokens, isNotNull);
+      expect(escalation.bandTokens, isNotNull);
+      // Counts only: no pass diagnostic embeds rendered ledger or
+      // message content (the fixture's payload bytes never appear).
+      for (final pass in hooks.passes) {
+        final errorText = pass.error?.toString() ?? '';
+        expect(errorText.contains('xxxx'), isFalse);
+        expect(errorText.contains('uuuu'), isFalse);
+      }
+    });
+  });
+
+  group('IT-ESC — factory wiring', () {
+    AssistantMessage streamMessage(StopReason reason, String text) =>
+        AssistantMessage(
+          content: [TextContent(text: text)],
+          api: 'test-api',
+          provider: 'test-provider',
+          model: 'test-model',
+          usage: Usage.zero,
+          stopReason: reason,
+          timestamp: DateTime.utc(2026),
+        );
+
+    AssistantMessageEventStream streamOf(
+      AssistantMessage message,
+      List<AssistantMessageEvent> events,
+    ) {
+      final stream = AssistantMessageEventStream()
+        ..push(StartEvent(partial: message));
+      for (final event in events) {
+        stream.push(event);
+      }
+      stream.end();
+      return stream;
+    }
+
+    String promptText(Context context) {
+      final last = context.messages.last;
+      return switch (last) {
+        UserMessage() =>
+          last.content is String
+              ? last.content as String
+              : (last.content as List<Object>)
+                    .whereType<TextContent>()
+                    .map((b) => b.text)
+                    .join(),
+        _ => '',
+      };
+    }
+
+    test('IT-ESC-1: a dead judge + deterministic fallback hide still '
+        'escalates in the same structured run', () async {
+      final (session, state) = await incidentSession(40);
+      final hooks = _CapturingAutoHooks();
+      var judgeStreamCalls = 0;
+      var checkpointStreamCalls = 0;
+      final ok = await AutoCompactorFactory(
+        session: session,
+        state: state,
+        window: 400,
+        settings: _incidentSettings,
+        sources: AutoCompactorSources(
+          smolStream: (m, c, {cancelToken}) {
+            if (promptText(c).contains('<conversation>')) {
+              checkpointStreamCalls++;
+              final message = streamMessage(StopReason.stop, 'ESCALATED');
+              return streamOf(message, [
+                TextStartEvent(contentIndex: 0, partial: streamMessage(StopReason.stop, '')),
+                DoneEvent(reason: StopReason.stop, message: message),
+              ]);
+            }
+            judgeStreamCalls++;
+            final message = streamMessage(StopReason.error, '');
+            return streamOf(message, [
+              ErrorEvent(reason: StopReason.error, error: message),
+            ]);
+          },
+          smolModel: null,
+          mainStream: (m, c, {cancelToken}) => throw UnimplementedError(),
+          mainModel: _factoryModel,
+        ),
+        hooks: hooks,
+      ).run();
+
+      expect(ok, isTrue, reason: 'structured success: fallback + escalation');
+      expect(judgeStreamCalls, 2, reason: 'two judge stalls, then fallback');
+      expect(checkpointStreamCalls, 1, reason: 'the escalation checkpoint');
+      final fallbackLabels = hooks.passes.map((p) => p.fallback).toList();
+      expect(fallbackLabels, contains('structured·hide-fallback'));
+      expect(fallbackLabels, contains('structured·ckpt-escalation'));
+      expect(hooks.doneCount, 1, reason: 'the host bracket closes once');
+    });
+
+    test('IT-ESC-5: a cap-forced run does not escalate (cap channel keeps '
+        'its existing classic fall-through)', () async {
+      // 4 messages at ~100 tok each: under the 600 token trigger, over
+      // the message-cap trigger (cap 4, margin 2 → fires at count >= 2).
+      final session = await repo.create(JsonlSessionCreateOptions(cwd: '/work'));
+      for (var i = 0; i < 2; i++) {
+        await session.appendMessage(UserMessage.text('u' * 400));
+        await session.appendMessage(_filler(100));
+      }
+      final state = _stateFor(await session.buildContextMessages());
+      final hooks = _CapturingAutoHooks();
+      final ok = await AutoCompactorFactory(
+        session: session,
+        state: state,
+        window: 800,
+        settings: _boundarySettings,
+        sources: AutoCompactorSources(
+          smolStream: null,
+          smolModel: null,
+          mainStream: (m, c, {cancelToken}) {
+            final message = streamMessage(StopReason.stop, 'classic fold');
+            return streamOf(message, [
+              TextStartEvent(contentIndex: 0, partial: streamMessage(StopReason.stop, '')),
+              DoneEvent(reason: StopReason.stop, message: message),
+            ]);
+          },
+          mainModel: _factoryModel,
+        ),
+        hooks: hooks,
+        messageCap: 4,
+        messageCapMargin: 2,
+      ).run();
+
+      expect(ok, isTrue);
+      expect(
+        hooks.passes
+            .map((p) => p.fallback)
+            .where((f) => f == 'structured·ckpt-escalation'),
+        isEmpty,
+        reason: 'cap-forced runs never escalate',
+      );
+      expect(
+        hooks.passes.map((p) => p.fallback),
+        everyElement(isNot(startsWith('structured'))),
+        reason: 'the cap channel falls through to the classic engine',
+      );
+    });
+  });
+}
+
+const _factoryModel = Model(
+  id: 'test-model',
+  api: 'test-api',
+  provider: 'test-provider',
+  baseUrl: 'https://example.test',
+  contextWindow: 400,
+  maxTokens: 4096,
+);
+
+final class _CapturingAutoHooks implements AutoCompactorHooks {
+  final passes = <AutoCompactorPass>[];
+  int doneCount = 0;
+
+  @override
+  void onDelta(String delta) {}
+
+  @override
+  void onAttemptStart(String label, int attempt, Duration budget) {}
+
+  @override
+  void onPass(AutoCompactorPass pass) => passes.add(pass);
+
+  @override
+  void onDone(int passes, int tokens) => doneCount++;
+
+  @override
+  void onRetry(int attempt, int maxAttempts, Duration backoff, Object error) {}
+
+  @override
+  void onBothRolesFailed(Object lastError) {}
+}

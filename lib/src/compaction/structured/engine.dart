@@ -62,6 +62,9 @@ final class StructuredCompactionPass {
     this.hiddenCount = 0,
     this.summarizedCount = 0,
     this.summary,
+    this.marginTokens,
+    this.bandTokens,
+    this.hideableRemaining,
   });
 
   /// `'hide'` or `'checkpoint'`.
@@ -93,6 +96,20 @@ final class StructuredCompactionPass {
 
   /// The checkpoint text this pass wrote; `null` for hide passes.
   final String? summary;
+
+  /// gh-2044 fragile-band escalation (optional metadata, never content):
+  /// the settled margin `trigger - tokensBefore` that triggered the
+  /// escalation pass. Null on every other pass kind.
+  final int? marginTokens;
+
+  /// gh-2044: the band the margin was measured against
+  /// (`settings.reserveTokens`). Null on every other pass kind.
+  final int? bandTokens;
+
+  /// gh-2044: remaining hideable-entry count at escalation time — a
+  /// diagnostic count only (the rejected "hides exhausted" gate must not
+  /// grow back as a hidden precondition). Null on every other pass kind.
+  final int? hideableRemaining;
 }
 
 /// Rebuilds [state.messages] from the session projection, zeroing usage
@@ -248,6 +265,24 @@ final class StructuredCompactor {
     await _runLruRehidePasses(trigger);
     if (!await _runHidePasses(trigger)) return false;
     if (!await _runCheckpointPasses(trigger)) return false;
+    // gh-2044 fragile-band escalation: an automatic run that settled with
+    // less than one full reserve of headroom deepens once through the
+    // checkpoint machinery, whether or not hideable entries remain. The
+    // deterministic fallback (issue #541) and the pass loops stop at the
+    // trigger, so a degraded run ducks under by a sliver and the next
+    // turn or two crosses the trigger again (sid 01a17c9c). Forced runs —
+    // manual `/compact` and the message-cap channel (`force || cap`) —
+    // keep their existing behavior; `maxCheckpointPasses == 0` keeps
+    // meaning "no checkpoint work".
+    if (!force && maxCheckpointPasses > 0) {
+      final settled = _requestTokens();
+      final margin = trigger - settled;
+      if (margin >= 0 && margin < settings.reserveTokens) {
+        if (!await _runCheckpointEscalationPass(trigger, margin)) {
+          return false;
+        }
+      }
+    }
     return _requestTokens() <= trigger;
   }
 
@@ -379,8 +414,6 @@ final class StructuredCompactor {
   /// Cancels the budget token — the factory's total-budget race calls
   /// this so the wedged call dies at the provider layer.
   void cancelBudget(Object? reason) => budgetSource?.cancel(reason);
-
-  /// The named [TimeoutException] a budget expiry throws (issue #515).
   TimeoutException _budgetTimeout(String what, Duration budget) =>
       TimeoutException(
         'structured compaction $what exceeded the '
