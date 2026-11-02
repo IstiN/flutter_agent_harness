@@ -292,8 +292,20 @@ Future<ArchiveDownloadOutcome> downloadArchiveBody(
       received = 0;
       nextProgressAt = progressStep;
       totalBytes = response.contentLength;
-    } else if (!resuming || totalBytes == null) {
+    } else if (!resuming) {
       totalBytes = response.contentLength;
+    } else if (totalBytes == null) {
+      // A 206's contentLength is the REMAINDER, never the total: the
+      // progress denominator and the early-close check both need the
+      // FULL size. The Content-Range total (`bytes 100-999/1234`) is the
+      // truth when the server sends one; `received + remainder` is the
+      // fallback (gh-2043 AC2/AC3).
+      final range = response.headers['content-range'];
+      final ranged = range == null ? null : int.tryParse(range.split('/').last);
+      final remainder = response.contentLength;
+      totalBytes =
+          ranged ??
+          (remainder == null || remainder < 0 ? null : received + remainder);
     }
 
     try {

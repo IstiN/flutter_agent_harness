@@ -1851,8 +1851,7 @@ void main() {
             206,
             contentLength: body.length - chunk,
             headers: {
-              'content-range':
-                  'bytes $chunk-${body.length - 1}/${body.length}',
+              'content-range': 'bytes $chunk-${body.length - 1}/${body.length}',
             },
           );
         });
