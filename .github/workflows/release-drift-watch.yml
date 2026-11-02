@@ -1,0 +1,113 @@
+# gh-2042 — release drift watch (AC2 + the AC3 remediation vehicle).
+#
+# The v1.0.680 incident: assets were re-attached to the ALREADY-PUBLISHED
+# release ~2-3h after the signed SHA256SUMS was attached; the manifest never
+# re-ran and every `fa update` provenance check on the train failed for
+# macOS-arm64. The attach paths are now gated
+# (scripts/release_asset_gate.sh, gh-2042 AC1) — this workflow is the
+# detection backstop for ANY drift that still reaches a published release:
+#
+#   - after every release publish (the `release: published` event fires when
+#     release-provenance flips the draft — the manifest is on board by then):
+#     verify the tag's shipped bytes against its signed SHA256SUMS;
+#   - on a DAILY schedule: the same check for the latest published release
+#     (the one `fa update` serves) — drift must page, not linger;
+#   - on demand (workflow_dispatch with a tag): the manual remediation
+#     vehicle — dispatching it for v1.0.680 IS the AC3 remediation: the
+#     check detects the stale manifest and the remediation step auto
+#     re-requests the release-provenance job, which re-hashes the CURRENT
+#     assets and re-signs. The provenance flip is guarded (gh-2042
+#     review): re-signing an OLD tag publishes the corrected manifest
+#     without ever dragging the `latest` badge backwards onto it.
+#
+# On drift the run goes red, a deduplicated issue pages the owner, and the
+# "Sign release checksums" job of the tag's ci.yml run is re-requested
+# (scripts/release_drift_remediate.sh — job-scoped rerun, never a full run:
+# a full rerun would rebuild + re-attach, which the AC1 gate refuses on a
+# published release). Only DRIFT pages: a transport/infra blip fails the
+# check red WITHOUT a details file and the remediation step stays silent —
+# an infra error is not drift evidence (gh-2042 review).
+name: Release drift watch
+
+on:
+  release:
+    types: [published]
+  schedule:
+    # Daily, offset from the other crons (ci 23 */2, daily-publish 17 5,
+    # nightly 17 3 / 17 7).
+    - cron: '51 6 * * *'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to verify (empty = the latest published release). Dispatch for a stale-manifest tag IS the provenance re-sign remediation (gh-2042 AC3).'
+        required: false
+        type: string
+        default: ''
+
+# SEC-08: explicit minimal default — the job declares its own block below.
+permissions:
+  contents: read
+
+concurrency:
+  group: release-drift-watch
+  cancel-in-progress: false # a drift check is never preempted mid-page
+
+jobs:
+  drift-watch:
+    name: Verify assets match the signed SHA256SUMS
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read # download the release assets
+      actions: write # re-request the release-provenance job on drift
+      issues: write # the deduplicated drift page
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Resolve target release
+        id: target
+        env:
+          # gh-2042 review: untrusted template values ride env-var
+          # indirection, never direct ${{ }} interpolation into the run:
+          # shell (the GitHub Actions security-hardening guide's script
+          # injection pattern — this job holds actions:write + issues:write).
+          DISPATCH_TAG: ${{ inputs.tag }}
+          RELEASE_EVENT_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          if [ -n "$DISPATCH_TAG" ]; then
+            tag="$DISPATCH_TAG"
+            echo "source=dispatch"
+          elif [ "${{ github.event_name }}" = "release" ]; then
+            tag="$RELEASE_EVENT_TAG"
+            echo "source=release event"
+          else
+            tag=$(gh api "repos/${GITHUB_REPOSITORY}/releases/latest" --jq .tag_name)
+            echo "source=schedule (latest published)"
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "verifying $tag"
+
+      - name: Verify assets against the signed manifest (gh-2042 AC2)
+        env:
+          TAG: ${{ steps.target.outputs.tag }}
+          FA_DRIFT_DETAILS: drift-details.txt
+        run: bash scripts/release_drift_check.sh "$TAG"
+
+      - name: Page + auto re-request release-provenance (drift never lingers)
+        if: failure()
+        env:
+          TAG: ${{ steps.target.outputs.tag }}
+        run: |
+          set -euo pipefail
+          # gh-2042 review: only DRIFT pages. A transport/infra failure
+          # exits the check red WITHOUT writing the details file — the run
+          # stays red but files no issue and re-requests nothing (the next
+          # scheduled run re-checks; the release's provenance is intact).
+          if [ -s drift-details.txt ]; then
+            bash scripts/release_drift_remediate.sh "$TAG" drift-details.txt
+          else
+            echo "red WITHOUT drift details — transport/infra failure, not drift: no page, no re-request (the next scheduled run re-checks)"
+          fi

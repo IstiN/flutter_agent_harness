@@ -596,10 +596,35 @@ case "\$cmd" in
           w=\$(head -1 "\$GH_STUB_DIR/view-seq.txt")
           sed -i.bak '1d' "\$GH_STUB_DIR/view-seq.txt" && rm -f "\$GH_STUB_DIR/view-seq.txt.bak"
           [ "\$w" = "exists" ] && exit 0
+          # gh-2042: an 'error' word models an API blip (rc != 0, stderr
+          # without a "not found" verdict) — the indeterminable state the
+          # immutability gate must fail CLOSED on.
+          [ "\$w" = "error" ] && { echo "gh: HTTP 502 (stub API blip)" >&2; exit 1; }
           echo "release not found (stub)" >&2
           exit 1
         fi
         case " \$*" in
+        # gh-2042: the immutability gate asks isDraft+assets in ONE call —
+        # serve both from the fixture. Absent release-state.txt defaults to
+        # DRAFT: the historical attach fixtures model a draft release (the
+        # pre-gate behavior every existing test pins). Published paths plant
+        # release-state.txt=false explicitly.
+        *--json\\ isDraft,assets*)
+          st="true"
+          [ -s "\$GH_STUB_DIR/release-state.txt" ] && st="\$(cat "\$GH_STUB_DIR/release-state.txt")"
+          objs=""
+          if [ -s "\$GH_STUB_DIR/asset-names.txt" ]; then
+            while IFS= read -r n; do
+              [ -n "\$n" ] && objs="\$objs{\\"name\\":\\"\$n\\"},"
+            done < "\$GH_STUB_DIR/asset-names.txt"
+          fi
+          objs="\${objs%,}"
+          printf '{"isDraft":%s,"assets":[%s]}\n' "\$st" "\$objs"
+          ;;
+        # gh-2042: the attach flip-check reads the draft state alone; the
+        # draft guard reads it too (release-state.txt is always planted
+        # there) — absent state defaults to draft, same as the branch above.
+        *--json\\ isDraft*) cat "\$GH_STUB_DIR/release-state.txt" 2>/dev/null || echo "true" ;;
           *--json\\ assets*) cat "\$GH_STUB_DIR/asset-names.txt" 2>/dev/null || echo "" ;;
           *--json\\ body*) cat "\$GH_STUB_DIR/release-body.txt" 2>/dev/null || echo "" ;;
           *) cat "\$GH_STUB_DIR/release-state.txt" 2>/dev/null || echo "missing" ;;

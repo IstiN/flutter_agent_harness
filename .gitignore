@@ -191,3 +191,9 @@ node_modules
 # sdk/web type-stripped build output (node build.mjs regenerates it).
 sdk/web/dist/
 agents/
+
+# gh-2042 review: CWD artifacts of the release scripts (release_attach_or_create.sh
+# writes release-notes.md, release_drift_check.sh defaults FA_DRIFT_DETAILS to
+# drift-details.txt) — test-run residue, never committed.
+/release-notes.md
+/drift-details.txt
