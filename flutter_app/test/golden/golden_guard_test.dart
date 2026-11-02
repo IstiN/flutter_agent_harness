@@ -79,6 +79,8 @@ const _coverage = <String, String>{
       'test/golden/wide_layout_shell_golden_test.dart',
   'lib/ui/apps/apps_directory_panel.dart':
       'test/golden/wide_layout_shell_golden_test.dart',
+  'lib/ui/apps/files_presentation_panel.dart':
+      'test/golden/wide_layout_shell_golden_test.dart',
   'lib/ui/apps/messenger_app_panel.dart':
       'test/golden/wide_layout_shell_golden_test.dart',
   'lib/ui/widgets/messenger_navigation_controls.dart':

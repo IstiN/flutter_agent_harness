@@ -643,6 +643,7 @@ void main() {
     await disposeGoldenShell(tester);
   });
 
+  // Covers lib/ui/apps/files_presentation_panel.dart (filesAppPanel).
   testWidgets('desktop Files presents through the animated app pane', (
     tester,
   ) async {

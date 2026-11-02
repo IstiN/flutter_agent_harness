@@ -155,7 +155,13 @@ void main() {
   /// Types [query] into the only search field, waits out the debounce and
   /// drops the caret so snapshots never depend on the cursor-blink phase.
   Future<void> typeAndBlur(WidgetTester tester, String query) async {
-    await tester.enterText(find.byType(SessionSearchField), query);
+    // The responsive messenger home replaced the legacy SessionSearchField
+    // with the chat-list chrome field (MessengerSectionHeader), so drive
+    // whichever surface this frame actually hosts.
+    final field = find.byType(SessionSearchField).evaluate().isNotEmpty
+        ? find.byType(SessionSearchField)
+        : find.byKey(const ValueKey('messengerSearchField'));
+    await tester.enterText(field, query);
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 200));
     FocusManager.instance.primaryFocus?.unfocus();
