@@ -57,6 +57,31 @@ export FA_CODE_SIGN_IDENTITY="$identity"
 export FA_DEVELOPMENT_TEAM="$team"
 export FA_PROVISIONING_PROFILE_SPECIFIER="${FA_PROVISIONING_PROFILE_SPECIFIER:-}"
 
+# gh-2039 pre-flight — the pinned identity must be resolvable by the
+# SAME search list codesign reads, BEFORE the multi-minute flutter
+# build whose xcode_backend codesign is the first real consumer. A
+# missing/locked/expired identity used to surface as `error: no
+# identity found` 5+ minutes into the build (run 41393469972); fail
+# here in ~1s with the exact remediation instead.
+#
+# No `-v` (gh-2039 rework review): the verbose listing includes INVALID
+# identities too, each with its failure reason (e.g.
+# CSSMERR_TP_CERT_EXPIRED) AND its SHA-1 — an expired pinned identity
+# would match the grep and the exact "expired cert" case this guard
+# exists to catch would slip into the 5-minute build. The plain
+# listing is VALID identities only, which is also the closer
+# approximation of what codesign will accept. `-i` because
+# `codesign --sign <SHA1>` and ci-sign's validity check are
+# case-insensitive — the pre-flight must be no stricter than its
+# consumers.
+if [[ "$identity" != "-" ]]; then
+  if ! security find-identity -p codesigning 2>/dev/null | grep -Fiq -- "$identity"; then
+    echo "::error::signing identity '$identity' is not resolvable as a VALID identity via 'security find-identity -p codesigning' (missing, expired, or the signing keychain is locked) — codesign inside 'flutter build' would fail after a full build. Re-assert the signing state first: ~/bin/ci-sign install fa-macos (unlock + identity verify + search-list rewrite), then re-run." >&2
+    exit 1
+  fi
+  echo "[build_macos_nosandbox] identity pre-flight OK: '$identity' resolvable for codesigning"
+fi
+
 readonly APP="build/macos/Build/Products/Release/Fa.app"
 readonly ENTITLEMENTS="macos/Runner/ReleaseNoSandbox.entitlements"
 

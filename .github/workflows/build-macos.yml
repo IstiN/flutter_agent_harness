@@ -1052,6 +1052,15 @@ jobs:
         env:
           VERSION: ${{ needs.version.outputs.version }}
           ARCH: ${{ matrix.arch }}
+          # gh-2039: the point-of-use re-assert below re-imports the
+          # identity if it is genuinely gone from the persistent
+          # keychain — same env the provisioning step passes to ci-sign
+          # (CI_SIGN_P12_* indirection), so the happy path stays a
+          # millisecond re-verify and the degraded path self-heals.
+          MACOS_CERTIFICATE_P12_BASE64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          CI_SIGN_P12_B64_ENV: MACOS_CERTIFICATE_P12_BASE64
+          CI_SIGN_P12_PASSWORD_ENV: MACOS_CERTIFICATE_PASSWORD
           # gh-1865: SHA-1 pin instead of the name-based
           # MACOS_CERTIFICATE_ID secret — build_macos_nosandbox.sh signs
           # via `codesign --sign "${identity}"` and falls back to ad-hoc
@@ -1063,6 +1072,21 @@ jobs:
         run: |
           set -euo pipefail
           cd flutter_app
+          # gh-2039 (run 41393469972): the release signing path depends on
+          # AMBIENT persistent-keychain state (ci-signing unlocked + in the
+          # search list) that raw codesign cannot assert and the 60s unlock
+          # watchdog does not guarantee across a multi-minute build window —
+          # the x86_64 leg died with "no identity found" at the flutter
+          # build's codesign, 7m after the last DMG codesign, while the
+          # arm64 leg survived ONLY because its arm64-only PKG step
+          # re-ran ci-sign install right before its own build. Re-assert
+          # at point of use (gh-1798 principle: immune to any gap length
+          # by construction) — idempotent (unlock + identity validity
+          # verify + search-list defensive rewrite), gated on the pinned
+          # identity so ad-hoc/local runs never require ~/bin/ci-sign.
+          if [ -n "${FA_CODE_SIGN_IDENTITY:-}" ]; then
+            ~/bin/ci-sign install fa-macos
+          fi
           if [ -z "${FA_DEVELOPMENT_TEAM:-}" ] && [ -n "${PROFILE_TEAM:-}" ]; then
             export FA_DEVELOPMENT_TEAM="$PROFILE_TEAM"
           fi
