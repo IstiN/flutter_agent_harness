@@ -592,4 +592,34 @@ void main() {
     expect(cisign, contains('security find-identity -v "\$KC" | grep -qi "\$NEW_FP"'),
         reason: 'post-import validity uses the policy-free valid list');
   });
+  test('AC24 — import ACL authorizes every CI signing consumer, not just '
+      'codesign (gh-2026: run 41354303751 arm64 hung 1h42m in a GUI '
+      'SecurityAgent dialog — productbuild --sign F54136E3 waited for key '
+      'access that the apple-tool:/apple: partition never grants it; the '
+      'job lease outlived the worker and x86_64 queued behind the ghost. '
+      'The fastlane-match recipe is import-time -T for every consumer + '
+      'the partition set twice)', () {
+    final cisign = File('scripts/ci-sign').readAsStringSync();
+    final importAt = cisign.indexOf('security import "\$TMP/cert.p12"');
+    var importEnd = cisign.indexOf('\n', importAt);
+    // the command may span lines via shell continuations — walk to the last one
+    while (cisign.substring(importAt, importEnd).endsWith('\\')) {
+      importEnd = cisign.indexOf('\n', importEnd + 1);
+    }
+    final importLine = cisign.substring(importAt, importEnd);
+    for (final tool in [
+      '/usr/bin/codesign',
+      '/usr/bin/productbuild',
+      '/usr/bin/productsign',
+      '/usr/bin/security'
+    ]) {
+      expect(importLine, contains('-T $tool'),
+          reason: '$tool must hold import-time key ACL or its first use '
+              'raises a modal SecurityAgent dialog');
+    }
+    final partitionCount = 'set-key-partition-list'.allMatches(cisign).length;
+    expect(partitionCount, greaterThanOrEqualTo(2),
+        reason: 'the partition list is applied twice (fastlane folklore: '
+            'the first apply does not always stick on a fresh import)');
+  });
 }
