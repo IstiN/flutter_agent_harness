@@ -141,6 +141,26 @@ void main() {
     });
   });
 
+  group('gh-2042 review rework — repo hygiene + shell-injection posture', () {
+    test('no committed test-run residue at the repo root (release-notes.md / drift-details.txt)', () {
+      // Both files are CWD artifacts of the release scripts run with
+      // fixture values — they were committed by accident and regenerated
+      // byte-identical on every `dart test` run. The branch must not track
+      // them, and .gitignore must keep them from coming back.
+      final gitignore = read('.gitignore');
+      for (final artifact in ['release-notes.md', 'drift-details.txt']) {
+        expect(File(artifact).existsSync(), isFalse,
+            reason: '$artifact is test-run residue — delete it from the branch');
+        expect(
+          RegExp('^/?${RegExp.escape(artifact)}' r'\s*$', multiLine: true)
+              .hasMatch(gitignore),
+          isTrue,
+          reason: '$artifact must be gitignored (a CWD artifact of the release scripts)',
+        );
+      }
+    });
+  });
+
   group('AC4 (REG) — the existing release gates stay exactly where they are', () {
     test('gh-1832 required-assets gate stays a publish-blocking provenance step', () {
       final prov = jobsOf('.github/workflows/ci.yml')['release-provenance'] as YamlMap;
@@ -172,6 +192,33 @@ void main() {
       expect(body, contains('SHA256SUMS'));
       expect(body, contains('--draft=false --latest'),
           reason: 'the flip stays provenance-owned (gh-1801)');
+    });
+
+    test('the provenance flip never drags `latest` backwards (gh-2042 BLOCKING review thread)', () {
+      // The drift remediation re-requests the "Sign release checksums" job
+      // for an OLD drifted tag; a rerun re-executes this step with the
+      // original run's ref. An unconditional `--latest` would re-flag that
+      // older release as Latest — pointing every `fa update` client DOWN at
+      // it (the re-signed manifest makes the downgrade pass provenance).
+      // The flip must carry --latest ONLY when the release is still a draft
+      // (the normal publish point) or is already the current latest.
+      final prov = jobsOf('.github/workflows/ci.yml')['release-provenance'] as YamlMap;
+      final uploadStep = (prov['steps'] as YamlList)
+          .whereType<YamlMap>()
+          .firstWhere((s) => s['name'] == 'Upload provenance assets');
+      final body = uploadStep['run'].toString();
+      expect(body, contains('isDraft'),
+          reason: 'the --latest flip is gated on the draft state');
+      expect(body, contains('releases/latest'),
+          reason: 'and on the tag actually being the current latest');
+      expect(
+        RegExp(r'--draft=false --repo').hasMatch(body),
+        isTrue,
+        reason: 'a non-latest published tag must be re-signed/published '
+            'WITHOUT --latest (the fallback branch exists)',
+      );
+      expect(body, contains('gh-2042'),
+          reason: 'the guard names the incident it prevents');
     });
   });
 }

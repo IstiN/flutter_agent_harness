@@ -4512,7 +4512,28 @@ jobs:
           # leaves the previous release as latest (safe degradation)
           # instead of stranding a provenance-less one (the v1.0.630
           # empty/partial-latest window class).
-          gh release edit "${GITHUB_REF_NAME}" --draft=false --latest --repo "${GITHUB_REPOSITORY}"
+          #
+          # gh-2042 (BLOCKING review thread): the flip must never drag the
+          # `latest` badge backwards. The drift remediation
+          # (scripts/release_drift_remediate.sh) re-requests THIS job for
+          # an old drifted tag; a job rerun re-executes this step with the
+          # original run's ref, and an unconditional --latest would
+          # re-flag that older release as Latest — pointing every
+          # `fa update` client DOWN at it (the re-signed manifest would
+          # make the downgrade pass provenance). Carry --latest ONLY when
+          # the release is still a draft (the normal publish point,
+          # gh-1801) or already the current latest; otherwise publish the
+          # re-signed state without touching the badge.
+          is_draft=$(gh release view "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" --json isDraft --jq .isDraft)
+          current_latest=$(gh api "repos/${GITHUB_REPOSITORY}/releases/latest" --jq .tag_name 2>/dev/null || true)
+          if [ "$is_draft" = "true" ] || [ "$current_latest" = "${GITHUB_REF_NAME}" ]; then
+            gh release edit "${GITHUB_REF_NAME}" --draft=false --latest --repo "${GITHUB_REPOSITORY}"
+          else
+            # Re-sign remediation of a non-latest tag: publish state is
+            # already correct — never drag the latest badge backwards
+            # (gh-2042).
+            gh release edit "${GITHUB_REF_NAME}" --draft=false --repo "${GITHUB_REPOSITORY}"
+          fi
 
       # gh-1899: the flip above publishes exactly ONE release object, but
       # GitHub does not atomically enforce one release per tag — two train
