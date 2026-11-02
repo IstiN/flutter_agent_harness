@@ -1555,6 +1555,17 @@ void main() {
       throw http.ClientException('connection closed while receiving');
     }
 
+    /// A body stream that yields [chunks] then dies with a
+    /// non-[Exception] `Error` — the misbehaving-client-wrapper shape
+    /// (review r1): a bare `on Exception` guard would let it crash the
+    /// update with a stack trace instead of a clean failure outcome.
+    Stream<List<int>> errorsAfter(List<List<int>> chunks) async* {
+      for (final piece in chunks) {
+        yield piece;
+      }
+      throw StateError('client wrapper blew up');
+    }
+
     http.Client streamingClient(
       http.StreamedResponse Function(http.BaseRequest request) handler,
     ) => MockClient.streaming((request, _) async => handler(request));
@@ -1702,10 +1713,7 @@ void main() {
     );
     test('AC2: a small archive reports the progress pair in KB', () async {
       final body = filler(chunk * 2); // 800 KB — both sides below one MiB.
-      final segments = [
-        body.sublist(0, chunk),
-        body.sublist(chunk, chunk * 2),
-      ];
+      final segments = [body.sublist(0, chunk), body.sublist(chunk, chunk * 2)];
       final lines = <String>[];
       final client = streamingClient(
         (_) => http.StreamedResponse(
@@ -1722,10 +1730,10 @@ void main() {
         stallTimeout: const Duration(seconds: 5),
       );
       expect(outcome.ok, isTrue);
-      expect(
-        lines.where((line) => line.startsWith('downloading… ')),
-        ['downloading… 400/800 KB', 'downloading… 800/800 KB'],
-      );
+      expect(lines.where((line) => line.startsWith('downloading… ')), [
+        'downloading… 400/800 KB',
+        'downloading… 800/800 KB',
+      ]);
     });
 
     test(
@@ -1869,7 +1877,7 @@ void main() {
               200,
             );
           }
-          expect(request.headers['range'], 'bytes=${chunk}-');
+          expect(request.headers['range'], 'bytes=$chunk-');
           // 206 promising the REMAINING 2 chunks; Content-Range names
           // the full size — the progress denominator must be 1.2 MB,
           // not 0.8 MB.
@@ -2018,6 +2026,50 @@ void main() {
       expect(outcome.statusCode, 404);
       expect(outcome.isHttpFailure, isTrue);
     });
+    test('a non-Exception Error from send is a transport failure', () async {
+      // Review r1 (gh-2043): the "never throws" contract must hold for a
+      // non-[Exception] `Error` thrown by the transport — a misbehaving
+      // client wrapper must not crash `fa update` with a stack trace.
+      final client = streamingClient(
+        (_) => throw StateError('misbehaving client wrapper'),
+      );
+      final outcome = await downloadArchiveBody(
+        client,
+        Uri.parse(archiveUrl),
+        log: (_) {},
+      );
+      expect(outcome.ok, isFalse);
+      expect(outcome.statusCode, isNull);
+      expect(outcome.failureMessage, contains('Bad state: misbehaving'));
+    });
+
+    test(
+      'a non-Exception Error mid-body is a bounded transport failure',
+      () async {
+        var requests = 0;
+        final client = streamingClient((_) {
+          requests++;
+          return http.StreamedResponse(
+            errorsAfter([filler(chunk)]),
+            200,
+            contentLength: chunk * 99,
+          );
+        });
+        final outcome = await downloadArchiveBody(
+          client,
+          Uri.parse(archiveUrl),
+          log: (_) {},
+          stallTimeout: const Duration(seconds: 5),
+          maxResumeAttempts: 1,
+        );
+        expect(outcome.ok, isFalse);
+        expect(outcome.statusCode, isNull);
+        expect(outcome.failureMessage, contains('connection lost at 800 KB'));
+        expect(outcome.failureMessage, contains('1 resume attempts exhausted'));
+        // 1 initial + 1 resume, then give up.
+        expect(requests, 2);
+      },
+    );
 
     test('runSelfUpdate survives one mid-body reset and swaps in', () async {
       final target = File('${temp.path}/fa')..writeAsStringSync('old');

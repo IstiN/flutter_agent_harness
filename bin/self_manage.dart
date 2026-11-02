@@ -83,6 +83,39 @@ String _formatSpeed(int bytes, Duration elapsed) {
   return '${perSecond.round()} KB/s';
 }
 
+/// One MiB — the MB/KB unit boundary of the progress line.
+const int _mib = 1024 * 1024;
+
+/// The `4.2`/`9.5` side of a progress line (one decimal in MB, rounded
+/// KB below one MiB) — one shared unit for both sides.
+String _progressSide(int bytes, bool asMb) => asMb
+    ? (bytes / _mib).toStringAsFixed(1)
+    : (bytes / 1024).round().toString();
+
+/// A progress line (`downloading… 4.2/9.5 MB`, gh-2043 AC2): the
+/// denominator is the full archive size when known — `downloading… 400
+/// KB` when it is not.
+String _progressLine(int receivedNow, int? totalBytes) {
+  if (totalBytes == null) return 'downloading… ${_formatBytes(receivedNow)}';
+  final asMb = receivedNow >= _mib || totalBytes >= _mib;
+  return 'downloading… '
+      '${_progressSide(receivedNow, asMb)}/${_progressSide(totalBytes, asMb)} '
+      '${asMb ? 'MB' : 'KB'}';
+}
+
+/// The FULL archive size implied by a resume response: the Content-Range
+/// total (`bytes 100-999/1234`) is the truth when the server sends one;
+/// `received + remainder` is the fallback — a 206's contentLength is the
+/// REMAINDER, never the total (gh-2043 AC2/AC3).
+int? _resumeTotalBytes(http.StreamedResponse response, int received) {
+  final range = response.headers['content-range'];
+  final ranged = range == null ? null : int.tryParse(range.split('/').last);
+  if (ranged != null) return ranged;
+  final remainder = response.contentLength;
+  if (remainder == null || remainder < 0) return null;
+  return received + remainder;
+}
+
 /// The outcome of a release-archive body download ([downloadArchiveBody],
 /// gh-2043): [bytes] on success — otherwise [failureMessage] names why,
 /// plus the HTTP [statusCode] when the failure happened at HTTP level.
@@ -98,7 +131,9 @@ final class ArchiveDownloadOutcome {
       statusCode = null;
 
   /// A transport failure (connect failure, mid-body reset after the
-  /// resume retries ran out, clean close below the promised length).
+  /// resume retries ran out, clean close below the promised length) —
+  /// including a non-[Exception] `Error` thrown by the transport, which
+  /// is mapped here instead of crashing the update with a stack trace.
   const ArchiveDownloadOutcome.transport(this.failureMessage)
     : bytes = const [],
       elapsed = null,
@@ -221,7 +256,205 @@ Future<void> _drainBody(
 ///   200 to a Range request restarts from zero (AC3). A stall is NOT a
 ///   resume case — fail-closed (gh-1377).
 ///
-/// Never throws: every failure is an [ArchiveDownloadOutcome].
+/// The mutable state of one archive-body download (gh-2043): the bytes
+/// received so far, the resume budget, and the full size once known.
+/// One attempt = open (headers bound) + drain (stall/backstop bounds).
+/// The loop lives in [run]; each decision is a small method so no single
+/// function carries the whole complexity (crap4dart ratchet).
+final class _BodyDownload {
+  _BodyDownload({
+    required this.say,
+    required this.progressStep,
+    required this.maxResumeAttempts,
+  }) : nextProgressAt = progressStep;
+
+  final void Function(String message) say;
+  final int progressStep;
+  final int maxResumeAttempts;
+
+  final builder = BytesBuilder(copy: false);
+  final _wall = Stopwatch();
+  var received = 0;
+  var nextProgressAt = 0;
+  int? totalBytes;
+  var resumeAttempts = 0;
+
+  /// Wall time across every attempt; valid once [run] returned null.
+  var elapsed = Duration.zero;
+
+  /// Prints a progress line at every [progressStep] crossing (AC2).
+  void _progress(int receivedNow) {
+    if (receivedNow < nextProgressAt) return;
+    nextProgressAt = receivedNow + progressStep;
+    say(_progressLine(receivedNow, totalBytes));
+  }
+
+  /// The shared soft-failure policy (send failure, mid-body reset, clean
+  /// early close): retry from the received offset while the budget
+  /// allows — [maxResumeAttempts] resume attempts — else the terminal
+  /// transport outcome naming [exhaustedMessage]. Null means retry.
+  ArchiveDownloadOutcome? _resumeOrGiveUp(String exhaustedMessage) {
+    if (resumeAttempts >= maxResumeAttempts) {
+      return ArchiveDownloadOutcome.transport(exhaustedMessage);
+    }
+    resumeAttempts++;
+    say(
+      'connection lost after ${_formatBytes(received)} — '
+      'resuming (attempt $resumeAttempts/$maxResumeAttempts)…',
+    );
+    return null;
+  }
+
+  /// One attempt's headers phase: the request (Range from the received
+  /// offset when resuming), the metadata bound on the status line (AC4),
+  /// and the status classification. Returns `(response, failure)`: a
+  /// non-null [failure] is terminal (an HTTP miss — the caller may have
+  /// a fallback asset — or an exhausted resume budget); a null pair
+  /// means the budget allows a retry.
+  Future<(http.StreamedResponse?, ArchiveDownloadOutcome?)> _open(
+    http.Client client,
+    Uri url,
+    Duration headersTimeout,
+  ) async {
+    final request = http.Request('GET', url);
+    if (received > 0) request.headers['range'] = 'bytes=$received-';
+    final http.StreamedResponse response;
+    try {
+      response = await client.send(request).timeout(headersTimeout);
+    } catch (error) {
+      // Any thrown object — `Exception` or `Error` (a misbehaving client
+      // wrapper) — is a transport failure, never a crash (review r1).
+      // Without bytes there is nothing to resume from: fail now.
+      if (received == 0) {
+        return (null, ArchiveDownloadOutcome.transport('$error'));
+      }
+      return (null, _resumeOrGiveUp('$error'));
+    }
+    if (response.statusCode != 200 && response.statusCode != 206) {
+      return (null, ArchiveDownloadOutcome.http(response.statusCode));
+    }
+    return (response, null);
+  }
+
+  /// The total-bytes bookkeeping for a fresh response: a 200 answering a
+  /// Range request is the WHOLE archive again (discard the partial
+  /// prefix and restart from zero — appending would duplicate it); a
+  /// first attempt takes contentLength; a 206 resume derives the full
+  /// size from Content-Range / received + remainder (never the
+  /// remainder itself).
+  void _noteOpen(http.StreamedResponse response) {
+    if (received > 0 && response.statusCode == 200) {
+      builder.clear();
+      received = 0;
+      nextProgressAt = progressStep;
+      totalBytes = response.contentLength;
+      return;
+    }
+    if (received == 0) {
+      totalBytes = response.contentLength;
+      return;
+    }
+    totalBytes ??= _resumeTotalBytes(response, received);
+  }
+
+  /// Drains one attempt's body under the stall/backstop bounds (AC1).
+  /// A stall or the backstop is terminal — fail-closed, never a resume
+  /// case (gh-1377). Any other thrown failure — `Exception` or
+  /// non-[Exception] `Error` (review r1) — goes through the resume
+  /// policy, keeping the bytes that arrived in the builder so the retry
+  /// continues from the true offset. Null means the body is complete.
+  Future<ArchiveDownloadOutcome?> _drain(
+    http.StreamedResponse response, {
+    required Duration stallTimeout,
+    required Duration totalTimeout,
+  }) async {
+    try {
+      await _drainBody(
+        response.stream,
+        builder,
+        stallTimeout: stallTimeout,
+        totalTimeout: totalTimeout,
+        onProgress: _progress,
+      );
+    } on TimeoutException catch (error) {
+      // Fail-closed (gh-1377): a body that stops delivering bytes — or a
+      // trickle that outlives the raised backstop — is a dead download,
+      // not a resume case.
+      return ArchiveDownloadOutcome.timedOut(error.message ?? 'timed out');
+    } catch (_) {
+      received = builder.length;
+      return _resumeOrGiveUp(
+        'connection lost at ${_formatBytes(received)} '
+        '($maxResumeAttempts resume attempts exhausted)',
+      );
+    }
+    received = builder.length;
+    return null;
+  }
+
+  /// The attempt loop. Null = the archive is complete ([takeBytes]);
+  /// non-null = the terminal failure.
+  Future<ArchiveDownloadOutcome?> run(
+    http.Client client,
+    Uri url, {
+    required Duration stallTimeout,
+    required Duration totalTimeout,
+    required Duration headersTimeout,
+  }) async {
+    _wall.start();
+    while (true) {
+      final (response, failure) = await _open(client, url, headersTimeout);
+      if (failure != null) return failure;
+      if (response == null) continue; // resume budget left — retry.
+      _noteOpen(response);
+      final drained = await _drain(
+        response,
+        stallTimeout: stallTimeout,
+        totalTimeout: totalTimeout,
+      );
+      if (drained != null) return drained;
+      final total = totalBytes;
+      if (total != null && received < total) {
+        // A clean close below the promised length is the same
+        // broken-link family as a mid-body reset: resume if allowed.
+        final giveUp = _resumeOrGiveUp(
+          'connection closed early at ${_formatBytes(received)} '
+          '($maxResumeAttempts resume attempts exhausted)',
+        );
+        if (giveUp != null) return giveUp;
+        continue;
+      }
+      elapsed = _wall.elapsed;
+      return null;
+    }
+  }
+
+  /// The reassembled archive bytes (call only after [run] returned null).
+  List<int> takeBytes() => builder.takeBytes();
+}
+
+/// Downloads a release-archive body with the gh-2043 bounds:
+///
+/// - Headers (the status line) must land within [headersTimeout] — the
+///   metadata bound, unchanged (AC4).
+/// - The body aborts when NO bytes arrive for [stallTimeout] — a slow
+///   but steady link keeps receiving, a hung one dies with a
+///   "no progress for Ns" message (AC1).
+/// - [totalTimeout] stays as a generous per-attempt backstop for a
+///   trickle that never stalls but never finishes (the old 2-minute
+///   total wall clock, raised; AC1).
+/// - Progress prints every [progressStep] bytes (`downloading… 4.2/9.5
+///   MB`) and a final line reports elapsed + average speed (AC2), via
+///   [log] (default [_say]).
+/// - A mid-body transport error (reset) or a clean close below the
+///   promised length retries with an HTTP `Range` from the received
+///   offset at most [maxResumeAttempts] times; a server that answers
+///   200 to a Range request restarts from zero (AC3). A stall is NOT a
+///   resume case — fail-closed (gh-1377).
+///
+/// Never throws: every failure — an HTTP miss, a stall or backstop
+/// timeout, or a transport death (including a non-[Exception] `Error`
+/// thrown by the client) — is an [ArchiveDownloadOutcome] (review r1).
 Future<ArchiveDownloadOutcome> downloadArchiveBody(
   http.Client client,
   Uri url, {
@@ -232,127 +465,22 @@ Future<ArchiveDownloadOutcome> downloadArchiveBody(
   int maxResumeAttempts = 3,
   Duration headersTimeout = kFaUpdateNetworkTimeout,
 }) async {
-  final say = log ?? _say;
-  final builder = BytesBuilder(copy: false);
-  var received = 0;
-  var nextProgressAt = progressStep;
-  int? totalBytes;
-  var resumeAttempts = 0;
-  final wall = Stopwatch()..start();
-
-  void reportProgress(int receivedNow) {
-    if (receivedNow < nextProgressAt) return;
-    nextProgressAt = receivedNow + progressStep;
-    final total = totalBytes;
-    if (total == null) {
-      say('downloading… ${_formatBytes(receivedNow)}');
-      return;
-    }
-    // One shared unit after the ratio — the ticket's `4.2/9.5 MB` shape.
-    final inMb = receivedNow >= 1024 * 1024 || total >= 1024 * 1024;
-    String side(int bytes) => inMb
-        ? (bytes / (1024 * 1024)).toStringAsFixed(1)
-        : (bytes / 1024).round().toString();
-    say(
-      'downloading… ${side(receivedNow)}/${side(total)} ${inMb ? 'MB' : 'KB'}',
-    );
-  }
-
-  void resumeLine() {
-    resumeAttempts++;
-    say(
-      'connection lost after ${_formatBytes(received)} — '
-      'resuming (attempt $resumeAttempts/$maxResumeAttempts)…',
-    );
-  }
-
-  while (true) {
-    final request = http.Request('GET', url);
-    final resuming = received > 0;
-    if (resuming) request.headers['range'] = 'bytes=$received-';
-
-    final http.StreamedResponse response;
-    try {
-      response = await client.send(request).timeout(headersTimeout);
-    } on Exception catch (error) {
-      if (!resuming || resumeAttempts >= maxResumeAttempts) {
-        return ArchiveDownloadOutcome.transport('$error');
-      }
-      resumeLine();
-      continue;
-    }
-    if (response.statusCode != 200 && response.statusCode != 206) {
-      return ArchiveDownloadOutcome.http(response.statusCode);
-    }
-    if (resuming && response.statusCode == 200) {
-      // The server ignored the Range header: this answer is the WHOLE
-      // archive again — discard the partial bytes, restart from zero
-      // (appending would duplicate the prefix).
-      builder.clear();
-      received = 0;
-      nextProgressAt = progressStep;
-      totalBytes = response.contentLength;
-    } else if (!resuming) {
-      totalBytes = response.contentLength;
-    } else if (totalBytes == null) {
-      // A 206's contentLength is the REMAINDER, never the total: the
-      // progress denominator and the early-close check both need the
-      // FULL size. The Content-Range total (`bytes 100-999/1234`) is the
-      // truth when the server sends one; `received + remainder` is the
-      // fallback (gh-2043 AC2/AC3).
-      final range = response.headers['content-range'];
-      final ranged = range == null ? null : int.tryParse(range.split('/').last);
-      final remainder = response.contentLength;
-      totalBytes =
-          ranged ??
-          (remainder == null || remainder < 0 ? null : received + remainder);
-    }
-
-    try {
-      await _drainBody(
-        response.stream,
-        builder,
-        stallTimeout: stallTimeout,
-        totalTimeout: totalTimeout,
-        onProgress: reportProgress,
-      );
-    } on TimeoutException catch (error) {
-      // Fail-closed (gh-1377): a body that stops delivering bytes — or a
-      // trickle that outlives the raised backstop — is a dead download,
-      // not a resume case.
-      return ArchiveDownloadOutcome.timedOut(error.message ?? 'timed out');
-    } on Exception {
-      // Keep what arrived before the link died: the resume continues
-      // from the true offset.
-      received = builder.length;
-      if (resumeAttempts >= maxResumeAttempts) {
-        return ArchiveDownloadOutcome.transport(
-          'connection lost at ${_formatBytes(received)} '
-          '($maxResumeAttempts resume attempts exhausted)',
-        );
-      }
-      resumeLine();
-      continue;
-    }
-    received = builder.length;
-    if (totalBytes != null && received < totalBytes) {
-      // A clean close below the promised length is the same broken-link
-      // family as a mid-body reset: resume if the budget allows.
-      if (resumeAttempts >= maxResumeAttempts) {
-        return ArchiveDownloadOutcome.transport(
-          'connection closed early at ${_formatBytes(received)} '
-          '($maxResumeAttempts resume attempts exhausted)',
-        );
-      }
-      resumeLine();
-      continue;
-    }
-    break;
-  }
-
-  final bytes = builder.takeBytes();
-  final elapsed = wall.elapsed;
-  say(
+  final download = _BodyDownload(
+    say: log ?? _say,
+    progressStep: progressStep,
+    maxResumeAttempts: maxResumeAttempts,
+  );
+  final failure = await download.run(
+    client,
+    url,
+    stallTimeout: stallTimeout,
+    totalTimeout: totalTimeout,
+    headersTimeout: headersTimeout,
+  );
+  if (failure != null) return failure;
+  final bytes = download.takeBytes();
+  final elapsed = download.elapsed;
+  download.say(
     'downloaded ${_formatBytes(bytes.length)} in ${_formatSpan(elapsed)} '
     '(${_formatSpeed(bytes.length, elapsed)})',
   );
