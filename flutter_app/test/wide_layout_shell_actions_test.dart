@@ -30,7 +30,6 @@ import 'package:fa_ui/fa_ui.dart'
     show
         FaChatHost,
         FaLogo,
-        FaDesignTokens,
         FaSectionEyebrow,
         FaSurface,
         FaVisualDirection,
@@ -839,44 +838,33 @@ void main() {
       ..addSession('design-session', _fakeService(env));
     await pumpShell(tester, manager: manager);
     await tester.pump(const Duration(milliseconds: 100));
-    final context = tester.element(find.byType(MessengerFilterControl));
-    final tokens = FaDesignTokens.of(context);
-
     // The segment panel floats on frosted chrome: translucent fill, no
     // hard bordered slab (iMessage-style underlay).
     final control = tester.widget<MessengerFilterControl>(
       find.byType(MessengerFilterControl),
     );
     expect(control.glass, isTrue);
-    final toolbarBox = tester.widget<Container>(
+    // The capsule is real liquid glass now: the styleguide FaSurface
+    // (LiquidGlass refraction) wraps the chips with an airy tint — no
+    // painted gradient slab, no dark rim.
+    final capsule = tester.widget<FaSurface>(
+      find.byKey(const ValueKey('messengerFilterGlassCapsule')),
+    );
+    expect(capsule.glass, isTrue);
+    expect(capsule.tintAmount, lessThan(.35), reason: 'airy glass tint');
+    expect(capsule.tintOpacity, lessThan(.7), reason: 'airy glass tint');
+    expect(capsule.borderRadius, BorderRadius.circular(18));
+    expect(
       find
           .descendant(
             of: find.byKey(const ValueKey('chatCategoryChips')),
-            matching: find.byType(Container),
+            matching: find.byKey(const ValueKey('messengerFilterGlassCapsule')),
           )
-          .first,
+          .evaluate()
+          .isNotEmpty,
+      isTrue,
+      reason: 'the chips capsule is real liquid glass',
     );
-    final toolbarDecoration = toolbarBox.decoration! as BoxDecoration;
-    // Neutral luminance capsule fill (references separate by brightness, not
-    // hue) with a bright inner specular sheen on top and no dark slab rim.
-    final gradient = toolbarDecoration.gradient as LinearGradient;
-    expect(gradient.begin, Alignment.topCenter);
-    expect(
-      gradient.colors.first,
-      const Color(
-        0xFFFFFFFF,
-      ).withValues(alpha: tokens.brightness == Brightness.dark ? .30 : .5),
-      reason: 'specular top sheen',
-    );
-    expect(
-      gradient.colors.last,
-      tokens.brightness == Brightness.dark
-          ? Colors.white.withValues(alpha: .10)
-          : Colors.black.withValues(alpha: .12),
-      reason: 'neutral luminance base fill',
-    );
-    expect(toolbarDecoration.borderRadius, BorderRadius.circular(18));
-    expect((toolbarDecoration.border! as Border).top.color, Colors.transparent);
 
     // The underlay is a graduated ProgressiveBlur band that reaches ~28px
     // below the toolbar; at rest its sigma is 0 (plain chrome, no band).

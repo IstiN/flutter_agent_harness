@@ -14,6 +14,7 @@ import 'package:liquid_glass_widgets/liquid_glass_widgets.dart'
     show ProgressiveBlur, ProgressiveBlurDirection;
 import 'package:fa_ui/fa_ui.dart';
 import 'package:flutter/foundation.dart';
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
@@ -285,6 +286,14 @@ class _ChatListPanelState extends State<ChatListPanel> {
       listenable: widget.controller,
       builder: (context, _) {
         final colors = FahColors.of(context);
+        // The desktop panel is flush with the window's top edge; the chrome
+        // and the list's top padding must clear the native titlebar/toolbar
+        // region (macOS fullSizeContentView inset; zero in tests and web).
+        // Compact (narrow) panels get the same inset from the shell's
+        // narrow-body wrap instead, so every section shares one geometry.
+        final titlebarTop = widget.compact
+            ? 0.0
+            : math.max(8.0, MediaQuery.paddingOf(context).top);
         final chrome = Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -323,15 +332,20 @@ class _ChatListPanelState extends State<ChatListPanel> {
                               'chat-directory-${_currentDirectory ?? 'root'}',
                             ),
                         child:
-                            widget.bodyBuilder?.call(_chromeHeight) ??
-                            _buildBody(colors, topPadding: _chromeHeight),
+                            widget.bodyBuilder?.call(
+                              _chromeHeight + titlebarTop,
+                            ) ??
+                            _buildBody(
+                              colors,
+                              topPadding: _chromeHeight + titlebarTop,
+                            ),
                       ),
                     ),
                   ),
                 ),
               ),
               Positioned(
-                top: 0,
+                top: titlebarTop,
                 left: 0,
                 right: 0,
                 child: _buildChromeSurface(colors, chrome),
@@ -354,6 +368,11 @@ class _ChatListPanelState extends State<ChatListPanel> {
   /// fades, so the search row and segment panel can never be gated away.
   Widget _buildChromeSurface(FahColors colors, Widget chrome) {
     final tokens = FaDesignTokens.of(context);
+    // Same titlebar inset the chrome Positioned uses — the blur band must
+    // keep filling from the panel's very top (behind the traffic lights).
+    final titlebarTop = widget.compact
+        ? 0.0
+        : math.max(8.0, MediaQuery.paddingOf(context).top);
     if (tokens.direction != FaVisualDirection.glass) {
       return ColoredBox(color: _panelColor(colors), child: chrome);
     }
@@ -363,7 +382,7 @@ class _ChatListPanelState extends State<ChatListPanel> {
           top: 0,
           left: 0,
           right: 0,
-          height: _chromeHeight + 28,
+          height: _chromeHeight + titlebarTop + 28,
           child: IgnorePointer(
             child: KeyedSubtree(
               key: const ValueKey('chatListChromeUnderlay'),

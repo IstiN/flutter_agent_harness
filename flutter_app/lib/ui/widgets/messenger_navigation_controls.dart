@@ -297,174 +297,52 @@ class MessengerFilterControl extends StatelessWidget {
       height: height,
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
-        child: Container(
-          padding: const EdgeInsets.all(2),
-          // Floating-glass capsule: neutral luminance fill (brightness, not
-          // hue, separates it from the chrome — refs B/C) with a bright
-          // inner specular sheen along the top edge and no dark slab rim. A
-          // uniform transparent 1px border keeps the inner segment geometry
-          // identical to the boxed variant; the specular is baked into the
-          // fill gradient (BorderRadius forbids non-uniform border colors).
-          decoration: glass
-              ? BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topCenter,
-                    end: Alignment.bottomCenter,
-                    colors: [
-                      Colors.white.withValues(
-                        alpha: tokens.brightness == Brightness.dark ? .30 : .5,
-                      ),
-                      tokens.brightness == Brightness.dark
-                          ? Colors.white.withValues(alpha: .10)
-                          : Colors.black.withValues(alpha: .12),
-                      tokens.brightness == Brightness.dark
-                          ? Colors.white.withValues(alpha: .10)
-                          : Colors.black.withValues(alpha: .12),
-                    ],
-                    stops: const [0.0, 0.14, 1.0],
-                  ),
-                  borderRadius: BorderRadius.circular(18),
-                  border: Border.all(color: Colors.transparent),
-                )
-              : BoxDecoration(
+        // Real liquid-glass capsule in the glass direction — the jelly
+        // refraction/specular comes from the styleguide FaSurface
+        // (LiquidGlass), not a painted gradient. Opaque directions keep the
+        // bordered slab. Inner padding stays 2 so segment geometry is
+        // identical in both variants.
+        child: glass
+            ? FaSurface(
+                key: const ValueKey('messengerFilterGlassCapsule'),
+                glass: true,
+                useBackdropGroup: true,
+                color: tokens.surface1,
+                tintAmount: .22,
+                tintOpacity: .55,
+                borderRadius: BorderRadius.circular(18),
+                // 3px inner padding matches the boxed variant's border+2
+                // (1px border + 2px padding): segment sizes and glyph
+                // insets must be identical across variants.
+                padding: const EdgeInsets.all(3),
+                child: _SegmentLayout(
+                  categories: categories,
+                  extraActions: extraActions,
+                  selectedIndex: selectedIndex,
+                  selectedExtraIndex: selectedExtraIndex,
+                  highlightSelectedCategory: highlightSelectedCategory,
+                  highlightSelectedExtra: highlightSelectedExtra,
+                  trailing: trailing,
+                ),
+              )
+            : Container(
+                key: const ValueKey('messengerFilterBoxedCapsule'),
+                padding: const EdgeInsets.all(2),
+                decoration: BoxDecoration(
                   color: tokens.surface1.withValues(alpha: .62),
                   borderRadius: BorderRadius.circular(18),
                   border: Border.all(color: tokens.hairline),
                 ),
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              final duration = FaMotion.duration(
-                context,
-                const Duration(milliseconds: 200),
-              );
-              const curve = Curves.easeInOutCubic;
-              final count = categories.length;
-              // The trailing selector is a control too: it occupies the final
-              // fixed slot and therefore participates in the width budget.
-              final controlCount = count + extraActions.length + 1;
-              final selectedExtraVisible =
-                  selectedExtraIndex != null && highlightSelectedExtra;
-              final selectedCategoryVisible = highlightSelectedCategory;
-              final expandedCount =
-                  (selectedCategoryVisible ? 1 : 0) +
-                  (selectedExtraVisible ? 1 : 0);
-              final fixedCount = controlCount - expandedCount;
-              final gap = constraints.maxWidth >= 300
-                  ? MessengerFilterControl.gap
-                  : 1.0;
-              // Two segmented groups can be selected at once (a chat filter
-              // and a shell section). Both keep their icon and gain a text
-              // slot; quiet icon slots retain a fixed hit rect. The section
-              // label gets the larger share so localized names stay readable.
-              const minSelectedWidth = 64.0;
-              const minSelectedExtraWidth = 72.0;
-              final minimumExpandedWidth =
-                  (selectedCategoryVisible ? minSelectedWidth : 0.0) +
-                  (selectedExtraVisible ? minSelectedExtraWidth : 0.0);
-              final slot =
-                  ((constraints.maxWidth -
-                              gap * (controlCount - 1) -
-                              minimumExpandedWidth) /
-                          fixedCount)
-                      .clamp(12.0, 36.0);
-              final expandedBudget =
-                  (constraints.maxWidth -
-                          gap * (controlCount - 1) -
-                          slot * fixedCount)
-                      .clamp(0.0, constraints.maxWidth);
-              final selectedWidth = !selectedCategoryVisible
-                  ? 0.0
-                  : selectedExtraVisible
-                  ? expandedBudget *
-                        minSelectedWidth /
-                        (minSelectedWidth + minSelectedExtraWidth)
-                  : expandedBudget;
-              final selectedExtraWidth = !selectedExtraVisible
-                  ? 0.0
-                  : selectedCategoryVisible
-                  ? expandedBudget *
-                        minSelectedExtraWidth /
-                        (minSelectedWidth + minSelectedExtraWidth)
-                  : expandedBudget;
-              final positions = <({double left, double width})>[];
-              var left = 0.0;
-              for (var index = 0; index < count; index++) {
-                final isSelected = index == selectedIndex;
-                final width = isSelected && selectedCategoryVisible
-                    ? selectedWidth
-                    : slot;
-                positions.add((left: left, width: width));
-                left += width + gap;
-              }
-              final extraPositions = <({double left, double width})>[];
-              for (var index = 0; index < extraActions.length; index++) {
-                final width =
-                    index == selectedExtraIndex && selectedExtraVisible
-                    ? selectedExtraWidth
-                    : slot;
-                extraPositions.add((left: left, width: width));
-                left += width + gap;
-              }
-              final selected = positions[selectedIndex];
-              return Stack(
-                clipBehavior: Clip.hardEdge,
-                children: [
-                  if (selectedCategoryVisible)
-                    AnimatedPositioned(
-                      key: const ValueKey('chatFilterSelectionPill'),
-                      duration: duration,
-                      curve: curve,
-                      left: selected.left,
-                      width: selected.width,
-                      top: 0,
-                      bottom: 0,
-                      child: IgnorePointer(
-                        child: DecoratedBox(
-                          decoration: ShapeDecoration(
-                            color: tokens.accent.withValues(alpha: .12),
-                            shape: StadiumBorder(
-                              side: BorderSide(
-                                color: tokens.accent.withValues(alpha: .18),
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                  for (var index = 0; index < count; index++)
-                    AnimatedPositioned(
-                      key: ValueKey('chatFilterSlot-$index'),
-                      duration: duration,
-                      curve: curve,
-                      left: positions[index].left,
-                      width: positions[index].width,
-                      top: 0,
-                      bottom: 0,
-                      child: categories[index],
-                    ),
-                  for (var index = 0; index < extraActions.length; index++)
-                    AnimatedPositioned(
-                      key: ValueKey('chatFilterExtraActionSlot-$index'),
-                      duration: duration,
-                      curve: curve,
-                      left: extraPositions[index].left,
-                      width: extraPositions[index].width,
-                      top: 0,
-                      bottom: 0,
-                      child: extraActions[index],
-                    ),
-                  Positioned(
-                    right: 0,
-                    top: 0,
-                    bottom: 0,
-                    width: slot,
-                    child: trailing,
-                  ),
-                ],
-              );
-            },
-          ),
-        ),
+                child: _SegmentLayout(
+                  categories: categories,
+                  extraActions: extraActions,
+                  selectedIndex: selectedIndex,
+                  selectedExtraIndex: selectedExtraIndex,
+                  highlightSelectedCategory: highlightSelectedCategory,
+                  highlightSelectedExtra: highlightSelectedExtra,
+                  trailing: trailing,
+                ),
+              ),
       ),
     );
   }
@@ -868,6 +746,165 @@ class MessengerCategoryChip extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+/// The segment slot layout shared by both MessengerFilterControl capsules:
+/// fixed icon slots plus one or two expanded text slots and a moving
+/// selection pill. Pure layout — the capsule surface is the parent's job.
+class _SegmentLayout extends StatelessWidget {
+  const _SegmentLayout({
+    required this.categories,
+    required this.extraActions,
+    required this.selectedIndex,
+    required this.selectedExtraIndex,
+    required this.highlightSelectedCategory,
+    required this.highlightSelectedExtra,
+    required this.trailing,
+  });
+
+  final List<Widget> categories;
+  final List<Widget> extraActions;
+  final int selectedIndex;
+  final int? selectedExtraIndex;
+  final bool highlightSelectedCategory;
+  final bool highlightSelectedExtra;
+  final Widget trailing;
+
+  @override
+  Widget build(BuildContext context) {
+    final tokens = FaDesignTokens.of(context);
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final duration = FaMotion.duration(
+          context,
+          const Duration(milliseconds: 200),
+        );
+        const curve = Curves.easeInOutCubic;
+        final count = categories.length;
+        // The trailing selector is a control too: it occupies the final
+        // fixed slot and therefore participates in the width budget.
+        final controlCount = count + extraActions.length + 1;
+        final selectedExtraVisible =
+            selectedExtraIndex != null && highlightSelectedExtra;
+        final selectedCategoryVisible = highlightSelectedCategory;
+        final expandedCount =
+            (selectedCategoryVisible ? 1 : 0) + (selectedExtraVisible ? 1 : 0);
+        final fixedCount = controlCount - expandedCount;
+        final gap = constraints.maxWidth >= 300
+            ? MessengerFilterControl.gap
+            : 1.0;
+        // Two segmented groups can be selected at once (a chat filter
+        // and a shell section). Both keep their icon and gain a text
+        // slot; quiet icon slots retain a fixed hit rect. The section
+        // label gets the larger share so localized names stay readable.
+        const minSelectedWidth = 64.0;
+        const minSelectedExtraWidth = 72.0;
+        final minimumExpandedWidth =
+            (selectedCategoryVisible ? minSelectedWidth : 0.0) +
+            (selectedExtraVisible ? minSelectedExtraWidth : 0.0);
+        final slot =
+            ((constraints.maxWidth -
+                        gap * (controlCount - 1) -
+                        minimumExpandedWidth) /
+                    fixedCount)
+                .clamp(12.0, 36.0);
+        final expandedBudget =
+            (constraints.maxWidth -
+                    gap * (controlCount - 1) -
+                    slot * fixedCount)
+                .clamp(0.0, constraints.maxWidth);
+        final selectedWidth = !selectedCategoryVisible
+            ? 0.0
+            : selectedExtraVisible
+            ? expandedBudget *
+                  minSelectedWidth /
+                  (minSelectedWidth + minSelectedExtraWidth)
+            : expandedBudget;
+        final selectedExtraWidth = !selectedExtraVisible
+            ? 0.0
+            : selectedCategoryVisible
+            ? expandedBudget *
+                  minSelectedExtraWidth /
+                  (minSelectedWidth + minSelectedExtraWidth)
+            : expandedBudget;
+        final positions = <({double left, double width})>[];
+        var left = 0.0;
+        for (var index = 0; index < count; index++) {
+          final isSelected = index == selectedIndex;
+          final width = isSelected && selectedCategoryVisible
+              ? selectedWidth
+              : slot;
+          positions.add((left: left, width: width));
+          left += width + gap;
+        }
+        final extraPositions = <({double left, double width})>[];
+        for (var index = 0; index < extraActions.length; index++) {
+          final width = index == selectedExtraIndex && selectedExtraVisible
+              ? selectedExtraWidth
+              : slot;
+          extraPositions.add((left: left, width: width));
+          left += width + gap;
+        }
+        final selected = positions[selectedIndex];
+        return Stack(
+          clipBehavior: Clip.hardEdge,
+          children: [
+            if (selectedCategoryVisible)
+              AnimatedPositioned(
+                key: const ValueKey('chatFilterSelectionPill'),
+                duration: duration,
+                curve: curve,
+                left: selected.left,
+                width: selected.width,
+                top: 0,
+                bottom: 0,
+                child: IgnorePointer(
+                  child: DecoratedBox(
+                    decoration: ShapeDecoration(
+                      color: tokens.accent.withValues(alpha: .12),
+                      shape: StadiumBorder(
+                        side: BorderSide(
+                          color: tokens.accent.withValues(alpha: .18),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            for (var index = 0; index < count; index++)
+              AnimatedPositioned(
+                key: ValueKey('chatFilterSlot-$index'),
+                duration: duration,
+                curve: curve,
+                left: positions[index].left,
+                width: positions[index].width,
+                top: 0,
+                bottom: 0,
+                child: categories[index],
+              ),
+            for (var index = 0; index < extraActions.length; index++)
+              AnimatedPositioned(
+                key: ValueKey('chatFilterExtraActionSlot-$index'),
+                duration: duration,
+                curve: curve,
+                left: extraPositions[index].left,
+                width: extraPositions[index].width,
+                top: 0,
+                bottom: 0,
+                child: extraActions[index],
+              ),
+            Positioned(
+              right: 0,
+              top: 0,
+              bottom: 0,
+              width: slot,
+              child: trailing,
+            ),
+          ],
+        );
+      },
     );
   }
 }

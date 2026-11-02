@@ -1542,7 +1542,7 @@ class _FaChatScreenState extends State<FaChatScreen>
               child: tokens.direction == FaVisualDirection.glass
                   ? const ProgressiveBlur(
                       key: ValueKey('faChatTopMelt'),
-                      maxSigma: 12,
+                      maxSigma: 8,
                       direction: ProgressiveBlurDirection.topToBottom,
                     )
                   : DecoratedBox(
@@ -2177,6 +2177,8 @@ class _FaChatScreenState extends State<FaChatScreen>
                       glass: true,
                       useBackdropGroup: true,
                       color: tokens.surface1,
+                      tintAmount: .22,
+                      tintOpacity: .5,
                       borderRadius: BorderRadius.circular(18),
                       padding: const EdgeInsets.symmetric(horizontal: 6),
                       child: Column(

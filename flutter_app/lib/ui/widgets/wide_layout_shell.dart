@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 import 'dart:io' show Platform;
 
 import 'package:flutter/services.dart'
@@ -878,13 +879,11 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
 
   Widget _buildNarrowBody(FahColors colors) {
     final base = switch (_section) {
-      _WideShellSection.chats => SafeArea(
-        bottom: false,
-        child: _buildChatPanel(compact: true),
-      ),
-      _WideShellSection.activity => SafeArea(
-        bottom: false,
-        child: _narrowActivityDetailVisible
+      // Top clearance comes from the single narrow-body wrap below — no
+      // per-branch SafeArea (it would double the inset on macOS).
+      _WideShellSection.chats => _buildChatPanel(compact: true),
+      _WideShellSection.activity =>
+        _narrowActivityDetailVisible
             ? ActivityDetailPanel(
                 controller: _activityController,
                 compact: true,
@@ -915,14 +914,21 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
                   ),
                 ],
               ),
-      ),
       _WideShellSection.apps => _buildAppsArea(),
     };
+    // One shared titlebar inset for every narrow section (the wide sidebar
+    // panels are flush with the window edge and clear it themselves —
+    // ChatListPanel adds the same inset when not compact).
+    final inset = math.max(8.0, MediaQuery.paddingOf(context).top);
+    final positioned = Padding(
+      padding: EdgeInsets.only(top: inset),
+      child: base,
+    );
     final presentation = _appPresentation;
-    if (presentation == null) return base;
+    if (presentation == null) return positioned;
     return Stack(
       children: [
-        base,
+        positioned,
         Positioned.fill(child: _buildPresentedApp(presentation)),
       ],
     );
@@ -1023,7 +1029,10 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
                       width: sidebarWidth,
                       child: _desktopPanelFrame(
                         key: const ValueKey('glassSidebarPanel'),
-                        padding: const EdgeInsets.fromLTRB(8, 8, 0, 8),
+                        // Flush with the window's left/top/bottom edges —
+                        // the only gutter is the sidebar/center seam, so no
+                        // scaffold rim shows around the window.
+                        padding: const EdgeInsets.fromLTRB(0, 0, 8, 0),
                         borderRadius: const BorderRadius.horizontal(
                           left: Radius.circular(18),
                         ),
@@ -1056,7 +1065,7 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
                         key: const ValueKey('glassCenterPanel'),
                         // Composer owns its floating margins; its separate
                         // environmental fade reaches the actual window edge.
-                        padding: const EdgeInsets.only(top: 8),
+                        padding: EdgeInsets.zero,
                         tokens: tokens,
                         borderRadius: const BorderRadius.horizontal(
                           right: Radius.circular(18),
