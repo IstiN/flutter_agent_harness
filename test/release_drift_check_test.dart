@@ -56,6 +56,10 @@ ProcessResult _runCheck(Directory dir) => Process.runSync('bash', [
       'GITHUB_REPOSITORY': 'OWNER/REPO',
       'GH_TOKEN': 'stub',
       'FA_DRIFT_LOCAL_DIR': dir.path,
+      // gh-2042 review thread 3: pin the drift-details seam INSIDE the
+      // fixture dir — every failing check in this suite would otherwise
+      // write drift-details.txt into the `dart test` CWD (the repo root).
+      'FA_DRIFT_DETAILS': '${dir.path}/details.txt',
     });
 
 void main() {
@@ -97,6 +101,25 @@ void main() {
     expect(r.exitCode, isNot(0), reason: _out(r));
     expect(_out(r), contains('::error::'));
     expect(_out(r), contains('fa-macos-arm64.tar.gz'));
+    dir.deleteSync(recursive: true);
+  });
+
+  test('_runCheck is hermetic — a failing check leaves no drift-details.txt in the repo root', () {
+    // gh-2042 review thread 3: without FA_DRIFT_DETAILS pinned into the
+    // fixture dir, every failing check wrote drift-details.txt into the
+    // `dart test` CWD — the repo root — dirtying the checkout on every
+    // suite run (the exact path that produced the committed residue).
+    final dir = _fixture('hermetic', {
+      'fa-linux-x64.tar.gz': 'linux-bytes',
+    }, [
+      'fa-linux-x64.tar.gz',
+    ]);
+    File('${dir.path}/fa-linux-x64.tar.gz').writeAsStringSync('REPLACED');
+    final r = _runCheck(dir);
+    expect(r.exitCode, isNot(0), reason: _out(r));
+    expect(File('drift-details.txt').existsSync(), isFalse,
+        reason: '_runCheck must set FA_DRIFT_DETAILS inside the fixture dir — '
+            'a suite run must never write residue into the checkout');
     dir.deleteSync(recursive: true);
   });
 
