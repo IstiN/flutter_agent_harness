@@ -33,6 +33,8 @@ import 'package:fa_ui/fa_ui.dart'
         FaVisualDirection,
         buildFaTheme,
         debugFaGlassAlwaysFake;
+import 'package:liquid_glass_widgets/liquid_glass_widgets.dart'
+    show ProgressiveBlur, ProgressiveBlurDirection;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
@@ -657,12 +659,12 @@ void main() {
       );
       expect(sidebarPanel.glass, isTrue);
       expect(sidebarPanel.color, const Color(0xFF1C1C1E));
-      // iMessage-style chrome band: no blur underlay at all — the list
-      // starts below the chrome, so there is nothing behind it to frost.
-      expect(
+      // The chrome band is a graduated blur: rows scroll beneath the
+      // search/segment glass (constant sigma — the glass is always armed).
+      final underlay = tester.widget<ProgressiveBlur>(
         find.byKey(const ValueKey('chatListChromeUnderlay')),
-        findsNothing,
       );
+      expect(underlay.maxSigma, 18);
       final centerPanel = tester.widget<Container>(
         find.byKey(const ValueKey('glassCenterPanel')),
       );
@@ -858,24 +860,23 @@ void main() {
       reason: 'the chips capsule is real liquid glass',
     );
 
-    // No under-scroll in the sidebar: the list starts strictly below the
-    // chrome band (rows and the scrollbar track never run behind the
-    // search/segment glass — iMessage-style).
-    expect(
+    // The chrome band's glass background is always armed (constant sigma)
+    // and the controls never live inside the blur layer.
+    final underlay = tester.widget<ProgressiveBlur>(
       find.byKey(const ValueKey('chatListChromeUnderlay')),
-      findsNothing,
-      reason: 'the blur underlay is gone with under-scrolling',
     );
-    final chips = tester.getRect(
-      find.byKey(const ValueKey('chatCategoryChips')),
-    );
-    final firstRow = tester.getRect(
-      find.byKey(const ValueKey('chatListScroll')),
-    );
+    expect(underlay.maxSigma, 18);
+    expect(underlay.direction, ProgressiveBlurDirection.topToBottom);
     expect(
-      firstRow.top,
-      greaterThanOrEqualTo(chips.bottom),
-      reason: 'list and its scrollbar start below the selectors',
+      find
+          .descendant(
+            of: find.byKey(const ValueKey('chatListChromeUnderlay')),
+            matching: find.byKey(const ValueKey('chatCategoryChips')),
+          )
+          .evaluate()
+          .isEmpty,
+      isTrue,
+      reason: 'chrome controls must live outside the blur layer',
     );
   });
 

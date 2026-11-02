@@ -14,6 +14,7 @@ import 'package:fa_ui/fa_ui.dart';
 import 'package:liquid_glass_widgets/liquid_glass_widgets.dart'
     show ProgressiveBlur, ProgressiveBlurDirection;
 import 'dart:math' as math;
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
@@ -285,67 +286,49 @@ class _ChatListPanelState extends State<ChatListPanel> {
               _buildCurrentDirectoryHeader(colors, directory),
           ],
         );
-        // iMessage-style: the chrome owns its band and the list starts
-        // BELOW it — rows never scroll under the search/segment glass and
-        // the scrollbar track runs from the selectors down.
+        // The chrome band IS the glass: search + segment controls sit on a
+        // graduated backdrop blur and the list scrolls beneath the whole
+        // band (rows and the scrollbar's tip dissolve behind it). The blur
+        // is always armed; it only shows where content has actually
+        // climbed behind the band.
         return ColoredBox(
           color: _panelColor(colors),
-          child: Padding(
-            padding: EdgeInsets.only(top: titlebarTop),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                _buildChromeSurface(colors, chrome),
-                Expanded(
-                  child: Stack(
-                    children: [
-                      Positioned.fill(
-                        child: ClipRect(
-                          child: AnimatedSwitcher(
-                            duration: FaMotion.duration(
-                              context,
-                              const Duration(milliseconds: 200),
-                            ),
-                            switchInCurve: Curves.easeInOutCubic,
-                            switchOutCurve: Curves.easeInOutCubic,
-                            child: KeyedSubtree(
-                              key:
-                                  widget.bodyKey ??
-                                  ValueKey(
-                                    'chat-directory-${_currentDirectory ?? 'root'}',
-                                  ),
-                              child:
-                                  widget.bodyBuilder?.call(0) ??
-                                  _buildBody(colors),
-                            ),
+          child: Stack(
+            children: [
+              Positioned.fill(
+                child: ClipRect(
+                  child: AnimatedSwitcher(
+                    duration: FaMotion.duration(
+                      context,
+                      const Duration(milliseconds: 200),
+                    ),
+                    switchInCurve: Curves.easeInOutCubic,
+                    switchOutCurve: Curves.easeInOutCubic,
+                    child: KeyedSubtree(
+                      key:
+                          widget.bodyKey ??
+                          ValueKey(
+                            'chat-directory-${_currentDirectory ?? 'root'}',
                           ),
-                        ),
-                      ),
-                      // The glass ceiling: rows (and the scrollbar's very
-                      // top) dissolve into a graduated blur as they ride
-                      // up to the chrome band — they never enter the
-                      // controls themselves.
-                      if (FaDesignTokens.of(context).direction ==
-                          FaVisualDirection.glass)
-                        Positioned(
-                          top: 0,
-                          left: 0,
-                          right: 0,
-                          height: 28,
-                          child: const IgnorePointer(
-                            child: ProgressiveBlur(
-                              key: ValueKey('chatListTopMelt'),
-                              maxSigma: 14,
-                              direction: ProgressiveBlurDirection.topToBottom,
-                              falloff: 1.0,
-                            ),
+                      child:
+                          widget.bodyBuilder?.call(
+                            _chromeHeight() + titlebarTop,
+                          ) ??
+                          _buildBody(
+                            colors,
+                            topPadding: _chromeHeight() + titlebarTop,
                           ),
-                        ),
-                    ],
+                    ),
                   ),
                 ),
-              ],
-            ),
+              ),
+              Positioned(
+                top: titlebarTop,
+                left: 0,
+                right: 0,
+                child: _buildChromeSurface(colors, chrome),
+              ),
+            ],
           ),
         );
       },
@@ -355,17 +338,48 @@ class _ChatListPanelState extends State<ChatListPanel> {
   /// The glass-direction chrome underlay: a graduated backdrop blur
   /// (`ProgressiveBlur`) that is strongest under the search row, eases to
   /// sharp right below the segment toolbar, and reaches a further 28px into
-  /// The chrome band sits on the panel's own surface: no under-scroll, no
-  /// blur underlay — the list starts below it (iMessage-style), so there is
-  /// nothing behind the chrome to frost. The glass direction leaves the
-  /// panel surface (the frame's FaSurface) showing through; opaque
-  /// directions keep the flat panel color.
+  /// The chrome band's background IS glass: a graduated backdrop blur
+  /// spanning the whole band (search + segments) plus a short tail, so
+  /// rows scrolling up dissolve behind the controls themselves. The
+  /// controls never live inside the blur layer. Opaque directions keep
+  /// the flat panel color.
   Widget _buildChromeSurface(FahColors colors, Widget chrome) {
     final tokens = FaDesignTokens.of(context);
     if (tokens.direction != FaVisualDirection.glass) {
       return ColoredBox(color: _panelColor(colors), child: chrome);
     }
-    return chrome;
+    return Stack(
+      children: [
+        Positioned(
+          top: 0,
+          left: 0,
+          right: 0,
+          height: _chromeHeight() + 28,
+          child: const IgnorePointer(
+            child: ProgressiveBlur(
+              key: ValueKey('chatListChromeUnderlay'),
+              maxSigma: 18,
+              direction: ProgressiveBlurDirection.topToBottom,
+              falloff: 1.0,
+            ),
+          ),
+        ),
+        chrome,
+      ],
+    );
+  }
+
+  double _chromeHeight() {
+    final isMac = !kIsWeb && defaultTargetPlatform == TargetPlatform.macOS;
+    final searchHeight = widget.compact
+        ? (isMac ? 82.0 : 54.0)
+        : (isMac ? 104.0 : 58.0);
+    return searchHeight +
+        (widget.headerBottom == null ? 0 : 46) +
+        MessengerFilterControl.height +
+        (_networkLoading ? 1 : 0) +
+        (_showNetworkBanner ? 50 : 0) +
+        (_currentDirectory == null ? 0 : 56);
   }
 
   Widget _buildHeader() {
@@ -588,7 +602,7 @@ class _ChatListPanelState extends State<ChatListPanel> {
     );
   }
 
-  Widget _buildBody(FahColors colors) {
+  Widget _buildBody(FahColors colors, {required double topPadding}) {
     final controller = widget.controller;
     final directory = _currentDirectory;
     bool inCurrentDirectory(ChatListEntry entry) =>
@@ -622,7 +636,10 @@ class _ChatListPanelState extends State<ChatListPanel> {
     final recent = controller.recentEntries.where(inCurrentDirectory).toList();
     return ListView(
       key: const ValueKey('chatListScroll'),
-      padding: EdgeInsets.only(bottom: widget.compact ? 76 : 10),
+      padding: EdgeInsets.only(
+        top: topPadding + 2,
+        bottom: widget.compact ? 76 : 10,
+      ),
       children: [
         if (pinned.isNotEmpty) ...[
           _SectionHeader(label: context.l10n.chatPinned),
