@@ -1,0 +1,283 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-11-02T15:07:56.239Z",
+  "ticketKey": "pr-2046",
+  "headSha": "ccdd0f796dd4b10ae3d603aacbf18515137c1a15",
+  "baseBranch": "main",
+  "reviewDecision": "NONE",
+  "labels": [],
+  "files": {
+    "ci_failures.md": {
+      "hash": "fnv1a64:322b878d3c3c2465",
+      "size": 288
+    },
+    "pr_diff.txt": {
+      "hash": "fnv1a64:55eaa1cd531c7c06",
+      "size": 12302
+    },
+    "pr_discussions.md": {
+      "hash": "fnv1a64:1c0940682a41033b",
+      "size": 31185
+    },
+    "pr_discussions_raw.json": {
+      "hash": "fnv1a64:5f327fb44ae01762",
+      "size": 11081
+    },
+    "pr_info.md": {
+      "hash": "fnv1a64:604a63f66ed2dfdd",
+      "size": 2078
+    },
+    "request.md": {
+      "hash": "fnv1a64:f8f41d6b2efada99",
+      "size": 1740
+    },
+    "review_state.md": {
+      "hash": "fnv1a64:69b0d42b141ae800",
+      "size": 1612
+    },
+    "rework_base_head.txt": {
+      "hash": "fnv1a64:dfeac9a7c9f427bd",
+      "size": 40
+    },
+    "ticket.json": {
+      "hash": "fnv1a64:cdacadbe2c1a0695",
+      "size": 1808
+    },
+    "ticket.md": {
+      "hash": "fnv1a64:f8f41d6b2efada99",
+      "size": 1740
+    }
+  },
+  "comments": [
+    {
+      "id": "PRRT_kwDOTXdlLc6ytztF",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "bin/self_manage.dart:1505",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT: boot/slash update path prints download progress to raw stdout, bypassing the `log` seam**\n\n`_downloadVerifiedArchive` (bin/self_manage.dart:1495) calls `downloadArchiveBody` without `log:` (bin/self_manage.dart:1505), so the default `_say` (raw stdout) is used:\n\n```dart\nfinal outcome = await downloadArchiveBody(\n  client,\n  Uri.parse(url),\n  stallTimeout: stallTimeout,\n  totalTimeout: totalTimeout,\n  headersTimeout: networkTimeout,\n);\n```\n\nEvery other message on the `applyUpdate` paths is routed through the injectable seam (`final log = logLine ?? logUpdateLine;` — bin/self_manage.dart:1326), whose default appends to `~/.fah/logs/fa.log` and whose test override is `logLine`. With this PR the new AC2/AC3 output — `downloading… 4.2/9.5 MB`, `connection lost … resuming (attempt n/m)…`, `downloaded … (… KB/s)` — lands on raw stdout instead:\n\n- **`/update` slash command** (bin/fah_runapp.dart:2247): these lines are written straight to the terminal via `_say` while the TUI session is alive (the old code printed nothing during the download phase), uncordinated with the TUI renderer.\n- **Boot hook** (`applyAndExit`, bin/fah_runapp.dart:406): the download phase leaves no trace in `fa.log`, where the check/swap/restart phases of the same update are logged — the post-mortem trail (issue #1377 convergence work) goes silent exactly for the phase this card makes long and retry-prone.\n\nSuggested fix — route through the same seam (optionally keeping stdout for live visibility):\n\n```dart\nfinal outcome = await downloadArchiveBody(\n  client,\n  Uri.parse(url),\n  log: log, // the same seam every other message on this path uses\n  stallTimeout: stallTimeout,\n  totalTimeout: totalTimeout,\n  headersTimeout: networkTimeout,\n);\n```\n\n(`log` is in scope in `_downloadVerifiedArchive` once threaded down from `applyUpdate`, which already computes it.) The interactive `fa update` path (`_binaryUpdate`, `log: _say`) is correct as-is.\n\nNot a merge blocker: output routing only, no behavioral risk — but worth fixing in this PR since it touches the AC2 requirement it implements."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6ytzxS",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "bin/self_manage.dart:392",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: the terminal \"connection lost\" message drops the underlying error**\n\nIn `_drain`'s catch-all (bin/self_manage.dart:390), the exhausted-resume outcome discards the error object:\n\n```dart\n} catch (_) {\n  received = builder.length;\n  final giveUp = _resumeOrGiveUp(\n    'connection lost at ${_formatBytes(received)} '\n    '($maxResumeAttempts resume attempts exhausted)',\n  );\n```\n\nwhile the headers-phase path in `_open` does keep it (`_resumeOrGiveUp('$error')`, bin/self_manage.dart:331). After a flaky link exhausts the budget mid-body, the user and any bug report see `fa: download failed (network): connection lost at 800 KB (3 resume attempts exhausted)` with no hint whether this was a `Connection reset by peer`, a `ClientException`, or something else — the exact detail needed to debug the corporate-link class of failures this card targets.\n\nTwo related points, one fix:\n\n1. Interpolate the error into the exhausted message: `'connection lost at … ($n resume attempts exhausted): $error'`. (Keep the stable `'connection lost at 800 KB'` prefix if tests match on it — the test at test/cli/self_manage_test.dart:2076 uses `contains`, so appending is safe.)\n2. The bare `catch (_)` also routes programmer errors (`TypeError`/`ArgumentError` thrown from `builder.add`/`onProgress`) into the resume policy, silently retrying them 3× and masking them as a network death. The \"never throws\" contract (review r1) is worth keeping — but consider logging the unexpected type when it is not an `Exception` (e.g. a `_warn`-style line or a `log` note) so a future bug surfaces instead of looking like a bad link day.\n\nPolish — does not block merge."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6ytz0H",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "bin/self_manage.dart:427",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: a stream error delivered after all promised bytes wastes the archive and fails with a pointless 416**\n\n`run`'s completeness check (bin/self_manage.dart:424–432) only runs on a CLEAN drain return:\n\n```dart\nfinal total = totalBytes;\nif (total != null && received < total) { … resume … }\n```\n\nIf the transport errors the stream at/after the promised byte count (a reset racing the final byte, a misbehaving proxy that over-sends then dies), `_drain`'s catch treats it as a mid-body death, burns a resume attempt, and sends `Range: bytes=<received>-`. A well-behaved server answers **416 Range Not Satisfiable**, which `_open` maps to `ArchiveDownloadOutcome.http(416)` — the update fails with `download failed (HTTP 416)` although the complete archive is already sitting in `builder`.\n\nThis is unreachable on well-formed content-length HTTP (dart:io completes the stream at exactly `contentLength` bytes, so an error cannot surface after the boundary), which is why it is a suggestion, not a blocker — but the guard is three lines and removes the whole class:\n\n```dart\n} catch (error) {\n  received = builder.length;\n  final total = totalBytes;\n  if (total != null && received >= total) {\n    elapsed = _wall.elapsed; // every promised byte arrived; ignore the tail error\n    return (null, false);\n  }\n  …\n}\n```\n\nFail-closed today (provenance would never see truncated bytes), so no correctness risk either way — purely wasted work and a misleading error message on a rare race. Optional polish."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6ytz3r",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "bin/self_manage.dart:222",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: `_drainBody` leaks armed timers if `stream.listen` throws synchronously**\n\nbin/self_manage.dart:218–222:\n\n```dart\narmStall();\nsubscription = stream.listen(   // `late final StreamSubscription` — assigned here only\n```\n\nThe stall/total timers are armed (bin/self_manage.dart:203–216) *before* `subscription = stream.listen(...)`, and `subscription` is `late final`. If `listen` ever throws synchronously, the exception propagates out of `_drainBody` before the future is returned; `_drain`'s catch absorbs it and the download proceeds (or fails) normally — but the two already-armed timers stay live. When one fires later, `fail` runs `subscription.cancel()` on the unassigned `late final` and throws `LateInitializationError` as an uncaught async zone error, long after the outcome resolved (stray stack trace on stderr in prod, zone poisoning in tests).\n\nToday's transports (`StreamedResponse` streams from package:http / MockClient) never throw synchronously from `listen`, so this is theoretical hardening, not a bug. Two cheap shapes:\n\n```dart\n// option A: nullable field instead of `late final`\nStreamSubscription<List<int>>? subscription;\n…\nvoid fail(Object error) {\n  if (completer.isCompleted) return;\n  stallTimer?.cancel();\n  totalTimer?.cancel();\n  subscription?.cancel();\n  completer.completeError(error);\n}\n```\n\nor arm the timers inside a try that wraps the `listen` call and calls `fail` on the sync path. Optional polish."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6ytz8d",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "bin/self_manage.dart:264",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: the full public contract doc is duplicated verbatim on the private `_BodyDownload` class**\n\nThe bullet-list contract (\"Headers … stall … total backstop … progress … Range resume … stall is NOT a resume case\") appears twice in bin/self_manage.dart: on `final class _BodyDownload` (starting at line 247) and on the public `downloadArchiveBody` (starting at line 444). Same nine bullets, two copies; when the contract changes (e.g. a future \"stall IS a resume case after N\" policy), both must be edited in lockstep or the private class quietly teaches a different contract than the public API.\n\nSuggestion: keep the full contract on the public function (that is what callers and docs read) and shrink the class doc to its own concern, pointing at the source of truth:\n\n```dart\n/// The mutable state of one archive-body download (gh-2043): the bytes\n/// received so far, the resume budget, and the full size once known.\n/// One attempt = open (headers bound) + drain (stall/backstop bounds).\n/// The loop lives in [run]; each decision is a small method so no single\n/// function carries the whole complexity (crap4dart ratchet).\n/// The behavioral contract (bounds, resume policy, progress) is the one\n/// on [downloadArchiveBody].\nfinal class _BodyDownload {\n```\n\nOptional polish — no behavioral impact."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6yt0Ab",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "test/cli/self_manage_test.dart:1629",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: timing margins in the total-backstop test are tight enough for a CI-load stall to flip the assertion**\n\ntest/cli/self_manage_test.dart:1629–1637 (\"AC1: the raised total backstop bounds a never-finishing trickle\"):\n\n```dart\nsteady(segments, gap: const Duration(milliseconds: 100)),   // 6 chunks → ~600ms\n…\nstallTimeout: const Duration(milliseconds: 300),\ntotalTimeout: const Duration(milliseconds: 400),\n```\n\nThe test's own comment says \"only the total cap can fire\", but that only holds if every inter-chunk gap stays under the 300ms stall bound. A scheduler pause ≥300ms between two timer callbacks (GC, loaded CI shard, container throttling) fires the **stall** bound first; the outcome message then contains `no progress for` instead of `exceeded`, `expect(outcome.failureMessage, contains('exceeded'))` fails, and the test lands in the flake-watch/quarantine pipeline for a timing race, not a real bug.\n\nThe other new tests use ~20× margins (15ms gaps vs 300ms stall); this one uses 3×/4×. Widen the ordering margin so the classification stays deterministic under load:\n\n```dart\nsteady(segments, gap: const Duration(milliseconds: 50)),   // ~300ms total\n…\nstallTimeout: const Duration(milliseconds: 500),\ntotalTimeout: const Duration(milliseconds: 1500),\n```\n\nStill completes in ~1.5s worst case. Optional polish — the suite is green today; this just keeps it green under load."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-02:a3799c1c",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-02",
+      "updatedAt": "2026-11-02",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🚨 **BLOCKING: red CI gate — `unnecessary_brace_in_string_interps`**\n\nThe \"Static gates\" CI job fails on this PR (`dart analyze --fatal-infos --fatal-warnings`, exit 1):\n\n```\ninfo - test/cli/self_manage_test.dart:1845:51 - Unnecessary braces in a string interpolation. Try removing the braces. - unnecessary_brace_in_string_interps\n```\n\nReproduced locally with the same single issue. The line:\n\n```dart\nexpect(request.headers['range'], 'bytes=${chunk}-');\n```\n\n`chunk` is a simple identifier and the next character (`-`) cannot continue an identifier, so the braces are unnecessary:\n\n```dart\nexpect(request.headers['range'], 'bytes=$chunk-');\n```\n\n(For completeness: the `##[error]size budget regression …` lines earlier in the same CI log are expected fixtures printed by `scripts/test_size_manifest.py`'s own test suite — that step passes. The only real gate failure is this lint.)"
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-02:3e7483d8",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-02",
+      "updatedAt": "2026-11-02",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: \"Never throws\" doc overclaims on `downloadArchiveBody`**\n\nThe new doc comment (bin/self_manage.dart:224) states:\n\n```dart\n/// Never throws: every failure is an [ArchiveDownloadOutcome].\n```\n\nbut the implementation only guards `Exception`s:\n\n```dart\n} on TimeoutException catch (error) { … }\non Exception { … }           // stream errors + headers-phase failures\n```\n\nA non-`Exception` `Error` thrown by the transport or the stream (e.g. a `StateError` from a misbehaving client wrapper) would propagate out of `downloadArchiveBody` despite this contract. `applyUpdate` is safe (it has a catch-all `catch (_)` returning `downloadFailed`), but the `fa update` path — `runSelfUpdate` → `_binaryUpdate`/`fallbackZipUpdate` — has no catch-all, so such an error would surface as an unhandled crash with a stack trace instead of the clean `fa: download failed (network): …` message. (Old code had the same `on Exception` posture, so this is not a regression — the claim in the doc is what's new.)\n\nEither tighten the wording (\"never throws for `Exception` failures…\") or catch `Object` in `downloadArchiveBody` and map it to `ArchiveDownloadOutcome.transport`. Optional polish, does not block merge."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-02:9d4d3206",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-02",
+      "updatedAt": "2026-11-02",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Fixed — lint removed, `dart analyze` clean\n\n`test/cli/self_manage_test.dart` now uses the brace-free form exactly as suggested:\n\n```dart\nexpect(request.headers['range'], 'bytes=$chunk-');\n```\n\n(The other Range assertion in the same file — `'bytes=${chunk * 2}-'` — keeps its braces because the interpolation is an expression, which the lint itself leaves alone.)\n\nVerification at CI parity:\n\n- `dart analyze --fatal-infos --fatal-warnings` (full tree, after the CI-matching `dart pub get --directory=office_addin/dart`): **No issues found.**\n- `dart test test/cli/self_manage_test.dart`: **88/88 pass** (84 pre-existing + 4 new regression/edge tests added during this rework).\n\nThe other reds in the same CI run are owned by this PR too and are fixed on this head:\n\n- **CRAP + duplication** (the `guards` leg): `downloadArchiveBody` measured CRAP 21.30 > 12.0 (CC 21 @ 91.2% cov). It is decomposed into small, fully-covered units (`_BodyDownload._open` / `_noteOpen` / `_drain` / `run` + pure helpers `_progressLine`, `_resumeTotalBytes`), verified against the merged shard coverage with `crap4dart analyze` (0.15.0, threshold 12.0 from `crap4dart.yaml`) — no method above the threshold.\n- The `##[error]size budget regression …` lines in the Static-gates log are the expected fixtures of `scripts/test_size_manifest.py`'s own suite (that step passes) — no action, as already noted in this thread."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-02:69a0bf5b",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-02",
+      "updatedAt": "2026-11-02",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Fixed — contract made true, not just reworded\n\nTook the stronger of the two offered options: `downloadArchiveBody` now catches every thrown object and maps it to an outcome, so the \"Never throws\" claim is accurate instead of softened.\n\nWhat changed in `bin/self_manage.dart`:\n\n- Headers phase (`_BodyDownload._open`): `on Exception catch` → bare `catch (error)`. A non-`Exception` `Error` from `client.send` on a first attempt (no bytes to resume from) maps straight to `ArchiveDownloadOutcome.transport('$error')` — the exact wording path you flagged; with bytes and budget left it goes through the bounded resume policy like any transport death.\n- Body phase (`_BodyDownload._drain`): `on Exception` → bare `catch (_)` after the `on TimeoutException` arm. A non-`Exception` `Error` mid-body is a bounded resume-or-transport failure (`connection lost at N … (M resume attempts exhausted)`), never a crash — and a stall stays fail-closed (gh-1377), not a resume case.\n- The doc comment now states the precise contract: *\"Never throws: every failure — an HTTP miss, a stall or backstop timeout, or a transport death (including a non-[Exception] `Error` thrown by the client) — is an [ArchiveDownloadOutcome].\"* The `ArchiveDownloadOutcome.transport` ctor doc mentions the non-`Exception` mapping too.\n\nTDD: two new regression tests reproduce the reported shape before the fix (both failed with `Bad state: …` propagating out of `downloadArchiveBody` on the pre-fix head) and pass now:\n\n- `a non-Exception Error from send is a transport failure` — `send` throws `StateError('misbehaving client wrapper')`; asserts `ok == false`, no HTTP status, message contains the error.\n- `a non-Exception Error mid-body is a bounded transport failure` — the body stream dies with `StateError` after one chunk on both attempts; asserts the bounded transport outcome, `1 resume attempts exhausted`, 2 requests.\n\n`fa update` (`runSelfUpdate` → `_binaryUpdate`/`fallbackZipUpdate`) can no longer surface an unhandled `Error` stack trace from the download path; the suite is 88/88 green."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-02:b1493453",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-02",
+      "updatedAt": "2026-11-02",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT: boot/slash update path prints download progress to raw stdout, bypassing the `log` seam**\n\n`_downloadVerifiedArchive` (bin/self_manage.dart:1495) calls `downloadArchiveBody` without `log:` (bin/self_manage.dart:1505), so the default `_say` (raw stdout) is used:\n\n```dart\nfinal outcome = await downloadArchiveBody(\n  client,\n  Uri.parse(url),\n  stallTimeout: stallTimeout,\n  totalTimeout: totalTimeout,\n  headersTimeout: networkTimeout,\n);\n```\n\nEvery other message on the `applyUpdate` paths is routed through the injectable seam (`final log = logLine ?? logUpdateLine;` — bin/self_manage.dart:1326), whose default appends to `~/.fah/logs/fa.log` and whose test override is `logLine`. With this PR the new AC2/AC3 output — `downloading… 4.2/9.5 MB`, `connection lost … resuming (attempt n/m)…`, `downloaded … (… KB/s)` — lands on raw stdout instead:\n\n- **`/update` slash command** (bin/fah_runapp.dart:2247): these lines are written straight to the terminal via `_say` while the TUI session is alive (the old code printed nothing during the download phase), uncordinated with the TUI renderer.\n- **Boot hook** (`applyAndExit`, bin/fah_runapp.dart:406): the download phase leaves no trace in `fa.log`, where the check/swap/restart phases of the same update are logged — the post-mortem trail (issue #1377 convergence work) goes silent exactly for the phase this card makes long and retry-prone.\n\nSuggested fix — route through the same seam (optionally keeping stdout for live visibility):\n\n```dart\nfinal outcome = await downloadArchiveBody(\n  client,\n  Uri.parse(url),\n  log: log, // the same seam every other message on this path uses\n  stallTimeout: stallTimeout,\n  totalTimeout: totalTimeout,\n  headersTimeout: networkTimeout,\n);\n```\n\n(`log` is in scope in `_downloadVerifiedArchive` once threaded down from `applyUpdate`, which already computes it.) The interactive `fa update` path (`_binaryUpdate`, `log: _say`) is correct as-is.\n\nNot a merge blocker: output routing only, no behavioral risk — but worth fixing in this PR since it touches the AC2 requirement it implements."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-02:01ec9101",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-02",
+      "updatedAt": "2026-11-02",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: the terminal \"connection lost\" message drops the underlying error**\n\nIn `_drain`'s catch-all (bin/self_manage.dart:390), the exhausted-resume outcome discards the error object:\n\n```dart\n} catch (_) {\n  received = builder.length;\n  final giveUp = _resumeOrGiveUp(\n    'connection lost at ${_formatBytes(received)} '\n    '($maxResumeAttempts resume attempts exhausted)',\n  );\n```\n\nwhile the headers-phase path in `_open` does keep it (`_resumeOrGiveUp('$error')`, bin/self_manage.dart:331). After a flaky link exhausts the budget mid-body, the user and any bug report see `fa: download failed (network): connection lost at 800 KB (3 resume attempts exhausted)` with no hint whether this was a `Connection reset by peer`, a `ClientException`, or something else — the exact detail needed to debug the corporate-link class of failures this card targets.\n\nTwo related points, one fix:\n\n1. Interpolate the error into the exhausted message: `'connection lost at … ($n resume attempts exhausted): $error'`. (Keep the stable `'connection lost at 800 KB'` prefix if tests match on it — the test at test/cli/self_manage_test.dart:2076 uses `contains`, so appending is safe.)\n2. The bare `catch (_)` also routes programmer errors (`TypeError`/`ArgumentError` thrown from `builder.add`/`onProgress`) into the resume policy, silently retrying them 3× and masking them as a network death. The \"never throws\" contract (review r1) is worth keeping — but consider logging the unexpected type when it is not an `Exception` (e.g. a `_warn`-style line or a `log` note) so a future bug surfaces instead of looking like a bad link day.\n\nPolish — does not block merge."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-02:67ec3c8f",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-02",
+      "updatedAt": "2026-11-02",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: a stream error delivered after all promised bytes wastes the archive and fails with a pointless 416**\n\n`run`'s completeness check (bin/self_manage.dart:424–432) only runs on a CLEAN drain return:\n\n```dart\nfinal total = totalBytes;\nif (total != null && received < total) { … resume … }\n```\n\nIf the transport errors the stream at/after the promised byte count (a reset racing the final byte, a misbehaving proxy that over-sends then dies), `_drain`'s catch treats it as a mid-body death, burns a resume attempt, and sends `Range: bytes=<received>-`. A well-behaved server answers **416 Range Not Satisfiable**, which `_open` maps to `ArchiveDownloadOutcome.http(416)` — the update fails with `download failed (HTTP 416)` although the complete archive is already sitting in `builder`.\n\nThis is unreachable on well-formed content-length HTTP (dart:io completes the stream at exactly `contentLength` bytes, so an error cannot surface after the boundary), which is why it is a suggestion, not a blocker — but the guard is three lines and removes the whole class:\n\n```dart\n} catch (error) {\n  received = builder.length;\n  final total = totalBytes;\n  if (total != null && received >= total) {\n    elapsed = _wall.elapsed; // every promised byte arrived; ignore the tail error\n    return (null, false);\n  }\n  …\n}\n```\n\nFail-closed today (provenance would never see truncated bytes), so no correctness risk either way — purely wasted work and a misleading error message on a rare race. Optional polish."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-02:eda7db45",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-02",
+      "updatedAt": "2026-11-02",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: `_drainBody` leaks armed timers if `stream.listen` throws synchronously**\n\nbin/self_manage.dart:218–222:\n\n```dart\narmStall();\nsubscription = stream.listen(   // `late final StreamSubscription` — assigned here only\n```\n\nThe stall/total timers are armed (bin/self_manage.dart:203–216) *before* `subscription = stream.listen(...)`, and `subscription` is `late final`. If `listen` ever throws synchronously, the exception propagates out of `_drainBody` before the future is returned; `_drain`'s catch absorbs it and the download proceeds (or fails) normally — but the two already-armed timers stay live. When one fires later, `fail` runs `subscription.cancel()` on the unassigned `late final` and throws `LateInitializationError` as an uncaught async zone error, long after the outcome resolved (stray stack trace on stderr in prod, zone poisoning in tests).\n\nToday's transports (`StreamedResponse` streams from package:http / MockClient) never throw synchronously from `listen`, so this is theoretical hardening, not a bug. Two cheap shapes:\n\n```dart\n// option A: nullable field instead of `late final`\nStreamSubscription<List<int>>? subscription;\n…\nvoid fail(Object error) {\n  if (completer.isCompleted) return;\n  stallTimer?.cancel();\n  totalTimer?.cancel();\n  subscription?.cancel();\n  completer.completeError(error);\n}\n```\n\nor arm the timers inside a try that wraps the `listen` call and calls `fail` on the sync path. Optional polish."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-02:3e152481",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-02",
+      "updatedAt": "2026-11-02",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: the full public contract doc is duplicated verbatim on the private `_BodyDownload` class**\n\nThe bullet-list contract (\"Headers … stall … total backstop … progress … Range resume … stall is NOT a resume case\") appears twice in bin/self_manage.dart: on `final class _BodyDownload` (starting at line 247) and on the public `downloadArchiveBody` (starting at line 444). Same nine bullets, two copies; when the contract changes (e.g. a future \"stall IS a resume case after N\" policy), both must be edited in lockstep or the private class quietly teaches a different contract than the public API.\n\nSuggestion: keep the full contract on the public function (that is what callers and docs read) and shrink the class doc to its own concern, pointing at the source of truth:\n\n```dart\n/// The mutable state of one archive-body download (gh-2043): the bytes\n/// received so far, the resume budget, and the full size once known.\n/// One attempt = open (headers bound) + drain (stall/backstop bounds).\n/// The loop lives in [run]; each decision is a small method so no single\n/// function carries the whole complexity (crap4dart ratchet).\n/// The behavioral contract (bounds, resume policy, progress) is the one\n/// on [downloadArchiveBody].\nfinal class _BodyDownload {\n```\n\nOptional polish — no behavioral impact."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-02:e371e312",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-02",
+      "updatedAt": "2026-11-02",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: timing margins in the total-backstop test are tight enough for a CI-load stall to flip the assertion**\n\ntest/cli/self_manage_test.dart:1629–1637 (\"AC1: the raised total backstop bounds a never-finishing trickle\"):\n\n```dart\nsteady(segments, gap: const Duration(milliseconds: 100)),   // 6 chunks → ~600ms\n…\nstallTimeout: const Duration(milliseconds: 300),\ntotalTimeout: const Duration(milliseconds: 400),\n```\n\nThe test's own comment says \"only the total cap can fire\", but that only holds if every inter-chunk gap stays under the 300ms stall bound. A scheduler pause ≥300ms between two timer callbacks (GC, loaded CI shard, container throttling) fires the **stall** bound first; the outcome message then contains `no progress for` instead of `exceeded`, `expect(outcome.failureMessage, contains('exceeded'))` fails, and the test lands in the flake-watch/quarantine pipeline for a timing race, not a real bug.\n\nThe other new tests use ~20× margins (15ms gaps vs 300ms stall); this one uses 3×/4×. Widen the ordering margin so the classification stays deterministic under load:\n\n```dart\nsteady(segments, gap: const Duration(milliseconds: 50)),   // ~300ms total\n…\nstallTimeout: const Duration(milliseconds: 500),\ntotalTimeout: const Duration(milliseconds: 1500),\n```\n\nStill completes in ~1.5s worst case. Optional polish — the suite is green today; this just keeps it green under load."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-11-02:a0485917",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-11-02",
+      "updatedAt": "2026-11-02",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ Validation CI went red on the head — merge aborted, rework re-queued. (linked issue #2043 re-armed) (approval latch kept — no re-review after fixes)\n🔴 red head 9a730420637df08d231cb76e4e7cd4f88c86f88f — red 1/3 (owner directive 2026-10-04: red yields the slot — after 3 reds on the same head, validation waits for a NEW head)"
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-02:3faf32bd",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-02",
+      "updatedAt": "2026-11-02",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — REQUEST_CHANGES\n\n**Summary**: One 🚨 BLOCKING (red CI — analyzer lint in the new test file); one 💡 suggestion. The gh-2043 design itself is sound: stall bound, Range resume, 200-restart and 206-total derivation are all correctly implemented, and the full `test/cli/self_manage_test.dart` suite passes locally (84/84).\n\n**Key Issues**:\n- 🚨 **Red CI gate**: `dart analyze --fatal-infos --fatal-warnings` exits 1 on `unnecessary_brace_in_string_interps` at `test/cli/self_manage_test.dart:1845:51` (reproduced locally — exactly this 1 issue; the size-budget `##[error]` lines in the log are expected fixtures of `scripts/test_size_manifest.py`, which passes).\n- 💡 `downloadArchiveBody`'s \"Never throws\" doc overclaims — only `on Exception` is caught; a non-`Exception` `Error` still escapes on the `fa update` path (no catch-all there, unlike `applyUpdate`).\n\n**Notes (no action required)**: worst-case body wall clock is now ~4 × 15 min (per-attempt backstop × 1 + 3 resumes) instead of the old 2-min total — documented per-attempt in the PR, and progress lines keep a slow update visible. Resumed bytes still pass the SHA256SUMS signature check, and a stall/reset never reaches provenance (AC4 verified by tests).\n\n**Next Steps**:\n1. Fix the lint: `'bytes=${chunk}-'` → `'bytes=$chunk-'` (test/cli/self_manage_test.dart:1845)\n2. Re-run `dart analyze --fatal-infos --fatal-warnings` + `dart test test/cli/self_manage_test.dart`"
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-11-02:7218e17a",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-11-02",
+      "updatedAt": "2026-11-02",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🧵 Unresolved review threads — rework armed. This machine-authored PR is reviewed (ai_pr_reviewed) but still has open review threads. The rework leg owns open threads: agent:rework is armed on this PR and the rework runner will work through the threads and push. Validation re-runs automatically afterwards, and once the threads are resolved a fresh re-review is armed (review-threads-resolved)."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-11-02:d4dc45a1",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-11-02",
+      "updatedAt": "2026-11-02",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🔄 zombie re-dispatch 5185c4d9d60287ba145b11e3ccae3d484f8eb6a9 — zombie 1/3 at 2026-11-02T13:35:54.425Z\n\nThis head carried no dispatched validation run at all — the dispatch was lost (gh-821). CI was re-dispatched automatically (bounded: 1 per head per hour; 3 in a row on the same head park the PR validation_failed)."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-11-02:387e6310",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-11-02",
+      "updatedAt": "2026-11-02",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🔄 zombie re-dispatch 8d8d260c8ca0bccfd3ef2d5c03994cf3341cec4e — zombie 1/3 at 2026-11-02T13:41:09.206Z\n\nThis head carried no dispatched validation run at all — the dispatch was lost (gh-821). CI was re-dispatched automatically (bounded: 1 per head per hour; 3 in a row on the same head park the PR validation_failed)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-02:d6000902",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-02",
+      "updatedAt": "2026-11-02",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — APPROVE (with suggestions)\n\n**Summary**: gh-2043 is correctly implemented: stall bound (45s), 15-min per-attempt backstop, 2 MB progress lines, HTTP Range resume (max 3 retries, 200-restart and 206-total derivation), applied to the tar.gz, zip fallback and boot-update paths; all 5 ACs have tests and the two prior review threads (analyzer lint, \"never throws\" contract) are verified fixed on this head. Verified locally: `dart analyze --fatal-infos --fatal-warnings` clean, `dart test test/cli/self_manage_test.dart` 88/88, CRAP max 9.00 (< 12.0 ratchet), format clean, GitHub checks on head 8d8d260 all SUCCESS (Quality gate included).\n\n**Key Issues**:\n- ⚠️ **1 IMPORTANT**: `_downloadVerifiedArchive` (bin/self_manage.dart:1505) does not route `downloadArchiveBody` output through `applyUpdate`'s injectable `log` seam — boot/slash-update progress/resume lines hit raw stdout (mid-TUI on `/update`) while every other message on that path goes to `fa.log`.\n- 💡 **5 SUGGESTIONS**: exhausted-message drops the underlying error; missing \"bytes complete despite stream error\" guard (416 edge); `_drainBody` sync-throw leaves armed timers + unassigned `late` subscription; public contract doc duplicated on private `_BodyDownload`; tight timing margins in the total-backstop test.\n\n**Next Steps**:\n1. Pass `log: log` in `_downloadVerifiedArchive`'s `downloadArchiveBody` call (or print to both stdout and `log`).\n2. Optional polish per the 5 suggestion threads — none block merge."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-11-02:e46cf500",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-11-02",
+      "updatedAt": "2026-11-02",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ silent-update failure — attempt 1 at 2026-11-02T14:54:41.603Z"
+    }
+  ]
+}
