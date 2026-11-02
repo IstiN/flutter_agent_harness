@@ -883,6 +883,49 @@ void main() {
     });
   });
 
+  group('UT-ESC-11 — multi-chunk escalation stays one pass (AC9/IT-ESC-2)', () {
+    test('a range needing several chunked summarizer calls reports exactly '
+        'one escalation record', () async {
+      final (session, state, hiddenIds) = await boundarySession(
+        hiddenPairs: 3,
+        keptPairs: 2,
+        margin: 0,
+      );
+      final hooks = _Hooks();
+      final entries = await session.getEntries();
+      var summarizerCalls = 0;
+      final compactor = StructuredCompactor(
+        session: session,
+        state: state,
+        window: 800,
+        settings: _boundarySettings,
+        judge: (_) async => judgeAnswerFor(entries, hiddenIds),
+        summarize: (request) {
+          summarizerCalls++;
+          return Future.value(SummarizationResult.success('CKPT chunk'));
+        },
+        checkpointPrompt: 'P',
+        hooks: hooks,
+        protectLastN: 2,
+        // A tiny summarizer window forces the #729 chunked fold:
+        // budget = max(128 - 200, 64) = 64 tokens per chunk.
+        summarizerWindow: 128,
+      );
+      final ok = await compactor.run();
+      expect(ok, isTrue);
+      expect(summarizerCalls, greaterThanOrEqualTo(2),
+          reason: 'the range must actually need multiple chunks');
+      final escalations = hooks.passes
+          .where((p) => p.kind == 'checkpoint-escalation')
+          .toList();
+      expect(escalations, hasLength(1),
+          reason: 'N summarizer calls fold into ONE escalation pass record');
+      expect(escalations.single.ok, isTrue);
+      expect(escalations.single.marginTokens, 0);
+      expect(escalations.single.bandTokens, 200);
+    });
+  });
+
   group('UT-ESC-10 — observability is content-safe', () {
     test('the escalation report carries margin/band/outcome and never '
         'ledger content in its diagnostics', () async {
