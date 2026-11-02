@@ -46,7 +46,7 @@ Directory _fixture(
   return dir;
 }
 
-ProcessResult _runCheck(Directory dir) => Process.runSync(
+ProcessResult _runCheck(Directory dir, {String? path}) => Process.runSync(
   'bash',
   ['scripts/release_drift_check.sh', 'v1.2.3'],
   environment: {
@@ -57,14 +57,13 @@ ProcessResult _runCheck(Directory dir) => Process.runSync(
     // fixture dir — every failing check in this suite would otherwise
     // write drift-details.txt into the `dart test` CWD (the repo root).
     'FA_DRIFT_DETAILS': '${dir.path}/details.txt',
+    // gh-2042 review thread 9 (CI fix): a PATH-prefixed stub dir lets a
+    // test replace `sha256sum` for the script invocation only — pinning
+    // the script's catch-all logic independently of the host coreutils
+    // implementation (uutils vs GNU parse malformed manifests differently).
+    if (path != null) 'PATH': '$path:${Platform.environment['PATH']}',
   },
 );
-
-String _sha256Of(File f) {
-  final res = Process.runSync('sha256sum', [f.path]);
-  if (res.exitCode != 0) fail('sha256sum failed: ${res.stderr}');
-  return (res.stdout as String).split(' ').first;
-}
 
 String _details(Directory dir) =>
     File('${dir.path}/details.txt').readAsStringSync();
@@ -397,23 +396,35 @@ void main() {
     'a sha-check failure with zero FAILED lines never passes silently (catch-all)',
     () {
       // gh-2042 review thread 9: the contract is "any hit = drift, exit 1",
-      // but the FAILED/failed matcher only promotes named failures. A
-      // tab-separated manifest still sed-extracts ([:space:]] matches TAB) so
-      // the set-diff stays clean, while `sha256sum -c` exits 1 with only
-      // "no properly formatted checksum lines found" — a corrupted manifest
-      // must never get the ✅ success line.
+      // but the FAILED/failed matcher only promotes named failures. The
+      // motivating shape (discovered empirically): a tab-separated manifest
+      // still sed-extracts ([[:space:]] matches TAB) so the set-diff stays
+      // clean, while `sha256sum -c` fails naming nothing — a corrupted
+      // manifest must never get the ✅ success line.
+      //
+      // The failure itself is stubbed on PATH rather than encoded in the
+      // manifest bytes: the tab shape exits non-zero under uutils coreutils
+      // but GNU coreutils (CI) parses it as a VALID line (digest matches →
+      // exit 0), so the fixture would be implementation-sensitive. Stubbing
+      // pins THIS script's catch-all logic against both implementations.
       final dir = _fixture(
-        'tab-manifest',
+        'silent-sha-failure',
         {'fa-linux-x64.tar.gz': 'linux-bytes'},
         ['fa-linux-x64.tar.gz'],
       );
-      final hash = _sha256Of(File('${dir.path}/fa-linux-x64.tar.gz'));
-      File(
-        '${dir.path}/SHA256SUMS',
-      ).writeAsStringSync('$hash\tfa-linux-x64.tar.gz\n');
-      final r = _runCheck(dir);
+      final stubby = Directory.systemTemp.createTempSync('sha-stub-');
+      File('${stubby.path}/sha256sum').writeAsStringSync(
+        '#!/bin/sh\n'
+        '# The no-named-failure failure class: sha-check exits non-zero\n'
+        '# and prints NO line containing FAILED.\n'
+        'echo "sha256sum: SHA256SUMS: no properly formatted checksum lines found" >&2\n'
+        'exit 1\n',
+      );
+      Process.runSync('chmod', ['+x', '${stubby.path}/sha256sum']);
+      final r = _runCheck(dir, path: stubby.path);
       expect(r.exitCode, 1, reason: _out(r));
       expect(_details(dir), contains('without a named FAILED line'));
+      stubby.deleteSync(recursive: true);
       dir.deleteSync(recursive: true);
     },
   );
