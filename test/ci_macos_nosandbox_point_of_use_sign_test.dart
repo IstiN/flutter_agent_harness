@@ -27,11 +27,20 @@
 //        pinned identity (signed=true shape) so ad-hoc/local runs are
 //        untouched;
 //   AC2  build_macos_nosandbox.sh pre-flights the pinned identity via
-//        `security find-identity -v -p codesigning` — the same search
-//        list codesign reads — and fails loud with the ci-sign
-//        remediation hint BEFORE `flutter build macos --release`
-//        (the gh-1798 point-of-use principle: "immune to any gap
-//        length by construction").
+//        `security find-identity -p codesigning` — VALID identities
+//        only (no `-v`: an expired identity still prints its SHA-1
+//        under `-v`, tagged with its failure reason, which would let
+//        the exact "expired cert" case this guard exists to catch slip
+//        through into the 5-minute build) — and fails loud with the
+//        ci-sign remediation hint BEFORE
+//        `flutter build macos --release` (the gh-1798 point-of-use
+//        principle: "immune to any gap length by construction");
+//   AC3  an EXPIRED pinned identity is rejected by the pre-flight
+//        before the build is spent: `find-identity -v` lists invalid
+//        identities with their SHA-1 (CSSMERR_TP_CERT_EXPIRED et al.),
+//        so the guard must consult the valid-only listing — proven
+//        with a stubbed `security` that exposes the identity ONLY in
+//        its `-v` mode and a stubbed `flutter` that must never run.
 import 'dart:io';
 
 import 'package:test/test.dart';
@@ -97,18 +106,60 @@ void main() {
     final flutterBuild = script.indexOf('flutter build macos --release');
     expect(flutterBuild, greaterThan(-1));
 
-    final preflight = script.indexOf(
-      'security find-identity -v -p codesigning',
-    );
-    expect(preflight, greaterThan(-1), reason: 'the script must verify '
-        'the pinned identity is resolvable BEFORE the multi-minute '
-        'flutter build — a miss must fail in ~1s with the remediation '
-        'hint, not after a 5-minute build (gh-2039)');
-    expect(preflight, lessThan(flutterBuild), reason: 'the pre-flight '
+    // The pre-flight lives in the gh-2039 block, between its marker
+    // comment and the readonly APP line. Isolate THAT block — the
+    // script's earlier local-development-identity discovery legitimately
+    // still uses `-v` (it reads identity NAMES, which only the verbose
+    // listing carries) and must not satisfy assertions meant for the
+    // pre-flight.
+    final blockStart = script.indexOf('# gh-2039 pre-flight');
+    final blockEnd = script.indexOf('readonly APP=');
+    expect(blockStart, greaterThan(-1), reason: 'the gh-2039 pre-flight '
+        'block must exist — the script must verify the pinned identity '
+        'is resolvable BEFORE the multi-minute flutter build — a miss '
+        'must fail in ~1s with the remediation hint, not after a '
+        '5-minute build (gh-2039)');
+    expect(blockEnd, greaterThan(blockStart));
+    final preflightBlock = script.substring(blockStart, blockEnd);
+    expect(blockEnd, lessThan(flutterBuild), reason: 'the pre-flight '
         'must precede flutter build macos --release');
 
+    // gh-2039 rework review thread 1: `find-identity -v` lists INVALID
+    // identities too (each tagged with its failure reason, e.g.
+    // CSSMERR_TP_CERT_EXPIRED) — an expired pinned identity would
+    // match the pre-flight and slip into the 5-minute build. The
+    // pre-flight must consult the VALID-only listing (`-p codesigning`
+    // without `-v`), which is also the closer approximation of what
+    // codesign will accept.
+    expect(
+      preflightBlock,
+      contains('security find-identity -p codesigning'),
+    );
+    expect(
+      preflightBlock.contains('find-identity -v'),
+      isFalse,
+      reason: 'the pre-flight must NOT use `find-identity -v` — the '
+          'verbose listing includes invalid identities (expired, '
+          'malformed) whose SHA-1 still matches the pinned value, so '
+          'the "expired" case the error text promises to catch would '
+          'slip through (gh-2039 review thread 1)',
+    );
+
+    // Secondary nit, same thread: codesign --sign <SHA1> and ci-sign's
+    // own validity check are case-insensitive — the pre-flight must be
+    // no stricter than its consumers.
+    expect(
+      preflightBlock,
+      contains('grep -Fiq'),
+      reason: 'the pinned-identity match must be case-insensitive: '
+          'codesign --sign and ci-sign resolve the fingerprint '
+          'case-insensitively (scripts/ci-sign uses grep -qi)',
+    );
+
     // The failure path must be actionable: name the ci-sign fix, not a
-    // bare exit.
+    // bare exit — and describe the command the operator can actually
+    // run (the valid-only listing, not the `-v` variant the fix
+    // removed).
     final errorLine = script
         .split('\n')
         .firstWhere((l) => l.contains('::error::'), orElse: () => '');
@@ -117,6 +168,80 @@ void main() {
       contains('ci-sign install fa-macos'),
       reason: 'the pre-flight error must point at the exact remediation '
           '(the same re-assert the workflow runs at point of use)',
+    );
+    expect(
+      errorLine,
+      contains("security find-identity -p codesigning"),
+      reason: 'the error text must name the command the guard actually '
+          'runs — a `-v` reference in the message would document a '
+          'check the script no longer performs',
+    );
+  });
+
+  test('AC3 — an EXPIRED pinned identity is rejected by the pre-flight BEFORE the build (find-identity -v lists invalid identities too)', () {
+    // gh-2039 review thread 1, executable form. `security find-identity
+    // -v -p codesigning` lists invalid identities as well, each with
+    // its failure reason and — crucially — its SHA-1. An expired pinned
+    // identity therefore MATCHED the pre-flight grep, the guard waved
+    // the leg through, and codesign still died ~5 minutes later — the
+    // exact failure mode this pre-flight exists to compress to ~1s.
+    // The stub below exposes the identity ONLY in the `-v` listing
+    // (tagged CSSMERR_TP_CERT_EXPIRED); the valid-only listing is
+    // empty, exactly what codesign would act on.
+    final tmp = Directory.systemTemp.createTempSync('nosandbox-preflight-');
+    addTearDown(() => tmp.deleteSync(recursive: true));
+    final bin = '${tmp.path}/bin';
+    Directory(bin).createSync();
+    const fakeSha = '43AEC254DEADBEEF0123456789ABCDEF01234567';
+    File('$bin/security').writeAsStringSync('''
+#!/usr/bin/env bash
+case " \$* " in
+  *" -v "*)
+    printf '  1) $fakeSha "Apple Distribution: Fa (TEAM123)" (CSSMERR_TP_CERT_EXPIRED)\n'
+    printf '     1 identities found\n'
+    ;;
+  *)
+    printf 'No identities found\n'
+    ;;
+esac
+exit 0
+''');
+    // The build must never be reached when the pre-flight rejects the
+    // identity — the marker records any flutter invocation.
+    final flutterMarker = '${tmp.path}/flutter-was-invoked';
+    File('$bin/flutter').writeAsStringSync('''
+#!/usr/bin/env bash
+echo "flutter \$*" >> '$flutterMarker'
+exit 42
+''');
+    Process.runSync('chmod', ['+x', '$bin/security', '$bin/flutter']);
+
+    final r = Process.runSync(
+      'bash',
+      [File(scriptPath).absolute.path],
+      environment: {
+        'PATH': '$bin:${Platform.environment['PATH']}',
+        'HOME': tmp.path,
+        'FA_CODE_SIGN_IDENTITY': fakeSha,
+        'FA_DEVELOPMENT_TEAM': 'TEAM123',
+      },
+    );
+
+    expect(r.exitCode, isNot(0), reason: 'an expired identity must fail '
+        'the pre-flight (stdout+stderr: ${r.stdout}${r.stderr})');
+    expect(
+      '${r.stdout}${r.stderr}',
+      contains('::error::'),
+      reason: 'the rejection must be the loud pre-flight error, not a '
+              'later build failure',
+    );
+    expect(
+      File(flutterMarker).existsSync(),
+      isFalse,
+      reason: 'the pre-flight must abort BEFORE `flutter build macos '
+          '--release` — the expired identity slipped through the `-v` '
+          'listing and the multi-minute build was spent anyway '
+          '(gh-2039 review thread 1)',
     );
   });
 }

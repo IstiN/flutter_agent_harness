@@ -74,9 +74,19 @@ done < <(git config --local --name-only --get-regexp 'http\..*\.extraheader' 2>/
 # above then no-ops: `--get-regexp` LISTS the key (git resolves it
 # through the include) but the key only EXISTS in the included file, so
 # the repo-local unset fails silently under `|| true`. Remove every
-# includeIf entry pointing at a credentials config file and delete the
+# include entry pointing at a credentials config file and delete the
 # file — exactly what the runner's post-job cleanup does ("Removing
 # includeIf entries pointing to credentials config files").
+#
+# The outer sweep covers the `gitdir:` conditional form, its
+# case-insensitive `gitdir/i:` variant, and plain non-conditional
+# `include.path` (gh-2039 rework review): a checkout variant writing
+# those shapes would otherwise convert "strip + green" into a red
+# release leg (Guard 1c still fails the leg closed for any residual
+# header, but the strip should have done the job). The inner
+# value-scoped `case`/`--unset-all` below guarantees only
+# git-credentials-*.config-referencing values are touched, so widening
+# the sweep cannot over-strip a benign include.
 stripped_v7=0
 while IFS= read -r include_key; do
   [ -n "$include_key" ] || continue
@@ -90,7 +100,7 @@ while IFS= read -r include_key; do
         ;;
     esac
   done < <(git config --local --get-all "$include_key" 2>/dev/null || true)
-done < <(git config --local --name-only --get-regexp 'includeIf\.gitdir:' 2>/dev/null || true)
+done < <(git config --local --name-only --get-regexp 'includeIf\.gitdir(/i)?:|^include\.path$' 2>/dev/null || true)
 if [ "$stripped_v7" -eq 1 ]; then
   echo "stripped checkout v7 persisted credentials (includeIf entries + git-credentials config files)"
 fi

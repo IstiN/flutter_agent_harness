@@ -41,6 +41,7 @@ class RaceMinter {
     required this.committerDate,
     this.pushLands = true,
     this.checkoutV7 = false,
+    this.v7VariantShapes = false,
   });
 
   final Directory root;
@@ -60,6 +61,19 @@ class RaceMinter {
   /// The credentials file the v7 fixture writes (deleted by the mint's
   /// strip, mirroring the runner post-job cleanup).
   String? credentialsFile;
+
+  /// A BENIGN included config file (PR review thread 3): referenced by
+  /// include entries the strip must NOT touch — only
+  /// git-credentials-*.config values are in scope. The v7creds tests
+  /// assert it survives the strip with its referencing entries intact.
+  String? benignIncludeFile;
+
+  /// PR review thread 2: ALSO persist the credentials through the
+  /// variant include shapes — the case-insensitive `includeIf.gitdir/i:`
+  /// conditional form and a plain non-conditional `include.path` — both
+  /// pointing at the SAME credentials file, plus benign counterparts so
+  /// the value-scoped strip is proven against the widened sweep.
+  final bool v7VariantShapes;
 
   late final String work;
   late final int gitCalls;
@@ -111,6 +125,29 @@ class RaceMinter {
         'includeIf.gitdir:$work/.git/worktrees/*.path',
         credsFile,
       ]);
+      // PR review thread 3 negative fixture: a benign include a
+      // value-scoped strip must leave alone.
+      final benignDir = '${root.path}/benign-include-$name';
+      Directory(benignDir).createSync(recursive: true);
+      final benignFile = '$benignDir/not-credentials.config';
+      File(benignFile).writeAsStringSync('[user]\n\tname = dev\n');
+      benignIncludeFile = benignFile;
+      git([
+        'config',
+        'includeIf.gitdir:$work/.git/benign.path',
+        benignFile,
+      ]);
+      if (v7VariantShapes) {
+        // PR review thread 2: the variant checkout shapes — the
+        // case-insensitive `gitdir/i:` conditional form and a plain
+        // `include.path` — carrying BOTH the credentials file and the
+        // benign counterpart. The widened sweep must strip exactly the
+        // credentials values.
+        git(['config', 'includeIf.gitdir/i:$work/.git.path', credsFile]);
+        git(['config', 'includeIf.gitdir/i:$work/.git/benign.path', benignFile]);
+        git(['config', 'include.path', credsFile]);
+        git(['config', '--add', 'include.path', benignFile]);
+      }
     } else {
       git([
         'config',
@@ -275,6 +312,7 @@ Future<(RaceMinter, String)> _singleMinter(
   String name, {
   String? attachOrigin,
   bool checkoutV7 = false,
+  bool v7VariantShapes = false,
 }) async {
   final root = Directory.systemTemp.createTempSync('mint-$name-');
   final realGit = resolveRealGit();
@@ -325,6 +363,7 @@ Future<(RaceMinter, String)> _singleMinter(
     committerDate: '2026-01-01T00:00:01Z',
     pushLands: name == 'noland' ? false : true,
     checkoutV7: checkoutV7,
+    v7VariantShapes: v7VariantShapes,
   );
   m.buildFixture(sha);
   return (m, sha);
@@ -608,12 +647,45 @@ void main() {
       '--get-regexp',
       'includeIf\\.gitdir:',
     ], workingDirectory: m.work);
+    final remainingIncludes = (includeKeys.stdout as String)
+        .trim()
+        .split('\n')
+        .where((l) => l.isNotEmpty)
+        .toList();
     expect(
-      (includeKeys.stdout as String).trim(),
-      isEmpty,
-      reason: 'includeIf entries pointing at git-credentials files must '
-          'be removed from the repo-local config '
-          '(stderr: ${includeKeys.stderr})',
+      remainingIncludes.every((k) => k.contains('benign')),
+      isTrue,
+      reason: 'sanity: the only includeIf keys allowed to survive are '
+          'the benign ones (actual: $remainingIncludes)',
+    );
+    expect(
+      remainingIncludes,
+      hasLength(1),
+      reason: 'the credentials-pointing includeIf entries must be '
+          'removed from the repo-local config while the benign entry '
+          'survives (stderr: ${includeKeys.stderr}; '
+          'actual: $remainingIncludes)',
+    );
+    // PR review thread 3: the strip must be VALUE-scoped. A regression
+    // that drops the value regex and unset-alls the entire key (or
+    // removes unrelated includeIf entries — e.g. a developer-configured
+    // include on a self-hosted persistent workspace) must fail here.
+    final benign = Process.runSync(realGit, [
+      'config',
+      '--local',
+      '--get-all',
+      'includeIf.gitdir:${m.work}/.git/benign.path',
+    ], workingDirectory: m.work);
+    expect(
+      (benign.stdout as String).trim(),
+      isNotEmpty,
+      reason: 'the strip must be value-scoped — benign includes survive',
+    );
+    expect(
+      File(m.benignIncludeFile!).existsSync(),
+      isTrue,
+      reason: 'only git-credentials-*.config files may be deleted — the '
+          'benign included config file must still exist',
     );
     // The push must still land with the URL credentials (the strip must
     // not break the mint itself): the train check passed above AND the
@@ -623,6 +695,136 @@ void main() {
       '--exit-code',
       m.origin,
       'refs/tags/v9.9.4',
+    ]);
+    expect(ref.exitCode, 0, reason: 'the minted tag must be on the remote');
+  });
+
+  test('gh-2039 rework: Guard 1b strips the includeIf.gitdir/i: variant and a plain include.path pointing at a credentials file — benign values on the widened shapes survive', () async {
+    // PR review thread 2: the sweep regexp `includeIf\.gitdir:` only
+    // matched the exact `gitdir:` conditional form. A checkout variant
+    // writing the case-insensitive `gitdir/i:` form, or a plain
+    // non-conditional `include.path`, was skipped by the strip. Not a
+    // credential-leak (Guard 1c fails the leg closed when the header
+    // still resolves), but it converts "strip + green" into a red
+    // release leg for exactly those shapes. The widened sweep must
+    // strip the credentials-pointing values on ALL shapes while the
+    // value-scoping keeps benign values — including benign values on
+    // the SAME widened keys.
+    final (m, _) = await _singleMinter(
+      'v7variant',
+      checkoutV7: true,
+      v7VariantShapes: true,
+    );
+    final realGit = resolveRealGit();
+    String effectiveExtraheader() {
+      final r = Process.runSync(realGit, [
+        'config',
+        '--get',
+        'http.https://github.com/.extraheader',
+      ], workingDirectory: m.work);
+      return r.stdout.toString().trim();
+    }
+
+    // Fixture sanity: the header resolves through the include chain —
+    // the pre-fix failure shape.
+    expect(
+      effectiveExtraheader(),
+      'AUTHORIZATION: basic am9iLXRva2Vu',
+      reason: 'the variant fixture must carry a RESOLVING extraheader '
+          '(nothing stripped yet)',
+    );
+
+    m.withEnv(const {'GH_STUB_TRAIN_RUNNING': '1'});
+    await m.run('v9.9.2');
+    expect(m.exitCode, 0, reason: m.output);
+    expect(m.output, contains('✅ tag train for v9.9.2 started'));
+    expect(
+      m.output,
+      contains(
+        'stripped checkout v7 persisted credentials (includeIf entries + git-credentials config files)',
+      ),
+      reason: 'the widened sweep must recognize the variant shapes as '
+          'its own work, not silently skip them',
+    );
+    expect(
+      effectiveExtraheader(),
+      isEmpty,
+      reason: 'the extraheader must no longer resolve after the strip '
+          '(gh-2039: this is the credential GitHub sees on the wire)',
+    );
+    expect(
+      File(m.credentialsFile!).existsSync(),
+      isFalse,
+      reason: 'the referenced credentials config file must be deleted',
+    );
+
+    // The credentials-pointing variant entries must be GONE.
+    for (final key in [
+      'includeIf.gitdir/i:${m.work}/.git.path',
+    ]) {
+      final gone = Process.runSync(realGit, [
+        'config',
+        '--local',
+        '--get-all',
+        key,
+      ], workingDirectory: m.work);
+      expect(
+        gone.exitCode,
+        isNot(0),
+        reason: 'the gitdir/i: credentials entry ($key) must be stripped '
+                '(stdout: ${gone.stdout})',
+      );
+    }
+    final includePath = Process.runSync(realGit, [
+      'config',
+      '--local',
+      '--get-all',
+      'include.path',
+    ], workingDirectory: m.work);
+    final includePathValues = (includePath.stdout as String)
+        .trim()
+        .split('\n')
+        .where((l) => l.isNotEmpty)
+        .toList();
+    expect(
+      includePathValues.any((v) => v.contains('git-credentials-')),
+      isFalse,
+      reason: 'the include.path credentials value must be stripped '
+          '(actual values: $includePathValues)',
+    );
+    expect(
+      includePathValues,
+      hasLength(1),
+      reason: 'the benign include.path value must survive the widened '
+          'sweep — the strip stays value-scoped even on the new shapes '
+          '(actual values: $includePathValues)',
+    );
+
+    // Benign values on the widened shapes survive, file untouched.
+    final benignGitdirI = Process.runSync(realGit, [
+      'config',
+      '--local',
+      '--get-all',
+      'includeIf.gitdir/i:${m.work}/.git/benign.path',
+    ], workingDirectory: m.work);
+    expect(
+      (benignGitdirI.stdout as String).trim(),
+      isNotEmpty,
+      reason: 'the benign gitdir/i: include must survive',
+    );
+    expect(
+      File('${m.root.path}/benign-include-v7variant/not-credentials.config')
+          .existsSync(),
+      isTrue,
+      reason: 'the benign included config file must NOT be deleted',
+    );
+
+    // The mint still works end-to-end.
+    final ref = Process.runSync(realGit, [
+      'ls-remote',
+      '--exit-code',
+      m.origin,
+      'refs/tags/v9.9.2',
     ]);
     expect(ref.exitCode, 0, reason: 'the minted tag must be on the remote');
   });
