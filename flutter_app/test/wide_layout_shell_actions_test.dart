@@ -1090,10 +1090,19 @@ void main() {
       // The Chats home shows the selected filter as icon+text.
       expect(chip('All').properties.selected, isTrue);
       expect(find.text('All'), findsOneWidget);
-      expect(
-        tester.getRect(find.byKey(const ValueKey('chatFilter-all'))).width,
-        greaterThan(36),
+      final allRect = tester.getRect(
+        find.byKey(const ValueKey('chatFilter-all')),
       );
+      expect(allRect.width, greaterThan(36));
+      // Selected segments center the icon+label group (segmented control).
+      final allIcon = tester.getRect(
+        find.descendant(
+          of: find.byKey(const ValueKey('chatFilter-all')),
+          matching: find.byIcon(Icons.inbox_outlined),
+        ),
+      );
+      final allText = tester.getRect(find.text('All'));
+      expect((allIcon.left + allText.right) / 2, closeTo(allRect.center.dx, 1));
       for (final section in const ['activity', 'apps']) {
         final action = sectionAction(section);
         expect(tester.getRect(action).height, 32);

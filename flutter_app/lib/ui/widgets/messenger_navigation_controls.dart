@@ -762,7 +762,10 @@ class MessengerCategoryChip extends StatelessWidget {
                       mainAxisSize: expanded || compact
                           ? MainAxisSize.max
                           : MainAxisSize.min,
-                      mainAxisAlignment: iconOnly
+                      // A text-led selected segment centers the icon+label
+                      // group like a segmented control; the dormant expanded
+                      // standalone label stays start-aligned.
+                      mainAxisAlignment: iconOnly || (textLed && compact)
                           ? MainAxisAlignment.center
                           : MainAxisAlignment.start,
                       children: [
@@ -779,14 +782,26 @@ class MessengerCategoryChip extends StatelessWidget {
                           width: iconOnly || dense ? 0 : (compact ? 4 : 6),
                         ),
                         if (expanded || compact)
-                          Expanded(
-                            child: AnimatedContainer(
-                              duration: duration,
-                              curve: Curves.easeInOutCubic,
-                              width: iconOnly ? 0 : null,
-                              child: animatedLabel,
-                            ),
-                          )
+                          // Flexible (not Expanded) lets the centered text-led
+                          // group hug its label instead of filling the slot.
+                          if (textLed && compact)
+                            Flexible(
+                              child: AnimatedContainer(
+                                duration: duration,
+                                curve: Curves.easeInOutCubic,
+                                width: iconOnly ? 0 : null,
+                                child: animatedLabel,
+                              ),
+                            )
+                          else
+                            Expanded(
+                              child: AnimatedContainer(
+                                duration: duration,
+                                curve: Curves.easeInOutCubic,
+                                width: iconOnly ? 0 : null,
+                                child: animatedLabel,
+                              ),
+                            )
                         else
                           animatedLabel,
                         if (!dense)

@@ -392,8 +392,10 @@ class _ChatListPanelState extends State<ChatListPanel> {
       color: tokens.surface1.withValues(alpha: .78),
       child: const SizedBox.expand(),
     );
+    // A tall frost band whose alpha holds near the toolbar and then decays:
+    // rows melt into the panel instead of hitting a hard 24px cut.
     return SizedBox(
-      height: 24,
+      height: 72,
       child: ClipRect(
         child: ShaderMask(
           key: const ValueKey('chatListScrollUnderFade'),
@@ -401,7 +403,8 @@ class _ChatListPanelState extends State<ChatListPanel> {
           shaderCallback: (bounds) => const LinearGradient(
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
-            colors: [Colors.white, Colors.transparent],
+            colors: [Colors.white, Colors.white, Colors.transparent],
+            stops: [0.0, 0.35, 1.0],
           ).createShader(bounds),
           child: BackdropGroup.of(context) != null
               ? BackdropFilter.grouped(filter: filter, child: frost)
