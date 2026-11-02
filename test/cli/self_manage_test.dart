@@ -1088,6 +1088,36 @@ void main() {
     );
 
     test(
+      'review r3: the download output rides the logLine seam, not stdout',
+      () async {
+        final target = File('${temp.path}/fa')..writeAsStringSync('old');
+        final log = <String>[];
+        final outcome = await applyUpdate(
+          currentVersion: '0.1.0',
+          launchArgs: const [],
+          statePath: '${temp.path}/update-state.json',
+          detectInstall: () => binaryInstall(target.path),
+          newClient: () => releaseClient(),
+          runProcess: extractingRunProcess,
+          spawn: (_, _) async => true,
+          pem: _testPem,
+          logLine: log.add,
+        );
+        expect(outcome, ApplyUpdateOutcome.applied);
+        // The body-phase output — the final speed line, and any
+        // progress/resume lines — must go through the same injectable
+        // seam as every other update message: the boot hook logs it to
+        // fa.log, the /update slash command renders it in-session
+        // (review r3). Raw-stdout output never reaches this capture.
+        expect(
+          log.any((line) => line.startsWith('downloaded ')),
+          isTrue,
+          reason: 'the final download line must use the logLine seam',
+        );
+      },
+    );
+
+    test(
       'is up to date when the latest tag equals the running version',
       () async {
         var requests = 0;
@@ -1566,6 +1596,15 @@ void main() {
       throw StateError('client wrapper blew up');
     }
 
+    /// An ENDLESS trickle — one [chunk] every [gap] forever, never done:
+    /// the never-finishing-link shape only the total backstop can end.
+    Stream<List<int>> trickle(List<int> chunk, Duration gap) async* {
+      while (true) {
+        await Future<void>.delayed(gap);
+        yield chunk;
+      }
+    }
+
     http.Client streamingClient(
       http.StreamedResponse Function(http.BaseRequest request) handler,
     ) => MockClient.streaming((request, _) async => handler(request));
@@ -1618,25 +1657,25 @@ void main() {
     test(
       'AC1: the raised total backstop bounds a never-finishing trickle',
       () async {
-        final body = filler(chunk * 6);
-        final segments = [
-          for (var i = 0; i < 6; i++) body.sublist(chunk * i, chunk * (i + 1)),
-        ];
-        // 100ms gaps never trip a 300ms stall bound, but the whole body
-        // needs ~600ms — only the total cap can fire.
+        // An ENDLESS trickle — a chunk every 20ms, never done — so ONLY
+        // the total cap can end it, with no nominal completion time to
+        // race. The 20ms gaps sit 25× under the 500ms stall bound: a
+        // loaded scheduler (GC, a throttled CI shard) cannot flip the
+        // classification into a stall misfire (review r8 — the old
+        // 100ms-gap vs 300ms-stall shape was a 3× margin).
         final client = streamingClient(
           (_) => http.StreamedResponse(
-            steady(segments, gap: const Duration(milliseconds: 100)),
+            trickle(filler(4096), const Duration(milliseconds: 20)),
             200,
-            contentLength: body.length,
+            contentLength: 1 << 30, // far more than any trickle delivers.
           ),
         );
         final outcome = await downloadArchiveBody(
           client,
           Uri.parse(archiveUrl),
           log: (_) {},
-          stallTimeout: const Duration(milliseconds: 300),
-          totalTimeout: const Duration(milliseconds: 400),
+          stallTimeout: const Duration(milliseconds: 500),
+          totalTimeout: const Duration(milliseconds: 600),
         );
         expect(outcome.ok, isFalse);
         expect(outcome.statusCode, isNull);
@@ -2325,5 +2364,157 @@ void main() {
       );
       expect(outcome, ApplyUpdateOutcome.downloadFailed);
     });
+
+    test(
+      'review r4: the exhausted-resume message names the underlying error',
+      () async {
+        var requests = 0;
+        final client = streamingClient((_) {
+          requests++;
+          return http.StreamedResponse(
+            errorsAfter([filler(chunk)]),
+            200,
+            contentLength: chunk * 99,
+          );
+        });
+        final outcome = await downloadArchiveBody(
+          client,
+          Uri.parse(archiveUrl),
+          log: (_) {},
+          stallTimeout: const Duration(seconds: 5),
+          maxResumeAttempts: 1,
+        );
+        expect(outcome.ok, isFalse);
+        expect(outcome.statusCode, isNull);
+        expect(outcome.failureMessage, contains('connection lost at 400 KB'));
+        expect(outcome.failureMessage, contains('1 resume attempts exhausted'));
+        // The transport error survives into the message: a bug report
+        // must be able to tell a reset from a wrapper blow-up.
+        expect(outcome.failureMessage, contains('client wrapper blew up'));
+        expect(requests, 2);
+      },
+    );
+
+    test(
+      'review r4: a non-Exception body error is called out as non-network',
+      () async {
+        final lines = <String>[];
+        final client = streamingClient(
+          (_) => http.StreamedResponse(
+            errorsAfter([filler(chunk)]),
+            200,
+            contentLength: chunk * 99,
+          ),
+        );
+        final outcome = await downloadArchiveBody(
+          client,
+          Uri.parse(archiveUrl),
+          log: lines.add,
+          stallTimeout: const Duration(seconds: 5),
+          maxResumeAttempts: 0,
+        );
+        expect(outcome.ok, isFalse);
+        // A programmer error must surface in the log seam, not
+        // masquerade as a bad-link day.
+        expect(
+          lines.any(
+            (line) => line.contains('non-network') &&
+                line.contains('StateError'),
+          ),
+          isTrue,
+          reason: 'the unexpected error type must be named in the log',
+        );
+      },
+    );
+
+    test(
+      'review r5: a stream error after the promised bytes still completes',
+      () async {
+        final body = filler(chunk * 3);
+        var requests = 0;
+        final client = streamingClient((request) {
+          requests++;
+          if (requests == 1) {
+            // Delivers EVERY promised byte, then errors instead of
+            // closing cleanly — the reset racing the final byte.
+            return http.StreamedResponse(
+              errorsAfter([
+                body.sublist(0, chunk),
+                body.sublist(chunk, chunk * 2),
+                body.sublist(chunk * 2),
+              ]),
+              200,
+              contentLength: body.length,
+            );
+          }
+          // A well-behaved server answers 416: `bytes=<received>-` names
+          // no remaining range. Reaching this request at all means the
+          // complete archive was treated as a mid-body death — the bug.
+          return bytesResponse(const [], status: 416);
+        });
+        final outcome = await downloadArchiveBody(
+          client,
+          Uri.parse(archiveUrl),
+          log: (_) {},
+          stallTimeout: const Duration(seconds: 5),
+        );
+        expect(
+          outcome.ok,
+          isTrue,
+          reason: 'the complete archive is already in the builder',
+        );
+        expect(outcome.bytes, body);
+        expect(requests, 1, reason: 'no resume may be spent on a full body');
+      },
+    );
+
+    test(
+      'review r6: a synchronous listen throw leaves no armed timer behind',
+      () async {
+        final client = streamingClient(
+          (_) => http.StreamedResponse(
+            const _SyncThrowStream(),
+            200,
+            contentLength: chunk * 99,
+          ),
+        );
+        final outcome = await downloadArchiveBody(
+          client,
+          Uri.parse(archiveUrl),
+          log: (_) {},
+          stallTimeout: const Duration(milliseconds: 50),
+          totalTimeout: const Duration(seconds: 5),
+          maxResumeAttempts: 0,
+        );
+        expect(outcome.ok, isFalse);
+        expect(outcome.statusCode, isNull);
+        expect(
+          outcome.failureMessage,
+          contains('listen exploded synchronously'),
+        );
+        // Outlive the armed stall timer: pre-fix, its late fire cancelled
+        // an unassigned `late final` subscription and crashed the zone
+        // with a LateInitializationError as an uncaught async error.
+        await Future<void>.delayed(const Duration(milliseconds: 200));
+      },
+    );
   });
+}
+
+/// A body stream whose `listen` throws SYNCHRONOUSLY (review r6): the
+/// timers are armed before `stream.listen(...)` assigns the `late final`
+/// subscription, so a sync throw must be absorbed by the drain's fail
+/// path — never leave the timers armed over an unassigned subscription.
+class _SyncThrowStream extends Stream<List<int>> {
+  const _SyncThrowStream();
+
+  @override
+  StreamSubscription<List<int>> listen(
+    void Function(List<int> event)? onData, {
+    Function? onError,
+    void Function()? onDone,
+    bool? cancelOnError,
+  }) {
+    throw StateError('listen exploded synchronously');
+  }
 }

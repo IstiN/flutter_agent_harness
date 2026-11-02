@@ -182,7 +182,10 @@ Future<void> _drainBody(
   required void Function(int receivedNow) onProgress,
 }) {
   final completer = Completer<void>();
-  late final StreamSubscription<List<int>> subscription;
+  // Nullable, not `late final` (review r6): if `stream.listen` throws
+  // synchronously, `fail` runs before any assignment — a `late final`
+  // read there would crash the zone long after the outcome resolved.
+  StreamSubscription<List<int>>? subscription;
   Timer? stallTimer;
   Timer? totalTimer;
 
@@ -190,7 +193,7 @@ Future<void> _drainBody(
     if (completer.isCompleted) return;
     stallTimer?.cancel();
     totalTimer?.cancel();
-    subscription.cancel();
+    subscription?.cancel();
     completer.completeError(error);
   }
 
@@ -209,58 +212,50 @@ Future<void> _drainBody(
     });
   }
 
-  // The raised total backstop (was the 2-minute wall clock, gh-2043).
-  totalTimer = Timer(totalTimeout, () {
-    fail(
-      TimeoutException(
-        'download exceeded ${_formatSpan(totalTimeout)}',
-        totalTimeout,
-      ),
+  try {
+    // The raised total backstop (was the 2-minute wall clock, gh-2043).
+    totalTimer = Timer(totalTimeout, () {
+      fail(
+        TimeoutException(
+          'download exceeded ${_formatSpan(totalTimeout)}',
+          totalTimeout,
+        ),
+      );
+    });
+    armStall();
+    subscription = stream.listen(
+      (chunk) {
+        armStall();
+        builder.add(chunk);
+        onProgress(builder.length);
+      },
+      onError: fail,
+      onDone: () {
+        if (completer.isCompleted) return;
+        stallTimer?.cancel();
+        totalTimer?.cancel();
+        completer.complete();
+      },
+      cancelOnError: true,
     );
-  });
-  armStall();
-  subscription = stream.listen(
-    (chunk) {
-      armStall();
-      builder.add(chunk);
-      onProgress(builder.length);
-    },
-    onError: fail,
-    onDone: () {
-      if (completer.isCompleted) return;
-      stallTimer?.cancel();
-      totalTimer?.cancel();
-      completer.complete();
-    },
-    cancelOnError: true,
-  );
+  } on Object catch (error) {
+    // A synchronous `listen` throw (review r6) must unwind through the
+    // same fail path: the armed timers are cancelled and the error
+    // becomes the drain failure, not a stray timer firing later.
+    fail(error);
+  }
   return completer.future;
 }
 
-/// Downloads a release-archive body with the gh-2043 bounds:
-///
-/// - Headers (the status line) must land within [headersTimeout] — the
-///   metadata bound, unchanged (AC4).
-/// - The body aborts when NO bytes arrive for [stallTimeout] — a slow
-///   but steady link keeps receiving, a hung one dies with a
-///   "no progress for Ns" message (AC1).
-/// - [totalTimeout] stays as a generous per-attempt backstop for a
-///   trickle that never stalls but never finishes (the old 2-minute
-///   total wall clock, raised; AC1).
-/// - Progress prints every [progressStep] bytes (`downloading… 4.2/9.5
-///   MB`) and a final line reports elapsed + average speed (AC2), via
-///   [log] (default [_say]).
-/// - A mid-body transport error (reset) or a clean close below the
-///   promised length retries with an HTTP `Range` from the received
-///   offset at most [maxResumeAttempts] times; a server that answers
-///   200 to a Range request restarts from zero (AC3). A stall is NOT a
-///   resume case — fail-closed (gh-1377).
-///
 /// The mutable state of one archive-body download (gh-2043): the bytes
 /// received so far, the resume budget, and the full size once known.
 /// One attempt = open (headers bound) + drain (stall/backstop bounds).
 /// The loop lives in [run]; each decision is a small method so no single
 /// function carries the whole complexity (crap4dart ratchet).
+///
+/// The behavioral contract — the bounds, the resume policy, the
+/// progress output, "never throws" — is the one on the public
+/// [downloadArchiveBody] and is NOT duplicated here (review r7).
 final class _BodyDownload {
   _BodyDownload({
     required this.say,
@@ -387,11 +382,28 @@ final class _BodyDownload {
         ArchiveDownloadOutcome.timedOut(error.message ?? 'timed out'),
         false,
       );
-    } catch (_) {
+    } catch (error) {
       received = builder.length;
+      final total = totalBytes;
+      if (total != null && received >= total) {
+        // Every promised byte is already in the builder (review r5): a
+        // tail error — a reset racing the final byte, a proxy that
+        // over-sends then dies — must not waste the complete archive on
+        // a resume a well-behaved server answers 416.
+        return (null, false);
+      }
+      if (error is! Exception) {
+        // A non-network failure (a TypeError from a callback, a
+        // StateError from a misbehaving wrapper) must surface, not
+        // masquerade as a bad-link day (review r4.2).
+        say(
+          'download body failed with a non-network '
+          '${error.runtimeType}: $error',
+        );
+      }
       final giveUp = _resumeOrGiveUp(
         'connection lost at ${_formatBytes(received)} '
-        '($maxResumeAttempts resume attempts exhausted)',
+        '($maxResumeAttempts resume attempts exhausted): $error',
       );
       return (giveUp, giveUp == null);
     }
@@ -1368,6 +1380,7 @@ Future<ApplyUpdateOutcome> applyUpdate({
       tag: tag,
       archive: archive,
       pem: pem,
+      log: log,
       networkTimeout: networkTimeout,
       stallTimeout: stallTimeout,
       totalTimeout: totalTimeout,
@@ -1497,6 +1510,7 @@ Future<({ApplyUpdateOutcome? stop, List<int> bytes})> _downloadVerifiedArchive({
   required String tag,
   required String archive,
   required String pem,
+  required void Function(String message) log,
   required Duration networkTimeout,
   required Duration stallTimeout,
   required Duration totalTimeout,
@@ -1505,6 +1519,10 @@ Future<({ApplyUpdateOutcome? stop, List<int> bytes})> _downloadVerifiedArchive({
   final outcome = await downloadArchiveBody(
     client,
     Uri.parse(url),
+    // The same seam every other message on this path uses (review r3):
+    // the boot hook logs the body phase to fa.log, the /update slash
+    // command renders it in-session — never raw stdout.
+    log: log,
     stallTimeout: stallTimeout,
     totalTimeout: totalTimeout,
     headersTimeout: networkTimeout,
