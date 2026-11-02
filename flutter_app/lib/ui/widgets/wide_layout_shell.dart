@@ -695,6 +695,8 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
       filterActions: compact || collapsed
           ? const <Widget>[]
           : _buildChatFilterActions(),
+      filterSelectedExtraIndex: compact || collapsed ? null : _section.index,
+      filterSelectionLabelOnly: !(compact || collapsed),
       searchController: switch (_section) {
         _WideShellSection.chats => null,
         _WideShellSection.activity => _activitySearchController,
@@ -1345,8 +1347,9 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
           },
           selected: _section == section,
           compact: true,
-          iconOnly: true,
-          selectionBackground: false,
+          iconOnly: _section != section,
+          labelOnly: _section == section,
+          selectionBackground: true,
           onTap: () => _selectSection(section),
         ),
     ];

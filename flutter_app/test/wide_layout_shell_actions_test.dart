@@ -27,7 +27,6 @@ import 'package:fa/ui/widgets/wide_layout_shell.dart';
 import 'package:fa_ui/fa_ui.dart'
     show
         FaChatHost,
-        FaDesignTokens,
         FaLogo,
         FaSurface,
         FaVisualDirection,
@@ -268,7 +267,7 @@ void main() {
 
     expect(find.byType(ChatScreen), findsOneWidget);
     expect(find.byType(AppLauncherScreen), findsNothing);
-    expect(find.text('Chats'), findsNothing);
+    expect(find.text('Chats'), findsOneWidget);
     expect(find.text('Search chats'), findsOneWidget);
     expect(find.byKey(const ValueKey('messengerNewButton')), findsOneWidget);
     expect(find.text('SESSIONS'), findsNothing);
@@ -352,16 +351,20 @@ void main() {
         final appsAction = find.byKey(
           const ValueKey('messengerPrimaryNav-apps'),
         );
-        final appsIcon = tester.widget<Icon>(
-          find.descendant(
+        expect(
+          find.descendant(of: appsAction, matching: find.text('Apps')),
+          findsOneWidget,
+        );
+        final appsSemantics = tester.widget<Semantics>(
+          find.ancestor(
             of: appsAction,
-            matching: find.byIcon(Icons.grid_view_rounded),
+            matching: find.byWidgetPredicate(
+              (widget) =>
+                  widget is Semantics && widget.properties.button == true,
+            ),
           ),
         );
-        expect(
-          appsIcon.color,
-          FaDesignTokens.of(tester.element(appsAction)).accent,
-        );
+        expect(appsSemantics.properties.selected, isTrue);
       },
     );
   }
@@ -384,16 +387,19 @@ void main() {
     expect(find.byType(AppLauncherScreen), findsOneWidget);
     expect(FaChatHost.jsAppNavigatorKey?.currentState, isNotNull);
     final appsAction = find.byKey(const ValueKey('messengerPrimaryNav-apps'));
-    final appsIcon = tester.widget<Icon>(
-      find.descendant(
+    expect(
+      find.descendant(of: appsAction, matching: find.text('Apps')),
+      findsOneWidget,
+    );
+    final appsSemantics = tester.widget<Semantics>(
+      find.ancestor(
         of: appsAction,
-        matching: find.byIcon(Icons.grid_view_rounded),
+        matching: find.byWidgetPredicate(
+          (widget) => widget is Semantics && widget.properties.button == true,
+        ),
       ),
     );
-    expect(
-      appsIcon.color,
-      FaDesignTokens.of(tester.element(appsAction)).accent,
-    );
+    expect(appsSemantics.properties.selected, isTrue);
   });
 
   testWidgets('Apps full-window brand opens the shared profile', (
@@ -905,11 +911,20 @@ void main() {
             }
             expect(all.width, greaterThan(32), reason: reason);
             for (final rect in [unread, agents, channels]) {
-              expect(rect.width, inInclusiveRange(20, 36), reason: reason);
+              expect(rect.width, inInclusiveRange(12, 36), reason: reason);
             }
-            expect(unread.left - all.right, MessengerFilterControl.gap);
-            expect(agents.left - unread.right, MessengerFilterControl.gap);
-            expect(channels.left - agents.right, MessengerFilterControl.gap);
+            expect(
+              unread.left - all.right,
+              inInclusiveRange(1, MessengerFilterControl.gap),
+            );
+            expect(
+              agents.left - unread.right,
+              inInclusiveRange(1, MessengerFilterControl.gap),
+            );
+            expect(
+              channels.left - agents.right,
+              inInclusiveRange(1, MessengerFilterControl.gap),
+            );
             final chats = tester.getRect(
               find.byKey(const ValueKey('messengerPrimaryNav-chats')),
             );
@@ -924,19 +939,19 @@ void main() {
             );
             expect(
               chats.left - channels.right,
-              closeTo(MessengerFilterControl.gap, .001),
+              inInclusiveRange(1, MessengerFilterControl.gap),
             );
             expect(
               activity.left - chats.right,
-              closeTo(MessengerFilterControl.gap, .001),
+              inInclusiveRange(1, MessengerFilterControl.gap),
             );
             expect(
               apps.left - activity.right,
-              closeTo(MessengerFilterControl.gap, .001),
+              inInclusiveRange(1, MessengerFilterControl.gap),
             );
             expect(
               network.left - apps.right,
-              closeTo(MessengerFilterControl.gap, .001),
+              inInclusiveRange(1, MessengerFilterControl.gap),
             );
             expect(network.center.dy, closeTo(all.center.dy, .001));
           }
@@ -1011,7 +1026,7 @@ void main() {
           of: find.byKey(const ValueKey('chatFilter-all')),
           matching: find.byIcon(Icons.inbox_outlined),
         ),
-        findsOneWidget,
+        findsNothing,
       );
       final agentsChip = find.byKey(const ValueKey('chatFilter-agents'));
       expect(
@@ -1033,11 +1048,69 @@ void main() {
         find.byKey(const ValueKey('wideShellPrimaryNavigation')),
         findsNothing,
       );
-      for (final section in const ['activity', 'apps']) {
-        final action = find.byKey(ValueKey('messengerPrimaryNav-$section'));
+      // Both segmented groups follow the same rule: the selected destination
+      // is text-led, quiet destinations stay icon-only.
+      Finder sectionAction(String section) =>
+          find.byKey(ValueKey('messengerPrimaryNav-$section'));
+      String sectionLabel(String section) => switch (section) {
+        'chats' => 'Chats',
+        'activity' => 'Activity',
+        _ => 'Apps',
+      };
+      for (final section in const ['chats', 'activity', 'apps']) {
+        final action = sectionAction(section);
         expect(tester.getRect(action).height, 32);
-        expect(tester.getRect(action).width, inInclusiveRange(20, 36));
+        if (section == 'chats') {
+          expect(tester.getRect(action).width, greaterThan(36));
+          expect(
+            find.descendant(of: action, matching: find.text('Chats')),
+            findsOneWidget,
+          );
+        } else {
+          expect(tester.getRect(action).width, inInclusiveRange(12, 36));
+          expect(
+            find.descendant(
+              of: action,
+              matching: find.text(sectionLabel(section)),
+            ),
+            findsNothing,
+          );
+        }
       }
+      await tester.pumpAndSettle();
+
+      for (final selected in const ['activity', 'apps', 'chats']) {
+        await tester.tap(sectionAction(selected));
+        await tester.pumpAndSettle();
+        expect(
+          find.descendant(
+            of: sectionAction(selected),
+            matching: find.text(sectionLabel(selected)),
+          ),
+          findsOneWidget,
+          reason: selected,
+        );
+        expect(tester.getRect(sectionAction(selected)).width, greaterThan(36));
+        for (final quiet in const ['chats', 'activity', 'apps']) {
+          if (quiet == selected) continue;
+          expect(
+            find.descendant(
+              of: sectionAction(quiet),
+              matching: find.text(sectionLabel(quiet)),
+            ),
+            findsNothing,
+            reason: quiet,
+          );
+          expect(
+            tester.getRect(sectionAction(quiet)).width,
+            inInclusiveRange(12, 36),
+            reason: quiet,
+          );
+        }
+        expect(tester.takeException(), isNull, reason: selected);
+      }
+      await tester.tap(sectionAction('chats'));
+      await tester.pumpAndSettle();
 
       for (final label in const ['Unread', 'Agents', 'Channels', 'All']) {
         await tester.tap(

@@ -57,6 +57,8 @@ class ChatListPanel extends StatefulWidget {
     this.onCollapse,
     this.headerBottom,
     this.filterActions = const <Widget>[],
+    this.filterSelectedExtraIndex,
+    this.filterSelectionLabelOnly = false,
     this.searchController,
     this.searchFocusNode,
     this.searchHint,
@@ -90,6 +92,15 @@ class ChatListPanel extends StatefulWidget {
   /// Additional icon-only actions inside the filter toolbar, after the
   /// category segments and before the network selector.
   final List<Widget> filterActions;
+
+  /// The selected [filterActions] slot, if that action group carries its own
+  /// selection (the wide shell's Chats/Activity/Apps destinations). It shares
+  /// the toolbar's width budget with the selected category.
+  final int? filterSelectedExtraIndex;
+
+  /// Text-led selected categories: the label replaces the icon while quiet
+  /// categories remain icon-only. Used by the dense shared sidebar toolbar.
+  final bool filterSelectionLabelOnly;
 
   /// Optional shared-shell search state. Defaults retain the standalone chat
   /// list behaviour; section bodies can replace only the list below chrome.
@@ -414,6 +425,7 @@ class _ChatListPanelState extends State<ChatListPanel> {
             _filterChip(value, _filterLabel(value), filter, animateLabels),
         ],
         extraActions: widget.filterActions,
+        selectedExtraIndex: widget.filterSelectedExtraIndex,
         trailing: _networkFilter(colors),
       ),
     );
@@ -445,6 +457,7 @@ class _ChatListPanelState extends State<ChatListPanel> {
       expanded: value == selected,
       compact: true,
       iconOnly: value != selected,
+      labelOnly: widget.filterSelectionLabelOnly && value == selected,
       animateLabel: animateLabels,
       selectionBackground: false,
       onTap: () => widget.controller.setFilter(value),

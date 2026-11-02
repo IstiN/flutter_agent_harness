@@ -238,17 +238,23 @@ class MessengerTextTabGroup extends StatelessWidget {
   }
 }
 
-/// One horizontal category/network control. The selected category receives
-/// the remaining width for its label; all other actions keep fixed hit rects.
+/// One horizontal category/network control. Selected segments receive the
+/// remaining width for their labels; all other actions keep fixed hit rects.
 class MessengerFilterControl extends StatelessWidget {
   const MessengerFilterControl({
     super.key,
     required this.categories,
     required this.selectedIndex,
     this.extraActions = const <Widget>[],
+    this.selectedExtraIndex,
     required this.trailing,
   }) : assert(categories.length > 0),
-       assert(selectedIndex >= 0 && selectedIndex < categories.length);
+       assert(selectedIndex >= 0 && selectedIndex < categories.length),
+       assert(
+         selectedExtraIndex == null ||
+             (selectedExtraIndex >= 0 &&
+                 selectedExtraIndex < extraActions.length),
+       );
 
   static const double height = 44;
   static const double gap = 4;
@@ -258,6 +264,12 @@ class MessengerFilterControl extends StatelessWidget {
 
   /// Icon-only actions sharing the same fixed slots as unselected categories.
   final List<Widget> extraActions;
+
+  /// The selected extra action, if that action group carries its own
+  /// selection (for example the shell's section destinations). It shares the
+  /// remaining width with the selected category.
+  final int? selectedExtraIndex;
+
   final Widget trailing;
 
   @override
@@ -282,23 +294,45 @@ class MessengerFilterControl extends StatelessWidget {
               );
               const curve = Curves.easeInOutCubic;
               final count = categories.length;
-              final fixedCount = count + extraActions.length;
-              final gap = constraints.maxWidth >= 176
+              // The trailing selector is a control too: it occupies the final
+              // fixed slot and therefore participates in the width budget.
+              final controlCount = count + extraActions.length + 1;
+              final hasSelectedExtra = selectedExtraIndex != null;
+              final expandedCount = hasSelectedExtra ? 2 : 1;
+              final fixedCount = controlCount - expandedCount;
+              final gap = constraints.maxWidth >= 300
                   ? MessengerFilterControl.gap
-                  : 2.0;
-              // Preserve a usable selected icon+label segment when section
-              // actions join the toolbar. Unselected icons share the remaining
-              // fixed slots, capped at the original 36px desktop geometry.
+                  : 1.0;
+              // Two segmented groups can be selected at once (a chat filter
+              // and a shell section). Keep both text-led slots usable while
+              // quiet icon slots retain a fixed hit rect. The section label
+              // gets the larger share so localized names stay readable.
               const minSelectedWidth = 56.0;
+              const minSelectedExtraWidth = 84.0;
+              final minimumExpandedWidth =
+                  minSelectedWidth +
+                  (hasSelectedExtra ? minSelectedExtraWidth : 0);
               final slot =
                   ((constraints.maxWidth -
-                              gap * fixedCount -
-                              minSelectedWidth) /
+                              gap * (controlCount - 1) -
+                              minimumExpandedWidth) /
                           fixedCount)
-                      .clamp(0.0, 36.0);
-              final selectedWidth =
-                  (constraints.maxWidth - gap * fixedCount - slot * fixedCount)
+                      .clamp(12.0, 36.0);
+              final expandedBudget =
+                  (constraints.maxWidth -
+                          gap * (controlCount - 1) -
+                          slot * fixedCount)
                       .clamp(0.0, constraints.maxWidth);
+              final selectedWidth = hasSelectedExtra
+                  ? expandedBudget *
+                        minSelectedWidth /
+                        (minSelectedWidth + minSelectedExtraWidth)
+                  : expandedBudget;
+              final selectedExtraWidth = hasSelectedExtra
+                  ? expandedBudget *
+                        minSelectedExtraWidth /
+                        (minSelectedWidth + minSelectedExtraWidth)
+                  : 0.0;
               final positions = <({double left, double width})>[];
               var left = 0.0;
               for (var index = 0; index < count; index++) {
@@ -306,10 +340,13 @@ class MessengerFilterControl extends StatelessWidget {
                 positions.add((left: left, width: width));
                 left += width + gap;
               }
-              final extraPositions = <double>[];
+              final extraPositions = <({double left, double width})>[];
               for (var index = 0; index < extraActions.length; index++) {
-                extraPositions.add(left);
-                left += slot + gap;
+                final width = index == selectedExtraIndex
+                    ? selectedExtraWidth
+                    : slot;
+                extraPositions.add((left: left, width: width));
+                left += width + gap;
               }
               final selected = positions[selectedIndex];
               return Stack(
@@ -348,10 +385,12 @@ class MessengerFilterControl extends StatelessWidget {
                       child: categories[index],
                     ),
                   for (var index = 0; index < extraActions.length; index++)
-                    Positioned(
+                    AnimatedPositioned(
                       key: ValueKey('chatFilterExtraActionSlot-$index'),
-                      left: extraPositions[index],
-                      width: slot,
+                      duration: duration,
+                      curve: curve,
+                      left: extraPositions[index].left,
+                      width: extraPositions[index].width,
                       top: 0,
                       bottom: 0,
                       child: extraActions[index],
@@ -583,6 +622,7 @@ class MessengerCategoryChip extends StatelessWidget {
     this.expanded = false,
     this.compact = false,
     this.iconOnly = false,
+    this.labelOnly = false,
     this.animateLabel = false,
     this.selectionBackground = true,
   });
@@ -603,6 +643,10 @@ class MessengerCategoryChip extends StatelessWidget {
 
   /// Icon-only segments still expose their label through tooltip/semantics.
   final bool iconOnly;
+
+  /// Text-only segments: the label replaces the icon. Selected compact
+  /// segments use this so two selected labels fit beside the quiet icons.
+  final bool labelOnly;
 
   /// Restarts the two directional label fades only for a real filter change.
   final bool animateLabel;
@@ -642,6 +686,19 @@ class MessengerCategoryChip extends StatelessWidget {
             : Opacity(opacity: opacity, child: labelText),
       ),
     );
+    final targetIconOpacity = labelOnly ? 0.0 : 1.0;
+    Widget animatedIcon(double size) => TweenAnimationBuilder<double>(
+      tween: Tween(
+        begin: animateLabel ? 1 - targetIconOpacity : targetIconOpacity,
+        end: targetIconOpacity,
+      ),
+      duration: duration,
+      curve: Curves.easeInOutCubic,
+      builder: (context, opacity, child) => opacity <= .001
+          ? const SizedBox.shrink()
+          : Opacity(opacity: opacity, child: child),
+      child: Icon(icon, size: size, color: foreground),
+    );
     return Tooltip(
       message: label,
       child: Semantics(
@@ -670,24 +727,27 @@ class MessengerCategoryChip extends StatelessWidget {
               height: 32,
               child: LayoutBuilder(
                 builder: (context, constraints) {
-                  if (constraints.maxWidth < 16) {
+                  if (constraints.maxWidth < 12) {
                     return const SizedBox.shrink();
                   }
                   // AnimatedPositioned changes the slot before the label's
                   // directional fade completes. Keep the intermediate narrow
                   // slot overflow-free instead of clipping a full-density row.
                   final dense = constraints.maxWidth < 32;
+                  final denseIconSize = constraints.maxWidth < 14 ? 10.0 : 12.0;
                   return Padding(
                     padding: iconOnly
                         ? EdgeInsets.zero
                         : EdgeInsets.symmetric(
-                            horizontal: dense ? 2 : (compact ? 6 : 14),
+                            horizontal: dense
+                                ? 0
+                                : (labelOnly ? 4 : (compact ? 6 : 14)),
                           ),
                     child: Row(
-                      mainAxisSize: expanded
+                      mainAxisSize: expanded || compact
                           ? MainAxisSize.max
                           : MainAxisSize.min,
-                      mainAxisAlignment: iconOnly
+                      mainAxisAlignment: iconOnly || labelOnly
                           ? MainAxisAlignment.center
                           : MainAxisAlignment.start,
                       children: [
@@ -695,15 +755,15 @@ class MessengerCategoryChip extends StatelessWidget {
                         // the directional fade. Balance it so an icon-only glyph
                         // remains centered both at rest and mid-transition.
                         if (iconOnly) const Spacer(),
-                        Icon(
-                          icon,
-                          size: dense ? 12 : (compact ? 15 : 16),
-                          color: foreground,
+                        animatedIcon(
+                          dense ? denseIconSize : (compact ? 15 : 16),
                         ),
                         AnimatedContainer(
                           duration: duration,
                           curve: Curves.easeInOutCubic,
-                          width: iconOnly || dense ? 0 : (compact ? 4 : 6),
+                          width: iconOnly || labelOnly || dense
+                              ? 0
+                              : (compact ? 4 : 6),
                         ),
                         if (expanded || compact)
                           Expanded(
