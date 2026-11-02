@@ -452,10 +452,6 @@ void main() {
           ]),
           dedupeDeleteFails: true,
         );
-        // ignore: avoid_print
-        print('DEBUG-OUT exit=${run.exitCode}: ${run.out}');
-        // ignore: avoid_print
-        print('DEBUG-LOG: ${run.log.join(' | ')}');
         expect(
           run.exitCode,
           0,
@@ -464,10 +460,6 @@ void main() {
               'servable; a transient DELETE failure is notification noise, '
               'not a leg failure (gh-1899 review, IMPORTANT)',
         );
-        // ignore: avoid_print
-        print('DEBUG-OUT exit=${run.exitCode}: ${run.out}');
-        // ignore: avoid_print
-        print('DEBUG-LOG: ${run.log.join(' | ')}');
         expect(
           run.out,
           contains('::warning::'),
