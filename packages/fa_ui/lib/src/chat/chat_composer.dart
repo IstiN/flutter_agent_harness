@@ -1078,6 +1078,8 @@ class ChatComposerState extends State<ChatComposer>
               glass: true,
               useBackdropGroup: true,
               borderRadius: BorderRadius.circular(tokens.radiusLg),
+              tintAmount: .22,
+              tintOpacity: .55,
               child: content,
             ),
           ],

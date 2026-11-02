@@ -19,9 +19,9 @@ import 'package:fa/ui/chats/chat_list_panel.dart';
 import 'package:fa/ui/widgets/messenger_navigation_controls.dart';
 import 'package:fa/ui/widgets/messenger_section_header.dart';
 import 'package:liquid_glass_widgets/liquid_glass_widgets.dart'
-    show ProgressiveBlur;
+    show ProgressiveBlur, ProgressiveBlurDirection;
 import 'package:fa_ui/fa_ui.dart'
-    show FaVisualDirection, buildFaTheme, debugFaGlassAlwaysFake;
+    show FaSurface, FaVisualDirection, buildFaTheme, debugFaGlassAlwaysFake;
 import 'package:fa/ui/widgets/wide_layout_shell.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -457,6 +457,32 @@ void main() {
       findsOneWidget,
     );
     final transcript = find.byKey(const ValueKey('faChatTranscriptList'));
+    // The melt bands over/under the floating chrome are graduated blurs, not
+    // plain shadow gradients.
+    final topBlur = tester.widget<ProgressiveBlur>(
+      find.byKey(const ValueKey('faChatTopMelt')),
+    );
+    expect(topBlur.direction, ProgressiveBlurDirection.topToBottom);
+    expect(topBlur.maxSigma, greaterThan(0));
+    final bottomBlur = tester.widget<ProgressiveBlur>(
+      find.byKey(const ValueKey('faChatBottomMelt')),
+    );
+    expect(bottomBlur.direction, ProgressiveBlurDirection.bottomToTop);
+    expect(bottomBlur.maxSigma, greaterThan(0));
+    // The avatar disc next to the title pill is glass too, not an opaque
+    // surface2 circle.
+    final avatar = tester.widget<FaSurface>(
+      find.descendant(
+        of: find.byKey(const ValueKey('faChatHeaderAvatar')),
+        matching: find.byType(FaSurface),
+      ),
+    );
+    expect(avatar.glass, isTrue);
+    // The composer surface rides a light tint, not the default dense one.
+    final composer = tester.widget<FaSurface>(
+      find.byKey(const ValueKey('faChatFloatingComposer')),
+    );
+    expect(composer.tintOpacity ?? .7, lessThan(.7));
     final scrollable = tester.widget<Scrollable>(
       find.descendant(of: transcript, matching: find.byType(Scrollable)).first,
     );

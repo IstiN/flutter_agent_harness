@@ -2,13 +2,14 @@
 // Use of this source code is governed by a MIT license that can be found
 // in the LICENSE file.
 
+import 'package:liquid_glass_widgets/liquid_glass_widgets.dart'
+    show ProgressiveBlur, ProgressiveBlurDirection;
 import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:desktop_drop/desktop_drop.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/rendering.dart' show RenderAbstractViewport;
 import 'package:flutter/services.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart'
     show
@@ -25,12 +26,14 @@ import 'package:flutter_chat_core/flutter_chat_core.dart';
 import 'package:flutter_chat_ui/flutter_chat_ui.dart';
 
 import '../theme/app_theme.dart';
+import '../theme/fa2_tokens.dart';
 import '../theme/fa2_typography.dart';
 import '../theme/fa_ui_theme.dart';
 import '../trajectory/trajectory_controller.dart';
 import '../trajectory/trajectory_panel.dart';
 import '../trajectory/trajectory_view.dart';
 import '../trajectory/trajectory_strings.dart';
+import '../widgets/fa2_controls.dart';
 import '../widgets/snackbars.dart';
 import 'approval_ui.dart';
 import 'ask_ui.dart';
@@ -84,6 +87,7 @@ class FaChatScreen extends StatefulWidget {
     this.settingsBuilder,
     this.fileBrowserBuilder,
     this.composerBuilder,
+    this.mentionOptionsBuilder,
     this.noticeBanner,
     this.wallpaperBuilder,
     this.avatarBuilder,
@@ -138,6 +142,9 @@ class FaChatScreen extends StatefulWidget {
   /// Replacement composer; null builds the default [ChatComposer] with
   /// [features].
   final FaChatComposerBuilder? composerBuilder;
+
+  /// Optional `@` suggestions in the default shared composer.
+  final FaChatMentionOptionsBuilder? mentionOptionsBuilder;
 
   /// A host notice banner docked above the transcript, under the
   /// auth-expired banner (issue #1889 R5: the aggregated image-drop chip).
@@ -235,6 +242,13 @@ class _FaChatScreenState extends State<FaChatScreen>
   /// the library only auto-scrolls on inserts, not on in-place updates.
   final _chatScrollController = ScrollController();
   bool _userNearBottom = true;
+
+  /// Measured overlay extents keep the first/last message fully reachable
+  /// while the reversed transcript paints beneath floating glass chrome.
+  final GlobalKey _glassHeaderMeasureKey = GlobalKey();
+  final GlobalKey _glassComposerMeasureKey = GlobalKey();
+  double _glassHeaderExtent = 64;
+  double _glassComposerExtent = 80;
 
   /// The follow-mode contract (gh-1439): the shared pure state machine
   /// (core `package:flutter_agent_harness`) owns live⇄held plus the
@@ -390,6 +404,25 @@ class _FaChatScreenState extends State<FaChatScreen>
   /// Whether the file browser side panel is expanded (wide layouts only).
   bool _filesPanelOpen = false;
 
+  /// Screen-local desired inspector width. The live width is clamped to the
+  /// viewport during layout; closing the panel never discards this value.
+  double _filesPanelWidth = kFaChatFilesPanelWidth;
+  static const double _minFilesPanelWidth = 240;
+  static const double _maxFilesPanelWidth = 520;
+  static const double _minChatBodyWidth = 320;
+
+  double _liveFilesPanelWidth(double viewportWidth) =>
+      _clampFilesPanelWidth(_filesPanelWidth, viewportWidth);
+
+  double _clampFilesPanelWidth(double width, double viewportWidth) {
+    final viewportMax = viewportWidth - _minChatBodyWidth - 1;
+    // Below the usable panel + center threshold the inspector is hidden for
+    // this layout, not allowed to over-constrain the floating header Stack.
+    if (viewportMax < _minFilesPanelWidth) return 0;
+    final upper = viewportMax.clamp(_minFilesPanelWidth, _maxFilesPanelWidth);
+    return width.clamp(_minFilesPanelWidth, upper).toDouble();
+  }
+
   /// Screen-level trajectory state (AC2/E6): one controller per service,
   /// alive for the screen's lifetime so switching Chat<->Trajectory and
   /// resizing wide<->narrow never lose scroll, selection, or filters.
@@ -508,6 +541,12 @@ class _FaChatScreenState extends State<FaChatScreen>
     if (widget.features.trajectory) _trajectory;
     _mirrorServiceState();
     _syncMessages();
+    // SizeChangedLayoutNotifier does not guarantee an initial notification.
+    // Measure the real floating header (including the trajectory row) and
+    // composer after their first layout so overlays never start beneath them.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _updateGlassChromeExtents();
+    });
   }
 
   @override
@@ -674,19 +713,20 @@ class _FaChatScreenState extends State<FaChatScreen>
       // inside the viewport instead of pinning the tail. Manual scroll
       // still wins — this only runs while following (AC2).
       final target = _liveWidgetClampOffset() ?? 0.0;
-      if ((target - _chatScrollController.offset).abs() < 1) return;
-      _chatScrollController.animateTo(
-        target,
-        duration: const Duration(milliseconds: 150),
-        curve: Curves.linearToEaseOut,
-      );
+      if ((target - _chatScrollController.offset).abs() >= 1) {
+        _chatScrollController.animateTo(
+          target,
+          duration: const Duration(milliseconds: 150),
+          curve: Curves.linearToEaseOut,
+        );
+      }
       // The animated list mounts the freshly inserted row one frame
       // later, so this frame's geometry (and the target above) lags one
-      // chunk behind. Re-measure on the next frame and correct — the
-      // leading edge must land inside the viewport exactly (AC1).
+      // chunk behind. Re-measure even when the first target was already 0;
+      // otherwise that unchanged target skipped the only correction pass.
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted || !_chatScrollController.hasClients) return;
-        if (!_userNearBottom) return;
+        if (_userScrolledAway) return;
         final corrected = _liveWidgetClampOffset();
         if (corrected == null) return;
         if ((corrected - _chatScrollController.offset).abs() < 1) return;
@@ -793,10 +833,19 @@ class _FaChatScreenState extends State<FaChatScreen>
     final rowContext = _itemKeys[target.$2]?.currentContext;
     final row = rowContext?.findRenderObject();
     if (row is! RenderBox || !row.attached) return null;
-    final viewport = RenderAbstractViewport.of(row);
-    final topReveal = viewport.getOffsetToReveal(row, 1.0).offset;
-    if (topReveal <= 0) return null; // fully visible at the tail already
-    return topReveal + 16; // a small margin keeps the edge strictly inside
+    final position = _chatScrollController.position;
+    final rowTop = row.localToGlobal(Offset.zero).dy;
+    // ChatAnimatedList already reserves the 16px visual margin in topPadding;
+    // adding it to this correction as well pushes the tile below the clamp
+    // window after each animated insertion settles.
+    final visibleTop = widget.showAppBar ? _glassHeaderExtent : 16.0;
+    // This is a reversed transcript: increasing the offset moves an existing
+    // row down. Use real render geometry rather than getOffsetToReveal's
+    // physical viewport edge, which allowed the row beneath the header and
+    // returned null until it had already disappeared above y=0.
+    final scrollTarget = position.pixels + visibleTop - rowTop;
+    if (scrollTarget <= 0) return null; // fully visible at the tail already
+    return scrollTarget.clamp(0.0, position.maxScrollExtent).toDouble();
   }
 
   /// A touch anywhere on a live widget row is an interaction (AC3): the
@@ -1454,28 +1503,127 @@ class _FaChatScreenState extends State<FaChatScreen>
     // and turn into the terminal "Beginning of session (1 of N)" once
     // the top of the file is reached (E6).
     final historyAbove = _historyAbove;
+    // The transcript always scrolls beneath the same floating chrome.
+    // Visual directions only change how those surfaces are painted.
+    return _buildFloatingGlassChatBody(context, strings, historyAbove);
+  }
+
+  Widget _buildFloatingGlassChatBody(
+    BuildContext context,
+    FaChatStrings strings,
+    int? historyAbove,
+  ) {
+    final tokens = FaDesignTokens.of(context);
+    final topOverlay = <Widget>[
+      ?_buildErrorBanner(context, strings),
+      ?widget.noticeBanner,
+      ?_buildTopHistoryBanner(strings, historyAbove),
+    ];
+    final bottomOverlay = <Widget>[
+      ?_buildWidgetOpenChip(context),
+      if (_historyHasNewer) _buildNewerHistoryBanner(strings),
+      if (_follow.isHeld && _follow.unseen > 0) _followLivePill(strings),
+    ];
     Widget body = DropTarget(
-      // Drag-and-drop over the chat area stages attachments (issue #465).
-      // Hosts that turn the attachments feature off keep drops off too.
       enable: widget.features.attachments,
       onDragEntered: (_) => setState(() => _dropHovering = true),
       onDragExited: (_) => setState(() => _dropHovering = false),
       onDragDone: _onDropDone,
-      child: Column(
+      child: Stack(
+        fit: StackFit.expand,
         children: [
-          ?_buildErrorBanner(context, strings),
-          // Host notice banner (issue #1889 R5: the aggregated image-drop
-          // chip) — docked above the transcript, under the auth banner.
-          ?widget.noticeBanner,
-          ?_buildTopHistoryBanner(strings, historyAbove),
-          Expanded(child: _buildTranscript(context)),
-          ?_buildWidgetOpenChip(context),
-          if (_historyHasNewer) _buildNewerHistoryBanner(strings),
-          // The follow-mode jump pill (gh-1439): a SIBLING of the history
-          // banner, live-updating — visible exactly while held with
-          // counted arrivals, one tap returns to the live tail.
-          if (_follow.isHeld && _follow.unseen > 0) _followLivePill(strings),
-          _buildComposer(context),
+          Positioned.fill(child: _buildTranscript(context)),
+          Positioned(
+            top: 0,
+            left: 0,
+            right: 0,
+            height: _glassHeaderExtent + 24,
+            child: IgnorePointer(
+              child: tokens.direction == FaVisualDirection.glass
+                  ? const ProgressiveBlur(
+                      key: ValueKey('faChatTopMelt'),
+                      maxSigma: 20,
+                      direction: ProgressiveBlurDirection.topToBottom,
+                    )
+                  : DecoratedBox(
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          stops: const [0, .68, 1],
+                          colors: [
+                            tokens.background.withValues(alpha: .96),
+                            tokens.background.withValues(alpha: .78),
+                            tokens.background.withValues(alpha: 0),
+                          ],
+                        ),
+                      ),
+                    ),
+            ),
+          ),
+          Positioned(
+            key: const ValueKey('faChatBottomEnvironmentFade'),
+            left: 0,
+            right: 0,
+            bottom: 0,
+            height: math.max(96, _glassComposerExtent + 40),
+            child: IgnorePointer(
+              child: tokens.direction == FaVisualDirection.glass
+                  ? const ProgressiveBlur(
+                      key: ValueKey('faChatBottomMelt'),
+                      maxSigma: 20,
+                      direction: ProgressiveBlurDirection.bottomToTop,
+                    )
+                  : DecoratedBox(
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          stops: const [0, .48, 1],
+                          colors: [
+                            tokens.background.withValues(alpha: 0),
+                            tokens.background.withValues(alpha: .42),
+                            tokens.background.withValues(alpha: .96),
+                          ],
+                        ),
+                      ),
+                    ),
+            ),
+          ),
+          if (topOverlay.isNotEmpty)
+            Positioned(
+              top: _glassHeaderExtent + 4,
+              left: 0,
+              right: 0,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: topOverlay,
+              ),
+            ),
+          if (bottomOverlay.isNotEmpty)
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: _glassComposerExtent + 4,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: bottomOverlay,
+              ),
+            ),
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: 0,
+            child: NotificationListener<SizeChangedLayoutNotification>(
+              onNotification: _onGlassChromeResized,
+              child: SizeChangedLayoutNotifier(
+                child: SizedBox(
+                  key: _glassComposerMeasureKey,
+                  child: _buildComposer(context),
+                ),
+              ),
+            ),
+          ),
         ],
       ),
     );
@@ -1552,6 +1700,28 @@ class _FaChatScreenState extends State<FaChatScreen>
     );
   }
 
+  bool _onGlassChromeResized(SizeChangedLayoutNotification notification) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _updateGlassChromeExtents();
+    });
+    return false;
+  }
+
+  void _updateGlassChromeExtents() {
+    final header = _glassHeaderMeasureKey.currentContext?.size;
+    final composer = _glassComposerMeasureKey.currentContext?.size;
+    final headerExtent = header?.height ?? _glassHeaderExtent;
+    final composerExtent = composer?.height ?? _glassComposerExtent;
+    if ((headerExtent - _glassHeaderExtent).abs() < .5 &&
+        (composerExtent - _glassComposerExtent).abs() < .5) {
+      return;
+    }
+    setState(() {
+      _glassHeaderExtent = headerExtent;
+      _glassComposerExtent = composerExtent;
+    });
+  }
+
   Widget _buildComposer(BuildContext context) {
     final composerBuilder = widget.composerBuilder;
     return composerBuilder != null
@@ -1559,6 +1729,7 @@ class _FaChatScreenState extends State<FaChatScreen>
         : ChatComposer(
             service: widget.service,
             features: widget.features,
+            mentionOptionsBuilder: widget.mentionOptionsBuilder,
             dropBridge: _dropBridge,
           );
   }
@@ -1634,6 +1805,11 @@ class _FaChatScreenState extends State<FaChatScreen>
         key: const ValueKey('faChatTranscriptList'),
         itemBuilder: itemBuilder,
         scrollController: _chatScrollController,
+        // Floating chrome overlays the viewport, not its layout. These
+        // measured insets make both extremes fully scrollable into view.
+        topPadding: (widget.showAppBar ? _glassHeaderExtent : 0) + 16,
+        bottomPadding: _glassComposerExtent + 16,
+        handleSafeArea: false,
         // Reversed list (the learn.ai pattern): index 0 is the
         // newest message, the list starts AT the bottom — no
         // initial scroll-to-end, no jump, or "stuck mid-list"
@@ -1869,15 +2045,41 @@ class _FaChatScreenState extends State<FaChatScreen>
     final fileBrowserBuilder = widget.features.fileBrowser
         ? _fileBrowserBuilder
         : null;
-    return Scaffold(
+    final headerActions = _buildHeaderActions(isWide, fileBrowserBuilder);
+    final glass =
+        FaDesignTokens.of(context).direction == FaVisualDirection.glass;
+    final body = _buildBody(isWide, fileBrowserBuilder);
+    final scaffold = Scaffold(
       key: _scaffoldKey,
-      appBar: _buildAppBar(
-        isWide,
-        _buildHeaderActions(isWide, fileBrowserBuilder),
-      ),
       endDrawer: _buildEndDrawer(isWide, fileBrowserBuilder),
-      body: _buildBody(isWide, fileBrowserBuilder),
+      body: LayoutBuilder(
+        builder: (context, constraints) {
+          final filesPanelWidth = _liveFilesPanelWidth(constraints.maxWidth);
+          final showFilesPanel =
+              isWide &&
+              _filesPanelOpen &&
+              fileBrowserBuilder != null &&
+              filesPanelWidth > 0;
+          return Stack(
+            fit: StackFit.expand,
+            children: [
+              Positioned.fill(child: body),
+              if (widget.showAppBar)
+                Positioned(
+                  top: 0,
+                  left: 0,
+                  // Use THIS center Stack's width, never the full window:
+                  // the app sidebar can make those constraints very different.
+                  right: showFilesPanel ? filesPanelWidth + 1 : 0,
+                  child: _buildFloatingGlassHeader(isWide, headerActions),
+                ),
+            ],
+          );
+        },
+      ),
     );
+    if (!glass || BackdropGroup.of(context) != null) return scaffold;
+    return BackdropGroup(child: scaffold);
   }
 
   /// The adaptive header's action list (issue #225): the list IS the
@@ -1954,38 +2156,228 @@ class _FaChatScreenState extends State<FaChatScreen>
     ];
   }
 
-  PreferredSizeWidget? _buildAppBar(
+  Widget _buildFloatingGlassHeader(
     bool isWide,
     List<FaHeaderAction> headerActions,
   ) {
-    if (!widget.showAppBar) return null;
-    return AppBar(
-      // The ONE adaptive header (issue #225): project identity ·
-      // title · model chip · actions · ⋮ overflow in one row.
-      title: FaAdaptiveHeader(
-        title: widget.title,
-        projectIcon: widget.projectIcon,
-        projectIconColor: widget.projectIconColor,
-        projectLabel: widget.projectLabel,
-        onProjectTap: widget.onProjectTap,
-        chip: widget.modelChip,
-        onChipTap: widget.onModelChipTap,
-        chipMenuLabel: widget.chipMenuLabel,
-        actions: headerActions,
+    final tokens = FaDesignTokens.of(context);
+    return NotificationListener<SizeChangedLayoutNotification>(
+      onNotification: _onGlassChromeResized,
+      child: SizeChangedLayoutNotifier(
+        child: SizedBox(
+          key: _glassHeaderMeasureKey,
+          child: SafeArea(
+            bottom: false,
+            child: isWide
+                ? _buildDesktopGlassHeader(headerActions)
+                : Padding(
+                    padding: const EdgeInsets.fromLTRB(8, 6, 8, 0),
+                    child: FaSurface(
+                      key: const ValueKey('faChatFloatingHeader'),
+                      glass: true,
+                      useBackdropGroup: true,
+                      color: tokens.surface1,
+                      borderRadius: BorderRadius.circular(18),
+                      padding: const EdgeInsets.symmetric(horizontal: 6),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          SizedBox(
+                            height: 48,
+                            child: FaAdaptiveHeader(
+                              leading: Navigator.canPop(context)
+                                  ? const BackButton()
+                                  : null,
+                              overflowMenuKey: const ValueKey(
+                                'faChatHeaderOverflow',
+                              ),
+                              title: widget.title,
+                              titleStyle: Theme.of(context).textTheme.titleSmall
+                                  ?.copyWith(fontWeight: FontWeight.w600),
+                              projectIcon: widget.projectIcon,
+                              projectIconColor: widget.projectIconColor,
+                              projectLabel: widget.projectLabel,
+                              onProjectTap: widget.onProjectTap,
+                              chip: widget.modelChip,
+                              onChipTap: widget.onModelChipTap,
+                              chipMenuLabel: widget.chipMenuLabel,
+                              actions: headerActions,
+                              visualDensity: VisualDensity.compact,
+                              iconSize: 18,
+                              actionGap: 8,
+                              actionBuilder: (context, action, button) =>
+                                  FaHeaderCircularAction(child: button),
+                              overflowBuilder: (context, button) =>
+                                  FaHeaderCircularAction(child: button),
+                            ),
+                          ),
+                          if (widget.features.trajectory)
+                            SizedBox(
+                              height: 52,
+                              child: Padding(
+                                padding: const EdgeInsets.fromLTRB(
+                                  10,
+                                  4,
+                                  10,
+                                  8,
+                                ),
+                                child: Center(
+                                  child: _trajectorySwitcher(context),
+                                ),
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                  ),
+          ),
+        ),
       ),
-      // Narrow: the Chat | Trajectory switcher sits in the app
-      // bar's bottom slot and swaps the screen body.
-      bottom: widget.features.trajectory && !isWide
-          ? PreferredSize(
-              preferredSize: const Size.fromHeight(52),
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
-                child: Center(child: _trajectorySwitcher(context)),
-              ),
-            )
-          : null,
     );
   }
+
+  Widget _buildDesktopGlassHeader(List<FaHeaderAction> headerActions) {
+    final tokens = FaDesignTokens.of(context);
+    return Padding(
+      key: const ValueKey('faChatFloatingHeader'),
+      padding: const EdgeInsets.fromLTRB(8, 6, 8, 6),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final actionWidth = math.min(360.0, constraints.maxWidth * .38);
+          // A fixed, viewport-derived pill width keeps geometry identical
+          // across direction-specific font families while remaining a
+          // centered identity control rather than a full-width app bar.
+          final titleWidth = math.min(
+            320.0,
+            math.max(200.0, constraints.maxWidth - 2 * (actionWidth + 12)),
+          );
+          final builtAvatar = widget.avatarBuilder?.call(context, 'assistant');
+          return SizedBox(
+            height: 80,
+            child: Stack(
+              children: [
+                Align(
+                  alignment: Alignment.topCenter,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      SizedBox(
+                        key: const ValueKey('faChatHeaderAvatar'),
+                        width: 36,
+                        height: 36,
+                        child: FaSurface(
+                          glass: true,
+                          circular: true,
+                          color: tokens.surface2,
+                          tintAmount: .22,
+                          tintOpacity: .55,
+                          child:
+                              builtAvatar ??
+                              Icon(
+                                widget.projectIcon ?? Icons.person_rounded,
+                                size: widget.projectIcon == null ? 25 : 20,
+                                color: widget.projectIconColor ?? tokens.ink2,
+                              ),
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      FaSurface(
+                        key: const ValueKey('faChatHeaderTitlePill'),
+                        glass: true,
+                        useBackdropGroup: true,
+                        color: tokens.surface1,
+                        borderRadius: BorderRadius.circular(14),
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                        onTap: widget.onProjectTap,
+                        child: SizedBox(
+                          width: titleWidth,
+                          height: 40,
+                          child: Row(
+                            children: [
+                              Expanded(
+                                child: Column(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  crossAxisAlignment: CrossAxisAlignment.center,
+                                  children: [
+                                    if (widget.projectLabel case final label?
+                                        when label.isNotEmpty)
+                                      Text(
+                                        label,
+                                        key: const ValueKey(
+                                          'faChatHeaderProjectLabel',
+                                        ),
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: TextStyle(
+                                          color: tokens.ink2,
+                                          fontSize: 10,
+                                          height: 1.2,
+                                          fontWeight: FontWeight.w500,
+                                        ),
+                                      ),
+                                    Text(
+                                      widget.title,
+                                      key: const ValueKey(
+                                        'faChatHeaderSessionLabel',
+                                      ),
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      textAlign: TextAlign.center,
+                                      style: TextStyle(
+                                        color: tokens.ink1,
+                                        fontSize: 13,
+                                        height: 1.25,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              if (widget.onProjectTap != null)
+                                Icon(
+                                  Icons.chevron_right,
+                                  size: 15,
+                                  color: tokens.ink2,
+                                ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Positioned(
+                  top: 9,
+                  right: 0,
+                  width: actionWidth,
+                  height: 40,
+                  child: FaAdaptiveHeader(
+                    visualDensity: VisualDensity.compact,
+                    overflowMenuKey: const ValueKey('faChatHeaderOverflow'),
+                    chip: widget.modelChip,
+                    chipMaxWidth: 112,
+                    onChipTap: widget.onModelChipTap,
+                    chipMenuLabel: widget.chipMenuLabel,
+                    actions: headerActions,
+                    iconSize: 18,
+                    actionGap: 8,
+                    menuColor: tokens.surface2,
+                    actionBuilder: (context, action, button) =>
+                        _glassHeaderAction(button),
+                    overflowBuilder: (context, button) =>
+                        _glassHeaderAction(button),
+                  ),
+                ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _glassHeaderAction(Widget button) =>
+      FaHeaderCircularAction(child: button);
 
   /// The files end drawer (narrow layouts only — wide uses the side
   /// panel in the body row); null hides it.
@@ -2015,17 +2407,22 @@ class _FaChatScreenState extends State<FaChatScreen>
         index: _showTrajectory ? 1 : 0,
         children: [
           _buildChatBody(context),
-          TrajectoryScreen(
-            controller: _trajectory,
-            loaded: _trajectoryLoaded,
-            scope: TrajectoryProjectionScope(
-              above: widget.service.historyAboveCount,
-              below: widget.service.historyBelowCount,
-              total: widget.service.historyTotalCount,
+          Padding(
+            padding: EdgeInsets.only(
+              top: widget.showAppBar ? _glassHeaderExtent : 0,
             ),
-            onRecordActivate: (record) =>
-                widget.service.jumpToMessage(record.recordId),
-            onClose: () => setState(() => _showTrajectory = false),
+            child: TrajectoryScreen(
+              controller: _trajectory,
+              loaded: _trajectoryLoaded,
+              scope: TrajectoryProjectionScope(
+                above: widget.service.historyAboveCount,
+                below: widget.service.historyBelowCount,
+                total: widget.service.historyTotalCount,
+              ),
+              onRecordActivate: (record) =>
+                  widget.service.jumpToMessage(record.recordId),
+              onClose: () => setState(() => _showTrajectory = false),
+            ),
           ),
         ],
       ),
@@ -2033,18 +2430,69 @@ class _FaChatScreenState extends State<FaChatScreen>
   }
 
   Widget _buildBodyRow(bool isWide, WidgetBuilder? fileBrowserBuilder) {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Expanded(child: _buildChatBody(context)),
-        if (isWide && _filesPanelOpen && fileBrowserBuilder != null) ...[
-          const VerticalDivider(width: 1),
-          SizedBox(
-            width: kFaChatFilesPanelWidth,
-            child: fileBrowserBuilder(context),
-          ),
-        ],
-      ],
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final filesPanelWidth = _liveFilesPanelWidth(constraints.maxWidth);
+        return Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Expanded(child: _buildChatBody(context)),
+            if (isWide &&
+                _filesPanelOpen &&
+                fileBrowserBuilder != null &&
+                filesPanelWidth > 0)
+              SizedBox(
+                key: const ValueKey('faChatFilesPanel'),
+                width: filesPanelWidth + 1,
+                child: Stack(
+                  children: [
+                    Positioned.fill(
+                      child: Row(
+                        children: [
+                          const VerticalDivider(width: 1),
+                          Expanded(child: fileBrowserBuilder(context)),
+                        ],
+                      ),
+                    ),
+                    Positioned(
+                      left: 0,
+                      top: 0,
+                      bottom: 0,
+                      width: 16,
+                      child: MouseRegion(
+                        cursor: SystemMouseCursors.resizeColumn,
+                        child: GestureDetector(
+                          key: const ValueKey('faChatFilesPanelResizeHandle'),
+                          behavior: HitTestBehavior.opaque,
+                          onHorizontalDragUpdate: (details) {
+                            final desired = _clampFilesPanelWidth(
+                              _filesPanelWidth - details.delta.dx,
+                              constraints.maxWidth,
+                            );
+                            if (desired == _filesPanelWidth) return;
+                            setState(() => _filesPanelWidth = desired);
+                          },
+                          child: Center(
+                            child: Container(
+                              width: 3,
+                              height: 32,
+                              decoration: BoxDecoration(
+                                color: FahColors.of(
+                                  context,
+                                ).border.withValues(alpha: .9),
+                                borderRadius: BorderRadius.circular(2),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+          ],
+        );
+      },
     );
   }
 

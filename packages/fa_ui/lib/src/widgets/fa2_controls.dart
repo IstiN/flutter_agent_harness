@@ -23,6 +23,10 @@ class FaSurface extends StatelessWidget {
     this.glass = false,
     this.onTap,
     this.color,
+    this.useBackdropGroup = false,
+    this.circular = false,
+    this.tintAmount,
+    this.tintOpacity,
   });
 
   final Widget child;
@@ -31,6 +35,20 @@ class FaSurface extends StatelessWidget {
   final bool glass;
   final VoidCallback? onTap;
   final Color? color;
+
+  /// Shares one backdrop capture with sibling chrome over the same content.
+  final bool useBackdropGroup;
+
+  /// Uses a true circle in both the real glass renderer and opaque fallback.
+  /// The caller must give the surface square constraints.
+  final bool circular;
+
+  /// Glass tint amount override (null keeps the styleguide default .35).
+  /// Lighter values read as airier glass; heavier ones as frosted plastic.
+  final double? tintAmount;
+
+  /// Glass tint alpha override (null keeps the styleguide default .7).
+  final double? tintOpacity;
 
   @override
   Widget build(BuildContext context) {
@@ -43,25 +61,31 @@ class FaSurface extends StatelessWidget {
     if (glass && tokens.direction == FaVisualDirection.glass) {
       return LiquidGlass.auto(
         fake: debugFaGlassAlwaysFake,
+        useBackdropGroup: useBackdropGroup,
+        clipBehavior: Clip.antiAlias,
         settings: LiquidGlassSettings.ios27Regular(
           brightness: tokens.brightness,
           frost: tokens.glassBlur,
-          tintAmount: .35,
+          tintAmount: tintAmount ?? .35,
         ),
         appearance: LiquidGlassAppearance.ios27Regular(
           brightness: tokens.brightness,
-          tint: (color ?? tokens.surface1).withValues(alpha: .7),
+          tint: (color ?? tokens.surface1).withValues(alpha: tintOpacity ?? .7),
         ),
-        shape: LiquidRoundedSuperellipse(borderRadius: radius.topLeft.x),
+        shape: circular
+            ? const LiquidOval()
+            : LiquidRoundedSuperellipse(borderRadius: radius.topLeft.x),
         child: Material(type: MaterialType.transparency, child: interactive),
       );
     }
     return Material(
       color: color ?? tokens.surface1.withValues(alpha: glass ? .94 : 1),
-      shape: RoundedSuperellipseBorder(
-        borderRadius: radius,
-        side: BorderSide(color: tokens.hairline),
-      ),
+      shape: circular
+          ? CircleBorder(side: BorderSide(color: tokens.hairline))
+          : RoundedSuperellipseBorder(
+              borderRadius: radius,
+              side: BorderSide(color: tokens.hairline),
+            ),
       clipBehavior: Clip.antiAlias,
       child: interactive,
     );
@@ -193,9 +217,11 @@ class FaTextField extends StatelessWidget {
   const FaTextField({
     super.key,
     this.controller,
+    this.focusNode,
     this.hintText,
     this.labelText,
     this.obscureText = false,
+    this.dense = false,
     this.keyboardType,
     this.onChanged,
     this.errorText,
@@ -204,9 +230,11 @@ class FaTextField extends StatelessWidget {
   });
 
   final TextEditingController? controller;
+  final FocusNode? focusNode;
   final String? hintText;
   final String? labelText;
   final bool obscureText;
+  final bool dense;
   final TextInputType? keyboardType;
   final ValueChanged<String>? onChanged;
   final String? errorText;
@@ -223,23 +251,32 @@ class FaTextField extends StatelessWidget {
         );
     return TextField(
       controller: controller,
+      focusNode: focusNode,
       obscureText: obscureText,
       keyboardType: keyboardType,
       onChanged: onChanged,
-      style: TextStyle(color: tokens.ink1, fontSize: 15, height: 1.4),
+      style: TextStyle(
+        color: tokens.ink1,
+        fontSize: dense ? 13 : 15,
+        height: 1.4,
+      ),
       decoration: InputDecoration(
+        isDense: dense,
         hintText: hintText,
         labelText: labelText,
         errorText: errorText,
         prefixIcon: prefixIcon,
+        prefixIconConstraints: dense
+            ? const BoxConstraints.tightFor(width: 32, height: 32)
+            : null,
         suffixIcon: suffixIcon,
         filled: true,
         fillColor: tokens.surface2,
         hintStyle: TextStyle(color: tokens.ink3),
         labelStyle: TextStyle(color: tokens.ink2),
-        contentPadding: const EdgeInsets.symmetric(
+        contentPadding: EdgeInsets.symmetric(
           horizontal: 16,
-          vertical: 14,
+          vertical: dense ? 0 : 14,
         ),
         border: border(tokens.hairline),
         enabledBorder: border(tokens.hairline),
