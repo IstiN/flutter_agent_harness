@@ -1,0 +1,351 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-11-02T13:56:55.831Z",
+  "ticketKey": "gh-2042",
+  "headSha": "c378bf163d90995ea014e32493b582996048f12d",
+  "baseBranch": "main",
+  "reviewDecision": "NONE",
+  "labels": [],
+  "files": {
+    "ci_failures.md": {
+      "hash": "fnv1a64:d83b8b27b46dfcec",
+      "size": 98003
+    },
+    "ci_failures_full.log": {
+      "hash": "fnv1a64:9359c354f0f29a42",
+      "size": 577538
+    },
+    "ci_violations.json": {
+      "hash": "fnv1a64:4fffdb70bd8d315d",
+      "size": 712
+    },
+    "pr_diff.txt": {
+      "hash": "fnv1a64:3829b07100795b8d",
+      "size": 12304
+    },
+    "pr_discussions.md": {
+      "hash": "fnv1a64:931310bf7f2cc201",
+      "size": 45313
+    },
+    "pr_discussions_raw.json": {
+      "hash": "fnv1a64:a4889d13ed7f3b6a",
+      "size": 114
+    },
+    "pr_info.md": {
+      "hash": "fnv1a64:b2e5eb76a12b190a",
+      "size": 3251
+    },
+    "request.md": {
+      "hash": "fnv1a64:98ca9d7cb1ee6671",
+      "size": 3770
+    },
+    "review_state.md": {
+      "hash": "fnv1a64:76316941f83c6868",
+      "size": 508
+    },
+    "rework_base_head.txt": {
+      "hash": "fnv1a64:60618e07c9f427bd",
+      "size": 40
+    },
+    "ticket.json": {
+      "hash": "fnv1a64:ae81cd03b1c376e4",
+      "size": 3861
+    },
+    "ticket.md": {
+      "hash": "fnv1a64:98ca9d7cb1ee6671",
+      "size": 3770
+    }
+  },
+  "comments": [
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-02:0048a178",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-02",
+      "updatedAt": "2026-11-02",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT: the guard closes the flip for post-guard commits only — a re-requested OLD job still runs the unconditional `--latest` flip**\n\nThis conditional flip correctly protects every rerun of a job whose run's commit contains it (`gh run rerun` re-executes the job with the workflow file as it existed at the original run's commit SHA — GitHub re-run semantics, https://docs.github.com/en/actions/managing-workflow-runs/re-running-workflows-and-jobs: a re-run uses the same `GITHUB_SHA`/`GITHUB_REF` of the original event).\n\nBut `scripts/release_drift_remediate.sh` re-requests the **tag's own historical run** (`gh run list --branch \"$tag\"` → `gh run rerun --job`), and the drift-watch workflow header explicitly advertises dispatching for **v1.0.680** — a tag minted *before* this PR — as THE AC3 remediation vehicle. v1.0.680's \"Sign release checksums\" job re-runs the OLD ci.yml, whose flip is still the unconditional `gh release edit --draft=false --latest`.\n\nConcretely:\n\n- **Today**: safe — v1.0.680 is still the Latest release, so even the old unconditional flip only reasserts the current badge, and AC3 (re-sign the shipped bytes) works as intended.\n- **After the next release ships**: a newer tag is Latest. If any pre-guard tag drifts and someone dispatches drift-watch for it (exactly the documented flow), the re-requested old job re-flags that **older** release as Latest → every `fa update` client \"updates\" **down** onto it, with a freshly valid signature that passes provenance. That is the same fleet-wide downgrade the r1 BLOCKING thread (now resolved) was about — the guard fixes it for new tags but the remediation vehicle's primary historical use case re-enters through the old workflow file.\n\nSuggested fixes (either one closes the window):\n\n1. Give remediation its own tiny workflow on `main` (`release-re-sign.yml`): download the release's `fa-*` + assert required assets → sign → upload → guarded flip — it always runs the guard, regardless of the tag's age; `release_drift_remediate.sh` dispatches it instead of `gh run rerun --job`.\n2. Or, in `release_drift_remediate.sh`, refuse the re-request when the tag's run predates the guard (e.g. probe the run's head SHA for `--latest` gating in its ci.yml) and degrade to a human-paged instruction in the drift issue.\n\nUntil one of these lands, the drift-watch header's claim — \"re-signing an OLD tag publishes the corrected manifest without ever dragging the `latest` badge backwards onto it\" — holds only while the old tag is still Latest."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-02:ce8065df",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-02",
+      "updatedAt": "2026-11-02",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT: committed test-run residue files (`release-notes.md`, `drift-details.txt`)**\n\nBoth new root files are artifacts of running the new scripts with **fixture** values — `v1.2.3`, `run/111/job/binaries-linux-arm64` and `fa-windows-x64.zip` exist only in the test fixtures:\n\n- `release-notes.md` — the minimal fallback body + draft-owner marker written by `release_attach_or_create.sh` when invoked from the repo root (the current-run marker would be appended on top of the stale one).\n- `drift-details.txt` — the drift check's default `FA_DRIFT_DETAILS` output, containing fake findings (\"digest drift: fa-windows-x64.zip: FAILED open or read\").\n\nThis is verifiably residue, not intentional fixtures: running the PR's own verify command regenerates `drift-details.txt` **byte-identical** at the repo root (verified during this review — the tracked file changes on every `dart test` run).\n\nFunctional hazard beyond hygiene: the drift-watch workflow pages from `drift-details.txt` in the checkout root. `release_drift_check.sh` only resets that file (`rm -f \"$details\"`) **after** the downloads, so if the check dies early (e.g. a transient `gh release download` failure — the `fa-*` download at line 47 has no `|| true`), the \"Page + auto re-request\" step files a GitHub issue quoting this stale committed content as if it were today's drift — a false incident page with fabricated data.\n\n**Fix**: delete both files from the branch and add `drift-details.txt` / `release-notes.md` to `.gitignore` (both are CWD artifacts of the release scripts — nothing on `main` tracks them today)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-02:2924b285",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-02",
+      "updatedAt": "2026-11-02",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT: `_runCheck` writes the drift details file into the repo root on every test run**\n\n`_runCheck` (lines 46-61) sets `FA_DRIFT_LOCAL_DIR` but not `FA_DRIFT_DETAILS`, so every *failing* check in this suite (tampered, unlisted, no-manifest, no-sig, missing-asset) writes `drift-details.txt` into the `dart test` CWD — the **repo root**. After this PR that path is a tracked file, so the suite dirties the checkout on every run; this is exactly how the committed `drift-details.txt` residue (see the other thread) got created — my verification run reproduced it byte-identically.\n\n**Fix** — keep the seam hermetic:\n\n```dart\n], environment: {\n  'GITHUB_REPOSITORY': 'OWNER/REPO',\n  'GH_TOKEN': 'stub',\n  'FA_DRIFT_LOCAL_DIR': dir.path,\n  'FA_DRIFT_DETAILS': '${dir.path}/details.txt',\n});\n```\n\n(The one test that exercises the details file already does this correctly — line 154+.) Alternatively default the script's `details` to `$workdir/drift-details.txt` instead of CWD-relative, but then `release-drift-watch.yml` must pass/export the same path explicitly so the remediation step still finds the file."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-02:3f6ce02e",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-02",
+      "updatedAt": "2026-11-02",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT: untrusted `${{ }}` interpolation into `run:` shell — use env indirection**\n\nThe \"Resolve target release\" step interpolates `${{ inputs.tag }}` and `${{ github.event.release.tag_name }}` directly into a `run:` block:\n\n```yaml\nif [ -n \"${{ inputs.tag }}\" ]; then\n  tag=\"${{ inputs.tag }}\"\n```\n\nand the resolved value is then re-interpolated in the two downstream `run:` steps as `\"${{ steps.target.outputs.tag }}\"`. This is the classic GitHub Actions script-injection pattern: a tag value containing shell metacharacters (`` ` ``, `$( )`, `;`) executes in the runner — a job holding `contents: read` + `actions: write` + `issues: write`.\n\nBoth `workflow_dispatch` and release publishing currently require repo write access, so this is not an external-attacker path — but it is exactly the hazard class this repo's SEC-08 posture (explicit least-privilege blocks in this very workflow) works to avoid, and GitHub's security-hardening guide calls for env-var indirection for *all* untrusted template values.\n\n**Fix**:\n\n```yaml\n- name: Resolve target release\n  id: target\n  env:\n    DISPATCH_TAG: ${{ inputs.tag }}\n    RELEASE_EVENT_TAG: ${{ github.event.release.tag_name }}\n  run: |\n    set -euo pipefail\n    if [ -n \"$DISPATCH_TAG\" ]; then\n      tag=\"$DISPATCH_TAG\"\n    elif [ \"${{ github.event_name }}\" = \"release\" ]; then\n      tag=\"$RELEASE_EVENT_TAG\"\n    ...\n```\n\nand pass the result into the check/remediate steps the same way (`env: TAG: ${{ steps.target.outputs.tag }}` → `\"$TAG\"`). Repo precedent exists both ways (`release-appstore.yml` interpolates inputs directly — equally flaggable), so this is hardening-for-consistency, not a regression unique to this PR."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-02:62049d82",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-02",
+      "updatedAt": "2026-11-02",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT: per-asset gate loop defeats the documented all-or-nothing contract**\n\nThe gate's header promises: *\"Verdicts (per call, all-or-nothing — a partial attach would still drift the manifest)\"*, and `release_asset_gate_test.dart` pins it (\"published release + mixed list → refuse ALL, nothing uploaded\"). But this caller invokes the gate **once per asset**:\n\n```bash\nfor asset in \"${assets[@]}\"; do\n  bash \"$(dirname \"$0\")/release_asset_gate.sh\" \"$tag\" \"$asset\"\ndone\n```\n\nso the atomicity the gate documents and the tests pin is never exercised in production:\n\n- With assets `[a.zip, fa-bad.tar.gz]` on a PUBLISHED release, the first gate call clobbers `a.zip` before the second call refuses `fa-bad.tar.gz` — a partial mutation the single-call contract forbids (benign for the manifest only because the partial case is non-fa, i.e. by accident of ordering, not by construction).\n- Each iteration re-runs `gh release view` (N extra API round-trips per attach) and widens the draft→published TOCTOU window: assets are judged against N different state snapshots.\n\n**Fix** — one call for the whole list (the gate already loops internally and refuses before any upload):\n\n```bash\nbash \"$(dirname \"$0\")/release_asset_gate.sh\" \"$tag\" \"${assets[@]}\"\n```"
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-02:6023d803",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-02",
+      "updatedAt": "2026-11-02",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: transient download blips are indistinguishable from real drift — they page false incidents**\n\nTwo asymmetric error paths conflate \"API blip\" with \"drift\":\n\n- Line 48: `gh release download --pattern 'SHA256SUMS*' || true` — a transport-level failure (502, rate limit) is swallowed and reported as *\"SHA256SUMS is NOT on release\"* → red run + issue page + a pointless release-provenance re-request for a release whose provenance is actually intact.\n- Line 47: the `fa-*` download has **no** `|| true` — a transient failure aborts via `set -e` *before* the `rm -f \"$details\"` reset, so the remediation pages with `(drift details unavailable)` (or stale checkout content) under the **same dedup title** as real drift, polluting the thread a genuine incident relies on.\n\nBoth end in a human page, and the check re-runs daily — one runner blip = one page. Since the intent is \"drift must page, not linger\", consider distinguishing 404 from transport errors: retry once, or capture stderr and only treat an explicit `not found` as the missing-asset verdict while letting other failures fail the step *without* filing the drift issue (an infra error is not drift evidence)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-02:dcc84fb1",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-02",
+      "updatedAt": "2026-11-02",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: unquoted expansion in the set-diff loops breaks on asset names with spaces**\n\nLines 74-79 expand `$unlisted` / `$uncovered` unquoted:\n\n```bash\nfor name in $unlisted; do\n```\n\nGitHub release asset names may contain spaces; a name like `fa macos arm64.tar.gz` would (a) never match the `comm` set-diff as a whole line and (b) be reported as several bogus per-word \"assets\" if it lands in the diff. Read the diffs line-wise instead:\n\n```bash\nwhile IFS= read -r name; do\n  [ -n \"$name\" ] || continue\n  report \"stale manifest: fa asset $name is on the release but NOT in SHA256SUMS (attached after signing?)\"\ndone <<< \"$unlisted\"\n```\n\nAlso worth a one-line note in the header: the check is GNU-bound (`sha256sum`, `find -printf`) — fine for the ubuntu-latest workflow, but it fails confusingly if run locally on macOS."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-02:9c134900",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-02",
+      "updatedAt": "2026-11-02",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread `PRRT_kwDOTXdlLc6ypQ__` — the AC3 remediation vehicle re-flagging `--latest`\n\n**Fixed** in `.github/workflows/ci.yml` (\"Upload provenance assets\" step, ci.yml:4515 area).\n\nThe reviewer's suggested shape is applied verbatim: the flip is now conditional —\n\n```bash\nis_draft=$(gh release view \"${GITHUB_REF_NAME}\" --repo \"${GITHUB_REPOSITORY}\" --json isDraft --jq .isDraft)\ncurrent_latest=$(gh api \"repos/${GITHUB_REPOSITORY}/releases/latest\" --jq .tag_name 2>/dev/null || true)\nif [ \"$is_draft\" = \"true\" ] || [ \"$current_latest\" = \"${GITHUB_REF_NAME}\" ]; then\n  gh release edit \"${GITHUB_REF_NAME}\" --draft=false --latest --repo \"${GITHUB_REPOSITORY}\"\nelse\n  # Re-sign remediation of a non-latest tag: publish state is already\n  # correct — never drag the latest badge backwards (gh-2042).\n  gh release edit \"${GITHUB_REF_NAME}\" --draft=false --repo \"${GITHUB_REPOSITORY}\"\nfi\n```\n\nSo a job rerun for an old drifted tag (exactly what `release_drift_remediate.sh` re-requests) re-publishes the corrected manifest **without** `--latest` — the `latest` badge can no longer move backwards, and the fleet-wide `fa update` downgrade path is closed. The normal publish point (draft flip, gh-1801) and the AC4 pins are unchanged.\n\nPinned by `test/release_drift_workflow_test.dart` → *\"the provenance flip never drags `latest` backwards (gh-2042 BLOCKING review thread)\"*: the step must gate `--latest` on `isDraft` + `releases/latest`, must carry a `--draft=false --repo` fallback without `--latest`, and must name gh-2042.\n\nThe `.github/workflows/release-drift-watch.yml` header comment now also documents the guarded flip (dispatching drift-watch for an older tag re-signs without dragging the badge)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-02:857f3884",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-02",
+      "updatedAt": "2026-11-02",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread `PRRT_kwDOTXdlLc6ypRCk` — committed test-run residue\n\n**Fixed** exactly as suggested:\n\n- `git rm drift-details.txt release-notes.md` — both residue files deleted from the branch.\n- Both names added to `.gitignore` (root-anchored, with a comment explaining they are CWD artifacts of `release_attach_or_create.sh` / `release_drift_check.sh`).\n- Root cause of the regeneration also closed: `test/release_drift_check_test.dart`'s `_runCheck` now pins `FA_DRIFT_DETAILS` into the fixture temp dir (see the thread-3 reply), so a `dart test` run no longer writes `drift-details.txt` at the repo root at all.\n\nPinned by `test/release_drift_workflow_test.dart` → *\"no committed test-run residue at the repo root\"*: both files must be absent from the checkout AND gitignored, so the residue cannot come back."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-02:4ed07339",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-02",
+      "updatedAt": "2026-11-02",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread `PRRT_kwDOTXdlLc6ypRFr` — `_runCheck` writes drift details into the repo root\n\n**Fixed** with the reviewer's primary suggestion — `_runCheck` in `test/release_drift_check_test.dart` now sets the hermetic seam:\n\n```dart\n], environment: {\n  'GITHUB_REPOSITORY': 'OWNER/REPO',\n  'GH_TOKEN': 'stub',\n  'FA_DRIFT_LOCAL_DIR': dir.path,\n  // gh-2042 review thread 3: pin the drift-details seam INSIDE the\n  // fixture dir ...\n  'FA_DRIFT_DETAILS': '${dir.path}/details.txt',\n});\n```\n\nEvery failing check in the suite now writes its details file inside the per-test temp dir that is deleted afterwards — the `dart test` CWD (repo root) is never dirtied, which also removes the mechanism that produced the committed `drift-details.txt` residue.\n\nTwo regression guards added:\n\n- `test/release_drift_check_test.dart` → *\"_runCheck is hermetic — a failing check leaves no drift-details.txt in the repo root\"* (fails against the pre-fix `_runCheck`; verified RED before the fix).\n- The script side also hardened per the related hazard noted in thread 2: `release_drift_check.sh` now runs `rm -f \"$details\"` **before** the downloads, so an early download death can never leave stale checkout content for the remediation step to page."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-02:87921e02",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-02",
+      "updatedAt": "2026-11-02",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread `PRRT_kwDOTXdlLc6ypRHt` — untrusted `${{ }}` interpolation into `run:` shells\n\n**Fixed** in `.github/workflows/release-drift-watch.yml` with env-var indirection, per the suggestion:\n\n- \"Resolve target release\" step: `DISPATCH_TAG: ${{ inputs.tag }}` and `RELEASE_EVENT_TAG: ${{ github.event.release.tag_name }}` ride `env:`; the `run:` block reads `\"$DISPATCH_TAG\"` / `\"$RELEASE_EVENT_TAG\"`. (`github.event_name` stays inline — a GitHub-controlled enum, as in the suggested fix.)\n- Both downstream steps receive the resolved tag as `env: TAG: ${{ steps.target.outputs.tag }}` and use `bash scripts/release_drift_check.sh \"$TAG\"` / `release_drift_remediate.sh \"$TAG\" ...` — no `steps.target.outputs` interpolation into `run:` anywhere.\n\nPinned by `test/release_drift_workflow_test.dart` → *\"no untrusted template interpolation into run: shells — env indirection\"*: every `run:` block of the workflow is statically linted for `{{ inputs.`, `{{ github.event.release.` and `{{ steps.target.outputs.`, and the three `env:` indirections must exist. (Verified RED against the pre-fix workflow.)"
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-02:bd1f46b1",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-02",
+      "updatedAt": "2026-11-02",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread `PRRT_kwDOTXdlLc6ypRKT` — per-asset gate loop defeats all-or-nothing\n\n**Fixed** exactly as suggested — `scripts/release_attach_or_create.sh` `upload_all` now invokes the gate once for the whole list:\n\n```bash\nbash \"$(dirname \"$0\")/release_asset_gate.sh\" \"$tag\" \"${assets[@]}\"\n```\n\n(the per-asset `for` loop is gone). One release-state snapshot judges every asset, the refusal happens before any upload, and the N extra API round-trips / widened draft→published TOCTOU window are gone. The gate script itself already documents and implements the per-call all-or-nothing verdict.\n\nPinned behaviorally by `test/release_publish_imutability_test.dart` → *\"the WHOLE asset list is judged against ONE state snapshot\"*: on the skip→refuse shape (first asset already attached, second an unattached `fa-*`) the stub log must show exactly ONE `gh release view --json isDraft,assets` verdict — two under the old per-asset loop (verified RED before the fix)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-02:7ab01e54",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-02",
+      "updatedAt": "2026-11-02",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread `PRRT_kwDOTXdlLc6ypRMY` — transient blips indistinguishable from drift\n\n**Fixed** in `scripts/release_drift_check.sh` (+ the workflow's remediation step) with the suggested \"distinguish 404 from transport errors, retry once\" design:\n\n- New `gh_dl` helper wraps both `gh release download` calls (`fa-*` and `SHA256SUMS*`): retry once on failure (backoff `FA_DRIFT_RETRY_SLEEP`, default 2 s), and treat **only** an explicit `not found` / `no assets match` stderr verdict as a deterministic \"absent\". The old asymmetric paths are gone — no more swallowed `|| true` on the manifest download and no more unguarded `fa-*` download.\n- Persistent transport failure after the retry exits **2** with a `::error::` naming the transport class and writes **no** drift details file: an infra blip is not drift evidence. The `.github/workflows/release-drift-watch.yml` \"Page + auto re-request\" step now pages **only** when `drift-details.txt` is non-empty (`[ -s drift-details.txt ]`); otherwise it stays silent (red run, no issue, no provenance re-request) — the next scheduled run re-checks.\n- A 404-class verdict keeps its deterministic meaning: the check proceeds and reports the real drift verdict (e.g. *\"SHA256SUMS is NOT on release\"* → exit 1 + details → page), as the reviewer intended.\n- Bonus from the same thread's hazard note: the `rm -f \"$details\"` reset moved **before** the downloads, so an early death never leaves stale checkout content to page under the real-drift dedup title.\n\nPinned by three stubbed-`gh` behavioral tests in `test/release_drift_check_test.dart` (blip-then-success → exit 0 with exactly one retry; persistent blip → exit 2, no details file, one retry; `release not found` → exit 1 + the missing-manifest drift verdict) and by the workflow lint *\"the remediation step pages ONLY on a non-empty drift details file\"*. All verified RED against the pre-fix script."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-02:7123603c",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-02",
+      "updatedAt": "2026-11-02",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread `PRRT_kwDOTXdlLc6ypRPM` — unquoted set-diff expansion breaks on names with spaces\n\n**Fixed** in `scripts/release_drift_check.sh` with the suggested line-wise reads:\n\n```bash\nwhile IFS= read -r name; do\n  [ -n \"$name\" ] || continue\n  report \"stale manifest: fa asset $name is on the release but NOT in SHA256SUMS (attached after signing?)\"\ndone <<< \"$unlisted\"\n```\n\n(same shape for the `$uncovered` / missing-asset loop). A spaced asset name now lands in ONE report line instead of splitting into bogus per-word \"assets\".\n\nThe header also gained the requested GNU-bound note: *GNU-bound (`sha256sum -c`, `find -printf`, `comm`): this check targets the ubuntu-latest workflow runner — it fails confusingly if run locally on macOS/BSD.*\n\nPinned by two tests in `test/release_drift_check_test.dart`: *\"asset names with spaces are reported whole\"* (a `fa-macos arm64.tar.gz` on the release but not in the manifest must be reported as the full name — RED against the word-splitting loop) and *\"a manifest-covered asset with spaces verifies clean\"* (the whole-line manifest/set-diff match on the happy path)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-02:97c54786",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-02",
+      "updatedAt": "2026-11-02",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🚨 **BLOCKING: the AC3 remediation vehicle re-flags an old release `--latest` — a fleet-wide `fa update` downgrade**\n\nThe remediation chain this PR wires up can move the `latest` badge **backwards**, which the PR itself declares must never happen:\n\n1. `scripts/release_drift_remediate.sh:43` re-requests the tag's **\"Sign release checksums\"** job:\n   ```bash\n   gh run rerun \"$run_id\" --repo \"$repo\" --job \"$job_id\"\n   ```\n2. That job's \"Upload provenance assets\" step ends with an **unconditional** flip (`.github/workflows/ci.yml:4515`):\n   ```bash\n   gh release edit \"${GITHUB_REF_NAME}\" --draft=false --latest --repo \"${GITHUB_REPOSITORY}\"\n   ```\n   A job rerun re-executes **all** its steps with the original run's ref, so `GITHUB_REF_NAME` is the (possibly old) tag.\n3. `gh release edit --latest` is \"**Explicitly mark the release as 'Latest'**\" (https://cli.github.com/manual/gh_release_edit) — it designates that release as Latest *regardless of whether a newer release exists*.\n4. The new workflow explicitly advertises the dangerous path as its primary use (`.github/workflows/release-drift-watch.yml:16`): *\"dispatching it for v1.0.680 IS the AC3 remediation\"*. Once any newer release exists, dispatching drift-watch for an older drifted tag re-flags that older release as Latest → every `fa update` client \"updates\" **down** to it (the re-signed manifest makes the downgrade pass provenance verification).\n\nThe PR's own invariant text: *\"A PUBLISHED release is never re-flaged `--latest` here: on an older release that would drag the latest badge (and `fa update`) backwards to a downgrade\"* (`scripts/release_attach_or_create.sh:57-58`, same wording in `test/release_publish_imutability_test.dart:10`). The attach path enforces it; the remediation path reintroduces it.\n\nNote the scheduled/`release: published` paths are safe (they only ever target the current latest), so this bites exactly the documented manual-remediation flow.\n\n**Suggested fix** — make the flip conditional in the provenance job (keeps the gh-1801 publish point and the AC4 pin intact):\n\n```bash\nis_draft=$(gh release view \"${GITHUB_REF_NAME}\" --repo \"${GITHUB_REPOSITORY}\" --json isDraft --jq .isDraft)\nis_latest=$(gh api \"repos/${GITHUB_REPOSITORY}/releases/latest\" --jq .tag_name 2>/dev/null || true)\nif [ \"$is_draft\" = \"true\" ] || [ \"$is_latest\" = \"${GITHUB_REF_NAME}\" ]; then\n  gh release edit \"${GITHUB_REF_NAME}\" --draft=false --latest --repo \"${GITHUB_REPOSITORY}\"\nelse\n  # Re-sign remediation of a non-latest tag: publish state is already\n  # correct — never drag the latest badge backwards (gh-2042).\n  gh release edit \"${GITHUB_REF_NAME}\" --draft=false --repo \"${GITHUB_REPOSITORY}\"\nfi\n```"
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-02:aabffe32",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-02",
+      "updatedAt": "2026-11-02",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: a `sha256sum -c` failure with zero `FAILED` lines currently reports no drift**\n\nThe contract at the top of the script is \"any hit = drift, exit 1\", but this matcher only promotes lines containing `FAILED`/`failed`. If `sha256sum -c` exits non-zero for a reason that prints no such line — e.g. a manifest with CRLF line endings (\"no properly formatted checksum lines found\"), or other corruption that names nothing — `drift[]` stays empty. In those shapes the sed set-diff usually still catches the mismatch (I probed CRLF and malformed-hash manifests: the names don't extract/match, so the stale-manifest loop fires and the run stays red), so this is defense-in-depth, not an observed hole — but a corrupted manifest that *does* still sed-match the local set would pass with the ✅ success line.\n\nCheap catch-all:\n\n```bash\n  if ! (cd \"$workdir\" && sha256sum -c SHA256SUMS > \"$workdir/sha-check.log\" 2>&1); then\n    reported=0\n    while IFS= read -r line; do\n      case \"$line\" in\n        *FAILED*|*failed*)\n          report \"digest drift: $line\"\n          reported=1\n          ;;\n      esac\n    done < \"$workdir/sha-check.log\"\n    # gh-2042 hardening: a failed verification that named nothing is still drift —\n    # never let a nonzero sha-check pass silently.\n    [ \"$reported\" -eq 1 ] || report \"SHA256SUMS failed verification without a named FAILED line — manifest shape is suspect (see $workdir/sha-check.log)\"\n  fi\n```"
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-02:c5d19644",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-02",
+      "updatedAt": "2026-11-02",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: filename typo — `imutability` → `immutability`**\n\n`test/release_publish_imutability_test.dart` (new file in this PR) spells the concept with one `t`: `imutability`. Everywhere else in the PR the word is spelled with the conventional double-t (`immutability` — e.g. the gate's comments and the PR description's prose; the description's verify command uses the same misspelled filename, so it stays consistent with the file on disk).\n\nSuggested follow-up (before merge is fine, or as an immediate post-merge rename since it's a brand-new file):\n\n```bash\ngit mv test/release_publish_imutability_test.dart test/release_publish_immutability_test.dart\n```\n\n…and update the references that name the file (PR description verify command, doc comments in `release_draft_dedupe_test.dart`/`release_drift_workflow_test.dart` if they mention it). Pure naming consistency — no behavior change."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-02:d77acda7",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-02",
+      "updatedAt": "2026-11-02",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread `PRRT_kwDOTXdlLc6yq5mY` — the pre-guard rerun window (re-requested OLD job still runs the unconditional `--latest` flip)\n\n**Fixed** with your option 2 — `scripts/release_drift_remediate.sh` now gates the re-request on the tag run's own commit — sized so the documented v1.0.680 AC3 flow keeps working while the downgrade window is closed:\n\nBefore re-requesting, the script probes the run's `headSha` for the flip guard (`gh api repos/$repo/contents/.github/workflows/ci.yml?ref=$run_sha`, marker `current_latest=`):\n\n- **Guard present at the run's commit** → re-request proceeds exactly as before (the guarded flip no-ops on non-latest tags — r1 fix).\n- **Pre-guard + the tag IS the current latest** → re-request proceeds with an explicit note in the drift issue: the legacy unconditional flip only re-asserts the badge the tag already holds. This is the case you flagged as \"Today: safe\" — v1.0.680 AC3 remediation keeps working.\n- **Pre-guard + the tag is NOT the current latest** → **REFUSED**: no `gh run rerun` is issued; the drift issue still pages (paging is independent of the re-request) with the full instruction — that the run predates the gh-2042 ci.yml flip guard, that re-running it would execute the OLD unconditional `--draft=false --latest` flip and drag the Latest badge (and every `fa update` client) backwards onto the tag, and how to re-sign from a post-guard checkout instead. Probe errors are fail-closed (unknown-guard + non-latest → refuse).\n\nPinned by two stubbed-`gh` behavioral tests in `test/release_drift_remediate_test.dart` (both verified RED against the pre-fix script, then GREEN):\n\n- *\"PRE-GUARD tag run + tag NOT the current latest → re-request REFUSED, issue still pages\"* — the stub serves a pre-guard ci.yml at the run's SHA and a different `releases/latest` tag; the log must show **zero** `run rerun` calls and the filed issue body must contain `REFUSED` + `predates the gh-2042 ci.yml flip guard`.\n- *\"PRE-GUARD tag run + tag IS the current latest → re-request proceeds (old flip only re-asserts)\"* — same pre-guard ci.yml, `releases/latest` = the drifted tag; exactly one `run rerun` call and the body carries the re-assert rationale.\n\n(The stub's `run list` forwarding was also made generic and now mirrors gh's raw-string `--jq` output, so the `headSha` rides along exactly as the real CLI emits it.)\n\nThe drift-watch header's claim — \"re-signing an OLD tag publishes the corrected manifest without ever dragging the `latest` badge backwards onto it\" — now holds for old tags **at any point in the release train's future**, not only while they are still Latest."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-02:2e015fa1",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-02",
+      "updatedAt": "2026-11-02",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread `PRRT_kwDOTXdlLc6yq5pV` — a `sha256sum -c` failure with zero FAILED lines reports no drift\n\n**Fixed** with your catch-all shape verbatim in `scripts/release_drift_check.sh`:\n\n```bash\n  if ! (cd \"$workdir\" && sha256sum -c SHA256SUMS > \"$workdir/sha-check.log\" 2>&1); then\n    reported=0\n    while IFS= read -r line; do\n      case \"$line\" in\n        *FAILED*|*failed*)\n          report \"digest drift: $line\"\n          reported=1\n          ;;\n      esac\n    done < \"$workdir/sha-check.log\"\n    # gh-2042 review thread 9: a failed verification that named nothing is\n    # still drift — never let a nonzero sha-check pass silently ...\n    [ \"$reported\" -eq 1 ] || report \"SHA256SUMS failed verification without a named FAILED line — manifest shape is suspect (see $workdir/sha-check.log)\"\n  fi\n```\n\nAnd the hole is no longer hypothetical — a concrete silent-pass shape was reproduced and pinned:\n\n- **Fixture**: a manifest with the one valid asset line written **tab-separated** (`<hash>\\tfa-linux-x64.tar.gz`).\n- **Before the fix**: `sha256sum -c` exits 1 with only `no properly formatted checksum lines found` (zero FAILED lines), while the sed extraction (`[[:space:]]\\+` matches TAB) still pulls out `fa-linux-x64.tar.gz` — so the set-diff is clean too — and the run **passed with the ✅ success line, exit 0**: a corrupted manifest certified clean.\n- **After the fix**: exit 1, and the drift details file carries the new catch-all line.\n\nPinned by `test/release_drift_check_test.dart` → *\"a sha-check failure with zero FAILED lines never passes silently (catch-all)\"* (verified RED against the pre-fix script, GREEN after; the full drift-check suite passes 16/16)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-02:44e341ab",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-02",
+      "updatedAt": "2026-11-02",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread `PRRT_kwDOTXdlLc6yq5sL` — filename typo `imutability` → `immutability`\n\n**Fixed** as suggested:\n\n```bash\ngit mv test/release_publish_imutability_test.dart test/release_publish_immutability_test.dart\n```\n\nReferences that name the file were updated in the same pass:\n\n- The **PR description's verify command** now names `test/release_publish_immutability_test.dart` (edited via `gh pr edit`; zero occurrences of the one-t spelling remain in the description).\n- A **naming guard** pins the spelling going forward: `test/release_drift_workflow_test.dart` → *\"naming consistency: the immutability suite is spelled immutability\"* asserts the correctly-spelled path exists AND the one-t variant does not (verified RED before the rename, GREEN after).\n- The other suites were checked for references first: `release_draft_dedupe_test.dart` / `release_drift_workflow_test.dart` doc comments never named the old filename, so no code-side renames were needed there.\n\nPure rename — no behavior change; the moved suite passes unmodified."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-02:94d1f27d",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-02",
+      "updatedAt": "2026-11-02",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — REQUEST CHANGES\n\n**Summary**: The gh-2042 design (immutability gate + drift watch + auto-remediation) is sound and unusually well-tested (52/52 targeted tests green, `bash -n` clean), but the remediation vehicle can regress `latest` fleet-wide, and two committed test-artifact files pollute the repo root.\n\n**Key Issues**:\n- 🚨 1 BLOCKING: drift remediation re-runs the provenance job, whose unconditional `--draft=false --latest` flip (ci.yml:4515) drags the Latest badge backwards onto an older tag — an `fa update` downgrade\n- ⚠️ 4 IMPORTANT: committed test residue (`release-notes.md`, `drift-details.txt` — the latter regenerated byte-identical on every test run); `_runCheck` missing `FA_DRIFT_DETAILS` (root cause of that residue); `${{ inputs.tag }}` interpolated into `run:` shell; per-asset gate loop defeats the documented all-or-nothing contract\n- 💡 2 SUGGESTIONS: transient download blips page false drift incidents; unquoted set-diff expansion breaks on asset names with spaces\n\n**Next Steps**:\n1. Gate the provenance flip on \"still draft OR already latest\" (or strip `--latest` when the flip isn't the publish point)\n2. Delete `release-notes.md` + `drift-details.txt` from the branch, set `FA_DRIFT_DETAILS` in `_runCheck`, gitignore both artifacts\n3. Env-indirect `inputs.tag`; pass the whole asset list to the gate in one call"
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-11-02:7218e17a",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-11-02",
+      "updatedAt": "2026-11-02",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🧵 Unresolved review threads — rework armed. This machine-authored PR is reviewed (ai_pr_reviewed) but still has open review threads. The rework leg owns open threads: agent:rework is armed on this PR and the rework runner will work through the threads and push. Validation re-runs automatically afterwards, and once the threads are resolved a fresh re-review is armed (review-threads-resolved)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-02:de73b30b",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-02",
+      "updatedAt": "2026-11-02",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## 🔧 Rework Complete — gh-2042\n\nAll PR review comments have been addressed. See fix summary below."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-11-02:825259a7",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-11-02",
+      "updatedAt": "2026-11-02",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🔴 red head 29ddbe76f679692f306ba7514418ea6e74f2a9bb — red 1/3 (owner directive 2026-10-04: red yields the slot — after 3 reds on the same head, validation waits for a NEW head)\n🔴 Red pre-merge gate on the head with no armed validation — rework armed (gh-917: first validation included, review or no review). The rework runner pushes a fix and validation re-runs on the new head (validate-fresh). After 3 red arming attempts on the SAME head the arm is withheld and a human is escalated (no infinite retry)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-02:fc9072db",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-02",
+      "updatedAt": "2026-11-02",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — REQUEST CHANGES (re-review r2)\n\n**Summary**: The r1 findings are all verifiably fixed in this diff (guarded provenance flip, residue deleted + gitignored, hermetic `_runCheck`, env-indirected `release-drift-watch.yml`, one gate call for the whole asset list, infra≠drift with retries, line-wise set-diff); the PR's own verify command passes 63/63 locally and `bash -n` is clean. 🚨 Merge is blocked by one red CI gate on the reviewed head `29ddbe76`.\n\n**Key Issues**:\n- 🚨 **BLOCKING — red CI on the reviewed head**: \"Core tests (shard 3/4)\" failed on `29ddbe76` — `test/dispatch_watch_test.dart` \"gh-1903 orphan-cancel … never-started child\" hit `TimeoutException after 30s` then `Bad state: process did not exit after signal`. The file is untouched by this PR (last modified gh-1986, Oct 30) and the targeted release suites pass locally, so this looks like a load flake in a real-subprocess SIGINT test — but the PR description's \"4 pre-existing reds\" list names only `test/integration/` PTY/yolo tests and does **not** cover this file. Re-run the shard (or fix/skip the flake) so the gate is green on a head you can name.\n- ⚠️ **IMPORTANT — residual `--latest` downgrade window for pre-guard tags**: `release_drift_remediate.sh` re-requests the tag's **own** \"Sign release checksums\" job; a job re-run executes with the workflow file **as it existed at the original run's commit**. Every tag minted before this PR therefore re-runs the OLD unconditional `--draft=false --latest` flip. Safe today (v1.0.680 is still Latest → reassert), but once a newer release ships, a manual drift-watch dispatch for an older drifted tag — the workflow header's documented AC3 vehicle — drags the badge backwards. Detail in the inline thread on the flip guard.\n- 💡 2 suggestions: a `sha256sum -c` failure with no `FAILED` line reports nothing; new test filename typo `imutability`.\n\n**Next Steps**:\n1. Re-run (or deflake) the Core tests shard on the final head — CI green is the merge gate.\n2. Consider closing the pre-guard rerun window (dedicated re-sign workflow on `main`, or gate the re-request on the run's commit containing the flip guard).\n3. Trivia: catch-all drift report for no-FAILED-line sha-check failures; rename `release_publish_imutability_test.dart`."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-11-02:cdf99212",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-11-02",
+      "updatedAt": "2026-11-02",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🔴 red head 29ddbe76f679692f306ba7514418ea6e74f2a9bb — red 2/3 (owner directive 2026-10-04: red yields the slot — after 3 reds on the same head, validation waits for a NEW head)\n🔴 Red pre-merge gate on the head with no armed validation — rework armed (gh-917: first validation included, review or no review). The rework runner pushes a fix and validation re-runs on the new head (validate-fresh). After 3 red arming attempts on the SAME head the arm is withheld and a human is escalated (no infinite retry)."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-11-02:935e746e",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-11-02",
+      "updatedAt": "2026-11-02",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🔄 zombie re-dispatch c378bf163d90995ea014e32493b582996048f12d — zombie 1/3 at 2026-11-02T13:11:16.502Z\n\nThis head carried no dispatched validation run at all — the dispatch was lost (gh-821). CI was re-dispatched automatically (bounded: 1 per head per hour; 3 in a row on the same head park the PR validation_failed)."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-11-02:7cffa23b",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-11-02",
+      "updatedAt": "2026-11-02",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ Validation CI went red on the head — merge aborted, rework re-queued. (linked issue #2042 re-armed) (approval latch kept — no re-review after fixes)\n🔴 red head c378bf163d90995ea014e32493b582996048f12d — red 1/3 (owner directive 2026-10-04: red yields the slot — after 3 reds on the same head, validation waits for a NEW head)"
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-11-02:4e9f64d4",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-11-02",
+      "updatedAt": "2026-11-02",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🔄 zombie re-dispatch 29ddbe76f679692f306ba7514418ea6e74f2a9bb — zombie 1/3 at 2026-11-02T12:13:04.209Z\n\nThis head carried no dispatched validation run at all — the dispatch was lost (gh-821). CI was re-dispatched automatically (bounded: 1 per head per hour; 3 in a row on the same head park the PR validation_failed)."
+    }
+  ]
+}
