@@ -18,6 +18,8 @@ import 'package:fa/ui/apps/messenger_app_panel.dart';
 import 'package:fa/ui/chats/chat_list_panel.dart';
 import 'package:fa/ui/widgets/messenger_navigation_controls.dart';
 import 'package:fa/ui/widgets/messenger_section_header.dart';
+import 'package:liquid_glass_widgets/liquid_glass_widgets.dart'
+    show ProgressiveBlur;
 import 'package:fa_ui/fa_ui.dart'
     show FaVisualDirection, buildFaTheme, debugFaGlassAlwaysFake;
 import 'package:fa/ui/widgets/wide_layout_shell.dart';
@@ -390,9 +392,13 @@ void main() {
     tester,
   ) async {
     await pumpShell(tester, populateChats: true, denseChats: true);
-    expect(find.byKey(const ValueKey('chatListGlassChrome')), findsOneWidget);
-    final fade = find.byKey(const ValueKey('chatListScrollUnderFadeOverlay'));
-    expect(tester.widget<AnimatedOpacity>(fade).opacity, 0);
+    final underlay = find.byKey(const ValueKey('chatListChromeUnderlay'));
+    expect(underlay, findsOneWidget);
+    ProgressiveBlur underlayBlur() => tester.widget<ProgressiveBlur>(
+      find.descendant(of: underlay, matching: find.byType(ProgressiveBlur)),
+    );
+    // At rest the graduated blur is fully dissolved (sigma 0): plain chrome.
+    expect(underlayBlur().maxSigma, 0);
     final scrollable = tester.widget<Scrollable>(
       find
           .descendant(
@@ -404,26 +410,39 @@ void main() {
     scrollable.controller!.jumpTo(180);
     await tester.pump();
     await tester.pumpAndSettle();
-    expect(tester.widget<AnimatedOpacity>(fade).opacity, 1);
-    // The chrome underlay fades in with the same scroll-under signal.
-    final chromeTintFade = tester.widget<AnimatedOpacity>(
+    // Rows beneath the chrome drive the graduated blur to full strength.
+    final tween = tester.widget<TweenAnimationBuilder<double>>(
       find
-          .ancestor(
-            of: find.descendant(
-              of: find.byKey(const ValueKey('chatListGlassChrome')),
-              matching: find.byType(ColoredBox),
-            ),
-            matching: find.byType(AnimatedOpacity),
+          .descendant(
+            of: underlay,
+            matching: find.byType(TweenAnimationBuilder<double>),
           )
           .first,
     );
-    expect(chromeTintFade.opacity, 1);
-    // The shadow is a tight lip that ends at the toolbar's bottom edge.
+    expect(tween.tween.end, 18);
+    await tester.pumpAndSettle();
+    expect(underlayBlur().maxSigma, 18);
+    // The golden must actually exercise scroll-under: at least one row has
+    // to sit behind the underlay band, otherwise the blur pixels are vacuous.
+    final underlayRect = tester.getRect(underlay);
+    final rows = find.byWidgetPredicate(
+      (w) =>
+          w.key is ValueKey<String> &&
+          (w.key as ValueKey<String>).value.startsWith('chatRow-'),
+    );
+    expect(rows.evaluate(), isNotEmpty, reason: 'fixture rows must exist');
+    final behind = rows
+        .evaluate()
+        .map((e) => e.findRenderObject()! as RenderBox)
+        .map((box) => box.localToGlobal(Offset.zero) & box.size)
+        // The underlay extends 28px past the chrome bottom; a row is only
+        // "under the glass" when it climbs above that bottom edge.
+        .where((r) => r.top < underlayRect.bottom - 28 && r.bottom > 0)
+        .toList();
     expect(
-      tester
-          .getSize(find.byKey(const ValueKey('chatListScrollUnderFade')))
-          .height,
-      24,
+      behind,
+      isNotEmpty,
+      reason: 'a row must scroll behind the chrome underlay',
     );
     await expectGolden(tester, 'wide_layout_shell_sidebar_glass_scroll_under');
   });

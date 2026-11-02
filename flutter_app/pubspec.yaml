@@ -22,6 +22,8 @@ dependencies:
   # The local fa_ui package: the Fa theme + provider/model settings widgets.
   fa_ui:
     path: ../packages/fa_ui
+  # ProgressiveBlur (graduated backdrop blur) for the sidebar chrome melt.
+  liquid_glass_widgets: ^1.16.1
   # The extension panel's worker-relay transports + protocol (issue #34).
   # Path dep: fa_browser_agent ships inside the repo's browser_ext/ and is
   # compiled into the SW separately; the app only shares the wire types.
@@ -464,7 +466,7 @@ flutter_launcher_icons:
   ios: true
   remove_alpha_ios: true
   min_sdk_android: 21
-  adaptive_icon_background: "#0b0f16"
+  adaptive_icon_background: "#1E1E1E"
   adaptive_icon_foreground: "assets/app_icon_source.png"
   macos:
     generate: true

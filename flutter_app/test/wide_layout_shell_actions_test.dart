@@ -24,6 +24,8 @@ import 'package:fa/ui/chats/chat_list_entry.dart';
 import 'package:fa/ui/chats/chat_list_panel.dart';
 import 'package:fa/ui/chats/local_chat_list_adapter.dart';
 import 'package:fa/ui/widgets/wide_layout_shell.dart';
+import 'package:liquid_glass_widgets/liquid_glass_widgets.dart'
+    show ProgressiveBlur, ProgressiveBlurDirection;
 import 'package:fa_ui/fa_ui.dart'
     show
         FaChatHost,
@@ -658,14 +660,15 @@ void main() {
       );
       expect(sidebarPanel.glass, isTrue);
       expect(sidebarPanel.color, const Color(0xFF1C1C1E));
-      final chrome = find.byKey(const ValueKey('chatListGlassChrome'));
-      expect(tester.widget<ClipRect>(chrome), isA<ClipRect>());
-      final backdrop = tester.widget<BackdropFilter>(
-        find.descendant(of: chrome, matching: find.byType(BackdropFilter)),
-      );
-      expect(backdrop.filter, isNotNull);
+      // The chrome is a graduated ProgressiveBlur underlay (plain frost —
+      // no LiquidGlass surfaces with shadows or refraction).
+      final underlay = find.byKey(const ValueKey('chatListChromeUnderlay'));
       expect(
-        find.descendant(of: chrome, matching: find.byType(FaSurface)),
+        find.descendant(of: underlay, matching: find.byType(ProgressiveBlur)),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(of: underlay, matching: find.byType(FaSurface)),
         findsNothing,
         reason: 'plain frost must not add LiquidGlass shadows or refraction',
       );
@@ -854,46 +857,51 @@ void main() {
           .first,
     );
     final toolbarDecoration = toolbarBox.decoration! as BoxDecoration;
-    expect(toolbarDecoration.color, tokens.surface1.withValues(alpha: .35));
+    // Neutral luminance capsule fill (references separate by brightness, not
+    // hue) with a bright inner specular sheen on top and no dark slab rim.
+    final gradient = toolbarDecoration.gradient as LinearGradient;
+    expect(gradient.begin, Alignment.topCenter);
+    expect(
+      gradient.colors.first,
+      const Color(
+        0xFFFFFFFF,
+      ).withValues(alpha: tokens.brightness == Brightness.dark ? .30 : .5),
+      reason: 'specular top sheen',
+    );
+    expect(
+      gradient.colors.last,
+      tokens.brightness == Brightness.dark
+          ? Colors.white.withValues(alpha: .10)
+          : Colors.black.withValues(alpha: .12),
+      reason: 'neutral luminance base fill',
+    );
     expect(toolbarDecoration.borderRadius, BorderRadius.circular(18));
-    // No hairline slab in the floating-glass treatment: a transparent 1px
-    // border keeps the inner segment geometry identical to the boxed variant.
     expect((toolbarDecoration.border! as Border).top.color, Colors.transparent);
 
-    // The chrome frost lets rows ghost through instead of hiding them.
-    final chrome = find.byKey(const ValueKey('chatListGlassChrome'));
-    final chromeTint = tester.widget<ColoredBox>(
-      find.descendant(of: chrome, matching: find.byType(ColoredBox)).first,
+    // The underlay is a graduated ProgressiveBlur band that reaches ~28px
+    // below the toolbar; at rest its sigma is 0 (plain chrome, no band).
+    final underlay = find.byKey(const ValueKey('chatListChromeUnderlay'));
+    expect(
+      tester.getSize(underlay).height,
+      greaterThan(tester.getSize(find.byType(MessengerFilterControl)).height),
     );
-    expect(chromeTint.color, tokens.surface1.withValues(alpha: .45));
-    // Default state is plain: the underlay only fades in once rows actually
-    // scroll beneath the glass — no visible tint band at rest.
-    final chromeFade = tester.widget<AnimatedOpacity>(
-      find
-          .ancestor(
-            of: find.descendant(of: chrome, matching: find.byType(ColoredBox)),
-            matching: find.byType(AnimatedOpacity),
-          )
-          .first,
+    final blur = tester.widget<ProgressiveBlur>(
+      find.descendant(of: underlay, matching: find.byType(ProgressiveBlur)),
     );
-    expect(chromeFade.opacity, 0);
-    // The gate only ever wraps the frost layer — the controls themselves
-    // (segment panel, search) must never be inside the opacity fade.
+    expect(blur.maxSigma, 0);
+    expect(blur.direction, ProgressiveBlurDirection.topToBottom);
+    // The underlay never hosts the controls: search/toolbar must render
+    // outside the blur layer so they can never be gated or frosted away.
     expect(
       find
           .descendant(
-            of: find
-                .ancestor(
-                  of: find.byType(ColoredBox),
-                  matching: find.byType(AnimatedOpacity),
-                )
-                .first,
+            of: underlay,
             matching: find.byKey(const ValueKey('chatCategoryChips')),
           )
           .evaluate()
           .isEmpty,
       isTrue,
-      reason: 'chrome controls must live outside the scroll-under frost gate',
+      reason: 'chrome controls must live outside the blur underlay',
     );
   });
 

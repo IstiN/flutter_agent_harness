@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:ui' as ui;
 
 import 'package:fa/l10n/l10n_ext.dart';
 import 'package:fa/network/network_mode.dart';
@@ -11,6 +10,8 @@ import 'package:fa/ui/widgets/dap_hub_mark.dart';
 import 'package:fa/ui/widgets/messenger_navigation_controls.dart';
 import 'package:fa/ui/widgets/messenger_section_header.dart';
 import 'package:fa/ui/widgets/subagent_mark.dart';
+import 'package:liquid_glass_widgets/liquid_glass_widgets.dart'
+    show ProgressiveBlur, ProgressiveBlurDirection;
 import 'package:fa_ui/fa_ui.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -335,22 +336,6 @@ class _ChatListPanelState extends State<ChatListPanel> {
                 right: 0,
                 child: _buildChromeSurface(colors, chrome),
               ),
-              Positioned(
-                top: _chromeHeight,
-                left: 0,
-                right: 0,
-                child: IgnorePointer(
-                  child: AnimatedOpacity(
-                    key: const ValueKey('chatListScrollUnderFadeOverlay'),
-                    duration: FaMotion.duration(
-                      context,
-                      const Duration(milliseconds: 160),
-                    ),
-                    opacity: _hasScrollUnder ? 1 : 0,
-                    child: _buildScrollUnderFade(),
-                  ),
-                ),
-              ),
             ],
           ),
         );
@@ -358,83 +343,48 @@ class _ChatListPanelState extends State<ChatListPanel> {
     );
   }
 
+  /// The glass-direction chrome underlay: a graduated backdrop blur
+  /// (`ProgressiveBlur`) that is strongest under the search row, eases to
+  /// sharp right below the segment toolbar, and reaches a further 28px into
+  /// the list so rows dissolve beneath the chrome instead of hitting a hard
+  /// frost rectangle. Sigma is driven by the scroll-under signal: 0 at rest
+  /// (plain chrome, no visible band), ~18 once rows actually scroll under.
+  ///
+  /// The controls themselves never live inside this layer — only the blur
+  /// fades, so the search row and segment panel can never be gated away.
   Widget _buildChromeSurface(FahColors colors, Widget chrome) {
     final tokens = FaDesignTokens.of(context);
     if (tokens.direction != FaVisualDirection.glass) {
       return ColoredBox(color: _panelColor(colors), child: chrome);
     }
-    final filter = ui.ImageFilter.blur(
-      sigmaX: tokens.glassBlur,
-      sigmaY: tokens.glassBlur,
-    );
-    // The frost layer (blur + tint) is a separate layer UNDER the controls:
-    // it fades in only once rows actually scroll beneath the glass. At rest
-    // the chrome controls stay fully visible on plain background — no band,
-    // and never a hidden toolbar.
-    final frost = AnimatedOpacity(
-      duration: FaMotion.duration(context, const Duration(milliseconds: 160)),
-      opacity: _hasScrollUnder ? 1 : 0,
-      child: BackdropGroup.of(context) != null
-          ? BackdropFilter.grouped(
-              filter: filter,
-              child: ColoredBox(
-                color: tokens.surface1.withValues(alpha: .45),
-                child: const SizedBox.expand(),
-              ),
-            )
-          : BackdropFilter(
-              filter: filter,
-              child: ColoredBox(
-                color: tokens.surface1.withValues(alpha: .45),
-                child: const SizedBox.expand(),
+    return Stack(
+      children: [
+        Positioned(
+          top: 0,
+          left: 0,
+          right: 0,
+          height: _chromeHeight + 28,
+          child: IgnorePointer(
+            child: KeyedSubtree(
+              key: const ValueKey('chatListChromeUnderlay'),
+              child: TweenAnimationBuilder<double>(
+                duration: FaMotion.duration(
+                  context,
+                  const Duration(milliseconds: 200),
+                ),
+                curve: Curves.easeInOutCubic,
+                tween: Tween<double>(begin: 0, end: _hasScrollUnder ? 18 : 0),
+                builder: (context, sigma, _) => ProgressiveBlur(
+                  maxSigma: sigma,
+                  direction: ProgressiveBlurDirection.topToBottom,
+                  falloff: 1.0,
+                ),
               ),
             ),
-    );
-    // A large rectangular LiquidGlass surface adds refractive highlights and
-    // shadows that look like artefacts over dense conversation rows. This
-    // chrome needs only frost: a clean backdrop blur + tint, with no shadow.
-    return ClipRect(
-      key: const ValueKey('chatListGlassChrome'),
-      child: Stack(
-        children: [
-          Positioned.fill(child: frost),
-          chrome,
-        ],
-      ),
-    );
-  }
-
-  Widget _buildScrollUnderFade() {
-    final tokens = FaDesignTokens.of(context);
-    final filter = ui.ImageFilter.blur(
-      sigmaX: tokens.glassBlur,
-      sigmaY: tokens.glassBlur,
-    );
-    final frost = ColoredBox(
-      color: tokens.surface1.withValues(alpha: .45),
-      child: const SizedBox.expand(),
-    );
-    // A tight frost lip that hangs below the toolbar: opaque where it meets
-    // the chrome frost, fading out over one soft step. The chrome (brand,
-    // search, new button, segment panel) is the foreground plane and the
-    // shadow ends at its bottom edge — rows melt under that edge instead of
-    // floating under a detached band further down the list.
-    return SizedBox(
-      height: 24,
-      child: ClipRect(
-        child: ShaderMask(
-          key: const ValueKey('chatListScrollUnderFade'),
-          blendMode: BlendMode.dstIn,
-          shaderCallback: (bounds) => const LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: [Colors.white, Colors.transparent],
-          ).createShader(bounds),
-          child: BackdropGroup.of(context) != null
-              ? BackdropFilter.grouped(filter: filter, child: frost)
-              : BackdropFilter(filter: filter, child: frost),
+          ),
         ),
-      ),
+        chrome,
+      ],
     );
   }
 

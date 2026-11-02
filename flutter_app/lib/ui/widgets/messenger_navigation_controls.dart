@@ -299,12 +299,31 @@ class MessengerFilterControl extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
         child: Container(
           padding: const EdgeInsets.all(2),
+          // Floating-glass capsule: neutral luminance fill (brightness, not
+          // hue, separates it from the chrome — refs B/C) with a bright
+          // inner specular sheen along the top edge and no dark slab rim. A
+          // uniform transparent 1px border keeps the inner segment geometry
+          // identical to the boxed variant; the specular is baked into the
+          // fill gradient (BorderRadius forbids non-uniform border colors).
           decoration: glass
               ? BoxDecoration(
-                  color: tokens.surface1.withValues(alpha: .35),
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [
+                      Colors.white.withValues(
+                        alpha: tokens.brightness == Brightness.dark ? .30 : .5,
+                      ),
+                      tokens.brightness == Brightness.dark
+                          ? Colors.white.withValues(alpha: .10)
+                          : Colors.black.withValues(alpha: .12),
+                      tokens.brightness == Brightness.dark
+                          ? Colors.white.withValues(alpha: .10)
+                          : Colors.black.withValues(alpha: .12),
+                    ],
+                    stops: const [0.0, 0.14, 1.0],
+                  ),
                   borderRadius: BorderRadius.circular(18),
-                  // Transparent 1px border keeps the inner geometry identical
-                  // to the boxed variant (segment heights, slot metrics).
                   border: Border.all(color: Colors.transparent),
                 )
               : BoxDecoration(
