@@ -389,45 +389,35 @@ void main() {
     debugDefaultTargetPlatformOverride = null;
   });
 
-  testWidgets('PROBE rows below chrome', (tester) async {
+  // Mid-collapse regression guard: the shrinking sidebar must CLIP its
+  // rows — a live capture once caught the selected row painting ~40pt
+  // past the panel's right edge during the animation. Pixels are the
+  // only honest witness mid-flight, so this stays a golden.
+  testWidgets('desktop sidebar collapse never paints rows past the panel', (
+    tester,
+  ) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+    addTearDown(() => debugDefaultTargetPlatformOverride = null);
     await pumpShell(tester, populateChats: true, denseChats: true);
-    final chips = tester.getRect(
-      find.byKey(const ValueKey('chatCategoryChips')),
+    await tester.tap(find.byKey(const ValueKey('wideShellSidebarToggle')));
+    await tester.pump(const Duration(milliseconds: 110)); // mid ~220ms flight
+    // Structural: mid-flight the rows are laid out at the pre-collapse
+    // width, so only a clip between them and the shrinking panel frame
+    // keeps them from painting past its edge.
+    final panel = find.byKey(const ValueKey('glassSidebarPanel'));
+    final clips = find.ancestor(
+      of: find.byKey(const ValueKey('chatListScroll')),
+      matching: find.byType(ClipRect),
     );
-    final list = tester.getRect(find.byKey(const ValueKey('chatListScroll')));
-    // ignore: avoid_print
-    print('PROBE chips=$chips list=$list');
-    final scrollable = tester.widget<Scrollable>(
-      find
-          .descendant(
-            of: find.byKey(const ValueKey('chatListScroll')),
-            matching: find.byType(Scrollable),
-          )
-          .first,
+    expect(
+      find.descendant(of: panel, matching: clips).evaluate(),
+      isNotEmpty,
+      reason: 'the chat list must sit under a clip inside the sidebar panel',
     );
-    // ignore: avoid_print
-    print('PROBE maxScroll=${scrollable.controller!.position.maxScrollExtent}');
-    scrollable.controller!.jumpTo(180);
+    await expectGolden(tester, 'wide_layout_shell_chats_collapse_midflight');
     await tester.pumpAndSettle();
-    final rows = find.byWidgetPredicate(
-      (w) =>
-          w.key is ValueKey<String> &&
-          (w.key as ValueKey<String>).value.startsWith('chatRow-'),
-    );
-    for (final e in rows.evaluate().take(3)) {
-      final b = e.findRenderObject()! as dynamic;
-      final k = (e.widget.key as ValueKey<String>).value;
-      var node = b as dynamic;
-      final chain = <String>[];
-      while (node != null && chain.length < 8) {
-        chain.add(node.runtimeType.toString());
-        node = node.parent as dynamic;
-      }
-      // ignore: avoid_print
-      print(
-        'PROBE row=$k at=${b.localToGlobal(const Offset(0, 0))} chain=$chain',
-      );
-    }
+    await expectGolden(tester, 'wide_layout_shell_chats_collapsed');
+    debugDefaultTargetPlatformOverride = null;
   });
 
   testWidgets('desktop glass rows scroll beneath the sidebar chrome band', (
