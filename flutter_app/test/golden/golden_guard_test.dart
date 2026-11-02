@@ -341,4 +341,58 @@ void main() {
       expect(problems, isEmpty, reason: problems.join('\n'));
     });
   });
+
+  group('styleguide guard wiring', () {
+    // The Material-usage ratchet (Icons.*/Colors.*/raw Material widgets/
+    // nested MaterialApp/ThemeData) lives in its own guard test with its
+    // own baseline file; this wiring test keeps it from being silently
+    // deleted or drifting out of sync with its allowlist.
+    test('material-usage ratchet guard is present and wired', () {
+      const guardPath = 'test/ui/styleguide_guard_test.dart';
+      const allowlistPath = 'test/ui/styleguide_material_allowlist.txt';
+      final guard = File(guardPath);
+      expect(
+        guard.existsSync(),
+        isTrue,
+        reason: '$guardPath (material ratchet) is missing',
+      );
+      final source = guard.readAsStringSync();
+      expect(
+        source,
+        contains(allowlistPath),
+        reason: '$guardPath must read the ratchet baseline $allowlistPath',
+      );
+      expect(
+        source,
+        contains('scripts/check_material_usage.sh'),
+        reason: '$guardPath must document how to regenerate the baseline',
+      );
+
+      final allowlist = File(allowlistPath);
+      expect(
+        allowlist.existsSync(),
+        isTrue,
+        reason:
+            '$allowlistPath is missing — regenerate it from the repo root '
+            'with scripts/check_material_usage.sh > '
+            'flutter_app/$allowlistPath',
+      );
+      final content = allowlist.readAsStringSync();
+      for (final section in [
+        'icons',
+        'material_colors',
+        'material_widgets',
+        'material_app',
+        'theme_data',
+      ]) {
+        expect(
+          content,
+          contains('[$section]'),
+          reason:
+              'allowlist section [$section] missing — regenerate with '
+              'scripts/check_material_usage.sh',
+        );
+      }
+    });
+  });
 }

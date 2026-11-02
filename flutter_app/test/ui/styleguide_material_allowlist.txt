@@ -1,0 +1,144 @@
+# Material-usage ratchet allowlist — parsed by
+# flutter_app/test/ui/styleguide_guard_test.dart.
+# Format: `[section]` header, then one `<lib path> <max count>` per line.
+# This file only ever SHRINKS: regenerate it with
+#   scripts/check_material_usage.sh \
+#     > flutter_app/test/ui/styleguide_material_allowlist.txt
+# after removing Material usages from lib/. Never raise a ceiling to
+# silence the guard.
+[icons]
+lib/apps/apps_grid.dart 1
+lib/apps/dynamic_widget_tile.dart 12
+lib/apps/fa_chat_overlay.dart 3
+lib/apps/fa_work_bar.dart 3
+lib/apps/js_app_view.dart 12
+lib/apps/js_theme_bridge_host.dart 1
+lib/apps/unpacked_load_flow.dart 5
+lib/apps/widgets_catalog_sheet.dart 5
+lib/services/aiin_connect_flow.dart 2
+lib/ui/activity/activity_surface.dart 7
+lib/ui/apps/apps_directory_panel.dart 1
+lib/ui/chats/chat_list_panel.dart 25
+lib/ui/network/add_agent_dialog.dart 14
+lib/ui/network/channel_rail.dart 15
+lib/ui/network/network_center.dart 4
+lib/ui/network/network_chat_page.dart 17
+lib/ui/network/network_home.dart 1
+lib/ui/network/networks_sidebar.dart 7
+lib/ui/network/showcase_page.dart 4
+lib/ui/network/sign_in_dialog.dart 5
+lib/ui/network/wallet_menu.dart 1
+lib/ui/screens/app_launcher_screen.dart 13
+lib/ui/screens/attached_session_screen.dart 1
+lib/ui/screens/chat_screen.dart 1
+lib/ui/screens/codemie_sso_pickers.dart 2
+lib/ui/screens/dap_settings_page.dart 18
+lib/ui/screens/mobile_consent_screen.dart 2
+lib/ui/screens/model_presets.dart 6
+lib/ui/screens/oauth_webview_scaffold.dart 1
+lib/ui/screens/onboarding_mockups.dart 35
+lib/ui/screens/onboarding_screen.dart 30
+lib/ui/screens/redaction_section.dart 1
+lib/ui/screens/settings_flows.dart 3
+lib/ui/screens/settings_sections.dart 11
+lib/ui/screens/settings_tiles.dart 2
+lib/ui/screens/settings.dart 17
+lib/ui/screens/skills_toggles_section.dart 1
+lib/ui/screens/tools_availability_section.dart 1
+lib/ui/widgets/apps_panel.dart 9
+lib/ui/widgets/code_viewer.dart 1
+lib/ui/widgets/file_browser.dart 18
+lib/ui/widgets/file_preview.dart 4
+lib/ui/widgets/github_account_section.dart 3
+lib/ui/widgets/github_connect_sheet.dart 4
+lib/ui/widgets/image_drop_notice_chip.dart 4
+lib/ui/widgets/messenger_navigation_controls.dart 1
+lib/ui/widgets/messenger_section_header.dart 2
+lib/ui/widgets/model_cache_section.dart 1
+lib/ui/widgets/provider_selection_list.dart 5
+lib/ui/widgets/quick_model_chip.dart 1
+lib/ui/widgets/session_search_field.dart 2
+lib/ui/widgets/sidebar_sessions_list.dart 7
+lib/ui/widgets/store_get_banner.dart 2
+lib/ui/widgets/wide_layout_shell.dart 17
+lib/ui/widgets/widget_publications_sheet.dart 2
+lib/ui/widgets/widget_publish_sheet.dart 2
+lib/ui/widgets/widget_status_detail_sheet.dart 1
+[material_colors]
+lib/apps/dynamic_widget_tile.dart 3
+lib/apps/fa_chat_overlay.dart 1
+lib/apps/fa_work_bar.dart 1
+lib/apps/js_app_view.dart 5
+lib/apps/widgets_catalog_sheet.dart 1
+lib/ui/network/networks_sidebar.dart 1
+lib/ui/screens/app_launcher_screen.dart 4
+lib/ui/screens/attached_session_screen.dart 2
+lib/ui/screens/onboarding_mockups.dart 30
+lib/ui/screens/onboarding_screen.dart 5
+lib/ui/widgets/messenger_navigation_controls.dart 1
+lib/ui/widgets/messenger_section_header.dart 1
+lib/ui/widgets/publication_state_chip.dart 8
+lib/ui/widgets/sidebar_sessions_list.dart 2
+lib/ui/widgets/widget_publish_sheet.dart 1
+[material_widgets]
+lib/apps/app_load_error.dart 1
+lib/apps/apps_grid.dart 1
+lib/apps/dynamic_messages_sheet.dart 1
+lib/apps/dynamic_widget_tile.dart 3
+lib/apps/fa_chat_overlay.dart 4
+lib/apps/fa_work_bar.dart 4
+lib/apps/js_app_view.dart 11
+lib/apps/js_theme_bridge_host.dart 2
+lib/apps/unpacked_load_flow.dart 3
+lib/apps/widgets_catalog_sheet.dart 11
+lib/main.dart 4
+lib/services/aiin_connect_flow.dart 7
+lib/services/codemie_sso_flow_steps.dart 4
+lib/ui/activity/activity_surface.dart 2
+lib/ui/chats/chat_list_panel.dart 9
+lib/ui/network/add_agent_dialog.dart 5
+lib/ui/network/channel_key_import_dialog.dart 3
+lib/ui/network/channel_rail.dart 15
+lib/ui/network/create_network_dialog.dart 4
+lib/ui/network/join_sheet.dart 7
+lib/ui/network/network_center.dart 3
+lib/ui/network/network_chat_page.dart 7
+lib/ui/network/network_home.dart 1
+lib/ui/network/networks_sidebar.dart 10
+lib/ui/network/showcase_page.dart 1
+lib/ui/network/sign_in_dialog.dart 5
+lib/ui/network/wallet_menu.dart 8
+lib/ui/screens/app_launcher_screen.dart 8
+lib/ui/screens/attached_session_screen.dart 2
+lib/ui/screens/chat_screen.dart 1
+lib/ui/screens/codemie_sso_pickers.dart 3
+lib/ui/screens/dap_settings_page.dart 4
+lib/ui/screens/mobile_consent_screen.dart 2
+lib/ui/screens/onboarding_screen.dart 4
+lib/ui/screens/settings_flows.dart 2
+lib/ui/screens/settings_key_dialogs.dart 3
+lib/ui/screens/settings.dart 1
+lib/ui/widgets/apps_panel.dart 8
+lib/ui/widgets/code_viewer.dart 2
+lib/ui/widgets/downloaded_models_quick_start.dart 1
+lib/ui/widgets/file_browser.dart 5
+lib/ui/widgets/file_preview.dart 1
+lib/ui/widgets/github_account_section.dart 5
+lib/ui/widgets/github_connect_sheet.dart 7
+lib/ui/widgets/image_drop_notice_chip.dart 1
+lib/ui/widgets/messenger_navigation_controls.dart 2
+lib/ui/widgets/messenger_section_header.dart 2
+lib/ui/widgets/model_cache_section.dart 3
+lib/ui/widgets/rename_session_dialog.dart 4
+lib/ui/widgets/session_search_field.dart 3
+lib/ui/widgets/sidebar_nav_item.dart 2
+lib/ui/widgets/sidebar_sessions_list.dart 4
+lib/ui/widgets/store_get_banner.dart 3
+lib/ui/widgets/wide_layout_shell.dart 4
+lib/ui/widgets/widget_publications_sheet.dart 1
+lib/ui/widgets/widget_publish_sheet.dart 5
+lib/ui/widgets/widget_status_detail_sheet.dart 1
+[material_app]
+
+[theme_data]
+
