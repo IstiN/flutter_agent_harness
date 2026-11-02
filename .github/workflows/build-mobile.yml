@@ -219,7 +219,7 @@ jobs:
       - name: Setup Ruby
         # ubuntu-24.04 runner images ship no Ruby — `bundle: command not
         # found` exit 127 (issue #353). Same setup as store-metadata.yml.
-        uses: ruby/setup-ruby@26e5b7d197ebf60545ee9667bcbace0be11ccaec # v1.328.0 (branch head; v1 moves)
+        uses: ruby/setup-ruby@de492cf36cbab201753d720ce4f4e336cd688c94 # v1.328.0 (branch head; v1 moves)
         with:
           ruby-version: '3.2'
 
@@ -318,7 +318,7 @@ jobs:
       - name: Setup Ruby
         # ubuntu-24.04 runner images ship no Ruby — `bundle: command not
         # found` exit 127 (issue #353). Same setup as store-metadata.yml.
-        uses: ruby/setup-ruby@26e5b7d197ebf60545ee9667bcbace0be11ccaec # v1.328.0 (branch head; v1 moves)
+        uses: ruby/setup-ruby@de492cf36cbab201753d720ce4f4e336cd688c94 # v1.328.0 (branch head; v1 moves)
         with:
           ruby-version: '3.2'
 
