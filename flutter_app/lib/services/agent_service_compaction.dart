@@ -130,7 +130,16 @@ class _AutoCompactorFlutterHooks implements AutoCompactorHooks {
   void onAttemptStart(String label, int attempt, Duration budget) {}
 
   @override
-  void onPass(AutoCompactorPass pass) {}
+  void onPass(AutoCompactorPass pass) {
+    // ignore: avoid_print
+    print(
+      'DBG-PASS p${pass.pass} fb=${pass.fallback} ok=${pass.ok} '
+      'b=${pass.tokensBefore} a=${pass.tokensAfter} '
+      'hid=${pass.hiddenRecords} sum=${pass.summarizedMessages} '
+      'drop=${pass.droppedMessages} err=${pass.error} '
+      'slen=${pass.summary?.length}',
+    );
+  }
 
   @override
   void onRetry(int attempt, int maxAttempts, Duration backoff, Object error) {}
@@ -318,6 +327,13 @@ extension CompactionWindowSizing on AgentService {
 
     // The AutoCompactor replaces `state.messages` on success; mirror
     // that into the chat list so the UI reflects the new transcript.
+    // ignore: avoid_print
+    // ignore_for_file: avoid_print
+    print(
+      'DBG wiring conv=$conversationWindow settings=r${settings.reserveTokens}'
+      '/k${settings.keepRecentTokens} before=$transcriptTokens '
+      'failures=$failures',
+    );
     _persistedCount = _agent.state.messages.length;
     messages
       ..clear()

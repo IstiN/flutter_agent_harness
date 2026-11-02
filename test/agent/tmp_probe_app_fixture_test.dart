@@ -86,17 +86,31 @@ void main() {
       contextWindow: 8192,
       maxTokens: 4096,
     );
+    final echoTool = AgentTool(
+      name: 'echo',
+      description: 'echo',
+      parameters: const {
+        'type': 'object',
+        'properties': {
+          'x': {'type': 'string'},
+        },
+        'required': ['x'],
+      },
+      execute: (arguments, cancelToken, onUpdate) async =>
+          ToolExecutionResult.text('y' * 34000),
+    );
     final state = AgentState(
       model: model,
       messages: await session.buildContextMessages(),
       systemPrompt: '',
+      tools: [echoTool],
     );
     final hooks = _Hooks();
     final ok = await AutoCompactorFactory(
       session: session,
       state: state,
       window: 8192,
-      settings: CompactionSettings.forWindow(8192),
+      settings: const CompactionSettings(enabled: true, reserveTokens: 2048, keepRecentTokens: 4096),
       sources: AutoCompactorSources(
         smolStream: null,
         smolModel: null,
