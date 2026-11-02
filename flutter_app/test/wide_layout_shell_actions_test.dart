@@ -28,6 +28,7 @@ import 'package:fa_ui/fa_ui.dart'
     show
         FaChatHost,
         FaLogo,
+        FaDesignTokens,
         FaSectionEyebrow,
         FaSurface,
         FaVisualDirection,
@@ -825,6 +826,49 @@ void main() {
     expect(eyebrow('All activity'), findsOneWidget);
     // The count chip on the Activity toolbar stays a plain dim numeral.
     expect(find.byKey(const ValueKey('activityCount')), findsOneWidget);
+  });
+
+  testWidgets('sidebar chrome is translucent glass under floating controls', (
+    tester,
+  ) async {
+    final env = MemoryExecutionEnv();
+    final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
+      ..addSession('design-session', _fakeService(env));
+    await pumpShell(tester, manager: manager);
+    await tester.pump(const Duration(milliseconds: 100));
+    final context = tester.element(find.byType(MessengerFilterControl));
+    final tokens = FaDesignTokens.of(context);
+
+    // The segment panel floats on frosted chrome: translucent fill, no
+    // hard bordered slab (iMessage-style underlay).
+    final control = tester.widget<MessengerFilterControl>(
+      find.byType(MessengerFilterControl),
+    );
+    expect(control.glass, isTrue);
+    final toolbarBox = tester.widget<Container>(
+      find
+          .descendant(
+            of: find.byKey(const ValueKey('chatCategoryChips')),
+            matching: find.byType(Container),
+          )
+          .first,
+    );
+    final toolbarDecoration = toolbarBox.decoration! as BoxDecoration;
+    expect(toolbarDecoration.color, tokens.surface1.withValues(alpha: .35));
+    expect(toolbarDecoration.borderRadius, BorderRadius.circular(18));
+    // No hairline slab in the floating-glass treatment: a transparent 1px
+    // border keeps the inner segment geometry identical to the boxed variant.
+    expect(
+      (toolbarDecoration.border! as Border).top.color,
+      Colors.transparent,
+    );
+
+    // The chrome frost lets rows ghost through instead of hiding them.
+    final chrome = find.byKey(const ValueKey('chatListGlassChrome'));
+    final chromeTint = tester.widget<ColoredBox>(
+      find.descendant(of: chrome, matching: find.byType(ColoredBox)).first,
+    );
+    expect(chromeTint.color, tokens.surface1.withValues(alpha: .45));
   });
 
   testWidgets('centered header uses the selected folder and session name', (

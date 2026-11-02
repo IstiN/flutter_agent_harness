@@ -368,7 +368,7 @@ class _ChatListPanelState extends State<ChatListPanel> {
       sigmaY: tokens.glassBlur,
     );
     final child = ColoredBox(
-      color: tokens.surface1.withValues(alpha: .78),
+      color: tokens.surface1.withValues(alpha: .45),
       child: chrome,
     );
     // A large rectangular LiquidGlass surface adds refractive highlights and
@@ -389,7 +389,7 @@ class _ChatListPanelState extends State<ChatListPanel> {
       sigmaY: tokens.glassBlur,
     );
     final frost = ColoredBox(
-      color: tokens.surface1.withValues(alpha: .78),
+      color: tokens.surface1.withValues(alpha: .45),
       child: const SizedBox.expand(),
     );
     // A tight frost lip that hangs below the toolbar: opaque where it meets
@@ -450,6 +450,7 @@ class _ChatListPanelState extends State<ChatListPanel> {
         selectedExtraIndex: widget.filterSelectedExtraIndex,
         highlightSelectedCategory: widget.filterSelectionHighlighted,
         highlightSelectedExtra: widget.filterSelectedExtraHighlighted,
+        glass: true,
         trailing: _networkFilter(colors),
       ),
     );

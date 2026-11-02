@@ -250,6 +250,7 @@ class MessengerFilterControl extends StatelessWidget {
     required this.trailing,
     this.highlightSelectedCategory = true,
     this.highlightSelectedExtra = true,
+    this.glass = false,
   }) : assert(categories.length > 0),
        assert(selectedIndex >= 0 && selectedIndex < categories.length),
        assert(
@@ -282,6 +283,11 @@ class MessengerFilterControl extends StatelessWidget {
   /// its implicit home destination quiet while a category owns the selection.
   final bool highlightSelectedExtra;
 
+  /// Floating-glass treatment: translucent fill without the hairline slab
+  /// border, for toolbars that sit on frosted chrome (iMessage-style
+  /// underlay — rows ghost through behind the floating controls).
+  final bool glass;
+
   final Widget trailing;
 
   @override
@@ -293,11 +299,19 @@ class MessengerFilterControl extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
         child: Container(
           padding: const EdgeInsets.all(2),
-          decoration: BoxDecoration(
-            color: tokens.surface1.withValues(alpha: .62),
-            borderRadius: BorderRadius.circular(18),
-            border: Border.all(color: tokens.hairline),
-          ),
+          decoration: glass
+              ? BoxDecoration(
+                  color: tokens.surface1.withValues(alpha: .35),
+                  borderRadius: BorderRadius.circular(18),
+                  // Transparent 1px border keeps the inner geometry identical
+                  // to the boxed variant (segment heights, slot metrics).
+                  border: Border.all(color: Colors.transparent),
+                )
+              : BoxDecoration(
+                  color: tokens.surface1.withValues(alpha: .62),
+                  borderRadius: BorderRadius.circular(18),
+                  border: Border.all(color: tokens.hairline),
+                ),
           child: LayoutBuilder(
             builder: (context, constraints) {
               final duration = FaMotion.duration(
