@@ -68,11 +68,15 @@
 		<true/>
 	</dict>
 	<!-- gh crash 2026-11-02: SIGSEGV in impeller::Canvas::SetupRenderPass on
-	     io.flutter.raster (macOS 26.7.1, debug). Impeller is off on macOS
-	     until the engine bug is fixed; Skia renders the same surfaces and
-	     liquid glass falls back to its non-Impeller path. -->
+	     io.flutter.raster (macOS 26.7.1, debug) with the early heavy
+	     LiquidGlass planes. Re-enabled 2026-11-02: the shell now renders far
+	     fewer glass planes (sidebar FaSurface + graduated ProgressiveBlur
+	     chrome) and the real shader paths (liquid glass refraction,
+	     progressive blur) only exist on Impeller — Skia degraded everything
+	     to flat fallbacks. If the raster crash returns, this key is the
+	     first switch to flip back to false. -->
 	<key>FLTEnableImpeller</key>
-	<false/>
+	<true/>
 	<key>FLTEnableFlutterGPU</key>
 	<true/>
 </dict>
