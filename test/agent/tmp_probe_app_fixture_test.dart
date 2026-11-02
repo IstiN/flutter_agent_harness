@@ -114,7 +114,9 @@ void main() {
       print(
           'PROBE pass=${p.pass} ok=${p.ok} fallback=${p.fallback} '
           'before=${p.tokensBefore} after=${p.tokensAfter} '
-          'err=${p.error} summaryLen=${p.summary?.length}');
+          'hidden=${p.hiddenRecords} summarized=${p.summarizedMessages} '
+          'dropped=${p.droppedMessages} err=${p.error} '
+          'summaryLen=${p.summary?.length}');
     }
     final entries = await session.getEntries();
     final ckpts = entries.whereType<CompactionRecord>().length;
