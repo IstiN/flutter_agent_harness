@@ -90,7 +90,8 @@ class MainFlutterWindow: NSWindow {
 
   /// The unified toolbar used to host the traffic lights; without one macOS
   /// drops them lower and widens their pitch over full-size content. Pin
-  /// them to the classic 20pt-spaced row near the window's top edge.
+  /// them to the position the toolbar era used: 20pt pitch, hugging the
+  /// left edge, vertically on the old toolbar row.
   private func pinTrafficLights() {
     let buttons = [
       standardWindowButton(.closeButton),
@@ -101,8 +102,8 @@ class MainFlutterWindow: NSWindow {
       return
     }
     let isFlipped = container.isFlipped
-    let y: CGFloat = isFlipped ? 7 : container.bounds.height - 7 - 14
-    var x: CGFloat = 16
+    let y: CGFloat = isFlipped ? 12 : container.bounds.height - 12 - 14
+    var x: CGFloat = 8
     for button in buttons {
       button.frame.origin = CGPoint(x: x, y: y)
       x += 20

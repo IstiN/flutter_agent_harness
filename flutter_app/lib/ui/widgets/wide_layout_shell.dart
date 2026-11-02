@@ -1023,11 +1023,9 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
                       width: sidebarWidth,
                       child: _desktopPanelFrame(
                         key: const ValueKey('glassSidebarPanel'),
-                        // Flush with the window's top edge: any top inset
-                        // here reads as a leftover titlebar strip.
-                        padding: const EdgeInsets.fromLTRB(8, 0, 0, 8),
-                        borderRadius: const BorderRadius.only(
-                          bottomLeft: Radius.circular(18),
+                        padding: const EdgeInsets.fromLTRB(8, 8, 0, 8),
+                        borderRadius: const BorderRadius.horizontal(
+                          left: Radius.circular(18),
                         ),
                         tokens: tokens,
                         glass: true,
@@ -1058,11 +1056,10 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
                         key: const ValueKey('glassCenterPanel'),
                         // Composer owns its floating margins; its separate
                         // environmental fade reaches the actual window edge.
-                        // Flush with the window's top edge like the sidebar.
-                        padding: EdgeInsets.zero,
+                        padding: const EdgeInsets.only(top: 8),
                         tokens: tokens,
-                        borderRadius: const BorderRadius.only(
-                          bottomRight: Radius.circular(18),
+                        borderRadius: const BorderRadius.horizontal(
+                          right: Radius.circular(18),
                         ),
                         // The collapsed toggle is floating chrome, never a
                         // participant in the transcript/header layout.
