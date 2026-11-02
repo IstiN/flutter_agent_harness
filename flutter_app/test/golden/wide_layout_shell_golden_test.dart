@@ -405,6 +405,19 @@ void main() {
     await tester.pump();
     await tester.pumpAndSettle();
     expect(tester.widget<AnimatedOpacity>(fade).opacity, 1);
+    // The chrome underlay fades in with the same scroll-under signal.
+    final chromeTintFade = tester.widget<AnimatedOpacity>(
+      find
+          .ancestor(
+            of: find.descendant(
+              of: find.byKey(const ValueKey('chatListGlassChrome')),
+              matching: find.byType(ColoredBox),
+            ),
+            matching: find.byType(AnimatedOpacity),
+          )
+          .first,
+    );
+    expect(chromeTintFade.opacity, 1);
     // The shadow is a tight lip that ends at the toolbar's bottom edge.
     expect(
       tester

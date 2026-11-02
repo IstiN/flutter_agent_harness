@@ -858,10 +858,7 @@ void main() {
     expect(toolbarDecoration.borderRadius, BorderRadius.circular(18));
     // No hairline slab in the floating-glass treatment: a transparent 1px
     // border keeps the inner segment geometry identical to the boxed variant.
-    expect(
-      (toolbarDecoration.border! as Border).top.color,
-      Colors.transparent,
-    );
+    expect((toolbarDecoration.border! as Border).top.color, Colors.transparent);
 
     // The chrome frost lets rows ghost through instead of hiding them.
     final chrome = find.byKey(const ValueKey('chatListGlassChrome'));
@@ -869,6 +866,17 @@ void main() {
       find.descendant(of: chrome, matching: find.byType(ColoredBox)).first,
     );
     expect(chromeTint.color, tokens.surface1.withValues(alpha: .45));
+    // Default state is plain: the underlay only fades in once rows actually
+    // scroll beneath the glass — no visible tint band at rest.
+    final chromeFade = tester.widget<AnimatedOpacity>(
+      find
+          .ancestor(
+            of: find.descendant(of: chrome, matching: find.byType(ColoredBox)),
+            matching: find.byType(AnimatedOpacity),
+          )
+          .first,
+    );
+    expect(chromeFade.opacity, 0);
   });
 
   testWidgets('centered header uses the selected folder and session name', (

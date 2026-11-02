@@ -367,9 +367,15 @@ class _ChatListPanelState extends State<ChatListPanel> {
       sigmaX: tokens.glassBlur,
       sigmaY: tokens.glassBlur,
     );
-    final child = ColoredBox(
-      color: tokens.surface1.withValues(alpha: .45),
-      child: chrome,
+    // The tint only fades in once rows actually scroll beneath the glass —
+    // at rest the chrome is plain and no underlay band is visible.
+    final child = AnimatedOpacity(
+      duration: FaMotion.duration(context, const Duration(milliseconds: 160)),
+      opacity: _hasScrollUnder ? 1 : 0,
+      child: ColoredBox(
+        color: tokens.surface1.withValues(alpha: .45),
+        child: chrome,
+      ),
     );
     // A large rectangular LiquidGlass surface adds refractive highlights and
     // shadows that look like artefacts over dense conversation rows. This
