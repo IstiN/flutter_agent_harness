@@ -4,82 +4,102 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:test/test.dart';
 
 /// gh-2044 rework probe: replicate the flutter_app over-window relief
-/// fixture at the core level — [user 'go', assistant toolUse, tool result
-/// y*34000] over an 8192 window; the fake stream answers call 1 with a
+/// fixture at the core level — [user 'go', assistant toolUse, huge tool
+/// result] over an 8192 window; the fake stream answers call 1 with a
 /// toolUse turn and every later call with text 'continued'.
 void main() {
   test('PROBE: app over-window relief fixture through AutoCompactorFactory',
       () async {
-    final session = SessionRecord(
-      messages: const [
-        TextMessage(role: SessionRole.user, text: 'go'),
-        TextMessage(role: SessionRole.assistant, text: ''),
-      ],
-      toolResults: const [
-        ToolResultRecord(
-          id: 'tc-1',
-          name: 'echo',
-          result: ToolResultPayload(text: 'y' * 34000),
-        ),
-      ],
+    final fs = MemoryFileSystem();
+    final repo = JsonlSessionRepo(fs: fs, sessionsRoot: '/sessions');
+    final session = await repo.create(JsonlSessionCreateOptions(cwd: '/work'));
+    await session.appendMessage(UserMessage.text('go'));
+    await session.appendMessage(
+      AssistantMessage(
+        content: const [
+          TextContent(text: 'a'),
+          ToolCall(id: 'tc-1', name: 'echo', arguments: {}),
+        ],
+        api: 'anthropic-messages',
+        provider: 'test',
+        model: 'test-model',
+        usage: Usage.zero,
+        stopReason: StopReason.toolUse,
+        timestamp: DateTime.now(),
+      ),
+    );
+    await session.appendMessage(
+      ToolResultMessage(
+        toolCallId: 'tc-1',
+        toolName: 'echo',
+        content: [TextContent(text: 'y' * 34000)],
+        isError: false,
+        timestamp: DateTime.now(),
+      ),
     );
     var calls = 0;
-    Stream<LlmStreamEvent> fake(Model model, List<Message> messages,
-        {bool thinking = false}) async* {
+    AssistantMessageEventStream fake(
+      Model m,
+      Context c, {
+      CancelToken? cancelToken,
+    }) {
       calls++;
-      if (calls == 1) {
-        yield MessageEvent(
-          message: AssistantMessage(
-            content: const [ToolUseContent(id: 'tc-1', name: 'echo', input: {})],
-            api: model.api,
-            provider: model.provider,
-            model: model.id,
+      AssistantMessage msg(dynamic content, StopReason reason) =>
+          AssistantMessage(
+            content: [content],
+            api: m.api,
+            provider: m.provider,
+            model: m.id,
             usage: Usage.zero,
-            stopReason: StopReason.toolUse,
+            stopReason: reason,
             timestamp: DateTime.now(),
+          );
+      final stream = AssistantMessageEventStream();
+      if (calls == 1) {
+        stream.push(
+          DoneEvent(
+            reason: StopReason.toolUse,
+            message: msg(
+              const ToolCall(id: 'tc-2', name: 'echo', arguments: {}),
+              StopReason.toolUse,
+            ),
           ),
         );
       } else {
-        yield MessageEvent(
-          message: AssistantMessage(
-            content: const [TextContent(text: 'continued')],
-            api: model.api,
-            provider: model.provider,
-            model: model.id,
-            usage: Usage.zero,
-            stopReason: StopReason.stop,
-            timestamp: DateTime.now(),
+        stream.push(
+          DoneEvent(
+            reason: StopReason.stop,
+            message: msg(const TextContent(text: 'continued'), StopReason.stop),
           ),
         );
       }
-      yield const DoneEvent(reason: StopReason.stop);
+      stream.end();
+      return stream;
     }
 
     final model = Model(
       id: 'test-model',
       name: 'test-model',
-      api: ModelApi.anthropic,
+      api: 'anthropic-messages',
       provider: 'test',
+      baseUrl: 'http://localhost:1',
       contextWindow: 8192,
+      maxTokens: 4096,
+    );
+    final state = AgentState(
+      model: model,
+      messages: await session.buildContextMessages(),
+      systemPrompt: '',
     );
     final hooks = _Hooks();
     final ok = await AutoCompactorFactory(
       session: session,
-      state: const AgentState(
-        messages: [],
-        model: Model(
-          id: 'test-model',
-          name: 'test-model',
-          api: ModelApi.anthropic,
-          provider: 'test',
-          contextWindow: 8192,
-        ),
-      ),
+      state: state,
       window: 8192,
-      settings: CompactionSettings.fromWindow(8192),
+      settings: CompactionSettings.forWindow(8192),
       sources: AutoCompactorSources(
-        smolStream: fake,
-        smolModel: model,
+        smolStream: null,
+        smolModel: null,
         mainStream: fake,
         mainModel: model,
       ),
@@ -88,40 +108,34 @@ void main() {
       engine: CompactionEngine.structured,
     ).run();
     // ignore: avoid_print
-    print('PROBE run()=$ok streamCalls=$calls hooks=${hooks.log}');
-    // ignore: avoid_print
-    print(
-        'PROBE session after: ${session.messages.length} messages, '
-        '${session.toolResults.length} toolResults');
-    for (final m in session.messages) {
+    print('PROBE run()=$ok streamCalls=$calls');
+    for (final p in hooks.passes) {
       // ignore: avoid_print
       print(
-          'PROBE   msg role=${m.role} text=${m.text.length > 60 ? '${m.text.substring(0, 60)}…' : m.text}');
+          'PROBE pass=${p.pass} ok=${p.ok} fallback=${p.fallback} '
+          'before=${p.tokensBefore} after=${p.tokensAfter} '
+          'err=${p.error} summaryLen=${p.summary?.length}');
     }
-    for (final r in session.toolResults) {
-      // ignore: avoid_print
-      print('PROBE   tool ${r.name} len=${r.result.text.length}');
-    }
-    for (final c in session.checkpoints) {
-      // ignore: avoid_print
-      print('PROBE   checkpoint kind=${c.kind} summaryLen=${c.summary.length}');
-    }
+    final entries = await session.getEntries();
+    final ckpts = entries.whereType<CompactionRecord>().length;
+    // ignore: avoid_print
+    print('PROBE session: ${entries.length} records, $ckpts compactionRecords');
     expect(ok, isTrue, reason: 'relief must land: the app turn continues');
   });
 }
 
-class _Hooks implements AutoCompactorHooks {
-  final log = <String>[];
+final class _Hooks implements AutoCompactorHooks {
+  final passes = <AutoCompactorPass>[];
   @override
-  void onDelta(String delta) => log.add('delta:${delta.length}');
+  void onPass(AutoCompactorPass pass) => passes.add(pass);
   @override
-  void onAttemptStart(int attempt) => log.add('attempt:$attempt');
+  void onRetry(int attempt, int maxAttempts, Duration backoff, Object error) {}
   @override
-  void onPass(CompactionPassReceipt receipt) =>
-      log.add('pass:${receipt.kind} ok=${receipt.ok} '
-          'err=${receipt.error} after=${receipt.afterTokens}');
+  void onDone(int passes, int tokens) {}
   @override
-  void onFallback(String reason) => log.add('fallback:$reason');
+  void onBothRolesFailed(Object lastError) {}
   @override
-  void onNotice(String message) => log.add('notice:$message');
+  void onDelta(String delta) {}
+  @override
+  void onAttemptStart(String label, int attempt, Duration budget) {}
 }
