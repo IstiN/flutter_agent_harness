@@ -107,13 +107,21 @@ else
     report "SHA256SUMS.sig is NOT on release $tag — an unsigned manifest is not provenance"
   fi
   if ! (cd "$workdir" && sha256sum -c SHA256SUMS > "$workdir/sha-check.log" 2>&1); then
+    reported=0
     while IFS= read -r line; do
       case "$line" in
         *FAILED*|*failed*)
           report "digest drift: $line"
+          reported=1
           ;;
       esac
     done < "$workdir/sha-check.log"
+    # gh-2042 review thread 9: a failed verification that named nothing is
+    # still drift — never let a nonzero sha-check pass silently (e.g. a
+    # tab-separated manifest sed-extracts cleanly, so the set-diff stays
+    # quiet while sha256sum only prints "no properly formatted checksum
+    # lines found").
+    [ "$reported" -eq 1 ] || report "SHA256SUMS failed verification without a named FAILED line — manifest shape is suspect (see $workdir/sha-check.log)"
   fi
 fi
 

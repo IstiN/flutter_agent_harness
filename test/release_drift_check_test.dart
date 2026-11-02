@@ -60,6 +60,15 @@ ProcessResult _runCheck(Directory dir) => Process.runSync(
   },
 );
 
+String _sha256Of(File f) {
+  final res = Process.runSync('sha256sum', [f.path]);
+  if (res.exitCode != 0) fail('sha256sum failed: ${res.stderr}');
+  return (res.stdout as String).split(' ').first;
+}
+
+String _details(Directory dir) => File('${dir.path}/details.txt')
+    .readAsStringSync();
+
 void main() {
   test('missing drift-check script fails the suite loudly', () {
     expect(
@@ -380,6 +389,31 @@ void main() {
       final r = _runCheck(dir);
       expect(r.exitCode, 0, reason: _out(r));
       expect(_out(r), contains('✅'));
+      dir.deleteSync(recursive: true);
+    },
+  );
+
+  test(
+    'a sha-check failure with zero FAILED lines never passes silently (catch-all)',
+    () {
+      // gh-2042 review thread 9: the contract is "any hit = drift, exit 1",
+      // but the FAILED/failed matcher only promotes named failures. A
+      // tab-separated manifest still sed-extracts ([:space:]] matches TAB) so
+      // the set-diff stays clean, while `sha256sum -c` exits 1 with only
+      // "no properly formatted checksum lines found" — a corrupted manifest
+      // must never get the ✅ success line.
+      final dir = _fixture(
+        'tab-manifest',
+        {'fa-linux-x64.tar.gz': 'linux-bytes'},
+        ['fa-linux-x64.tar.gz'],
+      );
+      final hash = _sha256Of(File('${dir.path}/fa-linux-x64.tar.gz'));
+      File('${dir.path}/SHA256SUMS').writeAsStringSync(
+        '$hash\tfa-linux-x64.tar.gz\n',
+      );
+      final r = _runCheck(dir);
+      expect(r.exitCode, 1, reason: _out(r));
+      expect(_details(dir), contains('without a named FAILED line'));
       dir.deleteSync(recursive: true);
     },
   );
