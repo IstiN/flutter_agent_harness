@@ -734,77 +734,71 @@ class _ChatListPanelState extends State<ChatListPanel> {
 
   Widget _folderDestination(ChatListEntry entry, String key, int count) {
     final path = _folderPath(entry)!;
-    return Tooltip(
-      message: path,
-      child: _ConversationRow(
-        materialKey: ValueKey('chatFolder-$key'),
-        entry: entry,
-        folderPath: compactChatFolderPath(path),
-        folderTitle: entry.folderName ?? _directoryName(path),
-        folderCount: count,
-        selected: false,
-        expanded: false,
-        childCount: 0,
-        indent: 0,
-        compact: widget.compact,
-        hubBound: false,
-        onOpen: () => _setDirectory(path),
-        onTogglePin: () {},
-        onToggleParent: null,
-        onLocalMenu: null,
-      ),
+    return _ConversationRow(
+      materialKey: ValueKey('chatFolder-$key'),
+      entry: entry,
+      folderPath: compactChatFolderPath(path),
+      folderTitle: entry.folderName ?? _directoryName(path),
+      folderCount: count,
+      selected: false,
+      expanded: false,
+      childCount: 0,
+      indent: 0,
+      compact: widget.compact,
+      hubBound: false,
+      onOpen: () => _setDirectory(path),
+      onTogglePin: () {},
+      onToggleParent: null,
+      onLocalMenu: null,
     );
   }
 
   Widget _buildCurrentDirectoryHeader(FahColors colors, String directory) {
-    return Tooltip(
-      message: directory,
-      child: Container(
-        key: const ValueKey('chatCurrentFolder'),
-        height: 56,
-        padding: const EdgeInsets.symmetric(horizontal: 6),
-        color: _panelColor(colors),
-        child: Row(
-          children: [
-            IconButton(
-              key: const ValueKey('chatFolderBack'),
-              onPressed: () => _setDirectory(null),
-              tooltip: MaterialLocalizations.of(context).backButtonTooltip,
-              iconSize: 20,
-              style: IconButton.styleFrom(
-                minimumSize: const Size.square(40),
-                maximumSize: const Size.square(40),
-              ),
-              icon: const Icon(Icons.arrow_back_rounded),
+    return Container(
+      key: const ValueKey('chatCurrentFolder'),
+      height: 56,
+      padding: const EdgeInsets.symmetric(horizontal: 6),
+      color: _panelColor(colors),
+      child: Row(
+        children: [
+          IconButton(
+            key: const ValueKey('chatFolderBack'),
+            onPressed: () => _setDirectory(null),
+            tooltip: MaterialLocalizations.of(context).backButtonTooltip,
+            iconSize: 20,
+            style: IconButton.styleFrom(
+              minimumSize: const Size.square(40),
+              maximumSize: const Size.square(40),
             ),
-            Icon(Icons.folder_outlined, size: 20, color: colors.dim),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    _directoryName(directory),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: colors.text,
-                      fontSize: 13,
-                      fontWeight: FontWeight.w600,
-                    ),
+            icon: const Icon(Icons.arrow_back_rounded),
+          ),
+          Icon(Icons.folder_outlined, size: 20, color: colors.dim),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  _directoryName(directory),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: colors.text,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
                   ),
-                  Text(
-                    directory,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(color: colors.dim, fontSize: 10),
-                  ),
-                ],
-              ),
+                ),
+                Text(
+                  directory,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(color: colors.dim, fontSize: 10),
+                ),
+              ],
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
