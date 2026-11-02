@@ -4289,5 +4289,16 @@
       "cacheRead": 2551744,
       "model": "glm-5.3-flash"
     }
+  ],
+  "pr-2047": [
+    {
+      "leg": "review",
+      "at": "2026-11-02T13:17:11Z",
+      "prompt": 172525,
+      "completion": 30159,
+      "total": 202684,
+      "cacheRead": 4062208,
+      "model": "glm-5.3-flash"
+    }
   ]
 }
