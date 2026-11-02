@@ -42,6 +42,7 @@ import 'package:fa/services/provider_registry.dart';
 import 'package:fa/services/session_keys_store.dart';
 import 'package:fa/services/skills_access_store.dart';
 import 'package:fa/ui/screens/settings_key_dialogs.dart';
+import 'package:fa/ui/screens/settings_tiles.dart';
 import 'package:fa/ui/screens/skills_toggles_section.dart';
 import 'package:fa/ui/screens/tools_availability_section.dart';
 import 'package:fa/ui/screens/redaction_section.dart';
@@ -85,16 +86,6 @@ RoundedSuperellipseBorder _settingsDialogShape(BuildContext context) {
   return RoundedSuperellipseBorder(
     borderRadius: BorderRadius.circular(tokens.radiusLg),
     side: BorderSide(color: tokens.hairline),
-  );
-}
-
-/// Keeps the themed button metrics while making a confirmation destructive.
-ButtonStyle _settingsDestructiveButtonStyle(BuildContext context) {
-  final tokens = faui.FaDesignTokens.of(context);
-  final base = Theme.of(context).filledButtonTheme.style;
-  return (base ?? const ButtonStyle()).copyWith(
-    backgroundColor: WidgetStatePropertyAll(tokens.danger),
-    foregroundColor: WidgetStatePropertyAll(tokens.accentInk),
   );
 }
 
@@ -973,10 +964,11 @@ class KeysSection extends StatelessWidget {
                   ),
                 ),
                 if (store != null)
-                  TextButton.icon(
+                  faui.FaButton(
+                    label: context.l10n.keysAddButton,
+                    icon: Icons.add,
+                    variant: faui.FaButtonVariant.ghost,
                     onPressed: () => _addKey(context, store),
-                    icon: const Icon(Icons.add, size: 18),
-                    label: Text(context.l10n.keysAddButton),
                   ),
               ],
             ),
@@ -1075,15 +1067,16 @@ class KeysSection extends StatelessWidget {
             ),
           ),
           if (onSet != null)
-            TextButton(
+            faui.FaButton(
+              label: context.l10n.keysSetButton,
+              variant: faui.FaButtonVariant.ghost,
               onPressed: onSet,
-              child: Text(context.l10n.keysSetButton),
             ),
           if (onDelete != null)
-            IconButton(
+            faui.FaIconButton(
               tooltip: context.l10n.commonDelete,
+              icon: Icons.delete_outline,
               onPressed: onDelete,
-              icon: Icon(Icons.delete_outline, size: 18, color: tokens.danger),
             ),
         ],
       ),
@@ -1135,14 +1128,15 @@ class KeysSection extends StatelessWidget {
         title: Text(context.l10n.keysDeleteTitle(name)),
         content: Text(context.l10n.keysDeleteBody),
         actions: [
-          TextButton(
+          faui.FaButton(
+            label: context.l10n.commonCancel,
+            variant: faui.FaButtonVariant.ghost,
             onPressed: () => Navigator.of(dialogContext).pop(false),
-            child: Text(context.l10n.commonCancel),
           ),
-          FilledButton(
-            style: _settingsDestructiveButtonStyle(dialogContext),
+          faui.FaButton(
+            label: context.l10n.commonDelete,
+            variant: faui.FaButtonVariant.danger,
             onPressed: () => Navigator.of(dialogContext).pop(true),
-            child: Text(context.l10n.commonDelete),
           ),
         ],
       ),
@@ -1865,14 +1859,15 @@ class ResetAppsSection extends StatelessWidget {
           child: Text(l10n.settingsResetAppsConfirmBody),
         ),
         actions: [
-          TextButton(
+          faui.FaButton(
+            label: l10n.commonCancel,
+            variant: faui.FaButtonVariant.ghost,
             onPressed: () => Navigator.of(dialogContext).pop(false),
-            child: Text(l10n.commonCancel),
           ),
-          FilledButton(
-            style: _settingsDestructiveButtonStyle(dialogContext),
+          faui.FaButton(
+            label: l10n.settingsResetApps,
+            variant: faui.FaButtonVariant.danger,
             onPressed: () => Navigator.of(dialogContext).pop(true),
-            child: Text(l10n.settingsResetApps),
           ),
         ],
       ),
@@ -1902,10 +1897,10 @@ class ResetAppsSection extends StatelessWidget {
             ],
           ),
         ),
-        TextButton(
+        faui.FaButton(
+          label: context.l10n.settingsResetApps,
+          variant: faui.FaButtonVariant.danger,
           onPressed: () => _confirmAndReset(context),
-          style: TextButton.styleFrom(foregroundColor: tokens.danger),
-          child: Text(context.l10n.settingsResetApps),
         ),
       ],
     );
@@ -2178,18 +2173,16 @@ class _CoderBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
+    final tokens = faui.FaDesignTokens.of(context);
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
       decoration: BoxDecoration(
-        color: theme.colorScheme.secondaryContainer,
-        borderRadius: BorderRadius.circular(4),
+        color: tokens.accentSoft,
+        borderRadius: BorderRadius.circular(tokens.radiusXs),
       ),
       child: Text(
         context.l10n.settingsCoderBadge,
-        style: theme.textTheme.labelSmall?.copyWith(
-          color: theme.colorScheme.onSecondaryContainer,
-        ),
+        style: TextStyle(color: tokens.accent, fontSize: 11),
       ),
     );
   }
@@ -2203,18 +2196,16 @@ class _VisionBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
+    final tokens = faui.FaDesignTokens.of(context);
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
       decoration: BoxDecoration(
-        color: theme.colorScheme.tertiaryContainer,
-        borderRadius: BorderRadius.circular(4),
+        color: tokens.accentSoft,
+        borderRadius: BorderRadius.circular(tokens.radiusXs),
       ),
       child: Text(
         context.l10n.settingsVisionBadge,
-        style: theme.textTheme.labelSmall?.copyWith(
-          color: theme.colorScheme.onTertiaryContainer,
-        ),
+        style: TextStyle(color: tokens.accent, fontSize: 11),
       ),
     );
   }
@@ -2263,10 +2254,11 @@ class _NoServiceSettings extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 12),
-        FilledButton.icon(
-          onPressed: onAddProvider,
-          icon: const Icon(Icons.add),
-          label: Text(context.l10n.settingsAddProvider),
+        faui.FaButton(
+          label: context.l10n.settingsAddProvider,
+          icon: Icons.add,
+          expanded: true,
+          onPressed: () => onAddProvider(),
         ),
       ],
     );

@@ -4,7 +4,7 @@
 import 'package:fa/l10n/l10n_ext.dart';
 import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/analytics.dart';
-import 'package:fa_ui/fa_ui.dart' as faui;
+import 'package:fa/ui/screens/settings_tiles.dart';
 import 'package:flutter/material.dart';
 
 /// The settings "Secret redaction" row (issue #1078 AC4/E3): flips the
@@ -28,8 +28,7 @@ class _RedactionSectionState extends State<RedactionSection> {
 
   @override
   Widget build(BuildContext context) {
-    final colors = faui.FahColors.of(context);
-    return SwitchListTile(
+    return SettingsSwitchRow(
       value: _enabled,
       onChanged: (enabled) {
         setState(() => _enabled = enabled);
@@ -39,22 +38,9 @@ class _RedactionSectionState extends State<RedactionSection> {
           params: {'enabled': enabled},
         );
       },
-      contentPadding: EdgeInsets.zero,
-      secondary: Icon(
-        Icons.visibility_off_outlined,
-        size: 20,
-        color: colors.dim,
-      ),
-      title: Text(
-        context.l10n.settingsRedaction,
-        style: Theme.of(context).textTheme.bodyMedium,
-      ),
-      subtitle: Text(
-        context.l10n.settingsRedactionHint,
-        style: Theme.of(
-          context,
-        ).textTheme.bodySmall?.copyWith(color: colors.dim),
-      ),
+      leading: const Icon(Icons.visibility_off_outlined),
+      title: Text(context.l10n.settingsRedaction),
+      subtitle: Text(context.l10n.settingsRedactionHint),
     );
   }
 }

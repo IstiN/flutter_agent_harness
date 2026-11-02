@@ -83,14 +83,11 @@ class ImagePreviewsSection extends StatelessWidget {
     return ListenableBuilder(
       listenable: store,
       builder: (context, _) {
-        return SwitchListTile(
+        return SettingsSwitchRow(
           value: store.highQuality,
           onChanged: store.setHighQuality,
           title: Text(context.l10n.settingsImagePreviewsLabel),
           subtitle: Text(context.l10n.settingsImagePreviewsHelper),
-          dense: true,
-          contentPadding: EdgeInsets.zero,
-          controlAffinity: ListTileControlAffinity.leading,
         );
       },
     );
@@ -367,25 +364,17 @@ class ThemePacksSection extends StatelessWidget {
             color: faui.FaDesignTokens.of(context).ink2,
           ),
         ),
-        RadioGroup<String?>(
-          groupValue: controller.packId,
-          onChanged: (id) => controller.setPack(
-            id,
-            hasWallpaper: id != null && store.byId(id)?.spec.wallpaper != null,
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              RadioListTile<String?>(
-                value: null,
-                title: Text(context.l10n.themePackDefault),
-                contentPadding: EdgeInsets.zero,
-                dense: true,
-              ),
-              for (final pack in store.packs)
-                _packTile(context, theme, store, controller, pack),
-            ],
-          ),
+        Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            SettingsRadioRow(
+              selected: controller.packId == null,
+              onTap: () => controller.setPack(null),
+              title: Text(context.l10n.themePackDefault),
+            ),
+            for (final pack in store.packs)
+              _packTile(context, theme, store, controller, pack),
+          ],
         ),
       ],
     );
@@ -406,10 +395,11 @@ class ThemePacksSection extends StatelessWidget {
           ),
         ),
         if (canPick)
-          TextButton.icon(
+          faui.FaButton(
+            label: context.l10n.themePackImport,
+            icon: Icons.upload_file,
+            variant: faui.FaButtonVariant.secondary,
             onPressed: () => _import(context, store),
-            icon: const Icon(Icons.upload_file, size: 18),
-            label: Text(context.l10n.themePackImport),
           ),
       ],
     );
@@ -422,21 +412,23 @@ class ThemePacksSection extends StatelessWidget {
     ThemeController controller,
     InstalledThemePack pack,
   ) {
-    return RadioListTile<String?>(
+    return SettingsRadioRow(
       key: ValueKey('theme-pack-${pack.id}'),
-      value: pack.id,
+      selected: controller.packId == pack.id,
+      onTap: () => controller.setPack(
+        pack.id,
+        hasWallpaper: pack.spec.wallpaper != null,
+      ),
       title: Text(pack.name),
       subtitle:
           (pack.spec.wallpaper == null && pack.spec.contrastWarnings.isEmpty)
           ? null
           : _packNotes(context, theme, pack),
-      secondary: IconButton(
+      trailing: faui.FaIconButton(
         tooltip: context.l10n.themePackDelete,
-        icon: const Icon(Icons.delete_outline, size: 20),
+        icon: Icons.delete_outline,
         onPressed: () => _remove(context, store, controller, pack),
       ),
-      contentPadding: EdgeInsets.zero,
-      dense: true,
     );
   }
 
@@ -489,6 +481,8 @@ class ChatTextSection extends StatelessWidget {
             Row(
               children: [
                 Expanded(
+                  // Divisions keep the size whole-stepped (the store clamps
+                  // but does not round); [FaSlider] has no divisions slot.
                   child: Slider(
                     value: store.fontSize,
                     min: ChatTextStore.minFontSize,
@@ -710,11 +704,12 @@ class _CompactionSectionState extends State<CompactionSection> {
         if (widget.docsUrl case final docs?)
           Align(
             alignment: Alignment.centerLeft,
-            child: TextButton.icon(
+            child: faui.FaButton(
+              label: l10n.settingsCompactionDocs,
+              icon: Icons.open_in_new,
+              variant: faui.FaButtonVariant.ghost,
               onPressed: () =>
                   launchUrl(docs, mode: LaunchMode.externalApplication),
-              icon: const Icon(Icons.open_in_new, size: 16),
-              label: Text(l10n.settingsCompactionDocs),
             ),
           ),
       ],
@@ -1069,10 +1064,11 @@ class _ProviderQueueSectionState extends State<ProviderQueueSection> {
         if (!envWins)
           Align(
             alignment: Alignment.centerLeft,
-            child: OutlinedButton.icon(
+            child: faui.FaButton(
+              label: l10n.settingsQueueAdd,
+              icon: Icons.add,
+              variant: faui.FaButtonVariant.secondary,
               onPressed: _addEntry,
-              icon: const Icon(Icons.add),
-              label: Text(l10n.settingsQueueAdd),
             ),
           ),
       ],
@@ -1151,20 +1147,20 @@ class _QueueEntryTile extends StatelessWidget {
               ),
             ),
           ),
-          IconButton(
+          faui.FaIconButton(
             tooltip: context.l10n.settingsQueueMoveUp,
+            icon: Icons.arrow_upward,
             onPressed: enabled ? onMoveUp : null,
-            icon: const Icon(Icons.arrow_upward, size: 18),
           ),
-          IconButton(
+          faui.FaIconButton(
             tooltip: context.l10n.settingsQueueMoveDown,
+            icon: Icons.arrow_downward,
             onPressed: enabled ? onMoveDown : null,
-            icon: const Icon(Icons.arrow_downward, size: 18),
           ),
-          IconButton(
+          faui.FaIconButton(
             tooltip: context.l10n.settingsQueueRemove,
+            icon: Icons.delete_outline,
             onPressed: enabled ? onRemove : null,
-            icon: const Icon(Icons.delete_outline, size: 18),
           ),
         ],
       ),

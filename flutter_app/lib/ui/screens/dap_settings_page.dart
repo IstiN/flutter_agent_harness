@@ -352,8 +352,8 @@ class _DapHubPageState extends State<DapHubPage> {
   Widget? _hubLeading(BuildContext context, DapSavedConnection? selected) =>
       selected == null
       ? null
-      : IconButton(
-          icon: const Icon(Icons.arrow_back),
+      : faui.FaIconButton(
+          icon: Icons.arrow_back,
           onPressed: () => setState(() => _selected = null),
         );
 
@@ -408,10 +408,11 @@ class _DapHubPageState extends State<DapHubPage> {
               _connectionRow(context, snapshot, row.connection, row.active),
             Align(
               alignment: Alignment.centerLeft,
-              child: TextButton.icon(
+              child: faui.FaButton(
+                label: context.l10n.settingsDapAddConnection,
+                icon: Icons.add,
+                variant: faui.FaButtonVariant.secondary,
                 onPressed: _addConnection,
-                icon: const Icon(Icons.add, size: 18),
-                label: Text(context.l10n.settingsDapAddConnection),
               ),
             ),
           ],
@@ -465,32 +466,43 @@ class _DapHubPageState extends State<DapHubPage> {
     DapSavedConnection entry,
     bool active,
   ) {
-    final theme = Theme.of(context);
     final colors = FahColors.of(context);
     final selected = _selected?.url == entry.url;
-    return ListTile(
+    return InkWell(
       key: ValueKey('dapConn-${entry.url}'),
-      contentPadding: EdgeInsets.zero,
-      dense: true,
-      leading: _activeDot(colors, active),
-      title: Row(
-        children: [
-          Expanded(child: _connectionTitle(context, entry, active)),
-          if (active) _activeChip(context),
-        ],
-      ),
-      subtitle: Text(
-        entry.url,
-        style: theme.textTheme.bodySmall?.copyWith(
-          color: colors.dim,
-          fontFamily: 'JetBrainsMono',
+      onTap: () => setState(() => _selected = entry),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        child: Row(
+          children: [
+            _activeDot(colors, active),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _connectionTitle(context, entry, active),
+                  Text(
+                    entry.url,
+                    style: FahPalette.mono(
+                      color: colors.dim,
+                      fontSize: 12,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            if (active) ...[
+              const SizedBox(width: 8),
+              _activeChip(context),
+            ],
+            Icon(
+              Icons.chevron_right,
+              color: selected ? colors.teal : colors.dim,
+            ),
+          ],
         ),
       ),
-      trailing: Icon(
-        Icons.chevron_right,
-        color: selected ? colors.teal : colors.dim,
-      ),
-      onTap: () => setState(() => _selected = entry),
     );
   }
 
@@ -501,10 +513,9 @@ class _DapHubPageState extends State<DapHubPage> {
     DapSavedConnection entry,
     bool active,
   ) {
-    final theme = Theme.of(context);
     return Text(
       entry.name.isEmpty ? entry.url : entry.name,
-      style: theme.textTheme.bodyMedium?.copyWith(
+      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
         fontWeight: active ? FontWeight.w600 : null,
       ),
     );
@@ -580,37 +591,33 @@ class _DapHubPageState extends State<DapHubPage> {
 
   /// The live switch: swaps the spinner in while a switch is in flight.
   Widget _makeActiveButton(BuildContext context, DapSavedConnection entry) {
-    return FilledButton.icon(
+    return faui.FaButton(
+      label: context.l10n.settingsDapMakeActive,
+      icon: Icons.swap_horiz,
+      busy: _switchingConnection,
+      expanded: true,
       onPressed: _switchingConnection
           ? null
           : () async {
               await _switchTo(entry);
               if (mounted) setState(() => _selected = entry);
             },
-      icon: _switchingConnection
-          ? const SizedBox(
-              width: 16,
-              height: 16,
-              child: CircularProgressIndicator(strokeWidth: 2),
-            )
-          : const Icon(Icons.swap_horiz, size: 18),
-      label: Text(context.l10n.settingsDapMakeActive),
     );
   }
 
   /// Drops the bookmark from the detail view.
   Widget _removeSavedButton(BuildContext context, DapSavedConnection entry) {
-    final theme = Theme.of(context);
-    return OutlinedButton.icon(
+    return faui.FaButton(
+      label: context.l10n.settingsDapRemoveSaved,
+      icon: Icons.bookmark_remove_outlined,
+      variant: faui.FaButtonVariant.danger,
+      expanded: true,
       onPressed: _switchingConnection
           ? null
           : () async {
               await _removeSaved(entry);
               if (mounted) setState(() => _selected = null);
             },
-      icon: const Icon(Icons.bookmark_remove_outlined, size: 18),
-      label: Text(context.l10n.settingsDapRemoveSaved),
-      style: OutlinedButton.styleFrom(foregroundColor: theme.colorScheme.error),
     );
   }
 
@@ -637,8 +644,9 @@ class _DapHubPageState extends State<DapHubPage> {
                       ),
                       Text(
                         snapshot.url,
-                        style: theme.textTheme.bodyLarge?.copyWith(
-                          fontFamily: 'JetBrainsMono',
+                        style: FahPalette.mono(
+                          color: theme.textTheme.bodyLarge!.color!,
+                          fontSize: 15,
                         ),
                       ),
                     ],
@@ -650,16 +658,12 @@ class _DapHubPageState extends State<DapHubPage> {
             const SizedBox(height: 8),
             Align(
               alignment: Alignment.centerLeft,
-              child: OutlinedButton.icon(
+              child: faui.FaButton(
+                label: context.l10n.settingsDapProbeButton,
+                icon: Icons.wifi_tethering,
+                variant: faui.FaButtonVariant.secondary,
+                busy: _probing,
                 onPressed: _probing ? null : _probe,
-                icon: _probing
-                    ? const SizedBox(
-                        width: 16,
-                        height: 16,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Icon(Icons.wifi_tethering, size: 18),
-                label: Text(context.l10n.settingsDapProbeButton),
               ),
             ),
             if (snapshot.envLocked) ...[
@@ -670,7 +674,7 @@ class _DapHubPageState extends State<DapHubPage> {
                   Icon(
                     Icons.info_outline,
                     size: 16,
-                    color: theme.colorScheme.tertiary,
+                    color: faui.FaDesignTokens.of(context).info,
                   ),
                   const SizedBox(width: 8),
                   Expanded(
@@ -729,21 +733,19 @@ class _DapHubPageState extends State<DapHubPage> {
                 runSpacing: 8,
                 children: [
                   for (final channel in snapshot.channels)
-                    Chip(
-                      label: Text(
-                        '#$channel', // l10n:ignore — channel name (data)
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          fontFamily: 'JetBrainsMono',
-                        ),
-                      ),
+                    faui.FaChip(
+                      // l10n:ignore — channel name (data)
+                      label: '#$channel',
                     ),
                 ],
               ),
             const SizedBox(height: 24),
-            OutlinedButton.icon(
+            faui.FaButton(
+              label: context.l10n.settingsDapEditConnection,
+              icon: Icons.edit_outlined,
+              variant: faui.FaButtonVariant.secondary,
+              expanded: true,
               onPressed: _edit,
-              icon: const Icon(Icons.edit_outlined, size: 18),
-              label: Text(context.l10n.settingsDapEditConnection),
             ),
           ],
         ),
@@ -871,7 +873,7 @@ class _DapHubPageState extends State<DapHubPage> {
             Icon(
               selected ? Icons.radio_button_checked : Icons.radio_button_off,
               size: 18,
-              color: selected ? theme.colorScheme.primary : colors.dim,
+              color: selected ? colors.teal : colors.dim,
             ),
             const SizedBox(width: 10),
             Expanded(
@@ -918,9 +920,12 @@ class _DapHubPageState extends State<DapHubPage> {
           Expanded(
             child: Text(
               value,
-              style: theme.textTheme.bodyMedium?.copyWith(
-                fontFamily: mono ? 'JetBrainsMono' : null,
-              ),
+              style: mono
+                  ? FahPalette.mono(
+                      color: theme.textTheme.bodyMedium!.color!,
+                      fontSize: 13,
+                    )
+                  : theme.textTheme.bodyMedium,
             ),
           ),
         ],
@@ -939,12 +944,12 @@ class _DapHubPageState extends State<DapHubPage> {
       true => (
         icon: Icons.check_circle_outline,
         label: context.l10n.settingsDapStatusConnected,
-        color: theme.colorScheme.primary,
+        color: faui.FaDesignTokens.of(context).success,
       ),
       false => (
         icon: Icons.cancel_outlined,
         label: context.l10n.settingsDapStatusOffline,
-        color: theme.colorScheme.error,
+        color: faui.FaDesignTokens.of(context).danger,
       ),
     };
     return Container(
@@ -1097,7 +1102,6 @@ class _DapConnectionEditorPageState extends State<DapConnectionEditorPage> {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
     return Scaffold(
       appBar: faAppBar(
         title: Text(
@@ -1145,20 +1149,26 @@ class _DapConnectionEditorPageState extends State<DapConnectionEditorPage> {
               ),
               if (_error != null) ...[
                 const SizedBox(height: 12),
-                Text(_error!, style: TextStyle(color: theme.colorScheme.error)),
+                Text(
+                  _error!,
+                  style: TextStyle(
+                    color: faui.FaDesignTokens.of(context).danger,
+                  ),
+                ),
               ],
               const SizedBox(height: 24),
               Row(
                 children: [
                   const Spacer(),
-                  TextButton(
+                  faui.FaButton(
+                    label: context.l10n.settingsCancelButton,
+                    variant: faui.FaButtonVariant.ghost,
                     onPressed: () => Navigator.of(context).pop(),
-                    child: Text(context.l10n.settingsCancelButton),
                   ),
                   const SizedBox(width: 12),
-                  FilledButton(
+                  faui.FaButton(
+                    label: context.l10n.settingsSaveButton,
                     onPressed: _save,
-                    child: Text(context.l10n.settingsSaveButton),
                   ),
                 ],
               ),
@@ -1278,6 +1288,7 @@ class _AgentNetworkSectionState extends State<AgentNetworkSection> {
   Widget build(BuildContext context) {
     final controller = _controller;
     final colors = FahColors.of(context);
+    final tokens = faui.FaDesignTokens.of(context);
     final theme = Theme.of(context);
     // Extension enrollment and connection state live in the worker-backed
     // DapHubService above; a second local network section would invite a
@@ -1304,8 +1315,8 @@ class _AgentNetworkSectionState extends State<AgentNetworkSection> {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        border: Border.all(color: colors.dim.withValues(alpha: 0.3)),
-        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: tokens.hairline),
+        borderRadius: BorderRadius.circular(tokens.radiusLg),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1330,7 +1341,7 @@ class _AgentNetworkSectionState extends State<AgentNetworkSection> {
                   ],
                 ),
               ),
-              Switch(value: enabled, onChanged: _toggle),
+              faui.FaSwitch(value: enabled, onChanged: _toggle),
             ],
           ),
           if (enabled) ...[
@@ -1349,15 +1360,16 @@ class _AgentNetworkSectionState extends State<AgentNetworkSection> {
   /// The live link state: chip + this agent's hub address.
   Widget _statusRow(BuildContext context, AgentNetworkController controller) {
     final colors = FahColors.of(context);
+    final tokens = faui.FaDesignTokens.of(context);
     final theme = Theme.of(context);
     final (label, color) = switch (controller.state) {
       HubLinkState.connected => (
         context.l10n.settingsAgentNetworkConnected,
-        Colors.green,
+        tokens.success,
       ),
       HubLinkState.connecting => (
         context.l10n.settingsAgentNetworkConnecting,
-        Colors.orange,
+        tokens.warning,
       ),
       _ => (context.l10n.settingsAgentNetworkOffline, colors.dim),
     };
@@ -1374,10 +1386,7 @@ class _AgentNetworkSectionState extends State<AgentNetworkSection> {
         Expanded(
           child: Text(
             controller.agentId ?? '',
-            style: theme.textTheme.bodySmall?.copyWith(
-              color: colors.dim,
-              fontFamily: 'JetBrainsMono',
-            ),
+            style: FahPalette.mono(color: colors.dim, fontSize: 12),
             overflow: TextOverflow.ellipsis,
           ),
         ),
@@ -1386,36 +1395,30 @@ class _AgentNetworkSectionState extends State<AgentNetworkSection> {
   }
 
   Widget _connectionFields(BuildContext context) {
-    final theme = Theme.of(context);
-    InputDecoration decoration(String label) => InputDecoration(
-      labelText: label,
-      isDense: true,
-      border: const OutlineInputBorder(),
-    );
     return Column(
       children: [
-        TextField(
+        faui.FaTextField(
           controller: _url,
-          decoration: decoration(context.l10n.settingsAgentNetworkUrl),
-          style: theme.textTheme.bodySmall,
+          dense: true,
+          labelText: context.l10n.settingsAgentNetworkUrl,
         ),
         const SizedBox(height: 8),
         Row(
           children: [
             Expanded(
-              child: TextField(
+              child: faui.FaTextField(
                 controller: _name,
-                decoration: decoration(context.l10n.settingsAgentNetworkName),
-                style: theme.textTheme.bodySmall,
+                dense: true,
+                labelText: context.l10n.settingsAgentNetworkName,
               ),
             ),
             const SizedBox(width: 8),
             Expanded(
-              child: TextField(
+              child: faui.FaTextField(
                 controller: _token,
+                dense: true,
                 obscureText: true,
-                decoration: decoration(context.l10n.settingsAgentNetworkToken),
-                style: theme.textTheme.bodySmall,
+                labelText: context.l10n.settingsAgentNetworkToken,
               ),
             ),
           ],
@@ -1423,10 +1426,12 @@ class _AgentNetworkSectionState extends State<AgentNetworkSection> {
         const SizedBox(height: 8),
         Align(
           alignment: Alignment.centerLeft,
-          child: TextButton.icon(
+          child: faui.FaButton(
+            label: context.l10n.settingsAgentNetworkSave,
+            icon: Icons.save_outlined,
+            variant: faui.FaButtonVariant.secondary,
+            busy: _saving,
             onPressed: _saving ? null : _save,
-            icon: const Icon(Icons.save_outlined, size: 18),
-            label: Text(context.l10n.settingsAgentNetworkSave),
           ),
         ),
       ],
@@ -1457,21 +1462,22 @@ class _AgentNetworkSectionState extends State<AgentNetworkSection> {
           Row(
             children: [
               Expanded(
+                // [FaTextField] has no onSubmitted seam; the themed
+                // inputDecorationTheme keeps this field on-brand.
                 child: TextField(
                   controller: _dm,
                   focusNode: _dmFocus,
                   decoration: InputDecoration(
                     labelText: context.l10n.settingsAgentNetworkDmHint,
                     isDense: true,
-                    border: const OutlineInputBorder(),
                   ),
                   style: theme.textTheme.bodySmall,
                   onSubmitted: (_) => _sendDm(),
                 ),
               ),
-              IconButton(
+              faui.FaIconButton(
                 tooltip: context.l10n.settingsAgentNetworkSend,
-                icon: const Icon(Icons.send_outlined, size: 18),
+                icon: Icons.send_outlined,
                 onPressed: _sendDm,
               ),
             ],
@@ -1494,7 +1500,7 @@ class _AgentNetworkSectionState extends State<AgentNetworkSection> {
             Icon(
               selected ? Icons.chat_bubble_outline : Icons.computer,
               size: 16,
-              color: selected ? theme.colorScheme.primary : colors.dim,
+              color: selected ? colors.teal : colors.dim,
             ),
             const SizedBox(width: 8),
             Expanded(

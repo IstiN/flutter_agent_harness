@@ -5,7 +5,6 @@
 import 'package:fa/l10n/app_localizations.dart';
 import 'package:fa/services/compaction_engine_loader.dart';
 import 'package:fa/services/launcher_layout_store.dart';
-import 'package:fa/services/session_keys_store.dart';
 import 'package:fa/services/theme_controller.dart';
 import 'package:fa/ui/screens/settings.dart';
 import 'package:fa/ui/screens/settings_key_dialogs.dart';
@@ -147,11 +146,10 @@ void main() {
           await tester.tap(find.byTooltip('Delete'));
           await tester.pumpAndSettle();
           _expectDialogTokens(tester, tokens);
-          final delete = tester.widget<FilledButton>(
-            find.widgetWithText(FilledButton, 'Delete'),
+          final delete = tester.widget<FaButton>(
+            find.widgetWithText(FaButton, 'Delete'),
           );
-          expect(delete.style!.backgroundColor!.resolve({}), tokens.danger);
-          expect(delete.style!.foregroundColor!.resolve({}), tokens.accentInk);
+          expect(delete.variant, FaButtonVariant.danger);
 
           await tester.tap(find.text('Cancel'));
           await tester.pumpAndSettle();

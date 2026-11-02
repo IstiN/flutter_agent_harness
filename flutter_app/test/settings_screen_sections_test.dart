@@ -8,11 +8,12 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/launcher_layout_store.dart';
 import 'package:fa/services/provider_registry.dart';
-import 'package:fa/ui/screens/provider_editor_page.dart';
 import 'package:fa/ui/screens/settings.dart';
+import 'package:fa/ui/screens/settings_tiles.dart';
 import 'package:fa/ui/screens/tools_availability_section.dart';
 import 'package:fa/ui/widgets/approval_ui.dart';
-import 'package:fa_ui/fa_ui.dart' show FahErrorCopyButton, ProviderEditorPage;
+import 'package:fa_ui/fa_ui.dart'
+    show FaButton, FaSwitch, FahErrorCopyButton, ProviderEditorPage;
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
 /// Drives the section gating of `SettingsScreen.build` (issue #702): the
@@ -74,7 +75,7 @@ void main() {
         find.text('Connect a provider to start chatting.'),
         findsOneWidget,
       );
-      expect(find.widgetWithText(FilledButton, 'Add provider'), findsOneWidget);
+      expect(find.widgetWithText(FaButton, 'Add provider'), findsOneWidget);
     });
 
     testWidgets('shows when no registry is available at all', (tester) async {
@@ -113,7 +114,7 @@ void main() {
       final registry = ProviderRegistry.inMemory();
       await pumpScreen(tester, registry: registry);
 
-      await tester.tap(find.widgetWithText(FilledButton, 'Add provider').last);
+      await tester.tap(find.widgetWithText(FaButton, 'Add provider').last);
       await tester.pumpAndSettle();
 
       expect(find.byType(ProviderEditorPage), findsOneWidget);
@@ -134,7 +135,7 @@ void main() {
       final registry = ProviderRegistry.inMemory();
       await pumpScreen(tester, registry: registry);
 
-      await tester.tap(find.widgetWithText(FilledButton, 'Add provider').last);
+      await tester.tap(find.widgetWithText(FaButton, 'Add provider').last);
       await tester.pumpAndSettle();
       expect(find.byType(ProviderEditorPage), findsOneWidget);
 
@@ -190,6 +191,33 @@ void main() {
       // not at the top level anymore.
       expect(find.byType(ProviderQueueSection), findsNothing);
     });
+
+    testWidgets(
+      'the themed screen leaks no raw Material list tiles or buttons',
+      (tester) async {
+        // The styleguide sweep: every boolean/radio row is a token
+        // SettingsSwitchRow/SettingsRadioRow, every action a FaButton/
+        // FaIconButton. The stock Material tiles and outlined buttons are
+        // the regression this guards against (un-themed switches, radios,
+        // checkboxes and OutlinedButtons render with Material defaults in
+        // some visual directions).
+        final service = fakeService();
+        await service.initialize();
+        await pumpScreen(
+          tester,
+          service: service,
+          registry: ProviderRegistry.inMemory(),
+          layoutStore: LauncherLayoutStore.inMemory(),
+        );
+
+        expect(find.byType(SwitchListTile), findsNothing);
+        expect(find.byType(CheckboxListTile), findsNothing);
+        expect(find.byType(RadioListTile), findsNothing);
+        expect(find.byType(OutlinedButton), findsNothing);
+        expect(find.byType(SettingsSwitchRow), findsWidgets);
+        expect(find.byType(FaSwitch), findsWidgets);
+      },
+    );
   });
 
   group('send test crash report (gh-1848)', () {

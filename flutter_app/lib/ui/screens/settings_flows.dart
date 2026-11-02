@@ -109,17 +109,11 @@ extension _SettingsFormFlowHelpers on _AgentSettingsFormState {
   /// "Back to providers" link.
   Widget _buildChangeProviderLink() => Align(
     alignment: Alignment.centerLeft,
-    child: TextButton.icon(
+    child: faui.FaButton(
+      label: 'Change provider', // l10n:ignore — see above
+      icon: Icons.arrow_back,
+      variant: faui.FaButtonVariant.ghost,
       onPressed: () => _formSetState(() => _showProviderListOnly = true),
-      icon: const Icon(Icons.arrow_back, size: 16),
-      label: const Text(
-        'Change provider',
-      ), // l10n:ignore — prototype redesign ships en-only copy for now
-      style: TextButton.styleFrom(
-        padding: EdgeInsets.zero,
-        minimumSize: Size.zero,
-        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-      ),
     ),
   );
 
@@ -198,16 +192,13 @@ extension _SettingsFormFlowHelpers on _AgentSettingsFormState {
     emptyReason: _models.emptyReason,
   );
 
-  Widget _buildVisionCheckbox() => CheckboxListTile(
+  Widget _buildVisionCheckbox() => SettingsSwitchRow(
     value: _vision,
     onChanged: (value) => _formSetState(() {
-      _vision = value ?? false;
+      _vision = value;
       _visionOverridden = true;
     }),
     title: Text(context.l10n.settingsVisionLabel),
-    dense: true,
-    contentPadding: EdgeInsets.zero,
-    controlAffinity: ListTileControlAffinity.leading,
   );
 
   Widget _buildBaseUrlField() => TextField(
@@ -267,25 +258,17 @@ extension _SettingsFormFlowHelpers on _AgentSettingsFormState {
     ),
   );
 
-  Widget _buildConnectButton(ThemeData theme) => FilledButton(
+  Widget _buildConnectButton(ThemeData theme) => faui.FaButton(
+    label: _connectButtonLabel(),
+    busy: _loading,
+    expanded: true,
     onPressed: _loading ? null : _connect,
-    child: _connectButtonChild(theme),
   );
 
-  Widget _connectButtonChild(ThemeData theme) =>
-      _loading && !_isOnDevice && !_isTransformersJs
-      ? const SizedBox(
-          width: 20,
-          height: 20,
-          child: CircularProgressIndicator(strokeWidth: 2),
-        )
-      : _connectButtonLabel();
-
-  Widget _connectButtonLabel() => Text(
+  String _connectButtonLabel() =>
     _loading
         ? context.l10n.settingsLoadingModel
-        : widget.connectLabel ?? context.l10n.settingsStartChat,
-  );
+        : widget.connectLabel ?? context.l10n.settingsStartChat;
 
   // ─── _applyLastConnection (gh-1848 tier-4) ───────────────────────────────
 

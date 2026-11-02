@@ -83,17 +83,18 @@ class _KeyEditorDialogState extends State<KeyEditorDialog> {
         ),
       ),
       actions: [
-        TextButton(
+        faui.FaButton(
+          label: context.l10n.commonCancel,
+          variant: faui.FaButtonVariant.ghost,
           onPressed: () => Navigator.of(context).pop(),
-          child: Text(context.l10n.commonCancel),
         ),
         ListenableBuilder(
           listenable: _valueController,
-          builder: (context, _) => FilledButton(
+          builder: (context, _) => faui.FaButton(
+            label: context.l10n.settingsSaveButton,
             onPressed: _valueController.text.trim().isEmpty
                 ? null
                 : () => _save(_valueController.text),
-            child: Text(context.l10n.settingsSaveButton),
           ),
         ),
       ],
@@ -180,19 +181,20 @@ class _AddKeyDialogState extends State<AddKeyDialog> {
         ),
       ),
       actions: [
-        TextButton(
+        faui.FaButton(
+          label: context.l10n.commonCancel,
+          variant: faui.FaButtonVariant.ghost,
           onPressed: () => Navigator.of(context).pop(),
-          child: Text(context.l10n.commonCancel),
         ),
         ListenableBuilder(
           listenable: Listenable.merge([_nameController, _valueController]),
-          builder: (context, _) => FilledButton(
+          builder: (context, _) => faui.FaButton(
+            label: context.l10n.settingsSaveButton,
             onPressed:
                 _nameController.text.trim().isEmpty ||
                     _valueController.text.trim().isEmpty
                 ? null
                 : _save,
-            child: Text(context.l10n.settingsSaveButton),
           ),
         ),
       ],

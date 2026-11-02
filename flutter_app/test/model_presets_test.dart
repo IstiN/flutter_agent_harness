@@ -10,6 +10,7 @@ import 'package:fa/services/session_keys_store.dart';
 import 'package:fa/services/task_models_store.dart';
 import 'package:fa/ui/screens/model_presets.dart';
 import 'package:fa/ui/screens/provider_editor_page.dart';
+import 'package:fa_ui/fa_ui.dart' show FaDesignTokens;
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -277,8 +278,10 @@ void main() {
             .last,
       );
       final decoration = section.decoration! as BoxDecoration;
-      final theme = Theme.of(tester.element(find.byType(ModelPresetsSection)));
-      expect(decoration.color, theme.colorScheme.primary);
+      final tokens = FaDesignTokens.of(
+        tester.element(find.byType(ModelPresetsSection)),
+      );
+      expect(decoration.color, tokens.accent);
     });
 
     testWidgets('Apply writes the media overrides and reconfigures the chat', (
