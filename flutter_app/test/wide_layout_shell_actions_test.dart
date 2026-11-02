@@ -28,6 +28,7 @@ import 'package:fa_ui/fa_ui.dart'
     show
         FaChatHost,
         FaLogo,
+        FaSectionEyebrow,
         FaSurface,
         FaVisualDirection,
         buildFaTheme,
@@ -799,6 +800,31 @@ void main() {
     expect(find.text('Мои приложения'), findsWidgets);
     expect(find.text('Каталог виджетов'), findsWidgets);
     expect(find.text('Магазин виджетов'), findsNothing);
+  });
+
+  testWidgets('sidebar section labels share one eyebrow style', (tester) async {
+    final env = MemoryExecutionEnv();
+    final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
+      ..addSession('design-session', _fakeService(env));
+
+    await pumpShell(tester, manager: manager);
+    // Chats list sections and the Activity/Apps bodies all render their
+    // labels through one widget, so typography and case cannot drift.
+    Finder eyebrow(String label) =>
+        find.widgetWithText(FaSectionEyebrow, label);
+    expect(eyebrow('Recent'), findsWidgets);
+
+    await tester.tap(find.byKey(const ValueKey('messengerPrimaryNav-apps')));
+    await tester.pumpAndSettle();
+    expect(eyebrow('Apps'), findsOneWidget);
+
+    await tester.tap(
+      find.byKey(const ValueKey('messengerPrimaryNav-activity')),
+    );
+    await tester.pumpAndSettle();
+    expect(eyebrow('All activity'), findsOneWidget);
+    // The count chip on the Activity toolbar stays a plain dim numeral.
+    expect(find.byKey(const ValueKey('activityCount')), findsOneWidget);
   });
 
   testWidgets('centered header uses the selected folder and session name', (

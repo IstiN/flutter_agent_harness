@@ -1324,19 +1324,7 @@ class _SectionHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colors = FahColors.of(context);
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 11, 10, 3),
-      child: Text(
-        label.toUpperCase(),
-        style: TextStyle(
-          color: colors.dim,
-          fontSize: 10.5,
-          fontWeight: FontWeight.w600,
-          letterSpacing: .65,
-        ),
-      ),
-    );
+    return FaSectionEyebrow(label: label);
   }
 }
 

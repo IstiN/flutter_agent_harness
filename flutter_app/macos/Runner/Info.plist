@@ -67,8 +67,12 @@
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>
+	<!-- gh crash 2026-11-02: SIGSEGV in impeller::Canvas::SetupRenderPass on
+	     io.flutter.raster (macOS 26.7.1, debug). Impeller is off on macOS
+	     until the engine bug is fixed; Skia renders the same surfaces and
+	     liquid glass falls back to its non-Impeller path. -->
 	<key>FLTEnableImpeller</key>
-	<true/>
+	<false/>
 	<key>FLTEnableFlutterGPU</key>
 	<true/>
 </dict>
