@@ -405,12 +405,12 @@ void main() {
     await tester.pump();
     await tester.pumpAndSettle();
     expect(tester.widget<AnimatedOpacity>(fade).opacity, 1);
-    // The melt-under band is a tall smooth gradient, not a hard 24px cut.
+    // The shadow is a tight lip that ends at the toolbar's bottom edge.
     expect(
       tester
           .getSize(find.byKey(const ValueKey('chatListScrollUnderFade')))
           .height,
-      72,
+      24,
     );
     await expectGolden(tester, 'wide_layout_shell_sidebar_glass_scroll_under');
   });
