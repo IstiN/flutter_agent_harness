@@ -31,6 +31,7 @@ import 'package:fa/services/upload.dart';
 import 'package:fa/ui/activity/activity_surface.dart';
 import 'package:fa/ui/apps/app_launcher_controller.dart';
 import 'package:fa/ui/apps/apps_directory_panel.dart';
+import 'package:fa/ui/apps/files_presentation_panel.dart';
 import 'package:fa/ui/apps/messenger_app_panel.dart';
 import 'package:fa/ui/screens/app_launcher_screen.dart';
 import 'package:fa/ui/widgets/fa_mark.dart';
@@ -161,9 +162,19 @@ PreferredSizeWidget faAppBar({
 
 enum _WideShellSection { chats, activity, apps }
 
-class _WideLayoutShellState extends State<WideLayoutShell> {
+class _WideLayoutShellState extends State<WideLayoutShell>
+    with TickerProviderStateMixin {
   static const _collapsedSidebarWidth = 96.0;
   static const _sidebarCollapseDuration = Duration(milliseconds: 200);
+
+  /// The presented-surface reveal: JS apps AND Files dock in the right
+  /// pane through one animated entrance/exit (~200ms, FaMotion ease) —
+  /// never an instant pop.
+  static const _presentationRevealDuration = Duration(milliseconds: 200);
+
+  /// The docked presentation slot's width (the card inside keeps 8pt
+  /// floating margins, matching the sidebar's panel margins).
+  static const _presentationSlotWidth = 340.0;
 
   bool _sidebarCollapsed = false;
   _WideShellSection _section = _WideShellSection.chats;
@@ -192,6 +203,29 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
       TextEditingController();
   late final AppsStore _appsStore;
   MessengerAppPresentation? _appPresentation;
+
+  /// The native Files presentation — a parallel of [_appPresentation]:
+  /// the same right-pane surface flow, real (non-JS) content. Exactly one
+  /// presentation is on screen at a time; opening either replaces the
+  /// other.
+  FilesAppPresentation? _filesPresentation;
+
+  /// Drives the presented surface's entrance/exit. Content fields above
+  /// swap instantly; this controller animates the pane's geometry.
+  late final AnimationController _presentationReveal = AnimationController(
+    vsync: this,
+    duration: _presentationRevealDuration,
+    value: 0,
+  );
+
+  /// Bumped on every present/dismiss so a close animation that completes
+  /// after a NEW surface opened never clears the new content.
+  int _presentationEpoch = 0;
+
+  /// Whether any presented content is mounted (mid-animation included).
+  bool get _presentationMounted =>
+      _appPresentation != null || _filesPresentation != null;
+
   ChatListEntry? _activeNetworkEntry;
   late bool _networkInboxEnabled;
   bool _narrowChatRouteVisible = false;
@@ -550,6 +584,7 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
     _chatController.dispose();
     _appLauncherController.dispose();
     _activitySearchController.dispose();
+    _presentationReveal.dispose();
     if (jsAppPanelPresenter == _presentJsApp) jsAppPanelPresenter = null;
     if (FaChatHost.jsAppNavigatorKey == _appsNavigatorKey) {
       FaChatHost.jsAppNavigatorKey = null;
@@ -572,20 +607,24 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
     final colors = FahColors.of(context);
     final tokens = FaDesignTokens.of(context);
     final narrow = _isNarrow;
+    // A presented surface covers the narrow shell (and animates out over
+    // its exit), hiding the bottom chrome while it is on screen.
+    final presentationCoversNarrow =
+        narrow && (_presentationMounted || _presentationReveal.value > 0);
     // Scaffold supplies both the required Material ancestor and a snack
     // host now that no permanent launcher pane owns one.
     Widget buildBody() =>
         narrow ? _buildNarrowBody(colors) : _buildBody(colors);
     final scaffold = Scaffold(
       backgroundColor: colors.bg,
-      extendBody: narrow && _appPresentation == null,
+      extendBody: !presentationCoversNarrow && narrow,
       body: buildBody(),
-      bottomNavigationBar: narrow && _appPresentation == null
-          ? _buildNarrowNavigation()
-          : null,
+      bottomNavigationBar: presentationCoversNarrow
+          ? null
+          : (narrow ? _buildNarrowNavigation() : null),
       floatingActionButton:
           narrow &&
-              _appPresentation == null &&
+              !presentationCoversNarrow &&
               _section == _WideShellSection.chats
           ? MessengerNewChatButton(
               key: const ValueKey('narrowShellNewChat'),
@@ -761,6 +800,7 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
           onOpenRunning: () => setState(() {
             _appPresentation?.fullScreen = false;
           }),
+          onOpenFiles: _openFiles,
         ),
       ),
     );
@@ -924,12 +964,28 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
       padding: EdgeInsets.only(top: inset),
       child: base,
     );
-    final presentation = _appPresentation;
-    if (presentation == null) return positioned;
+    if (!(_presentationMounted || _presentationReveal.value > 0)) {
+      return positioned;
+    }
+    // The presented surface (app or Files) fades in/out over the section.
+    Widget surface = _buildPresentedSurface();
     return Stack(
       children: [
         positioned,
-        Positioned.fill(child: _buildPresentedApp(presentation)),
+        Positioned.fill(
+          child: AnimatedBuilder(
+            animation: _presentationReveal,
+            builder: (context, _) {
+              final t = Curves.easeInOutCubic.transform(
+                _presentationReveal.value,
+              );
+              return IgnorePointer(
+                ignoring: t < .02,
+                child: Opacity(opacity: t, child: surface),
+              );
+            },
+          ),
+        ),
       ],
     );
   }
@@ -989,10 +1045,6 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
     final tokens = FaDesignTokens.of(context);
     return LayoutBuilder(
       builder: (context, constraints) {
-        final presentation = _appPresentation;
-        final full = presentation?.fullScreen == true;
-        final floatingPanel =
-            presentation != null && !full && constraints.maxWidth <= 1080;
         return TweenAnimationBuilder<double>(
           tween: Tween(end: _sidebarCollapsed ? 1.0 : 0.0),
           duration: FaMotion.duration(context, _sidebarCollapseDuration),
@@ -1005,8 +1057,12 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
                 _sidebarWidth +
                 (_collapsedSidebarWidth - _sidebarWidth) * progress;
             final contentCollapsed = progress >= .5;
+            // The glass card keeps 8pt floating margins on BOTH sides —
+            // the content must live INSIDE them, never under the clip
+            // (the old -8 let rows bleed 8px past the card's right edge).
             final contentWidth =
-                (contentCollapsed ? _collapsedSidebarWidth : _sidebarWidth) - 8;
+                (contentCollapsed ? _collapsedSidebarWidth : _sidebarWidth) -
+                16;
             final contentOpacity = contentCollapsed
                 ? (progress - .5) * 2
                 : 1 - progress * 2;
@@ -1020,113 +1076,186 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
               colors,
               collapsed: contentCollapsed,
             );
-            return Stack(
-              children: [
-                Row(
+            return AnimatedBuilder(
+              animation: _presentationReveal,
+              builder: (context, _) {
+                final presentation = _appPresentation;
+                final revealRaw = _presentationReveal.value;
+                final reveal = Curves.easeInOutCubic.transform(revealRaw);
+                            final full = presentation?.fullScreen == true;
+                // Presence (not the animation value) gates the slot: the
+                // content mounts on the presenting frame itself and the
+                // reveal only animates the pane's geometry afterwards.
+                final slotVisible = _presentationMounted && !full;
+                final floatingPanel = slotVisible && constraints.maxWidth <= 1080;
+                return Stack(
                   children: [
-                    SizedBox(
-                      key: const ValueKey('desktopSidebarContainer'),
-                      width: sidebarWidth,
-                      child: _desktopPanelFrame(
-                        key: const ValueKey('glassSidebarPanel'),
-                        // Equal floating margins (8pt all around) — a
-                        // rounded card; the seam gutter to the center pane
-                        // matches the outer margin.
-                        padding: const EdgeInsets.all(8),
-                        borderRadius: BorderRadius.circular(18),
-                        tokens: tokens,
-                        glass: true,
-                        child: ClipRect(
-                          child: OverflowBox(
-                            alignment: Alignment.topLeft,
-                            minWidth: contentWidth,
-                            maxWidth: contentWidth,
-                            child: SizedBox(
-                              width: contentWidth,
-                              child: IgnorePointer(
-                                ignoring: contentInTransition,
-                                child: ExcludeFocus(
-                                  excluding: contentInTransition,
-                                  child: Opacity(
-                                    opacity: contentOpacity,
-                                    child: sidebarContent,
+                    Row(
+                      children: [
+                        SizedBox(
+                          key: const ValueKey('desktopSidebarContainer'),
+                          width: sidebarWidth,
+                          child: _desktopPanelFrame(
+                            key: const ValueKey('glassSidebarPanel'),
+                            // Equal floating margins (8pt all around) — a
+                            // rounded card; the seam gutter to the center pane
+                            // matches the outer margin.
+                            padding: const EdgeInsets.all(8),
+                            borderRadius: BorderRadius.circular(18),
+                            tokens: tokens,
+                            glass: true,
+                            child: ClipRect(
+                              child: OverflowBox(
+                                alignment: Alignment.topLeft,
+                                minWidth: contentWidth,
+                                maxWidth: contentWidth,
+                                child: SizedBox(
+                                  width: contentWidth,
+                                  child: IgnorePointer(
+                                    ignoring: contentInTransition,
+                                    child: ExcludeFocus(
+                                      excluding: contentInTransition,
+                                      child: Opacity(
+                                        opacity: contentOpacity,
+                                        child: sidebarContent,
+                                      ),
+                                    ),
                                   ),
                                 ),
                               ),
                             ),
                           ),
                         ),
-                      ),
-                    ),
-                    Expanded(
-                      child: _desktopPanelFrame(
-                        key: const ValueKey('glassCenterPanel'),
-                        // Composer owns its floating margins; its separate
-                        // environmental fade reaches the actual window edge.
-                        padding: EdgeInsets.zero,
-                        tokens: tokens,
-                        borderRadius: const BorderRadius.horizontal(
-                          right: Radius.circular(18),
+                        Expanded(
+                          child: _desktopPanelFrame(
+                            key: const ValueKey('glassCenterPanel'),
+                            // Composer owns its floating margins; its separate
+                            // environmental fade reaches the actual window edge.
+                            // The Apps overview paints its own full-bled slab,
+                            // so it keeps square corners — a rounded clip would
+                            // slice its header at the window's right edge.
+                            padding: EdgeInsets.zero,
+                            tokens: tokens,
+                            borderRadius: _section == _WideShellSection.apps
+                                ? BorderRadius.zero
+                                : const BorderRadius.horizontal(
+                                    right: Radius.circular(18),
+                                  ),
+                            // The collapsed toggle is floating chrome, never a
+                            // participant in the transcript/header layout.
+                            child: _buildCenterSurface(colors),
+                          ),
                         ),
-                        // The collapsed toggle is floating chrome, never a
-                        // participant in the transcript/header layout.
-                        child: _buildCenterSurface(colors),
+                        if (slotVisible && !floatingPanel)
+                          _buildDockedPresentationSlot(reveal),
+                      ],
+                    ),
+                    // One action follows the animated boundary; the header trees
+                    // only crossfade content and never duplicate the toggle.
+                    Positioned(
+                      left: toggleLeft,
+                      top: _isMacOS ? 15 : 21,
+                      child: MessengerSidebarToggle(
+                        key: const ValueKey('wideShellSidebarToggle'),
+                        expanded: !_sidebarCollapsed,
+                        floating: progress > 0,
+                        tooltip: _sidebarCollapsed
+                            ? context.l10n.chatExpand
+                            : context.l10n.chatCollapse,
+                        onPressed: () => setState(
+                          () => _sidebarCollapsed = !_sidebarCollapsed,
+                        ),
                       ),
                     ),
-                    if (presentation != null && !full && !floatingPanel)
-                      SizedBox(
-                        width: 340,
-                        child: _buildPresentedApp(presentation),
+                    if (!_sidebarCollapsed && progress == 0)
+                      Positioned(
+                        left: sidebarWidth,
+                        top: 0,
+                        bottom: 0,
+                        child: _PaneDragHandle(
+                          key: kSidebarDragHandleKey,
+                          onDrag: (dx) => setState(() {
+                            _sidebarWidth = (_sidebarWidth + dx).clamp(
+                              SessionUiPrefsStore.minSidebarWidth,
+                              SessionUiPrefsStore.maxSidebarWidth,
+                            );
+                          }),
+                          onDragEnd: (_) => _onSidebarDragEnd(),
+                        ),
                       ),
+                    if (floatingPanel) _buildFloatingPresentationSlot(reveal),
+                    if (presentation != null && full)
+                      Positioned.fill(child: _buildPresentedApp(presentation)),
                   ],
-                ),
-                // One action follows the animated boundary; the header trees
-                // only crossfade content and never duplicate the toggle.
-                Positioned(
-                  left: toggleLeft,
-                  top: _isMacOS ? 15 : 21,
-                  child: MessengerSidebarToggle(
-                    key: const ValueKey('wideShellSidebarToggle'),
-                    expanded: !_sidebarCollapsed,
-                    floating: progress > 0,
-                    tooltip: _sidebarCollapsed
-                        ? context.l10n.chatExpand
-                        : context.l10n.chatCollapse,
-                    onPressed: () =>
-                        setState(() => _sidebarCollapsed = !_sidebarCollapsed),
-                  ),
-                ),
-                if (!_sidebarCollapsed && progress == 0)
-                  Positioned(
-                    left: sidebarWidth,
-                    top: 0,
-                    bottom: 0,
-                    child: _PaneDragHandle(
-                      key: kSidebarDragHandleKey,
-                      onDrag: (dx) => setState(() {
-                        _sidebarWidth = (_sidebarWidth + dx).clamp(
-                          SessionUiPrefsStore.minSidebarWidth,
-                          SessionUiPrefsStore.maxSidebarWidth,
-                        );
-                      }),
-                      onDragEnd: (_) => _onSidebarDragEnd(),
-                    ),
-                  ),
-                if (floatingPanel)
-                  Positioned(
-                    top: 0,
-                    right: 0,
-                    bottom: 0,
-                    width: 340,
-                    child: _buildPresentedApp(presentation),
-                  ),
-                if (presentation != null && full)
-                  Positioned.fill(child: _buildPresentedApp(presentation)),
-              ],
+                );
+              },
             );
           },
         );
       },
+    );
+  }
+
+  /// The docked right-pane slot: its WIDTH animates (0 → 340) while the
+  /// card inside keeps its fixed size — a JS app must not reflow its
+  /// canvas mid-animation, so the pane reveals rather than squeezes.
+  Widget _buildDockedPresentationSlot(double reveal) {
+    return SizedBox(
+      key: const ValueKey('wideShellPresentationSlot'),
+      width: _presentationSlotWidth * reveal,
+      child: ClipRect(
+        child: OverflowBox(
+          alignment: Alignment.centerRight,
+          minWidth: _presentationSlotWidth,
+          maxWidth: _presentationSlotWidth,
+          child: SizedBox(
+            width: _presentationSlotWidth,
+            child: IgnorePointer(
+              ignoring: reveal < .02,
+              child: Opacity(
+                opacity: reveal,
+                child: Transform.translate(
+                  offset: Offset(32 * (1 - reveal), 0),
+                  child: _buildPresentedSurface(),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// The floating overlay presentation for tighter widths: slides in
+  /// from the window's right edge over the center surface.
+  Widget _buildFloatingPresentationSlot(double reveal) {
+    return Positioned(
+      top: 0,
+      right: 0,
+      bottom: 0,
+      width: _presentationSlotWidth,
+      child: IgnorePointer(
+        ignoring: reveal < .02,
+        child: Opacity(
+          opacity: reveal,
+          child: Transform.translate(
+            offset: Offset(_presentationSlotWidth * (1 - reveal), 0),
+            child: _buildPresentedSurface(),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// The single presented surface: a JS app or the native Files browser.
+  Widget _buildPresentedSurface() {
+    final presentation = _appPresentation;
+    if (presentation != null) return _buildPresentedApp(presentation);
+    final files = _filesPresentation;
+    if (files == null) return const SizedBox.shrink();
+    return FilesAppPanel(
+      presentation: files,
+      onClose: () => unawaited(_dismissPresentedSurface()),
     );
   }
 
@@ -1173,7 +1302,7 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
       onPin: () => setState(() {
         presentation.pinned = !presentation.pinned;
       }),
-      onClose: () => setState(() => _appPresentation = null),
+      onClose: () => unawaited(_dismissPresentedSurface()),
     );
   }
 
@@ -1190,19 +1319,22 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
   }
 
   void _selectSection(_WideShellSection section) {
+    final changed = section != _section;
+    var dismissPresentation = false;
     setState(() {
       final presentation = _appPresentation;
       if (presentation != null) {
         presentation.fullScreen = false;
-        if (section != _section && !presentation.pinned) {
-          _appPresentation = null;
-        }
+        if (changed && !presentation.pinned) dismissPresentation = true;
       }
+      if (changed && _filesPresentation != null) dismissPresentation = true;
       _section = section;
       if (section == _WideShellSection.activity) {
         _narrowActivityDetailVisible = false;
       }
     });
+    // Unpinned surfaces ride out with the section change (animated).
+    if (dismissPresentation) unawaited(_dismissPresentedSurface());
   }
 
   void _openActivitySession(String sessionId) {
@@ -1232,6 +1364,7 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
       if (current?.app.id == app.id) {
         current!.fullScreen = false;
       } else {
+        _filesPresentation = null;
         _appPresentation = MessengerAppPresentation(
           app: app,
           service: service,
@@ -1240,7 +1373,39 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
         );
       }
     });
+    _presentSurface();
     return true;
+  }
+
+  /// Arms the presented surface's animated entrance. A surface already on
+  /// screen (pin/Full toggles, app swaps) must not replay it.
+  void _presentSurface() {
+    if (!mounted) return;
+    _presentationEpoch++;
+    if (FaMotion.reduceMotionOf(context)) {
+      _presentationReveal.value = 1;
+      return;
+    }
+    unawaited(_presentationReveal.forward());
+  }
+
+  /// Animates the presented surface out (~200ms), then clears it — JS
+  /// apps and Files close through the same motion. Reopening mid-flight
+  /// cancels the clear (the epoch guard).
+  Future<void> _dismissPresentedSurface() async {
+    if (!_presentationMounted && _presentationReveal.value == 0) return;
+    _presentationEpoch++;
+    final epoch = _presentationEpoch;
+    if (FaMotion.reduceMotionOf(context)) {
+      _presentationReveal.value = 0;
+    } else {
+      await _presentationReveal.reverse();
+    }
+    if (!mounted || _presentationEpoch != epoch) return;
+    setState(() {
+      _appPresentation = null;
+      _filesPresentation = null;
+    });
   }
 
   Future<void> _revealApps() async {
@@ -1255,11 +1420,12 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
   Future<void> _revealActiveChat() async {
     if (!mounted || widget.manager.active == null) return;
     final narrow = _isNarrow;
-    if (_section != _WideShellSection.chats || _appPresentation != null) {
+    if (_section != _WideShellSection.chats || _presentationMounted) {
       setState(() {
         _section = _WideShellSection.chats;
         if (narrow) {
-          _appPresentation = null;
+          // The narrow presentation covers everything — animate it out.
+          unawaited(_dismissPresentedSurface());
         } else {
           _appPresentation?.fullScreen = false;
         }
@@ -1757,8 +1923,8 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
     if (_activeNetworkEntry != null) {
       setState(() => _activeNetworkEntry = null);
     }
-    if (_appPresentation?.pinned == false) {
-      setState(() => _appPresentation = null);
+    if (_appPresentation?.pinned != true) {
+      unawaited(_dismissPresentedSurface());
     }
     final relayOpen = active.service.openSessionAction;
     if (relayOpen != null) {
@@ -1781,8 +1947,8 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
     if (_activeNetworkEntry != null) {
       setState(() => _activeNetworkEntry = null);
     }
-    if (_appPresentation?.pinned == false) {
-      setState(() => _appPresentation = null);
+    if (_appPresentation?.pinned != true) {
+      unawaited(_dismissPresentedSurface());
     }
     final relayOpen = service.openSessionAction;
     if (relayOpen != null) {
@@ -2157,19 +2323,33 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
     // browser renders against the sandbox cwd.
     final env = service?.env ?? await _resolveHomeEnv();
     if (!mounted) return;
-    final fsRevision = service?.fsRevision;
-    await pushFaPage<void>(
-      context,
-      Scaffold(
-        appBar: faAppBar(title: Text(context.l10n.chatFilesTooltip)),
-        body: FileBrowser(
-          env: env,
-          inlinePreview: false,
-          fsRevision: fsRevision,
-          onProjectMountChanged: service?.refreshProjectMountPrompt,
+    if (_isNarrow) {
+      final fsRevision = service?.fsRevision;
+      await pushFaPage<void>(
+        context,
+        Scaffold(
+          appBar: faAppBar(title: Text(context.l10n.chatFilesTooltip)),
+          body: FileBrowser(
+            env: env,
+            inlinePreview: false,
+            fsRevision: fsRevision,
+            onProjectMountChanged: service?.refreshProjectMountPrompt,
+          ),
         ),
-      ),
-    );
+      );
+      return;
+    }
+    // Wide: Files presents through the same right-pane surface as JS
+    // apps — native content, one animated entrance, never an instant pop.
+    setState(() {
+      _appPresentation = null;
+      _filesPresentation = FilesAppPresentation(
+        env: env,
+        fsRevision: service?.fsRevision,
+        onProjectMountChanged: service?.refreshProjectMountPrompt,
+      );
+    });
+    _presentSurface();
   }
 
   /// Cached env for routes that need a sandbox root but not an active

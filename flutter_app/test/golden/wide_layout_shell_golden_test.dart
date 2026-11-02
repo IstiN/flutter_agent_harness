@@ -18,6 +18,7 @@ import 'package:fa/ui/apps/messenger_app_panel.dart';
 import 'package:fa/ui/chats/chat_list_panel.dart';
 import 'package:fa/ui/widgets/messenger_navigation_controls.dart';
 import 'package:fa/ui/widgets/messenger_section_header.dart';
+import 'package:fa/ui/widgets/file_browser.dart';
 import 'package:liquid_glass_widgets/liquid_glass_widgets.dart'
     show ProgressiveBlur, ProgressiveBlurDirection;
 import 'package:fa_ui/fa_ui.dart'
@@ -570,6 +571,20 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('messengerPrimaryNav-apps')));
     await tester.pumpAndSettle();
     expect(find.byType(AppsDirectoryPanel), findsOneWidget);
+    // The directory header is the sidebar chrome language: a glass
+    // capsule toolbar carrying the section eyebrow and the Files entry.
+    final toolbar = tester.widget<FaSurface>(
+      find.byKey(const ValueKey('appsDirectoryToolbar')),
+    );
+    expect(toolbar.glass, isTrue);
+    expect(toolbar.tintAmount, lessThan(.35));
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('appsDirectoryToolbar')),
+        matching: find.byKey(const ValueKey('appsDirectoryFiles')),
+      ),
+      findsOneWidget,
+    );
     await expectGolden(tester, 'wide_layout_shell_apps');
   });
 
@@ -577,12 +592,85 @@ void main() {
     final manager = await pumpShell(tester);
     await openDemoApp(tester, manager);
     expect(find.byType(MessengerAppPanel), findsOneWidget);
+    // The presented app is a floating glass card — 8pt margins, rounded
+    // corners, the same chrome language as the sidebar panel.
+    final card = tester.widget<FaSurface>(
+      find.byKey(const ValueKey('messengerAppPanelCard')),
+    );
+    expect(card.glass, isTrue);
+    expect(card.borderRadius, BorderRadius.circular(18));
+    final cardRect = tester.getRect(
+      find.byKey(const ValueKey('messengerAppPanelCard')),
+    );
+    final slotRect = tester.getRect(
+      find.byKey(const ValueKey('wideShellPresentationSlot')),
+    );
+    expect(cardRect.right, slotRect.right - 8);
+    expect(cardRect.top, slotRect.top + 8);
     await expectGolden(tester, 'wide_layout_shell_app_panel');
 
     await tester.tap(find.byKey(const ValueKey('appFull')));
     await tester.pumpAndSettle();
     await expectGolden(tester, 'wide_layout_shell_app_full');
     await disposeGoldenShell(tester);
+  });
+
+  testWidgets('presented apps and Files animate in and out', (tester) async {
+    final manager = await pumpShell(tester);
+    await openDemoApp(tester, manager);
+    final slot = find.byKey(const ValueKey('wideShellPresentationSlot'));
+    expect(tester.getSize(slot).width, 340);
+    // Close runs the exit animation: the panel lingers mid-flight, then
+    // the pane collapses to nothing.
+    await tester.tap(find.byKey(const ValueKey('appClose')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(find.byType(MessengerAppPanel), findsOneWidget);
+    expect(tester.getSize(slot).width, lessThan(340));
+    await tester.pumpAndSettle();
+    expect(find.byType(MessengerAppPanel), findsNothing);
+    expect(slot, findsNothing);
+
+    // Reopening replays the entrance: the slot grows over ~200ms rather
+    // than popping in at full width.
+    await openDemoApp(tester, manager);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('appClose')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(tester.getSize(slot).width, lessThan(340));
+    await tester.pumpAndSettle();
+    await disposeGoldenShell(tester);
+  });
+
+  testWidgets('desktop Files presents through the animated app pane', (
+    tester,
+  ) async {
+    final manager = await pumpShell(tester, populateChats: true);
+    await manager.env.createDir('src');
+    await manager.env.writeFile('README.md', '# Presented files\n');
+    await manager.env.writeFile('pubspec.yaml', 'name: demo\n');
+    await tester.tap(find.byKey(const ValueKey('messengerPrimaryNav-apps')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('appsDirectoryFiles')));
+    await tester.pump();
+    // Native presentation, animated entrance — never an instant pop.
+    expect(find.byKey(const ValueKey('filesAppPanel')), findsOneWidget);
+    final slot = find.byKey(const ValueKey('wideShellPresentationSlot'));
+    expect(tester.getSize(slot).width, lessThan(340));
+    await tester.pumpAndSettle();
+    expect(tester.getSize(slot).width, 340);
+    expect(find.byType(FileBrowser), findsOneWidget);
+    // Files presents in the right pane while the Apps overview stays in
+    // the center — the same docked surface a JS app occupies.
+    expect(find.byType(AppLauncherScreen), findsOneWidget);
+    await expectGolden(tester, 'wide_layout_shell_files_panel');
+    await tester.tap(find.byKey(const ValueKey('filesAppClose')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(find.byKey(const ValueKey('filesAppPanel')), findsOneWidget);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('filesAppPanel')), findsNothing);
   });
 
   testWidgets('Russian desktop app side panel chrome', (tester) async {
