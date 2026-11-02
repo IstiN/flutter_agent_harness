@@ -296,6 +296,90 @@ abstract class AppLocalizations {
   /// **'Apps'**
   String get appsGridTitle;
 
+  /// No description provided for @appsOverviewSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'My Apps · Widgets Catalog'**
+  String get appsOverviewSubtitle;
+
+  /// No description provided for @appsMyApps.
+  ///
+  /// In en, this message translates to:
+  /// **'My Apps'**
+  String get appsMyApps;
+
+  /// No description provided for @appsMyAppsSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Installed apps and running widgets.'**
+  String get appsMyAppsSubtitle;
+
+  /// No description provided for @appsWidgetStore.
+  ///
+  /// In en, this message translates to:
+  /// **'Widgets Catalog'**
+  String get appsWidgetStore;
+
+  /// No description provided for @appsWidgetStoreSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Browse and install widgets into My Apps.'**
+  String get appsWidgetStoreSubtitle;
+
+  /// No description provided for @appsWidgetCatalog.
+  ///
+  /// In en, this message translates to:
+  /// **'Widget catalog'**
+  String get appsWidgetCatalog;
+
+  /// No description provided for @appsInstalledCount.
+  ///
+  /// In en, this message translates to:
+  /// **'{count} installed'**
+  String appsInstalledCount(Object count);
+
+  /// No description provided for @appsActiveCount.
+  ///
+  /// In en, this message translates to:
+  /// **'{count} active apps'**
+  String appsActiveCount(Object count);
+
+  /// No description provided for @appsRunning.
+  ///
+  /// In en, this message translates to:
+  /// **'Running'**
+  String get appsRunning;
+
+  /// No description provided for @appsQuickOpen.
+  ///
+  /// In en, this message translates to:
+  /// **'Quick open'**
+  String get appsQuickOpen;
+
+  /// No description provided for @appsFullTooltip.
+  ///
+  /// In en, this message translates to:
+  /// **'Full'**
+  String get appsFullTooltip;
+
+  /// No description provided for @appsExitFullTooltip.
+  ///
+  /// In en, this message translates to:
+  /// **'Exit full'**
+  String get appsExitFullTooltip;
+
+  /// No description provided for @appsPinTooltip.
+  ///
+  /// In en, this message translates to:
+  /// **'Pin'**
+  String get appsPinTooltip;
+
+  /// No description provided for @appsUnpinTooltip.
+  ///
+  /// In en, this message translates to:
+  /// **'Unpin'**
+  String get appsUnpinTooltip;
+
   /// No description provided for @wideNavChats.
   ///
   /// In en, this message translates to:
@@ -314,6 +398,246 @@ abstract class AppLocalizations {
   /// **'New chat'**
   String get wideChatFallbackTitle;
 
+  /// No description provided for @chatFilterAll.
+  ///
+  /// In en, this message translates to:
+  /// **'All'**
+  String get chatFilterAll;
+
+  /// No description provided for @chatFilterUnread.
+  ///
+  /// In en, this message translates to:
+  /// **'Unread'**
+  String get chatFilterUnread;
+
+  /// No description provided for @chatFilterAgents.
+  ///
+  /// In en, this message translates to:
+  /// **'Agents'**
+  String get chatFilterAgents;
+
+  /// No description provided for @chatFilterChannels.
+  ///
+  /// In en, this message translates to:
+  /// **'Channels'**
+  String get chatFilterChannels;
+
+  /// No description provided for @chatAllNetworks.
+  ///
+  /// In en, this message translates to:
+  /// **'All networks'**
+  String get chatAllNetworks;
+
+  /// No description provided for @chatMyNetwork.
+  ///
+  /// In en, this message translates to:
+  /// **'My network'**
+  String get chatMyNetwork;
+
+  /// No description provided for @chatManageNetworks.
+  ///
+  /// In en, this message translates to:
+  /// **'Manage networks'**
+  String get chatManageNetworks;
+
+  /// No description provided for @chatSignInNetwork.
+  ///
+  /// In en, this message translates to:
+  /// **'Sign in to Fa Network'**
+  String get chatSignInNetwork;
+
+  /// No description provided for @chatProfileSettings.
+  ///
+  /// In en, this message translates to:
+  /// **'Profile & settings'**
+  String get chatProfileSettings;
+
+  /// No description provided for @chatNew.
+  ///
+  /// In en, this message translates to:
+  /// **'New'**
+  String get chatNew;
+
+  /// No description provided for @chatPinned.
+  ///
+  /// In en, this message translates to:
+  /// **'Pinned'**
+  String get chatPinned;
+
+  /// No description provided for @chatRecent.
+  ///
+  /// In en, this message translates to:
+  /// **'Recent'**
+  String get chatRecent;
+
+  /// No description provided for @chatNoConversationsTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'No chats yet'**
+  String get chatNoConversationsTitle;
+
+  /// No description provided for @chatNoConversationsBody.
+  ///
+  /// In en, this message translates to:
+  /// **'Start a local chat. Network sign-in is optional.'**
+  String get chatNoConversationsBody;
+
+  /// No description provided for @chatStartChat.
+  ///
+  /// In en, this message translates to:
+  /// **'Start a chat'**
+  String get chatStartChat;
+
+  /// No description provided for @chatNoUnread.
+  ///
+  /// In en, this message translates to:
+  /// **'No unread conversations.'**
+  String get chatNoUnread;
+
+  /// No description provided for @chatNoAgents.
+  ///
+  /// In en, this message translates to:
+  /// **'No agents match this filter.'**
+  String get chatNoAgents;
+
+  /// No description provided for @chatNoChannels.
+  ///
+  /// In en, this message translates to:
+  /// **'No channels match this filter.'**
+  String get chatNoChannels;
+
+  /// No description provided for @chatNoNetworkResults.
+  ///
+  /// In en, this message translates to:
+  /// **'No conversations in this network.'**
+  String get chatNoNetworkResults;
+
+  /// No description provided for @chatNoSearchResults.
+  ///
+  /// In en, this message translates to:
+  /// **'No chats match your search.'**
+  String get chatNoSearchResults;
+
+  /// No description provided for @chatClearSearch.
+  ///
+  /// In en, this message translates to:
+  /// **'Clear search'**
+  String get chatClearSearch;
+
+  /// No description provided for @chatNoPreview.
+  ///
+  /// In en, this message translates to:
+  /// **'No messages yet'**
+  String get chatNoPreview;
+
+  /// No description provided for @chatNetworkUnavailable.
+  ///
+  /// In en, this message translates to:
+  /// **'Network chats are unavailable. Local chats still work.'**
+  String get chatNetworkUnavailable;
+
+  /// No description provided for @chatLoadError.
+  ///
+  /// In en, this message translates to:
+  /// **'Chats could not be loaded.'**
+  String get chatLoadError;
+
+  /// No description provided for @chatRetry.
+  ///
+  /// In en, this message translates to:
+  /// **'Retry'**
+  String get chatRetry;
+
+  /// No description provided for @chatCreateJoinNetwork.
+  ///
+  /// In en, this message translates to:
+  /// **'Create or join a network'**
+  String get chatCreateJoinNetwork;
+
+  /// No description provided for @chatOpenNetwork.
+  ///
+  /// In en, this message translates to:
+  /// **'Open network'**
+  String get chatOpenNetwork;
+
+  /// No description provided for @chatNetworksEmpty.
+  ///
+  /// In en, this message translates to:
+  /// **'No network memberships yet.'**
+  String get chatNetworksEmpty;
+
+  /// No description provided for @chatPin.
+  ///
+  /// In en, this message translates to:
+  /// **'Pin chat'**
+  String get chatPin;
+
+  /// No description provided for @chatUnpin.
+  ///
+  /// In en, this message translates to:
+  /// **'Unpin chat'**
+  String get chatUnpin;
+
+  /// No description provided for @chatWorking.
+  ///
+  /// In en, this message translates to:
+  /// **'Working…'**
+  String get chatWorking;
+
+  /// No description provided for @chatTimeNow.
+  ///
+  /// In en, this message translates to:
+  /// **'now'**
+  String get chatTimeNow;
+
+  /// No description provided for @chatMinuteSuffix.
+  ///
+  /// In en, this message translates to:
+  /// **'m'**
+  String get chatMinuteSuffix;
+
+  /// No description provided for @chatHourSuffix.
+  ///
+  /// In en, this message translates to:
+  /// **'h'**
+  String get chatHourSuffix;
+
+  /// No description provided for @chatDaySuffix.
+  ///
+  /// In en, this message translates to:
+  /// **'d'**
+  String get chatDaySuffix;
+
+  /// No description provided for @chatLocal.
+  ///
+  /// In en, this message translates to:
+  /// **'Local'**
+  String get chatLocal;
+
+  /// No description provided for @chatSearchShortcut.
+  ///
+  /// In en, this message translates to:
+  /// **'⌘F'**
+  String get chatSearchShortcut;
+
+  /// No description provided for @chatMoreActions.
+  ///
+  /// In en, this message translates to:
+  /// **'Chat actions'**
+  String get chatMoreActions;
+
+  /// No description provided for @chatExpand.
+  ///
+  /// In en, this message translates to:
+  /// **'Expand subagents'**
+  String get chatExpand;
+
+  /// No description provided for @chatCollapse.
+  ///
+  /// In en, this message translates to:
+  /// **'Collapse'**
+  String get chatCollapse;
+
   /// No description provided for @wideNavActivity.
   ///
   /// In en, this message translates to:
@@ -331,6 +655,36 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Recent'**
   String get activityRecent;
+
+  /// No description provided for @activityAll.
+  ///
+  /// In en, this message translates to:
+  /// **'All activity'**
+  String get activityAll;
+
+  /// No description provided for @activitySearchHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Search activity'**
+  String get activitySearchHint;
+
+  /// No description provided for @activityChoose.
+  ///
+  /// In en, this message translates to:
+  /// **'Choose an activity item'**
+  String get activityChoose;
+
+  /// No description provided for @activityStatus.
+  ///
+  /// In en, this message translates to:
+  /// **'Status'**
+  String get activityStatus;
+
+  /// No description provided for @activityLastActivity.
+  ///
+  /// In en, this message translates to:
+  /// **'Last activity'**
+  String get activityLastActivity;
 
   /// No description provided for @activityEmpty.
   ///
@@ -745,12 +1099,6 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Camera'**
   String get chatCamera;
-
-  /// No description provided for @chatCollapse.
-  ///
-  /// In en, this message translates to:
-  /// **'Collapse'**
-  String get chatCollapse;
 
   /// No description provided for @chatCopiedToClipboard.
   ///
@@ -1271,7 +1619,7 @@ abstract class AppLocalizations {
   /// No description provided for @launcherSearchHint.
   ///
   /// In en, this message translates to:
-  /// **'Search widgets…'**
+  /// **'Search apps and widgets…'**
   String get launcherSearchHint;
 
   /// No description provided for @launcherTabWidgets.
@@ -4471,6 +4819,24 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Channel deleted'**
   String get networkChannelDeleted;
+
+  /// No description provided for @networkInvitePerson.
+  ///
+  /// In en, this message translates to:
+  /// **'Invite person…'**
+  String get networkInvitePerson;
+
+  /// No description provided for @networkInvitePersonTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Invite a person'**
+  String get networkInvitePersonTitle;
+
+  /// No description provided for @networkInvitePersonBody.
+  ///
+  /// In en, this message translates to:
+  /// **'This link joins the whole network. Anyone who receives it can use it.'**
+  String get networkInvitePersonBody;
 
   /// Channel overflow menu item opening the agent invite
   ///

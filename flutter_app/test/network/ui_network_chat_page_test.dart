@@ -63,6 +63,7 @@ void main() {
       String? channelName = 'general',
       bool withChannelKeys = true,
       bool isPublic = false,
+      bool showAppBar = false,
       // The reload response served after a missing-key import — pass a
       // malformed body to make the post-import history reload throw.
       String? importReloadBody,
@@ -141,7 +142,13 @@ void main() {
         MaterialApp(
           theme: buildFahTheme(),
           home: Scaffold(
-            body: NetworkChatPage(controller: controller, manager: manager),
+            body: NetworkChatPage(
+              controller: controller,
+              manager: manager,
+              showAppBar: showAppBar,
+              showChannelHeader: !showAppBar,
+              projectLabel: showAppBar ? 'fa-team' : null,
+            ),
           ),
         ),
       );
@@ -672,6 +679,23 @@ void main() {
         findsOneWidget,
       );
       expect(find.text('other-agent'), findsNothing);
+      final mentionMenu = tester.widget<Container>(
+        find.byKey(const ValueKey('faChatMentionMenu')),
+      );
+      expect(mentionMenu.constraints!.maxWidth, lessThanOrEqualTo(320));
+      expect((mentionMenu.decoration! as BoxDecoration).boxShadow, isNull);
+      final composer = find.byKey(const ValueKey('faChatFloatingComposer'));
+      expect(
+        find.descendant(
+          of: composer,
+          matching: find.byKey(const ValueKey('mentionOption:agent-kb')),
+        ),
+        findsNothing,
+      );
+      expect(
+        tester.getRect(find.byKey(const ValueKey('faChatMentionMenu'))).bottom,
+        lessThanOrEqualTo(tester.getRect(composer).top),
+      );
 
       await tester.tap(find.byKey(const ValueKey('mentionOption:agent-kb')));
       await tester.pump();
@@ -708,6 +732,57 @@ void main() {
         await rig.session.close();
       },
     );
+
+    testWidgets('shared channel title opens details with roster and invites', (
+      tester,
+    ) async {
+      final rig = await pumpChat(tester, showAppBar: true);
+      final title = find.text('fa-team');
+      await tester.tap(title);
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey('channelDetailsSheet')), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('networkRosterMember:other-1')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('channelDetailsAddAgent')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('channelDetailsInvitePerson')),
+        findsOneWidget,
+      );
+
+      await tester.tap(find.byKey(const ValueKey('channelDetailsAddAgent')));
+      await tester.pumpAndSettle();
+      final agentDialog = tester.widget<AddAgentDialog>(
+        find.byType(AddAgentDialog),
+      );
+      expect(agentDialog.channel?.id, 'c1');
+      expect(agentDialog.initialScope, AgentInviteScope.channel);
+      Navigator.of(tester.element(find.byType(AddAgentDialog))).pop();
+      await tester.pumpAndSettle();
+
+      await tester.tap(title);
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(const ValueKey('channelDetailsInvitePerson')),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('invitePersonDialog')), findsOneWidget);
+      expect(find.byType(AddAgentDialog), findsNothing);
+      final clipboard = FakeClipboard()..install(tester);
+      await tester.tap(find.byKey(const ValueKey('invitePersonCopy')));
+      await tester.pump();
+      expect(clipboard.text, contains('net1'));
+      Navigator.of(
+        tester.element(find.byKey(const ValueKey('invitePersonDialog'))),
+      ).pop();
+      await tester.pumpAndSettle();
+      await rig.session.close();
+    });
 
     testWidgets('network.offline shows the reconnecting banner', (
       tester,

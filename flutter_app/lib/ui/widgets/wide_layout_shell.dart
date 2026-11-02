@@ -8,6 +8,7 @@ import 'package:path/path.dart' as p;
 
 import 'package:fa/apps/app_tile_host.dart';
 import 'package:fa/apps/apps_store.dart';
+import 'package:fa/apps/js_app_navigation.dart';
 import 'package:fa/l10n/app_localizations.dart';
 import 'package:fa/l10n/l10n_ext.dart';
 import 'package:fa/network/network_mode.dart';
@@ -26,14 +27,26 @@ import 'package:fa/services/session_ui_prefs_store.dart';
 import 'package:fa/services/session_names_store.dart';
 import 'package:fa/services/upload.dart';
 
+import 'package:fa/ui/activity/activity_surface.dart';
+import 'package:fa/ui/apps/app_launcher_controller.dart';
+import 'package:fa/ui/apps/apps_directory_panel.dart';
+import 'package:fa/ui/apps/messenger_app_panel.dart';
 import 'package:fa/ui/screens/app_launcher_screen.dart';
-import 'package:fa/ui/network/network_center.dart';
-import 'package:fa/ui/network/network_mode_chip.dart';
-import 'package:fa/ui/network/networks_sidebar.dart';
-import 'package:fa/ui/network/quick_switcher.dart';
 import 'package:fa/ui/widgets/fa_mark.dart';
+import 'package:fa/ui/widgets/messenger_navigation_controls.dart';
+import 'package:fa/ui/widgets/messenger_section_header.dart';
+import 'package:fa/ui/chats/chat_list_controller.dart';
+import 'package:fa/ui/chats/chat_list_entry.dart';
+import 'package:fa/ui/chats/chat_list_panel.dart';
+import 'package:fa/ui/chats/chat_list_stores.dart';
+import 'package:fa/ui/chats/local_chat_list_adapter.dart';
+import 'package:fa/ui/chats/network_inbox_adapter.dart';
+import 'package:fa/ui/chats/network_inbox_http_adapter.dart';
+import 'package:fa/ui/network/join_sheet.dart';
+import 'package:fa/ui/network/network_chat_page.dart';
 import 'package:fa/ui/screens/chat_screen.dart';
 import 'package:fa/ui/widgets/quick_model_chip.dart';
+import 'package:fa/ui/screens/models_settings_page.dart';
 import 'package:fa/ui/screens/settings.dart';
 import 'package:fa/ui/widgets/file_browser.dart';
 import 'package:fa/ui/widgets/boot_oversize_notice.dart';
@@ -67,6 +80,10 @@ class WideLayoutShell extends StatefulWidget {
     this.sessionPrefsStore,
     this.networkMode,
     this.networkSessions,
+    this.chatPinStore,
+    this.chatReadCursorStore,
+    this.networkInboxAdapter,
+    this.localChatAdapterFactory,
   });
 
   final FlutterSessionManager manager;
@@ -92,6 +109,16 @@ class WideLayoutShell extends StatefulWidget {
   final NetworkModeController? networkMode;
   final NetworkSessionManager? networkSessions;
 
+  /// Focused chat-list seams; production loads per-account stores from the
+  /// shared env and uses the unavailable aggregate adapter until HTTP lands.
+  final ChatPinStore? chatPinStore;
+  final ChatReadCursorStore? chatReadCursorStore;
+  final NetworkInboxAdapter? networkInboxAdapter;
+
+  /// Optional host/test projection seam. The default reads real live and
+  /// persisted sessions; injected sources must preserve that contract.
+  final LocalChatListSource Function()? localChatAdapterFactory;
+
   @override
   State<WideLayoutShell> createState() => _WideLayoutShellState();
 }
@@ -112,6 +139,7 @@ PreferredSizeWidget faAppBar({
   List<Widget>? actions,
   Widget? leading,
   bool? centerTitle,
+  bool trafficLightClearance = true,
 }) {
   final bar = AppBar(
     title: title,
@@ -119,7 +147,7 @@ PreferredSizeWidget faAppBar({
     leading: leading,
     centerTitle: centerTitle,
   );
-  if (!faIsMacOSDesktop) return bar;
+  if (!faIsMacOSDesktop || !trafficLightClearance) return bar;
   const inset = 32.0;
   return PreferredSize(
     preferredSize: const Size.fromHeight(kToolbarHeight + inset),
@@ -133,6 +161,9 @@ PreferredSizeWidget faAppBar({
 enum _WideShellSection { chats, activity, apps }
 
 class _WideLayoutShellState extends State<WideLayoutShell> {
+  static const _collapsedSidebarWidth = 96.0;
+  static const _sidebarCollapseDuration = Duration(milliseconds: 200);
+
   bool _sidebarCollapsed = false;
   _WideShellSection _section = _WideShellSection.chats;
 
@@ -152,6 +183,24 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
   /// Lazily loaded session-title store when the host did not inject one
   /// (the wide shell's boot path doesn't) — powers custom titles + rename.
   SessionNamesStore? _namesStore;
+  SessionNamesStore? _listenedNamesStore;
+  late final ChatListController _chatController;
+  late final ActivityController _activityController;
+  late final AppLauncherController _appLauncherController;
+  final TextEditingController _activitySearchController =
+      TextEditingController();
+  late final AppsStore _appsStore;
+  MessengerAppPresentation? _appPresentation;
+  ChatListEntry? _activeNetworkEntry;
+  late bool _networkInboxEnabled;
+  bool _narrowChatRouteVisible = false;
+  Route<void>? _narrowChatRoute;
+  bool? _wasNarrow;
+  bool _narrowActivityDetailVisible = false;
+  String? _chatAccountKey;
+  String? _chatDirectory;
+  final Set<String> _localExpandedParents = <String>{};
+  final Set<String> _localCollapsedParents = <String>{};
 
   /// Lazily loaded sessions-tree prefs (issue #426) when the host did not
   /// inject one — per-parent expand/collapse survives an app restart.
@@ -160,13 +209,12 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
   /// The sessions sidebar's width (issue #426 item 4): user-resizable via
   /// a drag handle on its divider, clamped to the store's
   /// [SessionUiPrefsStore.minSidebarWidth]..[maxSidebarWidth] and
-  /// persisted through the prefs store. Starts at the stock 240 until the
-  /// store loads (or the host injects one).
-  double _sidebarWidth = SessionUiPrefsStore.defaultSidebarWidth;
+  /// persisted through the prefs store. Starts at a compact desktop
+  /// messenger width of 260 until a stored width loads.
+  double _sidebarWidth = 260;
 
   /// True while the sidebar divider is mid-drag: the collapse animation
   /// is suppressed so the width tracks the pointer 1:1.
-  bool _sidebarDragging = false;
 
   /// Whether we're on macOS desktop (traffic lights float over content).
   static bool get _isMacOS =>
@@ -187,10 +235,93 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
     return widget.manager.hostedLiveId.value ?? widget.manager.active?.id;
   }
 
+  Map<String, String> _networkNames() {
+    final manager = widget.networkSessions;
+    if (manager == null) return const {};
+    return {
+      for (final network in manager.wallet.networks.entries)
+        network.key: network.value.name,
+    };
+  }
+
+  LocalChatListSource _makeLocalChatAdapter() {
+    final factory = widget.localChatAdapterFactory;
+    if (factory != null) return factory();
+    return LocalChatListAdapter(
+      manager: widget.manager,
+      sessionInfoNames: _jsonlNames,
+      readPersistedNames: false,
+      namesStore: widget.sessionNamesStore ?? _namesStore,
+      titleBuilder: (id, createdAt, isSubagent) {
+        if (!mounted) return id;
+        final shortId = id.length > 8 ? id.substring(0, 8) : id;
+        if (isSubagent) {
+          return context.l10n.sidebarSubagentTitle(shortId);
+        }
+        return derivedSessionTitle(context, id: id, createdAt: createdAt);
+      },
+    );
+  }
+
+  void _subscribeToNamesStore() {
+    final store = widget.sessionNamesStore ?? _namesStore;
+    if (identical(store, _listenedNamesStore)) return;
+    _listenedNamesStore?.removeListener(_onNamesChanged);
+    _listenedNamesStore = store;
+    store?.addListener(_onNamesChanged);
+  }
+
+  void _onNamesChanged() {
+    unawaited(_refreshChatProjection());
+    // The centered header shows the same live display name as the list.
+    if (mounted) setState(() {});
+  }
+
+  void _onNetworkSessionsChanged() {
+    _chatController.updateNetworkNames(_networkNames());
+    final manager = widget.networkSessions;
+    final enabled = manager?.hasJwt == true;
+    if (widget.networkInboxAdapter == null && enabled != _networkInboxEnabled) {
+      _networkInboxEnabled = enabled;
+      unawaited(
+        _chatController.replaceNetworkAdapter(
+          enabled ? NetworkInboxHttpAdapter(sessionManager: manager!) : null,
+        ),
+      );
+    }
+    unawaited(_ensureChatStores());
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _refreshChatProjection() async {
+    if (!mounted) return;
+    await _chatController.replaceLocalAdapter(_makeLocalChatAdapter());
+  }
+
+  Future<void> _ensureChatStores() async {
+    final network = widget.networkSessions;
+    final key = network?.accountLogin ?? 'local';
+    if (widget.chatPinStore != null && widget.chatReadCursorStore != null) {
+      _chatAccountKey = key;
+      return;
+    }
+    final env = widget.manager.active?.service.env;
+    if (env == null) return;
+    final pins =
+        widget.chatPinStore ?? await ChatPinStore.load(env, accountId: key);
+    final reads =
+        widget.chatReadCursorStore ??
+        await ChatReadCursorStore.load(env, accountId: key);
+    if (!mounted || key != _chatAccountKey && _chatAccountKey != null) return;
+    _chatAccountKey = key;
+    _chatController.replaceStores(pinStore: pins, readCursorStore: reads);
+  }
+
   void _onManagerChanged() {
     _subscribeToActiveService();
     unawaited(_reloadPersistedSessions());
     unawaited(_ensureNamesStore());
+    unawaited(_ensureChatStores());
     unawaited(_ensureUiPrefs());
     if (_pendingOpenId != null &&
         widget.manager.hostedLiveId.value == _pendingOpenId) {
@@ -210,6 +341,7 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
       _persistedSessions = all;
       _jsonlNames = names;
     });
+    unawaited(_refreshChatProjection());
   }
 
   /// The host path of the current project mount (null = Personal / no mount).
@@ -225,19 +357,39 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
   /// personal sandbox) → "Personal". Switching sessions switches the
   /// label.
   String _sessionFolderLabel() {
-    final cwd = widget.manager.active?.service.currentSessionCwd;
-    if (cwd != null) {
+    final service = widget.manager.active?.service;
+    final cwd = service?.currentSessionCwd ?? widget.manager.env.cwd;
+    if (cwd.isNotEmpty) {
       final name = p.basename(cwd);
       if (name.isNotEmpty && name != '/' && name != '.') return name;
     }
     return context.l10n.sessionFolderPersonal;
   }
 
+  /// Display name of the selected local/hosted session. Custom UI names win,
+  /// then the CLI's session_info name, then the same derived title used by
+  /// the conversation list. No generic application-name placeholder.
+  String _sessionDisplayTitle() {
+    final active = widget.manager.active;
+    if (active == null) return context.l10n.wideChatFallbackTitle;
+    final names = widget.sessionNamesStore ?? _namesStore;
+    final custom = names?.titleFor(active.id)?.trim();
+    if (custom != null && custom.isNotEmpty) return custom;
+    final jsonl = _jsonlNames[active.id]?.trim();
+    if (jsonl != null && jsonl.isNotEmpty) return jsonl;
+    return derivedSessionTitle(
+      context,
+      id: active.id,
+      createdAt: active.createdAt,
+    );
+  }
+
   /// Whether the active session has a real project folder (drives the
   /// chip icon color: indigo when bound to a folder, dim when personal).
   bool get _sessionHasFolder {
-    final cwd = widget.manager.active?.service.currentSessionCwd;
-    if (cwd == null) return false;
+    final service = widget.manager.active?.service;
+    final cwd = service?.currentSessionCwd ?? widget.manager.env.cwd;
+    if (cwd.isEmpty) return false;
     final name = p.basename(cwd);
     return name.isNotEmpty && name != '/' && name != '.';
   }
@@ -263,6 +415,9 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
         await SessionNamesStore.shared(service.env);
     if (!mounted) return;
     setState(() => _namesStore = store);
+    _activityController.updateNamesStore(store);
+    _subscribeToNamesStore();
+    unawaited(_refreshChatProjection());
   }
 
   /// Loads the sessions-tree prefs store from the shared env when the
@@ -283,19 +438,29 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
     });
   }
 
-  /// Rebuilds when the active service notifies (model change, reconfigure).
+  /// Rebuilds on run boundaries and non-streaming configuration changes.
+  /// ChatScreen owns partial-token rendering; rebuilding the whole shell and
+  /// reloading every persisted preview for each token only multiplies disk
+  /// and JSON work without improving the visible transcript.
   void _onServiceChanged() {
+    final streaming = widget.manager.active?.service.isStreaming ?? false;
+    final runBoundary = _lastServiceStreaming != streaming;
+    _lastServiceStreaming = streaming;
+    if (streaming && !runBoundary) return;
+    unawaited(_refreshChatProjection());
     if (mounted) setState(() {});
   }
 
   /// The service we're currently listening to (for model-change rebuilds).
   AgentService? _listenedService;
+  bool? _lastServiceStreaming;
 
   void _subscribeToActiveService() {
     final active = widget.manager.active?.service;
     if (active == _listenedService) return;
     _listenedService?.removeListener(_onServiceChanged);
     _listenedService = active;
+    _lastServiceStreaming = active?.isStreaming ?? false;
     active?.addListener(_onServiceChanged);
   }
 
@@ -303,9 +468,34 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
   void initState() {
     super.initState();
     widget.manager.addListener(_onManagerChanged);
+    widget.networkSessions?.addListener(_onNetworkSessionsChanged);
     _subscribeToActiveService();
+    _subscribeToNamesStore();
+    _networkInboxEnabled = widget.networkSessions?.hasJwt == true;
+    _activityController = ActivityController(
+      manager: widget.manager,
+      namesStore: widget.sessionNamesStore ?? _namesStore,
+    );
+    _appLauncherController = AppLauncherController();
+    _appsStore = widget.appsStore ?? AppsStore(widget.manager.env);
+    _chatController = ChatListController(
+      localAdapter: _makeLocalChatAdapter(),
+      pinStore:
+          widget.chatPinStore ?? ChatPinStore.inMemory(accountId: 'local'),
+      readCursorStore:
+          widget.chatReadCursorStore ??
+          ChatReadCursorStore.inMemory(accountId: 'local'),
+      networkAdapter:
+          widget.networkInboxAdapter ??
+          (_networkInboxEnabled
+              ? NetworkInboxHttpAdapter(sessionManager: widget.networkSessions!)
+              : null),
+      networkNames: _networkNames(),
+    );
+    unawaited(_chatController.load());
     unawaited(_reloadPersistedSessions());
     unawaited(_ensureNamesStore());
+    unawaited(_ensureChatStores());
     unawaited(_ensureUiPrefs());
     // Issue #381: boot skipped an oversized last-active session — say so
     // instead of the old silent swap; windowed open stays on the sidebar.
@@ -315,31 +505,61 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
       names: widget.sessionNamesStore,
       onOpen: (metadata) => _openPersistedSession(metadata),
     );
+    jsAppPanelPresenter = _presentJsApp;
     FaChatHost.jsAppNavigatorKey = _appsNavigatorKey;
     FaChatHost.revealJsApps = _revealApps;
+    FaChatHost.revealActiveChat = _revealActiveChat;
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final narrow = _isNarrow;
+    final wasNarrow = _wasNarrow;
+    _wasNarrow = narrow;
+    if (wasNarrow == true && !narrow && _narrowChatRoute != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _foldNarrowChatIntoWide();
+      });
+    }
+  }
+
+  /// A phone chat is a route above the shell. Once the same window becomes
+  /// wide, that route would otherwise keep covering the newly visible sidebar
+  /// and center. Fold it (and any narrow-only routes above it) back into the
+  /// shared wide chat instead of leaving a phone-sized screen stretched wide.
+  void _foldNarrowChatIntoWide() {
+    if (!mounted || _isNarrow) return;
+    final route = _narrowChatRoute;
+    if (route == null || !route.isActive) return;
+    final navigator = Navigator.of(context);
+    if (!route.isCurrent) {
+      navigator.popUntil((candidate) => identical(candidate, route));
+    }
+    if (route.isActive && route.isCurrent) navigator.pop();
   }
 
   @override
   void dispose() {
     widget.manager.removeListener(_onManagerChanged);
+    widget.networkSessions?.removeListener(_onNetworkSessionsChanged);
     _listenedService?.removeListener(_onServiceChanged);
+    _listenedNamesStore?.removeListener(_onNamesChanged);
+    _activityController.dispose();
+    _chatController.dispose();
+    _appLauncherController.dispose();
+    _activitySearchController.dispose();
+    if (jsAppPanelPresenter == _presentJsApp) jsAppPanelPresenter = null;
     if (FaChatHost.jsAppNavigatorKey == _appsNavigatorKey) {
       FaChatHost.jsAppNavigatorKey = null;
     }
     if (FaChatHost.revealJsApps == _revealApps) {
       FaChatHost.revealJsApps = null;
     }
+    if (FaChatHost.revealActiveChat == _revealActiveChat) {
+      FaChatHost.revealActiveChat = null;
+    }
     super.dispose();
-  }
-
-  /// True when the network mode is active and wired (issue #955): the
-  /// shell swaps the sidebar's sessions list for the networks list and
-  /// the center chat for the network center — never the whole screen.
-  bool get _inNetworkMode {
-    final mode = widget.networkMode;
-    return mode != null &&
-        widget.networkSessions != null &&
-        mode.mode == AppMode.network;
   }
 
   bool get _isNarrow =>
@@ -349,156 +569,295 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
   @override
   Widget build(BuildContext context) {
     final colors = FahColors.of(context);
+    final tokens = FaDesignTokens.of(context);
     final narrow = _isNarrow;
     // Scaffold supplies both the required Material ancestor and a snack
     // host now that no permanent launcher pane owns one.
-    final mode = widget.networkMode;
-    final sessions = widget.networkSessions;
     Widget buildBody() =>
         narrow ? _buildNarrowBody(colors) : _buildBody(colors);
-    return Scaffold(
+    final scaffold = Scaffold(
       backgroundColor: colors.bg,
-      body: mode == null || sessions == null
-          ? buildBody()
-          : ListenableBuilder(
-              // Wide mode toggles local ⇄ network in place. Narrow local
-              // mode keeps this shell; faHomeScreen owns its full-tree gate.
-              listenable: mode,
-              builder: (context, _) {
-                final body = buildBody();
-                return _inNetworkMode && !narrow
-                    ? NetworkQuickSwitcher(
-                        controller: mode,
-                        manager: sessions,
-                        child: body,
-                      )
-                    : body;
-              },
-            ),
-      bottomNavigationBar: narrow ? _buildNarrowNavigation(colors) : null,
+      extendBody: narrow && _appPresentation == null,
+      body: buildBody(),
+      bottomNavigationBar: narrow && _appPresentation == null
+          ? _buildNarrowNavigation()
+          : null,
       floatingActionButton:
-          narrow && _section == _WideShellSection.chats && !_inNetworkMode
-          ? FloatingActionButton(
+          narrow &&
+              _appPresentation == null &&
+              _section == _WideShellSection.chats
+          ? MessengerNewChatButton(
               key: const ValueKey('narrowShellNewChat'),
-              onPressed: () => unawaited(_newSession()),
-              tooltip: context.l10n.wideChatFallbackTitle,
-              child: const Icon(Icons.edit_outlined),
+              onTap: () => unawaited(_newSession()),
+              label: context.l10n.wideChatFallbackTitle,
             )
           : null,
     );
+    if (tokens.direction != FaVisualDirection.glass) return scaffold;
+    return BackdropGroup(child: scaffold);
   }
 
-  Widget _buildNarrowNavigation(FahColors colors) {
-    return NavigationBar(
-      key: const ValueKey('narrowShellNavigation'),
-      selectedIndex: _section.index,
-      onDestinationSelected: (index) =>
-          _selectSection(_WideShellSection.values[index]),
-      backgroundColor: colors.panel,
-      indicatorColor: colors.panelAlt,
-      destinations: [
-        NavigationDestination(
-          icon: const Icon(Icons.chat_bubble_outline_rounded),
-          selectedIcon: const Icon(Icons.chat_bubble_rounded),
-          label: context.l10n.wideNavChats,
+  Widget _buildNarrowNavigation() {
+    final labels = [
+      context.l10n.wideNavChats,
+      context.l10n.wideNavActivity,
+      context.l10n.appsGridTitle,
+    ];
+    return SafeArea(
+      top: false,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(
+          MessengerBottomNavigation.horizontalMargin,
+          0,
+          MessengerBottomNavigation.horizontalMargin,
+          MessengerBottomNavigation.bottomGap,
         ),
-        NavigationDestination(
-          icon: const Icon(Icons.notifications_none_rounded),
-          selectedIcon: const Icon(Icons.notifications_rounded),
-          label: context.l10n.wideNavActivity,
+        child: MessengerBottomNavigation(
+          key: const ValueKey('narrowShellNavigation'),
+          selectedIndex: _section.index,
+          children: [
+            for (var index = 0; index < labels.length; index++)
+              MessengerBottomNavigationItem(
+                key: ValueKey(
+                  'messengerPrimaryNav-${_WideShellSection.values[index].name}',
+                ),
+                icon: switch (_WideShellSection.values[index]) {
+                  _WideShellSection.chats => Icons.chat_bubble_outline_rounded,
+                  _WideShellSection.activity =>
+                    Icons.notifications_none_rounded,
+                  _WideShellSection.apps => Icons.grid_view_rounded,
+                },
+                label: labels[index],
+                selected: _section.index == index,
+                onTap: () => _selectSection(_WideShellSection.values[index]),
+              ),
+          ],
         ),
-        NavigationDestination(
-          icon: const Icon(Icons.grid_view_outlined),
-          selectedIcon: const Icon(Icons.grid_view_rounded),
-          label: context.l10n.appsGridTitle,
+      ),
+    );
+  }
+
+  Widget _buildChatPanel({bool compact = false, bool collapsed = false}) {
+    final dapStore = DapBindingStore.instance;
+    return ListenableBuilder(
+      listenable: _chatController,
+      builder: (context, _) => ListenableBuilder(
+        listenable: dapStore,
+        builder: (context, _) => _chatPanel(
+          dapBound: dapStore.boundSessionId != null,
+          compact: compact,
+          collapsed: collapsed,
         ),
-      ],
+      ),
+    );
+  }
+
+  Widget _chatPanel({
+    required bool dapBound,
+    required bool compact,
+    required bool collapsed,
+  }) {
+    return ChatListPanel(
+      controller: _chatController,
+      compact: compact,
+      selectedEntryId:
+          _activeNetworkEntry?.id ??
+          (_selectedSessionId == null
+              ? null
+              : ChatEntryId.local(_selectedSessionId!)),
+      didOpen: (entry) =>
+          entry.kind == ChatListEntryKind.localAgent &&
+          widget.manager.active?.id == entry.id.value,
+      hubBoundSessionId: dapBound
+          ? DapBindingStore.instance.boundSessionId
+          : null,
+      networkManager: widget.networkSessions,
+      networkMode: widget.networkMode,
+      onOpen: _openChatEntry,
+      onNew: _newSession,
+      onProfile: _openNarrowProfile,
+      onBrandTap: compact ? () => unawaited(_pushNarrowChat()) : null,
+      onBrandLongPress: () => unawaited(_mintSessionFromBrand()),
+      onCollapse: () => setState(() => _sidebarCollapsed = true),
+      onLocalMenu: _showChatEntryMenu,
+      expandedParents:
+          widget.sessionPrefsStore?.expandedParents ??
+          _uiPrefs?.expandedParents ??
+          _localExpandedParents,
+      collapsedParents:
+          widget.sessionPrefsStore?.collapsedParents ??
+          _uiPrefs?.collapsedParents ??
+          _localCollapsedParents,
+      onToggleParent: _toggleChatParent,
+      currentDirectory: _chatDirectory,
+      onDirectoryChanged: (path) => setState(() => _chatDirectory = path),
+      headerBottom: null,
+      filterActions: compact || collapsed
+          ? const <Widget>[]
+          : _buildChatFilterActions(),
+    );
+  }
+
+  void _toggleChatParent(String parentId, bool expand) {
+    final prefs = widget.sessionPrefsStore ?? _uiPrefs;
+    if (prefs != null) {
+      unawaited(prefs.setExpanded(parentId, expand));
+    }
+    setState(() {
+      if (expand) {
+        _localExpandedParents.add(parentId);
+        _localCollapsedParents.remove(parentId);
+      } else {
+        _localCollapsedParents.add(parentId);
+        _localExpandedParents.remove(parentId);
+      }
+    });
+  }
+
+  Future<void> _openChatEntry(ChatListEntry entry) async {
+    if (entry.kind == ChatListEntryKind.localAgent) {
+      final live = widget.manager.sessions
+          .where((session) => session.id == entry.id.value)
+          .firstOrNull;
+      if (live != null) {
+        if (_isNarrow) {
+          await _openNarrowLiveSession(entry.id.value);
+        } else {
+          _openLiveSession(entry.id.value);
+        }
+        return;
+      }
+      final persisted = _persistedSessions
+          .where((session) => session.id == entry.id.value)
+          .firstOrNull;
+      if (persisted != null) {
+        if (_isNarrow) {
+          await _openNarrowPersistedSession(persisted);
+        } else {
+          await _openPersistedSession(persisted);
+        }
+      }
+      return;
+    }
+    final manager = widget.networkSessions;
+    if (manager == null) return;
+    final mode = widget.networkMode;
+    final networkId = entry.networkId;
+    if (entry.kind == ChatListEntryKind.networkChannel &&
+        mode != null &&
+        networkId != null) {
+      await _openNetworkChannel(entry, manager, mode);
+      return;
+    }
+    // Network-agent detail is separate; management remains a secondary
+    // flow and never changes the messenger home or its filter.
+    await showChatNetworksDialog(context, manager: manager, networkMode: mode);
+  }
+
+  Future<void> _openNetworkChannel(
+    ChatListEntry entry,
+    NetworkSessionManager manager,
+    NetworkModeController mode,
+  ) async {
+    final networkId = entry.networkId!;
+    await mode.enterNetwork(networkId);
+    if (!manager.sessions.containsKey(networkId)) {
+      if (manager.wallet.networks[networkId]?.password == null) {
+        if (!mounted) return;
+        await showJoinSheet(
+          context,
+          controller: mode,
+          manager: manager,
+          initialNetworkId: networkId,
+        );
+      } else {
+        try {
+          await manager.resume(networkId);
+        } on Object catch (error) {
+          if (mounted) showFahErrorSnack(context, error.toString());
+        }
+      }
+    }
+    if (!mounted || !manager.sessions.containsKey(networkId)) return;
+    await mode.selectChannel(entry.id.value);
+    if (!mounted) return;
+    setState(() => _activeNetworkEntry = entry);
+    if (_isNarrow) await _pushNarrowChat();
+  }
+
+  Future<void> _showChatEntryMenu(ChatListEntry entry, Rect anchor) async {
+    if (entry.kind != ChatListEntryKind.localAgent) return;
+    final live = widget.manager.sessions
+        .where((session) => session.id == entry.id.value)
+        .firstOrNull;
+    final persisted = _persistedSessions
+        .where((session) => session.id == entry.id.value)
+        .firstOrNull;
+    if (live == null && persisted == null) return;
+    await showSessionActionsMenu(
+      context,
+      manager: widget.manager,
+      namesStore: widget.sessionNamesStore ?? _namesStore,
+      live: live,
+      persisted: persisted,
+      anchor: anchor,
+      sessionId: entry.id.value,
+      createdAt:
+          entry.lastActivity ??
+          DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
+      onDeleted: _reloadPersistedSessions,
     );
   }
 
   Widget _buildNarrowBody(FahColors colors) {
-    return switch (_section) {
+    final base = switch (_section) {
       _WideShellSection.chats => SafeArea(
         bottom: false,
-        child: Column(
-          children: [
-            _buildNarrowChatsHeader(colors),
-            Expanded(child: _buildNarrowConversationList()),
-          ],
-        ),
+        child: _buildChatPanel(compact: true),
       ),
       _WideShellSection.activity => SafeArea(
         bottom: false,
-        child: _WideActivitySurface(
-          manager: widget.manager,
-          namesStore: widget.sessionNamesStore ?? _namesStore,
-          onOpenSession: _openActivitySession,
-        ),
+        child: _narrowActivityDetailVisible
+            ? ActivityDetailPanel(
+                controller: _activityController,
+                compact: true,
+                onOpenSession: _openActivitySession,
+                onBack: () {
+                  _activityController.clearSelection();
+                  setState(() => _narrowActivityDetailVisible = false);
+                },
+              )
+            : Column(
+                children: [
+                  MessengerSectionHeader(
+                    title: context.l10n.wideNavActivity,
+                    searchController: _activitySearchController,
+                    searchHint: context.l10n.activitySearchHint,
+                    onSearch: _activityController.setSearch,
+                    onProfile: _openNarrowProfile,
+                    onNew: _newSession,
+                    compact: true,
+                  ),
+                  Expanded(
+                    child: ActivityListPanel(
+                      controller: _activityController,
+                      compact: true,
+                      onSelect: (_) =>
+                          setState(() => _narrowActivityDetailVisible = true),
+                    ),
+                  ),
+                ],
+              ),
       ),
       _WideShellSection.apps => _buildAppsArea(),
     };
-  }
-
-  Widget _buildNarrowChatsHeader(FahColors colors) {
-    final mode = widget.networkMode;
-    final sessions = widget.networkSessions;
-    return Container(
-      height: 58,
-      padding: const EdgeInsets.fromLTRB(16, 6, 8, 6),
-      decoration: BoxDecoration(
-        border: Border(bottom: BorderSide(color: colors.border)),
-      ),
-      child: Row(
-        children: [
-          const FaBrandTile(size: 30),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text(
-              context.l10n.wideNavChats,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                color: colors.text,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ),
-          if (mode != null && sessions != null)
-            NetworkModeChip(controller: mode, manager: sessions),
-          IconButton(
-            key: const ValueKey('narrowShellProfile'),
-            onPressed: () => unawaited(_openNarrowProfile()),
-            icon: const Icon(Icons.account_circle_outlined),
-            color: colors.dim,
-            tooltip: context.l10n.settingsTitle,
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildNarrowConversationList() {
-    return ListenableBuilder(
-      listenable: DapBindingStore.instance,
-      builder: (context, _) => SidebarSessionsList(
-        manager: widget.manager,
-        sessionNamesStore: widget.sessionNamesStore ?? _namesStore,
-        prefsStore: widget.sessionPrefsStore ?? _uiPrefs,
-        showHeader: false,
-        onNewSession: _newSession,
-        persistedSessions: _persistedSessions,
-        sessionInfoNames: _jsonlNames,
-        onOpenPersisted: (metadata) =>
-            unawaited(_openNarrowPersistedSession(metadata)),
-        onOpenLiveSession: (sessionId) =>
-            unawaited(_openNarrowLiveSession(sessionId)),
-        hubBoundSessionId: DapBindingStore.instance.boundSessionId,
-        pendingSessionId: _pendingOpenId,
-        selectedSessionId: _selectedSessionId,
-        headerLabel: context.l10n.wideNavChats,
-        searchHint: context.l10n.wideChatsSearchHint,
-        unnamedTitle: context.l10n.wideChatFallbackTitle,
-      ),
+    final presentation = _appPresentation;
+    if (presentation == null) return base;
+    return Stack(
+      children: [
+        base,
+        Positioned.fill(child: _buildPresentedApp(presentation)),
+      ],
     );
   }
 
@@ -518,6 +877,19 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
                     child: FaBrandTile(size: 64),
                   ),
                 ),
+                if (widget.networkSessions != null)
+                  ListTile(
+                    key: const ValueKey('narrowProfileNetworks'),
+                    leading: const Icon(Icons.hub_outlined),
+                    title: Text(context.l10n.networkNetworksTitle),
+                    trailing: const Icon(Icons.chevron_right_rounded),
+                    onTap: () => unawaited(
+                      showChatNetworksDialog(
+                        context,
+                        manager: widget.networkSessions!,
+                      ),
+                    ),
+                  ),
                 ListTile(
                   key: const ValueKey('narrowProfileFiles'),
                   leading: const Icon(Icons.folder_outlined),
@@ -542,56 +914,231 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
 
   Widget _buildBody(FahColors colors) {
     final tokens = FaDesignTokens.of(context);
-    return Row(
-      children: [
-        // Left: collapsible sidebar (width user-resizable, issue #426).
-        AnimatedContainer(
-          duration: _sidebarDragging
-              ? Duration.zero
-              : FaMotion.duration(context, tokens.base),
-          curve: Curves.easeInOut,
-          width: _sidebarCollapsed ? 60 : _sidebarWidth,
-          decoration: BoxDecoration(
-            border: Border(right: BorderSide(color: colors.border)),
-          ),
-          child: _buildSidebar(colors),
-        ),
-        // Drag handle: resizes the sessions sidebar.
-        if (!_sidebarCollapsed)
-          _PaneDragHandle(
-            key: kSidebarDragHandleKey,
-            onDrag: (dx) => setState(() {
-              _sidebarDragging = true;
-              _sidebarWidth = (_sidebarWidth + dx).clamp(
-                SessionUiPrefsStore.minSidebarWidth,
-                SessionUiPrefsStore.maxSidebarWidth,
-              );
-            }),
-            onDragEnd: (_) => _onSidebarDragEnd(),
-          ),
-        Expanded(child: _buildCenterSurface(colors)),
-      ],
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final presentation = _appPresentation;
+        final full = presentation?.fullScreen == true;
+        final floatingPanel =
+            presentation != null && !full && constraints.maxWidth <= 1080;
+        return TweenAnimationBuilder<double>(
+          tween: Tween(end: _sidebarCollapsed ? 1.0 : 0.0),
+          duration: FaMotion.duration(context, _sidebarCollapseDuration),
+          curve: Curves.easeInOutCubic,
+          builder: (context, progress, _) {
+            // One value drives all visible geometry. TweenAnimationBuilder
+            // starts at its end on first mount, and an unchanged zero target
+            // makes persisted divider resize direct rather than animated.
+            final sidebarWidth =
+                _sidebarWidth +
+                (_collapsedSidebarWidth - _sidebarWidth) * progress;
+            final contentCollapsed = progress >= .5;
+            final contentWidth =
+                (contentCollapsed ? _collapsedSidebarWidth : _sidebarWidth) - 8;
+            final contentOpacity = contentCollapsed
+                ? (progress - .5) * 2
+                : 1 - progress * 2;
+            final contentInTransition = progress > 0 && progress < 1;
+            // On macOS the collapsed toggle moves just outside the rail. The
+            // equal center inset leaves an 8px gap at every intermediate
+            // frame; on other platforms it stays inside the panel.
+            final toggleShift = _isMacOS ? 48 * progress : 0.0;
+            final toggleLeft = sidebarWidth - 40 + toggleShift;
+            final sidebarContent = switch (_section) {
+              _WideShellSection.chats => _buildSidebar(
+                colors,
+                collapsed: contentCollapsed,
+              ),
+              _WideShellSection.activity => _buildActivitySidebar(
+                colors,
+                collapsed: contentCollapsed,
+              ),
+              _WideShellSection.apps => _buildAppsSidebar(
+                colors,
+                collapsed: contentCollapsed,
+              ),
+            };
+            return Stack(
+              children: [
+                Row(
+                  children: [
+                    SizedBox(
+                      key: const ValueKey('desktopSidebarContainer'),
+                      width: sidebarWidth,
+                      child: _desktopPanelFrame(
+                        key: const ValueKey('glassSidebarPanel'),
+                        padding: const EdgeInsets.fromLTRB(8, 8, 0, 8),
+                        borderRadius: const BorderRadius.horizontal(
+                          left: Radius.circular(18),
+                        ),
+                        tokens: tokens,
+                        glass: true,
+                        child: ClipRect(
+                          child: OverflowBox(
+                            alignment: Alignment.topLeft,
+                            minWidth: contentWidth,
+                            maxWidth: contentWidth,
+                            child: SizedBox(
+                              width: contentWidth,
+                              child: IgnorePointer(
+                                ignoring: contentInTransition,
+                                child: ExcludeFocus(
+                                  excluding: contentInTransition,
+                                  child: Opacity(
+                                    opacity: contentOpacity,
+                                    child: sidebarContent,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                    Expanded(
+                      child: _desktopPanelFrame(
+                        key: const ValueKey('glassCenterPanel'),
+                        // Composer owns its floating margins; its separate
+                        // environmental fade reaches the actual window edge.
+                        padding: const EdgeInsets.only(top: 8),
+                        tokens: tokens,
+                        borderRadius: const BorderRadius.horizontal(
+                          right: Radius.circular(18),
+                        ),
+                        // The collapsed toggle is floating chrome, never a
+                        // participant in the transcript/header layout.
+                        child: _buildCenterSurface(colors),
+                      ),
+                    ),
+                    if (presentation != null && !full && !floatingPanel)
+                      SizedBox(
+                        width: 340,
+                        child: _buildPresentedApp(presentation),
+                      ),
+                  ],
+                ),
+                // One action follows the animated boundary; the header trees
+                // only crossfade content and never duplicate the toggle.
+                Positioned(
+                  left: toggleLeft,
+                  top: _isMacOS ? 15 : 21,
+                  child: MessengerSidebarToggle(
+                    key: const ValueKey('wideShellSidebarToggle'),
+                    expanded: !_sidebarCollapsed,
+                    floating: progress > 0,
+                    tooltip: _sidebarCollapsed
+                        ? context.l10n.chatExpand
+                        : context.l10n.chatCollapse,
+                    onPressed: () =>
+                        setState(() => _sidebarCollapsed = !_sidebarCollapsed),
+                  ),
+                ),
+                if (!_sidebarCollapsed && progress == 0)
+                  Positioned(
+                    left: sidebarWidth,
+                    top: 0,
+                    bottom: 0,
+                    child: _PaneDragHandle(
+                      key: kSidebarDragHandleKey,
+                      onDrag: (dx) => setState(() {
+                        _sidebarWidth = (_sidebarWidth + dx).clamp(
+                          SessionUiPrefsStore.minSidebarWidth,
+                          SessionUiPrefsStore.maxSidebarWidth,
+                        );
+                      }),
+                      onDragEnd: (_) => _onSidebarDragEnd(),
+                    ),
+                  ),
+                if (floatingPanel)
+                  Positioned(
+                    top: 0,
+                    right: 0,
+                    bottom: 0,
+                    width: 340,
+                    child: _buildPresentedApp(presentation),
+                  ),
+                if (presentation != null && full)
+                  Positioned.fill(child: _buildPresentedApp(presentation)),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  /// Only navigation chrome refracts. The transcript stays on an opaque,
+  /// inexpensive center surface; the sidebar/center join has no rail.
+  Widget _desktopPanelFrame({
+    required Key key,
+    required EdgeInsets padding,
+    required BorderRadius borderRadius,
+    required FaDesignTokens tokens,
+    required Widget child,
+    bool glass = false,
+  }) {
+    return Padding(
+      padding: padding,
+      child: glass
+          ? FaSurface(
+              key: key,
+              glass: true,
+              useBackdropGroup: true,
+              color: tokens.surface1,
+              borderRadius: borderRadius,
+              child: child,
+            )
+          : Container(
+              key: key,
+              decoration: BoxDecoration(
+                color: tokens.background,
+                borderRadius: borderRadius,
+              ),
+              clipBehavior: Clip.antiAlias,
+              child: child,
+            ),
+    );
+  }
+
+  Widget _buildPresentedApp(MessengerAppPresentation presentation) {
+    return MessengerAppPanel(
+      presentation: presentation,
+      manager: widget.manager,
+      onFullScreen: () => setState(() {
+        presentation.fullScreen = !presentation.fullScreen;
+      }),
+      onPin: () => setState(() {
+        presentation.pinned = !presentation.pinned;
+      }),
+      onClose: () => setState(() => _appPresentation = null),
     );
   }
 
   Widget _buildCenterSurface(FahColors colors) {
-    if (_inNetworkMode) return _buildChatArea(colors);
     return switch (_section) {
       _WideShellSection.chats => _buildChatArea(colors),
-      _WideShellSection.activity => _WideActivitySurface(
-        manager: widget.manager,
-        namesStore: widget.sessionNamesStore ?? _namesStore,
+      _WideShellSection.activity => ActivityDetailPanel(
+        controller: _activityController,
         onOpenSession: _openActivitySession,
+        showFirstWhenUnselected: true,
       ),
       _WideShellSection.apps => _buildAppsArea(),
     };
   }
 
   void _selectSection(_WideShellSection section) {
-    setState(() => _section = section);
-    if (section != _WideShellSection.chats && _inNetworkMode) {
-      unawaited(widget.networkMode!.exitToLocal());
-    }
+    setState(() {
+      final presentation = _appPresentation;
+      if (presentation != null) {
+        presentation.fullScreen = false;
+        if (section != _section && !presentation.pinned) {
+          _appPresentation = null;
+        }
+      }
+      _section = section;
+      if (section == _WideShellSection.activity) {
+        _narrowActivityDetailVisible = false;
+      }
+    });
   }
 
   void _openActivitySession(String sessionId) {
@@ -603,9 +1150,36 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
     );
   }
 
+  Future<bool> _presentJsApp({
+    required BuildContext context,
+    required JsAppInfo app,
+    required AgentService service,
+    required AgentService appService,
+    required AppPermissionsStore permissionsStore,
+  }) async {
+    if (!mounted) return false;
+    // A narrow chat/settings route covers the shell; retain the root-route
+    // fallback there. On the Apps list the shell itself owns the full surface.
+    if (_isNarrow && Navigator.of(context, rootNavigator: true).canPop()) {
+      return false;
+    }
+    setState(() {
+      final current = _appPresentation;
+      if (current?.app.id == app.id) {
+        current!.fullScreen = false;
+      } else {
+        _appPresentation = MessengerAppPresentation(
+          app: app,
+          service: service,
+          appService: appService,
+          permissionsStore: permissionsStore,
+        );
+      }
+    });
+    return true;
+  }
+
   Future<void> _revealApps() async {
-    if (!mounted) return;
-    if (_inNetworkMode) await widget.networkMode!.exitToLocal();
     if (!mounted) return;
     if (_section != _WideShellSection.apps ||
         _appsNavigatorKey.currentState == null) {
@@ -614,10 +1188,28 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
     }
   }
 
+  Future<void> _revealActiveChat() async {
+    if (!mounted || widget.manager.active == null) return;
+    final narrow = _isNarrow;
+    if (_section != _WideShellSection.chats || _appPresentation != null) {
+      setState(() {
+        _section = _WideShellSection.chats;
+        if (narrow) {
+          _appPresentation = null;
+        } else {
+          _appPresentation?.fullScreen = false;
+        }
+      });
+      await WidgetsBinding.instance.endOfFrame;
+    }
+    if (mounted && narrow && !_narrowChatRouteVisible) {
+      await _pushNarrowChat();
+    }
+  }
+
   /// Persists the settled sidebar width (drag end — one write per gesture,
   /// not per pixel).
   void _onSidebarDragEnd() {
-    _sidebarDragging = false;
     final store = widget.sessionPrefsStore ?? _uiPrefs;
     if (store != null) {
       unawaited(store.setSidebarWidth(_sidebarWidth));
@@ -629,43 +1221,98 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
   // Sidebar
   // ---------------------------------------------------------------------------
 
-  Widget _buildSidebar(FahColors colors) {
+  Widget _buildAppsSidebar(FahColors colors, {required bool collapsed}) {
+    return ColoredBox(
+      color: colors.panel,
+      child: Column(
+        children: [
+          MessengerSectionHeader(
+            title: context.l10n.appsGridTitle,
+            searchController: _appLauncherController.searchController,
+            searchFocusNode: _appLauncherController.searchFocusNode,
+            searchHint: context.l10n.launcherSearchHint,
+            onProfile: _openNarrowProfile,
+            onNew: _newSession,
+            collapsed: collapsed,
+            onExpand: () => setState(() => _sidebarCollapsed = false),
+            onCollapse: () => setState(() => _sidebarCollapsed = true),
+          ),
+          _buildPrimaryNavItems(collapsed: collapsed),
+          if (!collapsed)
+            Expanded(
+              child: ListenableBuilder(
+                listenable: _appLauncherController,
+                builder: (context, _) => AppsDirectoryPanel(
+                  controller: _appLauncherController,
+                  appsStore: _appsStore,
+                  runningAppName: _appPresentation?.app.name,
+                  showSearch: false,
+                  onOpenRunning: () => setState(() {
+                    _appPresentation?.fullScreen = false;
+                  }),
+                ),
+              ),
+            )
+          else
+            const Spacer(),
+        ],
+      ),
+    );
+  }
+
+  Color _sidebarSurfaceColor(FahColors colors) =>
+      FaDesignTokens.of(context).direction == FaVisualDirection.glass
+      ? Colors.transparent
+      : colors.panel;
+
+  Widget _buildActivitySidebar(FahColors colors, {required bool collapsed}) {
+    return ColoredBox(
+      color: _sidebarSurfaceColor(colors),
+      child: Column(
+        children: [
+          MessengerSectionHeader(
+            title: context.l10n.wideNavActivity,
+            searchController: _activitySearchController,
+            searchHint: context.l10n.activitySearchHint,
+            onSearch: _activityController.setSearch,
+            onProfile: _openNarrowProfile,
+            onNew: _newSession,
+            collapsed: collapsed,
+            onExpand: () => setState(() => _sidebarCollapsed = false),
+            onCollapse: () => setState(() => _sidebarCollapsed = true),
+          ),
+          _buildPrimaryNavItems(collapsed: collapsed),
+          if (!collapsed)
+            Expanded(child: ActivityListPanel(controller: _activityController))
+          else
+            const Spacer(),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSidebar(FahColors colors, {required bool collapsed}) {
     // SelectionContainer.disabled prevents macOS spell-check squiggly
     // underlines from appearing on sidebar text widgets.
     return SelectionContainer.disabled(
-      child: Container(
-        // Light theme: sidebar uses bg (#F8F9FC) for the subtle gray look
-        // matching the prototype; dark theme: uses panel for the dark look.
-        color: Theme.of(context).brightness == Brightness.light
-            ? colors.bg
-            : colors.panel,
+      child: ColoredBox(
+        color: _sidebarSurfaceColor(colors),
         child: Column(
           children: [
-            _buildBrandHeader(colors),
-            _buildPrimaryNavItems(),
+            if (collapsed) ...[
+              _buildCollapsedChatHeader(),
+              _buildPrimaryNavItems(collapsed: collapsed),
+            ],
             Expanded(
-              child: _inNetworkMode
-                  // Network mode swaps the SIDEBAR CONTENT, not the
-                  // screen (owner feedback on #955): the memberships list
-                  // takes the sessions list's place; the brand row (with
-                  // the mode chip) and the Files/Settings nav stay.
-                  ? _sidebarCollapsed
-                        ? const SizedBox.shrink()
-                        : NetworksSidebar(
-                            controller: widget.networkMode!,
-                            manager: widget.networkSessions!,
-                          )
-                  : ListenableBuilder(
-                      // The DAP inbound binding badge re-renders the list
-                      // when the binding loads/changes (settings page,
-                      // first load).
+              child: collapsed
+                  ? ListenableBuilder(
                       listenable: DapBindingStore.instance,
                       builder: (context, _) => SidebarSessionsList(
                         manager: widget.manager,
                         sessionNamesStore:
                             widget.sessionNamesStore ?? _namesStore,
                         prefsStore: widget.sessionPrefsStore ?? _uiPrefs,
-                        collapsed: _sidebarCollapsed,
+                        collapsed: true,
                         onNewSession: _newSession,
                         onSessionTap: () => setState(() {}),
                         persistedSessions: _persistedSessions,
@@ -680,211 +1327,92 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
                         searchHint: context.l10n.wideChatsSearchHint,
                         unnamedTitle: context.l10n.wideChatFallbackTitle,
                       ),
-                    ),
+                    )
+                  : _buildChatPanel(collapsed: collapsed),
             ),
-            Divider(height: 1, thickness: 1, color: colors.border),
-            _buildNavItems(colors),
           ],
         ),
       ),
     );
   }
 
-  Widget _buildBrandHeader(FahColors colors) {
-    // The Fa brand mark: sparkle SVG without any background (matching the
-    // prototype's clean icon style). The entry gesture contract (#864):
-    // long-press mints a fresh session (haptic, no dialog); a tap needs
-    // no action here — the wide layout always shows the active chat.
-    final brandIcon = Tooltip(
-      // Hover-only hint: triggerMode manual — the touch long-press is
-      // deliberately yielded to the InkWell below so it ALWAYS mints
-      // (#864); the hint still reaches screen readers via semantics.
-      message: context.l10n.faEntryHintTooltip,
-      triggerMode: TooltipTriggerMode.manual,
-      child: InkWell(
-        key: const ValueKey('wideShellFaBrand'),
-        borderRadius: BorderRadius.circular(8),
-        onLongPress: () => unawaited(_mintSessionFromBrand()),
-        child: const SizedBox(
-          width: 28,
-          height: 28,
-          child: Center(
-            child: SizedBox(
-              width: 24,
-              height: 24,
-              child: FaBrandTile(size: 24),
-            ),
-          ),
-        ),
-      ),
+  Widget _buildCollapsedChatHeader() {
+    return MessengerSectionHeader(
+      title: context.l10n.wideNavChats,
+      searchController: null,
+      searchHint: context.l10n.wideChatsSearchHint,
+      onProfile: _openNarrowProfile,
+      onNew: _newSession,
+      onBrandLongPress: () => unawaited(_mintSessionFromBrand()),
+      collapsed: true,
+      onExpand: () => setState(() => _sidebarCollapsed = false),
     );
+  }
 
-    if (_sidebarCollapsed) {
-      return Padding(
-        padding: EdgeInsets.symmetric(vertical: _isMacOS ? 28 : 16),
-        child: Column(
-          children: [
-            brandIcon,
-            const SizedBox(height: 8),
-            IconButton(
-              icon: const Icon(Icons.chevron_right),
-              onPressed: () => setState(() => _sidebarCollapsed = false),
-              iconSize: 20,
-              color: colors.dim,
-              padding: EdgeInsets.zero,
-              constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-              tooltip: 'Expand', // l10n:ignore
-            ),
-          ],
+  List<Widget> _buildChatFilterActions() {
+    return [
+      for (final section in const [
+        _WideShellSection.activity,
+        _WideShellSection.apps,
+      ])
+        MessengerCategoryChip(
+          chipKey: ValueKey('messengerPrimaryNav-${section.name}'),
+          icon: section == _WideShellSection.activity
+              ? Icons.notifications_none_rounded
+              : Icons.grid_view_rounded,
+          label: section == _WideShellSection.activity
+              ? context.l10n.wideNavActivity
+              : context.l10n.appsGridTitle,
+          selected: false,
+          compact: true,
+          iconOnly: true,
+          selectionBackground: false,
+          onTap: () => _selectSection(section),
         ),
+    ];
+  }
+
+  Widget _buildPrimaryNavItems({required bool collapsed}) {
+    Widget item(_WideShellSection section) {
+      final (icon, label) = switch (section) {
+        _WideShellSection.chats => (
+          Icons.chat_bubble_outline_rounded,
+          context.l10n.wideNavChats,
+        ),
+        _WideShellSection.activity => (
+          Icons.notifications_none_rounded,
+          context.l10n.wideNavActivity,
+        ),
+        _WideShellSection.apps => (
+          Icons.grid_view_rounded,
+          context.l10n.appsGridTitle,
+        ),
+      };
+      return SidebarNavItem(
+        key: ValueKey('messengerPrimaryNav-${section.name}'),
+        icon: icon,
+        label: label,
+        selected: _section == section,
+        collapsed: collapsed,
+        compact: true,
+        desktopTab: true,
+        onTap: () => _selectSection(section),
       );
     }
 
-    final mode = widget.networkMode;
-    final sessions = widget.networkSessions;
-    // With the network wiring present the brand row also carries the mode
-    // chip — it gets its own row (the chip does not fit beside the brand
-    // mark at the default sidebar width).
-    if (mode != null && sessions != null) {
-      return Padding(
-        // macOS: extra top padding to clear the floating traffic lights
-        // (the content now extends to the window top — no global strip).
-        padding: EdgeInsets.fromLTRB(16, _isMacOS ? 32 : 16, 8, 12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                brandIcon,
-                const SizedBox(width: 10),
-                Text(
-                  'Fa', // l10n:ignore
-                  style: TextStyle(
-                    color: colors.text,
-                    fontSize: 16,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-                const Spacer(),
-                IconButton(
-                  icon: const Icon(Icons.chevron_left),
-                  onPressed: () => setState(() => _sidebarCollapsed = true),
-                  iconSize: 20,
-                  color: colors.dim,
-                  padding: EdgeInsets.zero,
-                  constraints: const BoxConstraints(
-                    minWidth: 32,
-                    minHeight: 32,
-                  ),
-                  tooltip: 'Collapse', // l10n:ignore
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            NetworkModeChip(controller: mode, manager: sessions),
-          ],
-        ),
+    final items = [
+      for (final section in _WideShellSection.values) item(section),
+    ];
+    if (collapsed) {
+      return Column(
+        key: const ValueKey('collapsedPrimaryNavigation'),
+        children: items,
       );
     }
-
-    return Padding(
-      // macOS: extra top padding to clear the floating traffic lights
-      // (the content now extends to the window top — no global strip).
-      padding: EdgeInsets.fromLTRB(16, _isMacOS ? 32 : 16, 8, 12),
-      child: Row(
-        children: [
-          brandIcon,
-          const SizedBox(width: 10),
-          Text(
-            'Fa', // l10n:ignore
-            style: TextStyle(
-              color: colors.text,
-              fontSize: 16,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          const Spacer(),
-          if (widget.networkMode != null && widget.networkSessions != null)
-            Padding(
-              padding: const EdgeInsets.only(right: 4),
-              child: NetworkModeChip(
-                controller: widget.networkMode!,
-                manager: widget.networkSessions!,
-              ),
-            ),
-          IconButton(
-            icon: const Icon(Icons.chevron_left),
-            onPressed: () => setState(() => _sidebarCollapsed = true),
-            iconSize: 20,
-            color: colors.dim,
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-            tooltip: 'Collapse', // l10n:ignore
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildPrimaryNavItems() {
-    return Row(
-      children: [
-        Expanded(
-          child: SidebarNavItem(
-            icon: Icons.chat_bubble_outline_rounded,
-            label: context.l10n.wideNavChats,
-            selected: _section == _WideShellSection.chats,
-            collapsed: _sidebarCollapsed,
-            compact: true,
-            onTap: () => _selectSection(_WideShellSection.chats),
-          ),
-        ),
-        Expanded(
-          child: SidebarNavItem(
-            icon: Icons.notifications_none_rounded,
-            label: context.l10n.wideNavActivity,
-            selected: _section == _WideShellSection.activity,
-            collapsed: _sidebarCollapsed,
-            compact: true,
-            onTap: () => _selectSection(_WideShellSection.activity),
-          ),
-        ),
-        Expanded(
-          child: SidebarNavItem(
-            icon: Icons.grid_view_rounded,
-            label: context.l10n.appsGridTitle,
-            selected: _section == _WideShellSection.apps,
-            collapsed: _sidebarCollapsed,
-            compact: true,
-            onTap: () => _selectSection(_WideShellSection.apps),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildNavItems(FahColors colors) {
-    return Padding(
-      padding: const EdgeInsets.only(top: 4, bottom: 4),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          SidebarNavItem(
-            icon: Icons.folder_outlined,
-            label: context.l10n.chatFilesTooltip,
-            selected: false,
-            collapsed: _sidebarCollapsed,
-            onTap: _openFiles,
-          ),
-          SidebarNavItem(
-            icon: Icons.settings_outlined,
-            label: context.l10n.settingsTitle,
-            selected: false,
-            collapsed: _sidebarCollapsed,
-            onTap: _openSettings,
-          ),
-        ],
-      ),
+    return MessengerTextTabGroup(
+      key: const ValueKey('wideShellPrimaryNavigation'),
+      selectedIndex: _section.index,
+      children: items,
     );
   }
 
@@ -893,24 +1421,9 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
   // ---------------------------------------------------------------------------
 
   Widget _buildChatArea(FahColors colors, {bool narrowRoute = false}) {
-    // Network mode (issue #955): the center shows the network surface —
-    // the welcome empty state (join/create) or the channel rail beside
-    // the channel chat — inside THIS shell, never a takeover. The top
-    // inset clears the macOS window-drag strip exactly like the chat
-    // header below.
-    final networkMode = widget.networkMode;
-    final networkSessions = widget.networkSessions;
-    if (_inNetworkMode && networkMode != null && networkSessions != null) {
-      return Padding(
-        padding: EdgeInsets.only(top: _isMacOS ? 28 : 0),
-        child: NetworkCenterPane(
-          controller: networkMode,
-          manager: networkSessions,
-        ),
-      );
-    }
     final active = widget.manager.active;
-    if (active == null) {
+    final networkEntry = _activeNetworkEntry;
+    if (active == null && networkEntry == null) {
       return _buildPlaceholder(colors);
     }
     return MediaQuery(
@@ -923,34 +1436,50 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
       data: MediaQuery.of(context).copyWith(
         padding:
             MediaQuery.paddingOf(context) +
-            EdgeInsets.only(top: _isMacOS ? 28 : 0),
+            EdgeInsets.only(top: _isMacOS && narrowRoute ? 28 : 0),
       ),
-      child: ChatScreen(
-        manager: widget.manager,
-        registry: widget.registry,
-        lastConnectionStore: widget.lastConnectionStore,
-        uploadPicker: widget.uploadPicker,
-        asr: widget.asr,
-        asrTranscriber: widget.asrTranscriber,
-        audioControllerFactory: widget.audioControllerFactory,
-        videoControllerFactory: widget.videoControllerFactory,
-        projectIcon: Icons.folder_outlined,
-        projectIconColor: _sessionHasFolder ? colors.indigo : colors.dim,
-        projectLabel: _sessionFolderLabel(),
-        onProjectTap: _openSessionInfoDialog,
-        modelChip: QuickModelChip(
-          key: const ValueKey('wideModelChip'),
-          modelId: active.service.modelId,
-          tooltip: context.l10n.chatModelSwitchTooltip,
-          maxWidth: 132,
-          onTap: () => _openModelPicker(active),
-        ),
-        onModelChipTap: () => _openModelPicker(active),
-        chipMenuLabel: active.service.modelId,
-        onAppsToggle: narrowRoute
-            ? () => _selectSection(_WideShellSection.apps)
-            : null,
-      ),
+      child: networkEntry != null
+          ? _buildNetworkChatArea(networkEntry)
+          : ChatScreen(
+              manager: widget.manager,
+              sessionTitle: _sessionDisplayTitle(),
+              registry: widget.registry,
+              lastConnectionStore: widget.lastConnectionStore,
+              uploadPicker: widget.uploadPicker,
+              asr: widget.asr,
+              asrTranscriber: widget.asrTranscriber,
+              audioControllerFactory: widget.audioControllerFactory,
+              videoControllerFactory: widget.videoControllerFactory,
+              projectIcon: Icons.folder_outlined,
+              projectIconColor: _sessionHasFolder ? colors.indigo : colors.dim,
+              projectLabel: _sessionFolderLabel(),
+              onProjectTap: _openSessionInfoDialog,
+              modelChip: QuickModelChip(
+                key: const ValueKey('wideModelChip'),
+                modelId: active!.service.modelId,
+                tooltip: context.l10n.chatModelSwitchTooltip,
+                maxWidth: 132,
+                onTap: () => _openModelPicker(active),
+                onLongPress: () =>
+                    unawaited(_openModelSettings(active.service)),
+              ),
+              onModelChipTap: () => _openModelPicker(active),
+              chipMenuLabel: active.service.modelId,
+              onAppsToggle: narrowRoute
+                  ? () => _selectSection(_WideShellSection.apps)
+                  : null,
+            ),
+    );
+  }
+
+  Widget _buildNetworkChatArea(ChatListEntry entry) {
+    final manager = widget.networkSessions!;
+    return NetworkChatPage(
+      controller: widget.networkMode!,
+      manager: manager,
+      showAppBar: true,
+      showChannelHeader: false,
+      projectLabel: entry.networkName ?? entry.networkId,
     );
   }
 
@@ -980,13 +1509,25 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
       onGenerateRoute: (settings) => MaterialPageRoute(
         builder: (context) => AppLauncherScreen(
           manager: widget.manager,
+          controller: _appLauncherController,
+          fullScreen: !_isNarrow,
+          onProfile: _openNarrowProfile,
           registry: widget.registry,
           lastConnectionStore: widget.lastConnectionStore,
           layoutStore: widget.layoutStore,
-          appsStore: widget.appsStore,
+          appsStore: _appsStore,
           tileEngineFactory: widget.tileEngineFactory,
           networkMode: _isNarrow ? widget.networkMode : null,
           networkSessions: _isNarrow ? widget.networkSessions : null,
+          onOpenNetworks: widget.networkSessions == null
+              ? null
+              : () => unawaited(
+                  showChatNetworksDialog(
+                    context,
+                    manager: widget.networkSessions!,
+                    networkMode: widget.networkMode,
+                  ),
+                ),
         ),
       ),
     );
@@ -1009,6 +1550,9 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
     if (await _resetViaRelay(target.service)) return;
     final choice = await _pickNewSessionFolder(target.service);
     if (choice == null) return;
+    if (_activeNetworkEntry != null) {
+      setState(() => _activeNetworkEntry = null);
+    }
     // Fire-and-forget: the dialog flow controls nothing downstream.
     unawaited(_createSessionInChosenFolder(target.service, target.config));
   }
@@ -1177,16 +1721,27 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
 
   Future<void> _pushNarrowChat() async {
     final service = widget.manager.active?.service;
-    if (service == null) return;
-    await Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => ListenableBuilder(
-          listenable: service,
-          builder: (routeContext, _) =>
-              _buildChatArea(FahColors.of(routeContext), narrowRoute: true),
-        ),
-      ),
+    if ((service == null && _activeNetworkEntry == null) ||
+        _narrowChatRouteVisible) {
+      return;
+    }
+    _narrowChatRouteVisible = true;
+    final route = MaterialPageRoute<void>(
+      builder: (routeContext) => service == null
+          ? _buildChatArea(FahColors.of(routeContext), narrowRoute: true)
+          : ListenableBuilder(
+              listenable: service,
+              builder: (routeContext, _) =>
+                  _buildChatArea(FahColors.of(routeContext), narrowRoute: true),
+            ),
     );
+    _narrowChatRoute = route;
+    try {
+      await Navigator.of(context).push(route);
+    } finally {
+      _narrowChatRouteVisible = false;
+      if (identical(_narrowChatRoute, route)) _narrowChatRoute = null;
+    }
   }
 
   /// A tap on an already-live sidebar row. Hosted surfaces re-dispatch
@@ -1195,6 +1750,12 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
   Future<void> _openLiveSession(String sessionId) async {
     final active = widget.manager.active;
     if (active == null) return;
+    if (_activeNetworkEntry != null) {
+      setState(() => _activeNetworkEntry = null);
+    }
+    if (_appPresentation?.pinned == false) {
+      setState(() => _appPresentation = null);
+    }
     final relayOpen = active.service.openSessionAction;
     if (relayOpen != null) {
       debugPrint('[fah][shell] open live session $sessionId via relay');
@@ -1213,6 +1774,12 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
   Future<void> _openPersistedSession(SessionMetadata metadata) async {
     final service = widget.manager.active?.service;
     if (service == null) return;
+    if (_activeNetworkEntry != null) {
+      setState(() => _activeNetworkEntry = null);
+    }
+    if (_appPresentation?.pinned == false) {
+      setState(() => _appPresentation = null);
+    }
     final relayOpen = service.openSessionAction;
     if (relayOpen != null) {
       debugPrint(
@@ -1547,6 +2114,17 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
     if (mounted) setState(() {});
   }
 
+  Future<void> _openModelSettings(AgentService service) async {
+    await pushFaPage<void>(
+      context,
+      ModelsSettingsPage(
+        service: service,
+        registry: widget.registry,
+        lastConnectionStore: widget.lastConnectionStore,
+      ),
+    );
+  }
+
   Future<void> _openSettings() async {
     AppAnalytics.instance.settingsOpened();
     if (!mounted) return;
@@ -1604,201 +2182,8 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
   }
 }
 
-class _WideActivitySurface extends StatefulWidget {
-  const _WideActivitySurface({
-    required this.manager,
-    required this.namesStore,
-    required this.onOpenSession,
-  });
-
-  final FlutterSessionManager manager;
-  final SessionNamesStore? namesStore;
-  final ValueChanged<String> onOpenSession;
-
-  @override
-  State<_WideActivitySurface> createState() => _WideActivitySurfaceState();
-}
-
-class _WideActivitySurfaceState extends State<_WideActivitySurface> {
-  final Set<AgentService> _listenedServices = <AgentService>{};
-
-  @override
-  void initState() {
-    super.initState();
-    widget.manager.addListener(_onManagerChanged);
-    widget.namesStore?.addListener(_onActivityChanged);
-    _syncServiceListeners();
-  }
-
-  @override
-  void didUpdateWidget(covariant _WideActivitySurface oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.manager != widget.manager) {
-      oldWidget.manager.removeListener(_onManagerChanged);
-      widget.manager.addListener(_onManagerChanged);
-    }
-    if (oldWidget.namesStore != widget.namesStore) {
-      oldWidget.namesStore?.removeListener(_onActivityChanged);
-      widget.namesStore?.addListener(_onActivityChanged);
-    }
-    _syncServiceListeners();
-  }
-
-  @override
-  void dispose() {
-    widget.manager.removeListener(_onManagerChanged);
-    widget.namesStore?.removeListener(_onActivityChanged);
-    for (final service in _listenedServices) {
-      service.removeListener(_onActivityChanged);
-    }
-    super.dispose();
-  }
-
-  void _onManagerChanged() {
-    _syncServiceListeners();
-    _onActivityChanged();
-  }
-
-  void _onActivityChanged() {
-    if (mounted) setState(() {});
-  }
-
-  void _syncServiceListeners() {
-    final current = widget.manager.sessions
-        .map((session) => session.service)
-        .toSet();
-    for (final service in _listenedServices.difference(current)) {
-      service.removeListener(_onActivityChanged);
-    }
-    for (final service in current.difference(_listenedServices)) {
-      service.addListener(_onActivityChanged);
-    }
-    _listenedServices
-      ..removeWhere((service) => !current.contains(service))
-      ..addAll(current);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final tokens = FaDesignTokens.of(context);
-    final typography = FaTypography.of(context);
-    final sessions = widget.manager.sessions;
-    final running = sessions
-        .where((session) => session.service.isStreaming)
-        .toList();
-    final recent = sessions
-        .where((session) => !session.service.isStreaming)
-        .toList();
-    return ColoredBox(
-      color: tokens.background,
-      child: Padding(
-        padding: EdgeInsets.only(top: faIsMacOSDesktop ? 28 : 0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(28, 24, 28, 12),
-              child: Text(
-                context.l10n.wideNavActivity,
-                style: typography.headline.copyWith(color: tokens.ink1),
-              ),
-            ),
-            Expanded(
-              child: sessions.isEmpty
-                  ? Center(
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(
-                            Icons.monitor_heart_outlined,
-                            size: 36,
-                            color: tokens.ink3,
-                          ),
-                          const SizedBox(height: 12),
-                          Text(
-                            context.l10n.activityEmpty,
-                            style: typography.body.copyWith(color: tokens.ink2),
-                          ),
-                        ],
-                      ),
-                    )
-                  : ListView(
-                      padding: const EdgeInsets.fromLTRB(24, 4, 24, 24),
-                      children: [
-                        ..._sessionGroup(
-                          context,
-                          label: context.l10n.activityRunning,
-                          sessions: running,
-                          running: true,
-                        ),
-                        ..._sessionGroup(
-                          context,
-                          label: context.l10n.activityRecent,
-                          sessions: recent,
-                          running: false,
-                        ),
-                      ],
-                    ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  List<Widget> _sessionGroup(
-    BuildContext context, {
-    required String label,
-    required List<FlutterManagedSession> sessions,
-    required bool running,
-  }) {
-    if (sessions.isEmpty) return const [];
-    final tokens = FaDesignTokens.of(context);
-    final typography = FaTypography.of(context);
-    return [
-      Padding(
-        padding: const EdgeInsets.fromLTRB(4, 16, 4, 8),
-        child: Text(
-          label,
-          style: typography.label.copyWith(color: tokens.ink2),
-        ),
-      ),
-      for (final session in sessions)
-        Padding(
-          padding: const EdgeInsets.only(bottom: 8),
-          child: Material(
-            color: tokens.surface1,
-            shape: RoundedSuperellipseBorder(
-              borderRadius: BorderRadius.circular(tokens.radiusMd),
-              side: BorderSide(color: tokens.hairline),
-            ),
-            clipBehavior: Clip.antiAlias,
-            child: FaSettingsTile(
-              key: ValueKey('wideActivitySession-${session.id}'),
-              onTap: () => widget.onOpenSession(session.id),
-              leading: Icon(
-                running
-                    ? Icons.play_circle_outline_rounded
-                    : Icons.chat_bubble_outline_rounded,
-                color: running ? tokens.accent : tokens.ink2,
-              ),
-              title: Text(
-                widget.namesStore?.titleFor(session.id) ??
-                    context.l10n.wideChatFallbackTitle,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: typography.body.copyWith(color: tokens.ink1),
-              ),
-              trailing: Icon(Icons.chevron_right_rounded, color: tokens.ink3),
-            ),
-          ),
-        ),
-    ];
-  }
-}
-
-/// A draggable vertical divider between the sidebar and center surface.
-/// Renders a 1px line that thickens on hover with a subtle color change.
+/// Invisible resize target layered over the sidebar/center join. A short
+/// hover-only grip communicates resizing without painting a full-height rail.
 class _PaneDragHandle extends StatefulWidget {
   const _PaneDragHandle({super.key, required this.onDrag, this.onDragEnd});
 
@@ -1832,17 +2217,19 @@ class _PaneDragHandleState extends State<_PaneDragHandle> {
             ? null
             : () => widget.onDragEnd!(DragEndDetails()),
         child: AnimatedContainer(
+          key: const ValueKey('sidebar-drag-hit-surface'),
           duration: const Duration(milliseconds: 150),
-          width: 6,
-          color: _hovering
-              ? colors.indigo.withValues(alpha: 0.3)
-              : colors.border,
+          width: 8,
+          color: Colors.transparent,
           child: Center(
-            child: Container(
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 150),
               width: 2,
-              height: 32,
+              height: 36,
               decoration: BoxDecoration(
-                color: _hovering ? colors.indigo : colors.dim,
+                color: _hovering
+                    ? colors.indigo.withValues(alpha: .8)
+                    : Colors.transparent,
                 borderRadius: BorderRadius.circular(1),
               ),
             ),

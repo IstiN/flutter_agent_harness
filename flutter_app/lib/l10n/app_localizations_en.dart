@@ -120,6 +120,53 @@ class AppLocalizationsEn extends AppLocalizations {
   String get appsGridTitle => 'Apps';
 
   @override
+  String get appsOverviewSubtitle => 'My Apps · Widgets Catalog';
+
+  @override
+  String get appsMyApps => 'My Apps';
+
+  @override
+  String get appsMyAppsSubtitle => 'Installed apps and running widgets.';
+
+  @override
+  String get appsWidgetStore => 'Widgets Catalog';
+
+  @override
+  String get appsWidgetStoreSubtitle =>
+      'Browse and install widgets into My Apps.';
+
+  @override
+  String get appsWidgetCatalog => 'Widget catalog';
+
+  @override
+  String appsInstalledCount(Object count) {
+    return '$count installed';
+  }
+
+  @override
+  String appsActiveCount(Object count) {
+    return '$count active apps';
+  }
+
+  @override
+  String get appsRunning => 'Running';
+
+  @override
+  String get appsQuickOpen => 'Quick open';
+
+  @override
+  String get appsFullTooltip => 'Full';
+
+  @override
+  String get appsExitFullTooltip => 'Exit full';
+
+  @override
+  String get appsPinTooltip => 'Pin';
+
+  @override
+  String get appsUnpinTooltip => 'Unpin';
+
+  @override
   String get wideNavChats => 'Chats';
 
   @override
@@ -129,6 +176,128 @@ class AppLocalizationsEn extends AppLocalizations {
   String get wideChatFallbackTitle => 'New chat';
 
   @override
+  String get chatFilterAll => 'All';
+
+  @override
+  String get chatFilterUnread => 'Unread';
+
+  @override
+  String get chatFilterAgents => 'Agents';
+
+  @override
+  String get chatFilterChannels => 'Channels';
+
+  @override
+  String get chatAllNetworks => 'All networks';
+
+  @override
+  String get chatMyNetwork => 'My network';
+
+  @override
+  String get chatManageNetworks => 'Manage networks';
+
+  @override
+  String get chatSignInNetwork => 'Sign in to Fa Network';
+
+  @override
+  String get chatProfileSettings => 'Profile & settings';
+
+  @override
+  String get chatNew => 'New';
+
+  @override
+  String get chatPinned => 'Pinned';
+
+  @override
+  String get chatRecent => 'Recent';
+
+  @override
+  String get chatNoConversationsTitle => 'No chats yet';
+
+  @override
+  String get chatNoConversationsBody =>
+      'Start a local chat. Network sign-in is optional.';
+
+  @override
+  String get chatStartChat => 'Start a chat';
+
+  @override
+  String get chatNoUnread => 'No unread conversations.';
+
+  @override
+  String get chatNoAgents => 'No agents match this filter.';
+
+  @override
+  String get chatNoChannels => 'No channels match this filter.';
+
+  @override
+  String get chatNoNetworkResults => 'No conversations in this network.';
+
+  @override
+  String get chatNoSearchResults => 'No chats match your search.';
+
+  @override
+  String get chatClearSearch => 'Clear search';
+
+  @override
+  String get chatNoPreview => 'No messages yet';
+
+  @override
+  String get chatNetworkUnavailable =>
+      'Network chats are unavailable. Local chats still work.';
+
+  @override
+  String get chatLoadError => 'Chats could not be loaded.';
+
+  @override
+  String get chatRetry => 'Retry';
+
+  @override
+  String get chatCreateJoinNetwork => 'Create or join a network';
+
+  @override
+  String get chatOpenNetwork => 'Open network';
+
+  @override
+  String get chatNetworksEmpty => 'No network memberships yet.';
+
+  @override
+  String get chatPin => 'Pin chat';
+
+  @override
+  String get chatUnpin => 'Unpin chat';
+
+  @override
+  String get chatWorking => 'Working…';
+
+  @override
+  String get chatTimeNow => 'now';
+
+  @override
+  String get chatMinuteSuffix => 'm';
+
+  @override
+  String get chatHourSuffix => 'h';
+
+  @override
+  String get chatDaySuffix => 'd';
+
+  @override
+  String get chatLocal => 'Local';
+
+  @override
+  String get chatSearchShortcut => '⌘F';
+
+  @override
+  String get chatMoreActions => 'Chat actions';
+
+  @override
+  String get chatExpand => 'Expand subagents';
+
+  @override
+  String get chatCollapse => 'Collapse';
+
+  @override
   String get wideNavActivity => 'Activity';
 
   @override
@@ -136,6 +305,21 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get activityRecent => 'Recent';
+
+  @override
+  String get activityAll => 'All activity';
+
+  @override
+  String get activitySearchHint => 'Search activity';
+
+  @override
+  String get activityChoose => 'Choose an activity item';
+
+  @override
+  String get activityStatus => 'Status';
+
+  @override
+  String get activityLastActivity => 'Last activity';
 
   @override
   String get activityEmpty => 'No session activity yet.';
@@ -386,9 +570,6 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get chatCamera => 'Camera';
-
-  @override
-  String get chatCollapse => 'Collapse';
 
   @override
   String get chatCopiedToClipboard => 'Session copied to clipboard';
@@ -697,7 +878,7 @@ class AppLocalizationsEn extends AppLocalizations {
       'The widget files are deleted; its saved data (storage.json) is kept, so reinstalling restores its state.';
 
   @override
-  String get launcherSearchHint => 'Search widgets…';
+  String get launcherSearchHint => 'Search apps and widgets…';
 
   @override
   String get launcherTabWidgets => 'Widgets';
@@ -2532,6 +2713,16 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get networkChannelDeleted => 'Channel deleted';
+
+  @override
+  String get networkInvitePerson => 'Invite person…';
+
+  @override
+  String get networkInvitePersonTitle => 'Invite a person';
+
+  @override
+  String get networkInvitePersonBody =>
+      'This link joins the whole network. Anyone who receives it can use it.';
 
   @override
   String get networkAddAgent => 'Add agent…';

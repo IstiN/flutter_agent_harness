@@ -71,6 +71,18 @@ const _coverage = <String, String>{
       'test/golden/sessions_glyph_golden_test.dart',
   'lib/ui/widgets/wide_layout_shell.dart':
       'test/golden/wide_layout_shell_golden_test.dart',
+  'lib/ui/activity/activity_surface.dart':
+      'test/golden/wide_layout_shell_golden_test.dart',
+  'lib/ui/chats/chat_list_panel.dart':
+      'test/golden/wide_layout_shell_golden_test.dart',
+  'lib/ui/apps/apps_directory_panel.dart':
+      'test/golden/wide_layout_shell_golden_test.dart',
+  'lib/ui/apps/messenger_app_panel.dart':
+      'test/golden/wide_layout_shell_golden_test.dart',
+  'lib/ui/widgets/messenger_navigation_controls.dart':
+      'test/golden/wide_layout_shell_golden_test.dart',
+  'lib/ui/widgets/messenger_section_header.dart':
+      'test/golden/wide_layout_shell_golden_test.dart',
   'lib/ui/widgets/rename_session_dialog.dart':
       'test/golden/dialogs_golden_test.dart',
   'lib/ui/widgets/file_browser.dart': 'test/golden/files_golden_test.dart',
@@ -129,9 +141,6 @@ const _exempt = <String, String>{
   // coverage (main's own guard is red for these); goldens belong to the
   // network feature work — waived here so the guard reflects #947 only.
   'lib/ui/network/channel_rail.dart': 'fa_network #955: no goldens yet',
-  'lib/ui/network/channel_composer.dart':
-      'fa_network #955: no goldens yet (#1888 added the composer; goldens '
-      'belong to the network feature work like its rail/dialog siblings)',
   'lib/ui/network/create_network_dialog.dart':
       'fa_network #955: no goldens yet',
   'lib/ui/network/join_sheet.dart': 'fa_network #955: no goldens yet',

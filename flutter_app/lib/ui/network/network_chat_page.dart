@@ -6,17 +6,19 @@ import 'dart:async';
 
 import 'package:fa_ui/fa_ui.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 
 import 'package:fa/l10n/l10n_ext.dart';
 import 'package:fa/network/channel_chat_service.dart';
+import 'package:fa/network/invite_codec.dart';
 import 'package:fa/network/models.dart';
 import 'package:fa/network/network_mode.dart';
 import 'package:fa/network/network_session.dart';
 import 'package:fa/network/network_session_manager.dart';
 
 import 'add_agent_dialog.dart';
-import 'channel_composer.dart';
 import 'channel_key_import_dialog.dart';
+import 'channel_rail.dart';
 
 /// The channel chat surface (issue #955): the shared [FaChatScreen] over a
 /// [ChannelChatService] with `FaChatFeatures.minimal()` — plain text
@@ -29,6 +31,10 @@ class NetworkChatPage extends StatefulWidget {
     super.key,
     required this.controller,
     required this.manager,
+    this.showAppBar = false,
+    this.showChannelHeader = true,
+    this.projectLabel,
+    this.onProjectTap,
   });
 
   /// The mode controller — the selected channel id comes from here.
@@ -36,6 +42,18 @@ class NetworkChatPage extends StatefulWidget {
 
   /// The session manager owning the live [NetworkSession].
   final NetworkSessionManager manager;
+
+  /// Uses the shared adaptive chat header instead of an embedded bare body.
+  final bool showAppBar;
+
+  /// The legacy network-home channel strip; disabled in the messenger shell.
+  final bool showChannelHeader;
+
+  /// Network identity in the shared adaptive header's project slot.
+  final String? projectLabel;
+
+  /// Opens network details from the shared header's project slot.
+  final VoidCallback? onProjectTap;
 
   @override
   State<NetworkChatPage> createState() => _NetworkChatPageState();
@@ -143,6 +161,107 @@ class _NetworkChatPageState extends State<NetworkChatPage> {
     return memberClass != 'owner' && memberClass != 'admin';
   }
 
+  Future<void> _showChannelDetails(NetworkSession session) {
+    final networkId = widget.controller.networkId;
+    final channelId = widget.controller.channelId;
+    final channel = channelId == null ? null : _channel(session, channelId);
+    if (networkId == null || channelId == null) return Future<void>.value();
+    return showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (sheetContext) => ListenableBuilder(
+        listenable: session,
+        builder: (context, _) => NetworkRosterSheet(
+          key: const ValueKey('channelDetailsSheet'),
+          session: session,
+          channelId: channelId,
+          title: _channelLabel(session, channelId),
+          titleIcon: channel?.isPublic == true ? Icons.public : Icons.tag,
+          actions: [
+            IconButton(
+              key: const ValueKey('channelDetailsAddAgent'),
+              tooltip: context.l10n.networkAddAgent,
+              icon: const Icon(Icons.smart_toy_outlined),
+              onPressed: () {
+                Navigator.of(sheetContext).pop();
+                unawaited(
+                  showDialog<void>(
+                    context: this.context,
+                    builder: (_) => AddAgentDialog(
+                      wallet: widget.manager.wallet,
+                      manager: widget.manager,
+                      networkId: networkId,
+                      channel: channel,
+                      initialScope: AgentInviteScope.channel,
+                    ),
+                  ),
+                );
+              },
+            ),
+            IconButton(
+              key: const ValueKey('channelDetailsInvitePerson'),
+              tooltip: context.l10n.networkInvitePerson,
+              icon: const Icon(Icons.person_add_alt),
+              onPressed: () {
+                Navigator.of(sheetContext).pop();
+                unawaited(
+                  showDialog<void>(
+                    context: this.context,
+                    builder: (_) => _InvitePersonDialog(
+                      manager: widget.manager,
+                      networkId: networkId,
+                    ),
+                  ),
+                );
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  List<FaChatMentionOption> _mentionOptions(
+    NetworkSession session,
+    String query,
+  ) {
+    final normalized = query.toLowerCase();
+    final matches = session.roster.values
+        .where(
+          (member) =>
+              member.displayName.isNotEmpty &&
+              member.displayName.toLowerCase().startsWith(normalized),
+        )
+        .toList();
+    matches.sort((a, b) {
+      final byPresence = _presenceRank(
+        a.presence,
+      ).compareTo(_presenceRank(b.presence));
+      if (byPresence != 0) return byPresence;
+      final byName = a.displayName.toLowerCase().compareTo(
+        b.displayName.toLowerCase(),
+      );
+      return byName != 0 ? byName : a.id.compareTo(b.id);
+    });
+    return [
+      for (final member in matches)
+        FaChatMentionOption(
+          id: member.id,
+          label: member.displayName,
+          icon: member.memberClass == MemberClass.agent
+              ? Icons.smart_toy_outlined
+              : Icons.person_outline,
+          online: member.presence == Presence.live,
+        ),
+    ];
+  }
+
+  static int _presenceRank(Presence presence) => switch (presence) {
+    Presence.live => 0,
+    Presence.busy => 1,
+    _ => 2,
+  };
+
   @override
   Widget build(BuildContext context) {
     final chat = _chat;
@@ -158,11 +277,12 @@ class _NetworkChatPageState extends State<NetworkChatPage> {
         final label = _channelLabel(session, chatFor.$2);
         return Column(
           children: [
-            _ChannelHeader(
-              channel: channel,
-              label: label,
-              manager: widget.manager,
-            ),
+            if (widget.showChannelHeader)
+              _ChannelHeader(
+                channel: channel,
+                label: label,
+                manager: widget.manager,
+              ),
             if (session.networkOffline) _OfflineBanner(session: session),
             Expanded(
               child: FaChatStringsScope(
@@ -172,13 +292,32 @@ class _NetworkChatPageState extends State<NetworkChatPage> {
                 child: FaChatScreen(
                   key: ValueKey('channelChat:${chatFor.$2}'),
                   service: chat,
-                  features: const FaChatFeatures.minimal(),
+                  features: const FaChatFeatures(
+                    attachments: false,
+                    voiceInput: false,
+                    approvals: false,
+                    askSheets: false,
+                    secretRequests: false,
+                    mediaPlayback: false,
+                    thinkingBlocks: false,
+                    fileBrowser: false,
+                    appLauncher: false,
+                    trajectory: false,
+                  ),
                   title: label,
-                  showAppBar: false,
-                  // Writable channels keep the shared composer chrome, with
-                  // roster-backed @-completion added for DAP agents. The
-                  // showcase read-only note replaces it only for members
-                  // browsing a public showcase channel.
+                  showAppBar: widget.showAppBar,
+                  mentionOptionsBuilder: (query) =>
+                      _mentionOptions(session, query),
+                  projectIcon: widget.showAppBar
+                      ? (channel?.isPublic == true ? Icons.public : Icons.tag)
+                      : null,
+                  projectLabel: widget.projectLabel,
+                  onProjectTap:
+                      widget.onProjectTap ??
+                      () => unawaited(_showChannelDetails(session)),
+                  // Writable channels use the SAME shared composer as local
+                  // sessions. Only a read-only showcase or a missing E2E key
+                  // replaces it with the corresponding explanation.
                   composerBuilder: _isReadOnlyShowcase(session, chatFor.$2)
                       ? (context, service, drop) =>
                             const _ShowcaseReadOnlyNote()
@@ -196,14 +335,73 @@ class _NetworkChatPageState extends State<NetworkChatPage> {
                             if (mounted) setState(() {});
                           },
                         )
-                      : (context, service, drop) =>
-                            ChannelChatComposer(service: chat),
+                      : null,
                 ),
               ),
             ),
           ],
         );
       },
+    );
+  }
+}
+
+class _InvitePersonDialog extends StatelessWidget {
+  const _InvitePersonDialog({required this.manager, required this.networkId});
+
+  final NetworkSessionManager manager;
+  final String networkId;
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = context.l10n;
+    final invite = buildNetworkJoinLink(
+      host: Uri.parse(AddAgentDialog.networkJoinHost),
+      networkId: networkId,
+      password: manager.wallet.networks[networkId]?.password,
+    );
+    return AlertDialog(
+      key: const ValueKey('invitePersonDialog'),
+      title: Text(l10n.networkInvitePersonTitle),
+      content: SizedBox(
+        width: 420,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(l10n.networkInvitePersonBody),
+            const SizedBox(height: 12),
+            DecoratedBox(
+              decoration: BoxDecoration(
+                color: FahColors.of(context).panelAlt,
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: SelectableText(
+                  invite,
+                  key: const ValueKey('invitePersonLink'),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: Text(l10n.networkClose),
+        ),
+        FilledButton.icon(
+          key: const ValueKey('invitePersonCopy'),
+          onPressed: () {
+            unawaited(Clipboard.setData(ClipboardData(text: invite)));
+            showFahSnack(context, l10n.networkInviteCopied);
+          },
+          icon: const Icon(Icons.copy_outlined, size: 18),
+          label: Text(l10n.networkCopy),
+        ),
+      ],
     );
   }
 }
