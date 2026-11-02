@@ -2418,8 +2418,8 @@ void main() {
         // masquerade as a bad-link day.
         expect(
           lines.any(
-            (line) => line.contains('non-network') &&
-                line.contains('StateError'),
+            (line) =>
+                line.contains('non-network') && line.contains('StateError'),
           ),
           isTrue,
           reason: 'the unexpected error type must be named in the log',
