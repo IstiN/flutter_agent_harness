@@ -46,9 +46,13 @@ upload_all() { # exists-path: gate-guarded attach + (servable DRAFT-only) publis
   # PUBLISHED release an unattached fa-* asset refuses the whole call loud,
   # an already-attached one skips, and non-fa store/DMG refreshers keep
   # their clobber-refresh contract. Drafts attach exactly as before.
-  for asset in "${assets[@]}"; do
-    bash "$(dirname "$0")/release_asset_gate.sh" "$tag" "$asset"
-  done
+  # gh-2042 (review): ONE call for the WHOLE list — the gate's contract is
+  # per-call all-or-nothing ("refuse before any upload"), so per-asset
+  # invocation would judge each asset against its own release-view
+  # snapshot (N round-trips, a wider draft→published TOCTOU window, and a
+  # partial mutation when an early benign asset uploads before a later
+  # fa-* refusal).
+  bash "$(dirname "$0")/release_asset_gate.sh" "$tag" "${assets[@]}"
   # Latest policy (#282 + gh-1801 rework + gh-2042): publish + latest ONLY
   # when the release can actually serve `fa update` — that means the signed
   # checksums are already on it (`fa update` hard-fails without
