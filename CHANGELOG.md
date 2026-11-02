@@ -13,6 +13,22 @@ block a release again.
 
 ## Unreleased
 
+- fix(gh-2043): `fa update` no longer dies on slow links. The 2-minute
+  TOTAL archive wall clock (`kFaUpdateArchiveTimeout`) aborted downloads
+  that were progressing fine (~70–100 KB/s corporate links need 135s+
+  for the 9.5 MB macOS archive). The body is now bounded by NO-PROGRESS
+  (`kFaUpdateStallTimeout`, 45s — a body delivering no bytes for 45s
+  aborts with "no progress for 45s", gh-1377 hang protection intact),
+  the total cap is raised to a 15-minute per-attempt backstop
+  (`kFaUpdateTotalTimeout`), progress prints every 2 MB
+  (`downloading… 4.2/9.5 MB` plus a final elapsed + average-speed line),
+  and a mid-body connection reset/clean early close resumes with an HTTP
+  Range request from the received offset (max 3 retries; a server
+  answering 200 to the Range restarts from zero) — the reassembled bytes
+  still pass the same provenance hash check. Metadata bound unchanged
+  (`kFaUpdateNetworkTimeout` 15s), provenance failure keeps its distinct
+  wording, and the macOS fallback zip path (AC5) gets the same
+  stall/progress/resume treatment.
 - fix(gh-2003): the Copilot picker filter is tier-aware. Individual-tier
   `/models` responses omit `model_picker_enabled` entirely, so phase 1
   dropped every such entry as «picker flag absent» and individual/OAuth

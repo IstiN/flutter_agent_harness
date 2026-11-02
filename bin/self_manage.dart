@@ -7,8 +7,7 @@
 /// library cannot touch directly (process env, the registry, files).
 library;
 
-import 'dart:async'
-    show Completer, StreamSubscription, TimeoutException, Timer;
+import 'dart:async' show Completer, StreamSubscription, TimeoutException, Timer;
 import 'dart:convert';
 import 'dart:ffi' show Abi;
 import 'dart:io';
@@ -132,22 +131,22 @@ final class ArchiveDownloadOutcome {
   bool get isHttpFailure => statusCode != null;
 }
 
-/// Drains one response body segment into bytes, resetting a stall timer
-/// on every chunk. Throws [TimeoutException] when no bytes arrive for
-/// [stallTimeout] ("no progress for Ns", gh-2043 AC1) or the segment
-/// outlives [totalTimeout] (the raised total backstop); rethrows any
-/// stream error (the resume loop decides). [base] is the byte offset of
-/// this segment in the whole archive — [onProgress] receives absolute
-/// counts.
-Future<List<int>> _drainBody(
-  Stream<List<int>> stream, {
-  required int base,
+/// Drains one response body segment into [builder], resetting a stall
+/// timer on every chunk. Completes when the stream is done; throws
+/// [TimeoutException] when no bytes arrive for [stallTimeout] ("no
+/// progress for Ns", gh-2043 AC1) or the segment outlives [totalTimeout]
+/// (the raised total backstop); rethrows any stream error (the resume
+/// loop decides) — the bytes that arrived before the error STAY in
+/// [builder], so a resume can continue from the true offset.
+/// [onProgress] receives the absolute received count.
+Future<void> _drainBody(
+  Stream<List<int>> stream,
+  BytesBuilder builder, {
   required Duration stallTimeout,
   required Duration totalTimeout,
   required void Function(int receivedNow) onProgress,
 }) {
-  final completer = Completer<List<int>>();
-  final builder = BytesBuilder(copy: false);
+  final completer = Completer<void>();
   late final StreamSubscription<List<int>> subscription;
   Timer? stallTimer;
   Timer? totalTimer;
@@ -189,14 +188,14 @@ Future<List<int>> _drainBody(
     (chunk) {
       armStall();
       builder.add(chunk);
-      onProgress(base + builder.length);
+      onProgress(builder.length);
     },
     onError: fail,
     onDone: () {
       if (completer.isCompleted) return;
       stallTimer?.cancel();
       totalTimer?.cancel();
-      completer.complete(builder.takeBytes());
+      completer.complete();
     },
     cancelOnError: true,
   );
@@ -245,9 +244,17 @@ Future<ArchiveDownloadOutcome> downloadArchiveBody(
     if (receivedNow < nextProgressAt) return;
     nextProgressAt = receivedNow + progressStep;
     final total = totalBytes;
+    if (total == null) {
+      say('downloading… ${_formatBytes(receivedNow)}');
+      return;
+    }
+    // One shared unit after the ratio — the ticket's `4.2/9.5 MB` shape.
+    final inMb = receivedNow >= 1024 * 1024 || total >= 1024 * 1024;
+    String side(int bytes) => inMb
+        ? (bytes / (1024 * 1024)).toStringAsFixed(1)
+        : (bytes / 1024).round().toString();
     say(
-      'downloading… '
-      '${total == null ? _formatBytes(receivedNow) : '${_formatBytes(receivedNow)}/${_formatBytes(total)}'}',
+      'downloading… ${side(receivedNow)}/${side(total)} ${inMb ? 'MB' : 'KB'}',
     );
   }
 
@@ -290,21 +297,22 @@ Future<ArchiveDownloadOutcome> downloadArchiveBody(
     }
 
     try {
-      final segment = await _drainBody(
+      await _drainBody(
         response.stream,
-        base: received,
+        builder,
         stallTimeout: stallTimeout,
         totalTimeout: totalTimeout,
         onProgress: reportProgress,
       );
-      builder.add(segment);
-      received += segment.length;
     } on TimeoutException catch (error) {
       // Fail-closed (gh-1377): a body that stops delivering bytes — or a
       // trickle that outlives the raised backstop — is a dead download,
       // not a resume case.
       return ArchiveDownloadOutcome.timedOut(error.message ?? 'timed out');
     } on Exception {
+      // Keep what arrived before the link died: the resume continues
+      // from the true offset.
+      received = builder.length;
       if (resumeAttempts >= maxResumeAttempts) {
         return ArchiveDownloadOutcome.transport(
           'connection lost at ${_formatBytes(received)} '
@@ -314,6 +322,7 @@ Future<ArchiveDownloadOutcome> downloadArchiveBody(
       resumeLine();
       continue;
     }
+    received = builder.length;
     if (totalBytes != null && received < totalBytes) {
       // A clean close below the promised length is the same broken-link
       // family as a mid-body reset: resume if the budget allows.

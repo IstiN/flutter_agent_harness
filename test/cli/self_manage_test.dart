@@ -1559,27 +1559,30 @@ void main() {
       http.StreamedResponse Function(http.BaseRequest request) handler,
     ) => MockClient.streaming((request, _) async => handler(request));
 
-    test('AC1: a slow-but-steady body completes under the stall bound', () async {
-      final body = filler(chunk * 6);
-      final segments = [
-        for (var i = 0; i < 6; i++) body.sublist(chunk * i, chunk * (i + 1)),
-      ];
-      final client = streamingClient(
-        (_) => http.StreamedResponse(
-          steady(segments),
-          200,
-          contentLength: body.length,
-        ),
-      );
-      final outcome = await downloadArchiveBody(
-        client,
-        Uri.parse(archiveUrl),
-        log: (_) {},
-        stallTimeout: const Duration(milliseconds: 300),
-      );
-      expect(outcome.ok, isTrue);
-      expect(outcome.bytes, body);
-    });
+    test(
+      'AC1: a slow-but-steady body completes under the stall bound',
+      () async {
+        final body = filler(chunk * 6);
+        final segments = [
+          for (var i = 0; i < 6; i++) body.sublist(chunk * i, chunk * (i + 1)),
+        ];
+        final client = streamingClient(
+          (_) => http.StreamedResponse(
+            steady(segments),
+            200,
+            contentLength: body.length,
+          ),
+        );
+        final outcome = await downloadArchiveBody(
+          client,
+          Uri.parse(archiveUrl),
+          log: (_) {},
+          stallTimeout: const Duration(milliseconds: 300),
+        );
+        expect(outcome.ok, isTrue);
+        expect(outcome.bytes, body);
+      },
+    );
 
     test('AC1: a stalled body aborts with the no-progress message', () async {
       final client = streamingClient(
@@ -1601,32 +1604,34 @@ void main() {
       expect(outcome.failureMessage, contains('no progress for'));
     });
 
-    test('AC1: the raised total backstop bounds a never-finishing trickle',
-        () async {
-      final body = filler(chunk * 6);
-      final segments = [
-        for (var i = 0; i < 6; i++) body.sublist(chunk * i, chunk * (i + 1)),
-      ];
-      // 100ms gaps never trip a 300ms stall bound, but the whole body
-      // needs ~600ms — only the total cap can fire.
-      final client = streamingClient(
-        (_) => http.StreamedResponse(
-          steady(segments, gap: const Duration(milliseconds: 100)),
-          200,
-          contentLength: body.length,
-        ),
-      );
-      final outcome = await downloadArchiveBody(
-        client,
-        Uri.parse(archiveUrl),
-        log: (_) {},
-        stallTimeout: const Duration(milliseconds: 300),
-        totalTimeout: const Duration(milliseconds: 400),
-      );
-      expect(outcome.ok, isFalse);
-      expect(outcome.statusCode, isNull);
-      expect(outcome.failureMessage, contains('exceeded'));
-    });
+    test(
+      'AC1: the raised total backstop bounds a never-finishing trickle',
+      () async {
+        final body = filler(chunk * 6);
+        final segments = [
+          for (var i = 0; i < 6; i++) body.sublist(chunk * i, chunk * (i + 1)),
+        ];
+        // 100ms gaps never trip a 300ms stall bound, but the whole body
+        // needs ~600ms — only the total cap can fire.
+        final client = streamingClient(
+          (_) => http.StreamedResponse(
+            steady(segments, gap: const Duration(milliseconds: 100)),
+            200,
+            contentLength: body.length,
+          ),
+        );
+        final outcome = await downloadArchiveBody(
+          client,
+          Uri.parse(archiveUrl),
+          log: (_) {},
+          stallTimeout: const Duration(milliseconds: 300),
+          totalTimeout: const Duration(milliseconds: 400),
+        );
+        expect(outcome.ok, isFalse);
+        expect(outcome.statusCode, isNull);
+        expect(outcome.failureMessage, contains('exceeded'));
+      },
+    );
 
     test('AC4: the metadata bound is unchanged, the body bounds are new', () {
       expect(kFaUpdateNetworkTimeout, const Duration(seconds: 15));
@@ -1634,116 +1639,120 @@ void main() {
       expect(kFaUpdateTotalTimeout, const Duration(minutes: 15));
     });
 
-    test('AC2: progress prints at every step plus a final speed line',
-        () async {
-      final body = filler(chunk * 4); // 1.6 MB
-      final segments = [
-        for (var i = 0; i < 4; i++) body.sublist(chunk * i, chunk * (i + 1)),
-      ];
-      final lines = <String>[];
-      final client = streamingClient(
-        (_) => http.StreamedResponse(
-          steady(segments),
-          200,
-          contentLength: body.length,
-        ),
-      );
-      final outcome = await downloadArchiveBody(
-        client,
-        Uri.parse(archiveUrl),
-        log: lines.add,
-        progressStep: chunk * 2,
-        stallTimeout: const Duration(seconds: 5),
-      );
-      expect(outcome.ok, isTrue);
-      final progress = lines
-          .where((line) => line.startsWith('downloading… '))
-          .toList();
-      // Crossings at 0.8 MB and 1.6 MB.
-      expect(progress, hasLength(2));
-      expect(progress.first, contains('0.8/1.6 MB'));
-      expect(progress.last, contains('1.6/1.6 MB'));
-      final finalLine = lines.last;
-      expect(finalLine, startsWith('downloaded 1.6 MB in '));
-      expect(finalLine, endsWith('/s)'));
-    });
-
-    test('AC2: without a content length the progress line has no denominator',
-        () async {
-      final lines = <String>[];
-      final client = streamingClient(
-        (_) => http.StreamedResponse(
-          steady([filler(chunk), filler(chunk, 1)]),
-          200,
-        ),
-      );
-      final outcome = await downloadArchiveBody(
-        client,
-        Uri.parse(archiveUrl),
-        log: lines.add,
-        progressStep: chunk,
-        stallTimeout: const Duration(seconds: 5),
-      );
-      expect(outcome.ok, isTrue);
-      final progress = lines
-          .where((line) => line.startsWith('downloading… '))
-          .toList();
-      expect(progress, ['downloading… 0.8 MB']);
-      expect(lines.last, startsWith('downloaded 1.6 MB in '));
-    });
-
-    test('AC3: a mid-body reset resumes with HTTP Range and completes',
-        () async {
-      final body = filler(chunk * 3);
-      final seen = <http.BaseRequest>[];
-      var first = true;
-      final client = streamingClient((request) {
-        seen.add(request);
-        if (first) {
-          first = false;
-          return http.StreamedResponse(
-            resetsAfter([
-              body.sublist(0, chunk),
-              body.sublist(chunk, chunk * 2),
-            ]),
+    test(
+      'AC2: progress prints at every step plus a final speed line',
+      () async {
+        final body = filler(chunk * 4); // 1.6 MB
+        final segments = [
+          for (var i = 0; i < 4; i++) body.sublist(chunk * i, chunk * (i + 1)),
+        ];
+        final lines = <String>[];
+        final client = streamingClient(
+          (_) => http.StreamedResponse(
+            steady(segments),
             200,
             contentLength: body.length,
-          );
-        }
-        return http.StreamedResponse(
-          steady([body.sublist(chunk * 2)]),
-          206,
-          contentLength: body.length - chunk * 2,
+          ),
         );
-      });
-      final lines = <String>[];
-      final outcome = await downloadArchiveBody(
-        client,
-        Uri.parse(archiveUrl),
-        log: lines.add,
-        stallTimeout: const Duration(seconds: 5),
-      );
-      expect(outcome.ok, isTrue);
-      // The reassembled bytes are identical — a resumed completion passes
-      // the same provenance hash check.
-      expect(outcome.bytes, body);
-      expect(seen, hasLength(2));
-      expect(seen.last.headers['range'], 'bytes=${chunk * 2}-');
-      expect(lines.join('\n'), contains('resuming'));
-    });
+        final outcome = await downloadArchiveBody(
+          client,
+          Uri.parse(archiveUrl),
+          log: lines.add,
+          progressStep: chunk * 2,
+          stallTimeout: const Duration(seconds: 5),
+        );
+        expect(outcome.ok, isTrue);
+        final progress = lines
+            .where((line) => line.startsWith('downloading… '))
+            .toList();
+        // Crossings at 0.8 MB and 1.6 MB.
+        expect(progress, hasLength(2));
+        expect(progress.first, contains('0.8/1.6 MB'));
+        expect(progress.last, contains('1.6/1.6 MB'));
+        final finalLine = lines.last;
+        expect(finalLine, startsWith('downloaded 1.6 MB in '));
+        expect(finalLine, endsWith('/s)'));
+      },
+    );
+
+    test(
+      'AC2: without a content length the progress line has no denominator',
+      () async {
+        final lines = <String>[];
+        final client = streamingClient(
+          (_) => http.StreamedResponse(
+            steady([filler(chunk), filler(chunk, 1)]),
+            200,
+          ),
+        );
+        final outcome = await downloadArchiveBody(
+          client,
+          Uri.parse(archiveUrl),
+          log: lines.add,
+          progressStep: chunk,
+          stallTimeout: const Duration(seconds: 5),
+        );
+        expect(outcome.ok, isTrue);
+        final progress = lines
+            .where((line) => line.startsWith('downloading… '))
+            .toList();
+        expect(progress, ['downloading… 400 KB', 'downloading… 800 KB']);
+        expect(lines.last, startsWith('downloaded 800 KB in '));
+      },
+    );
+
+    test(
+      'AC3: a mid-body reset resumes with HTTP Range and completes',
+      () async {
+        final body = filler(chunk * 3);
+        final seen = <http.BaseRequest>[];
+        var first = true;
+        final client = streamingClient((request) {
+          seen.add(request);
+          if (first) {
+            first = false;
+            return http.StreamedResponse(
+              resetsAfter([
+                body.sublist(0, chunk),
+                body.sublist(chunk, chunk * 2),
+              ]),
+              200,
+              contentLength: body.length,
+            );
+          }
+          return http.StreamedResponse(
+            steady([body.sublist(chunk * 2)]),
+            206,
+            contentLength: body.length - chunk * 2,
+          );
+        });
+        final lines = <String>[];
+        final outcome = await downloadArchiveBody(
+          client,
+          Uri.parse(archiveUrl),
+          log: lines.add,
+          stallTimeout: const Duration(seconds: 5),
+        );
+        expect(outcome.ok, isTrue);
+        // The reassembled bytes are identical — a resumed completion passes
+        // the same provenance hash check.
+        expect(outcome.bytes, body);
+        expect(seen, hasLength(2));
+        expect(seen.last.headers['range'], 'bytes=${chunk * 2}-');
+        expect(lines.join('\n'), contains('resuming'));
+      },
+    );
 
     test('AC3: resume attempts are bounded at maxResumeAttempts', () async {
       var requests = 0;
-      final client = streamingClient(
-        (_) {
-          requests++;
-          return http.StreamedResponse(
-            resetsAfter([filler(chunk)]),
-            200,
-            contentLength: chunk * 99,
-          );
-        },
-      );
+      final client = streamingClient((_) {
+        requests++;
+        return http.StreamedResponse(
+          resetsAfter([filler(chunk)]),
+          200,
+          contentLength: chunk * 99,
+        );
+      });
       final outcome = await downloadArchiveBody(
         client,
         Uri.parse(archiveUrl),
@@ -1757,8 +1766,7 @@ void main() {
       expect(requests, 4);
     });
 
-    test('AC3: a server that ignores Range (200) restarts from zero',
-        () async {
+    test('AC3: a server that ignores Range (200) restarts from zero', () async {
       final body = filler(chunk * 3);
       var requests = 0;
       final client = streamingClient((request) {
@@ -1868,19 +1876,21 @@ void main() {
       expect(target.readAsStringSync(), 'old');
     });
 
-    test('a headers-phase failure without bytes is a transport failure',
-        () async {
-      final client = streamingClient(
-        (_) => throw http.ClientException('no route to host'),
-      );
-      final outcome = await downloadArchiveBody(
-        client,
-        Uri.parse(archiveUrl),
-        log: (_) {},
-      );
-      expect(outcome.ok, isFalse);
-      expect(outcome.statusCode, isNull);
-    });
+    test(
+      'a headers-phase failure without bytes is a transport failure',
+      () async {
+        final client = streamingClient(
+          (_) => throw http.ClientException('no route to host'),
+        );
+        final outcome = await downloadArchiveBody(
+          client,
+          Uri.parse(archiveUrl),
+          log: (_) {},
+        );
+        expect(outcome.ok, isFalse);
+        expect(outcome.statusCode, isNull);
+      },
+    );
 
     test('an HTTP failure carries the status for the caller', () async {
       final client = streamingClient(
@@ -1966,97 +1976,108 @@ void main() {
       expect(target.readAsStringSync(), 'new-binary');
     });
 
-    test('AC4: a stalled download never reaches the provenance check',
-        () async {
-      final target = File('${temp.path}/fa')..writeAsStringSync('old');
-      var sumsFetches = 0;
-      var zipTried = false;
-      final client = MockClient.streaming((request, _) async {
-        final path = request.url.path;
-        if (path.endsWith('/releases/latest')) {
-          return bytesResponse(
-            const [],
-            status: 302,
-            headers: {
-              'location':
-                  'https://github.com/IstiN/flutter_agent_harness/'
-                  'releases/tag/v9.9.9',
-            },
-          );
-        }
-        if (path.endsWith('SHA256SUMS')) {
-          sumsFetches++;
-          return bytesResponse(utf8.encode(_fixtureSums));
-        }
-        if (path.endsWith('SHA256SUMS.sig')) {
-          return bytesResponse(_fixtureSig);
-        }
-        if (path.endsWith('-mac.zip')) {
-          zipTried = true;
-          return bytesResponse(const []);
-        }
-        return http.StreamedResponse(
-          stallsAfter([filler(chunk)]),
-          200,
-          contentLength: chunk * 99,
-        );
-      });
-      final code = await runSelfUpdate(
-        currentVersion: '0.1.0',
-        detectInstall: () => Install(InstallKind.binary, target.path),
-        newClient: () => client,
-        stallTimeout: const Duration(milliseconds: 250),
-      );
-      expect(code, 1);
-      expect(target.readAsStringSync(), 'old');
-      expect(sumsFetches, 0, reason: 'a network death must not fetch SHA256SUMS');
-      expect(zipTried, isFalse, reason: 'the zip fallback is for HTTP misses');
-    });
-
-    test('AC5: fallbackZipUpdate resumes a reset zip download and swaps',
-        () async {
-      final target = File('${temp.path}/fa')..writeAsStringSync('old');
-      final body = _fixtureZip;
-      var zipRequests = 0;
-      final client = MockClient.streaming((request, _) async {
-        final path = request.url.path;
-        if (path.endsWith('SHA256SUMS.sig')) {
-          return bytesResponse(_fixtureSig);
-        }
-        if (path.endsWith('SHA256SUMS')) {
-          return bytesResponse(utf8.encode(_fixtureSums));
-        }
-        zipRequests++;
-        if (zipRequests == 1) {
+    test(
+      'AC4: a stalled download never reaches the provenance check',
+      () async {
+        final target = File('${temp.path}/fa')..writeAsStringSync('old');
+        var sumsFetches = 0;
+        var zipTried = false;
+        final client = MockClient.streaming((request, _) async {
+          final path = request.url.path;
+          if (path.endsWith('/releases/latest')) {
+            return bytesResponse(
+              const [],
+              status: 302,
+              headers: {
+                'location':
+                    'https://github.com/IstiN/flutter_agent_harness/'
+                    'releases/tag/v9.9.9',
+              },
+            );
+          }
+          if (path.endsWith('SHA256SUMS')) {
+            sumsFetches++;
+            return bytesResponse(utf8.encode(_fixtureSums));
+          }
+          if (path.endsWith('SHA256SUMS.sig')) {
+            return bytesResponse(_fixtureSig);
+          }
+          if (path.endsWith('-mac.zip')) {
+            zipTried = true;
+            return bytesResponse(const []);
+          }
           return http.StreamedResponse(
-            resetsAfter([body.sublist(0, 10)]),
+            stallsAfter([filler(chunk)]),
             200,
-            contentLength: body.length,
+            contentLength: chunk * 99,
           );
-        }
-        expect(request.headers['range'], 'bytes=10-');
-        return bytesResponse(
-          body.sublist(10),
-          status: 206,
-          contentLength: body.length - 10,
+        });
+        final code = await runSelfUpdate(
+          currentVersion: '0.1.0',
+          detectInstall: () => Install(InstallKind.binary, target.path),
+          newClient: () => client,
+          stallTimeout: const Duration(milliseconds: 250),
         );
-      });
-      final code = await fallbackZipUpdate(
-        client,
-        'v9.9.9',
-        'fa-macos-arm64-mac.zip',
-        target.path,
-        '9.9.9',
-        (_, _) async => ProcessResult(0, 0, '', ''),
-        pem: _testPem,
-      );
-      expect(code, 0);
-      expect(zipRequests, 2);
-      expect(target.readAsStringSync(), 'new-zip-binary');
-    });
+        expect(code, 1);
+        expect(target.readAsStringSync(), 'old');
+        expect(
+          sumsFetches,
+          0,
+          reason: 'a network death must not fetch SHA256SUMS',
+        );
+        expect(
+          zipTried,
+          isFalse,
+          reason: 'the zip fallback is for HTTP misses',
+        );
+      },
+    );
 
-    test('AC1: a stalled archive body fails the boot update fast',
-        () async {
+    test(
+      'AC5: fallbackZipUpdate resumes a reset zip download and swaps',
+      () async {
+        final target = File('${temp.path}/fa')..writeAsStringSync('old');
+        final body = _fixtureZip;
+        var zipRequests = 0;
+        final client = MockClient.streaming((request, _) async {
+          final path = request.url.path;
+          if (path.endsWith('SHA256SUMS.sig')) {
+            return bytesResponse(_fixtureSig);
+          }
+          if (path.endsWith('SHA256SUMS')) {
+            return bytesResponse(utf8.encode(_fixtureSums));
+          }
+          zipRequests++;
+          if (zipRequests == 1) {
+            return http.StreamedResponse(
+              resetsAfter([body.sublist(0, 10)]),
+              200,
+              contentLength: body.length,
+            );
+          }
+          expect(request.headers['range'], 'bytes=10-');
+          return bytesResponse(
+            body.sublist(10),
+            status: 206,
+            contentLength: body.length - 10,
+          );
+        });
+        final code = await fallbackZipUpdate(
+          client,
+          'v9.9.9',
+          'fa-macos-arm64-mac.zip',
+          target.path,
+          '9.9.9',
+          (_, _) async => ProcessResult(0, 0, '', ''),
+          pem: _testPem,
+        );
+        expect(code, 0);
+        expect(zipRequests, 2);
+        expect(target.readAsStringSync(), 'new-zip-binary');
+      },
+    );
+
+    test('AC1: a stalled archive body fails the boot update fast', () async {
       final client = MockClient.streaming((request, _) async {
         final path = request.url.path;
         if (path.endsWith('/releases/latest')) {
