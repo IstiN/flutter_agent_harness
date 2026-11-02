@@ -1,0 +1,291 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-11-02T15:29:02.622Z",
+  "ticketKey": "gh-2044",
+  "headSha": "3448229c7062d3a2c91fa9ddee07e9ce1f8dd131",
+  "baseBranch": "main",
+  "reviewDecision": "NONE",
+  "labels": [],
+  "files": {
+    "ci_failures.md": {
+      "hash": "fnv1a64:da7e3a60d8ac7f4e",
+      "size": 328515
+    },
+    "ci_failures_full.log": {
+      "hash": "fnv1a64:20272afecb640e50",
+      "size": 3589669
+    },
+    "ci_violations.json": {
+      "hash": "fnv1a64:909357744e3aa19a",
+      "size": 1858
+    },
+    "pr_diff.txt": {
+      "hash": "fnv1a64:9b3eab82dccea1fd",
+      "size": 12302
+    },
+    "pr_discussions.md": {
+      "hash": "fnv1a64:ad53a2257be6db9a",
+      "size": 27209
+    },
+    "pr_discussions_raw.json": {
+      "hash": "fnv1a64:3cc175febe69215f",
+      "size": 113
+    },
+    "pr_info.md": {
+      "hash": "fnv1a64:f7c9028e89752d89",
+      "size": 2552
+    },
+    "request.md": {
+      "hash": "fnv1a64:3ded9c848bb87f1f",
+      "size": 17179
+    },
+    "review_state.md": {
+      "hash": "fnv1a64:76316941f83c6868",
+      "size": 508
+    },
+    "rework_base_head.txt": {
+      "hash": "fnv1a64:3f0ff54bc9f427bd",
+      "size": 40
+    },
+    "ticket.json": {
+      "hash": "fnv1a64:bc2dc99929128e9e",
+      "size": 17413
+    },
+    "ticket.md": {
+      "hash": "fnv1a64:3ded9c848bb87f1f",
+      "size": 17179
+    }
+  },
+  "comments": [
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-02:64a39152",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-02",
+      "updatedAt": "2026-11-02",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT: new test file is not `dart format` clean**\n\n`dart format --output=none --set-exit-if-changed test/compaction/structured_escalation_test.dart`\nexits 1 on this file — the formatter would rewrap ~15 spots, e.g. line 143:\n\n```dart\nreturn (session, _stateFor(await session.buildContextMessages(), contextWindow: 400000));\n```\n\nwould become:\n\n```dart\nreturn (\n  session,\n  _stateFor(await session.buildContextMessages(), contextWindow: 400000),\n);\n```\n\nAGENTS.md's Quality gates section requires \"**dart analyze + dart format clean**\". The pre-commit\nhook normally self-heals this (reformat + re-stage), but the WIP auto-save commits on this branch\nevidently bypassed it. `dart analyze` on the changed files is clean; only formatting lags.\n\nFix is mechanical:\n\n```bash\ndart format test/compaction/structured_escalation_test.dart\n```\n\n(CI's fast gate does not re-check formatting, so this will not go red — but the next hook run or\na follow-up commit touching this file will reformat it as noise. Please land it formatted.)"
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-02:db50c590",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-02",
+      "updatedAt": "2026-11-02",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT: the escalation's \"no foldable range\" contract branch has zero test coverage**\n\n`_runCheckpointEscalationPass` documents this as a first-class outcome (gh-2044 semantic 5):\n\n```dart\nif (range == null) {\n  // Bounded no-op (gh-2044 semantic 5): nothing foldable below the\n  // keep-recent boundary — e.g. an entirely pinned/exempt foldable prefix.\n  ...\n  emit(after: before, ok: false, error: const CompactionException(\n    'checkpoint escalation found no foldable range below the keep-recent boundary'));\n  return true;\n}\n```\n\nNone of the 22 new tests drive it — `grep \"no foldable range\" test/compaction/` finds nothing. The\nbranch is reachable in-run: when the ordinary checkpoint ladder consumes the **entire** foldable\nprefix, the covered records drop out of the projection and the escalation's `_pickCheckpointRange`\nfinds only pinned records → `null` → it emits a user-visible `ok:false` FAILED receipt while the\nrun verdict stands. Since this receipt also flows to every host (CLI prints\n`auto-compact pass N FAILED ... error=...`), it deserves a pinned test.\n\nSuggested fixture (reuses the UT-ESC-8 style): pin the user ask, judge hides one pair, the ladder\ncheckpoint folds the remaining unpinned pairs so the settle lands thin with only pinned records\nprojected; assert exactly one `checkpoint-escalation` pass with `ok == false`, error is a\n`CompactionException` mentioning the foldable range, no additional checkpoint appended, and\n`run()` still `true`.\n\nTwo adjacent untested paths worth covering in the same pass:\n- `view == null` at the top of the pass (the `hideableRemaining = 0` diagnostic branch);\n- the **factory-level** abort wiring: UT-ESC-9 tests the engine's `cancelToken` directly, but the\n  production path is the runToken→budgetSource link (`budgetSource.cancel(runToken.cancelReason)`)\n  reaching `_runCancelled` through the reason-type heuristic — no IT test exercises a user abort\n  mid-escalation through `AutoCompactorFactory.run()`."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-02:5ab747d8",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-02",
+      "updatedAt": "2026-11-02",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: cancellation classification rides a cancel-reason type heuristic — the run token itself is available and never wired**\n\n```dart\nbool get _runCancelled {\n  if (cancelToken?.isCancelled ?? false) return true;\n  final source = budgetSource;\n  if (source == null) return false;\n  return source.token.isCancelled &&\n      source.token.cancelReason is! TimeoutException;\n}\n```\n\n\"User abort\" is inferred by ruling out `TimeoutException` reasons on the budget token. That holds\nfor today's callers (I checked: `_activeRun?.source.cancel()` passes no reason, steering cancels\npass strings), but it is a coupling, not a contract: a future caller that cancels the run token\nwith a `TimeoutException` reason (a watchdog, for example) is silently misclassified as a budget\nkill — the escalation then proceeds, its LM call dies instantly, and the abort dissolves into a\n\"summarizer returned no text\" failed receipt: exactly the #1085 shape this PR set out to avoid.\n\nThe robust signal already exists and is one line at the factory: `_runStructured` holds `runToken`\n(the factory links it into `budgetSource` right there) and `StructuredCompactor` already has a\n`cancelToken` constructor field that production never populates:\n\n```dart\nfinal compactor = StructuredCompactor(\n  // ...\n  cancelToken: runToken, // authoritative user-abort signal for _runCancelled\n  budgetSource: budgetSource,\n);\n```\n\nWith that, the first clause of `_runCancelled` becomes the primary check and the reason-type\nheuristic degrades to a harmless fallback. Please consider wiring it (and adding the IT-level\nabort test from the coverage comment so the link stays proven)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-02:e90dd5fc",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-02",
+      "updatedAt": "2026-11-02",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: `judgeCalls` under-reports chunked escalation folds**\n\n```dart\nemit(\n  after: after,\n  ok: true,\n  // Marker-only ranges consolidate deterministically (issue #387) —\n  // no LLM call happened, and none is reported (gh-2044 semantic 9).\n  judgeCalls: visibleMessages == 0 ? 0 : 1,\n  ...\n);\n```\n\nReporting `0` for the marker-only path makes `judgeCalls` look like a real call count, but a #729\nchunked fold makes **N** summarizer calls while the receipt says `1` — the PR's own UT-ESC-11 test\nproves `summarizerCalls >= 2` for a single escalation record. This is inherited from\n`_runCheckpointPasses` (which also hardcodes `judgeCalls: 1`), so behavior is consistent — but the\nnew 0/1 distinction makes the inconsistency visible.\n\nOptions: document `judgeCalls` as \"≥1 LLM call made\" on the field, or have `_chunkedFold` count\ncalls and report the real number (the escalation pass is the natural place to start, since its\nwhole purpose is observability of a previously invisible deepening)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-02:e5ab1788",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-02",
+      "updatedAt": "2026-11-02",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread 1 — `dart format` clean on the new test file\n\nFixed.\n\n- Ran `dart format test/compaction/structured_escalation_test.dart` (plus the other touched files: `lib/src/compaction/structured/engine.dart`, `lib/src/agent/auto_compactor.dart`, `test/task/subagent_compaction_test.dart`, `test/task/subagent_child_window_enforcement_test.dart` — the latter two were reformatted as part of the CI-failure fix, not just style).\n- Verified with the exact command from this thread, now exiting **0**:\n\n```bash\n$ dart format --output=none --set-exit-if-changed test/compaction/structured_escalation_test.dart\nFormatted 1 file (0 changed) in 0.03 seconds.\n$ echo $?\n0\n```\n\n- `dart analyze` on the changed files stays clean, so the gate pair from AGENTS.md (`dart analyze` + `dart format` clean) now holds for everything this PR touches.\n- Note: `dart format --output=none lib/src/ test/compaction/` under the local SDK (3.13.7) lists 42 *pre-existing* files this PR does not touch as \"would change\" — a formatter-version drift vs the files' landing format, untouched here on purpose (no diff noise); CI's own formatter is green on them.\n\nRework run: fix landed together with the escalation regressions in `ec08acbada` (branch `ai/gh-2044`)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-02:c39ed037",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-02",
+      "updatedAt": "2026-11-02",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread 2 — coverage for the escalation's \"no foldable range\" branch (+ adjacent paths)\n\nAll three flagged paths now have pinned tests in `test/compaction/structured_escalation_test.dart`:\n\n1. **The `range == null` branch (gh-2044 semantic 5)** — new group `UT-ESC-12 — the keep-recent boundary cannot fold the whole live world (gh-2044 rework)`, test *\"an escalation whose foldable path fits keepRecentTokens with live records left declines: no fold, no live-tail swallow, honest no-range receipt, verdict stands\"* (line ~1003). It pins the fixture this branch is reachable through and asserts exactly what the thread asked:\n   - exactly ONE `checkpoint-escalation` pass, `ok == false`, error `contains('no foldable range')`;\n   - no additional `CompactCheckpointRecord` appended;\n   - `run()` still returns `true` (verdict stands);\n   - `summarizeCalls == 0` — no LM call may summarize the live tail away;\n   - the live user ask and tail filler survive in the projection.\n   This test doubles as the regression test for the CI failure it exposed (core shards 1/4 + 3/4: `subagent produced no assistant message` on resumed child runs — the whole-world fold swallowed the live turn).\n\n2. **The `hideableRemaining = 0` diagnostic branch** — new test *\"the hideableRemaining diagnostic reads 0 when every entry is exempt or inside the protected tail\"* (line ~1105): `protectLastN: 16` puts every visible non-exempt record inside the protected tail, and the escalation receipt is asserted to carry `hideableRemaining == 0`. The literal `view == null ? 0` arm inside `_runCheckpointEscalationPass` stays defensive-only and is not directly driven: an over-trigger settle requires a non-empty projection, so `_buildView()` cannot return null on a path that reaches the escalation; driving it would mean calling the private pass with a synthetic state rather than through `run()`. Flagging that honestly rather than faking coverage.\n\n3. **The factory-level abort wiring** — new `IT-ESC-6: a user abort mid-escalation through the factory surfaces — even when the cancel reason is a TimeoutException` (line ~1229): goes through `AutoCompactorFactory.run()` with the production `runToken → budgetSource` link, cancels mid-escalation with a watchdog-shaped `TimeoutException` reason, and asserts `throwsA(isA<CancelledException>())`, exactly one entry into the escalation stream, and **no** failed `structured·ckpt-escalation` receipt masking the abort.\n\nAll green locally: `dart test test/compaction/` → 442 passed; the two `test/task/` suites that were red in CI pass as well."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-02:b31621b6",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-02",
+      "updatedAt": "2026-11-02",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread 3 — wire the factory's `runToken` into the engine's `cancelToken`\n\nDone — exactly the one-line wiring suggested:\n\n```dart\n// lib/src/agent/auto_compactor.dart (AutoCompactorFactory._runStructured)\nfinal compactor = StructuredCompactor(\n  // ...\n  // gh-2044 rework (review thread 3): the factory's run token is the\n  // AUTHORITATIVE user-abort signal for the engine's `_runCancelled`. ...\n  cancelToken: runToken,\n  budgetSource: budgetSource,\n);\n```\n\n(`lib/src/agent/auto_compactor.dart:1177`)\n\nWith that, `_runCancelled` (`lib/src/compaction/structured/engine.dart:442`) decides from the first clause — `cancelToken?.isCancelled` — and the reason-type heuristic on the budget token degrades to a fallback for callers that only pass `budgetSource`. A watchdog-shaped `TimeoutException` reason can no longer reclassify a user abort as a budget kill, so the #1085 shape (abort dissolving into a \"summarizer returned no text\" failed receipt while the run reports success) is closed at the source.\n\nThe budget-expiry semantics stay as specified: per-call attempt-budget kills cancel the budget token with a `TimeoutException` reason (issue #515) and must NOT suppress the escalation (gh-2044 AC1) — covered by *\"an attempt-budget expiry during the escalation propagates as the named TimeoutException\"*; and the factory's total-budget race now also latches a dedicated `_totalBudgetSource` so no attempt starts and nothing appends/reports after that authoritative outcome (`UT-ESC-5b`).\n\nProven end-to-end by the IT-level test this thread requested: `IT-ESC-6: a user abort mid-escalation through the factory surfaces — even when the cancel reason is a TimeoutException` — `AutoCompactorFactory.run()` + watchdog-shaped cancel reason mid-escalation → `throwsA(isA<CancelledException>())`, escalation entered exactly once, no masking failed-escalation receipt."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-02:e2954e3d",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-02",
+      "updatedAt": "2026-11-02",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread 4 — `judgeCalls` under-reports chunked escalation folds\n\nTook the second option: the escalation pass now reports the **real** summarizer call count.\n\n- `_summarizeRange` returns `({String? text, int summarizerCalls})` (`lib/src/compaction/structured/engine.dart:1057`):\n  - marker-only deterministic consolidation → `summarizerCalls: 0` (line 1086, issue #387 — no LLM call, none reported);\n  - single in-window fold → `summarizerCalls: 1` (line 1177);\n- `_chunkedFold` counts its per-chunk calls and returns the real N, including the mid-fold failure path (`text: null, summarizerCalls: calls`, lines 1184–1221);\n- the escalation receipt emits `judgeCalls: visibleMessages == 0 ? 0 : summarizerCalls` (line 862) — 0 for the marker-only path, 1 for a single fold, N for a #729 chunked fold — so the deepening's observability matches its actual work.\n- The classic checkpoint ladder keeps its historical `judgeCalls: 1` receipt shape unchanged (documented in-place at the call site, line ~677) to avoid churning every existing receipt consumer in one PR; the escalation pass — whose whole purpose is observability of a previously invisible pass — is where the real count starts, as suggested.\n\nTests pinning the counts in `test/compaction/structured_escalation_test.dart`:\n- *\"a range needing several chunked summarizer calls reports exactly N summarizer calls folded into ONE escalation pass record\"* — multi-chunk range → one `checkpoint-escalation` record with the real N;\n- *\"a marker-only escalation range consolidates deterministically\"* — `judgeCalls == 0`, no summarizer invocation;\n- single-fold escalation receipts assert the count of 1."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-11-02:987dfb10",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-11-02",
+      "updatedAt": "2026-11-02",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ Validation CI went red on the head — merge aborted, rework re-queued. (linked issue #2044 re-armed) (approval latch kept — no re-review after fixes)\n🔴 red head f812208944fa333527b6fd4189fbc19f2ef7a9ce — red 1/3 (owner directive 2026-10-04: red yields the slot — after 3 reds on the same head, validation waits for a NEW head)"
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-02:6044ab6c",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-02",
+      "updatedAt": "2026-11-02",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — APPROVE (with suggestions)\n\n**Summary**: gh-2044 fragile-band escalation is correct, bounded, and well-tested: 22 new tests pass, the full compaction suite stays green (439 passed), `dart analyze` is clean on all changed files, and the boundary table (margin 0 / reserve−1 / reserve / reserve+1), forced-run and `maxCheckpointPasses == 0` gates, failure safety, cancellation, and content-safe observability are all covered. No blocking findings; 3 important and 2 suggestion-level items remain.\n\n**Key Issues**:\n- ⚠️ New test file is not `dart format` clean (AGENTS.md quality gate; hook self-heal was bypassed) — one-command fix\n- ⚠️ The escalation's documented \"no foldable range\" contract branch (`range == null` → `ok:false` receipt) has no test\n- ⚠️ No curated CHANGELOG `## Unreleased` entry — AGENTS.md: \"PRs add lines under `## Unreleased`\"; every recent sibling GOAL PR (gh-2003/#2005, gh-1990/#2001, gh-1956/#1961) adds one, and this is a user-facing behavior change\n- 💡 `_runCancelled` infers user-abort from `cancelReason is! TimeoutException`; wiring `cancelToken: runToken` at the factory is the robust signal\n- 💡 `judgeCalls: 1` under-reports chunked (#729) escalation folds\n\n**Next Steps**:\n1. `dart format test/compaction/structured_escalation_test.dart` and add the CHANGELOG line\n2. Add the no-foldable-range fixture test (plus view-null and factory-level abort coverage)\n3. Optionally wire `cancelToken: runToken` and report real chunk-call counts"
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-11-02:27532b65",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-11-02",
+      "updatedAt": "2026-11-02",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🔴 red head f812208944fa333527b6fd4189fbc19f2ef7a9ce — red 2/3 (owner directive 2026-10-04: red yields the slot — after 3 reds on the same head, validation waits for a NEW head)\n🔴 Red pre-merge gate on the head with no armed validation — rework armed (gh-917: first validation included, review or no review). The rework runner pushes a fix and validation re-runs on the new head (validate-fresh). After 3 red arming attempts on the SAME head the arm is withheld and a human is escalated (no infinite retry)."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-11-02:7218e17a",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-11-02",
+      "updatedAt": "2026-11-02",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🧵 Unresolved review threads — rework armed. This machine-authored PR is reviewed (ai_pr_reviewed) but still has open review threads. The rework leg owns open threads: agent:rework is armed on this PR and the rework runner will work through the threads and push. Validation re-runs automatically afterwards, and once the threads are resolved a fresh re-review is armed (review-threads-resolved)."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-11-02:a7803f94",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-11-02",
+      "updatedAt": "2026-11-02",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🔄 zombie re-dispatch 367a47474458e2c6358f07841d3b8c8e1cde605e — zombie 1/3 at 2026-11-02T13:56:43.725Z\n\nThis head carried no dispatched validation run at all — the dispatch was lost (gh-821). CI was re-dispatched automatically (bounded: 1 per head per hour; 3 in a row on the same head park the PR validation_failed)."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-11-02:5ed1a63e",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-11-02",
+      "updatedAt": "2026-11-02",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🔄 zombie re-dispatch 93b6655db20f18ac5253c370caf536f674cff563 — zombie 1/3 at 2026-11-02T14:02:39.295Z\n\nThis head carried no dispatched validation run at all — the dispatch was lost (gh-821). CI was re-dispatched automatically (bounded: 1 per head per hour; 3 in a row on the same head park the PR validation_failed)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-02:501c5a01",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-02",
+      "updatedAt": "2026-11-02",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "✅ Rework finished. `pr_approved` is sticky (approved once — never re-reviewed): the new head re-validates and merges directly."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-11-02:adb17401",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-11-02",
+      "updatedAt": "2026-11-02",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🔄 zombie re-dispatch ec08acbadafc6d2dbb6d01eabb9ceda1dad7ffe3 — zombie 1/3 at 2026-11-02T14:12:01.555Z\n\nThis head carried no dispatched validation run at all — the dispatch was lost (gh-821). CI was re-dispatched automatically (bounded: 1 per head per hour; 3 in a row on the same head park the PR validation_failed)."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-11-02:3cbd5f7f",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-11-02",
+      "updatedAt": "2026-11-02",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ Validation CI went red on the head — merge aborted, rework re-queued. (linked issue #2044 re-armed) (approval latch kept — no re-review after fixes)\nFailed run: https://github.com/IstiN/flutter_agent_harness/actions/runs/41459651269\n🔴 red head ec08acbadafc6d2dbb6d01eabb9ceda1dad7ffe3 — red 1/3 (owner directive 2026-10-04: red yields the slot — after 3 reds on the same head, validation waits for a NEW head)"
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-11-02:a2967e07",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-11-02",
+      "updatedAt": "2026-11-02",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🔄 zombie re-dispatch 5e99c8f219fea659be40c0c003543129dba94e72 — zombie 1/3 at 2026-11-02T14:54:57.442Z\n\nThis head carried no dispatched validation run at all — the dispatch was lost (gh-821). CI was re-dispatched automatically (bounded: 1 per head per hour; 3 in a row on the same head park the PR validation_failed)."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-11-02:bc2cd1f2",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-11-02",
+      "updatedAt": "2026-11-02",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🔄 zombie re-dispatch b9432e7956761502b6b3b1d5827a7f1482655195 — zombie 1/3 at 2026-11-02T14:59:26.608Z\n\nThis head carried no dispatched validation run at all — the dispatch was lost (gh-821). CI was re-dispatched automatically (bounded: 1 per head per hour; 3 in a row on the same head park the PR validation_failed)."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-11-02:48fb9b80",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-11-02",
+      "updatedAt": "2026-11-02",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🔄 zombie re-dispatch c7daf21b4c6380d3edcbdab8b31e43e54487de1f — zombie 1/3 at 2026-11-02T15:04:35.847Z\n\nThis head carried no dispatched validation run at all — the dispatch was lost (gh-821). CI was re-dispatched automatically (bounded: 1 per head per hour; 3 in a row on the same head park the PR validation_failed)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-02:0d81cd41",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-02",
+      "updatedAt": "2026-11-02",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## 🔧 Rework Complete — gh-2044\n\nAll PR review comments have been addressed. See fix summary below."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-11-02:034f5441",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-11-02",
+      "updatedAt": "2026-11-02",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ Validation CI went red on the head — merge aborted, rework re-queued. (linked issue #2044 re-armed) (approval latch kept — no re-review after fixes)\n🔴 red head 3448229c7062d3a2c91fa9ddee07e9ce1f8dd131 — red 1/3 (owner directive 2026-10-04: red yields the slot — after 3 reds on the same head, validation waits for a NEW head)"
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-11-02:69b04e7e",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-11-02",
+      "updatedAt": "2026-11-02",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🔴 red head 3448229c7062d3a2c91fa9ddee07e9ce1f8dd131 — red 2/3 (owner directive 2026-10-04: red yields the slot — after 3 reds on the same head, validation waits for a NEW head)\n🔴 Red pre-merge gate on the head with no armed validation — rework armed (gh-917: first validation included, review or no review). The rework runner pushes a fix and validation re-runs on the new head (validate-fresh). After 3 red arming attempts on the SAME head the arm is withheld and a human is escalated (no infinite retry)."
+    }
+  ]
+}
