@@ -27,6 +27,8 @@ class ChatComposer extends StatelessWidget {
   const ChatComposer({
     super.key,
     required this.service,
+    this.draftKey,
+    this.draftStore,
     this.uploadPicker,
     this.asr,
     this.asrTranscriber,
@@ -42,6 +44,12 @@ class ChatComposer extends StatelessWidget {
 
   /// The session this composer sends to.
   final AgentService service;
+
+  /// Stable conversation id owning the unsent draft; null uses [service].
+  final Object? draftKey;
+
+  /// Optional isolated draft store; null uses the process-lifetime default.
+  final fa_ui.ChatComposerDraftStore? draftStore;
 
   /// File chooser behind the attach sheet's "Attach file" entry.
   /// Defaults to the platform picker (`null` off the web → the entry is
@@ -95,6 +103,8 @@ class ChatComposer extends StatelessWidget {
     final picker = uploadPicker ?? createUploadPicker();
     return fa_ui.ChatComposer(
       service: service,
+      draftKey: draftKey,
+      draftStore: draftStore,
       uploadPicker: picker == null
           ? null
           : () async => [

@@ -1,66 +1,40 @@
 #!/usr/bin/env python3
-"""Render the canonical Squircle-V2 Fa logo to every icon asset.
+"""Render the canonical B3-square-accent Fa logo to every icon asset.
 
-The geometry is the same 84x84 vector contract as fa_ui's FaLogoPainter and
+The geometry is the same 68x68 vector contract as fa_ui's FaLogoPainter and
 references/fa-pocs/fa2.0/logos.html. Pillow avoids host SVG delegates,
 so raster output is reproducible. Run through icon/generate_icons.sh, which
 then derives Android and Play assets from the generated iOS master.
 """
 
-from math import cos, pi, sin
 from pathlib import Path
 from PIL import Image, ImageDraw
 
 ROOT = Path(__file__).resolve().parents[1]
 MASTER = 1024
 SUPERSAMPLE = 4
+# Static icon equivalents of the Glass token palettes. The Flutter painter
+# resolves these roles from FaDesignTokens for every direction and brightness.
 GLASS_DARK = {
-    "background": "#080A10", "surface1": "#0F1320", "surface2": "#161B2C",
-    "ink1": "#F0F4FC", "hairline": "#222D46", "accent": "#38BDF8",
-    "agent2": "#818CF8",
+    "background": "#1E1E1E", "surface1": "#1C1C1E",
+    "ink1": "#F5F5F7", "accent": "#3F8FF7", "agent2": "#818CF8",
 }
 GLASS_LIGHT = {
-    "background": "#F0F4F8", "surface1": "#FFFFFF", "surface2": "#E5ECF4",
-    "ink1": "#0B1322", "hairline": "#C4D2E4", "accent": "#0277BD",
-    "agent2": "#4F46E5",
+    "background": "#F5F5F7", "surface1": "#FFFFFF",
+    "ink1": "#1D1D1F", "accent": "#3F8FF7", "agent2": "#4F46E5",
 }
-
-
-def rgb(value):
-    value = value.lstrip("#")
-    return tuple(int(value[i:i + 2], 16) for i in (0, 2, 4))
-
-
-def mix(a, b, amount):
-    ca, cb = rgb(a), rgb(b)
-    values = [round(x + (y - x) * amount) for x, y in zip(ca, cb)]
-    return "#" + "".join(f"{value:02X}" for value in values)
-
-
-def arc(cx, cy, radius, start, end, steps=16):
-    return [
-        (cx + radius * cos(start + (end - start) * i / steps),
-         cy + radius * sin(start + (end - start) * i / steps))
-        for i in range(steps + 1)
-    ]
-
-
-def bubble_points():
-    return (
-        [(20, 22), (64, 22)]
-        + arc(64, 30, 8, -pi / 2, 0)[1:]
-        + [(72, 46)]
-        + arc(64, 46, 8, 0, pi / 2)[1:]
-        + [(38, 54), (26, 62), (26, 54), (20, 54)]
-        + arc(20, 46, 8, pi / 2, pi)[1:]
-        + [(12, 30)]
-        + arc(20, 30, 8, pi, 3 * pi / 2)[1:]
-    )
+# Native launcher artwork follows the selected B3-square-accent reference
+# exactly. In-app marks remain themeable; a launcher icon must not flip to a
+# white tile merely because the light desktop theme is active.
+B3_NATIVE = {
+    "background": "#1E1E1E", "surface1": "#121828",
+    "ink1": "#F0F4FC", "accent": "#38BDF8", "agent2": "#9366FF",
+}
 
 
 def render(palette, full_bleed=False):
     canvas_size = MASTER * SUPERSAMPLE
-    scale = canvas_size / 84
+    scale = canvas_size / 68
     background = palette["background"] if full_bleed else (0, 0, 0, 0)
     image = Image.new("RGBA", (canvas_size, canvas_size), background)
     draw = ImageDraw.Draw(image)
@@ -68,11 +42,7 @@ def render(palette, full_bleed=False):
     def point(x, y):
         return (x * scale, y * scale)
 
-    def line(points, color, width, transform=None):
-        if transform is not None:
-            tx, ty, factor = transform
-            points = [(tx + x * factor, ty + y * factor) for x, y in points]
-            width *= factor
+    def line(points, color, width):
         scaled = [point(x, y) for x, y in points]
         pixel_width = round(width * scale)
         draw.line(scaled, fill=color, width=pixel_width, joint="curve")
@@ -80,45 +50,34 @@ def render(palette, full_bleed=False):
         for x, y in (scaled[0], scaled[-1]):
             draw.ellipse((x - radius, y - radius, x + radius, y + radius), fill=color)
 
-    def circle(cx, cy, radius, fill=None, outline=None, width=1, transform=None):
-        if transform is not None:
-            tx, ty, factor = transform
-            cx, cy, radius, width = tx + cx * factor, ty + cy * factor, radius * factor, width * factor
+    def circle(cx, cy, radius, fill=None, outline=None, width=1):
         box = (*point(cx - radius, cy - radius), *point(cx + radius, cy + radius))
         draw.ellipse(box, fill=fill, outline=outline, width=round(width * scale))
 
-    outer = mix(palette["surface1"], palette["accent"], .09)
     draw.rounded_rectangle(
-        (*point(4, 4), *point(80, 80)), radius=round(22 * scale),
-        fill=outer, outline=palette["hairline"], width=round(1.5 * scale),
+        (*point(4, 4), *point(64, 64)), radius=round(18 * scale),
+        fill=palette["surface1"], outline=palette["accent"], width=round(2 * scale),
     )
-    bubble = [point(x, y) for x, y in bubble_points()]
-    bubble_fill = mix(outer, palette["surface2"], .84)
-    draw.polygon(bubble, fill=bubble_fill)
-    draw.line(bubble + [bubble[0]], fill=palette["accent"], width=round(1.8 * scale), joint="curve")
+    line([(15, 28), (22, 34), (15, 40)], palette["accent"], 2.8)
 
-    line([(0, 28), (0, 0), (16, 0)], palette["ink1"], 3.5, (24, 26, .72))
-    line([(0, 12.5), (12, 12.5)], palette["ink1"], 3.5, (24, 26, .72))
-    circle(7, 11, 6.5, outline=palette["ink1"], width=3, transform=(38, 31, .82))
-    line([(13.5, 4.5), (13.5, 17.5)], palette["ink1"], 3, (38, 31, .82))
-
-    line([(52, 28), (57, 33), (52, 38)], palette["accent"], 2)
-    line([(59, 38), (63, 38)], palette["accent"], 2)
-    circle(60, 46, 3, fill=palette["agent2"])
+    # Vector Fa at x=27 / baseline=42; no host font is involved.
+    line([(27, 42), (27, 26), (38.5, 26)], palette["ink1"], 2.8)
+    line([(27, 33.5), (35.5, 33.5)], palette["ink1"], 2.8)
+    circle(43, 36, 5, outline=palette["ink1"], width=2.6)
+    line([(48, 31), (48, 42)], palette["ink1"], 2.6)
+    circle(48, 22, 3.2, fill=palette["agent2"])
     return image.resize((MASTER, MASTER), Image.Resampling.LANCZOS)
 
 
 def svg(palette, full_bleed=False, safe=False, foreground=False):
-    outer = mix(palette["surface1"], palette["accent"], .09)
-    bubble_fill = mix(outer, palette["surface2"], .84)
-    body = f'''<rect x="4" y="4" width="76" height="76" rx="22" fill="{outer}" stroke="{palette["hairline"]}" stroke-width="1.5"/>
-  <path d="M20 22 H64 A8 8 0 0 1 72 30 V46 A8 8 0 0 1 64 54 H38 L26 62 V54 H20 A8 8 0 0 1 12 46 V30 A8 8 0 0 1 20 22 Z" fill="{bubble_fill}" stroke="{palette["accent"]}" stroke-width="1.8" stroke-linejoin="round"/>
-  <g transform="translate(24 26) scale(.72)" fill="none" stroke="{palette["ink1"]}" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><path d="M0 28 V0 H16"/><path d="M0 12.5 H12"/></g>
-  <g transform="translate(38 31) scale(.82)"><circle cx="7" cy="11" r="6.5" fill="none" stroke="{palette["ink1"]}" stroke-width="3"/><path d="M13.5 4.5 V17.5" fill="none" stroke="{palette["ink1"]}" stroke-width="3" stroke-linecap="round"/></g>
-  <path d="M52 28 L57 33 L52 38" fill="none" stroke="{palette["accent"]}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-  <path d="M59 38 H63" fill="none" stroke="{palette["accent"]}" stroke-width="2" stroke-linecap="round"/>
-  <circle cx="60" cy="46" r="3" fill="{palette["agent2"]}"/>'''
-    size = 140 if safe else 84
+    body = f'''<rect x="4" y="4" width="60" height="60" rx="18" fill="{palette["surface1"]}" stroke="{palette["accent"]}" stroke-width="2"/>
+  <path d="M15 28 L22 34 L15 40" fill="none" stroke="{palette["accent"]}" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M27 42 V26 H38.5" fill="none" stroke="{palette["ink1"]}" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M27 33.5 H35.5" fill="none" stroke="{palette["ink1"]}" stroke-width="2.8" stroke-linecap="round"/>
+  <circle cx="43" cy="36" r="5" fill="none" stroke="{palette["ink1"]}" stroke-width="2.6"/>
+  <path d="M48 31 V42" fill="none" stroke="{palette["ink1"]}" stroke-width="2.6" stroke-linecap="round"/>
+  <circle cx="48" cy="22" r="3.2" fill="{palette["agent2"]}"/>'''
+    size = 124 if safe else 68
     background = ""
     if full_bleed and not foreground:
         background = f'<rect width="{size}" height="{size}" fill="{palette["background"]}"/>\n '
@@ -133,19 +92,19 @@ def save_at(master, path, size):
 
 
 def main():
-    dark = render(GLASS_DARK)
+    dark = render(B3_NATIVE)
     light = render(GLASS_LIGHT)
-    ios = render(GLASS_DARK, full_bleed=True)
+    ios = render(B3_NATIVE, full_bleed=True)
     icon_dir = ROOT / "icon"
     dark.save(icon_dir / "icon_1024.png", optimize=True)
     light.save(icon_dir / "icon_light_1024.png", optimize=True)
     ios.save(ROOT / "assets/app_icon_source.png", optimize=True)
-    (icon_dir / "icon.svg").write_text(svg(GLASS_DARK))
+    (icon_dir / "icon.svg").write_text(svg(B3_NATIVE))
     (icon_dir / "icon_light.svg").write_text(svg(GLASS_LIGHT))
-    (icon_dir / "icon_ios.svg").write_text(svg(GLASS_DARK, full_bleed=True))
-    (icon_dir / "icon_foreground.svg").write_text(svg(GLASS_DARK, safe=True, foreground=True))
-    (icon_dir / "icon_maskable.svg").write_text(svg(GLASS_DARK, full_bleed=True, safe=True))
-    (ROOT / "web/favicon.svg").write_text(svg(GLASS_DARK))
+    (icon_dir / "icon_ios.svg").write_text(svg(B3_NATIVE, full_bleed=True))
+    (icon_dir / "icon_foreground.svg").write_text(svg(B3_NATIVE, safe=True, foreground=True))
+    (icon_dir / "icon_maskable.svg").write_text(svg(B3_NATIVE, full_bleed=True, safe=True))
+    (ROOT / "web/favicon.svg").write_text(svg(B3_NATIVE))
 
     ios_dir = ROOT / "ios/Runner/Assets.xcassets/AppIcon.appiconset"
     ios_sizes = {
@@ -168,7 +127,7 @@ def main():
     save_at(dark, web / "icons/Icon-192.png", 192)
     save_at(dark, web / "icons/Icon-512.png", 512)
     save_at(dark, web / "favicon.png", 64)
-    maskable = Image.new("RGBA", (MASTER, MASTER), GLASS_DARK["background"])
+    maskable = Image.new("RGBA", (MASTER, MASTER), B3_NATIVE["background"])
     inner = ios.resize((614, 614), Image.Resampling.LANCZOS)
     maskable.alpha_composite(inner, (205, 205))
     save_at(maskable, web / "icons/Icon-maskable-192.png", 192)
@@ -176,7 +135,7 @@ def main():
 
     mac = ROOT / "macos/Runner/Assets.xcassets/AppIcon.appiconset"
     for size in (16, 32, 64, 128, 256, 512, 1024):
-        save_at(light, mac / f"app_icon_{size}.png", size)
+        save_at(dark, mac / f"app_icon_{size}.png", size)
         save_at(dark, icon_dir / f"icon_dark_{size}.png", size)
 
     windows = ROOT / "windows/runner/resources/app_icon.ico"

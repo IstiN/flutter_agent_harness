@@ -7,7 +7,7 @@
 //   * adaptive foreground ic_launcher_foreground.png (108–432 px): the
 //     master scaled into the adaptive safe zone on a transparent canvas;
 //   * the adaptive XML layers reference @mipmap/ic_launcher_foreground over
-//     the @color/ic_launcher_background brand navy (#0f1320) — no leftover
+//     the @color/ic_launcher_background Glass dark background (#1E1E1E) — no leftover
 //     Flutter-template drawables.
 //
 // Regenerate with: dart run tool/generate_android_adaptive_icons.dart
@@ -23,7 +23,7 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:image/image.dart';
 
-final brandNavy = ColorRgb8(0x0F, 0x13, 0x20);
+final brandBackground = ColorRgb8(0x1E, 0x1E, 0x1E);
 
 /// The flutter_app root, located by walking up from the cwd (under
 /// `flutter test` the cwd is flutter_app) — Platform.script points into
@@ -53,12 +53,12 @@ Image _read(String path) {
   return image;
 }
 
-/// Composites [image] over the brand navy background — the adaptive layers
+/// Composites [image] over the Glass dark background — the adaptive layers
 /// have transparent margins and the legacy icons have transparent rounded
-/// corners; over the icon background color both are what the eye sees.
-Image _overNavy(Image image, {required int size}) {
+/// corners; over the Glass dark background color both are what the eye sees.
+Image _overBrandBackground(Image image, {required int size}) {
   final out = Image(width: size, height: size);
-  fill(out, color: brandNavy);
+  fill(out, color: brandBackground);
   final scaled = copyResize(image, width: size, height: size);
   compositeImage(out, scaled);
   return out;
@@ -149,8 +149,8 @@ void main() {
         entry.value,
         reason: 'mipmap-${entry.key} ic_launcher.png size',
       );
-      final expected = _overNavy(master, size: entry.value);
-      final actual = _overNavy(icon, size: entry.value);
+      final expected = _overBrandBackground(master, size: entry.value);
+      final actual = _overBrandBackground(icon, size: entry.value);
       final score = _ssim(expected, actual);
       expect(
         score,
@@ -174,8 +174,8 @@ void main() {
       reason: 'Play icon must stay under 1 MB',
     );
 
-    final expected = _overNavy(master, size: 512);
-    final actual = _overNavy(icon, size: 512);
+    final expected = _overBrandBackground(master, size: 512);
+    final actual = _overBrandBackground(icon, size: 512);
     final score = _ssim(expected, actual);
     expect(
       score,
@@ -223,8 +223,11 @@ void main() {
         reason: 'mipmap-${entry.key} foreground size',
       );
       final expected = _expectedForeground(master, size: entry.value);
-      final actual = _overNavy(fg, size: entry.value);
-      final score = _ssim(_overNavy(expected, size: entry.value), actual);
+      final actual = _overBrandBackground(fg, size: entry.value);
+      final score = _ssim(
+        _overBrandBackground(expected, size: entry.value),
+        actual,
+      );
       expect(
         score,
         greaterThan(0.95),
@@ -258,8 +261,8 @@ void main() {
     final colors = File('$resDir/values/colors.xml').readAsStringSync();
     expect(
       colors,
-      contains('#0f1320'),
-      reason: 'ic_launcher_background must stay the brand navy',
+      contains('#1E1E1E'),
+      reason: 'ic_launcher_background must match the Glass dark background',
     );
 
     // The Flutter-template density drawables must be gone entirely.

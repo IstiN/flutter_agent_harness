@@ -103,7 +103,9 @@ class ChatScreen extends StatefulWidget {
   const ChatScreen({
     super.key,
     required this.manager,
+    this.sessionTitle,
     this.uploadPicker,
+    this.draftStore,
     this.registry,
     this.lastConnectionStore,
     this.asr,
@@ -122,6 +124,10 @@ class ChatScreen extends StatefulWidget {
 
   /// The multi-session manager owning the active [AgentService].
   final FlutterSessionManager manager;
+
+  /// The selected session's display name in the centered header. Null keeps
+  /// the application-title fallback for embedders without session metadata.
+  final String? sessionTitle;
 
   /// The active session's widget.service. Convenience accessor so the rest of
   /// the screen does not need to know about the manager indirection.
@@ -143,6 +149,10 @@ class ChatScreen extends StatefulWidget {
   /// Defaults to the platform picker (`null` off the web → the entry is
   /// hidden); tests inject a fake.
   final UploadPicker? uploadPicker;
+
+  /// Process-lifetime unsent drafts, keyed by [FlutterSessionManager.activeId].
+  /// Null uses the shared store; tests may inject an isolated instance.
+  final fa_ui.ChatComposerDraftStore? draftStore;
 
   /// The custom-provider registry shared with the settings dialog;
   /// `null` falls back to an in-memory one inside the form (tests).
@@ -420,7 +430,7 @@ class _ChatScreenState extends State<ChatScreen> {
     final service = widget.service;
     return fa_ui.FaChatScreen(
       service: service,
-      title: context.l10n.appTitle,
+      title: widget.sessionTitle ?? context.l10n.appTitle,
       noticeBanner: _imageNoticeBanner,
       dynamicWidgetTileBuilder: _buildDynamicTile,
       onOpenWidgetAsApp: _openWidgetAsApp,
@@ -459,6 +469,8 @@ class _ChatScreenState extends State<ChatScreen> {
             ),
       composerBuilder: (context, chatService, drop) => ChatComposer(
         service: chatService as AgentService,
+        draftKey: widget.manager.activeId,
+        draftStore: widget.draftStore,
         uploadPicker: widget.uploadPicker,
         asr: widget.asr,
         asrTranscriber: widget.asrTranscriber,

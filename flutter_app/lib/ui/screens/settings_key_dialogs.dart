@@ -9,12 +9,21 @@ library;
 import 'package:flutter/material.dart';
 
 import 'package:fa/l10n/l10n_ext.dart';
+import 'package:fa_ui/fa_ui.dart' as faui;
 
 /// Responsive dialog content width: [preferred] on wide screens, shrinking
 /// to fit narrow phones (AlertDialog's default inset padding is 16-24 px).
 double _dialogContentWidth(BuildContext context, double preferred) {
   final available = MediaQuery.sizeOf(context).width - 32;
   return available < preferred ? available.clamp(0.0, preferred) : preferred;
+}
+
+RoundedSuperellipseBorder _dialogShape(BuildContext context) {
+  final tokens = faui.FaDesignTokens.of(context);
+  return RoundedSuperellipseBorder(
+    borderRadius: BorderRadius.circular(tokens.radiusLg),
+    side: BorderSide(color: tokens.hairline),
+  );
 }
 
 /// Edits one provider key's value (`Set OPENROUTER_API_KEY`).
@@ -40,6 +49,9 @@ class _KeyEditorDialogState extends State<KeyEditorDialog> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
+      backgroundColor: faui.FaDesignTokens.of(context).surface1,
+      surfaceTintColor: Colors.transparent,
+      shape: _dialogShape(context),
       title: Text(widget.title),
       content: SizedBox(
         width: _dialogContentWidth(context, 380),
@@ -63,7 +75,9 @@ class _KeyEditorDialogState extends State<KeyEditorDialog> {
             const SizedBox(height: 12),
             Text(
               context.l10n.keysSectionNote,
-              style: Theme.of(context).textTheme.bodySmall,
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: faui.FaDesignTokens.of(context).ink2,
+              ),
             ),
           ],
         ),
@@ -127,6 +141,9 @@ class _AddKeyDialogState extends State<AddKeyDialog> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
+      backgroundColor: faui.FaDesignTokens.of(context).surface1,
+      surfaceTintColor: Colors.transparent,
+      shape: _dialogShape(context),
       title: Text(context.l10n.keysAddDialogTitle),
       content: SizedBox(
         width: _dialogContentWidth(context, 380),

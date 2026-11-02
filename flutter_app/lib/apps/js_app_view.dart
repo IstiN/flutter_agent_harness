@@ -13,6 +13,7 @@ import 'package:fa/apps/js_theme_bridge_host.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
+import 'package:fa_ui/fa_ui.dart' show FaChatHost;
 import 'package:flutter_map/flutter_map.dart' show TileProvider;
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:fa/apps/fa_js3d_host.dart';
@@ -72,6 +73,24 @@ class FaAppMessage {
   final Uint8List? screenshot;
 }
 
+/// Messenger app-panel chrome: Pin, Full/Exit full, and Close are owned by
+/// the shell while permissions and reload stay with the app view.
+final class JsAppPanelChrome {
+  const JsAppPanelChrome({
+    required this.fullScreen,
+    required this.pinned,
+    required this.onFullScreen,
+    required this.onPin,
+    required this.onClose,
+  });
+
+  final bool fullScreen;
+  final bool pinned;
+  final VoidCallback onFullScreen;
+  final VoidCallback onPin;
+  final VoidCallback onClose;
+}
+
 /// Full-screen host for one JS app: renders the JS-driven UI via
 /// [JsonWidgetRenderer], offers reload + permissions in the app bar (or in a
 /// floating overlay menu when the app's manifest asks for `chrome: 'full'`),
@@ -95,6 +114,7 @@ class JsAppView extends StatefulWidget {
     this.mediaHost,
     this.webViewHost,
     this.embeddedInPanel = false,
+    this.panelChrome,
   });
 
   final JsAppInfo app;
@@ -151,11 +171,12 @@ class JsAppView extends StatefulWidget {
   final AgentService? agentService;
 
   /// Whether the app renders inside the wide-shell apps side panel instead
-  /// of a standalone full-screen route. When true the in-app Fa chrome
-  /// (floating button, work bar, reply sheet, chat overlay) is hidden —
-  /// the main chat is always visible alongside the panel, so the in-app
-  /// copy would just duplicate the same agent response.
+  /// of a standalone full-screen route. The Fa chrome stays available in
+  /// either host; embedded apps report their panel canvas as the viewport.
   final bool embeddedInPanel;
+
+  /// Non-null replaces route chrome with the messenger panel header.
+  final JsAppPanelChrome? panelChrome;
 
   @override
   State<JsAppView> createState() => _JsAppViewState();
@@ -511,7 +532,12 @@ class _JsAppViewState extends State<JsAppView> {
     // logical size, orientation and safe areas ride the message.
     final view = View.of(context);
     final pixelRatio = view.devicePixelRatio;
-    final logical = view.physicalSize / pixelRatio;
+    // In the shell's nested Apps navigator the window also contains the
+    // main chat. Report the actual app canvas, just like the screenshot,
+    // rather than telling the agent to design for the whole shell.
+    final logical = widget.embeddedInPanel
+        ? _boundaryKey.currentContext?.size ?? view.physicalSize / pixelRatio
+        : view.physicalSize / pixelRatio;
     final padding = MediaQuery.paddingOf(context);
     final used = await onSend(
       FaAppMessage(
@@ -572,7 +598,12 @@ class _JsAppViewState extends State<JsAppView> {
   void _forwardBackToApp() {
     final engine = _engine;
     if (engine == null) {
-      Navigator.of(context).pop();
+      final close = widget.panelChrome?.onClose;
+      if (close != null) {
+        close();
+      } else {
+        Navigator.of(context).pop();
+      }
       return;
     }
     unawaited(engine.callEvent('back'));
@@ -583,7 +614,98 @@ class _JsAppViewState extends State<JsAppView> {
   /// re-enter the back flow it came from.
   void _closeFromJs() {
     if (!mounted) return;
-    Navigator.of(context).pop();
+    final close = widget.panelChrome?.onClose;
+    if (close != null) {
+      close();
+    } else {
+      Navigator.of(context).pop();
+    }
+  }
+
+  PreferredSizeWidget? _buildAppBar(bool fullChrome) {
+    final chrome = widget.panelChrome;
+    if (fullChrome && chrome == null) return null;
+    final title = Row(
+      children: [
+        AppIcon(app: widget.app, env: widget.env, size: 24),
+        const SizedBox(width: 8),
+        Flexible(child: Text(widget.app.name, overflow: TextOverflow.ellipsis)),
+      ],
+    );
+    if (chrome == null) {
+      return faAppBar(
+        title: title,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.shield_outlined),
+            tooltip: context.l10n.appsPermissionsTooltip,
+            onPressed: _openPermissions,
+          ),
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            tooltip: context.l10n.appsReloadTooltip,
+            onPressed: () {
+              AppAnalytics.instance.jsAppReloaded();
+              unawaited(_restart());
+            },
+          ),
+        ],
+      );
+    }
+    return faAppBar(
+      title: title,
+      trafficLightClearance: chrome.fullScreen,
+      actions: [
+        if (chrome.fullScreen)
+          TextButton(
+            key: const ValueKey('appFull'),
+            onPressed: chrome.onFullScreen,
+            child: Text(context.l10n.appsExitFullTooltip),
+          )
+        else
+          IconButton(
+            key: const ValueKey('appFull'),
+            tooltip: context.l10n.appsFullTooltip,
+            onPressed: chrome.onFullScreen,
+            visualDensity: VisualDensity.compact,
+            constraints: const BoxConstraints.tightFor(width: 28, height: 32),
+            padding: EdgeInsets.zero,
+            icon: const Icon(Icons.open_in_full, size: 17),
+          ),
+        if (chrome.fullScreen)
+          TextButton(
+            key: const ValueKey('appPin'),
+            onPressed: chrome.onPin,
+            child: Text(
+              chrome.pinned
+                  ? context.l10n.appsUnpinTooltip
+                  : context.l10n.appsPinTooltip,
+            ),
+          )
+        else
+          IconButton(
+            key: const ValueKey('appPin'),
+            tooltip: chrome.pinned
+                ? context.l10n.appsUnpinTooltip
+                : context.l10n.appsPinTooltip,
+            onPressed: chrome.onPin,
+            visualDensity: VisualDensity.compact,
+            constraints: const BoxConstraints.tightFor(width: 28, height: 32),
+            padding: EdgeInsets.zero,
+            icon: Icon(
+              chrome.pinned ? Icons.push_pin : Icons.push_pin_outlined,
+              size: 17,
+            ),
+          ),
+        IconButton(
+          key: const ValueKey('appClose'),
+          tooltip: context.l10n.appsCloseTooltip,
+          onPressed: chrome.onClose,
+          icon: const Icon(Icons.close),
+        ),
+        _chromeMenu(Theme.of(context)),
+      ],
+    );
   }
 
   @override
@@ -597,44 +719,19 @@ class _JsAppViewState extends State<JsAppView> {
       valueListenable: _engine?.backHandlerRegistered ?? _noBackHandler,
       builder: (context, backRegistered, _) {
         return PopScope(
-          canPop: !backRegistered,
+          canPop: widget.panelChrome == null && !backRegistered,
           onPopInvokedWithResult: (didPop, _) {
-            if (!didPop) _forwardBackToApp();
+            if (didPop) return;
+            final chrome = widget.panelChrome;
+            if (chrome != null && !backRegistered) {
+              chrome.onClose();
+            } else {
+              _forwardBackToApp();
+            }
           },
           child: Scaffold(
-            appBar: fullChrome
-                ? null
-                // faAppBar bakes in the macOS traffic-light clearance —
-                // a plain AppBar renders the back button under them.
-                : faAppBar(
-                    title: Row(
-                      children: [
-                        AppIcon(app: widget.app, env: widget.env, size: 24),
-                        const SizedBox(width: 8),
-                        Flexible(
-                          child: Text(
-                            widget.app.name,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                      ],
-                    ),
-                    actions: [
-                      IconButton(
-                        icon: const Icon(Icons.shield_outlined),
-                        tooltip: context.l10n.appsPermissionsTooltip,
-                        onPressed: _openPermissions,
-                      ),
-                      IconButton(
-                        icon: const Icon(Icons.refresh),
-                        tooltip: context.l10n.appsReloadTooltip,
-                        onPressed: () {
-                          AppAnalytics.instance.jsAppReloaded();
-                          unawaited(_restart());
-                        },
-                      ),
-                    ],
-                  ),
+            // faAppBar bakes in the macOS traffic-light clearance.
+            appBar: _buildAppBar(fullChrome),
             body: Stack(
               children: [
                 Positioned.fill(
@@ -648,7 +745,7 @@ class _JsAppViewState extends State<JsAppView> {
                       // stay edge-to-edge at the bottom but drop below the
                       // status bar: they draw their own opaque header, and
                       // edge-to-edge top slid it under the system tray.
-                      child: fullChrome
+                      child: fullChrome && widget.panelChrome == null
                           ? SafeArea(
                               bottom: false,
                               child: _keyboardWrappedBody(theme),
@@ -662,7 +759,7 @@ class _JsAppViewState extends State<JsAppView> {
                 ),
                 // Full chrome has no AppBar — permissions/reload live in a small
                 // floating menu so immersive apps (maps) keep the whole canvas.
-                if (fullChrome)
+                if (fullChrome && widget.panelChrome == null)
                   Positioned(
                     top: 0,
                     right: 0,
@@ -673,8 +770,10 @@ class _JsAppViewState extends State<JsAppView> {
                       ),
                     ),
                   ),
-                if (widget.onSendToAgent != null &&
-                    !widget.embeddedInPanel) ...[
+                // The local Stack keeps every Fa affordance inside the
+                // nested Apps panel; embedding must not remove app access
+                // to the same session, work controls, and app context.
+                if (widget.onSendToAgent != null) ...[
                   if (!_faChatExpanded)
                     Positioned(
                       right: 16,
@@ -719,10 +818,19 @@ class _JsAppViewState extends State<JsAppView> {
                           onSend: _sendFaMessage,
                           onCollapse: () =>
                               setState(() => _faChatExpanded = false),
-                          // Expand-to-full-chat always leaves the app (an
-                          // explicit tap, not a back gesture) — pop directly,
-                          // bypassing canPop.
-                          onOpenFullChat: () => Navigator.of(context).pop(),
+                          // The shell owns section + route changes so narrow
+                          // Apps lands on ChatScreen, not back on the grid.
+                          onOpenFullChat: () {
+                            final reveal = FaChatHost.revealActiveChat;
+                            if (reveal == null) {
+                              Navigator.of(context).pop();
+                            } else if (widget.embeddedInPanel) {
+                              unawaited(reveal());
+                            } else {
+                              Navigator.of(context).pop();
+                              unawaited(reveal());
+                            }
+                          },
                         ),
                       ),
                   ],

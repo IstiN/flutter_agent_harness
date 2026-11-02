@@ -8,6 +8,7 @@ import 'package:fa/network/network_mode.dart';
 import 'package:fa/network/network_session_manager.dart';
 import 'package:fa/services/flutter_session_manager.dart';
 import 'package:fa/ui/app_theme.dart';
+import 'package:fa/ui/chats/chat_list_panel.dart';
 import 'package:fa/ui/network/channel_rail.dart';
 import 'package:fa/ui/network/network_center.dart';
 import 'package:fa/ui/network/network_chat_page.dart';
@@ -120,7 +121,7 @@ void main() {
       expect(find.byType(NetworksSidebar), findsNothing);
       expect(find.byType(ChannelRail), findsNothing);
       expect(find.byType(NetworkChatPage), findsNothing);
-      expect(home, isA<ListenableBuilder>());
+      expect(home, isA<WidgetPublicationResumeRefresher>());
     });
 
     testWidgets('wide local mode with wiring → no tree swap, the classic '
@@ -136,14 +137,25 @@ void main() {
       // No ListenableBuilder gate on wide — the shell consumes the mode.
       expect(home, isA<WidgetPublicationResumeRefresher>());
       expect(find.byType(WideLayoutShell), findsOneWidget);
-      expect(find.byType(SidebarSessionsList), findsOneWidget);
+      expect(find.byType(ChatListPanel), findsOneWidget);
+      expect(find.byType(SidebarSessionsList), findsNothing);
       expect(find.byType(NetworksSidebar), findsNothing);
       expect(find.byType(NetworkCenterPane), findsNothing);
       expect(find.byType(NetworkHomePage), findsNothing);
+
+      await tester.tap(find.byKey(const ValueKey('chatNetworkFilter')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Local').last);
+      await tester.pumpAndSettle();
+      expect(controller.mode, AppMode.local);
+      expect(controller.networkId, isNull);
+      expect(find.byType(ChatListPanel), findsOneWidget);
+      expect(find.byType(NetworkCenterPane), findsNothing);
     });
 
-    testWidgets('wide network mode → the shell swaps the SIDEBAR CONTENT, '
-        'not the screen', (tester) async {
+    testWidgets('wide legacy network mode cannot take over the messenger', (
+      tester,
+    ) async {
       final controller = NetworkModeController.inMemory(mode: AppMode.network);
       final manager = await _networkManager();
       final home = await _homeAt(
@@ -154,26 +166,16 @@ void main() {
       );
       expect(home, isA<WidgetPublicationResumeRefresher>());
       expect(find.byType(WideLayoutShell), findsOneWidget);
+      expect(find.byType(ChatListPanel), findsOneWidget);
       expect(find.byType(NetworkHomePage), findsNothing);
-      // The sidebar shows the networks list instead of the sessions list.
-      expect(
-        find.descendant(
-          of: find.byType(WideLayoutShell),
-          matching: find.byType(NetworksSidebar),
-        ),
-        findsOneWidget,
-      );
-      expect(find.byType(SidebarSessionsList), findsNothing);
-      // The center shows the network empty state (no network selected).
-      expect(find.byType(NetworkCenterPane), findsOneWidget);
-      expect(find.text('Welcome to Fa networks'), findsOneWidget);
-      expect(find.byKey(const ValueKey('networkCenterJoin')), findsOneWidget);
+      expect(find.byType(NetworksSidebar), findsNothing);
+      expect(find.byType(NetworkCenterPane), findsNothing);
     });
 
-    testWidgets('narrow network mode → NetworkHomePage, the networks list '
-        'is the first screen (no onboarding gate)', (tester) async {
+    testWidgets('narrow legacy network mode cannot replace the messenger', (
+      tester,
+    ) async {
       final controller = NetworkModeController.inMemory(mode: AppMode.network);
-      // No identity in the wallet — the picker must still render.
       final manager = await _networkManager();
       addTearDown(manager.disconnectAll);
       await _homeAt(
@@ -182,20 +184,15 @@ void main() {
         networkMode: controller,
         networkSessions: manager,
       );
-      expect(find.byType(NetworkHomePage), findsOneWidget);
+      expect(find.byType(WideLayoutShell), findsOneWidget);
+      expect(find.byType(ChatListPanel), findsOneWidget);
+      expect(find.byType(NetworkHomePage), findsNothing);
+      expect(find.byType(NetworksSidebar), findsNothing);
       expect(find.byType(AppLauncherScreen), findsNothing);
       expect(
-        find.descendant(
-          of: find.byType(NetworkHomePage),
-          matching: find.byType(NetworksSidebar),
-        ),
+        find.byKey(const ValueKey('narrowShellNavigation')),
         findsOneWidget,
       );
-      // The onboarding gate is gone — identity is created lazily.
-      expect(find.text('Welcome to Fa networks'), findsNothing);
-      expect(find.byKey(const ValueKey('identityContinue')), findsNothing);
-      // The empty wallet's CTA is visible right away.
-      expect(find.byKey(const ValueKey('joinFirstNetwork')), findsOneWidget);
     });
   });
 }

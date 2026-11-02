@@ -168,6 +168,10 @@ abstract final class FaChatHost {
   /// used. Null on surfaces without an embedded Apps section.
   static Future<void> Function()? revealJsApps;
 
+  /// Leaves an embedded app and reveals its active/app-bound full chat.
+  /// The host owns section and route changes; null keeps the local pop fallback.
+  static Future<void> Function()? revealActiveChat;
+
   /// Builder of the files side panel shown by the toolbar's files button;
   /// null hides the button regardless of [FaChatFeatures.fileBrowser].
   static WidgetBuilder? fileBrowserBuilder;

@@ -437,128 +437,227 @@ class _FileBrowserState extends State<FileBrowser> {
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        _buildHeader(context),
-        _buildPathBar(context),
-        const Divider(height: 1),
-        Expanded(child: _buildBody(context)),
-      ],
-    );
-  }
-
-  Widget _buildHeader(BuildContext context) {
-    final theme = Theme.of(context);
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 12, 4, 0),
-      child: Row(
+    final colors = FahColors.of(context);
+    return Material(
+      key: const ValueKey('fileBrowserPanel'),
+      color: colors.panel,
+      shape: Border(left: BorderSide(color: colors.border, width: .5)),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Icon(Icons.folder_open_outlined, size: 20, color: theme.hintColor),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              context.l10n.filesPanelTitle,
-              style: theme.textTheme.titleMedium,
-            ),
-          ),
-          ?_buildMountControl(context),
-          if (_picker != null)
-            IconButton(
-              icon: const Icon(Icons.upload_file),
-              tooltip: context.l10n.filesUploadTooltip,
-              onPressed: _upload,
-            ),
-          if (_iCloudSync != null)
-            IconButton(
-              icon: const Icon(Icons.cloud_sync_outlined),
-              tooltip: context.l10n.filesICloudSyncTooltip,
-              onPressed: _syncICloud,
-            ),
-          IconButton(
-            icon: const Icon(Icons.refresh),
-            tooltip: context.l10n.filesRefreshTooltip,
-            onPressed: _load,
-          ),
+          _buildHeader(context),
+          ?_buildMountIdentity(context),
+          _buildPathBar(context),
+          Divider(height: 1, color: colors.border.withValues(alpha: .55)),
+          Expanded(child: _buildBody(context)),
         ],
       ),
     );
   }
 
-  /// The project-folder control for the header (macOS sandbox): an
-  /// open-folder button when unmounted, a name+eject chip when mounted, a
-  /// warning chip when the stored folder became unavailable. Null when the
-  /// env has no mount support (web/mobile).
-  Widget? _buildMountControl(BuildContext context) {
+  Widget _headerAction(Widget button) => FaHeaderCircularAction(child: button);
+
+  Widget _buildHeader(BuildContext context) {
+    final colors = FahColors.of(context);
+    final tokens = FaDesignTokens.of(context);
+    return SizedBox(
+      height: 52,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        child: FaAdaptiveHeader(
+          key: const ValueKey('fileBrowserHeader'),
+          leading: Icon(
+            Icons.folder_open_outlined,
+            size: 18,
+            color: colors.dim,
+          ),
+          title: context.l10n.filesPanelTitle,
+          titleStyle: TextStyle(
+            color: colors.text,
+            fontSize: 14,
+            fontWeight: FontWeight.w600,
+            height: 1.2,
+          ),
+          actions: [
+            ?_buildMountControl(context),
+            if (_picker != null)
+              FaHeaderAction(
+                key: const ValueKey('fileBrowserUpload'),
+                icon: Icons.upload_file,
+                label: context.l10n.filesUploadTooltip,
+                onPressed: _upload,
+              ),
+            if (_iCloudSync != null)
+              FaHeaderAction(
+                key: const ValueKey('fileBrowserICloudSync'),
+                icon: Icons.cloud_sync_outlined,
+                label: context.l10n.filesICloudSyncTooltip,
+                onPressed: _syncICloud,
+              ),
+            FaHeaderAction(
+              key: const ValueKey('fileBrowserRefresh'),
+              icon: Icons.refresh,
+              label: context.l10n.filesRefreshTooltip,
+              onPressed: _load,
+            ),
+          ],
+          visualDensity: VisualDensity.compact,
+          iconSize: 18,
+          actionGap: 8,
+          overflowMenuKey: const ValueKey('fileBrowserOverflow'),
+          menuColor: tokens.surface2,
+          actionBuilder: (context, action, button) => _headerAction(button),
+          overflowBuilder: (context, button) => _headerAction(button),
+        ),
+      ),
+    );
+  }
+
+  /// The project-folder action uses the same adaptive overflow as every
+  /// other panel action. Mounted identity lives in a secondary chip so a
+  /// long folder name can never squeeze the Files title or action row.
+  FaHeaderAction? _buildMountControl(BuildContext context) {
     final mountEnv = _mountEnv;
     if (mountEnv == null) return null;
     final unavailable = mountEnv.mountUnavailable;
     if (unavailable != null) {
-      return IconButton(
-        icon: Icon(
-          Icons.warning_amber_outlined,
-          color: Theme.of(context).colorScheme.error,
-        ),
-        tooltip: context.l10n.filesMountUnavailableTooltip(unavailable),
+      return FaHeaderAction(
+        key: const ValueKey('fileBrowserMount'),
+        icon: Icons.warning_amber_outlined,
+        label: context.l10n.filesMountUnavailableTooltip(unavailable),
         onPressed: _pickProjectFolder,
       );
     }
     final mountedPath = mountEnv.mountedRoot;
     if (mountedPath != null) {
-      final name = mountedPath.split('/').where((part) => part.isNotEmpty).last;
-      return Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(name, style: Theme.of(context).textTheme.bodySmall),
-          IconButton(
-            icon: const Icon(Icons.eject_outlined),
-            tooltip: context.l10n.filesUnmountTooltip(mountedPath),
-            onPressed: _unmountProjectFolder,
-          ),
-        ],
+      return FaHeaderAction(
+        key: const ValueKey('fileBrowserMount'),
+        icon: Icons.eject_outlined,
+        label: context.l10n.filesUnmountTooltip(mountedPath),
+        onPressed: _unmountProjectFolder,
       );
     }
     final canPick =
         widget.projectFolderOps != null || ProjectFolderChannelOps.isSupported;
     if (!canPick) return null;
-    return IconButton(
-      icon: const Icon(Icons.create_new_folder_outlined),
-      tooltip: context.l10n.filesOpenProjectFolderTooltip,
+    return FaHeaderAction(
+      key: const ValueKey('fileBrowserMount'),
+      icon: Icons.create_new_folder_outlined,
+      label: context.l10n.filesOpenProjectFolderTooltip,
       onPressed: _pickProjectFolder,
     );
   }
 
+  Widget? _buildMountIdentity(BuildContext context) {
+    final mountedPath = _mountEnv?.mountedRoot;
+    if (mountedPath == null) return null;
+    final colors = FahColors.of(context);
+    final name = mountedPath.split('/').where((part) => part.isNotEmpty).last;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 0, 12, 4),
+      child: Tooltip(
+        message: mountedPath,
+        child: Container(
+          key: const ValueKey('fileBrowserMountIdentity'),
+          height: 28,
+          padding: const EdgeInsets.symmetric(horizontal: 9),
+          decoration: BoxDecoration(
+            color: colors.panelAlt,
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: colors.border.withValues(alpha: .55)),
+          ),
+          child: Row(
+            children: [
+              Icon(Icons.folder_outlined, size: 14, color: colors.dim),
+              const SizedBox(width: 7),
+              Expanded(
+                child: Text(
+                  name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: colors.dim,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildPathBar(BuildContext context) {
+    final tokens = FaDesignTokens.of(context);
+    final colors = FahColors.of(context);
     return SizedBox(
-      height: 44,
-      child: Row(
-        children: [
-          IconButton(
-            icon: const Icon(Icons.arrow_upward, size: 18),
-            tooltip: context.l10n.filesUpTooltip,
-            onPressed: _segments.isEmpty ? null : _goUp,
-          ),
-          Expanded(
-            child: SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: Row(children: _breadcrumbs(context)),
+      key: const ValueKey('fileBrowserPathBar'),
+      height: 40,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(8, 2, 12, 2),
+        child: Row(
+          children: [
+            FaSurface(
+              glass: false,
+              circular: true,
+              color: tokens.surface1,
+              child: SizedBox.square(
+                dimension: 36,
+                child: IconButton(
+                  icon: const Icon(Icons.arrow_upward, size: 18),
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints.tightFor(
+                    width: 36,
+                    height: 36,
+                  ),
+                  style: IconButton.styleFrom(
+                    minimumSize: const Size.square(36),
+                    maximumSize: const Size.square(36),
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  ),
+                  tooltip: context.l10n.filesUpTooltip,
+                  onPressed: _segments.isEmpty ? null : _goUp,
+                ),
+              ),
             ),
-          ),
-        ],
+            const SizedBox(width: 8),
+            Expanded(
+              child: Container(
+                key: const ValueKey('fileBrowserBreadcrumbChip'),
+                height: 28,
+                padding: const EdgeInsets.symmetric(horizontal: 6),
+                decoration: BoxDecoration(
+                  color: colors.panelAlt,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(
+                    color: colors.border.withValues(alpha: .5),
+                  ),
+                ),
+                child: SingleChildScrollView(
+                  key: const ValueKey('fileBrowserBreadcrumbs'),
+                  scrollDirection: Axis.horizontal,
+                  child: Row(children: _breadcrumbs(context)),
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
 
   List<Widget> _breadcrumbs(BuildContext context) {
-    final theme = Theme.of(context);
-    final style = theme.textTheme.bodySmall;
+    final colors = FahColors.of(context);
+    final style = TextStyle(color: colors.dim, fontSize: 12, height: 1.2);
     Widget crumb(String label, int index, bool isCurrent) {
       final child = Padding(
         padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
         child: Text(
           label,
           style: isCurrent
-              ? style?.copyWith(fontWeight: FontWeight.bold)
+              ? style.copyWith(color: colors.text, fontWeight: FontWeight.w600)
               : style,
         ),
       );
@@ -572,42 +671,71 @@ class _FileBrowserState extends State<FileBrowser> {
 
     final crumbs = <Widget>[crumb('/', -1, _segments.isEmpty)];
     for (var i = 0; i < _segments.length; i++) {
-      crumbs.add(Icon(Icons.chevron_right, size: 14, color: theme.hintColor));
+      crumbs.add(Icon(Icons.chevron_right, size: 14, color: colors.dim));
       crumbs.add(crumb(_segments[i], i, i == _segments.length - 1));
     }
     return crumbs;
   }
 
   Widget _buildBody(BuildContext context) {
+    final colors = FahColors.of(context);
     final preview = _preview;
     if (preview != null) {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Row(
-            children: [
-              IconButton(
-                icon: const Icon(Icons.arrow_back),
-                tooltip: context.l10n.filesBackTooltip,
-                onPressed: () => setState(() => _preview = null),
+          SizedBox(
+            key: const ValueKey('filePreviewHeader'),
+            height: 44,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+              child: Row(
+                children: [
+                  _headerAction(
+                    IconButton(
+                      icon: const Icon(Icons.arrow_back, size: 18),
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints.tightFor(
+                        width: 40,
+                        height: 40,
+                      ),
+                      style: IconButton.styleFrom(
+                        minimumSize: const Size.square(40),
+                        maximumSize: const Size.square(40),
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      ),
+                      tooltip: context.l10n.filesBackTooltip,
+                      onPressed: () => setState(() => _preview = null),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      preview.name,
+                      maxLines: 1,
+                      style: TextStyle(
+                        color: colors.text,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                      ),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ],
               ),
-              Expanded(
-                child: Text(
-                  preview.name,
-                  style: Theme.of(context).textTheme.titleSmall,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-            ],
+            ),
           ),
-          const Divider(height: 1),
+          Divider(height: 1, color: colors.border.withValues(alpha: .55)),
           Expanded(
-            child: FilePreviewView(
-              key: ValueKey('${preview.path}#$_previewRevision'),
-              env: widget.env,
-              path: preview.path,
-              name: preview.name,
-              htmlPreviewBuilder: widget.htmlPreviewBuilder,
+            child: ColoredBox(
+              color: colors.panel,
+              child: FilePreviewView(
+                key: ValueKey('${preview.path}#$_previewRevision'),
+                env: widget.env,
+                path: preview.path,
+                name: preview.name,
+                htmlPreviewBuilder: widget.htmlPreviewBuilder,
+              ),
             ),
           ),
         ],
@@ -615,7 +743,7 @@ class _FileBrowserState extends State<FileBrowser> {
     }
 
     if (_loading) {
-      return const Center(child: CircularProgressIndicator());
+      return Center(child: CircularProgressIndicator(color: colors.indigo));
     }
     final error = _error;
     if (error != null) {
@@ -634,12 +762,16 @@ class _FileBrowserState extends State<FileBrowser> {
               const SizedBox(height: 12),
               Text(
                 context.l10n.filesOpenFolderError,
-                style: theme.textTheme.titleSmall,
+                style: TextStyle(
+                  color: colors.text,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                ),
               ),
               const SizedBox(height: 4),
               Text(
                 error,
-                style: theme.textTheme.bodySmall,
+                style: TextStyle(color: colors.dim, fontSize: 12),
                 textAlign: TextAlign.center,
               ),
               const SizedBox(height: 12),
@@ -655,39 +787,124 @@ class _FileBrowserState extends State<FileBrowser> {
     }
     final entries = _entries!;
     if (entries.isEmpty) {
-      final theme = Theme.of(context);
       return Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.folder_open_outlined, size: 40, color: theme.hintColor),
+            Icon(Icons.folder_open_outlined, size: 40, color: colors.dim),
             const SizedBox(height: 12),
             Text(
               context.l10n.filesEmptyFolder,
-              style: theme.textTheme.bodySmall,
+              style: TextStyle(color: colors.dim, fontSize: 12),
             ),
           ],
         ),
       );
     }
-    return ListView.builder(
-      itemCount: entries.length,
-      itemBuilder: (context, index) {
-        final entry = entries[index];
-        final isDir = entry.kind == FileKind.directory;
-        return ListTile(
-          dense: true,
-          leading: Icon(_iconFor(entry), size: 20),
-          title: Text(entry.name, overflow: TextOverflow.ellipsis),
-          trailing: isDir
-              ? const Icon(Icons.chevron_right, size: 18)
-              : Text(
-                  formatFileSize(entry.size),
-                  style: Theme.of(context).textTheme.labelSmall,
+    final directories = entries
+        .where((entry) => entry.kind == FileKind.directory)
+        .toList(growable: false);
+    final files = entries
+        .where((entry) => entry.kind != FileKind.directory)
+        .toList(growable: false);
+    return ListView(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      children: [
+        if (directories.isNotEmpty)
+          _entryCard(
+            directories,
+            colors,
+            key: const ValueKey('fileBrowserFoldersCard'),
+          ),
+        if (files.isNotEmpty)
+          _entryCard(
+            files,
+            colors,
+            key: const ValueKey('fileBrowserFilesCard'),
+          ),
+      ],
+    );
+  }
+
+  Widget _entryCard(
+    List<FileInfo> entries,
+    FahColors colors, {
+    required Key key,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      child: Material(
+        key: key,
+        color: colors.panelAlt,
+        clipBehavior: Clip.antiAlias,
+        shape: RoundedSuperellipseBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: BorderSide(color: colors.border.withValues(alpha: .55)),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            for (var index = 0; index < entries.length; index++) ...[
+              _entryRow(entries[index], colors),
+              if (index != entries.length - 1)
+                Divider(
+                  height: 1,
+                  indent: 54,
+                  endIndent: 12,
+                  color: colors.border.withValues(alpha: .45),
                 ),
-          onTap: () => isDir ? _enterDir(entry) : _openFile(entry),
-        );
-      },
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _entryRow(FileInfo entry, FahColors colors) {
+    final isDir = entry.kind == FileKind.directory;
+    return SizedBox(
+      height: 52,
+      child: ListTile(
+        key: ValueKey('fileRow-${entry.name}'),
+        dense: true,
+        contentPadding: const EdgeInsets.symmetric(horizontal: 8),
+        horizontalTitleGap: 10,
+        minLeadingWidth: 36,
+        shape: RoundedSuperellipseBorder(
+          borderRadius: BorderRadius.circular(12),
+        ),
+        hoverColor: colors.panel.withValues(alpha: .7),
+        selectedTileColor: colors.indigo.withValues(alpha: .12),
+        splashColor: colors.indigo.withValues(alpha: .12),
+        leading: Container(
+          width: 36,
+          height: 36,
+          decoration: BoxDecoration(
+            color: colors.panel,
+            borderRadius: BorderRadius.circular(isDir ? 10 : 18),
+          ),
+          child: Icon(_iconFor(entry), size: 18, color: colors.dim),
+        ),
+        title: Text(
+          entry.name,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            color: colors.text,
+            fontSize: 14,
+            fontWeight: FontWeight.w500,
+            height: 1.2,
+          ),
+        ),
+        trailing: isDir
+            ? Icon(Icons.chevron_right, size: 18, color: colors.dim)
+            : Text(
+                formatFileSize(entry.size),
+                maxLines: 1,
+                style: TextStyle(color: colors.dim, fontSize: 11),
+              ),
+        onTap: () => isDir ? _enterDir(entry) : _openFile(entry),
+      ),
     );
   }
 }

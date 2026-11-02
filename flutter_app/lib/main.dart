@@ -14,7 +14,6 @@ import 'package:fa/boot/boot_watchdog.dart';
 import 'package:fa/network/network_mode.dart';
 import 'package:fa/network/network_session_manager.dart';
 import 'package:fa/ui/app_theme.dart';
-import 'package:fa/ui/network/network_home.dart';
 import 'package:fa/ui/widgets/widget_publication_resume_refresh.dart';
 import 'package:fa/ui/widgets/wide_layout_shell.dart';
 import 'package:fa/ui/widgets/downloaded_models_quick_start.dart';
@@ -51,8 +50,6 @@ import 'package:fa/webllm/webllm_types.dart';
 import 'package:fa_ui/fa_ui.dart'
     show
         buildFaTheme,
-        faWindowClassForWidth,
-        FaWindowClass,
         MediaModelsScope,
         SandboxAudioControllerFactory,
         SandboxVideoControllerFactory,
@@ -428,21 +425,12 @@ Widget faHomeScreen({
   LauncherLayoutStore? layoutStore,
   AppsStore? appsStore,
 
-  /// Network mode (issue #955): the WIDE home never swaps — the
-  /// [WideLayoutShell] consumes the mode internally (sidebar shows the
-  /// networks list, the center the network surface). The NARROW home
-  /// swaps to [NetworkHomePage] when the controller says
-  /// [AppMode.network] (the mobile list → channels → chat navigation
-  /// pattern). When absent (tests, non-network hosts) the home is
-  /// byte-identical to the classic local tree (AC-N1).
+  /// Optional network auth/management wiring. Network selection is a filter
+  /// inside the one messenger list; legacy mode never replaces this home.
   NetworkModeController? networkMode,
   NetworkSessionManager? networkSessions,
 }) {
-  final isWide =
-      faWindowClassForWidth(MediaQuery.sizeOf(context).width) !=
-      FaWindowClass.small;
-  // The local home keeps one stateful shell across responsive layouts; the
-  // network gate below still swaps the WHOLE narrow surface when requested.
+  // One messenger home across responsive layouts and network filters.
   final localHome = WidgetPublicationResumeRefresher(
     env: manager.env,
     child: WideLayoutShell(
@@ -462,17 +450,7 @@ Widget faHomeScreen({
       networkSessions: networkSessions,
     ),
   );
-  final mode = networkMode;
-  final sessions = networkSessions;
-  // Wide: the shell consumes the mode internally (sidebar/center swap in
-  // place) — the full-tree swap is the NARROW pattern only.
-  if (mode == null || sessions == null || isWide) return localHome;
-  return ListenableBuilder(
-    listenable: mode,
-    builder: (context, _) => mode.mode == AppMode.network
-        ? NetworkHomePage(controller: mode, manager: sessions)
-        : localHome,
-  );
+  return localHome;
 }
 
 /// Boot decision screen: the setup form shows only when nothing was ever

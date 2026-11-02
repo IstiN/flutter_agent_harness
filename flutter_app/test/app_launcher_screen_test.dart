@@ -174,6 +174,7 @@ Future<_Harness> _pumpLauncher(
   int? gridColumns,
   bool useEnvLayout = false,
   Size? surface,
+  VoidCallback? onOpenNetworks,
 }) async {
   if (surface != null) {
     tester.view.physicalSize = surface;
@@ -207,6 +208,7 @@ Future<_Harness> _pumpLauncher(
         layoutStore: useEnvLayout ? null : layout,
         appsStore: _appsStore(env),
         tileEngineFactory: tileEngineFactory,
+        onOpenNetworks: onOpenNetworks,
       ),
     ),
   );
@@ -242,6 +244,17 @@ void main() {
       expect(find.text('Gamma'), findsOneWidget);
       expect(find.text('Settings'), findsOneWidget);
       expect(find.text('Files'), findsOneWidget);
+    });
+
+    testWidgets('network-capable host exposes Networks as an Apps tile', (
+      tester,
+    ) async {
+      var opened = 0;
+      await _pumpLauncher(tester, onOpenNetworks: () => opened++);
+      expect(find.text('Networks'), findsOneWidget);
+      await tester.ensureVisible(find.text('Networks'));
+      await tester.tap(find.text('Networks'));
+      expect(opened, 1);
     });
 
     testWidgets('drop near the edge reorders tiles', (tester) async {
@@ -975,7 +988,8 @@ void main() {
     });
   });
   Finder searchField() => find.byWidgetPredicate(
-    (w) => w is TextField && w.decoration?.hintText == 'Search widgets…',
+    (w) =>
+        w is TextField && w.decoration?.hintText == 'Search apps and widgets…',
   );
 
   group('AppLauncherScreen search', () {
@@ -991,6 +1005,52 @@ void main() {
       expect(find.text('Beta'), findsNothing);
       expect(find.text('Gamma'), findsNothing);
     });
+
+    testWidgets(
+      'search result updates animate without duplicate settled items',
+      (tester) async {
+        await _pumpLauncher(tester);
+        await tester.enterText(searchField(), 'alp');
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 50));
+        final result = find.byKey(const ValueKey('appSearchResults-alpha'));
+        expect(result, findsOneWidget);
+        final opacities = tester.widgetList<Opacity>(
+          find.ancestor(of: result, matching: find.byType(Opacity)),
+        );
+        expect(
+          opacities.any(
+            (opacity) => opacity.opacity > 0 && opacity.opacity < 1,
+          ),
+          isTrue,
+        );
+        expect(tester.takeException(), isNull);
+        await tester.pumpAndSettle();
+        expect(find.text('Alpha'), findsOneWidget);
+        expect(find.text('Beta'), findsNothing);
+
+        await tester.enterText(searchField(), 'a');
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 50));
+        final crossfades = tester.widgetList<FadeTransition>(
+          find.descendant(
+            of: find.byKey(const ValueKey('appSearchResultsSwitcher')),
+            matching: find.byType(FadeTransition),
+          ),
+        );
+        expect(
+          crossfades
+              .where((fade) => fade.opacity.value > 0 && fade.opacity.value < 1)
+              .length,
+          greaterThanOrEqualTo(2),
+        );
+        expect(tester.takeException(), isNull);
+        await tester.pumpAndSettle();
+        expect(find.text('Alpha'), findsOneWidget);
+        expect(find.text('Beta'), findsOneWidget);
+        expect(find.text('Gamma'), findsOneWidget);
+      },
+    );
 
     testWidgets('a query with no matches shows the empty marker', (
       tester,

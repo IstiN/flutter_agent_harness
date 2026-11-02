@@ -64,6 +64,26 @@ ThemeData buildFaTheme({
     appBarTheme: base.appBarTheme.copyWith(
       titleTextStyle: textTheme.titleLarge,
     ),
+    tooltipTheme: direction == FaVisualDirection.glass
+        ? base.tooltipTheme.copyWith(
+            waitDuration: const Duration(milliseconds: 450),
+            showDuration: const Duration(seconds: 3),
+            verticalOffset: 18,
+            preferBelow: true,
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            decoration: BoxDecoration(
+              color: const Color(0xF22C2C2E),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: const Color(0x33FFFFFF)),
+            ),
+            textStyle: const TextStyle(
+              color: Colors.white,
+              fontSize: 12,
+              fontWeight: FontWeight.w500,
+              height: 1.2,
+            ),
+          )
+        : base.tooltipTheme,
     filledButtonTheme: FilledButtonThemeData(
       style: base.filledButtonTheme.style?.copyWith(
         textStyle: WidgetStatePropertyAll(actionTextStyle),

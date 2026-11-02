@@ -22,6 +22,23 @@ void main() {
       },
     );
 
+    test('syncApps opts network-capable hosts into the Networks tile', () {
+      final store = LauncherLayoutStore.inMemory();
+      store.syncApps(['weather'], includeNetworks: true);
+      expect(store.topLevelKeys, [
+        'app:weather',
+        LauncherLayoutStore.settingsKey,
+        LauncherLayoutStore.filesKey,
+        LauncherLayoutStore.networksKey,
+      ]);
+
+      store.syncApps(['weather']);
+      expect(
+        store.topLevelKeys,
+        isNot(contains(LauncherLayoutStore.networksKey)),
+      );
+    });
+
     test('syncApps appends new apps, prunes deleted ones, keeps order', () {
       final store = LauncherLayoutStore.inMemory();
       store.syncApps(['a', 'b', 'c']);

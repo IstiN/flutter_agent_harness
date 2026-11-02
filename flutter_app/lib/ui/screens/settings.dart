@@ -78,6 +78,26 @@ export 'package:fa_ui/fa_ui.dart'
 part 'settings_sections.dart';
 part 'settings_flows.dart';
 
+/// Shared Fa dialog chrome for the few confirmations that remain Material
+/// dialogs. The layout, actions, focus and route results stay unchanged.
+RoundedSuperellipseBorder _settingsDialogShape(BuildContext context) {
+  final tokens = faui.FaDesignTokens.of(context);
+  return RoundedSuperellipseBorder(
+    borderRadius: BorderRadius.circular(tokens.radiusLg),
+    side: BorderSide(color: tokens.hairline),
+  );
+}
+
+/// Keeps the themed button metrics while making a confirmation destructive.
+ButtonStyle _settingsDestructiveButtonStyle(BuildContext context) {
+  final tokens = faui.FaDesignTokens.of(context);
+  final base = Theme.of(context).filledButtonTheme.style;
+  return (base ?? const ButtonStyle()).copyWith(
+    backgroundColor: WidgetStatePropertyAll(tokens.danger),
+    foregroundColor: WidgetStatePropertyAll(tokens.accentInk),
+  );
+}
+
 /// The key-storage notes match the platform: on secure-store surfaces
 /// (iOS/macOS Keychain, Android Keystore — see [KeychainStore]) saved keys
 /// persist on device; elsewhere the session/app-sandbox wording applies.
@@ -753,12 +773,16 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
   /// model picker over [webLlmModelPresets], the offline/WebGPU note, and —
   /// while a load is in flight — the engine-init progress bar.
   Widget _buildWebLlmFields(ThemeData theme) {
+    final tokens = faui.FaDesignTokens.of(context);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         DropdownButtonFormField<WebLlmModelPreset>(
           initialValue: _webllmModel,
           isExpanded: true,
+          dropdownColor: tokens.surface2,
+          iconEnabledColor: tokens.ink2,
+          borderRadius: BorderRadius.circular(tokens.radiusMd),
           decoration: InputDecoration(
             labelText: context.l10n.settingsOnDeviceModelLabel,
           ),
@@ -798,12 +822,12 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
         Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Icon(Icons.memory, size: 16, color: theme.colorScheme.primary),
+            Icon(Icons.memory, size: 16, color: tokens.accent),
             const SizedBox(width: 8),
             Expanded(
               child: Text(
                 context.l10n.settingsWebllmNote,
-                style: theme.textTheme.bodySmall,
+                style: theme.textTheme.bodySmall?.copyWith(color: tokens.ink2),
               ),
             ),
           ],
@@ -816,7 +840,7 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
             _loadStatus != null && _loadStatus!.isNotEmpty
                 ? _loadStatus!
                 : context.l10n.settingsDownloadingWeights,
-            style: theme.textTheme.bodySmall,
+            style: theme.textTheme.bodySmall?.copyWith(color: tokens.ink2),
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
           ),
@@ -830,12 +854,16 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
   /// offline/WebGPU note, and — while a load is in flight — the download
   /// progress bar. No token field: the ONNX repos are public.
   Widget _buildTransformersJsFields(ThemeData theme) {
+    final tokens = faui.FaDesignTokens.of(context);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         DropdownButtonFormField<TransformersJsModelPreset>(
           initialValue: _transformersJsModel,
           isExpanded: true,
+          dropdownColor: tokens.surface2,
+          iconEnabledColor: tokens.ink2,
+          borderRadius: BorderRadius.circular(tokens.radiusMd),
           decoration: InputDecoration(
             labelText: context.l10n.settingsOnDeviceModelLabel,
           ),
@@ -875,12 +903,12 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
         Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Icon(Icons.memory, size: 16, color: theme.colorScheme.primary),
+            Icon(Icons.memory, size: 16, color: tokens.accent),
             const SizedBox(width: 8),
             Expanded(
               child: Text(
                 context.l10n.settingsTransformersJsNote,
-                style: theme.textTheme.bodySmall,
+                style: theme.textTheme.bodySmall?.copyWith(color: tokens.ink2),
               ),
             ),
           ],
@@ -893,7 +921,7 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
             _loadStatus != null && _loadStatus!.isNotEmpty
                 ? _loadStatus!
                 : context.l10n.settingsDownloadingWeights,
-            style: theme.textTheme.bodySmall,
+            style: theme.textTheme.bodySmall?.copyWith(color: tokens.ink2),
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
           ),
@@ -1023,6 +1051,7 @@ class KeysSection extends StatelessWidget {
     VoidCallback? onSet,
     VoidCallback? onDelete,
   }) {
+    final tokens = faui.FaDesignTokens.of(context);
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 2),
       child: Row(
@@ -1033,13 +1062,15 @@ class KeysSection extends StatelessWidget {
               children: [
                 Text(
                   title,
-                  style: FahPalette.mono(
-                    color: theme.colorScheme.onSurface,
-                    fontSize: 12,
-                  ),
+                  style: FahPalette.mono(color: tokens.ink1, fontSize: 12),
                   overflow: TextOverflow.ellipsis,
                 ),
-                Text(source, style: theme.textTheme.bodySmall),
+                Text(
+                  source,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: tokens.ink2,
+                  ),
+                ),
               ],
             ),
           ),
@@ -1052,11 +1083,7 @@ class KeysSection extends StatelessWidget {
             IconButton(
               tooltip: context.l10n.commonDelete,
               onPressed: onDelete,
-              icon: Icon(
-                Icons.delete_outline,
-                size: 18,
-                color: theme.colorScheme.error,
-              ),
+              icon: Icon(Icons.delete_outline, size: 18, color: tokens.danger),
             ),
         ],
       ),
@@ -1102,6 +1129,9 @@ class KeysSection extends StatelessWidget {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
+        backgroundColor: faui.FaDesignTokens.of(dialogContext).surface1,
+        surfaceTintColor: Colors.transparent,
+        shape: _settingsDialogShape(dialogContext),
         title: Text(context.l10n.keysDeleteTitle(name)),
         content: Text(context.l10n.keysDeleteBody),
         actions: [
@@ -1110,6 +1140,7 @@ class KeysSection extends StatelessWidget {
             child: Text(context.l10n.commonCancel),
           ),
           FilledButton(
+            style: _settingsDestructiveButtonStyle(dialogContext),
             onPressed: () => Navigator.of(dialogContext).pop(true),
             child: Text(context.l10n.commonDelete),
           ),
@@ -1532,10 +1563,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       onDeviceRowVisible: onDeviceConfig?.isConfigured,
       onDeviceConnected: (config) async {
         final agentConfig = agentConfigFrom(config);
-        const onDeviceKinds = {
-          webLlmProviderKind,
-          transformersJsProviderKind,
-        };
+        const onDeviceKinds = {webLlmProviderKind, transformersJsProviderKind};
         if (onDeviceKinds.contains(agentConfig.providerKind)) {
           await onDeviceConfig?.markConfigured(agentConfig.providerKind);
         }
@@ -1686,15 +1714,15 @@ class _ModelsRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colors = FahColors.of(context);
+    final tokens = faui.FaDesignTokens.of(context);
     return InkWell(
-      borderRadius: BorderRadius.circular(12),
+      borderRadius: BorderRadius.circular(tokens.radiusMd),
       onTap: onTap,
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: 8),
         child: Row(
           children: [
-            faui.FaModelGlyph(size: 20, color: colors.dim),
+            faui.FaModelGlyph(size: 20, color: tokens.ink2),
             const SizedBox(width: 12),
             Expanded(
               child: Text(
@@ -1702,7 +1730,7 @@ class _ModelsRow extends StatelessWidget {
                 style: Theme.of(context).textTheme.bodyMedium,
               ),
             ),
-            Icon(Icons.chevron_right, size: 20, color: colors.dim),
+            Icon(Icons.chevron_right, size: 20, color: tokens.ink2),
           ],
         ),
       ),
@@ -1722,14 +1750,14 @@ class HomeGridSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colors = FahColors.of(context);
+    final tokens = faui.FaDesignTokens.of(context);
     return ListenableBuilder(
       listenable: layoutStore,
       builder: (context, _) {
         final current = layoutStore.gridColumns;
         return Row(
           children: [
-            Icon(Icons.grid_view_outlined, size: 20, color: colors.dim),
+            Icon(Icons.grid_view_outlined, size: 20, color: tokens.ink2),
             const SizedBox(width: 12),
             Expanded(
               child: Column(
@@ -1743,7 +1771,7 @@ class HomeGridSection extends StatelessWidget {
                     context.l10n.settingsIconsPerRowHint,
                     style: Theme.of(
                       context,
-                    ).textTheme.bodySmall?.copyWith(color: colors.dim),
+                    ).textTheme.bodySmall?.copyWith(color: tokens.ink2),
                   ),
                 ],
               ),
@@ -1751,6 +1779,9 @@ class HomeGridSection extends StatelessWidget {
             DropdownButton<int?>(
               value: current,
               underline: const SizedBox.shrink(),
+              dropdownColor: tokens.surface2,
+              iconEnabledColor: tokens.ink2,
+              borderRadius: BorderRadius.circular(tokens.radiusMd),
               items: [
                 DropdownMenuItem<int?>(
                   child: Text(context.l10n.settingsIconsPerRowAuto),
@@ -1821,9 +1852,12 @@ class ResetAppsSection extends StatelessWidget {
     return showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
+        backgroundColor: faui.FaDesignTokens.of(dialogContext).surface1,
+        surfaceTintColor: Colors.transparent,
+        shape: _settingsDialogShape(dialogContext),
         icon: Icon(
           Icons.warning_amber_rounded,
-          color: Theme.of(dialogContext).colorScheme.error,
+          color: faui.FaDesignTokens.of(dialogContext).danger,
         ),
         title: Text(l10n.settingsResetAppsConfirmTitle),
         content: SizedBox(
@@ -1836,6 +1870,7 @@ class ResetAppsSection extends StatelessWidget {
             child: Text(l10n.commonCancel),
           ),
           FilledButton(
+            style: _settingsDestructiveButtonStyle(dialogContext),
             onPressed: () => Navigator.of(dialogContext).pop(true),
             child: Text(l10n.settingsResetApps),
           ),
@@ -1846,11 +1881,11 @@ class ResetAppsSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colors = FahColors.of(context);
+    final tokens = faui.FaDesignTokens.of(context);
     final theme = Theme.of(context);
     return Row(
       children: [
-        Icon(Icons.restart_alt, size: 20, color: colors.dim),
+        Icon(Icons.restart_alt, size: 20, color: tokens.ink2),
         const SizedBox(width: 12),
         Expanded(
           child: Column(
@@ -1862,14 +1897,14 @@ class ResetAppsSection extends StatelessWidget {
               ),
               Text(
                 context.l10n.settingsResetAppsHint,
-                style: theme.textTheme.bodySmall?.copyWith(color: colors.dim),
+                style: theme.textTheme.bodySmall?.copyWith(color: tokens.ink2),
               ),
             ],
           ),
         ),
         TextButton(
           onPressed: () => _confirmAndReset(context),
-          style: TextButton.styleFrom(foregroundColor: theme.colorScheme.error),
+          style: TextButton.styleFrom(foregroundColor: tokens.danger),
           child: Text(context.l10n.settingsResetApps),
         ),
       ],
@@ -1892,7 +1927,7 @@ class SkillsAccessSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colors = FahColors.of(context);
+    final tokens = faui.FaDesignTokens.of(context);
     String label(SkillsAccess access) => switch (access) {
       SkillsAccess.ask => context.l10n.skillsAccessAsk,
       SkillsAccess.granted => context.l10n.skillsAccessAllowed,
@@ -1903,7 +1938,7 @@ class SkillsAccessSection extends StatelessWidget {
       builder: (context, _) {
         return Row(
           children: [
-            Icon(Icons.extension_outlined, size: 20, color: colors.dim),
+            Icon(Icons.extension_outlined, size: 20, color: tokens.ink2),
             const SizedBox(width: 12),
             Expanded(
               child: Column(
@@ -1917,7 +1952,7 @@ class SkillsAccessSection extends StatelessWidget {
                     context.l10n.settingsSkillsAccessHint,
                     style: Theme.of(
                       context,
-                    ).textTheme.bodySmall?.copyWith(color: colors.dim),
+                    ).textTheme.bodySmall?.copyWith(color: tokens.ink2),
                   ),
                 ],
               ),
@@ -1925,6 +1960,9 @@ class SkillsAccessSection extends StatelessWidget {
             DropdownButton<SkillsAccess>(
               value: service.skillsAccess,
               underline: const SizedBox.shrink(),
+              dropdownColor: tokens.surface2,
+              iconEnabledColor: tokens.ink2,
+              borderRadius: BorderRadius.circular(tokens.radiusMd),
               items: [
                 for (final access in SkillsAccess.values)
                   DropdownMenuItem(value: access, child: Text(label(access))),
@@ -1969,9 +2007,9 @@ class OnboardingReplaySection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colors = FahColors.of(context);
+    final tokens = faui.FaDesignTokens.of(context);
     return InkWell(
-      borderRadius: BorderRadius.circular(12),
+      borderRadius: BorderRadius.circular(tokens.radiusMd),
       onTap: () {
         unawaited(
           Navigator.of(context).push(
@@ -1992,7 +2030,7 @@ class OnboardingReplaySection extends StatelessWidget {
         padding: const EdgeInsets.symmetric(vertical: 8),
         child: Row(
           children: [
-            Icon(Icons.waving_hand_outlined, size: 20, color: colors.dim),
+            Icon(Icons.waving_hand_outlined, size: 20, color: tokens.ink2),
             const SizedBox(width: 12),
             Expanded(
               child: Text(
@@ -2000,7 +2038,7 @@ class OnboardingReplaySection extends StatelessWidget {
                 style: Theme.of(context).textTheme.bodyMedium,
               ),
             ),
-            Icon(Icons.chevron_right, size: 20, color: colors.dim),
+            Icon(Icons.chevron_right, size: 20, color: tokens.ink2),
           ],
         ),
       ),
@@ -2016,9 +2054,9 @@ class MobileAutomationSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colors = FahColors.of(context);
+    final tokens = faui.FaDesignTokens.of(context);
     return InkWell(
-      borderRadius: BorderRadius.circular(12),
+      borderRadius: BorderRadius.circular(tokens.radiusMd),
       onTap: () {
         unawaited(
           Navigator.of(context).push(
@@ -2033,7 +2071,7 @@ class MobileAutomationSection extends StatelessWidget {
         padding: const EdgeInsets.symmetric(vertical: 8),
         child: Row(
           children: [
-            Icon(Icons.settings_accessibility, size: 20, color: colors.dim),
+            Icon(Icons.settings_accessibility, size: 20, color: tokens.ink2),
             const SizedBox(width: 12),
             Expanded(
               child: Text(
@@ -2041,7 +2079,7 @@ class MobileAutomationSection extends StatelessWidget {
                 style: Theme.of(context).textTheme.bodyMedium,
               ),
             ),
-            Icon(Icons.chevron_right, size: 20, color: colors.dim),
+            Icon(Icons.chevron_right, size: 20, color: tokens.ink2),
           ],
         ),
       ),
@@ -2058,20 +2096,20 @@ class DebugLogsSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colors = FahColors.of(context);
+    final tokens = faui.FaDesignTokens.of(context);
     return Column(
       children: [
         Row(
           children: [
-            IconButton(
-              icon: const Icon(Icons.bug_report_outlined),
+            faui.FaIconButton(
+              icon: Icons.bug_report_outlined,
               tooltip: context.l10n.settingsCopyDebugLogs,
               onPressed: () => _copyLogs(context),
             ),
             Expanded(
               child: Text(
                 context.l10n.settingsCopyDebugLogs,
-                style: TextStyle(color: colors.dim, fontSize: 13),
+                style: TextStyle(color: tokens.ink2, fontSize: 13),
               ),
             ),
           ],
@@ -2079,15 +2117,15 @@ class DebugLogsSection extends StatelessWidget {
         if (!kIsWeb)
           Row(
             children: [
-              IconButton(
-                icon: const Icon(Icons.emergency_share_outlined),
+              faui.FaIconButton(
+                icon: Icons.emergency_share_outlined,
                 tooltip: context.l10n.settingsSendTestCrashReport,
                 onPressed: () => _sendTestReport(context),
               ),
               Expanded(
                 child: Text(
                   context.l10n.settingsSendTestCrashReport,
-                  style: TextStyle(color: colors.dim, fontSize: 13),
+                  style: TextStyle(color: tokens.ink2, fontSize: 13),
                 ),
               ),
             ],
@@ -2201,20 +2239,17 @@ class _NoServiceSettings extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final colors = FahColors.of(context);
+    final tokens = faui.FaDesignTokens.of(context);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Container(
+        faui.FaSurface(
           padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: colors.indigo.withValues(alpha: 0.08),
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: colors.indigo.withValues(alpha: 0.3)),
-          ),
+          color: tokens.accentSoft,
+          borderRadius: BorderRadius.circular(tokens.radiusMd),
           child: Row(
             children: [
-              Icon(Icons.cloud_outlined, color: colors.indigo, size: 22),
+              Icon(Icons.cloud_outlined, color: tokens.accent, size: 22),
               const SizedBox(width: 12),
               Expanded(
                 child: Text(

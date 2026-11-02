@@ -15,8 +15,8 @@ import 'fake_chat_service.dart';
 /// viewport with the keyboard visible: the composer is docked at the
 /// bottom under a simulated inset, the field holds ONE line, and the
 /// whole widget's rendered height must stay within a fixed budget. The
-/// budget pins the compact single-layer padding: max(48px hit-target
-/// buttons, one text line) + 2×4dp outer padding.
+/// budget pins the compact single-layer padding: a 36px control/one-line
+/// row plus 2+2px row padding, with floating margins outside the surface.
 void main() {
   testWidgets('AC1: composer height stays within the mobile budget with '
       'the keyboard visible', (tester) async {
@@ -43,10 +43,23 @@ void main() {
     final height = tester
         .getSize(find.byKey(const ValueKey('composer')))
         .height;
-    // Compact budget: buttons floor the row at 48, outer padding 4+4 —
-    // 57dp total (1dp top hairline + 48dp buttons + 4+4dp padding). The pre-fix nested padding
-    // (8+12 above and below the text) measures 64dp.
-    expect(height, lessThanOrEqualTo(57), reason: 'composer height');
+    // 40px surface + 4px top separation + 8px outer bottom margin.
+    expect(height, 52, reason: 'composer height including floating margins');
+    expect(
+      tester.getSize(find.byKey(const ValueKey('faChatFloatingComposer'))),
+      const Size(390 - 16, 40),
+      reason: '40px single-line surface inside 8px horizontal margins',
+    );
+    expect(
+      tester
+          .getSize(find.byKey(const ValueKey('faChatComposerFieldRow')))
+          .height,
+      40,
+    );
+    expect(
+      tester.getSize(find.byKey(const ValueKey('faChatComposerSendButton'))),
+      const Size.square(36),
+    );
   });
 
   testWidgets('AC1 E3: without an inset (hardware keyboard) the paddings '
@@ -73,7 +86,13 @@ void main() {
     final height = tester
         .getSize(find.byKey(const ValueKey('composer')))
         .height;
-    expect(height, lessThanOrEqualTo(57), reason: 'composer height');
+    expect(height, 52, reason: 'composer height including floating margins');
+    expect(
+      tester
+          .getSize(find.byKey(const ValueKey('faChatComposerFieldRow')))
+          .height,
+      40,
+    );
   });
 
   testWidgets('AC2: the attach button keeps a >=36x36 hit target', (
@@ -107,7 +126,52 @@ void main() {
     );
     expect(button, findsOneWidget);
     final size = tester.getSize(button);
-    expect(size.width, greaterThanOrEqualTo(36), reason: 'hit target width');
-    expect(size.height, greaterThanOrEqualTo(36), reason: 'hit target height');
+    expect(
+      size,
+      const Size.square(36),
+      reason: 'compact accessible hit target',
+    );
+  });
+
+  testWidgets('multiline grows to six lines then scrolls at the same height', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Align(
+            alignment: Alignment.bottomCenter,
+            child: ChatComposer(service: FakeChatService()),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final field = find.byKey(const ValueKey('faChatComposerTextField'));
+    final row = find.byKey(const ValueKey('faChatComposerFieldRow'));
+    await tester.enterText(
+      field,
+      List.generate(6, (i) => 'line $i').join('\n'),
+    );
+    await tester.pump();
+    final sixLineHeight = tester.getSize(row).height;
+    expect(sixLineHeight, greaterThan(40));
+    await tester.enterText(
+      field,
+      List.generate(8, (i) => 'line $i').join('\n'),
+    );
+    await tester.pump();
+    expect(tester.getSize(row).height, sixLineHeight);
+    final send = tester.getRect(
+      find.byKey(const ValueKey('faChatComposerSendButton')),
+    );
+    final surface = tester.getRect(
+      find.byKey(const ValueKey('faChatFloatingComposer')),
+    );
+    expect(surface.contains(send.center), isTrue);
+    expect(send.size, const Size.square(36));
   });
 }

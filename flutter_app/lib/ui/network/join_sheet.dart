@@ -173,6 +173,10 @@ class _JoinSheetState extends State<JoinSheet> {
   Widget build(BuildContext context) {
     final colors = FahColors.of(context);
     final error = _error;
+    final initialMembership =
+        widget.manager.wallet.networks[widget.initialNetworkId];
+    final explainOneTimePassword =
+        initialMembership != null && initialMembership.password == null;
     return SingleChildScrollView(
       padding: const EdgeInsets.fromLTRB(20, 8, 20, 20),
       child: Column(
@@ -185,6 +189,16 @@ class _JoinSheetState extends State<JoinSheet> {
               context,
             ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600),
           ),
+          if (explainOneTimePassword) ...[
+            const SizedBox(height: 8),
+            Text(
+              context.l10n.networkNeedsPasswordBody,
+              key: const ValueKey('networkNeedsPasswordExplanation'),
+              style: Theme.of(
+                context,
+              ).textTheme.bodySmall?.copyWith(color: colors.dim),
+            ),
+          ],
           const SizedBox(height: 12),
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,

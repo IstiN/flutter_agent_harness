@@ -6,7 +6,7 @@ import 'package:flutter/material.dart';
 
 import '../theme/fa2_tokens.dart';
 
-/// The owner-approved Squircle-V2 identity from `logos.html`.
+/// The canonical B3-square-accent identity from `logos.html`.
 ///
 /// This is a vector painting, not a font glyph or raster asset: app icon,
 /// launcher mark and compact brand header therefore share the exact geometry.
@@ -27,7 +27,7 @@ class FaLogo extends StatelessWidget {
   );
 }
 
-/// Paints the canonical 84×84 Fa mark in any [FaDesignTokens] palette.
+/// Paints the canonical 68×68 B3-square-accent mark in any token palette.
 class FaLogoPainter extends CustomPainter {
   const FaLogoPainter(this.tokens);
 
@@ -36,113 +36,54 @@ class FaLogoPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     canvas.save();
-    canvas.scale(size.width / 84, size.height / 84);
-    final outerRadius = tokens.direction == FaVisualDirection.graphite
-        ? 18.0
-        : 22.0;
-    final outerFill = tokens.direction == FaVisualDirection.glass
-        ? Color.lerp(tokens.surface1, tokens.accent, .09)!
-        : tokens.surface1;
-    canvas.drawRRect(
-      RRect.fromRectAndRadius(
-        const Rect.fromLTWH(4, 4, 76, 76),
-        Radius.circular(outerRadius),
-      ),
-      Paint()..color = outerFill,
-    );
-    canvas.drawRRect(
-      RRect.fromRectAndRadius(
-        const Rect.fromLTWH(4, 4, 76, 76),
-        Radius.circular(outerRadius),
-      ),
-      Paint()
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 1.5
-        ..color = tokens.hairline,
-    );
+    canvas.scale(size.width / 68, size.height / 68);
 
-    final bubble = Path()
-      ..moveTo(20, 22)
-      ..lineTo(64, 22)
-      ..arcToPoint(const Offset(72, 30), radius: const Radius.circular(8))
-      ..lineTo(72, 46)
-      ..arcToPoint(const Offset(64, 54), radius: const Radius.circular(8))
-      ..lineTo(38, 54)
-      ..lineTo(26, 62)
-      ..lineTo(26, 54)
-      ..lineTo(20, 54)
-      ..arcToPoint(const Offset(12, 46), radius: const Radius.circular(8))
-      ..lineTo(12, 30)
-      ..arcToPoint(
-        const Offset(20, 22),
-        radius: const Radius.circular(8),
-        clockwise: true,
-      )
-      ..close();
-    final bubbleFill = tokens.direction == FaVisualDirection.glass
-        ? tokens.surface2.withValues(alpha: .84)
-        : tokens.surface2;
-    canvas.drawPath(bubble, Paint()..color = bubbleFill);
-    canvas.drawPath(
-      bubble,
+    final outer = RRect.fromLTRBR(4, 4, 64, 64, const Radius.circular(18));
+    canvas.drawRRect(outer, Paint()..color = tokens.surface1);
+    canvas.drawRRect(
+      outer,
       Paint()
         ..style = PaintingStyle.stroke
-        ..strokeJoin = StrokeJoin.round
-        ..strokeWidth = 1.8
+        ..strokeWidth = 2
         ..color = tokens.accent,
     );
 
-    final prompt = Path()
-      ..moveTo(52, 28)
-      ..lineTo(57, 33)
-      ..lineTo(52, 38);
-    canvas.drawPath(prompt, _linePaint(tokens.accent, 2));
-    canvas.drawLine(
-      const Offset(59, 38),
-      const Offset(63, 38),
-      _linePaint(tokens.accent, 2),
-    );
+    final chevron = Path()
+      ..moveTo(15, 28)
+      ..lineTo(22, 34)
+      ..lineTo(15, 40);
+    canvas.drawPath(chevron, _linePaint(tokens.accent, 2.8));
 
-    // Dominant vector Fa, matching the 22px bold reference without a font.
-    canvas.save();
-    canvas.translate(24, 26);
-    canvas.scale(.72);
-    canvas.drawPath(
-      Path()
-        ..moveTo(0, 28)
-        ..lineTo(0, 0)
-        ..lineTo(16, 0),
-      _linePaint(tokens.ink1, 3.5),
-    );
+    // Deterministic vector Fa at the reference's x=27 / baseline=42 anchor.
+    // The 22px bold text is geometry, so rendering never depends on host fonts.
+    final f = Path()
+      ..moveTo(27, 42)
+      ..lineTo(27, 26)
+      ..lineTo(38.5, 26);
+    canvas.drawPath(f, _linePaint(tokens.ink1, 2.8));
     canvas.drawLine(
-      const Offset(0, 12.5),
-      const Offset(12, 12.5),
-      _linePaint(tokens.ink1, 3.5),
+      const Offset(27, 33.5),
+      const Offset(35.5, 33.5),
+      _linePaint(tokens.ink1, 2.8),
     );
-    canvas.restore();
-
-    canvas.save();
-    canvas.translate(38, 31);
-    canvas.scale(.82);
     canvas.drawCircle(
-      const Offset(7, 11),
-      6.5,
+      const Offset(43, 36),
+      5,
       Paint()
         ..style = PaintingStyle.stroke
-        ..strokeWidth = 3
+        ..strokeWidth = 2.6
         ..color = tokens.ink1,
     );
     canvas.drawLine(
-      const Offset(13.5, 4.5),
-      const Offset(13.5, 17.5),
-      _linePaint(tokens.ink1, 3),
+      const Offset(48, 31),
+      const Offset(48, 42),
+      _linePaint(tokens.ink1, 2.6),
     );
-    canvas.restore();
 
     final dotColor = tokens.agentHues.length > 1
         ? tokens.agentHues[1]
         : tokens.accent;
-    canvas.drawCircle(const Offset(60, 46), 3, Paint()..color = dotColor);
+    canvas.drawCircle(const Offset(48, 22), 3.2, Paint()..color = dotColor);
     canvas.restore();
   }
 

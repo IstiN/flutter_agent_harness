@@ -294,4 +294,117 @@ void main() {
     expect(tester.takeException(), isNull);
     expect(tester.getSize(find.byType(FaAdaptiveHeader)).width, 374);
   });
+
+  testWidgets(
+    '8px circular-action gaps participate in demotion and callbacks',
+    (tester) async {
+      var thirdCalls = 0;
+      Widget gapHeader(double width) => MaterialApp(
+        home: Scaffold(
+          body: SizedBox(
+            width: width,
+            height: 40,
+            child: FaAdaptiveHeader(
+              visualDensity: VisualDensity.compact,
+              iconSize: 18,
+              actionGap: 8,
+              actionBuilder: (context, action, button) =>
+                  FaHeaderCircularAction(child: button),
+              overflowBuilder: (context, button) =>
+                  FaHeaderCircularAction(child: button),
+              actions: [
+                FaHeaderAction(
+                  key: const ValueKey('gapFirst'),
+                  icon: Icons.folder_outlined,
+                  label: 'First',
+                  onPressed: () {},
+                ),
+                FaHeaderAction(
+                  key: const ValueKey('gapSecond'),
+                  icon: Icons.timeline,
+                  label: 'Second',
+                  onPressed: () {},
+                ),
+                FaHeaderAction(
+                  key: const ValueKey('gapThird'),
+                  icon: Icons.copy_outlined,
+                  label: 'Third',
+                  onPressed: () => thirdCalls++,
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+
+      await tester.pumpWidget(gapHeader(136));
+      final first = tester.getRect(find.byKey(const ValueKey('gapFirst')));
+      final second = tester.getRect(find.byKey(const ValueKey('gapSecond')));
+      final third = tester.getRect(find.byKey(const ValueKey('gapThird')));
+      expect(second.left - first.right, 8);
+      expect(third.left - second.right, 8);
+      expect(find.byIcon(Icons.more_vert), findsNothing);
+      expect(tester.takeException(), isNull);
+
+      await tester.pumpWidget(gapHeader(128));
+      expect(find.byKey(const ValueKey('gapFirst')), findsOneWidget);
+      expect(find.byKey(const ValueKey('gapSecond')), findsNothing);
+      expect(find.byKey(const ValueKey('gapThird')), findsNothing);
+      expect(tester.takeException(), isNull);
+      await tester.tap(find.byIcon(Icons.more_vert));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Third'));
+      await tester.pumpAndSettle();
+      expect(thirdCalls, 1);
+    },
+  );
+
+  testWidgets('tiny local widths never create negative constraints or flex '
+      'overflow', (tester) async {
+    for (final width in <double>[0, 20, 39, 40, 41.6, 48, 80, 120]) {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SizedBox(
+              width: width,
+              height: 40,
+              child: FaAdaptiveHeader(
+                leading: const Icon(Icons.menu),
+                projectIcon: Icons.folder_outlined,
+                projectLabel: 'Personal',
+                title: 'A session title',
+                chip: const SizedBox(width: 120, height: 28),
+                visualDensity: VisualDensity.compact,
+                actionGap: 8,
+                actionBuilder: (context, action, button) =>
+                    FaHeaderCircularAction(child: button),
+                overflowBuilder: (context, button) =>
+                    FaHeaderCircularAction(child: button),
+                actions: [
+                  FaHeaderAction(
+                    icon: Icons.stop,
+                    label: 'Stop',
+                    pinned: true,
+                    onPressed: () {},
+                  ),
+                  FaHeaderAction(
+                    icon: Icons.folder_outlined,
+                    label: 'Files',
+                    onPressed: () {},
+                  ),
+                  FaHeaderAction(
+                    icon: Icons.copy_outlined,
+                    label: 'Copy',
+                    onPressed: () {},
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      expect(tester.takeException(), isNull, reason: 'width=$width');
+    }
+  });
 }

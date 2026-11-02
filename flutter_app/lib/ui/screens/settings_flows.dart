@@ -224,7 +224,11 @@ extension _SettingsFormFlowHelpers on _AgentSettingsFormState {
   Widget _buildKeyNoteRow(ThemeData theme, Object selection) => Row(
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
-      Icon(Icons.lock_outline, size: 16, color: theme.colorScheme.primary),
+      Icon(
+        Icons.lock_outline,
+        size: 16,
+        color: faui.FaDesignTokens.of(context).accent,
+      ),
       const SizedBox(width: 8),
       Expanded(
         child: Text(
@@ -245,7 +249,11 @@ extension _SettingsFormFlowHelpers on _AgentSettingsFormState {
   Widget _infoNote(ThemeData theme, String text) => Row(
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
-      Icon(Icons.info_outline, size: 16, color: theme.colorScheme.tertiary),
+      Icon(
+        Icons.info_outline,
+        size: 16,
+        color: faui.FaDesignTokens.of(context).info,
+      ),
       const SizedBox(width: 8),
       Expanded(child: Text(text, style: theme.textTheme.bodySmall)),
     ],
@@ -253,7 +261,10 @@ extension _SettingsFormFlowHelpers on _AgentSettingsFormState {
 
   Widget _buildErrorText(ThemeData theme) => Padding(
     padding: const EdgeInsets.only(bottom: 12),
-    child: Text(_error!, style: TextStyle(color: theme.colorScheme.error)),
+    child: Text(
+      _error!,
+      style: TextStyle(color: faui.FaDesignTokens.of(context).danger),
+    ),
   );
 
   Widget _buildConnectButton(ThemeData theme) => FilledButton(

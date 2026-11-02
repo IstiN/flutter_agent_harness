@@ -13,13 +13,27 @@ import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/analytics.dart';
 import 'package:fa/services/app_log.dart';
 import 'package:fa/services/flutter_session_manager.dart';
-import 'package:fa_ui/fa_ui.dart' show FaChatHost;
+import 'package:fa_ui/fa_ui.dart'
+    show FaChatHost, FaWindowClass, faWindowClassForWidth;
 import 'package:flutter_agent_harness/flutter_agent_harness.dart'
     show FileErrorCode;
 
 /// App-open navigation shared by the session sidebar's Apps section and the
 /// agent's `open_app` tool (see `open_app_tool.dart`): both push the same
 /// [JsAppView] with the same wiring.
+
+/// Host seam for the messenger's route-less app side panel. Return true when
+/// the app was presented; false falls back to the classic Navigator route.
+typedef JsAppPanelPresenter =
+    Future<bool> Function({
+      required BuildContext context,
+      required JsAppInfo app,
+      required AgentService service,
+      required AgentService appService,
+      required AppPermissionsStore permissionsStore,
+    });
+
+JsAppPanelPresenter? jsAppPanelPresenter;
 
 /// Resolves the session bound to [appId] (`apps/<id>/session.json`),
 /// switching [manager] to it. Returns null when no (valid) binding exists —
@@ -325,12 +339,37 @@ Future<void> pushJsApp(
   final store = permissionsStore ?? await AppPermissionsStore.load(service.env);
   final appService = await resolveAppBoundSession(manager, app.id) ?? service;
   if (!context.mounted) return;
+  final presentPanel = jsAppPanelPresenter;
+  if (presentPanel != null &&
+      await presentPanel(
+        context: context,
+        app: app,
+        service: service,
+        appService: appService,
+        permissionsStore: store,
+      )) {
+    return;
+  }
+  if (!context.mounted) return;
   // Wide screens: reveal the selected Apps section before using its nested
   // Navigator. The agent's open_app therefore never lands on a hidden pane.
   await FaChatHost.revealJsApps?.call();
   if (!context.mounted) return;
-  final panelNavigator = FaChatHost.jsAppNavigatorKey?.currentState;
-  final navigator = panelNavigator ?? Navigator.of(context);
+  final rootNavigator = Navigator.of(context, rootNavigator: true);
+  final narrow =
+      faWindowClassForWidth(MediaQuery.sizeOf(context).width) ==
+      FaWindowClass.small;
+  // Any narrow root route (chat, settings, ...) covers the shell's nested
+  // Apps Navigator. Open the app on the ROOT route so it is actually visible.
+  // The shell independently tracks whether a chat route already exists when
+  // the app's Open-full-chat action returns.
+  final coversRootRoute = narrow && rootNavigator.canPop();
+  final panelNavigator = coversRootRoute
+      ? null
+      : FaChatHost.jsAppNavigatorKey?.currentState;
+  final navigator = coversRootRoute
+      ? rootNavigator
+      : panelNavigator ?? Navigator.of(context);
   await navigator.push(
     MaterialPageRoute<void>(
       builder: (_) => JsAppView(

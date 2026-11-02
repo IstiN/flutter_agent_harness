@@ -64,6 +64,10 @@ final class NetworkSessionManager extends ChangeNotifier {
   String? _jwt;
   String? _sessionToken;
 
+  /// One token-only refresh shared by restore and every account-client
+  /// request. No membership sync or live network session is involved.
+  Future<String?>? _jwtRefreshInFlight;
+
   /// The live sessions by network id.
   final Map<String, NetworkSession> sessions = {};
 
@@ -157,32 +161,78 @@ final class NetworkSessionManager extends ChangeNotifier {
     await syncAccountNetworks();
   }
 
-  /// Restores the wallet account on app start/resume: an unexpired
-  /// access token becomes the JWT directly; an expired one is refreshed
-  /// silently via `POST /api/auth/refresh`. A refresh failure (or a dead
-  /// refresh token) leaves the account in the wallet but flips
-  /// [sessionExpired] — the sidebar keeps showing the account with a
-  /// "session expired" note instead of dropping it.
+  /// Restores the wallet account on app start/resume, then performs the
+  /// legacy best-effort membership sync. Token freshness itself lives in
+  /// [ensureFreshJwt], so account-scoped requests never trigger that sync.
   Future<void> restoreAccount() async {
     final account = _wallet.account;
     if (account == null) return;
+    final wasFresh = account.accessExpiresAt.isAfter(_clock().toUtc());
+    final jwt = await ensureFreshJwt();
+    if (jwt == null) return;
+    AppLog.i(
+      'fa_network',
+      wasFresh
+          ? 'account restored from wallet (access token fresh)'
+          : 'account restored via refresh',
+    );
+    notifyListeners();
+    await syncAccountNetworks();
+  }
+
+  /// Returns a management client only when an account JWT is usable.
+  ///
+  /// Dev/injected JWTs work without a wallet account. A wallet access token
+  /// is checked on every call and refreshed through the configured auth
+  /// service when expired. Signed-out users and failed/expired refreshes
+  /// return null, never a client carrying a stale or anonymous credential.
+  /// This performs no membership sync, joins, WebSockets, or other network
+  /// side effects beyond the refresh itself.
+  Future<FaNetworkClient?> accountClient() async {
+    final jwt = await ensureFreshJwt();
+    if (jwt == null || jwt.isEmpty) return null;
+    return _newClient()..jwt = jwt;
+  }
+
+  /// Ensures the current account JWT is fresh, returning null when no such
+  /// credential is available. Concurrent expired-token callers share one
+  /// refresh. Refresh failures retain the wallet account for the UI, clear
+  /// any stale in-memory JWT, and set [sessionExpired].
+  Future<String?> ensureFreshJwt() {
+    final account = _wallet.account;
+    if (account == null) return Future.value(hasJwt ? _jwt : null);
+
     final now = _clock().toUtc();
     if (account.accessExpiresAt.isAfter(now)) {
+      final changed = _jwt != account.accessToken || _sessionExpired;
       _jwt = account.accessToken;
       _sessionExpired = false;
-      AppLog.i(
-        'fa_network',
-        'account restored from wallet (access token fresh)',
-      );
-      notifyListeners();
-      await syncAccountNetworks();
-      return;
+      if (changed) notifyListeners();
+      return Future.value(_jwt);
     }
+
+    final inFlight = _jwtRefreshInFlight;
+    if (inFlight != null) return inFlight;
+    final refresh = _refreshExpiredAccount(account);
+    _jwtRefreshInFlight = refresh;
+    refresh.whenComplete(() {
+      if (identical(_jwtRefreshInFlight, refresh)) {
+        _jwtRefreshInFlight = null;
+      }
+    }).ignore();
+    return refresh;
+  }
+
+  Future<String?> _refreshExpiredAccount(WalletAccount account) async {
+    // An expired access token must never leak onto a request while its
+    // replacement is being obtained (or after that attempt fails).
+    _jwt = null;
+    final now = _clock().toUtc();
     final refreshExpiry = account.refreshExpiresAt;
     if (refreshExpiry != null && !refreshExpiry.isAfter(now)) {
       _sessionExpired = true;
       notifyListeners();
-      return;
+      return null;
     }
     try {
       final tokens = await _newClient().refreshTokens(
@@ -192,16 +242,15 @@ final class NetworkSessionManager extends ChangeNotifier {
       await _wallet.saveAccount(account.withTokens(tokens));
       _jwt = tokens.accessToken;
       _sessionExpired = false;
-      AppLog.i('fa_network', 'account restored via refresh');
       notifyListeners();
-      await syncAccountNetworks();
+      return _jwt;
     } on Object catch (e) {
+      _jwt = null;
       _sessionExpired = true;
       AppLog.i('fa_network', 'account refresh FAILED: $e');
       notifyListeners();
-      return;
+      return null;
     }
-    notifyListeners();
   }
 
   /// Syncs the signed-in account's fa_network memberships

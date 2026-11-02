@@ -1,6 +1,8 @@
 import 'package:fa_ui/fa_ui.dart';
 import 'package:flutter/material.dart';
 
+import 'messenger_navigation_controls.dart';
+
 /// One navigation row in the wide-screen sidebar, or a compact primary tab.
 /// The selected destination uses Fa2 accent tokens. When [collapsed] is true
 /// only the centered icon is shown with a [Tooltip] revealing the label.
@@ -13,6 +15,7 @@ class SidebarNavItem extends StatelessWidget {
     required this.onTap,
     this.collapsed = false,
     this.compact = false,
+    this.desktopTab = false,
   });
 
   final IconData icon;
@@ -20,6 +23,7 @@ class SidebarNavItem extends StatelessWidget {
   final bool selected;
   final bool collapsed;
   final bool compact;
+  final bool desktopTab;
   final VoidCallback onTap;
 
   @override
@@ -29,40 +33,76 @@ class SidebarNavItem extends StatelessWidget {
     final fg = selected ? tokens.accent : tokens.ink2;
     final selectedBg = tokens.accentSoft;
 
-    if (compact) {
-      return Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 1, vertical: 2),
+    if (desktopTab && !collapsed) {
+      return Semantics(
+        button: true,
+        selected: selected,
         child: Material(
-          color: selected ? selectedBg : Colors.transparent,
-          shape: RoundedSuperellipseBorder(
-            borderRadius: BorderRadius.circular(tokens.radiusSm),
-          ),
+          key: ValueKey('messengerPrimaryTab-$label'),
+          color: Colors.transparent,
+          shape: const StadiumBorder(),
           clipBehavior: Clip.antiAlias,
           child: InkWell(
+            customBorder: const StadiumBorder(),
             onTap: onTap,
-            borderRadius: BorderRadius.circular(tokens.radiusSm),
             child: SizedBox(
-              height: 34,
+              height: 32,
               child: Center(
-                child: collapsed
-                    ? Tooltip(
-                        message: label,
-                        child: Icon(icon, size: 18, color: fg),
-                      )
-                    : Text(
-                        label,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: typography.label.copyWith(
-                          color: fg,
-                          fontSize: 12,
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  child: AnimatedDefaultTextStyle(
+                    duration: FaMotion.duration(
+                      context,
+                      const Duration(milliseconds: 200),
+                    ),
+                    curve: Curves.easeInOutCubic,
+                    style: typography.label.copyWith(
+                      color: fg,
+                      fontSize: 13,
+                      fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
+                    ),
+                    child: Text(
+                      label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ),
               ),
             ),
           ),
         ),
+      );
+    }
+
+    if (compact) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 1),
+        child: collapsed
+            ? Semantics(
+                selected: selected,
+                child: IconButton(
+                  onPressed: onTap,
+                  tooltip: label,
+                  icon: Icon(icon, size: 18, color: fg),
+                  style: IconButton.styleFrom(
+                    minimumSize: const Size(40, 40),
+                    maximumSize: const Size(40, 40),
+                    padding: EdgeInsets.zero,
+                    foregroundColor: fg,
+                    backgroundColor: selected ? selectedBg : Colors.transparent,
+                    shape: const StadiumBorder(),
+                  ),
+                ),
+              )
+            : MessengerCategoryChip(
+                chipKey: ValueKey('messengerPrimaryChip-$label'),
+                icon: icon,
+                label: label,
+                selected: selected,
+                compact: true,
+                onTap: onTap,
+              ),
       );
     }
 

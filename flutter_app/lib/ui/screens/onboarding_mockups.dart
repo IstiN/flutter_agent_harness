@@ -68,7 +68,7 @@ class _UserBubble extends StatelessWidget {
   }
 }
 
-/// Fa "typing" response: navy avatar + title + typing dots in a light bubble.
+/// Fa "typing" response: brand avatar + title + typing dots in a light bubble.
 class _TypingBubble extends StatelessWidget {
   const _TypingBubble();
 
@@ -129,19 +129,7 @@ class _FaAvatar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      width: size,
-      height: size,
-      decoration: BoxDecoration(
-        color: _kNavy,
-        borderRadius: BorderRadius.circular(size * 0.3),
-      ),
-      child: Icon(
-        Icons.auto_awesome,
-        size: size * 0.5,
-        color: const Color(0xFF5B8DEF),
-      ),
-    );
+    return FaBrandTile(size: size, dark: true);
   }
 }
 

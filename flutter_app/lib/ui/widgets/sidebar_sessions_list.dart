@@ -474,6 +474,7 @@ class _SidebarSessionsListState extends State<SidebarSessionsList> {
     return Column(
       children: [
         IconButton(
+          key: const ValueKey('collapsedSidebarNewSession'),
           icon: const Icon(Icons.add_circle_outline),
           onPressed: widget.onNewSession,
           tooltip: context.l10n.sidebarNewSessionTooltip,
@@ -814,7 +815,7 @@ String sessionFolderGroupLabel(String? cwd, String personalLabel) {
 /// The session tile's 3-dot menu, shared by the wide sidebar and the
 /// mobile chat sheet's sessions drawer: rename (via the shared rename
 /// dialog, like the CLI `/rename`) and delete (with confirmation). Works
-/// for live and persisted-only sessions alike. [onDeleted] fires after a
+/// for live and persisted-only sessions alike. [onDeleted] is awaited after a
 /// successful delete so hosts listing on-disk sessions can resync.
 Future<void> showSessionActionsMenu(
   BuildContext context, {
@@ -825,7 +826,7 @@ Future<void> showSessionActionsMenu(
   required DateTime createdAt,
   FlutterManagedSession? live,
   SessionMetadata? persisted,
-  VoidCallback? onDeleted,
+  FutureOr<void> Function()? onDeleted,
 }) async {
   final l10n = context.l10n;
   // Hosted rows (extension panel / relay shell) live in the service
@@ -901,7 +902,7 @@ Future<void> _deleteSession(
   required String sessionId,
   required FlutterManagedSession? live,
   required SessionMetadata? persisted,
-  VoidCallback? onDeleted,
+  FutureOr<void> Function()? onDeleted,
 }) async {
   // Defense in depth for the gated menu entry (issue #863 review round
   // 2): a hosted row has no delete path from this surface.
@@ -942,7 +943,7 @@ Future<void> _deleteSession(
   if (confirmed != true || !context.mounted) return;
   try {
     await manager.deleteSession(sessionId, metadata: persisted);
-    onDeleted?.call();
+    await onDeleted?.call();
     // Deleting the active (and only) session must not strand the shell on
     // the "No active session" placeholder — mint a fresh one on the same
     // connection, like the chat screen's ensureActiveSession path.

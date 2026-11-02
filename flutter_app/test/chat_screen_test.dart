@@ -1,5 +1,7 @@
 import 'dart:async';
+import 'dart:typed_data';
 
+import 'package:fa_ui/fa_ui.dart' as fa_ui;
 import 'package:flutter/material.dart';
 import 'package:fa/apps/js_app_view.dart';
 import 'package:fa/services/agent_service.dart';
@@ -71,8 +73,6 @@ StreamFunction _hungResponse() {
 }
 
 void main() {
-
-
   group('ChatScreen side panels', () {
     testWidgets('wide: the files panel toggles; no sessions sidebar anywhere', (
       tester,
@@ -250,6 +250,213 @@ void main() {
       expect(service.isStreaming, isFalse);
       // Let the Live Activity end timer (4 s) fire so nothing is pending.
       await tester.pump(const Duration(seconds: 5));
+    });
+  });
+
+  group('ChatScreen floating glass chrome', () {
+    testWidgets(
+      'transcript extends beneath chrome and both ends stay reachable in every direction',
+      (tester) async {
+        tester.view.devicePixelRatio = 1.0;
+        tester.view.physicalSize = const Size(1100, 700);
+        addTearDown(tester.view.reset);
+        fa_ui.debugFaGlassAlwaysFake = true;
+        addTearDown(() => fa_ui.debugFaGlassAlwaysFake = false);
+
+        for (final direction in fa_ui.FaVisualDirection.values) {
+          final env = MemoryExecutionEnv();
+          final service = _fakeService(env);
+          for (var index = 0; index < 16; index++) {
+            service.messages.add(
+              FahChatMessage(
+                role: index.isEven ? 'user' : 'assistant',
+                content: index == 0
+                    ? 'message 0 oldest'
+                    : index == 15
+                    ? 'message 15 newest'
+                    : 'Transcript message $index with enough content to scroll.',
+              ),
+            );
+          }
+          final manager = FlutterSessionManager(
+            env: env,
+            sessionsRoot: '/sessions',
+          )..addSession('glass-session', service);
+          await tester.pumpWidget(
+            MaterialApp(
+              theme: fa_ui.buildFaTheme(
+                direction: direction,
+                brightness: Brightness.dark,
+              ),
+              home: ChatScreen(
+                manager: manager,
+                projectLabel: 'Personal',
+                onProjectTap: () {},
+                modelChip: const Text('test-model'),
+                chipMenuLabel: 'test-model',
+              ),
+            ),
+          );
+          await tester.pumpAndSettle();
+
+          final header = find.byKey(const ValueKey('faChatFloatingHeader'));
+          final composer = find.byKey(const ValueKey('faChatFloatingComposer'));
+          final transcript = find.byKey(const ValueKey('faChatTranscriptList'));
+          expect(header, findsOneWidget);
+          expect(composer, findsOneWidget);
+          final headerRect = tester.getRect(header);
+          final avatar = find.byKey(const ValueKey('faChatHeaderAvatar'));
+          final titlePill = find.byKey(const ValueKey('faChatHeaderTitlePill'));
+          expect(
+            tester.getCenter(avatar).dx,
+            closeTo(headerRect.center.dx, .5),
+          );
+          expect(
+            tester.getCenter(titlePill).dx,
+            closeTo(headerRect.center.dx, .5),
+          );
+          expect(
+            tester.getRect(titlePill).top,
+            greaterThanOrEqualTo(tester.getRect(avatar).bottom),
+          );
+          expect(
+            tester.getRect(titlePill).width,
+            lessThan(headerRect.width * .6),
+          );
+          expect(find.text('test-model'), findsOneWidget);
+          expect(find.byIcon(Icons.folder_outlined), findsOneWidget);
+          expect(find.byIcon(Icons.copy_outlined), findsOneWidget);
+          final copySurface = find
+              .ancestor(
+                of: find.byIcon(Icons.copy_outlined),
+                matching: find.byType(fa_ui.FaHeaderCircularAction),
+              )
+              .first;
+          expect(tester.getRect(copySurface).width, 40);
+          expect(tester.getRect(copySurface).height, 40);
+          expect(
+            tester.getRect(copySurface).left,
+            greaterThan(headerRect.center.dx),
+          );
+          expect(tester.getRect(transcript).top, closeTo(headerRect.top, .5));
+          expect(tester.getRect(transcript).bottom, closeTo(700, .5));
+          expect(tester.getRect(composer).bottom, closeTo(692, .5));
+          expect(
+            tester
+                .getRect(
+                  find.byKey(const ValueKey('faChatBottomEnvironmentFade')),
+                )
+                .bottom,
+            closeTo(700, .5),
+          );
+          expect(
+            tester.getRect(find.textContaining('message 15 newest')).bottom,
+            lessThanOrEqualTo(tester.getRect(composer).top),
+          );
+
+          final scrollable = tester.widget<Scrollable>(
+            find
+                .descendant(of: transcript, matching: find.byType(Scrollable))
+                .first,
+          );
+          expect(
+            scrollable.controller!.position.maxScrollExtent,
+            greaterThan(0),
+          );
+          scrollable.controller!.jumpTo(
+            scrollable.controller!.position.maxScrollExtent,
+          );
+          await tester.pumpAndSettle();
+          expect(
+            tester.getRect(find.textContaining('message 0 oldest')).top,
+            greaterThanOrEqualTo(tester.getRect(header).bottom),
+          );
+          expect(tester.takeException(), isNull);
+          await tester.pumpWidget(const SizedBox());
+        }
+      },
+    );
+  });
+
+  group('ChatScreen composer drafts', () {
+    testWidgets('session switching and narrow-route remount restore only the '
+        'owning session\'s text and staged attachment', (tester) async {
+      final env = MemoryExecutionEnv();
+      final manager = FlutterSessionManager(
+        env: env,
+        sessionsRoot: '/sessions',
+      );
+      final a = _fakeService(env);
+      final b = _fakeService(env);
+      addTearDown(a.dispose);
+      addTearDown(b.dispose);
+      manager
+        ..addSession('session-a', a)
+        ..addSession('session-b', b)
+        ..switchTo('session-a');
+      final drafts = fa_ui.ChatComposerDraftStore();
+
+      Future<void> pumpChat() async {
+        await tester.pumpWidget(
+          MaterialApp(
+            home: ChatScreen(manager: manager, draftStore: drafts),
+          ),
+        );
+        await tester.pumpAndSettle();
+      }
+
+      String fieldText() =>
+          tester.widget<TextField>(find.byType(TextField)).controller!.text;
+
+      await pumpChat();
+      await tester.enterText(find.byType(TextField), 'A unsent draft');
+      await tester
+          .state<fa_ui.ChatComposerState>(find.byType(fa_ui.ChatComposer))
+          .stageDroppedFiles([
+            (
+              name: 'a-draft.txt',
+              bytes: Uint8List.fromList([1, 3, 3, 7]),
+              mimeType: 'text/plain',
+            ),
+          ]);
+      await tester.pump();
+      expect(find.textContaining('a-draft.txt'), findsOneWidget);
+
+      manager.switchTo('session-b');
+      await tester.pumpAndSettle();
+      expect(fieldText(), isEmpty);
+      expect(find.byIcon(Icons.close), findsNothing);
+      expect(drafts.draftFor('session-b').isEmpty, isTrue);
+
+      await tester.enterText(find.byType(TextField), 'B unsent draft');
+      manager.switchTo('session-a');
+      await tester.pumpAndSettle();
+      expect(fieldText(), 'A unsent draft');
+      expect(find.textContaining('a-draft.txt'), findsOneWidget);
+
+      // Narrow Chat/Apps presentation replaces the route's subtree. Rebuild
+      // the ChatScreen with the same manager/store, as the shell does.
+      await tester.pumpWidget(
+        const MaterialApp(home: Scaffold(body: Text('Apps'))),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byType(fa_ui.ChatComposer), findsNothing);
+      await pumpChat();
+      expect(fieldText(), 'A unsent draft');
+      expect(find.textContaining('a-draft.txt'), findsOneWidget);
+      expect(drafts.draftFor('session-b').text, 'B unsent draft');
+      expect(drafts.draftFor('session-a').attachments.single.bytes, [
+        1,
+        3,
+        3,
+        7,
+      ]);
+
+      manager.switchTo('session-b');
+      await tester.pumpAndSettle();
+      expect(fieldText(), 'B unsent draft');
+      expect(find.byIcon(Icons.close), findsNothing);
+      await tester.pumpWidget(const SizedBox());
     });
   });
 

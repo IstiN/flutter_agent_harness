@@ -439,9 +439,8 @@ class ChatMessageTile extends StatelessWidget {
   /// `b.png`).
   String _baseName(String path) => path.split('/').last;
 
-  /// The default AI avatar: the Fa brand `>_` tile ([FaAiAvatar]) — the
-  /// launcher brand-tile language, not a stock sparkle. Shown when no
-  /// [avatarBuilder] is provided.
+  /// The default AI avatar: the shared B3-square-accent [FaAiAvatar], not a
+  /// stock sparkle. Shown when no [avatarBuilder] is provided.
   Widget _defaultAiAvatar(BuildContext context) {
     return const FaAiAvatar(size: 28);
   }

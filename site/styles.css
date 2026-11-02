@@ -125,10 +125,10 @@ a:hover { text-decoration: underline; }
 .brand { display: flex; align-items: baseline; gap: 9px; color: var(--text); }
 .brand:hover { text-decoration: none; }
 .brand-mark {
-  font-family: var(--mono);
-  font-weight: 700;
-  color: var(--accent);
-  letter-spacing: -0.06em;
+  width: 20px;
+  height: 20px;
+  flex: 0 0 20px;
+  align-self: center;
 }
 .brand-name { font-weight: 750; font-size: 1.06rem; letter-spacing: -0.02em; }
 .brand-sub { color: var(--dim); font-size: 0.82rem; font-family: var(--mono); }
@@ -597,6 +597,7 @@ section {
   font-size: 0.88rem;
 }
 .footer p { margin: 0; }
+.footer .brand-mark { width: 16px; height: 16px; vertical-align: -3px; }
 .footer nav { display: flex; flex-wrap: wrap; gap: 10px 20px; }
 .footer a { color: var(--dim); }
 .footer a:hover { color: var(--text); }

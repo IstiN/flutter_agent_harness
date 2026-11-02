@@ -5,7 +5,7 @@
 import 'package:fa_ui/fa_ui.dart' show FaDesignTokens, FaLogo, buildFaTheme;
 import 'package:flutter/material.dart';
 
-/// The canonical Squircle-V2 mark used by compact brand actions.
+/// The canonical B3-square-accent mark used by compact brand actions.
 class FaMark extends StatelessWidget {
   const FaMark({super.key, this.size = 20});
 
@@ -39,29 +39,29 @@ class FaBrandTile extends StatelessWidget {
   }
 }
 
-/// SVG forms of the canonical Squircle-V2 geometry used by [FaLogo].
+/// Glass dark/light SVG forms of the B3-square-accent geometry in [FaLogo].
 const String kFaBrandTileDarkSvg = '''
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 84 84">
-  <rect x="4" y="4" width="76" height="76" rx="22" fill="#132233" stroke="#222D46" stroke-width="1.5"/>
-  <path d="M20 22 H64 A8 8 0 0 1 72 30 V46 A8 8 0 0 1 64 54 H38 L26 62 V54 H20 A8 8 0 0 1 12 46 V30 A8 8 0 0 1 20 22 Z" fill="#161C2D" stroke="#38BDF8" stroke-width="1.8" stroke-linejoin="round"/>
-  <g transform="translate(24 26) scale(.72)" fill="none" stroke="#F0F4FC" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><path d="M0 28 V0 H16"/><path d="M0 12.5 H12"/></g>
-  <g transform="translate(38 31) scale(.82)"><circle cx="7" cy="11" r="6.5" fill="none" stroke="#F0F4FC" stroke-width="3"/><path d="M13.5 4.5 V17.5" fill="none" stroke="#F0F4FC" stroke-width="3" stroke-linecap="round"/></g>
-  <path d="M52 28 L57 33 L52 38" fill="none" stroke="#38BDF8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-  <path d="M59 38 H63" fill="none" stroke="#38BDF8" stroke-width="2" stroke-linecap="round"/>
-  <circle cx="60" cy="46" r="3" fill="#818CF8"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 68 68">
+ <rect x="4" y="4" width="60" height="60" rx="18" fill="#1C1C1E" stroke="#3F8FF7" stroke-width="2"/>
+  <path d="M15 28 L22 34 L15 40" fill="none" stroke="#3F8FF7" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M27 42 V26 H38.5" fill="none" stroke="#F5F5F7" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M27 33.5 H35.5" fill="none" stroke="#F5F5F7" stroke-width="2.8" stroke-linecap="round"/>
+  <circle cx="43" cy="36" r="5" fill="none" stroke="#F5F5F7" stroke-width="2.6"/>
+  <path d="M48 31 V42" fill="none" stroke="#F5F5F7" stroke-width="2.6" stroke-linecap="round"/>
+  <circle cx="48" cy="22" r="3.2" fill="#818CF8"/>
 </svg>
 ''';
 
 /// Light form of the canonical mark.
 const String kFaBrandTileLightSvg = '''
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 84 84">
-  <rect x="4" y="4" width="76" height="76" rx="22" fill="#E8F3F9" stroke="#C4D2E4" stroke-width="1.5"/>
-  <path d="M20 22 H64 A8 8 0 0 1 72 30 V46 A8 8 0 0 1 64 54 H38 L26 62 V54 H20 A8 8 0 0 1 12 46 V30 A8 8 0 0 1 20 22 Z" fill="#E5EDF5" stroke="#0277BD" stroke-width="1.8" stroke-linejoin="round"/>
-  <g transform="translate(24 26) scale(.72)" fill="none" stroke="#0B1322" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><path d="M0 28 V0 H16"/><path d="M0 12.5 H12"/></g>
-  <g transform="translate(38 31) scale(.82)"><circle cx="7" cy="11" r="6.5" fill="none" stroke="#0B1322" stroke-width="3"/><path d="M13.5 4.5 V17.5" fill="none" stroke="#0B1322" stroke-width="3" stroke-linecap="round"/></g>
-  <path d="M52 28 L57 33 L52 38" fill="none" stroke="#0277BD" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-  <path d="M59 38 H63" fill="none" stroke="#0277BD" stroke-width="2" stroke-linecap="round"/>
-  <circle cx="60" cy="46" r="3" fill="#4F46E5"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 68 68">
+ <rect x="4" y="4" width="60" height="60" rx="18" fill="#FFFFFF" stroke="#3F8FF7" stroke-width="2"/>
+  <path d="M15 28 L22 34 L15 40" fill="none" stroke="#3F8FF7" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M27 42 V26 H38.5" fill="none" stroke="#1D1D1F" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M27 33.5 H35.5" fill="none" stroke="#1D1D1F" stroke-width="2.8" stroke-linecap="round"/>
+  <circle cx="43" cy="36" r="5" fill="none" stroke="#1D1D1F" stroke-width="2.6"/>
+  <path d="M48 31 V42" fill="none" stroke="#1D1D1F" stroke-width="2.6" stroke-linecap="round"/>
+  <circle cx="48" cy="22" r="3.2" fill="#4F46E5"/>
 </svg>
 ''';
 

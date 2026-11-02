@@ -2,7 +2,14 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:fa/services/agent_service.dart';
-import 'package:fa_ui/fa_ui.dart' show FaAttachGlyph;
+import 'package:fa_ui/fa_ui.dart'
+    show
+        FaAttachGlyph,
+        FaDesignTokens,
+        FaHeaderCircularAction,
+        FaVisualDirection,
+        FahColors,
+        buildFaTheme;
 import 'package:fa/ui/screens/chat_screen.dart';
 import 'package:fa/ui/widgets/file_browser.dart';
 import 'package:fa/ui/widgets/file_preview.dart';
@@ -112,9 +119,12 @@ AgentService _fakeService(ExecutionEnv env) {
   );
 }
 
-FlutterSessionManager _fakeManager(ExecutionEnv env) {
+FlutterSessionManager _fakeManager(
+  ExecutionEnv env, [
+  String sessionId = 'fake-session',
+]) {
   final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions');
-  manager.addSession('fake-session', _fakeService(env));
+  manager.addSession(sessionId, _fakeService(env));
   return manager;
 }
 
@@ -291,6 +301,153 @@ void main() {
         'page.html',
         'readme.md',
       ]);
+    });
+
+    testWidgets('themed grouped cards and chrome adapt without overflow', (
+      tester,
+    ) async {
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final env = await _seededEnv();
+      for (final direction in FaVisualDirection.values) {
+        for (final brightness in Brightness.values) {
+          for (final width in <double>[240, 300, 420, 180]) {
+            await tester.pumpWidget(const SizedBox());
+            await tester.pump();
+            tester.view.physicalSize = Size(width, 700);
+            await tester.pumpWidget(
+              MaterialApp(
+                theme: buildFaTheme(
+                  direction: direction,
+                  brightness: brightness,
+                ),
+                home: Scaffold(
+                  body: FileBrowser(
+                    env: env,
+                    uploadPicker: _FakePicker(const []),
+                    iCloudSyncService: _FakeICloudSync(),
+                  ),
+                ),
+              ),
+            );
+            await tester.pumpAndSettle();
+            final reason = '$direction $brightness at $width';
+            final title = tester.widget<Text>(
+              find.descendant(
+                of: find.byKey(const ValueKey('fileBrowserHeader')),
+                matching: find.text('Files'),
+              ),
+            );
+            expect(title.maxLines, 1, reason: reason);
+            expect(title.overflow, TextOverflow.ellipsis, reason: reason);
+            expect(tester.getRect(find.text('Files')).height, lessThan(24));
+            expect(
+              tester
+                  .getSize(
+                    find.byKey(const ValueKey('fileBrowserBreadcrumbChip')),
+                  )
+                  .height,
+              28,
+              reason: reason,
+            );
+
+            final panel = tester.widget<Material>(
+              find.byKey(const ValueKey('fileBrowserPanel')),
+            );
+            final colors = FahColors.of(
+              tester.element(find.byType(FileBrowser)),
+            );
+            expect(panel.color, colors.panel, reason: reason);
+            for (final key in ['Folders', 'Files']) {
+              final finder = find.byKey(ValueKey('fileBrowser${key}Card'));
+              expect(finder, findsOneWidget, reason: reason);
+              final card = tester.widget<Material>(finder);
+              expect(card.color, colors.panelAlt, reason: reason);
+              expect(card.shape, isA<RoundedSuperellipseBorder>());
+            }
+            final row = find.byKey(const ValueKey('fileRow-zzz_dir'));
+            expect(tester.getSize(row).height, 52, reason: reason);
+            final tile = tester.widget<ListTile>(row);
+            final rowTitle = tile.title! as Text;
+            expect(rowTitle.maxLines, 1, reason: reason);
+            expect(rowTitle.style?.fontSize, 14, reason: reason);
+            if (width >= 240) {
+              Finder action(String key) => find
+                  .ancestor(
+                    of: find.byKey(ValueKey('fileBrowser$key')),
+                    matching: find.byType(FaHeaderCircularAction),
+                  )
+                  .first;
+              final upload = action('Upload');
+              final sync = action('ICloudSync');
+              final refresh = action('Refresh');
+              for (final finder in [upload, sync, refresh]) {
+                expect(
+                  tester.getSize(finder),
+                  const Size.square(40),
+                  reason: reason,
+                );
+              }
+              expect(
+                tester.getRect(sync).left - tester.getRect(upload).right,
+                8,
+                reason: reason,
+              );
+              expect(
+                tester.getRect(refresh).left - tester.getRect(sync).right,
+                8,
+                reason: reason,
+              );
+              final material = tester.widget<Material>(
+                find
+                    .descendant(of: refresh, matching: find.byType(Material))
+                    .first,
+              );
+              expect(
+                material.color,
+                FaDesignTokens.of(tester.element(refresh)).surface2,
+                reason: reason,
+              );
+              expect(material.shape, isA<CircleBorder>(), reason: reason);
+              expect(
+                (material.shape! as CircleBorder).side,
+                BorderSide.none,
+                reason: reason,
+              );
+            } else {
+              expect(
+                find.byKey(const ValueKey('fileBrowserOverflow')),
+                findsOneWidget,
+                reason: reason,
+              );
+            }
+
+            final overflow = find.byKey(const ValueKey('fileBrowserOverflow'));
+            if (overflow.evaluate().isNotEmpty) {
+              await tester.tap(overflow);
+              await tester.pumpAndSettle();
+            }
+            for (final label in [
+              'Upload files here',
+              'Sync sessions and apps with iCloud',
+              'Refresh',
+            ]) {
+              final inline = find.byTooltip(label).evaluate().isNotEmpty;
+              expect(
+                inline || find.text(label).evaluate().isNotEmpty,
+                isTrue,
+                reason: '$label reachable: $reason',
+              );
+            }
+            if (overflow.evaluate().isNotEmpty &&
+                find.byTooltip('Refresh').evaluate().isEmpty) {
+              await tester.tap(find.text('Refresh'));
+              await tester.pumpAndSettle();
+            }
+            expect(tester.takeException(), isNull, reason: reason);
+          }
+        }
+      }
     });
 
     testWidgets('folder tap navigates; up button and breadcrumb return', (
@@ -754,12 +911,170 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.byType(FileBrowser), findsOneWidget);
       expect(find.text('notes.txt'), findsOneWidget);
-      // The panel is docked on the RIGHT edge of the surface.
+      // The panel is docked on the RIGHT edge of the surface, and the
+      // floating chat header belongs ONLY to the remaining center content.
       expect(tester.getTopLeft(find.byType(FileBrowser)).dx, greaterThan(1000));
+      final header = tester.getRect(
+        find.byKey(const ValueKey('faChatFloatingHeader')),
+      );
+      final panel = tester.getRect(
+        find.byKey(const ValueKey('faChatFilesPanel')),
+      );
+      expect(panel.width, 301);
+      expect(header.right, panel.left);
+      expect(
+        find.byKey(const ValueKey('faChatFilesPanelResizeHandle')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('faChatFloatingHeader')),
+        findsOneWidget,
+      );
+      final title = tester.getRect(
+        find.byKey(const ValueKey('faChatHeaderTitlePill')),
+      );
+      expect(title.right, lessThanOrEqualTo(panel.left));
+      expect(title.left, greaterThanOrEqualTo(header.left));
+      final filesAction = tester.getRect(find.byTooltip('Files'));
+      expect(filesAction.right, lessThanOrEqualTo(panel.left));
 
       await tester.tap(find.byTooltip('Files'));
       await tester.pumpAndSettle();
       expect(find.byType(FileBrowser), findsNothing);
+      expect(
+        tester
+            .getRect(find.byKey(const ValueKey('faChatFloatingHeader')))
+            .right,
+        1400,
+      );
+    });
+
+    testWidgets('wide Files panel drag is live, clamped, and retained', (
+      tester,
+    ) async {
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = const Size(1400, 900);
+      addTearDown(tester.view.reset);
+      final env = await _seededEnv();
+      await tester.pumpWidget(
+        MaterialApp(home: ChatScreen(manager: _fakeManager(env))),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip('Files'));
+      await tester.pumpAndSettle();
+
+      final handle = find.byKey(const ValueKey('faChatFilesPanelResizeHandle'));
+      final panel = find.byKey(const ValueKey('faChatFilesPanel'));
+      final header = find.byKey(const ValueKey('faChatFloatingHeader'));
+      void expectBoundary(double browserWidth) {
+        expect(handle, findsOneWidget);
+        final panelRect = tester.getRect(panel);
+        expect(panelRect.width, browserWidth + 1);
+        expect(tester.getRect(header).right, panelRect.left);
+        expect(
+          tester
+              .getRect(find.byKey(const ValueKey('faChatFloatingComposer')))
+              .right,
+          lessThanOrEqualTo(panelRect.left - 8),
+        );
+        expect(tester.takeException(), isNull);
+      }
+
+      expectBoundary(300);
+      final gesture = await tester.startGesture(tester.getCenter(handle));
+      await gesture.moveBy(const Offset(-60, 0));
+      await tester.pump();
+      expectBoundary(360);
+      await gesture.moveBy(const Offset(-60, 0));
+      await tester.pump();
+      expectBoundary(420);
+      await gesture.up();
+      await tester.pumpAndSettle();
+      expectBoundary(420);
+
+      await tester.tap(find.byTooltip('Files'));
+      await tester.pumpAndSettle();
+      expect(handle, findsNothing);
+      await tester.tap(find.byTooltip('Files'));
+      await tester.pumpAndSettle();
+      expectBoundary(420);
+
+      await tester.drag(handle, const Offset(-200, 0));
+      await tester.pump();
+      expectBoundary(520);
+      await tester.drag(handle, const Offset(400, 0));
+      await tester.pump();
+      expectBoundary(240);
+      await tester.drag(handle, const Offset(-400, 0));
+      await tester.pumpAndSettle();
+      expectBoundary(520);
+
+      tester.view.physicalSize = const Size(900, 900);
+      await tester.pumpAndSettle();
+      expectBoundary(520);
+      expect(tester.getRect(panel).left, 379);
+    });
+
+    testWidgets('max Files width degrades safely inside a sidebar-narrowed '
+        'center', (tester) async {
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = const Size(1400, 900);
+      addTearDown(tester.view.reset);
+      final env = await _seededEnv();
+      final manager = _fakeManager(env);
+      Widget app(double centerWidth) => MaterialApp(
+        home: Align(
+          alignment: Alignment.topLeft,
+          child: SizedBox(
+            width: centerWidth,
+            height: 900,
+            child: ChatScreen(manager: manager),
+          ),
+        ),
+      );
+
+      await tester.pumpWidget(app(900));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip('Files'));
+      await tester.pumpAndSettle();
+      final handle = find.byKey(const ValueKey('faChatFilesPanelResizeHandle'));
+      await tester.drag(handle, const Offset(-400, 0));
+      await tester.pumpAndSettle();
+      expect(
+        tester.getSize(find.byKey(const ValueKey('faChatFilesPanel'))).width,
+        521,
+      );
+
+      for (final width in <double>[
+        700,
+        600,
+        561,
+        560,
+        500,
+        420,
+        320,
+        561,
+        700,
+        900,
+      ]) {
+        await tester.pumpWidget(app(width));
+        // One layout frame at a time mirrors live window/sidebar transitions.
+        await tester.pump();
+        final header = tester.getRect(
+          find.byKey(const ValueKey('faChatFloatingHeader')),
+        );
+        final panel = find.byKey(const ValueKey('faChatFilesPanel'));
+        if (panel.evaluate().isEmpty) {
+          expect(header.right, width, reason: 'center=$width');
+        } else {
+          expect(header.right, tester.getRect(panel).left);
+          expect(
+            tester.getRect(panel).left - header.left,
+            greaterThanOrEqualTo(320),
+          );
+        }
+        expect(tester.takeException(), isNull, reason: 'center=$width');
+      }
     });
 
     testWidgets('narrow surface: Files icon opens the files end drawer; file '
@@ -779,6 +1094,11 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.byType(Drawer), findsOneWidget);
       expect(find.byType(FileBrowser), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('faChatFilesPanelResizeHandle')),
+        findsNothing,
+      );
+      expect(tester.widget<Drawer>(find.byType(Drawer)).width, 300);
 
       await tester.tap(find.text('notes.txt'));
       await tester.pumpAndSettle();
@@ -793,7 +1113,7 @@ void main() {
       final picker = _FakePicker([_uploadFile('chat.txt', 'via chat')]);
       final service = _fakeService(env);
       final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
-        ..addSession('fake-session', service);
+        ..addSession('attach-batch-session', service);
       await tester.pumpWidget(
         MaterialApp(
           home: ChatScreen(manager: manager, uploadPicker: picker),
@@ -850,7 +1170,10 @@ void main() {
       ]);
       await tester.pumpWidget(
         MaterialApp(
-          home: ChatScreen(manager: _fakeManager(env), uploadPicker: picker),
+          home: ChatScreen(
+            manager: _fakeManager(env, 'remove-attachment-session'),
+            uploadPicker: picker,
+          ),
         ),
       );
       await tester.pumpAndSettle();
@@ -882,7 +1205,7 @@ void main() {
       ]);
       final service = _fakeService(env);
       final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
-        ..addSession('fake-session', service);
+        ..addSession('svg-session', service);
       await tester.pumpWidget(
         MaterialApp(
           home: ChatScreen(manager: manager, uploadPicker: picker),
@@ -926,7 +1249,7 @@ void main() {
       final env = await _seededEnv();
       final picker = _FakePicker([_uploadFile('chat.txt', 'via chat')]);
       final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
-        ..addSession('fake-session', _ThrowingSendService(env));
+        ..addSession('failed-send-session', _ThrowingSendService(env));
       await tester.pumpWidget(
         MaterialApp(
           home: ChatScreen(manager: manager, uploadPicker: picker),
@@ -962,7 +1285,10 @@ void main() {
         ..error = StateError('Could not read broken.bin');
       await tester.pumpWidget(
         MaterialApp(
-          home: ChatScreen(manager: _fakeManager(env), uploadPicker: picker),
+          home: ChatScreen(
+            manager: _fakeManager(env, 'picker-failure-session'),
+            uploadPicker: picker,
+          ),
         ),
       );
       await tester.pumpAndSettle();

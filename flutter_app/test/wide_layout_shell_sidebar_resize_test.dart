@@ -8,8 +8,9 @@ import 'package:fa/main.dart';
 import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/flutter_session_manager.dart';
 import 'package:fa/services/session_ui_prefs_store.dart';
-import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/widgets/wide_layout_shell.dart';
+import 'package:fa_ui/fa_ui.dart'
+    show FaVisualDirection, buildFaTheme, debugFaGlassAlwaysFake;
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -100,6 +101,8 @@ void main() {
   setUpAll(() async {
     await initializeDateFormatting('en');
   });
+  setUp(() => debugFaGlassAlwaysFake = true);
+  tearDown(() => debugFaGlassAlwaysFake = false);
 
   /// Boots the wide shell (via the real home-screen dispatch). The shell
   /// lazily loads its own prefs store from the manager's env — assertions
@@ -107,13 +110,17 @@ void main() {
   Future<void> pumpShell(
     WidgetTester tester, {
     required FlutterSessionManager manager,
+    Size size = const Size(1280, 800),
   }) async {
     tester.view.devicePixelRatio = 1.0;
-    tester.view.physicalSize = const Size(1280, 800);
+    tester.view.physicalSize = size;
     addTearDown(tester.view.reset);
     await tester.pumpWidget(
       MaterialApp(
-        theme: buildFahTheme(),
+        theme: buildFaTheme(
+          direction: FaVisualDirection.glass,
+          brightness: Brightness.dark,
+        ),
         localizationsDelegates: AppLocalizations.localizationsDelegates,
         supportedLocales: AppLocalizations.supportedLocales,
         home: Builder(
@@ -137,18 +144,18 @@ void main() {
       ..addSession('fake-session', _fakeService(env));
 
     await pumpShell(tester, manager: manager);
-    // Stock 240: the handle sits exactly at the sidebar's right edge.
-    expect(handleX(tester), closeTo(240, 0.5));
+    // Compact reference 260: the handle sits at the sidebar's right edge.
+    expect(handleX(tester), closeTo(260, 0.5));
 
     // Drag right: the sidebar grows with the pointer.
     await tester.drag(find.byKey(kSidebarDragHandleKey), const Offset(90, 0));
     await tester.pumpAndSettle();
-    expect(handleX(tester), closeTo(330, 0.5));
+    expect(handleX(tester), closeTo(350, 0.5));
     // The settled gesture wrote the store (the shell owns its instance —
     // verify through a fresh load, like a second reader would).
     expect(
       (await SessionUiPrefsStore.load(env)).sidebarWidth,
-      closeTo(330, 0.5),
+      closeTo(350, 0.5),
     );
 
     // A huge drag clamps at 480, not past it.
@@ -253,6 +260,47 @@ void main() {
       await tester.pumpAndSettle();
 
       // Exactly ONE trigger went through: one relay reset, no clone mint.
+      expect(gated.resets, 1);
+      expect(manager.sessions, hasLength(1));
+      expect(manager.activeId, 'fake-session');
+    });
+
+    testWidgets('narrow drops a second long-press while mint is in flight', (
+      tester,
+    ) async {
+      final env = MemoryExecutionEnv();
+      final gated = _GatedRelayService(
+        agent: Agent(
+          model: Model(
+            id: 'test-model',
+            api: 'test-api',
+            provider: 'test',
+            baseUrl: 'https://example.com',
+            contextWindow: 100000,
+            maxTokens: 4096,
+          ),
+          systemPrompt: 'You are Fa.',
+          streamFunction: _singleTextResponse('ok'),
+          toolRegistry: ToolRegistry(const []),
+        ),
+        env: env,
+        sessionsRoot: '/sessions',
+        config: AgentConfig(
+          providerKind: 'test',
+          modelId: 'test-model',
+          baseUrl: 'https://example.com',
+          apiKey: '',
+        ),
+      );
+      final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
+        ..addSession('fake-session', gated);
+
+      await pumpShell(tester, manager: manager, size: const Size(390, 844));
+      await tester.longPress(find.byKey(const ValueKey('wideShellFaBrand')));
+      await tester.longPress(find.byKey(const ValueKey('wideShellFaBrand')));
+      gated.gate.complete();
+      await tester.pumpAndSettle();
+
       expect(gated.resets, 1);
       expect(manager.sessions, hasLength(1));
       expect(manager.activeId, 'fake-session');

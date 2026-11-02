@@ -11,7 +11,7 @@
 //   * adaptive foreground ic_launcher_foreground.png (108–432 px): the
 //     master scaled into the adaptive safe zone (60% of the canvas width)
 //     centered on a TRANSPARENT canvas — the adaptive background layer is
-//     the brand navy @color/ic_launcher_background (#0f1320), so the
+//     the Glass dark @color/ic_launcher_background (#1E1E1E), so the
 //     margins composite seamlessly and the glyph survives every launcher
 //     mask/parallax.
 //
@@ -98,7 +98,7 @@ void main() {
   final playIconBytes = encodePng(playIcon);
   for (final locale in ['en-US', 'ru-RU']) {
     final out = '$appRoot/fastlane/metadata/android/$locale/images/icon.png';
-    Directory('${File(out).parent.path}').createSync(recursive: true);
+    Directory(File(out).parent.path).createSync(recursive: true);
     File(out).writeAsBytesSync(playIconBytes);
     print('listing $out (512x512)');
   }

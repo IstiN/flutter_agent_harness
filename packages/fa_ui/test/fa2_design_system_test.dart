@@ -43,9 +43,48 @@ void main() {
             }
             expect(
               _contrast(tokens.accentInk, tokens.accent),
-              greaterThanOrEqualTo(4.5),
+              // The platform Messages blue is a 3:1 UI accent with white
+              // foreground; the other direction accents retain body-text AA.
+              greaterThanOrEqualTo(
+                direction == FaVisualDirection.glass ? 3.0 : 4.5,
+              ),
             );
           }
+        }
+      },
+    );
+
+    test(
+      'glass messenger palette is neutral with the Messages blue accent',
+      () {
+        for (final brightness in Brightness.values) {
+          final tokens = FaDesignTokens.forDirection(
+            FaVisualDirection.glass,
+            brightness,
+          );
+          expect(tokens.accent, const Color(0xFF3F8FF7));
+          expect(tokens.accentInk, const Color(0xFFFFFFFF));
+        }
+        final dark = FaDesignTokens.forDirection(
+          FaVisualDirection.glass,
+          Brightness.dark,
+        );
+        expect(dark.background, const Color(0xFF1E1E1E));
+        expect(dark.surface1, const Color(0xFF1C1C1E));
+        for (final surface in [
+          dark.background,
+          dark.surface1,
+          dark.surface2,
+          dark.surface3,
+          dark.ink2,
+          dark.ink3,
+        ]) {
+          final channels = [surface.r, surface.g, surface.b]..sort();
+          expect(
+            channels.last - channels.first,
+            lessThanOrEqualTo(2 / 255),
+            reason: 'glass chrome stays neutral, not navy: $surface',
+          );
         }
       },
     );
@@ -64,6 +103,17 @@ void main() {
             expect(theme.brightness, brightness);
             expect(theme.colorScheme.primary, tokens.accent);
             expect(theme.scaffoldBackgroundColor, tokens.background);
+            if (direction == FaVisualDirection.glass) {
+              expect(
+                theme.tooltipTheme.waitDuration,
+                const Duration(milliseconds: 450),
+              );
+              expect(theme.tooltipTheme.verticalOffset, 18);
+              expect(theme.tooltipTheme.textStyle?.color, Colors.white);
+              final decoration =
+                  theme.tooltipTheme.decoration! as BoxDecoration;
+              expect(decoration.color, const Color(0xF22C2C2E));
+            }
             final halfway = tokens.lerp(
               FaDesignTokens.forDirection(direction, brightness),
               .5,

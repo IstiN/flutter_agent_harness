@@ -73,21 +73,15 @@
     }
   </style>
   <div id="fah-splash" role="status" aria-label="Loading flutter_agent_harness">
-    <svg width="72" height="72" viewBox="0 0 64 64" aria-hidden="true">
-      <defs>
-        <linearGradient id="fah-g" x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0" stop-color="#818cf8"/>
-          <stop offset="1" stop-color="#5eead4"/>
-        </linearGradient>
-      </defs>
-      <rect width="64" height="64" rx="14" fill="url(#fah-g)"/>
-      <!-- The brand chevron as a PATH (butt caps + miter joins = sharp
-           tip), same geometry as icon/icon.svg — a font glyph here
-           rendered with rounded stroke terminals. -->
-      <g transform="translate(32.5 32) scale(0.071875) translate(-520 -592)">
-        <path d="M 280 434 L 492 541 L 280 648" fill="none" stroke="#070a10" stroke-width="64" stroke-linecap="butt" stroke-linejoin="miter"/>
-        <rect x="512" y="712" width="248" height="40" fill="#070a10"/>
-      </g>
+    <!-- Canonical B3-square-accent vectors; keep in sync with icon/icon.svg. -->
+    <svg width="72" height="72" viewBox="0 0 68 68" aria-hidden="true">
+      <rect x="4" y="4" width="60" height="60" rx="18" fill="#1C1C1E" stroke="#3F8FF7" stroke-width="2"/>
+      <path d="M15 28 L22 34 L15 40" fill="none" stroke="#3F8FF7" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M27 42 V26 H38.5" fill="none" stroke="#F5F5F7" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M27 33.5 H35.5" fill="none" stroke="#F5F5F7" stroke-width="2.8" stroke-linecap="round"/>
+      <circle cx="43" cy="36" r="5" fill="none" stroke="#F5F5F7" stroke-width="2.6"/>
+      <path d="M48 31 V42" fill="none" stroke="#F5F5F7" stroke-width="2.6" stroke-linecap="round"/>
+      <circle cx="48" cy="22" r="3.2" fill="#818CF8"/>
     </svg>
     <div class="fah-name">Fa</div>
     <div class="fah-bar"></div>

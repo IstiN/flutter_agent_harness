@@ -29,17 +29,17 @@ import 'package:fa/services/last_connection.dart';
 import 'package:fa/services/launcher_layout_store.dart';
 import 'package:fa/services/widget_publication_store.dart';
 import 'package:fa/services/widget_publish_service.dart';
+import 'package:fa/ui/apps/app_launcher_controller.dart';
 import 'package:fa/ui/widgets/github_account_section.dart';
+import 'package:fa/ui/widgets/messenger_navigation_controls.dart';
+import 'package:fa/ui/widgets/messenger_section_header.dart';
 import 'package:fa/ui/widgets/widget_publish_sheet.dart';
 import 'package:fa/ui/screens/settings.dart';
-import 'package:fa/ui/widgets/fa_mark.dart';
 import 'package:fa/ui/network/network_mode_chip.dart';
 import 'package:fa/ui/widgets/file_browser.dart';
-import 'package:fa/ui/widgets/fah_wallpaper.dart';
 import 'package:fa/ui/widgets/span_grid_delegate.dart';
 import 'package:fa_ui/fa_ui.dart';
-import 'package:fa/ui/widgets/wide_layout_shell.dart'
-    show faAppBar, faIsMacOSDesktop;
+import 'package:fa/ui/widgets/wide_layout_shell.dart' show faAppBar;
 
 /// iOS-home-screen-style apps launcher: the app's home on narrow layouts
 /// (the wide layout keeps the classic chat home). A dynamic square grid of
@@ -66,6 +66,10 @@ class AppLauncherScreen extends StatefulWidget {
     this.tileEngineFactory,
     this.networkMode,
     this.networkSessions,
+    this.onOpenNetworks,
+    this.fullScreen = false,
+    this.onProfile,
+    this.controller,
   });
 
   /// The multi-session manager owning the active [AgentService].
@@ -94,6 +98,20 @@ class AppLauncherScreen extends StatefulWidget {
   final NetworkModeController? networkMode;
   final NetworkSessionManager? networkSessions;
 
+  /// Opens network management from the Apps system tile. Null keeps that
+  /// tile out of hosts that have no network manager.
+  final VoidCallback? onOpenNetworks;
+
+  /// Desktop shows the Apps overview header; narrow shows the PoC sidebar
+  /// header. It never means that the launcher replaces the messenger shell.
+  final bool fullScreen;
+
+  /// Opens the same profile surface as the messenger's other sections.
+  final VoidCallback? onProfile;
+
+  /// Shares section, search, and Quick open state with the Apps directory.
+  final AppLauncherController? controller;
+
   @override
   State<AppLauncherScreen> createState() => _AppLauncherScreenState();
 }
@@ -121,7 +139,10 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
 
   /// Search field above the grid; a non-empty query swaps the draggable
   /// grid for a flat filtered results grid (no drag&drop in search mode).
-  final TextEditingController _searchController = TextEditingController();
+  TextEditingController get _searchController => _controller.searchController;
+
+  late final AppLauncherController _controller;
+  late final bool _ownsController;
 
   /// The active content tab: the app grid or the widgets catalog.
   _LauncherTab _tab = _LauncherTab.widgets;
@@ -147,6 +168,13 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
   void initState() {
     super.initState();
     AppAnalytics.instance.screenOpened('launcher');
+    _ownsController = widget.controller == null;
+    _controller = widget.controller ?? AppLauncherController();
+    _controller.addListener(_onControllerChanged);
+    _tab = switch (_controller.section) {
+      AppsDirectorySection.myApps => _LauncherTab.widgets,
+      AppsDirectorySection.widgetStore => _LauncherTab.getWidgets,
+    };
     _appsStore = widget.appsStore ?? AppsStore(widget.manager.env);
     _layout = widget.layoutStore;
     widget.manager.addListener(_onManagerChanged);
@@ -182,13 +210,28 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
   @override
   void dispose() {
     widget.manager.removeListener(_onManagerChanged);
-    _searchController.removeListener(_onSearchChanged);
-    _searchController.dispose();
+    _controller.removeListener(_onControllerChanged);
+    if (_ownsController) {
+      _searchController.removeListener(_onSearchChanged);
+      _controller.dispose();
+    } else {
+      _searchController.removeListener(_onSearchChanged);
+    }
     _detachFsRevision();
     _layout?.removeListener(_onLayoutChanged);
     _layoutReloadDebounce?.cancel();
     _cancelFolderDwell();
     super.dispose();
+  }
+
+  void _onControllerChanged() {
+    if (!mounted) return;
+    setState(() {
+      _tab = switch (_controller.section) {
+        AppsDirectorySection.myApps => _LauncherTab.widgets,
+        AppsDirectorySection.widgetStore => _LauncherTab.getWidgets,
+      };
+    });
   }
 
   void _onSearchChanged() {
@@ -285,7 +328,10 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
   void _syncApps() {
     final apps = _apps;
     if (apps == null) return;
-    _layout?.syncApps(apps.map((app) => app.id));
+    _layout?.syncApps(
+      apps.map((app) => app.id),
+      includeNetworks: widget.onOpenNetworks != null,
+    );
   }
 
   // --- drag & drop ---------------------------------------------------------
@@ -988,11 +1034,11 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
     return Scaffold(
       // Let the Apps surface and wallpaper reach the bottom edge; the grid
       // applies its own safe-area clearance.
+      backgroundColor: colors.bg,
       body: SafeArea(
         bottom: false,
         child: Stack(
           children: [
-            const Positioned.fill(child: FahWallpaper()),
             _buildGridArea(colors),
             if (_openFolderId != null) ...[
               _buildFolderBarrier(colors),
@@ -1000,6 +1046,67 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
             ],
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildNarrowHeader(FahColors colors) {
+    return MessengerSectionHeader(
+      title: context.l10n.appsGridTitle,
+      searchController: _searchController,
+      searchFocusNode: _controller.searchFocusNode,
+      searchHint: context.l10n.launcherSearchHint,
+      onProfile: widget.onProfile ?? () {},
+      onNew: () {},
+      compact: true,
+    );
+  }
+
+  Widget _buildOverviewHeader(FahColors colors) {
+    return Container(
+      height: 48,
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      decoration: BoxDecoration(
+        color: colors.panel,
+        border: Border(bottom: BorderSide(color: colors.border)),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  context.l10n.appsGridTitle,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: colors.text,
+                    fontSize: 15,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                Text(
+                  context.l10n.appsOverviewSubtitle,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(color: colors.dim, fontSize: 11),
+                ),
+              ],
+            ),
+          ),
+          if (widget.networkMode != null && widget.networkSessions != null)
+            NetworkModeChip(
+              controller: widget.networkMode!,
+              manager: widget.networkSessions!,
+            ),
+          TextButton(
+            key: const ValueKey('appsQuickOpen'),
+            onPressed: _controller.quickOpen,
+            child: Text(context.l10n.appsQuickOpen),
+          ),
+        ],
       ),
     );
   }
@@ -1016,104 +1123,209 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Padding(
-          // macOS: extra room so the floating traffic lights don't crowd
-          // the brand tile at the very top edge.
-          padding: EdgeInsets.fromLTRB(20, faIsMacOSDesktop ? 32 : 16, 20, 8),
-          child: FaSurface(
-            glass:
-                FaDesignTokens.of(context).direction == FaVisualDirection.glass,
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-            child: Row(
-              children: [
-                const FaBrandTile(size: 28),
-                const SizedBox(width: 10),
-                // Ellipsize the title before any trailing network-mode chip.
-                Flexible(
-                  child: Text(
-                    context.l10n.appsGridTitle,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ),
-                if (widget.networkMode != null &&
-                    widget.networkSessions != null) ...[
-                  const SizedBox(width: 8),
-                  NetworkModeChip(
-                    controller: widget.networkMode!,
-                    manager: widget.networkSessions!,
-                  ),
-                ],
-              ],
-            ),
+        widget.fullScreen
+            ? _buildOverviewHeader(colors)
+            : _buildNarrowHeader(colors),
+        if (widget.fullScreen &&
+            _tab == _LauncherTab.widgets &&
+            _searchController.text.trim().isEmpty)
+          Center(
+            child: SizedBox(width: 760, child: _buildFeaturedApps(colors)),
           ),
-        ),
-        // ── Search ───────────────────────────────────────────────
-        Padding(
-          padding: const EdgeInsets.fromLTRB(20, 0, 20, 6),
-          child: FaTextField(
-            controller: _searchController,
-            prefixIcon: const Icon(Icons.search, size: 18),
-            hintText: context.l10n.launcherSearchHint,
-          ),
-        ),
         // ── Tabs: the app grid or the widgets catalog ────────────
         Padding(
           padding: const EdgeInsets.fromLTRB(20, 0, 20, 4),
-          child: Row(
-            children: [
-              for (final tab in _LauncherTab.values)
-                _LauncherTabButton(
-                  label: switch (tab) {
-                    _LauncherTab.widgets => context.l10n.launcherTabWidgets,
-                    _LauncherTab.getWidgets =>
-                      context.l10n.launcherTabGetWidgets,
-                  },
-                  selected: _tab == tab,
-                  onTap: () => setState(() => _tab = tab),
+          child: Center(
+            child: SizedBox(
+              width: 760,
+              child: SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  children: [
+                    for (final tab in _LauncherTab.values)
+                      Padding(
+                        padding: const EdgeInsets.only(right: 8),
+                        child: MessengerCategoryChip(
+                          chipKey: ValueKey(
+                            tab == _LauncherTab.widgets
+                                ? 'appsTab-myApps'
+                                : 'appsTab-catalog',
+                          ),
+                          icon: tab == _LauncherTab.widgets
+                              ? Icons.apps_outlined
+                              : Icons.download_outlined,
+                          label: switch (tab) {
+                            _LauncherTab.widgets => context.l10n.appsMyApps,
+                            _LauncherTab.getWidgets =>
+                              context.l10n.appsWidgetStore,
+                          },
+                          selected: _tab == tab,
+                          onTap: () => _controller.select(
+                            tab == _LauncherTab.widgets
+                                ? AppsDirectorySection.myApps
+                                : AppsDirectorySection.widgetStore,
+                          ),
+                        ),
+                      ),
+                    // gh-1616: Chrome-parity "Load unpacked" — a local
+                    // apps/<id>/ folder loads, validates and persists like a
+                    // catalog install. Hidden on hosts with no folder picker.
+                    if (_unpackedPicker != null)
+                      MessengerCategoryChip(
+                        chipKey: const ValueKey('appsLoadUnpacked'),
+                        icon: Icons.folder_open_outlined,
+                        label: context.l10n.launcherLoadUnpacked,
+                        selected: false,
+                        onTap: () => unawaited(
+                          loadUnpackedWidget(
+                            context,
+                            manager: widget.manager,
+                            appsStore: _appsStore,
+                            picker: _unpackedPicker,
+                          ),
+                        ),
+                      ),
+                  ],
                 ),
-              // gh-1616: Chrome-parity "Load unpacked" — a local
-              // apps/<id>/ folder loads, validates and persists like a
-              // catalog install. Hidden on hosts with no folder picker.
-              if (_unpackedPicker != null) ...[
-                const Spacer(),
-                _LauncherTabButton(
-                  label: context.l10n.launcherLoadUnpacked,
-                  selected: false,
-                  onTap: () => unawaited(
-                    loadUnpackedWidget(
-                      context,
-                      manager: widget.manager,
-                      appsStore: _appsStore,
-                      picker: _unpackedPicker,
-                    ),
-                  ),
-                  icon: Icons.folder_open,
-                ),
-              ],
-            ],
+              ),
+            ),
           ),
         ),
+        if (widget.fullScreen)
+          Center(
+            child: SizedBox(
+              width: 760,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(20, 8, 20, 4),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      _tab == _LauncherTab.widgets
+                          ? context.l10n.appsMyApps
+                          : context.l10n.appsWidgetStore,
+                      style: TextStyle(
+                        color: colors.text,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    Text(
+                      _tab == _LauncherTab.widgets
+                          ? context.l10n.appsMyAppsSubtitle
+                          : context.l10n.appsWidgetStoreSubtitle,
+                      style: TextStyle(color: colors.dim, fontSize: 11),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
         Expanded(
-          child: _tab == _LauncherTab.getWidgets
-              // The catalog inline (no bottom-sheet chrome) — install,
-              // update, preview and open widgets without leaving home.
-              // Shares the launcher's AppsStore so installs are visible to
-              // the tile menu (Remove) immediately.
-              ? WidgetsCatalogSheet(
-                  env: widget.manager.env,
-                  manager: widget.manager,
-                  appsStore: _appsStore,
-                  embedded: true,
-                )
-              : _searchController.text.trim().isNotEmpty
-              ? _buildSearchResults(colors)
-              : _buildDraggableGrid(colors),
+          child: Center(
+            child: SizedBox(
+              width: 760,
+              child: _tab == _LauncherTab.getWidgets
+                  // The catalog inline (no bottom-sheet chrome) — install,
+                  // update, preview and open widgets without leaving home.
+                  // Shares the launcher's AppsStore so installs are visible to
+                  // the tile menu (Remove) immediately.
+                  ? WidgetsCatalogSheet(
+                      env: widget.manager.env,
+                      manager: widget.manager,
+                      appsStore: _appsStore,
+                      embedded: true,
+                    )
+                  : _searchController.text.trim().isNotEmpty
+                  ? _buildSearchResults(colors)
+                  : _buildDraggableGrid(colors),
+            ),
+          ),
         ),
       ],
+    );
+  }
+
+  /// App-Store-like content-first overview. These are real installed apps:
+  /// tapping a feature uses exactly the same launch path as its grid tile.
+  Widget _buildFeaturedApps(FahColors colors) {
+    final apps = (_apps ?? const <JsAppInfo>[]).take(4).toList();
+    if (apps.isEmpty) return const SizedBox.shrink();
+    final locale = Localizations.localeOf(context).toLanguageTag();
+    return SizedBox(
+      key: const ValueKey('appsFeatureCards'),
+      height: 158,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.fromLTRB(20, 4, 20, 12),
+        itemCount: apps.length,
+        separatorBuilder: (_, _) => const SizedBox(width: 12),
+        itemBuilder: (context, index) {
+          final app = apps[index];
+          final description = app.displayDescription(locale);
+          return Material(
+            color: colors.panelAlt,
+            shape: RoundedSuperellipseBorder(
+              borderRadius: BorderRadius.circular(18),
+              side: BorderSide(color: colors.border.withValues(alpha: .45)),
+            ),
+            clipBehavior: Clip.antiAlias,
+            child: InkWell(
+              key: ValueKey('appsFeatureCard-${app.id}'),
+              onTap: () => unawaited(_launchApp(app)),
+              child: Container(
+                width: 246,
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [
+                      colors.indigo.withValues(alpha: .10),
+                      colors.panelAlt.withValues(alpha: .2),
+                    ],
+                  ),
+                ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    AppIcon(app: app, env: widget.manager.env, size: 48),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            app.displayName(locale),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: colors.text,
+                              fontSize: 15,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            description.isEmpty ? app.id : description,
+                            maxLines: 3,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: colors.dim,
+                              fontSize: 12,
+                              height: 1.3,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          );
+        },
+      ),
     );
   }
 
@@ -1122,32 +1334,48 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
   /// and folders stay exclusive to the main grid.
   Widget _buildSearchResults(FahColors colors) {
     final matches = _searchMatches();
-    if (matches.isEmpty) {
-      return Center(
-        child: Text(
-          '∅',
-          style: Theme.of(
-            context,
-          ).textTheme.headlineMedium?.copyWith(color: colors.dim),
-        ),
-      );
-    }
-    return GridView.builder(
-      padding: EdgeInsets.fromLTRB(
-        16,
-        8,
-        16,
-        MediaQuery.viewPaddingOf(context).bottom + 128,
+    return TweenAnimationBuilder<double>(
+      tween: Tween(begin: 0, end: 1),
+      duration: FaMotion.duration(context, const Duration(milliseconds: 200)),
+      curve: Curves.easeInOutCubic,
+      builder: (context, opacity, child) =>
+          Opacity(opacity: opacity, child: child),
+      child: AnimatedSwitcher(
+        key: const ValueKey('appSearchResultsSwitcher'),
+        duration: FaMotion.duration(context, const Duration(milliseconds: 200)),
+        switchInCurve: Curves.easeInOutCubic,
+        switchOutCurve: Curves.easeInOutCubic,
+        child: matches.isEmpty
+            ? Center(
+                key: const ValueKey('appSearchEmpty'),
+                child: Text(
+                  '∅',
+                  style: Theme.of(
+                    context,
+                  ).textTheme.headlineMedium?.copyWith(color: colors.dim),
+                ),
+              )
+            : GridView.builder(
+                key: ValueKey(
+                  'appSearchResults-${matches.map((app) => app.id).join(',')}',
+                ),
+                padding: EdgeInsets.fromLTRB(
+                  16,
+                  8,
+                  16,
+                  MediaQuery.viewPaddingOf(context).bottom + 128,
+                ),
+                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: 4,
+                  childAspectRatio: 0.82,
+                  crossAxisSpacing: 8,
+                  mainAxisSpacing: 12,
+                ),
+                itemCount: matches.length,
+                itemBuilder: (context, index) =>
+                    _searchResultTile(colors, context, matches[index]),
+              ),
       ),
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 4,
-        childAspectRatio: 0.82,
-        crossAxisSpacing: 8,
-        mainAxisSpacing: 12,
-      ),
-      itemCount: matches.length,
-      itemBuilder: (context, index) =>
-          _searchResultTile(colors, context, matches[index]),
     );
   }
 
@@ -1172,6 +1400,7 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
     JsAppInfo app,
   ) {
     return InkWell(
+      key: ValueKey('appSearchResult-${app.id}'),
       borderRadius: BorderRadius.circular(12),
       hoverColor: colors.indigo.withValues(alpha: 0.06),
       onTap: () => unawaited(_launchApp(app)),
@@ -1594,6 +1823,11 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
         size: size * 0.5,
         color: colors.dim,
       ),
+      LauncherLayoutStore.networksKey => Icon(
+        Icons.hub_outlined,
+        size: size * 0.5,
+        color: colors.dim,
+      ),
       _ when LauncherLayoutStore.isFolderKey(key) => _folderMiniIcons(
         colors,
         LauncherLayoutStore.folderIdOf(key),
@@ -1747,6 +1981,9 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
     if (key == LauncherLayoutStore.filesKey) {
       return context.l10n.chatFilesTooltip;
     }
+    if (key == LauncherLayoutStore.networksKey) {
+      return context.l10n.networkNetworksTitle;
+    }
     if (LauncherLayoutStore.isFolderKey(key)) {
       return _layout?.folderById(LauncherLayoutStore.folderIdOf(key))?.name ??
           context.l10n.launcherFolderDefaultName;
@@ -1761,6 +1998,10 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
     }
     if (key == LauncherLayoutStore.filesKey) {
       unawaited(_openFiles());
+      return;
+    }
+    if (key == LauncherLayoutStore.networksKey) {
+      widget.onOpenNetworks?.call();
       return;
     }
     if (LauncherLayoutStore.isFolderKey(key)) {
@@ -1921,59 +2162,3 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
 
 /// The launcher's content tabs: the app grid vs the widgets catalog.
 enum _LauncherTab { widgets, getWidgets }
-
-/// One tab button in the launcher header row (pill highlight, the same
-/// look the desktop apps panel's filter tabs use).
-class _LauncherTabButton extends StatelessWidget {
-  const _LauncherTabButton({
-    required this.label,
-    required this.selected,
-    required this.onTap,
-    this.icon,
-  });
-
-  final String label;
-  final bool selected;
-  final VoidCallback onTap;
-
-  /// Optional leading icon (the "Load unpacked" action renders as a
-  /// folder chip in the same tab row).
-  final IconData? icon;
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = FahColors.of(context);
-    final theme = Theme.of(context);
-    return Padding(
-      padding: const EdgeInsets.only(right: 4),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(8),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-          decoration: BoxDecoration(
-            color: selected ? colors.panelAlt : Colors.transparent,
-            borderRadius: BorderRadius.circular(8),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (icon != null) ...[
-                Icon(icon, size: 14, color: colors.dim),
-                const SizedBox(width: 4),
-              ],
-              Text(
-                label,
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: selected ? colors.text : colors.dim,
-                  fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
-                  fontSize: 12,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}

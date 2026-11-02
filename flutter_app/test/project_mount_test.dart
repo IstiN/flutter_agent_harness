@@ -66,6 +66,9 @@ void main() {
   testWidgets('open-folder button mounts and lists the project', (
     tester,
   ) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(300, 700);
+    addTearDown(tester.view.reset);
     final env = await _envWithHost();
     final ops = _FakeFolderOps(
       pickResult: (path: '/host/repo', bookmark: 'Ym9va21hcms='),
@@ -88,6 +91,15 @@ void main() {
       findsOneWidget,
       reason: 'mounted state shows the eject chip',
     );
+    expect(
+      find.byKey(const ValueKey('fileBrowserMountIdentity')),
+      findsOneWidget,
+    );
+    expect(find.text('repo'), findsOneWidget);
+    final title = tester.widget<Text>(find.text('Files'));
+    expect(title.maxLines, 1);
+    expect(title.overflow, TextOverflow.ellipsis);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('eject unmounts and stops the scoped access', (tester) async {

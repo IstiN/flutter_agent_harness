@@ -53,7 +53,7 @@ void main() {
       ),
     );
     expect(find.text('hello'), findsOneWidget);
-    // The stock avatar is the Fa brand `>_` tile.
+    // The stock avatar is the shared B3-square-accent Fa brand tile.
     expect(find.byType(FaAiAvatar), findsOneWidget);
   });
 

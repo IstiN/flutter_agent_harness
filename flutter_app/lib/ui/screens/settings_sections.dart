@@ -17,6 +17,7 @@ class ThemeModeSection extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final tokens = faui.FaDesignTokens.of(context);
     final controller = this.controller ?? FahThemeScope.maybeOf(context);
     if (controller == null) return const SizedBox.shrink();
     return ListenableBuilder(
@@ -37,6 +38,9 @@ class ThemeModeSection extends StatelessWidget {
               key: ValueKey<FahThemeMode>(controller.mode),
               initialValue: controller.mode,
               isExpanded: true,
+              dropdownColor: tokens.surface2,
+              iconEnabledColor: tokens.ink2,
+              borderRadius: BorderRadius.circular(tokens.radiusMd),
               items: [
                 DropdownMenuItem(
                   value: FahThemeMode.system,
@@ -117,7 +121,9 @@ class VisualDirectionSection extends StatelessWidget {
           const SizedBox(height: 4),
           Text(
             context.l10n.visualDirectionSubtitle,
-            style: Theme.of(context).textTheme.bodySmall,
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              color: faui.FaDesignTokens.of(context).ink2,
+            ),
           ),
           const SizedBox(height: 12),
           LayoutBuilder(
@@ -149,6 +155,11 @@ class VisualDirectionSection extends StatelessWidget {
             key: ValueKey<faui.FaFontPreset>(controller.fontPreset),
             initialValue: controller.fontPreset,
             isExpanded: true,
+            dropdownColor: faui.FaDesignTokens.of(context).surface2,
+            iconEnabledColor: faui.FaDesignTokens.of(context).ink2,
+            borderRadius: BorderRadius.circular(
+              faui.FaDesignTokens.of(context).radiusMd,
+            ),
             items: [
               for (final preset in faui.FaFontPreset.values)
                 DropdownMenuItem(
@@ -350,7 +361,12 @@ class ThemePacksSection extends StatelessWidget {
       children: [
         _headerRow(context, theme, store, canPick),
         const SizedBox(height: 4),
-        Text(context.l10n.themePacksSubtitle, style: theme.textTheme.bodySmall),
+        Text(
+          context.l10n.themePacksSubtitle,
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: faui.FaDesignTokens.of(context).ink2,
+          ),
+        ),
         RadioGroup<String?>(
           groupValue: controller.packId,
           onChanged: (id) => controller.setPack(
@@ -440,7 +456,7 @@ class ThemePacksSection extends StatelessWidget {
           Text(
             pack.spec.contrastWarnings.join(' · '),
             style: theme.textTheme.bodySmall?.copyWith(
-              color: theme.colorScheme.error,
+              color: faui.FaDesignTokens.of(context).danger,
             ),
           ),
       ],
@@ -622,6 +638,7 @@ class _CompactionSectionState extends State<CompactionSection> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final tokens = faui.FaDesignTokens.of(context);
     final l10n = context.l10n;
     final resolution = _resolution;
     if (!widget.supported) {
@@ -635,9 +652,7 @@ class _CompactionSectionState extends State<CompactionSection> {
           const SizedBox(height: 8),
           Text(
             l10n.settingsCompactionWebNote,
-            style: theme.textTheme.bodySmall?.copyWith(
-              color: theme.colorScheme.onSurfaceVariant,
-            ),
+            style: theme.textTheme.bodySmall?.copyWith(color: tokens.ink2),
           ),
         ],
       );
@@ -656,9 +671,7 @@ class _CompactionSectionState extends State<CompactionSection> {
         const SizedBox(height: 8),
         Text(
           l10n.settingsCompactionHelper,
-          style: theme.textTheme.bodySmall?.copyWith(
-            color: theme.colorScheme.onSurfaceVariant,
-          ),
+          style: theme.textTheme.bodySmall?.copyWith(color: tokens.ink2),
         ),
         const SizedBox(height: 8),
         DropdownButtonFormField<CompactionEngine>(
@@ -667,6 +680,9 @@ class _CompactionSectionState extends State<CompactionSection> {
           key: ValueKey<CompactionEngine>(engine),
           initialValue: engine,
           isExpanded: true,
+          dropdownColor: tokens.surface2,
+          iconEnabledColor: tokens.ink2,
+          borderRadius: BorderRadius.circular(tokens.radiusMd),
           items: [
             DropdownMenuItem(
               value: CompactionEngine.structured,
@@ -684,14 +700,12 @@ class _CompactionSectionState extends State<CompactionSection> {
           engine == CompactionEngine.structured
               ? l10n.settingsCompactionStructuredHint
               : l10n.settingsCompactionClassicHint,
-          style: theme.textTheme.bodySmall,
+          style: theme.textTheme.bodySmall?.copyWith(color: tokens.ink2),
         ),
         const SizedBox(height: 4),
         Text(
           sourceCaption,
-          style: theme.textTheme.bodySmall?.copyWith(
-            color: theme.colorScheme.onSurfaceVariant,
-          ),
+          style: theme.textTheme.bodySmall?.copyWith(color: tokens.ink2),
         ),
         if (widget.docsUrl case final docs?)
           Align(
@@ -731,6 +745,7 @@ class CliOnlySettingsSection extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final tokens = faui.FaDesignTokens.of(context);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       mainAxisSize: MainAxisSize.min,
@@ -742,10 +757,7 @@ class CliOnlySettingsSection extends StatelessWidget {
         const SizedBox(height: 4),
         Text(
           context.l10n.settingsCliOnlyLead,
-          style: TextStyle(
-            color: theme.textTheme.bodySmall?.color,
-            fontSize: 12,
-          ),
+          style: TextStyle(color: tokens.ink2, fontSize: 12),
         ),
         const SizedBox(height: 8),
         for (final setting in cliOnlySettings)
@@ -756,11 +768,7 @@ class CliOnlySettingsSection extends StatelessWidget {
               children: [
                 Padding(
                   padding: const EdgeInsets.only(top: 2),
-                  child: Icon(
-                    Icons.terminal,
-                    size: 16,
-                    color: theme.colorScheme.primary,
-                  ),
+                  child: Icon(Icons.terminal, size: 16, color: tokens.accent),
                 ),
                 const SizedBox(width: 8),
                 Expanded(
@@ -770,10 +778,7 @@ class CliOnlySettingsSection extends StatelessWidget {
                       Text(_label(context.l10n, setting)),
                       Text(
                         cliOnlyJustifications[setting] ?? '',
-                        style: TextStyle(
-                          color: theme.textTheme.bodySmall?.color,
-                          fontSize: 12,
-                        ),
+                        style: TextStyle(color: tokens.ink2, fontSize: 12),
                       ),
                     ],
                   ),
@@ -986,6 +991,7 @@ class _ProviderQueueSectionState extends State<ProviderQueueSection> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final tokens = faui.FaDesignTokens.of(context);
     final l10n = context.l10n;
     if (!widget.supported) {
       // Web: no config yaml to read or write — say so instead of an
@@ -1011,10 +1017,7 @@ class _ProviderQueueSectionState extends State<ProviderQueueSection> {
         const SizedBox(height: 4),
         Text(
           l10n.settingsQueueHelper,
-          style: TextStyle(
-            color: theme.textTheme.bodySmall?.color,
-            fontSize: 12,
-          ),
+          style: TextStyle(color: tokens.ink2, fontSize: 12),
         ),
         const SizedBox(height: 8),
         if (resolution == null || !resolution.isSet)
@@ -1059,7 +1062,7 @@ class _ProviderQueueSectionState extends State<ProviderQueueSection> {
             padding: const EdgeInsets.only(top: 4),
             child: Text(
               l10n.settingsQueueScopeEnv,
-              style: TextStyle(color: theme.colorScheme.tertiary, fontSize: 12),
+              style: TextStyle(color: tokens.warning, fontSize: 12),
             ),
           ),
         const SizedBox(height: 8),
@@ -1103,6 +1106,7 @@ class _QueueEntryTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final tokens = faui.FaDesignTokens.of(context);
     final subtitle = [
       entry.providerType,
       if (entry.baseUrl != null) faui.providerHostOf(entry.baseUrl!),
@@ -1114,24 +1118,17 @@ class _QueueEntryTile extends StatelessWidget {
         children: [
           SizedBox(
             width: 28,
-            child: Text(
-              '${index + 1}.',
-              style: TextStyle(color: theme.textTheme.bodySmall?.color),
-            ),
+            child: Text('${index + 1}.', style: TextStyle(color: tokens.ink2)),
           ),
           Expanded(
             child: InkWell(
               onTap: enabled ? onEdit : null,
-              borderRadius: BorderRadius.circular(8),
+              borderRadius: BorderRadius.circular(tokens.radiusSm),
               child: Padding(
                 padding: const EdgeInsets.symmetric(vertical: 6),
                 child: Row(
                   children: [
-                    Icon(
-                      Icons.cloud_outlined,
-                      size: 20,
-                      color: theme.colorScheme.primary,
-                    ),
+                    Icon(Icons.cloud_outlined, size: 20, color: tokens.accent),
                     const SizedBox(width: 12),
                     Expanded(
                       child: Column(
@@ -1140,17 +1137,15 @@ class _QueueEntryTile extends StatelessWidget {
                           Text(entry.model),
                           Text(
                             subtitle,
-                            style: theme.textTheme.bodySmall,
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: tokens.ink2,
+                            ),
                             overflow: TextOverflow.ellipsis,
                           ),
                         ],
                       ),
                     ),
-                    Icon(
-                      Icons.chevron_right,
-                      size: 18,
-                      color: theme.colorScheme.onSurfaceVariant,
-                    ),
+                    Icon(Icons.chevron_right, size: 18, color: tokens.ink2),
                   ],
                 ),
               ),
@@ -1187,17 +1182,16 @@ class _ToolsBadge extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final tokens = faui.FaDesignTokens.of(context);
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
       decoration: BoxDecoration(
-        color: theme.colorScheme.primaryContainer,
-        borderRadius: BorderRadius.circular(4),
+        color: tokens.accentSoft,
+        borderRadius: BorderRadius.circular(tokens.radiusXs),
       ),
       child: Text(
         context.l10n.settingsToolsBadge,
-        style: theme.textTheme.labelSmall?.copyWith(
-          color: theme.colorScheme.onPrimaryContainer,
-        ),
+        style: theme.textTheme.labelSmall?.copyWith(color: tokens.accent),
       ),
     );
   }

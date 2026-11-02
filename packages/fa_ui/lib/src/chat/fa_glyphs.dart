@@ -5,6 +5,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
+import '../theme/fa2_theme.dart';
+import '../theme/fa2_tokens.dart';
+import '../widgets/fa_logo.dart';
+
 /// Shared chat glyphs drawn as inline SVG (crisp at any density, no icon
 /// font dependency): the composer's attach affordance and the assistant's
 /// brand avatar.
@@ -77,9 +81,8 @@ class FaModelGlyph extends StatelessWidget {
   }
 }
 
-/// The assistant's transcript avatar: the Fa brand `>_` glyph on a rounded
-/// tile — the same artwork language as the launcher brand tile. [dark]
-/// defaults to the theme brightness.
+/// The assistant's transcript avatar: the shared B3-square-accent [FaLogo].
+/// [dark] defaults to the theme brightness.
 class FaAiAvatar extends StatelessWidget {
   const FaAiAvatar({super.key, this.size = 28, this.dark});
 
@@ -90,55 +93,14 @@ class FaAiAvatar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final isDark = dark ?? Theme.of(context).brightness == Brightness.dark;
-    return SizedBox(
-      width: size,
-      height: size,
-      child: SvgPicture.string(
-        isDark ? _kFaAiAvatarDarkSvg : _kFaAiAvatarLightSvg,
-        fit: BoxFit.contain,
+    final forced = dark;
+    if (forced == null) return FaLogo(size: size);
+    return Theme(
+      data: buildFaTheme(
+        direction: FaDesignTokens.of(context).direction,
+        brightness: forced ? Brightness.dark : Brightness.light,
       ),
+      child: FaLogo(size: size),
     );
   }
 }
-
-/// 24×24 rendering of the brand tile geometry (see `icon/icon.svg`): the
-/// indigo chevron + teal underscore on a dark squircle.
-const String _kFaAiAvatarDarkSvg = '''
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-  <defs>
-    <linearGradient id="faAvChev" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#5B61F6"/>
-      <stop offset="1" stop-color="#3566FF"/>
-    </linearGradient>
-    <linearGradient id="faAvUnder" x1="0" y1="0" x2="1" y2="0">
-      <stop offset="0" stop-color="#2EBD9E"/>
-      <stop offset="1" stop-color="#48C7E8"/>
-    </linearGradient>
-  </defs>
-  <rect width="24" height="24" rx="6.5" fill="#0b0f16"/>
-  <rect x="0.6" y="0.6" width="22.8" height="22.8" rx="5.9" fill="none" stroke="#1c2637" stroke-width="1.1"/>
-  <path d="M 7 8.4 L 11.9 11.8 L 7 15.2" fill="none" stroke="url(#faAvChev)" stroke-width="2" stroke-linecap="butt" stroke-linejoin="miter"/>
-  <rect x="12.9" y="15.7" width="5.1" height="1.5" fill="url(#faAvUnder)"/>
-</svg>
-''';
-
-/// Light form (see `icon/icon_light.svg`).
-const String _kFaAiAvatarLightSvg = '''
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-  <defs>
-    <linearGradient id="faAvChevL" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#5B61F6"/>
-      <stop offset="1" stop-color="#3566FF"/>
-    </linearGradient>
-    <linearGradient id="faAvUnderL" x1="0" y1="0" x2="1" y2="0">
-      <stop offset="0" stop-color="#2EBD9E"/>
-      <stop offset="1" stop-color="#48C7E8"/>
-    </linearGradient>
-  </defs>
-  <rect width="24" height="24" rx="6.5" fill="#fafbfe"/>
-  <rect x="0.6" y="0.6" width="22.8" height="22.8" rx="5.9" fill="none" stroke="#e5eaf2" stroke-width="1.1"/>
-  <path d="M 7 8.4 L 11.9 11.8 L 7 15.2" fill="none" stroke="url(#faAvChevL)" stroke-width="2" stroke-linecap="butt" stroke-linejoin="miter"/>
-  <rect x="12.9" y="15.7" width="5.1" height="1.5" fill="url(#faAvUnderL)"/>
-</svg>
-''';

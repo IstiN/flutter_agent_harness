@@ -10,6 +10,7 @@ library;
 
 import 'dart:io';
 
+import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/widgets/file_browser.dart';
 import 'package:fa/ui/widgets/file_preview.dart';
 import 'package:flutter/material.dart';
@@ -371,11 +372,13 @@ Future<void> _pumpBrowser(
   WidgetTester tester,
   MemoryExecutionEnv env, {
   Size size = goldenSizeDesktop,
+  ThemeData? theme,
 }) {
   return pumpGolden(
     tester,
     FileBrowser(env: env),
     size: size,
+    theme: theme,
     wrap: (child) => Scaffold(body: child),
   );
 }
@@ -391,6 +394,24 @@ void main() {
       final env = await _seededEnv();
       await _pumpBrowser(tester, env);
       await expectGolden(tester, 'files_listing');
+    });
+
+    testWidgets('compact 300px panel in dark and light themes', (tester) async {
+      for (final light in [false, true]) {
+        await tester.pumpWidget(const SizedBox());
+        await tester.pump();
+        final env = await _seededEnv();
+        await _pumpBrowser(
+          tester,
+          env,
+          size: const Size(300, 700),
+          theme: light ? buildFahThemeLight() : buildFahTheme(),
+        );
+        await expectGolden(
+          tester,
+          light ? 'files_panel_light' : 'files_panel_dark',
+        );
+      }
     });
 
     testWidgets('markdown preview with the Preview/Source segments', (
