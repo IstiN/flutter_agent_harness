@@ -2080,6 +2080,49 @@ void main() {
       },
     );
 
+    test(
+      'AC3: a send failure while resuming spends the same bounded budget',
+      () async {
+        final body = filler(chunk * 3);
+        var requests = 0;
+        var sendCalls = 0;
+        final client = MockClient.streaming((request, _) async {
+          sendCalls++;
+          if (sendCalls == 1) {
+            requests++;
+            return http.StreamedResponse(
+              resetsAfter([body.sublist(0, chunk)]),
+              200,
+              contentLength: body.length,
+            );
+          }
+          if (sendCalls == 2) {
+            // The resume attempt itself cannot connect (the flaky-link
+            // shape): the send failure is soft while the budget allows.
+            throw http.ClientException('no route to host');
+          }
+          requests++;
+          return http.StreamedResponse(
+            steady([body.sublist(chunk, chunk * 2), body.sublist(chunk * 2)]),
+            206,
+            contentLength: body.length - chunk,
+          );
+        });
+        final lines = <String>[];
+        final outcome = await downloadArchiveBody(
+          client,
+          Uri.parse(archiveUrl),
+          log: lines.add,
+          stallTimeout: const Duration(seconds: 5),
+          maxResumeAttempts: 2,
+        );
+        expect(outcome.ok, isTrue);
+        expect(outcome.bytes, body);
+        expect(requests, 2);
+        expect(lines.join('\n'), contains('resuming (attempt 2/2)…'));
+      },
+    );
+
     test('runSelfUpdate survives one mid-body reset and swaps in', () async {
       final target = File('${temp.path}/fa')..writeAsStringSync('old');
       final body = _fixtureTarGz;
