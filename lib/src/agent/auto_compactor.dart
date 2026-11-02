@@ -55,6 +55,9 @@ final class AutoCompactorPass {
     this.hiddenRecords = 0,
     this.summarizedMessages = 0,
     this.droppedMessages = 0,
+    this.marginTokens,
+    this.bandTokens,
+    this.hideableRemaining,
   });
 
   /// 1-based pass number.
@@ -91,6 +94,19 @@ final class AutoCompactorPass {
   /// summaries, so a report showing only hidden/summarized cannot explain
   /// where the tokens went. 0 for every summarizer pass.
   final int droppedMessages;
+
+  /// gh-2044 fragile-band escalation metadata (optional, never content):
+  /// the settled margin that triggered the structured engine's escalation
+  /// pass. Null on every pass except `structured·ckpt-escalation`.
+  final int? marginTokens;
+
+  /// gh-2044: the band the margin was measured against
+  /// (`settings.reserveTokens`). Null except on escalation passes.
+  final int? bandTokens;
+
+  /// gh-2044: remaining hideable-entry count at escalation time — a
+  /// diagnostic count only. Null except on escalation passes.
+  final int? hideableRemaining;
 }
 
 /// Hooks for a host UI to observe progress. Implementations should not
@@ -1277,6 +1293,7 @@ final class _StructuredHooksAdapter implements StructuredCompactorHooks {
         // (issue #541).
         fallback: switch (pass.kind) {
           'checkpoint' => 'structured·ckpt',
+          'checkpoint-escalation' => 'structured·ckpt-escalation',
           'hide-fallback' => 'structured·hide-fallback',
           'hide-lru' => 'structured·hide-lru',
           _ => 'structured·hide',
@@ -1286,6 +1303,11 @@ final class _StructuredHooksAdapter implements StructuredCompactorHooks {
         hiddenRecords: pass.hiddenCount,
         summarizedMessages: pass.summarizedCount,
         summary: pass.summary,
+        // gh-2044: the escalation's numeric reason rides to the host
+        // reporting (margin/band/outcome) — counts only, never content.
+        marginTokens: pass.marginTokens,
+        bandTokens: pass.bandTokens,
+        hideableRemaining: pass.hideableRemaining,
       ),
     );
   }

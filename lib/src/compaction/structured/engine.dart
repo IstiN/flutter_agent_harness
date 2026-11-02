@@ -411,9 +411,43 @@ final class StructuredCompactor {
     return ids;
   }
 
+  /// gh-2044: the total-budget latch. [cancelBudget] is the factory's
+  /// total-budget race kill (issue #515) — the ONE caller — so once it
+  /// fires the run's outcome is the factory's authoritative timeout path:
+  /// the escalation must not start another attempt after budget
+  /// exhaustion, and must not append (nor report) after that outcome.
+  /// Deliberately separate from [budgetSource]: per-call attempt-budget
+  /// kills cancel the budget token too, and the incident's judge timeouts
+  /// must not suppress the escalation (gh-2044 AC1).
+  final CancelTokenSource _totalBudgetSource = CancelTokenSource();
+
+  /// Whether the factory's total-budget race has killed this run.
+  bool get _totalBudgetSpent => _totalBudgetSource.token.isCancelled;
+
   /// Cancels the budget token — the factory's total-budget race calls
   /// this so the wedged call dies at the provider layer.
-  void cancelBudget(Object? reason) => budgetSource?.cancel(reason);
+  void cancelBudget(Object? reason) {
+    budgetSource?.cancel(reason);
+    _totalBudgetSource.cancel(reason);
+  }
+
+  /// gh-2044: whether a user/run cancellation killed this run — checked
+  /// around the escalation so a cancelled deepening surfaces the abort
+  /// (issue #1085 parity) instead of dissolving into "optional pass
+  /// failed, success stands". The budget token latches per-call budget
+  /// kills too (issue #515 provider-layer aborts carry a
+  /// [TimeoutException] reason) — those are NOT cancels: the incident's
+  /// judge timeouts must still escalate. Any other reason reached this
+  /// token only through the factory's run-token link — a user abort.
+  bool get _runCancelled {
+    if (cancelToken?.isCancelled ?? false) return true;
+    final source = budgetSource;
+    if (source == null) return false;
+    return source.token.isCancelled &&
+        source.token.cancelReason is! TimeoutException;
+  }
+
+  /// The named [TimeoutException] a budget expiry throws (issue #515).
   TimeoutException _budgetTimeout(String what, Duration budget) =>
       TimeoutException(
         'structured compaction $what exceeded the '
@@ -679,6 +713,152 @@ final class StructuredCompactor {
     return true;
   }
 
+  /// gh-2044 fragile-band escalation: exactly ONE extra checkpoint pass
+  /// after an automatic run (`force == false` — enforced by the caller)
+  /// settled with thin relief, `0 <= trigger - settled <
+  /// settings.reserveTokens`. The deterministic fallback (issue #541) is
+  /// intentionally minimal — it hides just enough to duck under the
+  /// trigger — so a degraded run lands right back on pressure within a
+  /// turn or two; this pass deepens with the EXISTING checkpoint
+  /// machinery instead (projection invariants, marker consolidation, the
+  /// #729 chunked fold — all inherited, not reimplemented).
+  ///
+  /// Contract:
+  /// - Thin settled headroom is the ONLY gate. Hideable entries may
+  ///   remain (the minimal fallback cannot prove exhaustion); the count
+  ///   rides the report as a diagnostic.
+  /// - Bounded: at most one pass, never a hide re-entry, never a loop —
+  ///   a still-thin post-escalation result keeps the existing verdict.
+  /// - Failure safety: a no-work outcome (no foldable range), an empty
+  ///   summary or an append error keeps the pre-escalation under-trigger
+  ///   verdict and emits ONE explicit failed escalation report.
+  /// - A cancellation or a budget expiry is NOT an ordinary failure: a
+  ///   cancelled run reports failure so the factory surfaces the abort
+  ///   (issue #1085); a [TimeoutException] propagates to the factory's
+  ///   #515/#1425 outcome path and no further attempt starts after the
+  ///   total-budget kill.
+  /// - Marker-only ranges consolidate deterministically — no LLM call is
+  ///   made, and none is reported.
+  ///
+  /// Returns whether the run's verdict stands (false only to surface a
+  /// cancellation).
+  Future<bool> _runCheckpointEscalationPass(int trigger, int margin) async {
+    if (_runCancelled || _totalBudgetSpent) return false;
+    final band = settings.reserveTokens;
+    final before = _requestTokens();
+    final view = await _buildView();
+    // Diagnostic count only — never rendered content.
+    final hideableRemaining = view == null
+        ? 0
+        : _hideableEntries(view.ledger).length;
+    void emit({
+      required int after,
+      required bool ok,
+      Object? error,
+      int judgeCalls = 0,
+      int summarizedCount = 0,
+      String? summary,
+    }) {
+      hooks?.onPass(
+        StructuredCompactionPass(
+          kind: 'checkpoint-escalation',
+          pass: ++_pass,
+          tokensBefore: before,
+          tokensAfter: after,
+          ok: ok,
+          error: error,
+          judgeCalls: judgeCalls,
+          summarizedCount: summarizedCount,
+          summary: summary,
+          marginTokens: margin,
+          bandTokens: band,
+          hideableRemaining: hideableRemaining,
+        ),
+      );
+    }
+
+    final range = await _pickCheckpointRange(view: view);
+    if (range == null) {
+      // Bounded no-op (gh-2044 semantic 5): nothing foldable below the
+      // keep-recent boundary — e.g. an entirely pinned/exempt foldable
+      // prefix. The pre-escalation verdict stands; no classic/lossy
+      // escape.
+      emit(
+        after: before,
+        ok: false,
+        error: const CompactionException(
+          'checkpoint escalation found no foldable range below the '
+          'keep-recent boundary',
+        ),
+      );
+      return true;
+    }
+    final flattened = _flattenForDepthCap(range);
+    final String? text;
+    try {
+      text = await _summarizeRange(range, flattened);
+    } on TimeoutException {
+      // A budget kill must surface as a named error (issue #515), not
+      // dissolve into the optional-pass null — the factory's #515/#1425
+      // outcome path owns it.
+      rethrow;
+    }
+    // gh-2044 semantic 7: the factory's total-budget kill is the
+    // authoritative outcome — no append and no report after it, whether
+    // the in-flight call died with the budget or raced it.
+    if (_totalBudgetSpent) return true;
+    if (text == null || text.isEmpty) {
+      if (_runCancelled) return false;
+      emit(
+        after: before,
+        ok: false,
+        error: const CompactionException(
+          'checkpoint escalation summarizer returned no text',
+        ),
+      );
+      return true;
+    }
+    try {
+      await session.appendCompactCheckpoint(
+        firstRecordId: range.firstRecordId,
+        lastRecordId: range.lastRecordId,
+        text: text,
+        coversRecordIds: range.coveredRecordIds,
+        flattenedRecordIds: [for (final ckpt in flattened) ckpt.id],
+      );
+    } on TimeoutException {
+      rethrow;
+    } on Object catch (error) {
+      if (_runCancelled) return false;
+      emit(after: before, ok: false, error: error);
+      return true;
+    }
+    final after = await _refreshState();
+    var summarizedCount = 0;
+    var visibleMessages = 0;
+    for (final id in range.coveredRecordIds) {
+      final seq = range.seqs.seqOf(id);
+      if (seq == null) continue;
+      if (range.seqs.recordAt(seq) is MessageRecord) summarizedCount++;
+    }
+    for (final record in range.visible) {
+      if (record is MessageRecord &&
+          range.coveredRecordIds.contains(record.id)) {
+        visibleMessages++;
+      }
+    }
+    emit(
+      after: after,
+      ok: true,
+      // Marker-only ranges consolidate deterministically (issue #387) —
+      // no LLM call happened, and none is reported (gh-2044 semantic 9).
+      judgeCalls: visibleMessages == 0 ? 0 : 1,
+      summarizedCount: summarizedCount,
+      summary: text,
+    );
+    return true;
+  }
+
   List<LedgerEntry> _hideableEntries(ContextLedger ledger) {
     final tailStart = ledger.entries.length - protectLastN < 0
         ? 0
@@ -733,7 +913,10 @@ final class StructuredCompactor {
   }
 
   /// Picks the next checkpoint range: the oldest PROJECTED records up to
-  /// the keep-recent boundary, snapped inward to pair groups.
+  /// the keep-recent boundary, snapped inward to pair groups. The
+  /// gh-2044 escalation passes its own prebuilt [view] so the range and
+  /// the diagnostic counts measure the same ledger; the ordinary pass
+  /// ladder builds its own.
   ///
   /// Issue #387: the walk projects HIDDEN records at their marker size —
   /// a checkpoint covering a marker run consolidates the per-record
@@ -741,10 +924,10 @@ final class StructuredCompactor {
   /// without bound. Without this, hide passes accumulate one-line
   /// markers that no later pass ever folds (they are invisible to the
   /// ledger), and the wire payload creeps back toward the window.
-  Future<_CkptRange?> _pickCheckpointRange() async {
-    final view = await _buildView();
-    if (view == null) return null;
-    final projected = _projectedEntries(view);
+  Future<_CkptRange?> _pickCheckpointRange({_LedgerView? view}) async {
+    final view_ = view ?? await _buildView();
+    if (view_ == null) return null;
+    final projected = _projectedEntries(view_);
     if (projected.isEmpty) return null;
 
     // The foldable prefix: pins and their whole pair groups drop out
@@ -760,9 +943,9 @@ final class StructuredCompactor {
     // deterministic and LRU passes still run).
     final foldable = [
       for (final entry in projected)
-        if (!view.ledger
+        if (!view_.ledger
             .groupOf(entry.recordId)
-            .any(view.state.pinnedRecordIds.contains))
+            .any(view_.state.pinnedRecordIds.contains))
           entry,
     ];
     if (foldable.isEmpty) return null;
@@ -776,7 +959,7 @@ final class StructuredCompactor {
       }
     }
     // Snap inward at group boundaries: a range never splits a pair.
-    while (cut > 1 && _sharesGroup(foldable, cut, view.ledger)) {
+    while (cut > 1 && _sharesGroup(foldable, cut, view_.ledger)) {
       cut--;
     }
     final members = foldable.take(cut).toList();
@@ -785,15 +968,15 @@ final class StructuredCompactor {
     final coveredIds = <String>{};
     for (final member in members) {
       coveredIds.add(member.recordId);
-      coveredIds.addAll(view.ledger.groupOf(member.recordId));
+      coveredIds.addAll(view_.ledger.groupOf(member.recordId));
     }
     return _CkptRange(
       firstRecordId: members.first.recordId,
       lastRecordId: members.last.recordId,
       coveredRecordIds: coveredIds.toList()..sort(),
-      state: view.state,
-      visible: view.visible,
-      seqs: view.seqs,
+      state: view_.state,
+      visible: view_.visible,
+      seqs: view_.seqs,
     );
   }
 

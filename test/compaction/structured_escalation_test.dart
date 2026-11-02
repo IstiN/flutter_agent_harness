@@ -118,15 +118,17 @@ void main() {
   });
 
   /// The incident shape at the 400k settings: user ask (100 tok) +
-  /// [pairs] read pairs of 1002 tok each. Entry ≈ 380k–400k, over the
-  /// 375000 trigger; a deterministic fallback hide of [fallbackPairs]
-  /// pairs lands the settle in the fragile band.
-  Future<(Session, AgentState)> incidentSession(int pairs) async {
+  /// [pairs] read pairs of 1002 tok each (1000-token results). 376 pairs
+  /// put the entry at 376,852; the minimal fallback hide then takes 2
+  /// pairs (freed 2004 ≥ over 1852) and lands the settle in the fragile
+  /// band (the wire keeps one-line markers for the hidden records — the
+  /// same marker tax the real incident paid).
+  Future<(Session, AgentState)> incidentSession([int pairs = 376]) async {
     final session = await repo.create(JsonlSessionCreateOptions(cwd: '/work'));
     await session.appendMessage(UserMessage.text('u' * 400));
     for (var i = 0; i < pairs; i++) {
       await session.appendMessage(_carrier('c$i'));
-      await session.appendMessage(_result('c$i', 100));
+      await session.appendMessage(_result('c$i', 1000));
     }
     return (session, _stateFor(await session.buildContextMessages(), contextWindow: 400));
   }
@@ -181,11 +183,12 @@ void main() {
     }
     final hiddenIds = keepVisible;
 
-    // Marker overhead of the hidden set (projection helpers, not guesses).
+    // Marker overhead of the hidden set (projection helpers, not guesses):
+    // the projected total with hidden records at marker size minus their
+    // full record cost.
     final markerTotal = _settledTokens(entries, hiddenIds) -
         entries
             .whereType<MessageRecord>()
-            .where((r) => hiddenIds.contains(r.id))
             .fold<int>(0, (sum, r) => sum + recordTokens(r));
 
     // kept filler: settle = user 100 + 102*keptPairs + filler + markers
@@ -279,17 +282,9 @@ void main() {
 
     test('375,609→360,010-shaped relief escalates too (second incident '
         'transition is a merge-blocking fixture)', () async {
-      // 38 pairs + one 1003-token pair: entry 385177, fallback frees 2004
-      // → settled 365173, margin 9827 — in the band.
-      final session = await repo.create(JsonlSessionCreateOptions(cwd: '/work'));
-      await session.appendMessage(UserMessage.text('u' * 400));
-      for (var i = 0; i < 37; i++) {
-        await session.appendMessage(_carrier('c$i'));
-        await session.appendMessage(_result('c$i', 100));
-      }
-      await session.appendMessage(_carrier('cbig'));
-      await session.appendMessage(_result('cbig', 1001));
-      final state = _stateFor(await session.buildContextMessages(), contextWindow: 400);
+      // 375 pairs: entry 375,850, over 850 — the fallback takes ONE pair
+      // and the settle (with its marker tax) stays in the band.
+      final (session, state) = await incidentSession(375);
       expect(_requestTokens(state), greaterThan(375000));
       var judgeCalls = 0;
       final hooks = _Hooks();
