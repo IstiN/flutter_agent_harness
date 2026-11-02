@@ -31,19 +31,29 @@ final class _CapturingHooks implements AutoCompactorHooks {
   void onDelta(String delta) {}
 
   @override
-  void onAttemptStart(String label, int attempt, Duration budget) {}
+  void onAttemptStart(String label, int attempt, Duration budget) {
+    // ignore: avoid_print
+    print('PROBE: attemptStart label=$label attempt=$attempt');
+  }
 
   @override
   void onPass(AutoCompactorPass pass) => passes.add(pass);
 
   @override
-  void onRetry(int attempt, int maxAttempts, Duration backoff, Object error) {}
+  void onRetry(int attempt, int maxAttempts, Duration backoff, Object error) {
+    // ignore: avoid_print
+    print('PROBE: retry attempt=$attempt error=$error');
+  }
 
   @override
   void onDone(int passes, int tokens) => doneCount++;
 
   @override
-  void onBothRolesFailed(Object lastError) => bothRolesError = lastError;
+  void onBothRolesFailed(Object lastError) {
+    bothRolesError = lastError;
+    // ignore: avoid_print
+    print('PROBE: bothRolesFailed error=$lastError');
+  }
 }
 
 void main() {
@@ -55,7 +65,7 @@ void main() {
     repo = JsonlSessionRepo(fs: fs, sessionsRoot: '/sessions');
   });
 
-  test('PROBE: gh-1743 nothing-droppable trace', () async {
+  test('PROBE-2: classic engine alone on the nothing-droppable fixture', () async {
     final session = await repo.create(JsonlSessionCreateOptions(cwd: '/w'));
     await session.appendMessage(UserMessage.text('a' * 40));
     final state = AgentState(
@@ -64,6 +74,7 @@ void main() {
     );
     final hooks = _CapturingHooks();
 
+    final sw = Stopwatch()..start();
     final ok = await AutoCompactorFactory(
       session: session,
       state: state,
@@ -78,7 +89,7 @@ void main() {
         smolModel: null,
         mainStream: (m, c, {cancelToken}) {
           // ignore: avoid_print
-          print('PROBE: main stream called (wedged)');
+          print('PROBE: STREAM CALLED (wedged)');
           final stream = AssistantMessageEventStream();
           stream.push(StartEvent(partial: _message(StopReason.stop)));
           return stream;
@@ -90,16 +101,15 @@ void main() {
       attemptBudget: const Duration(seconds: 30),
       totalBudget: const Duration(milliseconds: 300),
     ).run();
+    sw.stop();
 
     // ignore: avoid_print
-    print('PROBE: ok=$ok bothRolesError=${hooks.bothRolesError} '
-        'doneCount=${hooks.doneCount}');
+    print('PROBE: ok=$ok elapsed=${sw.elapsedMilliseconds}ms '
+        'bothRolesError=${hooks.bothRolesError} doneCount=${hooks.doneCount}');
     for (final p in hooks.passes) {
       // ignore: avoid_print
       print('PROBE: pass=${p.pass} fallback=${p.fallback} ok=${p.ok} '
-          'tokens ${p.tokensBefore}->${p.tokensAfter} '
-          'error=${p.error} summary=${p.summary?.substring(0, p.summary!.length.clamp(0, 120))} '
-          'hidden=${p.hiddenRecords} summarized=${p.summarizedMessages} dropped=${p.droppedMessages}');
+          'tokens ${p.tokensBefore}->${p.tokensAfter} summary=${p.summary}');
     }
     expect(true, isTrue);
   });
