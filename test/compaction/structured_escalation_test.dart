@@ -1141,6 +1141,120 @@ void main() {
     });
   });
 
+  group('UT-ESC-13 — an over-window run whose whole ledger fits '
+      'keepRecentTokens still folds (gh-2044 rework, flutter_app '
+      'over-window relief AC)', () {
+    test('the ladder folds the tool-result-heavy whole world when relief is '
+        'required — the decline stays escalation-only', () async {
+      // The flutter_app over-window fixture (agent_service_test.dart
+      // "auto-compaction over-window guard"): user ask + carrier +
+      // a 34000-char tool result over an 8192 window with the app's
+      // hosted settings (reserve 2048, keep 4096). The request estimate
+      // (~8.5k) is far over the trigger, yet every LEDGER token (~870)
+      // fits keepRecentTokens — the keep-recent walk cuts nowhere, and
+      // the tool result alone exceeds the window, so folding the whole
+      // world is the ONLY summarizer-based relief. The shared decline
+      // must NOT starve the ladder here: main's whole-world fold
+      // collapsed this transcript to ~85 tokens and the turn continued;
+      // the decline turned the relief into a hollow classic record
+      // (+29 tokens) and the app AC red.
+      final session = await repo.create(
+        JsonlSessionCreateOptions(cwd: '/work'),
+      );
+      await session.appendMessage(UserMessage.text('go'));
+      await session.appendMessage(_carrier('tc-1'));
+      await session.appendMessage(_result('tc-1', 8500));
+      final model = Model(
+        id: 'm1',
+        name: 'm1',
+        api: 'anthropic-messages',
+        provider: 'p',
+        baseUrl: 'http://localhost:1',
+        contextWindow: 8192,
+        maxTokens: 4096,
+      );
+      final state = _stateFor(
+        await session.buildContextMessages(),
+        contextWindow: 8192,
+      );
+      const appSettings = CompactionSettings(
+        enabled: true,
+        reserveTokens: 2048,
+        keepRecentTokens: 4096,
+      );
+      final before = _requestTokens(state);
+      expect(before, greaterThan(8192 - 512));
+      expect(
+        _settledTokens(await session.getEntries(), {}),
+        lessThan(appSettings.keepRecentTokens),
+        reason: 'fixture precondition: every ledger token fits '
+            'keepRecentTokens — the whole-world regime',
+      );
+
+      final hooks = _CapturingAutoHooks();
+      AssistantMessage reliefMessage() => AssistantMessage(
+        content: [TextContent(text: 'continued')],
+        api: 'test-api',
+        provider: 'test-provider',
+        model: 'm1',
+        usage: Usage.zero,
+        stopReason: StopReason.stop,
+        timestamp: DateTime.utc(2026),
+      );
+      final ok = await AutoCompactorFactory(
+        session: session,
+        state: state,
+        window: 8192,
+        settings: appSettings,
+        sources: AutoCompactorSources(
+          smolStream: null,
+          smolModel: null,
+          mainStream: (m, c, {cancelToken}) {
+            final message = reliefMessage();
+            return AssistantMessageEventStream()
+              ..push(DoneEvent(reason: StopReason.stop, message: message))
+              ..end();
+          },
+          mainModel: model,
+        ),
+        hooks: hooks,
+        prompts: const CompactionPrompts(),
+        engine: CompactionEngine.structured,
+      ).run();
+
+      expect(ok, isTrue);
+      final folds = hooks.passes
+          .where((p) => p.ok && p.tokensAfter < p.tokensBefore)
+          .toList();
+      expect(
+        folds,
+        isNotEmpty,
+        reason: 'relief is required: at least one pass must SHRINK the '
+            'request — the app relief gate reads afterTokens < beforeTokens',
+      );
+      expect(
+        hooks.passes.map((p) => p.fallback),
+        everyElement(startsWith('structured')),
+        reason: 'no hollow classic fall-through may run when the ladder '
+            'can fold',
+      );
+      expect(
+        (await session.getEntries()).whereType<CompactionRecord>(),
+        isEmpty,
+        reason: 'the classic contentless record must not appear',
+      );
+      final after = _requestTokens(
+        _stateFor(await session.buildContextMessages(), contextWindow: 8192),
+      );
+      expect(
+        after,
+        lessThan(before),
+        reason: 'the rebuilt projection must shrink: the huge tool result '
+            'folds into the checkpoint summary',
+      );
+    });
+  });
+
   group('IT-ESC — factory wiring', () {
     AssistantMessage streamMessage(StopReason reason, String text) =>
         AssistantMessage(
