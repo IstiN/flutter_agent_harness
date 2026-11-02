@@ -1227,13 +1227,15 @@ void main() {
       expect(
         folds,
         isNotEmpty,
-        reason: 'relief is required: at least one pass must SHRINK the '
+        reason:
+            'relief is required: at least one pass must SHRINK the '
             'request — the app relief gate reads afterTokens < beforeTokens',
       );
       expect(
         hooks.passes.map((p) => p.fallback),
         everyElement(startsWith('structured')),
-        reason: 'no hollow classic fall-through may run when the ladder '
+        reason:
+            'no hollow classic fall-through may run when the ladder '
             'can fold',
       );
       expect(
@@ -1247,7 +1249,8 @@ void main() {
       expect(
         after,
         lessThan(before),
-        reason: 'the rebuilt projection must shrink: the huge tool result '
+        reason:
+            'the rebuilt projection must shrink: the huge tool result '
             'folds into the checkpoint summary',
       );
     });

@@ -36,7 +36,17 @@ block a release again.
   `success: true` through the no-work terminal — `compactSession` now
   refuses that empty-region blank fold (gh-1743's failure-verdict
   contract kept; a dialed blank answer over a real region still lands
-  as a record, issue #578 unchanged).
+  as a record, issue #578 unchanged). Third CI red on the same branch
+  (flutter-app over-window relief, both shards): the whole-world decline
+  lived in the shared `_pickCheckpointRange`, so it also starved the
+  checkpoint LADDER — a tool-result-heavy transcript whose every ledger
+  token fits `keepRecentTokens` (the request estimate is far over the
+  trigger) lost its only summarizer-based relief, and the hosted app's
+  over-window guard ended the turn instead of continuing it. The decline
+  is now escalation-only: ladder passes run over the trigger, where the
+  fold IS the relief (the escalation still declines — semantic 5 — and
+  its pass body was extracted below the CRAP ratchet's 12.00).
+  (gh-2044 rework, UT-ESC-13)
 
 - fix(gh-2003): the Copilot picker filter is tier-aware. Individual-tier
   `/models` responses omit `model_picker_enabled` entirely, so phase 1
