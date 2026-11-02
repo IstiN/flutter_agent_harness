@@ -20,29 +20,23 @@ class MainFlutterWindow: NSWindow {
     titlebarAppearsTransparent = true
     titleVisibility = .hidden
     styleMask.insert(.fullSizeContentView)
-    // No NSToolbar: a unified toolbar paints its own translucent strip in
-    // the titlebar region — a few darker pixels along the window's top edge
-    // that read as a dirty seam. The window is already movable by its
-    // background and the traffic lights float without one — but without a
-    // toolbar macOS parks them lower and wider over the content, so pin
-    // them to the classic titlebar position ourselves.
-    isMovableByWindowBackground = true
-    pinTrafficLights()
-    NotificationCenter.default.addObserver(
-      forName: NSWindow.didResizeNotification,
-      object: self,
-      queue: .main
-    ) { [weak self] _ in
-      self?.pinTrafficLights()
+    if #available(macOS 11.0, *) {
+      toolbarStyle = .unified
     }
+    // The toolbar is invisible chrome: it hosts the traffic lights at the
+    // stock position and keeps the titlebar's SafeArea geometry stable
+    // (without it the lights drift and full-size content gets clipped under
+    // the window controls). Its baseline separator stays off so no strip
+    // is painted over the messenger chrome.
+    toolbar = NSToolbar(identifier: "FaToolbar")
+    toolbar?.showsBaselineSeparator = false
+    isMovableByWindowBackground = true
     // A neutral (not dark) window background: rounded-corner slivers and
     // any pre-first-frame flash must not tint against light themes.
     backgroundColor = NSColor.windowBackgroundColor
 
     self.contentViewController = flutterViewController
     self.setFrame(windowFrame, display: true)
-
-    pinTrafficLights()
 
     RegisterGeneratedPlugins(registry: flutterViewController)
     // Custom channels register against the ENGINE's binary messenger — in
@@ -88,27 +82,6 @@ class MainFlutterWindow: NSWindow {
     }
   }
 
-  /// The unified toolbar used to host the traffic lights; without one macOS
-  /// drops them lower and widens their pitch over full-size content. Pin
-  /// them to the position the toolbar era used: 20pt pitch, hugging the
-  /// left edge, vertically on the old toolbar row.
-  private func pinTrafficLights() {
-    let buttons = [
-      standardWindowButton(.closeButton),
-      standardWindowButton(.miniaturizeButton),
-      standardWindowButton(.zoomButton),
-    ].compactMap { $0 }
-    guard buttons.count == 3, let container = buttons[0].superview else {
-      return
-    }
-    let isFlipped = container.isFlipped
-    let y: CGFloat = isFlipped ? 12 : container.bounds.height - 12 - 14
-    var x: CGFloat = 8
-    for button in buttons {
-      button.frame.origin = CGPoint(x: x, y: y)
-      x += 20
-    }
-  }
 }
 
 /// The `fah/project_folder` method channel: native directory picking via
