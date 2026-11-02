@@ -154,7 +154,6 @@ void main() {
     required int keptPairs,
     required int margin,
     int hiddenFillerTokens = 100,
-    int protectLastN = 4,
   }) async {
     final session = await repo.create(JsonlSessionCreateOptions(cwd: '/work'));
     await session.appendMessage(UserMessage.text('u' * 400));
@@ -179,16 +178,15 @@ void main() {
     for (final record in entries) {
       if (record is! MessageRecord) continue;
       final seq = seqs.seqOf(record.id)!;
-      if (record.message is UserMessage && seq == 3) {
-        keepVisible.add(record.id); // the hidden filler
+      if (seq == 3) {
+        keepVisible.add(record.id); // the hidden filler (any role)
         continue;
       }
-      if (record.message is AssistantMessage ||
-          record.message is ToolResultMessage) {
-        if (seenPairRecords < pairRecordCount) {
-          keepVisible.add(record.id);
-          seenPairRecords++;
-        }
+      final message = record.message;
+      if ((message is AssistantMessage || message is ToolResultMessage) &&
+          seenPairRecords < pairRecordCount) {
+        keepVisible.add(record.id);
+        seenPairRecords++;
       }
     }
     final hiddenIds = keepVisible;
@@ -379,7 +377,7 @@ void main() {
     Future<(bool, _Hooks, Session)> runBoundary(int margin) async {
       final (session, state, hiddenIds) = await boundarySession(
         hiddenPairs: margin == 0 ? 1 : 2,
-        keptPairs: margin == 0 ? 4 : 2,
+        keptPairs: margin == 0 ? 4 : 1,
         margin: margin,
       );
       final hooks = _Hooks();
@@ -393,7 +391,7 @@ void main() {
         summarize: (_) => Future.value(SummarizationResult.success('CKPT')),
         checkpointPrompt: 'P',
         hooks: hooks,
-        protectLastN: 4,
+        protectLastN: 2,
       );
       final ok = await compactor.run();
       return (ok, hooks, session);
@@ -471,7 +469,9 @@ void main() {
         isEmpty,
         reason: 'a settle still over the trigger never escalates',
       );
-      expect(ok, isFalse);
+      // The classic ladder still falls through to the checkpoint, which
+      // succeeds — only the escalation is absent.
+      expect(ok, isTrue);
     });
   });
 
