@@ -23,14 +23,26 @@ class MainFlutterWindow: NSWindow {
     // No NSToolbar: a unified toolbar paints its own translucent strip in
     // the titlebar region — a few darker pixels along the window's top edge
     // that read as a dirty seam. The window is already movable by its
-    // background and the traffic lights float without one.
+    // background and the traffic lights float without one — but without a
+    // toolbar macOS parks them lower and wider over the content, so pin
+    // them to the classic titlebar position ourselves.
     isMovableByWindowBackground = true
+    pinTrafficLights()
+    NotificationCenter.default.addObserver(
+      forName: NSWindow.didResizeNotification,
+      object: self,
+      queue: .main
+    ) { [weak self] _ in
+      self?.pinTrafficLights()
+    }
     // A neutral (not dark) window background: rounded-corner slivers and
     // any pre-first-frame flash must not tint against light themes.
     backgroundColor = NSColor.windowBackgroundColor
 
     self.contentViewController = flutterViewController
     self.setFrame(windowFrame, display: true)
+
+    pinTrafficLights()
 
     RegisterGeneratedPlugins(registry: flutterViewController)
     // Custom channels register against the ENGINE's binary messenger — in
@@ -73,6 +85,27 @@ class MainFlutterWindow: NSWindow {
           )
         }
       }
+    }
+  }
+
+  /// The unified toolbar used to host the traffic lights; without one macOS
+  /// drops them lower and widens their pitch over full-size content. Pin
+  /// them to the classic 20pt-spaced row near the window's top edge.
+  private func pinTrafficLights() {
+    let buttons = [
+      standardWindowButton(.closeButton),
+      standardWindowButton(.miniaturizeButton),
+      standardWindowButton(.zoomButton),
+    ].compactMap { $0 }
+    guard buttons.count == 3, let container = buttons[0].superview else {
+      return
+    }
+    let isFlipped = container.isFlipped
+    let y: CGFloat = isFlipped ? 7 : container.bounds.height - 7 - 14
+    var x: CGFloat = 16
+    for button in buttons {
+      button.frame.origin = CGPoint(x: x, y: y)
+      x += 20
     }
   }
 }
