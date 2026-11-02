@@ -1700,6 +1700,33 @@ void main() {
         expect(lines.last, startsWith('downloaded 800 KB in '));
       },
     );
+    test('AC2: a small archive reports the progress pair in KB', () async {
+      final body = filler(chunk * 2); // 800 KB — both sides below one MiB.
+      final segments = [
+        body.sublist(0, chunk),
+        body.sublist(chunk, chunk * 2),
+      ];
+      final lines = <String>[];
+      final client = streamingClient(
+        (_) => http.StreamedResponse(
+          steady(segments),
+          200,
+          contentLength: body.length,
+        ),
+      );
+      final outcome = await downloadArchiveBody(
+        client,
+        Uri.parse(archiveUrl),
+        log: lines.add,
+        progressStep: chunk,
+        stallTimeout: const Duration(seconds: 5),
+      );
+      expect(outcome.ok, isTrue);
+      expect(
+        lines.where((line) => line.startsWith('downloading… ')),
+        ['downloading… 400/800 KB', 'downloading… 800/800 KB'],
+      );
+    });
 
     test(
       'AC3: a mid-body reset resumes with HTTP Range and completes',
