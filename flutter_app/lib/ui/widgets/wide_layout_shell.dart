@@ -1029,13 +1029,11 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
                       width: sidebarWidth,
                       child: _desktopPanelFrame(
                         key: const ValueKey('glassSidebarPanel'),
-                        // Flush with the window's left/top/bottom edges —
-                        // the only gutter is the sidebar/center seam, so no
-                        // scaffold rim shows around the window.
-                        padding: const EdgeInsets.fromLTRB(0, 0, 8, 0),
-                        borderRadius: const BorderRadius.horizontal(
-                          left: Radius.circular(18),
-                        ),
+                        // Equal floating margins (8pt all around) — a
+                        // rounded card; the seam gutter to the center pane
+                        // matches the outer margin.
+                        padding: const EdgeInsets.all(8),
+                        borderRadius: BorderRadius.circular(18),
                         tokens: tokens,
                         glass: true,
                         child: ClipRect(

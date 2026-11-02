@@ -10,10 +10,7 @@ import 'package:fa/ui/widgets/dap_hub_mark.dart';
 import 'package:fa/ui/widgets/messenger_navigation_controls.dart';
 import 'package:fa/ui/widgets/messenger_section_header.dart';
 import 'package:fa/ui/widgets/subagent_mark.dart';
-import 'package:liquid_glass_widgets/liquid_glass_widgets.dart'
-    show ProgressiveBlur, ProgressiveBlurDirection;
 import 'package:fa_ui/fa_ui.dart';
-import 'package:flutter/foundation.dart';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -152,7 +149,6 @@ class ChatListPanel extends StatefulWidget {
 class _ChatListPanelState extends State<ChatListPanel> {
   final TextEditingController _searchController = TextEditingController();
   final FocusNode _searchFocus = FocusNode(debugLabel: 'chat-list-search');
-  bool _hasScrollUnder = false;
   String? _localDirectory;
   ChatListFilter? _renderedFilter;
 
@@ -186,7 +182,6 @@ class _ChatListPanelState extends State<ChatListPanel> {
   @override
   void didUpdateWidget(covariant ChatListPanel oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.bodyKey != widget.bodyKey) _hasScrollUnder = false;
   }
 
   @override
@@ -195,12 +190,6 @@ class _ChatListPanelState extends State<ChatListPanel> {
     _searchController.dispose();
     _searchFocus.dispose();
     super.dispose();
-  }
-
-  void _onScrollUnderChanged(double pixels) {
-    final hasScrollUnder = pixels > 0.5;
-    if (hasScrollUnder == _hasScrollUnder) return;
-    setState(() => _hasScrollUnder = hasScrollUnder);
   }
 
   bool get _modalIsOpen => ModalRoute.of(context)?.isCurrent == false;
@@ -267,33 +256,20 @@ class _ChatListPanelState extends State<ChatListPanel> {
       widget.controller.networkStatus == ChatLoadState.loading &&
       widget.controller.networkFilter.kind != ChatNetworkFilterKind.my;
 
-  double get _chromeHeight {
-    final isMac = !kIsWeb && defaultTargetPlatform == TargetPlatform.macOS;
-    final searchHeight = widget.compact
-        ? (isMac ? 82.0 : 54.0)
-        : (isMac ? 104.0 : 58.0);
-    return searchHeight +
-        (widget.headerBottom == null ? 0 : 46) +
-        MessengerFilterControl.height +
-        (_networkLoading ? 1 : 0) +
-        (_showNetworkBanner ? 50 : 0) +
-        (_currentDirectory == null ? 0 : 56);
-  }
-
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
       listenable: widget.controller,
       builder: (context, _) {
         final colors = FahColors.of(context);
-        // The desktop panel is flush with the window's top edge; the chrome
-        // and the list's top padding must clear the native titlebar/toolbar
-        // region (macOS fullSizeContentView inset; zero in tests and web).
-        // Compact (narrow) panels get the same inset from the shell's
-        // narrow-body wrap instead, so every section shares one geometry.
+        // The panel floats 8pt below the window's top edge; the chrome must
+        // still clear the native titlebar/toolbar region (macOS
+        // fullSizeContentView inset; zero in tests and web), so the inset is
+        // what remains of the titlebar beyond the panel margin. Compact
+        // (narrow) panels get their inset from the shell's narrow-body wrap.
         final titlebarTop = widget.compact
             ? 0.0
-            : math.max(8.0, MediaQuery.paddingOf(context).top);
+            : math.max(0.0, MediaQuery.paddingOf(context).top - 8);
         final chrome = Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -307,17 +283,19 @@ class _ChatListPanelState extends State<ChatListPanel> {
               _buildCurrentDirectoryHeader(colors, directory),
           ],
         );
+        // iMessage-style: the chrome owns its band and the list starts
+        // BELOW it — rows never scroll under the search/segment glass and
+        // the scrollbar track runs from the selectors down.
         return ColoredBox(
           color: _panelColor(colors),
-          child: Stack(
-            children: [
-              Positioned.fill(
-                child: ClipRect(
-                  child: NotificationListener<ScrollNotification>(
-                    onNotification: (notification) {
-                      _onScrollUnderChanged(notification.metrics.pixels);
-                      return false;
-                    },
+          child: Padding(
+            padding: EdgeInsets.only(top: titlebarTop),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _buildChromeSurface(colors, chrome),
+                Expanded(
+                  child: ClipRect(
                     child: AnimatedSwitcher(
                       duration: FaMotion.duration(
                         context,
@@ -332,25 +310,13 @@ class _ChatListPanelState extends State<ChatListPanel> {
                               'chat-directory-${_currentDirectory ?? 'root'}',
                             ),
                         child:
-                            widget.bodyBuilder?.call(
-                              _chromeHeight + titlebarTop,
-                            ) ??
-                            _buildBody(
-                              colors,
-                              topPadding: _chromeHeight + titlebarTop,
-                            ),
+                            widget.bodyBuilder?.call(0) ?? _buildBody(colors),
                       ),
                     ),
                   ),
                 ),
-              ),
-              Positioned(
-                top: titlebarTop,
-                left: 0,
-                right: 0,
-                child: _buildChromeSurface(colors, chrome),
-              ),
-            ],
+              ],
+            ),
           ),
         );
       },
@@ -360,51 +326,17 @@ class _ChatListPanelState extends State<ChatListPanel> {
   /// The glass-direction chrome underlay: a graduated backdrop blur
   /// (`ProgressiveBlur`) that is strongest under the search row, eases to
   /// sharp right below the segment toolbar, and reaches a further 28px into
-  /// the list so rows dissolve beneath the chrome instead of hitting a hard
-  /// frost rectangle. Sigma is driven by the scroll-under signal: 0 at rest
-  /// (plain chrome, no visible band), ~18 once rows actually scroll under.
-  ///
-  /// The controls themselves never live inside this layer — only the blur
-  /// fades, so the search row and segment panel can never be gated away.
+  /// The chrome band sits on the panel's own surface: no under-scroll, no
+  /// blur underlay — the list starts below it (iMessage-style), so there is
+  /// nothing behind the chrome to frost. The glass direction leaves the
+  /// panel surface (the frame's FaSurface) showing through; opaque
+  /// directions keep the flat panel color.
   Widget _buildChromeSurface(FahColors colors, Widget chrome) {
     final tokens = FaDesignTokens.of(context);
-    // Same titlebar inset the chrome Positioned uses — the blur band must
-    // keep filling from the panel's very top (behind the traffic lights).
-    final titlebarTop = widget.compact
-        ? 0.0
-        : math.max(8.0, MediaQuery.paddingOf(context).top);
     if (tokens.direction != FaVisualDirection.glass) {
       return ColoredBox(color: _panelColor(colors), child: chrome);
     }
-    return Stack(
-      children: [
-        Positioned(
-          top: 0,
-          left: 0,
-          right: 0,
-          height: _chromeHeight + titlebarTop + 28,
-          child: IgnorePointer(
-            child: KeyedSubtree(
-              key: const ValueKey('chatListChromeUnderlay'),
-              child: TweenAnimationBuilder<double>(
-                duration: FaMotion.duration(
-                  context,
-                  const Duration(milliseconds: 200),
-                ),
-                curve: Curves.easeInOutCubic,
-                tween: Tween<double>(begin: 0, end: _hasScrollUnder ? 18 : 0),
-                builder: (context, sigma, _) => ProgressiveBlur(
-                  maxSigma: sigma,
-                  direction: ProgressiveBlurDirection.topToBottom,
-                  falloff: 1.0,
-                ),
-              ),
-            ),
-          ),
-        ),
-        chrome,
-      ],
-    );
+    return chrome;
   }
 
   Widget _buildHeader() {
@@ -627,16 +559,13 @@ class _ChatListPanelState extends State<ChatListPanel> {
     );
   }
 
-  Widget _buildBody(FahColors colors, {required double topPadding}) {
+  Widget _buildBody(FahColors colors) {
     final controller = widget.controller;
     final directory = _currentDirectory;
     bool inCurrentDirectory(ChatListEntry entry) =>
         directory == null || _folderPath(entry) == directory;
     final visibleEntries = controller.visibleEntries.where(inCurrentDirectory);
-    Widget state(Widget child) => Padding(
-      padding: EdgeInsets.only(top: topPadding),
-      child: child,
-    );
+    Widget state(Widget child) => child;
     if (controller.status == ChatLoadState.loading) {
       return state(const Center(child: CircularProgressIndicator()));
     }
@@ -664,10 +593,7 @@ class _ChatListPanelState extends State<ChatListPanel> {
     final recent = controller.recentEntries.where(inCurrentDirectory).toList();
     return ListView(
       key: const ValueKey('chatListScroll'),
-      padding: EdgeInsets.only(
-        top: topPadding + 2,
-        bottom: widget.compact ? 76 : 10,
-      ),
+      padding: EdgeInsets.only(bottom: widget.compact ? 76 : 10),
       children: [
         if (pinned.isNotEmpty) ...[
           _SectionHeader(label: context.l10n.chatPinned),

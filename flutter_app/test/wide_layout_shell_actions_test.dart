@@ -24,8 +24,6 @@ import 'package:fa/ui/chats/chat_list_entry.dart';
 import 'package:fa/ui/chats/chat_list_panel.dart';
 import 'package:fa/ui/chats/local_chat_list_adapter.dart';
 import 'package:fa/ui/widgets/wide_layout_shell.dart';
-import 'package:liquid_glass_widgets/liquid_glass_widgets.dart'
-    show ProgressiveBlur, ProgressiveBlurDirection;
 import 'package:fa_ui/fa_ui.dart'
     show
         FaChatHost,
@@ -659,17 +657,11 @@ void main() {
       );
       expect(sidebarPanel.glass, isTrue);
       expect(sidebarPanel.color, const Color(0xFF1C1C1E));
-      // The chrome is a graduated ProgressiveBlur underlay (plain frost —
-      // no LiquidGlass surfaces with shadows or refraction).
-      final underlay = find.byKey(const ValueKey('chatListChromeUnderlay'));
+      // iMessage-style chrome band: no blur underlay at all — the list
+      // starts below the chrome, so there is nothing behind it to frost.
       expect(
-        find.descendant(of: underlay, matching: find.byType(ProgressiveBlur)),
-        findsOneWidget,
-      );
-      expect(
-        find.descendant(of: underlay, matching: find.byType(FaSurface)),
+        find.byKey(const ValueKey('chatListChromeUnderlay')),
         findsNothing,
-        reason: 'plain frost must not add LiquidGlass shadows or refraction',
       );
       final centerPanel = tester.widget<Container>(
         find.byKey(const ValueKey('glassCenterPanel')),
@@ -866,30 +858,24 @@ void main() {
       reason: 'the chips capsule is real liquid glass',
     );
 
-    // The underlay is a graduated ProgressiveBlur band that reaches ~28px
-    // below the toolbar; at rest its sigma is 0 (plain chrome, no band).
-    final underlay = find.byKey(const ValueKey('chatListChromeUnderlay'));
+    // No under-scroll in the sidebar: the list starts strictly below the
+    // chrome band (rows and the scrollbar track never run behind the
+    // search/segment glass — iMessage-style).
     expect(
-      tester.getSize(underlay).height,
-      greaterThan(tester.getSize(find.byType(MessengerFilterControl)).height),
+      find.byKey(const ValueKey('chatListChromeUnderlay')),
+      findsNothing,
+      reason: 'the blur underlay is gone with under-scrolling',
     );
-    final blur = tester.widget<ProgressiveBlur>(
-      find.descendant(of: underlay, matching: find.byType(ProgressiveBlur)),
+    final chips = tester.getRect(
+      find.byKey(const ValueKey('chatCategoryChips')),
     );
-    expect(blur.maxSigma, 0);
-    expect(blur.direction, ProgressiveBlurDirection.topToBottom);
-    // The underlay never hosts the controls: search/toolbar must render
-    // outside the blur layer so they can never be gated or frosted away.
+    final firstRow = tester.getRect(
+      find.byKey(const ValueKey('chatListScroll')),
+    );
     expect(
-      find
-          .descendant(
-            of: underlay,
-            matching: find.byKey(const ValueKey('chatCategoryChips')),
-          )
-          .evaluate()
-          .isEmpty,
-      isTrue,
-      reason: 'chrome controls must live outside the blur underlay',
+      firstRow.top,
+      greaterThanOrEqualTo(chips.bottom),
+      reason: 'list and its scrollbar start below the selectors',
     );
   });
 

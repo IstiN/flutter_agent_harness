@@ -388,17 +388,14 @@ void main() {
     debugDefaultTargetPlatformOverride = null;
   });
 
-  testWidgets('desktop glass conversation rows scroll beneath sidebar chrome', (
-    tester,
-  ) async {
+  testWidgets('PROBE rows below chrome', (tester) async {
     await pumpShell(tester, populateChats: true, denseChats: true);
-    final underlay = find.byKey(const ValueKey('chatListChromeUnderlay'));
-    expect(underlay, findsOneWidget);
-    ProgressiveBlur underlayBlur() => tester.widget<ProgressiveBlur>(
-      find.descendant(of: underlay, matching: find.byType(ProgressiveBlur)),
+    final chips = tester.getRect(
+      find.byKey(const ValueKey('chatCategoryChips')),
     );
-    // At rest the graduated blur is fully dissolved (sigma 0): plain chrome.
-    expect(underlayBlur().maxSigma, 0);
+    final list = tester.getRect(find.byKey(const ValueKey('chatListScroll')));
+    // ignore: avoid_print
+    print('PROBE chips=$chips list=$list');
     final scrollable = tester.widget<Scrollable>(
       find
           .descendant(
@@ -407,44 +404,78 @@ void main() {
           )
           .first,
     );
+    // ignore: avoid_print
+    print('PROBE maxScroll=${scrollable.controller!.position.maxScrollExtent}');
     scrollable.controller!.jumpTo(180);
-    await tester.pump();
     await tester.pumpAndSettle();
-    // Rows beneath the chrome drive the graduated blur to full strength.
-    final tween = tester.widget<TweenAnimationBuilder<double>>(
-      find
-          .descendant(
-            of: underlay,
-            matching: find.byType(TweenAnimationBuilder<double>),
-          )
-          .first,
-    );
-    expect(tween.tween.end, 18);
-    await tester.pumpAndSettle();
-    expect(underlayBlur().maxSigma, 18);
-    // The golden must actually exercise scroll-under: at least one row has
-    // to sit behind the underlay band, otherwise the blur pixels are vacuous.
-    final underlayRect = tester.getRect(underlay);
     final rows = find.byWidgetPredicate(
       (w) =>
           w.key is ValueKey<String> &&
           (w.key as ValueKey<String>).value.startsWith('chatRow-'),
     );
-    expect(rows.evaluate(), isNotEmpty, reason: 'fixture rows must exist');
-    final behind = rows
-        .evaluate()
-        .map((e) => e.findRenderObject()! as RenderBox)
-        .map((box) => box.localToGlobal(Offset.zero) & box.size)
-        // The underlay extends 28px past the chrome bottom; a row is only
-        // "under the glass" when it climbs above that bottom edge.
-        .where((r) => r.top < underlayRect.bottom - 28 && r.bottom > 0)
-        .toList();
-    expect(
-      behind,
-      isNotEmpty,
-      reason: 'a row must scroll behind the chrome underlay',
+    for (final e in rows.evaluate().take(3)) {
+      final b = e.findRenderObject()! as dynamic;
+      final k = (e.widget.key as ValueKey<String>).value;
+      var node = b as dynamic;
+      final chain = <String>[];
+      while (node != null && chain.length < 8) {
+        chain.add(node.runtimeType.toString());
+        node = node.parent as dynamic;
+      }
+      // ignore: avoid_print
+      print(
+        'PROBE row=$k at=${b.localToGlobal(const Offset(0, 0))} chain=$chain',
+      );
+    }
+  });
+
+  testWidgets('desktop glass sidebar keeps rows below the chrome band', (
+    tester,
+  ) async {
+    await pumpShell(tester, populateChats: true, denseChats: true);
+    // The under-scroll era is over: no blur underlay in the sidebar, and
+    // even fully scrolled the rows (and the scrollbar track) stay below
+    // the selectors — iMessage-style chrome band.
+    expect(find.byKey(const ValueKey('chatListChromeUnderlay')), findsNothing);
+    final scrollable = tester.widget<Scrollable>(
+      find
+          .descendant(
+            of: find.byKey(const ValueKey('chatListScroll')),
+            matching: find.byType(Scrollable),
+          )
+          .first,
     );
-    await expectGolden(tester, 'wide_layout_shell_sidebar_glass_scroll_under');
+    // The viewport starts at the chrome band's bottom edge and clips its
+    // children. (Render-rect probes of list items would lie here: items in
+    // the cache extent still report layout geometry above the viewport.)
+    final chips = tester.getRect(
+      find.byKey(const ValueKey('chatCategoryChips')),
+    );
+    final list = tester.getRect(find.byKey(const ValueKey('chatListScroll')));
+    expect(
+      list.top,
+      greaterThanOrEqualTo(chips.bottom),
+      reason: 'the list (and its scrollbar) start below the selectors',
+    );
+    expect(
+      find
+          .ancestor(
+            of: find.byKey(const ValueKey('chatListScroll')),
+            matching: find.byType(ClipRect),
+          )
+          .evaluate()
+          .isNotEmpty,
+      isTrue,
+      reason: 'the viewport clips — rows can never paint into the chrome',
+    );
+    expect(
+      scrollable.controller!.position.maxScrollExtent,
+      greaterThan(0),
+      reason: 'the fixture must actually scroll',
+    );
+    scrollable.controller!.jumpTo(180);
+    await tester.pumpAndSettle();
+    await expectGolden(tester, 'wide_layout_shell_sidebar_below_chrome');
   });
 
   testWidgets('desktop glass transcript scrolls beneath floating chrome', (
