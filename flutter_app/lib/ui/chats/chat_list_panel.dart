@@ -61,6 +61,7 @@ class ChatListPanel extends StatefulWidget {
     this.filterSelectionTextLed = false,
     this.filterSelectionHighlighted = true,
     this.filterSelectedExtraHighlighted = true,
+    this.onFilterSelected,
     this.searchController,
     this.searchFocusNode,
     this.searchHint,
@@ -112,6 +113,11 @@ class ChatListPanel extends StatefulWidget {
   /// The wide shell keeps its implicit Chats destination quiet even though
   /// it remains the active section.
   final bool filterSelectedExtraHighlighted;
+
+  /// Invoked after a filter category tap. The wide shell uses it to return
+  /// from Activity/Apps to the Chats home: filters and section destinations
+  /// are one mutually exclusive selection.
+  final VoidCallback? onFilterSelected;
 
   /// Optional shared-shell search state. Defaults retain the standalone chat
   /// list behaviour; section bodies can replace only the list below chrome.
@@ -475,7 +481,10 @@ class _ChatListPanelState extends State<ChatListPanel> {
       textLed: widget.filterSelectionTextLed && isSelected,
       animateLabel: animateLabels,
       selectionBackground: false,
-      onTap: () => widget.controller.setFilter(value),
+      onTap: () {
+        widget.controller.setFilter(value);
+        widget.onFilterSelected?.call();
+      },
     );
   }
 

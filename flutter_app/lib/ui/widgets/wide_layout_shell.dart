@@ -695,12 +695,21 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
       filterActions: compact || collapsed
           ? const <Widget>[]
           : _buildChatFilterActions(),
-      filterSelectedExtraIndex: compact || collapsed ? null : _section.index,
+      filterSelectedExtraIndex: compact || collapsed
+          ? null
+          : switch (_section) {
+              _WideShellSection.chats => null,
+              _WideShellSection.activity => 0,
+              _WideShellSection.apps => 1,
+            },
       filterSelectionTextLed: !(compact || collapsed),
       filterSelectionHighlighted:
           !(compact || collapsed) && _section == _WideShellSection.chats,
       filterSelectedExtraHighlighted:
           !(compact || collapsed) && _section != _WideShellSection.chats,
+      onFilterSelected: _section == _WideShellSection.chats
+          ? null
+          : () => _selectSection(_WideShellSection.chats),
       searchController: switch (_section) {
         _WideShellSection.chats => null,
         _WideShellSection.activity => _activitySearchController,
@@ -1335,27 +1344,25 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
   }
 
   List<Widget> _buildChatFilterActions() {
+    // Chats has no toolbar destination: the filter segments themselves are
+    // the Chats home (the list body below the toolbar differs per section).
+    const sections = [_WideShellSection.activity, _WideShellSection.apps];
     return [
-      for (final section in _WideShellSection.values)
+      for (final section in sections)
         MessengerCategoryChip(
           chipKey: ValueKey('messengerPrimaryNav-${section.name}'),
           icon: switch (section) {
-            _WideShellSection.chats => Icons.chat_bubble_outline_rounded,
             _WideShellSection.activity => Icons.notifications_none_rounded,
-            _WideShellSection.apps => Icons.grid_view_rounded,
+            _ => Icons.grid_view_rounded,
           },
           label: switch (section) {
-            _WideShellSection.chats => context.l10n.wideNavChats,
             _WideShellSection.activity => context.l10n.wideNavActivity,
-            _WideShellSection.apps => context.l10n.appsGridTitle,
+            _ => context.l10n.appsGridTitle,
           },
-          // Chats is the implicit home: it stays a quiet destination while
-          // the active chat filter carries the visible selection. Activity
-          // and Apps own the selection whenever they are active.
-          selected: _section == section && section != _WideShellSection.chats,
+          selected: _section == section,
           compact: true,
-          iconOnly: _section != section || section == _WideShellSection.chats,
-          textLed: _section == section && section != _WideShellSection.chats,
+          iconOnly: _section != section,
+          textLed: _section == section,
           selectionBackground: true,
           onTap: () => _selectSection(section),
         ),

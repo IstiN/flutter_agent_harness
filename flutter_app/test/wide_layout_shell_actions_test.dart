@@ -278,7 +278,12 @@ void main() {
     expect(find.widgetWithText(SidebarNavItem, 'Files'), findsNothing);
     expect(find.widgetWithText(SidebarNavItem, 'Settings'), findsNothing);
     final toolbar = find.byKey(const ValueKey('chatCategoryChips'));
-    for (final section in const ['chats', 'activity', 'apps']) {
+    // Chats has no toolbar destination: the filters are the Chats home.
+    expect(
+      find.byKey(const ValueKey('messengerPrimaryNav-chats')),
+      findsNothing,
+    );
+    for (final section in const ['activity', 'apps']) {
       expect(
         find.descendant(
           of: toolbar,
@@ -471,7 +476,7 @@ void main() {
 
     await tester.tap(find.byKey(const ValueKey('appPin')));
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey('messengerPrimaryNav-chats')));
+    await tester.tap(find.byKey(const ValueKey('chatFilter-all')));
     await tester.pumpAndSettle();
     expect(find.byType(MessengerAppPanel), findsNothing);
   });
@@ -927,9 +932,6 @@ void main() {
               channels.left - agents.right,
               inInclusiveRange(.999, MessengerFilterControl.gap),
             );
-            final chats = tester.getRect(
-              find.byKey(const ValueKey('messengerPrimaryNav-chats')),
-            );
             final activity = tester.getRect(
               find.byKey(const ValueKey('messengerPrimaryNav-activity')),
             );
@@ -940,11 +942,7 @@ void main() {
               find.byKey(const ValueKey('chatNetworkFilter')),
             );
             expect(
-              chats.left - channels.right,
-              inInclusiveRange(.999, MessengerFilterControl.gap),
-            );
-            expect(
-              activity.left - chats.right,
+              activity.left - channels.right,
               inInclusiveRange(.999, MessengerFilterControl.gap),
             );
             expect(
@@ -1050,25 +1048,33 @@ void main() {
         find.byKey(const ValueKey('wideShellPrimaryNavigation')),
         findsNothing,
       );
-      // Both segmented groups follow the same rule: the selected destination
-      // is text-led, quiet destinations stay icon-only.
+      // Chats has no toolbar destination: the filter segments are the Chats
+      // home, and every toolbar destination follows one rule — the selected
+      // segment is icon+text, quiet segments stay icon-only.
+      expect(
+        find.byKey(const ValueKey('messengerPrimaryNav-chats')),
+        findsNothing,
+      );
       Finder sectionAction(String section) =>
           find.byKey(ValueKey('messengerPrimaryNav-$section'));
       String sectionLabel(String section) => switch (section) {
-        'chats' => 'Chats',
         'activity' => 'Activity',
         _ => 'Apps',
       };
-      // Chats is the implicit home: its destination stays icon-only while the
-      // active chat filter carries the selection.
-      for (final section in const ['chats', 'activity', 'apps']) {
+      // The Chats home shows the selected filter as icon+text.
+      expect(chip('All').properties.selected, isTrue);
+      expect(find.text('All'), findsOneWidget);
+      expect(
+        tester.getRect(find.byKey(const ValueKey('chatFilter-all'))).width,
+        greaterThan(36),
+      );
+      for (final section in const ['activity', 'apps']) {
         final action = sectionAction(section);
         expect(tester.getRect(action).height, 32);
         expect(
           find.descendant(
             of: action,
             matching: find.byIcon(switch (section) {
-              'chats' => Icons.chat_bubble_outline_rounded,
               'activity' => Icons.notifications_none_rounded,
               _ => Icons.grid_view_rounded,
             }),
@@ -1086,6 +1092,19 @@ void main() {
           reason: section,
         );
       }
+      for (final label in const ['Unread', 'Agents', 'Channels']) {
+        expect(chip(label).properties.selected, isFalse, reason: label);
+        expect(find.text(label), findsNothing, reason: label);
+        expect(
+          tester
+              .getRect(
+                find.byKey(ValueKey('chatFilter-${label.toLowerCase()}')),
+              )
+              .width,
+          inInclusiveRange(12, 36),
+          reason: label,
+        );
+      }
       await tester.pumpAndSettle();
 
       for (final selected in const ['activity', 'apps']) {
@@ -1099,8 +1118,14 @@ void main() {
           findsOneWidget,
           reason: selected,
         );
-        expect(tester.getRect(sectionAction(selected)).width, greaterThan(36));
-        for (final quiet in const ['chats', 'activity', 'apps']) {
+        // Regression: a lone selected segment keeps the full expanded slot
+        // (icon + text), not the split half of a shared width budget.
+        expect(
+          tester.getRect(sectionAction(selected)).width,
+          greaterThan(60),
+          reason: selected,
+        );
+        for (final quiet in const ['activity', 'apps']) {
           if (quiet == selected) continue;
           expect(
             find.descendant(
@@ -1116,24 +1141,38 @@ void main() {
             reason: quiet,
           );
         }
-        // The chat-filter group defers its selection while a section outside
-        // Chats is active: no pill text and no selected semantics.
-        expect(chip('All').properties.selected, isFalse, reason: selected);
-        expect(find.text('All'), findsNothing, reason: selected);
-        expect(
-          tester.getRect(find.byKey(const ValueKey('chatFilter-all'))).width,
-          inInclusiveRange(12, 36),
-          reason: selected,
-        );
+        // The filter group defers its selection while a section is active:
+        // no pill text and no selected semantics.
+        for (final label in const ['All', 'Unread', 'Agents', 'Channels']) {
+          expect(chip(label).properties.selected, isFalse, reason: label);
+          expect(find.text(label), findsNothing, reason: label);
+        }
         expect(tester.takeException(), isNull, reason: selected);
       }
-      await tester.tap(sectionAction('chats'));
-      await tester.pumpAndSettle();
-      expect(find.text('Chats'), findsNothing);
-      expect(chip('All').properties.selected, isTrue);
-      expect(find.text('All'), findsOneWidget);
 
-      for (final label in const ['Unread', 'Agents', 'Channels', 'All']) {
+      // Tapping a filter returns to the Chats home from another section.
+      await tester.tap(find.byKey(const ValueKey('chatFilter-unread')));
+      await tester.pumpAndSettle();
+      expect(find.byType(ActivityListPanel), findsNothing);
+      expect(find.byKey(const ValueKey('appsDirectory')), findsNothing);
+      expect(chip('Unread').properties.selected, isTrue);
+      expect(find.text('Unread'), findsOneWidget);
+      expect(
+        tester.getRect(find.byKey(const ValueKey('chatFilter-unread'))).width,
+        greaterThan(36),
+      );
+      for (final quiet in const ['activity', 'apps']) {
+        expect(
+          find.descendant(
+            of: sectionAction(quiet),
+            matching: find.text(sectionLabel(quiet)),
+          ),
+          findsNothing,
+          reason: quiet,
+        );
+      }
+
+      for (final label in const ['Agents', 'Channels', 'All']) {
         await tester.tap(
           find.byKey(ValueKey('chatFilter-${label.toLowerCase()}')),
         );
@@ -1195,7 +1234,8 @@ void main() {
       expect(find.byKey(const ValueKey('appsDirectory')), findsOneWidget);
       expect(find.byType(ActivityListPanel), findsNothing);
 
-      await tester.tap(find.byKey(const ValueKey('messengerPrimaryNav-chats')));
+      // Filters are the Chats home: tapping one returns from Apps.
+      await tester.tap(find.byKey(const ValueKey('chatFilter-all')));
       await tester.pumpAndSettle();
       expect(find.byKey(const ValueKey('chatListScroll')), findsOneWidget);
       expect(
@@ -1268,10 +1308,13 @@ void main() {
     expect(rect('messengerSearchField'), searchBefore);
     expect(rect('chatCategoryChips'), filtersBefore);
 
-    for (final section in ['activity', 'apps', 'chats']) {
+    for (final section in const ['activity', 'apps']) {
       await tester.tap(find.byKey(ValueKey('messengerPrimaryNav-$section')));
       await tester.pumpAndSettle();
     }
+    // Filters are the Chats home: tapping one returns from Apps.
+    await tester.tap(find.byKey(const ValueKey('chatFilter-all')));
+    await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('chatCurrentFolder')), findsOneWidget);
     expect(find.text('Agent two'), findsOneWidget);
 

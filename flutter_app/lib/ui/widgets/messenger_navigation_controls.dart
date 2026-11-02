@@ -339,16 +339,20 @@ class MessengerFilterControl extends StatelessWidget {
                           gap * (controlCount - 1) -
                           slot * fixedCount)
                       .clamp(0.0, constraints.maxWidth);
-              final selectedWidth = selectedExtraVisible
+              final selectedWidth = !selectedCategoryVisible
+                  ? 0.0
+                  : selectedExtraVisible
                   ? expandedBudget *
                         minSelectedWidth /
                         (minSelectedWidth + minSelectedExtraWidth)
                   : expandedBudget;
-              final selectedExtraWidth = selectedExtraVisible
+              final selectedExtraWidth = !selectedExtraVisible
+                  ? 0.0
+                  : selectedCategoryVisible
                   ? expandedBudget *
                         minSelectedExtraWidth /
                         (minSelectedWidth + minSelectedExtraWidth)
-                  : 0.0;
+                  : expandedBudget;
               final positions = <({double left, double width})>[];
               var left = 0.0;
               for (var index = 0; index < count; index++) {
