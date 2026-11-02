@@ -4110,6 +4110,18 @@ jobs:
         shell: bash
         run: codesign --force --sign - build/out/bundle/bin/fa
 
+      # gh-2040: the native fa-clip pasteboard helper rides the macOS
+      # bundle (bundle/bin/fa-clip, per-arch — the release matrix builds
+      # each arch on a native runner, AC8) so install.sh / fa update can
+      # ship it beside the binary and image paste never rides Apple Events.
+      - name: Build fa-clip pasteboard helper (macOS, gh-2040)
+        if: matrix.os == 'macos'
+        shell: bash
+        run: |
+          bash scripts/build_fa_clip.sh build/out/bundle/bin/fa-clip
+          codesign --force --sign - build/out/bundle/bin/fa-clip
+          test -x build/out/bundle/bin/fa-clip
+
       # gh-1280 NG2: «compiles» is not «works» — every release arch boots its
       # binary before the asset is archived/uploaded (same smoke as
       # binaries-pr). The usage marker (cli_help.dart "USAGE") discriminates

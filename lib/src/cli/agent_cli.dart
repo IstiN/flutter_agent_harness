@@ -270,7 +270,7 @@ import '../web_search/web_search.dart';
 // The interactive dart_tui REPL is VM-only (raw terminal + FFI); web builds
 // of the root library get a no-op stub with the same host-facing API.
 import 'paste_image.dart';
-// Pasteboard reads are VM-only (osascript/xclip/PowerShell); web builds get
+// Pasteboard reads are VM-only (fa-clip/xclip/PowerShell); web builds get
 // a stub that always reports unavailable.
 import 'clipboard_reader_stub.dart'
     if (dart.library.io) 'clipboard_reader.dart';

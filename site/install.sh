@@ -348,6 +348,14 @@ lib_dir="$install_dir/../lib"
 rm -f "$target"  # break any pre-existing symlink so cp writes the real file
 cp "$tmp_extract/bundle/bin/fa" "$target"
 chmod +x "$target"
+# gh-2040: the native fa-clip pasteboard helper rides the bundle — install
+# it beside the fa binary (the CLI resolves the helper relative to its own
+# executable, never PATH). A bundle without the helper (older releases)
+# simply skips this: image paste degrades to the named unavailable path.
+if [ -f "$tmp_extract/bundle/bin/fa-clip" ]; then
+  cp "$tmp_extract/bundle/bin/fa-clip" "$install_dir/fa-clip"
+  chmod +x "$install_dir/fa-clip"
+fi
 # Copy version.txt so the binary can report its version.
 if [ -f "$tmp_extract/bundle/version.txt" ]; then
   cp "$tmp_extract/bundle/version.txt" "$install_dir/version.txt"
@@ -369,14 +377,19 @@ ok "Installed $target"
 # executables are tagged by Gatekeeper and will be killed on launch unless
 # the quarantine attribute is removed. Re-signing ad-hoc makes the binary
 # runnable from any directory on Apple Silicon, even without a paid
-# Developer ID certificate.
+# Developer ID certificate. The fa-clip helper is hardened the same way
+# (gh-2040: a quarantined helper degrades paste; stripping + re-signing
+# keeps the native pasteboard read alive from the first run).
 if [ "$os" = "macos" ]; then
+  helper_target="$install_dir/fa-clip"
   if command -v xattr >/dev/null 2>&1; then
     xattr -dr com.apple.quarantine "$target" 2>/dev/null || true
     xattr -dr com.apple.quarantine "$lib_dir" 2>/dev/null || true
+    [ -f "$helper_target" ] && xattr -dr com.apple.quarantine "$helper_target" 2>/dev/null || true
   fi
   if command -v codesign >/dev/null 2>&1; then
     codesign --force --sign - "$target" 2>/dev/null || true
+    [ -f "$helper_target" ] && codesign --force --sign - "$helper_target" 2>/dev/null || true
   fi
 fi
 

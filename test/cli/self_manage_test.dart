@@ -710,6 +710,77 @@ void main() {
     });
   });
 
+  group('copyBundleClipboardHelper (gh-2040 self-update keeps fa-clip)', () {
+    test(
+      'copies the helper beside the binary and keeps it executable',
+      () async {
+        final tmp = await Directory.systemTemp.createTemp('fa_clip_update');
+        try {
+          final bundle = Directory('${tmp.path}/bundle')
+            ..createSync(recursive: true);
+          Directory('${bundle.path}/bin').createSync();
+          File('${bundle.path}/bin/fa-clip').writeAsBytesSync([1, 2, 3]);
+          final installDir = Directory('${tmp.path}/home/.local/bin')
+            ..createSync(recursive: true);
+
+          await copyBundleClipboardHelper(bundle, installDir, (_, _) async {
+            return ProcessResult(0, 0, '', '');
+          });
+
+          final copied = File('${installDir.path}/fa-clip');
+          expect(copied.existsSync(), isTrue);
+          expect(copied.readAsBytesSync(), [1, 2, 3]);
+        } finally {
+          if (tmp.existsSync()) tmp.deleteSync(recursive: true);
+        }
+      },
+    );
+
+    test('a bundle without the helper is a no-op (AC5 degradation)', () async {
+      final tmp = await Directory.systemTemp.createTemp('fa_clip_update_old');
+      try {
+        final bundle = Directory('${tmp.path}/bundle')
+          ..createSync(recursive: true);
+        final installDir = Directory('${tmp.path}/home/.local/bin')
+          ..createSync(recursive: true);
+
+        await copyBundleClipboardHelper(bundle, installDir, (_, _) async {
+          return ProcessResult(0, 0, '', '');
+        });
+
+        expect(File('${installDir.path}/fa-clip').existsSync(), isFalse);
+      } finally {
+        if (tmp.existsSync()) tmp.deleteSync(recursive: true);
+      }
+    });
+
+    test('a failing chmod does not fail the update', () async {
+      final tmp = await Directory.systemTemp.createTemp('fa_clip_update_x');
+      try {
+        final bundle = Directory('${tmp.path}/bundle')
+          ..createSync(recursive: true);
+        Directory('${bundle.path}/bin').createSync();
+        File('${bundle.path}/bin/fa-clip').writeAsBytesSync([1]);
+        final installDir = Directory('${tmp.path}/home/.local/bin')
+          ..createSync(recursive: true);
+
+        await copyBundleClipboardHelper(bundle, installDir, (_, _) async {
+          throw const ProcessException('chmod', ['+x']);
+        });
+
+        expect(
+          File('${installDir.path}/fa-clip').existsSync(),
+          isTrue,
+          reason:
+              'a non-executable helper is the AC5 degradation shape, '
+              'never a blocked update',
+        );
+      } finally {
+        if (tmp.existsSync()) tmp.deleteSync(recursive: true);
+      }
+    });
+  });
+
   group('installer scripts install libs where the binary looks (gh-1574)', () {
     // Static layout contract: the AOT binary resolves its bundled sqlite3 as
     // <exe_dir>/../lib/<name>. With the exe installed flat into the install
