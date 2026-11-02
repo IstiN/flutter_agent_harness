@@ -1088,6 +1088,36 @@ void main() {
     );
 
     test(
+      'review r3: the download output rides the logLine seam, not stdout',
+      () async {
+        final target = File('${temp.path}/fa')..writeAsStringSync('old');
+        final log = <String>[];
+        final outcome = await applyUpdate(
+          currentVersion: '0.1.0',
+          launchArgs: const [],
+          statePath: '${temp.path}/update-state.json',
+          detectInstall: () => binaryInstall(target.path),
+          newClient: () => releaseClient(),
+          runProcess: extractingRunProcess,
+          spawn: (_, _) async => true,
+          pem: _testPem,
+          logLine: log.add,
+        );
+        expect(outcome, ApplyUpdateOutcome.applied);
+        // The body-phase output — the final speed line, and any
+        // progress/resume lines — must go through the same injectable
+        // seam as every other update message: the boot hook logs it to
+        // fa.log, the /update slash command renders it in-session
+        // (review r3). Raw-stdout output never reaches this capture.
+        expect(
+          log.any((line) => line.startsWith('downloaded ')),
+          isTrue,
+          reason: 'the final download line must use the logLine seam',
+        );
+      },
+    );
+
+    test(
       'is up to date when the latest tag equals the running version',
       () async {
         var requests = 0;
@@ -1502,4 +1532,989 @@ void main() {
       ]);
     });
   });
+
+  group('downloadArchiveBody (gh-2043 stall/progress/resume)', () {
+    // 400 KB chunks: four of them cross printable "few MB" boundaries.
+    const chunk = 409600;
+    const archiveUrl =
+        'https://github.com/IstiN/flutter_agent_harness/releases/'
+        'download/v9.9.9/fa-test.tar.gz';
+
+    List<int> filler(int size, [int seed = 0]) =>
+        List<int>.generate(size, (i) => (i + seed) & 0xFF);
+
+    http.StreamedResponse bytesResponse(
+      List<int> bytes, {
+      int status = 200,
+      int? contentLength,
+      Map<String, String> headers = const {},
+    }) => http.StreamedResponse(
+      Stream<List<int>>.value(bytes),
+      status,
+      contentLength: contentLength,
+      headers: headers,
+    );
+
+    /// A body stream yielding [chunks] [gap] apart — slow but steady,
+    /// the corporate-link shape that the old 2-minute cap killed.
+    Stream<List<int>> steady(
+      List<List<int>> chunks, {
+      Duration gap = const Duration(milliseconds: 15),
+    }) async* {
+      for (final piece in chunks) {
+        await Future<void>.delayed(gap);
+        yield piece;
+      }
+    }
+
+    /// A body stream that yields [chunks] then hangs forever: no error,
+    /// no done — the stalled-link shape (nothing arrives for Ns).
+    Stream<List<int>> stallsAfter(List<List<int>> chunks) async* {
+      for (final piece in chunks) {
+        yield piece;
+      }
+      await Completer<void>().future;
+    }
+
+    /// A body stream that yields [chunks] then dies mid-body — the
+    /// connection-reset shape (curl exit 56).
+    Stream<List<int>> resetsAfter(List<List<int>> chunks) async* {
+      for (final piece in chunks) {
+        yield piece;
+      }
+      throw http.ClientException('connection closed while receiving');
+    }
+
+    /// A body stream that yields [chunks] then dies with a
+    /// non-[Exception] `Error` — the misbehaving-client-wrapper shape
+    /// (review r1): a bare `on Exception` guard would let it crash the
+    /// update with a stack trace instead of a clean failure outcome.
+    Stream<List<int>> errorsAfter(List<List<int>> chunks) async* {
+      for (final piece in chunks) {
+        yield piece;
+      }
+      throw StateError('client wrapper blew up');
+    }
+
+    /// An ENDLESS trickle — one [chunk] every [gap] forever, never done:
+    /// the never-finishing-link shape only the total backstop can end.
+    Stream<List<int>> trickle(List<int> chunk, Duration gap) async* {
+      while (true) {
+        await Future<void>.delayed(gap);
+        yield chunk;
+      }
+    }
+
+    http.Client streamingClient(
+      http.StreamedResponse Function(http.BaseRequest request) handler,
+    ) => MockClient.streaming((request, _) async => handler(request));
+
+    test(
+      'AC1: a slow-but-steady body completes under the stall bound',
+      () async {
+        final body = filler(chunk * 6);
+        final segments = [
+          for (var i = 0; i < 6; i++) body.sublist(chunk * i, chunk * (i + 1)),
+        ];
+        final client = streamingClient(
+          (_) => http.StreamedResponse(
+            steady(segments),
+            200,
+            contentLength: body.length,
+          ),
+        );
+        final outcome = await downloadArchiveBody(
+          client,
+          Uri.parse(archiveUrl),
+          log: (_) {},
+          stallTimeout: const Duration(milliseconds: 300),
+        );
+        expect(outcome.ok, isTrue);
+        expect(outcome.bytes, body);
+      },
+    );
+
+    test('AC1: a stalled body aborts with the no-progress message', () async {
+      final client = streamingClient(
+        (_) => http.StreamedResponse(
+          stallsAfter([filler(chunk)]),
+          200,
+          contentLength: chunk * 99,
+        ),
+      );
+      final outcome = await downloadArchiveBody(
+        client,
+        Uri.parse(archiveUrl),
+        log: (_) {},
+        stallTimeout: const Duration(milliseconds: 250),
+      );
+      expect(outcome.ok, isFalse);
+      // Below HTTP: never a fake status code.
+      expect(outcome.statusCode, isNull);
+      expect(outcome.failureMessage, contains('no progress for'));
+    });
+
+    test(
+      'AC1: the raised total backstop bounds a never-finishing trickle',
+      () async {
+        // An ENDLESS trickle — a chunk every 20ms, never done — so ONLY
+        // the total cap can end it, with no nominal completion time to
+        // race. The 20ms gaps sit 25× under the 500ms stall bound: a
+        // loaded scheduler (GC, a throttled CI shard) cannot flip the
+        // classification into a stall misfire (review r8 — the old
+        // 100ms-gap vs 300ms-stall shape was a 3× margin).
+        final client = streamingClient(
+          (_) => http.StreamedResponse(
+            trickle(filler(4096), const Duration(milliseconds: 20)),
+            200,
+            contentLength: 1 << 30, // far more than any trickle delivers.
+          ),
+        );
+        final outcome = await downloadArchiveBody(
+          client,
+          Uri.parse(archiveUrl),
+          log: (_) {},
+          stallTimeout: const Duration(milliseconds: 500),
+          totalTimeout: const Duration(milliseconds: 600),
+        );
+        expect(outcome.ok, isFalse);
+        expect(outcome.statusCode, isNull);
+        expect(outcome.failureMessage, contains('exceeded'));
+      },
+    );
+
+    test('AC4: the metadata bound is unchanged, the body bounds are new', () {
+      expect(kFaUpdateNetworkTimeout, const Duration(seconds: 15));
+      expect(kFaUpdateStallTimeout, const Duration(seconds: 45));
+      expect(kFaUpdateTotalTimeout, const Duration(minutes: 15));
+    });
+
+    test(
+      'AC2: progress prints at every step plus a final speed line',
+      () async {
+        final body = filler(chunk * 4); // 1.6 MB
+        final segments = [
+          for (var i = 0; i < 4; i++) body.sublist(chunk * i, chunk * (i + 1)),
+        ];
+        final lines = <String>[];
+        final client = streamingClient(
+          (_) => http.StreamedResponse(
+            steady(segments),
+            200,
+            contentLength: body.length,
+          ),
+        );
+        final outcome = await downloadArchiveBody(
+          client,
+          Uri.parse(archiveUrl),
+          log: lines.add,
+          progressStep: chunk * 2,
+          stallTimeout: const Duration(seconds: 5),
+        );
+        expect(outcome.ok, isTrue);
+        final progress = lines
+            .where((line) => line.startsWith('downloading… '))
+            .toList();
+        // Crossings at 0.8 MB and 1.6 MB.
+        expect(progress, hasLength(2));
+        expect(progress.first, contains('0.8/1.6 MB'));
+        expect(progress.last, contains('1.6/1.6 MB'));
+        final finalLine = lines.last;
+        expect(finalLine, startsWith('downloaded 1.6 MB in '));
+        expect(finalLine, endsWith('/s)'));
+      },
+    );
+
+    test(
+      'AC2: without a content length the progress line has no denominator',
+      () async {
+        final lines = <String>[];
+        final client = streamingClient(
+          (_) => http.StreamedResponse(
+            steady([filler(chunk), filler(chunk, 1)]),
+            200,
+          ),
+        );
+        final outcome = await downloadArchiveBody(
+          client,
+          Uri.parse(archiveUrl),
+          log: lines.add,
+          progressStep: chunk,
+          stallTimeout: const Duration(seconds: 5),
+        );
+        expect(outcome.ok, isTrue);
+        final progress = lines
+            .where((line) => line.startsWith('downloading… '))
+            .toList();
+        expect(progress, ['downloading… 400 KB', 'downloading… 800 KB']);
+        expect(lines.last, startsWith('downloaded 800 KB in '));
+      },
+    );
+    test('AC2: a small archive reports the progress pair in KB', () async {
+      final body = filler(chunk * 2); // 800 KB — both sides below one MiB.
+      final segments = [body.sublist(0, chunk), body.sublist(chunk, chunk * 2)];
+      final lines = <String>[];
+      final client = streamingClient(
+        (_) => http.StreamedResponse(
+          steady(segments),
+          200,
+          contentLength: body.length,
+        ),
+      );
+      final outcome = await downloadArchiveBody(
+        client,
+        Uri.parse(archiveUrl),
+        log: lines.add,
+        progressStep: chunk,
+        stallTimeout: const Duration(seconds: 5),
+      );
+      expect(outcome.ok, isTrue);
+      expect(lines.where((line) => line.startsWith('downloading… ')), [
+        'downloading… 400/800 KB',
+        'downloading… 800/800 KB',
+      ]);
+    });
+
+    test(
+      'AC3: a mid-body reset resumes with HTTP Range and completes',
+      () async {
+        final body = filler(chunk * 3);
+        final seen = <http.BaseRequest>[];
+        var first = true;
+        final client = streamingClient((request) {
+          seen.add(request);
+          if (first) {
+            first = false;
+            return http.StreamedResponse(
+              resetsAfter([
+                body.sublist(0, chunk),
+                body.sublist(chunk, chunk * 2),
+              ]),
+              200,
+              contentLength: body.length,
+            );
+          }
+          return http.StreamedResponse(
+            steady([body.sublist(chunk * 2)]),
+            206,
+            contentLength: body.length - chunk * 2,
+          );
+        });
+        final lines = <String>[];
+        final outcome = await downloadArchiveBody(
+          client,
+          Uri.parse(archiveUrl),
+          log: lines.add,
+          stallTimeout: const Duration(seconds: 5),
+        );
+        expect(outcome.ok, isTrue);
+        // The reassembled bytes are identical — a resumed completion passes
+        // the same provenance hash check.
+        expect(outcome.bytes, body);
+        expect(seen, hasLength(2));
+        expect(seen.last.headers['range'], 'bytes=${chunk * 2}-');
+        expect(lines.join('\n'), contains('resuming'));
+      },
+    );
+
+    test('AC3: resume attempts are bounded at maxResumeAttempts', () async {
+      var requests = 0;
+      final client = streamingClient((_) {
+        requests++;
+        return http.StreamedResponse(
+          resetsAfter([filler(chunk)]),
+          200,
+          contentLength: chunk * 99,
+        );
+      });
+      final outcome = await downloadArchiveBody(
+        client,
+        Uri.parse(archiveUrl),
+        log: (_) {},
+        stallTimeout: const Duration(seconds: 5),
+        maxResumeAttempts: 3,
+      );
+      expect(outcome.ok, isFalse);
+      expect(outcome.statusCode, isNull);
+      // 1 initial + 3 resumes, then give up.
+      expect(requests, 4);
+    });
+
+    test('AC3: a server that ignores Range (200) restarts from zero', () async {
+      final body = filler(chunk * 3);
+      var requests = 0;
+      final client = streamingClient((request) {
+        requests++;
+        if (requests == 1) {
+          return http.StreamedResponse(
+            resetsAfter([body.sublist(0, chunk)]),
+            200,
+            contentLength: body.length,
+          );
+        }
+        expect(request.headers['range'], isNotNull);
+        // 200 to a Range request: the WHOLE body again — no duplicated
+        // prefix may survive.
+        return http.StreamedResponse(
+          steady([body]),
+          200,
+          contentLength: body.length,
+        );
+      });
+      final outcome = await downloadArchiveBody(
+        client,
+        Uri.parse(archiveUrl),
+        log: (_) {},
+        stallTimeout: const Duration(seconds: 5),
+      );
+      expect(outcome.ok, isTrue);
+      expect(outcome.bytes, body);
+      expect(requests, 2);
+    });
+
+    test('AC3: a clean close below the promised length resumes too', () async {
+      final body = filler(chunk * 3);
+      var requests = 0;
+      final client = streamingClient((request) {
+        requests++;
+        if (requests == 1) {
+          // Promises 3 chunks, delivers 2, closes WITHOUT an error.
+          return http.StreamedResponse(
+            steady([body.sublist(0, chunk), body.sublist(chunk, chunk * 2)]),
+            200,
+            contentLength: body.length,
+          );
+        }
+        return http.StreamedResponse(
+          steady([body.sublist(chunk * 2)]),
+          206,
+          contentLength: body.length - chunk * 2,
+        );
+      });
+      final outcome = await downloadArchiveBody(
+        client,
+        Uri.parse(archiveUrl),
+        log: (_) {},
+        stallTimeout: const Duration(seconds: 5),
+      );
+      expect(outcome.ok, isTrue);
+      expect(outcome.bytes, body);
+      expect(requests, 2);
+    });
+
+    test(
+      'AC2: a resumed 206 totals from Content-Range, not the remainder',
+      () async {
+        final body = filler(chunk * 3);
+        var requests = 0;
+        final client = streamingClient((request) {
+          requests++;
+          if (requests == 1) {
+            // Chunked first attempt: no content length at all.
+            return http.StreamedResponse(
+              resetsAfter([body.sublist(0, chunk)]),
+              200,
+            );
+          }
+          expect(request.headers['range'], 'bytes=$chunk-');
+          // 206 promising the REMAINING 2 chunks; Content-Range names
+          // the full size — the progress denominator must be 1.2 MB,
+          // not 0.8 MB.
+          return http.StreamedResponse(
+            steady([body.sublist(chunk, chunk * 2), body.sublist(chunk * 2)]),
+            206,
+            contentLength: body.length - chunk,
+            headers: {
+              'content-range': 'bytes $chunk-${body.length - 1}/${body.length}',
+            },
+          );
+        });
+        final lines = <String>[];
+        final outcome = await downloadArchiveBody(
+          client,
+          Uri.parse(archiveUrl),
+          log: lines.add,
+          progressStep: chunk,
+          stallTimeout: const Duration(seconds: 5),
+        );
+        expect(outcome.ok, isTrue);
+        expect(outcome.bytes, body);
+        expect(
+          lines.where((line) => line.startsWith('downloading… ')),
+          contains('downloading… 0.8/1.2 MB'),
+        );
+      },
+    );
+
+    test(
+      'AC3: a resumed 206 without Content-Range totals received + remainder',
+      () async {
+        final body = filler(chunk * 3);
+        var requests = 0;
+        final client = streamingClient((request) {
+          requests++;
+          if (requests == 1) {
+            return http.StreamedResponse(
+              resetsAfter([body.sublist(0, chunk)]),
+              200,
+            );
+          }
+          if (requests == 2) {
+            // 206 promising 2 more chunks but closing after 1 — only a
+            // CORRECT full total can classify this as an early close and
+            // resume again; a remainder-as-total would "complete" here
+            // with truncated bytes.
+            return http.StreamedResponse(
+              steady([body.sublist(chunk, chunk * 2)]),
+              206,
+              contentLength: body.length - chunk,
+            );
+          }
+          return http.StreamedResponse(
+            steady([body.sublist(chunk * 2)]),
+            206,
+            contentLength: body.length - chunk * 2,
+          );
+        });
+        final outcome = await downloadArchiveBody(
+          client,
+          Uri.parse(archiveUrl),
+          log: (_) {},
+          stallTimeout: const Duration(seconds: 5),
+        );
+        expect(outcome.ok, isTrue);
+        expect(outcome.bytes, body);
+        expect(requests, 3);
+      },
+    );
+
+    test('AC3: a corrupted resume is caught by the provenance hash', () async {
+      final target = File('${temp.path}/fa')..writeAsStringSync('old');
+      final body = _fixtureTarGz;
+      final half = body.length ~/ 2;
+      var requests = 0;
+      final client = MockClient.streaming((request, _) async {
+        final path = request.url.path;
+        if (path.endsWith('/releases/latest')) {
+          return bytesResponse(
+            const [],
+            status: 302,
+            headers: {
+              'location':
+                  'https://github.com/IstiN/flutter_agent_harness/'
+                  'releases/tag/v9.9.9',
+            },
+          );
+        }
+        if (path.endsWith('SHA256SUMS.sig')) {
+          return bytesResponse(_fixtureSig);
+        }
+        if (path.endsWith('SHA256SUMS')) {
+          return bytesResponse(utf8.encode(_fixtureSums));
+        }
+        requests++;
+        if (requests == 1) {
+          return http.StreamedResponse(
+            resetsAfter([body.sublist(0, half)]),
+            200,
+            contentLength: body.length,
+          );
+        }
+        // The resumed segment is corrupt: one flipped byte.
+        final wrong = List<int>.of(body.sublist(half))..[0] ^= 0x5A;
+        return bytesResponse(wrong, status: 206, contentLength: wrong.length);
+      });
+      final code = await runSelfUpdate(
+        currentVersion: '0.1.0',
+        detectInstall: () => Install(InstallKind.binary, target.path),
+        newClient: () => client,
+        pem: _testPem,
+        stallTimeout: const Duration(seconds: 5),
+        runProcess: (_, _) async => ProcessResult(0, 0, '', ''),
+      );
+      expect(code, 1);
+      expect(target.readAsStringSync(), 'old');
+    });
+
+    test(
+      'a headers-phase failure without bytes is a transport failure',
+      () async {
+        final client = streamingClient(
+          (_) => throw http.ClientException('no route to host'),
+        );
+        final outcome = await downloadArchiveBody(
+          client,
+          Uri.parse(archiveUrl),
+          log: (_) {},
+        );
+        expect(outcome.ok, isFalse);
+        expect(outcome.statusCode, isNull);
+      },
+    );
+
+    test('an HTTP failure carries the status for the caller', () async {
+      final client = streamingClient(
+        (_) => bytesResponse(const [], status: 404),
+      );
+      final outcome = await downloadArchiveBody(
+        client,
+        Uri.parse(archiveUrl),
+        log: (_) {},
+      );
+      expect(outcome.ok, isFalse);
+      expect(outcome.statusCode, 404);
+      expect(outcome.isHttpFailure, isTrue);
+    });
+    test('a non-Exception Error from send is a transport failure', () async {
+      // Review r1 (gh-2043): the "never throws" contract must hold for a
+      // non-[Exception] `Error` thrown by the transport — a misbehaving
+      // client wrapper must not crash `fa update` with a stack trace.
+      final client = streamingClient(
+        (_) => throw StateError('misbehaving client wrapper'),
+      );
+      final outcome = await downloadArchiveBody(
+        client,
+        Uri.parse(archiveUrl),
+        log: (_) {},
+      );
+      expect(outcome.ok, isFalse);
+      expect(outcome.statusCode, isNull);
+      expect(outcome.failureMessage, contains('Bad state: misbehaving'));
+    });
+
+    test(
+      'a non-Exception Error mid-body is a bounded transport failure',
+      () async {
+        var requests = 0;
+        final client = streamingClient((_) {
+          requests++;
+          if (requests == 1) {
+            return http.StreamedResponse(
+              errorsAfter([filler(chunk)]),
+              200,
+              contentLength: chunk * 99,
+            );
+          }
+          // The retry honors the Range (206): one more chunk arrives,
+          // then the same non-Exception death — the offset accumulates.
+          return http.StreamedResponse(
+            errorsAfter([filler(chunk, 1)]),
+            206,
+            contentLength: chunk * 98,
+          );
+        });
+        final outcome = await downloadArchiveBody(
+          client,
+          Uri.parse(archiveUrl),
+          log: (_) {},
+          stallTimeout: const Duration(seconds: 5),
+          maxResumeAttempts: 1,
+        );
+        expect(outcome.ok, isFalse);
+        expect(outcome.statusCode, isNull);
+        expect(outcome.failureMessage, contains('connection lost at 800 KB'));
+        expect(outcome.failureMessage, contains('1 resume attempts exhausted'));
+        // 1 initial + 1 resume, then give up.
+        expect(requests, 2);
+      },
+    );
+
+    test(
+      'AC3: a send failure while resuming spends the same bounded budget',
+      () async {
+        final body = filler(chunk * 3);
+        var requests = 0;
+        var sendCalls = 0;
+        final client = MockClient.streaming((request, _) async {
+          sendCalls++;
+          if (sendCalls == 1) {
+            requests++;
+            return http.StreamedResponse(
+              resetsAfter([body.sublist(0, chunk)]),
+              200,
+              contentLength: body.length,
+            );
+          }
+          if (sendCalls == 2) {
+            // The resume attempt itself cannot connect (the flaky-link
+            // shape): the send failure is soft while the budget allows.
+            throw http.ClientException('no route to host');
+          }
+          requests++;
+          return http.StreamedResponse(
+            steady([body.sublist(chunk, chunk * 2), body.sublist(chunk * 2)]),
+            206,
+            contentLength: body.length - chunk,
+          );
+        });
+        final lines = <String>[];
+        final outcome = await downloadArchiveBody(
+          client,
+          Uri.parse(archiveUrl),
+          log: lines.add,
+          stallTimeout: const Duration(seconds: 5),
+          maxResumeAttempts: 2,
+        );
+        expect(outcome.ok, isTrue);
+        expect(outcome.bytes, body);
+        expect(requests, 2);
+        expect(lines.join('\n'), contains('resuming (attempt 2/2)…'));
+      },
+    );
+
+    test('runSelfUpdate survives one mid-body reset and swaps in', () async {
+      final target = File('${temp.path}/fa')..writeAsStringSync('old');
+      final body = _fixtureTarGz;
+      final half = body.length ~/ 2;
+      var archiveRequests = 0;
+      final client = MockClient.streaming((request, _) async {
+        final path = request.url.path;
+        if (path.endsWith('/releases/latest')) {
+          return bytesResponse(
+            const [],
+            status: 302,
+            headers: {
+              'location':
+                  'https://github.com/IstiN/flutter_agent_harness/'
+                  'releases/tag/v9.9.9',
+            },
+          );
+        }
+        if (path.endsWith('SHA256SUMS.sig')) {
+          return bytesResponse(_fixtureSig);
+        }
+        if (path.endsWith('SHA256SUMS')) {
+          return bytesResponse(utf8.encode(_fixtureSums));
+        }
+        archiveRequests++;
+        if (archiveRequests == 1) {
+          return http.StreamedResponse(
+            resetsAfter([body.sublist(0, half)]),
+            200,
+            contentLength: body.length,
+          );
+        }
+        expect(request.headers['range'], 'bytes=$half-');
+        return bytesResponse(
+          body.sublist(half),
+          status: 206,
+          contentLength: body.length - half,
+        );
+      });
+      final code = await runSelfUpdate(
+        currentVersion: '0.1.0',
+        detectInstall: () => Install(InstallKind.binary, target.path),
+        newClient: () => client,
+        pem: _testPem,
+        stallTimeout: const Duration(seconds: 5),
+        runProcess: (exe, args) async {
+          if (exe == 'tar') {
+            final destDir = args.last;
+            final archiveFile = args[args.indexOf('-xzf') + 1];
+            final data = File(archiveFile).readAsBytesSync();
+            final decoded = TarDecoder().decodeBytes(
+              GZipDecoder().decodeBytes(data),
+            );
+            for (final entry in decoded) {
+              if (entry.isFile) {
+                final parts = entry.name.split('/');
+                final dest = File('$destDir/${parts.join('/')}');
+                dest.parent.createSync(recursive: true);
+                dest.writeAsBytesSync(entry.content as List<int>);
+              }
+            }
+          }
+          return ProcessResult(0, 0, '', '');
+        },
+      );
+      expect(code, 0);
+      expect(archiveRequests, 2);
+      expect(target.readAsStringSync(), 'new-binary');
+    });
+
+    test(
+      'AC4: a stalled download never reaches the provenance check',
+      () async {
+        final target = File('${temp.path}/fa')..writeAsStringSync('old');
+        var sumsFetches = 0;
+        var zipTried = false;
+        final client = MockClient.streaming((request, _) async {
+          final path = request.url.path;
+          if (path.endsWith('/releases/latest')) {
+            return bytesResponse(
+              const [],
+              status: 302,
+              headers: {
+                'location':
+                    'https://github.com/IstiN/flutter_agent_harness/'
+                    'releases/tag/v9.9.9',
+              },
+            );
+          }
+          if (path.endsWith('SHA256SUMS')) {
+            sumsFetches++;
+            return bytesResponse(utf8.encode(_fixtureSums));
+          }
+          if (path.endsWith('SHA256SUMS.sig')) {
+            return bytesResponse(_fixtureSig);
+          }
+          if (path.endsWith('-mac.zip')) {
+            zipTried = true;
+            return bytesResponse(const []);
+          }
+          return http.StreamedResponse(
+            stallsAfter([filler(chunk)]),
+            200,
+            contentLength: chunk * 99,
+          );
+        });
+        final code = await runSelfUpdate(
+          currentVersion: '0.1.0',
+          detectInstall: () => Install(InstallKind.binary, target.path),
+          newClient: () => client,
+          stallTimeout: const Duration(milliseconds: 250),
+        );
+        expect(code, 1);
+        expect(target.readAsStringSync(), 'old');
+        expect(
+          sumsFetches,
+          0,
+          reason: 'a network death must not fetch SHA256SUMS',
+        );
+        expect(
+          zipTried,
+          isFalse,
+          reason: 'the zip fallback is for HTTP misses',
+        );
+      },
+    );
+
+    test(
+      'AC5: fallbackZipUpdate resumes a reset zip download and swaps',
+      () async {
+        final target = File('${temp.path}/fa')..writeAsStringSync('old');
+        final body = _fixtureZip;
+        var zipRequests = 0;
+        final client = MockClient.streaming((request, _) async {
+          final path = request.url.path;
+          if (path.endsWith('SHA256SUMS.sig')) {
+            return bytesResponse(_fixtureSig);
+          }
+          if (path.endsWith('SHA256SUMS')) {
+            return bytesResponse(utf8.encode(_fixtureSums));
+          }
+          zipRequests++;
+          if (zipRequests == 1) {
+            return http.StreamedResponse(
+              resetsAfter([body.sublist(0, 10)]),
+              200,
+              contentLength: body.length,
+            );
+          }
+          expect(request.headers['range'], 'bytes=10-');
+          return bytesResponse(
+            body.sublist(10),
+            status: 206,
+            contentLength: body.length - 10,
+          );
+        });
+        final code = await fallbackZipUpdate(
+          client,
+          'v9.9.9',
+          'fa-macos-arm64-mac.zip',
+          target.path,
+          '9.9.9',
+          (_, _) async => ProcessResult(0, 0, '', ''),
+          pem: _testPem,
+        );
+        expect(code, 0);
+        expect(zipRequests, 2);
+        expect(target.readAsStringSync(), 'new-zip-binary');
+      },
+    );
+
+    test('AC1: a stalled archive body fails the boot update fast', () async {
+      final client = MockClient.streaming((request, _) async {
+        final path = request.url.path;
+        if (path.endsWith('/releases/latest')) {
+          return bytesResponse(
+            const [],
+            status: 302,
+            headers: {
+              'location':
+                  'https://github.com/IstiN/flutter_agent_harness/'
+                  'releases/tag/v9.9.9',
+            },
+          );
+        }
+        return http.StreamedResponse(
+          stallsAfter([filler(chunk)]),
+          200,
+          contentLength: chunk * 99,
+        );
+      });
+      final outcome = await applyUpdate(
+        currentVersion: '1.0.522',
+        launchArgs: const [],
+        detectInstall: () => Install(InstallKind.binary, '${temp.path}/fa'),
+        newClient: () => client,
+        spawn: (_, _) async => fail('no successor on a stalled download'),
+        statePath: '${temp.path}/update-state.json',
+        stallTimeout: const Duration(milliseconds: 250),
+      );
+      expect(outcome, ApplyUpdateOutcome.downloadFailed);
+    });
+
+    test(
+      'review r4: the exhausted-resume message names the underlying error',
+      () async {
+        var requests = 0;
+        final client = streamingClient((_) {
+          requests++;
+          return http.StreamedResponse(
+            errorsAfter([filler(chunk)]),
+            200,
+            contentLength: chunk * 99,
+          );
+        });
+        final outcome = await downloadArchiveBody(
+          client,
+          Uri.parse(archiveUrl),
+          log: (_) {},
+          stallTimeout: const Duration(seconds: 5),
+          maxResumeAttempts: 1,
+        );
+        expect(outcome.ok, isFalse);
+        expect(outcome.statusCode, isNull);
+        expect(outcome.failureMessage, contains('connection lost at 400 KB'));
+        expect(outcome.failureMessage, contains('1 resume attempts exhausted'));
+        // The transport error survives into the message: a bug report
+        // must be able to tell a reset from a wrapper blow-up.
+        expect(outcome.failureMessage, contains('client wrapper blew up'));
+        expect(requests, 2);
+      },
+    );
+
+    test(
+      'review r4: a non-Exception body error is called out as non-network',
+      () async {
+        final lines = <String>[];
+        final client = streamingClient(
+          (_) => http.StreamedResponse(
+            errorsAfter([filler(chunk)]),
+            200,
+            contentLength: chunk * 99,
+          ),
+        );
+        final outcome = await downloadArchiveBody(
+          client,
+          Uri.parse(archiveUrl),
+          log: lines.add,
+          stallTimeout: const Duration(seconds: 5),
+          maxResumeAttempts: 0,
+        );
+        expect(outcome.ok, isFalse);
+        // A programmer error must surface in the log seam, not
+        // masquerade as a bad-link day.
+        expect(
+          lines.any(
+            (line) =>
+                line.contains('non-network') && line.contains('StateError'),
+          ),
+          isTrue,
+          reason: 'the unexpected error type must be named in the log',
+        );
+      },
+    );
+
+    test(
+      'review r5: a stream error after the promised bytes still completes',
+      () async {
+        final body = filler(chunk * 3);
+        var requests = 0;
+        final client = streamingClient((request) {
+          requests++;
+          if (requests == 1) {
+            // Delivers EVERY promised byte, then errors instead of
+            // closing cleanly — the reset racing the final byte.
+            return http.StreamedResponse(
+              errorsAfter([
+                body.sublist(0, chunk),
+                body.sublist(chunk, chunk * 2),
+                body.sublist(chunk * 2),
+              ]),
+              200,
+              contentLength: body.length,
+            );
+          }
+          // A well-behaved server answers 416: `bytes=<received>-` names
+          // no remaining range. Reaching this request at all means the
+          // complete archive was treated as a mid-body death — the bug.
+          return bytesResponse(const [], status: 416);
+        });
+        final outcome = await downloadArchiveBody(
+          client,
+          Uri.parse(archiveUrl),
+          log: (_) {},
+          stallTimeout: const Duration(seconds: 5),
+        );
+        expect(
+          outcome.ok,
+          isTrue,
+          reason: 'the complete archive is already in the builder',
+        );
+        expect(outcome.bytes, body);
+        expect(requests, 1, reason: 'no resume may be spent on a full body');
+      },
+    );
+
+    test(
+      'review r6: a synchronous listen throw leaves no armed timer behind',
+      () async {
+        final client = streamingClient(
+          (_) => http.StreamedResponse(
+            const _SyncThrowStream(),
+            200,
+            contentLength: chunk * 99,
+          ),
+        );
+        final outcome = await downloadArchiveBody(
+          client,
+          Uri.parse(archiveUrl),
+          log: (_) {},
+          stallTimeout: const Duration(milliseconds: 50),
+          totalTimeout: const Duration(seconds: 5),
+          maxResumeAttempts: 0,
+        );
+        expect(outcome.ok, isFalse);
+        expect(outcome.statusCode, isNull);
+        expect(
+          outcome.failureMessage,
+          contains('listen exploded synchronously'),
+        );
+        // Outlive the armed stall timer: pre-fix, its late fire cancelled
+        // an unassigned `late final` subscription and crashed the zone
+        // with a LateInitializationError as an uncaught async error.
+        await Future<void>.delayed(const Duration(milliseconds: 200));
+      },
+    );
+  });
+}
+
+/// A body stream whose `listen` throws SYNCHRONOUSLY (review r6): the
+/// timers are armed before `stream.listen(...)` assigns the `late final`
+/// subscription, so a sync throw must be absorbed by the drain's fail
+/// path — never leave the timers armed over an unassigned subscription.
+class _SyncThrowStream extends Stream<List<int>> {
+  const _SyncThrowStream();
+
+  @override
+  StreamSubscription<List<int>> listen(
+    void Function(List<int> event)? onData, {
+    Function? onError,
+    void Function()? onDone,
+    bool? cancelOnError,
+  }) {
+    throw StateError('listen exploded synchronously');
+  }
 }
