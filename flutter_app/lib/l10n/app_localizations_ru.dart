@@ -690,6 +690,9 @@ class AppLocalizationsRu extends AppLocalizations {
   String get filesEmptyFolder => 'Пустая папка';
 
   @override
+  String get filesFilesSection => 'Файлы';
+
+  @override
   String get filesFolderAccessDenied =>
       'Не удалось получить доступ к этой папке.';
 
@@ -697,6 +700,9 @@ class AppLocalizationsRu extends AppLocalizations {
   String filesFolderPickerError(Object error) {
     return 'Не удалось открыть выбор папки: $error';
   }
+
+  @override
+  String get filesFoldersSection => 'Папки';
 
   @override
   String filesICloudSyncDone(Object files, Object size, Object when) {

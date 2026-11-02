@@ -96,7 +96,12 @@ void main() {
       findsOneWidget,
     );
     expect(find.text('repo'), findsOneWidget);
-    final title = tester.widget<Text>(find.text('Files'));
+    final title = tester.widget<Text>(
+      find.descendant(
+        of: find.byKey(const ValueKey('fileBrowserHeader')),
+        matching: find.text('Files'),
+      ),
+    );
     expect(title.maxLines, 1);
     expect(title.overflow, TextOverflow.ellipsis);
     expect(tester.takeException(), isNull);

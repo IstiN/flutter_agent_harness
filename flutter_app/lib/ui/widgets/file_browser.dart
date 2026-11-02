@@ -13,6 +13,8 @@ import 'package:fa/services/upload_picker_stub.dart'
     if (dart.library.io) 'package:fa/services/upload_picker_io.dart'
     if (dart.library.html) 'package:fa/services/upload_picker_web.dart';
 import 'package:fa_ui/fa_ui.dart' hide formatFileSize;
+import 'package:liquid_glass_widgets/liquid_glass_widgets.dart'
+    show ProgressiveBlur, ProgressiveBlurDirection;
 
 /// The default [ProjectFolderOps] on supported platforms (macOS), else null.
 ProjectFolderOps? _defaultProjectFolderOps() =>
@@ -438,22 +440,94 @@ class _FileBrowserState extends State<FileBrowser> {
   @override
   Widget build(BuildContext context) {
     final colors = FahColors.of(context);
+    // Chrome stack heights are fixed (header 52, identity chip 32, path or
+    // preview bar 44, hairline 1) so the body can pad its top and scroll
+    // beneath the chrome band, like the chat list.
+    final hasIdentity = _mountEnv?.mountedRoot != null;
+    final chromeHeight = 52.0 + (hasIdentity ? 32.0 : 0.0) + 44.0 + 1.0;
     return Material(
       key: const ValueKey('fileBrowserPanel'),
       color: colors.panel,
       shape: Border(left: BorderSide(color: colors.border, width: .5)),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
+      child: Stack(
         children: [
-          _buildHeader(context),
-          ?_buildMountIdentity(context),
-          _buildPathBar(context),
-          Divider(height: 1, color: colors.border.withValues(alpha: .55)),
-          Expanded(child: _buildBody(context)),
+          Positioned.fill(child: _buildBody(context, chromeHeight)),
+          Positioned(
+            top: 0,
+            left: 0,
+            right: 0,
+            child: _buildChrome(context, chromeHeight),
+          ),
         ],
       ),
     );
   }
+
+  /// The chrome band: header, mounted identity, path bar (or the inline
+  /// preview's back bar) and the closing hairline. In the glass direction
+  /// the band's background IS glass — a graduated `ProgressiveBlur` under
+  /// the controls, so rows scrolling up dissolve behind the chrome itself
+  /// (same pattern as the chat list). Opaque directions keep the flat
+  /// panel color.
+  Widget _buildChrome(BuildContext context, double height) {
+    final colors = FahColors.of(context);
+    final tokens = FaDesignTokens.of(context);
+    final chrome = Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _buildHeader(context),
+        ?_buildMountIdentity(context),
+        _preview != null ? _buildPreviewBar(context) : _buildPathBar(context),
+        Divider(height: 1, color: colors.border.withValues(alpha: .55)),
+      ],
+    );
+    if (tokens.direction != FaVisualDirection.glass) {
+      return ColoredBox(color: colors.panel, child: chrome);
+    }
+    return Stack(
+      children: [
+        Positioned(
+          top: 0,
+          left: 0,
+          right: 0,
+          height: height + 28,
+          child: const IgnorePointer(
+            child: ProgressiveBlur(
+              key: ValueKey('fileBrowserChromeUnderlay'),
+              maxSigma: 18,
+              direction: ProgressiveBlurDirection.topToBottom,
+              falloff: 1.0,
+            ),
+          ),
+        ),
+        chrome,
+      ],
+    );
+  }
+
+  /// One circular icon action in the panel chrome (path bar up button,
+  /// preview back button): the same [FaHeaderCircularAction] chrome the
+  /// header actions use, so every icon button in the Files panel reads as
+  /// one family instead of a mix of ad-hoc circles.
+  Widget _chromeIconButton({
+    required IconData icon,
+    required String tooltip,
+    VoidCallback? onPressed,
+  }) => FaHeaderCircularAction(
+    child: IconButton(
+      icon: Icon(icon, size: 18),
+      padding: EdgeInsets.zero,
+      constraints: const BoxConstraints.tightFor(width: 40, height: 40),
+      style: IconButton.styleFrom(
+        minimumSize: const Size.square(40),
+        maximumSize: const Size.square(40),
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      ),
+      tooltip: tooltip,
+      onPressed: onPressed,
+    ),
+  );
 
   Widget _headerAction(Widget button) => FaHeaderCircularAction(child: button);
 
@@ -483,7 +557,7 @@ class _FileBrowserState extends State<FileBrowser> {
             if (_picker != null)
               FaHeaderAction(
                 key: const ValueKey('fileBrowserUpload'),
-                icon: Icons.upload_file,
+                icon: Icons.upload_file_outlined,
                 label: context.l10n.filesUploadTooltip,
                 onPressed: _upload,
               ),
@@ -552,37 +626,42 @@ class _FileBrowserState extends State<FileBrowser> {
     final mountedPath = _mountEnv?.mountedRoot;
     if (mountedPath == null) return null;
     final colors = FahColors.of(context);
+    final tokens = FaDesignTokens.of(context);
     final name = mountedPath.split('/').where((part) => part.isNotEmpty).last;
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 0, 12, 4),
-      child: Tooltip(
-        message: mountedPath,
-        child: Container(
-          key: const ValueKey('fileBrowserMountIdentity'),
-          height: 28,
-          padding: const EdgeInsets.symmetric(horizontal: 9),
-          decoration: BoxDecoration(
-            color: colors.panelAlt,
+      child: Align(
+        alignment: AlignmentDirectional.centerStart,
+        child: Tooltip(
+          message: mountedPath,
+          child: FaSurface(
+            glass: true,
+            color: tokens.surface1,
+            tintAmount: .22,
+            tintOpacity: .55,
             borderRadius: BorderRadius.circular(10),
-            border: Border.all(color: colors.border.withValues(alpha: .55)),
-          ),
-          child: Row(
-            children: [
-              Icon(Icons.folder_outlined, size: 14, color: colors.dim),
-              const SizedBox(width: 7),
-              Expanded(
-                child: Text(
-                  name,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: colors.dim,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w500,
+            padding: const EdgeInsets.symmetric(horizontal: 9),
+            child: SizedBox(
+              key: const ValueKey('fileBrowserMountIdentity'),
+              height: 28,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.folder_outlined, size: 14, color: colors.dim),
+                  const SizedBox(width: 7),
+                  Text(
+                    name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: colors.dim,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w500,
+                    ),
                   ),
-                ),
+                ],
               ),
-            ],
+            ),
           ),
         ),
       ),
@@ -591,54 +670,35 @@ class _FileBrowserState extends State<FileBrowser> {
 
   Widget _buildPathBar(BuildContext context) {
     final tokens = FaDesignTokens.of(context);
-    final colors = FahColors.of(context);
     return SizedBox(
       key: const ValueKey('fileBrowserPathBar'),
-      height: 40,
+      height: 44,
       child: Padding(
         padding: const EdgeInsets.fromLTRB(8, 2, 12, 2),
         child: Row(
           children: [
-            FaSurface(
-              glass: false,
-              circular: true,
-              color: tokens.surface1,
-              child: SizedBox.square(
-                dimension: 36,
-                child: IconButton(
-                  icon: const Icon(Icons.arrow_upward, size: 18),
-                  padding: EdgeInsets.zero,
-                  constraints: const BoxConstraints.tightFor(
-                    width: 36,
-                    height: 36,
-                  ),
-                  style: IconButton.styleFrom(
-                    minimumSize: const Size.square(36),
-                    maximumSize: const Size.square(36),
-                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                  ),
-                  tooltip: context.l10n.filesUpTooltip,
-                  onPressed: _segments.isEmpty ? null : _goUp,
-                ),
-              ),
+            _chromeIconButton(
+              icon: Icons.arrow_upward,
+              tooltip: context.l10n.filesUpTooltip,
+              onPressed: _segments.isEmpty ? null : _goUp,
             ),
             const SizedBox(width: 8),
             Expanded(
-              child: Container(
-                key: const ValueKey('fileBrowserBreadcrumbChip'),
-                height: 28,
+              child: FaSurface(
+                glass: true,
+                color: tokens.surface1,
+                tintAmount: .22,
+                tintOpacity: .55,
+                borderRadius: BorderRadius.circular(14),
                 padding: const EdgeInsets.symmetric(horizontal: 6),
-                decoration: BoxDecoration(
-                  color: colors.panelAlt,
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(
-                    color: colors.border.withValues(alpha: .5),
+                child: SizedBox(
+                  key: const ValueKey('fileBrowserBreadcrumbChip'),
+                  height: 28,
+                  child: SingleChildScrollView(
+                    key: const ValueKey('fileBrowserBreadcrumbs'),
+                    scrollDirection: Axis.horizontal,
+                    child: Row(children: _breadcrumbs(context)),
                   ),
-                ),
-                child: SingleChildScrollView(
-                  key: const ValueKey('fileBrowserBreadcrumbs'),
-                  scrollDirection: Axis.horizontal,
-                  child: Row(children: _breadcrumbs(context)),
                 ),
               ),
             ),
@@ -677,88 +737,41 @@ class _FileBrowserState extends State<FileBrowser> {
     return crumbs;
   }
 
-  Widget _buildBody(BuildContext context) {
+  /// The panel body, laid out under the chrome band ([topInset] px down):
+  /// the listing scrolls beneath the chrome, so in the glass direction
+  /// rows dissolve behind the band exactly like the chat list.
+  Widget _buildBody(BuildContext context, double topInset) {
     final colors = FahColors.of(context);
     final preview = _preview;
     if (preview != null) {
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          SizedBox(
-            key: const ValueKey('filePreviewHeader'),
-            height: 44,
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-              child: Row(
-                children: [
-                  _headerAction(
-                    IconButton(
-                      icon: const Icon(Icons.arrow_back, size: 18),
-                      padding: EdgeInsets.zero,
-                      constraints: const BoxConstraints.tightFor(
-                        width: 40,
-                        height: 40,
-                      ),
-                      style: IconButton.styleFrom(
-                        minimumSize: const Size.square(40),
-                        maximumSize: const Size.square(40),
-                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                      ),
-                      tooltip: context.l10n.filesBackTooltip,
-                      onPressed: () => setState(() => _preview = null),
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Text(
-                      preview.name,
-                      maxLines: 1,
-                      style: TextStyle(
-                        color: colors.text,
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
-                      ),
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          Divider(height: 1, color: colors.border.withValues(alpha: .55)),
-          Expanded(
-            child: ColoredBox(
-              color: colors.panel,
-              child: FilePreviewView(
-                key: ValueKey('${preview.path}#$_previewRevision'),
-                env: widget.env,
-                path: preview.path,
-                name: preview.name,
-                htmlPreviewBuilder: widget.htmlPreviewBuilder,
-              ),
-            ),
-          ),
-        ],
+      return Padding(
+        padding: EdgeInsets.only(top: topInset),
+        child: FilePreviewView(
+          key: ValueKey('${preview.path}#$_previewRevision'),
+          env: widget.env,
+          path: preview.path,
+          name: preview.name,
+          htmlPreviewBuilder: widget.htmlPreviewBuilder,
+        ),
       );
     }
 
     if (_loading) {
-      return Center(child: CircularProgressIndicator(color: colors.indigo));
+      return _centered(
+        topInset,
+        child: CircularProgressIndicator(color: colors.indigo),
+      );
     }
     final error = _error;
     if (error != null) {
-      final theme = Theme.of(context);
-      return Center(
+      return _centered(
+        topInset,
         child: Padding(
           padding: const EdgeInsets.all(24),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(
-                Icons.error_outline,
-                size: 40,
-                color: theme.colorScheme.error,
-              ),
+              Icon(Icons.error_outline, size: 40, color: colors.error),
               const SizedBox(height: 12),
               Text(
                 context.l10n.filesOpenFolderError,
@@ -774,11 +787,12 @@ class _FileBrowserState extends State<FileBrowser> {
                 style: TextStyle(color: colors.dim, fontSize: 12),
                 textAlign: TextAlign.center,
               ),
-              const SizedBox(height: 12),
-              TextButton.icon(
+              const SizedBox(height: 16),
+              FaButton(
+                variant: FaButtonVariant.secondary,
+                icon: Icons.refresh,
+                label: context.l10n.filesRetryButton,
                 onPressed: _load,
-                icon: const Icon(Icons.refresh, size: 18),
-                label: Text(context.l10n.filesRetryButton),
               ),
             ],
           ),
@@ -787,7 +801,8 @@ class _FileBrowserState extends State<FileBrowser> {
     }
     final entries = _entries!;
     if (entries.isEmpty) {
-      return Center(
+      return _centered(
+        topInset,
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -808,102 +823,135 @@ class _FileBrowserState extends State<FileBrowser> {
         .where((entry) => entry.kind != FileKind.directory)
         .toList(growable: false);
     return ListView(
-      padding: const EdgeInsets.symmetric(vertical: 6),
+      key: const ValueKey('fileBrowserListing'),
+      padding: EdgeInsets.fromLTRB(0, topInset + 4, 0, 12),
       children: [
-        if (directories.isNotEmpty)
-          _entryCard(
-            directories,
-            colors,
+        if (directories.isNotEmpty) ...[
+          FaSectionEyebrow(
             key: const ValueKey('fileBrowserFoldersCard'),
+            label: context.l10n.filesFoldersSection,
           ),
-        if (files.isNotEmpty)
-          _entryCard(
-            files,
-            colors,
+          for (final entry in directories) _entryRow(context, entry),
+        ],
+        if (files.isNotEmpty) ...[
+          FaSectionEyebrow(
             key: const ValueKey('fileBrowserFilesCard'),
+            label: context.l10n.filesFilesSection,
           ),
+          for (final entry in files) _entryRow(context, entry),
+        ],
       ],
     );
   }
 
-  Widget _entryCard(
-    List<FileInfo> entries,
-    FahColors colors, {
-    required Key key,
-  }) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-      child: Material(
-        key: key,
-        color: colors.panelAlt,
-        clipBehavior: Clip.antiAlias,
-        shape: RoundedSuperellipseBorder(
-          borderRadius: BorderRadius.circular(16),
-          side: BorderSide(color: colors.border.withValues(alpha: .55)),
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
+  /// Centers [child] in the space below the chrome band ([topInset] down),
+  /// the shared frame of the loading, error and empty states.
+  Widget _centered(double topInset, {required Widget child}) => Padding(
+    padding: EdgeInsets.only(top: topInset),
+    child: Center(child: child),
+  );
+
+  /// The inline preview's back bar, swapped into the chrome band in place
+  /// of the path bar while a preview is open (one row of chrome, not two).
+  Widget _buildPreviewBar(BuildContext context) {
+    final colors = FahColors.of(context);
+    final preview = _preview!;
+    return SizedBox(
+      key: const ValueKey('filePreviewHeader'),
+      height: 44,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+        child: Row(
           children: [
-            for (var index = 0; index < entries.length; index++) ...[
-              _entryRow(entries[index], colors),
-              if (index != entries.length - 1)
-                Divider(
-                  height: 1,
-                  indent: 54,
-                  endIndent: 12,
-                  color: colors.border.withValues(alpha: .45),
+            _chromeIconButton(
+              icon: Icons.arrow_back,
+              tooltip: context.l10n.filesBackTooltip,
+              onPressed: () => setState(() => _preview = null),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                preview.name,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: colors.text,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
                 ),
-            ],
+              ),
+            ),
           ],
         ),
       ),
     );
   }
 
-  Widget _entryRow(FileInfo entry, FahColors colors) {
+  /// One file row at chat-list density: a 12px-rounded transparent row
+  /// (panelAlt on hover) with 10px content insets, instead of a ListTile
+  /// inside a slab card.
+  Widget _entryRow(BuildContext context, FileInfo entry) {
+    final colors = FahColors.of(context);
     final isDir = entry.kind == FileKind.directory;
-    return SizedBox(
-      height: 52,
-      child: ListTile(
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+      child: Material(
         key: ValueKey('fileRow-${entry.name}'),
-        dense: true,
-        contentPadding: const EdgeInsets.symmetric(horizontal: 8),
-        horizontalTitleGap: 10,
-        minLeadingWidth: 36,
+        color: Colors.transparent,
         shape: RoundedSuperellipseBorder(
           borderRadius: BorderRadius.circular(12),
         ),
-        hoverColor: colors.panel.withValues(alpha: .7),
-        selectedTileColor: colors.indigo.withValues(alpha: .12),
-        splashColor: colors.indigo.withValues(alpha: .12),
-        leading: Container(
-          width: 36,
-          height: 36,
-          decoration: BoxDecoration(
-            color: colors.panel,
-            borderRadius: BorderRadius.circular(isDir ? 10 : 18),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: () => isDir ? _enterDir(entry) : _openFile(entry),
+          borderRadius: BorderRadius.circular(12),
+          hoverColor: colors.panelAlt,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+            child: Row(
+              children: [
+                Container(
+                  width: 34,
+                  height: 34,
+                  decoration: BoxDecoration(
+                    color: isDir
+                        ? colors.indigo.withValues(alpha: .14)
+                        : colors.panelAlt,
+                    borderRadius: BorderRadius.circular(isDir ? 10 : 17),
+                  ),
+                  child: Icon(
+                    _iconFor(entry),
+                    size: 18,
+                    color: isDir ? colors.indigo : colors.dim,
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    entry.name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: colors.text,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w500,
+                      height: 1.2,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 6),
+                if (isDir)
+                  Icon(Icons.chevron_right, size: 18, color: colors.dim)
+                else
+                  Text(
+                    formatFileSize(entry.size),
+                    maxLines: 1,
+                    style: TextStyle(color: colors.dim, fontSize: 11),
+                  ),
+              ],
+            ),
           ),
-          child: Icon(_iconFor(entry), size: 18, color: colors.dim),
         ),
-        title: Text(
-          entry.name,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: TextStyle(
-            color: colors.text,
-            fontSize: 14,
-            fontWeight: FontWeight.w500,
-            height: 1.2,
-          ),
-        ),
-        trailing: isDir
-            ? Icon(Icons.chevron_right, size: 18, color: colors.dim)
-            : Text(
-                formatFileSize(entry.size),
-                maxLines: 1,
-                style: TextStyle(color: colors.dim, fontSize: 11),
-              ),
-        onTap: () => isDir ? _enterDir(entry) : _openFile(entry),
       ),
     );
   }

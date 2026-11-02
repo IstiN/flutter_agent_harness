@@ -5,8 +5,11 @@ import 'package:fa/services/agent_service.dart';
 import 'package:fa_ui/fa_ui.dart'
     show
         FaAttachGlyph,
+        FaButton,
+        FaButtonVariant,
         FaDesignTokens,
         FaHeaderCircularAction,
+        FaSectionEyebrow,
         FaVisualDirection,
         FahColors,
         buildFaTheme;
@@ -76,8 +79,22 @@ Finder _selectableRichText(String plainText) => find.byWidgetPredicate(
 
 List<String> _listedNames(WidgetTester tester) {
   return tester
-      .widgetList<ListTile>(find.byType(ListTile))
-      .map((tile) => (tile.title! as Text).data!)
+      .widgetList<Material>(
+        find.byWidgetPredicate(
+          (widget) =>
+              widget is Material &&
+              widget.key is ValueKey<String> &&
+              (widget.key as ValueKey<String>).value.startsWith('fileRow-'),
+        ),
+      )
+      .map((row) {
+        final title = tester
+            .widgetList<Text>(
+              find.descendant(of: find.byKey(row.key!), matching: find.byType(Text)),
+            )
+            .first;
+        return title.data!;
+      })
       .toList();
 }
 
@@ -340,7 +357,15 @@ void main() {
             );
             expect(title.maxLines, 1, reason: reason);
             expect(title.overflow, TextOverflow.ellipsis, reason: reason);
-            expect(tester.getRect(find.text('Files')).height, lessThan(24));
+            expect(
+              tester.getRect(
+                find.descendant(
+                  of: find.byKey(const ValueKey('fileBrowserHeader')),
+                  matching: find.text('Files'),
+                ),
+              ).height,
+              lessThan(24),
+            );
             expect(
               tester
                   .getSize(
@@ -358,19 +383,51 @@ void main() {
               tester.element(find.byType(FileBrowser)),
             );
             expect(panel.color, colors.panel, reason: reason);
-            for (final key in ['Folders', 'Files']) {
-              final finder = find.byKey(ValueKey('fileBrowser${key}Card'));
-              expect(finder, findsOneWidget, reason: reason);
-              final card = tester.widget<Material>(finder);
-              expect(card.color, colors.panelAlt, reason: reason);
-              expect(card.shape, isA<RoundedSuperellipseBorder>());
+            // Groups are messenger-style section eyebrows over chat-density
+            // rows — no slab cards anymore.
+            final sections = {
+              'fileBrowserFoldersCard': 'Folders',
+              'fileBrowserFilesCard': 'Files',
+            };
+            for (final entry in sections.entries) {
+              final eyebrow = tester.widget<FaSectionEyebrow>(
+                find.byKey(ValueKey(entry.key)),
+              );
+              expect(eyebrow.label, entry.value, reason: reason);
             }
+            // Rows: 12px-rounded transparent rows that fill on hover, with
+            // 10px content insets (the chat list's visual density).
             final row = find.byKey(const ValueKey('fileRow-zzz_dir'));
-            expect(tester.getSize(row).height, 52, reason: reason);
-            final tile = tester.widget<ListTile>(row);
-            final rowTitle = tile.title! as Text;
+            final rowMaterial = tester.widget<Material>(row);
+            expect(rowMaterial.color, Colors.transparent, reason: reason);
+            final rowShape = rowMaterial.shape as RoundedSuperellipseBorder;
+            expect(
+              rowShape.borderRadius.resolve(TextDirection.ltr).topLeft,
+              const Radius.circular(12),
+              reason: reason,
+            );
+            final rowInk = tester.widget<InkWell>(
+              find.descendant(of: row, matching: find.byType(InkWell)).first,
+            );
+            expect(rowInk.hoverColor, colors.panelAlt, reason: reason);
+            expect(tester.getSize(row).height, 48, reason: reason);
+            final rowTitle = tester
+                .widgetList<Text>(
+                  find.descendant(of: row, matching: find.byType(Text)),
+                )
+                .first;
             expect(rowTitle.maxLines, 1, reason: reason);
             expect(rowTitle.style?.fontSize, 14, reason: reason);
+            // The chrome band is glass in the glass direction (graduated
+            // blur under the controls, rows scroll beneath) and flat panel
+            // color in the opaque directions.
+            expect(
+              find.byKey(const ValueKey('fileBrowserChromeUnderlay')),
+              direction == FaVisualDirection.glass
+                  ? findsOneWidget
+                  : findsNothing,
+              reason: reason,
+            );
             if (width >= 240) {
               Finder action(String key) => find
                   .ancestor(
@@ -529,6 +586,60 @@ void main() {
       await tester.tap(find.text('empty_dir'));
       await tester.pumpAndSettle();
       expect(find.text('Empty folder'), findsOneWidget);
+    });
+
+    testWidgets('retry is the styleguide secondary FaButton', (tester) async {
+      // cwd '/missing' is never created, so listing '.' reports notFound.
+      final env = MemoryExecutionEnv(cwd: '/missing');
+      await tester.pumpWidget(_wrap(FileBrowser(env: env)));
+      await tester.pumpAndSettle();
+
+      final retry = tester.widget<FaButton>(
+        find.ancestor(of: find.text('Retry'), matching: find.byType(FaButton)),
+      );
+      expect(retry.variant, FaButtonVariant.secondary);
+      expect(retry.icon, Icons.refresh);
+    });
+
+    testWidgets(
+      'inline preview swaps into the chrome band, not a second row',
+      (tester) async {
+        final env = await _seededEnv();
+        await tester.pumpWidget(_wrap(FileBrowser(env: env)));
+        await tester.pumpAndSettle();
+
+        await tester.tap(find.text('notes.txt'));
+        await tester.pumpAndSettle();
+        expect(find.byKey(const ValueKey('filePreviewHeader')), findsOneWidget);
+        expect(find.byKey(const ValueKey('fileBrowserPathBar')), findsNothing);
+        await tester.tap(find.byTooltip('Back to files'));
+        await tester.pumpAndSettle();
+        expect(find.byKey(const ValueKey('filePreviewHeader')), findsNothing);
+        expect(find.byKey(const ValueKey('fileBrowserPathBar')), findsOneWidget);
+      },
+    );
+
+    testWidgets('path bar up button shares the header action chrome', (
+      tester,
+    ) async {
+      final env = await _seededEnv();
+      await tester.pumpWidget(_wrap(FileBrowser(env: env)));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('zzz_dir'));
+      await tester.pumpAndSettle();
+      final up = find
+          .ancestor(
+            of: find.byIcon(Icons.arrow_upward),
+            matching: find.byType(FaHeaderCircularAction),
+          )
+          .first;
+      expect(tester.getSize(up), const Size.square(40));
+      final material = tester.widget<Material>(
+        find.descendant(of: up, matching: find.byType(Material)).first,
+      );
+      expect(material.color, FaDesignTokens.of(tester.element(up)).surface2);
+      expect(material.shape, isA<CircleBorder>());
     });
 
     testWidgets('listing failure shows an error state with retry', (

@@ -1310,6 +1310,12 @@ abstract class AppLocalizations {
   /// **'Empty folder'**
   String get filesEmptyFolder;
 
+  /// No description provided for @filesFilesSection.
+  ///
+  /// In en, this message translates to:
+  /// **'Files'**
+  String get filesFilesSection;
+
   /// No description provided for @filesFolderAccessDenied.
   ///
   /// In en, this message translates to:
@@ -1321,6 +1327,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Could not open folder picker: {error}'**
   String filesFolderPickerError(Object error);
+
+  /// No description provided for @filesFoldersSection.
+  ///
+  /// In en, this message translates to:
+  /// **'Folders'**
+  String get filesFoldersSection;
 
   /// No description provided for @filesICloudSyncDone.
   ///

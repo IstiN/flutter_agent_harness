@@ -10,9 +10,10 @@ library;
 
 import 'dart:io';
 
-import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/widgets/file_browser.dart';
 import 'package:fa/ui/widgets/file_preview.dart';
+import 'package:fa_ui/fa_ui.dart'
+    show FaVisualDirection, buildFaTheme, debugFaGlassAlwaysFake;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
@@ -388,6 +389,11 @@ void main() {
     await ensureGoldenFonts();
     await _ensureMaterialIcons();
   });
+  // The glass direction's LiquidGlass chips (breadcrumb capsule, mounted
+  // identity) render through the deterministic fake — same contract as the
+  // wide-layout-shell goldens.
+  setUp(() => debugFaGlassAlwaysFake = true);
+  tearDown(() => debugFaGlassAlwaysFake = false);
 
   group('files goldens', () {
     testWidgets('file listing of a realistic project tree', (tester) async {
@@ -396,8 +402,27 @@ void main() {
       await expectGolden(tester, 'files_listing');
     });
 
-    testWidgets('compact 300px panel in dark and light themes', (tester) async {
-      for (final light in [false, true]) {
+    testWidgets('compact 300px panel across visual directions', (
+      tester,
+    ) async {
+      // Glass (the default app theme) in both brightnesses, plus one
+      // opaque direction per brightness — the panel must look right in all
+      // four visual languages.
+      const frames = <(String, FaVisualDirection, Brightness)>[
+        ('files_panel_dark', FaVisualDirection.glass, Brightness.dark),
+        ('files_panel_light', FaVisualDirection.glass, Brightness.light),
+        (
+          'files_panel_graphite_dark',
+          FaVisualDirection.graphite,
+          Brightness.dark,
+        ),
+        (
+          'files_panel_porcelain_light',
+          FaVisualDirection.porcelain,
+          Brightness.light,
+        ),
+      ];
+      for (final (name, direction, brightness) in frames) {
         await tester.pumpWidget(const SizedBox());
         await tester.pump();
         final env = await _seededEnv();
@@ -405,12 +430,9 @@ void main() {
           tester,
           env,
           size: const Size(300, 700),
-          theme: light ? buildFahThemeLight() : buildFahTheme(),
+          theme: buildFaTheme(direction: direction, brightness: brightness),
         );
-        await expectGolden(
-          tester,
-          light ? 'files_panel_light' : 'files_panel_dark',
-        );
+        await expectGolden(tester, name);
       }
     });
 

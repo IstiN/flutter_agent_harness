@@ -688,12 +688,18 @@ class AppLocalizationsEn extends AppLocalizations {
   String get filesEmptyFolder => 'Empty folder';
 
   @override
+  String get filesFilesSection => 'Files';
+
+  @override
   String get filesFolderAccessDenied => 'Could not get access to that folder.';
 
   @override
   String filesFolderPickerError(Object error) {
     return 'Could not open folder picker: $error';
   }
+
+  @override
+  String get filesFoldersSection => 'Folders';
 
   @override
   String filesICloudSyncDone(Object files, Object size, Object when) {

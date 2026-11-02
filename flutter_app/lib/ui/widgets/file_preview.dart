@@ -12,6 +12,7 @@ import 'package:fa/ui/widgets/html_preview_stub.dart'
 import 'package:fa/ui/markdown_style.dart';
 import 'package:fa/ui/widgets/media_player.dart';
 import 'package:fa/ui/widgets/wide_layout_shell.dart';
+import 'package:fa_ui/fa_ui.dart' show FaButton, FaButtonVariant;
 
 /// Files larger than this are never loaded for preview (4 MB).
 const int kPreviewReadCapBytes = 4 * 1024 * 1024;
@@ -202,6 +203,7 @@ class _FilePreviewViewState extends State<FilePreviewView> {
     final info = await _statPreviewFile();
     if (info == null) return null;
     if (info.size > kPreviewReadCapBytes) {
+      if (!mounted) return null;
       _showInfo(context.l10n.filePreviewTooLarge);
       return null;
     }
@@ -451,11 +453,11 @@ class _FilePreviewViewState extends State<FilePreviewView> {
             padding: const EdgeInsets.fromLTRB(12, 4, 12, 0),
             child: Align(
               alignment: Alignment.centerRight,
-              child: TextButton.icon(
+              child: FaButton(
+                variant: FaButtonVariant.ghost,
+                icon: Icons.edit_outlined,
+                label: context.l10n.filePreviewEdit,
                 onPressed: () => setState(() => _editing = true),
-                icon: const Icon(Icons.edit_outlined, size: 18),
-                // l10n:ignore
-                label: const Text('Edit'), // l10n:ignore
               ),
             ),
           ),
