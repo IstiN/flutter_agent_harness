@@ -891,9 +891,12 @@ void main() {
       // #729 chunked fold actually splits — the exempt user ask and the
       // keep-recent tail are outside the range, so the marker-rich middle
       // plus the kept filler must carry the weight.
+      // Kept FULL pairs outside the keep-recent tail put >256 tokens of
+      // non-marker content in the foldable range (markers alone never
+      // chunk — they consolidate deterministically).
       final (session, state, hiddenIds) = await boundarySession(
-        hiddenPairs: 6,
-        keptPairs: 1,
+        hiddenPairs: 1,
+        keptPairs: 3,
         margin: 0,
       );
       final hooks = _Hooks();
@@ -917,13 +920,6 @@ void main() {
         summarizerWindow: 128,
       );
       final ok = await compactor.run();
-      // ignore: avoid_print
-      for (final p in hooks.passes) {
-        // ignore: avoid_print
-        print('DBG pass ${p.kind} ${p.tokensBefore}->${p.tokensAfter} ok=${p.ok} sum=${p.summarizedCount} hidden=${p.hiddenCount}');
-      }
-      // ignore: avoid_print
-      print('DBG calls=$summarizerCalls');
       expect(ok, isTrue);
       expect(summarizerCalls, greaterThanOrEqualTo(2),
           reason: 'the range must actually need multiple chunks');
