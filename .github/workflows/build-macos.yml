@@ -1207,6 +1207,16 @@ jobs:
         run: |
           codesign --force --sign - build/out/bundle/bin/fa
 
+      # gh-2040: the native fa-clip pasteboard helper rides the macOS CLI
+      # bundle (bundle/bin/fa-clip, per-arch — this matrix builds each arch
+      # on a native runner, AC8) so install.sh / fa update ship it beside
+      # the binary and image paste never rides Apple Events.
+      - name: Build fa-clip pasteboard helper (gh-2040)
+        run: |
+          bash scripts/build_fa_clip.sh build/out/bundle/bin/fa-clip
+          codesign --force --sign - build/out/bundle/bin/fa-clip
+          test -x build/out/bundle/bin/fa-clip
+
       - name: Archive and upload CLI bundle
         env:
           GH_TOKEN: ${{ secrets.RELEASE_PAT }}

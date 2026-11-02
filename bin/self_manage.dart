@@ -1158,6 +1158,10 @@ Future<int> _extractAndSwap(
     await File(staging).writeAsBytes(srcExe.readAsBytesSync());
     await _atomicSwap(staging, target, runProcess);
     await copyBundleLibs(bundleDir, installDir);
+    // gh-2040: the native fa-clip pasteboard helper rides the bundle —
+    // keep it beside the swapped binary so image paste survives updates
+    // (the reader resolves it relative to the fa executable, never PATH).
+    await copyBundleClipboardHelper(bundleDir, installDir, runProcess);
     // Copy version.txt so the new binary reports its version correctly.
     final srcVersion = File('${bundleDir.path}/version.txt');
     if (srcVersion.existsSync()) {
@@ -1169,6 +1173,34 @@ Future<int> _extractAndSwap(
     return 0;
   } finally {
     await tmpDir.delete(recursive: true);
+  }
+}
+
+/// Copies the bundle's `bin/fa-clip` pasteboard helper (gh-2040) beside the
+/// installed binary: the macOS image reader resolves `fa-clip` relative to
+/// the fa executable, so the helper must live where the binary lives.
+///
+/// Public so the self-management unit tests can pin it, like
+/// [copyBundleLibs]. A bundle without the helper is a no-op — the reader
+/// degrades to the named pasteboard-unavailable path when the helper is
+/// missing (gh-2040 AC5), never blocking paste.
+Future<void> copyBundleClipboardHelper(
+  Directory bundleDir,
+  Directory installDir, [
+  Future<ProcessResult> Function(String, List<String>)? runProcess,
+]) async {
+  if (Platform.isWindows) return; // macOS-only helper
+  final src = File('${bundleDir.path}/bin/fa-clip');
+  if (!src.existsSync()) return;
+  final helperTarget = File('${installDir.path}/fa-clip');
+  await helperTarget.writeAsBytes(src.readAsBytesSync());
+  if (runProcess != null) {
+    try {
+      await runProcess('chmod', ['+x', helperTarget.path]);
+    } on Object {
+      // Best-effort — a non-executable helper is the AC5 degradation
+      // shape (named diagnostic), never a blocked update.
+    }
   }
 }
 

@@ -5,16 +5,29 @@
 /// path funnels through an injected [ProcessRunner] so tests script the
 /// pasteboard instead of touching a real one.
 ///
-/// - macOS: `osascript` writes `«class PNGf»` (fallback `«class JPEG»`) to a
-///   temp file we then read. A TIFF-only pasteboard (Preview, most browsers)
-///   holds neither (gh-1575): a third `«class TIFF»` probe lands the bytes in
-///   a scratch file and `sips -s format png` converts them to PNG.
+/// - macOS: the native `fa-clip` helper (gh-2040, Swift/AppKit source in
+///   `tools/fa-clip/fa-clip.swift`, shipped beside the fa binary) reads the
+///   pasteboard through `NSPasteboard.general.data(forType:)` — a plain
+///   pasteboard read that sends no Apple Events, so the TCC
+///   `SystemPolicyAppData` consent class («access data from other apps»)
+///   that the old AppleScript transport raised can never fire. The helper
+///   answers ONE flavor per call (`fa-clip png|jpeg|tiff`; exit 0 = bytes
+///   on stdout, exit 2 = flavor absent) and this side keeps the flavor
+///   ladder PNG → JPEG → TIFF: a TIFF-only pasteboard (Preview, most
+///   browsers, gh-1575) converts to PNG with `sips -s format png`. The
+///   helper is resolved relative to the fa executable, never PATH —
+///   a missing/broken helper degrades to the named unavailable path (AC5).
 /// - Linux: `xclip -selection clipboard -t image/png -o`, falling back to
 ///   `wl-paste --type image/png` (Wayland).
 /// - Windows: PowerShell `Get-Clipboard -Format Image` saved as PNG.
-/// - `readPasteboardText` reads the clipboard's plain text the same way
+/// - `readPasteboardText` reads the clipboard's plain text
 ///   (`pbpaste` / `xclip`+`wl-paste` / PowerShell `Get-Clipboard`) — the
-///   Ctrl+V text fallback when the image probe misses (gh-1575).
+///   Ctrl+V text fallback when the image probe misses (gh-1575). macOS text
+///   deliberately STAYS on `pbpaste` (gh-2040 AC4, documented split):
+///   `pbpaste` reads the pasteboard through the system pasteboard server
+///   and delivers no Apple Events either — it is already prompt-free, so
+///   moving it onto the helper would grow the helper's surface (a text
+///   flavor + UTF-8 contract) for zero consent benefit.
 /// - `FA_FAKE_PASTEBOARD=<path>` short-circuits the IMAGE read: that file
 ///   is returned as-is — the test seam for the PTY golden tests (and handy
 ///   for debugging on a headless box). The TEXT read has no fake seam —
@@ -72,18 +85,19 @@ PasteboardRead? _readFakePasteboard(String? fake) {
 }
 
 /// Dispatches to the platform reader. Never throws (doc): a missing
-/// xclip/osascript/powershell surfaces as a ProcessException here — turn
+/// xclip/fa-clip/powershell surfaces as a ProcessException here — turn
 /// it into the named unavailable result the transcript prints as a clean
 /// note (edge E1).
 Future<PasteboardRead> _readPlatform(
   ProcessRunner run,
   Directory tmp,
   String? platform,
+  String helperPath,
 ) async {
   try {
     switch (pasteboardPlatform(platform)) {
       case 'macos':
-        return await _readMacos(run, tmp);
+        return await _readMacos(run, tmp, helperPath);
       case 'linux':
         return await _readLinux(run);
       case 'windows':
@@ -106,6 +120,12 @@ Future<PasteboardRead> readPasteboardImage({
   /// platform path (macOS/Windows readers are unreachable on a Linux
   /// CI runner, which would push their CRAP through the roof).
   String? platform,
+
+  /// Pins the macOS `fa-clip` helper location (gh-2040): the production
+  /// value resolves beside the fa executable ([faClipHelperPath]); tests
+  /// pass a scripted path so the helper protocol is pinned on the same
+  /// [ProcessRunner] seam as every other platform.
+  String? helperPath,
 }) async {
   final run = runner ?? _runBinaryProcess;
   // The explicit map wins (unit tests); the real process env is the seam
@@ -115,32 +135,47 @@ Future<PasteboardRead> readPasteboardImage({
         Platform.environment['FA_FAKE_PASTEBOARD'],
   );
   if (fake != null) return fake;
-  return _readPlatform(run, tempDir ?? Directory.systemTemp, platform);
+  return _readPlatform(
+    run,
+    tempDir ?? Directory.systemTemp,
+    platform,
+    helperPath ?? faClipHelperPath(),
+  );
 }
 
-Future<PasteboardRead> _readMacos(ProcessRunner runner, Directory tmp) async {
-  for (final (appleClass, ext) in [
-    ('«class PNGf»', 'png'),
-    ('«class JPEG»', 'jpg'),
-  ]) {
-    final bytes = await _osascriptClipboardClassToFile(
-      runner,
-      tmp,
-      appleClass,
-      ext,
+/// The production `fa-clip` location: beside the running fa executable.
+/// Never a PATH lookup — the binary ships its helper as one unit, and a
+/// stray `fa-clip` on PATH is exactly the partial-update shape AC5 degrades
+/// on (gh-2040).
+String faClipHelperPath() {
+  final exeDir = File(Platform.resolvedExecutable).parent.path;
+  return '$exeDir${Platform.pathSeparator}fa-clip';
+}
+
+Future<PasteboardRead> _readMacos(
+  ProcessRunner runner,
+  Directory tmp,
+  String helperPath,
+) async {
+  // A missing helper is a transport failure with its own one-line
+  // diagnostic (gh-2040 border case: name the transport, never a bare
+  // «no image»): partial updates, uninstall-side installs and dev runs
+  // without the helper all land here and degrade per AC5.
+  if (!File(helperPath).existsSync()) {
+    return PasteboardUnavailable(
+      'fa-clip helper not found at $helperPath — reinstall fa so the '
+      'native pasteboard helper sits beside the binary',
     );
+  }
+  for (final flavor in const ['png', 'jpeg']) {
+    final bytes = await _faClipFlavorBytes(runner, helperPath, flavor);
     if (bytes != null) return PasteboardImage(bytes);
   }
   // gh-1575: TIFF-only pasteboards (an image copied from Preview or a
-  // browser) hold neither PNGf nor JPEG — probe «class TIFF» and convert
+  // browser) hold neither PNG nor JPEG — probe the tiff flavor and convert
   // to PNG with sips (ships with macOS). A failed conversion keeps the
   // unavailable fall-through: no silent garbage bytes ever become a chip.
-  final tiff = await _osascriptClipboardClassToFile(
-    runner,
-    tmp,
-    '«class TIFF»',
-    'tiff',
-  );
+  final tiff = await _faClipFlavorBytes(runner, helperPath, 'tiff');
   if (tiff != null) {
     final png = await _convertTiffToPng(runner, tmp, tiff);
     if (png != null) return PasteboardImage(png);
@@ -148,43 +183,32 @@ Future<PasteboardRead> _readMacos(ProcessRunner runner, Directory tmp) async {
   return const PasteboardUnavailable('clipboard holds no image');
 }
 
-/// Asks osascript to write one clipboard flavor to a scratch file; the
-/// bytes when the class was available and the file landed, else null. A
-/// successful read drops the scratch file — a golden run pastes many
-/// images and each would otherwise litter the temp dir.
-Future<List<int>?> _osascriptClipboardClassToFile(
+/// One `fa-clip <flavor>` probe (gh-2040): the flavor's bytes when the
+/// pasteboard holds it (exit 0), null when the flavor is absent (exit 2 —
+/// the ladder falls through), a named transport failure otherwise. A
+/// crashed/quarantined/wrong-ABI helper (any other exit code) throws the
+/// StateError the platform dispatch renders as `pasteboard read failed: …`
+/// — the same named-unavailable path a broken backend takes on every other
+/// platform (AC5), never a hang and never silent garbage bytes.
+Future<List<int>?> _faClipFlavorBytes(
   ProcessRunner runner,
-  Directory tmp,
-  String appleClass,
-  String ext,
+  String helperPath,
+  String flavor,
 ) async {
-  final target =
-      '${tmp.path}/fa-clipboard-${DateTime.now().microsecondsSinceEpoch}'
-      '.$ext';
-  final script = [
-    'set pngData to (the clipboard as $appleClass)',
-    'set imgFile to (open for access POSIX file "$target" with write permission)',
-    'try',
-    'write pngData to imgFile',
-    'close access imgFile',
-    'on error errStr',
-    'try',
-    'close access imgFile',
-    'end try',
-    'error errStr',
-    'end try',
-  ];
-  final result = await runner('osascript', [
-    for (final line in script) ...['-e', line],
-  ]);
-  if (result.exitCode != 0) return null;
-  try {
-    final bytes = File(target).readAsBytesSync();
-    File(target).deleteSync();
-    return bytes;
-  } on Object {
-    return null;
+  final result = await runner(helperPath, [flavor]);
+  final stdout = result.stdout;
+  if (result.exitCode == 0 && stdout is List<int> && stdout.isNotEmpty) {
+    return stdout;
   }
+  if (result.exitCode == 0 || result.exitCode == 2) return null;
+  final stderr = result.stderr;
+  final detail = stderr is List<int>
+      ? utf8.decode(stderr, allowMalformed: true).trim()
+      : '$stderr'.trim();
+  throw StateError(
+    'fa-clip $flavor failed (exit ${result.exitCode})'
+    '${detail.isEmpty ? '' : ': $detail'}',
+  );
 }
 
 /// Converts TIFF [bytes] to PNG via `sips -s format png <in> --out <out>`;
@@ -229,6 +253,12 @@ Future<List<int>?> _convertTiffToPng(
 /// (Linux), PowerShell `Get-Clipboard` (Windows). Never throws — every
 /// failure becomes [PasteboardUnavailable]. Empty stdout counts as no
 /// text: an empty paste must never reach the composer.
+///
+/// gh-2040 AC4 (documented split): macOS text stays on `pbpaste` — it
+/// reads the pasteboard through the system pasteboard server, delivers no
+/// Apple Events, and is already prompt-free, so the fa-clip helper stays
+/// image-only instead of growing a text flavor + UTF-8 contract for zero
+/// consent benefit.
 Future<PasteboardRead> readPasteboardText({
   ProcessRunner? runner,
 

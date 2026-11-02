@@ -22,6 +22,17 @@ final _pngish = <int>[
 ProcessResult _ok(List<int> stdout) => ProcessResult(1, 0, stdout, null);
 
 void main() {
+  // gh-2040: the macOS path resolves the fa-clip helper beside the binary
+  // and refuses to spawn a missing one — the scripted macOS tests pin a
+  // real (empty) stand-in file so the protocol stays on the runner seam.
+  String helper = '';
+  setUp(() async {
+    final dir = await Directory.systemTemp.createTemp('fa_pasteboard');
+    addTearDown(() => dir.deleteSync(recursive: true));
+    helper = '${dir.path}/fa-clip';
+    File(helper).writeAsBytesSync(const []);
+  });
+
   test('the Linux path hands the raw bytes through untouched', () async {
     Future<ProcessResult> runner(String executable, List<String> args) async =>
         _ok(_pngish);
@@ -69,33 +80,37 @@ void main() {
     expect((read as PasteboardImage).bytes, _pngish);
   });
 
-  test('the macOS path reads the scratch file the script wrote', () async {
+  test('the macOS path reads the helper stdout (gh-2040 fa-clip)', () async {
     Future<ProcessResult> runner(String exe, List<String> args) async {
-      expect(exe, 'osascript');
-      // The script embeds the target path: the fake osascript honors it
-      // exactly like the real one — write the image, exit 0.
-      final script = args.join(' ');
-      final match = RegExp(r'POSIX file "([^"]+)"').firstMatch(script)!;
-      File(match.group(1)!).writeAsBytesSync(_pngish);
-      return _ok(const []);
+      expect(exe, endsWith('fa-clip'));
+      expect(args, ['png']);
+      return _ok(_pngish);
     }
 
-    final read = await readPasteboardImage(runner: runner, platform: 'macos');
+    final read = await readPasteboardImage(
+      runner: runner,
+      platform: 'macos',
+      helperPath: helper,
+    );
     expect(read, isA<PasteboardImage>());
     expect((read as PasteboardImage).bytes, _pngish);
   });
 
   test(
-    'the macOS path falls through PNG to JPEG to TIFF, then gives up',
+    'the macOS path falls through png to jpeg to tiff, then gives up',
     () async {
       var calls = 0;
       Future<ProcessResult> runner(String exe, List<String> args) async {
         calls++;
-        return ProcessResult(1, 1, '', 'clipboard holds no image');
+        return ProcessResult(1, 2, '', 'no flavor');
       }
 
-      final read = await readPasteboardImage(runner: runner, platform: 'macos');
-      expect(calls, 3, reason: 'PNGf tried, then JPEG, then the TIFF fallback');
+      final read = await readPasteboardImage(
+        runner: runner,
+        platform: 'macos',
+        helperPath: helper,
+      );
+      expect(calls, 3, reason: 'png tried, then jpeg, then the tiff fallback');
       expect(read, isA<PasteboardUnavailable>());
     },
   );
@@ -106,14 +121,8 @@ void main() {
     const tiff = <int>[0x4D, 0x4D, 0x00, 0x2A, 0xDE, 0xAD];
     final png = _pngish;
     Future<ProcessResult> runner(String exe, List<String> args) async {
-      final script = args.join(' ');
-      if (exe == 'osascript') {
-        if (!script.contains('«class TIFF»')) {
-          return ProcessResult(1, 1, '', 'no image of this class');
-        }
-        final match = RegExp(r'POSIX file "([^"]+)"').firstMatch(script)!;
-        File(match.group(1)!).writeAsBytesSync(tiff);
-        return _ok(const []);
+      if (exe.endsWith('fa-clip')) {
+        return args.single == 'tiff' ? _ok(tiff) : ProcessResult(1, 2, '', '');
       }
       expect(exe, 'sips');
       expect(args.take(3), ['-s', 'format', 'png']);
@@ -122,26 +131,30 @@ void main() {
       return _ok(const []);
     }
 
-    final read = await readPasteboardImage(runner: runner, platform: 'macos');
+    final read = await readPasteboardImage(
+      runner: runner,
+      platform: 'macos',
+      helperPath: helper,
+    );
     expect(read, isA<PasteboardImage>());
     expect((read as PasteboardImage).bytes, png);
   });
 
   test('a failing TIFF→PNG conversion falls through to unavailable', () async {
     Future<ProcessResult> runner(String exe, List<String> args) async {
-      final script = args.join(' ');
-      if (exe == 'osascript') {
-        if (!script.contains('«class TIFF»')) {
-          return ProcessResult(1, 1, '', 'no image of this class');
-        }
-        final match = RegExp(r'POSIX file "([^"]+)"').firstMatch(script)!;
-        File(match.group(1)!).writeAsBytesSync(const [1, 2, 3, 4]);
-        return _ok(const []);
+      if (exe.endsWith('fa-clip')) {
+        return args.single == 'tiff'
+            ? _ok(const [1, 2, 3, 4])
+            : ProcessResult(1, 2, '', '');
       }
       return ProcessResult(1, 1, '', 'sips failed'); // conversion breaks
     }
 
-    final read = await readPasteboardImage(runner: runner, platform: 'macos');
+    final read = await readPasteboardImage(
+      runner: runner,
+      platform: 'macos',
+      helperPath: helper,
+    );
     expect(read, isA<PasteboardUnavailable>());
     expect((read as PasteboardUnavailable).reason, contains('no image'));
   });
