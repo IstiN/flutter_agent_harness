@@ -427,5 +427,25 @@ void main() {
         );
       },
     );
+
+    test(
+      'naming consistency: the immutability suite is spelled immutability',
+      () {
+        // gh-2042 review thread 10: the publish-immutability suite landed as
+        // `release_publish_imutability_test.dart` (one t). Naming is part of
+        // the PR's contract surface — the verify command, review replies and
+        // docs all name this file — so the misspelling must not come back.
+        expect(
+          File('test/release_publish_immutability_test.dart').existsSync(),
+          isTrue,
+          reason: 'the suite lives at the correctly-spelled path',
+        );
+        expect(
+          File('test/release_publish_imutability_test.dart').existsSync(),
+          isFalse,
+          reason: 'the one-t misspelled filename must not exist',
+        );
+      },
+    );
   });
 }

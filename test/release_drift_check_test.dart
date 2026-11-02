@@ -66,8 +66,8 @@ String _sha256Of(File f) {
   return (res.stdout as String).split(' ').first;
 }
 
-String _details(Directory dir) => File('${dir.path}/details.txt')
-    .readAsStringSync();
+String _details(Directory dir) =>
+    File('${dir.path}/details.txt').readAsStringSync();
 
 void main() {
   test('missing drift-check script fails the suite loudly', () {
@@ -408,9 +408,9 @@ void main() {
         ['fa-linux-x64.tar.gz'],
       );
       final hash = _sha256Of(File('${dir.path}/fa-linux-x64.tar.gz'));
-      File('${dir.path}/SHA256SUMS').writeAsStringSync(
-        '$hash\tfa-linux-x64.tar.gz\n',
-      );
+      File(
+        '${dir.path}/SHA256SUMS',
+      ).writeAsStringSync('$hash\tfa-linux-x64.tar.gz\n');
       final r = _runCheck(dir);
       expect(r.exitCode, 1, reason: _out(r));
       expect(_details(dir), contains('without a named FAILED line'));
