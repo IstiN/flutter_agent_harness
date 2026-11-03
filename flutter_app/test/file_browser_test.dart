@@ -496,7 +496,7 @@ void main() {
               for (final finder in [upload, sync, refresh]) {
                 expect(
                   tester.getSize(finder),
-                  const Size.square(40),
+                  const Size.square(36),
                   reason: reason,
                 );
               }
@@ -588,6 +588,72 @@ void main() {
       await tester.tap(find.text('/'));
       await tester.pumpAndSettle();
       expect(find.text('aaa.txt'), findsOneWidget);
+    });
+
+    testWidgets('band chrome: the close circle LEADS the search capsule; '
+        'capsule and circles share the composer scale', (tester) async {
+      final env = await _seededEnv();
+      await tester.pumpWidget(_wrap(FileBrowser(env: env, onClose: () {})));
+      await tester.pumpAndSettle();
+
+      // The panel's own X is the visible close affordance, sitting
+      // immediately LEFT of the search capsule (the collapse/expand
+      // pattern: the same button flips to an X next to "search files").
+      final close = tester.getRect(find.byKey(const ValueKey('filesAppClose')));
+      final capsule = tester.getRect(
+        find.byKey(const ValueKey('fileBrowserSearch')),
+      );
+      expect(close.right, lessThan(capsule.left));
+      expect(capsule.left - close.right, 8);
+      // The capsule matches the chat composer field scale (36pt band).
+      expect(capsule.height, 36);
+      // Every band circle shares that composer scale (shrunken from the
+      // chat header's 40pt chrome) with the 18px glyph.
+      Finder circleOf(Key key) => find
+          .ancestor(of: find.byKey(key), matching: find.byType(FaHeaderCircularAction))
+          .first;
+      expect(
+        tester.getSize(circleOf(const ValueKey('filesAppClose'))),
+        const Size.square(36),
+      );
+      expect(
+        tester.getSize(circleOf(const ValueKey('fileBrowserRefresh'))),
+        const Size.square(36),
+      );
+      expect(
+        tester
+            .widget<Icon>(
+              find.descendant(
+                of: circleOf(const ValueKey('fileBrowserRefresh')),
+                matching: find.byIcon(Icons.refresh),
+              ),
+            )
+            .size,
+        18,
+      );
+    });
+
+    testWidgets('breadcrumbs: one line, ellipsized, vertically centered in '
+        'the path chip', (tester) async {
+      final env = await _seededEnv();
+      await tester.pumpWidget(_wrap(FileBrowser(env: env)));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('zzz_dir'));
+      await tester.pumpAndSettle();
+
+      final chip = tester.getRect(
+        find.byKey(const ValueKey('fileBrowserBreadcrumbChip')),
+      );
+      for (final label in <String>['/', 'zzz_dir']) {
+        final crumb = tester.widget<Text>(find.text(label));
+        expect(crumb.maxLines, 1, reason: label);
+        expect(crumb.overflow, TextOverflow.ellipsis, reason: label);
+        final rect = tester.getRect(find.text(label));
+        expect(rect.center.dy, chip.center.dy, reason: label);
+        expect(rect.top, greaterThanOrEqualTo(chip.top), reason: label);
+        expect(rect.bottom, lessThanOrEqualTo(chip.bottom), reason: label);
+      }
     });
 
     testWidgets('tapping a text file previews its content inline', (
@@ -691,7 +757,7 @@ void main() {
             matching: find.byType(FaHeaderCircularAction),
           )
           .first;
-      expect(tester.getSize(up), const Size.square(40));
+      expect(tester.getSize(up), const Size.square(36));
       final material = tester.widget<Material>(
         find.descendant(of: up, matching: find.byType(Material)).first,
       );

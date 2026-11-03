@@ -206,10 +206,12 @@ void main() {
                       matching: find.byType(fa_ui.FaHeaderCircularAction),
                     )
                     .first;
+                // Files is the RIGHTMOST chat-header action (user
+                // direction): it trails copy (host widgets may sit
+                // between on narrow surfaces).
                 expect(
-                  tester.getRect(copyAction).left -
-                      tester.getRect(folderAction).right,
-                  8,
+                  tester.getRect(folderAction).left,
+                  greaterThan(tester.getRect(copyAction).right),
                   reason: reason,
                 );
               }

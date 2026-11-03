@@ -13,8 +13,9 @@ import 'chat_strings.dart';
 /// [FaChatHeaderAction]); [label] feeds both the bar tooltip and the
 /// overflow-menu row. Actions render in list order — the list IS the
 /// priority order, and demotion on tight widths removes from the tail, so
-/// order primary actions first (files, trajectory) and secondary ones last
-/// (copy, ✦, apps).
+/// order primary actions first and secondary ones last (copy, ✦, apps);
+/// pinned actions always render at the head of the group regardless of
+/// list position.
 class FaHeaderAction {
   const FaHeaderAction({
     this.key,
@@ -57,16 +58,28 @@ class FaHeaderAction {
 /// Shared filled circular chrome for compact header actions. The child keeps
 /// its own tooltip, disabled state and InkResponse; Material supplies the
 /// hover/press overlay without a permanent outline or backdrop capture.
+///
+/// [dimension] keeps the family parameterized: the chat header's 40pt
+/// default stays untouched, while the Files chrome shrinks to the
+/// composer's 36pt control scale ([FilesCircleAction]).
 class FaHeaderCircularAction extends StatelessWidget {
-  const FaHeaderCircularAction({super.key, required this.child});
+  const FaHeaderCircularAction({
+    super.key,
+    required this.child,
+    this.dimension = 40,
+  }) : assert(dimension > 0);
 
   final Widget child;
+
+  /// The circle's edge length (the chat bar's chrome is 40pt; the Files
+  /// band uses the composer's 36pt scale).
+  final double dimension;
 
   @override
   Widget build(BuildContext context) {
     final tokens = FaDesignTokens.of(context);
     return SizedBox.square(
-      dimension: 40,
+      dimension: dimension,
       child: Material(
         color: tokens.surface2,
         shape: const CircleBorder(),

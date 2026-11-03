@@ -98,6 +98,42 @@ void main() {
       expect(find.byType(FileBrowser), findsNothing);
     });
 
+    testWidgets('wide: the Files icon is the RIGHTMOST chat-header action', (
+      tester,
+    ) async {
+      _useWideSurface(tester);
+      final env = MemoryExecutionEnv();
+      await tester.pumpWidget(
+        MaterialApp(home: ChatScreen(manager: _fakeManager(env))),
+      );
+      await tester.pumpAndSettle();
+
+      final files = find.byTooltip('Files');
+      final copy = find.byTooltip('Copy session');
+      expect(files, findsOneWidget);
+      expect(copy, findsOneWidget);
+      // The header folder icon sits at the tail of the action row: right
+      // of copy (and any host widgets between them).
+      expect(
+        tester.getTopRight(files).dx,
+        greaterThan(tester.getTopRight(copy).dx),
+      );
+      // And the panel's own X — not the header icon — closes it. It
+      // leads the band's search capsule.
+      await tester.tap(find.byTooltip('Files'));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('filesAppClose')), findsOneWidget);
+      expect(
+        tester.getRect(find.byKey(const ValueKey('filesAppClose'))).right,
+        lessThan(
+          tester.getRect(find.byKey(const ValueKey('filesAppSearch'))).left,
+        ),
+      );
+      await tester.tap(find.byKey(const ValueKey('filesAppClose')));
+      await tester.pumpAndSettle();
+      expect(find.byType(FileBrowser), findsNothing);
+    });
+
     testWidgets('wide: no settings gear in the chat bar (sidebar owns it)', (
       tester,
     ) async {

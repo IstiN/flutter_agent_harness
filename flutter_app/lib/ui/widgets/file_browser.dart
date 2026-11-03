@@ -728,7 +728,13 @@ class _FileBrowserState extends State<FileBrowser> {
                   child: SingleChildScrollView(
                     key: const ValueKey('fileBrowserBreadcrumbs'),
                     scrollDirection: Axis.horizontal,
-                    child: Row(children: _breadcrumbs(context)),
+                    // The scroll view forces the cross axis tight to the
+                    // 28px chip; center keeps the crumbs on its optical
+                    // middle line.
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      children: _breadcrumbs(context),
+                    ),
                   ),
                 ),
               ),
@@ -742,11 +748,18 @@ class _FileBrowserState extends State<FileBrowser> {
   List<Widget> _breadcrumbs(BuildContext context) {
     final colors = FahColors.of(context);
     final style = TextStyle(color: colors.dim, fontSize: 12, height: 1.2);
+    // One line, never wrapped, ellipsized if a single crumb is ever
+    // constrained — and no vertical padding: the cross-axis-tight scroll
+    // view centers the row in the 28px chip, so padded crumbs (14.4px of
+    // text + 16px of padding) overflowed the chip and clipped top/bottom.
     Widget crumb(String label, int index, bool isCurrent) {
       final child = Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 4),
         child: Text(
           label,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          softWrap: false,
           style: isCurrent
               ? style.copyWith(color: colors.text, fontWeight: FontWeight.w600)
               : style,
@@ -1010,10 +1023,16 @@ class _FileBrowserState extends State<FileBrowser> {
   }
 }
 
-/// One 40px circular chrome action in the Files surfaces (band actions,
-/// the close circle, the path-bar up/back buttons) — the same
+/// One circular chrome action in the Files surfaces (band actions, the
+/// close circle, the path-bar up/back buttons) — the same
 /// [FaHeaderCircularAction] family everywhere, so every icon button in
 /// Files reads as one chrome instead of ad-hoc circles.
+///
+/// The circle matches the chat composer's control scale: 36pt with an
+/// 18px glyph (the composer's send/mic buttons), one step down from the
+/// chat header's 40pt chrome. Parameterized via [size] so every Files
+/// surface — the band, the presented pane, the path bar — keeps the same
+/// sane look.
 ///
 /// [buttonKey] lands on the inner [IconButton] — the keyed widget sits
 /// INSIDE its [FaHeaderCircularAction] chrome, exactly where the
@@ -1026,23 +1045,30 @@ final class FilesCircleAction extends StatelessWidget {
     required this.icon,
     required this.tooltip,
     this.onPressed,
+    this.size = 36,
   });
+
+  static const double _glyphSize = 18;
 
   final Key? buttonKey;
   final IconData icon;
   final String tooltip;
   final VoidCallback? onPressed;
 
+  /// The circle's edge (composer scale by default).
+  final double size;
+
   @override
   Widget build(BuildContext context) => FaHeaderCircularAction(
+    dimension: size,
     child: IconButton(
       key: buttonKey,
-      icon: Icon(icon, size: 18),
+      icon: Icon(icon, size: _glyphSize),
       padding: EdgeInsets.zero,
-      constraints: const BoxConstraints.tightFor(width: 40, height: 40),
+      constraints: BoxConstraints.tightFor(width: size, height: size),
       style: IconButton.styleFrom(
-        minimumSize: const Size.square(40),
-        maximumSize: const Size.square(40),
+        minimumSize: Size.square(size),
+        maximumSize: Size.square(size),
         tapTargetSize: MaterialTapTargetSize.shrinkWrap,
       ),
       tooltip: tooltip,
@@ -1055,8 +1081,11 @@ final class FilesCircleAction extends StatelessWidget {
 /// pane's band, shared by every Files surface: the browser's own header
 /// ([FileBrowser.showHeader]) and the presented/pushed/docked panes.
 ///
-/// Layout: Files title + the live search capsule ([FaTextField]) + the
-/// browser actions + the close circle. The capsule is the band's flexible
+/// Layout: the close circle (the panel's own X) + the live search
+/// capsule ([FaTextField]) + the browser actions. The X sits immediately
+/// LEFT of the capsule — the collapse/expand morph: the same button flips
+/// to an X next to "search files" while the panel is open, and the
+/// header's folder icon only toggles. The capsule is the band's flexible
 /// middle: it EXPANDS to fill everything between its neighbors (defect:
 /// a fixed ~140px capsule). Fit policy, widest-first:
 ///  - roomy bands (≥ [kFilesSearchDesktopMin] after the close circle)
@@ -1089,7 +1118,8 @@ final class FilesChrome extends StatelessWidget {
   /// priority order — the tail demotes into the ⋮ menu first.
   final List<FaHeaderAction> actions;
 
-  /// Close circle; null hides it (hosts that toggle the surface
+  /// Close circle — the panel's own X, rendered immediately LEFT of the
+  /// search capsule; null hides it (hosts that toggle the surface
   /// themselves).
   final VoidCallback? onClose;
 
@@ -1103,12 +1133,15 @@ final class FilesChrome extends StatelessWidget {
 
   static const _bandHeight = 52.0;
   static const _bandPadding = EdgeInsets.fromLTRB(10, 6, 10, 6);
-  static const _capsuleHeight = 32.0;
+
+  /// The composer's field scale (the chat composer's 36pt send/mic
+  /// control band) — the capsule and every band circle share it.
+  static const _capsuleHeight = 36.0;
   static const _titleIcon = 16.0;
   static const _titleGap = 7.0;
   static const _searchLeadingGap = 10.0;
   static const _searchTrailingGap = 8.0;
-  static const _actionSlot = 40.0;
+  static const _actionSlot = 36.0;
   static const _actionGap = 8.0;
 
   /// Icon + gap that only render alongside the title.
@@ -1200,6 +1233,18 @@ final class FilesChrome extends StatelessWidget {
                   ),
                 ],
                 const SizedBox(width: _searchLeadingGap),
+                // The panel's own X leads the capsule: the visible
+                // close affordance, morphing in next to "search files"
+                // while the panel is open.
+                if (onClose != null) ...[
+                  FilesCircleAction(
+                    buttonKey: closeKey ?? const ValueKey('filesAppClose'),
+                    icon: Icons.close,
+                    tooltip: context.l10n.appsCloseTooltip,
+                    onPressed: onClose,
+                  ),
+                  const SizedBox(width: _actionGap),
+                ],
                 Expanded(
                   child: SizedBox(
                     height: _capsuleHeight,
@@ -1219,15 +1264,6 @@ final class FilesChrome extends StatelessWidget {
                 if (overflow) ...[
                   const SizedBox(width: _actionGap),
                   _overflowMenu(context, demoted),
-                ],
-                if (onClose != null) ...[
-                  if (inline > 0 || overflow) const SizedBox(width: _actionGap),
-                  FilesCircleAction(
-                    buttonKey: closeKey ?? const ValueKey('filesAppClose'),
-                    icon: Icons.close,
-                    tooltip: context.l10n.appsCloseTooltip,
-                    onPressed: onClose,
-                  ),
                 ],
               ],
             );
@@ -1250,6 +1286,7 @@ final class FilesChrome extends StatelessWidget {
   /// wherever it renders.
   Widget _overflowMenu(BuildContext context, List<FaHeaderAction> demoted) =>
       FaHeaderCircularAction(
+        dimension: _actionSlot,
         child: PopupMenuButton<int>(
           key: overflowKey ?? const ValueKey('fileBrowserOverflow'),
           tooltip: FaChatStrings.of(context).chatMoreTooltip,

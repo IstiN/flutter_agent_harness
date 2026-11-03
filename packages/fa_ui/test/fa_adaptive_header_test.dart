@@ -407,4 +407,35 @@ void main() {
       expect(tester.takeException(), isNull, reason: 'width=$width');
     }
   });
+
+  testWidgets('FaHeaderCircularAction dimension: 40 default, shrinkable', (
+    tester,
+  ) async {
+    Widget circle({double? dimension}) => MaterialApp(
+      home: Scaffold(
+        body: Material(
+          child: Builder(
+            builder: (context) {
+              final action = IconButton(
+                onPressed: () {},
+                icon: const Icon(Icons.folder_outlined, size: 18),
+              );
+              return dimension == null
+                  ? FaHeaderCircularAction(child: action)
+                  : FaHeaderCircularAction(dimension: dimension, child: action);
+            },
+          ),
+        ),
+      ),
+    );
+
+    await tester.pumpWidget(circle());
+    expect(tester.getSize(find.byType(FaHeaderCircularAction)).width, 40);
+
+    // The Files chrome matches the composer's control scale (36) without
+    // disturbing the chat header's default.
+    await tester.pumpWidget(circle(dimension: 36));
+    expect(tester.getSize(find.byType(FaHeaderCircularAction)).width, 36);
+    expect(tester.takeException(), isNull);
+  });
 }

@@ -56,6 +56,32 @@ const double kWideLayoutBreakpoint = 900;
 /// Width of the files side panel / end drawer.
 const double kFaChatFilesPanelWidth = 300;
 
+/// The host's close intent for a host-built files panel (the docked
+/// in-chat panel slot): [FaChatScreen] provides it around the panel it
+/// builds, and a band chrome ([FilesChrome]-shaped) whose surface has no
+/// explicit `onClose` can fall back to it — so the panel's OWN X (left of
+/// the search capsule) is the visible close affordance, not just the
+/// header's folder toggle. The end drawer builds outside the scope: it
+/// closes through its scrim, so its band keeps no X.
+class FaFilesPanelScope extends InheritedWidget {
+  const FaFilesPanelScope({
+    super.key,
+    required this.closePanel,
+    required super.child,
+  });
+
+  /// Closes the files panel the scope wraps (toggling is the header
+  /// folder icon's job; this is the panel band's X).
+  final VoidCallback closePanel;
+
+  static FaFilesPanelScope? maybeOf(BuildContext context) =>
+      context.dependOnInheritedWidgetOfExactType<FaFilesPanelScope>();
+
+  @override
+  bool updateShouldNotify(FaFilesPanelScope oldWidget) =>
+      closePanel != oldWidget.closePanel;
+}
+
 /// Builds the composer's replacement / customization point; null uses the
 /// default [ChatComposer] driven by [FaChatFeatures] and the host hooks.
 /// Custom builders receive the surface's [FaChatDropBridge] (issue #465):
@@ -528,6 +554,12 @@ class _FaChatScreenState extends State<FaChatScreen>
       FaChatHost.track('files_opened', {'source': 'chat'});
       _scaffoldKey.currentState?.openEndDrawer();
     }
+  }
+
+  /// The docked panel band's own X (the visible close affordance —
+  /// [FaFilesPanelScope]); the header folder icon only toggles.
+  void _closeFilesPanel() {
+    if (_filesPanelOpen) setState(() => _filesPanelOpen = false);
   }
 
   @override
@@ -2084,9 +2116,12 @@ class _FaChatScreenState extends State<FaChatScreen>
 
   /// The adaptive header's action list (issue #225): the list IS the
   /// priority order and demotion removes from the tail, so the pinned
-  /// streaming stop comes first (never demoted — E2), then the primary
-  /// actions (files, trajectory), then the secondary ones (copy, the
-  /// host's ✦ and Apps widgets) that yield first on tight widths.
+  /// streaming stop comes first (never demoted — E2), then the secondary
+  /// actions (trajectory, copy, the host's ✦ and Apps widgets) that
+  /// yield on tight widths. Files sits LAST — the rightmost slot — by
+  /// user direction: the open panel carries its own visible close
+  /// affordance (the chrome band's X), so the header entry may demote
+  /// into the ⋮ menu on tight widths without stranding an open panel.
   List<FaHeaderAction> _buildHeaderActions(
     bool isWide,
     WidgetBuilder? fileBrowserBuilder,
@@ -2094,12 +2129,6 @@ class _FaChatScreenState extends State<FaChatScreen>
     final strings = FaChatStrings.of(context);
     return [
       ?_streamingStopAction(strings),
-      if (fileBrowserBuilder != null)
-        FaHeaderAction(
-          icon: Icons.folder_outlined,
-          label: strings.chatFilesTooltip,
-          onPressed: _openFiles,
-        ),
       // Wide: the app-bar entry pushes the full-screen master-detail
       // route (AC1). Narrow uses the switcher below the app bar instead.
       if (widget.features.trajectory && isWide)
@@ -2115,6 +2144,12 @@ class _FaChatScreenState extends State<FaChatScreen>
           onPressed: _copySession,
         ),
       ..._hostHeaderActions(),
+      if (fileBrowserBuilder != null)
+        FaHeaderAction(
+          icon: Icons.folder_outlined,
+          label: strings.chatFilesTooltip,
+          onPressed: _openFiles,
+        ),
     ];
   }
 
@@ -2452,7 +2487,16 @@ class _FaChatScreenState extends State<FaChatScreen>
                       child: Row(
                         children: [
                           const VerticalDivider(width: 1),
-                          Expanded(child: fileBrowserBuilder(context)),
+                          // The scope carries the docked panel's close
+                          // intent: the band's own X (left of the search
+                          // capsule) closes the panel, the header folder
+                          // icon only toggles it.
+                          Expanded(
+                            child: FaFilesPanelScope(
+                              closePanel: _closeFilesPanel,
+                              child: fileBrowserBuilder(context),
+                            ),
+                          ),
                         ],
                       ),
                     ),

@@ -41,9 +41,11 @@ final class FilesAppPanel extends StatelessWidget {
 
   final FilesAppPresentation presentation;
 
-  /// Closes the surface through the band's trailing circle. Null hides
-  /// the circle — the in-chat panel and the end drawer close through
-  /// their own hosts (the chat header's Files button / the scrim).
+  /// Closes the surface through the band's close circle — the X that sits
+  /// immediately LEFT of the search capsule. Null falls back to the
+  /// host's [FaFilesPanelScope] (the in-chat docked panel closes through
+  /// its scope, the end drawer builds without one and closes through its
+  /// scrim); both null hide the circle.
   final VoidCallback? onClose;
 
   /// Whether file previews render inside the pane (wide docked surfaces)
@@ -53,6 +55,10 @@ final class FilesAppPanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final tokens = FaDesignTokens.of(context);
+    // Explicit onClose wins; otherwise the host's docked-panel scope (the
+    // in-chat panel) carries the close, and surfaces without either (the
+    // end drawer) keep no circle.
+    final close = onClose ?? FaFilesPanelScope.maybeOf(context)?.closePanel;
     return ColoredBox(
       key: const ValueKey('filesAppPanel'),
       color: Theme.of(context).scaffoldBackgroundColor,
@@ -74,7 +80,7 @@ final class FilesAppPanel extends StatelessWidget {
             onProjectMountChanged: presentation.onProjectMountChanged,
             showHeader: true,
             surfaceBorder: false,
-            onClose: onClose,
+            onClose: close,
             headerKey: const ValueKey('filesAppPanelToolbar'),
             searchKey: const ValueKey('filesAppSearch'),
             closeKey: const ValueKey('filesAppClose'),
