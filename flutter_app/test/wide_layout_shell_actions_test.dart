@@ -19,6 +19,9 @@ import 'package:fa/ui/screens/app_launcher_screen.dart';
 import 'package:fa/ui/screens/chat_screen.dart';
 import 'package:fa/ui/screens/models_settings_page.dart';
 import 'package:fa/ui/widgets/messenger_navigation_controls.dart';
+import 'package:fa/ui/widgets/file_browser.dart';
+import 'package:fa/ui/widgets/messenger_section_header.dart';
+import 'package:fa/ui/widgets/session_search_field.dart';
 import 'package:fa/ui/widgets/sidebar_nav_item.dart';
 import 'package:fa/ui/chats/chat_list_entry.dart';
 import 'package:fa/ui/chats/chat_list_panel.dart';
@@ -27,6 +30,7 @@ import 'package:fa/ui/widgets/wide_layout_shell.dart';
 import 'package:fa_ui/fa_ui.dart'
     show
         FaChatHost,
+        FaIconActionButton,
         FaLogo,
         FaSectionEyebrow,
         FaSurface,
@@ -588,7 +592,9 @@ void main() {
       find.byKey(const ValueKey('messengerSearchField')),
       'Build',
     );
-    await tester.pump();
+    // The ONE shared search field applies queries after its 150ms
+    // debounce (the sidebar/Files capsule behavior) — advance past it.
+    await tester.pump(const Duration(milliseconds: 200));
     expect(
       find.byKey(const ValueKey('activitySession-running-session')),
       findsOneWidget,
@@ -601,7 +607,7 @@ void main() {
       find.byKey(const ValueKey('messengerSearchField')),
       '',
     );
-    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200));
 
     runningService.isStreaming = true;
     runningService.notifyListeners();
@@ -1529,18 +1535,22 @@ void main() {
             isTrue,
             reason: '$reason floating toggle=$expand center=$collapsedCenter',
           );
-          final floatingSurface = tester.widget<FaSurface>(
-            find
-                .ancestor(
-                  of: find.byKey(const ValueKey('chatSidebarExpand')),
-                  matching: find.byType(FaSurface),
-                )
-                .first,
+          final floatingButton = tester.widget<IconButton>(
+            find.byKey(const ValueKey('chatSidebarExpand')),
           );
-          expect(floatingSurface.circular, isTrue, reason: reason);
+          expect(floatingButton.onPressed, isNotNull, reason: reason);
+          // ONE style: the toggle renders the shared circular chrome
+          // (FaIconActionButton — token fill + hairline) in both states,
+          // floating or docked; no per-state glass variant.
+          final toggleChrome = tester.widget<FaIconActionButton>(
+            find.ancestor(
+              of: find.byKey(const ValueKey('chatSidebarExpand')),
+              matching: find.byType(FaIconActionButton),
+            ),
+          );
           expect(
-            floatingSurface.glass,
-            direction == FaVisualDirection.glass,
+            toggleChrome.diameter,
+            FaIconActionButton.defaultDiameter,
             reason: reason,
           );
           expect(expand.center.dy, closeTo(collapse.center.dy, .001));
@@ -1830,8 +1840,16 @@ void main() {
       final collapseRect = tester.getRect(collapse);
       expect(newRect.width, 32, reason: label);
       expect(newRect.height, 32, reason: label);
-      expect(collapseRect.width, 32, reason: label);
-      expect(collapseRect.height, 32, reason: label);
+      expect(
+        collapseRect.width,
+        FaIconActionButton.defaultDiameter,
+        reason: label,
+      );
+      expect(
+        collapseRect.height,
+        FaIconActionButton.defaultDiameter,
+        reason: label,
+      );
       expect(
         tester
                 .getRect(find.byKey(const ValueKey('messengerSearchField')))
@@ -2511,4 +2529,195 @@ void main() {
       await tester.pump(const Duration(milliseconds: 100));
     });
   });
+
+  // Owner rule (FaIconActionButton unification): the SEARCH field and the
+  // NEW button are THE SAME shared widgets across chats/activity/apps
+  // section switches — built once by the ONE MessengerSectionHeader the
+  // shell owns, never duplicated per section. Identical boxes (epsilon
+  // 0.5), identical runtime types, one shared ancestor component.
+  testWidgets(
+    'search field and New button are one shared pair across section switches',
+    (tester) async {
+      final env = MemoryExecutionEnv();
+      final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
+        ..addSession('design-session', _fakeService(env));
+      await pumpShell(tester, manager: manager);
+
+      final snapshots = <String, _HeaderSlotSnapshot>{};
+      for (final section in const ['chats', 'activity', 'apps']) {
+        if (section != 'chats') {
+          await tester.tap(find.byKey(ValueKey('messengerPrimaryNav-$section')));
+          await tester.pumpAndSettle();
+        }
+        final search = find.byKey(const ValueKey('messengerSearchField'));
+        final newButton = find.byKey(const ValueKey('messengerNewButton'));
+        expect(search, findsOneWidget, reason: section);
+        expect(newButton, findsOneWidget, reason: section);
+        // One shared component: both slots are descendants of the ONE
+        // MessengerSectionHeader the shell builds for every section.
+        expect(
+          find
+              .ancestor(
+                of: search,
+                matching: find.byType(MessengerSectionHeader),
+              )
+              .evaluate()
+              .length,
+          1,
+          reason: section,
+        );
+        expect(
+          find
+              .ancestor(
+                of: newButton,
+                matching: find.byType(MessengerSectionHeader),
+              )
+              .evaluate()
+              .length,
+          1,
+          reason: section,
+        );
+        snapshots[section] = _HeaderSlotSnapshot(
+          searchRect: tester.getRect(search),
+          newRect: tester.getRect(newButton),
+          searchType: tester.widget(search).runtimeType,
+          newType: tester.widget(newButton).runtimeType,
+        );
+      }
+
+      // The FILES band search is the SAME one component: pump the real
+      // FilesChrome band and compare it against the sidebar header's
+      // field — same runtime type, same height/vertical metrics
+      // (epsilon 0.5), same capsule radius.
+      final filesSearch = FileBrowser(env: MemoryExecutionEnv());
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildFaTheme(
+            direction: FaVisualDirection.glass,
+            brightness: Brightness.dark,
+          ),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: Scaffold(
+            body: Align(
+              alignment: Alignment.topLeft,
+              child: SizedBox(
+                width: 480,
+                height: 600,
+                child: filesSearch,
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final filesField = find.byKey(const ValueKey('fileBrowserSearch'));
+      expect(filesField, findsOneWidget);
+      final filesRect = tester.getRect(filesField);
+      final filesType = tester.widget(filesField).runtimeType;
+      final filesDecoration = tester
+          .widget<TextField>(
+            find.descendant(of: filesField, matching: find.byType(TextField)).first,
+          )
+          .decoration!
+          .enabledBorder! as OutlineInputBorder;
+      final sidebarField = find.byKey(const ValueKey('messengerSearchField'));
+      expect(sidebarField, findsNothing, reason: 'shell pumped away');
+      // Rebuild the shell's header field standalone for the box compare:
+      // the messenger header slot (the one the sections shared above).
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildFaTheme(
+            direction: FaVisualDirection.glass,
+            brightness: Brightness.dark,
+          ),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: Scaffold(
+            body: Center(
+              child: SizedBox(
+                width: 300,
+                child: SessionSearchField(
+                  key: const ValueKey('messengerSearchField'),
+                  controller: TextEditingController(),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final standaloneField = find.byKey(
+        const ValueKey('messengerSearchField'),
+      );
+      final sidebarRect = tester.getRect(standaloneField);
+      expect(
+        tester.widget(standaloneField).runtimeType,
+        filesType,
+        reason: 'files band search is the one shared component',
+      );
+      expect(
+        sidebarRect.height,
+        closeTo(filesRect.height, .5),
+        reason: 'search capsule height',
+      );
+      expect(
+        sidebarRect.top - sidebarRect.center.dy,
+        closeTo(filesRect.top - filesRect.center.dy, .5),
+        reason: 'vertical metrics',
+      );
+      final sidebarDecoration = tester
+          .widget<TextField>(
+            find
+                .descendant(of: standaloneField, matching: find.byType(TextField))
+                .first,
+          )
+          .decoration!
+          .enabledBorder! as OutlineInputBorder;
+      expect(
+        sidebarDecoration.borderRadius,
+        filesDecoration.borderRadius,
+        reason: 'capsule radius tokens',
+      );
+
+      final base = snapshots['chats']!;
+      for (final entry in snapshots.entries) {
+        final other = entry.value;
+        final reason = 'section ${entry.key}';
+        expect(other.searchType, base.searchType, reason: reason);
+        expect(other.newType, base.newType, reason: reason);
+        expect(other.searchRect.left, closeTo(base.searchRect.left, .5),
+            reason: reason);
+        expect(other.searchRect.top, closeTo(base.searchRect.top, .5),
+            reason: reason);
+        expect(other.searchRect.right, closeTo(base.searchRect.right, .5),
+            reason: reason);
+        expect(other.searchRect.bottom, closeTo(base.searchRect.bottom, .5),
+            reason: reason);
+        expect(other.newRect.left, closeTo(base.newRect.left, .5),
+            reason: reason);
+        expect(other.newRect.top, closeTo(base.newRect.top, .5),
+            reason: reason);
+        expect(other.newRect.right, closeTo(base.newRect.right, .5),
+            reason: reason);
+        expect(other.newRect.bottom, closeTo(base.newRect.bottom, .5),
+            reason: reason);
+      }
+    },
+  );
+}
+
+/// The shared header's search/new slots captured for one section.
+class _HeaderSlotSnapshot {
+  const _HeaderSlotSnapshot({
+    required this.searchRect,
+    required this.newRect,
+    required this.searchType,
+    required this.newType,
+  });
+
+  final Rect searchRect;
+  final Rect newRect;
+  final Type searchType;
+  final Type newType;
 }

@@ -524,8 +524,8 @@ void main() {
               );
               expect(material.shape, isA<CircleBorder>(), reason: reason);
               expect(
-                (material.shape! as CircleBorder).side,
-                BorderSide.none,
+                (material.shape! as CircleBorder).side.color,
+                FaDesignTokens.of(tester.element(refresh)).hairline,
                 reason: reason,
               );
             } else {

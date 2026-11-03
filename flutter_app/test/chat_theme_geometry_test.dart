@@ -115,11 +115,16 @@ void main() {
                 )
                 .first;
             current['copyAction'] = tester.getRect(actionFinder);
-            final material = tester.widget<Material>(
-              find
-                  .descendant(of: actionFinder, matching: find.byType(Material))
-                  .first,
-            );
+            // The glass underlay adds an unshaded Material wrapper; the
+            // chrome's own circle is the shaped one.
+            final material = tester
+                .widgetList<Material>(
+                  find.descendant(
+                    of: actionFinder,
+                    matching: find.byType(Material),
+                  ),
+                )
+                .firstWhere((m) => m.shape != null);
             expect(
               material.color,
               fa_ui.FaDesignTokens.of(tester.element(copy)).surface2,
@@ -127,8 +132,8 @@ void main() {
             );
             expect(material.shape, isA<CircleBorder>(), reason: reason);
             expect(
-              (material.shape! as CircleBorder).side,
-              BorderSide.none,
+              (material.shape! as CircleBorder).side.color,
+              fa_ui.FaDesignTokens.of(tester.element(copy)).hairline,
               reason: reason,
             );
             final copyRect = current['copyAction']!;

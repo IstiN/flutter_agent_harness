@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
 import 'package:fa/ui/widgets/file_preview.dart';
+import 'package:fa/ui/widgets/session_search_field.dart' show SessionSearchField;
 import 'package:fa/services/icloud_sync_service.dart';
 import 'package:fa/services/project_folder_channel.dart';
 import 'package:fa/services/project_mount_env.dart';
@@ -1088,16 +1089,15 @@ class _FileBrowserState extends State<FileBrowser> {
 /// [FaHeaderCircularAction] family everywhere, so every icon button in
 /// Files reads as one chrome instead of ad-hoc circles.
 ///
-/// The circle matches the chat composer's control scale: 36pt with an
-/// 18px glyph (the composer's send/mic buttons), one step down from the
-/// chat header's 40pt chrome. Parameterized via [size] so every Files
-/// surface — the band, the presented pane, the path bar — keeps the same
-/// sane look.
+/// One circular icon action in the Files chrome — now a thin delegate to
+/// the fa_ui styleguide's ONE [FaIconActionButton] (36pt composer scale,
+/// token fill/hairline/ink), so the band's ✕/⋮/refresh/upload circles,
+/// the chat header circles and the sidebar toggle all share a single
+/// painter instead of ad-hoc per-surface circles.
 ///
-/// [buttonKey] lands on the inner [IconButton] — the keyed widget sits
-/// INSIDE its [FaHeaderCircularAction] chrome, exactly where the
-/// pre-band header keyed its bar buttons, and stays a single finder
-/// match (never ambiguous with its wrapper).
+/// [buttonKey] lands on the inner button — the keyed widget sits INSIDE
+/// its circular chrome (exactly where the pre-band header keyed its bar
+/// buttons) and stays a single finder match.
 final class FilesCircleAction extends StatelessWidget {
   const FilesCircleAction({
     super.key,
@@ -1106,9 +1106,7 @@ final class FilesCircleAction extends StatelessWidget {
     required this.tooltip,
     this.onPressed,
     this.size = 36,
-  });
-
-  static const double _glyphSize = 18;
+  }) : assert(size >= 32);
 
   final Key? buttonKey;
   final IconData icon;
@@ -1119,21 +1117,14 @@ final class FilesCircleAction extends StatelessWidget {
   final double size;
 
   @override
-  Widget build(BuildContext context) => FaHeaderCircularAction(
-    dimension: size,
-    child: IconButton(
-      key: buttonKey,
-      icon: Icon(icon, size: _glyphSize),
-      padding: EdgeInsets.zero,
-      constraints: BoxConstraints.tightFor(width: size, height: size),
-      style: IconButton.styleFrom(
-        minimumSize: Size.square(size),
-        maximumSize: Size.square(size),
-        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-      ),
-      tooltip: tooltip,
-      onPressed: onPressed,
-    ),
+  Widget build(BuildContext context) => FaIconActionButton(
+    diameter: size,
+    buttonKey: buttonKey,
+    icon: icon,
+    tooltip: tooltip,
+    onPressed: onPressed,
+    // The band provides its own surface: the flat token state.
+    glass: false,
   );
 }
 
@@ -1198,13 +1189,6 @@ final class FilesChrome extends StatelessWidget {
   /// not part of the panel).
   static const _bandPadding = EdgeInsets.fromLTRB(4, 6, 10, 6);
 
-  /// The chat composer's single-line field height — the composer field
-  /// row's 40px (its 36px send/mic control + 2+2px row padding, the
-  /// `faChatComposerFieldRow` geometry). A 36pt capsule read as a thin
-  /// strip under that field; mirroring it keeps the Files band on the
-  /// composer's text-field scale. Every band circle stays at
-  /// [_actionSlot].
-  static const _capsuleHeight = 40.0;
   static const _titleIcon = 16.0;
   static const _titleGap = 7.0;
   static const _searchLeadingGap = 10.0;
@@ -1320,20 +1304,14 @@ final class FilesChrome extends StatelessWidget {
                   ),
                   const SizedBox(width: _actionGap),
                 ],
+                // THE one search field (SessionSearchField): the same
+                // 40pt capsule the chats/activity/apps headers render —
+                // the browser filters from its own controller listener.
                 Expanded(
-                  child: SizedBox(
-                    height: _capsuleHeight,
-                    child: FaTextField(
-                      key: searchKey ?? const ValueKey('fileBrowserSearch'),
-                      controller: searchController,
-                      hintText: context.l10n.filesSearchHint,
-                      dense: true,
-                      // The capsule is a full 40pt field (the composer's
-                      // row scale): the decorator's layout fills the box
-                      // and the text sits centered in it, not an
-                      // intrinsic dense strip top-aligned inside.
-                      boxHeight: _capsuleHeight,
-                    ),
+                  child: SessionSearchField(
+                    key: searchKey ?? const ValueKey('fileBrowserSearch'),
+                    controller: searchController,
+                    hintText: context.l10n.filesSearchHint,
                   ),
                 ),
                 const SizedBox(width: _searchTrailingGap),

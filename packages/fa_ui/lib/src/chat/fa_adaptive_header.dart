@@ -5,6 +5,7 @@
 import 'package:flutter/material.dart';
 
 import '../theme/fa2_tokens.dart';
+import '../widgets/fa2_controls.dart' show FaSurface;
 import 'chat_strings.dart';
 
 /// One action of [FaAdaptiveHeader].
@@ -55,40 +56,65 @@ class FaHeaderAction {
   final bool pinned;
 }
 
-/// Shared filled circular chrome for compact header actions. The child keeps
-/// its own tooltip, disabled state and InkResponse; Material supplies the
-/// hover/press overlay without a permanent outline or backdrop capture.
+/// The ONE circular chrome for icon actions (the painter behind
+/// [FaIconActionButton], the styleguide's canonical circular icon
+/// control). Token-driven surface fill + hairline ring — the same style
+/// for every direction and brightness; call sites never pick a surface
+/// gray. The child keeps its own tooltip, disabled state and InkResponse;
+/// Material supplies the hover/press overlay, and the merged [IconTheme]
+/// pins the one ink token (ink1) at the 18px glyph scale.
 ///
 /// [dimension] keeps the family parameterized: the chat header's 40pt
-/// default stays untouched, while the Files chrome shrinks to the
-/// composer's 36pt control scale ([FilesCircleAction]).
+/// bar chrome stays the default, while the Files chrome and every other
+/// control-scale circle run the composer's 36pt
+/// ([FaIconActionButton.defaultDiameter]).
+///
+/// [glass] is the state-conditional underlay (owner rule): flat token
+/// surface when the circle sits on a parent surface (the Files band, the
+/// narrow header slab — the parent already provides its backdrop), and a
+/// liquid-glass disc when it floats on the chat header's backdrop with
+/// no panel of its own.
 class FaHeaderCircularAction extends StatelessWidget {
   const FaHeaderCircularAction({
     super.key,
     required this.child,
     this.dimension = 40,
+    this.glass = false,
   }) : assert(dimension > 0);
 
   final Widget child;
 
-  /// The circle's edge length (the chat bar's chrome is 40pt; the Files
-  /// band uses the composer's 36pt scale).
+  /// The circle's edge length (the chat bar's chrome is 40pt; control
+  /// scale circles pass 36).
   final double dimension;
+
+  /// Whether the chrome rides a glass underlay (floating header state).
+  /// Default false — the flat token surface, for circles on parent
+  /// surfaces.
+  final bool glass;
 
   @override
   Widget build(BuildContext context) {
     final tokens = FaDesignTokens.of(context);
-    return SizedBox.square(
+    final chrome = SizedBox.square(
       dimension: dimension,
       child: Material(
         color: tokens.surface2,
-        shape: const CircleBorder(),
+        shape: CircleBorder(side: BorderSide(color: tokens.hairline)),
         clipBehavior: Clip.antiAlias,
         child: IconTheme.merge(
           data: IconThemeData(size: 18, color: tokens.ink1),
           child: child,
         ),
       ),
+    );
+    if (!glass || tokens.direction != FaVisualDirection.glass) return chrome;
+    return FaSurface(
+      glass: true,
+      circular: true,
+      useBackdropGroup: true,
+      color: tokens.surface1.withValues(alpha: .94),
+      child: chrome,
     );
   }
 }

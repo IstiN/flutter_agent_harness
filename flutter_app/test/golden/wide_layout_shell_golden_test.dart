@@ -22,7 +22,12 @@ import 'package:fa/ui/widgets/file_browser.dart';
 import 'package:liquid_glass_widgets/liquid_glass_widgets.dart'
     show ProgressiveBlur, ProgressiveBlurDirection;
 import 'package:fa_ui/fa_ui.dart'
-    show FaSurface, FaVisualDirection, buildFaTheme, debugFaGlassAlwaysFake;
+    show
+        FaHeaderCircularAction,
+        FaSurface,
+        FaVisualDirection,
+        buildFaTheme,
+        debugFaGlassAlwaysFake;
 import 'package:fa/ui/widgets/wide_layout_shell.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -488,15 +493,14 @@ void main() {
     );
     expect(bottomBlur.direction, ProgressiveBlurDirection.bottomToTop);
     expect(bottomBlur.maxSigma, greaterThan(0));
-    // The avatar disc next to the title pill is glass too, not an opaque
-    // surface2 circle.
-    final avatar = tester.widget<FaSurface>(
-      find.descendant(
-        of: find.byKey(const ValueKey('faChatHeaderAvatar')),
-        matching: find.byType(FaSurface),
-      ),
+    // The avatar disc next to the title pill is the ONE circular chrome
+    // now (FaHeaderCircularAction — token surface fill + hairline, the
+    // painter behind FaIconActionButton), not a tinted-glass disc.
+    // The key rides the FaHeaderCircularAction chrome itself.
+    final avatar = tester.widget<FaHeaderCircularAction>(
+      find.byKey(const ValueKey('faChatHeaderAvatar')),
     );
-    expect(avatar.glass, isTrue);
+    expect(avatar.dimension, 36);
     // The composer surface rides a light tint, not the default dense one.
     final composer = tester.widget<FaSurface>(
       find.byKey(const ValueKey('faChatFloatingComposer')),

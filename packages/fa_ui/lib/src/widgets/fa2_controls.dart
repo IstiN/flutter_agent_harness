@@ -238,6 +238,8 @@ class FaTextField extends StatelessWidget {
     this.errorText,
     this.prefixIcon,
     this.suffixIcon,
+    this.maxLength,
+    this.textInputAction,
   });
 
   final TextEditingController? controller;
@@ -255,6 +257,13 @@ class FaTextField extends StatelessWidget {
 
   /// Whether the OS text-correction pipeline applies (off for secrets).
   final bool autocorrect;
+
+  /// Character cap (the shared search field's 100-char paste cap); the
+  /// counter stays hidden.
+  final int? maxLength;
+
+  /// The keyboard's action button; null keeps the platform default.
+  final TextInputAction? textInputAction;
 
   /// The host's fixed box height: FaTextField pads the field's content
   /// so the InputDecorator's intrinsic layout is EXACTLY this tall — the
@@ -317,6 +326,13 @@ class FaTextField extends StatelessWidget {
       enableSuggestions: enableSuggestions,
       onChanged: onChanged,
       onSubmitted: onSubmitted,
+      maxLength: maxLength,
+      buildCounter:
+          maxLength == null
+              ? null
+              : (_, {required currentLength, required isFocused, maxLength}) =>
+                    null,
+      textInputAction: textInputAction,
       style: TextStyle(
         color: tokens.ink1,
         fontSize: dense ? 13 : 15,

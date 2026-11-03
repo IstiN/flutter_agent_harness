@@ -52,7 +52,12 @@ class _SidebarLeftPainter extends CustomPainter {
       oldDelegate.color != color;
 }
 
-/// One predictable hide/show action with the same icon in both states.
+/// One predictable hide/show action with the same icon in both states —
+/// rendered through the styleguide's ONE [FaIconActionButton] (36pt,
+/// token fill + hairline, ink1 glyph), the same circle family as the
+/// chat header actions and the Files band chrome, at the header band's
+/// shared action centerline. Floating vs docked no longer changes the
+/// style: ONE circle for every state.
 class MessengerSidebarToggle extends StatelessWidget {
   const MessengerSidebarToggle({
     super.key,
@@ -65,37 +70,25 @@ class MessengerSidebarToggle extends StatelessWidget {
   final bool expanded;
   final String tooltip;
   final VoidCallback onPressed;
+
+  /// Floating over the center content (collapsed rail state) → the glass
+  /// underlay; docked on the titlebar band → the flat token state.
   final bool floating;
 
   @override
-  Widget build(BuildContext context) {
-    final tokens = FaDesignTokens.of(context);
-    final button = IconButton(
-      key: ValueKey(expanded ? 'chatSidebarCollapse' : 'chatSidebarExpand'),
-      tooltip: tooltip,
-      onPressed: onPressed,
-      iconSize: 20,
-      padding: EdgeInsets.zero,
-      style: IconButton.styleFrom(
-        minimumSize: const Size.square(32),
-        maximumSize: const Size.square(32),
-        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-      ),
-      icon: MessengerSidebarLeftIcon(color: tokens.ink2),
-    );
-    return SizedBox.square(
-      dimension: 32,
-      child: floating
-          ? FaSurface(
-              glass: tokens.direction == FaVisualDirection.glass,
-              useBackdropGroup: true,
-              circular: true,
-              color: tokens.surface1.withValues(alpha: .94),
-              child: button,
-            )
-          : button,
-    );
-  }
+  Widget build(BuildContext context) => FaIconActionButton(
+    // The composer's control scale — the header band's circle norm.
+    diameter: FaIconActionButton.defaultDiameter,
+    buttonKey: ValueKey(expanded ? 'chatSidebarCollapse' : 'chatSidebarExpand'),
+    tooltip: tooltip,
+    onPressed: onPressed,
+    glass: floating,
+    child: const MessengerSidebarLeftIcon(
+      // The family glyph (FaIconActionButton.glyphSizeFor(36)): the
+      // painter fills its canvas, so 18px is the band's ink norm.
+      size: 18,
+    ),
+  );
 }
 
 /// One layout rhythm for primary sections and secondary filters. Wide rows

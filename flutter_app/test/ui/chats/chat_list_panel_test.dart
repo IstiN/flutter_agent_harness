@@ -512,7 +512,9 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('chatFilter-all')));
     await tester.pumpAndSettle();
     await tester.enterText(find.byType(TextField).first, 'not-present');
-    await tester.pump();
+    // The ONE shared search field applies the query after its 150ms
+    // debounce — advance past it.
+    await tester.pump(const Duration(milliseconds: 200));
     expect(find.text('No chats match your search.'), findsOneWidget);
   });
 

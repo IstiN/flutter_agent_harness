@@ -1069,8 +1069,13 @@ class _WideLayoutShellState extends State<WideLayoutShell>
             // On macOS the collapsed toggle moves just outside the rail. The
             // equal center inset leaves an 8px gap at every intermediate
             // frame; on other platforms it stays inside the panel.
-            final toggleShift = _isMacOS ? 48 * progress : 0.0;
-            final toggleLeft = sidebarWidth - 40 + toggleShift;
+            // 52 = the 48px rail travel + the 36pt circle's +2px-per-side
+            // growth over the old 32pt circle, so the collapsed state
+            // keeps its 8pt outside-the-rail gutter.
+            final toggleShift = _isMacOS ? 52 * progress : 0.0;
+            // The 36pt circle hugs the rail edge: its right edge keeps the
+            // panel flush with the 8pt seam at the collapsed extreme.
+            final toggleLeft = sidebarWidth - 44 + toggleShift;
             final sidebarContent = _buildSidebar(
               colors,
               collapsed: contentCollapsed,
@@ -1154,7 +1159,10 @@ class _WideLayoutShellState extends State<WideLayoutShell>
                     // only crossfade content and never duplicate the toggle.
                     Positioned(
                       left: toggleLeft,
-                      top: _isMacOS ? 15 : 21,
+                      // The header band's shared action centerline: the
+                      // 36pt toggle's center (17 + 18 = 35) sits on the
+                      // chat header action row's center.
+                      top: 17,
                       child: MessengerSidebarToggle(
                         key: const ValueKey('wideShellSidebarToggle'),
                         expanded: !_sidebarCollapsed,

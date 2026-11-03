@@ -2249,10 +2249,19 @@ class _FaChatScreenState extends State<FaChatScreen>
                               visualDensity: VisualDensity.compact,
                               iconSize: 18,
                               actionGap: 8,
+                              // Floating on the header backdrop with no
+                              // surface of its own: the glass underlay
+                              // state (owner rule).
                               actionBuilder: (context, action, button) =>
-                                  FaHeaderCircularAction(child: button),
+                                  FaHeaderCircularAction(
+                                    glass: true,
+                                    child: button,
+                                  ),
                               overflowBuilder: (context, button) =>
-                                  FaHeaderCircularAction(child: button),
+                                  FaHeaderCircularAction(
+                                    glass: true,
+                                    child: button,
+                                  ),
                             ),
                           ),
                           if (widget.features.trajectory)
@@ -2297,7 +2306,12 @@ class _FaChatScreenState extends State<FaChatScreen>
           );
           final builtAvatar = widget.avatarBuilder?.call(context, 'assistant');
           return SizedBox(
-            height: 80,
+            // 11 (identity air) + 36 (avatar) + 4 + 40 (pill): the avatar's
+            // center (11 + 18 = 29) sits ON the action row's center
+            // (Positioned top 9 + 40/2) — one centerline for the whole
+            // desktop glass header, and the circle clears the band's top
+            // edge (the old top-0 avatar read clipped at the window edge).
+            height: 91,
             child: Stack(
               children: [
                 Align(
@@ -2305,22 +2319,24 @@ class _FaChatScreenState extends State<FaChatScreen>
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      SizedBox(
-                        key: const ValueKey('faChatHeaderAvatar'),
-                        width: 36,
-                        height: 36,
-                        child: FaSurface(
+                      // The ONE circular chrome (FaHeaderCircularAction —
+                      // the painter behind FaIconActionButton): token
+                      // surface fill + hairline, ink1 glyph — not a third
+                      // tinted-glass disc.
+                      Padding(
+                        padding: const EdgeInsets.only(top: 11),
+                        child: FaHeaderCircularAction(
+                          key: const ValueKey('faChatHeaderAvatar'),
+                          dimension: 36,
+                          // Floating identity circle on the header
+                          // backdrop: the glass underlay state.
                           glass: true,
-                          circular: true,
-                          color: tokens.surface2,
-                          tintAmount: .22,
-                          tintOpacity: .55,
                           child:
                               builtAvatar ??
                               Icon(
                                 widget.projectIcon ?? Icons.person_rounded,
-                                size: widget.projectIcon == null ? 25 : 20,
-                                color: widget.projectIconColor ?? tokens.ink2,
+                                size: widget.projectIcon == null ? 25 : 18,
+                                color: widget.projectIconColor ?? tokens.ink1,
                               ),
                         ),
                       ),
@@ -2421,7 +2437,7 @@ class _FaChatScreenState extends State<FaChatScreen>
   }
 
   Widget _glassHeaderAction(Widget button) =>
-      FaHeaderCircularAction(child: button);
+      FaHeaderCircularAction(glass: true, child: button);
 
   /// The files end drawer (narrow layouts only — wide uses the side
   /// panel in the body row); null hides it.

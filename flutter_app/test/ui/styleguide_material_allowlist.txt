@@ -53,7 +53,7 @@ lib/ui/widgets/github_account_section.dart 3
 lib/ui/widgets/github_connect_sheet.dart 4
 lib/ui/widgets/image_drop_notice_chip.dart 4
 lib/ui/widgets/messenger_navigation_controls.dart 1
-lib/ui/widgets/messenger_section_header.dart 2
+lib/ui/widgets/messenger_section_header.dart 1
 lib/ui/widgets/model_cache_section.dart 1
 lib/ui/widgets/provider_selection_list.dart 5
 lib/ui/widgets/quick_model_chip.dart 1
@@ -118,15 +118,13 @@ lib/ui/screens/settings_key_dialogs.dart 3
 lib/ui/widgets/apps_panel.dart 1
 lib/ui/widgets/code_viewer.dart 2
 lib/ui/widgets/downloaded_models_quick_start.dart 1
-lib/ui/widgets/file_browser.dart 2
 lib/ui/widgets/github_account_section.dart 5
 lib/ui/widgets/github_connect_sheet.dart 7
 lib/ui/widgets/image_drop_notice_chip.dart 1
-lib/ui/widgets/messenger_navigation_controls.dart 2
 lib/ui/widgets/messenger_section_header.dart 2
 lib/ui/widgets/model_cache_section.dart 3
 lib/ui/widgets/rename_session_dialog.dart 4
-lib/ui/widgets/session_search_field.dart 3
+lib/ui/widgets/session_search_field.dart 2
 lib/ui/widgets/sidebar_nav_item.dart 2
 lib/ui/widgets/sidebar_sessions_list.dart 4
 lib/ui/widgets/store_get_banner.dart 3
@@ -137,3 +135,4 @@ lib/ui/widgets/widget_status_detail_sheet.dart 1
 [material_app]
 
 [theme_data]
+

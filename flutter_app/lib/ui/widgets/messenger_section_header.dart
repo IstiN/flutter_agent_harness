@@ -3,6 +3,7 @@
 // in the LICENSE file.
 
 import 'package:fa/l10n/l10n_ext.dart';
+import 'package:fa/ui/widgets/session_search_field.dart';
 import 'package:fa_ui/fa_ui.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -113,22 +114,15 @@ final class MessengerSectionHeader extends StatelessWidget {
                       ),
                     ],
                     const SizedBox(width: 6),
+                    // THE one search field (SessionSearchField): the
+                    // same capsule the Files band renders.
                     Expanded(
-                      child: SizedBox(
-                        height: 32,
-                        child: FaTextField(
-                          key: const ValueKey('messengerSearchField'),
-                          controller: searchController!,
-                          focusNode: searchFocusNode,
-                          onChanged: onSearch,
-                          hintText: searchHint,
-                          dense: true,
-                          prefixIcon: Icon(
-                            Icons.search,
-                            size: 17,
-                            color: colors.dim,
-                          ),
-                        ),
+                      child: SessionSearchField(
+                        key: const ValueKey('messengerSearchField'),
+                        controller: searchController,
+                        focusNode: searchFocusNode,
+                        hintText: searchHint,
+                        onQueryChanged: onSearch,
                       ),
                     ),
                     if (!compact) ...[

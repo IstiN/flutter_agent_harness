@@ -11,6 +11,11 @@ import 'package:flutter/services.dart';
 /// instant, coarse enough to keep big lists smooth while typing.
 const _searchDebounce = Duration(milliseconds: 150);
 
+/// The ONE search field height everywhere — chats sidebar, activity,
+/// apps header and the Files band capsule (the composer's 40px field
+/// row). The composer's send/mic circles ride the same scale.
+const double kSearchFieldHeight = 40.0;
+
 /// Sane cap for a pasted query (E3): long pastes stop at 100 chars.
 const _queryMaxLength = 100;
 
@@ -129,18 +134,24 @@ Widget sessionSearchEmptyState(
   );
 }
 
-/// The filter field pinned at the top of a session list (macOS sidebar and
-/// the mobile drawer render the same one): magnifier icon, text field,
-/// clear (✕) once non-empty. Typing filters live after a short debounce;
-/// Esc clears and unfocuses. The host owns [focusNode] when it needs to
-/// focus the field itself (the sidebar's Cmd/Ctrl+F).
+/// The ONE search field (FaTextField capsule at [kSearchFieldHeight]):
+/// magnifier icon, hint, clear (✕) once non-empty. The chats sidebar,
+/// activity and apps headers and the Files band all render THIS widget,
+/// so every search reads identically. Typing filters live after a short
+/// debounce ([onQueryChanged]); Esc clears and unfocuses. The host owns
+/// [focusNode] when it needs to focus the field itself (the sidebar's
+/// Cmd/Ctrl+F).
+///
+/// Hosts that drive filtering from the [controller] themselves (the
+/// Files band) pass no [onQueryChanged] — the field stays controlled and
+/// the debounce semantics belong to the host.
 class SessionSearchField extends StatefulWidget {
   const SessionSearchField({
     super.key,
     this.focusNode,
     this.controller,
     this.hintText,
-    required this.onQueryChanged,
+    this.onQueryChanged,
   });
 
   /// Hint override for non-session lists reusing this field (the networks
@@ -158,7 +169,8 @@ class SessionSearchField extends StatefulWidget {
 
   /// Fires with the applied (debounced) query; '' once the field is
   /// cleared — the full list restores instantly (state is transient).
-  final ValueChanged<String> onQueryChanged;
+  /// Null when the host filters from the [controller] itself.
+  final ValueChanged<String>? onQueryChanged;
 
   @override
   State<SessionSearchField> createState() => _SessionSearchFieldState();
@@ -205,10 +217,11 @@ class _SessionSearchFieldState extends State<SessionSearchField> {
     // The clear (✕) affordance follows the text; the filter itself waits
     // for the debounce.
     setState(() {});
+    if (widget.onQueryChanged == null) return;
     _debounce?.cancel();
     _debounce = Timer(
       _searchDebounce,
-      () => widget.onQueryChanged(_controller.text),
+      () => widget.onQueryChanged!(_controller.text),
     );
   }
 
@@ -216,7 +229,7 @@ class _SessionSearchFieldState extends State<SessionSearchField> {
     _debounce?.cancel();
     _controller.clear();
     _focus.unfocus();
-    widget.onQueryChanged('');
+    widget.onQueryChanged?.call('');
   }
 
   @override
@@ -224,22 +237,18 @@ class _SessionSearchFieldState extends State<SessionSearchField> {
     final colors = FahColors.of(context);
     return CallbackShortcuts(
       bindings: {const SingleActivator(LogicalKeyboardKey.escape): _clear},
-      child: TextField(
-        controller: _controller,
-        focusNode: _focus,
-        maxLength: _queryMaxLength,
-        buildCounter:
-            (_, {required currentLength, required isFocused, maxLength}) =>
-                null,
-        autocorrect: false,
-        textInputAction: TextInputAction.done,
-        onSubmitted: (_) {
-          _debounce?.cancel();
-          widget.onQueryChanged(_controller.text);
-        },
-        style: const TextStyle(fontSize: 13),
-        decoration: InputDecoration(
-          isDense: true,
+      child: SizedBox(
+        height: kSearchFieldHeight,
+        child: FaTextField(
+          key: const ValueKey('sessionSearchFieldInput'),
+          controller: _controller,
+          focusNode: _focus,
+          dense: true,
+          boxHeight: kSearchFieldHeight,
+          maxLength: _queryMaxLength,
+          autocorrect: false,
+          enableSuggestions: false,
+          textInputAction: TextInputAction.done,
           hintText: widget.hintText ?? context.l10n.sidebarSearchHint,
           prefixIcon: Icon(Icons.search, size: 18, color: colors.dim),
           suffixIcon: _controller.text.isEmpty
@@ -251,6 +260,10 @@ class _SessionSearchFieldState extends State<SessionSearchField> {
                   onPressed: _clear,
                   visualDensity: VisualDensity.compact,
                 ),
+          onSubmitted: (_) {
+            _debounce?.cancel();
+            widget.onQueryChanged?.call(_controller.text);
+          },
         ),
       ),
     );

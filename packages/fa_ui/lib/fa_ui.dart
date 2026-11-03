@@ -85,5 +85,6 @@ export 'src/widgets/model_list_picker.dart';
 export 'src/widgets/snackbars.dart';
 export 'src/widgets/fa2_adaptive.dart';
 export 'src/widgets/fa2_controls.dart';
+export 'src/widgets/fa_icon_action_button.dart';
 export 'src/widgets/fa_logo.dart';
 export 'src/widgets/fa2_section_eyebrow.dart';
