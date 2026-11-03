@@ -15,6 +15,7 @@ import 'package:fa_ui/fa_ui.dart'
         FahColors,
         buildFaTheme;
 import 'package:fa/ui/screens/chat_screen.dart';
+import 'package:fa/ui/widgets/chat_composer.dart';
 import 'package:fa/ui/widgets/file_browser.dart';
 import 'package:fa/ui/widgets/file_preview.dart';
 import 'package:fa/services/flutter_session_manager.dart';
@@ -605,12 +606,16 @@ void main() {
       );
       expect(close.right, lessThan(capsule.left));
       expect(capsule.left - close.right, 8);
-      // The capsule matches the chat composer field scale (36pt band).
-      expect(capsule.height, 36);
+      // The capsule mirrors the chat composer's single-line field height
+      // (its 36px control + 2+2px row padding = 40).
+      expect(capsule.height, 40);
       // Every band circle shares that composer scale (shrunken from the
       // chat header's 40pt chrome) with the 18px glyph.
       Finder circleOf(Key key) => find
-          .ancestor(of: find.byKey(key), matching: find.byType(FaHeaderCircularAction))
+          .ancestor(
+            of: find.byKey(key),
+            matching: find.byType(FaHeaderCircularAction),
+          )
           .first;
       expect(
         tester.getSize(circleOf(const ValueKey('filesAppClose'))),
@@ -1126,6 +1131,132 @@ void main() {
     });
   });
 
+  group('Files chrome band', () {
+    /// The shared band as the presented panes render it: header on, a
+    /// close circle (the panel's own X), a narrow 300px docked width.
+    FileBrowser band(MemoryExecutionEnv env) =>
+        FileBrowser(env: env, onClose: () {});
+
+    Future<void> pumpBand(
+      WidgetTester tester,
+      MemoryExecutionEnv env, {
+      double width = 300,
+    }) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Align(
+            alignment: Alignment.topLeft,
+            child: SizedBox(
+              width: width,
+              height: 600,
+              child: band(env),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets("the band X sits ~4pt from the band's left edge", (
+      tester,
+    ) async {
+      await pumpBand(tester, await _seededEnv());
+      // At the docked 300px width the title is squeezed out, so the X is
+      // the band's leading control.
+      final browserLeft = tester
+          .getTopLeft(find.byKey(const ValueKey('fileBrowserPanel')))
+          .dx;
+      final closeLeft = tester
+          .getTopLeft(find.byKey(const ValueKey('filesAppClose')))
+          .dx;
+      expect(closeLeft - browserLeft, 4);
+    });
+
+    testWidgets("the search capsule mirrors the chat composer's field "
+        'height', (tester) async {
+      final env = await _seededEnv();
+      // The composer's single-line field row IS the reference: its 36px
+      // control + 2+2px row padding (faChatComposerFieldRow). Pump the
+      // real composer next to the band and compare live sizes, so a
+      // composer geometry change cannot silently desync the band.
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Column(
+              children: [
+                SizedBox(
+                  height: 120,
+                  child: ChatComposer(
+                    service: _fakeService(env),
+                    autofocus: false,
+                  ),
+                ),
+                Expanded(child: band(env)),
+              ],
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final composerRow = tester.getSize(
+        find.byKey(const ValueKey('faChatComposerFieldRow')),
+      );
+      final capsule = tester.getSize(
+        find.byKey(const ValueKey('fileBrowserSearch')),
+      );
+      expect(capsule.height, composerRow.height);
+      expect(capsule.height, 40);
+    });
+  });
+
+  group('FileBrowser initialPath', () {
+    testWidgets('absolute session path opens the listing in that folder', (
+      tester,
+    ) async {
+      final env = MemoryExecutionEnv();
+      await env.writeFile('root-only.txt', 'at the env root');
+      await env.writeFile('sessions/demo/notes.md', '# demo');
+      await env.createDir('sessions/demo/sub');
+      await tester.pumpWidget(
+        _wrap(FileBrowser(env: env, initialPath: '/sessions/demo')),
+      );
+      await tester.pumpAndSettle();
+      // The FIRST listing is the session folder — its own files, not the
+      // env root's.
+      expect(find.text('notes.md'), findsOneWidget);
+      expect(find.text('sub'), findsOneWidget);
+      expect(find.text('root-only.txt'), findsNothing);
+      // The breadcrumb carries the session folder's segments.
+      expect(find.byTooltip('Up'), findsOneWidget);
+    });
+
+    testWidgets('a relative initial path resolves against the env cwd', (
+      tester,
+    ) async {
+      final env = MemoryExecutionEnv(cwd: '/sessions/demo');
+      await env.writeFile('notes.md', '# demo');
+      await env.writeFile('sub/deep.txt', 'deeper');
+      await tester.pumpWidget(_wrap(FileBrowser(env: env, initialPath: 'sub')));
+      await tester.pumpAndSettle();
+      expect(find.text('deep.txt'), findsOneWidget);
+      expect(find.text('notes.md'), findsNothing);
+    });
+
+    testWidgets('an initial path equal to the env cwd keeps the root '
+        'listing', (tester) async {
+      final env = MemoryExecutionEnv(cwd: '/sessions/demo');
+      await env.writeFile('notes.md', '# demo');
+      await tester.pumpWidget(
+        _wrap(FileBrowser(env: env, initialPath: '/sessions/demo')),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('notes.md'), findsOneWidget);
+      // The breadcrumb sits at the root crumb — no session subfolder.
+      expect(find.text('/'), findsOneWidget);
+      expect(find.text('demo'), findsNothing);
+    });
+  });
+
   group('ChatScreen integration', () {
     testWidgets('wide surface: Files icon toggles the right files panel', (
       tester,
@@ -1141,12 +1272,13 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.byType(FileBrowser), findsNothing);
 
-      await tester.tap(find.byTooltip('Files'));
+      await tester.tap(find.byTooltip('Open files'));
       await tester.pumpAndSettle();
       expect(find.byType(FileBrowser), findsOneWidget);
       expect(find.text('notes.txt'), findsOneWidget);
-      // The panel is docked on the RIGHT edge of the surface, and the
-      // floating chat header belongs ONLY to the remaining center content.
+      // The panel is docked on the RIGHT edge of the surface, FLUSH
+      // against the transcript (no divider), and the floating chat
+      // header belongs ONLY to the remaining center content.
       expect(tester.getTopLeft(find.byType(FileBrowser)).dx, greaterThan(1000));
       final header = tester.getRect(
         find.byKey(const ValueKey('faChatFloatingHeader')),
@@ -1154,7 +1286,7 @@ void main() {
       final panel = tester.getRect(
         find.byKey(const ValueKey('faChatFilesPanel')),
       );
-      expect(panel.width, 301);
+      expect(panel.width, 300);
       expect(header.right, panel.left);
       expect(
         find.byKey(const ValueKey('faChatFilesPanelResizeHandle')),
@@ -1169,10 +1301,14 @@ void main() {
       );
       expect(title.right, lessThanOrEqualTo(panel.left));
       expect(title.left, greaterThanOrEqualTo(header.left));
-      final filesAction = tester.getRect(find.byTooltip('Files'));
-      expect(filesAction.right, lessThanOrEqualTo(panel.left));
+      // Toggle-as-part-of-panel: the header Files entry hides while the
+      // panel is open (the band's X is the visible toggle), and no
+      // divider renders between the transcript and the panel.
+      expect(find.byTooltip('Open files'), findsNothing);
+      expect(find.byType(VerticalDivider), findsNothing);
+      expect(find.byKey(const ValueKey('filesAppClose')), findsOneWidget);
 
-      await tester.tap(find.byTooltip('Files'));
+      await tester.tap(find.byKey(const ValueKey('filesAppClose')));
       await tester.pumpAndSettle();
       expect(find.byType(FileBrowser), findsNothing);
       expect(
@@ -1194,7 +1330,7 @@ void main() {
         MaterialApp(home: ChatScreen(manager: _fakeManager(env))),
       );
       await tester.pumpAndSettle();
-      await tester.tap(find.byTooltip('Files'));
+      await tester.tap(find.byTooltip('Open files'));
       await tester.pumpAndSettle();
 
       final handle = find.byKey(const ValueKey('faChatFilesPanelResizeHandle'));
@@ -1203,7 +1339,7 @@ void main() {
       void expectBoundary(double browserWidth) {
         expect(handle, findsOneWidget);
         final panelRect = tester.getRect(panel);
-        expect(panelRect.width, browserWidth + 1);
+        expect(panelRect.width, browserWidth);
         expect(tester.getRect(header).right, panelRect.left);
         expect(
           tester
@@ -1226,10 +1362,12 @@ void main() {
       await tester.pumpAndSettle();
       expectBoundary(420);
 
-      await tester.tap(find.byTooltip('Files'));
+      // While the panel is open the header's Files entry is hidden — the
+      // band's X is the close toggle.
+      await tester.tap(find.byKey(const ValueKey('filesAppClose')));
       await tester.pumpAndSettle();
       expect(handle, findsNothing);
-      await tester.tap(find.byTooltip('Files'));
+      await tester.tap(find.byTooltip('Open files'));
       await tester.pumpAndSettle();
       expectBoundary(420);
 
@@ -1246,7 +1384,7 @@ void main() {
       tester.view.physicalSize = const Size(900, 900);
       await tester.pumpAndSettle();
       expectBoundary(520);
-      expect(tester.getRect(panel).left, 379);
+      expect(tester.getRect(panel).left, 380);
     });
 
     testWidgets('max Files width degrades safely inside a sidebar-narrowed '
@@ -1269,14 +1407,14 @@ void main() {
 
       await tester.pumpWidget(app(900));
       await tester.pumpAndSettle();
-      await tester.tap(find.byTooltip('Files'));
+      await tester.tap(find.byTooltip('Open files'));
       await tester.pumpAndSettle();
       final handle = find.byKey(const ValueKey('faChatFilesPanelResizeHandle'));
       await tester.drag(handle, const Offset(-400, 0));
       await tester.pumpAndSettle();
       expect(
         tester.getSize(find.byKey(const ValueKey('faChatFilesPanel'))).width,
-        521,
+        520,
       );
 
       for (final width in <double>[
@@ -1324,7 +1462,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.byType(FileBrowser), findsNothing);
 
-      await tester.tap(find.byTooltip('Files'));
+      await tester.tap(find.byTooltip('Open files'));
       await tester.pumpAndSettle();
       expect(find.byType(Drawer), findsOneWidget);
       expect(find.byType(FileBrowser), findsOneWidget);

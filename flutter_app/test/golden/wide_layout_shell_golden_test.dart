@@ -356,7 +356,7 @@ void main() {
     await manager.env.createDir('src');
     await manager.env.writeFile('README.md', '# Files panel\n');
     await manager.env.writeFile('pubspec.yaml', 'name: demo\n');
-    await tester.tap(find.byTooltip('Files'));
+    await tester.tap(find.byTooltip('Open files'));
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('faChatFilesPanel')), findsOneWidget);
     await expectGolden(tester, 'wide_layout_shell_chats_files');
@@ -365,7 +365,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(
       tester.getSize(find.byKey(const ValueKey('faChatFilesPanel'))).width,
-      421,
+      420,
     );
     await expectGolden(tester, 'wide_layout_shell_chats_files_resized');
   });

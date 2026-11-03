@@ -88,14 +88,18 @@ void main() {
       // managed by the launcher's chat sheet); the files panel starts closed.
       expect(find.byType(FileBrowser), findsNothing);
 
-      await tester.tap(find.byTooltip('Files'));
+      await tester.tap(find.byTooltip('Open files'));
       await tester.pumpAndSettle();
       expect(find.byType(FileBrowser), findsOneWidget);
       expect(tester.getTopLeft(find.byType(FileBrowser)).dx, greaterThan(1000));
 
-      await tester.tap(find.byTooltip('Files'));
+      // Toggle-as-part-of-panel: the header entry hides while open; the
+      // band's X is the close toggle.
+      expect(find.byTooltip('Open files'), findsNothing);
+      await tester.tap(find.byKey(const ValueKey('filesAppClose')));
       await tester.pumpAndSettle();
       expect(find.byType(FileBrowser), findsNothing);
+      expect(find.byTooltip('Open files'), findsOneWidget);
     });
 
     testWidgets('wide: the Files icon is the RIGHTMOST chat-header action', (
@@ -108,7 +112,7 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      final files = find.byTooltip('Files');
+      final files = find.byTooltip('Open files');
       final copy = find.byTooltip('Copy session');
       expect(files, findsOneWidget);
       expect(copy, findsOneWidget);
@@ -119,9 +123,11 @@ void main() {
         greaterThan(tester.getTopRight(copy).dx),
       );
       // And the panel's own X — not the header icon — closes it. It
-      // leads the band's search capsule.
-      await tester.tap(find.byTooltip('Files'));
+      // leads the band's search capsule, and the header entry is gone
+      // while the panel is open.
+      await tester.tap(files);
       await tester.pumpAndSettle();
+      expect(find.byTooltip('Open files'), findsNothing);
       expect(find.byKey(const ValueKey('filesAppClose')), findsOneWidget);
       expect(
         tester.getRect(find.byKey(const ValueKey('filesAppClose'))).right,
@@ -154,7 +160,7 @@ void main() {
       // The chat-bar gear is gone by design: settings open from the
       // sidebar nav / apps panel. Files and copy remain app-bar actions.
       expect(find.byTooltip('Connection settings'), findsNothing);
-      expect(find.byTooltip('Files'), findsOneWidget);
+      expect(find.byTooltip('Open files'), findsOneWidget);
       expect(service.messages, hasLength(2));
       expect(service.messages[0].content, 'hello');
       // The chat list's initial scroll-to-end timer fires post-asserts;

@@ -164,7 +164,9 @@ class FaChatStringsEn extends FaChatStrings {
   @override
   String get chatMoreTooltip => 'More actions';
   @override
-  String get chatFilesTooltip => 'Files';
+  // The header folder icon only OPENS the Files surface — while the panel
+  // is open the action hides and the band's own X ('Close files') closes.
+  String get chatFilesTooltip => 'Open files';
   @override
   String get chatCopySessionTooltip => 'Copy session';
   @override
@@ -374,7 +376,8 @@ class FaChatStringsRu extends FaChatStrings {
   @override
   String get chatMoreTooltip => 'Ещё действия';
   @override
-  String get chatFilesTooltip => 'Файлы';
+  // See [FaChatStringsEn.chatFilesTooltip]: the header icon opens.
+  String get chatFilesTooltip => 'Открыть файлы';
   @override
   String get chatCopySessionTooltip => 'Копировать сессию';
   @override

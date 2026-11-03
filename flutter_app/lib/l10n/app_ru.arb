@@ -219,6 +219,7 @@
   "filePreviewTooLarge": "Файл слишком большой для предпросмотра",
   "filePreviewTruncated": "Показаны первые {size} — вывод обрезан",
   "filesBackTooltip": "Назад к файлам",
+  "filesCloseTooltip": "Закрыть файлы",
   "filesEmptyFileName": "(пустое имя файла)",
   "filesEmptyFolder": "Пустая папка",
   "filesFilesSection": "Файлы",

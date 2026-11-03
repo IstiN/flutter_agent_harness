@@ -684,6 +684,9 @@ class AppLocalizationsRu extends AppLocalizations {
   String get filesBackTooltip => 'Назад к файлам';
 
   @override
+  String get filesCloseTooltip => 'Закрыть файлы';
+
+  @override
   String get filesEmptyFileName => '(пустое имя файла)';
 
   @override

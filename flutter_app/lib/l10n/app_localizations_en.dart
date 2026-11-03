@@ -682,6 +682,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get filesBackTooltip => 'Back to files';
 
   @override
+  String get filesCloseTooltip => 'Close files';
+
+  @override
   String get filesEmptyFileName => '(empty file name)';
 
   @override

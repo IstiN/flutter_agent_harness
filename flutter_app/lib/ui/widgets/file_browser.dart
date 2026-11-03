@@ -52,6 +52,7 @@ class FileBrowser extends StatefulWidget {
   const FileBrowser({
     super.key,
     required this.env,
+    this.initialPath,
     this.inlinePreview = true,
     this.uploadPicker,
     this.iCloudSyncService,
@@ -72,6 +73,13 @@ class FileBrowser extends StatefulWidget {
   /// The environment whose filesystem is browsed — the same instance the
   /// agent's tools use (see `AgentService.env`).
   final ExecutionEnv env;
+
+  /// Folder the listing opens in — the session's working directory (the
+  /// host passes `service.currentSessionCwd`). Absolute paths are used
+  /// as-is and rebased onto the env cwd when they live under it; relative
+  /// paths resolve against the env cwd (`FileSystem.cwd`). Null (or
+  /// empty) keeps today's behavior — the listing starts at the env cwd.
+  final String? initialPath;
 
   /// Whether file previews render inside the panel (true) or push a
   /// full-screen route (false).
@@ -227,6 +235,7 @@ class _FileBrowserState extends State<FileBrowser> {
     super.initState();
     widget.fsRevision?.addListener(_onFsRevision);
     _search.addListener(_onFilterChanged);
+    _segments.addAll(_initialSegments(widget.initialPath));
     _load();
   }
 
@@ -240,6 +249,15 @@ class _FileBrowserState extends State<FileBrowser> {
     if (oldWidget.filterController != widget.filterController) {
       oldWidget.filterController?.removeListener(_onFilterChanged);
       _search.addListener(_onFilterChanged);
+    }
+    // The host swapped the session under an open panel: jump to the new
+    // session's folder (the same resolution [initialPath] documents).
+    if (oldWidget.initialPath != widget.initialPath) {
+      _segments
+        ..clear()
+        ..addAll(_initialSegments(widget.initialPath));
+      _preview = null;
+      _load();
     }
   }
 
@@ -271,6 +289,48 @@ class _FileBrowserState extends State<FileBrowser> {
 
   String _childPath(String name) =>
       _segments.isEmpty ? name : '${_segments.join('/')}/$name';
+
+  /// Segments (cwd-relative) that open the browser in [path]:
+  /// [FileBrowser.initialPath] resolution. Relative paths resolve against
+  /// the env cwd; absolute ones are used as-is, rebased onto the cwd when
+  /// they live under it (the local desktop env's cwd IS the session
+  /// folder, so the session folder opens as the root listing). Null or
+  /// empty yields no segments — the env cwd itself.
+  List<String> _initialSegments(String? path) {
+    var target = path?.trim() ?? '';
+    if (target.isEmpty || target == '.') return const [];
+    final cwd = widget.env.cwd;
+    if (!target.startsWith('/')) {
+      target = cwd.endsWith('/') ? '$cwd$target' : '$cwd/$target';
+    }
+    List<String> segmentsOf(String p) => [
+      for (final segment in p.split('/'))
+        if (segment.isNotEmpty && segment != '.') segment,
+    ];
+    // Resolve `..` on the absolute target (the cwd keeps `..` inside it —
+    // the browser never escapes its root namespace).
+    final resolved = <String>[];
+    for (final segment in segmentsOf(target)) {
+      if (segment == '..') {
+        if (resolved.isNotEmpty) resolved.removeLast();
+        continue;
+      }
+      resolved.add(segment);
+    }
+    final cwdSegments = segmentsOf(cwd);
+    final underCwd =
+        resolved.length >= cwdSegments.length &&
+        _segmentsStartWith(resolved, cwdSegments);
+    return underCwd ? resolved.sublist(cwdSegments.length) : resolved;
+  }
+
+  /// Whether [path] starts with exactly the [prefix] segments.
+  bool _segmentsStartWith(List<String> path, List<String> prefix) {
+    for (var i = 0; i < prefix.length; i++) {
+      if (path[i] != prefix[i]) return false;
+    }
+    return true;
+  }
 
   Future<void> _load() async {
     setState(() {
@@ -1132,11 +1192,19 @@ final class FilesChrome extends StatelessWidget {
   final Color? menuColor;
 
   static const _bandHeight = 52.0;
-  static const _bandPadding = EdgeInsets.fromLTRB(10, 6, 10, 6);
 
-  /// The composer's field scale (the chat composer's 36pt send/mic
-  /// control band) — the capsule and every band circle share it.
-  static const _capsuleHeight = 36.0;
+  /// The X's left inset: ~4pt from the band's left edge — the panel's own
+  /// toggle hugs its panel (a 10pt inset read as a detached second header,
+  /// not part of the panel).
+  static const _bandPadding = EdgeInsets.fromLTRB(4, 6, 10, 6);
+
+  /// The chat composer's single-line field height — the composer field
+  /// row's 40px (its 36px send/mic control + 2+2px row padding, the
+  /// `faChatComposerFieldRow` geometry). A 36pt capsule read as a thin
+  /// strip under that field; mirroring it keeps the Files band on the
+  /// composer's text-field scale. Every band circle stays at
+  /// [_actionSlot].
+  static const _capsuleHeight = 40.0;
   static const _titleIcon = 16.0;
   static const _titleGap = 7.0;
   static const _searchLeadingGap = 10.0;
@@ -1144,8 +1212,9 @@ final class FilesChrome extends StatelessWidget {
   static const _actionSlot = 36.0;
   static const _actionGap = 8.0;
 
-  /// Icon + gap that only render alongside the title.
-  static const double _titleExtras = _titleIcon + _titleGap;
+  /// Icon + gap + the title-to-X air that only render alongside the
+  /// title.
+  static const double _titleExtras = _titleIcon + _titleGap + _searchLeadingGap;
 
   /// The desktop capsule minimum — the promise that the search field
   /// expands to a real field on roomy surfaces instead of a ~140px stub.
@@ -1169,8 +1238,12 @@ final class FilesChrome extends StatelessWidget {
         child: LayoutBuilder(
           builder: (context, constraints) {
             final width = constraints.maxWidth;
+            // No leading gap is reserved before the X: the toggle hugs
+            // the band's 4pt inset ([_bandPadding]); the X-to-capsule gap
+            // is the action gap, and the title's trailing air lives in
+            // [_titleExtras].
             double budget({required int inline, required bool overflow}) {
-              var w = _searchLeadingGap + _searchTrailingGap;
+              var w = _searchTrailingGap;
               w +=
                   inline * _actionSlot +
                   (inline > 1 ? (inline - 1) * _actionGap : 0);
@@ -1231,8 +1304,10 @@ final class FilesChrome extends StatelessWidget {
                       ),
                     ),
                   ),
+                  // The title-to-X air only renders alongside the
+                  // title: without it the X hugs the band's 4pt inset.
+                  const SizedBox(width: _searchLeadingGap),
                 ],
-                const SizedBox(width: _searchLeadingGap),
                 // The panel's own X leads the capsule: the visible
                 // close affordance, morphing in next to "search files"
                 // while the panel is open.
@@ -1240,7 +1315,7 @@ final class FilesChrome extends StatelessWidget {
                   FilesCircleAction(
                     buttonKey: closeKey ?? const ValueKey('filesAppClose'),
                     icon: Icons.close,
-                    tooltip: context.l10n.appsCloseTooltip,
+                    tooltip: context.l10n.filesCloseTooltip,
                     onPressed: onClose,
                   ),
                   const SizedBox(width: _actionGap),

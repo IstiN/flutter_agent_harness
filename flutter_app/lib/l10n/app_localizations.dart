@@ -1298,6 +1298,12 @@ abstract class AppLocalizations {
   /// **'Back to files'**
   String get filesBackTooltip;
 
+  /// No description provided for @filesCloseTooltip.
+  ///
+  /// In en, this message translates to:
+  /// **'Close files'**
+  String get filesCloseTooltip;
+
   /// No description provided for @filesEmptyFileName.
   ///
   /// In en, this message translates to:

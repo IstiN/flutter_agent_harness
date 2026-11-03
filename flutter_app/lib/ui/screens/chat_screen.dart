@@ -457,6 +457,10 @@ class _ChatScreenState extends State<ChatScreen> {
       fileBrowserBuilder: (context) => FilesAppPanel(
         presentation: FilesAppPresentation(
           env: service.env,
+          // The listing opens in the SESSION's folder (null keeps the
+          // personal sandbox cwd); the browser resolves it against the
+          // env cwd.
+          initialPath: service.currentSessionCwd,
           fsRevision: service.fsRevision,
           onProjectMountChanged: service.refreshProjectMountPrompt,
         ),

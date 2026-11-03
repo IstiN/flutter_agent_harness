@@ -222,6 +222,7 @@
   "filePreviewTooLarge": "File too large to preview",
   "filePreviewTruncated": "Showing the first {size} — truncated",
   "filesBackTooltip": "Back to files",
+  "filesCloseTooltip": "Close files",
   "filesEmptyFileName": "(empty file name)",
   "filesEmptyFolder": "Empty folder",
   "filesFilesSection": "Files",

@@ -2077,7 +2077,11 @@ class _FaChatScreenState extends State<FaChatScreen>
     final fileBrowserBuilder = widget.features.fileBrowser
         ? _fileBrowserBuilder
         : null;
-    final headerActions = _buildHeaderActions(isWide, fileBrowserBuilder);
+    final headerActions = _buildHeaderActions(
+      isWide,
+      fileBrowserBuilder,
+      filesPanelOpen: _filesPanelOpen,
+    );
     final glass =
         FaDesignTokens.of(context).direction == FaVisualDirection.glass;
     final body = _buildBody(isWide, fileBrowserBuilder);
@@ -2102,7 +2106,7 @@ class _FaChatScreenState extends State<FaChatScreen>
                   left: 0,
                   // Use THIS center Stack's width, never the full window:
                   // the app sidebar can make those constraints very different.
-                  right: showFilesPanel ? filesPanelWidth + 1 : 0,
+                  right: showFilesPanel ? filesPanelWidth : 0,
                   child: _buildFloatingGlassHeader(isWide, headerActions),
                 ),
             ],
@@ -2118,14 +2122,17 @@ class _FaChatScreenState extends State<FaChatScreen>
   /// priority order and demotion removes from the tail, so the pinned
   /// streaming stop comes first (never demoted — E2), then the secondary
   /// actions (trajectory, copy, the host's ✦ and Apps widgets) that
-  /// yield on tight widths. Files sits LAST — the rightmost slot — by
-  /// user direction: the open panel carries its own visible close
-  /// affordance (the chrome band's X), so the header entry may demote
-  /// into the ⋮ menu on tight widths without stranding an open panel.
+  /// yield on tight widths. Files sits LAST — the rightmost slot — and
+  /// hides while the docked panel is open (toggle-as-part-of-panel, the
+  /// chats-sidebar collapse/expand pattern): the visible toggle becomes
+  /// the panel band's leading X, so the header never renders a second
+  /// close-looking control for an open surface. On narrow layouts the
+  /// entry stays — the end drawer has no band X of its own.
   List<FaHeaderAction> _buildHeaderActions(
     bool isWide,
-    WidgetBuilder? fileBrowserBuilder,
-  ) {
+    WidgetBuilder? fileBrowserBuilder, {
+    required bool filesPanelOpen,
+  }) {
     final strings = FaChatStrings.of(context);
     return [
       ?_streamingStopAction(strings),
@@ -2144,7 +2151,7 @@ class _FaChatScreenState extends State<FaChatScreen>
           onPressed: _copySession,
         ),
       ..._hostHeaderActions(),
-      if (fileBrowserBuilder != null)
+      if (fileBrowserBuilder != null && !(isWide && filesPanelOpen))
         FaHeaderAction(
           icon: Icons.folder_outlined,
           label: strings.chatFilesTooltip,
@@ -2480,24 +2487,19 @@ class _FaChatScreenState extends State<FaChatScreen>
                 filesPanelWidth > 0)
               SizedBox(
                 key: const ValueKey('faChatFilesPanel'),
-                width: filesPanelWidth + 1,
+                width: filesPanelWidth,
                 child: Stack(
                   children: [
+                    // The panel sits FLUSH against the transcript (no
+                    // divider): the band's glass edge and the resize
+                    // handle carry the seam. The scope carries the docked
+                    // panel's close intent — the band's own X (left of the
+                    // search capsule) closes the panel; the header hides
+                    // its Files entry while the panel is open.
                     Positioned.fill(
-                      child: Row(
-                        children: [
-                          const VerticalDivider(width: 1),
-                          // The scope carries the docked panel's close
-                          // intent: the band's own X (left of the search
-                          // capsule) closes the panel, the header folder
-                          // icon only toggles it.
-                          Expanded(
-                            child: FaFilesPanelScope(
-                              closePanel: _closeFilesPanel,
-                              child: fileBrowserBuilder(context),
-                            ),
-                          ),
-                        ],
+                      child: FaFilesPanelScope(
+                        closePanel: _closeFilesPanel,
+                        child: fileBrowserBuilder(context),
                       ),
                     ),
                     Positioned(

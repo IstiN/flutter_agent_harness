@@ -198,7 +198,7 @@ void main() {
                 reason: reason,
               );
               expect(tester.widget<Icon>(copy).size, 18, reason: reason);
-              final folder = find.byTooltip('Files');
+              final folder = find.byTooltip('Open files');
               if (folder.evaluate().isNotEmpty) {
                 final folderAction = find
                     .ancestor(

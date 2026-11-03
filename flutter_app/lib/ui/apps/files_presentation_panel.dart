@@ -15,11 +15,19 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart'
 final class FilesAppPresentation {
   FilesAppPresentation({
     required this.env,
+    this.initialPath,
     this.fsRevision,
     this.onProjectMountChanged,
   });
 
   final ExecutionEnv env;
+
+  /// Folder the browser opens in — the session's working directory
+  /// (`service.currentSessionCwd`). Resolved by [FileBrowser]: relative
+  /// paths against the env cwd, absolute ones as-is. Null keeps the
+  /// listing at the env cwd.
+  final String? initialPath;
+
   final ValueNotifier<int>? fsRevision;
   final void Function()? onProjectMountChanged;
 }
@@ -75,6 +83,7 @@ final class FilesAppPanel extends StatelessWidget {
           padding: const EdgeInsets.all(6),
           child: FileBrowser(
             env: presentation.env,
+            initialPath: presentation.initialPath,
             inlinePreview: inlinePreview,
             fsRevision: presentation.fsRevision,
             onProjectMountChanged: presentation.onProjectMountChanged,
