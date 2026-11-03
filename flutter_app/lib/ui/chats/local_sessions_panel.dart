@@ -162,7 +162,6 @@ class _LocalHeader extends StatelessWidget {
                       onPressed: onNew,
                       tooltip: context.l10n.chatNew,
                       iconSize: 18,
-                      color: Colors.white,
                       padding: EdgeInsets.zero,
                       style: IconButton.styleFrom(
                         backgroundColor: tokens.accent,

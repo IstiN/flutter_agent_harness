@@ -19,6 +19,7 @@ lib/services/aiin_connect_flow.dart 2
 lib/ui/activity/activity_surface.dart 7
 lib/ui/apps/apps_directory_panel.dart 6
 lib/ui/chats/chat_list_panel.dart 25
+lib/ui/chats/local_sessions_panel.dart 2
 lib/ui/network/add_agent_dialog.dart 14
 lib/ui/network/channel_rail.dart 15
 lib/ui/network/network_center.dart 4
@@ -52,6 +53,7 @@ lib/ui/widgets/file_preview.dart 4
 lib/ui/widgets/github_account_section.dart 3
 lib/ui/widgets/github_connect_sheet.dart 4
 lib/ui/widgets/image_drop_notice_chip.dart 4
+lib/ui/widgets/messenger_nav_rail.dart 1
 lib/ui/widgets/messenger_navigation_controls.dart 1
 lib/ui/widgets/messenger_section_header.dart 1
 lib/ui/widgets/model_cache_section.dart 1
@@ -60,7 +62,7 @@ lib/ui/widgets/quick_model_chip.dart 1
 lib/ui/widgets/session_search_field.dart 2
 lib/ui/widgets/sidebar_sessions_list.dart 7
 lib/ui/widgets/store_get_banner.dart 2
-lib/ui/widgets/wide_layout_shell.dart 17
+lib/ui/widgets/wide_layout_shell.dart 21
 lib/ui/widgets/widget_publications_sheet.dart 2
 lib/ui/widgets/widget_publish_sheet.dart 2
 lib/ui/widgets/widget_status_detail_sheet.dart 1
@@ -95,6 +97,7 @@ lib/services/aiin_connect_flow.dart 7
 lib/services/codemie_sso_flow_steps.dart 4
 lib/ui/activity/activity_surface.dart 2
 lib/ui/chats/chat_list_panel.dart 9
+lib/ui/chats/local_sessions_panel.dart 3
 lib/ui/network/add_agent_dialog.dart 5
 lib/ui/network/channel_key_import_dialog.dart 3
 lib/ui/network/channel_rail.dart 15

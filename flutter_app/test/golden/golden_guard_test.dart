@@ -180,6 +180,10 @@ const _exempt = <String, String>{
       'sidebar nav row; rendered inside wide_layout_shell (covered indirectly)',
   'lib/ui/widgets/sidebar_sessions_list.dart':
       'sidebar sessions list; rendered inside wide_layout_shell (covered indirectly)',
+  'lib/ui/widgets/messenger_nav_rail.dart': 'test/golden/rail_golden_test.dart',
+  'lib/ui/widgets/folder_avatar.dart': 'test/golden/rail_golden_test.dart',
+  'lib/ui/chats/local_sessions_panel.dart':
+      'test/golden/rail_golden_test.dart',
   'lib/ui/widgets/code_viewer.dart':
       'syntax-highlighted code view; rendered inside file_preview (covered indirectly)',
   'lib/apps/app_tile_host.dart':

@@ -940,7 +940,7 @@ class _WideLayoutShellState extends State<WideLayoutShell>
       // Top clearance comes from the single narrow-body wrap below — no
       // per-branch SafeArea (it would double the inset on macOS).
       _WideShellSection.chats => _buildChatPanel(compact: true),
-      _WideShellSection.local => _buildLocalPanel(),
+      _WideShellSection.local => _buildLocalPanel(compact: true),
       _WideShellSection.activity =>
         _narrowActivityDetailVisible
             ? ActivityDetailPanel(
@@ -1568,9 +1568,10 @@ class _WideLayoutShellState extends State<WideLayoutShell>
 
   /// The Local section's sidebar: folder-first navigation (folders, then a
   /// folder's Telegram-style session list), shell-owned drill-down state.
-  Widget _buildLocalPanel() {
+  Widget _buildLocalPanel({bool compact = false}) {
     return LocalSessionsPanel(
       controller: _chatController,
+      compact: compact,
       selectedFolderId: _localFolderId,
       onSelectFolder: (folderId) => setState(() => _localFolderId = folderId),
       selectedSessionId: _selectedSessionId,

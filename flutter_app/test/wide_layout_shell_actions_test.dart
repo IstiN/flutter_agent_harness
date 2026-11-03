@@ -1426,6 +1426,61 @@ void main() {
     debugDefaultTargetPlatformOverride = null;
   });
 
+  testWidgets('the Local rail row walks folders → sessions → open → back', (
+    tester,
+  ) async {
+    final env = MemoryExecutionEnv();
+    final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
+      ..addSession('design-session', _fakeService(env));
+    ChatListEntry folderEntry(String id, String cwd) => ChatListEntry(
+      id: ChatEntryId.local(id),
+      kind: ChatListEntryKind.localAgent,
+      title: id,
+      preview: 'Preview of $id',
+      createdAt: DateTime.utc(2025),
+      lastActivity: DateTime.utc(2026),
+      folderPath: cwd,
+      localMessageCount: 1,
+    );
+    await pumpShell(
+      tester,
+      manager: manager,
+      localChatAdapterFactory: () => _StaticLocalChatListSource([
+        folderEntry('design-session', '/work/fa'),
+        folderEntry('docs-session', '/work/mono'),
+      ]),
+    );
+    await tester.pumpAndSettle();
+
+    // Rail → Local folder list.
+    await tester.tap(find.byKey(const ValueKey('messengerPrimaryNav-local')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('localFolderList')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('localFolder-/work/mono')),
+      findsOneWidget,
+    );
+
+    // Folder → its Telegram-style session list.
+    await tester.tap(find.byKey(const ValueKey('localFolder-/work/fa')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('localSessionList')), findsOneWidget);
+    expect(find.text('design-session'), findsOneWidget);
+    expect(find.text('Preview of design-session'), findsOneWidget);
+
+    // Session row → the existing open flow (the live session's chat).
+    await tester.tap(find.byKey(const ValueKey('localSession-design-session')));
+    await tester.pumpAndSettle();
+    expect(find.byType(ChatScreen), findsOneWidget);
+
+    // Back from the folder list; the drill-down state stays shell-owned.
+    await tester.tap(find.byKey(const ValueKey('localFolderBack')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('localFolderList')), findsOneWidget);
+    expect(find.byKey(const ValueKey('localSession-design-session')),
+        findsNothing);
+  });
+
   testWidgets('macOS titlebar keeps toggle clearance and collapsed identity', (
     tester,
   ) async {
