@@ -198,19 +198,13 @@ final class _DirectoryToolbar extends StatelessWidget {
               ],
               if (onOpenFiles != null) ...[
                 const SizedBox(width: 4),
-                IconButton(
+                SizedBox(
                   key: const ValueKey('appsDirectoryFiles'),
-                  onPressed: onOpenFiles,
-                  tooltip: context.l10n.filesPanelTitle,
-                  icon: const Icon(Icons.folder_open_outlined),
-                  color: colors.dim,
-                  iconSize: 17,
-                  visualDensity: VisualDensity.compact,
-                  constraints: const BoxConstraints.tightFor(
-                    width: 30,
-                    height: 30,
+                  child: FaIconButton(
+                    icon: Icons.folder_open_outlined,
+                    tooltip: context.l10n.filesPanelTitle,
+                    onPressed: onOpenFiles,
                   ),
-                  padding: EdgeInsets.zero,
                 ),
               ],
             ],
