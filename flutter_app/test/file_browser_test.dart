@@ -365,13 +365,19 @@ void main() {
         find.byKey(const ValueKey('filesSessionFolderGateAllow')),
         findsOneWidget,
       );
-      // NO silent wrong listing: the active mount's content is not shown.
+      // NO silent wrong listing: the active mount's content is not shown,
+      // and no listing error leaks either — the gate replaces the body.
       expect(find.text('mount_file.txt'), findsNothing);
+      expect(find.text('Could not list folder'), findsNothing);
     });
 
     testWidgets('a session folder the env can open lists directly (no gate)',
         (tester) async {
-      final base = MemoryExecutionEnv();
+      // A sandboxed delegate roots at its own container — a relative
+      // listDir('Users/…') must never resolve (the real macOS sandbox),
+      // so the browser has to rebase the host initialPath onto the
+      // mount namespace.
+      final base = MemoryExecutionEnv(cwd: '/app-sandbox');
       await base.writeFile(
         '/Users/x/support/session_file.txt',
         'in the session folder',
@@ -391,6 +397,39 @@ void main() {
       expect(find.byKey(const ValueKey('filesSessionFolderGate')),
           findsNothing);
       expect(find.text('session_file.txt'), findsOneWidget);
+      expect(find.text('Could not list folder'), findsNothing);
+    });
+
+    testWidgets(
+        'a mounted session lists through the mount namespace when opened '
+        'with the host initialPath (regression: directory listing failed)',
+        (tester) async {
+      // The exact production seam: chat_screen passes
+      // initialPath = visibleFolderRoot(env, sessionCwd) — the HOST
+      // path of the mounted folder — while ProjectMountEnv.cwd is the
+      // virtual '/project'. The browser must rebase that host path
+      // onto the mount root, never leak raw host segments into
+      // listDir.
+      final base = MemoryExecutionEnv(cwd: '/app-sandbox');
+      await base.writeFile(
+        '/Users/x/support/opened.txt',
+        'in the mounted folder',
+      );
+      final env = ProjectMountEnv(base)..mountedRoot = '/Users/x/support';
+      await tester.pumpWidget(
+        _wrap(
+          FileBrowser(
+            env: env,
+            initialPath: visibleFolderRoot(env, '/Users/x/support'),
+            sessionFolder: null,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Could not list folder'), findsNothing,
+          reason: 'the host initialPath must rebase onto /project');
+      expect(find.text('opened.txt'), findsOneWidget);
     });
 
     testWidgets('a personal session (no folder) keeps the env-root listing',
@@ -407,8 +446,10 @@ void main() {
 
     testWidgets('granting access switches the mount and lists the session '
         'folder', (tester) async {
-      final base = MemoryExecutionEnv();
-      await base.writeFile('mount_file.txt', 'the active mount content');
+      // Sandboxed delegate (non-root cwd): the post-grant jump must go
+      // through the mount namespace, not raw host segments.
+      final base = MemoryExecutionEnv(cwd: '/app-sandbox');
+      await base.writeFile('/Users/x/mount/mount_file.txt', 'the active mount content');
       final env = ProjectMountEnv(base);
       // The session folder's content, as the (in-memory) host FS holds it.
       await base.writeFile('/Users/x/support/granted.txt', 'granted content');
@@ -441,6 +482,7 @@ void main() {
           findsNothing);
       expect(find.text('granted.txt'), findsOneWidget);
       expect(find.text('mount_file.txt'), findsNothing);
+      expect(find.text('Could not list folder'), findsNothing);
     });
 
     testWidgets('a failed grant keeps the gate (no silent wrong listing)',

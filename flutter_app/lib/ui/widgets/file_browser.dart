@@ -331,9 +331,16 @@ class _FileBrowserState extends State<FileBrowser> {
     _load();
   }
 
-  /// Path of the current directory in the env namespace, relative to its
-  /// working directory.
-  String get _envPath => _segments.isEmpty ? '.' : _segments.join('/');
+  /// Path of the current directory in the env namespace. Relative to the
+  /// env's working directory EXCEPT at a mounted root: there the browser's
+  /// root IS the mount segment ([projectMountSegment]) — a bare '.' would
+  /// resolve against the delegate's own cwd (the app container), listing
+  /// the container instead of the mounted project folder ('Could not list
+  /// folder' on the sandboxed desktop when the container has no such
+  /// path).
+  String get _envPath => _segments.isEmpty
+      ? (_mountEnv != null ? projectMountSegment : '.')
+      : _segments.join('/');
 
   String _childPath(String name) =>
       _segments.isEmpty ? name : '${_segments.join('/')}/$name';
@@ -369,7 +376,24 @@ class _FileBrowserState extends State<FileBrowser> {
     final underCwd =
         resolved.length >= cwdSegments.length &&
         _segmentsStartWith(resolved, cwdSegments);
-    return underCwd ? resolved.sublist(cwdSegments.length) : resolved;
+    if (underCwd) return resolved.sublist(cwdSegments.length);
+    // The mount namespace: a host absolute path under the mounted root
+    // lives INSIDE the mount at [projectMountSegment] — rebase onto the
+    // mount root so the listing goes through the env's host mapping.
+    // Without this, a mounted session's host path (the
+    // [visibleFolderRoot] initialPath, or the grant flow's jump) leaks
+    // raw host segments into listDir and the panel reports 'Could not
+    // list folder' on the sandboxed desktop (delegate cwd is the app
+    // container, so 'Users/…' resolves nowhere).
+    final mountRoot = _mountEnv?.mountedRoot;
+    if (mountRoot != null) {
+      final mountSegments = segmentsOf(mountRoot);
+      if (resolved.length >= mountSegments.length &&
+          _segmentsStartWith(resolved, mountSegments)) {
+        return resolved.sublist(mountSegments.length);
+      }
+    }
+    return resolved;
   }
 
   /// Whether [path] starts with exactly the [prefix] segments.
