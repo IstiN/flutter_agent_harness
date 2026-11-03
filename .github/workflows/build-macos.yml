@@ -1403,6 +1403,21 @@ jobs:
           GH_TOKEN: ${{ secrets.RELEASE_PAT }}
           RELEASE_TAG: ${{ needs.version.outputs.tag }}
           VERSION: ${{ needs.version.outputs.version }}
+          # gh-2050: this attach is the daily NEXT-TAG-DRAFT pre-stager (its
+          # DMGs/zips/latest-mac.yml are clobber-refresher assets, not
+          # publish blockers — release_required_assets.txt). When the
+          # sibling train publishes the derived tag while the serialized
+          # self-hosted mac builds are still running (the v1.0.685 daily
+          # run: draft 05:22:46, published 05:44:52, this leg attached
+          # 06:28:53), the gate's PUBLISHED refusal would red this leg
+          # daily. RELEASE_GATE_PUBLISHED_SKIP=1 turns that verdict into a
+          # loud whole-call skip — nothing uploads, nothing mutates (gh-2042
+          # AC1 intact; the gate's default remains the refusal), and the
+          # next daily leg pre-stages the next version's draft with fresh
+          # assets. The build-macos-cli / build-extension attaches below do
+          # NOT get this policy: their fa-* assets are REQUIRED release
+          # assets the tag train ships, so their verdict must stay loud.
+          RELEASE_GATE_PUBLISHED_SKIP: '1'
         run: |
           set -euo pipefail
 
