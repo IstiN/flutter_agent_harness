@@ -152,10 +152,10 @@ void main() {
     await expectGolden(tester, 'composer_multiline_6line_light');
   });
 
-  group('composer send oval (owner spec: 40x32 solid accent, paper plane)', () {
-    // The bare composer with one typed line: the send oval sits vertically
-    // centered in the pill's right end. Deterministic: unfocused, no
-    // cursor blink phase in the snapshot.
+  group('composer send oval (owner spec: 40x34 flush capsule, paper plane)', () {
+    // The bare composer with one typed line: the send capsule sits
+    // vertically centered, flush with the pill's right edge (2px inset).
+    // Deterministic: unfocused, no cursor blink phase in the snapshot.
     Future<void> pumpOvalState(
       WidgetTester tester, {
       required bool light,

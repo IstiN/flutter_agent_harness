@@ -1830,7 +1830,8 @@ void main() {
         expect(composer.left, panel.left + 8, reason: reason);
         expect(composer.height, 40, reason: reason);
         expect(row.height, 40, reason: reason);
-        expect(send.size, const Size(40, 32), reason: reason);
+        expect(send.size, const Size(40, 34), reason: reason);
+        expect(composer.right - send.right, 2, reason: 'flush right');
         expect(attach.size, const Size.square(36), reason: reason);
         expect(composer.contains(send.center), isTrue, reason: reason);
         expect(composer.contains(attach.center), isTrue, reason: reason);

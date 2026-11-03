@@ -345,7 +345,8 @@ void main() {
             closeTo(composer.bottom, .001),
             reason: reason,
           );
-          expect(send.size, const Size(40, 32), reason: reason);
+          expect(send.size, const Size(40, 34), reason: reason);
+          expect(composer.right - send.right, 2, reason: 'flush right');
           expect(fade.left, 0, reason: reason);
           expect(fade.right, width, reason: reason);
           expect(fade.bottom, 700, reason: reason);

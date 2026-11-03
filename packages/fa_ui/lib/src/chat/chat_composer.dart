@@ -1207,11 +1207,13 @@ class ChatComposerState extends State<ChatComposer>
     final strings = FaChatStrings.of(context);
     return Padding(
       key: const ValueKey('faChatComposerFieldRow'),
-      // A 40x32 oval control plus 2+2px keeps the 40px single-line row.
-      // The 12px left inset is the kit's field padding norm (owner call:
-      // the placeholder sat ~60px from the pill's leading edge — a
-      // reserved-but-unrendered slot read as dead space).
-      padding: const EdgeInsets.fromLTRB(12, 2, 12, 2),
+      // The trailing inset is 2px so the send capsule sits FLUSH with the
+      // pill's right edge (owner call: the old 12px let the oval float
+      // ~11pt off the pill); the mic re-adds 10px so its inset is
+      // unchanged. The 12px left inset is the kit's field padding norm
+      // (owner call: the placeholder sat ~60px from the pill's leading
+      // edge — a reserved-but-unrendered slot read as dead space).
+      padding: const EdgeInsets.fromLTRB(12, 2, 2, 2),
       child: Row(
         children: [
           if (widget.leadingBuilder != null)
@@ -1309,8 +1311,14 @@ class ChatComposerState extends State<ChatComposer>
     FahColors palette,
     FaChatStrings strings,
   ) {
+    // The mic re-adds the 10px the field row no longer carries (the
+    // trailing inset went to the flush send capsule), keeping its inset.
     return [
-      if (_slotShowsMic) _buildMicButton(context),
+      if (_slotShowsMic)
+        Padding(
+          padding: const EdgeInsets.only(right: 10),
+          child: _buildMicButton(context),
+        ),
       if (_slotShowsMic && _slotShowsSendStop) const SizedBox(width: 4),
       if (_slotShowsSendStop) _buildSendStopButton(palette, strings),
     ];
@@ -1328,7 +1336,12 @@ class ChatComposerState extends State<ChatComposer>
       child: _slotShowsMic
           ? KeyedSubtree(
               key: const ValueKey('composerTrailingMic'),
-              child: _buildMicButton(context),
+              // The mic re-adds the 10px the field row no longer carries
+              // (the trailing inset went to the flush send capsule).
+              child: Padding(
+                padding: const EdgeInsets.only(right: 10),
+                child: _buildMicButton(context),
+              ),
             )
           : _slotShowsSendStop
           ? KeyedSubtree(
@@ -1339,11 +1352,13 @@ class ChatComposerState extends State<ChatComposer>
     );
   }
 
-  /// The send/stop control: a solid accent OVAL (40x32, Telegram-style)
-  /// in the composer pill's right end. Stop while streaming with an empty
-  /// field, send (or steer-send mid-stream) otherwise. The oval is the
+  /// The send/stop control: a solid accent capsule (40x34, radius 17)
+  /// flush with the composer pill's right edge, 2pt inset. The corner
+  /// radius (17 = pillRadius - inset) continues the pill's curvature as
+  /// a concentric arc. Stop while streaming with an empty field, send
+  /// (or steer-send mid-stream) otherwise. The capsule is the
   /// owner-approved prototype look — solid opaque accent, no glass, no
-  /// border/shadow — and a disabled arm renders the same oval dimmed.
+  /// border/shadow — and a disabled arm renders the same capsule dimmed.
   Widget _buildSendStopButton(FahColors palette, FaChatStrings strings) {
     // Stop only while streaming AND nothing typed; with text in the
     // field the button is a steer-send (interrupt the turn and run
@@ -1353,21 +1368,22 @@ class ChatComposerState extends State<ChatComposer>
         ? widget.service.abort
         : () => _send(_textController.text);
     // The arms are always wired today (send/steer/abort never unset), so
-    // the oval renders enabled; the disabled contract is "the same oval,
-    // dimmed" — never a shape or glyph swap.
+    // the capsule renders enabled; the disabled contract is "the same
+    // capsule, dimmed" — never a shape or glyph swap.
     return SizedBox(
       key: const ValueKey('faChatComposerSendButton'),
       width: 40,
-      height: 32,
-      child: ClipOval(
+      height: 34,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(17),
         child: ColoredBox(
           color: palette.indigo,
           child: IconButton(
             padding: EdgeInsets.zero,
-            constraints: const BoxConstraints.tightFor(width: 40, height: 32),
+            constraints: const BoxConstraints.tightFor(width: 40, height: 34),
             style: IconButton.styleFrom(
-              minimumSize: const Size(40, 32),
-              maximumSize: const Size(40, 32),
+              minimumSize: const Size(40, 34),
+              maximumSize: const Size(40, 34),
               padding: EdgeInsets.zero,
               tapTargetSize: MaterialTapTargetSize.shrinkWrap,
             ),
@@ -1375,7 +1391,7 @@ class ChatComposerState extends State<ChatComposer>
               // The prototype's paper-plane glyph: a filled send mark
               // pointing up-right (Icons.stop keeps the interrupt arm).
               showStop ? Icons.stop : Icons.send_rounded,
-              size: 21,
+              size: 22.5,
             ),
             color: palette.onAccent,
             tooltip: showStop

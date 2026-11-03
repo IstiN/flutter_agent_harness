@@ -56,11 +56,32 @@ void main() {
           .height,
       40,
     );
-    expect(
-      tester.getSize(find.byKey(const ValueKey('faChatComposerSendButton'))),
-      const Size(40, 32),
-      reason: 'the send oval: 40x32 (Telegram-style), not a circle',
+    final sendSize = tester.getSize(
+      find.byKey(const ValueKey('faChatComposerSendButton')),
     );
+    expect(
+      sendSize,
+      const Size(40, 34),
+      reason: 'the send capsule: 40x34 (2px vertical inset in the pill), '
+          'not a circle',
+    );
+    // The capsule is flush with the pill's right edge (2px inset) and
+    // vertically centered, with a corner radius concentric to the pill's.
+    final sendRect = tester.getRect(
+      find.byKey(const ValueKey('faChatComposerSendButton')),
+    );
+    final surfaceRect = tester.getRect(
+      find.byKey(const ValueKey('faChatFloatingComposer')),
+    );
+    expect(surfaceRect.right - sendRect.right, 2, reason: 'flush right');
+    expect(sendRect.center.dy, surfaceRect.center.dy, reason: 'centered');
+    final clip = tester.widget<ClipRRect>(
+      find.descendant(
+        of: find.byKey(const ValueKey('faChatComposerSendButton')),
+        matching: find.byType(ClipRRect),
+      ),
+    );
+    expect(clip.borderRadius, BorderRadius.circular(17));
   });
 
   testWidgets('AC1 E3: without an inset (hardware keyboard) the paddings '
@@ -173,7 +194,7 @@ void main() {
       find.byKey(const ValueKey('faChatFloatingComposer')),
     );
     expect(surface.contains(send.center), isTrue);
-    expect(send.size, const Size(40, 32));
+    expect(send.size, const Size(40, 34));
   });
 
   testWidgets('AC5: the placeholder starts at the kit iconSpacing norm from '
