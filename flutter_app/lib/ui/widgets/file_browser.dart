@@ -62,6 +62,11 @@ class FileBrowser extends StatefulWidget {
     this.onProjectMountChanged,
     this.showHeader = true,
     this.filterController,
+    this.onClose,
+    this.surfaceBorder,
+    this.headerKey,
+    this.searchKey,
+    this.closeKey,
   });
 
   /// The environment whose filesystem is browsed — the same instance the
@@ -112,6 +117,25 @@ class FileBrowser extends StatefulWidget {
   /// Files card's capsule). Null keeps the listing unfiltered.
   final TextEditingController? filterController;
 
+  /// Closes the Files surface: rendered as the band's trailing circle
+  /// (the presented pane and pushed routes pop through it). Null hides
+  /// the circle — hosts that toggle the surface themselves (the chat
+  /// header's Files button) pass nothing.
+  final VoidCallback? onClose;
+
+  /// Whether the browser paints the legacy left hairline on its Material.
+  /// Standalone surfaces keep it; hosts that embed the browser inside a
+  /// card (the shared Files pane) turn it off — the card already draws
+  /// its own edge.
+  final bool? surfaceBorder;
+
+  /// Key overrides for the shared band's slots. Defaults keep the
+  /// browser's own lookup keys ([showHeader] standalone); the shared pane
+  /// passes its golden-stable keys through.
+  final Key? headerKey;
+  final Key? searchKey;
+  final Key? closeKey;
+
   @override
   State<FileBrowser> createState() => _FileBrowserState();
 }
@@ -119,6 +143,12 @@ class FileBrowser extends StatefulWidget {
 class _FileBrowserState extends State<FileBrowser> {
   /// Current directory as segments relative to the env root (`[]` = root).
   final List<String> _segments = [];
+
+  /// The band's search capsule: the host-owned filter when provided, else
+  /// an owned controller (disposed with the browser).
+  final TextEditingController _ownedSearch = TextEditingController();
+  late final TextEditingController _search =
+      widget.filterController ?? _ownedSearch;
 
   List<FileInfo>? _entries;
   String? _error;
@@ -196,7 +226,7 @@ class _FileBrowserState extends State<FileBrowser> {
   void initState() {
     super.initState();
     widget.fsRevision?.addListener(_onFsRevision);
-    widget.filterController?.addListener(_onFilterChanged);
+    _search.addListener(_onFilterChanged);
     _load();
   }
 
@@ -209,14 +239,15 @@ class _FileBrowserState extends State<FileBrowser> {
     }
     if (oldWidget.filterController != widget.filterController) {
       oldWidget.filterController?.removeListener(_onFilterChanged);
-      widget.filterController?.addListener(_onFilterChanged);
+      _search.addListener(_onFilterChanged);
     }
   }
 
   @override
   void dispose() {
     widget.fsRevision?.removeListener(_onFsRevision);
-    widget.filterController?.removeListener(_onFilterChanged);
+    _search.removeListener(_onFilterChanged);
+    if (widget.filterController == null) _ownedSearch.dispose();
     super.dispose();
   }
 
@@ -475,7 +506,7 @@ class _FileBrowserState extends State<FileBrowser> {
     return Material(
       key: const ValueKey('fileBrowserPanel'),
       color: colors.panel,
-      shape: widget.showHeader
+      shape: (widget.surfaceBorder ?? widget.showHeader)
           ? Border(left: BorderSide(color: colors.border, width: .5))
           : null,
       child: Stack(
@@ -536,88 +567,54 @@ class _FileBrowserState extends State<FileBrowser> {
   }
 
   /// One circular icon action in the panel chrome (path bar up button,
-  /// preview back button): the same [FaHeaderCircularAction] chrome the
-  /// header actions use, so every icon button in the Files panel reads as
-  /// one family instead of a mix of ad-hoc circles.
+  /// preview back button): the same [FilesCircleAction] chrome the band
+  /// actions use, so every icon button in the Files panel reads as one
+  /// family instead of a mix of ad-hoc circles.
   Widget _chromeIconButton({
     required IconData icon,
     required String tooltip,
     VoidCallback? onPressed,
-  }) => FaHeaderCircularAction(
-    child: IconButton(
-      icon: Icon(icon, size: 18),
-      padding: EdgeInsets.zero,
-      constraints: const BoxConstraints.tightFor(width: 40, height: 40),
-      style: IconButton.styleFrom(
-        minimumSize: const Size.square(40),
-        maximumSize: const Size.square(40),
-        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-      ),
-      tooltip: tooltip,
-      onPressed: onPressed,
-    ),
-  );
-
-  Widget _headerAction(Widget button) => FaHeaderCircularAction(child: button);
+  }) => FilesCircleAction(icon: icon, tooltip: tooltip, onPressed: onPressed);
 
   /// The panel's own header row — [FileBrowser.showHeader] off hides it
-  /// entirely (the host band replaces it).
+  /// entirely (the host band replaces it). On it renders the ONE shared
+  /// [FilesChrome] band, so every Files surface reads alike.
   Widget? _headerRow(BuildContext context) =>
       widget.showHeader ? _buildHeader(context) : null;
 
   Widget _buildHeader(BuildContext context) {
-    final colors = FahColors.of(context);
     final tokens = FaDesignTokens.of(context);
-    return SizedBox(
-      height: 52,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-        child: FaAdaptiveHeader(
-          key: const ValueKey('fileBrowserHeader'),
-          leading: Icon(
-            Icons.folder_open_outlined,
-            size: 18,
-            color: colors.dim,
-          ),
-          title: context.l10n.filesPanelTitle,
-          titleStyle: TextStyle(
-            color: colors.text,
-            fontSize: 14,
-            fontWeight: FontWeight.w600,
-            height: 1.2,
-          ),
-          actions: [
-            ?_buildMountControl(context),
-            if (_picker != null)
-              FaHeaderAction(
-                key: const ValueKey('fileBrowserUpload'),
-                icon: Icons.upload_file_outlined,
-                label: context.l10n.filesUploadTooltip,
-                onPressed: _upload,
-              ),
-            if (_iCloudSync != null)
-              FaHeaderAction(
-                key: const ValueKey('fileBrowserICloudSync'),
-                icon: Icons.cloud_sync_outlined,
-                label: context.l10n.filesICloudSyncTooltip,
-                onPressed: _syncICloud,
-              ),
-            FaHeaderAction(
-              key: const ValueKey('fileBrowserRefresh'),
-              icon: Icons.refresh,
-              label: context.l10n.filesRefreshTooltip,
-              onPressed: _load,
-            ),
-          ],
-          visualDensity: VisualDensity.compact,
-          iconSize: 18,
-          actionGap: 8,
-          overflowMenuKey: const ValueKey('fileBrowserOverflow'),
-          menuColor: tokens.surface2,
-          actionBuilder: (context, action, button) => _headerAction(button),
-          overflowBuilder: (context, button) => _headerAction(button),
-        ),
+    final actions = <FaHeaderAction>[
+      FaHeaderAction(
+        key: const ValueKey('fileBrowserRefresh'),
+        icon: Icons.refresh,
+        label: context.l10n.filesRefreshTooltip,
+        onPressed: _load,
       ),
+      if (_picker != null)
+        FaHeaderAction(
+          key: const ValueKey('fileBrowserUpload'),
+          icon: Icons.upload_file_outlined,
+          label: context.l10n.filesUploadTooltip,
+          onPressed: _upload,
+        ),
+      if (_iCloudSync != null)
+        FaHeaderAction(
+          key: const ValueKey('fileBrowserICloudSync'),
+          icon: Icons.cloud_sync_outlined,
+          label: context.l10n.filesICloudSyncTooltip,
+          onPressed: _syncICloud,
+        ),
+      ?_buildMountControl(context),
+    ];
+    return FilesChrome(
+      key: widget.headerKey ?? const ValueKey('fileBrowserHeader'),
+      searchController: _search,
+      actions: actions,
+      menuColor: tokens.surface2,
+      onClose: widget.onClose,
+      closeKey: widget.closeKey,
+      searchKey: widget.searchKey,
     );
   }
 
@@ -850,7 +847,7 @@ class _FileBrowserState extends State<FileBrowser> {
         ),
       );
     }
-    final query = widget.filterController?.text.trim().toLowerCase() ?? '';
+    final query = _search.text.trim().toLowerCase();
     final visible = query.isEmpty
         ? entries
         : entries
@@ -1011,4 +1008,273 @@ class _FileBrowserState extends State<FileBrowser> {
       ),
     );
   }
+}
+
+/// One 40px circular chrome action in the Files surfaces (band actions,
+/// the close circle, the path-bar up/back buttons) — the same
+/// [FaHeaderCircularAction] family everywhere, so every icon button in
+/// Files reads as one chrome instead of ad-hoc circles.
+///
+/// [buttonKey] lands on the inner [IconButton] — the keyed widget sits
+/// INSIDE its [FaHeaderCircularAction] chrome, exactly where the
+/// pre-band header keyed its bar buttons, and stays a single finder
+/// match (never ambiguous with its wrapper).
+final class FilesCircleAction extends StatelessWidget {
+  const FilesCircleAction({
+    super.key,
+    this.buttonKey,
+    required this.icon,
+    required this.tooltip,
+    this.onPressed,
+  });
+
+  final Key? buttonKey;
+  final IconData icon;
+  final String tooltip;
+  final VoidCallback? onPressed;
+
+  @override
+  Widget build(BuildContext context) => FaHeaderCircularAction(
+    child: IconButton(
+      key: buttonKey,
+      icon: Icon(icon, size: 18),
+      padding: EdgeInsets.zero,
+      constraints: const BoxConstraints.tightFor(width: 40, height: 40),
+      style: IconButton.styleFrom(
+        minimumSize: const Size.square(40),
+        maximumSize: const Size.square(40),
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      ),
+      tooltip: tooltip,
+      onPressed: onPressed,
+    ),
+  );
+}
+
+/// The ONE Files chrome band — the native twin of the presented Files
+/// pane's band, shared by every Files surface: the browser's own header
+/// ([FileBrowser.showHeader]) and the presented/pushed/docked panes.
+///
+/// Layout: Files title + the live search capsule ([FaTextField]) + the
+/// browser actions + the close circle. The capsule is the band's flexible
+/// middle: it EXPANDS to fill everything between its neighbors (defect:
+/// a fixed ~140px capsule). Fit policy, widest-first:
+///  - roomy bands (≥ [kFilesSearchDesktopMin] after the close circle)
+///    keep that desktop capsule minimum: actions demote tail-first into
+///    a ⋮ menu, and the ⋮ itself yields before the minimum does;
+///  - the title (and its folder glyph) shows only out of the surplus
+///    beyond the active minimum, so a tight band is a wide capsule, not
+///    a squeezed label;
+///  - cramped bands (a resizable panel at its minimum) drop the actions
+///    entirely and fill with the capsule ([kFilesSearchCompactFloor]).
+///
+/// The closing hairline comes from the browser's chrome stack below, so
+/// the band paints no second divider.
+final class FilesChrome extends StatelessWidget {
+  const FilesChrome({
+    super.key,
+    required this.searchController,
+    this.actions = const <FaHeaderAction>[],
+    this.onClose,
+    this.closeKey,
+    this.searchKey,
+    this.overflowKey,
+    this.menuColor,
+  });
+
+  /// The live filter the capsule types into (the browser's search state).
+  final TextEditingController searchController;
+
+  /// The browser actions (refresh, upload, iCloud sync, mount), in
+  /// priority order — the tail demotes into the ⋮ menu first.
+  final List<FaHeaderAction> actions;
+
+  /// Close circle; null hides it (hosts that toggle the surface
+  /// themselves).
+  final VoidCallback? onClose;
+
+  /// Lookup keys for the capsule / close / ⋮ slots (tests and goldens).
+  final Key? closeKey;
+  final Key? searchKey;
+  final Key? overflowKey;
+
+  /// The ⋮ menu's background color (the browser passes its tokens).
+  final Color? menuColor;
+
+  static const _bandHeight = 52.0;
+  static const _bandPadding = EdgeInsets.fromLTRB(10, 6, 10, 6);
+  static const _capsuleHeight = 32.0;
+  static const _titleIcon = 16.0;
+  static const _titleGap = 7.0;
+  static const _searchLeadingGap = 10.0;
+  static const _searchTrailingGap = 8.0;
+  static const _actionSlot = 40.0;
+  static const _actionGap = 8.0;
+
+  /// Icon + gap that only render alongside the title.
+  static const double _titleExtras = _titleIcon + _titleGap;
+
+  /// The desktop capsule minimum — the promise that the search field
+  /// expands to a real field on roomy surfaces instead of a ~140px stub.
+  static const double kFilesSearchDesktopMin = 220;
+
+  /// The cramped-band floor: below the desktop minimum the capsule still
+  /// takes the whole band, and only a band leaving this much shows a
+  /// title at all.
+  static const double kFilesSearchCompactFloor = 160;
+
+  /// Minimum width the title text needs before it is worth showing.
+  static const double _titleMin = 44;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = FahColors.of(context);
+    return SizedBox(
+      height: _bandHeight,
+      child: Padding(
+        padding: _bandPadding,
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final width = constraints.maxWidth;
+            double budget({required int inline, required bool overflow}) {
+              var w = _searchLeadingGap + _searchTrailingGap;
+              w +=
+                  inline * _actionSlot +
+                  (inline > 1 ? (inline - 1) * _actionGap : 0);
+              if (overflow) w += _actionGap + _actionSlot;
+              if (onClose != null) w += _actionGap + _actionSlot;
+              return width - w;
+            }
+
+            // The capsule's promise on this band: a roomy one keeps the
+            // desktop minimum for the field itself, a cramped one the
+            // compact floor, a tiny one just fills.
+            final bare = budget(inline: 0, overflow: false);
+            final searchFloor = bare >= kFilesSearchDesktopMin
+                ? kFilesSearchDesktopMin
+                : bare >= kFilesSearchCompactFloor
+                ? kFilesSearchCompactFloor
+                : 0.0;
+            // Actions demote tail-first while they would bite into the
+            // capsule's promise; the ⋮ menu lives on the compact floor so
+            // the actions stay reachable on middle-width bands.
+            var inline = actions.length;
+            while (inline > 0 &&
+                budget(inline: inline, overflow: true) < searchFloor) {
+              inline--;
+            }
+            final overflow =
+                inline < actions.length &&
+                budget(inline: inline, overflow: true) >=
+                    kFilesSearchCompactFloor;
+            final titleBudget =
+                budget(inline: inline, overflow: overflow) -
+                _titleExtras -
+                searchFloor;
+            final showTitle = titleBudget >= _titleMin;
+            final demoted = [
+              for (var i = inline; i < actions.length; i++) actions[i],
+            ];
+            return Row(
+              children: [
+                if (showTitle) ...[
+                  Icon(
+                    Icons.folder_open_outlined,
+                    size: _titleIcon,
+                    color: colors.dim,
+                  ),
+                  const SizedBox(width: _titleGap),
+                  ConstrainedBox(
+                    constraints: BoxConstraints(maxWidth: titleBudget),
+                    child: Text(
+                      context.l10n.filesPanelTitle,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: colors.text,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        height: 1.2,
+                      ),
+                    ),
+                  ),
+                ],
+                const SizedBox(width: _searchLeadingGap),
+                Expanded(
+                  child: SizedBox(
+                    height: _capsuleHeight,
+                    child: FaTextField(
+                      key: searchKey ?? const ValueKey('fileBrowserSearch'),
+                      controller: searchController,
+                      hintText: context.l10n.filesSearchHint,
+                      dense: true,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: _searchTrailingGap),
+                for (var i = 0; i < inline; i++) ...[
+                  if (i > 0) const SizedBox(width: _actionGap),
+                  _circle(context, actions[i]),
+                ],
+                if (overflow) ...[
+                  const SizedBox(width: _actionGap),
+                  _overflowMenu(context, demoted),
+                ],
+                if (onClose != null) ...[
+                  if (inline > 0 || overflow) const SizedBox(width: _actionGap),
+                  FilesCircleAction(
+                    buttonKey: closeKey ?? const ValueKey('filesAppClose'),
+                    icon: Icons.close,
+                    tooltip: context.l10n.appsCloseTooltip,
+                    onPressed: onClose,
+                  ),
+                ],
+              ],
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  Widget _circle(BuildContext context, FaHeaderAction action) =>
+      FilesCircleAction(
+        buttonKey: action.key,
+        icon: action.icon!,
+        tooltip: action.label,
+        onPressed: action.onPressed,
+      );
+
+  /// The demoted tail, reachable through the same ⋮ menu family the
+  /// adaptive headers use — accessibility keeps the action's name
+  /// wherever it renders.
+  Widget _overflowMenu(BuildContext context, List<FaHeaderAction> demoted) =>
+      FaHeaderCircularAction(
+        child: PopupMenuButton<int>(
+          key: overflowKey ?? const ValueKey('fileBrowserOverflow'),
+          tooltip: FaChatStrings.of(context).chatMoreTooltip,
+          color: menuColor,
+          icon: const Icon(Icons.more_vert, size: 18),
+          onSelected: (index) => demoted[index].onPressed?.call(),
+          itemBuilder: (context) => [
+            for (var i = 0; i < demoted.length; i++)
+              PopupMenuItem(
+                value: i,
+                child: Row(
+                  children: [
+                    Icon(demoted[i].icon, size: 18),
+                    const SizedBox(width: 10),
+                    Flexible(
+                      child: Text(
+                        demoted[i].label,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+          ],
+        ),
+      );
 }

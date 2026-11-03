@@ -31,10 +31,10 @@ import 'package:fa/services/last_connection.dart';
 import 'package:fa/services/provider_registry.dart';
 import 'package:fa/services/upload.dart';
 import 'package:fa/ui/screens/settings.dart';
+import 'package:fa/ui/apps/files_presentation_panel.dart';
 import 'package:fa/ui/widgets/chat_composer.dart';
 import 'package:fa/ui/widgets/fah_wallpaper.dart';
 import 'package:fa/ui/widgets/image_drop_notice_chip.dart';
-import 'package:fa/ui/widgets/file_browser.dart';
 import 'package:fa/ui/widgets/media_player.dart';
 
 // The screen itself lives in the fa_ui package; these symbols stay
@@ -454,19 +454,17 @@ class _ChatScreenState extends State<ChatScreen> {
         registry: widget.registry,
         lastConnectionStore: widget.lastConnectionStore,
       ),
-      fileBrowserBuilder: (context) =>
-          MediaQuery.sizeOf(context).width >= fa_ui.kWideLayoutBreakpoint
-          ? FileBrowser(
-              env: service.env,
-              fsRevision: service.fsRevision,
-              onProjectMountChanged: service.refreshProjectMountPrompt,
-            )
-          : FileBrowser(
-              env: service.env,
-              inlinePreview: false,
-              fsRevision: service.fsRevision,
-              onProjectMountChanged: service.refreshProjectMountPrompt,
-            ),
+      fileBrowserBuilder: (context) => FilesAppPanel(
+        presentation: FilesAppPresentation(
+          env: service.env,
+          fsRevision: service.fsRevision,
+          onProjectMountChanged: service.refreshProjectMountPrompt,
+        ),
+        // The wide docked panel previews inline; the narrow end drawer
+        // pushes the preview route.
+        inlinePreview:
+            MediaQuery.sizeOf(context).width >= fa_ui.kWideLayoutBreakpoint,
+      ),
       composerBuilder: (context, chatService, drop) => ChatComposer(
         service: chatService as AgentService,
         draftKey: widget.manager.activeId,

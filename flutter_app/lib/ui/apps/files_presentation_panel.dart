@@ -2,9 +2,9 @@
 // Use of this source code is governed by a MIT-style license that can be
 // found in the LICENSE file.
 
-import 'package:fa/l10n/l10n_ext.dart';
 import 'package:fa/ui/widgets/file_browser.dart';
 import 'package:fa_ui/fa_ui.dart';
+import 'package:flutter/foundation.dart' show defaultTargetPlatform, kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart'
     show ExecutionEnv;
@@ -26,27 +26,29 @@ final class FilesAppPresentation {
 
 /// Files presented like an app: a floating glass card (8pt margins,
 /// rounded corners — the sidebar/center chrome language) whose ONE chrome
-/// band carries the Files title, the search capsule and the close circle
-/// above the real file browser. The browser's own header row is hidden —
-/// one band per presented pane, never a stacked double header.
-final class FilesAppPanel extends StatefulWidget {
-  const FilesAppPanel({super.key, required this.presentation, this.onClose});
+/// band ([FilesChrome]) carries the Files title, the search capsule and
+/// the actions above the real file browser. The browser renders the band
+/// itself ([FileBrowser.showHeader]) — one band per pane, never a stacked
+/// double header, and the same chrome the in-chat, drawer and pushed
+/// Files surfaces use.
+final class FilesAppPanel extends StatelessWidget {
+  const FilesAppPanel({
+    super.key,
+    required this.presentation,
+    this.onClose,
+    this.inlinePreview = false,
+  });
 
   final FilesAppPresentation presentation;
+
+  /// Closes the surface through the band's trailing circle. Null hides
+  /// the circle — the in-chat panel and the end drawer close through
+  /// their own hosts (the chat header's Files button / the scrim).
   final VoidCallback? onClose;
 
-  @override
-  State<FilesAppPanel> createState() => _FilesAppPanelState();
-}
-
-final class _FilesAppPanelState extends State<FilesAppPanel> {
-  final _searchController = TextEditingController();
-
-  @override
-  void dispose() {
-    _searchController.dispose();
-    super.dispose();
-  }
+  /// Whether file previews render inside the pane (wide docked surfaces)
+  /// or push a full-screen route (narrow ones).
+  final bool inlinePreview;
 
   @override
   Widget build(BuildContext context) {
@@ -65,24 +67,17 @@ final class _FilesAppPanelState extends State<FilesAppPanel> {
           tintOpacity: .78,
           borderRadius: BorderRadius.circular(18),
           padding: const EdgeInsets.all(6),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              _FilesChrome(
-                onClose: widget.onClose,
-                searchController: _searchController,
-              ),
-              Expanded(
-                child: FileBrowser(
-                  env: widget.presentation.env,
-                  inlinePreview: false,
-                  fsRevision: widget.presentation.fsRevision,
-                  onProjectMountChanged: widget.presentation.onProjectMountChanged,
-                  showHeader: false,
-                  filterController: _searchController,
-                ),
-              ),
-            ],
+          child: FileBrowser(
+            env: presentation.env,
+            inlinePreview: inlinePreview,
+            fsRevision: presentation.fsRevision,
+            onProjectMountChanged: presentation.onProjectMountChanged,
+            showHeader: true,
+            surfaceBorder: false,
+            onClose: onClose,
+            headerKey: const ValueKey('filesAppPanelToolbar'),
+            searchKey: const ValueKey('filesAppSearch'),
+            closeKey: const ValueKey('filesAppClose'),
           ),
         ),
       ),
@@ -90,66 +85,28 @@ final class _FilesAppPanelState extends State<FilesAppPanel> {
   }
 }
 
-/// The panel's ONE chrome band: Files title, the search capsule
-/// ([FaTextField]) and the close circle — the native twin of the JS app
-/// panel's chrome. The closing hairline comes from the browser's chrome
-/// stack below, so the band paints no second divider.
-final class _FilesChrome extends StatelessWidget {
-  const _FilesChrome({this.onClose, required this.searchController});
+/// Files as a pushed full-page route (Apps → Files and the shell's
+/// narrow-layout Files): the SAME [FilesAppPanel] card — one Files look
+/// everywhere — with the band's close circle popping the route. macOS
+/// traffic lights float over content, so the card clears the same 32px
+/// strip the pushed app bars reserve ([faAppBar] clearance).
+final class FilesAppPage extends StatelessWidget {
+  const FilesAppPage({super.key, required this.presentation});
 
-  final VoidCallback? onClose;
-  final TextEditingController searchController;
+  final FilesAppPresentation presentation;
 
   @override
   Widget build(BuildContext context) {
-    final colors = FahColors.of(context);
+    // Mirrors faAppBar's macOS clearance (wide_layout_shell owns that
+    // symbol; importing it here would cycle the two libraries).
+    final trafficClearance =
+        !kIsWeb && defaultTargetPlatform == TargetPlatform.macOS ? 32.0 : 0.0;
     return Padding(
-      key: const ValueKey('filesAppPanelToolbar'),
-      padding: const EdgeInsets.fromLTRB(10, 4, 6, 6),
-      child: Row(
-        children: [
-          Icon(Icons.folder_open_outlined, size: 16, color: colors.dim),
-          const SizedBox(width: 7),
-          Text(
-            context.l10n.filesPanelTitle,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              color: colors.text,
-              fontSize: 13,
-              fontWeight: FontWeight.w600,
-              height: 1.2,
-            ),
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: SizedBox(
-              height: 32,
-              child: FaTextField(
-                key: const ValueKey('filesAppSearch'),
-                controller: searchController,
-                hintText: context.l10n.filesSearchHint,
-                dense: true,
-              ),
-            ),
-          ),
-          const SizedBox(width: 8),
-          FaHeaderCircularAction(
-            child: IconButton(
-              key: const ValueKey('filesAppClose'),
-              icon: const Icon(Icons.close, size: 18),
-              padding: EdgeInsets.zero,
-              constraints: const BoxConstraints.tightFor(width: 40, height: 40),
-              style: IconButton.styleFrom(
-                minimumSize: const Size.square(40),
-                maximumSize: const Size.square(40),
-                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-              ),
-              tooltip: context.l10n.appsCloseTooltip,
-              onPressed: onClose,
-            ),
-          ),
-        ],
+      padding: EdgeInsets.only(top: trafficClearance),
+      child: FilesAppPanel(
+        presentation: presentation,
+        inlinePreview: false,
+        onClose: () => Navigator.of(context).maybePop(),
       ),
     );
   }

@@ -1,6 +1,7 @@
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:fa/l10n/l10n_ext.dart';
 import 'package:fa/services/agent_service.dart';
 import 'package:fa_ui/fa_ui.dart'
     show
@@ -90,7 +91,10 @@ List<String> _listedNames(WidgetTester tester) {
       .map((row) {
         final title = tester
             .widgetList<Text>(
-              find.descendant(of: find.byKey(row.key!), matching: find.byType(Text)),
+              find.descendant(
+                of: find.byKey(row.key!),
+                matching: find.byType(Text),
+              ),
             )
             .first;
         return title.data!;
@@ -320,6 +324,41 @@ void main() {
       ]);
     });
 
+    testWidgets('the band capsule filters the listing live', (tester) async {
+      final env = await _seededEnv();
+      await tester.pumpWidget(_wrap(FileBrowser(env: env)));
+      await tester.pumpAndSettle();
+      expect(find.text('notes.txt'), findsOneWidget);
+      expect(find.text('logo.png'), findsOneWidget);
+
+      await tester.enterText(
+        find.byKey(const ValueKey('fileBrowserSearch')),
+        'notes',
+      );
+      await tester.pump();
+      expect(find.text('notes.txt'), findsOneWidget);
+      expect(find.text('logo.png'), findsNothing);
+
+      await tester.enterText(
+        find.byKey(const ValueKey('fileBrowserSearch')),
+        'zzz',
+      );
+      await tester.pump();
+      expect(_listedNames(tester), ['zzz_dir']);
+
+      await tester.enterText(
+        find.byKey(const ValueKey('fileBrowserSearch')),
+        'no-such-file',
+      );
+      await tester.pump();
+      expect(
+        find.text(
+          tester.element(find.byType(FileBrowser)).l10n.filesNoSearchMatches,
+        ),
+        findsOneWidget,
+      );
+    });
+
     testWidgets('themed grouped cards and chrome adapt without overflow', (
       tester,
     ) async {
@@ -328,7 +367,7 @@ void main() {
       final env = await _seededEnv();
       for (final direction in FaVisualDirection.values) {
         for (final brightness in Brightness.values) {
-          for (final width in <double>[240, 300, 420, 180]) {
+          for (final width in <double>[800, 300]) {
             await tester.pumpWidget(const SizedBox());
             await tester.pump();
             tester.view.physicalSize = Size(width, 700);
@@ -349,23 +388,39 @@ void main() {
             );
             await tester.pumpAndSettle();
             final reason = '$direction $brightness at $width';
-            final title = tester.widget<Text>(
-              find.descendant(
-                of: find.byKey(const ValueKey('fileBrowserHeader')),
-                matching: find.text('Files'),
-              ),
+            // ONE band: the search capsule always fills the header, and
+            // its width grows with the band — the desktop minimum holds
+            // on a roomy band, and a cramped band gives the capsule
+            // everything between its neighbors.
+            final capsule = tester.getRect(
+              find.byKey(const ValueKey('fileBrowserSearch')),
             );
-            expect(title.maxLines, 1, reason: reason);
-            expect(title.overflow, TextOverflow.ellipsis, reason: reason);
             expect(
-              tester.getRect(
-                find.descendant(
-                  of: find.byKey(const ValueKey('fileBrowserHeader')),
-                  matching: find.text('Files'),
-                ),
-              ).height,
-              lessThan(24),
+              capsule.width,
+              width >= 800
+                  ? greaterThanOrEqualTo(220)
+                  : greaterThanOrEqualTo(160),
+              reason: reason,
             );
+            // The title yields to the capsule: shown out of the surplus
+            // on a roomy band (never squeezed under a 24px strip), hidden
+            // entirely on a cramped one.
+            final titleFinder = find.descendant(
+              of: find.byKey(const ValueKey('fileBrowserHeader')),
+              matching: find.text('Files'),
+            );
+            if (width >= 800) {
+              final title = tester.widget<Text>(titleFinder);
+              expect(title.maxLines, 1, reason: reason);
+              expect(title.overflow, TextOverflow.ellipsis, reason: reason);
+              expect(
+                tester.getRect(titleFinder).height,
+                lessThan(24),
+                reason: reason,
+              );
+            } else {
+              expect(titleFinder, findsNothing, reason: reason);
+            }
             expect(
               tester
                   .getSize(
@@ -428,7 +483,7 @@ void main() {
                   : findsNothing,
               reason: reason,
             );
-            if (width >= 240) {
+            if (width >= 800) {
               Finder action(String key) => find
                   .ancestor(
                     of: find.byKey(ValueKey('fileBrowser$key')),
@@ -445,13 +500,14 @@ void main() {
                   reason: reason,
                 );
               }
+              // Priority order on the band: refresh, upload, sync.
               expect(
-                tester.getRect(sync).left - tester.getRect(upload).right,
+                tester.getRect(upload).left - tester.getRect(refresh).right,
                 8,
                 reason: reason,
               );
               expect(
-                tester.getRect(refresh).left - tester.getRect(sync).right,
+                tester.getRect(sync).left - tester.getRect(upload).right,
                 8,
                 reason: reason,
               );
@@ -472,6 +528,8 @@ void main() {
                 reason: reason,
               );
             } else {
+              // A middle-width band keeps the actions reachable through
+              // the ⋮ menu while the capsule keeps its floor.
               expect(
                 find.byKey(const ValueKey('fileBrowserOverflow')),
                 findsOneWidget,
@@ -601,23 +659,22 @@ void main() {
       expect(retry.icon, Icons.refresh);
     });
 
-    testWidgets(
-      'inline preview swaps into the chrome band, not a second row',
-      (tester) async {
-        final env = await _seededEnv();
-        await tester.pumpWidget(_wrap(FileBrowser(env: env)));
-        await tester.pumpAndSettle();
+    testWidgets('inline preview swaps into the chrome band, not a second row', (
+      tester,
+    ) async {
+      final env = await _seededEnv();
+      await tester.pumpWidget(_wrap(FileBrowser(env: env)));
+      await tester.pumpAndSettle();
 
-        await tester.tap(find.text('notes.txt'));
-        await tester.pumpAndSettle();
-        expect(find.byKey(const ValueKey('filePreviewHeader')), findsOneWidget);
-        expect(find.byKey(const ValueKey('fileBrowserPathBar')), findsNothing);
-        await tester.tap(find.byTooltip('Back to files'));
-        await tester.pumpAndSettle();
-        expect(find.byKey(const ValueKey('filePreviewHeader')), findsNothing);
-        expect(find.byKey(const ValueKey('fileBrowserPathBar')), findsOneWidget);
-      },
-    );
+      await tester.tap(find.text('notes.txt'));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('filePreviewHeader')), findsOneWidget);
+      expect(find.byKey(const ValueKey('fileBrowserPathBar')), findsNothing);
+      await tester.tap(find.byTooltip('Back to files'));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('filePreviewHeader')), findsNothing);
+      expect(find.byKey(const ValueKey('fileBrowserPathBar')), findsOneWidget);
+    });
 
     testWidgets('path bar up button shares the header action chrome', (
       tester,

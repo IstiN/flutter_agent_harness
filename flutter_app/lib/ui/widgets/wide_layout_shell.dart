@@ -50,7 +50,6 @@ import 'package:fa/ui/screens/chat_screen.dart';
 import 'package:fa/ui/widgets/quick_model_chip.dart';
 import 'package:fa/ui/screens/models_settings_page.dart';
 import 'package:fa/ui/screens/settings.dart';
-import 'package:fa/ui/widgets/file_browser.dart';
 import 'package:fa/ui/widgets/boot_oversize_notice.dart';
 import 'package:fa/ui/widgets/sidebar_nav_item.dart';
 import 'package:fa/ui/widgets/sidebar_sessions_list.dart';
@@ -1082,12 +1081,13 @@ class _WideLayoutShellState extends State<WideLayoutShell>
                 final presentation = _appPresentation;
                 final revealRaw = _presentationReveal.value;
                 final reveal = Curves.easeInOutCubic.transform(revealRaw);
-                            final full = presentation?.fullScreen == true;
+                final full = presentation?.fullScreen == true;
                 // Presence (not the animation value) gates the slot: the
                 // content mounts on the presenting frame itself and the
                 // reveal only animates the pane's geometry afterwards.
                 final slotVisible = _presentationMounted && !full;
-                final floatingPanel = slotVisible && constraints.maxWidth <= 1080;
+                final floatingPanel =
+                    slotVisible && constraints.maxWidth <= 1080;
                 return Stack(
                   children: [
                     Row(
@@ -2325,15 +2325,16 @@ class _WideLayoutShellState extends State<WideLayoutShell>
     if (!mounted) return;
     if (_isNarrow) {
       final fsRevision = service?.fsRevision;
-      await pushFaPage<void>(
-        context,
-        Scaffold(
-          appBar: faAppBar(title: Text(context.l10n.chatFilesTooltip)),
-          body: FileBrowser(
-            env: env,
-            inlinePreview: false,
-            fsRevision: fsRevision,
-            onProjectMountChanged: service?.refreshProjectMountPrompt,
+      // The SAME Files card every other entry uses — the shared chrome
+      // band, never a legacy Scaffold + app-bar duplicate.
+      await Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => FilesAppPage(
+            presentation: FilesAppPresentation(
+              env: env,
+              fsRevision: fsRevision,
+              onProjectMountChanged: service?.refreshProjectMountPrompt,
+            ),
           ),
         ),
       );

@@ -13,6 +13,8 @@ import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/flutter_session_manager.dart';
 import 'package:fa/services/launcher_layout_store.dart';
 import 'package:fa/ui/app_theme.dart';
+import 'package:fa/ui/screens/settings.dart';
+import 'package:fa/ui/widgets/file_browser.dart';
 import 'package:fa/ui/screens/app_launcher_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
@@ -544,6 +546,32 @@ void main() {
       await tester.tap(find.text('Writing'));
       await tester.pumpAndSettle();
       await expectGolden(tester, 'launcher/folder_open_dark');
+    });
+
+    testWidgets('Files tile opens the shared Files card route', (tester) async {
+      await _pumpLauncher(tester);
+      await tester.tap(find.text('Files'));
+      await tester.pumpAndSettle();
+      // The SAME presented-Files card — one chrome band with the search
+      // capsule — never a legacy app-bar duplicate.
+      expect(find.byKey(const ValueKey('filesAppPanel')), findsOneWidget);
+      expect(find.byKey(const ValueKey('filesAppSearch')), findsOneWidget);
+      expect(find.byType(FileBrowser), findsOneWidget);
+      await expectGolden(tester, 'launcher/files_route');
+      // The band's close circle pops the route.
+      await tester.tap(find.byKey(const ValueKey('filesAppClose')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('filesAppPanel')), findsNothing);
+    });
+
+    testWidgets('Settings tile presents the Fa2 settings surface', (
+      tester,
+    ) async {
+      await _pumpLauncher(tester);
+      await tester.tap(find.text('Settings'));
+      await tester.pumpAndSettle();
+      expect(find.byType(SettingsScreen), findsOneWidget);
+      await expectGolden(tester, 'launcher/settings_route');
     });
 
     testWidgets('grid with live tiles (4x2 + 2x2) — dark', (tester) async {

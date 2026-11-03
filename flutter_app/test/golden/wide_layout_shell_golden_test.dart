@@ -681,6 +681,27 @@ void main() {
     await disposeGoldenShell(tester);
   });
 
+  testWidgets('mobile Files opens the shared Files card route', (tester) async {
+    final manager = await pumpShell(tester, size: goldenSizePhone);
+    await manager.env.createDir('src');
+    await manager.env.writeFile('README.md', '# Narrow shell files\n');
+    await tester.tap(find.text('Apps'));
+    await tester.pumpAndSettle();
+    // The launcher's Files tile pushes the SAME FilesAppPage card as the
+    // Apps directory's entry — the shared chrome band, not a Scaffold +
+    // app bar.
+    await tester.tap(find.text('Files'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('filesAppPanel')), findsOneWidget);
+    expect(find.byType(FileBrowser), findsOneWidget);
+    await expectGolden(tester, 'narrow_layout_shell_files_route');
+    // The band's close circle pops the route.
+    await tester.tap(find.byKey(const ValueKey('filesAppClose')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('filesAppPanel')), findsNothing);
+    await disposeGoldenShell(tester);
+  });
+
   testWidgets('mobile Activity detail', (tester) async {
     await pumpShell(tester, size: goldenSizePhone);
     await tester.tap(find.text('Activity'));

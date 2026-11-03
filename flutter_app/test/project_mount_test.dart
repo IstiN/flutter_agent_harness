@@ -67,7 +67,7 @@ void main() {
     tester,
   ) async {
     tester.view.devicePixelRatio = 1;
-    tester.view.physicalSize = const Size(300, 700);
+    tester.view.physicalSize = const Size(900, 700);
     addTearDown(tester.view.reset);
     final env = await _envWithHost();
     final ops = _FakeFolderOps(

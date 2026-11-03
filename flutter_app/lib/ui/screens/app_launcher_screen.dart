@@ -36,10 +36,9 @@ import 'package:fa/ui/widgets/messenger_section_header.dart';
 import 'package:fa/ui/widgets/widget_publish_sheet.dart';
 import 'package:fa/ui/screens/settings.dart';
 import 'package:fa/ui/network/network_mode_chip.dart';
-import 'package:fa/ui/widgets/file_browser.dart';
+import 'package:fa/ui/apps/files_presentation_panel.dart';
 import 'package:fa/ui/widgets/span_grid_delegate.dart';
 import 'package:fa_ui/fa_ui.dart';
-import 'package:fa/ui/widgets/wide_layout_shell.dart' show faAppBar;
 
 /// iOS-home-screen-style apps launcher: the app's home on narrow layouts
 /// (the wide layout keeps the classic chat home). A dynamic square grid of
@@ -948,17 +947,19 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
     final service = widget.manager.active?.service;
     if (service == null) return;
     AppAnalytics.instance.settingsOpened();
-    await Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => SettingsScreen(
-          service: service,
-          env: widget.manager.env,
-          registry: widget.registry,
-          lastConnectionStore: widget.lastConnectionStore,
-          // The same store instance the launcher listens to — grid changes
-          // apply live.
-          layoutStore: _layout,
-        ),
+    // The Fa2 page presentation — the same centered/adaptive surface the
+    // shell's Settings entry uses, instead of a raw full-page Material
+    // route.
+    await pushFaPage<void>(
+      context,
+      SettingsScreen(
+        service: service,
+        env: widget.manager.env,
+        registry: widget.registry,
+        lastConnectionStore: widget.lastConnectionStore,
+        // The same store instance the launcher listens to — grid changes
+        // apply live.
+        layoutStore: _layout,
       ),
     );
   }
@@ -967,13 +968,14 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
     final service = widget.manager.active?.service;
     if (service == null) return;
     AppAnalytics.instance.filesOpened('launcher');
+    // The SAME Files surface every other entry uses — the shared
+    // [FilesAppPanel] card with its chrome band — never a legacy
+    // Scaffold + app-bar duplicate.
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
-        builder: (_) => Scaffold(
-          appBar: faAppBar(title: Text(context.l10n.chatFilesTooltip)),
-          body: FileBrowser(
+        builder: (_) => FilesAppPage(
+          presentation: FilesAppPresentation(
             env: service.env,
-            inlinePreview: false,
             fsRevision: service.fsRevision,
             onProjectMountChanged: service.refreshProjectMountPrompt,
           ),
@@ -1193,27 +1195,27 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
                             ),
                           ),
                         ),
-                    // gh-1616: Chrome-parity "Load unpacked" — a local
-                    // apps/<id>/ folder loads, validates and persists like a
-                    // catalog install. Hidden on hosts with no folder picker.
-                    if (_unpackedPicker != null)
-                      Padding(
-                        padding: const EdgeInsets.only(right: 8),
-                        child: _OverviewChip(
-                          chipKey: const ValueKey('appsLoadUnpacked'),
-                          icon: Icons.folder_open_outlined,
-                          label: context.l10n.launcherLoadUnpacked,
-                          selected: false,
-                          onTap: () => unawaited(
-                            loadUnpackedWidget(
-                              context,
-                              manager: widget.manager,
-                              appsStore: _appsStore,
-                              picker: _unpackedPicker,
+                      // gh-1616: Chrome-parity "Load unpacked" — a local
+                      // apps/<id>/ folder loads, validates and persists like a
+                      // catalog install. Hidden on hosts with no folder picker.
+                      if (_unpackedPicker != null)
+                        Padding(
+                          padding: const EdgeInsets.only(right: 8),
+                          child: _OverviewChip(
+                            chipKey: const ValueKey('appsLoadUnpacked'),
+                            icon: Icons.folder_open_outlined,
+                            label: context.l10n.launcherLoadUnpacked,
+                            selected: false,
+                            onTap: () => unawaited(
+                              loadUnpackedWidget(
+                                context,
+                                manager: widget.manager,
+                                appsStore: _appsStore,
+                                picker: _unpackedPicker,
+                              ),
                             ),
                           ),
                         ),
-                      ),
                     ],
                   ),
                 )
