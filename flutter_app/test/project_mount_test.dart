@@ -1,8 +1,12 @@
+import 'dart:io';
+
 import 'package:fa/ui/widgets/file_browser.dart';
 import 'package:fa/services/project_folder_channel.dart';
 import 'package:fa/services/project_mount_env.dart';
+import 'package:fa/services/project_mount_flow.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
+import 'package:flutter_agent_harness/io.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 /// Scripted [ProjectFolderOps] for the open-folder flow tests.
@@ -32,6 +36,67 @@ Future<ProjectMountEnv> _envWithHost() async {
 Widget _wrap(Widget child) => MaterialApp(home: Scaffold(body: child));
 
 void main() {
+  group('visibleFolderRoot — the Files initialPath visibility seam (P1)', () {
+    test('session folder == the mounted root passes through', () {
+      final base = LocalExecutionEnv(cwd: '/app/support');
+      final env = ProjectMountEnv(base)..mountedRoot = '/Users/x/project';
+      expect(
+        visibleFolderRoot(env, '/Users/x/project'),
+        '/Users/x/project',
+      );
+    });
+
+    test('an unrelated host path (the macOS sandbox cannot see it) is null',
+        () {
+      // The regression: currentSessionCwd passed raw — Files tried to
+      // list a host path outside the granted mount and painted "could
+      // not open folder". Null keeps the env cwd instead (for a mounted
+      // session that already is the session's folder via /project).
+      final base = LocalExecutionEnv(cwd: '/app/support');
+      final env = ProjectMountEnv(base)..mountedRoot = '/Users/x/project';
+      expect(visibleFolderRoot(env, '/Users/Uladzimir/git/support'), isNull);
+    });
+
+    test('session folder == the env cwd (unmounted desktop) passes through',
+        () {
+      final env = LocalExecutionEnv(cwd: '/app/support');
+      expect(visibleFolderRoot(env, '/app/support'), '/app/support');
+    });
+
+    test('trailing slashes do not hide visibility', () {
+      final base = LocalExecutionEnv(cwd: '/app/support');
+      final env = ProjectMountEnv(base)..mountedRoot = '/Users/x/project/';
+      expect(visibleFolderRoot(env, '/Users/x/project'), '/Users/x/project');
+      expect(
+        visibleFolderRoot(env, '/Users/x/project///'),
+        '/Users/x/project///'.replaceAll(RegExp(r'/+$'), ''),
+      );
+    });
+
+    test('null/empty candidates stay null', () {
+      final env = ProjectMountEnv(LocalExecutionEnv(cwd: '/app'))
+        ..mountedRoot = '/Users/x/project';
+      expect(visibleFolderRoot(env, null), isNull);
+      expect(visibleFolderRoot(env, ''), isNull);
+      expect(visibleFolderRoot(env, '   '), isNull);
+    });
+
+    test('the visible root is returned for the env the listing will use',
+        () async {
+      // End-to-end shape: what the seam returns must be a path the env's
+      // listing can actually open — mounted root lists through the mount
+      // pass-through, the env cwd always lists.
+      final dir = await Directory.systemTemp.createTemp('visible_root');
+      addTearDown(() => dir.delete(recursive: true));
+      await File('${dir.path}/in_project.txt').writeAsString('x');
+      final base = LocalExecutionEnv(cwd: dir.path);
+      final env = ProjectMountEnv(base)..mountedRoot = dir.path;
+      final root = visibleFolderRoot(env, dir.path);
+      expect(root, dir.path);
+      expect((await env.listDir(root!)).isOk, isTrue);
+    });
+  });
+
   group('ProjectFolderChannelOps', () {
     test('pickResult maps a complete payload to the record', () {
       expect(

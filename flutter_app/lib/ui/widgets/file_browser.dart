@@ -1328,6 +1328,11 @@ final class FilesChrome extends StatelessWidget {
                       controller: searchController,
                       hintText: context.l10n.filesSearchHint,
                       dense: true,
+                      // The capsule is a full 40pt field (the composer's
+                      // row scale): the decorator's layout fills the box
+                      // and the text sits centered in it, not an
+                      // intrinsic dense strip top-aligned inside.
+                      boxHeight: _capsuleHeight,
                     ),
                   ),
                 ),

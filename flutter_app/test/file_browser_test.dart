@@ -636,6 +636,52 @@ void main() {
             .size,
         18,
       );
+
+      // P2 render-box audit (the "capsule still tiny" report was shot on
+      // the pre-SizedBox build where FaTextField painted its ~17.5pt
+      // intrinsic box ~21px above the circles' centers). The envelope is
+      // not enough — the INPUT DECORATOR (the filled surface the user
+      // sees) must paint the full 40pt box, and the capsule's center must
+      // sit exactly on the circles' centers.
+      final decoratorRect = tester.getRect(
+        find.descendant(
+          of: find.byKey(const ValueKey('fileBrowserSearch')),
+          matching: find.byType(InputDecorator),
+        ).first,
+      );
+      expect(decoratorRect.height, 40, reason: 'InputDecorator fill height');
+      expect(
+        decoratorRect.center.dy,
+        moreOrLessEquals(close.center.dy, epsilon: 0.5),
+        reason: 'capsule center on the close circle center',
+      );
+      expect(
+        decoratorRect.center.dy,
+        moreOrLessEquals(
+          tester
+              .getRect(circleOf(const ValueKey('fileBrowserRefresh')))
+              .center
+              .dy,
+          epsilon: 0.5,
+        ),
+        reason: 'capsule center on the refresh circle center',
+      );
+      // The editable text inside paints within the capsule, vertically
+      // centered in it (the visual "tiny strip above the buttons" guard:
+      // the pre-fix field laid its text out at the capsule's very top).
+      final editableRect = tester.getRect(find.byType(EditableText).first);
+      expect(
+        editableRect.center.dy,
+        moreOrLessEquals(close.center.dy, epsilon: 0.5),
+      );
+      expect(
+        editableRect.top,
+        greaterThanOrEqualTo(decoratorRect.top),
+      );
+      expect(
+        editableRect.bottom,
+        lessThanOrEqualTo(decoratorRect.bottom),
+      );
     });
 
     testWidgets('breadcrumbs: one line, ellipsized, vertically centered in '

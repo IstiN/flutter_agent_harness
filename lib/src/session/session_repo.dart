@@ -1167,14 +1167,24 @@ final class JsonlSessionRepo implements SessionRepo {
   /// walked breadth-first with bounded parallel [listDir] calls, then all
   /// header reads fan out through ONE bounded pool (issue #199 AC3 —
   /// sequential listing makes app boot O(sessions × header latency)).
+  ///
+  /// Per-directory [listDir] and per-file header failures are skipped
+  /// (with a `session_list_skip` diagnostic through the ioRetry logger):
+  /// one unreadable file or a directory that vanished mid-walk (the
+  /// transient-ENOENT host family issue #427 names) must not fail the
+  /// whole listing — a single bad entry used to blank a host's entire
+  /// session sidebar.
   Future<List<SessionMetadata>> _collectSessionsInDir(String dirPath) async {
     final files = <FileInfo>[];
     final pending = <String>[dirPath];
     while (pending.isNotEmpty) {
       final level = List.of(pending);
       pending.clear();
-      final discovered = await _mapBounded(level, _listDir);
+      final discovered = await _mapBounded(level, _listDirOrNull);
       for (final entries in discovered) {
+        // A directory that failed to list is skipped (logged) — the walk
+        // continues with the rest of the tree.
+        if (entries == null) continue;
         for (final entry in entries) {
           if (entry.kind == FileKind.directory) {
             // Trash (issue #522) never surfaces as live sessions.
@@ -1216,6 +1226,17 @@ final class JsonlSessionRepo implements SessionRepo {
     return [for (final r in results) r as R];
   }
 
+  /// [_listDir] that skips a failing directory instead of failing the
+  /// whole walk: the listing degrades to the readable part of the tree.
+  Future<List<FileInfo>?> _listDirOrNull(String dir) async {
+    try {
+      return await _listDir(dir);
+    } on SessionException catch (error) {
+      _logListSkip(dir, error);
+      return null;
+    }
+  }
+
   Future<List<FileInfo>> _listDir(String dir) async => _fsOrThrow(
     await _fs.listDir(dir),
     'Failed to list session directory $dir',
@@ -1230,10 +1251,25 @@ final class JsonlSessionRepo implements SessionRepo {
         sizeBytes: entry.size,
       );
     } on SessionException catch (error) {
-      if (error.code != SessionErrorCode.invalidSession) rethrow;
+      // A header that parses but is not a session (receipts, foreign
+      // jsonl) is expected noise — silent skip, as before. An unreadable
+      // file (transient ENOENT, permission, torn mid-write) is also a
+      // skip — but a logged one, so the post-mortem sees what dropped
+      // out of the listing instead of a silently shrinking sidebar.
+      if (error.code != SessionErrorCode.invalidSession) {
+        _logListSkip(entry.path, error);
+      }
       return null;
     }
   }
+
+  /// One `session_list_skip` diagnostic line through the ioRetry logger
+  /// (the sink hosts already wire for `session_io_retry`). Silent when
+  /// no logger is configured.
+  void _logListSkip(String path, SessionException error) =>
+      _ioRetry.logger?.call(
+        'session_list_skip path=$path error=${error.message}',
+      );
 
   Future<List<SessionRecord>> _entriesToFork(
     SessionStorage storage,

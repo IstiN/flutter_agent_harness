@@ -137,6 +137,12 @@ final class FlutterSessionManager extends ChangeNotifier {
                env: env,
                root: sessionsRoot,
              ),
+             // Surface the store's own diagnostics (session_io_retry
+             // lines, session_list_skip skips) in the app log — a
+             // shrinking listing must leave a trace.
+             ioRetry: SessionIoRetryConfig(
+               logger: (message) => debugPrint('[fah][sessions] $message'),
+             ),
            ),
        _parentResolver = parentResolver ?? SubagentParentResolver();
 
@@ -270,7 +276,13 @@ final class FlutterSessionManager extends ChangeNotifier {
       final relinked = await _parentResolver.resolve(listed);
       if (relinked.isEmpty) return listed;
       return relinkSubagentParents(listed, relinked);
-    } on Object {
+    } on Object catch (error) {
+      // Storage failures yield an empty list — a broken sessions dir must
+      // not break the sidebar listing. But NEVER silently: an empty
+      // sidebar with healthy rows on disk is undebuggable without this
+      // line (P3: "локальных сессий не видно" with 900+ files listing
+      // fine from a shell).
+      debugPrint('[fah][sessions] list failed: $error');
       return const [];
     }
   }
@@ -283,7 +295,8 @@ final class FlutterSessionManager extends ChangeNotifier {
   Future<List<SessionMetadata>> _listViaHostService(AgentService active) async {
     try {
       return await active.listSessions();
-    } on Object {
+    } on Object catch (error) {
+      debugPrint('[fah][sessions] hosted list failed: $error');
       return const [];
     }
   }

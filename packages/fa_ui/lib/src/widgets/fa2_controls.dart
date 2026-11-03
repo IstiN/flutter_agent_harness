@@ -2,6 +2,7 @@
 // Use of this source code is governed by a MIT license that can be found
 // in the LICENSE file.
 
+import 'dart:math' as math;
 import 'dart:ui' show lerpDouble;
 
 import 'package:flutter/material.dart';
@@ -230,6 +231,7 @@ class FaTextField extends StatelessWidget {
     this.autofocus = false,
     this.enabled = true,
     this.autocorrect = true,
+    this.boxHeight,
     this.enableSuggestions = true,
     this.onChanged,
     this.onSubmitted,
@@ -254,6 +256,19 @@ class FaTextField extends StatelessWidget {
   /// Whether the OS text-correction pipeline applies (off for secrets).
   final bool autocorrect;
 
+  /// The host's fixed box height: FaTextField pads the field's content
+  /// so the InputDecorator's intrinsic layout is EXACTLY this tall — the
+  /// painted fill and the text genuinely occupy the box, vertically
+  /// centered, instead of the intrinsic dense box (~18pt) top-aligned
+  /// inside the host's taller one. For chrome that owns a fixed field
+  /// box taller than the intrinsic field (the Files band's 40pt search
+  /// capsule mirrors the composer's field row). Null (the default) keeps
+  /// intrinsic sizing everywhere else; nothing about the composer or
+  /// settings fields changes. Hosts must give the field a matching tight
+  /// height and keep the field single-line without helper/error text
+  /// (their intrinsic heights would exceed the box).
+  final double? boxHeight;
+
   /// Whether the OS suggestion pipeline applies (off for secrets).
   final bool enableSuggestions;
 
@@ -271,6 +286,26 @@ class FaTextField extends StatelessWidget {
           borderRadius: BorderRadius.circular(tokens.radiusMd),
           borderSide: BorderSide(color: color, width: width),
         );
+    // Fill the host's fixed box ([boxHeight]): the InputDecorator only
+    // paints what its intrinsic layout computes, so the content padding
+    // grows to make that layout exactly the box — the fill and the text
+    // occupy it top-to-bottom. The theme's visual density shifts the
+    // decorator's own content height, so it is subtracted here too.
+    final lineHeight = (dense ? 13.0 : 15.0) * 1.4;
+    final contentPadding = boxHeight == null
+        ? EdgeInsets.symmetric(horizontal: 16, vertical: dense ? 0 : 14)
+        : EdgeInsets.symmetric(
+            horizontal: 16,
+            vertical: math.max(
+              0,
+              (boxHeight! -
+                  lineHeight -
+                  Theme.of(
+                    context,
+                  ).visualDensity.baseSizeAdjustment.dy) /
+              2,
+            ),
+          );
     return TextField(
       controller: controller,
       focusNode: focusNode,
@@ -303,10 +338,7 @@ class FaTextField extends StatelessWidget {
         hintStyle: TextStyle(color: tokens.ink3),
         labelStyle: TextStyle(color: tokens.ink2),
         helperStyle: TextStyle(color: tokens.ink3, fontSize: 12),
-        contentPadding: EdgeInsets.symmetric(
-          horizontal: 16,
-          vertical: dense ? 0 : 14,
-        ),
+        contentPadding: contentPadding,
         border: border(tokens.hairline),
         enabledBorder: border(tokens.hairline),
         focusedBorder: border(tokens.accent, 1.5),

@@ -28,6 +28,8 @@ import 'package:fa/services/dap_enrollment_service.dart';
 import 'package:fa/services/flutter_session_manager.dart';
 import 'package:fa/services/image_preview_store.dart';
 import 'package:fa/services/last_connection.dart';
+import 'package:fa/services/project_mount_flow.dart'
+    show visibleFolderRoot;
 import 'package:fa/services/provider_registry.dart';
 import 'package:fa/services/upload.dart';
 import 'package:fa/ui/screens/settings.dart';
@@ -457,10 +459,15 @@ class _ChatScreenState extends State<ChatScreen> {
       fileBrowserBuilder: (context) => FilesAppPanel(
         presentation: FilesAppPresentation(
           env: service.env,
-          // The listing opens in the SESSION's folder (null keeps the
-          // personal sandbox cwd); the browser resolves it against the
-          // env cwd.
-          initialPath: service.currentSessionCwd,
+          // The listing opens in the SESSION's folder — but only when the
+          // env can actually open it ([visibleFolderRoot]): a host path
+          // outside the sandbox/mount roots would list as "could not open
+          // folder". Null keeps the env cwd, which for a mounted session
+          // already is the session's folder.
+          initialPath: visibleFolderRoot(
+            service.env,
+            service.currentSessionCwd,
+          ),
           fsRevision: service.fsRevision,
           onProjectMountChanged: service.refreshProjectMountPrompt,
         ),

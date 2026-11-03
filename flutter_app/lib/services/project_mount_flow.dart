@@ -75,6 +75,47 @@ Future<bool> unapplyProjectMount({
 String? currentMountedPath(ExecutionEnv env) =>
     _resolveMountEnv(env)?.mountedRoot;
 
+/// THE visibility seam for opening a host folder in the session's env:
+/// is [candidatePath] (typically a session's origin folder,
+/// `service.currentSessionCwd`) inside the env's visible roots at all?
+///
+/// The env sees exactly two roots — [ExecutionEnv.cwd] (the container
+/// root, e.g. the app-support sandbox) and the mounted host folder
+/// ([currentMountedPath]). A session folder outside both (a host path the
+/// sandbox cannot open — the macOS app sandbox sees only the granted
+/// mount) yields null: the caller must NOT hand the path to a listing
+/// (Files would show "could not open folder"); null means "open the env
+/// root", which for a mounted session already IS the session's folder
+/// (`/project` maps onto the mount).
+///
+/// Returns the normalized visible root (trailing slashes stripped, `null`
+/// or blank candidates never pass), so one function owns the decision and
+/// the follow-up access flow (the 'allow folder access' open-panel
+/// affordance for a non-visible folder) can hook the same seam.
+String? visibleFolderRoot(ExecutionEnv env, String? candidatePath) {
+  final candidate = _normalizeFolderPath(candidatePath);
+  if (candidate == null) return null;
+  for (final root in <String?>[env.cwd, currentMountedPath(env)]) {
+    final visible = _normalizeFolderPath(root);
+    if (visible != null && visible == candidate) return candidate;
+  }
+  return null;
+}
+
+/// Trailing-slash-insensitive folder-path comparison form: null for
+/// null/blank, the path with any trailing slashes stripped (`/` stays
+/// `/`). One normalization so roots and candidates cannot drift apart on
+/// a formatting detail.
+String? _normalizeFolderPath(String? path) {
+  final trimmed = path?.trim() ?? '';
+  if (trimmed.isEmpty) return null;
+  var normalized = trimmed;
+  while (normalized.length > 1 && normalized.endsWith('/')) {
+    normalized = normalized.substring(0, normalized.length - 1);
+  }
+  return normalized;
+}
+
 /// Whether the active mount is scoped (tool restriction flag on).
 bool? currentMountedScoped(ExecutionEnv env) => _resolveMountEnv(env)?.scoped;
 

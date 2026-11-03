@@ -172,6 +172,91 @@ class CountingRangedFs implements FileSystem, RangedReadFileSystem {
   }) => _delegate.remove(path, recursive: recursive, force: force);
 }
 
+/// Wraps a [FileSystem] and persistently fails the chosen ops —
+/// the transient-ENOENT host family (issue #427) at the moment the
+/// retry window has already been burned, plus plain unreadable files.
+/// The skip log collects the repo's `session_list_skip` diagnostics.
+class BrokenFs implements FileSystem {
+  BrokenFs(this._delegate);
+
+  final FileSystem _delegate;
+
+  /// Paths (exact) whose header read fails with a storage error.
+  final Set<String> unreadableFiles = {};
+
+  /// Directory paths whose listDir fails with a storage error.
+  final Set<String> unlistableDirs = {};
+
+  /// Every `session_list_skip` diagnostic line the repo emitted.
+  final List<String> skipLog = [];
+
+  @override
+  Future<Result<List<String>, FileError>> readTextLines(
+    String path, {
+    int? maxLines,
+  }) async {
+    if (unreadableFiles.contains(path)) {
+      return Err(
+        FileError(FileErrorCode.unknown, 'simulated unreadable file'),
+      );
+    }
+    return _delegate.readTextLines(path, maxLines: maxLines);
+  }
+
+  @override
+  Future<Result<List<FileInfo>, FileError>> listDir(String path) async {
+    if (unlistableDirs.contains(path)) {
+      return Err(
+        FileError(FileErrorCode.unknown, 'simulated unlistable directory'),
+      );
+    }
+    return _delegate.listDir(path);
+  }
+
+  @override
+  String get cwd => _delegate.cwd;
+  @override
+  Future<Result<String, FileError>> absolutePath(String path) =>
+      _delegate.absolutePath(path);
+  @override
+  Future<Result<String, FileError>> joinPath(List<String> parts) =>
+      _delegate.joinPath(parts);
+  @override
+  Future<Result<String, FileError>> readTextFile(String path) =>
+      _delegate.readTextFile(path);
+  @override
+  Future<Result<Uint8List, FileError>> readBinaryFile(String path) =>
+      _delegate.readBinaryFile(path);
+  @override
+  Future<Result<void, FileError>> writeBinaryFile(
+    String path,
+    Uint8List content,
+  ) => _delegate.writeBinaryFile(path, content);
+  @override
+  Future<Result<void, FileError>> writeFile(String path, String content) =>
+      _delegate.writeFile(path, content);
+  @override
+  Future<Result<void, FileError>> appendFile(String path, String content) =>
+      _delegate.appendFile(path, content);
+  @override
+  Future<Result<FileInfo, FileError>> fileInfo(String path) =>
+      _delegate.fileInfo(path);
+  @override
+  Future<Result<bool, FileError>> exists(String path) =>
+      _delegate.exists(path);
+  @override
+  Future<Result<void, FileError>> createDir(
+    String path, {
+    bool recursive = true,
+  }) => _delegate.createDir(path, recursive: recursive);
+  @override
+  Future<Result<void, FileError>> remove(
+    String path, {
+    bool recursive = false,
+    bool force = false,
+  }) => _delegate.remove(path, recursive: recursive, force: force);
+}
+
 void main() {
   late MemoryFileSystem fs;
   late JsonlSessionRepo repo;
@@ -563,6 +648,71 @@ void main() {
         expect((await envFs.exists(realPath)).valueOrNull, isTrue);
       },
     );
+  });
+
+  group('listing resilience — one bad entry must not blank the list', () {
+    test('an unreadable session file is skipped and logged; the rest list',
+        () async {
+      final healthy = await repo.create(
+        JsonlSessionCreateOptions(id: 'healthy', cwd: '/work'),
+      );
+      await healthy.appendMessage(UserMessage.text('hello'));
+      final broken = await repo.create(
+        JsonlSessionCreateOptions(id: 'broken', cwd: '/work'),
+      );
+      final brokenPath = (await broken.getMetadata()).path;
+
+      final logged = <String>[];
+      final brokenRepo = JsonlSessionRepo(
+        fs: BrokenFs(fs)..unreadableFiles.add(brokenPath),
+        sessionsRoot: '/sessions',
+        ioRetry: SessionIoRetryConfig(logger: logged.add),
+      );
+
+      expect((await brokenRepo.list()).map((m) => m.id), ['healthy']);
+      expect(logged, hasLength(1));
+      expect(logged.single, contains('session_list_skip'));
+      expect(logged.single, contains(brokenPath));
+    });
+
+    test('an unlistable session directory is skipped and logged; the rest '
+        'lists', () async {
+      await repo.create(JsonlSessionCreateOptions(id: 'keep', cwd: '/other'));
+      await repo.create(JsonlSessionCreateOptions(id: 'gone', cwd: '/work'));
+      final goneDir = (await repo
+          .list())
+          .singleWhere((m) => m.id == 'gone')
+          .path
+          .split('/')
+          .reversed
+          .skip(1)
+          .first;
+
+      final logged = <String>[];
+      final brokenRepo = JsonlSessionRepo(
+        fs: BrokenFs(fs)..unlistableDirs.add("/sessions/$goneDir"),
+        sessionsRoot: '/sessions',
+        ioRetry: SessionIoRetryConfig(logger: logged.add),
+      );
+
+      expect((await brokenRepo.list()).map((m) => m.id), ['keep']);
+      expect(logged.single, contains('session_list_skip'));
+    });
+
+    test('without a logger the skip stays silent and non-fatal', () async {
+      await repo.create(JsonlSessionCreateOptions(id: 'healthy', cwd: '/work'));
+      final broken = await repo.create(
+        JsonlSessionCreateOptions(id: 'broken', cwd: '/work'),
+      );
+      final brokenPath = (await broken.getMetadata()).path;
+
+      final brokenRepo = JsonlSessionRepo(
+        fs: BrokenFs(fs)..unreadableFiles.add(brokenPath),
+        sessionsRoot: '/sessions',
+      );
+
+      expect((await brokenRepo.list()).map((m) => m.id), ['healthy']);
+    });
   });
 
   group('issue #199 — parallel listing', () {
