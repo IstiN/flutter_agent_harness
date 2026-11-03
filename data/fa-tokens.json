@@ -4423,5 +4423,16 @@
       "cacheRead": 3581184,
       "model": "glm-5.3-flash"
     }
+  ],
+  "issue-2050": [
+    {
+      "leg": "dev",
+      "at": "2026-11-03T06:37:17Z",
+      "prompt": 6453,
+      "completion": 0,
+      "total": 6453,
+      "cacheRead": 0,
+      "model": "kimi-for-coding"
+    }
   ]
 }
