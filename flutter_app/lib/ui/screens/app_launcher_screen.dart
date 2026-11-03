@@ -852,13 +852,16 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
         title: Text(l10n.launcherRemoveWidgetTitle(appName)),
         content: Text(l10n.launcherRemoveWidgetBody),
         actions: [
-          TextButton(
+          FaButton(
+            label: l10n.commonCancel,
+            variant: FaButtonVariant.secondary,
             onPressed: () => Navigator.of(dialogContext).pop(false),
-            child: Text(l10n.commonCancel),
           ),
-          FilledButton(
+          const SizedBox(width: 8),
+          FaButton(
+            label: l10n.commonDelete,
+            variant: FaButtonVariant.danger,
             onPressed: () => Navigator.of(dialogContext).pop(true),
-            child: Text(l10n.commonDelete),
           ),
         ],
       ),
@@ -995,6 +998,8 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
       builder: (dialogContext) => AlertDialog(
         title: Text(dialogContext.l10n.launcherRenameFolderTooltip),
         content: TextField(
+          // Raw TextField (not FaTextField): the dialog needs autofocus +
+          // Enter-to-submit, which FaTextField doesn't expose yet.
           controller: controller,
           autofocus: true,
           decoration: InputDecoration(
@@ -1003,13 +1008,15 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
           onSubmitted: (value) => Navigator.of(dialogContext).pop(value),
         ),
         actions: [
-          TextButton(
+          FaButton(
+            label: dialogContext.l10n.commonCancel,
+            variant: FaButtonVariant.secondary,
             onPressed: () => Navigator.of(dialogContext).pop(),
-            child: Text(dialogContext.l10n.commonCancel),
           ),
-          FilledButton(
+          const SizedBox(width: 8),
+          FaButton(
+            label: dialogContext.l10n.settingsSaveButton,
             onPressed: () => Navigator.of(dialogContext).pop(controller.text),
-            child: Text(dialogContext.l10n.settingsSaveButton),
           ),
         ],
       ),
@@ -1063,12 +1070,16 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
   }
 
   Widget _buildOverviewHeader(FahColors colors) {
+    // The ONE chrome band (styleguide audit): eyebrow + title + capsule
+    // actions on a single shared 16pt inset over one hairline — the old
+    // bare strip with its muted-blue TextButton is gone.
     return Container(
-      height: 48,
-      padding: const EdgeInsets.symmetric(horizontal: 12),
+      key: const ValueKey('appsOverviewHeader'),
+      padding: const EdgeInsets.fromLTRB(16, 8, 12, 8),
       decoration: BoxDecoration(
-        color: colors.panel,
-        border: Border(bottom: BorderSide(color: colors.border)),
+        border: Border(
+          bottom: BorderSide(color: colors.border.withValues(alpha: .55)),
+        ),
       ),
       child: Row(
         children: [
@@ -1077,34 +1088,48 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
               mainAxisAlignment: MainAxisAlignment.center,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                // The band's eyebrow carries the shared FaSectionEyebrow
+                // typography as a plain Text — the sidebar's directory
+                // toolbar owns the one widget-level eyebrow for 'Apps'
+                // (the shell test pins that count).
                 Text(
                   context.l10n.appsGridTitle,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: colors.dim,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    letterSpacing: .2,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  context.l10n.appsOverviewSubtitle,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
                     color: colors.text,
                     fontSize: 15,
                     fontWeight: FontWeight.w600,
+                    height: 1.2,
                   ),
-                ),
-                Text(
-                  context.l10n.appsOverviewSubtitle,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(color: colors.dim, fontSize: 11),
                 ),
               ],
             ),
           ),
-          if (widget.networkMode != null && widget.networkSessions != null)
+          if (widget.networkMode != null && widget.networkSessions != null) ...[
             NetworkModeChip(
               controller: widget.networkMode!,
               manager: widget.networkSessions!,
             ),
-          TextButton(
+            const SizedBox(width: 8),
+          ],
+          FaButton(
             key: const ValueKey('appsQuickOpen'),
+            label: context.l10n.appsQuickOpen,
+            variant: FaButtonVariant.secondary,
             onPressed: _controller.quickOpen,
-            child: Text(context.l10n.appsQuickOpen),
           ),
         ],
       ),
@@ -1129,121 +1154,164 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
         if (widget.fullScreen &&
             _tab == _LauncherTab.widgets &&
             _searchController.text.trim().isEmpty)
-          Center(
-            child: SizedBox(width: 760, child: _buildFeaturedApps(colors)),
-          ),
+          _buildFeaturedApps(colors),
         // ── Tabs: the app grid or the widgets catalog ────────────
+        // Desktop shares the band's 16pt inset and capsule chips; the
+        // phone keeps its own centered 760 stage and MessengerCategoryChip
+        // pills (the narrow chrome and its goldens are unchanged).
         Padding(
-          padding: const EdgeInsets.fromLTRB(20, 0, 20, 4),
-          child: Center(
-            child: SizedBox(
-              width: 760,
-              child: SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                child: Row(
-                  children: [
-                    for (final tab in _LauncherTab.values)
-                      Padding(
-                        padding: const EdgeInsets.only(right: 8),
-                        child: MessengerCategoryChip(
-                          chipKey: ValueKey(
-                            tab == _LauncherTab.widgets
-                                ? 'appsTab-myApps'
-                                : 'appsTab-catalog',
-                          ),
-                          icon: tab == _LauncherTab.widgets
-                              ? Icons.apps_outlined
-                              : Icons.download_outlined,
-                          label: switch (tab) {
-                            _LauncherTab.widgets => context.l10n.appsMyApps,
-                            _LauncherTab.getWidgets =>
-                              context.l10n.appsWidgetStore,
-                          },
-                          selected: _tab == tab,
-                          onTap: () => _controller.select(
-                            tab == _LauncherTab.widgets
-                                ? AppsDirectorySection.myApps
-                                : AppsDirectorySection.widgetStore,
+          padding: widget.fullScreen
+              ? const EdgeInsets.fromLTRB(16, 10, 16, 4)
+              : const EdgeInsets.fromLTRB(20, 0, 20, 4),
+          child: widget.fullScreen
+              ? SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(
+                    children: [
+                      for (final tab in _LauncherTab.values)
+                        Padding(
+                          padding: const EdgeInsets.only(right: 8),
+                          child: _OverviewChip(
+                            chipKey: ValueKey(
+                              tab == _LauncherTab.widgets
+                                  ? 'appsTab-myApps'
+                                  : 'appsTab-catalog',
+                            ),
+                            icon: tab == _LauncherTab.widgets
+                                ? Icons.apps_outlined
+                                : Icons.download_outlined,
+                            label: switch (tab) {
+                              _LauncherTab.widgets => context.l10n.appsMyApps,
+                              _LauncherTab.getWidgets =>
+                                context.l10n.appsWidgetStore,
+                            },
+                            selected: _tab == tab,
+                            onTap: () => _controller.select(
+                              tab == _LauncherTab.widgets
+                                  ? AppsDirectorySection.myApps
+                                  : AppsDirectorySection.widgetStore,
+                            ),
                           ),
                         ),
-                      ),
                     // gh-1616: Chrome-parity "Load unpacked" — a local
                     // apps/<id>/ folder loads, validates and persists like a
                     // catalog install. Hidden on hosts with no folder picker.
                     if (_unpackedPicker != null)
-                      MessengerCategoryChip(
-                        chipKey: const ValueKey('appsLoadUnpacked'),
-                        icon: Icons.folder_open_outlined,
-                        label: context.l10n.launcherLoadUnpacked,
-                        selected: false,
-                        onTap: () => unawaited(
-                          loadUnpackedWidget(
-                            context,
-                            manager: widget.manager,
-                            appsStore: _appsStore,
-                            picker: _unpackedPicker,
+                      Padding(
+                        padding: const EdgeInsets.only(right: 8),
+                        child: _OverviewChip(
+                          chipKey: const ValueKey('appsLoadUnpacked'),
+                          icon: Icons.folder_open_outlined,
+                          label: context.l10n.launcherLoadUnpacked,
+                          selected: false,
+                          onTap: () => unawaited(
+                            loadUnpackedWidget(
+                              context,
+                              manager: widget.manager,
+                              appsStore: _appsStore,
+                              picker: _unpackedPicker,
+                            ),
                           ),
                         ),
                       ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        ),
-        if (widget.fullScreen)
-          Center(
-            child: SizedBox(
-              width: 760,
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(20, 8, 20, 4),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      _tab == _LauncherTab.widgets
-                          ? context.l10n.appsMyApps
-                          : context.l10n.appsWidgetStore,
-                      style: TextStyle(
-                        color: colors.text,
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
+                    ],
+                  ),
+                )
+              : Center(
+                  child: SizedBox(
+                    width: 760,
+                    child: SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: Row(
+                        children: [
+                          for (final tab in _LauncherTab.values)
+                            Padding(
+                              padding: const EdgeInsets.only(right: 8),
+                              child: MessengerCategoryChip(
+                                chipKey: ValueKey(
+                                  tab == _LauncherTab.widgets
+                                      ? 'appsTab-myApps'
+                                      : 'appsTab-catalog',
+                                ),
+                                icon: tab == _LauncherTab.widgets
+                                    ? Icons.apps_outlined
+                                    : Icons.download_outlined,
+                                label: switch (tab) {
+                                  _LauncherTab.widgets =>
+                                    context.l10n.appsMyApps,
+                                  _LauncherTab.getWidgets =>
+                                    context.l10n.appsWidgetStore,
+                                },
+                                selected: _tab == tab,
+                                onTap: () => _controller.select(
+                                  tab == _LauncherTab.widgets
+                                      ? AppsDirectorySection.myApps
+                                      : AppsDirectorySection.widgetStore,
+                                ),
+                              ),
+                            ),
+                          // gh-1616: Chrome-parity "Load unpacked" — a local
+                          // apps/<id>/ folder loads, validates and persists
+                          // like a catalog install. Hidden on hosts with no
+                          // folder picker.
+                          if (_unpackedPicker != null)
+                            MessengerCategoryChip(
+                              chipKey: const ValueKey('appsLoadUnpacked'),
+                              icon: Icons.folder_open_outlined,
+                              label: context.l10n.launcherLoadUnpacked,
+                              selected: false,
+                              onTap: () => unawaited(
+                                loadUnpackedWidget(
+                                  context,
+                                  manager: widget.manager,
+                                  appsStore: _appsStore,
+                                  picker: _unpackedPicker,
+                                ),
+                              ),
+                            ),
+                        ],
                       ),
                     ),
-                    Text(
-                      _tab == _LauncherTab.widgets
-                          ? context.l10n.appsMyAppsSubtitle
-                          : context.l10n.appsWidgetStoreSubtitle,
-                      style: TextStyle(color: colors.dim, fontSize: 11),
-                    ),
-                  ],
+                  ),
                 ),
-              ),
+        ),
+        if (widget.fullScreen)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+            child: FaSectionEyebrow(
+              label: _tab == _LauncherTab.widgets
+                  ? context.l10n.appsMyAppsSubtitle
+                  : context.l10n.appsWidgetStoreSubtitle,
+              padding: EdgeInsets.zero,
             ),
           ),
         Expanded(
-          child: Center(
-            child: SizedBox(
-              width: 760,
-              child: _tab == _LauncherTab.getWidgets
-                  // The catalog inline (no bottom-sheet chrome) — install,
-                  // update, preview and open widgets without leaving home.
-                  // Shares the launcher's AppsStore so installs are visible to
-                  // the tile menu (Remove) immediately.
-                  ? WidgetsCatalogSheet(
-                      env: widget.manager.env,
-                      manager: widget.manager,
-                      appsStore: _appsStore,
-                      embedded: true,
-                    )
-                  : _searchController.text.trim().isNotEmpty
-                  ? _buildSearchResults(colors)
-                  : _buildDraggableGrid(colors),
-            ),
-          ),
+          child: _tab == _LauncherTab.getWidgets
+              // The catalog inline (no bottom-sheet chrome) — install,
+              // update, preview and open widgets without leaving home.
+              // Shares the launcher's AppsStore so installs are visible to
+              // the tile menu (Remove) immediately.
+              ? WidgetsCatalogSheet(
+                  env: widget.manager.env,
+                  manager: widget.manager,
+                  appsStore: _appsStore,
+                  embedded: true,
+                )
+              : _buildLauncherBody(colors),
         ),
       ],
     );
+  }
+
+  /// The launcher body below the tabs: search results or the draggable
+  /// grid. Desktop fills the pane (the audit's dead flanks); the phone
+  /// keeps its centered 760 stage.
+  Widget _buildLauncherBody(FahColors colors) {
+    final body = _searchController.text.trim().isNotEmpty
+        ? _buildSearchResults(colors)
+        : _buildDraggableGrid(colors);
+    if (widget.fullScreen) return body;
+    return Center(child: SizedBox(width: 760, child: body));
   }
 
   /// App-Store-like content-first overview. These are real installed apps:
@@ -1257,70 +1325,54 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
       height: 158,
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.fromLTRB(20, 4, 20, 12),
+        padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
         itemCount: apps.length,
         separatorBuilder: (_, _) => const SizedBox(width: 12),
         itemBuilder: (context, index) {
           final app = apps[index];
           final description = app.displayDescription(locale);
-          return Material(
+          return FaSurface(
+            key: ValueKey('appsFeatureCard-${app.id}'),
             color: colors.panelAlt,
-            shape: RoundedSuperellipseBorder(
-              borderRadius: BorderRadius.circular(18),
-              side: BorderSide(color: colors.border.withValues(alpha: .45)),
-            ),
-            clipBehavior: Clip.antiAlias,
-            child: InkWell(
-              key: ValueKey('appsFeatureCard-${app.id}'),
-              onTap: () => unawaited(_launchApp(app)),
-              child: Container(
-                width: 246,
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                    colors: [
-                      colors.indigo.withValues(alpha: .10),
-                      colors.panelAlt.withValues(alpha: .2),
-                    ],
-                  ),
-                ),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    AppIcon(app: app, env: widget.manager.env, size: 48),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            app.displayName(locale),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              color: colors.text,
-                              fontSize: 15,
-                              fontWeight: FontWeight.w600,
-                            ),
+            borderRadius: BorderRadius.circular(18),
+            padding: const EdgeInsets.all(16),
+            onTap: () => unawaited(_launchApp(app)),
+            child: SizedBox(
+              width: 246,
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  AppIcon(app: app, env: widget.manager.env, size: 48),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          app.displayName(locale),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: colors.text,
+                            fontSize: 15,
+                            fontWeight: FontWeight.w600,
                           ),
-                          const SizedBox(height: 6),
-                          Text(
-                            description.isEmpty ? app.id : description,
-                            maxLines: 3,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              color: colors.dim,
-                              fontSize: 12,
-                              height: 1.3,
-                            ),
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          description.isEmpty ? app.id : description,
+                          maxLines: 3,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: colors.dim,
+                            fontSize: 12,
+                            height: 1.3,
                           ),
-                        ],
-                      ),
+                        ),
+                      ],
                     ),
-                  ],
-                ),
+                  ),
+                ],
               ),
             ),
           );
@@ -1365,10 +1417,10 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
                   16,
                   MediaQuery.viewPaddingOf(context).bottom + 128,
                 ),
-                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: 4,
-                  childAspectRatio: 0.82,
-                  crossAxisSpacing: 8,
+                gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+                  maxCrossAxisExtent: 220,
+                  childAspectRatio: 1.0,
+                  crossAxisSpacing: 12,
                   mainAxisSpacing: 12,
                 ),
                 itemCount: matches.length,
@@ -1471,7 +1523,13 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
                   16,
                   MediaQuery.viewPaddingOf(context).bottom + 16,
                 ),
-                child: Center(
+                // Desktop: the grid's left edge sits on the band's 16pt
+                // inset (the audit's 130px dead flank). The phone keeps
+                // its centered iOS stage.
+                child: Align(
+                  alignment: widget.fullScreen
+                      ? AlignmentDirectional.topStart
+                      : AlignmentDirectional.center,
                   child: SizedBox(
                     width: gridWidth,
                     height: packedTilesHeight(rects),
@@ -2162,3 +2220,57 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
 
 /// The launcher's content tabs: the app grid vs the widgets catalog.
 enum _LauncherTab { widgets, getWidgets }
+
+/// One desktop overview tab: a [FaSurface] capsule (the directory
+/// toolbar's 34px glass-capsule density) instead of a flat grey pill.
+final class _OverviewChip extends StatelessWidget {
+  const _OverviewChip({
+    required this.chipKey,
+    required this.icon,
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final Key chipKey;
+  final IconData icon;
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = FahColors.of(context);
+    final tokens = FaDesignTokens.of(context);
+    final foreground = selected ? colors.indigo : colors.dim;
+    return FaSurface(
+      key: chipKey,
+      color: selected ? colors.indigo.withValues(alpha: .16) : tokens.surface2,
+      borderRadius: BorderRadius.circular(14),
+      onTap: onTap,
+      child: SizedBox(
+        height: 34,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 15, color: foreground),
+              const SizedBox(width: 8),
+              Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: selected ? colors.indigo : colors.text,
+                  fontSize: 12,
+                  fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
