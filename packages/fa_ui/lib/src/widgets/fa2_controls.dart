@@ -2,7 +2,10 @@
 // Use of this source code is governed by a MIT license that can be found
 // in the LICENSE file.
 
+import 'dart:ui' show lerpDouble;
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:liquid_glass_renderer/liquid_glass_renderer.dart';
 
 import '../theme/fa2_tokens.dart';
@@ -437,16 +440,151 @@ class FaChip extends StatelessWidget {
   }
 }
 
-/// Styleguide switch wrapper (keeps call sites independent of Material).
-class FaSwitch extends StatelessWidget {
+/// Styleguide switch: a custom-painted capsule track with an animated
+/// squircle thumb, sized for desktop rows (40 × 24). Theming a Material
+/// `Switch` cannot reshape its stock M3 geometry, so the toggle is painted
+/// straight from [FaDesignTokens] — accent track + accentInk thumb when on,
+/// surface3 track + ink1 thumb when off, a 55% wash when disabled — while
+/// the public API (`value`/`onChanged`) and the toggle semantics stay.
+class FaSwitch extends StatefulWidget {
   const FaSwitch({super.key, required this.value, required this.onChanged});
 
   final bool value;
   final ValueChanged<bool>? onChanged;
 
   @override
-  Widget build(BuildContext context) =>
-      Switch(value: value, onChanged: onChanged);
+  State<FaSwitch> createState() => _FaSwitchState();
+}
+
+class _FaSwitchState extends State<FaSwitch> {
+  final FocusNode _focusNode = FocusNode(debugLabel: 'FaSwitch');
+
+  @override
+  void dispose() {
+    _focusNode.dispose();
+    super.dispose();
+  }
+
+  bool get _enabled => widget.onChanged != null;
+
+  void _activate() => widget.onChanged!(!widget.value);
+
+  @override
+  Widget build(BuildContext context) {
+    final tokens = FaDesignTokens.of(context);
+    return Semantics(
+      toggled: widget.value,
+      enabled: _enabled,
+      child: GestureDetector(
+        excludeFromSemantics: true,
+        behavior: HitTestBehavior.opaque,
+        onTap: _enabled ? _activate : null,
+        child: Focus(
+          focusNode: _focusNode,
+          onKeyEvent: _enabled
+              ? (node, event) {
+                  if (event is! KeyDownEvent) return KeyEventResult.ignored;
+                  final key = event.logicalKey;
+                  if (key == LogicalKeyboardKey.space ||
+                      key == LogicalKeyboardKey.enter ||
+                      key == LogicalKeyboardKey.numpadEnter) {
+                    _activate();
+                    return KeyEventResult.handled;
+                  }
+                  return KeyEventResult.ignored;
+                }
+              : null,
+          child: TweenAnimationBuilder<double>(
+            tween: Tween(end: widget.value ? 1.0 : 0.0),
+            duration: FaMotionDuration.resolve(context, tokens.fast),
+            curve: Curves.easeOutCubic,
+            builder: (context, position, _) => CustomPaint(
+              size: FaSwitchPainter.switchSize,
+              painter: FaSwitchPainter(
+                position: position,
+                enabled: _enabled,
+                tokens: tokens,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Paints the [FaSwitch] capsule: a full-round track that lerps surface3 →
+/// accent and a rounded-superellipse (squircle) thumb that slides across
+/// and lerps ink1 → accentInk. Disabled controls fade to a 55% wash.
+@visibleForTesting
+class FaSwitchPainter extends CustomPainter {
+  FaSwitchPainter({
+    required this.position,
+    required this.enabled,
+    required this.tokens,
+  }) : assert(position >= 0 && position <= 1);
+
+  /// The visual size of the switch: 40 × 24 desktop capsule.
+  static const Size switchSize = Size(40, 24);
+
+  static const double _thumbDiameter = 18;
+  static const double _thumbInset = 3;
+
+  /// Thumb travel: 0 (off) → 1 (on).
+  final double position;
+
+  final bool enabled;
+
+  final FaDesignTokens tokens;
+
+  /// The current (lerped) capsule track color.
+  Color get trackColor => _wash(Color.lerp(trackOff, trackOn, position)!);
+
+  /// The current (lerped) squircle thumb color.
+  Color get thumbColor => _wash(Color.lerp(thumbOff, thumbOn, position)!);
+
+  Color get trackOn => tokens.accent;
+  Color get trackOff => tokens.surface3;
+  Color get thumbOn => tokens.accentInk;
+  Color get thumbOff => tokens.ink1;
+
+  Color _wash(Color color) => enabled ? color : color.withValues(alpha: .55);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final rect = Offset.zero & size;
+    canvas.drawPath(
+      StadiumBorder().getOuterPath(rect),
+      Paint()
+        ..color = trackColor
+        ..isAntiAlias = true,
+    );
+    final x = lerpDouble(
+      _thumbInset,
+      size.width - _thumbInset - _thumbDiameter,
+      position,
+    )!;
+    final thumbRect = Rect.fromLTWH(
+      x,
+      (size.height - _thumbDiameter) / 2,
+      _thumbDiameter,
+      _thumbDiameter,
+    );
+    canvas.drawPath(
+      RoundedSuperellipseBorder(
+        borderRadius: BorderRadius.circular(_thumbDiameter / 2),
+      ).getOuterPath(thumbRect),
+      Paint()
+        ..color = thumbColor
+        ..isAntiAlias = true,
+    );
+  }
+
+  @override
+  bool shouldRepaint(FaSwitchPainter oldDelegate) =>
+      position != oldDelegate.position ||
+      enabled != oldDelegate.enabled ||
+      tokens != oldDelegate.tokens;
 }
 
 /// Styleguide slider wrapper.

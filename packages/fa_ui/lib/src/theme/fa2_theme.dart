@@ -89,6 +89,13 @@ ThemeData buildFaTheme({
         textStyle: WidgetStatePropertyAll(actionTextStyle),
       ),
     ),
+    // The four control families, restyled from the same semantic tokens the
+    // Fa widgets read — raw Material Switch/Radio/Checkbox/Slider call sites
+    // inherit the styleguide look instead of the stock M3 blue capsules.
+    switchTheme: _faSwitchTheme(tokens),
+    radioTheme: _faRadioTheme(tokens),
+    checkboxTheme: _faCheckboxTheme(tokens),
+    sliderTheme: _faSliderTheme(tokens),
     elevatedButtonTheme: ElevatedButtonThemeData(
       style: base.elevatedButtonTheme.style?.copyWith(
         textStyle: WidgetStatePropertyAll(actionTextStyle),
@@ -100,3 +107,74 @@ ThemeData buildFaTheme({
         : InkRipple.splashFactory,
   );
 }
+
+/// The disabled wash shared by every control family: the enabled color at
+/// 55% alpha keeps a disabled row visible but inert on all surfaces.
+Color _faControlDisabledWash(Color color) => color.withValues(alpha: .55);
+
+SwitchThemeData _faSwitchTheme(FaDesignTokens tokens) => SwitchThemeData(
+  trackColor: WidgetStateProperty.resolveWith((states) {
+    if (states.contains(WidgetState.disabled)) {
+      return _faControlDisabledWash(tokens.surface3);
+    }
+    return states.contains(WidgetState.selected)
+        ? tokens.accent
+        : tokens.surface3;
+  }),
+  thumbColor: WidgetStateProperty.resolveWith((states) {
+    if (states.contains(WidgetState.disabled)) {
+      return _faControlDisabledWash(tokens.ink3);
+    }
+    return states.contains(WidgetState.selected)
+        ? tokens.accentInk
+        : tokens.ink1;
+  }),
+  // Flat tracks: the hairline M3 outline would reintroduce stock chrome.
+  trackOutlineColor: const WidgetStatePropertyAll(Colors.transparent),
+);
+
+RadioThemeData _faRadioTheme(FaDesignTokens tokens) => RadioThemeData(
+  fillColor: WidgetStateProperty.resolveWith((states) {
+    if (states.contains(WidgetState.disabled)) {
+      return _faControlDisabledWash(tokens.ink3);
+    }
+    return states.contains(WidgetState.selected) ? tokens.accent : tokens.ink2;
+  }),
+);
+
+CheckboxThemeData _faCheckboxTheme(FaDesignTokens tokens) =>
+  CheckboxThemeData(
+    fillColor: WidgetStateProperty.resolveWith((states) {
+      if (!states.contains(WidgetState.selected)) return Colors.transparent;
+      return states.contains(WidgetState.disabled)
+          ? _faControlDisabledWash(tokens.surface3)
+          : tokens.accent;
+    }),
+    checkColor: WidgetStatePropertyAll(tokens.accentInk),
+    // Unchecked boxes draw the hairline ring; once checked the accent fill
+    // covers it (CheckboxThemeData.side is stateless).
+    side: BorderSide(color: tokens.hairline, width: 1.5),
+    shape: RoundedSuperellipseBorder(
+      borderRadius: BorderRadius.circular(tokens.radiusXs),
+    ),
+  );
+
+SliderThemeData _faSliderTheme(FaDesignTokens tokens) => SliderThemeData(
+  trackHeight: 4,
+  activeTrackColor: tokens.accent,
+  inactiveTrackColor: tokens.surface3,
+  secondaryActiveTrackColor: tokens.surface3.withValues(alpha: .5),
+  thumbColor: tokens.accent,
+  overlayColor: tokens.accent.withValues(alpha: .12),
+  activeTickMarkColor: Colors.transparent,
+  inactiveTickMarkColor: Colors.transparent,
+  valueIndicatorColor: tokens.surface2,
+  valueIndicatorTextStyle: TextStyle(color: tokens.ink1, fontSize: 12),
+  // Flat capsule thumb: no M3 elevation shadow on the token surfaces.
+  thumbShape: const RoundSliderThumbShape(
+    enabledThumbRadius: 8,
+    elevation: 0,
+    pressedElevation: 0,
+  ),
+  overlayShape: const RoundSliderOverlayShape(overlayRadius: 16),
+);
