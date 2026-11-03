@@ -25,13 +25,15 @@ import 'package:fa/services/upload_picker_stub.dart'
     if (dart.library.html) 'package:fa/services/upload_picker_web.dart';
 import 'package:fa/services/icloud_sync_service.dart';
 import 'package:fa/services/project_folder_channel.dart';
-import 'package:fa/ui/widgets/session_search_field.dart' show kSearchFieldHeight;
+import 'package:fa/ui/widgets/session_search_field.dart'
+    show kSearchFieldHeight;
 import 'package:fa/services/project_mount_env.dart';
 import 'package:fa/services/project_mount_flow.dart' show visibleFolderRoot;
 import 'package:fa/services/project_mount_store.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:liquid_glass_widgets/liquid_glass_widgets.dart' show GlassTextField;
+import 'package:liquid_glass_widgets/liquid_glass_widgets.dart'
+    show GlassTextField;
 
 /// Valid 1x1 transparent PNG.
 const _pngBytes = <int>[
@@ -372,8 +374,9 @@ void main() {
       expect(find.text('Could not list folder'), findsNothing);
     });
 
-    testWidgets('a session folder the env can open lists directly (no gate)',
-        (tester) async {
+    testWidgets('a session folder the env can open lists directly (no gate)', (
+      tester,
+    ) async {
       // A sandboxed delegate roots at its own container — a relative
       // listDir('Users/…') must never resolve (the real macOS sandbox),
       // so the browser has to rebase the host initialPath onto the
@@ -395,53 +398,62 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      expect(find.byKey(const ValueKey('filesSessionFolderGate')),
-          findsNothing);
+      expect(
+        find.byKey(const ValueKey('filesSessionFolderGate')),
+        findsNothing,
+      );
       expect(find.text('session_file.txt'), findsOneWidget);
       expect(find.text('Could not list folder'), findsNothing);
     });
 
     testWidgets(
-        'a mounted session lists through the mount namespace when opened '
-        'with the host initialPath (regression: directory listing failed)',
-        (tester) async {
-      // The exact production seam: chat_screen passes
-      // initialPath = visibleFolderRoot(env, sessionCwd) — the HOST
-      // path of the mounted folder — while ProjectMountEnv.cwd is the
-      // virtual '/project'. The browser must rebase that host path
-      // onto the mount root, never leak raw host segments into
-      // listDir.
-      final base = MemoryExecutionEnv(cwd: '/app-sandbox');
-      await base.writeFile(
-        '/Users/x/support/opened.txt',
-        'in the mounted folder',
-      );
-      final env = ProjectMountEnv(base)..mountedRoot = '/Users/x/support';
-      await tester.pumpWidget(
-        _wrap(
-          FileBrowser(
-            env: env,
-            initialPath: visibleFolderRoot(env, '/Users/x/support'),
-            sessionFolder: null,
+      'a mounted session lists through the mount namespace when opened '
+      'with the host initialPath (regression: directory listing failed)',
+      (tester) async {
+        // The exact production seam: chat_screen passes
+        // initialPath = visibleFolderRoot(env, sessionCwd) — the HOST
+        // path of the mounted folder — while ProjectMountEnv.cwd is the
+        // virtual '/project'. The browser must rebase that host path
+        // onto the mount root, never leak raw host segments into
+        // listDir.
+        final base = MemoryExecutionEnv(cwd: '/app-sandbox');
+        await base.writeFile(
+          '/Users/x/support/opened.txt',
+          'in the mounted folder',
+        );
+        final env = ProjectMountEnv(base)..mountedRoot = '/Users/x/support';
+        await tester.pumpWidget(
+          _wrap(
+            FileBrowser(
+              env: env,
+              initialPath: visibleFolderRoot(env, '/Users/x/support'),
+              sessionFolder: null,
+            ),
           ),
-        ),
-      );
-      await tester.pumpAndSettle();
+        );
+        await tester.pumpAndSettle();
 
-      expect(find.text('Could not list folder'), findsNothing,
-          reason: 'the host initialPath must rebase onto /project');
-      expect(find.text('opened.txt'), findsOneWidget);
-    });
+        expect(
+          find.text('Could not list folder'),
+          findsNothing,
+          reason: 'the host initialPath must rebase onto /project',
+        );
+        expect(find.text('opened.txt'), findsOneWidget);
+      },
+    );
 
-    testWidgets('a personal session (no folder) keeps the env-root listing',
-        (tester) async {
+    testWidgets('a personal session (no folder) keeps the env-root listing', (
+      tester,
+    ) async {
       final env = await _seededEnv();
       await tester.pumpWidget(
         _wrap(FileBrowser(env: env, sessionFolder: null)),
       );
       await tester.pumpAndSettle();
-      expect(find.byKey(const ValueKey('filesSessionFolderGate')),
-          findsNothing);
+      expect(
+        find.byKey(const ValueKey('filesSessionFolderGate')),
+        findsNothing,
+      );
       expect(find.text('aaa.txt'), findsOneWidget);
     });
 
@@ -450,7 +462,10 @@ void main() {
       // Sandboxed delegate (non-root cwd): the post-grant jump must go
       // through the mount namespace, not raw host segments.
       final base = MemoryExecutionEnv(cwd: '/app-sandbox');
-      await base.writeFile('/Users/x/mount/mount_file.txt', 'the active mount content');
+      await base.writeFile(
+        '/Users/x/mount/mount_file.txt',
+        'the active mount content',
+      );
       final env = ProjectMountEnv(base);
       // The session folder's content, as the (in-memory) host FS holds it.
       await base.writeFile('/Users/x/support/granted.txt', 'granted content');
@@ -467,10 +482,14 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      expect(find.byKey(const ValueKey('filesSessionFolderGate')),
-          findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('filesSessionFolderGate')),
+        findsOneWidget,
+      );
 
-      await tester.tap(find.byKey(const ValueKey('filesSessionFolderGateAllow')));
+      await tester.tap(
+        find.byKey(const ValueKey('filesSessionFolderGateAllow')),
+      );
       await tester.pumpAndSettle();
 
       // The existing security-scoped flow ran: bookmark resolved, mount
@@ -479,15 +498,18 @@ void main() {
       expect(env.mountedRoot, '/Users/x/support');
       final stored = await ProjectMountStore.load(env);
       expect(stored?.path, '/Users/x/support');
-      expect(find.byKey(const ValueKey('filesSessionFolderGate')),
-          findsNothing);
+      expect(
+        find.byKey(const ValueKey('filesSessionFolderGate')),
+        findsNothing,
+      );
       expect(find.text('granted.txt'), findsOneWidget);
       expect(find.text('mount_file.txt'), findsNothing);
       expect(find.text('Could not list folder'), findsNothing);
     });
 
-    testWidgets('a failed grant keeps the gate (no silent wrong listing)',
-        (tester) async {
+    testWidgets('a failed grant keeps the gate (no silent wrong listing)', (
+      tester,
+    ) async {
       final base = MemoryExecutionEnv();
       await base.writeFile('mount_file.txt', 'the active mount content');
       final env = ProjectMountEnv(base);
@@ -503,12 +525,17 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      await tester.tap(find.byKey(const ValueKey('filesSessionFolderGateAllow')));
+      await tester.tap(
+        find.byKey(const ValueKey('filesSessionFolderGateAllow')),
+      );
       await tester.pumpAndSettle();
 
       expect(env.mountedRoot, isNull, reason: 'the mount never switched');
-      expect(find.byKey(const ValueKey('filesSessionFolderGate')),
-          findsOneWidget, reason: 'the affordance stays');
+      expect(
+        find.byKey(const ValueKey('filesSessionFolderGate')),
+        findsOneWidget,
+        reason: 'the affordance stays',
+      );
       expect(find.text('mount_file.txt'), findsNothing);
     });
 
@@ -526,11 +553,15 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const ValueKey('filesSessionFolderGateAllow')));
+      await tester.tap(
+        find.byKey(const ValueKey('filesSessionFolderGateAllow')),
+      );
       await tester.pumpAndSettle();
       expect(env.mountedRoot, isNull);
-      expect(find.byKey(const ValueKey('filesSessionFolderGate')),
-          findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('filesSessionFolderGate')),
+        findsOneWidget,
+      );
     });
   });
 
@@ -876,10 +907,12 @@ void main() {
       // full box height, and the capsule's center must sit exactly on the
       // circles' centers.
       final fieldRect = tester.getRect(
-        find.descendant(
-          of: find.byKey(const ValueKey('fileBrowserSearch')),
-          matching: find.byType(GlassTextField),
-        ).first,
+        find
+            .descendant(
+              of: find.byKey(const ValueKey('fileBrowserSearch')),
+              matching: find.byType(GlassTextField),
+            )
+            .first,
       );
       expect(
         fieldRect.height,
@@ -910,14 +943,8 @@ void main() {
         editableRect.center.dy,
         moreOrLessEquals(close.center.dy, epsilon: 0.5),
       );
-      expect(
-        editableRect.top,
-        greaterThanOrEqualTo(fieldRect.top),
-      );
-      expect(
-        editableRect.bottom,
-        lessThanOrEqualTo(fieldRect.bottom),
-      );
+      expect(editableRect.top, greaterThanOrEqualTo(fieldRect.top));
+      expect(editableRect.bottom, lessThanOrEqualTo(fieldRect.bottom));
     });
 
     testWidgets('breadcrumbs: one line, ellipsized, vertically centered in '
@@ -1428,11 +1455,7 @@ void main() {
         MaterialApp(
           home: Align(
             alignment: Alignment.topLeft,
-            child: SizedBox(
-              width: width,
-              height: 600,
-              child: band(env),
-            ),
+            child: SizedBox(width: width, height: 600, child: band(env)),
           ),
         ),
       );

@@ -58,7 +58,8 @@ void main() {
     );
     expect(
       tester.getSize(find.byKey(const ValueKey('faChatComposerSendButton'))),
-      const Size.square(36),
+      const Size(40, 32),
+      reason: 'the send oval: 40x32 (Telegram-style), not a circle',
     );
   });
 
@@ -172,6 +173,54 @@ void main() {
       find.byKey(const ValueKey('faChatFloatingComposer')),
     );
     expect(surface.contains(send.center), isTrue);
-    expect(send.size, const Size.square(36));
+    expect(send.size, const Size(40, 32));
+  });
+
+  testWidgets('AC5: the placeholder starts at the kit iconSpacing norm from '
+      'the attach glyph (owner call: the old reserved-but-unrendered slot '
+      'pushed the hint ~60px from the pill edge)', (tester) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+
+    // A wired picker renders the built-in attach (plus) button in the
+    // leading slot — the prefix icon the dead zone was measured after.
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Align(
+            alignment: Alignment.bottomCenter,
+            child: ChatComposer(
+              service: FakeChatService(),
+              uploadPicker: () async => const [],
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final surface = tester.getRect(
+      find.byKey(const ValueKey('faChatFloatingComposer')),
+    );
+    final attach = tester.getRect(
+      find.byKey(const ValueKey('faChatComposerAttachButton')),
+    );
+    final hint = tester.getRect(find.text('Type a message'));
+
+    // Icon-to-text gap: the field's content starts within the kit's
+    // iconSpacing norm (8-12px) of the prefix icon's right edge.
+    final gap = hint.left - attach.right;
+    expect(gap, greaterThanOrEqualTo(8));
+    expect(gap, lessThanOrEqualTo(16), reason: 'icon-to-text gap ≈ 10px');
+    // Field-left padding: the pill's leading edge to the prefix icon is
+    // the 12-16px norm.
+    final fieldLeft = attach.left - surface.left;
+    expect(fieldLeft, greaterThanOrEqualTo(12));
+    expect(fieldLeft, lessThanOrEqualTo(16));
+    // The whole leading inset (pill edge → caret) is fully accounted:
+    // 12px field-left + the 36px hit target + the 10px gap = 58. The old
+    // compact build put the caret 70px out with a 22px icon-to-text gap.
+    expect(hint.left - surface.left, closeTo(58, .5));
   });
 }

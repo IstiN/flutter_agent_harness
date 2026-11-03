@@ -35,6 +35,7 @@ import '../trajectory/trajectory_view.dart';
 import '../trajectory/trajectory_strings.dart';
 import '../widgets/fa2_controls.dart';
 import '../widgets/fa_icon_action_button.dart' show FaIconActionButton;
+import '../widgets/pane_resize_handle.dart';
 import '../widgets/snackbars.dart';
 import 'approval_ui.dart';
 import 'ask_ui.dart';
@@ -2581,80 +2582,78 @@ class _FaChatScreenState extends State<FaChatScreen>
                 SizedBox(
                   key: const ValueKey('faChatFilesPanel'),
                   width: filesPanelWidth * reveal,
-                  child: ClipRect(
-                    child: OverflowBox(
-                      alignment: Alignment.centerRight,
-                      minWidth: filesPanelWidth,
-                      maxWidth: filesPanelWidth,
-                      child: SizedBox(
-                        width: filesPanelWidth,
-                        child: IgnorePointer(
-                          ignoring: reveal < .02,
-                          child: Opacity(
-                            opacity: reveal,
-                            child: Transform.translate(
-                              offset: Offset(filesPanelWidth * (1 - reveal), 0),
-                              child: Stack(
-                                children: [
-                                  // The panel sits FLUSH against the transcript (no
-                                  // divider): the band's glass edge and the resize
-                                  // handle carry the seam. The scope carries the docked
-                                  // panel's close intent — the band's own X (left of the
-                                  // search capsule) closes the panel; the header hides
-                                  // its Files entry while the panel is open.
-                                  Positioned.fill(
-                                    child: FaFilesPanelScope(
-                                      closePanel: _closeFilesPanel,
-                                      child: fileBrowserBuilder(context),
-                                    ),
+                  child: Stack(
+                    clipBehavior: Clip.none,
+                    children: [
+                      ClipRect(
+                        child: OverflowBox(
+                          alignment: Alignment.centerRight,
+                          minWidth: filesPanelWidth,
+                          maxWidth: filesPanelWidth,
+                          child: SizedBox(
+                            width: filesPanelWidth,
+                            child: IgnorePointer(
+                              ignoring: reveal < .02,
+                              child: Opacity(
+                                opacity: reveal,
+                                child: Transform.translate(
+                                  offset: Offset(
+                                    filesPanelWidth * (1 - reveal),
+                                    0,
                                   ),
-                                  Positioned(
-                                    left: 0,
-                                    top: 0,
-                                    bottom: 0,
-                                    width: 16,
-                                    child: MouseRegion(
-                                      cursor: SystemMouseCursors.resizeColumn,
-                                      child: GestureDetector(
-                                        key: const ValueKey(
-                                          'faChatFilesPanelResizeHandle',
-                                        ),
-                                        behavior: HitTestBehavior.opaque,
-                                        onHorizontalDragUpdate: (details) {
-                                          final desired = _clampFilesPanelWidth(
-                                            _filesPanelWidth - details.delta.dx,
-                                            constraints.maxWidth,
-                                          );
-                                          if (desired == _filesPanelWidth) {
-                                            return;
-                                          }
-                                          setState(
-                                            () => _filesPanelWidth = desired,
-                                          );
-                                        },
-                                        child: Center(
-                                          child: Container(
-                                            width: 3,
-                                            height: 32,
-                                            decoration: BoxDecoration(
-                                              color: FahColors.of(
-                                                context,
-                                              ).border.withValues(alpha: .9),
-                                              borderRadius:
-                                                  BorderRadius.circular(2),
-                                            ),
-                                          ),
+                                  // The panel sits FLUSH against the
+                                  // transcript (no divider): the band's
+                                  // glass edge and the resize handle carry
+                                  // the seam. The scope carries the docked
+                                  // panel's close intent — the band's own X
+                                  // (left of the search capsule) closes the
+                                  // panel; the header hides its Files entry
+                                  // while the panel is open.
+                                  child: Stack(
+                                    children: [
+                                      Positioned.fill(
+                                        child: FaFilesPanelScope(
+                                          closePanel: _closeFilesPanel,
+                                          child: fileBrowserBuilder(context),
                                         ),
                                       ),
-                                    ),
+                                    ],
                                   ),
-                                ],
+                                ),
                               ),
                             ),
                           ),
                         ),
                       ),
-                    ),
+                      // The shared pane handle, CENTERED on the panel edge
+                      // (the slot's left line) — the grip straddles the
+                      // seam like the sidebar divider's does. Kept outside
+                      // the reveal's ClipRect so the hit surface can reach
+                      // 8px into the transcript; drags stay live the whole
+                      // flight (width drags are never animated).
+                      Positioned(
+                        left: -8,
+                        top: 0,
+                        bottom: 0,
+                        width: 16,
+                        child: IgnorePointer(
+                          ignoring: reveal < .02,
+                          child: FaPaneResizeHandle(
+                            key: const ValueKey('faChatFilesPanelResizeHandle'),
+                            onDragUpdate: (dx) {
+                              final desired = _clampFilesPanelWidth(
+                                _filesPanelWidth - dx,
+                                constraints.maxWidth,
+                              );
+                              if (desired == _filesPanelWidth) {
+                                return;
+                              }
+                              setState(() => _filesPanelWidth = desired);
+                            },
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
             ],

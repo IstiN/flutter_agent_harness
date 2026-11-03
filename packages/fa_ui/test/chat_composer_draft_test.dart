@@ -145,7 +145,7 @@ void main() {
     await _stage(tester, 'keep-b.txt', Uint8List.fromList([7]));
 
     await _pumpComposer(tester, a, store, 'session-a');
-    await tester.tap(find.byIcon(Icons.arrow_upward));
+    await tester.tap(find.byIcon(Icons.send_rounded));
     await tester.pumpAndSettle();
 
     expect(a.sentTexts, ['send from A']);

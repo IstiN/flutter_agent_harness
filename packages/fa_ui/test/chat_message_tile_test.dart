@@ -712,5 +712,92 @@ void main() {
       expect(find.byType(MarkdownBody), findsNothing);
       expect(find.byIcon(Icons.keyboard_arrow_down), findsNothing);
     });
+
+    testWidgets('the bubble body renders one notch below the theme body role '
+        '(owner call: the fa2 15-16pt body reads giant in a transcript)', (
+      tester,
+    ) async {
+      tester.view.physicalSize = const Size(500, 400);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      // The fa2 glass theme ships bodyMedium at 15pt — the transcript
+      // steps it down to 14.
+      await tester.pumpWidget(
+        FaUiThemeProvider(
+          data: const FaUiTheme(),
+          child: MaterialApp(
+            theme: buildFaTheme(
+              direction: FaVisualDirection.glass,
+              brightness: Brightness.dark,
+            ),
+            home: Scaffold(
+              body: Center(
+                child: ChatMessageTile(
+                  message: FaChatMessage(role: 'assistant', content: 'hello'),
+                  images: images(),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      expect(
+        tester
+            .widget<MarkdownBody>(find.byType(MarkdownBody))
+            .styleSheet!
+            .p!
+            .fontSize!,
+        14,
+      );
+    });
+
+    testWidgets('the legacy 14pt markdown baseline steps down to 13 too', (
+      tester,
+    ) async {
+      tester.view.physicalSize = const Size(500, 400);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(
+        wrap(
+          ChatMessageTile(
+            message: FaChatMessage(role: 'assistant', content: 'hello'),
+            images: images(),
+          ),
+        ),
+      );
+      expect(
+        tester
+            .widget<MarkdownBody>(find.byType(MarkdownBody))
+            .styleSheet!
+            .p!
+            .fontSize!,
+        13,
+      );
+    });
+
+    testWidgets('an explicit messageFontSize (the chat text-size setting) '
+        'overrides the notch-down default', (tester) async {
+      tester.view.physicalSize = const Size(500, 400);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(
+        wrap(
+          ChatMessageTile(
+            message: FaChatMessage(role: 'assistant', content: 'hello'),
+            images: images(),
+            messageFontSize: 16,
+          ),
+        ),
+      );
+      expect(
+        tester
+            .widget<MarkdownBody>(find.byType(MarkdownBody))
+            .styleSheet!
+            .p!
+            .fontSize!,
+        16,
+      );
+    });
   });
 }

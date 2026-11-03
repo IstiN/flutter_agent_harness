@@ -13,6 +13,7 @@
 library;
 
 import 'package:fa_ui/fa_ui.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -23,7 +24,8 @@ const _windowWidth = 1280.0;
 const _windowHeight = 800.0;
 
 Finder get _panel => find.byKey(const ValueKey('faChatFilesPanel'));
-Finder get _handle => find.byKey(const ValueKey('faChatFilesPanelResizeHandle'));
+Finder get _handle =>
+    find.byKey(const ValueKey('faChatFilesPanelResizeHandle'));
 
 Future<void> _pumpChat(WidgetTester tester) async {
   final service = FakeChatService();
@@ -70,8 +72,11 @@ void main() {
     final mid = tester.getRect(_panel);
     expect(mid.width, greaterThan(1), reason: 'reveal has started');
     expect(mid.width, lessThan(_panelWidth), reason: 'reveal is mid-flight');
-    expect(mid.right, closeTo(_windowWidth, .5),
-        reason: 'the slot hugs the window edge at every frame');
+    expect(
+      mid.right,
+      closeTo(_windowWidth, .5),
+      reason: 'the slot hugs the window edge at every frame',
+    );
     // The content does not reflow mid-flight: the inner surface keeps the
     // final width and slides in from the window edge (a rightward
     // translate carries the overflow; the slot's ClipRect crops it).
@@ -109,7 +114,9 @@ void main() {
     expect(settledContent, settled, reason: 'settled content fills the slot');
   });
 
-  testWidgets('close: the panel slides out instead of vanishing', (tester) async {
+  testWidgets('close: the panel slides out instead of vanishing', (
+    tester,
+  ) async {
     await _pumpChat(tester);
     await tester.tap(find.byTooltip('Open files'));
     await tester.pumpAndSettle();
@@ -145,9 +152,66 @@ void main() {
     await tester.pumpAndSettle();
     final settled = tester.getSize(_panel);
     expect(settled.width, 420, reason: 'the drag set the final width');
-    expect(
-      tester.getRect(_panel).right,
-      closeTo(_windowWidth, .001),
+    expect(tester.getRect(_panel).right, closeTo(_windowWidth, .001));
+  });
+
+  testWidgets('the shared handle sits FLUSH on the panel edge and '
+      'highlights on hover (owner unification)', (tester) async {
+    await _pumpChat(tester);
+    await tester.tap(find.byTooltip('Open files'));
+    await tester.pumpAndSettle();
+
+    // FLUSH: the grip's center lands exactly on the panel's left edge —
+    // the seam line — not detached from it.
+    final grip = tester.getRect(
+      find.descendant(
+        of: _handle,
+        matching: find.byWidgetPredicate(
+          (w) =>
+              w is AnimatedContainer &&
+              (w.decoration as BoxDecoration?)?.color != Colors.transparent,
+        ),
+      ),
     );
+    final panelLeft = tester.getRect(_panel).left;
+    expect(grip.width, 3, reason: 'the shared 3px grip');
+    expect(grip.center.dx, closeTo(panelLeft, .5));
+
+    // HOVER: idle paints the hairline grip; hovering the divider
+    // highlights it with the accent (the chats divider's interaction).
+    Color gripColor() =>
+        (tester
+                    .widget<AnimatedContainer>(
+                      find.descendant(
+                        of: _handle,
+                        matching: find.byWidgetPredicate(
+                          (w) =>
+                              w is AnimatedContainer &&
+                              (w.decoration as BoxDecoration?)?.color !=
+                                  Colors.transparent,
+                        ),
+                      ),
+                    )
+                    .decoration!
+                as BoxDecoration)
+            .color!;
+
+    final tokens = FaDesignTokens.of(tester.element(_handle));
+    expect(gripColor(), tokens.hairline, reason: 'idle: the hairline grip');
+
+    final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
+    await mouse.addPointer(location: Offset.zero);
+    addTearDown(mouse.removePointer);
+    await mouse.moveTo(tester.getCenter(_handle));
+    await tester.pumpAndSettle();
+    expect(
+      gripColor(),
+      tokens.accent.withValues(alpha: .8),
+      reason: 'hover: the accent highlight',
+    );
+
+    await mouse.moveTo(Offset.zero);
+    await tester.pumpAndSettle();
+    expect(gripColor(), tokens.hairline, reason: 'hover out restores idle');
   });
 }

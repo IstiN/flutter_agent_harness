@@ -1207,11 +1207,11 @@ class ChatComposerState extends State<ChatComposer>
     final strings = FaChatStrings.of(context);
     return Padding(
       key: const ValueKey('faChatComposerFieldRow'),
-      // A 36px control plus 2+2px gives a 40px single-line row. The text
-      // field keeps its own inner air and still grows naturally to 6 lines.
-      padding: widget.hideMicWhenNotEmpty
-          ? const EdgeInsets.fromLTRB(12, 2, 12, 2)
-          : const EdgeInsets.fromLTRB(8, 2, 8, 2),
+      // A 40x32 oval control plus 2+2px keeps the 40px single-line row.
+      // The 12px left inset is the kit's field padding norm (owner call:
+      // the placeholder sat ~60px from the pill's leading edge — a
+      // reserved-but-unrendered slot read as dead space).
+      padding: const EdgeInsets.fromLTRB(12, 2, 12, 2),
       child: Row(
         children: [
           if (widget.leadingBuilder != null)
@@ -1250,48 +1250,47 @@ class ChatComposerState extends State<ChatComposer>
 
   Widget _buildTextField() {
     final palette = fahChatColorsOf(context);
-    return Padding(
-      padding: EdgeInsets.symmetric(
-        horizontal: widget.hideMicWhenNotEmpty ? 6 : 0,
-      ),
-      child: Focus(
-        onKeyEvent: _handleComposerKey,
-        child: TextField(
-          key: const ValueKey('faChatComposerTextField'),
-          controller: _textController,
-          focusNode: _focusNode,
-          style: TextStyle(color: palette.text, fontSize: 14, height: 1.4),
-          decoration: InputDecoration(
-            // The host-localized hint (the session surface scopes
-            // FaChatStrings; channel chats override it with "Message
-            // <channel>").
-            hintText: FaChatStrings.of(context).chatInputHint,
-            contentPadding: const EdgeInsets.symmetric(
-              horizontal: 16,
-              vertical: 8,
-            ),
-            isDense: true,
-            // The outer FaSurface is the composer's ONLY filled, bordered
-            // surface. A nested InputDecorator fill/outline produced doubled
-            // horizontal rules and a second right edge with the real glass
-            // renderer; InputBorder.none keeps editing inside that one clip.
-            filled: false,
-            fillColor: Colors.transparent,
-            border: InputBorder.none,
-            enabledBorder: InputBorder.none,
-            focusedBorder: InputBorder.none,
-            disabledBorder: InputBorder.none,
-            errorBorder: InputBorder.none,
-            focusedErrorBorder: InputBorder.none,
+    // No wrapper padding: the 10px InputDecorator inset IS the
+    // icon-to-text gap — the kit's iconSpacing norm (owner call: the old
+    // 16px decorator inset + 6px wrapper read as a ~22px dead zone after
+    // the attach glyph, ~60px from the pill's edge).
+    return Focus(
+      onKeyEvent: _handleComposerKey,
+      child: TextField(
+        key: const ValueKey('faChatComposerTextField'),
+        controller: _textController,
+        focusNode: _focusNode,
+        style: TextStyle(color: palette.text, fontSize: 14, height: 1.4),
+        decoration: InputDecoration(
+          // The host-localized hint (the session surface scopes
+          // FaChatStrings; channel chats override it with "Message
+          // <channel>").
+          hintText: FaChatStrings.of(context).chatInputHint,
+          contentPadding: const EdgeInsets.symmetric(
+            horizontal: 10,
+            vertical: 8,
           ),
-          // Multiline: Shift+Enter (hardware) or the touch return key
-          // inserts a line break; plain Enter sends (_handleComposerKey).
-          // The field grows 1→6 lines and then scrolls internally.
-          keyboardType: TextInputType.multiline,
-          textInputAction: TextInputAction.newline,
-          maxLines: 6,
-          minLines: 1,
+          isDense: true,
+          // The outer FaSurface is the composer's ONLY filled, bordered
+          // surface. A nested InputDecorator fill/outline produced doubled
+          // horizontal rules and a second right edge with the real glass
+          // renderer; InputBorder.none keeps editing inside that one clip.
+          filled: false,
+          fillColor: Colors.transparent,
+          border: InputBorder.none,
+          enabledBorder: InputBorder.none,
+          focusedBorder: InputBorder.none,
+          disabledBorder: InputBorder.none,
+          errorBorder: InputBorder.none,
+          focusedErrorBorder: InputBorder.none,
         ),
+        // Multiline: Shift+Enter (hardware) or the touch return key
+        // inserts a line break; plain Enter sends (_handleComposerKey).
+        // The field grows 1→6 lines and then scrolls internally.
+        keyboardType: TextInputType.multiline,
+        textInputAction: TextInputAction.newline,
+        maxLines: 6,
+        minLines: 1,
       ),
     );
   }
@@ -1340,54 +1339,52 @@ class ChatComposerState extends State<ChatComposer>
     );
   }
 
-  /// The circular send/stop button: stop while streaming with an empty
-  /// field, send (or steer-send mid-stream) otherwise. Light theme paints
-  /// a solid indigo circle; dark theme the brand gradient.
+  /// The send/stop control: a solid accent OVAL (40x32, Telegram-style)
+  /// in the composer pill's right end. Stop while streaming with an empty
+  /// field, send (or steer-send mid-stream) otherwise. The oval is the
+  /// owner-approved prototype look — solid opaque accent, no glass, no
+  /// border/shadow — and a disabled arm renders the same oval dimmed.
   Widget _buildSendStopButton(FahColors palette, FaChatStrings strings) {
-    final glass =
-        Theme.of(context).extension<FaDesignTokens>()?.direction ==
-        FaVisualDirection.glass;
-    return SizedBox.square(
-      dimension: 36,
-      child: Container(
-        key: const ValueKey('faChatComposerSendButton'),
-        decoration: BoxDecoration(
-          color: glass || Theme.of(context).brightness == Brightness.light
-              ? palette.indigo
-              : null,
-          gradient: !glass && Theme.of(context).brightness == Brightness.dark
-              ? palette.brandGradient
-              : null,
-          shape: BoxShape.circle,
-        ),
-        clipBehavior: Clip.antiAlias,
-        child: Builder(
-          builder: (context) {
-            // Stop only while streaming AND nothing typed; with text in the
-            // field the button is a steer-send (interrupt the turn and run
-            // the message).
-            final showStop =
-                _isStreaming && _textController.text.trim().isEmpty;
-            return IconButton(
+    // Stop only while streaming AND nothing typed; with text in the
+    // field the button is a steer-send (interrupt the turn and run
+    // the message).
+    final showStop = _isStreaming && _textController.text.trim().isEmpty;
+    final VoidCallback onPressed = showStop
+        ? widget.service.abort
+        : () => _send(_textController.text);
+    // The arms are always wired today (send/steer/abort never unset), so
+    // the oval renders enabled; the disabled contract is "the same oval,
+    // dimmed" — never a shape or glyph swap.
+    return SizedBox(
+      key: const ValueKey('faChatComposerSendButton'),
+      width: 40,
+      height: 32,
+      child: ClipOval(
+        child: ColoredBox(
+          color: palette.indigo,
+          child: IconButton(
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints.tightFor(width: 40, height: 32),
+            style: IconButton.styleFrom(
+              minimumSize: const Size(40, 32),
+              maximumSize: const Size(40, 32),
               padding: EdgeInsets.zero,
-              constraints: const BoxConstraints.tightFor(width: 36, height: 36),
-              style: _compactControlStyle(),
-              icon: Icon(
-                // Prototype uses an up-arrow (send-up) icon.
-                showStop ? Icons.stop : Icons.arrow_upward,
-                size: 18,
-              ),
-              color: palette.onAccent,
-              tooltip: showStop
-                  ? strings.chatAbortTooltip
-                  : (_isStreaming
-                        ? strings.chatSteerTooltip
-                        : strings.chatSendTooltip),
-              onPressed: showStop
-                  ? widget.service.abort
-                  : () => _send(_textController.text),
-            );
-          },
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+            icon: Icon(
+              // The prototype's paper-plane glyph: a filled send mark
+              // pointing up-right (Icons.stop keeps the interrupt arm).
+              showStop ? Icons.stop : Icons.send_rounded,
+              size: 21,
+            ),
+            color: palette.onAccent,
+            tooltip: showStop
+                ? strings.chatAbortTooltip
+                : (_isStreaming
+                      ? strings.chatSteerTooltip
+                      : strings.chatSendTooltip),
+            onPressed: onPressed,
+          ),
         ),
       ),
     );

@@ -1193,19 +1193,28 @@ class _WideLayoutShellState extends State<WideLayoutShell>
                       ),
                     ),
                     if (!_sidebarCollapsed && progress == 0)
+                      // The shared pane handle, CENTERED on the panel edge:
+                      // the glass card keeps an 8pt outer margin, so its
+                      // right edge sits at sidebarWidth - 8 — the old handle
+                      // hung 12pt off that edge, floating over the seam
+                      // (owner call). The hit surface still straddles the
+                      // card's padding band and the gutter; the drag
+                      // contract (delta → clamp → persist on settle) is
+                      // untouched.
                       Positioned(
-                        left: sidebarWidth,
+                        left: sidebarWidth - 16,
                         top: 0,
                         bottom: 0,
-                        child: _PaneDragHandle(
+                        child: FaPaneResizeHandle(
                           key: kSidebarDragHandleKey,
-                          onDrag: (dx) => setState(() {
+                          onDragUpdate: (dx) => setState(() {
                             _sidebarWidth = (_sidebarWidth + dx).clamp(
                               SessionUiPrefsStore.minSidebarWidth,
                               SessionUiPrefsStore.maxSidebarWidth,
                             );
                           }),
-                          onDragEnd: (_) => _onSidebarDragEnd(),
+                          onDragEnd: _onSidebarDragEnd,
+                          onDragCancel: _onSidebarDragEnd,
                         ),
                       ),
                     if (floatingPanel) _buildFloatingPresentationSlot(reveal),
@@ -2399,63 +2408,5 @@ class _WideLayoutShellState extends State<WideLayoutShell>
 
   Future<ExecutionEnv> _createPlatformEnv() async {
     return createPlatformEnv();
-  }
-}
-
-/// Invisible resize target layered over the sidebar/center join. A short
-/// hover-only grip communicates resizing without painting a full-height rail.
-class _PaneDragHandle extends StatefulWidget {
-  const _PaneDragHandle({super.key, required this.onDrag, this.onDragEnd});
-
-  /// Called with the horizontal delta of each drag update.
-  final void Function(double dx) onDrag;
-
-  /// Called when the drag gesture settles (pointer up/cancel) — the
-  /// sidebar uses it to persist the settled width once per gesture.
-  final void Function(DragEndDetails details)? onDragEnd;
-
-  @override
-  State<_PaneDragHandle> createState() => _PaneDragHandleState();
-}
-
-class _PaneDragHandleState extends State<_PaneDragHandle> {
-  bool _hovering = false;
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = FahColors.of(context);
-    return MouseRegion(
-      cursor: SystemMouseCursors.resizeLeftRight,
-      onEnter: (_) => setState(() => _hovering = true),
-      onExit: (_) => setState(() => _hovering = false),
-      child: GestureDetector(
-        onHorizontalDragUpdate: (details) => widget.onDrag(details.delta.dx),
-        onHorizontalDragEnd: widget.onDragEnd == null
-            ? null
-            : (details) => widget.onDragEnd!(details),
-        onHorizontalDragCancel: widget.onDragEnd == null
-            ? null
-            : () => widget.onDragEnd!(DragEndDetails()),
-        child: AnimatedContainer(
-          key: const ValueKey('sidebar-drag-hit-surface'),
-          duration: const Duration(milliseconds: 150),
-          width: 8,
-          color: Colors.transparent,
-          child: Center(
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 150),
-              width: 2,
-              height: 36,
-              decoration: BoxDecoration(
-                color: _hovering
-                    ? colors.indigo.withValues(alpha: .8)
-                    : Colors.transparent,
-                borderRadius: BorderRadius.circular(1),
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
   }
 }

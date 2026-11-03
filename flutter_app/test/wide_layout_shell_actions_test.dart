@@ -692,7 +692,7 @@ void main() {
       final dragHandle = tester.widget<AnimatedContainer>(
         find.descendant(
           of: find.byKey(kSidebarDragHandleKey),
-          matching: find.byKey(const ValueKey('sidebar-drag-hit-surface')),
+          matching: find.byKey(const ValueKey('faPaneResizeHandleHitSurface')),
         ),
       );
       expect(
@@ -1740,50 +1740,52 @@ void main() {
     debugDefaultTargetPlatformOverride = null;
   });
 
-  testWidgets('sidebar toggle glass states follow the icon, not the animation',
-      (tester) async {
-    // Owner rule (FaIconActionButton): on-surface = flat, floating = glass.
-    // The docked collapse toggle (panel OPEN, sitting on the glass panel)
-    // is FLAT; the floating expand toggle (panel collapsed, no panel under
-    // it) carries the glass underlay.
-    debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
-    addTearDown(() => debugDefaultTargetPlatformOverride = null);
-    final env = MemoryExecutionEnv();
-    final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
-      ..addSession('design-session', _fakeService(env));
-    await pumpShell(tester, manager: manager);
-    await tester.pumpAndSettle();
+  testWidgets(
+    'sidebar toggle glass states follow the icon, not the animation',
+    (tester) async {
+      // Owner rule (FaIconActionButton): on-surface = flat, floating = glass.
+      // The docked collapse toggle (panel OPEN, sitting on the glass panel)
+      // is FLAT; the floating expand toggle (panel collapsed, no panel under
+      // it) carries the glass underlay.
+      debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+      addTearDown(() => debugDefaultTargetPlatformOverride = null);
+      final env = MemoryExecutionEnv();
+      final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
+        ..addSession('design-session', _fakeService(env));
+      await pumpShell(tester, manager: manager);
+      await tester.pumpAndSettle();
 
-    bool toggleGlass() => tester
-        .widget<FaIconActionButton>(
-          find
-              .descendant(
-                of: find.byKey(const ValueKey('wideShellSidebarToggle')),
-                matching: find.byType(FaIconActionButton),
-              )
-              .first,
-        )
-        .glass;
+      bool toggleGlass() => tester
+          .widget<FaIconActionButton>(
+            find
+                .descendant(
+                  of: find.byKey(const ValueKey('wideShellSidebarToggle')),
+                  matching: find.byType(FaIconActionButton),
+                )
+                .first,
+          )
+          .glass;
 
-    // Panel OPEN: the collapse icon sits ON the panel — flat, no underlay.
-    expect(toggleGlass(), isFalse, reason: 'docked collapse icon is flat');
-    expect(find.byKey(const ValueKey('chatSidebarCollapse')), findsOneWidget);
+      // Panel OPEN: the collapse icon sits ON the panel — flat, no underlay.
+      expect(toggleGlass(), isFalse, reason: 'docked collapse icon is flat');
+      expect(find.byKey(const ValueKey('chatSidebarCollapse')), findsOneWidget);
 
-    await tester.tap(find.byKey(const ValueKey('chatSidebarCollapse')));
-    await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('chatSidebarCollapse')));
+      await tester.pumpAndSettle();
 
-    // Panel CLOSED: the expand icon floats over the center surface — glass.
-    expect(toggleGlass(), isTrue, reason: 'floating expand icon is glass');
-    expect(find.byKey(const ValueKey('chatSidebarExpand')), findsOneWidget);
+      // Panel CLOSED: the expand icon floats over the center surface — glass.
+      expect(toggleGlass(), isTrue, reason: 'floating expand icon is glass');
+      expect(find.byKey(const ValueKey('chatSidebarExpand')), findsOneWidget);
 
-    await tester.tap(find.byKey(const ValueKey('chatSidebarExpand')));
-    await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('chatSidebarExpand')));
+      await tester.pumpAndSettle();
 
-    // Back open: flat again (the flag follows the state, never lags the
-    // collapse animation).
-    expect(toggleGlass(), isFalse, reason: 're-docked toggle is flat again');
-    debugDefaultTargetPlatformOverride = null;
-  });
+      // Back open: flat again (the flag follows the state, never lags the
+      // collapse animation).
+      expect(toggleGlass(), isFalse, reason: 're-docked toggle is flat again');
+      debugDefaultTargetPlatformOverride = null;
+    },
+  );
 
   testWidgets('compact composer floats 8 above the window in every theme', (
     tester,
@@ -1828,7 +1830,7 @@ void main() {
         expect(composer.left, panel.left + 8, reason: reason);
         expect(composer.height, 40, reason: reason);
         expect(row.height, 40, reason: reason);
-        expect(send.size, const Size.square(36), reason: reason);
+        expect(send.size, const Size(40, 32), reason: reason);
         expect(attach.size, const Size.square(36), reason: reason);
         expect(composer.contains(send.center), isTrue, reason: reason);
         expect(composer.contains(attach.center), isTrue, reason: reason);
@@ -1894,8 +1896,9 @@ void main() {
     }
   });
 
-  testWidgets('the docked Files band X rides the collapse toggle centerline',
-      (tester) async {
+  testWidgets('the docked Files band X rides the collapse toggle centerline', (
+    tester,
+  ) async {
     final env = MemoryExecutionEnv();
     final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
       ..addSession('design-session', _fakeService(env));
@@ -1917,8 +1920,11 @@ void main() {
       find.byKey(const ValueKey('chatSidebarCollapse')),
     );
     final filesX = tester.getRect(find.byKey(const ValueKey('filesAppClose')));
-    expect(filesX.center.dy, closeTo(toggle.center.dy, .5),
-        reason: 'toggle=$toggle filesX=$filesX');
+    expect(
+      filesX.center.dy,
+      closeTo(toggle.center.dy, .5),
+      reason: 'toggle=$toggle filesX=$filesX',
+    );
     // And the X keeps the canonical 36pt circle.
     expect(filesX.size, const Size.square(36));
     expect(tester.takeException(), isNull);
@@ -2653,7 +2659,9 @@ void main() {
       final snapshots = <String, _HeaderSlotSnapshot>{};
       for (final section in const ['chats', 'activity', 'apps']) {
         if (section != 'chats') {
-          await tester.tap(find.byKey(ValueKey('messengerPrimaryNav-$section')));
+          await tester.tap(
+            find.byKey(ValueKey('messengerPrimaryNav-$section')),
+          );
           await tester.pumpAndSettle();
         }
         final search = find.byKey(const ValueKey('messengerSearchField'));
@@ -2708,11 +2716,7 @@ void main() {
           home: Scaffold(
             body: Align(
               alignment: Alignment.topLeft,
-              child: SizedBox(
-                width: 480,
-                height: 600,
-                child: filesSearch,
-              ),
+              child: SizedBox(width: 480, height: 600, child: filesSearch),
             ),
           ),
         ),
@@ -2729,7 +2733,8 @@ void main() {
               matching: find.byType(CupertinoTextField),
             ),
           )
-          .decoration?.border;
+          .decoration
+          ?.border;
       final sidebarField = find.byKey(const ValueKey('messengerSearchField'));
       expect(sidebarField, findsNothing, reason: 'shell pumped away');
       // Rebuild the shell's header field standalone for the box compare:
@@ -2777,17 +2782,16 @@ void main() {
       );
       final sidebarShape = tester
           .widget<CupertinoTextField>(
-            find.descendant(
-              of: standaloneField,
-              matching: find.byType(CupertinoTextField),
-            ).first,
+            find
+                .descendant(
+                  of: standaloneField,
+                  matching: find.byType(CupertinoTextField),
+                )
+                .first,
           )
-          .decoration?.border;
-      expect(
-        sidebarShape,
-        filesShape,
-        reason: 'capsule radius tokens',
-      );
+          .decoration
+          ?.border;
+      expect(sidebarShape, filesShape, reason: 'capsule radius tokens');
 
       final base = snapshots['chats']!;
       for (final entry in snapshots.entries) {
@@ -2795,22 +2799,46 @@ void main() {
         final reason = 'section ${entry.key}';
         expect(other.searchType, base.searchType, reason: reason);
         expect(other.newType, base.newType, reason: reason);
-        expect(other.searchRect.left, closeTo(base.searchRect.left, .5),
-            reason: reason);
-        expect(other.searchRect.top, closeTo(base.searchRect.top, .5),
-            reason: reason);
-        expect(other.searchRect.right, closeTo(base.searchRect.right, .5),
-            reason: reason);
-        expect(other.searchRect.bottom, closeTo(base.searchRect.bottom, .5),
-            reason: reason);
-        expect(other.newRect.left, closeTo(base.newRect.left, .5),
-            reason: reason);
-        expect(other.newRect.top, closeTo(base.newRect.top, .5),
-            reason: reason);
-        expect(other.newRect.right, closeTo(base.newRect.right, .5),
-            reason: reason);
-        expect(other.newRect.bottom, closeTo(base.newRect.bottom, .5),
-            reason: reason);
+        expect(
+          other.searchRect.left,
+          closeTo(base.searchRect.left, .5),
+          reason: reason,
+        );
+        expect(
+          other.searchRect.top,
+          closeTo(base.searchRect.top, .5),
+          reason: reason,
+        );
+        expect(
+          other.searchRect.right,
+          closeTo(base.searchRect.right, .5),
+          reason: reason,
+        );
+        expect(
+          other.searchRect.bottom,
+          closeTo(base.searchRect.bottom, .5),
+          reason: reason,
+        );
+        expect(
+          other.newRect.left,
+          closeTo(base.newRect.left, .5),
+          reason: reason,
+        );
+        expect(
+          other.newRect.top,
+          closeTo(base.newRect.top, .5),
+          reason: reason,
+        );
+        expect(
+          other.newRect.right,
+          closeTo(base.newRect.right, .5),
+          reason: reason,
+        );
+        expect(
+          other.newRect.bottom,
+          closeTo(base.newRect.bottom, .5),
+          reason: reason,
+        );
       }
     },
   );

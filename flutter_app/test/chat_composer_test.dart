@@ -124,7 +124,7 @@ const _pasteSettle = Duration(milliseconds: 100);
 Future<void> _typeAndSend(WidgetTester tester, String text) async {
   await tester.enterText(find.byType(TextField), text);
   await tester.pump();
-  await tester.tap(find.byIcon(Icons.arrow_upward));
+  await tester.tap(find.byIcon(Icons.send_rounded));
   await tester.pump();
 }
 
@@ -349,7 +349,7 @@ void main() {
       // Whitespace-only: the send button does nothing.
       await tester.enterText(find.byType(TextField), '  \n\n ');
       await tester.pump();
-      await tester.tap(find.byIcon(Icons.arrow_upward));
+      await tester.tap(find.byIcon(Icons.send_rounded));
       await tester.pump();
       expect(service.messages.where((m) => m.role == 'user'), isEmpty);
 
@@ -358,7 +358,7 @@ void main() {
       await tester.runAsync(() async {
         await tester.enterText(find.byType(TextField), 'hello\n\n');
         await tester.pump();
-        await tester.tap(find.byIcon(Icons.arrow_upward));
+        await tester.tap(find.byIcon(Icons.send_rounded));
         await tester.pump();
         await waitForAssistant(tester, service);
       });
@@ -397,7 +397,7 @@ void main() {
         // Visible growth is capped at the 6-line budget; the content is
         // intact behind the internal scroll.
         expect(tester.getSize(find.byType(TextField)).height, sixLineHeight);
-        await tester.tap(find.byIcon(Icons.arrow_upward));
+        await tester.tap(find.byIcon(Icons.send_rounded));
         await tester.pump();
         await waitForAssistant(tester, service);
       });

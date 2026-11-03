@@ -191,9 +191,16 @@ class ChatMessageTile extends StatelessWidget {
   /// cap, AI bubbles span up to 90% of the viewport), the role surface, and
   /// the single SelectionArea over the Markdown body.
   Widget _bubbleContainer(BuildContext context, bool isUser) {
+    final theme = Theme.of(context);
     final styleSheet = fahMarkdownStyleSheet(
-      Theme.of(context),
-      fontSize: messageFontSize,
+      theme,
+      // The transcript body renders ONE notch below the theme's body role:
+      // the fa2 styleguide body (15-16pt) reads giant in a dense chat
+      // transcript (owner call). Headings keep their proportional factors
+      // and the pinned line heights; a host-provided [messageFontSize]
+      // (the chat text-size setting) always wins.
+      fontSize:
+          messageFontSize ?? (theme.textTheme.bodyMedium?.fontSize ?? 14) - 1,
     );
     final palette = fahChatColorsOf(context);
     final border = Theme.of(context).dividerColor;

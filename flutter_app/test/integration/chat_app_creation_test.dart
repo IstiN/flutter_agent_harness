@@ -123,7 +123,7 @@ void main() {
       await tester.pumpAndSettle();
       // Enter no longer sends (it inserts a newline, #463) — the send
       // button is the explicit path.
-      await tester.tap(find.byIcon(Icons.arrow_upward));
+      await tester.tap(find.byIcon(Icons.send_rounded));
       // The composer hands the text to the active session's service. (The
       // run itself is driven in the other test — agent runs complete in the
       // real async zone, see below.)
