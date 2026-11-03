@@ -236,6 +236,8 @@
   "filesPanelTitle": "Файлы",
   "filesRefreshTooltip": "Обновить",
   "filesRetryButton": "Повторить",
+  "filesSearchHint": "Поиск файлов…",
+  "filesNoSearchMatches": "Нет подходящих файлов",
   "filesUnmountTooltip": "Отключить {path}",
   "filesUpTooltip": "Вверх",
   "filesUploadFailed": "Ошибка загрузки: {error}",

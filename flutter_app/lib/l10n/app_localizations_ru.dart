@@ -746,6 +746,12 @@ class AppLocalizationsRu extends AppLocalizations {
   String get filesRetryButton => 'Повторить';
 
   @override
+  String get filesSearchHint => 'Поиск файлов…';
+
+  @override
+  String get filesNoSearchMatches => 'Нет подходящих файлов';
+
+  @override
   String filesUnmountTooltip(Object path) {
     return 'Отключить $path';
   }

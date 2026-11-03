@@ -1400,6 +1400,18 @@ abstract class AppLocalizations {
   /// **'Retry'**
   String get filesRetryButton;
 
+  /// No description provided for @filesSearchHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Search files…'**
+  String get filesSearchHint;
+
+  /// No description provided for @filesNoSearchMatches.
+  ///
+  /// In en, this message translates to:
+  /// **'No matching files'**
+  String get filesNoSearchMatches;
+
   /// No description provided for @filesUnmountTooltip.
   ///
   /// In en, this message translates to:

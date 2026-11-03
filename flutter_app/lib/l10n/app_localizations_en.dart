@@ -742,6 +742,12 @@ class AppLocalizationsEn extends AppLocalizations {
   String get filesRetryButton => 'Retry';
 
   @override
+  String get filesSearchHint => 'Search files…';
+
+  @override
+  String get filesNoSearchMatches => 'No matching files';
+
+  @override
   String filesUnmountTooltip(Object path) {
     return 'Unmount $path';
   }

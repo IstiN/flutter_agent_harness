@@ -60,6 +60,8 @@ class FileBrowser extends StatefulWidget {
     this.htmlPreviewBuilder,
     this.projectFolderOps,
     this.onProjectMountChanged,
+    this.showHeader = true,
+    this.filterController,
   });
 
   /// The environment whose filesystem is browsed — the same instance the
@@ -99,6 +101,16 @@ class FileBrowser extends StatefulWidget {
   /// Fired after the project-folder mount changes (mount/unmount), so the
   /// host can recompose the agent's system prompt.
   final void Function()? onProjectMountChanged;
+
+  /// Whether the browser paints its own header row. Host surfaces that
+  /// already provide the chrome band (the presented Files card) turn it
+  /// off — the path bar, hairline and listing stay. Default keeps the
+  /// full self-contained chrome.
+  final bool showHeader;
+
+  /// Live name filter driven by a host-owned search field (the presented
+  /// Files card's capsule). Null keeps the listing unfiltered.
+  final TextEditingController? filterController;
 
   @override
   State<FileBrowser> createState() => _FileBrowserState();
@@ -184,6 +196,7 @@ class _FileBrowserState extends State<FileBrowser> {
   void initState() {
     super.initState();
     widget.fsRevision?.addListener(_onFsRevision);
+    widget.filterController?.addListener(_onFilterChanged);
     _load();
   }
 
@@ -194,12 +207,22 @@ class _FileBrowserState extends State<FileBrowser> {
       oldWidget.fsRevision?.removeListener(_onFsRevision);
       widget.fsRevision?.addListener(_onFsRevision);
     }
+    if (oldWidget.filterController != widget.filterController) {
+      oldWidget.filterController?.removeListener(_onFilterChanged);
+      widget.filterController?.addListener(_onFilterChanged);
+    }
   }
 
   @override
   void dispose() {
     widget.fsRevision?.removeListener(_onFsRevision);
+    widget.filterController?.removeListener(_onFilterChanged);
     super.dispose();
+  }
+
+  /// Host-side search capsule typed into — re-run the (cheap) name filter.
+  void _onFilterChanged() {
+    if (mounted) setState(() {});
   }
 
   /// Agent-side filesystem change ("hook"): reload the listing and force
@@ -444,11 +467,17 @@ class _FileBrowserState extends State<FileBrowser> {
     // preview bar 44, hairline 1) so the body can pad its top and scroll
     // beneath the chrome band, like the chat list.
     final hasIdentity = _mountEnv?.mountedRoot != null;
-    final chromeHeight = 52.0 + (hasIdentity ? 32.0 : 0.0) + 44.0 + 1.0;
+    final chromeHeight =
+        (widget.showHeader ? 52.0 : 0.0) +
+        (hasIdentity ? 32.0 : 0.0) +
+        44.0 +
+        1.0;
     return Material(
       key: const ValueKey('fileBrowserPanel'),
       color: colors.panel,
-      shape: Border(left: BorderSide(color: colors.border, width: .5)),
+      shape: widget.showHeader
+          ? Border(left: BorderSide(color: colors.border, width: .5))
+          : null,
       child: Stack(
         children: [
           Positioned.fill(child: _buildBody(context, chromeHeight)),
@@ -476,7 +505,7 @@ class _FileBrowserState extends State<FileBrowser> {
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        _buildHeader(context),
+        ?_headerRow(context),
         ?_buildMountIdentity(context),
         _preview != null ? _buildPreviewBar(context) : _buildPathBar(context),
         Divider(height: 1, color: colors.border.withValues(alpha: .55)),
@@ -530,6 +559,11 @@ class _FileBrowserState extends State<FileBrowser> {
   );
 
   Widget _headerAction(Widget button) => FaHeaderCircularAction(child: button);
+
+  /// The panel's own header row — [FileBrowser.showHeader] off hides it
+  /// entirely (the host band replaces it).
+  Widget? _headerRow(BuildContext context) =>
+      widget.showHeader ? _buildHeader(context) : null;
 
   Widget _buildHeader(BuildContext context) {
     final colors = FahColors.of(context);
@@ -816,10 +850,32 @@ class _FileBrowserState extends State<FileBrowser> {
         ),
       );
     }
-    final directories = entries
+    final query = widget.filterController?.text.trim().toLowerCase() ?? '';
+    final visible = query.isEmpty
+        ? entries
+        : entries
+              .where((entry) => entry.name.toLowerCase().contains(query))
+              .toList(growable: false);
+    if (visible.isEmpty) {
+      return _centered(
+        topInset,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.folder_open_outlined, size: 40, color: colors.dim),
+            const SizedBox(height: 12),
+            Text(
+              context.l10n.filesNoSearchMatches,
+              style: TextStyle(color: colors.dim, fontSize: 12),
+            ),
+          ],
+        ),
+      );
+    }
+    final directories = visible
         .where((entry) => entry.kind == FileKind.directory)
         .toList(growable: false);
-    final files = entries
+    final files = visible
         .where((entry) => entry.kind != FileKind.directory)
         .toList(growable: false);
     return ListView(
