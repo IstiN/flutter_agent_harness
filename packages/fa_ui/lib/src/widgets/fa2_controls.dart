@@ -223,10 +223,14 @@ class FaTextField extends StatelessWidget {
     this.focusNode,
     this.hintText,
     this.labelText,
+    this.helperText,
     this.obscureText = false,
     this.dense = false,
     this.keyboardType,
+    this.autofocus = false,
+    this.enabled = true,
     this.onChanged,
+    this.onSubmitted,
     this.errorText,
     this.prefixIcon,
     this.suffixIcon,
@@ -236,10 +240,16 @@ class FaTextField extends StatelessWidget {
   final FocusNode? focusNode;
   final String? hintText;
   final String? labelText;
+
+  /// One-line helper under the field (token dim ink).
+  final String? helperText;
   final bool obscureText;
   final bool dense;
   final TextInputType? keyboardType;
+  final bool autofocus;
+  final bool enabled;
   final ValueChanged<String>? onChanged;
+  final ValueChanged<String>? onSubmitted;
   final String? errorText;
   final Widget? prefixIcon;
   final Widget? suffixIcon;
@@ -257,7 +267,10 @@ class FaTextField extends StatelessWidget {
       focusNode: focusNode,
       obscureText: obscureText,
       keyboardType: keyboardType,
+      autofocus: autofocus,
+      enabled: enabled,
       onChanged: onChanged,
+      onSubmitted: onSubmitted,
       style: TextStyle(
         color: tokens.ink1,
         fontSize: dense ? 13 : 15,
@@ -267,6 +280,7 @@ class FaTextField extends StatelessWidget {
         isDense: dense,
         hintText: hintText,
         labelText: labelText,
+        helperText: helperText,
         errorText: errorText,
         prefixIcon: prefixIcon,
         prefixIconConstraints: dense
@@ -277,6 +291,7 @@ class FaTextField extends StatelessWidget {
         fillColor: tokens.surface2,
         hintStyle: TextStyle(color: tokens.ink3),
         labelStyle: TextStyle(color: tokens.ink2),
+        helperStyle: TextStyle(color: tokens.ink3, fontSize: 12),
         contentPadding: EdgeInsets.symmetric(
           horizontal: 16,
           vertical: dense ? 0 : 14,
