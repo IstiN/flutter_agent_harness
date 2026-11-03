@@ -19,6 +19,7 @@ import '../types.dart' show Message;
 import '../session_io_retry.dart';
 import '../session_retention.dart' show sessionIdFromSessionPath;
 import 'session_chunk_reader.dart';
+import '../session_listing_index.dart';
 import 'session_record.dart';
 import 'session_search.dart';
 import 'session_storage.dart';
@@ -48,6 +49,7 @@ final class JsonlSessionCreateOptions {
     this.id,
     this.parentSessionPath,
     this.metadata,
+    this.rotateBytes,
   });
 
   /// Working directory the session belongs to (determines its directory).
@@ -61,6 +63,12 @@ final class JsonlSessionCreateOptions {
 
   /// Free-form application metadata written to the header.
   final Map<String, dynamic>? metadata;
+
+  /// Rotation threshold override for the created session's storage (the
+  /// shipped default rides [kSessionSegmentRotateBytes]). Tests shrink it
+  /// to exercise the append-driven rotation path without gigabyte appends;
+  /// production callers leave it null.
+  final int? rotateBytes;
 }
 
 /// The repository contract for sessions.
@@ -227,6 +235,32 @@ List<SessionMetadata> sortSessionsCurrentFolderFirst(
   ];
 }
 
+/// One directory-walk snapshot of a sessions root, shared by the cold
+/// scan and the indexed listing (issue #2053): the `.jsonl` primary
+/// segments in walk order, their per-directory buckets (the fingerprint
+/// terms are computed from these), and the set of primary paths whose
+/// directory listing showed `.part-` segment siblings (AC8's segment
+/// discovery without per-session `listDir` calls).
+final class _RootWalk {
+  _RootWalk({
+    required this.files,
+    required this.filesByDir,
+    required this.partPrimaries,
+  });
+
+  /// Every `.jsonl` session file (primary segments only), breadth-first
+  /// walk order — the same order the pre-#2053 cold scan read headers in.
+  final List<FileInfo> files;
+
+  /// Absolute directory path → the `.jsonl` files listed in it (possibly
+  /// empty — a session-free directory still contributes `count: 0` terms
+  /// to the fingerprint).
+  final Map<String, List<FileInfo>> filesByDir;
+
+  /// Primary file paths with at least one `.part-NN` sibling.
+  final Set<String> partPrimaries;
+}
+
 /// JSONL session repository on top of a [FileSystem].
 ///
 /// Ported from pi's `JsonlSessionRepo`. Layout: sessions are stored under
@@ -252,6 +286,7 @@ final class JsonlSessionRepo implements SessionRepo {
     this.processId,
     this.maxTrashCopyBytes = defaultMaxTrashCopyBytes,
     this.persistTransform,
+    this.persistListingIndex = true,
     DateTime Function()? now,
   }) : _sessionsRootInput = sessionsRoot,
        now = now ?? DateTime.now;
@@ -288,6 +323,18 @@ final class JsonlSessionRepo implements SessionRepo {
   /// carry raw secrets in `toolCalls[].arguments`. `null` (read-only
   /// repos, tools, imports) keeps appends byte-identical.
   final Message Function(Message message)? persistTransform;
+
+  /// Issue #2053: whether [list] maintains the persisted listing index
+  /// (`<root>/.listing-index.json`) and serves warm boots from it. On by
+  /// default — the sidecar is a cache validated against the directory
+  /// walk on every read, so disabling it only re-earns the per-file
+  /// header reads of the pre-#2053 cold path. Hosts that must leave the
+  /// sessions root byte-frozen (read-only embeds, goldens) pass false.
+  final bool persistListingIndex;
+
+  /// The persisted listing index store (stateless; one sidecar per root).
+  static const SessionListingIndexStore _listingIndexStore =
+      SessionListingIndexStore();
 
   /// Header-read concurrency for [list] (issue #199): bounded so 500+
   /// sessions never exhaust fds; ≥ 2 so latency overlaps (E4 pins the VM
@@ -371,6 +418,20 @@ final class JsonlSessionRepo implements SessionRepo {
       parentSessionPath: options.parentSessionPath,
       metadata: options.metadata,
       ioRetry: _ioRetry,
+      rotateBytes: options.rotateBytes,
+      onMutated: _onSegmentsMutated,
+    );
+    // Issue #2053 AC6: the writer path keeps the persisted listing index
+    // fresh in the same operation — the new session enters the sidecar
+    // here (best effort: a failed index write self-heals on the next
+    // listing's fingerprint check).
+    await _indexUpsertCreated(
+      filePath,
+      id: id,
+      cwd: options.cwd,
+      createdAt: createdAt,
+      parentSessionPath: options.parentSessionPath,
+      metadata: options.metadata,
     );
     return Session(storage, persistTransform: persistTransform);
   }
@@ -430,6 +491,7 @@ final class JsonlSessionRepo implements SessionRepo {
               ioRetry: _ioRetry,
               timingLog: timingLog,
               wholeFileOnly: wholeFileOnly,
+              onMutated: _onSegmentsMutated,
             ),
       // The repo backs the session's raw custom-record scan (the
       // obligations ledger's below-the-tail fallback, #488 class).
@@ -579,6 +641,9 @@ final class JsonlSessionRepo implements SessionRepo {
         actor: actor,
         result: 'missing',
       );
+      // Issue #2053 AC6: the entry (if any) is already stale — drop it so
+      // a warm listing cannot resurrect the deleted session.
+      await _indexAfterRemoval(path);
       return;
     }
     final trashPath = await _trashPathFor(root, path);
@@ -596,6 +661,7 @@ final class JsonlSessionRepo implements SessionRepo {
         'Failed to delete session $path',
       );
       await _verifyGone(path);
+      await _indexAfterRemoval(path);
       return;
     }
     final trashDir = _fsOrThrow(
@@ -666,6 +732,9 @@ final class JsonlSessionRepo implements SessionRepo {
       );
     }
     await _verifyGone(path);
+    // Issue #2053 AC6: soft-delete (rename to trash, or the copy+delete
+    // fallback) drops the sidecar entry in the same operation.
+    await _indexAfterRemoval(path);
   }
 
   /// Issue #863 (E3): a delete that "succeeded" but left the file (env/repo
@@ -821,14 +890,25 @@ final class JsonlSessionRepo implements SessionRepo {
       await _fs.createDir(cwdDir, recursive: true),
       'Failed to create session directory for $cwd',
     );
+    final forkPath = await _createSessionFilePath(sessionId, createdAt, cwd);
     final storage = await JsonlSessionStorage.create(
       _fs,
-      await _createSessionFilePath(sessionId, createdAt, cwd),
+      forkPath,
       cwd: cwd,
       sessionId: sessionId,
       parentSessionPath: parentSessionPath ?? source.path,
       metadata: metadata ?? source.metadata,
       ioRetry: _ioRetry,
+      onMutated: _onSegmentsMutated,
+    );
+    // Issue #2053 AC6: same writer-path index maintenance as create.
+    await _indexUpsertCreated(
+      forkPath,
+      id: sessionId,
+      cwd: cwd,
+      createdAt: createdAt,
+      parentSessionPath: parentSessionPath ?? source.path,
+      metadata: metadata ?? source.metadata,
     );
     for (final entry in forkedEntries) {
       await storage.appendEntry(entry);
@@ -852,11 +932,25 @@ final class JsonlSessionRepo implements SessionRepo {
   /// open sessions windowed at all). Throws [SessionException] like
   /// [open] when the file is missing/unreadable — callers already
   /// guard.
-  Future<String?> sessionNameQuick(SessionMetadata metadata) async {
+  Future<String?> sessionNameQuick(
+    SessionMetadata metadata, {
+    bool? hasRotatedSegments,
+  }) async {
     // Rotated sessions (gh-1077): probe every segment, newest first —
     // the newest session_info record anywhere in the chain decides,
     // exactly as in a single file (an empty name CLEARS an older one).
-    final paths = await listSessionSegmentPaths(_fs, metadata.path);
+    //
+    // Issue #2053 AC8: the listing walk already saw every directory —
+    // when it recorded NO `.part-` siblings for this primary (explicit
+    // [hasRotatedSegments] = false, or the last listing's knowledge), the
+    // per-session segment `listDir` is skipped. Null keeps the discovery
+    // exactly as before (the CLI `--session` single-session path and any
+    // caller without fresh listing knowledge).
+    final partsKnown =
+        hasRotatedSegments ?? _lastListingParts?[metadata.path];
+    final paths = partsKnown == false
+        ? <String>[metadata.path]
+        : await listSessionSegmentPaths(_fs, metadata.path);
     for (final path in paths.reversed) {
       final reader = SessionChunkReader(
         fs: _fs,
@@ -1160,31 +1254,36 @@ final class JsonlSessionRepo implements SessionRepo {
       'Failed to check sessions root $root',
     );
     if (!exists) return [];
+    if (persistListingIndex) return _collectSessionsIndexed(root);
     return _collectSessionsInDir(root);
   }
 
-  /// Collects every session file under the root: the directory tree is
-  /// walked breadth-first with bounded parallel [listDir] calls, then all
-  /// header reads fan out through ONE bounded pool (issue #199 AC3 —
-  /// sequential listing makes app boot O(sessions × header latency)).
+  /// One directory-walk snapshot behind [list]: every `.jsonl` session
+  /// file (primary segments only), bucketed per directory, plus the
+  /// `.part-` sibling knowledge the same directory listings already
+  /// yielded (issue #2053 AC8 — segment discovery without per-session
+  /// `listDir` calls).
   ///
-  /// Per-directory [listDir] and per-file header failures are skipped
-  /// (with a `session_list_skip` diagnostic through the ioRetry logger):
-  /// one unreadable file or a directory that vanished mid-walk (the
-  /// transient-ENOENT host family issue #427 names) must not fail the
-  /// whole listing — a single bad entry used to blank a host's entire
-  /// session sidebar.
-  Future<List<SessionMetadata>> _collectSessionsInDir(String dirPath) async {
+  /// The walk is the SAME breadth-first sweep with bounded parallel
+  /// [listDir] calls and the same skip-on-failure semantics as the
+  /// pre-#2053 cold scan; the listing index only changes what happens
+  /// AFTER the walk (header reads vs. index serve).
+  Future<_RootWalk> _walkRoot(String dirPath) async {
     final files = <FileInfo>[];
+    final filesByDir = <String, List<FileInfo>>{};
+    final partPrimaries = <String>{};
     final pending = <String>[dirPath];
     while (pending.isNotEmpty) {
       final level = List.of(pending);
       pending.clear();
       final discovered = await _mapBounded(level, _listDirOrNull);
-      for (final entries in discovered) {
+      for (var i = 0; i < discovered.length; i++) {
+        final entries = discovered[i];
         // A directory that failed to list is skipped (logged) — the walk
         // continues with the rest of the tree.
         if (entries == null) continue;
+        final dir = level[i];
+        final bucket = filesByDir.putIfAbsent(dir, () => <FileInfo>[]);
         for (final entry in entries) {
           if (entry.kind == FileKind.directory) {
             // Trash (issue #522) never surfaces as live sessions.
@@ -1192,15 +1291,507 @@ final class JsonlSessionRepo implements SessionRepo {
             pending.add(entry.path);
           } else if (entry.name.endsWith('.jsonl')) {
             files.add(entry);
+            bucket.add(entry);
+          } else {
+            // Rotated segment sibling (gh-1077): remember its primary so
+            // name resolution and consumers skip re-listing this
+            // directory per session.
+            final primary = _primaryOfPartName(entry.name);
+            if (primary != null) partPrimaries.add('$dir/$primary');
           }
         }
       }
     }
+    return _RootWalk(
+      files: files,
+      filesByDir: filesByDir,
+      partPrimaries: partPrimaries,
+    );
+  }
+
+  /// The primary session filename of a `.part-NN` sibling basename
+  /// (`foo.jsonl.part-0001` → `foo.jsonl`); null for anything else.
+  static String? _primaryOfPartName(String name) {
+    final match = _partSuffixPattern.firstMatch(name);
+    if (match == null) return null;
+    return name.substring(0, name.length - match.group(0)!.length);
+  }
+
+  static final RegExp _partSuffixPattern = RegExp(r'\.jsonl\.part-\d+$');
+
+  /// Issue #2053: the indexed listing — the walk validates the persisted
+  /// sidecar, and warm boots serve rows from it with ZERO per-file header
+  /// reads (AC1). Cold (no index / foreign shape) falls back to today's
+  /// full scan and writes a fresh index (AC2/AC7); anything in between is
+  /// an incremental refresh: entries whose stats still match the walk are
+  /// reused, every created/deleted/rotated/moved file is re-read (AC3).
+  ///
+  /// Correctness does not rest on the fingerprint alone: served entries
+  /// are cross-checked per file against the walk's own stat data and
+  /// served only for files the walk still sees — a stale entry can never
+  /// hide or resurrect a session even when the directory fingerprint
+  /// happens to match (the gh-1734 residual, caught one level deeper).
+  Future<List<SessionMetadata>> _collectSessionsIndexed(String root) async {
+    final walk = await _walkRoot(root);
+    _lastListingParts = {
+      for (final file in walk.files) file.path: walk.partPrimaries.contains(
+        file.path,
+      ),
+    };
+    final index = await _listingIndexStore.read(_fs, root);
+    if (index == null) {
+      // Cold / corrupt / foreign-version index: today's full scan, then a
+      // fresh sidecar (no names — those are learned lazily, AC4).
+      final sessions = await _loadSessionMetadataBatch(walk.files);
+      await _writeIndexSnapshot(
+        root,
+        walk,
+        [for (final session in sessions) _entryFromMetadata(session)],
+      );
+      return sessions;
+    }
+    final byPath = {
+      for (final entry in index.entries) entry.path: entry,
+    };
+    bool reusable(SessionListingIndexEntry entry, FileInfo file) =>
+        entry.sizeBytes == file.size && entry.mtimeMs == file.mtimeMs;
+    final stale = <FileInfo>[];
+    for (final file in walk.files) {
+      final entry = byPath[file.path];
+      // No entry (created since the index) or changed stats (appended /
+      // rotated / touched): the header is re-read — AC3's incremental
+      // refresh. Everything else is served from the index (AC1).
+      if (entry == null || !reusable(entry, file)) stale.add(file);
+    }
+    final fresh = await _mapBounded<FileInfo, SessionMetadata?>(
+      stale,
+      _tryLoadSessionMetadata,
+    );
+    final freshByPath = <String, SessionMetadata>{};
+    for (var i = 0; i < stale.length; i++) {
+      final metadata = fresh[i];
+      if (metadata != null) freshByPath[stale[i].path] = metadata;
+    }
+    final entries = <SessionListingIndexEntry>[];
+    final sessions = <SessionMetadata>[];
+    var mutated = false;
+    for (final file in walk.files) {
+      final entry = byPath[file.path];
+      final hasParts = walk.partPrimaries.contains(file.path);
+      if (entry != null && reusable(entry, file)) {
+        final settled =
+            entry.hasParts == hasParts
+                ? entry
+                : entry.withStats(
+                  sizeBytes: entry.sizeBytes,
+                  mtimeMs: entry.mtimeMs,
+                  hasParts: hasParts,
+                );
+        if (!identical(settled, entry)) mutated = true;
+        entries.add(settled);
+        sessions.add(_metadataFromEntry(settled));
+        continue;
+      }
+      final metadata = freshByPath[file.path];
+      if (metadata == null) continue; // unreadable/foreign header: skipped
+      entries.add(
+        SessionListingIndexEntry(
+          id: metadata.id,
+          path: metadata.path,
+          sizeBytes: metadata.sizeBytes ?? file.size,
+          mtimeMs: file.mtimeMs,
+          createdAtIso: metadata.createdAt.toIso8601String(),
+          cwd: metadata.cwd,
+          lastUpdatedAtMs: metadata.lastUpdatedAt?.millisecondsSinceEpoch,
+          parentSessionPath: metadata.parentSessionPath,
+          metadata: metadata.metadata,
+          hasParts: hasParts,
+        ),
+      );
+      sessions.add(metadata);
+      mutated = true;
+    }
+    // Skip the rewrite when the walk agreed with the sidecar completely —
+    // repeated warm boots must not churn the root (AC1's zero-write
+    // steady state; the file's own mtime is then stable too).
+    if (mutated || !_sameDirStats(root, walk, index.dirStats)) {
+      await _writeIndexSnapshot(root, walk, entries);
+    }
+    return sessions;
+  }
+
+  /// The pre-#2053 cold scan: walk + one bounded header-read fan-out.
+  /// Kept verbatim for [persistListingIndex] = false hosts and as the
+  /// semantic reference the indexed path must be byte-comparable to
+  /// (issue #2053 AC2).
+  Future<List<SessionMetadata>> _collectSessionsInDir(String dirPath) async {
+    final walk = await _walkRoot(dirPath);
+    _lastListingParts = {
+      for (final file in walk.files) file.path: walk.partPrimaries.contains(
+        file.path,
+      ),
+    };
+    return _loadSessionMetadataBatch(walk.files);
+  }
+
+  /// The bounded header-read fan-out shared by the cold and incremental
+  /// paths (issue #199 AC3 — one pool for the whole listing).
+  Future<List<SessionMetadata>> _loadSessionMetadataBatch(
+    List<FileInfo> files,
+  ) async {
     final loaded = await _mapBounded<FileInfo, SessionMetadata?>(
       files,
       _tryLoadSessionMetadata,
     );
     return [for (final m in loaded) ?m];
+  }
+
+  /// Builds the listing-index entry of a freshly read session (no name —
+  /// names are learned lazily and persisted by [rememberSessionNames]).
+  SessionListingIndexEntry _entryFromMetadata(SessionMetadata metadata) =>
+      SessionListingIndexEntry(
+        id: metadata.id,
+        path: metadata.path,
+        sizeBytes: metadata.sizeBytes ?? 0,
+        mtimeMs: metadata.lastUpdatedAt?.millisecondsSinceEpoch ?? 0,
+        createdAtIso: metadata.createdAt.toIso8601String(),
+        cwd: metadata.cwd,
+        lastUpdatedAtMs: metadata.lastUpdatedAt?.millisecondsSinceEpoch,
+        parentSessionPath: metadata.parentSessionPath,
+        metadata: metadata.metadata,
+      );
+
+  /// Serves a session's listing metadata straight from an index entry —
+  /// the field-for-field equivalent of [loadJsonlSessionMetadata] plus the
+  /// walk's stat pair (AC2's byte-comparable metadata).
+  SessionMetadata _metadataFromEntry(SessionListingIndexEntry entry) =>
+      SessionMetadata(
+        // createdAt rides the header's exact ISO string, parsed exactly
+        // the way the cold scan parses the header line — a served row is
+        // indistinguishable from a re-read one (AC2's byte-comparable
+        // metadata). lastUpdatedAt comes from the file stat, which the
+        // cold scan serves local — match that too.
+        id: entry.id,
+        createdAt: DateTime.parse(entry.createdAtIso),
+        cwd: entry.cwd,
+        path: entry.path,
+        lastUpdatedAt: entry.lastUpdatedAtMs == null
+            ? null
+            : DateTime.fromMillisecondsSinceEpoch(entry.lastUpdatedAtMs!),
+        parentSessionPath: entry.parentSessionPath,
+        metadata: entry.metadata,
+        sizeBytes: entry.sizeBytes,
+      );
+
+  /// Writes the sidecar snapshot for [root]: per-directory fingerprint
+  /// terms from the walk plus the merged entries. Best effort — a failed
+  /// write self-heals on the next listing (cache-only concern).
+  Future<void> _writeIndexSnapshot(
+    String root,
+    _RootWalk walk,
+    List<SessionListingIndexEntry> entries,
+  ) async {
+    try {
+      final dirStats = <String, ListingDirStats>{};
+      for (final entry in walk.filesByDir.entries) {
+        dirStats[_dirKey(root, entry.key)] = _dirStatsOf(entry.value);
+      }
+      final index = SessionListingIndex(
+        dirStats: dirStats,
+        entries: entries,
+        writtenAtMs: now().millisecondsSinceEpoch,
+      );
+      await _listingIndexStore.write(_fs, root, index);
+    } on Object {
+      // Cache-only: never fail (or even log) a listing for its cache.
+    }
+  }
+
+  /// Fingerprint terms of one walked directory.
+  ListingDirStats _dirStatsOf(List<FileInfo> files) => ListingDirStats(
+    fileCount: files.length,
+    totalBytes: files.fold(0, (sum, file) => sum + file.size),
+    maxMtimeMs: files.isEmpty
+        ? 0
+        : files.map((file) => file.mtimeMs).reduce(math.max),
+  );
+
+  /// Directory key relative to [root] ('' = the root itself) — stable
+  /// across absolute-root moves, so an index written under one mount
+  /// path validates against the same tree under another.
+  String _dirKey(String root, String dir) {
+    if (dir == root) return '';
+    if (dir.length > root.length &&
+        dir.startsWith(root) &&
+        (dir[root.length] == '/' || dir[root.length] == r'\')) {
+      return dir.substring(root.length + 1);
+    }
+    // Foreign prefix (root re-resolved differently): degrade to the full
+    // path — the fingerprint still compares, just less portably.
+    return dir;
+  }
+
+  /// Whether the walk's per-directory terms match the index's snapshot.
+  bool _sameDirStats(
+    String root,
+    _RootWalk walk,
+    Map<String, ListingDirStats> indexStats,
+  ) {
+    if (walk.filesByDir.length != indexStats.length) return false;
+    for (final entry in walk.filesByDir.entries) {
+      final other = indexStats[_dirKey(root, entry.key)];
+      if (other == null || other != _dirStatsOf(entry.value)) return false;
+    }
+    return true;
+  }
+
+  // --- Writer-path index maintenance (issue #2053 AC6). -------------------
+
+  /// Segment-chain mutation notification from a storage this repo created
+  /// (rotation / failed-rotation restore). Awaited by the storage so the
+  /// index update lands IN the same operation (AC6); every failure is
+  /// swallowed here — the append path must never fail for its cache.
+  Future<void> _onSegmentsMutated(String primaryPath) async {
+    _lastListingParts = null;
+    try {
+      await _indexAfterSegmentMutation(primaryPath);
+    } on Object {
+      // Cache-only: never fail an append for its cache.
+    }
+  }
+
+  /// Refreshes the primary's entry (stats + hasParts, name kept — a
+  /// rotation moves older records into a part and cannot change the
+  /// newest session_info) in the same operation as the rotation.
+  Future<void> _indexAfterSegmentMutation(String primaryPath) async {
+    try {
+      if (!persistListingIndex) return;
+      final root = await _getSessionsRoot();
+      final index = await _listingIndexStore.read(_fs, root);
+      final entry = index?.entryFor(primaryPath);
+      if (index == null || entry == null) return;
+      final info = await _fs.fileInfo(primaryPath);
+      final file = info.valueOrNull;
+      if (file == null || file.kind != FileKind.file) return;
+      final updated = entry.withStats(
+        sizeBytes: file.size,
+        mtimeMs: file.mtimeMs,
+        hasParts: true,
+      );
+      await _persistMutatedIndex(
+        root,
+        index,
+        [for (final e in index.entries) e.path == primaryPath ? updated : e],
+      );
+    } on Object {
+      // Cache-only: never fail (or even log) an append for its cache.
+    }
+  }
+
+  /// Adds/refreshes the entry of a session this repo just created (or
+  /// forked) — the new file enters the sidecar in the same operation.
+  /// No-op when no index exists yet: the next listing writes a complete
+  /// one from a full scan (a create must not cost a scan).
+  Future<void> _indexUpsertCreated(
+    String filePath, {
+    required String id,
+    required String cwd,
+    required DateTime createdAt,
+    String? parentSessionPath,
+    Map<String, dynamic>? metadata,
+  }) async {
+    try {
+      if (!persistListingIndex) return;
+      _lastListingParts = null;
+      final root = await _getSessionsRoot();
+      final index = await _listingIndexStore.read(_fs, root);
+      if (index == null) return;
+      final info = await _fs.fileInfo(filePath);
+      final file = info.valueOrNull;
+      if (file == null || file.kind != FileKind.file) return;
+      final entry = SessionListingIndexEntry(
+        id: id,
+        path: filePath,
+        sizeBytes: file.size,
+        mtimeMs: file.mtimeMs,
+        createdAtIso: createdAt.toIso8601String(),
+        cwd: cwd,
+        lastUpdatedAtMs: file.mtimeMs,
+        parentSessionPath: parentSessionPath,
+        metadata: metadata,
+      );
+      await _persistMutatedIndex(
+        root,
+        index,
+        [
+          for (final e in index.entries)
+            if (e.path != filePath) e,
+          entry,
+        ],
+      );
+    } on Object {
+      // Cache-only: never fail a create for its cache.
+    }
+  }
+
+  /// Drops the entry of a removed (soft-deleted) session file in the same
+  /// operation as the removal.
+  Future<void> _indexAfterRemoval(String path) async {
+    try {
+      if (!persistListingIndex) return;
+      _lastListingParts = null;
+      final root = await _getSessionsRoot();
+      final index = await _listingIndexStore.read(_fs, root);
+      if (index == null || index.entryFor(path) == null) return;
+      await _persistMutatedIndex(root, index, [
+        for (final e in index.entries)
+          if (e.path != path) e,
+      ]);
+    } on Object {
+      // Cache-only: never fail a delete for its cache.
+    }
+  }
+
+  /// Shared tail of the writer-path mutations: rewrite the sidecar with
+  /// [entries] and refresh the fingerprint terms of the one directory the
+  /// mutation touched (a fresh `listDir` of it — everything else stays as
+  /// the snapshot recorded it).
+  Future<void> _persistMutatedIndex(
+    String root,
+    SessionListingIndex index,
+    List<SessionListingIndexEntry> entries,
+  ) async {
+    // The mutated file lives in exactly one directory; refresh only that
+    // directory's terms so the next warm boot still validates cleanly.
+    final dirs = <String>{
+      for (final entry in entries) _dirOf(entry.path),
+    };
+    final dirStats = Map.of(index.dirStats);
+    for (final dir in dirs) {
+      final refreshed = await _refreshDirStats(dir);
+      if (refreshed != null) dirStats[_dirKey(root, dir)] = refreshed;
+    }
+    await _listingIndexStore.write(
+      _fs,
+      root,
+      index.withEntries(entries).withDirStats(dirStats),
+    );
+  }
+
+  /// Re-stats one directory's `.jsonl` files for the fingerprint refresh;
+  /// null when the directory cannot be listed (the stale terms survive —
+  /// the next listing's walk revalidates anyway).
+  Future<ListingDirStats?> _refreshDirStats(String dir) async {
+    try {
+      final listed = await _fs.listDir(dir);
+      if (listed.isErr) return null;
+      final files = [
+        for (final entry in listed.valueOrNull ?? const <FileInfo>[])
+          if (entry.kind == FileKind.file && entry.name.endsWith('.jsonl'))
+            entry,
+      ];
+      return _dirStatsOf(files);
+    } on Object {
+      return null;
+    }
+  }
+
+  /// The directory part of [path] (both separators, matching the storage
+  /// path helpers).
+  static String _dirOf(String path) {
+    final slash = path.lastIndexOf('/');
+    final backslash = path.lastIndexOf(r'\');
+    final cut = math.max(slash, backslash);
+    return cut <= 0 ? path : path.substring(0, cut);
+  }
+
+  // --- Lazy names (issue #2053 AC4). --------------------------------------
+
+  /// Segment-presence knowledge from the last listing walk: primary path
+  /// → whether `.part-` siblings were seen in the very directory listing
+  /// that found the primary. [sessionNamesQuick] skips its per-session
+  /// segment `listDir` for `false` entries (AC8 — one directory read per
+  /// session gone); a writer mutation clears the map so a hint can never
+  /// outlive the state it was derived from.
+  Map<String, bool>? _lastListingParts;
+
+  /// Display names known WITHOUT any name-probe window read: the
+  /// persisted listing index's learned names. Boot surfaces render these
+  /// immediately and fill the rest in lazily (issue #2053 AC4).
+  ///
+  /// Each named entry is stat-validated first (a few files — names are
+  /// rare): a file whose stats moved since the name was learned has had
+  /// records appended (a `/rename` writes a new `session_info`), so its
+  /// learned name may be stale and is withheld until the lazy fill
+  /// re-learns it. The listing itself heals the entry.
+  Future<Map<String, String>> knownSessionNames() async {
+    try {
+      if (!persistListingIndex) return const {};
+      final index = await _listingIndexStore.read(
+        _fs,
+        await _getSessionsRoot(),
+      );
+      if (index == null) return const {};
+      final names = <String, String>{};
+      for (final entry in index.entries) {
+        final name = entry.name;
+        if (name == null || name.trim().isEmpty) continue;
+        final info = await _fs.fileInfo(entry.path);
+        final file = info.valueOrNull;
+        final unchanged = file != null &&
+            file.kind == FileKind.file &&
+            file.size == entry.sizeBytes &&
+            file.mtimeMs == entry.mtimeMs;
+        if (unchanged) names[entry.id] = name;
+      }
+      return names;
+    } on Object {
+      return const {};
+    }
+  }
+
+  /// Persists lazily probed display names into the listing index (the
+  /// writer side of AC4): the NEXT boot renders those names without a
+  /// single name probe. Guarded per name — the file must still carry the
+  /// stat pair the index recorded, so an appended rename record (new
+  /// stats) invalidates the learned name instead of freezing it. Best
+  /// effort: never throws, skips ids the index does not know.
+  Future<void> rememberSessionNames(Map<String, String> namesById) async {
+    if (!persistListingIndex || namesById.isEmpty) return;
+    try {
+      final root = await _getSessionsRoot();
+      final index = await _listingIndexStore.read(_fs, root);
+      if (index == null) return;
+      var changed = false;
+      final entries = <SessionListingIndexEntry>[];
+      for (final entry in index.entries) {
+        final name = namesById[entry.id];
+        final learnable = name != null &&
+            name.trim().isNotEmpty &&
+            entry.name != name;
+        if (!learnable) {
+          entries.add(entry);
+          continue;
+        }
+        final info = await _fs.fileInfo(entry.path);
+        final file = info.valueOrNull;
+        final unchanged = file != null &&
+            file.kind == FileKind.file &&
+            file.size == entry.sizeBytes &&
+            file.mtimeMs == entry.mtimeMs;
+        if (!unchanged) {
+          entries.add(entry);
+          continue;
+        }
+        entries.add(entry.withName(name));
+        changed = true;
+      }
+      if (changed) {
+        await _listingIndexStore.write(_fs, root, index.withEntries(entries));
+      }
+    } on Object {
+      // Cache-only: never fail a name probe for its cache.
+    }
   }
 
   /// Runs [task] over [items] with at most [_listConcurrency] in flight;
