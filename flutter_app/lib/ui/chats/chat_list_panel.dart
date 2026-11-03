@@ -71,6 +71,7 @@ class ChatListPanel extends StatefulWidget {
     this.bodyBuilder,
     this.bodyKey,
     this.showCurrentDirectory = true,
+    this.showFilterToolbar = true,
     this.networkManager,
     this.networkMode,
     this.selectedEntryId,
@@ -130,6 +131,11 @@ class ChatListPanel extends StatefulWidget {
   final Widget Function(double topPadding)? bodyBuilder;
   final Key? bodyKey;
   final bool showCurrentDirectory;
+
+  /// Whether the horizontal chat-filter/network toolbar renders. The wide
+  /// shell's vertical rail owns those destinations now, so the wide panel
+  /// passes false; the narrow shell keeps the bar (horizontal adaptation).
+  final bool showFilterToolbar;
   final NetworkSessionManager? networkManager;
   final NetworkModeController? networkMode;
   final ChatEntryId? selectedEntryId;
@@ -279,7 +285,7 @@ class _ChatListPanelState extends State<ChatListPanel> {
           children: [
             _buildHeader(),
             ?widget.headerBottom,
-            _buildFilters(colors),
+            if (widget.showFilterToolbar) _buildFilters(colors),
             if (_networkLoading) const LinearProgressIndicator(minHeight: 1),
             if (_showNetworkBanner) _buildNetworkBanner(colors),
             if (_currentDirectory case final directory?)
@@ -376,7 +382,7 @@ class _ChatListPanelState extends State<ChatListPanel> {
         : (isMac ? 104.0 : 58.0);
     return searchHeight +
         (widget.headerBottom == null ? 0 : 46) +
-        MessengerFilterControl.height +
+        (widget.showFilterToolbar ? MessengerFilterControl.height : 0) +
         (_networkLoading ? 1 : 0) +
         (_showNetworkBanner ? 50 : 0) +
         (_currentDirectory == null ? 0 : 56);
@@ -460,16 +466,10 @@ class _ChatListPanelState extends State<ChatListPanel> {
     );
   }
 
-  Map<String, String> get _memberships {
-    final result = Map<String, String>.of(widget.controller.networkNames);
-    final manager = widget.networkManager;
-    if (manager != null) {
-      for (final entry in manager.wallet.networks.entries) {
-        result[entry.key] = entry.value.name;
-      }
-    }
-    return result;
-  }
+  Map<String, String> get _memberships => chatNetworkMemberships(
+    controller: widget.controller,
+    manager: widget.networkManager,
+  );
 
   String get _networkFilterLabel {
     final selected = widget.controller.networkFilter;
@@ -486,48 +486,20 @@ class _ChatListPanelState extends State<ChatListPanel> {
     return PopupMenuButton<String>(
       key: const ValueKey('chatNetworkFilter'),
       tooltip: _networkFilterLabel,
-      onSelected: (value) {
-        if (value == 'manage') {
-          unawaited(
-            showChatNetworksDialog(
-              context,
-              manager: manager,
-              networkMode: widget.networkMode,
-            ),
-          );
-        } else if (value == 'sign-in') {
-          if (manager != null) {
-            unawaited(showSignInDialog(context, manager: manager));
-          }
-        } else if (value == 'all') {
-          widget.controller.setNetworkFilter(const ChatNetworkFilter.all());
-        } else if (value == 'my') {
-          widget.controller.setNetworkFilter(const ChatNetworkFilter.my());
-        } else if (value.startsWith('network:')) {
-          widget.controller.setNetworkFilter(
-            ChatNetworkFilter.network(value.substring(8)),
-          );
-        }
-      },
-      itemBuilder: (context) => [
-        PopupMenuItem(value: 'all', child: Text(context.l10n.chatAllNetworks)),
-        PopupMenuItem(value: 'my', child: Text(context.l10n.chatLocal)),
-        for (final network in _memberships.entries)
-          PopupMenuItem(
-            value: 'network:${network.key}',
-            child: Text(network.value),
-          ),
-        const PopupMenuDivider(),
-        PopupMenuItem(
-          value: 'manage',
-          child: Text(context.l10n.chatManageNetworks),
+      onSelected: (value) => unawaited(
+        selectChatNetworkFilter(
+          context,
+          value: value,
+          controller: widget.controller,
+          manager: manager,
+          networkMode: widget.networkMode,
         ),
-        if (manager != null && !manager.hasJwt)
-          PopupMenuItem(
-            value: 'sign-in',
-            child: Text(context.l10n.chatSignInNetwork),
-          ),
-      ],
+      ),
+      itemBuilder: (context) => chatNetworkFilterMenuItems(
+        context,
+        controller: widget.controller,
+        manager: manager,
+      ),
       child: Container(
         height: 32,
         decoration: BoxDecoration(
@@ -1587,5 +1559,83 @@ Future<void> _openManagedNetwork(
     await manager.resume(networkId);
   } on Object catch (error) {
     if (context.mounted) showFahErrorSnack(context, error.toString());
+  }
+}
+
+/// The memberships map behind the shared network filter menu: the
+/// controller's known names plus the wallet's live networks.
+Map<String, String> chatNetworkMemberships({
+  required ChatListController? controller,
+  required NetworkSessionManager? manager,
+}) {
+  final result = Map<String, String>.of(controller?.networkNames ?? const {});
+  if (manager != null) {
+    for (final entry in manager.wallet.networks.entries) {
+      result[entry.key] = entry.value.name;
+    }
+  }
+  return result;
+}
+
+/// The identity-globe destination's menu entries, shared by the chat
+/// panel's toolbar trailing (narrow) and the wide shell's rail row.
+List<PopupMenuEntry<String>> chatNetworkFilterMenuItems(
+  BuildContext context, {
+  required ChatListController? controller,
+  required NetworkSessionManager? manager,
+}) {
+  final memberships = chatNetworkMemberships(
+    controller: controller,
+    manager: manager,
+  );
+  return [
+    PopupMenuItem(value: 'all', child: Text(context.l10n.chatAllNetworks)),
+    PopupMenuItem(value: 'my', child: Text(context.l10n.chatLocal)),
+    for (final network in memberships.entries)
+      PopupMenuItem(
+        value: 'network:${network.key}',
+        child: Text(network.value),
+      ),
+    const PopupMenuDivider(),
+    PopupMenuItem(
+      value: 'manage',
+      child: Text(context.l10n.chatManageNetworks),
+    ),
+    if (manager != null && !manager.hasJwt)
+      PopupMenuItem(
+        value: 'sign-in',
+        child: Text(context.l10n.chatSignInNetwork),
+      ),
+  ];
+}
+
+/// Handles a selection from [chatNetworkFilterMenuItems]: the filter
+/// values apply to the controller, the management/sign-in values open
+/// their flows. Never changes the messenger home.
+Future<void> selectChatNetworkFilter(
+  BuildContext context, {
+  required String value,
+  required ChatListController controller,
+  required NetworkSessionManager? manager,
+  required NetworkModeController? networkMode,
+}) async {
+  if (value == 'manage') {
+    await showChatNetworksDialog(
+      context,
+      manager: manager,
+      networkMode: networkMode,
+    );
+  } else if (value == 'sign-in') {
+    if (manager != null) {
+      await showSignInDialog(context, manager: manager);
+    }
+  } else if (value == 'all') {
+    controller.setNetworkFilter(const ChatNetworkFilter.all());
+  } else if (value == 'my') {
+    controller.setNetworkFilter(const ChatNetworkFilter.my());
+  } else if (value.startsWith('network:')) {
+    controller.setNetworkFilter(
+      ChatNetworkFilter.network(value.substring(8)),
+    );
   }
 }

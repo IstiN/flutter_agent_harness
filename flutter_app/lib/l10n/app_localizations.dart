@@ -386,6 +386,42 @@ abstract class AppLocalizations {
   /// **'Chats'**
   String get wideNavChats;
 
+  /// No description provided for @wideNavLocal.
+  ///
+  /// In en, this message translates to:
+  /// **'Local'**
+  String get wideNavLocal;
+
+  /// No description provided for @localFoldersTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Local folders'**
+  String get localFoldersTitle;
+
+  /// No description provided for @localFolderSessionCount.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{1 session} other{{count} sessions}}'**
+  String localFolderSessionCount(num count);
+
+  /// No description provided for @localSessionsEmpty.
+  ///
+  /// In en, this message translates to:
+  /// **'No sessions in this folder yet'**
+  String get localSessionsEmpty;
+
+  /// No description provided for @localFoldersEmpty.
+  ///
+  /// In en, this message translates to:
+  /// **'No project folders yet'**
+  String get localFoldersEmpty;
+
+  /// No description provided for @localFolderBack.
+  ///
+  /// In en, this message translates to:
+  /// **'Back to folders'**
+  String get localFolderBack;
+
   /// No description provided for @wideChatsSearchHint.
   ///
   /// In en, this message translates to:

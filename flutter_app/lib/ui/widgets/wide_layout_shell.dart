@@ -35,6 +35,8 @@ import 'package:fa/ui/apps/files_presentation_panel.dart';
 import 'package:fa/ui/apps/messenger_app_panel.dart';
 import 'package:fa/ui/screens/app_launcher_screen.dart';
 import 'package:fa/ui/widgets/fa_mark.dart';
+import 'package:fa/ui/widgets/folder_avatar.dart';
+import 'package:fa/ui/widgets/messenger_nav_rail.dart';
 import 'package:fa/ui/widgets/messenger_navigation_controls.dart';
 import 'package:fa/ui/widgets/messenger_section_header.dart';
 import 'package:fa/ui/chats/chat_list_controller.dart';
@@ -42,6 +44,7 @@ import 'package:fa/ui/chats/chat_list_entry.dart';
 import 'package:fa/ui/chats/chat_list_panel.dart';
 import 'package:fa/ui/chats/chat_list_stores.dart';
 import 'package:fa/ui/chats/local_chat_list_adapter.dart';
+import 'package:fa/ui/chats/local_sessions_panel.dart';
 import 'package:fa/ui/chats/network_inbox_adapter.dart';
 import 'package:fa/ui/chats/network_inbox_http_adapter.dart';
 import 'package:fa/ui/network/join_sheet.dart';
@@ -51,7 +54,6 @@ import 'package:fa/ui/widgets/quick_model_chip.dart';
 import 'package:fa/ui/screens/models_settings_page.dart';
 import 'package:fa/ui/screens/settings.dart';
 import 'package:fa/ui/widgets/boot_oversize_notice.dart';
-import 'package:fa/ui/widgets/sidebar_nav_item.dart';
 import 'package:fa/ui/widgets/sidebar_sessions_list.dart';
 import 'package:fa_ui/fa_ui.dart';
 import 'package:flutter/foundation.dart';
@@ -159,7 +161,7 @@ PreferredSizeWidget faAppBar({
   );
 }
 
-enum _WideShellSection { chats, activity, apps }
+enum _WideShellSection { chats, local, activity, apps }
 
 class _WideLayoutShellState extends State<WideLayoutShell>
     with TickerProviderStateMixin {
@@ -231,6 +233,17 @@ class _WideLayoutShellState extends State<WideLayoutShell>
   Route<void>? _narrowChatRoute;
   bool? _wasNarrow;
   bool _narrowActivityDetailVisible = false;
+
+  /// The Local section's open folder (cwd, '' = Personal; null = the
+  /// folder list). Shell-owned so it survives section switches and sidebar
+  /// collapse, like the chats panel's drill-down directory.
+  String? _localFolderId;
+
+  /// Lazily built resolver for folders' well-known icon files (cached
+  /// per folder in memory).
+  FolderIconResolver? _folderIconResolver;
+  FolderIconResolver get _folderIcons =>
+      _folderIconResolver ??= FolderIconResolver(widget.manager.env);
   String? _chatAccountKey;
   String? _chatDirectory;
   final Set<String> _localExpandedParents = <String>{};
@@ -645,6 +658,7 @@ class _WideLayoutShellState extends State<WideLayoutShell>
   Widget _buildNarrowNavigation() {
     final labels = [
       context.l10n.wideNavChats,
+      context.l10n.wideNavLocal,
       context.l10n.wideNavActivity,
       context.l10n.appsGridTitle,
     ];
@@ -668,6 +682,7 @@ class _WideLayoutShellState extends State<WideLayoutShell>
                 ),
                 icon: switch (_WideShellSection.values[index]) {
                   _WideShellSection.chats => Icons.chat_bubble_outline_rounded,
+                  _WideShellSection.local => Icons.folder_outlined,
                   _WideShellSection.activity =>
                     Icons.notifications_none_rounded,
                   _WideShellSection.apps => Icons.grid_view_rounded,
@@ -737,26 +752,12 @@ class _WideLayoutShellState extends State<WideLayoutShell>
       currentDirectory: _chatDirectory,
       onDirectoryChanged: (path) => setState(() => _chatDirectory = path),
       headerBottom: null,
-      filterActions: compact || collapsed
-          ? const <Widget>[]
-          : _buildChatFilterActions(),
-      filterSelectedExtraIndex: compact || collapsed
-          ? null
-          : switch (_section) {
-              _WideShellSection.chats => null,
-              _WideShellSection.activity => 0,
-              _WideShellSection.apps => 1,
-            },
-      filterSelectionTextLed: !(compact || collapsed),
-      filterSelectionHighlighted:
-          !(compact || collapsed) && _section == _WideShellSection.chats,
-      filterSelectedExtraHighlighted:
-          !(compact || collapsed) && _section != _WideShellSection.chats,
-      onFilterSelected: _section == _WideShellSection.chats
-          ? null
-          : () => _selectSection(_WideShellSection.chats),
+      // The wide shell's vertical rail owns the section destinations and
+      // chat filters; the narrow shell keeps the horizontal bar.
+      showFilterToolbar: compact || collapsed,
       searchController: switch (_section) {
         _WideShellSection.chats => null,
+        _WideShellSection.local => null,
         _WideShellSection.activity => _activitySearchController,
         _WideShellSection.apps => _appLauncherController.searchController,
       },
@@ -765,11 +766,13 @@ class _WideLayoutShellState extends State<WideLayoutShell>
           : null,
       searchHint: switch (_section) {
         _WideShellSection.chats => null,
+        _WideShellSection.local => null,
         _WideShellSection.activity => context.l10n.activitySearchHint,
         _WideShellSection.apps => context.l10n.launcherSearchHint,
       },
       onSearch: switch (_section) {
         _WideShellSection.chats => null,
+        _WideShellSection.local => null,
         _WideShellSection.activity => _activityController.setSearch,
         _WideShellSection.apps => (_) {},
       },
@@ -778,6 +781,7 @@ class _WideLayoutShellState extends State<WideLayoutShell>
           : ValueKey('wide-sidebar-${_section.name}'),
       bodyBuilder: switch (_section) {
         _WideShellSection.chats => null,
+        _WideShellSection.local => null,
         _WideShellSection.activity => _buildActivitySidebarBody,
         _WideShellSection.apps => _buildAppsSidebarBody,
       },
@@ -825,6 +829,15 @@ class _WideLayoutShellState extends State<WideLayoutShell>
         _localExpandedParents.remove(parentId);
       }
     });
+  }
+
+  /// Opens a Local-section row through the existing open flow (live via
+  /// the relay/switch, persisted via the clone path), then clears the
+  /// row's unread count the same way the chat list does.
+  Future<void> _openLocalEntry(ChatListEntry entry) async {
+    if (entry.kind != ChatListEntryKind.localAgent) return;
+    await _openChatEntry(entry);
+    await _chatController.markOpened(entry);
   }
 
   Future<void> _openChatEntry(ChatListEntry entry) async {
@@ -927,6 +940,7 @@ class _WideLayoutShellState extends State<WideLayoutShell>
       // Top clearance comes from the single narrow-body wrap below — no
       // per-branch SafeArea (it would double the inset on macOS).
       _WideShellSection.chats => _buildChatPanel(compact: true),
+      _WideShellSection.local => _buildLocalPanel(),
       _WideShellSection.activity =>
         _narrowActivityDetailVisible
             ? ActivityDetailPanel(
@@ -1080,11 +1094,15 @@ class _WideLayoutShellState extends State<WideLayoutShell>
             // gutter the open panel now keeps. Other platforms stay inside
             // the panel.
             final toggleShift = _isMacOS ? 60 * progress : 0.0;
+            // The vertical rail (left edge of the wide shell) + its 8pt
+            // seam precede the sidebar column, so floating chrome anchored
+            // to the sidebar's edges must clear the rail's footprint.
+            final railLeading = MessengerNavRail.width + MessengerNavRail.seam;
             // The 36pt circle keeps the panel's 8pt gutter contract on
             // BOTH sides: 8pt card margin + 8pt gutter put its right edge
             // 16pt inside the sidebar's right edge (owner call: the open
             // panel's toggle must not hug the panel edge).
-            final toggleLeft = sidebarWidth - 52 + toggleShift;
+            final toggleLeft = railLeading + sidebarWidth - 52 + toggleShift;
             final sidebarContent = _buildSidebar(
               colors,
               collapsed: contentCollapsed,
@@ -1106,6 +1124,8 @@ class _WideLayoutShellState extends State<WideLayoutShell>
                   children: [
                     Row(
                       children: [
+                        _buildNavRail(),
+                        const SizedBox(width: MessengerNavRail.seam),
                         SizedBox(
                           key: const ValueKey('desktopSidebarContainer'),
                           width: sidebarWidth,
@@ -1202,7 +1222,7 @@ class _WideLayoutShellState extends State<WideLayoutShell>
                       // contract (delta → clamp → persist on settle) is
                       // untouched.
                       Positioned(
-                        left: sidebarWidth - 16,
+                        left: railLeading + sidebarWidth - 16,
                         top: 0,
                         bottom: 0,
                         child: FaPaneResizeHandle(
@@ -1346,6 +1366,7 @@ class _WideLayoutShellState extends State<WideLayoutShell>
   Widget _buildCenterSurface(FahColors colors) {
     return switch (_section) {
       _WideShellSection.chats => _buildChatArea(colors),
+      _WideShellSection.local => _buildChatArea(colors),
       _WideShellSection.activity => ActivityDetailPanel(
         controller: _activityController,
         onOpenSession: _openActivitySession,
@@ -1495,21 +1516,18 @@ class _WideLayoutShellState extends State<WideLayoutShell>
 
   Widget _buildSidebar(FahColors colors, {required bool collapsed}) {
     // SelectionContainer.disabled prevents macOS spell-check squiggly
-    // underlines from appearing on sidebar text widgets.
+    // underlines from appearing on sidebar text widgets. Section navigation
+    // lives in the vertical rail; the sidebar is per-section content.
     return SelectionContainer.disabled(
       child: ColoredBox(
         color: _sidebarSurfaceColor(colors),
         child: Column(
           children: [
-            if (collapsed) ...[
-              _buildCollapsedChatHeader(),
-              _buildPrimaryNavItems(collapsed: collapsed),
-            ],
+            if (collapsed) _buildCollapsedChatHeader(),
             Expanded(
               child: collapsed
-                  ? _section != _WideShellSection.chats
-                        ? const SizedBox.shrink()
-                        : ListenableBuilder(
+                  ? _section == _WideShellSection.chats
+                        ? ListenableBuilder(
                             listenable: DapBindingStore.instance,
                             builder: (context, _) => SidebarSessionsList(
                               manager: widget.manager,
@@ -1532,11 +1550,33 @@ class _WideLayoutShellState extends State<WideLayoutShell>
                               unnamedTitle: context.l10n.wideChatFallbackTitle,
                             ),
                           )
-                  : _buildChatPanel(collapsed: collapsed),
+                        : const SizedBox.shrink()
+                  : switch (_section) {
+                      _WideShellSection.chats ||
+                      _WideShellSection.activity ||
+                      _WideShellSection.apps => _buildChatPanel(
+                        collapsed: collapsed,
+                      ),
+                      _WideShellSection.local => _buildLocalPanel(),
+                    },
             ),
           ],
         ),
       ),
+    );
+  }
+
+  /// The Local section's sidebar: folder-first navigation (folders, then a
+  /// folder's Telegram-style session list), shell-owned drill-down state.
+  Widget _buildLocalPanel() {
+    return LocalSessionsPanel(
+      controller: _chatController,
+      selectedFolderId: _localFolderId,
+      onSelectFolder: (folderId) => setState(() => _localFolderId = folderId),
+      selectedSessionId: _selectedSessionId,
+      onOpenSession: (entry) => unawaited(_openLocalEntry(entry)),
+      onNew: _newSession,
+      iconResolver: _folderIcons,
     );
   }
 
@@ -1553,73 +1593,141 @@ class _WideLayoutShellState extends State<WideLayoutShell>
     );
   }
 
-  List<Widget> _buildChatFilterActions() {
-    // Chats has no toolbar destination: the filter segments themselves are
-    // the Chats home (the list body below the toolbar differs per section).
-    const sections = [_WideShellSection.activity, _WideShellSection.apps];
-    return [
-      for (final section in sections)
-        MessengerCategoryChip(
-          chipKey: ValueKey('messengerPrimaryNav-${section.name}'),
-          icon: switch (section) {
-            _WideShellSection.activity => Icons.notifications_none_rounded,
-            _ => Icons.grid_view_rounded,
-          },
-          label: switch (section) {
-            _WideShellSection.activity => context.l10n.wideNavActivity,
-            _ => context.l10n.appsGridTitle,
-          },
+  /// The vertical rail's destinations (the horizontal bar's section set,
+  /// re-ordered Telegram-style): the Chats filters first, then Local,
+  /// Activity, Apps and the identity (networks) row; Settings is the
+  /// pinned bottom slot.
+  List<MessengerRailDestination> _railDestinations() {
+    final filter = _chatController.filter;
+    final chatsSelected = _section == _WideShellSection.chats;
+    var unreadChats = 0;
+    var runningSessions = 0;
+    for (final entry in _chatController.localEntries) {
+      if ((entry.unreadCount ?? 0) > 0) unreadChats++;
+      if (entry.isStreaming) runningSessions++;
+    }
+    MessengerRailDestination filterRow(
+      ChatListFilter value,
+      IconData icon,
+      String label, {
+      int? badge,
+    }) => MessengerRailDestination(
+      rowKey: ValueKey('chatFilter-${value.name}'),
+      icon: icon,
+      label: label,
+      selected: chatsSelected && filter == value,
+      onTap: (_) {
+        _chatController.setFilter(value);
+        _selectSection(_WideShellSection.chats);
+      },
+      badge: badge,
+    );
+    MessengerRailDestination sectionRow(
+      _WideShellSection section,
+      IconData icon,
+      String label,
+    ) => MessengerRailDestination(
+          rowKey: ValueKey('messengerPrimaryNav-${section.name}'),
+          icon: icon,
+          label: label,
           selected: _section == section,
-          compact: true,
-          iconOnly: _section != section,
-          textLed: _section == section,
-          selectionBackground: true,
-          onTap: () => _selectSection(section),
-        ),
+          onTap: (_) => _selectSection(section),
+        );
+    return [
+      filterRow(
+        ChatListFilter.all,
+        Icons.inbox_outlined,
+        context.l10n.chatFilterAll,
+      ),
+      filterRow(
+        ChatListFilter.unread,
+        Icons.chat_bubble_outline_rounded,
+        context.l10n.chatFilterUnread,
+        badge: unreadChats,
+      ),
+      filterRow(
+        ChatListFilter.agents,
+        Icons.people_outline_rounded,
+        context.l10n.chatFilterAgents,
+      ),
+      filterRow(
+        ChatListFilter.channels,
+        Icons.tag_rounded,
+        context.l10n.chatFilterChannels,
+      ),
+      MessengerRailDestination(
+        rowKey: const ValueKey('messengerPrimaryNav-local'),
+        icon: Icons.folder_outlined,
+        label: context.l10n.wideNavLocal,
+        selected: _section == _WideShellSection.local,
+        badge: runningSessions,
+        badgeMuted: true,
+        onTap: (_) => _selectSection(_WideShellSection.local),
+      ),
+      sectionRow(
+        _WideShellSection.activity,
+        Icons.notifications_none_rounded,
+        context.l10n.wideNavActivity,
+      ),
+      sectionRow(
+        _WideShellSection.apps,
+        Icons.grid_view_rounded,
+        context.l10n.appsGridTitle,
+      ),
+      MessengerRailDestination(
+        rowKey: const ValueKey('chatNetworkFilter'),
+        icon: Icons.public_outlined,
+        label: context.l10n.networkNetworksTitle,
+        selected: false,
+        onTap: _showRailNetworkMenu,
+      ),
     ];
   }
 
-  Widget _buildPrimaryNavItems({required bool collapsed}) {
-    Widget item(_WideShellSection section) {
-      final (icon, label) = switch (section) {
-        _WideShellSection.chats => (
-          Icons.chat_bubble_outline_rounded,
-          context.l10n.wideNavChats,
-        ),
-        _WideShellSection.activity => (
-          Icons.notifications_none_rounded,
-          context.l10n.wideNavActivity,
-        ),
-        _WideShellSection.apps => (
-          Icons.grid_view_rounded,
-          context.l10n.appsGridTitle,
-        ),
-      };
-      return SidebarNavItem(
-        key: ValueKey('messengerPrimaryNav-${section.name}'),
-        icon: icon,
-        label: label,
-        selected: _section == section,
-        collapsed: collapsed,
-        compact: true,
-        desktopTab: true,
-        onTap: () => _selectSection(section),
-      );
-    }
+  /// The identity globe stays its own rail row: tapping it opens the same
+  /// network-filter menu the chat panel's trailing globe showed, anchored
+  /// at the row.
+  Future<void> _showRailNetworkMenu(BuildContext rowContext) async {
+    if (!mounted) return;
+    final box = rowContext.findRenderObject();
+    if (box is! RenderBox || !box.attached) return;
+    final overlay =
+        Overlay.of(rowContext).context.findRenderObject() as RenderBox;
+    final position = RelativeRect.fromRect(
+      box.localToGlobal(Offset.zero, ancestor: overlay) & box.size,
+      Offset.zero & overlay.size,
+    );
+    final selection = await showMenu<String>(
+      context: rowContext,
+      position: position,
+      items: chatNetworkFilterMenuItems(
+        context,
+        controller: _chatController,
+        manager: widget.networkSessions,
+      ),
+    );
+    if (selection == null || !mounted) return;
+    await selectChatNetworkFilter(
+      context,
+      value: selection,
+      controller: _chatController,
+      manager: widget.networkSessions,
+      networkMode: widget.networkMode,
+    );
+  }
 
-    final items = [
-      for (final section in _WideShellSection.values) item(section),
-    ];
-    if (collapsed) {
-      return Column(
-        key: const ValueKey('collapsedPrimaryNavigation'),
-        children: items,
-      );
-    }
-    return MessengerTextTabGroup(
-      key: const ValueKey('wideShellPrimaryNavigation'),
-      selectedIndex: _section.index,
-      children: items,
+  /// The wide shell's left rail surface + the 8pt seam before the content
+  /// column (Telegram pattern). Badges: unread chats on the Unread row,
+  /// running sessions (muted) on the Local row.
+  Widget _buildNavRail() {
+    return ListenableBuilder(
+      listenable: _chatController,
+      builder: (context, _) => MessengerNavRail(
+        key: const ValueKey('messengerNavRail'),
+        destinations: _railDestinations(),
+        settingsLabel: context.l10n.settingsTitle,
+        onSettingsTap: () => unawaited(_openSettings()),
+      ),
     );
   }
 

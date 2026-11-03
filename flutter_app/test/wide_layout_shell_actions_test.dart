@@ -20,6 +20,7 @@ import 'package:fa/ui/screens/chat_screen.dart';
 import 'package:fa/ui/screens/models_settings_page.dart';
 import 'package:fa/ui/widgets/messenger_navigation_controls.dart';
 import 'package:fa/ui/widgets/file_browser.dart';
+import 'package:fa/ui/widgets/messenger_nav_rail.dart';
 import 'package:fa/ui/widgets/messenger_section_header.dart';
 import 'package:fa/ui/widgets/session_search_field.dart';
 import 'package:fa/ui/widgets/sidebar_nav_item.dart';
@@ -285,19 +286,29 @@ void main() {
     // Secondary utilities live in Apps, not as a second navigation stack.
     expect(find.widgetWithText(SidebarNavItem, 'Files'), findsNothing);
     expect(find.widgetWithText(SidebarNavItem, 'Settings'), findsNothing);
-    final toolbar = find.byKey(const ValueKey('chatCategoryChips'));
-    // Chats has no toolbar destination: the filters are the Chats home.
+    // The vertical rail owns navigation now: the Chats filters lead it and
+    // Local/Activity/Apps follow; the horizontal toolbar is gone.
+    final rail = find.byKey(const ValueKey('messengerNavRail'));
+    expect(rail, findsOneWidget);
+    expect(find.byKey(const ValueKey('chatCategoryChips')), findsNothing);
     expect(
       find.byKey(const ValueKey('messengerPrimaryNav-chats')),
       findsNothing,
+      reason: 'the All filter row is the Chats home',
     );
-    for (final section in const ['activity', 'apps']) {
+    for (final destination in const [
+      'chatFilter-all',
+      'chatFilter-unread',
+      'chatFilter-agents',
+      'chatFilter-channels',
+      'messengerPrimaryNav-local',
+      'messengerPrimaryNav-activity',
+      'messengerPrimaryNav-apps',
+    ]) {
       expect(
-        find.descendant(
-          of: toolbar,
-          matching: find.byKey(ValueKey('messengerPrimaryNav-$section')),
-        ),
+        find.descendant(of: rail, matching: find.byKey(ValueKey(destination))),
         findsOneWidget,
+        reason: destination,
       );
     }
     await tester.pump(const Duration(milliseconds: 100));
@@ -338,7 +349,8 @@ void main() {
           findsOneWidget,
         );
         expect(find.text('Files'), findsOneWidget);
-        expect(find.text('Settings'), findsOneWidget);
+        // The directory's Settings tile plus the rail's pinned settings row.
+        expect(find.text('Settings'), findsNWidgets(2));
         final appsRect = tester.getRect(find.byType(AppLauncherScreen));
         expect(appsRect.left, greaterThan(250));
         expect(
@@ -371,13 +383,16 @@ void main() {
           findsOneWidget,
         );
         final appsSemantics = tester.widget<Semantics>(
-          find.ancestor(
-            of: appsAction,
-            matching: find.byWidgetPredicate(
-              (widget) =>
-                  widget is Semantics && widget.properties.button == true,
-            ),
-          ),
+          find
+              .descendant(
+                of: appsAction,
+                matching: find.byWidgetPredicate(
+                  (widget) =>
+                      widget is Semantics &&
+                      widget.properties.button == true,
+                ),
+              )
+              .first,
         );
         expect(appsSemantics.properties.selected, isTrue);
       },
@@ -407,12 +422,15 @@ void main() {
       findsOneWidget,
     );
     final appsSemantics = tester.widget<Semantics>(
-      find.ancestor(
-        of: appsAction,
-        matching: find.byWidgetPredicate(
-          (widget) => widget is Semantics && widget.properties.button == true,
-        ),
-      ),
+      find
+          .descendant(
+            of: appsAction,
+            matching: find.byWidgetPredicate(
+              (widget) =>
+                  widget is Semantics && widget.properties.button == true,
+            ),
+          )
+          .first,
     );
     expect(appsSemantics.properties.selected, isTrue);
   });
@@ -831,7 +849,7 @@ void main() {
     expect(find.byKey(const ValueKey('activityCount')), findsOneWidget);
   });
 
-  testWidgets('sidebar chrome is translucent glass under floating controls', (
+  testWidgets('the vertical rail owns its surface beside the glass chrome', (
     tester,
   ) async {
     final env = MemoryExecutionEnv();
@@ -839,52 +857,31 @@ void main() {
       ..addSession('design-session', _fakeService(env));
     await pumpShell(tester, manager: manager);
     await tester.pump(const Duration(milliseconds: 100));
-    // The segment panel floats on frosted chrome: translucent fill, no
-    // hard bordered slab (iMessage-style underlay).
-    final control = tester.widget<MessengerFilterControl>(
-      find.byType(MessengerFilterControl),
+    // The rail is full-bled at the window's left edge with its own
+    // surface; the content column starts after the 8pt seam.
+    final railRect = tester.getRect(
+      find.byKey(const ValueKey('messengerNavRail')),
     );
-    expect(control.glass, isTrue);
-    // The capsule is real liquid glass now: the styleguide FaSurface
-    // (LiquidGlass refraction) wraps the chips with an airy tint — no
-    // painted gradient slab, no dark rim.
-    final capsule = tester.widget<FaSurface>(
-      find.byKey(const ValueKey('messengerFilterGlassCapsule')),
+    expect(railRect.left, 0);
+    expect(railRect.width, MessengerNavRail.width);
+    expect(railRect.height, tester.view.physicalSize.height /
+        tester.view.devicePixelRatio);
+    final sidebar = tester.getRect(
+      find.byKey(const ValueKey('desktopSidebarContainer')),
     );
-    expect(capsule.glass, isTrue);
-    expect(capsule.tintAmount, lessThan(.35), reason: 'airy glass tint');
-    expect(capsule.tintOpacity, lessThan(.7), reason: 'airy glass tint');
-    expect(capsule.borderRadius, BorderRadius.circular(18));
-    expect(
-      find
-          .descendant(
-            of: find.byKey(const ValueKey('chatCategoryChips')),
-            matching: find.byKey(const ValueKey('messengerFilterGlassCapsule')),
-          )
-          .evaluate()
-          .isNotEmpty,
-      isTrue,
-      reason: 'the chips capsule is real liquid glass',
-    );
+    expect(sidebar.left - railRect.right, MessengerNavRail.seam);
+    // The horizontal section pill-bar is gone — its destinations moved
+    // into the rail rows.
+    expect(find.byKey(const ValueKey('chatCategoryChips')), findsNothing);
+    expect(find.byType(MessengerFilterControl), findsNothing);
 
-    // The chrome band's glass background is always armed (constant sigma)
-    // and the controls never live inside the blur layer.
+    // The chat chrome band's glass background stays armed (constant
+    // sigma) under the search row.
     final underlay = tester.widget<ProgressiveBlur>(
       find.byKey(const ValueKey('chatListChromeUnderlay')),
     );
     expect(underlay.maxSigma, 18);
     expect(underlay.direction, ProgressiveBlurDirection.topToBottom);
-    expect(
-      find
-          .descendant(
-            of: find.byKey(const ValueKey('chatListChromeUnderlay')),
-            matching: find.byKey(const ValueKey('chatCategoryChips')),
-          )
-          .evaluate()
-          .isEmpty,
-      isTrue,
-      reason: 'chrome controls must live outside the blur layer',
-    );
   });
 
   testWidgets('centered header uses the selected folder and session name', (
@@ -994,29 +991,52 @@ void main() {
           }
 
           if (section == 0) {
+            // The rail: 78pt-wide rows on a fixed 64pt pitch, pictogram
+            // 25–28pt with the label centered below.
             final all = current['filter-All']!;
             final unread = current['filter-Unread']!;
             final agents = current['filter-Agents']!;
             final channels = current['filter-Channels']!;
             for (final rect in [all, unread, agents, channels]) {
-              expect(rect.height, 32, reason: reason);
-              expect(rect.top, closeTo(all.top, .001), reason: reason);
-            }
-            expect(all.width, greaterThan(32), reason: reason);
-            for (final rect in [unread, agents, channels]) {
-              expect(rect.width, inInclusiveRange(12, 36), reason: reason);
+              expect(rect.width, MessengerNavRail.width, reason: reason);
+              expect(rect.height, MessengerNavRail.rowPitch, reason: reason);
             }
             expect(
-              unread.left - all.right,
-              inInclusiveRange(.999, MessengerFilterControl.gap),
+              unread.top - all.top,
+              MessengerNavRail.rowPitch,
+              reason: reason,
             );
             expect(
-              agents.left - unread.right,
-              inInclusiveRange(.999, MessengerFilterControl.gap),
+              agents.top - unread.top,
+              MessengerNavRail.rowPitch,
+              reason: reason,
             );
             expect(
-              channels.left - agents.right,
-              inInclusiveRange(.999, MessengerFilterControl.gap),
+              channels.top - agents.top,
+              MessengerNavRail.rowPitch,
+              reason: reason,
+            );
+            final allRow = find.byKey(const ValueKey('chatFilter-all'));
+            final icon = tester.getRect(
+              find.descendant(of: allRow, matching: find.byType(Icon)),
+            );
+            final label = tester.getRect(find.text('All'));
+            expect(icon.width, inInclusiveRange(25, 28), reason: reason);
+            expect(
+              icon.center.dx,
+              closeTo(all.center.dx, .5),
+              reason: reason,
+            );
+            expect(
+              label.center.dx,
+              closeTo(all.center.dx, .5),
+              reason: reason,
+            );
+            expect(label.center.dy, greaterThan(icon.center.dy), reason: reason);
+            // Local, Activity, Apps and the identity row follow on the
+            // same pitch.
+            final local = tester.getRect(
+              find.byKey(const ValueKey('messengerPrimaryNav-local')),
             );
             final activity = tester.getRect(
               find.byKey(const ValueKey('messengerPrimaryNav-activity')),
@@ -1024,22 +1044,23 @@ void main() {
             final apps = tester.getRect(
               find.byKey(const ValueKey('messengerPrimaryNav-apps')),
             );
+            expect(
+              local.top - channels.top,
+              MessengerNavRail.rowPitch,
+              reason: reason,
+            );
+            expect(local.height, MessengerNavRail.rowPitch, reason: reason);
+            expect(activity.height, MessengerNavRail.rowPitch, reason: reason);
+            expect(apps.height, MessengerNavRail.rowPitch, reason: reason);
+            // The identity row is its own row; Settings is pinned last.
             final network = tester.getRect(
               find.byKey(const ValueKey('chatNetworkFilter')),
             );
-            expect(
-              activity.left - channels.right,
-              inInclusiveRange(.999, MessengerFilterControl.gap),
+            expect(network.height, MessengerNavRail.rowPitch, reason: reason);
+            final settings = tester.getRect(
+              find.byKey(const ValueKey('railSettingsRow')),
             );
-            expect(
-              apps.left - activity.right,
-              inInclusiveRange(.999, MessengerFilterControl.gap),
-            );
-            expect(
-              network.left - apps.right,
-              inInclusiveRange(.999, MessengerFilterControl.gap),
-            );
-            expect(network.center.dy, closeTo(all.center.dy, .001));
+            expect(settings.top, greaterThan(apps.top), reason: reason);
           }
 
           if (section == 2) {
@@ -1088,7 +1109,7 @@ void main() {
   });
 
   testWidgets(
-    'wide text tabs and filter segments keep selection and callbacks',
+    'rail rows keep section selection and callbacks',
     (tester) async {
       final env = MemoryExecutionEnv();
       final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
@@ -1106,13 +1127,15 @@ void main() {
             )
             .first,
       );
-      expect(chip('All').properties.selected, isTrue);
-      for (final label in ['Unread', 'Agents', 'Channels']) {
-        expect(chip(label).properties.selected, isFalse);
-        expect(find.text(label), findsNothing);
-      }
+      SizedBox railRow(String key) =>
+          tester.widget<SizedBox>(find.byKey(ValueKey(key)));
+      // Every rail row shows its label; selection is the accent tint.
       expect(find.text('All'), findsOneWidget);
-      expect(find.text('All networks'), findsNothing);
+      for (final label in ['Unread', 'Agents', 'Channels']) {
+        expect(find.text(label), findsOneWidget);
+        expect(chip(label).properties.selected, isFalse);
+      }
+      expect(chip('All').properties.selected, isTrue);
       expect(
         find.descendant(
           of: find.byKey(const ValueKey('chatFilter-all')),
@@ -1120,29 +1143,27 @@ void main() {
         ),
         findsOneWidget,
       );
-      final agentsChip = find.byKey(const ValueKey('chatFilter-agents'));
+      final agentsRow = find.byKey(const ValueKey('chatFilter-agents'));
       expect(
         find.descendant(
-          of: agentsChip,
+          of: agentsRow,
           matching: find.byIcon(Icons.people_outline_rounded),
         ),
         findsOneWidget,
       );
       expect(
         find.descendant(
-          of: agentsChip,
+          of: agentsRow,
           matching: find.byIcon(Icons.smart_toy_outlined),
         ),
         findsNothing,
       );
-
       expect(
         find.byKey(const ValueKey('wideShellPrimaryNavigation')),
         findsNothing,
       );
-      // Chats has no toolbar destination: the filter segments are the Chats
-      // home, and every toolbar destination follows one rule — the selected
-      // segment is icon+text, quiet segments stay icon-only.
+      // The rail has no separate Chats destination: the All filter row IS
+      // the Chats home.
       expect(
         find.byKey(const ValueKey('messengerPrimaryNav-chats')),
         findsNothing,
@@ -1153,14 +1174,10 @@ void main() {
         'activity' => 'Activity',
         _ => 'Apps',
       };
-      // The Chats home shows the selected filter as icon+text.
-      expect(chip('All').properties.selected, isTrue);
-      expect(find.text('All'), findsOneWidget);
       final allRect = tester.getRect(
         find.byKey(const ValueKey('chatFilter-all')),
       );
-      expect(allRect.width, greaterThan(36));
-      // Selected segments center the icon+label group (segmented control).
+      expect(allRect.width, MessengerNavRail.width);
       final allIcon = tester.getRect(
         find.descendant(
           of: find.byKey(const ValueKey('chatFilter-all')),
@@ -1168,10 +1185,11 @@ void main() {
         ),
       );
       final allText = tester.getRect(find.text('All'));
-      expect((allIcon.left + allText.right) / 2, closeTo(allRect.center.dx, 1));
+      expect(allIcon.center.dx, closeTo(allRect.center.dx, .5));
+      expect(allText.center.dx, closeTo(allRect.center.dx, .5));
       for (final section in const ['activity', 'apps']) {
         final action = sectionAction(section);
-        expect(tester.getRect(action).height, 32);
+        expect(tester.getRect(action).height, MessengerNavRail.rowPitch);
         expect(
           find.descendant(
             of: action,
@@ -1183,70 +1201,38 @@ void main() {
           findsOneWidget,
           reason: section,
         );
-        expect(tester.getRect(action).width, inInclusiveRange(12, 36));
+        // Rail rows always carry their label (Telegram pattern).
         expect(
           find.descendant(
             of: action,
             matching: find.text(sectionLabel(section)),
           ),
-          findsNothing,
+          findsOneWidget,
           reason: section,
         );
+        expect(chip(sectionLabel(section)).properties.selected, isFalse);
       }
-      for (final label in const ['Unread', 'Agents', 'Channels']) {
-        expect(chip(label).properties.selected, isFalse, reason: label);
-        expect(find.text(label), findsNothing, reason: label);
-        expect(
-          tester
-              .getRect(
-                find.byKey(ValueKey('chatFilter-${label.toLowerCase()}')),
-              )
-              .width,
-          inInclusiveRange(12, 36),
-          reason: label,
-        );
-      }
+
       await tester.pumpAndSettle();
 
       for (final selected in const ['activity', 'apps']) {
         await tester.tap(sectionAction(selected));
         await tester.pumpAndSettle();
         expect(
-          find.descendant(
-            of: sectionAction(selected),
-            matching: find.text(sectionLabel(selected)),
-          ),
-          findsOneWidget,
+          chip(sectionLabel(selected)).properties.selected,
+          isTrue,
           reason: selected,
         );
-        // Regression: a lone selected segment keeps the full expanded slot
-        // (icon + text), not the split half of a shared width budget.
-        expect(
-          tester.getRect(sectionAction(selected)).width,
-          greaterThan(60),
-          reason: selected,
-        );
-        for (final quiet in const ['activity', 'apps']) {
-          if (quiet == selected) continue;
-          expect(
-            find.descendant(
-              of: sectionAction(quiet),
-              matching: find.text(sectionLabel(quiet)),
-            ),
-            findsNothing,
-            reason: quiet,
-          );
-          expect(
-            tester.getRect(sectionAction(quiet)).width,
-            inInclusiveRange(12, 36),
-            reason: quiet,
-          );
-        }
-        // The filter group defers its selection while a section is active:
-        // no pill text and no selected semantics.
+        // The filter rows quiet down while a section owns the rail.
         for (final label in const ['All', 'Unread', 'Agents', 'Channels']) {
           expect(chip(label).properties.selected, isFalse, reason: label);
-          expect(find.text(label), findsNothing, reason: label);
+        }
+        for (final quiet in const ['activity', 'apps']) {
+          expect(
+            chip(sectionLabel(quiet)).properties.selected,
+            quiet == selected,
+            reason: quiet,
+          );
         }
         expect(tester.takeException(), isNull, reason: selected);
       }
@@ -1258,17 +1244,10 @@ void main() {
       expect(find.byKey(const ValueKey('appsDirectory')), findsNothing);
       expect(chip('Unread').properties.selected, isTrue);
       expect(find.text('Unread'), findsOneWidget);
-      expect(
-        tester.getRect(find.byKey(const ValueKey('chatFilter-unread'))).width,
-        greaterThan(36),
-      );
       for (final quiet in const ['activity', 'apps']) {
         expect(
-          find.descendant(
-            of: sectionAction(quiet),
-            matching: find.text(sectionLabel(quiet)),
-          ),
-          findsNothing,
+          chip(sectionLabel(quiet)).properties.selected,
+          isFalse,
           reason: quiet,
         );
       }
@@ -1283,13 +1262,17 @@ void main() {
           isTrue,
           reason: '$label must be tappable',
         );
-        expect(find.text(label), findsOneWidget);
       }
+      // The identity row opens the same network-filter menu the chat
+      // panel's trailing globe owned.
       await tester.tap(find.byKey(const ValueKey('chatNetworkFilter')));
       await tester.pumpAndSettle();
       expect(find.text('All networks'), findsOneWidget);
-      expect(find.text('Local'), findsOneWidget);
+      // One "Local" in the menu plus the rail's own Local row label.
+      expect(find.text('Local'), findsNWidgets(2));
       expect(chip('All').properties.selected, isTrue);
+      // The rail row itself never becomes selected.
+      railRow('chatFilter-all');
     },
   );
 
@@ -1304,8 +1287,8 @@ void main() {
 
       final panel = find.byType(ChatListPanel);
       expect(find.byKey(const ValueKey('chatListScroll')), findsOneWidget);
-      final toolbar = tester.getRect(
-        find.byKey(const ValueKey('chatCategoryChips')),
+      final railRect = tester.getRect(
+        find.byKey(const ValueKey('messengerNavRail')),
       );
       final search = tester.getRect(
         find.byKey(const ValueKey('messengerSearchField')),
@@ -1339,9 +1322,10 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('chatFilter-all')));
       await tester.pumpAndSettle();
       expect(find.byKey(const ValueKey('chatListScroll')), findsOneWidget);
+      // The rail is steady chrome: section switches never move it.
       expect(
-        tester.getRect(find.byKey(const ValueKey('chatCategoryChips'))),
-        toolbar,
+        tester.getRect(find.byKey(const ValueKey('messengerNavRail'))),
+        railRect,
       );
       expect(
         tester.getRect(find.byKey(const ValueKey('messengerSearchField'))),
@@ -1396,7 +1380,7 @@ void main() {
 
     Rect rect(String key) => tester.getRect(find.byKey(ValueKey(key)));
     final searchBefore = rect('messengerSearchField');
-    final filtersBefore = rect('chatCategoryChips');
+    final railBefore = rect('messengerNavRail');
     await tester.tap(
       find.byKey(const ValueKey('chatFolder-folder::/work/project')),
     );
@@ -1407,7 +1391,7 @@ void main() {
     expect(find.text('/work/project'), findsOneWidget);
     expect(find.text('Agent one'), findsOneWidget);
     expect(rect('messengerSearchField'), searchBefore);
-    expect(rect('chatCategoryChips'), filtersBefore);
+    expect(rect('messengerNavRail'), railBefore);
 
     for (final section in const ['activity', 'apps']) {
       await tester.tap(find.byKey(ValueKey('messengerPrimaryNav-$section')));
@@ -1610,15 +1594,25 @@ void main() {
             findsNothing,
           );
           final axis = tester.getCenter(brand).dx;
-          for (final navLabel in const ['chats', 'activity', 'apps']) {
+          // The rail owns navigation now: its rows share ONE axis (the
+          // rail's center) while the collapsed brand keeps the sidebar's.
+          final railRect = tester.getRect(
+            find.byKey(const ValueKey('messengerNavRail')),
+          );
+          final railAxis = railRect.center.dx;
+          expect(railAxis, isNot(closeTo(axis, 1)), reason: reason);
+          for (final navKey in const [
+            'chatFilter-all',
+            'messengerPrimaryNav-local',
+            'messengerPrimaryNav-activity',
+            'messengerPrimaryNav-apps',
+          ]) {
             expect(
               tester
-                  .getCenter(
-                    find.byKey(ValueKey('messengerPrimaryNav-$navLabel')),
-                  )
+                  .getCenter(find.byKey(ValueKey(navKey)))
                   .dx,
-              closeTo(axis, .001),
-              reason: '$reason $navLabel axis',
+              closeTo(railAxis, .001),
+              reason: '$reason $navKey axis',
             );
           }
           if (label == 'Chats') {
@@ -2119,8 +2113,8 @@ void main() {
       final env = MemoryExecutionEnv();
       final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
         ..addSession('design-session', _fakeService(env));
-      const labels = ['Chats', 'Activity', 'Apps'];
-      const ids = ['chats', 'activity', 'apps'];
+      const labels = ['Chats', 'Local', 'Activity', 'Apps'];
+      const ids = ['chats', 'local', 'activity', 'apps'];
 
       for (final direction in FaVisualDirection.values) {
         for (final brightness in Brightness.values) {
@@ -2168,7 +2162,7 @@ void main() {
               ValueKey('messengerPrimaryNav-${ids[index]}'),
             );
             final rect = tester.getRect(item);
-            expect(rect.width, closeTo(280 / 3, .001), reason: reason);
+            expect(rect.width, closeTo(280 / 4, .001), reason: reason);
             expect(rect.height, 56, reason: reason);
             expect(rect.center.dy, dock.center.dy, reason: reason);
             final icon = tester.getRect(
@@ -2339,7 +2333,7 @@ void main() {
       final initialPill = tester.getRect(pill);
       expect(initialPill.left, closeTo(59, .001));
       expect(initialPill.top, 784);
-      expect(initialPill.width, closeTo(280 / 3 - 8, .001));
+      expect(initialPill.width, closeTo(280 / 4 - 8, .001));
       expect(initialPill.bottom, 832);
       var animated = tester.widget<AnimatedPositioned>(pill);
       expect(animated.duration, const Duration(milliseconds: 200));

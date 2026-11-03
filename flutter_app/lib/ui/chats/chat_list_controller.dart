@@ -285,6 +285,16 @@ final class ChatListController extends ChangeNotifier {
     return List.unmodifiable(entries);
   }
 
+  /// Every projected LOCAL row with pin/unread state applied — regardless
+  /// of the active filter/search. The Local folder navigation groups these
+  /// by cwd; a filtered Chats toolbar must never hide folders.
+  List<ChatListEntry> get localEntries {
+    final entries = <ChatListEntry>[
+      for (final entry in _localEntries) _effectiveLocal(entry),
+    ]..sort(_compareActivity);
+    return List.unmodifiable(entries);
+  }
+
   List<ChatListEntry> get visibleEntries {
     final query = _search.trim().toLowerCase();
     return List.unmodifiable([
