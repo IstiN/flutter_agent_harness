@@ -60,7 +60,9 @@ class LocalSessionsPanel extends StatelessWidget {
         );
         final openFolder = selectedFolderId == null
             ? null
-            : folders.where((folder) => folder.id == selectedFolderId).firstOrNull;
+            : folders
+                  .where((folder) => folder.id == selectedFolderId)
+                  .firstOrNull;
         return ColoredBox(
           color: colors.panel,
           child: Column(
@@ -201,10 +203,7 @@ class _FolderListView extends StatelessWidget {
       return Center(
         child: Text(
           context.l10n.localFoldersEmpty,
-          style: TextStyle(
-            color: FahColors.of(context).dim,
-            fontSize: 13,
-          ),
+          style: TextStyle(color: FahColors.of(context).dim, fontSize: 13),
         ),
       );
     }
@@ -360,10 +359,7 @@ class _FolderSessionListView extends StatelessWidget {
       return Center(
         child: Text(
           context.l10n.localSessionsEmpty,
-          style: TextStyle(
-            color: FahColors.of(context).dim,
-            fontSize: 13,
-          ),
+          style: TextStyle(color: FahColors.of(context).dim, fontSize: 13),
         ),
       );
     }

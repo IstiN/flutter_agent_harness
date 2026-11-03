@@ -1,7 +1,6 @@
 // Copyright (c) 2026, the Flutter Agent Harness authors.
 
-import 'package:flutter/painting.dart'
-    show Color, HSLColor;
+import 'package:flutter/painting.dart' show Color, HSLColor;
 import 'package:path/path.dart' as p;
 
 import 'chat_list_entry.dart';
@@ -65,8 +64,7 @@ List<LocalSessionFolder> groupLocalSessionFolders(
   }
   final folders = <LocalSessionFolder>[];
   for (final id in byFolder.keys) {
-    final sessions = [...byFolder[id]!]
-      ..sort(_SessionOrder.compare);
+    final sessions = [...byFolder[id]!]..sort(_SessionOrder.compare);
     DateTime? latest;
     var running = 0;
     for (final session in sessions) {
@@ -89,9 +87,9 @@ List<LocalSessionFolder> groupLocalSessionFolders(
   folders.sort((a, b) {
     final byTime = (b.latestActivity ?? DateTime.fromMillisecondsSinceEpoch(0))
         .compareTo(a.latestActivity ?? DateTime.fromMillisecondsSinceEpoch(0));
-    return byTime != 0 ? byTime : a.name.toLowerCase().compareTo(
-      b.name.toLowerCase(),
-    );
+    return byTime != 0
+        ? byTime
+        : a.name.toLowerCase().compareTo(b.name.toLowerCase());
   });
   return folders;
 }

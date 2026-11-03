@@ -1,13 +1,15 @@
 // Copyright (c) 2026, the Flutter Agent Harness authors.
 
 import 'package:fa/ui/widgets/messenger_nav_rail.dart';
-import 'package:fa_ui/fa_ui.dart'
-    show FaVisualDirection, buildFaTheme;
+import 'package:fa_ui/fa_ui.dart' show FaVisualDirection, buildFaTheme;
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 Widget _wrap(Widget child) => MaterialApp(
-  theme: buildFaTheme(direction: FaVisualDirection.nebula, brightness: Brightness.dark),
+  theme: buildFaTheme(
+    direction: FaVisualDirection.nebula,
+    brightness: Brightness.dark,
+  ),
   home: Scaffold(body: child),
 );
 
@@ -120,7 +122,10 @@ void main() {
     var taps = 0;
     await tester.pumpWidget(
       MaterialApp(
-        theme: buildFaTheme(direction: FaVisualDirection.nebula, brightness: Brightness.dark),
+        theme: buildFaTheme(
+          direction: FaVisualDirection.nebula,
+          brightness: Brightness.dark,
+        ),
         home: Scaffold(
           body: MessengerNavRail(
             destinations: [

@@ -1628,12 +1628,12 @@ class _WideLayoutShellState extends State<WideLayoutShell>
       IconData icon,
       String label,
     ) => MessengerRailDestination(
-          rowKey: ValueKey('messengerPrimaryNav-${section.name}'),
-          icon: icon,
-          label: label,
-          selected: _section == section,
-          onTap: (_) => _selectSection(section),
-        );
+      rowKey: ValueKey('messengerPrimaryNav-${section.name}'),
+      icon: icon,
+      label: label,
+      selected: _section == section,
+      onTap: (_) => _selectSection(section),
+    );
     return [
       filterRow(
         ChatListFilter.all,

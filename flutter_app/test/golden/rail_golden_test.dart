@@ -109,23 +109,21 @@ Future<void> _pumpRail(
       direction: FaVisualDirection.glass,
       brightness: brightness,
     ),
-    wrap:
-        (child) => Scaffold(
-          body: Row(
-            children: [
-              child,
-              Expanded(
-                child: Builder(
-                  builder:
-                      (context) => ColoredBox(
-                        color: FahColors.of(context).panel,
-                        child: const SizedBox.expand(),
-                      ),
-                ),
+    wrap: (child) => Scaffold(
+      body: Row(
+        children: [
+          child,
+          Expanded(
+            child: Builder(
+              builder: (context) => ColoredBox(
+                color: FahColors.of(context).panel,
+                child: const SizedBox.expand(),
               ),
-            ],
+            ),
           ),
-        ),
+        ],
+      ),
+    ),
   );
   await expectGolden(tester, name);
 }

@@ -22,18 +22,10 @@ void main() {
       final hue = folderAvatarHue(cwd);
       expect(hue, cwd.hashCode.abs() % 360);
       final (start, end) = folderAvatarGradient(cwd);
-      expect(
-        start,
-        HSLColor.fromAHSL(1, hue.toDouble(), 0.45, 0.42).toColor(),
-      );
+      expect(start, HSLColor.fromAHSL(1, hue.toDouble(), 0.45, 0.42).toColor());
       expect(
         end,
-        HSLColor.fromAHSL(
-          1,
-          ((hue + 32) % 360).toDouble(),
-          0.5,
-          0.3,
-        ).toColor(),
+        HSLColor.fromAHSL(1, ((hue + 32) % 360).toDouble(), 0.5, 0.3).toColor(),
       );
     });
 

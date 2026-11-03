@@ -164,7 +164,11 @@ class MessengerNavRailItem extends StatelessWidget {
 /// The 19pt count circle overlapping the icon's top-right: accent fill with
 /// the accent's on-color numeral, or the muted gray variant.
 class MessengerRailBadge extends StatelessWidget {
-  const MessengerRailBadge({super.key, required this.count, this.muted = false});
+  const MessengerRailBadge({
+    super.key,
+    required this.count,
+    this.muted = false,
+  });
 
   final int count;
   final bool muted;

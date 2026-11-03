@@ -37,9 +37,7 @@ ChatListEntry entry(
   isSubagent: isSubagent,
 );
 
-Future<ChatListController> controller(
-  List<ChatListEntry> entries,
-) async {
+Future<ChatListController> controller(List<ChatListEntry> entries) async {
   final c = ChatListController(localAdapter: StaticChatListAdapter(entries));
   await c.load();
   return c;
@@ -90,7 +88,11 @@ void main() {
   testWidgets('folder rows show name, session count, latest time and '
       'the running dot, newest folder first', (tester) async {
     final c = await controller([
-      entry('old', folderPath: '/work/fa', lastActivity: DateTime.utc(2026, 1, 2)),
+      entry(
+        'old',
+        folderPath: '/work/fa',
+        lastActivity: DateTime.utc(2026, 1, 2),
+      ),
       entry(
         'live',
         folderPath: '/work/mono',
@@ -102,10 +104,15 @@ void main() {
     await pumpPanel(tester, c);
 
     // Grouped by cwd: two folders, the one with the newest session first.
-    expect(find.byKey(const ValueKey('localFolder-/work/mono')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('localFolder-/work/mono')),
+      findsOneWidget,
+    );
     expect(find.byKey(const ValueKey('localFolder-/work/fa')), findsOneWidget);
     expect(
-      tester.getTopLeft(find.byKey(const ValueKey('localFolder-/work/mono'))).dy,
+      tester
+          .getTopLeft(find.byKey(const ValueKey('localFolder-/work/mono')))
+          .dy,
       lessThan(
         tester
             .getTopLeft(find.byKey(const ValueKey('localFolder-/work/fa')))
@@ -147,20 +154,14 @@ void main() {
     expect(find.text('fa'), findsOneWidget);
     final design = find.byKey(const ValueKey('localSession-design'));
     final docs = find.byKey(const ValueKey('localSession-docs'));
-    expect(
-      tester.getTopLeft(design).dy,
-      lessThan(tester.getTopLeft(docs).dy),
-    );
+    expect(tester.getTopLeft(design).dy, lessThan(tester.getTopLeft(docs).dy));
     expect(find.text('design'), findsOneWidget);
     expect(find.text('Preview of design'), findsOneWidget);
     expect(find.byKey(const ValueKey('localSessionUnread')), findsOneWidget);
     expect(find.byKey(const ValueKey('localSessionRunning')), findsOneWidget);
     expect(find.text('4'), findsOneWidget);
     // Telegram pitch: 70pt rows with hairline separators.
-    expect(
-      tester.getSize(design).height,
-      LocalSessionsPanel.sessionRowPitch,
-    );
+    expect(tester.getSize(design).height, LocalSessionsPanel.sessionRowPitch);
 
     await tester.tap(find.byKey(const ValueKey('localFolderBack')));
     await tester.pumpAndSettle();
@@ -171,9 +172,7 @@ void main() {
   testWidgets('tapping a session row opens it through the shell callback '
       'and the selected row is highlighted', (tester) async {
     final opened = <String>[];
-    final c = await controller([
-      entry('design', folderPath: '/work/fa'),
-    ]);
+    final c = await controller([entry('design', folderPath: '/work/fa')]);
     await pumpPanel(
       tester,
       c,
@@ -195,9 +194,7 @@ void main() {
     await pumpPanel(tester, c);
     expect(find.text('No project folders yet'), findsOneWidget);
 
-    final solo = await controller([
-      entry('only', folderPath: '/work/solo'),
-    ]);
+    final solo = await controller([entry('only', folderPath: '/work/solo')]);
     await pumpPanel(tester, solo, folderId: '/work/gone');
     // A folder id that is not in the projection falls back to the list.
     expect(find.byKey(const ValueKey('localFolderList')), findsOneWidget);

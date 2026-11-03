@@ -15,6 +15,7 @@ import 'package:fa/ui/network/join_sheet.dart';
 import 'package:fa/ui/network/network_center.dart';
 import 'package:fa/ui/network/network_chat_page.dart';
 import 'package:fa/ui/network/sign_in_dialog.dart';
+import 'package:fa/ui/screens/app_launcher_screen.dart';
 import 'package:fa/ui/screens/chat_screen.dart';
 import 'package:fa/ui/widgets/wide_layout_shell.dart';
 import 'package:fa_ui/fa_ui.dart';
@@ -201,9 +202,16 @@ void main() {
 
       await tester.tap(find.byKey(const ValueKey('messengerPrimaryNav-apps')));
       await tester.pumpAndSettle();
-      expect(find.text('Networks'), findsOneWidget);
-      await tester.ensureVisible(find.text('Networks'));
-      await tester.tap(find.text('Networks'));
+      // The Apps surface owns the Networks entry; the rail's identity
+      // row (same label) is a filter menu trigger, not a nav duplicate.
+      final appsSurface = find.byType(AppLauncherScreen);
+      final networksCard = find.descendant(
+        of: appsSurface,
+        matching: find.text('Networks'),
+      );
+      expect(networksCard, findsOneWidget);
+      await tester.ensureVisible(networksCard);
+      await tester.tap(networksCard);
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 300));
       expect(
