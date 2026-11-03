@@ -152,6 +152,43 @@ void main() {
     await expectGolden(tester, 'composer_multiline_6line_light');
   });
 
+  group('composer send oval (owner spec: 40x32 solid accent, paper plane)', () {
+    // The bare composer with one typed line: the send oval sits vertically
+    // centered in the pill's right end. Deterministic: unfocused, no
+    // cursor blink phase in the snapshot.
+    Future<void> pumpOvalState(
+      WidgetTester tester, {
+      required bool light,
+    }) async {
+      final manager = FlutterSessionManager(
+        env: MemoryExecutionEnv(),
+        sessionsRoot: '/sessions',
+      )..addSession('fake-session', _fakeService(MemoryExecutionEnv()));
+      await pumpGolden(
+        tester,
+        ChatScreen(manager: manager),
+        size: goldenSizePhone,
+        theme: light ? buildFahThemeLight() : null,
+        wrap: (child) => child,
+      );
+      await tester.enterText(find.byType(TextField), 'send it');
+      await tester.pumpAndSettle();
+      FocusManager.instance.primaryFocus?.unfocus();
+      await tester.pump(const Duration(milliseconds: 600));
+      await tester.pump();
+    }
+
+    testWidgets('send oval — dark', (tester) async {
+      await pumpOvalState(tester, light: false);
+      await expectGolden(tester, 'composer_send_oval');
+    });
+
+    testWidgets('send oval — light', (tester) async {
+      await pumpOvalState(tester, light: true);
+      await expectGolden(tester, 'composer_send_oval_light');
+    });
+  });
+
   group('composer staged chip — paste vs picker parity', () {
     // The multiline tests above pump the full ChatScreen, which wires the
     // FaChatHost static gallery/camera pickers for the whole process —
