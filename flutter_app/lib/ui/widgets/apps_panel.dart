@@ -128,13 +128,13 @@ class _AppsPanelState extends State<AppsPanel> {
 
   /// Marks the widget loaded when the calendar service is unavailable —
   /// the "Up next" tile just stays empty.
-  Future<bool> _calendarReady(calendar) async {
+  Future<bool> _calendarReady(CalendarApi calendar) async {
     if (await calendar.isAvailable) return true;
     if (mounted) setState(() => _calendarLoaded = true);
     return false;
   }
 
-  Future<void> _fetchUpcomingEvents(calendar) async {
+  Future<void> _fetchUpcomingEvents(CalendarApi calendar) async {
     final now = DateTime.now();
     final endOfDay = DateTime(now.year, now.month, now.day, 23, 59, 59);
     final events = await calendar.events(start: now, end: endOfDay);
@@ -264,13 +264,15 @@ class _AppsPanelState extends State<AppsPanel> {
           'is kept, so reinstalling restores its state.',
         ),
         actions: [
-          TextButton(
+          FaButton(
+            label: 'Cancel',
+            variant: FaButtonVariant.secondary,
             onPressed: () => Navigator.of(dialogContext).pop(false),
-            child: const Text('Cancel'),
           ),
-          FilledButton(
+          FaButton(
+            label: 'Remove',
+            variant: FaButtonVariant.danger,
             onPressed: () => Navigator.of(dialogContext).pop(true),
-            child: const Text('Remove'),
           ),
         ],
       ),
@@ -311,13 +313,15 @@ class _AppsPanelState extends State<AppsPanel> {
           onSubmitted: (value) => Navigator.of(dialogContext).pop(value),
         ),
         actions: [
-          TextButton(
+          FaButton(
+            label: 'Cancel',
+            variant: FaButtonVariant.secondary,
             onPressed: () => Navigator.of(dialogContext).pop(),
-            child: const Text('Cancel'),
           ),
-          FilledButton(
+          FaButton(
+            label: 'Ask Fa',
+            variant: FaButtonVariant.primary,
             onPressed: () => Navigator.of(dialogContext).pop(controller.text),
-            child: const Text('Ask Fa'),
           ),
         ],
       ),
@@ -382,30 +386,13 @@ class _AppsPanelState extends State<AppsPanel> {
           // ── Search bar ───────────────────────────────────────────
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: TextField(
-              controller: _searchController,
-              decoration: InputDecoration(
+            child: SizedBox(
+              height: 36,
+              child: FaTextField(
+                controller: _searchController,
+                dense: true,
                 prefixIcon: const Icon(Icons.search, size: 18),
                 hintText: 'Search apps, files, and more…',
-                isDense: true,
-                contentPadding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 8,
-                ),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(10),
-                  borderSide: BorderSide(color: colors.border),
-                ),
-                enabledBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(10),
-                  borderSide: BorderSide(color: colors.border),
-                ),
-                focusedBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(10),
-                  borderSide: BorderSide(color: colors.indigo, width: 1.2),
-                ),
-                filled: true,
-                fillColor: isLight ? colors.panel : colors.panelAlt,
               ),
             ),
           ),
@@ -445,8 +432,8 @@ class _AppsPanelState extends State<AppsPanel> {
       // Search mode: flat grid of matches.
       return GridView.builder(
         padding: const EdgeInsets.all(12),
-        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-          crossAxisCount: 4,
+        gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+          maxCrossAxisExtent: 200,
           childAspectRatio: 0.82,
           crossAxisSpacing: 8,
           mainAxisSpacing: 12,
@@ -492,23 +479,25 @@ class _AppsPanelState extends State<AppsPanel> {
         Row(
           children: [
             const Spacer(),
-            TextButton.icon(
+            FaButton(
+              label: 'Get widgets',
+              variant: FaButtonVariant.secondary,
+              icon: Icons.widgets_outlined,
               onPressed: _openWidgetsCatalog,
-              icon: const Icon(Icons.widgets_outlined, size: 18),
-              label: const Text('Get widgets'),
             ),
             // gh-1616: Chrome-parity "Load unpacked" — a local
             // apps/<id>/ folder loads, validates and persists like a
             // catalog install. Hidden on hosts with no folder picker.
             if (createFolderPicker() != null)
-              TextButton.icon(
+              FaButton(
+                label: context.l10n.launcherLoadUnpacked,
+                variant: FaButtonVariant.secondary,
+                icon: Icons.folder_open,
                 onPressed: () => loadUnpackedWidget(
                   context,
                   manager: widget.manager,
                   appsStore: _appsStore,
                 ),
-                icon: const Icon(Icons.folder_open, size: 18),
-                label: Text(context.l10n.launcherLoadUnpacked),
               ),
           ],
         ),
@@ -591,26 +580,17 @@ class _FilterTab extends StatelessWidget {
     final theme = Theme.of(context);
     return Padding(
       padding: const EdgeInsets.only(right: 4),
-      child: InkWell(
+      child: FaSurface(
+        color: selected ? colors.panelAlt : Colors.transparent,
+        borderRadius: BorderRadius.circular(999),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
         onTap: onTap,
-        borderRadius: BorderRadius.circular(8),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-          decoration: BoxDecoration(
-            color: selected
-                ? (theme.brightness == Brightness.light
-                      ? const Color(0xFFEEF2FF)
-                      : colors.panelAlt)
-                : Colors.transparent,
-            borderRadius: BorderRadius.circular(8),
-          ),
-          child: Text(
-            label,
-            style: theme.textTheme.bodySmall?.copyWith(
-              color: selected ? colors.text : colors.dim,
-              fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
-              fontSize: 12,
-            ),
+        child: Text(
+          label,
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: selected ? colors.text : colors.dim,
+            fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+            fontSize: 12,
           ),
         ),
       ),
@@ -635,13 +615,8 @@ class _UpNextWidget extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
+    return FaSurface(
       padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: isLight ? colors.panel : colors.panelAlt,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: colors.border),
-      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
@@ -817,14 +792,8 @@ class _FocusTimerWidgetState extends State<_FocusTimerWidget> {
   Widget build(BuildContext context) {
     final colors = widget.colors;
     final theme = widget.theme;
-    final isLight = widget.isLight;
-    return Container(
+    return FaSurface(
       padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: isLight ? colors.panel : colors.panelAlt,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: colors.border),
-      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
@@ -966,8 +935,8 @@ class _AppGrid extends StatelessWidget {
     return GridView.builder(
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 4,
+      gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+        maxCrossAxisExtent: 200,
         childAspectRatio: 0.82,
         crossAxisSpacing: 8,
         mainAxisSpacing: 12,
@@ -1017,15 +986,13 @@ class _AddAppTile extends StatelessWidget {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Container(
-            width: 44,
-            height: 44,
-            decoration: BoxDecoration(
-              color: isLight ? colors.panel : colors.panelAlt,
-              borderRadius: BorderRadius.circular(11),
-              border: Border.all(color: colors.border),
+          FaSurface(
+            borderRadius: BorderRadius.circular(11),
+            child: SizedBox(
+              width: 44,
+              height: 44,
+              child: Icon(Icons.add, size: 22, color: colors.indigo),
             ),
-            child: Icon(Icons.add, size: 22, color: colors.indigo),
           ),
           const SizedBox(height: 6),
           Text(
@@ -1057,7 +1024,6 @@ class _AppTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final colors = FahColors.of(context);
     final theme = Theme.of(context);
-    final isLight = theme.brightness == Brightness.light;
     final manager = context
         .dependOnInheritedWidgetOfExactType<ManagerScope>()
         ?.manager;
@@ -1077,18 +1043,16 @@ class _AppTile extends StatelessWidget {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Container(
-            width: 44,
-            height: 44,
-            decoration: BoxDecoration(
-              color: isLight ? colors.panelAlt : colors.panel,
-              borderRadius: BorderRadius.circular(11),
-              border: Border.all(color: colors.border),
-            ),
-            child: Center(
-              child: service != null
-                  ? AppIcon(app: app, env: service.env, size: 24)
-                  : AppIcon(app: app, env: manager!.env, size: 24),
+          FaSurface(
+            borderRadius: BorderRadius.circular(11),
+            child: SizedBox(
+              width: 44,
+              height: 44,
+              child: Center(
+                child: service != null
+                    ? AppIcon(app: app, env: service.env, size: 24)
+                    : AppIcon(app: app, env: manager!.env, size: 24),
+              ),
             ),
           ),
           const SizedBox(height: 6),
