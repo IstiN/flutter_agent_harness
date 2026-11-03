@@ -457,7 +457,7 @@ Future<void> main() async {
       expect(outcome.error, contains('base64'));
     });
 
-    test('write passes the secret through the child environment', () async {
+    test('write stores the canonical tagged base64 payload', () async {
       final runner = _FakeRunner()..queue.add(const SecureKeyRunResult(0, ''));
       final store = platformSecureKeyStore(
         runner: runner.call,
@@ -467,12 +467,81 @@ Future<void> main() async {
       await store.write('OPENAI_API_KEY', 'sk-secret-123');
 
       final call = runner.calls.single;
-      expect(call.environment, {'FAH_SECRET': 'sk-secret-123'});
+      final stored = call.environment!['FAH_SECRET'];
+      expect(stored, startsWith('b64:'));
+      expect(utf8.decode(base64.decode(stored!.substring(4))), 'sk-secret-123');
       final script = call.arguments[3];
       expect(script, isNot(contains('sk-secret-123')));
       expect(script, contains(r'$env:FAH_SECRET'));
       expect(script, contains('PasswordCredential'));
       expect(script, contains(r'$v.Add($c)'));
+    });
+
+    test('a write round-trips through the canonical read path', () async {
+      // Simulates the full wire: the write stores the tagged payload in the
+      // locker; the read script prints base64 of the stored string; Dart
+      // unwraps both layers back to the original secret — including the
+      // Cyrillic shape that started gh-1971.
+      const secret = 'sk-секрет-123';
+      final runner = _FakeRunner()..queue.add(const SecureKeyRunResult(0, ''));
+      final store = platformSecureKeyStore(
+        runner: runner.call,
+        platform: 'windows',
+      );
+
+      await store.write('OPENAI_API_KEY', secret);
+      final stored = runner.calls.single.environment!['FAH_SECRET']!;
+      final readRunner = _FakeRunner()
+        ..queue.add(
+          SecureKeyRunResult(0, '${base64Encode(utf8.encode(stored))}\r\n'),
+        );
+      final reader = platformSecureKeyStore(
+        runner: readRunner.call,
+        platform: 'windows',
+      );
+
+      expect(await reader.read('OPENAI_API_KEY'), secret);
+    });
+
+    test('read still returns a legacy untagged stored value', () async {
+      // Pre-gh-2064 entries stored the raw secret; the read script's base64
+      // wrap (kept since #1971) delivers it and the untagged value passes
+      // through unchanged instead of erroring.
+      final runner = _FakeRunner()
+        ..queue.add(
+          SecureKeyRunResult(
+            0,
+            '${base64Encode(utf8.encode('sk-legacy'))}\r\n',
+          ),
+        );
+      final store = platformSecureKeyStore(
+        runner: runner.call,
+        platform: 'windows',
+      );
+
+      expect(await store.read('OPENAI_API_KEY'), 'sk-legacy');
+    });
+
+    test('a corrupt tagged payload degrades to an error', () async {
+      final runner = _FakeRunner()
+        ..queue.add(
+          SecureKeyRunResult(
+            0,
+            '${base64Encode(utf8.encode('b64:!!!not-base64!!!'))}\r\n',
+          ),
+        );
+      final store = platformSecureKeyStore(
+        runner: runner.call,
+        platform: 'windows',
+      );
+
+      final outcome = await (store as SecureKeyDiagnostics).readDetailed(
+        'OPENAI_API_KEY',
+      );
+
+      expect(outcome.status, SecureKeyReadStatus.error);
+      expect(outcome.value, isNull);
+      expect(outcome.error, contains('tagged'));
     });
 
     test('delete removes the credential, ignoring a miss', () async {
@@ -597,21 +666,27 @@ Future<void> main() async {
       },
     );
 
-    test('the process runner kills a hung helper instead of hanging', () async {
-      final previous = secureKeyProcessTimeout;
-      secureKeyProcessTimeout = const Duration(milliseconds: 300);
-      addTearDown(() => secureKeyProcessTimeout = previous);
+    test(
+      'the process runner kills a hung helper instead of hanging',
+      skip: Platform.isWindows
+          ? 'spawns POSIX sleep(1) — no Windows PATH equivalent (CI: linux/mac)'
+          : null,
+      () async {
+        final previous = secureKeyProcessTimeout;
+        secureKeyProcessTimeout = const Duration(milliseconds: 300);
+        addTearDown(() => secureKeyProcessTimeout = previous);
 
-      final sw = Stopwatch()..start();
-      final result = await secureKeyProcessRunner('sleep', const ['30']);
-      expect(result.exitCode, -1);
-      expect(result.timedOut, isTrue);
-      expect(
-        sw.elapsed,
-        lessThan(const Duration(seconds: 10)),
-        reason: 'a modal/hung keychain helper must not block the CLI',
-      );
-    });
+        final sw = Stopwatch()..start();
+        final result = await secureKeyProcessRunner('sleep', const ['30']);
+        expect(result.exitCode, -1);
+        expect(result.timedOut, isTrue);
+        expect(
+          sw.elapsed,
+          lessThan(const Duration(seconds: 10)),
+          reason: 'a modal/hung keychain helper must not block the CLI',
+        );
+      },
+    );
 
     test('the process runner reports spawn failures as -1', () async {
       final result = await secureKeyProcessRunner('definitely-not-a-binary', [
@@ -621,15 +696,21 @@ Future<void> main() async {
       expect(result.timedOut, isFalse);
     });
 
-    test('the process runner captures the helper stderr', () async {
-      final result = await secureKeyProcessRunner('sh', const [
-        '-c',
-        'echo to-stdout; echo to-stderr >&2; exit 3',
-      ]);
-      expect(result.exitCode, 3);
-      expect(result.stdout, 'to-stdout\n');
-      expect(result.stderr, contains('to-stderr'));
-    });
+    test(
+      'the process runner captures the helper stderr',
+      skip: Platform.isWindows
+          ? 'spawns POSIX sh(1) — no Windows PATH equivalent (CI: linux/mac)'
+          : null,
+      () async {
+        final result = await secureKeyProcessRunner('sh', const [
+          '-c',
+          'echo to-stdout; echo to-stderr >&2; exit 3',
+        ]);
+        expect(result.exitCode, 3);
+        expect(result.stdout, 'to-stdout\n');
+        expect(result.stderr, contains('to-stderr'));
+      },
+    );
 
     test('helper environment overrides ride the inherited environment', () {
       // gh-1059 H1: a non-null map on Process.start REPLACES the child env;
@@ -644,18 +725,24 @@ Future<void> main() async {
       expect(secureKeyChildEnvironment(null), isNull);
     });
 
-    test('a keychain read with an explicit env override still works '
-        '(inherited env survives the spawn)', () async {
-      // Real-spawn guard for the merge: the child sees BOTH the override
-      // and the inherited environment (sh prints the inherited PATH).
-      final result = await secureKeyProcessRunner(
-        'sh',
-        const ['-c', 'test -n "\$PATH" && echo "\$OVERRIDE_MARKER"'],
-        environment: {'OVERRIDE_MARKER': 'inherited-env-intact'},
-      );
-      expect(result.exitCode, 0);
-      expect(result.stdout, 'inherited-env-intact\n');
-    });
+    test(
+      'a keychain read with an explicit env override still works '
+      '(inherited env survives the spawn)',
+      skip: Platform.isWindows
+          ? 'spawns POSIX sh(1) — no Windows PATH equivalent (CI: linux/mac)'
+          : null,
+      () async {
+        // Real-spawn guard for the merge: the child sees BOTH the override
+        // and the inherited environment (sh prints the inherited PATH).
+        final result = await secureKeyProcessRunner(
+          'sh',
+          const ['-c', 'test -n "\$PATH" && echo "\$OVERRIDE_MARKER"'],
+          environment: {'OVERRIDE_MARKER': 'inherited-env-intact'},
+        );
+        expect(result.exitCode, 0);
+        expect(result.stdout, 'inherited-env-intact\n');
+      },
+    );
   });
 
   group('SecureKeyCache preload report (gh-1059)', () {

@@ -865,6 +865,29 @@ List<String> secureKeyBootDiagnostics({
       're-enter a key or $hint (the stored values were not touched)',
     );
   }
+  // gh-2064: the PARTIAL state — some referenced names resolved, others
+  // came back ABSENT (the slot simply has no stored value) — used to be
+  // silent: the none-resolved warning never fired and absent is not an
+  // error. That is exactly the post-update shape (the old build never
+  // persisted the key; the new one finds nothing there) that read as
+  // "my providers lost their keys after updating" with no log trail.
+  // Name the absent slots too, but only when at least one referenced name
+  // resolved (the zero-resolved case is already loud above), so optional
+  // slots never nag on their own.
+  final absentReferenced = _referencedNamesWithStatus(
+    referencedKeyNames,
+    report,
+    SecureKeyReadStatus.absent,
+  ).toList()..sort();
+  if (absentReferenced.isNotEmpty && resolvedReferenced.isNotEmpty) {
+    final hint = _bootWarningHint(debug, 'the per-name reads');
+    lines.add(
+      'warning: ${absentReferenced.length} provider key(s) referenced by '
+      'the config have NO stored value in the $label: '
+      '${absentReferenced.join(', ')} — those providers boot keyless; '
+      're-enter a key or $hint (the stored values were not touched)',
+    );
+  }
   return lines;
 }
 

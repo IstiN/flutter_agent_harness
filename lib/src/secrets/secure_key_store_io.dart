@@ -392,6 +392,18 @@ final class _LinuxSecretServiceStore
 /// `powershell.exe` (present since Windows 10; `cmdkey` cannot read secrets
 /// back, so it is not an option). The secret reaches the child through the
 /// FAH_SECRET environment variable, never the command line.
+///
+/// On-vault payload contract (gh-2064): every entry this build writes is
+/// the canonical tagged shape `b64:<base64-of-UTF-8-bytes>` — pure ASCII,
+/// self-describing, byte-exact through any console code page. Reads
+/// unwrap the tag strictly; a value without the tag is a legacy raw entry
+/// written by an older build and is returned as-is (the read script's
+/// base64 wrap already made the pipe code-page-safe, #1971), so a
+/// pre-gh-2064 entry keeps working and is re-tagged by the next [write].
+/// The old asymmetric contract (store raw, re-derive base64 at read time)
+/// could not tell a legitimately-stored raw value from pipe pollution, and
+/// an entry a foreign tool wrote pre-encoded read back as a silently WRONG
+/// key (401 with no trail).
 final class _WindowsCredentialLockerStore
     implements SecureKeyStore, SecureKeyDiagnostics {
   const _WindowsCredentialLockerStore(this._run);
@@ -402,6 +414,54 @@ final class _WindowsCredentialLockerStore
       r"[Windows.Security.Credentials.PasswordVault,Windows.Security.Credentials,"
       'ContentType=WindowsRuntime] | Out-Null; '
       r'$v = New-Object Windows.Security.Credentials.PasswordVault; ';
+
+  /// The canonical on-vault payload prefix ([write]) — visible ASCII, one
+  /// glance tells a fa entry from anything else in the locker.
+  static const _canonicalTag = 'b64:';
+
+  /// The canonical on-vault payload for [value]: the tag plus base64 of
+  /// the UTF-8 bytes.
+  static String _canonicalPayload(String value) =>
+      '$_canonicalTag${base64Encode(utf8.encode(value))}';
+
+  /// Decodes the script's base64 stdout payload into the stored string,
+  /// then unwraps the canonical tag when present. Legacy raw entries
+  /// (untagged) pass through; a tagged payload whose inner base64 is
+  /// corrupt degrades to an error diagnostic — never a wrong key.
+  SecureKeyReadOutcome _decodeStored(String name, String payload) {
+    final String stored;
+    try {
+      stored = utf8.decode(base64.decode(payload));
+    } on FormatException {
+      return SecureKeyReadOutcome(
+        name,
+        SecureKeyReadStatus.error,
+        error: 'stored credential is not base64-encoded UTF-8',
+      );
+    }
+    if (!stored.startsWith(_canonicalTag)) {
+      return SecureKeyReadOutcome(
+        name,
+        SecureKeyReadStatus.found,
+        value: stored,
+      );
+    }
+    try {
+      return SecureKeyReadOutcome(
+        name,
+        SecureKeyReadStatus.found,
+        value: utf8.decode(
+          base64.decode(stored.substring(_canonicalTag.length)),
+        ),
+      );
+    } on FormatException {
+      return SecureKeyReadOutcome(
+        name,
+        SecureKeyReadStatus.error,
+        error: 'stored credential payload is tagged but not valid base64',
+      );
+    }
+  }
 
   @override
   String get label => 'Windows Credential Locker';
@@ -446,21 +506,7 @@ final class _WindowsCredentialLockerStore
     );
     final outcome = _classifyRead(result, name);
     if (outcome.status != SecureKeyReadStatus.found) return outcome;
-    try {
-      return SecureKeyReadOutcome(
-        name,
-        SecureKeyReadStatus.found,
-        value: utf8.decode(base64.decode(outcome.value!)),
-      );
-    } on FormatException {
-      // Written by an older build (raw bytes) or corrupted: degrade to an
-      // error diagnostic instead of failing the whole preload.
-      return SecureKeyReadOutcome(
-        name,
-        SecureKeyReadStatus.error,
-        error: 'stored credential is not base64-encoded UTF-8',
-      );
-    }
+    return _decodeStored(name, outcome.value!);
   }
 
   @override
@@ -472,7 +518,9 @@ final class _WindowsCredentialLockerStore
       r'$c = New-Object Windows.Security.Credentials.PasswordCredential('
       "'$secureKeyServiceName','$name',\$env:FAH_SECRET); "
       r'$v.Add($c)',
-      secret: value,
+      // Canonical tagged payload: base64 travels as pure ASCII through the
+      // wide-char env hop, so the stored bytes are exact for any secret.
+      secret: _canonicalPayload(value),
     );
     if (result.exitCode != 0) {
       throw StateError('PasswordVault add failed (exit ${result.exitCode})');

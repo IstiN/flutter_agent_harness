@@ -298,7 +298,10 @@ void main() {
 
       expect(resolved.provider, 'google');
       expect(resolved.args.model, 'gemini-2.5-pro');
-      expect(resolved.args.baseUrl, 'https://generativelanguage.googleapis.com');
+      expect(
+        resolved.args.baseUrl,
+        'https://generativelanguage.googleapis.com',
+      );
     });
 
     test('explicit flags still beat the custom-provider default '
@@ -1322,12 +1325,13 @@ void main() {
           'not allowed.',
         ),
       );
-      expect(
-        lines.lastWhere((l) => l.startsWith('[keys] ')),
-        contains('2 config-referenced, 1 found, 1 absent, 1 errors'),
-      );
-      // Some referenced keys resolved → no zero-resolved warning.
-      expect(lines.where((l) => l.startsWith('warning:')), isEmpty);
+      // gh-2064: the absent referenced slot names itself now — the silent
+      // partial state is exactly the post-update "providers lost their
+      // keys" shape.
+      final warnings = lines.where((l) => l.startsWith('warning:')).toList();
+      expect(warnings, hasLength(1));
+      expect(warnings.single, contains('NO stored value'));
+      expect(warnings.single, contains('FA_KEY_Z_AI'));
     });
 
     test('zero referenced keys resolved → the NOTHING warning plus a '
@@ -1388,6 +1392,74 @@ void main() {
       expect(warnings.single, contains('failed to read'));
       expect(warnings.single, contains('FA_KEY_Z_AI'));
       expect(warnings.single, contains('--debug-secrets'));
+    });
+
+    test('a partially absent config names the absent slots (gh-2064)', () {
+      final lines = secureKeyBootDiagnostics(
+        report: const SecureKeyPreloadReport(
+          storeAvailable: true,
+          outcomes: [
+            SecureKeyReadOutcome(
+              'FA_KEY_CHATGPT_COM',
+              SecureKeyReadStatus.found,
+              value: 'x',
+            ),
+            SecureKeyReadOutcome('FA_KEY_Z_AI', SecureKeyReadStatus.absent),
+          ],
+        ),
+        referencedKeyNames: referencedSecureKeyNames(savedWithKeys),
+        debug: false,
+      );
+      final warnings = lines.where((l) => l.startsWith('warning:')).toList();
+      expect(warnings, hasLength(1));
+      expect(warnings.single, contains('1 provider key(s)'));
+      expect(warnings.single, contains('have NO stored value'));
+      expect(warnings.single, contains('FA_KEY_Z_AI'));
+      expect(warnings.single, isNot(contains('FA_KEY_CHATGPT_COM')));
+    });
+
+    test('an all-referenced-resolved boot stays quiet (gh-2064)', () {
+      final lines = secureKeyBootDiagnostics(
+        report: const SecureKeyPreloadReport(
+          storeAvailable: true,
+          outcomes: [
+            SecureKeyReadOutcome(
+              'FA_KEY_CHATGPT_COM',
+              SecureKeyReadStatus.found,
+              value: 'x',
+            ),
+            SecureKeyReadOutcome(
+              'FA_KEY_Z_AI',
+              SecureKeyReadStatus.found,
+              value: 'y',
+            ),
+          ],
+        ),
+        referencedKeyNames: referencedSecureKeyNames(savedWithKeys),
+        debug: false,
+      );
+      expect(lines.where((l) => l.startsWith('warning:')), isEmpty);
+    });
+
+    test('all referenced absent keeps the NOTHING warning (no double '
+        'count)', () {
+      final lines = secureKeyBootDiagnostics(
+        report: const SecureKeyPreloadReport(
+          storeAvailable: true,
+          outcomes: [
+            SecureKeyReadOutcome(
+              'FA_KEY_CHATGPT_COM',
+              SecureKeyReadStatus.absent,
+            ),
+            SecureKeyReadOutcome('FA_KEY_Z_AI', SecureKeyReadStatus.absent),
+          ],
+        ),
+        referencedKeyNames: referencedSecureKeyNames(savedWithKeys),
+        debug: false,
+      );
+      final warnings = lines.where((l) => l.startsWith('warning:')).toList();
+      expect(warnings, hasLength(1));
+      expect(warnings.single, contains('resolved NOTHING'));
     });
 
     test('an env-only boot (nothing referenced) never warns', () {
