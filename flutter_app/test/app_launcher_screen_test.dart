@@ -17,6 +17,7 @@ import 'package:fa/ui/widgets/wide_layout_shell.dart';
 import 'package:fa/ui/screens/settings.dart';
 import 'package:fa/ui/widgets/file_browser.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/cupertino.dart' show CupertinoTextField;
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -987,9 +988,12 @@ void main() {
       );
     });
   });
+  // The ONE search field is the kit's GlassTextField — its
+  // CupertinoTextField carries the hint as the placeholder.
   Finder searchField() => find.byWidgetPredicate(
     (w) =>
-        w is TextField && w.decoration?.hintText == 'Search apps and widgets…',
+        w is CupertinoTextField &&
+        w.placeholder == 'Search apps and widgets…',
   );
 
   group('AppLauncherScreen search', () {

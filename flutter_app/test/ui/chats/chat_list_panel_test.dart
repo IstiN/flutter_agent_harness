@@ -13,6 +13,7 @@ import 'package:fa_ui/fa_ui.dart' show FaLogo, FaVisualDirection, buildFaTheme;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart' show PointerDeviceKind;
 import 'package:flutter/material.dart';
+import 'package:flutter/cupertino.dart' show CupertinoTextField;
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -511,7 +512,12 @@ void main() {
 
     await tester.tap(find.byKey(const ValueKey('chatFilter-all')));
     await tester.pumpAndSettle();
-    await tester.enterText(find.byType(TextField).first, 'not-present');
+    // The ONE search field is the kit's GlassTextField — type through its
+    // CupertinoTextField (an EditableText descendant, so enterText works).
+    await tester.enterText(
+      find.byType(CupertinoTextField).first,
+      'not-present',
+    );
     // The ONE shared search field applies the query after its 150ms
     // debounce — advance past it.
     await tester.pump(const Duration(milliseconds: 200));

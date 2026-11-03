@@ -47,7 +47,10 @@ const double kFaGlassTintAmount = .12;
 /// The kit [LiquidGlassSettings] for Fa chrome — see the constants above.
 LiquidGlassSettings faGlassSettings({Color? tint, double? frost}) =>
     LiquidGlassSettings(
-      glassColor: tint ?? const Color(0x00FFFFFF),
+      // Colors.transparent (not a hex literal — the styleguide guard
+      // bans one-off hex palettes here): alpha 0 keeps the kit's inherited-
+      // tint path (glassColor.a > 0 marks an explicit wash).
+      glassColor: tint ?? Colors.transparent,
       blur: frost ?? kFaGlassFrost,
       chromaticAberration: 0,
     );

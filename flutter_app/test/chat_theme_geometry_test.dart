@@ -115,27 +115,46 @@ void main() {
                 )
                 .first;
             current['copyAction'] = tester.getRect(actionFinder);
-            // The glass underlay adds an unshaded Material wrapper; the
-            // chrome's own circle is the shaped one.
-            final material = tester
-                .widgetList<Material>(
-                  find.descendant(
-                    of: actionFinder,
-                    matching: find.byType(Material),
-                  ),
-                )
-                .firstWhere((m) => m.shape != null);
-            expect(
-              material.color,
-              fa_ui.FaDesignTokens.of(tester.element(copy)).surface2,
-              reason: reason,
-            );
-            expect(material.shape, isA<CircleBorder>(), reason: reason);
-            expect(
-              (material.shape! as CircleBorder).side.color,
-              fa_ui.FaDesignTokens.of(tester.element(copy)).hairline,
-              reason: reason,
-            );
+            // The chrome surface differs by direction: in the glass
+            // direction the adapter pass renders the kit's GlassIconButton
+            // (the kit glass surface replaces the token fill+ring); other
+            // directions keep the flat token Material circle.
+            final tokens = fa_ui.FaDesignTokens.of(tester.element(copy));
+            if (direction == fa_ui.FaVisualDirection.glass) {
+              // The header circles ride FaAdaptiveHeader's FaSurface glass
+              // mode (the kit AdaptiveGlass underlay).
+              expect(
+                find.descendant(
+                  of: actionFinder,
+                  matching: find.byType(fa_ui.FaSurface),
+                ),
+                findsOneWidget,
+                reason: reason,
+              );
+              expect(
+                IconTheme.of(tester.element(copy)).color,
+                tokens.ink1,
+                reason: reason,
+              );
+            } else {
+              // The glass underlay adds an unshaded Material wrapper; the
+              // chrome's own circle is the shaped one.
+              final material = tester
+                  .widgetList<Material>(
+                    find.descendant(
+                      of: actionFinder,
+                      matching: find.byType(Material),
+                    ),
+                  )
+                  .firstWhere((m) => m.shape != null);
+              expect(material.color, tokens.surface2, reason: reason);
+              expect(material.shape, isA<CircleBorder>(), reason: reason);
+              expect(
+                (material.shape! as CircleBorder).side.color,
+                tokens.hairline,
+                reason: reason,
+              );
+            }
             final copyRect = current['copyAction']!;
             // The ONE control scale: the chat header circles are the 36pt
             // FaIconActionButton default — the sidebar toggle's circle.

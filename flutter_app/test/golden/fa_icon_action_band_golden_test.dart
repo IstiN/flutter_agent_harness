@@ -16,6 +16,8 @@ import 'package:fa/ui/widgets/session_search_field.dart'
     show kSearchFieldHeight;
 import 'package:fa_ui/fa_ui.dart';
 import 'package:flutter/material.dart';
+import 'package:liquid_glass_widgets/liquid_glass_widgets.dart'
+    show GlassIconButton;
 import 'package:flutter_test/flutter_test.dart';
 
 import 'golden_test_helper.dart';
@@ -122,9 +124,19 @@ Finder _chromeOf(WidgetTester tester, Key key) {
   // The keyed widget may BE the chrome (the chat-header circles), hold it
   // as a CHILD (FaIconActionButton composes the chrome), or sit INSIDE it
   // (the Files band's inner buttons).
-  if (tester.widget(of) is FaHeaderCircularAction) {
+  // The adapter pass: glass-direction buttons are the kit's
+  // GlassIconButton — its own render box IS the circle.
+  final w = tester.widget(of);
+  if (w is FaHeaderCircularAction || w is GlassIconButton) {
     return of;
   }
+  // The adapter pass: a glass-direction FaIconActionButton composes the
+  // kit's GlassIconButton as its chrome (no FaHeaderCircularAction).
+  final asKitChild = find.descendant(
+    of: of,
+    matching: find.byType(GlassIconButton),
+  );
+  if (asKitChild.evaluate().isNotEmpty) return asKitChild.first;
   final asChild = find.descendant(
     of: of,
     matching: find.byType(FaHeaderCircularAction),
@@ -195,14 +207,18 @@ void main() {
     ];
     // Glass vs flat (same button, two states): the floating header
     // chrome (sidebar toggle excluded — docked/flat here) carries the
-    // glass underlay — the two chat-header circles and the folder
-    // toggle; the on-band folder twin and the Files band render none.
-    expect(find.byType(FaSurface).evaluate().length, 3,
+    // glass underlay — the two chat-header circles (FaSurface glass
+    // mode) and the folder toggle (the adapter pass: the kit's
+    // GlassIconButton IS the glass surface); the on-band folder twin and
+    // the Files band render none.
+    final glassSurfaces = find.byType(FaSurface).evaluate().length +
+        find.byType(GlassIconButton).evaluate().length;
+    expect(glassSurfaces, 3,
         reason: 'the two header circles + the floating folder toggle');
-    final glassSurfaces = tester
+    final headerSurfaces = tester
         .widgetList<FaSurface>(find.byType(FaSurface))
         .every((surface) => surface.glass);
-    expect(glassSurfaces, isTrue, reason: 'all three are glass states');
+    expect(headerSurfaces, isTrue, reason: 'FaSurface glass states only');
 
     // EQUAL diameters: every circle in the band is 36pt — the sidebar
     // toggle (its key rides the inner button) and each chrome circle.
@@ -243,11 +259,31 @@ void main() {
     }
     expect(centerOf(capsule), closeTo(centerline, .5), reason: 'capsule');
 
-    // ONE style: token surface2 fill + hairline ring, ink1 glyph ink.
+    // ONE style: ink1 glyph ink everywhere; the surface differs by state —
+    // the flat keys keep the token surface2 fill + hairline ring Material
+    // circle, the glass keys carry the kit's GlassIconButton (the adapter
+    // pass: the kit glass surface replaces the token fill+ring).
     final tokens = FaDesignTokens.of(tester.element(find.byType(_Band)));
+    final glassKeys = {
+      ValueKey('bandTrajectory'),
+      ValueKey('bandCopy'),
+      ValueKey('bandFolderGlass'),
+    };
     for (final key in keys) {
       final chrome = _chromeOf(tester, key);
-      // The glass state's underlay adds an unshaded Material wrapper; the
+      if (glassKeys.contains(key)) {
+        expect(chrome, findsOneWidget, reason: '$key kit glass surface');
+        expect(
+          IconTheme.of(tester.element(find.descendant(
+            of: chrome,
+            matching: find.byType(Icon),
+          ).first)).color,
+          tokens.ink1,
+          reason: '$key ink',
+        );
+        continue;
+      }
+      // The flat state's underlay adds an unshaded Material wrapper; the
       // chrome's own circle is the shaped one.
       final material = tester
           .widgetList<Material>(
@@ -293,11 +329,25 @@ void main() {
       Size.square(FaIconActionButton.defaultDiameter),
     );
     expect(openRect.center.dy, closeTo(closedRect.center.dy, .5));
-    // Exactly ONE glass underlay: the floating (closed) state.
-    expect(find.byType(FaSurface).evaluate().length, 1);
-    final surface = tester.widget<FaSurface>(find.byType(FaSurface));
-    expect(surface.glass, isTrue);
-    expect(surface.circular, isTrue);
+    // Exactly ONE glass underlay: the floating (closed) state. The
+    // adapter pass renders it as the kit's GlassIconButton (the glass
+    // surface itself); the docked twin stays flat Material chrome.
+    expect(find.byType(GlassIconButton).evaluate().length, 1);
+    expect(find.byType(FaSurface).evaluate().length, 0);
+    final tokens = FaDesignTokens.of(
+      tester.element(find.byType(_SidebarToggleStates)),
+    );
+    final flatToggle = tester
+        .widgetList<Material>(
+          find.descendant(
+            of: find.byKey(const ValueKey('sidebarToggleOpen')),
+            matching: find.byType(Material),
+          ),
+        )
+        .firstWhere((m) => m.shape != null);
+    expect(flatToggle.shape, isA<CircleBorder>(),
+        reason: 'docked twin keeps the token circle');
+    expect(flatToggle.color, tokens.surface2);
 
     await expectGolden(tester, 'fa_icon_action_glass_states');
   });

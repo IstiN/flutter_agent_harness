@@ -301,8 +301,8 @@ class MessengerFilterControl extends StatelessWidget {
                 glass: true,
                 useBackdropGroup: true,
                 color: tokens.surface1,
-                tintAmount: .22,
-                tintOpacity: .55,
+                tintAmount: .10,
+                tintOpacity: .40,
                 borderRadius: BorderRadius.circular(18),
                 // 3px inner padding matches the boxed variant's border+2
                 // (1px border + 2px padding): segment sizes and glyph

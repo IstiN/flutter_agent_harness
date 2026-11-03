@@ -38,7 +38,7 @@ import 'package:fa_ui/fa_ui.dart'
         buildFaTheme,
         debugFaGlassAlwaysFake;
 import 'package:liquid_glass_widgets/liquid_glass_widgets.dart'
-    show ProgressiveBlur, ProgressiveBlurDirection;
+    show GlassIconButton, ProgressiveBlur, ProgressiveBlurDirection;
 import 'package:flutter/cupertino.dart' show CupertinoTextField;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -1546,10 +1546,26 @@ void main() {
             isTrue,
             reason: '$reason floating toggle=$expand center=$collapsedCenter',
           );
-          final floatingButton = tester.widget<IconButton>(
-            find.byKey(const ValueKey('chatSidebarExpand')),
+          // The floating toggle's pressable contract: the kit's
+          // GlassIconButton in the glass direction (FaIconActionButton
+          // delegates there), the flat Material IconButton everywhere else
+          // (real glass only in the glass direction).
+          final floatingFinder = find.byKey(
+            const ValueKey('chatSidebarExpand'),
           );
-          expect(floatingButton.onPressed, isNotNull, reason: reason);
+          if (direction == FaVisualDirection.glass) {
+            expect(
+              tester.widget<GlassIconButton>(floatingFinder).onPressed,
+              isNotNull,
+              reason: reason,
+            );
+          } else {
+            expect(
+              tester.widget<IconButton>(floatingFinder).onPressed,
+              isNotNull,
+              reason: reason,
+            );
+          }
           // ONE style: the toggle renders the shared circular chrome
           // (FaIconActionButton — token fill + hairline) in both states,
           // floating or docked; no per-state glass variant.
