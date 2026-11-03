@@ -7,17 +7,58 @@ import 'dart:ui' show lerpDouble;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:liquid_glass_renderer/liquid_glass_renderer.dart';
+import 'package:liquid_glass_widgets/liquid_glass_widgets.dart';
 
 import '../theme/fa2_tokens.dart';
 
 /// Test seam for deterministic goldens and devices where shader output is not
-/// stable. Production keeps this false; upstream also falls back automatically
-/// on web/Skia and when Flutter GPU is unavailable.
+/// stable: the kit glass renders its zero-shader frosted fallback
+/// ([GlassQuality.minimal]) instead of the standard lightweight shader.
+/// Production keeps this false; the kit's [AdaptiveGlass] also falls back
+/// automatically on web/Skia and when Flutter GPU is unavailable.
 @visibleForTesting
 bool debugFaGlassAlwaysFake = false;
 
+/// The styleguide's tuned kit-glass material, shared by every Fa glass
+/// adapter ([FaSurface], [FaHeaderCircularAction], the [FaIconActionButton]
+/// kit delegate, the host's SessionSearchField). The pixel audit pinned the
+/// reference look: the background under small glass diffuses by ~4-6 pt with
+/// a mild rim refraction, the interior stays near-clear, and the specular
+/// ring comes from the kit shader — not from a painted fill. The kit's
+/// default material (iOS-26 rim, fresnel specular) carries the optics; we
+/// map only the Fa tokens onto it:
+///
+/// - `blur` ← [frost] (the audit's sigma: [kFaGlassFrost] for control-scale
+///   discs, `tokens.glassBlur` for panels);
+/// - `glassColor` ← [tint], the low-alpha surface wash (audit: alpha ≤ ~.5);
+/// - `chromaticAberration` 0 — the audit measured zero dispersion on the
+///   iOS-27 reference chrome.
+const double kFaGlassFrost = 5.0;
+
+/// The glass wash alpha ceiling: the interior tint mixes at most this far
+/// toward the surface color (audit: interior tint alpha ≤ ~0.5; the old
+/// surface1@.94 fill was the murky-glass regression).
+const double kFaGlassTintAlpha = .40;
+
+/// The iOS-27 tint-slider position the wash defaults to (0 clear → 1
+/// tinted; the reference discs sit near clear).
+const double kFaGlassTintAmount = .12;
+
+/// The kit [LiquidGlassSettings] for Fa chrome — see the constants above.
+LiquidGlassSettings faGlassSettings({Color? tint, double? frost}) =>
+    LiquidGlassSettings(
+      glassColor: tint ?? const Color(0x00FFFFFF),
+      blur: frost ?? kFaGlassFrost,
+      chromaticAberration: 0,
+    );
+
 /// A semantic Fa surface, optionally rendered with real liquid refraction.
+///
+/// Glass mode rides the liquid_glass_widgets kit ([AdaptiveGlass]) — the
+/// same canonical wrapper the kit's own widgets use, with the Fa token
+/// mapping from [faGlassSettings]. Non-glass directions keep the opaque
+/// token surface (the styleguide rule: real glass in the glass direction,
+/// opaque fallbacks elsewhere).
 class FaSurface extends StatelessWidget {
   const FaSurface({
     super.key,
@@ -41,18 +82,39 @@ class FaSurface extends StatelessWidget {
   final Color? color;
 
   /// Shares one backdrop capture with sibling chrome over the same content.
+  ///
+  /// Retained for API compatibility: the kit's [AdaptiveGlass] currently
+  /// gives each surface its own layer, so the shared-sample optimization is
+  /// advisory only (no call site changes behavior).
   final bool useBackdropGroup;
 
   /// Uses a true circle in both the real glass renderer and opaque fallback.
   /// The caller must give the surface square constraints.
   final bool circular;
 
-  /// Glass tint amount override (null keeps the styleguide default .35).
-  /// Lighter values read as airier glass; heavier ones as frosted plastic.
+  /// Glass tint amount override — the iOS-27 tint-slider position (0 clear,
+  /// 1 tinted; null keeps the styleguide default [kFaGlassTintAmount]). It
+  /// scales the wash alpha relative to that default, so a call site passing
+  /// tintAmount .10 gets roughly a third of the ceiling alpha.
   final double? tintAmount;
 
-  /// Glass tint alpha override (null keeps the styleguide default .7).
+  /// Glass tint alpha override — the wash mix ceiling (null keeps the
+  /// styleguide default [kFaGlassTintAlpha]).
   final double? tintOpacity;
+
+  /// The wash color the kit `glassColor` channel carries: an explicitly
+  /// passed translucent [color] is used as-is (the caller shaped its own
+  /// alpha); otherwise surface1 mixes at the tint ceiling scaled by
+  /// [tintAmount].
+  Color _glassTint(FaDesignTokens tokens) {
+    final base = color ?? tokens.surface1;
+    if (color != null && color!.a < 1) return base;
+    final alpha =
+        ((tintOpacity ?? kFaGlassTintAlpha) *
+                ((tintAmount ?? kFaGlassTintAmount) / kFaGlassTintAmount))
+            .clamp(0.0, 1.0);
+    return base.withValues(alpha: alpha);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -63,22 +125,18 @@ class FaSurface extends StatelessWidget {
         ? content
         : InkWell(onTap: onTap, borderRadius: radius, child: content);
     if (glass && tokens.direction == FaVisualDirection.glass) {
-      return LiquidGlass.auto(
-        fake: debugFaGlassAlwaysFake,
-        useBackdropGroup: useBackdropGroup,
-        clipBehavior: Clip.antiAlias,
-        settings: LiquidGlassSettings.ios27Regular(
-          brightness: tokens.brightness,
-          frost: tokens.glassBlur,
-          tintAmount: tintAmount ?? .35,
-        ),
-        appearance: LiquidGlassAppearance.ios27Regular(
-          brightness: tokens.brightness,
-          tint: (color ?? tokens.surface1).withValues(alpha: tintOpacity ?? .7),
-        ),
+      return AdaptiveGlass(
         shape: circular
             ? const LiquidOval()
             : LiquidRoundedSuperellipse(borderRadius: radius.topLeft.x),
+        settings: faGlassSettings(
+          tint: _glassTint(tokens),
+          frost: tokens.glassBlur,
+        ),
+        quality: debugFaGlassAlwaysFake
+            ? GlassQuality.minimal
+            : GlassQuality.standard,
+        clipBehavior: Clip.antiAlias,
         child: Material(type: MaterialType.transparency, child: interactive),
       );
     }
@@ -308,11 +366,9 @@ class FaTextField extends StatelessWidget {
             vertical: math.max(
               0,
               (boxHeight! -
-                  lineHeight -
-                  Theme.of(
-                    context,
-                  ).visualDensity.baseSizeAdjustment.dy) /
-              2,
+                      lineHeight -
+                      Theme.of(context).visualDensity.baseSizeAdjustment.dy) /
+                  2,
             ),
           );
     return TextField(
@@ -327,11 +383,10 @@ class FaTextField extends StatelessWidget {
       onChanged: onChanged,
       onSubmitted: onSubmitted,
       maxLength: maxLength,
-      buildCounter:
-          maxLength == null
-              ? null
-              : (_, {required currentLength, required isFocused, maxLength}) =>
-                    null,
+      buildCounter: maxLength == null
+          ? null
+          : (_, {required currentLength, required isFocused, maxLength}) =>
+                null,
       textInputAction: textInputAction,
       style: TextStyle(
         color: tokens.ink1,

@@ -31,6 +31,7 @@ import 'package:fa/services/project_mount_flow.dart' show visibleFolderRoot;
 import 'package:fa/services/project_mount_store.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:liquid_glass_widgets/liquid_glass_widgets.dart' show GlassTextField;
 
 /// Valid 1x1 transparent PNG.
 const _pngBytes = <int>[
@@ -868,29 +869,30 @@ void main() {
       );
 
       // P2 render-box audit (the "capsule still tiny" report was shot on
-      // the pre-SizedBox build where FaTextField painted its ~17.5pt
+      // the pre-SizedBox build where the field painted its ~17.5pt
       // intrinsic box ~21px above the circles' centers). The envelope is
-      // not enough — the INPUT DECORATOR (the filled surface the user
-      // sees) must paint the full 40pt box, and the capsule's center must
-      // sit exactly on the circles' centers.
-      final decoratorRect = tester.getRect(
+      // not enough — the kit field's painted surface (the whole
+      // GlassTextField box the glass/solid well draws into) must occupy the
+      // full box height, and the capsule's center must sit exactly on the
+      // circles' centers.
+      final fieldRect = tester.getRect(
         find.descendant(
           of: find.byKey(const ValueKey('fileBrowserSearch')),
-          matching: find.byType(InputDecorator),
+          matching: find.byType(GlassTextField),
         ).first,
       );
       expect(
-        decoratorRect.height,
+        fieldRect.height,
         kSearchFieldHeight,
-        reason: 'InputDecorator fill height',
+        reason: 'kit field surface height',
       );
       expect(
-        decoratorRect.center.dy,
+        fieldRect.center.dy,
         moreOrLessEquals(close.center.dy, epsilon: 0.5),
         reason: 'capsule center on the close circle center',
       );
       expect(
-        decoratorRect.center.dy,
+        fieldRect.center.dy,
         moreOrLessEquals(
           tester
               .getRect(circleOf(const ValueKey('fileBrowserRefresh')))
@@ -910,11 +912,11 @@ void main() {
       );
       expect(
         editableRect.top,
-        greaterThanOrEqualTo(decoratorRect.top),
+        greaterThanOrEqualTo(fieldRect.top),
       );
       expect(
         editableRect.bottom,
-        lessThanOrEqualTo(decoratorRect.bottom),
+        lessThanOrEqualTo(fieldRect.bottom),
       );
     });
 

@@ -3,8 +3,12 @@
 // in the LICENSE file.
 
 import 'package:flutter/material.dart';
+import 'package:liquid_glass_widgets/liquid_glass_widgets.dart';
 
 import '../chat/fa_adaptive_header.dart';
+import '../theme/fa2_tokens.dart';
+import 'fa2_controls.dart'
+    show faGlassSettings, kFaGlassFrost, kFaGlassTintAlpha;
 
 /// The ONE circular icon action for headers, bands and panel chrome.
 ///
@@ -45,6 +49,7 @@ class FaIconActionButton extends StatelessWidget {
     this.glyphSize,
     this.buttonKey,
     this.glass = false,
+    this.focusNode,
   }) : assert(
          (icon == null) != (child == null),
          'Provide exactly one of icon or child',
@@ -100,24 +105,67 @@ class FaIconActionButton extends StatelessWidget {
   /// State-conditional glass underlay (owner rule): false (default) when
   /// the circle sits on a parent surface (Files band, panel slabs — flat
   /// token surface); true when it floats on the chat header's backdrop.
+  /// In the glass direction true renders the kit's [GlassIconButton] — the
+  /// jelly squash-press, the token-derived press glow and the Fa-tuned
+  /// glass material come from the kit, not an imitation; every other
+  /// direction keeps the flat [FaHeaderCircularAction] chrome (styleguide
+  /// rule: real glass only in the glass direction).
   final bool glass;
 
+  /// Focus node for the kit button (glass mode); null keeps the kit's
+  /// internal focus handling.
+  final FocusNode? focusNode;
+
   @override
-  Widget build(BuildContext context) => FaHeaderCircularAction(
-    dimension: diameter,
-    glass: glass,
-    child: IconButton(
-      key: buttonKey,
-      onPressed: onPressed,
-      tooltip: tooltip,
-      padding: EdgeInsets.zero,
-      constraints: BoxConstraints.tightFor(width: diameter, height: diameter),
-      style: IconButton.styleFrom(
-        minimumSize: Size.square(diameter),
-        maximumSize: Size.square(diameter),
-        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+  Widget build(BuildContext context) {
+    final tokens = FaDesignTokens.of(context);
+    if (glass && tokens.direction == FaVisualDirection.glass) {
+      final enabled = onPressed != null;
+      final kitButton = GlassIconButton(
+        key: buttonKey,
+        icon: IconTheme.merge(
+          data: IconThemeData(
+            size: effectiveGlyphSize,
+            color: enabled ? tokens.ink1 : tokens.ink3,
+          ),
+          child:
+              child ?? Icon(icon, size: effectiveGlyphSize, color: tokens.ink1),
+        ),
+        onPressed: onPressed,
+        // OUR control scale, not the kit's 44pt phone target: the circle
+        // keeps the 36pt composer diameter, glyph at half the edge.
+        size: diameter,
+        iconSize: effectiveGlyphSize,
+        interactionScale: 0.95,
+        glowColor: tokens.ink1.withValues(alpha: .2),
+        glowRadius: diameter * .5,
+        settings: faGlassSettings(
+          tint: tokens.surface1.withValues(alpha: kFaGlassTintAlpha),
+          frost: kFaGlassFrost,
+        ),
+        focusNode: focusNode,
+        semanticLabel: tooltip,
+      );
+      return tooltip == null
+          ? kitButton
+          : Tooltip(message: tooltip, child: kitButton);
+    }
+    return FaHeaderCircularAction(
+      dimension: diameter,
+      glass: glass,
+      child: IconButton(
+        key: buttonKey,
+        onPressed: onPressed,
+        tooltip: tooltip,
+        padding: EdgeInsets.zero,
+        constraints: BoxConstraints.tightFor(width: diameter, height: diameter),
+        style: IconButton.styleFrom(
+          minimumSize: Size.square(diameter),
+          maximumSize: Size.square(diameter),
+          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        ),
+        icon: child ?? Icon(icon, size: effectiveGlyphSize),
       ),
-      icon: child ?? Icon(icon, size: effectiveGlyphSize),
-    ),
-  );
+    );
+  }
 }

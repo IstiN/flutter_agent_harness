@@ -85,7 +85,7 @@ void main() {
       expect(find.text('fa-team'), findsOneWidget);
       expect(find.text('side-project'), findsOneWidget);
 
-      await tester.enterText(find.byType(TextField).first, 'side');
+      await tester.enterText(find.byType(SessionSearchField), 'side');
       // The shared search field debounces the query by 150 ms.
       await tester.pump(const Duration(milliseconds: 200));
 

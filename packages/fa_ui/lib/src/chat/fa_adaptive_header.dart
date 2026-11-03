@@ -96,7 +96,31 @@ class FaHeaderCircularAction extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final tokens = FaDesignTokens.of(context);
-    final chrome = SizedBox.square(
+    if (glass && tokens.direction == FaVisualDirection.glass) {
+      // The glass IS the surface: the kit disc (AdaptiveGlass via FaSurface,
+      // Fa-tuned per the pixel audit) replaces the opaque token fill — the
+      // old surface1@.94 fill plus surface2 chrome smothered the shader's
+      // rim and the under-disc refraction (the murky-disc regression). Only
+      // a transparent ink host rides inside so child InkResponses keep a
+      // Material ancestor.
+      return FaSurface(
+        glass: true,
+        circular: true,
+        useBackdropGroup: true,
+        color: tokens.surface1.withValues(alpha: .45),
+        child: SizedBox.square(
+          dimension: dimension,
+          child: Material(
+            type: MaterialType.transparency,
+            child: IconTheme.merge(
+              data: IconThemeData(size: 18, color: tokens.ink1),
+              child: child,
+            ),
+          ),
+        ),
+      );
+    }
+    return SizedBox.square(
       dimension: dimension,
       child: Material(
         color: tokens.surface2,
@@ -107,14 +131,6 @@ class FaHeaderCircularAction extends StatelessWidget {
           child: child,
         ),
       ),
-    );
-    if (!glass || tokens.direction != FaVisualDirection.glass) return chrome;
-    return FaSurface(
-      glass: true,
-      circular: true,
-      useBackdropGroup: true,
-      color: tokens.surface1.withValues(alpha: .94),
-      child: chrome,
     );
   }
 }

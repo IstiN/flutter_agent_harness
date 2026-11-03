@@ -2269,8 +2269,8 @@ class _FaChatScreenState extends State<FaChatScreen>
                       glass: true,
                       useBackdropGroup: true,
                       color: tokens.surface1,
-                      tintAmount: .22,
-                      tintOpacity: .5,
+                      tintAmount: .10,
+                      tintOpacity: .35,
                       borderRadius: BorderRadius.circular(18),
                       padding: const EdgeInsets.symmetric(horizontal: 6),
                       child: Column(

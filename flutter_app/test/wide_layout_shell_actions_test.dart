@@ -38,7 +38,11 @@ import 'package:fa_ui/fa_ui.dart'
         buildFaTheme,
         debugFaGlassAlwaysFake;
 import 'package:liquid_glass_widgets/liquid_glass_widgets.dart'
-    show ProgressiveBlur, ProgressiveBlurDirection;
+    show
+        GlassTextField,
+        LiquidShape,
+        ProgressiveBlur,
+        ProgressiveBlurDirection;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
@@ -937,7 +941,7 @@ void main() {
         );
         await tester.pump(const Duration(milliseconds: 100));
         Color? searchFill;
-        InputBorder? searchBorder;
+        LiquidShape? searchBorder;
         Color? newBackground;
         for (var section = 0; section < labels.length; section++) {
           if (section > 0) {
@@ -1050,22 +1054,24 @@ void main() {
             expect(search, findsOneWidget, reason: reason);
           }
 
+          // Material-level reads: the shared field renders a TextField
+          // whose InputDecoration carries fill/border/hint in every
+          // underlying implementation (FaTextField, kit glass field).
           final field = tester.widget<TextField>(
             find.descendant(of: search, matching: find.byType(TextField)),
           );
-          final decoration = field.decoration!;
           final newStyle = tester.widget<IconButton>(newButton).style;
           final background = newStyle?.backgroundColor?.resolve(const {});
           if (section == 0) {
-            searchFill = decoration.fillColor;
-            searchBorder = decoration.enabledBorder;
+            searchFill = field.decoration?.fillColor;
+            searchBorder = field.decoration?.border;
             newBackground = background;
           } else {
-            expect(decoration.fillColor, searchFill, reason: reason);
-            expect(decoration.enabledBorder, searchBorder, reason: reason);
+            expect(field.decoration?.fillColor, searchFill, reason: reason);
+            expect(field.decoration?.border, searchBorder, reason: reason);
             expect(background, newBackground, reason: reason);
           }
-          expect(decoration.hintText, isNotEmpty, reason: reason);
+          expect(field.decoration?.hintText, isNotEmpty, reason: reason);
           expect(
             tester
                 .widget<Icon>(
@@ -1497,7 +1503,11 @@ void main() {
             reason: '$reason titlebar=$titlebar toggle=$collapse',
           );
           expect(search.top, greaterThanOrEqualTo(titlebar.bottom));
-          expect(collapse.right, closeTo(sidebar.right - 8, .001));
+          // The panel's 8pt gutter contract on BOTH sides: 8pt card
+          // margin + 8pt gutter between the toggle's right edge and the
+          // panel's right edge (owner call: the open panel's toggle must
+          // not hug the panel edge).
+          expect(collapse.right, closeTo(sidebar.right - 16, .001));
           final brand = find.byKey(const ValueKey('wideShellFaBrand'));
           final expandedLogo = tester.widget<FaLogo>(
             find.descendant(of: brand, matching: find.byType(FaLogo)),
@@ -1707,7 +1717,9 @@ void main() {
     }
     final restored = expanding.last;
     expect(restored.$1.width, 260);
-    expect(restored.$2.right, closeTo(restored.$1.right - 8, .001));
+    // The panel's 8pt gutter contract on BOTH sides (8pt card margin +
+    // 8pt gutter).
+    expect(restored.$2.right, closeTo(restored.$1.right - 16, .001));
     debugDefaultTargetPlatformOverride = null;
   });
 
@@ -1860,6 +1872,36 @@ void main() {
         await tester.pump();
       }
     }
+  });
+
+  testWidgets('the docked Files band X rides the collapse toggle centerline',
+      (tester) async {
+    final env = MemoryExecutionEnv();
+    final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
+      ..addSession('design-session', _fakeService(env));
+    await pumpShell(tester, manager: manager);
+    await tester.pumpAndSettle();
+
+    // Open the chat's docked Files panel through the header folder icon.
+    await tester.tap(find.byTooltip('Open files'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('faChatFilesPanel')), findsOneWidget);
+    expect(find.byKey(const ValueKey('filesAppClose')), findsOneWidget);
+
+    // ONE centerline: the Files band X's vertical center equals the
+    // collapse toggle's (the header band's shared action centerline —
+    // screen y=35: the panel card's 8pt margin + 3pt card padding + the
+    // band's 2pt padding + the row's 4pt centering put the 36pt X's top
+    // at 17).
+    final toggle = tester.getRect(
+      find.byKey(const ValueKey('chatSidebarCollapse')),
+    );
+    final filesX = tester.getRect(find.byKey(const ValueKey('filesAppClose')));
+    expect(filesX.center.dy, closeTo(toggle.center.dy, .5),
+        reason: 'toggle=$toggle filesX=$filesX');
+    // And the X keeps the canonical 36pt circle.
+    expect(filesX.size, const Size.square(36));
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('sidebar-left toggle hides and shows every section', (
@@ -2660,12 +2702,11 @@ void main() {
       expect(filesField, findsOneWidget);
       final filesRect = tester.getRect(filesField);
       final filesType = tester.widget(filesField).runtimeType;
-      final filesDecoration = tester
+      final filesShape = tester
           .widget<TextField>(
-            find.descendant(of: filesField, matching: find.byType(TextField)).first,
+            find.descendant(of: filesField, matching: find.byType(TextField)),
           )
-          .decoration!
-          .enabledBorder! as OutlineInputBorder;
+          .decoration?.border;
       final sidebarField = find.byKey(const ValueKey('messengerSearchField'));
       expect(sidebarField, findsNothing, reason: 'shell pumped away');
       // Rebuild the shell's header field standalone for the box compare:
@@ -2711,17 +2752,18 @@ void main() {
         closeTo(filesRect.top - filesRect.center.dy, .5),
         reason: 'vertical metrics',
       );
-      final sidebarDecoration = tester
+      final sidebarShape = tester
           .widget<TextField>(
-            find
-                .descendant(of: standaloneField, matching: find.byType(TextField))
+            find.descendant(
+              of: standaloneField,
+              matching: find.byType(TextField),
+                )
                 .first,
           )
-          .decoration!
-          .enabledBorder! as OutlineInputBorder;
+          .shape;
       expect(
-        sidebarDecoration.borderRadius,
-        filesDecoration.borderRadius,
+        sidebarShape,
+        filesShape,
         reason: 'capsule radius tokens',
       );
 

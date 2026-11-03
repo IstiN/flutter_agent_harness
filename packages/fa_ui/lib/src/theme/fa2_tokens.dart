@@ -343,7 +343,11 @@ class FaDesignTokens extends ThemeExtension<FaDesignTokens> {
       radiusMd: radii[2],
       radiusLg: radii[3],
       radiusXl: radii[4],
-      glassBlur: direction == FaVisualDirection.glass ? 24 : 0,
+      // The pixel audit: the reference glass diffuses the backdrop by only
+      // ~4-6 pt on control chrome (the old 24 smothered the rim and the
+      // under-disc content). Panels pass this through the kit settings as
+      // the backdrop-blur sigma.
+      glassBlur: direction == FaVisualDirection.glass ? 6 : 0,
       fast: Duration(milliseconds: motion[0]),
       base: Duration(milliseconds: motion[1]),
       emphasized: Duration(milliseconds: motion[2]),

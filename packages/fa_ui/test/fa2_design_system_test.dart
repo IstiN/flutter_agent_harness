@@ -3,7 +3,7 @@ import 'dart:math' as math;
 import 'package:fa_ui/fa_ui.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:liquid_glass_renderer/liquid_glass_renderer.dart';
+import 'package:liquid_glass_widgets/liquid_glass_widgets.dart';
 
 void main() {
   group('FaDesignTokens', () {
@@ -148,14 +148,22 @@ void main() {
     });
 
     testWidgets(
-      'glass surface uses the upstream renderer through the test seam',
+      'glass surface rides the kit AdaptiveGlass through the test seam',
       (tester) async {
         await _pump(
           tester,
           const FaSurface(glass: true, child: Text('Glass content')),
         );
         await tester.pump();
-        expect(find.byType(LiquidGlass), findsOneWidget);
+        // The test seam pins GlassQuality.minimal — the kit's zero-shader
+        // frosted fallback, deterministic on any host renderer.
+        expect(find.byType(AdaptiveGlass), findsOneWidget);
+        expect(
+          tester
+              .widget<AdaptiveGlass>(find.byType(AdaptiveGlass))
+              .quality,
+          GlassQuality.minimal,
+        );
         expect(find.text('Glass content'), findsOneWidget);
       },
     );
