@@ -16,6 +16,7 @@
 import 'dart:io';
 
 import 'package:test/test.dart';
+import 'package:yaml/yaml.dart';
 
 import 'release_hygiene_test_support.dart';
 
@@ -26,6 +27,7 @@ void main() {
     List<String> attachedNames = const [],
     List<String> assets = const ['fa-linux-x64.tar.gz'],
     List<String> viewSeq = const [],
+    Map<String, String> env = const {},
   }) {
     final dir = Directory(
       '${hygieneFixtureRoot.path}/gate-$name-${DateTime.now().microsecondsSinceEpoch}',
@@ -58,6 +60,7 @@ void main() {
       'GH_STUB_DIR': dir.path,
       'GH_LOG_FILE': '${dir.path}/log',
       'GH_TOKEN': 'stub',
+      ...env,
     });
     return GateRun(
       res.exitCode,
@@ -146,6 +149,102 @@ void main() {
     expect(run.out, contains('fa-macos-arm64.tar.gz'));
     expect(run.log.where((l) => l.contains('release upload')), isEmpty,
         reason: 'a mixed refusal uploads nothing — no partial mutation');
+  });
+
+  // ── gh-2050: the pre-stage policy (RELEASE_GATE_PUBLISHED_SKIP=1) ──────
+  //
+  // The daily build-macos leg is a next-tag-draft PRE-STAGER (its DMGs/zips/
+  // latest-mac.yml are clobber-refresher assets, not publish blockers —
+  // release_required_assets.txt). When the sibling train publishes the
+  // derived tag while the serialized self-hosted macOS builds are still
+  // running (run 41583268061: draft 05:22:46, published 05:44:52, mac leg
+  // attached 06:28:53), the leg's attach arrives at a PUBLISHED release and
+  // the default verdict refuses — a red leg + a discarded build. Under the
+  // caller-declared policy that verdict becomes a whole-call loud skip: the
+  // immutability contract holds (nothing uploads, nothing mutates), and the
+  // next daily leg pre-stages the NEXT version's draft with fresh assets.
+
+  test('gh-2050 policy: published + unattached fa-* → loud whole-call skip, exit 0, NOTHING uploaded', () {
+    // THE gh-2050 reproduction: without the policy this verdict is the
+    // ::error:: refusal above (red leg); with it the leg goes green.
+    final run = runGate('policy-published-fa', releaseState: 'false',
+        attachedNames: ['fa-web-spa.zip'],
+        assets: ['fa-macos-arm64-1.0.685.dmg', 'latest-mac.yml'],
+        env: {'RELEASE_GATE_PUBLISHED_SKIP': '1'});
+    expect(run.exitCode, 0, reason: run.out);
+    expect(run.out, contains('::warning::'),
+        reason: 'the skip must stay loud — a green run annotation, not silence');
+    expect(run.out, contains('fa-macos-arm64-1.0.685.dmg'),
+        reason: 'the skip names what it refused to attach');
+    expect(run.out.toLowerCase(), contains('published'));
+    expect(run.log.where((l) => l.contains('release upload')), isEmpty,
+        reason: 'a skipped attach uploads nothing — gh-2042 AC1 still holds');
+    expect(run.log.where((l) => l.contains('release edit')), isEmpty);
+  });
+
+  test('gh-2050 policy: mixed list skips the WHOLE call — even the uploadable non-fa asset', () {
+    // latest-mac.yml must never land alone on a release whose zips were
+    // skipped: electron-updater would fetch a feed of missing files. The
+    // skip is all-or-nothing, mirroring the refusal's per-call contract.
+    final run = runGate('policy-mixed', releaseState: 'false',
+        attachedNames: ['fa-linux-x64.tar.gz'],
+        assets: ['fa-linux-x64.tar.gz', 'fa-macos-arm64.tar.gz', 'app-release.aab'],
+        env: {'RELEASE_GATE_PUBLISHED_SKIP': '1'});
+    expect(run.exitCode, 0, reason: run.out);
+    expect(run.out, contains('::warning::'));
+    expect(run.log.where((l) => l.contains('release upload')), isEmpty,
+        reason: 'no partial mutation on the skip path either');
+  });
+
+  test('gh-2050 policy never touches the draft path — drafts attach exactly as before', () {
+    final run = runGate('policy-draft', assets: ['fa-linux-x64.tar.gz'],
+        env: {'RELEASE_GATE_PUBLISHED_SKIP': '1'});
+    expect(run.exitCode, 0, reason: run.out);
+    expect(run.out, isNot(contains('::warning::')));
+    expect(
+      run.log,
+      contains('release upload v1.2.3 fa-linux-x64.tar.gz --clobber --repo OWNER/REPO'),
+    );
+  });
+
+  test('gh-2050 policy: published + all already attached → unchanged immutable skip', () {
+    final run = runGate('policy-published-attached', releaseState: 'false',
+        attachedNames: ['fa-linux-x64.tar.gz', 'SHA256SUMS', 'SHA256SUMS.sig'],
+        assets: ['fa-linux-x64.tar.gz'],
+        env: {'RELEASE_GATE_PUBLISHED_SKIP': '1'});
+    expect(run.exitCode, 0, reason: run.out);
+    expect(run.out, isNot(contains('::warning::')),
+        reason: 'nothing was refused — the ordinary immutable skip, not a policy skip');
+    expect(run.log.where((l) => l.contains('release upload')), isEmpty);
+    expect(run.out.toLowerCase(), contains('skip'));
+  });
+
+  test('gh-2050 policy is opt-in: any value but exactly "1" keeps the loud refusal', () {
+    // Fail-closed discipline: a loose truthiness ('true', 'yes', stray '0')
+    // would let a typo silently re-arm post-publish attaches repo-wide.
+    for (final value in ['', 'true', 'yes', '0', 'on']) {
+      final run = runGate('policy-optin-$value', releaseState: 'false',
+          attachedNames: ['fa-web-spa.zip'], assets: ['fa-macos-arm64.tar.gz'],
+          env: {'RELEASE_GATE_PUBLISHED_SKIP': value});
+      expect(run.exitCode, isNot(0), reason: 'value "$value" must not enable the skip: ${run.out}');
+      expect(run.out, contains('::error::'));
+      expect(run.log.where((l) => l.contains('release upload')), isEmpty);
+    }
+  });
+
+  test('the daily release-macos attach step declares the gh-2050 pre-stage policy', () {
+    // The behavioral tests above pin the gate; this pins the CALLER: the
+    // daily mac desktop pre-stage attach opts into the policy, so removing
+    // the env (and silently re-red-ing the leg) fails tests, not the 06:28
+    // daily train.
+    final job = jobsOf('.github/workflows/build-macos.yml')['release-macos'] as YamlMap;
+    final step = (job['steps'] as YamlList).firstWhere(
+      (s) => s is YamlMap && s['name'] == 'Create or update GitHub Release',
+    ) as YamlMap;
+    final env = step['env'] as YamlMap?;
+    expect(env, isNotNull, reason: 'the attach step carries env config');
+    expect(env!['RELEASE_GATE_PUBLISHED_SKIP']?.toString(), '1',
+        reason: 'the pre-stage attach must opt into the gh-2050 published-skip policy');
   });
 
   test('missing release → allow (the caller lazy-drafts first; upload surfaces real errors)', () {

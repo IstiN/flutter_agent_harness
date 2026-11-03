@@ -23,6 +23,7 @@ void main() {
     List<String> attachedNames = const [],
     List<String> viewSeq = const ['exists'],
     List<String> assets = const ['fa-macos-arm64-mac.zip', 'fa-macos-arm64'],
+    Map<String, String> env = const {},
   }) {
     final dir = Directory(
       '${hygieneFixtureRoot.path}/immutable-$name-${DateTime.now().microsecondsSinceEpoch}',
@@ -61,6 +62,7 @@ void main() {
         'GH_LOG_FILE': '${dir.path}/log',
         'GITHUB_RUN_ID': '111',
         'GITHUB_JOB': 'release-macos',
+        ...env,
       },
     );
     return AttachOut(
@@ -96,6 +98,44 @@ void main() {
         reason: 'the release exists — a refusal must not create a twin',
       );
       expect(run.log.where((l) => l.contains('release edit')), isEmpty);
+    },
+  );
+
+  test(
+    'gh-2050 pre-stage policy: published + unattached fa-* → leg goes green, NOTHING mutated',
+    () {
+      // The daily release-macos leg's exact gh-2050 shape: it arrives after
+      // the sibling train published the same derived tag. Under the policy
+      // (set by the workflow step) attach-or-create must complete exit 0 —
+      // no twin create, no upload, no draft→published flip — with the skip
+      // surfaced loud, so the leg green-skips instead of red-filing a daily
+      // ticket (run 41583268061).
+      final run = runAttach(
+        'policy-published-fa',
+        releaseState: 'false',
+        attachedNames: ['fa-macos-arm64.tar.gz', 'SHA256SUMS', 'SHA256SUMS.sig'],
+        assets: ['fa-macos-arm64-1.0.685.dmg', 'fa-macos-arm64-mac.zip', 'latest-mac.yml'],
+        env: {'RELEASE_GATE_PUBLISHED_SKIP': '1'},
+      );
+      expect(run.exitCode, 0, reason: run.out);
+      expect(run.out, contains('::warning::'),
+          reason: 'the skip is loud — a green annotation, never silence');
+      expect(run.out.toLowerCase(), contains('published'));
+      expect(
+        run.log.where((l) => l.contains('release upload')),
+        isEmpty,
+        reason: 'a skipped pre-stage uploads nothing',
+      );
+      expect(
+        run.log.where((l) => l.contains('release create')),
+        isEmpty,
+        reason: 'the release exists — a skip must not mint a twin draft',
+      );
+      expect(
+        run.log.where((l) => l.contains('release edit')),
+        isEmpty,
+        reason: 'no publish/latest flip on the skip path — latest never moves',
+      );
     },
   );
 

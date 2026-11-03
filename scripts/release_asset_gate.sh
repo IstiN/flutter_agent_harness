@@ -26,7 +26,16 @@
 #                                REFUSE the whole call with a loud
 #                                ::error:: (post-publish attach must
 #                                target a DRAFT / next-version or re-run
-#                                release-provenance for the tag)
+#                                release-provenance for the tag) — OR,
+#                                when the caller declares
+#                                RELEASE_GATE_PUBLISHED_SKIP=1, SKIP the
+#                                whole call with a loud ::warning::
+#                                instead (gh-2050: the daily pre-stager
+#                                legs' draft window closed — a sibling
+#                                train published the tag while they were
+#                                still building; nothing uploads, nothing
+#                                mutates, the next daily leg pre-stages
+#                                the next version)
 #                              - name not attached, NOT fa-* → attach
 #                                (store AAB/IPA/APK + DMG refreshers are
 #                                deliberately not provenance-covered,
@@ -39,7 +48,8 @@
 # gate by design (gh-2042 AC3).
 #
 # Usage: release_asset_gate.sh <tag> <asset> [<asset>...]
-# Env: GITHUB_REPOSITORY, GH_TOKEN/GITHUB_TOKEN.
+# Env: GITHUB_REPOSITORY, GH_TOKEN/GITHUB_TOKEN,
+#      RELEASE_GATE_PUBLISHED_SKIP (gh-2050 pre-stage skip — exact "1").
 set -euo pipefail
 
 tag="${1:?usage: release_asset_gate.sh <tag> <assets...>}"
@@ -85,6 +95,20 @@ if printf '%s' "$state_json" | jq -e '.isDraft == false' >/dev/null 2>&1; then
     fi
   done
   if [ "${#refused[@]}" -gt 0 ]; then
+    # gh-2050: the caller-declared PRE-STAGE policy. The daily build-macos /
+    # build-mobile legs are next-tag-draft PRE-STAGERS (their DMGs/zips/
+    # latest-mac.yml are clobber-refresher assets, not publish blockers —
+    # release_required_assets.txt). When the sibling train publishes the
+    # derived tag while the slow legs are still building (the v1.0.685
+    # daily run: draft 05:22:46, published 05:44:52, mac leg attached
+    # 06:28:53), the pre-stager's draft window is simply closed — its only
+    # honest action is a loud whole-call skip; the next daily leg pre-stages
+    # the NEXT version's draft with fresh assets. Exact "1" or the default
+    # refusal below stays armed (fail-closed).
+    if [ "${RELEASE_GATE_PUBLISHED_SKIP:-}" = "1" ]; then
+      echo "::warning::release $tag is PUBLISHED — pre-stage skip (RELEASE_GATE_PUBLISHED_SKIP=1, gh-2050): the unattached fa-* asset(s) [${refused[*]}] cannot attach (gh-2042 AC1: a published release is immutable for fa-* assets; its signed SHA256SUMS vouches for the bytes already on it). NOTHING was uploaded — the whole call is skipped, non-fa-* assets included (a latest-mac.yml landing alone would serve the mac update feed a manifest of missing files). A sibling train published this tag while this leg was still building; the next daily leg pre-stages the next version's draft with fresh assets. Landing these assets on THIS tag needs a human-sanctioned post-publish remediation: attach, then re-run the release-provenance sign job for the tag (it re-hashes the current assets and re-signs)." >&2
+      exit 0
+    fi
     echo "::error::release $tag is PUBLISHED — attaching unattached fa-* asset(s) [${refused[*]}] would invalidate its signed SHA256SUMS (gh-2042 AC1: a published release is immutable for fa-* assets). Remediate by re-running the release-provenance job for the tag (it re-hashes the current assets and re-signs), or target the next-version DRAFT instead." >&2
     exit 1
   fi

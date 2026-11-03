@@ -13,6 +13,24 @@ block a release again.
 
 ## Unreleased
 
+- fix(gh-2050): the daily-publish `cli` leg red-failed daily when its
+  macOS attach arrived after a sibling train had already PUBLISHED the
+  derived tag (the same-tag convergence race: mobile leg drafts + the tag
+  train publishes ~25 min after dispatch while the serialized self-hosted
+  mac builds need ~66 min — v1.0.685: draft 05:22:46, published 05:44:52,
+  mac leg attached 06:28:53). `scripts/release_asset_gate.sh` gains a
+  caller-declared pre-stage policy — `RELEASE_GATE_PUBLISHED_SKIP=1` —
+  that turns the PUBLISHED+unattached-fa-* verdict into a loud whole-call
+  skip (`::warning::`, exit 0, nothing uploaded, no twin create, no flip;
+  all-or-nothing so `latest-mac.yml` can never land alone on a release
+  whose zips were skipped). The default stays the gh-2042 AC1 loud
+  refusal; only build-macos.yml's `release-macos` desktop attach opts in
+  (its DMGs/zips/manifest are clobber-refresher pre-stage assets, not
+  publish blockers), the CLI-tar/extension attaches keep the refusal (they
+  carry REQUIRED release assets). The stranded desktop feed self-heals:
+  the next daily leg pre-stages the next version's draft with fresh
+  assets.
+
 - fix(gh-2044): the auto-compact fragile-band escalation could fold the
   ENTIRE visible projection when the remaining path fit inside
   `keepRecentTokens` — the keep-recent walk defaulted to folding
