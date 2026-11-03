@@ -95,7 +95,6 @@ lib/main.dart 4
 lib/services/aiin_connect_flow.dart 7
 lib/services/codemie_sso_flow_steps.dart 4
 lib/ui/activity/activity_surface.dart 2
-lib/ui/apps/apps_directory_panel.dart 1
 lib/ui/apps/files_presentation_panel.dart 2
 lib/ui/chats/chat_list_panel.dart 9
 lib/ui/network/add_agent_dialog.dart 5
