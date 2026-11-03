@@ -9,6 +9,7 @@ import 'package:fa/l10n/app_localizations.dart';
 import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/skills_toggles_store.dart';
 import 'package:fa/ui/app_theme.dart';
+import 'package:fa/ui/screens/settings_tiles.dart';
 import 'package:fa/ui/screens/skills_toggles_section.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
@@ -202,10 +203,9 @@ void main() {
       // The literal #1334 invariant: no EMPTY skill dir survives boot.
       for (final entry in remaining) {
         if (entry.kind != FileKind.directory) continue;
-        final entries =
-            (await env.listDir(
-              '${env.cwd}/.fah/skills/${entry.name}',
-            )).valueOrNull!;
+        final entries = (await env.listDir(
+          '${env.cwd}/.fah/skills/${entry.name}',
+        )).valueOrNull!;
         expect(entries, isNotEmpty, reason: '${entry.name}/ is a ghost dir');
       }
 
@@ -426,7 +426,7 @@ void main() {
 
     Finder row(String name) => find.ancestor(
       of: find.text(name),
-      matching: find.byType(SwitchListTile),
+      matching: find.byType(SettingsSwitchRow),
     );
 
     testWidgets('renders one default-on switch per package builtin', (
@@ -439,9 +439,9 @@ void main() {
         builtins.map((s) => s.name),
         containsAll(['create-goal', 'self-settings']),
       );
-      expect(find.byType(SwitchListTile), findsNWidgets(builtins.length));
+      expect(find.byType(SettingsSwitchRow), findsNWidgets(builtins.length));
       for (final skill in builtins) {
-        expect(tester.widget<SwitchListTile>(row(skill.name)).value, isTrue);
+        expect(tester.widget<SettingsSwitchRow>(row(skill.name)).value, isTrue);
         // One-line description under the name.
         expect(find.textContaining(skill.description), findsOneWidget);
       }
@@ -463,7 +463,10 @@ void main() {
         await tester.pump(const Duration(milliseconds: 100));
       }
 
-      expect(tester.widget<SwitchListTile>(row('create-goal')).value, isFalse);
+      expect(
+        tester.widget<SettingsSwitchRow>(row('create-goal')).value,
+        isFalse,
+      );
       expect(
         service.systemPromptForTest,
         isNot(contains('<name>create-goal</name>')),

@@ -768,15 +768,10 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        DropdownButtonFormField<WebLlmModelPreset>(
-          initialValue: _webllmModel,
-          isExpanded: true,
-          dropdownColor: tokens.surface2,
-          iconEnabledColor: tokens.ink2,
-          borderRadius: BorderRadius.circular(tokens.radiusMd),
-          decoration: InputDecoration(
-            labelText: context.l10n.settingsOnDeviceModelLabel,
-          ),
+        SettingsDropdown<WebLlmModelPreset>(
+          itemKey: ValueKey<WebLlmModelPreset>(_webllmModel),
+          value: _webllmModel,
+          labelText: context.l10n.settingsOnDeviceModelLabel,
           items: [
             for (final preset in webLlmModelPresets)
               DropdownMenuItem(
@@ -849,15 +844,10 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        DropdownButtonFormField<TransformersJsModelPreset>(
-          initialValue: _transformersJsModel,
-          isExpanded: true,
-          dropdownColor: tokens.surface2,
-          iconEnabledColor: tokens.ink2,
-          borderRadius: BorderRadius.circular(tokens.radiusMd),
-          decoration: InputDecoration(
-            labelText: context.l10n.settingsOnDeviceModelLabel,
-          ),
+        SettingsDropdown<TransformersJsModelPreset>(
+          itemKey: ValueKey<TransformersJsModelPreset>(_transformersJsModel),
+          value: _transformersJsModel,
+          labelText: context.l10n.settingsOnDeviceModelLabel,
           items: [
             for (final preset in transformersJsModelPresets)
               DropdownMenuItem(
@@ -945,12 +935,38 @@ class KeysSection extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final tokens = faui.FaDesignTokens.of(context);
     final store = this.store ?? SessionKeysScope.maybeOf(context);
     final registry = this.registry;
     if (store == null && registry == null) return const SizedBox.shrink();
     return ListenableBuilder(
       listenable: Listenable.merge([?store, ?registry]),
       builder: (context, _) {
+        final keyRows = <Widget>[
+          if (store != null)
+            for (final name in _listedNames(store))
+              _buildKeyRow(
+                context,
+                theme,
+                title: name,
+                source: _sourceFor(context, store, name),
+                onSet: () => _setStoredKey(context, store, name),
+                onDelete: store.has(name)
+                    ? () => _deleteStoredKey(context, store, name)
+                    : null,
+              ),
+          if (registry != null)
+            for (final provider in registry.providers)
+              if ((registry.keyFor(provider.id) ?? '').isNotEmpty)
+                _buildKeyRow(
+                  context,
+                  theme,
+                  title: provider.name,
+                  source: context.l10n.keysSourceProviderSession,
+                  onSet: () => _setProviderKey(context, registry, provider),
+                  onDelete: () => registry.rememberKey(provider.id, ''),
+                ),
+        ];
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           mainAxisSize: MainAxisSize.min,
@@ -960,7 +976,12 @@ class KeysSection extends StatelessWidget {
                 Expanded(
                   child: Text(
                     context.l10n.keysSectionTitle,
-                    style: theme.textTheme.titleSmall,
+                    style: TextStyle(
+                      color: tokens.ink2,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      letterSpacing: .2,
+                    ),
                   ),
                 ),
                 if (store != null)
@@ -975,32 +996,25 @@ class KeysSection extends StatelessWidget {
             const SizedBox(height: 4),
             Text(
               context.l10n.keysSectionNote,
-              style: theme.textTheme.bodySmall,
+              style: TextStyle(color: tokens.ink2, fontSize: 12, height: 1.35),
             ),
             const SizedBox(height: 8),
-            if (store != null)
-              for (final name in _listedNames(store))
-                _buildKeyRow(
-                  context,
-                  theme,
-                  title: name,
-                  source: _sourceFor(context, store, name),
-                  onSet: () => _setStoredKey(context, store, name),
-                  onDelete: store.has(name)
-                      ? () => _deleteStoredKey(context, store, name)
-                      : null,
-                ),
-            if (registry != null)
-              for (final provider in registry.providers)
-                if ((registry.keyFor(provider.id) ?? '').isNotEmpty)
-                  _buildKeyRow(
-                    context,
-                    theme,
-                    title: provider.name,
-                    source: context.l10n.keysSourceProviderSession,
-                    onSet: () => _setProviderKey(context, registry, provider),
-                    onDelete: () => registry.rememberKey(provider.id, ''),
+            if (keyRows.isNotEmpty)
+              faui.FaSurface(
+                borderRadius: BorderRadius.circular(14),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      for (var i = 0; i < keyRows.length; i++) ...[
+                        if (i > 0) faui.FaHairline(indent: 16, symmetry: 0),
+                        keyRows[i],
+                      ],
+                    ],
                   ),
+                ),
+              ),
           ],
         );
       },
@@ -1045,7 +1059,7 @@ class KeysSection extends StatelessWidget {
   }) {
     final tokens = faui.FaDesignTokens.of(context);
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 2),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
       child: Row(
         children: [
           Expanded(
@@ -1329,9 +1343,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ),
               ..._noServiceHint(context, service),
               _providersSection(context, service, onDeviceConfig),
-              const SizedBox(height: 24),
-              const Divider(),
-              const SizedBox(height: 16),
+              const faui.FaHairline(),
               // The Agents section / Models row / Approval mode all read
               // from the live service (reconfigure, subagentManager,
               // activeBaseUrl, …). Gate them on a non-null service
@@ -1343,51 +1355,36 @@ class _SettingsScreenState extends State<SettingsScreen> {
               const SizedBox(height: 20),
               const ThemeModeSection(),
               const ThemePacksSection(),
-
               const SizedBox(height: 24),
-              const Divider(),
-              const SizedBox(height: 16),
+
+              const faui.FaHairline(),
               // The DAP/1 hub connection (machine-shared `~/.dap` config,
               // docs/dap.md §9) — service-independent, so it shows without
               // an active agent service too.
               const DapHubSection(),
-              const SizedBox(height: 24),
-              const Divider(),
-              const SizedBox(height: 16),
+              const faui.FaHairline(),
               // The GitHub account used for widget publishing (issue #35)
               // — resolves its store from SessionKeysScope, so it renders
               // without an active agent service, like DapHubSection. The
               // env wires "My publications" to the live status polling.
               GithubAccountSection(env: widget.env),
-              const SizedBox(height: 24),
-              const Divider(),
-              const SizedBox(height: 16),
+              const faui.FaHairline(),
               const ChatTextSection(),
-              const SizedBox(height: 24),
-              const Divider(),
-              const SizedBox(height: 16),
+              const faui.FaHairline(),
               // Issue #207: chat image previews decode downscaled (600px)
               // by default; this switch lifts the constraint live.
               const ImagePreviewsSection(),
-              const SizedBox(height: 24),
-              const Divider(),
-              const SizedBox(height: 16),
+              const faui.FaHairline(),
               if (widget.layoutStore != null) ...[
                 HomeGridSection(layoutStore: widget.layoutStore!),
-                const SizedBox(height: 24),
-                const Divider(),
-                const SizedBox(height: 16),
+                const faui.FaHairline(),
               ],
               if (service != null) ...[
                 ResetAppsSection(service: service),
-                const SizedBox(height: 24),
-                const Divider(),
-                const SizedBox(height: 16),
+                const faui.FaHairline(),
               ],
               KeysSection(registry: widget.registry),
-              const SizedBox(height: 24),
-              const Divider(),
-              const SizedBox(height: 16),
+              const faui.FaHairline(),
               if (service != null) ..._approvalAndToolsSections(service),
               // Registry-classified CLI-only settings, listed with their
               // reasons — never a silent absence (issue #288 AC4).
@@ -1396,22 +1393,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
               // with no service yet still shows WHY those settings are
               // CLI-only.
               const CliOnlySettingsSection(),
-              const SizedBox(height: 24),
-              const Divider(),
-              const SizedBox(height: 16),
+              const faui.FaHairline(),
               WebLlmCacheSection(engine: widget.webLlmEngine),
               ..._onDeviceCacheSections(),
-              const SizedBox(height: 24),
-              const Divider(),
-              const SizedBox(height: 16),
+              const faui.FaHairline(),
               OnboardingReplaySection(
                 mediaModelsStore: MediaModelsScope.maybeOf(context),
                 lastConnectionStore: widget.lastConnectionStore,
                 registry: widget.registry,
               ),
-              const SizedBox(height: 24),
-              const Divider(),
-              const SizedBox(height: 16),
+              const faui.FaHairline(),
               const DebugLogsSection(),
               const SizedBox(height: 24),
             ],
@@ -1432,8 +1423,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     return [
       _NoServiceSettings(onAddProvider: () => _addProviderFromCta(context)),
       const SizedBox(height: 16),
-      const Divider(),
-      const SizedBox(height: 8),
+      const faui.FaHairline(),
     ];
   }
 
@@ -1596,9 +1586,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           );
         },
       ),
-      const SizedBox(height: 24),
-      const Divider(),
-      const SizedBox(height: 16),
+      const faui.FaHairline(),
       // The live subagent tree (CLI `/agents` panel parity):
       // main + retained children with observe/send.
       if (service.subagentManager case final manager?) ...[
@@ -1615,9 +1603,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           observe: service.observeSubagent,
           send: service.sendToSubagent,
         ),
-        const SizedBox(height: 24),
-        const Divider(),
-        const SizedBox(height: 16),
+        const faui.FaHairline(),
       ],
     ];
   }
@@ -1629,35 +1615,25 @@ class _SettingsScreenState extends State<SettingsScreen> {
   List<Widget> _approvalAndToolsSections(AgentService service) {
     return [
       ApprovalModeSelector(service: service),
-      const SizedBox(height: 24),
-      const Divider(),
-      const SizedBox(height: 16),
+      const faui.FaHairline(),
       // Third-party skills consent — the roots don't exist on
       // mobile, so the section hides there entirely.
       if (skillsConsentSurfacesVisible) ...[
         SkillsAccessSection(service: service),
-        const SizedBox(height: 24),
-        const Divider(),
-        const SizedBox(height: 16),
+        const faui.FaHairline(),
       ],
       // Per-skill toggles (issue #1151): the package builtins are embedded
       // data on every host — the rows render wherever the settings screen
       // does, no consent-style platform gating.
       SkillsTogglesSection(service: service),
-      const SizedBox(height: 24),
-      const Divider(),
-      const SizedBox(height: 16),
+      const faui.FaHairline(),
       // Capability-gated tools (issue #19): live toggles, every
       // platform — the tool set exists everywhere.
       ToolsAvailabilitySection(service: service),
-      const SizedBox(height: 24),
-      const Divider(),
-      const SizedBox(height: 16),
+      const faui.FaHairline(),
       // Secret redaction (issue #1078 AC4/E3): the live pipeline toggle.
       RedactionSection(service: service),
-      const SizedBox(height: 24),
-      const Divider(),
-      const SizedBox(height: 16),
+      const faui.FaHairline(),
       // Compaction engine picker (issue #287): structured (2.0)
       // is the default; classic stays the in-settings rollback.
       // Resolves/writes the same config layers the per-compaction
@@ -1670,9 +1646,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           'main/docs',
         ),
       ),
-      const SizedBox(height: 24),
-      const Divider(),
-      const SizedBox(height: 16),
+      const faui.FaHairline(),
     ];
   }
 
@@ -1690,9 +1664,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       // show it.
       if (mobilePlatformSupported && mobileFlavor == 'god') ...[
         const MobileAutomationSection(),
-        const SizedBox(height: 24),
-        const Divider(),
-        const SizedBox(height: 16),
+        const faui.FaHairline(),
       ],
     ];
   }

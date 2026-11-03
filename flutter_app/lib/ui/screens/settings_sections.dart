@@ -16,7 +16,6 @@ class ThemeModeSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
     final tokens = faui.FaDesignTokens.of(context);
     final controller = this.controller ?? FahThemeScope.maybeOf(context);
     if (controller == null) return const SizedBox.shrink();
@@ -27,20 +26,25 @@ class ThemeModeSection extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text(
-              context.l10n.settingsThemeLabel,
-              style: theme.textTheme.titleSmall,
+            // The dim eyebrow: section headers stay out of the field so
+            // the capsule carries no floating M3 label.
+            Padding(
+              padding: const EdgeInsets.fromLTRB(4, 0, 4, 8),
+              child: Text(
+                context.l10n.settingsThemeLabel,
+                style: TextStyle(
+                  color: tokens.ink2,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                  letterSpacing: .2,
+                ),
+              ),
             ),
-            const SizedBox(height: 8),
-            DropdownButtonFormField<FahThemeMode>(
+            SettingsDropdown<FahThemeMode>(
               // The key forces the FormField to re-seed when the mode is
               // changed from elsewhere.
-              key: ValueKey<FahThemeMode>(controller.mode),
-              initialValue: controller.mode,
-              isExpanded: true,
-              dropdownColor: tokens.surface2,
-              iconEnabledColor: tokens.ink2,
-              borderRadius: BorderRadius.circular(tokens.radiusMd),
+              itemKey: ValueKey<FahThemeMode>(controller.mode),
+              value: controller.mode,
               items: [
                 DropdownMenuItem(
                   value: FahThemeMode.system,
@@ -148,15 +152,9 @@ class VisualDirectionSection extends StatelessWidget {
             style: Theme.of(context).textTheme.titleSmall,
           ),
           const SizedBox(height: 8),
-          DropdownButtonFormField<faui.FaFontPreset>(
-            key: ValueKey<faui.FaFontPreset>(controller.fontPreset),
-            initialValue: controller.fontPreset,
-            isExpanded: true,
-            dropdownColor: faui.FaDesignTokens.of(context).surface2,
-            iconEnabledColor: faui.FaDesignTokens.of(context).ink2,
-            borderRadius: BorderRadius.circular(
-              faui.FaDesignTokens.of(context).radiusMd,
-            ),
+          SettingsDropdown<faui.FaFontPreset>(
+            itemKey: ValueKey<faui.FaFontPreset>(controller.fontPreset),
+            value: controller.fontPreset,
             items: [
               for (final preset in faui.FaFontPreset.values)
                 DropdownMenuItem(
@@ -668,15 +666,11 @@ class _CompactionSectionState extends State<CompactionSection> {
           style: theme.textTheme.bodySmall?.copyWith(color: tokens.ink2),
         ),
         const SizedBox(height: 8),
-        DropdownButtonFormField<CompactionEngine>(
+        SettingsDropdown<CompactionEngine>(
           // Re-seed when the effective engine changes elsewhere (config
           // edits apply without a restart — same trick as ThemeModeSection).
-          key: ValueKey<CompactionEngine>(engine),
-          initialValue: engine,
-          isExpanded: true,
-          dropdownColor: tokens.surface2,
-          iconEnabledColor: tokens.ink2,
-          borderRadius: BorderRadius.circular(tokens.radiusMd),
+          itemKey: ValueKey<CompactionEngine>(engine),
+          value: engine,
           items: [
             DropdownMenuItem(
               value: CompactionEngine.structured,
@@ -1114,7 +1108,11 @@ class _QueueEntryTile extends StatelessWidget {
         children: [
           SizedBox(
             width: 28,
-            child: Text('${index + 1}.', style: TextStyle(color: tokens.ink2)),
+            // A bare queue ordinal ("1.") — not translatable copy.
+            child: Text(
+              '${index + 1}.',
+              style: TextStyle(color: tokens.ink2),
+            ), // l10n:ignore
           ),
           Expanded(
             child: InkWell(

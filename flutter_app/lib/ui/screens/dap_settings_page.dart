@@ -14,11 +14,69 @@ import 'package:fa/services/dap_service_web_core.dart'
     show ExtensionDapHubService, normalizeWebDapHost;
 import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/widgets/dap_hub_mark.dart';
-import 'package:fa/ui/widgets/wide_layout_shell.dart';
 import 'package:fa_ui/fa_ui.dart' as faui;
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart'
     show AgentPresence, HubLinkState, MailboxEntry;
+
+/// The shared readable column for the DAP pages (760 max, centered):
+/// full-width content stretched into an unreadable strip on wide windows.
+Widget _readableColumn(BuildContext context, {required Widget child}) => Center(
+  child: ConstrainedBox(
+    constraints: const BoxConstraints(maxWidth: 760),
+    child: child,
+  ),
+);
+
+/// The DAP pages' Fa2 chrome band: [faui.FaAdaptiveHeader] (title +
+/// circular back action) over one token hairline — the stock AppBar
+/// leaked the M3 surface and its full-width hairline.
+class _DapHeader extends StatelessWidget {
+  const _DapHeader({required this.title, this.onBack});
+
+  final String title;
+
+  /// The detail-view back affordance; null keeps the bar action-free.
+  final VoidCallback? onBack;
+
+  @override
+  Widget build(BuildContext context) {
+    final tokens = faui.FaDesignTokens.of(context);
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Container(
+          color: tokens.direction == faui.FaVisualDirection.glass
+              ? Colors.transparent
+              : tokens.surface1,
+          padding: const EdgeInsets.fromLTRB(16, 10, 8, 6),
+          child: SizedBox(
+            height: 40,
+            child: faui.FaAdaptiveHeader(
+              title: title,
+              titleStyle: TextStyle(
+                color: tokens.ink1,
+                fontSize: 17,
+                fontWeight: FontWeight.w600,
+                height: 1.2,
+              ),
+              leading: onBack == null
+                  ? null
+                  : faui.FaIconButton(
+                      icon: Icons.arrow_back,
+                      onPressed: onBack,
+                    ),
+              visualDensity: VisualDensity.compact,
+              iconSize: 18,
+            ),
+          ),
+        ),
+        Container(height: 1, color: tokens.hairline),
+      ],
+    );
+  }
+}
 
 /// The settings "DAP hub" row: opens the dedicated [DapHubPage] (connection,
 /// identity, channels) so the top level stays provider-focused. The
@@ -333,11 +391,22 @@ class _DapHubPageState extends State<DapHubPage> {
   Widget build(BuildContext context) {
     final selected = _selected;
     return Scaffold(
-      appBar: faAppBar(
-        title: Text(_hubTitle(context, selected)),
-        leading: _hubLeading(context, selected),
+      // Fa2 chrome: the header band + one token hairline replace the stock
+      // AppBar (its M3 surface + full-width hairline leaked the old look).
+      body: SafeArea(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _DapHeader(
+              title: _hubTitle(context, selected),
+              onBack: selected == null
+                  ? null
+                  : () => setState(() => _selected = null),
+            ),
+            Expanded(child: _hubBody(context, _snapshot, selected)),
+          ],
+        ),
       ),
-      body: _hubBody(context, _snapshot, selected),
     );
   }
 
@@ -347,15 +416,6 @@ class _DapHubPageState extends State<DapHubPage> {
       selected == null
       ? context.l10n.settingsDapHubTitle
       : (selected.name.isEmpty ? selected.url : selected.name);
-
-  /// The back affordance, only when a detail is open.
-  Widget? _hubLeading(BuildContext context, DapSavedConnection? selected) =>
-      selected == null
-      ? null
-      : faui.FaIconButton(
-          icon: Icons.arrow_back,
-          onPressed: () => setState(() => _selected = null),
-        );
 
   /// The body state machine: loading/error → unsupported note → the list
   /// or the selected detail.
@@ -377,11 +437,12 @@ class _DapHubPageState extends State<DapHubPage> {
   /// The connections list: the active connection first (always present —
   /// synthesized from the snapshot when never bookmarked), then the
   /// bookmarks. Tapping a row opens its details; Add appends a new hub.
+  /// Content sits on the shared readable column (760 max, centered).
   Widget _listBody(BuildContext context, DapHubSnapshot snapshot) {
-    final theme = Theme.of(context);
-    final colors = FahColors.of(context);
+    final tokens = faui.FaDesignTokens.of(context);
     final rows = _rowsFor(snapshot);
-    return SafeArea(
+    return _readableColumn(
+      context,
       child: SingleChildScrollView(
         padding: const EdgeInsets.all(24),
         child: Column(
@@ -389,23 +450,53 @@ class _DapHubPageState extends State<DapHubPage> {
           children: [
             Text(
               context.l10n.settingsDapHubIntro,
-              style: theme.textTheme.bodySmall?.copyWith(color: colors.dim),
+              style: TextStyle(color: tokens.ink2, fontSize: 13, height: 1.4),
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 24),
             AgentNetworkSection(controller: widget.agentNetwork),
-            const SizedBox(height: 16),
+            const SizedBox(height: 24),
             Text(
               context.l10n.settingsDapSavedTitle,
-              style: theme.textTheme.titleSmall,
+              style: TextStyle(
+                color: tokens.ink2,
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+                letterSpacing: .2,
+              ),
             ),
             const SizedBox(height: 4),
             Text(
               context.l10n.settingsDapSavedHint,
-              style: theme.textTheme.bodySmall?.copyWith(color: colors.dim),
+              style: TextStyle(color: tokens.ink2, fontSize: 12, height: 1.35),
             ),
             const SizedBox(height: 8),
-            for (final row in rows)
-              _connectionRow(context, snapshot, row.connection, row.active),
+            if (rows.isNotEmpty)
+              faui.FaSurface(
+                borderRadius: BorderRadius.circular(14),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      for (var i = 0; i < rows.length; i++) ...[
+                        if (i > 0)
+                          Container(
+                            margin: const EdgeInsets.only(left: 16),
+                            height: 1,
+                            color: tokens.hairline,
+                          ),
+                        _connectionRow(
+                          context,
+                          snapshot,
+                          rows[i].connection,
+                          rows[i].active,
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+            const SizedBox(height: 16),
             Align(
               alignment: Alignment.centerLeft,
               child: faui.FaButton(
@@ -472,7 +563,7 @@ class _DapHubPageState extends State<DapHubPage> {
       key: ValueKey('dapConn-${entry.url}'),
       onTap: () => setState(() => _selected = entry),
       child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
         child: Row(
           children: [
             _activeDot(colors, active),
@@ -484,18 +575,12 @@ class _DapHubPageState extends State<DapHubPage> {
                   _connectionTitle(context, entry, active),
                   Text(
                     entry.url,
-                    style: FahPalette.mono(
-                      color: colors.dim,
-                      fontSize: 12,
-                    ),
+                    style: FahPalette.mono(color: colors.dim, fontSize: 12),
                   ),
                 ],
               ),
             ),
-            if (active) ...[
-              const SizedBox(width: 8),
-              _activeChip(context),
-            ],
+            if (active) ...[const SizedBox(width: 8), _activeChip(context)],
             Icon(
               Icons.chevron_right,
               color: selected ? colors.teal : colors.dim,
@@ -542,8 +627,8 @@ class _DapHubPageState extends State<DapHubPage> {
     );
   }
 
-  /// A non-active bookmark's details: its coordinates, the shared agent
-  /// identity, and the live switch.
+  /// The bookmark's details: its coordinates, the shared agent
+  /// identity, and the live switch — on the readable column.
   Widget _bookmarkDetailBody(
     BuildContext context,
     DapHubSnapshot snapshot,
@@ -551,7 +636,8 @@ class _DapHubPageState extends State<DapHubPage> {
   ) {
     final theme = Theme.of(context);
     final colors = FahColors.of(context);
-    return SafeArea(
+    return _readableColumn(
+      context,
       child: SingleChildScrollView(
         padding: const EdgeInsets.all(24),
         child: Column(
@@ -624,7 +710,8 @@ class _DapHubPageState extends State<DapHubPage> {
   Widget _connectionBody(BuildContext context, DapHubSnapshot snapshot) {
     final colors = FahColors.of(context);
     final theme = Theme.of(context);
-    return SafeArea(
+    return _readableColumn(
+      context,
       child: SingleChildScrollView(
         padding: const EdgeInsets.all(24),
         child: Column(
@@ -687,11 +774,14 @@ class _DapHubPageState extends State<DapHubPage> {
               ),
             ],
             const SizedBox(height: 24),
-            const Divider(),
-            const SizedBox(height: 16),
             Text(
               context.l10n.settingsDapIdentityTitle,
-              style: theme.textTheme.titleSmall,
+              style: TextStyle(
+                color: faui.FaDesignTokens.of(context).ink2,
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+                letterSpacing: .2,
+              ),
             ),
             const SizedBox(height: 4),
             Text(
@@ -710,16 +800,17 @@ class _DapHubPageState extends State<DapHubPage> {
               snapshot.agentId ?? '—',
               mono: true,
             ),
-            const SizedBox(height: 24),
-            const Divider(),
-            const SizedBox(height: 16),
+            const faui.FaHairline(),
             ..._inboundSection(context, snapshot),
-            const SizedBox(height: 24),
-            const Divider(),
-            const SizedBox(height: 16),
+            const faui.FaHairline(),
             Text(
               context.l10n.settingsDapChannelsTitle,
-              style: theme.textTheme.titleSmall,
+              style: TextStyle(
+                color: faui.FaDesignTokens.of(context).ink2,
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+                letterSpacing: .2,
+              ),
             ),
             const SizedBox(height: 8),
             if (snapshot.channels.isEmpty)
@@ -979,7 +1070,8 @@ class _DapHubPageState extends State<DapHubPage> {
   Widget _messageBody(BuildContext context, String message) {
     final colors = FahColors.of(context);
     final theme = Theme.of(context);
-    return SafeArea(
+    return _readableColumn(
+      context,
       child: Center(
         child: Padding(
           padding: const EdgeInsets.all(24),
@@ -1103,77 +1195,85 @@ class _DapConnectionEditorPageState extends State<DapConnectionEditorPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: faAppBar(
-        title: Text(
-          _isAdd
-              ? context.l10n.settingsDapAddConnection
-              : context.l10n.settingsDapEditConnection,
-        ),
-      ),
+      // Fa2 chrome: the header band + one token hairline replace the stock
+      // AppBar (the editor is a pushed page of its own).
       body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              TextField(
-                controller: _urlController,
-                decoration: InputDecoration(
-                  labelText: context.l10n.settingsDapUrlLabel,
-                  hintText: context.l10n.settingsDapUrlHint,
-                  helperText: context.l10n.settingsDapUrlHint,
-                ),
-                autocorrect: false,
-                enableSuggestions: false,
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: _nameController,
-                decoration: InputDecoration(
-                  labelText: context.l10n.settingsDapAgentNameLabel,
-                  hintText: context.l10n.settingsDapNameHint,
-                ),
-                autocorrect: false,
-                enableSuggestions: false,
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: _secretController,
-                decoration: InputDecoration(
-                  labelText: context.l10n.settingsDapPasswordLabel,
-                  helperText: context.l10n.settingsDapPasswordHint,
-                ),
-                obscureText: true,
-                autocorrect: false,
-                enableSuggestions: false,
-              ),
-              if (_error != null) ...[
-                const SizedBox(height: 12),
-                Text(
-                  _error!,
-                  style: TextStyle(
-                    color: faui.FaDesignTokens.of(context).danger,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _DapHeader(
+              title: _isAdd
+                  ? context.l10n.settingsDapAddConnection
+                  : context.l10n.settingsDapEditConnection,
+            ),
+            Expanded(
+              child: _readableColumn(
+                context,
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.all(24),
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 760),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        faui.FaTextField(
+                          controller: _urlController,
+                          dense: true,
+                          hintText: context.l10n.settingsDapUrlLabel,
+                          helperText: context.l10n.settingsDapUrlHint,
+                          autocorrect: false,
+                          enableSuggestions: false,
+                        ),
+                        const SizedBox(height: 12),
+                        faui.FaTextField(
+                          controller: _nameController,
+                          dense: true,
+                          hintText: context.l10n.settingsDapAgentNameLabel,
+                          autocorrect: false,
+                          enableSuggestions: false,
+                        ),
+                        const SizedBox(height: 12),
+                        faui.FaTextField(
+                          controller: _secretController,
+                          dense: true,
+                          hintText: context.l10n.settingsDapPasswordLabel,
+                          helperText: context.l10n.settingsDapPasswordHint,
+                          obscureText: true,
+                          autocorrect: false,
+                          enableSuggestions: false,
+                        ),
+                        if (_error != null) ...[
+                          const SizedBox(height: 12),
+                          Text(
+                            _error!,
+                            style: TextStyle(
+                              color: faui.FaDesignTokens.of(context).danger,
+                            ),
+                          ),
+                        ],
+                        const SizedBox(height: 24),
+                        Row(
+                          children: [
+                            const Spacer(),
+                            faui.FaButton(
+                              label: context.l10n.settingsCancelButton,
+                              variant: faui.FaButtonVariant.ghost,
+                              onPressed: () => Navigator.of(context).pop(),
+                            ),
+                            const SizedBox(width: 12),
+                            faui.FaButton(
+                              label: context.l10n.settingsSaveButton,
+                              onPressed: _save,
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
                   ),
                 ),
-              ],
-              const SizedBox(height: 24),
-              Row(
-                children: [
-                  const Spacer(),
-                  faui.FaButton(
-                    label: context.l10n.settingsCancelButton,
-                    variant: faui.FaButtonVariant.ghost,
-                    onPressed: () => Navigator.of(context).pop(),
-                  ),
-                  const SizedBox(width: 12),
-                  faui.FaButton(
-                    label: context.l10n.settingsSaveButton,
-                    onPressed: _save,
-                  ),
-                ],
               ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );
@@ -1288,7 +1388,6 @@ class _AgentNetworkSectionState extends State<AgentNetworkSection> {
   Widget build(BuildContext context) {
     final controller = _controller;
     final colors = FahColors.of(context);
-    final tokens = faui.FaDesignTokens.of(context);
     final theme = Theme.of(context);
     // Extension enrollment and connection state live in the worker-backed
     // DapHubService above; a second local network section would invite a
@@ -1312,47 +1411,50 @@ class _AgentNetworkSectionState extends State<AgentNetworkSection> {
     }
     final store = controller.store;
     final enabled = store.enabled;
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        border: Border.all(color: tokens.hairline),
-        borderRadius: BorderRadius.circular(tokens.radiusLg),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      context.l10n.settingsAgentNetworkJoin,
-                      style: theme.textTheme.titleSmall,
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      context.l10n.settingsAgentNetworkJoinHint,
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: colors.dim,
+    // The styleguide surface card: the join switch lives in the card's
+    // header row (never parked at the window's far edge — the readable
+    // column above bounds it).
+    return faui.FaSurface(
+      borderRadius: BorderRadius.circular(14),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        context.l10n.settingsAgentNetworkJoin,
+                        style: theme.textTheme.titleSmall,
                       ),
-                    ),
-                  ],
+                      const SizedBox(height: 2),
+                      Text(
+                        context.l10n.settingsAgentNetworkJoinHint,
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: colors.dim,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
-              ),
-              faui.FaSwitch(value: enabled, onChanged: _toggle),
+                const SizedBox(width: 16),
+                faui.FaSwitch(value: enabled, onChanged: _toggle),
+              ],
+            ),
+            if (enabled) ...[
+              const SizedBox(height: 12),
+              _statusRow(context, controller),
+              const SizedBox(height: 12),
+              _connectionFields(context),
+              const SizedBox(height: 12),
+              _peersList(context, controller),
             ],
-          ),
-          if (enabled) ...[
-            const SizedBox(height: 12),
-            _statusRow(context, controller),
-            const SizedBox(height: 12),
-            _connectionFields(context),
-            const SizedBox(height: 12),
-            _peersList(context, controller),
           ],
-        ],
+        ),
       ),
     );
   }

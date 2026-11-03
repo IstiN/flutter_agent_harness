@@ -229,6 +229,8 @@ class FaTextField extends StatelessWidget {
     this.keyboardType,
     this.autofocus = false,
     this.enabled = true,
+    this.autocorrect = true,
+    this.enableSuggestions = true,
     this.onChanged,
     this.onSubmitted,
     this.errorText,
@@ -248,6 +250,13 @@ class FaTextField extends StatelessWidget {
   final TextInputType? keyboardType;
   final bool autofocus;
   final bool enabled;
+
+  /// Whether the OS text-correction pipeline applies (off for secrets).
+  final bool autocorrect;
+
+  /// Whether the OS suggestion pipeline applies (off for secrets).
+  final bool enableSuggestions;
+
   final ValueChanged<String>? onChanged;
   final ValueChanged<String>? onSubmitted;
   final String? errorText;
@@ -269,6 +278,8 @@ class FaTextField extends StatelessWidget {
       keyboardType: keyboardType,
       autofocus: autofocus,
       enabled: enabled,
+      autocorrect: autocorrect,
+      enableSuggestions: enableSuggestions,
       onChanged: onChanged,
       onSubmitted: onSubmitted,
       style: TextStyle(
@@ -301,6 +312,32 @@ class FaTextField extends StatelessWidget {
         focusedBorder: border(tokens.accent, 1.5),
         errorBorder: border(tokens.danger),
         focusedErrorBorder: border(tokens.danger, 1.5),
+      ),
+    );
+  }
+}
+
+/// The styleguide's only divider: a 1px token hairline with symmetric
+/// vertical rhythm (the stock [Divider] leaks the M3 defaults and an
+/// asymmetric 24/16 spacing). [indent] aligns the line with a card's
+/// text column.
+class FaHairline extends StatelessWidget {
+  const FaHairline({super.key, this.indent = 0, this.symmetry = 24});
+
+  final double indent;
+
+  /// Vertical space on both sides — symmetric by contract.
+  final double symmetry;
+
+  @override
+  Widget build(BuildContext context) {
+    final tokens = FaDesignTokens.of(context);
+    return Padding(
+      padding: EdgeInsets.symmetric(vertical: symmetry),
+      child: Container(
+        margin: EdgeInsets.only(left: indent),
+        height: 1,
+        color: tokens.hairline,
       ),
     );
   }

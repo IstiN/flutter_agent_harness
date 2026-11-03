@@ -155,16 +155,14 @@ extension _SettingsFormFlowHelpers on _AgentSettingsFormState {
 
   Widget _buildApiKeyField() {
     final keyOptional = _keyIsOptional;
-    return TextField(
+    return faui.FaTextField(
       controller: _keyController,
-      decoration: InputDecoration(
-        labelText: keyOptional
-            ? context.l10n.settingsApiKeyOptionalLabel
-            : context.l10n.settingsApiKeyLabel,
-        hintText: keyOptional ? null : context.l10n.settingsApiKeyHint,
-        helperText: keyOptional ? context.l10n.settingsApiKeyLocalHelper : null,
-      ),
+      dense: true,
       obscureText: true,
+      hintText: keyOptional
+          ? context.l10n.settingsApiKeyOptionalLabel
+          : context.l10n.settingsApiKeyLabel,
+      helperText: keyOptional ? context.l10n.settingsApiKeyLocalHelper : null,
       autocorrect: false,
       enableSuggestions: false,
     );
@@ -201,15 +199,12 @@ extension _SettingsFormFlowHelpers on _AgentSettingsFormState {
     title: Text(context.l10n.settingsVisionLabel),
   );
 
-  Widget _buildBaseUrlField() => TextField(
+  Widget _buildBaseUrlField() => faui.FaTextField(
     controller: _urlController,
+    dense: true,
     enabled: _hasEditableBaseUrl,
-    decoration: InputDecoration(
-      labelText: context.l10n.settingsBaseUrlLabel,
-      helperText: _hasEditableBaseUrl
-          ? context.l10n.settingsBaseUrlHelper
-          : null,
-    ),
+    hintText: context.l10n.settingsBaseUrlLabel,
+    helperText: _hasEditableBaseUrl ? context.l10n.settingsBaseUrlHelper : null,
   );
 
   Widget _buildKeyNoteRow(ThemeData theme, Object selection) => Row(
@@ -265,10 +260,9 @@ extension _SettingsFormFlowHelpers on _AgentSettingsFormState {
     onPressed: _loading ? null : _connect,
   );
 
-  String _connectButtonLabel() =>
-    _loading
-        ? context.l10n.settingsLoadingModel
-        : widget.connectLabel ?? context.l10n.settingsStartChat;
+  String _connectButtonLabel() => _loading
+      ? context.l10n.settingsLoadingModel
+      : widget.connectLabel ?? context.l10n.settingsStartChat;
 
   // ─── _applyLastConnection (gh-1848 tier-4) ───────────────────────────────
 

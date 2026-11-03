@@ -113,10 +113,9 @@ lib/ui/screens/app_launcher_screen.dart 4
 lib/ui/screens/attached_session_screen.dart 2
 lib/ui/screens/chat_screen.dart 1
 lib/ui/screens/codemie_sso_pickers.dart 3
-lib/ui/screens/dap_settings_page.dart 4
+lib/ui/screens/dap_settings_page.dart 1
 lib/ui/screens/mobile_consent_screen.dart 2
 lib/ui/screens/onboarding_screen.dart 4
-lib/ui/screens/settings_flows.dart 2
 lib/ui/screens/settings_key_dialogs.dart 3
 lib/ui/widgets/apps_panel.dart 1
 lib/ui/widgets/code_viewer.dart 2
@@ -140,4 +139,3 @@ lib/ui/widgets/widget_status_detail_sheet.dart 1
 [material_app]
 
 [theme_data]
-
