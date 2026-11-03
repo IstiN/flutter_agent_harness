@@ -365,16 +365,22 @@ class _WideLayoutShellState extends State<WideLayoutShell>
   }
 
   /// Refreshes the sidebar's persisted-sessions tail from disk.
+  ///
+  /// Issue #2053: the listing rides the manager's single-flight pass (the
+  /// chat-list adapter shares it), and names come from the lazily-known
+  /// snapshot — ZERO name-probe window reads here. The bounded background
+  /// fill ([FlutterSessionManager.warmSessionNames]) lands the CLI /rename
+  /// names after the first frame and repaints through the manager
+  /// listener; this method then runs again and picks them up.
   Future<void> _reloadPersistedSessions() async {
     final all = await widget.manager.listPersistedSessions();
-    // The CLI's /rename names live in the session JSONL itself — read them
-    // alongside the metadata so CLI-named sessions show their titles here.
-    final names = await widget.manager.readSessionNames(all);
+    final names = widget.manager.knownSessionNames;
     if (!mounted) return;
     setState(() {
       _persistedSessions = all;
       _jsonlNames = names;
     });
+    unawaited(widget.manager.warmSessionNames(all));
     unawaited(_refreshChatProjection());
   }
 

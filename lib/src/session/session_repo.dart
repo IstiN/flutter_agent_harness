@@ -502,6 +502,7 @@ final class JsonlSessionRepo implements SessionRepo {
 
   @override
   Future<List<SessionMetadata>> list({String? cwd}) async {
+    debugOnListingPass?.call();
     final sessions = await _collectRootSessions();
     if (cwd != null) {
       sessions.retainWhere((m) => m.cwd == cwd);
@@ -509,6 +510,18 @@ final class JsonlSessionRepo implements SessionRepo {
     sessions.sort(compareSessionActivity);
     return sessions;
   }
+
+  /// Test seam (issue #2053 op-count assertions): fired once per [list]
+  /// invocation, BEFORE any IO — lets suites count actual repo passes
+  /// without subclassing (the class is `final` by design).
+  @visibleForTesting
+  void Function()? debugOnListingPass;
+
+  /// Test seam (issue #2053 AC4): fired at the top of every
+  /// [sessionNameQuick] call — the app-boot suite asserts the boot path
+  /// never fires it and that the lazy fill is the only caller.
+  @visibleForTesting
+  void Function(SessionMetadata metadata)? debugOnNameProbe;
 
   @override
   Future<void> delete(
@@ -936,6 +949,7 @@ final class JsonlSessionRepo implements SessionRepo {
     SessionMetadata metadata, {
     bool? hasRotatedSegments,
   }) async {
+    debugOnNameProbe?.call(metadata);
     // Rotated sessions (gh-1077): probe every segment, newest first —
     // the newest session_info record anywhere in the chain decides,
     // exactly as in a single file (an empty name CLEARS an older one).

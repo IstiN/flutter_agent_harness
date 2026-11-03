@@ -37,13 +37,23 @@ void main() {
       final entries = await adapter.load();
       final byId = {for (final item in entries) item.id.value: item};
 
-      expect(byId['parent']!.title, 'CLI parent');
+      // Issue #2053 AC4: JSONL names left the boot path — the first
+      // paint derives titles, previews and subagent metadata stay
+      // synchronous.
+      expect(byId['parent']!.title, isNot('CLI parent'));
       expect(byId['parent']!.preview, 'A real persisted preview');
       expect(byId['parent']!.folderName, 'work');
       expect(byId['parent']!.folderPath, '/work');
       expect(byId['child']!.parentId, 'parent');
       expect(byId['child']!.isSubagent, isTrue);
       expect(byId['empty']!.preview, isNull);
+
+      // The lazy fill learns the session_info name (bounded probes, off
+      // the boot path) and the next projection shows it.
+      final persisted = await manager.listPersistedSessions();
+      await manager.warmSessionNames(persisted);
+      final refilled = {for (final item in await adapter.load()) item.id.value: item};
+      expect(refilled['parent']!.title, 'CLI parent');
     },
   );
 

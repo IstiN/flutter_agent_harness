@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:fa/services/agent_service.dart';
@@ -63,18 +64,22 @@ final class LocalChatListAdapter implements LocalChatListChangeSource {
     // A constructor snapshot can predate a successful delete (and an older
     // async host refresh can finish after a newer one). Always project the
     // fresh manager/store listing so no cached row can resurrect a session.
+    // AC5 (#2053): concurrent loads share the manager's ONE listing pass.
     final persisted = await manager.listPersistedSessions();
     final live = manager.sessions;
     final liveIds = live.map((session) => session.id).toSet();
     final persistedById = {
       for (final metadata in persisted) metadata.id: metadata,
     };
+    // Issue #2053 AC4: names leave the boot path. Rows render with the
+    // names already known (persisted listing index + previous fills) and
+    // the bounded background fill tops up the rest — it completes after
+    // this projection and repaints through [changes] (the manager).
     var jsonlNames = const <String, String>{};
-    if (readPersistedNames && persisted.isNotEmpty) {
-      try {
-        jsonlNames = await manager.readSessionNames(persisted);
-      } on Object {
-        // An unreadable optional name record must not hide the conversation.
+    if (readPersistedNames) {
+      jsonlNames = manager.knownSessionNames;
+      if (persisted.isNotEmpty) {
+        unawaited(manager.warmSessionNames(persisted));
       }
     }
     final infoNames = {...jsonlNames, ...sessionInfoNames};

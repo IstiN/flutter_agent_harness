@@ -261,7 +261,31 @@ final class FlutterSessionManager extends ChangeNotifier {
   /// the page-local repo sees an empty tree and the sidebar collapsed to
   /// a single row. The relay service's [AgentService.listSessions]
   /// (sessions_query) is the authority there.
-  Future<List<SessionMetadata>> listPersistedSessions() async {
+  ///
+  /// Issue #2053 AC5 — single-flight: concurrent callers (the chat-list
+  /// adapter and the wide-layout shell both load at boot) share ONE
+  /// listing pass; the in-flight future is handed to everyone who asks
+  /// while it runs. Mutations call [invalidateListing], so a post-delete
+  /// load always re-lists.
+  Future<List<SessionMetadata>> listPersistedSessions() {
+    final inFlight = _listingInFlight;
+    if (inFlight != null) return inFlight;
+    final future = _listPersistedUncached();
+    _listingInFlight = future;
+    return future.whenComplete(() {
+      if (identical(_listingInFlight, future)) _listingInFlight = null;
+    });
+  }
+
+  /// Drops the shared in-flight listing (and any result it may have
+  /// seeded) so the next [listPersistedSessions] re-lists from the repo —
+  /// the explicit invalidation point for deletes, closes and refreshes.
+  void invalidateListing() {
+    _listingInFlight = null;
+  }
+
+  /// The one listing pass behind [listPersistedSessions].
+  Future<List<SessionMetadata>> _listPersistedUncached() async {
     final active = this.active?.service;
     if (_isHostedListing(active)) {
       return _listViaHostService(active!);
@@ -274,6 +298,15 @@ final class FlutterSessionManager extends ChangeNotifier {
       // subagent_registry records — bounded + cached, so a listing with
       // nothing to resolve costs nothing.
       final relinked = await _parentResolver.resolve(listed);
+      // Issue #2053 AC4: names the persisted listing index already knows
+      // ride along for free — zero probes (the lazy fill tops up the
+      // rest, see [warmSessionNames]).
+      try {
+        _sessionNameCache.addAll(await _repo.knownSessionNames());
+      } on Object {
+        // Name pre-fill is decorative — a broken index must not fail the
+        // listing (the broken-sessions-dir rule).
+      }
       if (relinked.isEmpty) return listed;
       return relinkSubagentParents(listed, relinked);
     } on Object catch (error) {
@@ -285,6 +318,82 @@ final class FlutterSessionManager extends ChangeNotifier {
       debugPrint('[fah][sessions] list failed: $error');
       return const [];
     }
+  }
+
+  /// The shared in-flight listing (single-flight, AC5).
+  Future<List<SessionMetadata>>? _listingInFlight;
+
+  /// Display names learned WITHOUT boot probes: the persisted listing
+  /// index's names plus everything [warmSessionNames] has probed so far.
+  /// UI surfaces render these synchronously and let the rest fill in.
+  final Map<String, String> _sessionNameCache = {};
+
+  /// Ids probed by [warmSessionNames] that carry NO session_info name —
+  /// the negative half of the cache. Without it every projection would
+  /// re-probe all unnamed tiles (the 883-of-908 majority on the real
+  /// corpus). Per manager instance: the next boot re-probes once, so a
+  /// name learned mid-run appears after restart.
+  final Set<String> _probedWithoutName = {};
+
+  /// Snapshot of the lazily known session names (id → name). Never
+  /// touches the disk — safe to call per tile build.
+  Map<String, String> get knownSessionNames =>
+      Map.unmodifiable(_sessionNameCache);
+
+  /// The known name for one session id, or null (derived title fallback).
+  String? sessionNameFor(String id) => _sessionNameCache[id];
+
+  /// In-flight-name generations: a newer warm request supersedes an older
+  /// one's remaining probes (the tile that asked may be long gone).
+  int _nameWarmGeneration = 0;
+
+  /// Issue #2053 AC4 — the bounded, cancellable lazy name fill. Probes
+  /// ONLY the ids missing from [knownSessionNames], 4 at a time, entirely
+  /// off the boot path; every landed name updates the cache and a single
+  /// [notifyListeners] at completion repaints the tiles (their titles
+  /// re-derive through the same listenable). Superseded by any newer
+  /// call; persists the learned names into the listing index so the NEXT
+  /// boot renders them with zero probes.
+  Future<void> warmSessionNames(List<SessionMetadata> sessions) async {
+    if (_isHostedListing(active?.service)) return;
+    final pending = [
+      for (final session in sessions)
+        if (!_sessionNameCache.containsKey(session.id) &&
+            !_probedWithoutName.contains(session.id))
+          session,
+    ];
+    if (pending.isEmpty) return;
+    final generation = ++_nameWarmGeneration;
+    final learned = <String, String>{};
+    var next = 0;
+    Future<void> worker() async {
+      while (next < pending.length && generation == _nameWarmGeneration) {
+        final metadata = pending[next++];
+        try {
+          final name = await _repo.sessionNameQuick(metadata);
+          if (name != null) {
+            learned[metadata.id] = name;
+            _sessionNameCache[metadata.id] = name;
+          } else {
+            _probedWithoutName.add(metadata.id);
+          }
+        } on Object {
+          // Broken or foreign session file: skip, never break the fill.
+        }
+      }
+    }
+
+    await Future.wait([
+      for (var i = 0; i < 4 && i < pending.length; i++) worker(),
+    ]);
+    if (learned.isNotEmpty) {
+      try {
+        await _repo.rememberSessionNames(learned);
+      } on Object {
+        // Cache-only: the next boot just re-probes those tiles.
+      }
+    }
+    if (generation == _nameWarmGeneration) notifyListeners();
   }
 
   /// Hosted sessions (extension panel / app tab): the session files live
@@ -425,6 +534,10 @@ final class FlutterSessionManager extends ChangeNotifier {
     _sessions[id] = managed;
     _activeId = id;
     _rememberActive(id);
+    // Issue #2053: the session file now exists on disk (the repo already
+    // upserted the listing index) — the next persisted listing must not
+    // be served from a pre-create pass.
+    invalidateListing();
     notifyListeners();
     return managed;
   }
@@ -769,6 +882,10 @@ final class FlutterSessionManager extends ChangeNotifier {
     if (_heldLeasePath != null) _releaseDriveLease();
     managed.service.abort();
     if (deleteFile) {
+      // Issue #2053 AC5: the listing cache is stale the moment the file
+      // goes — the next load() must re-list, not share a pre-delete pass.
+      invalidateListing();
+      _sessionNameCache.remove(sessionId);
       // E2 (issue #863): let the aborted run's final persist settle BEFORE
       // the file disappears, or that persist recreates it as an orphan.
       await managed.service.waitForIdle();
@@ -913,6 +1030,11 @@ final class FlutterSessionManager extends ChangeNotifier {
     // metadata: a stale cached path (#426's relink moves files) would
     // journal `missing` on a dead path while the fresh-listing verify
     // still finds the id at its real one, failing a deletable delete.
+    // Issue #2053 AC5: delete invalidates — both the in-flight listing
+    // and the learned name (a re-list after this must not share a pass
+    // that still contains the victim).
+    invalidateListing();
+    _sessionNameCache.remove(id);
     final localRows = await _listAcrossRoots();
     final SessionMetadata? resolved = localRows
         .where((m) => m.id == id)
@@ -934,6 +1056,7 @@ final class FlutterSessionManager extends ChangeNotifier {
         throw SessionDeleteException(id, reason: failure);
       }
       debugPrint('[fah][sessions] delete: id=$id outcome=ok');
+      invalidateListing();
       notifyListeners();
       return;
     }
