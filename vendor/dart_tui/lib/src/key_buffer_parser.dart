@@ -147,23 +147,26 @@ TeaKey? parseKeyFromBuffer(List<int> buffer) {
   }
 
   // Multi-byte UTF-8 or Printable ASCII
-  // Try to decode as much as possible from the start of the buffer.
-  // Cap the run at the first CONTROL byte: a burst read delivering
-  // "text\r" (or "text\n") in one chunk must not swallow the Enter into
-  // the text run — the control byte belongs to the next key.
-  var maxRun = 0;
-  while (maxRun < buffer.length && maxRun < 4) {
-    final b = buffer[maxRun];
-    if (b < 0x20 || b == 0x7f) break;
-    maxRun++;
-  }
-  for (var len = maxRun; len >= 1; len--) {
+  // Decode exactly ONE sequence per call. A burst read can deliver several
+  // keystrokes in one chunk (ConPTY hosts like Alacritty coalesce input,
+  // and legacy lines deliver whole words); the decoder must then yield one
+  // key per character — a multi-character TeaKey used to be dropped WHOLE
+  // by the FA composer's single-character insert gates, so Russian typed
+  // into Alacritty vanished letter-pair by letter-pair (fa #1982
+  // follow-up). No UTF-8 sequence spans a control byte, so the old
+  // first-control-byte cap is inherent: "text\r" still leaves the CR for
+  // the next pass.
+  final seqLen = _utf8SequenceLength(b0);
+  if (seqLen > 0 && seqLen <= buffer.length) {
     try {
-      final decoded = utf8.decode(buffer.sublist(0, len));
-      buffer.removeRange(0, len);
+      final decoded = utf8.decode(buffer.sublist(0, seqLen));
+      buffer.removeRange(0, seqLen);
       return TeaKey(code: KeyCode.rune, text: decoded);
-    } catch (_) {
-      // Continue trying shorter lengths or wait for more bytes
+    } on FormatException {
+      // The head promised a well-formed sequence of this size but it does
+      // not decode (overlong / surrogate / truncated shape) — fall through
+      // to the recovery below, which consumes one byte so typing never
+      // stalls.
     }
   }
 

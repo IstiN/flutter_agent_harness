@@ -1637,12 +1637,30 @@ final class FaTuiModel extends Model {
         keystroke.startsWith('super+');
   }
 
+  /// Whether [text] is insertable content: non-empty and made only of
+  /// printable characters. Multi-character texts are legitimate — a ConPTY
+  /// host (Alacritty) coalesces keystrokes into one stdin chunk, and IME /
+  /// kitty associatedText events arrive pre-composed — so the insert gates
+  /// accept any printable text. The old `length == 1` gate silently
+  /// swallowed every such key, which is why Russian typed into Alacritty
+  /// never reached the composer (fa #1982 follow-up). Control characters
+  /// never ride printable text (Enter/Tab/Esc decode to their own
+  /// KeyCode entries), so filtering them out keeps any terminal that does
+  /// attach a text payload to a control key from printing it.
+  static bool _isInsertableText(String text) {
+    if (text.isEmpty) return false;
+    for (final rune in text.runes) {
+      if (rune < 0x20 || rune == 0x7f) return false;
+    }
+    return true;
+  }
+
   /// Normal-mode character insert: the editing cluster's catch-all for
-  /// single-character keys.
+  /// printable keys (single runes and pre-composed multi-character texts).
   UiUpdate _handleCharInsertKey(KeyMsg msg) {
     if (_isCommandKeystroke(msg.key)) return (this, null);
     final text = msg.keyEvent.text;
-    if (text.isNotEmpty && text.length == 1) {
+    if (_isInsertableText(text)) {
       return (_updateMenuForInput(copyWith(editor: editor.insert(text))), null);
     }
     return (this, null);
@@ -1714,9 +1732,12 @@ final class FaTuiModel extends Model {
     _ => null,
   };
 
-  /// A printable character keystroke, unless it is a command chord.
+  /// A printable keystroke, unless it is a command chord. Multi-character
+  /// texts are accepted ([_isInsertableText]) — Russian typed into the
+  /// provider-key sheet through a chunk-batching ConPTY terminal used to
+  /// vanish on the same `length == 1` gate that ate composer input.
   PromptKey? _promptChar(KeyMsg msg) =>
-      !_isCommandKeystroke(msg.key) && msg.keyEvent.text.length == 1
+      !_isCommandKeystroke(msg.key) && _isInsertableText(msg.keyEvent.text)
       ? PromptChar(msg.keyEvent.text)
       : null;
 

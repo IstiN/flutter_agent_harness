@@ -31,12 +31,17 @@ void main() {
         if (m is KeyPressMsg) m.keyEvent.text,
     ];
 
-    test('UTF-8 Cyrillic arrives as characters (whole chunk)', () {
+    test('UTF-8 Cyrillic arrives one char per key (whole chunk)', () {
+      // ConPTY (Alacritty & co) coalesces keystrokes into one read chunk:
+      // the whole word can land in a single feed. One KeyPressMsg per
+      // character — a multi-character key used to be dropped whole by the
+      // FA composer's single-character gates (fa #1982 follow-up), so
+      // Russian typed into Alacritty vanished.
       final decoder = TerminalInputDecoder();
 
       final msgs = decoder.feed(utf8.encode('привет'));
 
-      expect(texts(msgs).join(), 'привет');
+      expect(texts(msgs), ['п', 'р', 'и', 'в', 'е', 'т']);
     });
 
     test('UTF-8 Cyrillic survives a chunk split mid-character', () {
@@ -81,14 +86,16 @@ void main() {
     });
 
     test(
-        'multiple letters in one chunk: decoder greedily combines printable ASCII',
+        'multiple letters in one chunk: one KeyPressMsg per character',
         () {
       final d = TerminalInputDecoder();
       final msgs = d.feed(_str('xyz'));
-      // The key buffer parser greedily decodes as many UTF-8 bytes as possible
-      // in one pass, so a single chunk of printable ASCII becomes 1 KeyPressMsg.
-      expect(msgs, hasLength(1));
-      expect((msgs[0] as KeyPressMsg).keyEvent.text, 'xyz');
+      // One UTF-8 sequence (here: one byte) per key, regardless of how
+      // many characters the stdin chunk batched — consumers insert
+      // per key and a multi-character key can be dropped whole.
+      expect(msgs, hasLength(3));
+      final texts = msgs.map((m) => (m as KeyPressMsg).keyEvent.text);
+      expect(texts, ['x', 'y', 'z']);
     });
 
     test('letters fed one at a time each become a separate KeyPressMsg', () {
@@ -107,11 +114,12 @@ void main() {
       expect(k.keyEvent.text, ' ');
     });
 
-    test('digit characters in one chunk are greedy-decoded as one message', () {
+    test('digit characters in one chunk decode one message per digit', () {
       final d = TerminalInputDecoder();
       final msgs = d.feed(_str('123'));
-      expect(msgs, hasLength(1));
-      expect((msgs[0] as KeyPressMsg).keyEvent.text, '123');
+      expect(msgs, hasLength(3));
+      final texts = msgs.map((m) => (m as KeyPressMsg).keyEvent.text);
+      expect(texts, ['1', '2', '3']);
     });
   });
 

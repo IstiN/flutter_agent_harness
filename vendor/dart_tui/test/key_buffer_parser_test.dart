@@ -47,6 +47,62 @@ void main() {
       expect(buffer, isEmpty);
     });
 
+    test('a burst chunk of two Cyrillic chars yields TWO single-char keys', () {
+      // ConPTY (Alacritty & co) coalesces keystrokes into one read chunk:
+      // [п][р] arrives as 4 bytes in one feed. The parser used to emit ONE
+      // TeaKey with text 'пр' — which the single-character composer gates
+      // dropped whole, so fast Russian typing lost pairs of letters. One
+      // UTF-8 sequence per call: 'п' first, 'р' on the next pass.
+      final buffer = <int>[0xD0, 0xBF, 0xD1, 0x80]; // 'пр' as UTF-8
+
+      final first = parseKeyFromBuffer(buffer)!;
+      expect(first.code, KeyCode.rune);
+      expect(first.text, 'п');
+      expect(buffer, <int>[0xD1, 0x80]);
+
+      final second = parseKeyFromBuffer(buffer)!;
+      expect(second.text, 'р');
+      expect(buffer, isEmpty);
+    });
+
+    test('a mixed ASCII+Cyrillic burst chunk stays one char per key', () {
+      final buffer = <int>[0x61, 0xD0, 0xB1]; // 'a' + 'б'
+
+      expect(parseKeyFromBuffer(buffer)!.text, 'a');
+      expect(buffer, <int>[0xD0, 0xB1]);
+      expect(parseKeyFromBuffer(buffer)!.text, 'б');
+      expect(buffer, isEmpty);
+    });
+
+    test('a four-ASCII-byte burst chunk yields four keys', () {
+      final buffer = <int>[0x61, 0x62, 0x63, 0x64];
+      final keys = <String>[];
+      while (buffer.isNotEmpty) {
+        keys.add(parseKeyFromBuffer(buffer)!.text);
+      }
+      expect(keys, ['a', 'b', 'c', 'd']);
+    });
+
+    test('a whole emoji survives as a single one-rune key', () {
+      // 4-byte UTF-8 (U+1F600) in one chunk must still be ONE key with ONE
+      // rune — the invariant is one RUNE per key, never fewer bytes.
+      final buffer = <int>[0xF0, 0x9F, 0x98, 0x80];
+      final key = parseKeyFromBuffer(buffer)!;
+      expect(key.code, KeyCode.rune);
+      expect(key.text, '😀');
+      expect(key.text.runes.length, 1);
+      expect(buffer, isEmpty);
+    });
+
+    test('a Cyrillic burst followed by CR leaves Enter for the next pass', () {
+      final buffer = <int>[0xD0, 0xBF, 0x0D]; // 'п' + CR in one chunk
+
+      expect(parseKeyFromBuffer(buffer)!.text, 'п');
+      expect(buffer, <int>[0x0D]);
+      expect(parseKeyFromBuffer(buffer)!.code, KeyCode.enter);
+      expect(buffer, isEmpty);
+    });
+
     test('a genuinely partial character still waits for the rest', () {
       final buffer = <int>[0xD0]; // first byte of 'п'
 
@@ -179,14 +235,19 @@ void main() {
   });
 
   test(
-      'parseKeyFromBuffer never swallows a trailing control byte into a '
-      'text run (burst input)', () {
-    // A PTY/terminal delivering "ok\r" in ONE chunk: the printable run is
-    // emitted first, the CR stays buffered and parses as Enter next.
+      'parseKeyFromBuffer emits one rune per key from a burst chunk '
+      '("ok\\r")', () {
+    // A PTY/terminal delivering "ok\r" in ONE chunk: one key per call —
+    // 'o', then 'k', the CR stays buffered and parses as Enter last.
+    // Multi-character keys used to be emitted here and were dropped whole
+    // by the single-character composer gates (fa #1982 follow-up).
     final b = <int>[0x6f, 0x6b, 0x0d];
-    final text = parseKeyFromBuffer(b)!;
-    expect(text.code, KeyCode.rune);
-    expect(text.text, 'ok');
+    final first = parseKeyFromBuffer(b)!;
+    expect(first.code, KeyCode.rune);
+    expect(first.text, 'o');
+    expect(b, [0x6b, 0x0d]);
+    final second = parseKeyFromBuffer(b)!;
+    expect(second.text, 'k');
     expect(b, [0x0d]);
     final enter = parseKeyFromBuffer(b)!;
     expect(enter.code, KeyCode.enter);
