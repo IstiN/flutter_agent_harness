@@ -5,7 +5,9 @@ import 'package:fa_ui/fa_ui.dart' as fa_ui;
 import 'package:flutter/material.dart';
 import 'package:fa/apps/js_app_view.dart';
 import 'package:fa/services/agent_service.dart';
+import 'package:fa/ui/apps/files_presentation_panel.dart';
 import 'package:fa/ui/screens/chat_screen.dart';
+import 'package:fa/services/project_mount_flow.dart' show visibleFolderRoot;
 import 'package:fa/ui/widgets/file_browser.dart';
 import 'package:fa/services/flutter_session_manager.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
@@ -100,6 +102,33 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.byType(FileBrowser), findsNothing);
       expect(find.byTooltip('Open files'), findsOneWidget);
+    });
+
+    testWidgets('wide: the Files presentation carries the session folder '
+        '(the access-gate seam)', (tester) async {
+      _useWideSurface(tester);
+      final env = MemoryExecutionEnv();
+      final service = _fakeService(env);
+      await service.initialize();
+      final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
+        ..addSession('fake-session', service);
+      await tester.pumpWidget(MaterialApp(home: ChatScreen(manager: manager)));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip('Open files'));
+      await tester.pumpAndSettle();
+
+      // The browser learns the session's OWN folder alongside the visible
+      // initialPath: a session whose folder differs from the mount shows
+      // the access gate instead of a silently wrong listing.
+      final panel = tester.widget<FilesAppPanel>(
+        find.byType(FilesAppPanel),
+      );
+      expect(panel.presentation.sessionFolder, service.currentSessionCwd);
+      // The initialPath stays the visibility seam's decision.
+      expect(
+        panel.presentation.initialPath,
+        visibleFolderRoot(env, service.currentSessionCwd),
+      );
     });
 
     testWidgets('wide: the Files icon is the RIGHTMOST chat-header action', (
@@ -374,8 +403,16 @@ void main() {
                 matching: find.byType(fa_ui.FaHeaderCircularAction),
               )
               .first;
-          expect(tester.getRect(copySurface).width, 40);
-          expect(tester.getRect(copySurface).height, 40);
+          // The ONE control scale: the chat header circles are the 36pt
+          // FaIconActionButton default (the sidebar toggle's circle).
+          expect(
+            tester.getRect(copySurface).width,
+            fa_ui.FaIconActionButton.defaultDiameter,
+          );
+          expect(
+            tester.getRect(copySurface).height,
+            fa_ui.FaIconActionButton.defaultDiameter,
+          );
           expect(
             tester.getRect(copySurface).left,
             greaterThan(headerRect.center.dx),

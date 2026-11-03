@@ -733,6 +733,18 @@ class AppLocalizationsEn extends AppLocalizations {
   String get filesOpenFolderError => 'Could not open folder';
 
   @override
+  String get filesSessionFolderGateTitle =>
+      'This chat\'s folder is not accessible';
+
+  @override
+  String filesSessionFolderGateBody(Object folder) {
+    return 'Files can only browse folders Fa has access to. This conversation lives in $folder — grant access to browse its files here.';
+  }
+
+  @override
+  String get filesSessionFolderGateAllow => 'Allow access';
+
+  @override
   String get filesOpenProjectFolderTooltip => 'Open project folder…';
 
   @override

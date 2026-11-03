@@ -976,6 +976,10 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
         builder: (_) => FilesAppPage(
           presentation: FilesAppPresentation(
             env: service.env,
+            // The active session's folder rides along: when the env
+            // cannot open it, the browser gates the listing (allow-access
+            // flow) instead of silently listing the active mount.
+            sessionFolder: service.currentSessionCwd,
             fsRevision: service.fsRevision,
             onProjectMountChanged: service.refreshProjectMountPrompt,
           ),

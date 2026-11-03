@@ -1166,7 +1166,15 @@ class _WideLayoutShellState extends State<WideLayoutShell>
                       child: MessengerSidebarToggle(
                         key: const ValueKey('wideShellSidebarToggle'),
                         expanded: !_sidebarCollapsed,
-                        floating: progress > 0,
+                        // The glass flag tracks the ICON in the circle, not
+                        // the animation phase: the docked collapse icon (the
+                        // toggle sits ON the panel) is the flat token state;
+                        // the floating expand icon (the panel is gone under
+                        // it) carries the glass underlay. The old
+                        // `progress > 0` kept glass on the expand icon
+                        // through the whole re-opening animation — an
+                        // on-surface circle wearing a floating state.
+                        floating: _sidebarCollapsed,
                         tooltip: _sidebarCollapsed
                             ? context.l10n.chatExpand
                             : context.l10n.chatCollapse,
@@ -2340,6 +2348,10 @@ class _WideLayoutShellState extends State<WideLayoutShell>
           builder: (_) => FilesAppPage(
             presentation: FilesAppPresentation(
               env: env,
+              // The active session's folder rides along: the browser
+              // gates on it (allow-access flow) instead of silently
+              // listing the active mount when the env cannot open it.
+              sessionFolder: service?.currentSessionCwd,
               fsRevision: fsRevision,
               onProjectMountChanged: service?.refreshProjectMountPrompt,
             ),
@@ -2354,6 +2366,9 @@ class _WideLayoutShellState extends State<WideLayoutShell>
       _appPresentation = null;
       _filesPresentation = FilesAppPresentation(
         env: env,
+        // The active session's folder rides along (the gate seam — see
+        // the narrow branch above).
+        sessionFolder: service?.currentSessionCwd,
         fsRevision: service?.fsRevision,
         onProjectMountChanged: service?.refreshProjectMountPrompt,
       );

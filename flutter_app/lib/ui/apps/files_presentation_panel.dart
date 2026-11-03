@@ -16,6 +16,7 @@ final class FilesAppPresentation {
   FilesAppPresentation({
     required this.env,
     this.initialPath,
+    this.sessionFolder,
     this.fsRevision,
     this.onProjectMountChanged,
   });
@@ -27,6 +28,13 @@ final class FilesAppPresentation {
   /// paths against the env cwd, absolute ones as-is. Null keeps the
   /// listing at the env cwd.
   final String? initialPath;
+
+  /// The session's own folder, kept alongside [initialPath]: when the
+  /// env cannot open it (a host path outside the visible roots) the
+  /// browser shows the session-folder access gate — the allow-access
+  /// flow that switches the mount — instead of silently listing the
+  /// active mount.
+  final String? sessionFolder;
 
   final ValueNotifier<int>? fsRevision;
   final void Function()? onProjectMountChanged;
@@ -84,6 +92,7 @@ final class FilesAppPanel extends StatelessWidget {
           child: FileBrowser(
             env: presentation.env,
             initialPath: presentation.initialPath,
+            sessionFolder: presentation.sessionFolder,
             inlinePreview: inlinePreview,
             fsRevision: presentation.fsRevision,
             onProjectMountChanged: presentation.onProjectMountChanged,

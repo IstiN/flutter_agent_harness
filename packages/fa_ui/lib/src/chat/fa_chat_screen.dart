@@ -34,6 +34,7 @@ import '../trajectory/trajectory_panel.dart';
 import '../trajectory/trajectory_view.dart';
 import '../trajectory/trajectory_strings.dart';
 import '../widgets/fa2_controls.dart';
+import '../widgets/fa_icon_action_button.dart' show FaIconActionButton;
 import '../widgets/snackbars.dart';
 import 'approval_ui.dart';
 import 'ask_ui.dart';
@@ -430,6 +431,38 @@ class _FaChatScreenState extends State<FaChatScreen>
   /// Whether the file browser side panel is expanded (wide layouts only).
   bool _filesPanelOpen = false;
 
+  /// Drives the docked panel's entrance/exit — the SAME 200ms
+  /// easeInOutCubic slide+fade the shell's sidebar collapse uses (user
+  /// call: the Files view must not pop in and vanish on close while the
+  /// sidebar glides). Content fields swap instantly; this controller
+  /// animates the pane's geometry in BOTH directions. Width drags are
+  /// NOT animated: [AnimationController.value] only drives the
+  /// open/close reveal, never the panel width.
+  late final AnimationController _filesPanelReveal = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 200),
+    value: 0,
+  )..addStatusListener(_onFilesPanelRevealStatus);
+
+  /// One rebuild at the exit's end: the last mounted frame leaves the
+  /// screen (and the header's Files entry returns).
+  void _onFilesPanelRevealStatus(AnimationStatus status) {
+    if (status == AnimationStatus.dismissed && mounted) setState(() {});
+  }
+
+  /// Whether the docked panel's content is on screen at all — opening,
+  /// settled open, or mid-exit. Presence (not the target flag) mounts
+  /// the slot so the exit animates out instead of vanishing.
+  bool get _filesPanelMounted =>
+      _filesPanelOpen ||
+      _filesPanelReveal.status == AnimationStatus.forward ||
+      (_filesPanelReveal.status == AnimationStatus.reverse &&
+          _filesPanelReveal.value > 0);
+
+  /// The curved reveal for the current tick (the sidebar's curve).
+  double get _filesPanelRevealValue =>
+      Curves.easeInOutCubic.transform(_filesPanelReveal.value);
+
   /// Screen-local desired inspector width. The live width is clamped to the
   /// viewport during layout; closing the panel never discards this value.
   double _filesPanelWidth = kFaChatFilesPanelWidth;
@@ -543,10 +576,14 @@ class _FaChatScreenState extends State<FaChatScreen>
       widget.fileBrowserBuilder ?? FaChatHost.fileBrowserBuilder;
 
   /// Opens the file browser: toggles the right side panel on wide layouts,
-  /// opens the end drawer on narrow ones.
+  /// opens the end drawer on narrow ones. The docked panel reveals through
+  /// the sidebar's slide (never an instant pop).
   void _openFiles() {
     if (MediaQuery.sizeOf(context).width >= kWideLayoutBreakpoint) {
       setState(() => _filesPanelOpen = !_filesPanelOpen);
+      _filesPanelOpen
+          ? _filesPanelReveal.forward()
+          : _filesPanelReveal.reverse();
       if (_filesPanelOpen) {
         FaChatHost.track('files_opened', {'source': 'chat'});
       }
@@ -557,9 +594,13 @@ class _FaChatScreenState extends State<FaChatScreen>
   }
 
   /// The docked panel band's own X (the visible close affordance —
-  /// [FaFilesPanelScope]); the header folder icon only toggles.
+  /// [FaFilesPanelScope]); the header folder icon only toggles. The
+  /// panel slides OUT through the same reveal — no instant vanish.
   void _closeFilesPanel() {
-    if (_filesPanelOpen) setState(() => _filesPanelOpen = false);
+    if (_filesPanelOpen) {
+      setState(() => _filesPanelOpen = false);
+      _filesPanelReveal.reverse();
+    }
   }
 
   @override
@@ -1044,6 +1085,7 @@ class _FaChatScreenState extends State<FaChatScreen>
     _unbindTrajectory();
     _unsubscribeFromService(widget.service);
     _chatController.dispose();
+    _filesPanelReveal.dispose();
     super.dispose();
   }
 
@@ -2091,25 +2133,33 @@ class _FaChatScreenState extends State<FaChatScreen>
       body: LayoutBuilder(
         builder: (context, constraints) {
           final filesPanelWidth = _liveFilesPanelWidth(constraints.maxWidth);
-          final showFilesPanel =
-              isWide &&
-              _filesPanelOpen &&
-              fileBrowserBuilder != null &&
-              filesPanelWidth > 0;
-          return Stack(
-            fit: StackFit.expand,
-            children: [
-              Positioned.fill(child: body),
-              if (widget.showAppBar)
-                Positioned(
-                  top: 0,
-                  left: 0,
-                  // Use THIS center Stack's width, never the full window:
-                  // the app sidebar can make those constraints very different.
-                  right: showFilesPanel ? filesPanelWidth : 0,
-                  child: _buildFloatingGlassHeader(isWide, headerActions),
-                ),
-            ],
+          // The header's right inset follows the SAME reveal as the
+          // docked slot: the floating header glides with the panel's
+          // boundary (the sidebar's smooth-boundary behavior) instead of
+          // snapping when the panel's target flag flips.
+          return AnimatedBuilder(
+            animation: _filesPanelReveal,
+            builder: (context, _) {
+              final reveal = _filesPanelRevealValue;
+              final panelCapable =
+                  isWide && fileBrowserBuilder != null && filesPanelWidth > 0;
+              final slotMounted = panelCapable && _filesPanelMounted;
+              return Stack(
+                fit: StackFit.expand,
+                children: [
+                  Positioned.fill(child: body),
+                  if (widget.showAppBar)
+                    Positioned(
+                      top: 0,
+                      left: 0,
+                      // Use THIS center Stack's width, never the full window:
+                      // the app sidebar can make those constraints very different.
+                      right: slotMounted ? filesPanelWidth * reveal : 0,
+                      child: _buildFloatingGlassHeader(isWide, headerActions),
+                    ),
+                ],
+              );
+            },
           );
         },
       ),
@@ -2251,14 +2301,23 @@ class _FaChatScreenState extends State<FaChatScreen>
                               actionGap: 8,
                               // Floating on the header backdrop with no
                               // surface of its own: the glass underlay
-                              // state (owner rule).
+                              // state (owner rule). The chat bar's circles
+                              // sit at the ONE control scale — the 36pt
+                              // FaIconActionButton default, the same circle
+                              // edge as the sidebar toggle and the Files
+                              // band (user direction: trajectory/copy/files
+                              // must not outsize the expand toggle).
                               actionBuilder: (context, action, button) =>
                                   FaHeaderCircularAction(
+                                    dimension:
+                                        FaIconActionButton.defaultDiameter,
                                     glass: true,
                                     child: button,
                                   ),
                               overflowBuilder: (context, button) =>
                                   FaHeaderCircularAction(
+                                    dimension:
+                                        FaIconActionButton.defaultDiameter,
                                     glass: true,
                                     child: button,
                                   ),
@@ -2436,8 +2495,15 @@ class _FaChatScreenState extends State<FaChatScreen>
     );
   }
 
-  Widget _glassHeaderAction(Widget button) =>
-      FaHeaderCircularAction(glass: true, child: button);
+  /// The chat bar's circular action chrome: the ONE control scale (the
+  /// 36pt [FaIconActionButton.defaultDiameter] — the sidebar toggle's and
+  /// the Files band's circle) floating on the header backdrop with no
+  /// surface of its own: the glass underlay state (owner rule).
+  Widget _glassHeaderAction(Widget button) => FaHeaderCircularAction(
+    dimension: FaIconActionButton.defaultDiameter,
+    glass: true,
+    child: button,
+  );
 
   /// The files end drawer (narrow layouts only — wide uses the side
   /// panel in the body row); null hides it.
@@ -2491,72 +2557,110 @@ class _FaChatScreenState extends State<FaChatScreen>
 
   Widget _buildBodyRow(bool isWide, WidgetBuilder? fileBrowserBuilder) {
     return LayoutBuilder(
-      builder: (context, constraints) {
-        final filesPanelWidth = _liveFilesPanelWidth(constraints.maxWidth);
-        return Row(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Expanded(child: _buildChatBody(context)),
-            if (isWide &&
-                _filesPanelOpen &&
-                fileBrowserBuilder != null &&
-                filesPanelWidth > 0)
-              SizedBox(
-                key: const ValueKey('faChatFilesPanel'),
-                width: filesPanelWidth,
-                child: Stack(
-                  children: [
-                    // The panel sits FLUSH against the transcript (no
-                    // divider): the band's glass edge and the resize
-                    // handle carry the seam. The scope carries the docked
-                    // panel's close intent — the band's own X (left of the
-                    // search capsule) closes the panel; the header hides
-                    // its Files entry while the panel is open.
-                    Positioned.fill(
-                      child: FaFilesPanelScope(
-                        closePanel: _closeFilesPanel,
-                        child: fileBrowserBuilder(context),
-                      ),
-                    ),
-                    Positioned(
-                      left: 0,
-                      top: 0,
-                      bottom: 0,
-                      width: 16,
-                      child: MouseRegion(
-                        cursor: SystemMouseCursors.resizeColumn,
-                        child: GestureDetector(
-                          key: const ValueKey('faChatFilesPanelResizeHandle'),
-                          behavior: HitTestBehavior.opaque,
-                          onHorizontalDragUpdate: (details) {
-                            final desired = _clampFilesPanelWidth(
-                              _filesPanelWidth - details.delta.dx,
-                              constraints.maxWidth,
-                            );
-                            if (desired == _filesPanelWidth) return;
-                            setState(() => _filesPanelWidth = desired);
-                          },
-                          child: Center(
-                            child: Container(
-                              width: 3,
-                              height: 32,
-                              decoration: BoxDecoration(
-                                color: FahColors.of(
-                                  context,
-                                ).border.withValues(alpha: .9),
-                                borderRadius: BorderRadius.circular(2),
+      builder: (context, constraints) => AnimatedBuilder(
+        animation: _filesPanelReveal,
+        builder: (context, _) {
+          final filesPanelWidth = _liveFilesPanelWidth(constraints.maxWidth);
+          // The reveal only plays on open/close; width drags land at 1.0.
+          final reveal = _filesPanelRevealValue;
+          final panelMounted =
+              _filesPanelMounted &&
+              isWide &&
+              fileBrowserBuilder != null &&
+              filesPanelWidth > 0;
+          return Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Expanded(child: _buildChatBody(context)),
+              if (panelMounted)
+                // The docked slot mirrors the shell's presented-surface
+                // reveal: the slot's WIDTH animates (0 → full) while the
+                // card inside keeps its final size — the browser must not
+                // reflow mid-flight — and the pane slides in from the
+                // window's right edge with the sidebar's duration+curve.
+                SizedBox(
+                  key: const ValueKey('faChatFilesPanel'),
+                  width: filesPanelWidth * reveal,
+                  child: ClipRect(
+                    child: OverflowBox(
+                      alignment: Alignment.centerRight,
+                      minWidth: filesPanelWidth,
+                      maxWidth: filesPanelWidth,
+                      child: SizedBox(
+                        width: filesPanelWidth,
+                        child: IgnorePointer(
+                          ignoring: reveal < .02,
+                          child: Opacity(
+                            opacity: reveal,
+                            child: Transform.translate(
+                              offset: Offset(filesPanelWidth * (1 - reveal), 0),
+                              child: Stack(
+                                children: [
+                                  // The panel sits FLUSH against the transcript (no
+                                  // divider): the band's glass edge and the resize
+                                  // handle carry the seam. The scope carries the docked
+                                  // panel's close intent — the band's own X (left of the
+                                  // search capsule) closes the panel; the header hides
+                                  // its Files entry while the panel is open.
+                                  Positioned.fill(
+                                    child: FaFilesPanelScope(
+                                      closePanel: _closeFilesPanel,
+                                      child: fileBrowserBuilder(context),
+                                    ),
+                                  ),
+                                  Positioned(
+                                    left: 0,
+                                    top: 0,
+                                    bottom: 0,
+                                    width: 16,
+                                    child: MouseRegion(
+                                      cursor: SystemMouseCursors.resizeColumn,
+                                      child: GestureDetector(
+                                        key: const ValueKey(
+                                          'faChatFilesPanelResizeHandle',
+                                        ),
+                                        behavior: HitTestBehavior.opaque,
+                                        onHorizontalDragUpdate: (details) {
+                                          final desired = _clampFilesPanelWidth(
+                                            _filesPanelWidth - details.delta.dx,
+                                            constraints.maxWidth,
+                                          );
+                                          if (desired == _filesPanelWidth) {
+                                            return;
+                                          }
+                                          setState(
+                                            () => _filesPanelWidth = desired,
+                                          );
+                                        },
+                                        child: Center(
+                                          child: Container(
+                                            width: 3,
+                                            height: 32,
+                                            decoration: BoxDecoration(
+                                              color: FahColors.of(
+                                                context,
+                                              ).border.withValues(alpha: .9),
+                                              borderRadius:
+                                                  BorderRadius.circular(2),
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ],
                               ),
                             ),
                           ),
                         ),
                       ),
                     ),
-                  ],
+                  ),
                 ),
-              ),
-          ],
-        );
-      },
+            ],
+          );
+        },
+      ),
     );
   }
 

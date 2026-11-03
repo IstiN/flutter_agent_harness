@@ -12,9 +12,12 @@ import 'package:flutter/services.dart';
 const _searchDebounce = Duration(milliseconds: 150);
 
 /// The ONE search field height everywhere — chats sidebar, activity,
-/// apps header and the Files band capsule (the composer's 40px field
-/// row). The composer's send/mic circles ride the same scale.
-const double kSearchFieldHeight = 40.0;
+/// apps header and the Files band capsule: the composer-adjacent 32px
+/// control row of the original sidebar search (FaTextField's dense
+/// inset), restored as THE shared look after the 40pt Files capsule
+/// briefly flattened every header (user call: search files was to become
+/// search chats, not the other way around).
+const double kSearchFieldHeight = 32.0;
 
 /// Sane cap for a pasted query (E3): long pastes stop at 100 chars.
 const _queryMaxLength = 100;
@@ -134,10 +137,11 @@ Widget sessionSearchEmptyState(
   );
 }
 
-/// The ONE search field (FaTextField capsule at [kSearchFieldHeight]):
+/// The ONE search field (FaTextField's dense inset at [kSearchFieldHeight]):
 /// magnifier icon, hint, clear (✕) once non-empty. The chats sidebar,
 /// activity and apps headers and the Files band all render THIS widget,
-/// so every search reads identically. Typing filters live after a short
+/// so every search reads identically — the original sidebar-search look,
+/// not the Files band's tall capsule. Typing filters live after a short
 /// debounce ([onQueryChanged]); Esc clears and unfocuses. The host owns
 /// [focusNode] when it needs to focus the field itself (the sidebar's
 /// Cmd/Ctrl+F).
@@ -243,22 +247,29 @@ class _SessionSearchFieldState extends State<SessionSearchField> {
           key: const ValueKey('sessionSearchFieldInput'),
           controller: _controller,
           focusNode: _focus,
+          // The original sidebar-search look (the 1bd25df10d visual
+          // contract): FaTextField's dense 32px inset — surface2 fill,
+          // radiusMd hairline, ink3 hint — NOT the Files band's tall
+          // 40pt capsule. One shared style, the old sidebar one.
           dense: true,
-          boxHeight: kSearchFieldHeight,
           maxLength: _queryMaxLength,
           autocorrect: false,
           enableSuggestions: false,
           textInputAction: TextInputAction.done,
           hintText: widget.hintText ?? context.l10n.sidebarSearchHint,
-          prefixIcon: Icon(Icons.search, size: 18, color: colors.dim),
+          prefixIcon: Icon(Icons.search, size: 17, color: colors.dim),
           suffixIcon: _controller.text.isEmpty
               ? null
-              : IconButton(
-                  tooltip: context.l10n.sidebarSearchClearTooltip,
-                  icon: const Icon(Icons.cancel, size: 16),
-                  color: colors.dim,
-                  onPressed: _clear,
-                  visualDensity: VisualDensity.compact,
+              : SizedBox.square(
+                  dimension: kSearchFieldHeight,
+                  child: IconButton(
+                    tooltip: context.l10n.sidebarSearchClearTooltip,
+                    icon: const Icon(Icons.cancel, size: 16),
+                    color: colors.dim,
+                    onPressed: _clear,
+                    padding: EdgeInsets.zero,
+                    visualDensity: VisualDensity.compact,
+                  ),
                 ),
           onSubmitted: (_) {
             _debounce?.cancel();

@@ -137,7 +137,10 @@ void main() {
               reason: reason,
             );
             final copyRect = current['copyAction']!;
-            expect(copyRect.width, 40, reason: reason);
+            // The ONE control scale: the chat header circles are the 36pt
+            // FaIconActionButton default — the sidebar toggle's circle.
+            expect(copyRect.width, fa_ui.FaIconActionButton.defaultDiameter,
+                reason: reason);
             expect(copyRect.height, copyRect.width, reason: reason);
             expect(tester.widget<Icon>(copy).size, 18, reason: reason);
             final timeline = find.byIcon(Icons.timeline);
@@ -199,7 +202,7 @@ void main() {
                   .first;
               expect(
                 tester.getSize(copyAction),
-                const Size.square(40),
+                Size.square(fa_ui.FaIconActionButton.defaultDiameter),
                 reason: reason,
               );
               expect(tester.widget<Icon>(copy).size, 18, reason: reason);

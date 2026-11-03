@@ -24,6 +24,11 @@ import 'package:fa/services/upload_picker_stub.dart'
     if (dart.library.io) 'package:fa/services/upload_picker_io.dart'
     if (dart.library.html) 'package:fa/services/upload_picker_web.dart';
 import 'package:fa/services/icloud_sync_service.dart';
+import 'package:fa/services/project_folder_channel.dart';
+import 'package:fa/ui/widgets/session_search_field.dart' show kSearchFieldHeight;
+import 'package:fa/services/project_mount_env.dart';
+import 'package:fa/services/project_mount_flow.dart' show visibleFolderRoot;
+import 'package:fa/services/project_mount_store.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -304,7 +309,188 @@ final class _FakeICloudSync implements ICloudSyncService {
   }
 }
 
+/// A fake [ProjectFolderOps] whose pick result the test scripts; records
+/// the started/stopped bookmarks like the channel ops would.
+final class _ScriptedFolderOps implements ProjectFolderOps {
+  _ScriptedFolderOps({this.pickResult, this.startAccessOk = true});
+
+  ({String path, String bookmark})? pickResult;
+  bool startAccessOk;
+  final started = <String>[];
+  final stopped = <String>[];
+
+  @override
+  Future<({String path, String bookmark})?> pickDirectory() async => pickResult;
+
+  @override
+  Future<bool> startAccessing(String bookmark) async {
+    if (!startAccessOk) return false;
+    started.add(bookmark);
+    return true;
+  }
+
+  @override
+  Future<void> stopAccessing(String bookmark) async => stopped.add(bookmark);
+}
+
 void main() {
+  group('FileBrowser session folder gate', () {
+    // The reported defect: a chat session in folder X with the app mount
+    // at folder Y showed Y's listing under the Files title. A foreign
+    // session folder must gate the listing instead.
+    testWidgets('a foreign session folder shows the access gate, not a '
+        'wrong listing', (tester) async {
+      final base = MemoryExecutionEnv();
+      await base.writeFile('mount_file.txt', 'the active mount content');
+      final env = ProjectMountEnv(base)..mountedRoot = '/Users/x/mount';
+      await tester.pumpWidget(
+        _wrap(
+          FileBrowser(
+            env: env,
+            sessionFolder: '/Users/x/support',
+            projectFolderOps: _ScriptedFolderOps(),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // The gate names the session's folder and offers the grant.
+      expect(
+        find.byKey(const ValueKey('filesSessionFolderGate')),
+        findsOneWidget,
+      );
+      // The gate names the session folder in its body copy.
+      expect(find.textContaining('support'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('filesSessionFolderGateAllow')),
+        findsOneWidget,
+      );
+      // NO silent wrong listing: the active mount's content is not shown.
+      expect(find.text('mount_file.txt'), findsNothing);
+    });
+
+    testWidgets('a session folder the env can open lists directly (no gate)',
+        (tester) async {
+      final base = MemoryExecutionEnv();
+      await base.writeFile(
+        '/Users/x/support/session_file.txt',
+        'in the session folder',
+      );
+      final env = ProjectMountEnv(base)..mountedRoot = '/Users/x/support';
+      await tester.pumpWidget(
+        _wrap(
+          FileBrowser(
+            env: env,
+            initialPath: visibleFolderRoot(env, '/Users/x/support'),
+            sessionFolder: '/Users/x/support',
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey('filesSessionFolderGate')),
+          findsNothing);
+      expect(find.text('session_file.txt'), findsOneWidget);
+    });
+
+    testWidgets('a personal session (no folder) keeps the env-root listing',
+        (tester) async {
+      final env = await _seededEnv();
+      await tester.pumpWidget(
+        _wrap(FileBrowser(env: env, sessionFolder: null)),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('filesSessionFolderGate')),
+          findsNothing);
+      expect(find.text('aaa.txt'), findsOneWidget);
+    });
+
+    testWidgets('granting access switches the mount and lists the session '
+        'folder', (tester) async {
+      final base = MemoryExecutionEnv();
+      await base.writeFile('mount_file.txt', 'the active mount content');
+      final env = ProjectMountEnv(base);
+      // The session folder's content, as the (in-memory) host FS holds it.
+      await base.writeFile('/Users/x/support/granted.txt', 'granted content');
+      final ops = _ScriptedFolderOps(
+        pickResult: (path: '/Users/x/support', bookmark: 'Ym9va21hcms='),
+      );
+      await tester.pumpWidget(
+        _wrap(
+          FileBrowser(
+            env: env,
+            sessionFolder: '/Users/x/support',
+            projectFolderOps: ops,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('filesSessionFolderGate')),
+          findsOneWidget);
+
+      await tester.tap(find.byKey(const ValueKey('filesSessionFolderGateAllow')));
+      await tester.pumpAndSettle();
+
+      // The existing security-scoped flow ran: bookmark resolved, mount
+      // switched (persisted), gate gone, listing = the granted folder.
+      expect(ops.started, ['Ym9va21hcms=']);
+      expect(env.mountedRoot, '/Users/x/support');
+      final stored = await ProjectMountStore.load(env);
+      expect(stored?.path, '/Users/x/support');
+      expect(find.byKey(const ValueKey('filesSessionFolderGate')),
+          findsNothing);
+      expect(find.text('granted.txt'), findsOneWidget);
+      expect(find.text('mount_file.txt'), findsNothing);
+    });
+
+    testWidgets('a failed grant keeps the gate (no silent wrong listing)',
+        (tester) async {
+      final base = MemoryExecutionEnv();
+      await base.writeFile('mount_file.txt', 'the active mount content');
+      final env = ProjectMountEnv(base);
+      final ops = _ScriptedFolderOps(startAccessOk: false);
+      await tester.pumpWidget(
+        _wrap(
+          FileBrowser(
+            env: env,
+            sessionFolder: '/Users/x/support',
+            projectFolderOps: ops,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const ValueKey('filesSessionFolderGateAllow')));
+      await tester.pumpAndSettle();
+
+      expect(env.mountedRoot, isNull, reason: 'the mount never switched');
+      expect(find.byKey(const ValueKey('filesSessionFolderGate')),
+          findsOneWidget, reason: 'the affordance stays');
+      expect(find.text('mount_file.txt'), findsNothing);
+    });
+
+    testWidgets('declining the picker keeps the gate', (tester) async {
+      final base = MemoryExecutionEnv();
+      final env = ProjectMountEnv(base);
+      final ops = _ScriptedFolderOps(); // pickDirectory → null (cancel)
+      await tester.pumpWidget(
+        _wrap(
+          FileBrowser(
+            env: env,
+            sessionFolder: '/Users/x/support',
+            projectFolderOps: ops,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('filesSessionFolderGateAllow')));
+      await tester.pumpAndSettle();
+      expect(env.mountedRoot, isNull);
+      expect(find.byKey(const ValueKey('filesSessionFolderGate')),
+          findsOneWidget);
+    });
+  });
+
   group('FileBrowser', () {
     testWidgets('lists directories first, then files, both sorted', (
       tester,
@@ -606,9 +792,11 @@ void main() {
       );
       expect(close.right, lessThan(capsule.left));
       expect(capsule.left - close.right, 8);
-      // The capsule mirrors the chat composer's single-line field height
-      // (its 36px control + 2+2px row padding = 40).
-      expect(capsule.height, 40);
+      // The band renders the ONE SessionSearchField at the restored
+      // sidebar-search height — the dense 32px inset, the same field the
+      // chats/activity/apps headers render (user call: search files was
+      // to become search chats, not the other way around).
+      expect(capsule.height, kSearchFieldHeight);
       // Every band circle shares that composer scale (shrunken from the
       // chat header's 40pt chrome) with the 18px glyph.
       Finder circleOf(Key key) => find
@@ -649,7 +837,11 @@ void main() {
           matching: find.byType(InputDecorator),
         ).first,
       );
-      expect(decoratorRect.height, 40, reason: 'InputDecorator fill height');
+      expect(
+        decoratorRect.height,
+        kSearchFieldHeight,
+        reason: 'InputDecorator fill height',
+      );
       expect(
         decoratorRect.center.dy,
         moreOrLessEquals(close.center.dy, epsilon: 0.5),
@@ -1250,8 +1442,11 @@ void main() {
       final capsule = tester.getSize(
         find.byKey(const ValueKey('fileBrowserSearch')),
       );
-      expect(capsule.height, composerRow.height);
-      expect(capsule.height, 40);
+      // The band field is the ONE shared SessionSearchField — the old
+      // sidebar-search 32px inset (the composer's 40px row is its own
+      // thing; the retired Files capsule no longer mirrors it).
+      expect(capsule.height, kSearchFieldHeight);
+      expect(capsule.height, isNot(composerRow.height));
     });
   });
 

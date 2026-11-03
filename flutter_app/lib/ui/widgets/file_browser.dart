@@ -54,6 +54,7 @@ class FileBrowser extends StatefulWidget {
     super.key,
     required this.env,
     this.initialPath,
+    this.sessionFolder,
     this.inlinePreview = true,
     this.uploadPicker,
     this.iCloudSyncService,
@@ -81,6 +82,14 @@ class FileBrowser extends StatefulWidget {
   /// paths resolve against the env cwd (`FileSystem.cwd`). Null (or
   /// empty) keeps today's behavior — the listing starts at the env cwd.
   final String? initialPath;
+
+  /// The active session's own folder (`service.currentSessionCwd`),
+  /// kept separately from [initialPath]: when this folder is NOT one of
+  /// the env's visible roots ([visibleFolderRoot] null — a host path the
+  /// sandbox/mount cannot open), the browser shows the session-folder
+  /// access gate instead of silently listing the mount root. Null (a
+  /// personal session) never gates.
+  final String? sessionFolder;
 
   /// Whether file previews render inside the panel (true) or push a
   /// full-screen route (false).
@@ -170,6 +179,44 @@ class _FileBrowserState extends State<FileBrowser> {
     var env = widget.env;
     if (env is SecretsExecutionEnv) env = env.delegate;
     return env is ProjectMountEnv ? env : null;
+  }
+
+  /// The active session's folder when Files CANNOT list it through the
+  /// env's visible roots ([visibleFolderRoot] null): a host path outside
+  /// the sandbox/mount roots. Files must not silently list a different
+  /// folder (the active mount) in its place — it shows the access
+  /// affordance instead ([_buildSessionFolderGate]). Null (no session
+  /// folder, or one the env can already open) keeps today's listing.
+  String? get _gatedSessionFolder {
+    final folder = widget.sessionFolder?.trim();
+    if (folder == null || folder.isEmpty) return null;
+    final name = folder.split('/').where((s) => s.isNotEmpty).lastOrNull;
+    if (name == null || name == '.' || name == '..') return null;
+    return visibleFolderRoot(widget.env, folder) == null ? folder : null;
+  }
+
+  /// The gate's affordance action: the EXISTING security-scoped flow
+  /// ([pickAndApplyProjectMount] — native picker → bookmark resolve →
+  /// [ProjectMountStore] persist → mount switch → host notify). A grant
+  /// of the session's folder switches the listing to it; a decline or
+  /// failure keeps the affordance (no silent wrong listing).
+  Future<void> _grantSessionFolder() async {
+    final folder = widget.sessionFolder?.trim();
+    await _pickProjectFolder();
+    if (!mounted) return;
+    if (_gatedSessionFolder != null) return; // decline / other folder picked
+    // Granted: the mount IS the session's folder now — jump the listing
+    // to the visible root the env can actually open (the resolved mount
+    // path; a session folder must never fall back to the old segments).
+    final visible = visibleFolderRoot(widget.env, folder);
+    if (visible == null) return;
+    setState(() {
+      _segments
+        ..clear()
+        ..addAll(_initialSegments(visible));
+      _preview = null;
+    });
+    await _load();
   }
 
   Future<void> _pickProjectFolder() async {
@@ -847,6 +894,16 @@ class _FileBrowserState extends State<FileBrowser> {
   /// rows dissolve behind the band exactly like the chat list.
   Widget _buildBody(BuildContext context, double topInset) {
     final colors = FahColors.of(context);
+    // A session folder the env cannot open (not the mount, not the
+    // container root): the gate REPLACES the listing — never a silent
+    // wrong folder under the Files title.
+    final gated = _gatedSessionFolder;
+    if (gated != null) {
+      return Padding(
+        padding: EdgeInsets.only(top: topInset),
+        child: _buildSessionFolderGate(context, gated),
+      );
+    }
     final preview = _preview;
     if (preview != null) {
       return Padding(
@@ -977,6 +1034,51 @@ class _FileBrowserState extends State<FileBrowser> {
     padding: EdgeInsets.only(top: topInset),
     child: Center(child: child),
   );
+
+  /// The session-folder access gate (issue: Files showed the active
+  /// mount for a session whose folder differs — a silent wrong listing).
+  /// Names the session's folder and offers the existing security-scoped
+  /// grant flow ([_grantSessionFolder]); declining keeps the gate.
+  Widget _buildSessionFolderGate(BuildContext context, String folder) {
+    final colors = FahColors.of(context);
+    final name = folder.split('/').where((s) => s.isNotEmpty).lastOrNull;
+    return Center(
+      child: Padding(
+        key: const ValueKey('filesSessionFolderGate'),
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.folder_off_outlined, size: 40, color: colors.dim),
+            const SizedBox(height: 12),
+            Text(
+              context.l10n.filesSessionFolderGateTitle,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: colors.text,
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              context.l10n.filesSessionFolderGateBody(name ?? folder),
+              textAlign: TextAlign.center,
+              style: TextStyle(color: colors.dim, fontSize: 12),
+            ),
+            const SizedBox(height: 16),
+            FaButton(
+              key: const ValueKey('filesSessionFolderGateAllow'),
+              variant: FaButtonVariant.secondary,
+              icon: Icons.folder_open_outlined,
+              label: context.l10n.filesSessionFolderGateAllow,
+              onPressed: _grantSessionFolder,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 
   /// The inline preview's back bar, swapped into the chrome band in place
   /// of the path bar while a preview is open (one row of chrome, not two).
@@ -1305,8 +1407,10 @@ final class FilesChrome extends StatelessWidget {
                   const SizedBox(width: _actionGap),
                 ],
                 // THE one search field (SessionSearchField): the same
-                // 40pt capsule the chats/activity/apps headers render —
-                // the browser filters from its own controller listener.
+                // dense sidebar-search inset the chats/activity/apps
+                // headers render — the old sidebar look, NOT a taller
+                // Files-specific capsule. The browser filters from its
+                // own controller listener.
                 Expanded(
                   child: SessionSearchField(
                     key: searchKey ?? const ValueKey('fileBrowserSearch'),

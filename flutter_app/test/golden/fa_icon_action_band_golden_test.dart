@@ -12,6 +12,8 @@ library;
 import 'package:fa/ui/widgets/file_browser.dart' show FilesChrome;
 import 'package:fa/ui/widgets/messenger_navigation_controls.dart'
     show MessengerSidebarToggle;
+import 'package:fa/ui/widgets/session_search_field.dart'
+    show kSearchFieldHeight;
 import 'package:fa_ui/fa_ui.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -39,20 +41,33 @@ class _Band extends StatelessWidget {
               onPressed: () {},
             ),
             // Chat header circles (trajectory + copy) at the control
-            // scale — the same FaIconActionButton the Files band uses.
+            // scale — the REAL header chrome (FaHeaderCircularAction at
+            // the 36pt FaIconActionButton default, the glass underlay the
+            // floating header state carries), exactly what
+            // fa_chat_screen's action builders render.
             const SizedBox(width: 8),
-            FaIconActionButton(
+            FaHeaderCircularAction(
               key: const ValueKey('bandTrajectory'),
-              icon: Icons.show_chart,
-              tooltip: 'Trajectory',
-              onPressed: () {},
+              dimension: FaIconActionButton.defaultDiameter,
+              glass: true,
+              child: IconButton(
+                onPressed: () {},
+                tooltip: 'Trajectory',
+                icon: const Icon(Icons.show_chart, size: 18),
+                visualDensity: VisualDensity.compact,
+              ),
             ),
             const SizedBox(width: 8),
-            FaIconActionButton(
+            FaHeaderCircularAction(
               key: const ValueKey('bandCopy'),
-              icon: Icons.copy_outlined,
-              tooltip: 'Copy session',
-              onPressed: () {},
+              dimension: FaIconActionButton.defaultDiameter,
+              glass: true,
+              child: IconButton(
+                onPressed: () {},
+                tooltip: 'Copy session',
+                icon: const Icon(Icons.copy_outlined, size: 18),
+                visualDensity: VisualDensity.compact,
+              ),
             ),
             const SizedBox(width: 8),
             // The two glass states of the ONE action (owner rule): the
@@ -102,8 +117,14 @@ class _Band extends StatelessWidget {
 /// The chrome around a band button. Band keys on FaIconActionButton hold
 /// the chrome as their CHILD (the component composes the chrome); keys on
 /// inner buttons (the Files band's) hold it as an ANCESTOR.
-Finder _chromeOf(Key key) {
+Finder _chromeOf(WidgetTester tester, Key key) {
   final of = find.byKey(key);
+  // The keyed widget may BE the chrome (the chat-header circles), hold it
+  // as a CHILD (FaIconActionButton composes the chrome), or sit INSIDE it
+  // (the Files band's inner buttons).
+  if (tester.widget(of) is FaHeaderCircularAction) {
+    return of;
+  }
   final asChild = find.descendant(
     of: of,
     matching: find.byType(FaHeaderCircularAction),
@@ -114,7 +135,7 @@ Finder _chromeOf(Key key) {
       .first;
 }
 
-Rect _circleOf(WidgetTester tester, Key key) => tester.getRect(_chromeOf(key));
+Rect _circleOf(WidgetTester tester, Key key) => tester.getRect(_chromeOf(tester, key));
 
 /// The sidebar toggle's two states (vision-confirmed owner rule): panel
 /// OPEN — the toggle sits ON the panel band → FLAT token surface; panel
@@ -172,14 +193,16 @@ void main() {
       ValueKey('filesAppClose'),
       ValueKey('fileBrowserRefresh'),
     ];
-    // Glass vs flat (same button, two states): exactly ONE FaSurface —
-    // the floating glass circle; the on-band twin renders none.
-    expect(find.byType(FaSurface).evaluate().length, 1,
-        reason: 'one glass underlay in the band');
-    expect(
-      tester.widget<FaSurface>(find.byType(FaSurface)).glass,
-      isTrue,
-    );
+    // Glass vs flat (same button, two states): the floating header
+    // chrome (sidebar toggle excluded — docked/flat here) carries the
+    // glass underlay — the two chat-header circles and the folder
+    // toggle; the on-band folder twin and the Files band render none.
+    expect(find.byType(FaSurface).evaluate().length, 3,
+        reason: 'the two header circles + the floating folder toggle');
+    final glassSurfaces = tester
+        .widgetList<FaSurface>(find.byType(FaSurface))
+        .every((surface) => surface.glass);
+    expect(glassSurfaces, isTrue, reason: 'all three are glass states');
 
     // EQUAL diameters: every circle in the band is 36pt — the sidebar
     // toggle (its key rides the inner button) and each chrome circle.
@@ -203,11 +226,13 @@ void main() {
     }
 
     // EQUAL center ys (epsilon 0.5): the toggle, every circle AND the
-    // 40pt search capsule sit on ONE centerline.
+    // shared search field sit on ONE centerline.
     final capsule = tester.getRect(find.byKey(const ValueKey('fileBrowserSearch')));
-    // The capsule keeps the composer's 40pt field height (its center
-    // rides the circles' centerline, not its own).
-    expect(capsule.height, 40, reason: 'capsule boxHeight');
+    // The band renders the ONE SessionSearchField at the restored
+    // sidebar-search height (the dense 32px inset, not the retired 40pt
+    // capsule); its center rides the circles' centerline.
+    expect(capsule.height, kSearchFieldHeight, reason: 'shared field height');
+    expect(capsule.height, 32, reason: 'the old sidebar-search inset');
     final centerline = centerOf(toggle);
     for (final key in keys) {
       expect(
@@ -221,7 +246,7 @@ void main() {
     // ONE style: token surface2 fill + hairline ring, ink1 glyph ink.
     final tokens = FaDesignTokens.of(tester.element(find.byType(_Band)));
     for (final key in keys) {
-      final chrome = _chromeOf(key);
+      final chrome = _chromeOf(tester, key);
       // The glass state's underlay adds an unshaded Material wrapper; the
       // chrome's own circle is the shaped one.
       final material = tester

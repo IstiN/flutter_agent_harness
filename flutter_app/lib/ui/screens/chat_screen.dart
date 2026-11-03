@@ -468,6 +468,12 @@ class _ChatScreenState extends State<ChatScreen> {
             service.env,
             service.currentSessionCwd,
           ),
+          // The session's own folder rides along: when it is NOT the
+          // visible root the browser shows the access gate (allow-access
+          // flow switches the mount) instead of silently listing the
+          // active mount — a session in folder X must never pose as a
+          // listing of folder Y.
+          sessionFolder: service.currentSessionCwd,
           fsRevision: service.fsRevision,
           onProjectMountChanged: service.refreshProjectMountPrompt,
         ),

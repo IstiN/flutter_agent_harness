@@ -47,7 +47,7 @@ lib/ui/screens/skills_toggles_section.dart 1
 lib/ui/screens/tools_availability_section.dart 1
 lib/ui/widgets/apps_panel.dart 9
 lib/ui/widgets/code_viewer.dart 1
-lib/ui/widgets/file_browser.dart 21
+lib/ui/widgets/file_browser.dart 23
 lib/ui/widgets/file_preview.dart 4
 lib/ui/widgets/github_account_section.dart 3
 lib/ui/widgets/github_connect_sheet.dart 4

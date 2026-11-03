@@ -1382,6 +1382,24 @@ abstract class AppLocalizations {
   /// **'Could not open folder'**
   String get filesOpenFolderError;
 
+  /// No description provided for @filesSessionFolderGateTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'This chat\'s folder is not accessible'**
+  String get filesSessionFolderGateTitle;
+
+  /// No description provided for @filesSessionFolderGateBody.
+  ///
+  /// In en, this message translates to:
+  /// **'Files can only browse folders Fa has access to. This conversation lives in {folder} — grant access to browse its files here.'**
+  String filesSessionFolderGateBody(Object folder);
+
+  /// No description provided for @filesSessionFolderGateAllow.
+  ///
+  /// In en, this message translates to:
+  /// **'Allow access'**
+  String get filesSessionFolderGateAllow;
+
   /// No description provided for @filesOpenProjectFolderTooltip.
   ///
   /// In en, this message translates to:

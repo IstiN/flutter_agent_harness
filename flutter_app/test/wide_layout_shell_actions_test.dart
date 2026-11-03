@@ -1711,6 +1711,51 @@ void main() {
     debugDefaultTargetPlatformOverride = null;
   });
 
+  testWidgets('sidebar toggle glass states follow the icon, not the animation',
+      (tester) async {
+    // Owner rule (FaIconActionButton): on-surface = flat, floating = glass.
+    // The docked collapse toggle (panel OPEN, sitting on the glass panel)
+    // is FLAT; the floating expand toggle (panel collapsed, no panel under
+    // it) carries the glass underlay.
+    debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+    addTearDown(() => debugDefaultTargetPlatformOverride = null);
+    final env = MemoryExecutionEnv();
+    final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
+      ..addSession('design-session', _fakeService(env));
+    await pumpShell(tester, manager: manager);
+    await tester.pumpAndSettle();
+
+    bool toggleGlass() => tester
+        .widget<FaIconActionButton>(
+          find
+              .descendant(
+                of: find.byKey(const ValueKey('wideShellSidebarToggle')),
+                matching: find.byType(FaIconActionButton),
+              )
+              .first,
+        )
+        .glass;
+
+    // Panel OPEN: the collapse icon sits ON the panel — flat, no underlay.
+    expect(toggleGlass(), isFalse, reason: 'docked collapse icon is flat');
+    expect(find.byKey(const ValueKey('chatSidebarCollapse')), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('chatSidebarCollapse')));
+    await tester.pumpAndSettle();
+
+    // Panel CLOSED: the expand icon floats over the center surface — glass.
+    expect(toggleGlass(), isTrue, reason: 'floating expand icon is glass');
+    expect(find.byKey(const ValueKey('chatSidebarExpand')), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('chatSidebarExpand')));
+    await tester.pumpAndSettle();
+
+    // Back open: flat again (the flag follows the state, never lags the
+    // collapse animation).
+    expect(toggleGlass(), isFalse, reason: 're-docked toggle is flat again');
+    debugDefaultTargetPlatformOverride = null;
+  });
+
   testWidgets('compact composer floats 8 above the window in every theme', (
     tester,
   ) async {

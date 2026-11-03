@@ -737,6 +737,17 @@ class AppLocalizationsRu extends AppLocalizations {
   String get filesOpenFolderError => 'Не удалось открыть папку';
 
   @override
+  String get filesSessionFolderGateTitle => 'Папка этого чата недоступна';
+
+  @override
+  String filesSessionFolderGateBody(Object folder) {
+    return 'Files показывает только папки, к которым у Fa есть доступ. Этот диалог живёт в $folder — разрешите доступ, чтобы видеть его файлы здесь.';
+  }
+
+  @override
+  String get filesSessionFolderGateAllow => 'Разрешить доступ';
+
+  @override
   String get filesOpenProjectFolderTooltip => 'Открыть папку проекта…';
 
   @override
