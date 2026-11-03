@@ -90,6 +90,11 @@ final class MessengerAppPanel extends StatelessWidget {
           glass: true,
           useBackdropGroup: true,
           color: tokens.surface1,
+          // A touch heavier tint than the sidebar card so the presented
+          // surface's edge reads against the wallpaper (the audit caught
+          // the old ~8% contrast ghosting the card into the background).
+          tintAmount: .4,
+          tintOpacity: .78,
           borderRadius: BorderRadius.circular(18),
           child: view,
         ),

@@ -4,6 +4,7 @@
 
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math' as math;
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
@@ -13,7 +14,7 @@ import 'package:fa/apps/js_theme_bridge_host.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
-import 'package:fa_ui/fa_ui.dart' show FaChatHost;
+import 'package:fa_ui/fa_ui.dart' show FaChatHost, FaButton, FaButtonVariant, FaHeaderCircularAction, FahColors;
 import 'package:flutter_map/flutter_map.dart' show TileProvider;
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:fa/apps/fa_js3d_host.dart';
@@ -27,7 +28,6 @@ import 'package:fa/services/app_log.dart';
 import 'package:fa/services/asr_service.dart';
 import 'package:fa/services/media_tools.dart';
 import 'package:fa/services/video_tool.dart';
-import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/markdown_style.dart';
 import 'package:fa/ui/widgets/fa_mark.dart';
 import 'package:fa/ui/widgets/secret_request_sheet.dart';
@@ -652,61 +652,112 @@ class _JsAppViewState extends State<JsAppView> {
         ],
       );
     }
-    return faAppBar(
-      title: title,
-      trafficLightClearance: chrome.fullScreen,
-      actions: [
-        if (chrome.fullScreen)
-          TextButton(
-            key: const ValueKey('appFull'),
-            onPressed: chrome.onFullScreen,
-            child: Text(context.l10n.appsExitFullTooltip),
-          )
-        else
-          IconButton(
-            key: const ValueKey('appFull'),
-            tooltip: context.l10n.appsFullTooltip,
-            onPressed: chrome.onFullScreen,
-            visualDensity: VisualDensity.compact,
-            constraints: const BoxConstraints.tightFor(width: 28, height: 32),
-            padding: EdgeInsets.zero,
-            icon: const Icon(Icons.open_in_full, size: 17),
+    // The presented panel's chrome band (styleguide audit): the titlebar
+    // clearance follows the chat list's titlebarTop pattern — the card
+    // floats 8pt below the window top, so the inset is what remains of
+    // the titlebar region (zero in tests/web) — and every action renders
+    // as ONE 40px [FaHeaderCircularAction] circle, so the toolbar shares
+    // a single baseline that can never cross the bar's hairline.
+    final titlebarTop = math.max(0.0, MediaQuery.paddingOf(context).top - 8);
+    final colors = FahColors.of(context);
+    return PreferredSize(
+      preferredSize: Size.fromHeight(kToolbarHeight + titlebarTop),
+      child: Padding(
+        padding: EdgeInsets.only(top: titlebarTop),
+        child: AppBar(
+          centerTitle: false,
+          automaticallyImplyLeading: false,
+          title: Row(
+            children: [
+              AppIcon(app: widget.app, env: widget.env, size: 20),
+              const SizedBox(width: 8),
+              Flexible(
+                child: Text(
+                  widget.app.name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: colors.text,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    height: 1.2,
+                  ),
+                ),
+              ),
+            ],
           ),
-        if (chrome.fullScreen)
-          TextButton(
-            key: const ValueKey('appPin'),
-            onPressed: chrome.onPin,
-            child: Text(
-              chrome.pinned
+          actions: [
+            if (chrome.fullScreen)
+              FaButton(
+                key: const ValueKey('appFull'),
+                label: context.l10n.appsExitFullTooltip,
+                variant: FaButtonVariant.secondary,
+                onPressed: chrome.onFullScreen,
+              )
+            else
+              _chromeAction(
+                key: const ValueKey('appFull'),
+                icon: Icons.open_in_full,
+                tooltip: context.l10n.appsFullTooltip,
+                onPressed: chrome.onFullScreen,
+              ),
+            _chromeAction(
+              key: const ValueKey('appPin'),
+              icon: chrome.pinned ? Icons.push_pin : Icons.push_pin_outlined,
+              tooltip: chrome.pinned
                   ? context.l10n.appsUnpinTooltip
                   : context.l10n.appsPinTooltip,
+              onPressed: chrome.onPin,
             ),
-          )
-        else
-          IconButton(
-            key: const ValueKey('appPin'),
-            tooltip: chrome.pinned
-                ? context.l10n.appsUnpinTooltip
-                : context.l10n.appsPinTooltip,
-            onPressed: chrome.onPin,
-            visualDensity: VisualDensity.compact,
-            constraints: const BoxConstraints.tightFor(width: 28, height: 32),
-            padding: EdgeInsets.zero,
-            icon: Icon(
-              chrome.pinned ? Icons.push_pin : Icons.push_pin_outlined,
-              size: 17,
+            _chromeAction(
+              key: const ValueKey('appClose'),
+              icon: Icons.close,
+              tooltip: context.l10n.appsCloseTooltip,
+              onPressed: chrome.onClose,
             ),
-          ),
-        IconButton(
-          key: const ValueKey('appClose'),
-          tooltip: context.l10n.appsCloseTooltip,
-          onPressed: chrome.onClose,
-          icon: const Icon(Icons.close),
+            _barChromeMenu(),
+          ],
         ),
-        _chromeMenu(Theme.of(context)),
-      ],
+      ),
     );
   }
+
+  /// One 40px circular chrome action in the presented panel's toolbar —
+  /// the same [FaHeaderCircularAction] chrome the Files header uses, so
+  /// every icon button reads as one aligned family instead of a mix of
+  /// ad-hoc circles.
+  Widget _chromeAction({
+    required Key key,
+    required IconData icon,
+    required String tooltip,
+    VoidCallback? onPressed,
+  }) => FaHeaderCircularAction(
+    child: IconButton(
+      key: key,
+      icon: Icon(icon, size: 18),
+      padding: EdgeInsets.zero,
+      constraints: const BoxConstraints.tightFor(width: 40, height: 40),
+      style: IconButton.styleFrom(
+        minimumSize: const Size.square(40),
+        maximumSize: const Size.square(40),
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      ),
+      tooltip: tooltip,
+      onPressed: onPressed,
+    ),
+  );
+
+  /// The ⋮ chrome menu as a matching 40px circle (the app-bar variant;
+  /// the floating full-chrome menu keeps its own [_chromeMenu] style).
+  Widget _barChromeMenu() => FaHeaderCircularAction(
+    child: PopupMenuButton<String>(
+      icon: const Icon(Icons.more_vert, size: 18),
+      constraints: const BoxConstraints.tightFor(width: 40, height: 40),
+      padding: EdgeInsets.zero,
+      onSelected: _onChromeMenuSelection,
+      itemBuilder: (context) => _chromeMenuEntries(),
+    ),
+  );
 
   @override
   Widget build(BuildContext context) {
@@ -854,41 +905,45 @@ class _JsAppViewState extends State<JsAppView> {
       child: PopupMenuButton<String>(
         icon: const Icon(Icons.more_vert),
         onSelected: _onChromeMenuSelection,
-        itemBuilder: (context) => [
-          PopupMenuItem(
-            value: 'permissions',
-            child: Row(
-              children: [
-                const Icon(Icons.shield_outlined, size: 20),
-                const SizedBox(width: 12),
-                Text(context.l10n.appsPermissionsTooltip),
-              ],
-            ),
-          ),
-          PopupMenuItem(
-            value: 'reload',
-            child: Row(
-              children: [
-                const Icon(Icons.refresh, size: 20),
-                const SizedBox(width: 12),
-                Text(context.l10n.appsReloadTooltip),
-              ],
-            ),
-          ),
-          PopupMenuItem(
-            value: 'close',
-            child: Row(
-              children: [
-                const Icon(Icons.close, size: 20),
-                const SizedBox(width: 12),
-                Text(context.l10n.appsCloseTooltip),
-              ],
-            ),
-          ),
-        ],
+        itemBuilder: (context) => _chromeMenuEntries(),
       ),
     );
   }
+
+  /// The ⋮ menu rows shared by the app-bar circle and the floating
+  /// full-chrome menu.
+  List<PopupMenuItem<String>> _chromeMenuEntries() => [
+    PopupMenuItem(
+      value: 'permissions',
+      child: Row(
+        children: [
+          const Icon(Icons.shield_outlined, size: 20),
+          const SizedBox(width: 12),
+          Text(context.l10n.appsPermissionsTooltip),
+        ],
+      ),
+    ),
+    PopupMenuItem(
+      value: 'reload',
+      child: Row(
+        children: [
+          const Icon(Icons.refresh, size: 20),
+          const SizedBox(width: 12),
+          Text(context.l10n.appsReloadTooltip),
+        ],
+      ),
+    ),
+    PopupMenuItem(
+      value: 'close',
+      child: Row(
+        children: [
+          const Icon(Icons.close, size: 20),
+          const SizedBox(width: 12),
+          Text(context.l10n.appsCloseTooltip),
+        ],
+      ),
+    ),
+  ];
 
   /// Dispatches a full-chrome menu selection — the same actions the
   /// header AppBar offers.
