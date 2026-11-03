@@ -53,6 +53,7 @@ final class FilesAppPanel extends StatelessWidget {
     required this.presentation,
     this.onClose,
     this.inlinePreview = false,
+    this.topCenterline = false,
   });
 
   final FilesAppPresentation presentation;
@@ -67,6 +68,12 @@ final class FilesAppPanel extends StatelessWidget {
   /// Whether file previews render inside the pane (wide docked surfaces)
   /// or push a full-screen route (narrow ones).
   final bool inlinePreview;
+
+  /// Biases the band's circles onto the chat header's shared action
+  /// centerline (the sidebar collapse toggle's center) — the wide docked
+  /// surface sits right of that header; standalone routes keep the band's
+  /// symmetric centering.
+  final bool topCenterline;
 
   @override
   Widget build(BuildContext context) {
@@ -88,10 +95,16 @@ final class FilesAppPanel extends StatelessWidget {
           tintAmount: .4,
           tintOpacity: .78,
           borderRadius: BorderRadius.circular(18),
-          padding: const EdgeInsets.all(6),
+          // 3pt top / 6pt elsewhere: with the band's topCenterline bias
+          // (4pt up) this lands the X's center on the chat header's shared
+          // action centerline — the collapse toggle's center (screen y=35
+          // in the docked panel: 8pt panel margin + 3pt card padding + 2pt
+          // band padding + 4pt centering gap + 18pt half-circle).
+          padding: const EdgeInsets.fromLTRB(6, 3, 6, 6),
           child: FileBrowser(
             env: presentation.env,
             initialPath: presentation.initialPath,
+            topCenterline: topCenterline,
             sessionFolder: presentation.sessionFolder,
             inlinePreview: inlinePreview,
             fsRevision: presentation.fsRevision,

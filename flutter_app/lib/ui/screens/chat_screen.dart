@@ -479,7 +479,9 @@ class _ChatScreenState extends State<ChatScreen> {
         ),
         // The wide docked panel previews inline; the narrow end drawer
         // pushes the preview route.
-        inlinePreview:
+        // The docked pane sits beside the chat header: its band X rides
+        // the header's shared action centerline (the collapse toggle).
+        topCenterline:
             MediaQuery.sizeOf(context).width >= fa_ui.kWideLayoutBreakpoint,
       ),
       composerBuilder: (context, chatService, drop) => ChatComposer(

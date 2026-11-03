@@ -64,6 +64,7 @@ class FileBrowser extends StatefulWidget {
     this.projectFolderOps,
     this.onProjectMountChanged,
     this.showHeader = true,
+    this.topCenterline = false,
     this.filterController,
     this.onClose,
     this.surfaceBorder,
@@ -124,6 +125,11 @@ class FileBrowser extends StatefulWidget {
   /// Fired after the project-folder mount changes (mount/unmount), so the
   /// host can recompose the agent's system prompt.
   final void Function()? onProjectMountChanged;
+
+  /// Biases the band's circles onto the host header's shared action
+  /// centerline (the docked Files surface sits beside the chat header's
+  /// collapse toggle). Standalone hosts keep the symmetric centering.
+  final bool topCenterline;
 
   /// Whether the browser paints its own header row. Host surfaces that
   /// already provide the chrome band (the presented Files card) turn it
@@ -747,6 +753,7 @@ class _FileBrowserState extends State<FileBrowser> {
       onClose: widget.onClose,
       closeKey: widget.closeKey,
       searchKey: widget.searchKey,
+      topCenterline: widget.topCenterline,
     );
   }
 
@@ -1286,6 +1293,7 @@ final class FilesChrome extends StatelessWidget {
     this.searchKey,
     this.overflowKey,
     this.menuColor,
+    this.topCenterline = false,
   });
 
   /// The live filter the capsule types into (the browser's search state).
@@ -1308,12 +1316,23 @@ final class FilesChrome extends StatelessWidget {
   /// The ⋮ menu's background color (the browser passes its tokens).
   final Color? menuColor;
 
+  /// Vertically biases the band's circles UP 4pt: the docked Files panel
+  /// (right of the chat) must land the X's center on the header band's
+  /// shared action centerline — the sidebar collapse toggle's center
+  /// (screen y=35 in the docked panel). Standalone bands (the pipeline
+  /// golden fixture, the narrow route) keep the symmetric centering.
+  final bool topCenterline;
+
   static const _bandHeight = 52.0;
 
   /// The X's left inset: ~4pt from the band's left edge — the panel's own
   /// toggle hugs its panel (a 10pt inset read as a detached second header,
-  /// not part of the panel).
-  static const _bandPadding = EdgeInsets.fromLTRB(4, 6, 10, 6);
+  /// not part of the panel). Vertical: symmetric 6s by default; the
+  /// [topCenterline] docked variant trades 4pt of top inset (2 vs 6) so
+  /// the circle's center rides the header band's shared action centerline.
+  EdgeInsetsGeometry get _bandPadding => topCenterline
+      ? const EdgeInsets.fromLTRB(4, 2, 10, 6)
+      : const EdgeInsets.fromLTRB(4, 6, 10, 6);
 
   static const _titleIcon = 16.0;
   static const _titleGap = 7.0;

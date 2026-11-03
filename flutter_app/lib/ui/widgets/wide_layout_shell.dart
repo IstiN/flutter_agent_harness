@@ -1067,15 +1067,18 @@ class _WideLayoutShellState extends State<WideLayoutShell>
                 : 1 - progress * 2;
             final contentInTransition = progress > 0 && progress < 1;
             // On macOS the collapsed toggle moves just outside the rail. The
-            // equal center inset leaves an 8px gap at every intermediate
-            // frame; on other platforms it stays inside the panel.
-            // 52 = the 48px rail travel + the 36pt circle's +2px-per-side
-            // growth over the old 32pt circle, so the collapsed state
-            // keeps its 8pt outside-the-rail gutter.
-            final toggleShift = _isMacOS ? 52 * progress : 0.0;
-            // The 36pt circle hugs the rail edge: its right edge keeps the
-            // panel flush with the 8pt seam at the collapsed extreme.
-            final toggleLeft = sidebarWidth - 44 + toggleShift;
+            // shift is tuned so the collapsed extreme lands at the same
+            // 8pt-outside-the-rail spot as before (left edge 104 at the
+            // 96px rail): 44 = the 48px rail travel + the circle's growth
+            // (+2px per side over the old 32pt circle) MINUS the 8pt right
+            // gutter the open panel now keeps. Other platforms stay inside
+            // the panel.
+            final toggleShift = _isMacOS ? 60 * progress : 0.0;
+            // The 36pt circle keeps the panel's 8pt gutter contract on
+            // BOTH sides: 8pt card margin + 8pt gutter put its right edge
+            // 16pt inside the sidebar's right edge (owner call: the open
+            // panel's toggle must not hug the panel edge).
+            final toggleLeft = sidebarWidth - 52 + toggleShift;
             final sidebarContent = _buildSidebar(
               colors,
               collapsed: contentCollapsed,
@@ -1271,6 +1274,9 @@ class _WideLayoutShellState extends State<WideLayoutShell>
     if (files == null) return const SizedBox.shrink();
     return FilesAppPanel(
       presentation: files,
+      // The docked pane sits beside the chat header: its band X rides the
+      // header's shared action centerline (the collapse toggle's center).
+      topCenterline: true,
       onClose: () => unawaited(_dismissPresentedSurface()),
     );
   }

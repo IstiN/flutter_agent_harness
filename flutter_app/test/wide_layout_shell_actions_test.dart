@@ -38,11 +38,8 @@ import 'package:fa_ui/fa_ui.dart'
         buildFaTheme,
         debugFaGlassAlwaysFake;
 import 'package:liquid_glass_widgets/liquid_glass_widgets.dart'
-    show
-        GlassTextField,
-        LiquidShape,
-        ProgressiveBlur,
-        ProgressiveBlurDirection;
+    show ProgressiveBlur, ProgressiveBlurDirection;
+import 'package:flutter/cupertino.dart' show CupertinoTextField;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
@@ -358,10 +355,10 @@ void main() {
         expect(find.byType(WidgetsCatalogSheet), findsNothing);
         await tester.tap(find.byKey(const ValueKey('appsQuickOpen')));
         await tester.pump();
-        final search = tester.widget<TextField>(
+        final search = tester.widget<CupertinoTextField>(
           find.descendant(
             of: find.byKey(const ValueKey('messengerSearchField')),
-            matching: find.byType(TextField),
+            matching: find.byType(CupertinoTextField),
           ),
         );
         expect(search.focusNode?.hasFocus, isTrue);
@@ -941,7 +938,7 @@ void main() {
         );
         await tester.pump(const Duration(milliseconds: 100));
         Color? searchFill;
-        LiquidShape? searchBorder;
+        BoxBorder? searchBorder;
         Color? newBackground;
         for (var section = 0; section < labels.length; section++) {
           if (section > 0) {
@@ -1054,24 +1051,28 @@ void main() {
             expect(search, findsOneWidget, reason: reason);
           }
 
-          // Material-level reads: the shared field renders a TextField
-          // whose InputDecoration carries fill/border/hint in every
-          // underlying implementation (FaTextField, kit glass field).
-          final field = tester.widget<TextField>(
-            find.descendant(of: search, matching: find.byType(TextField)),
+          // Kit-level reads: the shared field is the kit's GlassTextField —
+          // its CupertinoTextField carries a BoxDecoration with the fill
+          // and the capsule border in every direction (the kit input is
+          // the ONE search field, Material TextField is gone).
+          final field = tester.widget<CupertinoTextField>(
+            find.descendant(
+              of: search,
+              matching: find.byType(CupertinoTextField),
+            ),
           );
           final newStyle = tester.widget<IconButton>(newButton).style;
           final background = newStyle?.backgroundColor?.resolve(const {});
           if (section == 0) {
-            searchFill = field.decoration?.fillColor;
+            searchFill = field.decoration?.color;
             searchBorder = field.decoration?.border;
             newBackground = background;
           } else {
-            expect(field.decoration?.fillColor, searchFill, reason: reason);
+            expect(field.decoration?.color, searchFill, reason: reason);
             expect(field.decoration?.border, searchBorder, reason: reason);
             expect(background, newBackground, reason: reason);
           }
-          expect(field.decoration?.hintText, isNotEmpty, reason: reason);
+          expect(field.placeholder, isNotEmpty, reason: reason);
           expect(
             tester
                 .widget<Icon>(
@@ -1852,12 +1853,15 @@ void main() {
           final finder = find.byKey(const ValueKey('messengerSearchField'));
           expect(finder, findsOneWidget);
           final rect = tester.getRect(finder);
-          final field = tester.widget<TextField>(
-            find.descendant(of: finder, matching: find.byType(TextField)),
+          final field = tester.widget<CupertinoTextField>(
+            find.descendant(
+              of: finder,
+              matching: find.byType(CupertinoTextField),
+            ),
           );
           if (expectedSearch == null) {
             expectedSearch = rect;
-            expectedFill = field.decoration?.fillColor;
+            expectedFill = field.decoration?.color;
           } else {
             expect(
               rect,
@@ -1865,7 +1869,7 @@ void main() {
               reason:
                   '$direction/$brightness/$label moved the compact search field',
             );
-            expect(field.decoration?.fillColor, expectedFill);
+            expect(field.decoration?.color, expectedFill);
           }
         }
         await tester.pumpWidget(const SizedBox());
@@ -2703,8 +2707,11 @@ void main() {
       final filesRect = tester.getRect(filesField);
       final filesType = tester.widget(filesField).runtimeType;
       final filesShape = tester
-          .widget<TextField>(
-            find.descendant(of: filesField, matching: find.byType(TextField)),
+          .widget<CupertinoTextField>(
+            find.descendant(
+              of: filesField,
+              matching: find.byType(CupertinoTextField),
+            ),
           )
           .decoration?.border;
       final sidebarField = find.byKey(const ValueKey('messengerSearchField'));
@@ -2753,14 +2760,13 @@ void main() {
         reason: 'vertical metrics',
       );
       final sidebarShape = tester
-          .widget<TextField>(
+          .widget<CupertinoTextField>(
             find.descendant(
               of: standaloneField,
-              matching: find.byType(TextField),
-                )
-                .first,
+              matching: find.byType(CupertinoTextField),
+            ).first,
           )
-          .shape;
+          .decoration?.border;
       expect(
         sidebarShape,
         filesShape,
