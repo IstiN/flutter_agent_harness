@@ -6,11 +6,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
 /// The deterministic folder avatar (yoloit tier-1 port): a rounded SQUARE
-/// (radius 0.28·size) painted with the folder's two-stop HSL gradient and
-/// the uppercase first rune of its name in WHITE @ 95% — the saturated
-/// palette stops need the constant on-color on every shell. When the
-/// folder carries a well-known icon file ([FolderIconResolver]), that
-/// image wins.
+/// (radius `radiusFactor`·size, default 0.28) painted with the folder's
+/// two-stop HSL gradient and the uppercase first rune of its name in WHITE
+/// @ 95% — the saturated palette stops need the constant on-color on every
+/// shell. When the folder carries a well-known icon file
+/// ([FolderIconResolver]), that image wins. The Telegram compact strip
+/// paints its UNSELECTED avatars as circles instead ([circle]).
 class FolderAvatar extends StatelessWidget {
   const FolderAvatar({
     super.key,
@@ -18,6 +19,8 @@ class FolderAvatar extends StatelessWidget {
     required this.label,
     this.size = 46,
     this.image,
+    this.circle = false,
+    this.radiusFactor = 0.28,
   });
 
   /// Hue seed — the folder identity string (the cwd path).
@@ -30,10 +33,20 @@ class FolderAvatar extends StatelessWidget {
   /// Optional resolved folder icon (well-known file variant).
   final ImageProvider? image;
 
+  /// Paint the gradient as a circle (the strip's unselected avatar).
+  final bool circle;
+
+  /// The rounded-square corner radius as a fraction of [size]. The strip's
+  /// selected avatar re-renders as a rounded square at ~25%.
+  final double radiusFactor;
+
+  BorderRadius get _radius =>
+      BorderRadius.circular(circle ? size / 2 : size * radiusFactor);
+
   @override
   Widget build(BuildContext context) {
     final (start, end) = folderAvatarGradient(seed);
-    final radius = BorderRadius.circular(size * 0.28);
+    final radius = _radius;
     return Container(
       width: size,
       height: size,

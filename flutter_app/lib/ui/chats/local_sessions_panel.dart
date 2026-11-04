@@ -34,6 +34,18 @@ class LocalSessionsPanel extends StatelessWidget {
   static const double sessionRowPitch = 70;
   static const double avatarSize = 46;
 
+  // The level-1 compact avatar strip (Telegram pattern, owner pass): a
+  // ~70pt avatar-only column on the left of the sidebar content; avatars
+  // Ø~50 circles centered on a ~70pt pitch (~10pt gaps); the selected
+  // folder wears an accent capsule bar (~6x51, fully rounded) flush
+  // against the strip's LEFT edge and re-renders its avatar as a rounded
+  // square (radius ~25% of the size). No name labels at this level.
+  static const double stripWidth = 70;
+  static const double stripItemPitch = 70;
+  static const double stripAvatarSize = 50;
+  static const double stripCapsuleWidth = 6;
+  static const double stripCapsuleHeight = 51;
+
   final ChatListController controller;
   final bool compact;
 
@@ -79,17 +91,36 @@ class LocalSessionsPanel extends StatelessWidget {
                 onNew: onNew,
               ),
               Expanded(
-                child: openFolder == null
-                    ? _FolderListView(
-                        folders: folders,
-                        iconResolver: iconResolver,
-                        onOpen: onSelectFolder,
-                      )
-                    : LocalFolderSessionList(
-                        sessions: openFolder.sessions,
-                        selectedSessionId: selectedSessionId,
-                        onOpenSession: onOpenSession,
-                      ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    _FolderStrip(
+                      folders: folders,
+                      selectedFolderId: selectedFolderId,
+                      iconResolver: iconResolver,
+                      onOpen: onSelectFolder,
+                    ),
+                    Expanded(
+                      child: openFolder == null
+                          ? (folders.isEmpty
+                                ? Center(
+                                    child: Text(
+                                      context.l10n.localFoldersEmpty,
+                                      style: TextStyle(
+                                        color: colors.dim,
+                                        fontSize: 13,
+                                      ),
+                                    ),
+                                  )
+                                : const SizedBox.shrink())
+                          : LocalFolderSessionList(
+                              sessions: openFolder.sessions,
+                              selectedSessionId: selectedSessionId,
+                              onOpenSession: onOpenSession,
+                            ),
+                    ),
+                  ],
+                ),
               ),
             ],
           ),
@@ -187,155 +218,88 @@ class _LocalHeader extends StatelessWidget {
   }
 }
 
-/// Level 1: one row per local session folder.
-class _FolderListView extends StatelessWidget {
-  const _FolderListView({
+/// Level 1: the Telegram compact avatar-only strip — one Ø50 folder
+/// avatar per [LocalSessionsPanel.stripItemPitch] cell, no name labels.
+/// The selected folder paints the accent capsule flush to the strip's
+/// left edge and squares its avatar (radius ~25%); a tap opens the
+/// folder's session list beside the strip.
+class _FolderStrip extends StatelessWidget {
+  const _FolderStrip({
     required this.folders,
-    required this.iconResolver,
+    required this.selectedFolderId,
     required this.onOpen,
+    this.iconResolver,
   });
 
   final List<LocalSessionFolder> folders;
+  final String? selectedFolderId;
   final FolderIconResolver? iconResolver;
   final ValueChanged<String> onOpen;
 
   @override
   Widget build(BuildContext context) {
-    if (folders.isEmpty) {
-      return Center(
-        child: Text(
-          context.l10n.localFoldersEmpty,
-          style: TextStyle(color: FahColors.of(context).dim, fontSize: 13),
-        ),
-      );
-    }
-    return ListView.builder(
-      key: const ValueKey('localFolderList'),
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      itemCount: folders.length,
-      itemBuilder: (context, index) {
-        final folder = folders[index];
-        return _FolderRow(
-          key: ValueKey('localFolder-${folder.id}'),
-          folder: folder,
-          iconResolver: iconResolver,
-          onOpen: () => onOpen(folder.id),
-          hairline: index < folders.length - 1,
-        );
-      },
-    );
-  }
-}
-
-class _FolderRow extends StatelessWidget {
-  const _FolderRow({
-    super.key,
-    required this.folder,
-    required this.iconResolver,
-    required this.onOpen,
-    required this.hairline,
-  });
-
-  final LocalSessionFolder folder;
-  final FolderIconResolver? iconResolver;
-  final VoidCallback onOpen;
-  final bool hairline;
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = FahColors.of(context);
-    return Material(
-      color: Colors.transparent,
-      borderRadius: BorderRadius.circular(12),
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: onOpen,
-        child: SizedBox(
-          height: 64,
-          child: Column(
-            children: [
-              Expanded(
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 8),
-                  child: Row(
-                    children: [
-                      FutureBuilder<MemoryImage?>(
-                        future: iconResolver?.resolve(folder.id),
-                        builder: (context, snapshot) => FolderAvatar(
-                          seed: folder.avatarSeed,
-                          label: folder.name,
-                          image: snapshot.data,
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              folder.name,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                color: colors.text,
-                                fontSize: 14,
-                                fontWeight: FontWeight.w600,
-                                height: 1.2,
+    final tokens = FaDesignTokens.of(context);
+    return SizedBox(
+      key: const ValueKey('localFoldersStrip'),
+      width: LocalSessionsPanel.stripWidth,
+      child: folders.isEmpty
+          ? const SizedBox.shrink()
+          : ListView.builder(
+              padding: const EdgeInsets.symmetric(vertical: 4),
+              itemCount: folders.length,
+              itemBuilder: (context, index) {
+                final folder = folders[index];
+                final selected = folder.id == selectedFolderId;
+                return SizedBox(
+                  key: ValueKey('localFolder-${folder.id}'),
+                  width: LocalSessionsPanel.stripWidth,
+                  height: LocalSessionsPanel.stripItemPitch,
+                  child: Material(
+                    color: Colors.transparent,
+                    child: InkWell(
+                      onTap: () => onOpen(folder.id),
+                      child: Stack(
+                        alignment: Alignment.center,
+                        children: [
+                          if (selected)
+                            Positioned(
+                              left: 0,
+                              top:
+                                  (LocalSessionsPanel.stripItemPitch -
+                                      LocalSessionsPanel.stripCapsuleHeight) /
+                                  2,
+                              child: Container(
+                                key: const ValueKey(
+                                  'localFolderSelectedCapsule',
+                                ),
+                                width: LocalSessionsPanel.stripCapsuleWidth,
+                                height: LocalSessionsPanel.stripCapsuleHeight,
+                                decoration: BoxDecoration(
+                                  color: tokens.accent,
+                                  borderRadius: BorderRadius.circular(
+                                    LocalSessionsPanel.stripCapsuleWidth / 2,
+                                  ),
+                                ),
                               ),
                             ),
-                            const SizedBox(height: 3),
-                            Text(
-                              context.l10n.localFolderSessionCount(
-                                folder.sessions.length,
-                              ),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                color: colors.dim,
-                                fontSize: 12.5,
-                                height: 1.2,
-                              ),
+                          FutureBuilder<MemoryImage?>(
+                            future: iconResolver?.resolve(folder.id),
+                            builder: (context, snapshot) => FolderAvatar(
+                              seed: folder.avatarSeed,
+                              label: folder.name,
+                              size: LocalSessionsPanel.stripAvatarSize,
+                              image: snapshot.data,
+                              circle: !selected,
+                              radiusFactor: selected ? 0.25 : 0.28,
                             ),
-                          ],
-                        ),
-                      ),
-                      if (folder.runningCount > 0) ...[
-                        const SizedBox(width: 6),
-                        Container(
-                          key: const ValueKey('localFolderRunning'),
-                          width: 10,
-                          height: 10,
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: colors.teal,
                           ),
-                        ),
-                      ],
-                      const SizedBox(width: 8),
-                      Text(
-                        chatListRelativeTime(context, folder.latestActivity),
-                        style: TextStyle(
-                          color: colors.dim,
-                          fontSize: 10.5,
-                          fontWeight: FontWeight.w400,
-                          height: 1.2,
-                        ),
+                        ],
                       ),
-                    ],
+                    ),
                   ),
-                ),
-              ),
-              if (hairline)
-                Container(
-                  height: 1,
-                  margin: const EdgeInsets.only(left: 66, right: 8),
-                  color: colors.border.withValues(alpha: .45),
-                ),
-            ],
-          ),
-        ),
-      ),
+                );
+              },
+            ),
     );
   }
 }

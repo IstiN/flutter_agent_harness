@@ -1,8 +1,10 @@
 @TestOn('vm')
 /// Widget tests for the Local section's folder-first navigation panels:
-/// folder rows (name / session count / latest time / running dot), the
-/// Telegram-style session list (name, time, preview, badges, accent
-/// selection, hairlines) and the '<' back chevron.
+/// the level-1 avatar-only folder STRIP (no name labels, Ø50 circle
+/// avatars on a 70pt pitch, accent capsule + rounded-square selection),
+/// the Telegram-style session list beside the strip (name, time, preview,
+/// badges, accent selection, hairlines), the folder name in the sidebar
+/// header, and the '<' back chevron restoring the strip + header.
 library;
 
 import 'package:fa/l10n/app_localizations.dart';
@@ -10,6 +12,7 @@ import 'package:fa/ui/chats/chat_list_controller.dart';
 import 'package:fa/ui/chats/chat_list_entry.dart';
 import 'package:fa/ui/chats/local_chat_list_adapter.dart';
 import 'package:fa/ui/chats/local_sessions_panel.dart';
+import 'package:fa/ui/widgets/folder_avatar.dart';
 import 'package:fa_ui/fa_ui.dart' show FaVisualDirection, buildFaTheme;
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -85,8 +88,8 @@ void main() {
     await initializeDateFormatting('ru');
   });
 
-  testWidgets('folder rows show name, session count, latest time and '
-      'the running dot, newest folder first', (tester) async {
+  testWidgets('the level-1 strip renders avatar-only — no name labels, '
+      'Ø50 circles on the 70pt pitch, newest folder first', (tester) async {
     final c = await controller([
       entry(
         'old',
@@ -103,7 +106,9 @@ void main() {
     ]);
     await pumpPanel(tester, c);
 
-    // Grouped by cwd: two folders, the one with the newest session first.
+    // The strip carries every folder (grouped by cwd, newest first) but
+    // NO name labels — avatar-only at this level.
+    expect(find.byKey(const ValueKey('localFoldersStrip')), findsOneWidget);
     expect(
       find.byKey(const ValueKey('localFolder-/work/mono')),
       findsOneWidget,
@@ -119,17 +124,45 @@ void main() {
             .dy,
       ),
     );
-    expect(find.text('mono'), findsOneWidget);
-    expect(find.text('fa'), findsOneWidget);
-    // One session per folder: the subagent never inflated mono's count.
-    expect(find.text('1 session'), findsNWidgets(2));
-    expect(find.byKey(const ValueKey('localFolderRunning')), findsOneWidget);
-    // The subagent never became a folder session.
+    expect(find.text('mono'), findsNothing);
+    expect(find.text('fa'), findsNothing);
+    expect(find.text('1 session'), findsNothing);
+    expect(find.text('Local'), findsOneWidget, reason: 'the header title');
     expect(find.text('sub'), findsNothing);
+
+    // Geometry: ~70pt strip, Ø~50 avatars, ~70pt pitch (~10pt gaps).
+    expect(
+      tester.getSize(find.byKey(const ValueKey('localFoldersStrip'))).width,
+      LocalSessionsPanel.stripWidth,
+    );
+    final avatars = find.byType(FolderAvatar);
+    expect(avatars, findsNWidgets(2));
+    expect(tester.getSize(avatars.first).width, 50);
+    expect(tester.getSize(avatars.first).height, 50);
+    expect(
+      tester.getTopLeft(find.byKey(const ValueKey('localFolder-/work/fa'))).dy -
+          tester
+              .getTopLeft(find.byKey(const ValueKey('localFolder-/work/mono')))
+              .dy,
+      LocalSessionsPanel.stripItemPitch,
+    );
+
+    // Unselected strip avatars are circles; nothing is selected yet, so
+    // no capsule bar is painted.
+    for (final avatar in avatars.evaluate()) {
+      final widget = avatar.widget as FolderAvatar;
+      expect(widget.circle, isTrue);
+    }
+    expect(
+      find.byKey(const ValueKey('localFolderSelectedCapsule')),
+      findsNothing,
+    );
   });
 
-  testWidgets('opening a folder shows the Telegram-style session list and '
-      'back returns to the folders', (tester) async {
+  testWidgets('selecting a folder opens its session list beside the strip, '
+      'paints the capsule, squares the avatar and names the header', (
+    tester,
+  ) async {
     final c = await controller([
       entry(
         'design',
@@ -143,18 +176,24 @@ void main() {
         lastActivity: DateTime.utc(2026, 1, 2, 9),
         isStreaming: true,
       ),
+      entry('other', folderPath: '/work/mono'),
     ]);
     await pumpPanel(tester, c);
 
     await tester.tap(find.byKey(const ValueKey('localFolder-/work/fa')));
     await tester.pumpAndSettle();
 
-    // Rows in session order: newest first; header names the folder and
-    // offers the '<' chevron.
+    // The folder's name lands in the sidebar header.
     expect(find.text('fa'), findsOneWidget);
+
+    // The session list opens to the RIGHT of the (still visible) strip.
+    final strip = tester.getRect(
+      find.byKey(const ValueKey('localFoldersStrip')),
+    );
     final design = find.byKey(const ValueKey('localSession-design'));
     final docs = find.byKey(const ValueKey('localSession-docs'));
     expect(tester.getTopLeft(design).dy, lessThan(tester.getTopLeft(docs).dy));
+    expect(tester.getTopLeft(design).dx, greaterThan(strip.right));
     expect(find.text('design'), findsOneWidget);
     expect(find.text('Preview of design'), findsOneWidget);
     expect(find.byKey(const ValueKey('localSessionUnread')), findsOneWidget);
@@ -163,10 +202,38 @@ void main() {
     // Telegram pitch: 70pt rows with hairline separators.
     expect(tester.getSize(design).height, LocalSessionsPanel.sessionRowPitch);
 
-    await tester.tap(find.byKey(const ValueKey('localFolderBack')));
-    await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey('localFolderList')), findsOneWidget);
-    expect(find.text('Preview of design'), findsNothing);
+    // The selected folder wears the accent capsule flush to the strip's
+    // LEFT edge and its avatar re-renders as a rounded square (radius
+    // ~25% of the Ø50 avatar); the unselected one stays a circle.
+    final capsule = tester.getRect(
+      find.byKey(const ValueKey('localFolderSelectedCapsule')),
+    );
+    expect(capsule.width, LocalSessionsPanel.stripCapsuleWidth);
+    expect(capsule.height, LocalSessionsPanel.stripCapsuleHeight);
+    expect(capsule.left, strip.left);
+    expect(
+      capsule.center.dy,
+      inInclusiveRange(
+        strip.top,
+        strip.top + LocalSessionsPanel.stripItemPitch,
+      ),
+      reason: 'the capsule rides the selected folder row',
+    );
+    final selectedAvatar = tester.widget<FolderAvatar>(
+      find.descendant(
+        of: find.byKey(const ValueKey('localFolder-/work/fa')),
+        matching: find.byType(FolderAvatar),
+      ),
+    );
+    expect(selectedAvatar.circle, isFalse);
+    expect(selectedAvatar.radiusFactor, 0.25);
+    final unselectedAvatar = tester.widget<FolderAvatar>(
+      find.descendant(
+        of: find.byKey(const ValueKey('localFolder-/work/mono')),
+        matching: find.byType(FolderAvatar),
+      ),
+    );
+    expect(unselectedAvatar.circle, isTrue);
   });
 
   testWidgets('tapping a session row opens it through the shell callback '
@@ -188,15 +255,36 @@ void main() {
     expect(find.text('Preview of design'), findsOneWidget);
   });
 
+  testWidgets('back walks the open folder to the strip and restores the '
+      'Local header title', (tester) async {
+    final c = await controller([entry('design', folderPath: '/work/fa')]);
+    await pumpPanel(tester, c, folderId: '/work/fa');
+    expect(find.text('fa'), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('localFolderBack')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('localFoldersStrip')), findsOneWidget);
+    expect(find.byKey(const ValueKey('localSession-design')), findsNothing);
+    expect(find.text('fa'), findsNothing);
+    expect(find.text('Local'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('localFolderSelectedCapsule')),
+      findsNothing,
+    );
+  });
+
   testWidgets('the empty folder state and the empty folder list each '
       'render their copy', (tester) async {
     final c = await controller([]);
     await pumpPanel(tester, c);
     expect(find.text('No project folders yet'), findsOneWidget);
+    expect(find.byKey(const ValueKey('localFoldersStrip')), findsOneWidget);
 
     final solo = await controller([entry('only', folderPath: '/work/solo')]);
     await pumpPanel(tester, solo, folderId: '/work/gone');
-    // A folder id that is not in the projection falls back to the list.
-    expect(find.byKey(const ValueKey('localFolderList')), findsOneWidget);
+    // A folder id that is not in the projection falls back to the strip.
+    expect(find.byKey(const ValueKey('localFoldersStrip')), findsOneWidget);
+    expect(find.text('No sessions in this folder yet'), findsNothing);
   });
 }
