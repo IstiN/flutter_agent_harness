@@ -109,20 +109,29 @@ class _SessionOrder {
 }
 
 // ---------------------------------------------------------------------------
-// Folder avatar algorithm (yoloit tier-1 port)
+// Folder avatar algorithm (yoloit tier-1 port, vision-audit rework)
 // ---------------------------------------------------------------------------
 
-/// The folder's avatar hue: `folderId.hashCode.abs() % 360` — stable per
-/// cwd across restarts.
-int folderAvatarHue(String folderId) => folderId.hashCode.abs() % 360;
+/// The fixed 10-slot palette the folder avatar's hue comes from: evenly
+/// spread around the wheel so sibling folders never cluster into mud (the
+/// old raw `% 360` ramp audited at S 28–46%, L 31–45% with visible hue
+/// clustering).
+const folderAvatarHues = [4, 40, 125, 150, 175, 200, 235, 265, 300, 335];
 
-/// The deterministic two-stop gradient: HSL(hue, .45, .42) →
-/// HSL(hue+32, .5, .3), painted topLeft → bottomRight.
+/// The folder avatar's hue: the palette slot at `folderId.hashCode.abs() %
+/// 10` — deterministic per cwd across restarts, and never clustered.
+int folderAvatarHue(String folderId) =>
+    folderAvatarHues[folderId.hashCode.abs() % folderAvatarHues.length];
+
+/// The deterministic two-stop gradient: HSL(hue, .72, .58) →
+/// HSL(hue+30, .66, .42), painted topLeft → bottomRight. Saturated stops
+/// that hold up on both the dark and light shells (the tiles sit on
+/// glass/dark cards).
 (Color, Color) folderAvatarGradient(String folderId) {
   final hue = folderAvatarHue(folderId);
   return (
-    HSLColor.fromAHSL(1, hue.toDouble(), 0.45, 0.42).toColor(),
-    HSLColor.fromAHSL(1, ((hue + 32) % 360).toDouble(), 0.5, 0.3).toColor(),
+    HSLColor.fromAHSL(1, hue.toDouble(), 0.72, 0.58).toColor(),
+    HSLColor.fromAHSL(1, ((hue + 30) % 360).toDouble(), 0.66, 0.42).toColor(),
   );
 }
 
