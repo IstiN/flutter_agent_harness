@@ -511,40 +511,43 @@ void main() {
     );
 
     group('static lint — pure text invariants, no sandbox', () {
-      test('guard keys on the archive the Podfile consumes, not the zip marker', () {
-        final podspec = read(podspecPath);
-        final block = interpolate(shellBlock(podspec), podspec);
-        // Anchor POSITIVELY on the consumed-archive path, not on "the first
-        // line starting with `if `" — a second, unrelated `if` above the
-        // guard would silently re-latch the old anchor while the real guard
-        // regresses to the zip marker. singleWhere also fails if the archive
-        // path appears in more than one place, itself a drift signal.
-        final guardLine = block
-            .split('\n')
-            .singleWhere(
-              (l) => l.contains(consumedArchive),
-              orElse: () => fail(
-                'the podspec shell block no longer keys its guard on '
-                '$consumedArchive — the wasm_run-v0.1.0.zip-marker guard made '
-                'the block run (and `rm -rf` the restored framework) on every '
-                'fresh CI clone (gh-2055)',
-              ),
-            );
-        expect(
-          guardLine.trimLeft().startsWith('if '),
-          isTrue,
-          reason:
-              'the archive-keyed line must be the if-guard itself, not a '
-              'mention elsewhere in the block',
-        );
-        expect(
-          guardLine.contains('[ ! -f'),
-          isTrue,
-          reason:
-              'the guard must TEST for the archive\'s presence '
-              '("if [ ! -f … ]"), not merely reference it',
-        );
-      });
+      test(
+        'guard keys on the archive the Podfile consumes, not the zip marker',
+        () {
+          final podspec = read(podspecPath);
+          final block = interpolate(shellBlock(podspec), podspec);
+          // Anchor POSITIVELY on the consumed-archive path, not on "the first
+          // line starting with `if `" — a second, unrelated `if` above the
+          // guard would silently re-latch the old anchor while the real guard
+          // regresses to the zip marker. singleWhere also fails if the archive
+          // path appears in more than one place, itself a drift signal.
+          final guardLine = block
+              .split('\n')
+              .singleWhere(
+                (l) => l.contains(consumedArchive),
+                orElse: () => fail(
+                  'the podspec shell block no longer keys its guard on '
+                  '$consumedArchive — the wasm_run-v0.1.0.zip-marker guard made '
+                  'the block run (and `rm -rf` the restored framework) on every '
+                  'fresh CI clone (gh-2055)',
+                ),
+              );
+          expect(
+            guardLine.trimLeft().startsWith('if '),
+            isTrue,
+            reason:
+                'the archive-keyed line must be the if-guard itself, not a '
+                'mention elsewhere in the block',
+          );
+          expect(
+            guardLine.contains('[ ! -f'),
+            isTrue,
+            reason:
+                'the guard must TEST for the archive\'s presence '
+                '("if [ ! -f … ]"), not merely reference it',
+          );
+        },
+      );
 
       test(
         'curl fails on HTTP errors AND aborts the block — gh-1149 posture',
@@ -614,9 +617,9 @@ void main() {
 
       test('the consumed archive path matches the Podfile slice', () {
         final podfile = read(podfilePath);
-        final slice = RegExp(r"macos_slice = '[^']*libwasm_run_dart\.a'")
-            .firstMatch(podfile)!
-            .group(0)!;
+        final slice = RegExp(
+          r"macos_slice = '[^']*libwasm_run_dart\.a'",
+        ).firstMatch(podfile)!.group(0)!;
         expect(
           slice,
           contains('Frameworks/$consumedArchive'),
