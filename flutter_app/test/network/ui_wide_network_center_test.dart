@@ -10,6 +10,7 @@ import 'package:fa/services/flutter_session_manager.dart';
 import 'package:fa/ui/chats/chat_list_entry.dart';
 import 'package:fa/ui/chats/chat_list_panel.dart';
 import 'package:fa/ui/chats/network_inbox_adapter.dart';
+import 'package:fa/ui/chats/networks_list_panel.dart';
 import 'package:fa/ui/network/channel_rail.dart';
 import 'package:fa/ui/network/join_sheet.dart';
 import 'package:fa/ui/network/network_center.dart';
@@ -635,6 +636,98 @@ void main() {
         await tester.pump();
       });
     }
+
+    testWidgets('the networks surface channel tap opens the messages and '
+        'selects the row on the All home', (tester) async {
+      final wallet = await KeyWallet.load(MemoryWalletBackend());
+      await wallet.addNetwork(networkId: 'net1', name: 'epam-public');
+      final httpClient = FakeHttpClient()
+        ..respond(
+          200,
+          body:
+              '[{"id":"c1","networkId":"net1","name":"general","public":true}]',
+        )
+        ..respond(200, body: membersBody)
+        ..respond(200, body: '{"items":[],"nextCursor":""}');
+      final session = buildSession(
+        httpClient: httpClient,
+        connector: FakeWsConnector(),
+        wallet: wallet,
+      );
+      await session.start();
+      final manager = NetworkSessionManager(
+        baseUrl: testBase,
+        wallet: wallet,
+        httpClient: FakeHttpClient(),
+        wsConnector: FakeWsConnector(),
+      )..sessions['net1'] = session;
+      addTearDown(manager.disconnectAll);
+      final controller = NetworkModeController.inMemory();
+      final inbox = FixtureNetworkInboxAdapter(
+        items: [
+          NetworkInboxItem(
+            kind: ChatListEntryKind.networkChannel,
+            networkId: 'net1',
+            id: 'c1',
+            title: 'general',
+            lastActivity: DateTime.utc(2026, 8, 1, 12),
+            unreadCount: 2,
+          ),
+        ],
+      );
+      await _pumpWideHome(
+        tester,
+        controller: controller,
+        manager: manager,
+        networkInboxAdapter: inbox,
+      );
+      await tester.pump();
+
+      // The rail's Network destination swaps the sidebar to the networks
+      // surface; drill into the network (level-1 row), then tap the
+      // channel ROW.
+      await tester.tap(
+        find.byKey(const ValueKey('messengerPrimaryNav-network')),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 250));
+      expect(find.byKey(const ValueKey('networkRow-net1')), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('networkRow-net1')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 250));
+      expect(
+        find.byKey(const ValueKey('chatNetworkChannel-c1')),
+        findsOneWidget,
+      );
+
+      await tester.tap(find.byKey(const ValueKey('chatNetworkChannel-c1')));
+      for (var index = 0; index < 6; index++) {
+        await tester.pump(const Duration(milliseconds: 20));
+      }
+
+      expect(controller.networkId, 'net1');
+      expect(controller.channelId, 'c1');
+      // The surface closed back to the chats home (NOT still networks).
+      expect(find.byType(ChatNetworksPanel), findsNothing);
+      expect(find.byType(ChatListPanel), findsOneWidget);
+      // The tapped channel's messages own the content pane immediately.
+      expect(find.byType(NetworkChatPage), findsOneWidget);
+      // The channel row is visibly selected on the All home.
+      final panel = tester.widget<ChatListPanel>(find.byType(ChatListPanel));
+      expect(
+        panel.selectedEntryId,
+        ChatEntryId.network(
+          ChatListEntryKind.networkChannel,
+          networkId: 'net1',
+          id: 'c1',
+        ),
+      );
+      // The tap also clears the row's unread count (the chat-list row
+      // path marks the entry opened; the surface tap is the same open).
+      expect(inbox.readCalls.any((call) => call.channelId == 'c1'), isTrue);
+      await manager.disconnectAll();
+      await tester.pump();
+    });
 
     testWidgets('a restored selection silently resumes the session', (
       tester,
