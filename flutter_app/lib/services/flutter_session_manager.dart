@@ -205,6 +205,11 @@ final class FlutterSessionManager extends ChangeNotifier {
   final Map<String, FlutterManagedSession> _sessions = {};
   String? _activeId;
 
+  /// Selection intent, not load completion, owns the active session. Rapid
+  /// A→B→A clicks otherwise let the slowest loader activate a session the
+  /// user has already left.
+  int _selectionGeneration = 0;
+
   /// The service worker's live session id on hosted surfaces (the browser
   /// extension) — THE single source of truth for "which session am I in"
   /// for every session UI (wide sidebar, narrow drawer). The manager slot
@@ -601,6 +606,7 @@ final class FlutterSessionManager extends ChangeNotifier {
     required AgentConfig config,
     required FutureOr<AgentService> Function() serviceFactory,
   }) async {
+    final selection = ++_selectionGeneration;
     final existing = _sessions[metadata.id];
     if (existing != null) {
       debugPrint(
@@ -645,8 +651,15 @@ final class FlutterSessionManager extends ChangeNotifier {
       lastUpdatedAt: metadata.lastUpdatedAt ?? metadata.createdAt,
     );
     _sessions[metadata.id] = managed;
-    _activeId = metadata.id;
-    _rememberActive(metadata.id);
+    if (selection == _selectionGeneration) {
+      _activeId = metadata.id;
+      _rememberActive(metadata.id);
+    } else {
+      debugPrint(
+        '[fah][sessions] open ${metadata.id}: loaded in background — a '
+        'newer selection owns the active session',
+      );
+    }
     notifyListeners();
     return managed;
   }
@@ -822,6 +835,9 @@ final class FlutterSessionManager extends ChangeNotifier {
   /// Switches the active session without aborting its run.
   void switchTo(String sessionId) {
     if (!_sessions.containsKey(sessionId)) return;
+    // Even selecting the already-active id is new intent: it must cancel the
+    // activation rights of opens started before that click.
+    _selectionGeneration++;
     if (_activeId == sessionId) return;
     _activeId = sessionId;
     _rememberActive(sessionId);
