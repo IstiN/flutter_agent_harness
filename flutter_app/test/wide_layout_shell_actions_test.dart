@@ -27,6 +27,7 @@ import 'package:fa/ui/widgets/sidebar_nav_item.dart';
 import 'package:fa/ui/chats/chat_list_entry.dart';
 import 'package:fa/ui/chats/chat_list_panel.dart';
 import 'package:fa/ui/chats/local_chat_list_adapter.dart';
+import 'package:fa/ui/chats/networks_list_panel.dart';
 import 'package:fa/ui/widgets/wide_layout_shell.dart';
 import 'package:fa_ui/fa_ui.dart'
     show
@@ -1296,17 +1297,31 @@ void main() {
         reason: '$label must be tappable',
       );
     }
-    // The identity row opens the NETWORKS panel in the chat column
-    // (Telegram pattern — the old dropdown menu is gone).
+    // The identity row swaps the CHATS SIDEBAR content to the networks
+    // surface (the same slot the Local drill-down uses); the chat message
+    // column keeps the chat — the old chat-column surface is gone.
     await tester.tap(find.byKey(const ValueKey('chatNetworkFilter')));
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('chatNetworksList')), findsOneWidget);
     expect(find.byKey(const ValueKey('chatNetworksBack')), findsOneWidget);
-    // Back walks the panel to the normal chats list.
+    expect(find.byType(ChatNetworksPanel), findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('glassCenterPanel')),
+        matching: find.byType(ChatNetworksPanel),
+      ),
+      findsNothing,
+      reason: 'the networks surface no longer renders in the message column',
+    );
+    // The sidebar swapped: the chat list panel is replaced while the
+    // surface is open.
+    expect(find.byType(ChatListPanel), findsNothing);
+    // Back walks the surface to the normal chats list.
     await tester.tap(find.byKey(const ValueKey('chatNetworksBack')));
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('chatNetworksList')), findsNothing);
     expect(find.byKey(const ValueKey('chatListScroll')), findsOneWidget);
+    expect(find.byType(ChatListPanel), findsOneWidget);
     expect(chip('All').properties.selected, isTrue);
     // The rail row itself never becomes selected.
     railRow('chatFilter-all');

@@ -240,11 +240,12 @@ class _WideLayoutShellState extends State<WideLayoutShell>
   /// collapse, like the chats panel's drill-down directory.
   String? _localFolderId;
 
-  /// The chat column's NETWORKS surface (Telegram pattern): when open, the
-  /// center column shows [ChatNetworksPanel] instead of the chat — the
-  /// identity globe's networks list with the in-place channel drill-down.
+  /// The chats sidebar's NETWORKS surface (Telegram pattern): when open,
+  /// the SIDEBAR swaps to [ChatNetworksPanel] — the identity globe's
+  /// networks strip with the in-place channel drill-down, in the same slot
+  /// the Local drill-down uses. The message column keeps the chat.
   /// Section switches close it, like a route pop.
-  bool _networksPaneOpen = false;
+  bool _networksSurfaceOpen = false;
 
   /// Lazily built resolver for folders' well-known icon files (cached
   /// per folder in memory).
@@ -1379,8 +1380,7 @@ class _WideLayoutShellState extends State<WideLayoutShell>
 
   Widget _buildCenterSurface(FahColors colors) {
     return switch (_section) {
-      _WideShellSection.chats =>
-        _networksPaneOpen ? _buildNetworksPane() : _buildChatArea(colors),
+      _WideShellSection.chats => _buildChatArea(colors),
       _WideShellSection.local => _buildChatArea(colors),
       _WideShellSection.activity => ActivityDetailPanel(
         controller: _activityController,
@@ -1401,7 +1401,7 @@ class _WideLayoutShellState extends State<WideLayoutShell>
         if (changed && !presentation.pinned) dismissPresentation = true;
       }
       if (changed && _filesPresentation != null) dismissPresentation = true;
-      if (changed) _networksPaneOpen = false;
+      if (changed) _networksSurfaceOpen = false;
       _section = section;
       if (section == _WideShellSection.activity) {
         _narrowActivityDetailVisible = false;
@@ -1568,11 +1568,12 @@ class _WideLayoutShellState extends State<WideLayoutShell>
                           )
                         : const SizedBox.shrink()
                   : switch (_section) {
-                      _WideShellSection.chats ||
-                      _WideShellSection.activity ||
-                      _WideShellSection.apps => _buildChatPanel(
-                        collapsed: collapsed,
-                      ),
+                      _WideShellSection.chats =>
+                        _networksSurfaceOpen
+                            ? _buildNetworksSidebar()
+                            : _buildChatPanel(collapsed: collapsed),
+                      _WideShellSection.activity || _WideShellSection.apps =>
+                        _buildChatPanel(collapsed: collapsed),
                       _WideShellSection.local => _buildLocalPanel(),
                     },
             ),
@@ -1696,7 +1697,12 @@ class _WideLayoutShellState extends State<WideLayoutShell>
         icon: Icons.public_outlined,
         label: context.l10n.networkNetworksTitle,
         selected: false,
-        onTap: (_) => setState(() => _networksPaneOpen = true),
+        onTap: (_) {
+          // The networks surface lives IN the chats sidebar (the same slot
+          // the Local drill-down uses); the message column keeps the chat.
+          _selectSection(_WideShellSection.chats);
+          setState(() => _networksSurfaceOpen = true);
+        },
       ),
     ];
   }
@@ -1772,17 +1778,19 @@ class _WideLayoutShellState extends State<WideLayoutShell>
     );
   }
 
-  /// The identity globe's networks panel (Telegram pattern, owner pass):
-  /// the chat column swaps to the networks list with the in-place channel
-  /// drill-down. Back returns to the normal chats; the manage gear keeps
-  /// the management dialog reachable; opening a channel applies the
-  /// network chat filter (what the old dropdown menu's per-network entry
-  /// did) and returns to the chats.
-  Widget _buildNetworksPane() {
+  /// The chats sidebar's NETWORKS surface (Telegram pattern, owner pass):
+  /// the identity globe swaps the SIDEBAR content to the networks strip
+  /// with the in-place channel drill-down — the same slot the Local
+  /// drill-down uses; the message column keeps the chat. Back returns to
+  /// the normal chats; the manage gear keeps the management dialog
+  /// reachable; opening a channel applies the network chat filter (what
+  /// the old dropdown menu's per-network entry did) and returns to the
+  /// chats.
+  Widget _buildNetworksSidebar() {
     return ChatNetworksPanel(
       manager: widget.networkSessions,
       mode: widget.networkMode,
-      onBack: () => setState(() => _networksPaneOpen = false),
+      onBack: () => setState(() => _networksSurfaceOpen = false),
       onManageNetworks: () => unawaited(
         showChatNetworksDialog(
           context,
@@ -1792,7 +1800,7 @@ class _WideLayoutShellState extends State<WideLayoutShell>
       ),
       onOpenChannel: (networkId, channel) {
         _chatController.setNetworkFilter(ChatNetworkFilter.network(networkId));
-        setState(() => _networksPaneOpen = false);
+        setState(() => _networksSurfaceOpen = false);
       },
     );
   }

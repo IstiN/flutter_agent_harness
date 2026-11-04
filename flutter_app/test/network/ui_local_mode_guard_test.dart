@@ -9,6 +9,7 @@ import 'package:fa/network/network_session_manager.dart';
 import 'package:fa/services/flutter_session_manager.dart';
 import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/chats/chat_list_panel.dart';
+import 'package:fa/ui/chats/networks_list_panel.dart';
 import 'package:fa/ui/network/channel_rail.dart';
 import 'package:fa/ui/network/network_center.dart';
 import 'package:fa/ui/network/network_chat_page.dart';
@@ -143,12 +144,14 @@ void main() {
       expect(find.byType(NetworkCenterPane), findsNothing);
       expect(find.byType(NetworkHomePage), findsNothing);
 
-      // The globe opens the NETWORKS panel in place (no tree swap to a
-      // network home); leaving it restores the classic sidebar content.
+      // The globe swaps the CHATS SIDEBAR content to the networks surface
+      // in place (no tree swap to a network home, the chat column keeps
+      // the chat); leaving it restores the classic sidebar content.
       await tester.tap(find.byKey(const ValueKey('chatNetworkFilter')));
       await tester.pumpAndSettle();
       expect(find.byKey(const ValueKey('chatNetworksList')), findsOneWidget);
-      expect(find.byType(ChatListPanel), findsOneWidget);
+      expect(find.byType(ChatListPanel), findsNothing);
+      expect(find.byType(ChatNetworksPanel), findsOneWidget);
       expect(find.byType(NetworkCenterPane), findsNothing);
       await tester.tap(find.byKey(const ValueKey('chatNetworksBack')));
       await tester.pumpAndSettle();
