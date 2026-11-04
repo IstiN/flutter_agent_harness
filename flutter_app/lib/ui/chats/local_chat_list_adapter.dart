@@ -126,7 +126,13 @@ final class LocalChatListAdapter implements LocalChatListChangeSource {
         ChatListEntry(
           id: ChatEntryId.local(session.id),
           kind: ChatListEntryKind.localAgent,
-          title: _title(session.id, createdAt, isSubagent, infoNames),
+          title: _title(
+            session.id,
+            createdAt,
+            isSubagent,
+            infoNames,
+            metadata: metadata,
+          ),
           createdAt: createdAt,
           lastActivity:
               metadata?.lastUpdatedAt ??
@@ -153,7 +159,13 @@ final class LocalChatListAdapter implements LocalChatListChangeSource {
         ChatListEntry(
           id: ChatEntryId.local(metadata.id),
           kind: ChatListEntryKind.localAgent,
-          title: _title(metadata.id, metadata.createdAt, isSubagent, infoNames),
+          title: _title(
+            metadata.id,
+            metadata.createdAt,
+            isSubagent,
+            infoNames,
+            metadata: metadata,
+          ),
           createdAt: metadata.createdAt,
           lastActivity: metadata.lastUpdatedAt ?? metadata.createdAt,
           // '' caches "no preview" — both surface as null to the row.
@@ -222,11 +234,37 @@ final class LocalChatListAdapter implements LocalChatListChangeSource {
     String id,
     DateTime createdAt,
     bool isSubagent,
-    Map<String, String> infoNames,
-  ) =>
-      namesStore?.titleFor(id) ??
-      infoNames[id] ??
-      titleBuilder(id, createdAt, isSubagent);
+    Map<String, String> infoNames, {
+    SessionMetadata? metadata,
+  }) {
+    final persistedName = namesStore?.titleFor(id) ?? infoNames[id];
+    if (persistedName != null && persistedName.trim().isNotEmpty) {
+      return persistedName;
+    }
+    if (isSubagent && metadata != null) {
+      // The terminal/task identity is the human name for a delegated agent.
+      // Never replace it with the transcript UUID when no session_info name
+      // exists yet (the JSONL name fill is intentionally asynchronous).
+      for (final key in const ['id', 'name', 'displayName']) {
+        final value = metadata.metadata?[key];
+        final candidate = value is String ? value.trim() : null;
+        if (candidate != null &&
+            candidate.isNotEmpty &&
+            candidate != id &&
+            !_uuidPattern.hasMatch(candidate)) {
+          return candidate;
+        }
+      }
+    }
+    final derived = titleBuilder(id, createdAt, isSubagent).trim();
+    if (derived.isNotEmpty) return derived;
+    return isSubagent && id.length > 8 ? id.substring(0, 8) : id;
+  }
+
+  static final RegExp _uuidPattern = RegExp(
+    r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-'
+    r'[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$',
+  );
 
   static String? _folderName(String? cwd) {
     if (cwd == null || cwd.isEmpty) return null;

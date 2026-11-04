@@ -54,12 +54,13 @@ SubagentFamily? subagentFamilyFor(
   final current = controller.localEntryFor(sessionId);
   final parentId =
       (current != null && current.isSubagent ? current.parentId : null) ??
-          sessionId;
+      sessionId;
   final children = controller.subagentEntriesFor(parentId);
   if (children.isEmpty) return null;
   // Only a subagent chat gets the parent row; a parent chat IS the parent.
-  final parent =
-      current != null && current.isSubagent ? controller.localEntryFor(parentId) : null;
+  final parent = current != null && current.isSubagent
+      ? controller.localEntryFor(parentId)
+      : null;
   // A lone orphan has no family context to show.
   if (current != null && current.isSubagent && parent == null) {
     if (children.length < 2) return null;
@@ -95,7 +96,7 @@ class SubagentChatBadge extends StatelessWidget {
         final family = subagentFamilyFor(controller, sid);
         if (family == null) return const SizedBox.shrink();
         return Align(
-          alignment: Alignment.centerLeft,
+          alignment: Alignment.centerRight,
           child: Padding(
             padding: const EdgeInsets.fromLTRB(12, 4, 12, 6),
             child: _SubagentBadgeButton(family: family, onOpen: onOpen),
@@ -200,12 +201,14 @@ Future<void> showChatSubagentPopover(
   required SubagentFamily family,
   required Future<void> Function(ChatListEntry entry) onOpen,
 }) {
-  return Navigator.of(context).push(_SubagentPopoverRoute(
-    anchor: anchor,
-    bounds: bounds,
-    family: family,
-    onOpen: onOpen,
-  ));
+  return Navigator.of(context).push(
+    _SubagentPopoverRoute(
+      anchor: anchor,
+      bounds: bounds,
+      family: family,
+      onOpen: onOpen,
+    ),
+  );
 }
 
 class _SubagentPopoverRoute extends PopupRoute<void> {
@@ -242,7 +245,9 @@ class _SubagentPopoverRoute extends PopupRoute<void> {
     // Below the anchor by default, flipped above when it would overflow.
     const width = 300.0;
     const maxHeight = 380.0;
-    final left = anchor.left.clamp(8.0, math.max(8.0, bounds.width - width - 8)).toDouble();
+    final left = (anchor.right - width)
+        .clamp(8.0, math.max(8.0, bounds.width - width - 8))
+        .toDouble();
     var top = anchor.bottom + 6;
     if (top + maxHeight > bounds.height - 8) {
       top = math.max(8.0, anchor.top - maxHeight - 6);
@@ -337,7 +342,9 @@ class _SubagentPopoverPanelState extends State<_SubagentPopoverPanel> {
                 children: [
                   _SubagentFilterPill(
                     key: const ValueKey('chatSubagentToggleActive'),
-                    label: context.l10n.chatSubagentFilterActive(running.length),
+                    label: context.l10n.chatSubagentFilterActive(
+                      running.length,
+                    ),
                     selected: !_showDone,
                     onTap: () => _setDone(false),
                   ),
@@ -441,10 +448,7 @@ class _SubagentPopoverRow extends StatelessWidget {
         child: Row(
           children: [
             if (leading != null)
-              Padding(
-                padding: const EdgeInsets.only(right: 6),
-                child: leading!,
-              )
+              Padding(padding: const EdgeInsets.only(right: 6), child: leading!)
             else if (_entryIsRunning(entry))
               Padding(
                 padding: const EdgeInsets.only(right: 6),
@@ -471,8 +475,10 @@ class _SubagentPopoverRow extends StatelessWidget {
                     borderRadius: BorderRadius.circular(999),
                   ),
                   child: Padding(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 6,
+                      vertical: 1,
+                    ),
                     child: Text(
                       '${entry.unreadCount ?? 0}',
                       style: TextStyle(

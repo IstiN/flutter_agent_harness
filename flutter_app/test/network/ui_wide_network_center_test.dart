@@ -653,6 +653,73 @@ void main() {
       });
     }
 
+    testWidgets('rail All is a global reset from a drilled network channel', (
+      tester,
+    ) async {
+      final wallet = await KeyWallet.load(MemoryWalletBackend());
+      await wallet.addNetwork(networkId: 'net1', name: 'epam-public');
+      final session = buildSession(
+        httpClient: FakeHttpClient()
+          ..respond(
+            200,
+            body:
+                '[{"id":"c1","networkId":"net1","name":"general","public":true}]',
+          )
+          ..respond(200, body: membersBody)
+          ..respond(200, body: '{"items":[],"nextCursor":""}'),
+        connector: FakeWsConnector(),
+        wallet: wallet,
+      );
+      await session.start();
+      final manager = NetworkSessionManager(
+        baseUrl: testBase,
+        wallet: wallet,
+        httpClient: FakeHttpClient(),
+        wsConnector: FakeWsConnector(),
+      )..sessions['net1'] = session;
+      addTearDown(manager.disconnectAll);
+      final controller = NetworkModeController.inMemory();
+      await _pumpWideHome(
+        tester,
+        controller: controller,
+        manager: manager,
+        networkInboxAdapter: FixtureNetworkInboxAdapter(
+          items: [
+            NetworkInboxItem(
+              kind: ChatListEntryKind.networkChannel,
+              networkId: 'net1',
+              id: 'c1',
+              title: 'general',
+              lastActivity: DateTime.utc(2026, 8, 1, 12),
+            ),
+          ],
+        ),
+      );
+      await tester.tap(
+        find.byKey(const ValueKey('messengerPrimaryNav-network')),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('networkRow-net1')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('chatNetworkChannel-c1')));
+      await tester.pumpAndSettle();
+      expect(find.byType(NetworkChatPage), findsOneWidget);
+      expect(find.byType(ChatNetworksPanel), findsOneWidget);
+
+      await tester.tap(find.byKey(const ValueKey('chatFilter-all')));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(NetworkChatPage), findsNothing);
+      expect(find.byType(ChatNetworksPanel), findsNothing);
+      expect(find.byType(ChatListPanel), findsOneWidget);
+      expect(find.byKey(const ValueKey('chatListScroll')), findsOneWidget);
+      expect(controller.mode, AppMode.local);
+      expect(controller.networkId, isNull);
+      expect(controller.channelId, isNull);
+      await manager.disconnectAll();
+      await tester.pump();
+    });
+
     testWidgets('the networks surface channel tap keeps the surface and '
         'selects the channel row', (tester) async {
       final wallet = await KeyWallet.load(MemoryWalletBackend());

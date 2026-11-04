@@ -11,8 +11,7 @@ import 'package:fa/ui/chats/chat_list_entry.dart';
 import 'package:fa/ui/chats/chat_list_panel.dart' show ChatRunningDot;
 import 'package:fa/ui/chats/local_chat_list_adapter.dart';
 import 'package:fa/ui/widgets/subagent_chat_badge.dart';
-import 'package:fa_ui/fa_ui.dart'
-    show FaVisualDirection, buildFaTheme;
+import 'package:fa_ui/fa_ui.dart' show FaVisualDirection, buildFaTheme;
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -87,18 +86,20 @@ void main() {
     expect(family.running.map((e) => e.id.value), ['scan']);
   });
 
-  test('family for a subagent chat: the parent row + the sibling children',
-      () async {
-    final c = await controller([
-      entry('poc'),
-      entry('scan', parentId: 'poc', isSubagent: true),
-      entry('watch', parentId: 'poc', isSubagent: true),
-      entry('other-family-child', parentId: 'other', isSubagent: true),
-    ]);
-    final family = subagentFamilyFor(c, 'watch')!;
-    expect(family.parent!.id.value, 'poc');
-    expect(family.children.map((e) => e.id.value), ['scan', 'watch']);
-  });
+  test(
+    'family for a subagent chat: the parent row + the sibling children',
+    () async {
+      final c = await controller([
+        entry('poc'),
+        entry('scan', parentId: 'poc', isSubagent: true),
+        entry('watch', parentId: 'poc', isSubagent: true),
+        entry('other-family-child', parentId: 'other', isSubagent: true),
+      ]);
+      final family = subagentFamilyFor(c, 'watch')!;
+      expect(family.parent!.id.value, 'poc');
+      expect(family.children.map((e) => e.id.value), ['scan', 'watch']);
+    },
+  );
 
   test('a chat without a subagent family has none (no badge)', () async {
     final c = await controller([entry('solo')]);
@@ -132,6 +133,26 @@ void main() {
     expect(find.text('2'), findsOneWidget, reason: 'two RUNNING subagents');
   });
 
+  testWidgets('the badge and its popover are anchored on the right', (
+    tester,
+  ) async {
+    final c = await controller([
+      entry('poc'),
+      entry('scan', parentId: 'poc', isSubagent: true, streaming: true),
+    ]);
+    await pumpBadge(tester, controller: c, sessionId: 'poc');
+    final badge = find.byKey(const ValueKey('chatSubagentBadge'));
+    expect(tester.getRect(badge).right, greaterThan(760));
+
+    await tester.tap(badge);
+    await tester.pumpAndSettle();
+
+    final row = tester.getRect(
+      find.byKey(const ValueKey('chatSubagentEntry-scan')),
+    );
+    expect(row.right, closeTo(tester.getRect(badge).right, 1));
+  });
+
   testWidgets('the badge popover lists the family with the Active|Done '
       'filter and opens a row through the host flow', (tester) async {
     final opened = <ChatListEntry>[];
@@ -156,10 +177,7 @@ void main() {
       findsOneWidget,
     );
     // …and the finished row hides behind the Done toggle.
-    expect(
-      find.byKey(const ValueKey('chatSubagentEntry-watch')),
-      findsNothing,
-    );
+    expect(find.byKey(const ValueKey('chatSubagentEntry-watch')), findsNothing);
     // The running dot rides the active row (the chat list's token).
     expect(
       find.descendant(
@@ -183,10 +201,7 @@ void main() {
       ),
       findsOneWidget,
     );
-    expect(
-      find.byKey(const ValueKey('chatSubagentEntry-scan')),
-      findsNothing,
-    );
+    expect(find.byKey(const ValueKey('chatSubagentEntry-scan')), findsNothing);
 
     // A row tap opens that subagent's chat and closes the popover.
     await tester.tap(find.byKey(const ValueKey('chatSubagentEntry-watch')));
@@ -228,8 +243,9 @@ void main() {
     expect(opened.single.id.value, 'poc');
   });
 
-  testWidgets('an outside tap closes the popover without opening anything',
-      (tester) async {
+  testWidgets('an outside tap closes the popover without opening anything', (
+    tester,
+  ) async {
     final opened = <ChatListEntry>[];
     final c = await controller([
       entry('poc'),
@@ -244,7 +260,10 @@ void main() {
 
     await tester.tap(find.byKey(const ValueKey('chatSubagentBadge')));
     await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey('chatSubagentEntry-scan')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('chatSubagentEntry-scan')),
+      findsOneWidget,
+    );
 
     // Dismiss via the barrier: the popover closes, nothing opens.
     await tester.tapAt(const Offset(600, 100));

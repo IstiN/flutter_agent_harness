@@ -441,6 +441,8 @@ class _WideLayoutShellState extends State<WideLayoutShell>
     if (custom != null && custom.isNotEmpty) return custom;
     final jsonl = _jsonlNames[active.id]?.trim();
     if (jsonl != null && jsonl.isNotEmpty) return jsonl;
+    final entry = _chatController.localEntryFor(active.id);
+    if (entry != null && entry.isSubagent) return entry.title;
     return derivedSessionTitle(
       context,
       id: active.id,
@@ -1367,6 +1369,22 @@ class _WideLayoutShellState extends State<WideLayoutShell>
     };
   }
 
+  /// All is the chats-home reset, not merely another list facet. In
+  /// particular it must unwind a drilled network/channel even when Chats
+  /// already owns the rail (so the ordinary section-change reset is a no-op).
+  void _selectAllChats() {
+    _chatController.setFilter(ChatListFilter.all);
+    _chatController.setNetworkFilter(const ChatNetworkFilter.all());
+    _selectSection(_WideShellSection.chats);
+    setState(() {
+      _networksSurfaceOpen = false;
+      _activeNetworkEntry = null;
+      _localFolderId = null;
+    });
+    final mode = widget.networkMode;
+    if (mode != null) unawaited(mode.exitToLocal());
+  }
+
   void _selectSection(_WideShellSection section) {
     final changed = section != _section;
     var dismissPresentation = false;
@@ -1620,6 +1638,10 @@ class _WideLayoutShellState extends State<WideLayoutShell>
       label: label,
       selected: chatsSelected && filter == value,
       onTap: (_) {
+        if (value == ChatListFilter.all) {
+          _selectAllChats();
+          return;
+        }
         _chatController.setFilter(value);
         _selectSection(_WideShellSection.chats);
       },

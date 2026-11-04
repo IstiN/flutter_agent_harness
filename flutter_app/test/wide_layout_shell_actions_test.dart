@@ -3026,11 +3026,12 @@ void main() {
       JsonlSessionRepo repo, {
       required String id,
       required String parent,
+      String? taskName,
     }) => repo.create(
       JsonlSessionCreateOptions(
         cwd: '/tmp',
         id: id,
-        metadata: {'agent': 'subagent', 'parent': parent},
+        metadata: {'agent': 'subagent', 'parent': parent, 'id': ?taskName},
       ),
     );
 
@@ -3101,6 +3102,47 @@ void main() {
       final opened = manager.sessions.firstWhere((s) => s.id == 'sub-scan');
       manager.switchTo('fake-session');
       await manager.closeSession('sub-scan');
+      opened.service.dispose();
+      await tester.pumpAndSettle();
+    });
+
+    testWidgets('the human task name reaches both picker and chat header', (
+      tester,
+    ) async {
+      const childId = '0198f2f5-90e5-7f35-8e30-bdb535d04b04';
+      final env = MemoryExecutionEnv();
+      final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
+        ..addSession('fake-session', _listedService(env));
+      final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
+      await createSubagent(
+        repo,
+        id: childId,
+        parent: 'fake-session',
+        taskName: 'channel-open-fix',
+      );
+      await pumpShell(tester, manager: manager);
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const ValueKey('chatSubagentBadge')));
+      await tester.pumpAndSettle();
+      final row = find.byKey(ValueKey('chatSubagentEntry-$childId'));
+      expect(
+        find.descendant(of: row, matching: find.text('channel-open-fix')),
+        findsOneWidget,
+      );
+      await tester.tap(row);
+      await tester.pumpAndSettle();
+      await tester.pump(const Duration(seconds: 10));
+      await tester.pumpAndSettle();
+
+      expect(manager.activeId, childId);
+      expect(
+        tester.widget<ChatScreen>(find.byType(ChatScreen)).sessionTitle,
+        'channel-open-fix',
+      );
+      final opened = manager.sessions.firstWhere((s) => s.id == childId);
+      manager.switchTo('fake-session');
+      await manager.closeSession(childId);
       opened.service.dispose();
       await tester.pumpAndSettle();
     });

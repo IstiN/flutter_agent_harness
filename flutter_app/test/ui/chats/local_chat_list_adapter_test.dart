@@ -157,6 +157,36 @@ void main() {
     },
   );
 
+  test('subagents prefer their persisted human task identity', () async {
+    final env = MemoryExecutionEnv();
+    final manager = FlutterSessionManager(
+      env: env,
+      sessionsRoot: '/sessions',
+      includeSharedSessionRoots: false,
+    );
+    final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
+    await repo.create(
+      const JsonlSessionCreateOptions(
+        id: '0198f2f5-90e5-7f35-8e30-bdb535d04b04',
+        cwd: '/work',
+        metadata: {
+          'agent': 'subagent',
+          'parent': 'parent',
+          'id': 'rail-all-local-pass',
+        },
+      ),
+    );
+    final adapter = LocalChatListAdapter(
+      manager: manager,
+      titleBuilder: (_, _, _) => 'Derived fallback title',
+    );
+
+    final entries = await adapter.load();
+
+    expect(entries.single.title, 'rail-all-local-pass');
+    expect(entries.single.isSubagent, isTrue);
+  });
+
   test(
     'reload uses the fresh store instead of a pre-delete snapshot',
     () async {
