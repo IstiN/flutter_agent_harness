@@ -205,6 +205,40 @@ void main() {
       },
     );
 
+    test(
+      'a failed fallback download aborts the block with a non-zero exit — '
+      'the failure must surface at the curl step, not be swallowed into the '
+      'downstream nm diagnostic',
+      () {
+        final tmp = Directory.systemTemp.createTempSync('gh2055-');
+        addTearDown(() => tmp.deleteSync(recursive: true));
+        final work = '${tmp.path}/work';
+        Directory('$work/Frameworks').createSync(recursive: true);
+
+        final block = interpolate(shellBlock(read(podspecPath)), read(podspecPath));
+        final log = '${tmp.path}/stub.log';
+        final r = runBlock(block, work, '${tmp.path}/bin', log);
+
+        expect(
+          r.exitCode,
+          isNot(0),
+          reason:
+              'the block must fail at the step that failed: curl already '
+              'carries --fail, but an ignored exit status falls through to '
+              'unzip (misleading "not a zip" error) and the shell block '
+              'still exits 0 — pod install then dies at the Podfile nm '
+              'check with the curl root cause masked. Same '
+              '"fail loudly at the failing step" posture the gh-1149 '
+              'restore step is linted for.',
+        );
+        expect(
+          File(log).existsSync(),
+          isTrue,
+          reason: 'the download must have been attempted before failing',
+        );
+      },
+    );
+
     test('guard keys on the archive the Podfile consumes, not the zip marker', () {
       final podspec = read(podspecPath);
       final block = interpolate(shellBlock(podspec), podspec);

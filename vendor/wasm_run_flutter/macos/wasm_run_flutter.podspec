@@ -22,11 +22,14 @@ cd Frameworks
 # missing libwasm_run_dart.a. With the archive in place this block is now
 # a no-op; it stays as the local-dev fallback for a truly cold tree.
 # --fail keeps an HTTP error page from masquerading as a zip (the same
-# posture the workflow restore step is linted for).
+# posture the workflow restore step is linted for); the || guard fails the
+# block AT the curl step so a dead download surfaces its own error instead
+# of being swallowed into unzip/truncate residue and the downstream
+# Podfile nm diagnostic (gh-2055 review).
 if [ ! -f #{framework_name}/macos-arm64_x86_64/libwasm_run_dart.a ]
 then
   rm -rf #{framework_name}
-  curl --fail -L #{url} -o #{local_zip_name}
+  curl --fail -L #{url} -o #{local_zip_name} || { echo "wasm_run download failed" >&2; exit 1; }
   unzip #{local_zip_name}
   truncate -s 0 #{local_zip_name}
   rm -rf #{framework_name}/ios-*
