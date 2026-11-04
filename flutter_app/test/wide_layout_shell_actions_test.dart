@@ -1313,6 +1313,15 @@ void main() {
       findsNothing,
       reason: 'the networks surface no longer renders in the message column',
     );
+    // It lives IN the sidebar panel — the same slot the Local drill-down
+    // uses.
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('glassSidebarPanel')),
+        matching: find.byType(ChatNetworksPanel),
+      ),
+      findsOneWidget,
+    );
     // The sidebar swapped: the chat list panel is replaced while the
     // surface is open.
     expect(find.byType(ChatListPanel), findsNothing);
