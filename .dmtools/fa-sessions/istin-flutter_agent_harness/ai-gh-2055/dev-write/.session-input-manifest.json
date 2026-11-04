@@ -1,0 +1,161 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-11-04T08:52:00.872Z",
+  "ticketKey": "gh-2055",
+  "headSha": "fcdbf899eb61e9690ea6cf883c024e920017e627",
+  "baseBranch": "main",
+  "reviewDecision": "NONE",
+  "labels": [],
+  "files": {
+    "ci_failures.md": {
+      "hash": "fnv1a64:d76f3b12c7d9cb95",
+      "size": 15573
+    },
+    "ci_failures_full.log": {
+      "hash": "fnv1a64:321b88f0682e5c52",
+      "size": 14987
+    },
+    "ci_violations.json": {
+      "hash": "fnv1a64:0a2c81736495982a",
+      "size": 306
+    },
+    "pr_diff.txt": {
+      "hash": "fnv1a64:642579f4c863255b",
+      "size": 12301
+    },
+    "pr_discussions.md": {
+      "hash": "fnv1a64:d8fe76aca2473427",
+      "size": 13366
+    },
+    "pr_discussions_raw.json": {
+      "hash": "fnv1a64:f6d81e4ffa23508f",
+      "size": 5856
+    },
+    "pr_info.md": {
+      "hash": "fnv1a64:dc92336b9ebc7637",
+      "size": 2691
+    },
+    "request.md": {
+      "hash": "fnv1a64:81d9ff4230471b47",
+      "size": 2385
+    },
+    "review_state.md": {
+      "hash": "fnv1a64:8e150b99988245bf",
+      "size": 966
+    },
+    "rework_base_head.txt": {
+      "hash": "fnv1a64:2af60e80c9f427bd",
+      "size": 40
+    },
+    "ticket.json": {
+      "hash": "fnv1a64:a2788eb9364ef27e",
+      "size": 2458
+    },
+    "ticket.md": {
+      "hash": "fnv1a64:81d9ff4230471b47",
+      "size": 2385
+    }
+  },
+  "comments": [
+    {
+      "id": "PRRT_kwDOTXdlLc6zg6Uf",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "vendor/wasm_run_flutter/macos/wasm_run_flutter.podspec:29",
+      "resolved": false,
+      "body": "⚠️ severity: IMPORTANT —\n⚠️ **IMPORTANT: the fallback download failure is still swallowed — pod install dies later at the `nm` check with the root cause masked**\n\n`--fail` is the right posture, but the block still ignores curl's exit status.\nThe shell block runs via Ruby backticks (exit code unchecked), and there is no\n`set -e`, so a failed download falls through to:\n\n```sh\ncurl --fail -L #{url} -o #{local_zip_name}   # exits non-zero on HTTP error OR network failure (curl 56)\nunzip #{local_zip_name}                      # fails: zip missing / truncated\ntruncate -s 0 #{local_zip_name}              # recreates the 0-byte zip residue\n```\n\n…yet the block **still exits 0** (the trailing `cd -` is the last command), so\n`pod install` proceeds with no framework and the Podfile post_install hook fails\nwith the *downstream* symptom:\n\n```\nraise \"no wasm_run FFI symbols found in #{macos_archive}\"\n```\n\nThat is exactly the gh-2055 failure *shape* the PR fixes: the real root cause\n(one line above in the log: the curl error) is masked by an unrelated-looking\nsymbol error. Verified behaviorally with the block extracted from this podspec\nand a stubbed curl exiting 60: block `exit=0` despite the failed\ndownload/unzip.\n\nMake the fallback fail at the step that failed:\n\n```sh\ncurl --fail -L #{url} -o #{local_zip_name} || { echo \"wasm_run download failed\" >&2; exit 1; }\n```\n\nso `pod install` aborts with curl's own error adjacent, instead of the `nm`\ndiagnostic. Low blast radius (CI always has the hardened build-macos.yml\nrestore step ahead of pod install; this path is the local-dev fallback), which\nis why this is ⚠️ and not 🚨 — but it is one line and it completes the gh-1149\n\"fail loudly at the failing step\" posture the PR invokes."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6zg6XV",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "test/wasmrun_macos_podspec_download_guard_test.dart:213",
+      "resolved": false,
+      "body": "💡 severity: SUGGESTION —\n💡 **SUGGESTION: guard/curl lint anchors latch onto the *first* `if ` / `curl ` line — one `orElse` away from a silent misfire**\n\n```dart\nfinal guardLine = block\n    .split('\\n')\n    .firstWhere((l) => l.trimLeft().startsWith('if '));\n```\n\nTwo fragilities (same pattern at line 229 for `curl `):\n\n1. **Wrong-line latch.** `firstWhere` takes the first line that merely *starts\n   with* `if `. If the shell block ever grows a second `if` (e.g. an\n   arch-conditional or a post-unzip check) *above* the guard, the lint silently\n   inspects the wrong line — the test can then pass while the actual guard\n   regresses back to the zip marker.\n2. **Unhelpful failure.** No `orElse`: if the guard line is renamed/reformatted\n   (say `if ! …` or split across lines), the test dies with a bare\n   `StateError: No element associated` instead of the named `reason:` that\n   documents gh-2055.\n\nCheap hardening:\n\n```dart\nfinal guardLine = block.split('\\n').firstWhere(\n      (l) => l.trimLeft().startsWith('if '),\n      orElse: () => fail('no if-guard found in the podspec shell block'),\n    );\n```\n\nor anchor positively — the guard line is the one containing the interpolated\narchive path:\n\n```dart\nfinal guardLine = block.split('\\n').singleWhere(\n      (l) => l.contains(consumedArchive),\n      orElse: () => fail('guard no longer keys on $consumedArchive'),\n    );\n```\n\n`singleWhere` additionally fails if the archive path is mentioned in two\nplaces, which is itself a drift signal. Pure polish — behavior today is\ncorrect."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6zg6aJ",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "test/wasmrun_macos_podspec_download_guard_test.dart:105",
+      "resolved": false,
+      "body": "💡 severity: SUGGESTION —\n💡 **SUGGESTION: assert the curl stub is actually executable — a silent `chmod` failure would send the tests to the real network**\n\n```dart\nProcess.runSync('chmod', ['+x', stub.path]);\n```\n\nThe result is discarded, and the test's own contract (header comment:\n*\"executed in a sandbox with a stubbed `curl` (never the network)\"*) rests on\nthis line. Shell `PATH` resolution skips non-executable entries and falls\nthrough to the next match — so if `chmod` ever fails, `sh` finds the **real**\ncurl later on `PATH` and tests 2 and 3 (the \"archive absent\" paths, where curl\n*is* invoked) would kick off a genuine 92.7 MB download of\n`WasmRun.xcframework.zip` from GitHub releases, then fail confusingly on\n`unzip`/exit-code assertions.\n\nKeep the no-network guarantee airtight:\n\n```dart\nfinal chmod = Process.runSync('chmod', ['+x', stub.path]);\nexpect(chmod.exitCode, 0, reason: 'curl stub must be executable — '\n    'otherwise PATH falls through to the real curl and these tests '\n    'touch the network');\n```\n\nOptional, same vein: on the record this file is POSIX-bound (`sh`, `chmod`,\n`#!/bin/sh` stub). CI only runs the root Dart suite on ubuntu, and macOS devs\nare fine, but a Windows dev running `dart test` locally would hit a\n`ProcessException` from `chmod`. A one-line\n`skip: !Platform.isLinux && !Platform.isMacOS` on the group (with the two pure\nstatic lints kept unskipped, or moved out) keeps the whole suite green there\ntoo — the repo already uses this pattern\n(`test/ci_profile_serial_precheck_test.dart:39`). Pure polish."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-04:a1fde16e",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-04",
+      "updatedAt": "2026-11-04",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ severity: IMPORTANT —\n⚠️ **IMPORTANT: the fallback download failure is still swallowed — pod install dies later at the `nm` check with the root cause masked**\n\n`--fail` is the right posture, but the block still ignores curl's exit status.\nThe shell block runs via Ruby backticks (exit code unchecked), and there is no\n`set -e`, so a failed download falls through to:\n\n```sh\ncurl --fail -L #{url} -o #{local_zip_name}   # exits non-zero on HTTP error OR network failure (curl 56)\nunzip #{local_zip_name}                      # fails: zip missing / truncated\ntruncate -s 0 #{local_zip_name}              # recreates the 0-byte zip residue\n```\n\n…yet the block **still exits 0** (the trailing `cd -` is the last command), so\n`pod install` proceeds with no framework and the Podfile post_install hook fails\nwith the *downstream* symptom:\n\n```\nraise \"no wasm_run FFI symbols found in #{macos_archive}\"\n```\n\nThat is exactly the gh-2055 failure *shape* the PR fixes: the real root cause\n(one line above in the log: the curl error) is masked by an unrelated-looking\nsymbol error. Verified behaviorally with the block extracted from this podspec\nand a stubbed curl exiting 60: block `exit=0` despite the failed\ndownload/unzip.\n\nMake the fallback fail at the step that failed:\n\n```sh\ncurl --fail -L #{url} -o #{local_zip_name} || { echo \"wasm_run download failed\" >&2; exit 1; }\n```\n\nso `pod install` aborts with curl's own error adjacent, instead of the `nm`\ndiagnostic. Low blast radius (CI always has the hardened build-macos.yml\nrestore step ahead of pod install; this path is the local-dev fallback), which\nis why this is ⚠️ and not 🚨 — but it is one line and it completes the gh-1149\n\"fail loudly at the failing step\" posture the PR invokes."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-04:ee142b86",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-04",
+      "updatedAt": "2026-11-04",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 severity: SUGGESTION —\n💡 **SUGGESTION: guard/curl lint anchors latch onto the *first* `if ` / `curl ` line — one `orElse` away from a silent misfire**\n\n```dart\nfinal guardLine = block\n    .split('\\n')\n    .firstWhere((l) => l.trimLeft().startsWith('if '));\n```\n\nTwo fragilities (same pattern at line 229 for `curl `):\n\n1. **Wrong-line latch.** `firstWhere` takes the first line that merely *starts\n   with* `if `. If the shell block ever grows a second `if` (e.g. an\n   arch-conditional or a post-unzip check) *above* the guard, the lint silently\n   inspects the wrong line — the test can then pass while the actual guard\n   regresses back to the zip marker.\n2. **Unhelpful failure.** No `orElse`: if the guard line is renamed/reformatted\n   (say `if ! …` or split across lines), the test dies with a bare\n   `StateError: No element associated` instead of the named `reason:` that\n   documents gh-2055.\n\nCheap hardening:\n\n```dart\nfinal guardLine = block.split('\\n').firstWhere(\n      (l) => l.trimLeft().startsWith('if '),\n      orElse: () => fail('no if-guard found in the podspec shell block'),\n    );\n```\n\nor anchor positively — the guard line is the one containing the interpolated\narchive path:\n\n```dart\nfinal guardLine = block.split('\\n').singleWhere(\n      (l) => l.contains(consumedArchive),\n      orElse: () => fail('guard no longer keys on $consumedArchive'),\n    );\n```\n\n`singleWhere` additionally fails if the archive path is mentioned in two\nplaces, which is itself a drift signal. Pure polish — behavior today is\ncorrect."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-04:0f225f99",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-04",
+      "updatedAt": "2026-11-04",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 severity: SUGGESTION —\n💡 **SUGGESTION: assert the curl stub is actually executable — a silent `chmod` failure would send the tests to the real network**\n\n```dart\nProcess.runSync('chmod', ['+x', stub.path]);\n```\n\nThe result is discarded, and the test's own contract (header comment:\n*\"executed in a sandbox with a stubbed `curl` (never the network)\"*) rests on\nthis line. Shell `PATH` resolution skips non-executable entries and falls\nthrough to the next match — so if `chmod` ever fails, `sh` finds the **real**\ncurl later on `PATH` and tests 2 and 3 (the \"archive absent\" paths, where curl\n*is* invoked) would kick off a genuine 92.7 MB download of\n`WasmRun.xcframework.zip` from GitHub releases, then fail confusingly on\n`unzip`/exit-code assertions.\n\nKeep the no-network guarantee airtight:\n\n```dart\nfinal chmod = Process.runSync('chmod', ['+x', stub.path]);\nexpect(chmod.exitCode, 0, reason: 'curl stub must be executable — '\n    'otherwise PATH falls through to the real curl and these tests '\n    'touch the network');\n```\n\nOptional, same vein: on the record this file is POSIX-bound (`sh`, `chmod`,\n`#!/bin/sh` stub). CI only runs the root Dart suite on ubuntu, and macOS devs\nare fine, but a Windows dev running `dart test` locally would hit a\n`ProcessException` from `chmod`. A one-line\n`skip: !Platform.isLinux && !Platform.isMacOS` on the group (with the two pure\nstatic lints kept unskipped, or moved out) keeps the whole suite green there\ntoo — the repo already uses this pattern\n(`test/ci_profile_serial_precheck_test.dart:39`). Pure polish."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-11-04:98756223",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-11-04",
+      "updatedAt": "2026-11-04",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🔁 Cancelled required checks re-run: `Cube kernel live (macOS)` ended CANCELLED on this head — the push runs died after the 15m verdict window (gh-755 — live dmtools-agents PRs #752/#753: kicker sm-liveness + docs-freshness cancelled with no rerun and no verdict; owner directive 2026-10-05: a CANCELLED run is not a verdict, re-run it). CANCELLED is never a verdict: nothing failed, the re-run re-stamps the contexts and merging resumes automatically. (head `fcdbf899eb61e9690ea6cf883c024e920017e627`)"
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-11-04:4ccf3432",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-11-04",
+      "updatedAt": "2026-11-04",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ Validation CI went red on the head — merge aborted, rework re-queued. (linked issue #2055 re-armed) (approval latch kept — no re-review after fixes)\n🔴 red head fcdbf899eb61e9690ea6cf883c024e920017e627 — red 1/3 (owner directive 2026-10-04: red yields the slot — after 3 reds on the same head, validation waits for a NEW head)"
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-04:eab033a1",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-04",
+      "updatedAt": "2026-11-04",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — REQUEST_CHANGES\n\n**Summary**: The gh-2055 fix itself is correct and was verified behaviorally (stubbed-curl replay: old guard destroys a restored framework, new archive-keyed guard is a clean no-op), with a solid behavioral + static test. Merge is blocked only by the red `Quality gate` on head `fcdbf899`.\n\n- 🚨 **BLOCKING (CI)** — `Quality gate` failed: platform leg `cube-kernel-live` is **cancelled** (`R_CUBE: cancelled` → `platform_red` → required check red). Nothing failed; per the owner directive quoted on this PR, a CANCELLED run is not a verdict — **re-run the cancelled `Cube kernel live (macOS)` leg**, no code change expected. Notably `build-macos = success` on this same head: the leg this PR fixes is already green. Details: `outputs/pr_review_comments/comment0_ci_quality_gate_red.md`.\n- ⚠️ **IMPORTANT** — `vendor/wasm_run_flutter/macos/wasm_run_flutter.podspec:29`: `curl --fail` now exits non-zero, but the block ignores it (`exit=0` verified) and pod install proceeds to fail at the Podfile `nm` check, masking the curl root cause; add `curl … || exit 1`.\n- 💡 2 suggestions — test robustness (guard-lint `firstWhere` anchor, unchecked `chmod` that guards the no-network contract).\n\n**Next Steps**:\n1. Re-run the cancelled `Cube kernel live (macOS)` check on this head.\n2. Add the one-line failure guard to the podspec fallback download.\n3. Optional robustness polish in `test/wasmrun_macos_podspec_download_guard_test.dart`."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-11-04:f6b3287d",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-11-04",
+      "updatedAt": "2026-11-04",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🔴 red head fcdbf899eb61e9690ea6cf883c024e920017e627 — red 2/3 (owner directive 2026-10-04: red yields the slot — after 3 reds on the same head, validation waits for a NEW head)\n🔴 Red pre-merge gate on the head with no armed validation — rework armed (gh-917: first validation included, review or no review). The rework runner pushes a fix and validation re-runs on the new head (validate-fresh). After 3 red arming attempts on the SAME head the arm is withheld and a human is escalated (no infinite retry)."
+    }
+  ]
+}
