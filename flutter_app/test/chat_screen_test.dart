@@ -104,6 +104,33 @@ void main() {
       expect(find.byTooltip('Open files'), findsOneWidget);
     });
 
+    testWidgets('inputHeader docks between the transcript and the composer '
+        '(the subagent switcher slot)', (tester) async {
+      _useWideSurface(tester);
+      final env = MemoryExecutionEnv();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ChatScreen(
+            manager: _fakeManager(env),
+            inputHeader: const SizedBox(
+              key: ValueKey('inputHeaderProbe'),
+              width: 60,
+              height: 20,
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final probe = find.byKey(const ValueKey('inputHeaderProbe'));
+      expect(probe, findsOneWidget);
+      // It sits directly ABOVE the composer input, below the transcript.
+      final probeRect = tester.getRect(probe);
+      final composerRect = tester.getRect(find.byType(fa_ui.ChatComposer));
+      expect(probeRect.bottom, lessThanOrEqualTo(composerRect.top + 1));
+      expect(probeRect.height, 20);
+    });
+
     testWidgets('wide: the Files presentation carries the session folder '
         '(the access-gate seam)', (tester) async {
       _useWideSurface(tester);

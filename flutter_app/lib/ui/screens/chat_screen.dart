@@ -122,6 +122,7 @@ class ChatScreen extends StatefulWidget {
     this.modelChip,
     this.onModelChipTap,
     this.chipMenuLabel,
+    this.inputHeader,
   });
 
   /// The multi-session manager owning the active [AgentService].
@@ -213,6 +214,11 @@ class ChatScreen extends StatefulWidget {
 
   /// The ⋮-menu row label for the demoted model chip (the model id).
   final String? chipMenuLabel;
+
+  /// A host widget docked between the transcript and the composer input —
+  /// the subagent switcher chips (subagent sessions owner pass). Null
+  /// docks nothing.
+  final Widget? inputHeader;
 
   @override
   State<ChatScreen> createState() => _ChatScreenState();
@@ -450,6 +456,7 @@ class _ChatScreenState extends State<ChatScreen> {
       modelChip: widget.modelChip,
       onModelChipTap: widget.onModelChipTap,
       chipMenuLabel: widget.chipMenuLabel,
+      inputHeader: widget.inputHeader,
       settingsBuilder: (_) => SettingsScreen(
         service: service,
         env: service.env,

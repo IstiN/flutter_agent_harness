@@ -117,6 +117,7 @@ class FaChatScreen extends StatefulWidget {
     this.composerBuilder,
     this.mentionOptionsBuilder,
     this.noticeBanner,
+    this.inputHeader,
     this.wallpaperBuilder,
     this.avatarBuilder,
     this.onAuthRecovery,
@@ -179,6 +180,12 @@ class FaChatScreen extends StatefulWidget {
   /// The HOST owns the widget's lifecycle and state — this screen only
   /// docks whatever is handed in; null docks nothing.
   final Widget? noticeBanner;
+
+  /// A host widget docked between the transcript and the composer input —
+  /// the slot under the bottom-overlay pills, just above the input row.
+  /// The messenger's subagent switcher rides it (subagent sessions owner
+  /// pass); the HOST owns the widget's lifecycle — null docks nothing.
+  final Widget? inputHeader;
 
   /// Wallpaper layer painted under the transcript (theme packs): when
   /// non-null the chat surface paints transparent so the layer shows
@@ -1598,6 +1605,7 @@ class _FaChatScreenState extends State<FaChatScreen>
       ?_buildWidgetOpenChip(context),
       if (_historyHasNewer) _buildNewerHistoryBanner(strings),
       if (_follow.isHeld && _follow.unseen > 0) _followLivePill(strings),
+      ?widget.inputHeader,
     ];
     Widget body = DropTarget(
       enable: widget.features.attachments,
