@@ -13,8 +13,8 @@ import 'package:fa/ui/chats/chat_list_panel.dart' show chatListRelativeTime;
 import 'package:fa/ui/chats/local_sessions_panel.dart' show LocalSessionsPanel;
 import 'package:fa/ui/chats/messenger_list_row_style.dart';
 import 'package:fa/ui/widgets/folder_avatar.dart';
+import 'package:fa/ui/widgets/messenger_section_header.dart';
 import 'package:fa_ui/fa_ui.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 /// The chats sidebar's NETWORKS surface (Telegram pattern, owner pass):
@@ -38,6 +38,7 @@ class ChatNetworksPanel extends StatefulWidget {
     required this.onBack,
     required this.onManageNetworks,
     required this.onOpenChannel,
+    this.onCollapse,
   });
 
   /// The compact strip's geometry (the Local folder strip's contract):
@@ -77,6 +78,9 @@ class ChatNetworksPanel extends StatefulWidget {
   /// returns to the chats.
   final void Function(String networkId, Channel channel) onOpenChannel;
 
+  /// Reserves the same wide-shell sidebar-toggle slot as All and Local.
+  final VoidCallback? onCollapse;
+
   @override
   State<ChatNetworksPanel> createState() => _ChatNetworksPanelState();
 }
@@ -92,13 +96,11 @@ class _ChatNetworksPanelState extends State<ChatNetworksPanel> {
     final networks = manager?.wallet.networks ?? const {};
     final openId = _openNetworkId;
     final openName = openId == null ? null : networks[openId]?.name ?? openId;
-    final isMac = !kIsWeb && defaultTargetPlatform == TargetPlatform.macOS;
-    // The sidebar panel is flush with the window edge and must clear the
-    // native titlebar region (macOS fullSizeContentView inset; the same
-    // clearance the Local panel's header applies).
-    final titlebarHeight = isMac ? 46.0 : 0.0;
+    final tokens = FaDesignTokens.of(context);
     return ColoredBox(
-      color: colors.panel,
+      color: tokens.direction == FaVisualDirection.glass
+          ? Colors.transparent
+          : colors.panel,
       child: ListenableBuilder(
         listenable: Listenable.merge([
           ?manager,
@@ -119,17 +121,41 @@ class _ChatNetworksPanelState extends State<ChatNetworksPanel> {
           return Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              _NetworksHeader(
-                titlebarHeight: titlebarHeight,
+              MessengerSectionHeader(
                 title: openName ?? context.l10n.networkNetworksTitle,
-                backKey: openId == null
-                    ? const ValueKey('chatNetworksBack')
-                    : const ValueKey('chatChannelsBack'),
-                onBack: openId == null
-                    ? widget.onBack
-                    : () => setState(() => _openNetworkId = null),
-                showManage: openId == null,
-                onManage: widget.onManageNetworks,
+                searchController: null,
+                searchHint: '',
+                onProfile: null,
+                onNew: null,
+                onCollapse: widget.onCollapse,
+                leading: IconButton(
+                  key: openId == null
+                      ? const ValueKey('chatNetworksBack')
+                      : const ValueKey('chatChannelsBack'),
+                  tooltip: MaterialLocalizations.of(context).backButtonTooltip,
+                  onPressed: openId == null
+                      ? widget.onBack
+                      : () => setState(() => _openNetworkId = null),
+                  icon: const Icon(Icons.chevron_left_rounded),
+                  iconSize: 26,
+                  color: colors.text,
+                  visualDensity: VisualDensity.compact,
+                ),
+                trailing: openId != null
+                    ? null
+                    : SizedBox.square(
+                        dimension: 32,
+                        child: IconButton(
+                          key: const ValueKey('chatNetworksManage'),
+                          tooltip: context.l10n.chatManageNetworks,
+                          onPressed: widget.onManageNetworks,
+                          icon: const Icon(Icons.settings_outlined),
+                          iconSize: 18,
+                          color: colors.dim,
+                          visualDensity: VisualDensity.compact,
+                          padding: EdgeInsets.zero,
+                        ),
+                      ),
               ),
               Expanded(
                 key: const ValueKey('chatNetworksList'),
@@ -207,98 +233,6 @@ class _ChatNetworksPanelState extends State<ChatNetworksPanel> {
             ],
           );
         },
-      ),
-    );
-  }
-}
-
-/// The Telegram '<' chevron header row (the Local panel's header anatomy):
-/// back key swaps between chatNetworksBack (strip → normal chats) and
-/// chatChannelsBack (channels → strip); the title carries the surface's
-/// name (Networks at strip level, the open network's display name beside
-/// the channels) and the manage gear rides the strip level. The header
-/// reserves the floating sidebar toggle's top-right slot — the same 36pt
-/// contract as the shared section header.
-class _NetworksHeader extends StatelessWidget {
-  const _NetworksHeader({
-    required this.titlebarHeight,
-    required this.title,
-    required this.backKey,
-    required this.onBack,
-    required this.showManage,
-    required this.onManage,
-  });
-
-  final double titlebarHeight;
-  final String title;
-  final Key backKey;
-  final VoidCallback onBack;
-  final bool showManage;
-  final VoidCallback onManage;
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = FahColors.of(context);
-    return Container(
-      height: titlebarHeight + 54,
-      color: colors.panel,
-      child: Column(
-        children: [
-          if (titlebarHeight > 0) SizedBox(height: titlebarHeight),
-          SizedBox(
-            height: 54,
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(8, 7, 10, 7),
-              child: Row(
-                children: [
-                  IconButton(
-                    key: backKey,
-                    tooltip: MaterialLocalizations.of(
-                      context,
-                    ).backButtonTooltip,
-                    onPressed: onBack,
-                    icon: const Icon(Icons.chevron_left_rounded),
-                    iconSize: 26,
-                    color: colors.text,
-                    visualDensity: VisualDensity.compact,
-                  ),
-                  Expanded(
-                    child: Text(
-                      title,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: colors.text,
-                        fontSize: 17,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-                  if (showManage)
-                    SizedBox.square(
-                      dimension: 32,
-                      child: IconButton(
-                        key: const ValueKey('chatNetworksManage'),
-                        tooltip: context.l10n.chatManageNetworks,
-                        onPressed: onManage,
-                        icon: const Icon(Icons.settings_outlined),
-                        iconSize: 18,
-                        color: colors.dim,
-                        visualDensity: VisualDensity.compact,
-                        padding: EdgeInsets.zero,
-                      ),
-                    ),
-                  // The wide shell's floating sidebar toggle owns the
-                  // panel's top-right corner (the shared section header
-                  // reserves this exact 36pt slot) — the header never
-                  // places actions under it.
-                  const SizedBox(width: 4),
-                  const SizedBox.square(dimension: 32),
-                ],
-              ),
-            ),
-          ),
-        ],
       ),
     );
   }

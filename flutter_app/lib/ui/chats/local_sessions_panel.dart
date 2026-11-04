@@ -9,8 +9,8 @@ import 'package:fa/ui/chats/chat_list_panel.dart' show chatListRelativeTime;
 import 'package:fa/ui/chats/local_session_folders.dart';
 import 'package:fa/ui/chats/messenger_list_row_style.dart';
 import 'package:fa/ui/widgets/folder_avatar.dart';
+import 'package:fa/ui/widgets/messenger_section_header.dart';
 import 'package:fa_ui/fa_ui.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 /// The Local section's folder-first navigation (Telegram pattern): level 1
@@ -28,6 +28,7 @@ class LocalSessionsPanel extends StatelessWidget {
     required this.selectedSessionId,
     required this.onOpenSession,
     required this.onNew,
+    this.onCollapse,
     this.compact = false,
     this.iconResolver,
   });
@@ -59,13 +60,13 @@ class LocalSessionsPanel extends StatelessWidget {
   final String? selectedSessionId;
   final ValueChanged<ChatListEntry> onOpenSession;
   final VoidCallback onNew;
+  final VoidCallback? onCollapse;
   final FolderIconResolver? iconResolver;
 
   @override
   Widget build(BuildContext context) {
     final colors = FahColors.of(context);
-    final isMac = !kIsWeb && defaultTargetPlatform == TargetPlatform.macOS;
-    final titlebarHeight = isMac ? (compact ? 28.0 : 46.0) : 0.0;
+    final tokens = FaDesignTokens.of(context);
     return ListenableBuilder(
       listenable: controller,
       builder: (context, _) {
@@ -79,17 +80,32 @@ class LocalSessionsPanel extends StatelessWidget {
                   .where((folder) => folder.id == selectedFolderId)
                   .firstOrNull;
         return ColoredBox(
-          color: colors.panel,
+          color: tokens.direction == FaVisualDirection.glass
+              ? Colors.transparent
+              : colors.panel,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              _LocalHeader(
+              MessengerSectionHeader(
                 title: openFolder?.name ?? context.l10n.wideNavLocal,
-                showBack: openFolder != null,
-                compact: compact,
-                titlebarHeight: titlebarHeight,
-                onBack: () => onSelectFolder(null),
+                searchController: null,
+                searchHint: '',
+                onProfile: null,
                 onNew: onNew,
+                newButtonKey: const ValueKey('localNewButton'),
+                compact: compact,
+                onCollapse: onCollapse,
+                leading: openFolder == null
+                    ? null
+                    : IconButton(
+                        key: const ValueKey('localFolderBack'),
+                        tooltip: context.l10n.localFolderBack,
+                        onPressed: () => onSelectFolder(null),
+                        icon: const Icon(Icons.chevron_left_rounded),
+                        iconSize: 26,
+                        color: colors.text,
+                        visualDensity: VisualDensity.compact,
+                      ),
               ),
               Expanded(
                 child: Row(
@@ -161,94 +177,6 @@ class LocalSessionsPanel extends StatelessWidget {
           ),
         );
       },
-    );
-  }
-}
-
-/// The panel header: Telegram's '<' chevron header inside a folder, the
-/// Local title plus the shared New action at the root.
-class _LocalHeader extends StatelessWidget {
-  const _LocalHeader({
-    required this.title,
-    required this.showBack,
-    required this.compact,
-    required this.titlebarHeight,
-    required this.onBack,
-    required this.onNew,
-  });
-
-  final String title;
-  final bool showBack;
-  final bool compact;
-  final double titlebarHeight;
-  final VoidCallback onBack;
-  final VoidCallback onNew;
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = FahColors.of(context);
-    final tokens = FaDesignTokens.of(context);
-    return Container(
-      height: titlebarHeight + 54,
-      color: colors.panel,
-      child: Column(
-        children: [
-          if (titlebarHeight > 0) SizedBox(height: titlebarHeight),
-          SizedBox(
-            height: 54,
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(8, 7, 10, 7),
-              child: Row(
-                children: [
-                  if (showBack)
-                    IconButton(
-                      key: const ValueKey('localFolderBack'),
-                      tooltip: context.l10n.localFolderBack,
-                      onPressed: onBack,
-                      icon: const Icon(Icons.chevron_left_rounded),
-                      iconSize: 26,
-                      color: colors.text,
-                      visualDensity: VisualDensity.compact,
-                    )
-                  else
-                    const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      title,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: colors.text,
-                        fontSize: compact ? 16 : 17,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  SizedBox.square(
-                    dimension: 32,
-                    child: IconButton.filled(
-                      key: const ValueKey('localNewButton'),
-                      onPressed: onNew,
-                      tooltip: context.l10n.chatNew,
-                      iconSize: 18,
-                      padding: EdgeInsets.zero,
-                      style: IconButton.styleFrom(
-                        backgroundColor: tokens.accent,
-                        foregroundColor: tokens.accentInk,
-                        minimumSize: const Size.square(32),
-                        maximumSize: const Size.square(32),
-                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                      ),
-                      icon: const Icon(Icons.edit_outlined),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ],
-      ),
     );
   }
 }

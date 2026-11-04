@@ -24,21 +24,27 @@ final class MessengerSectionHeader extends StatelessWidget {
     this.onExpand,
     this.onCollapse,
     this.searchFocusNode,
+    this.leading,
+    this.trailing,
+    this.newButtonKey,
     this.compact = false,
     this.collapsed = false,
-  }) : assert(collapsed || searchController != null);
+  });
 
   final String title;
   final TextEditingController? searchController;
   final FocusNode? searchFocusNode;
   final String searchHint;
   final VoidCallback? onProfile;
-  final VoidCallback onNew;
+  final VoidCallback? onNew;
   final ValueChanged<String>? onSearch;
   final VoidCallback? onBrandTap;
   final VoidCallback? onBrandLongPress;
   final VoidCallback? onExpand;
   final VoidCallback? onCollapse;
+  final Widget? leading;
+  final Widget? trailing;
+  final Key? newButtonKey;
   final bool compact;
   final bool collapsed;
 
@@ -53,11 +59,9 @@ final class MessengerSectionHeader extends StatelessWidget {
     // SafeArea without this desktop-only clearance. The wide sidebar-left
     // action stays at the opposite edge and at the same y in expanded and
     // collapsed states, independent of theme and section.
-    final titlebarHeight = isMac
-        ? (compact ? 28.0 : 46.0)
-        : (collapsed ? 58.0 : 0.0);
+    final titlebarHeight = isMac ? 30.0 : (collapsed ? 58.0 : 0.0);
     final brand = Semantics(
-      button: true,
+      button: onBrandTap != null || onProfile != null,
       label: context.l10n.chatProfileSettings,
       child: GestureDetector(
         key: const ValueKey('messengerProfile'),
@@ -94,8 +98,8 @@ final class MessengerSectionHeader extends StatelessWidget {
                 padding: EdgeInsets.fromLTRB(compact ? 12 : 10, 7, 10, 7),
                 child: Row(
                   children: [
-                    brand,
-                    if (compact) ...[
+                    leading ?? brand,
+                    if (compact && searchController != null) ...[
                       const SizedBox(width: 8),
                       // A fixed title slot keeps Search at the same geometry
                       // for Chats, Activity and Apps in the compact shell.
@@ -113,24 +117,41 @@ final class MessengerSectionHeader extends StatelessWidget {
                         ),
                       ),
                     ],
-                    const SizedBox(width: 6),
-                    // THE one search field (SessionSearchField): the
-                    // same capsule the Files band renders.
-                    Expanded(
-                      child: SessionSearchField(
-                        key: const ValueKey('messengerSearchField'),
-                        controller: searchController,
-                        focusNode: searchFocusNode,
-                        hintText: searchHint,
-                        onQueryChanged: onSearch,
+                    SizedBox(width: searchController == null ? 8 : 6),
+                    if (searchController != null)
+                      // THE one search field (SessionSearchField): the
+                      // same capsule the Files band renders.
+                      Expanded(
+                        child: SessionSearchField(
+                          key: const ValueKey('messengerSearchField'),
+                          controller: searchController,
+                          focusNode: searchFocusNode,
+                          hintText: searchHint,
+                          onQueryChanged: onSearch,
+                        ),
+                      )
+                    else
+                      Expanded(
+                        child: Text(
+                          title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: colors.text,
+                            fontSize: compact ? 16 : 17,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
                       ),
-                    ),
-                    if (!compact) ...[
+                    if (onNew != null &&
+                        (!compact || searchController == null)) ...[
                       const SizedBox(width: 8),
                       SizedBox.square(
                         dimension: 32,
                         child: IconButton.filled(
-                          key: const ValueKey('messengerNewButton'),
+                          key:
+                              newButtonKey ??
+                              const ValueKey('messengerNewButton'),
                           onPressed: onNew,
                           tooltip: context.l10n.chatNew,
                           iconSize: 18,
@@ -146,10 +167,14 @@ final class MessengerSectionHeader extends StatelessWidget {
                           icon: const Icon(Icons.edit_outlined),
                         ),
                       ),
-                      if (!isMac && onCollapse != null) ...[
-                        const SizedBox(width: 4),
-                        const SizedBox.square(dimension: 32),
-                      ],
+                    ],
+                    if (trailing != null) ...[
+                      const SizedBox(width: 4),
+                      trailing!,
+                    ],
+                    if (!compact && onCollapse != null) ...[
+                      const SizedBox(width: 4),
+                      const SizedBox.square(dimension: 36),
                     ],
                   ],
                 ),

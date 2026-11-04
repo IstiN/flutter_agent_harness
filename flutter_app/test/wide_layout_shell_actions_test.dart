@@ -2017,6 +2017,81 @@ void main() {
     }
   });
 
+  testWidgets('All Local and Networks share one compact glass header', (
+    tester,
+  ) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+    addTearDown(() => debugDefaultTargetPlatformOverride = null);
+    final env = MemoryExecutionEnv();
+    final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
+      ..addSession('design-session', _fakeService(env));
+    await pumpShell(tester, manager: manager);
+    await tester.pumpAndSettle();
+
+    Rect? contentRow;
+    for (final destination in const ['all', 'local', 'network']) {
+      if (destination != 'all') {
+        await tester.tap(
+          find.byKey(ValueKey('messengerPrimaryNav-$destination')),
+        );
+        await tester.pumpAndSettle();
+      }
+      final reason = destination;
+      final header = find.byType(MessengerSectionHeader);
+      expect(header, findsOneWidget, reason: reason);
+      final headerRect = tester.getRect(header);
+      expect(headerRect.height, 86, reason: reason);
+      final glass = tester.getRect(
+        find.byKey(const ValueKey('glassSidebarPanel')),
+      );
+      expect(glass.contains(headerRect.topLeft), isTrue, reason: reason);
+      expect(headerRect.right, lessThanOrEqualTo(glass.right), reason: reason);
+      expect(
+        headerRect.bottom,
+        lessThanOrEqualTo(glass.bottom),
+        reason: reason,
+      );
+      final toggle = tester.getRect(
+        find.byKey(const ValueKey('chatSidebarCollapse')),
+      );
+      expect(glass.contains(toggle.center), isTrue, reason: reason);
+      final titlebar = tester.getRect(
+        find.byKey(const ValueKey('macosSidebarTitlebar')),
+      );
+      expect(toggle.center.dy, greaterThan(titlebar.bottom), reason: reason);
+      final primary = tester.getRect(
+        find.byKey(
+          ValueKey(switch (destination) {
+            'all' => 'messengerSearchField',
+            'local' => 'localNewButton',
+            _ => 'chatNetworksManage',
+          }),
+        ),
+      );
+      expect(
+        toggle.center.dy,
+        closeTo(primary.center.dy, .001),
+        reason: reason,
+      );
+      contentRow ??= Rect.fromCenter(
+        center: Offset(0, primary.center.dy),
+        width: 1,
+        height: primary.height,
+      );
+      expect(primary.center.dy, closeTo(contentRow.center.dy, .001));
+      final panel = destination == 'all'
+          ? find.byType(ChatListPanel)
+          : destination == 'local'
+          ? find.byType(LocalSessionsPanel)
+          : find.byType(ChatNetworksPanel);
+      final surface = tester.widget<ColoredBox>(
+        find.descendant(of: panel, matching: find.byType(ColoredBox)).first,
+      );
+      expect(surface.color, Colors.transparent, reason: reason);
+    }
+    debugDefaultTargetPlatformOverride = null;
+  });
+
   testWidgets('compact section headers keep identical search geometry', (
     tester,
   ) async {

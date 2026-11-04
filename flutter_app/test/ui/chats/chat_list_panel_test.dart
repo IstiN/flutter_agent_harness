@@ -279,7 +279,7 @@ void main() {
     }
   });
 
-  testWidgets('macOS desktop places search and compose below the titlebar', (
+  testWidgets('macOS desktop keeps one compact row below the titlebar', (
     tester,
   ) async {
     debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
@@ -290,8 +290,12 @@ void main() {
       find.byKey(const ValueKey('messengerSearchField')),
     );
     final newButton = find.byKey(const ValueKey('messengerNewButton'));
-    expect(search.top, greaterThanOrEqualTo(46));
-    expect(tester.getRect(newButton).top, greaterThanOrEqualTo(46));
+    expect(search.top, greaterThanOrEqualTo(28));
+    expect(tester.getRect(newButton).top, greaterThanOrEqualTo(28));
+    expect(
+      search.center.dy,
+      closeTo(tester.getRect(newButton).center.dy, .001),
+    );
     final button = tester.widget<IconButton>(newButton);
     expect(button.color, Colors.white);
     expect(
@@ -864,7 +868,7 @@ void main() {
     );
     expect(find.text('Fa'), findsNothing);
     expect(tester.getSize(brand), const Size(30, 30));
-    expect(tester.getRect(brand).top, greaterThanOrEqualTo(46));
+    expect(tester.getRect(brand).top, greaterThanOrEqualTo(28));
     debugDefaultTargetPlatformOverride = null;
   });
 

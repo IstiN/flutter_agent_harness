@@ -362,7 +362,7 @@ class _ChatListPanelState extends State<ChatListPanel> {
     final isMac = !kIsWeb && defaultTargetPlatform == TargetPlatform.macOS;
     final searchHeight = widget.compact
         ? (isMac ? 82.0 : 54.0)
-        : (isMac ? 104.0 : 58.0);
+        : (isMac ? 86.0 : 58.0);
     return searchHeight +
         (widget.headerBottom == null ? 0 : 46) +
         (widget.showFilterToolbar ? MessengerFilterControl.height : 0) +

@@ -1181,9 +1181,9 @@ class _WideLayoutShellState extends State<WideLayoutShell>
                     // only crossfade content and never duplicate the toggle.
                     Positioned(
                       left: toggleLeft,
-                      // The header band's shared action centerline: the
-                      // 36pt toggle's center (17 + 18 = 35) sits on the
-                      // chat header action row's center.
+                      // Expanded: inside the ONE compact header row, below
+                      // the native titlebar and inside the rounded glass.
+                      // Collapsed: floating center chrome at its usual band.
                       top: 17,
                       child: MessengerSidebarToggle(
                         key: const ValueKey('wideShellSidebarToggle'),
@@ -1594,6 +1594,9 @@ class _WideLayoutShellState extends State<WideLayoutShell>
       selectedSessionId: _selectedSessionId,
       onOpenSession: (entry) => unawaited(_openLocalEntry(entry)),
       onNew: _newSession,
+      onCollapse: compact
+          ? null
+          : () => setState(() => _sidebarCollapsed = true),
       iconResolver: _folderIcons,
     );
   }
@@ -1802,6 +1805,7 @@ class _WideLayoutShellState extends State<WideLayoutShell>
       manager: widget.networkSessions,
       mode: widget.networkMode,
       chatList: _chatController,
+      onCollapse: () => setState(() => _sidebarCollapsed = true),
       onBack: () {
         _chatController.setNetworkFilter(const ChatNetworkFilter.all());
         setState(() => _networksSurfaceOpen = false);
