@@ -1016,7 +1016,7 @@ jobs:
           # 26.5 SIMULATOR runtime the SDK-27.1 runner never needed, the
           # transfer stalled with zero output, and the unbounded step hung
           # 77m35s until build-ios's 90m job ceiling cancelled the whole
-          # job (run 417861470 — no build, no submit, a lost TestFlight
+          # job (run 41778614770 — no build, no submit, a lost TestFlight
           # day). Now: SDK present => done in seconds; SDK missing => ONE
           # unversioned download (hardcoded buildVersion pins rot) under a
           # deadline watchdog that kills a stalled transfer instead of
@@ -1030,15 +1030,29 @@ jobs:
           # this step — the build below fails with xcodebuild's clearer
           # message when the SDK is genuinely unusable. The watchdog bounds
           # DURATION: `|| true` guards exit codes, never minutes.
-          DOWNLOAD_CEILING=120 # 20m — ≪ the 90m build-ios job budget
-          xcodebuild -downloadPlatform iOS &
+          DOWNLOAD_CEILING=1200 # 20m — ≪ the 90m build-ios job budget
+          # gh-2054 review thread 2: setsid gives the download its own
+          # process GROUP so the watchdog can kill the whole transfer
+          # tree — xcodebuild delegates to helper processes and a lone
+          # `kill $DL_PID` leaked detached descendants into the archive
+          # step. No setsid on a runner => plain pid, direct kills below.
+          if command -v setsid >/dev/null 2>&1; then
+            setsid xcodebuild -downloadPlatform iOS &
+          else
+            xcodebuild -downloadPlatform iOS &
+          fi
           DL_PID=$!
           DEADLINE=$(( $(date +%s) + DOWNLOAD_CEILING ))
           while kill -0 "$DL_PID" 2>/dev/null; do
             if [ "$(date +%s)" -ge "$DEADLINE" ]; then
-              echo "::warning::iOS platform download exceeded ${DOWNLOAD_CEILING}s — killing the stalled transfer (gh-2054)"
+              echo "::warning::iOS platform download exceeded ${DOWNLOAD_CEILING}s — killing the stalled transfer tree (gh-2054)"
+              # Negative pid = the whole process GROUP (only real when
+              # setsid launched the download); the direct-pid kills
+              # after it keep the watchdog effective without setsid.
+              kill -- -"$DL_PID" 2>/dev/null || true
               kill "$DL_PID" 2>/dev/null || true
               sleep 5
+              kill -9 -- -"$DL_PID" 2>/dev/null || true
               kill -9 "$DL_PID" 2>/dev/null || true
               break
             fi
