@@ -3,6 +3,7 @@
 import 'package:fa/ui/widgets/messenger_nav_rail.dart';
 import 'package:fa_ui/fa_ui.dart'
     show FaSurface, FaVisualDirection, buildFaTheme;
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -117,22 +118,21 @@ void main() {
       '(mirror of its max(8, MediaQuery top) first-row line)', (tester) async {
     Rect firstRowTop() => tester.getRect(find.byKey(const ValueKey('railAll')));
 
-    // No titlebar (tests/web): the card's 8pt margin is the only inset.
+    // No titlebar, non-macOS (linux override): the card's 8pt margin is
+    // the only inset.
+    debugDefaultTargetPlatformOverride = TargetPlatform.linux;
     await tester.pumpWidget(_wrap(rail()));
     expect(firstRowTop().top, MessengerNavRail.seam);
+    debugDefaultTargetPlatformOverride = null;
 
-    // macOS traffic lights: the sidebar's chrome starts at max(8, top),
-    // i.e. its 8pt panel margin + MediaQuery.top - 8 inside — the rail
-    // mirrors that exact value (52pt window padding → first row at 52).
-    await tester.pumpWidget(
-      _wrap(
-        MediaQuery(
-          data: const MediaQueryData(padding: EdgeInsets.only(top: 52)),
-          child: rail(),
-        ),
-      ),
-    );
-    expect(firstRowTop().top, 52, reason: 'same line as the sidebar chrome');
+    // macOS desktop is a fullSizeContentView — MediaQuery.top reads 0 while
+    // the traffic lights float over the first ~28pt — so a fixed 40pt
+    // clearance applies: first row at 8 + 40 = 48.
+    debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+    await tester.pumpWidget(_wrap(rail()));
+    expect(firstRowTop().top, MessengerNavRail.seam + 40,
+        reason: 'clears the macOS traffic lights');
+    debugDefaultTargetPlatformOverride = null;
   });
 
   testWidgets('selected row tints accent without a background fill', (

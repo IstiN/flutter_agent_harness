@@ -3,6 +3,7 @@
 import 'dart:math' as math;
 
 import 'package:fa_ui/fa_ui.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 /// One Telegram-style destination in the vertical messenger rail.
@@ -83,16 +84,19 @@ class MessengerNavRail extends StatelessWidget {
     // same tokens (surface1 tint, kit glass settings), same 18pt radius,
     // same BackdropGroup participation — so content slides under it and
     // blurs through 1:1 with that panel.
-    // Titlebar clearance mirrors the chats sidebar exactly (ChatListPanel
-    // non-compact): the chrome's first row sits at max(seam, MediaQuery
-    // top) from the window edge — the card's 8pt margin plus what remains
-    // of the macOS titlebar beyond it (zero in tests and web), so the
-    // first row clears the traffic lights on the same line the sidebar
-    // uses.
-    final titlebarTop = math.max(
-      0.0,
-      MediaQuery.paddingOf(context).top - MessengerNavRail.seam,
-    );
+    // Titlebar clearance: on macOS desktop the window is a fullSizeContent
+    // view — MediaQuery.top reads 0 while the real traffic lights float
+    // over the first ~28pt — so use a fixed macOS inset (the faAppBar
+    // clearance zone, 40pt: lights + breathing room). Everywhere else the
+    // chats-sidebar formula applies: max(seam, MediaQuery top) — the card's
+    // 8pt margin plus what remains of the platform titlebar.
+    final titlebarTop = (!kIsWeb &&
+            defaultTargetPlatform == TargetPlatform.macOS)
+        ? 40.0
+        : math.max(
+            0.0,
+            MediaQuery.paddingOf(context).top - MessengerNavRail.seam,
+          );
     return Padding(
       padding: const EdgeInsets.all(MessengerNavRail.seam),
       child: FaSurface(
