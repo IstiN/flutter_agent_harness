@@ -191,3 +191,7 @@ node_modules
 # sdk/web type-stripped build output (node build.mjs regenerates it).
 sdk/web/dist/
 agents/
+
+# runtime preference files written at the repo root during tests
+/session_ui_prefs.json
+/theme.json
