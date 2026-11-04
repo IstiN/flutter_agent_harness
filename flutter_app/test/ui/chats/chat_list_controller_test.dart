@@ -63,6 +63,40 @@ void main() {
   final t2 = DateTime.utc(2026, 1, 2, 10);
   final t3 = DateTime.utc(2026, 1, 3, 10);
 
+  test('networkChannelEntries lists every channel projection regardless '
+      'of filters, scoped per network for the drill-down', () async {
+    final c = await controller(
+      [local('Local design', activity: t1)],
+      network: FixtureNetworkInboxAdapter(
+        items: [
+          remote('Release channel', unreadCount: 2, activity: t3),
+          remote(
+            'Research agent',
+            kind: ChatListEntryKind.networkAgent,
+            activity: t2,
+          ),
+          remote('Other channel', networkId: 'other', unreadCount: 1),
+        ],
+      ),
+    );
+    // Filters never hide the projection's rows.
+    c.setFilter(ChatListFilter.agents);
+    c.setSearch('release');
+    expect(
+      c.networkChannelEntries.map((e) => e.title),
+      ['Release channel', 'Other channel'],
+    );
+    expect(
+      c.networkChannelEntries.where((e) => e.networkId == 'remote').map(
+        (e) => e.title,
+      ),
+      ['Release channel'],
+    );
+    c.setSearch('');
+    c.setFilter(ChatListFilter.all);
+    expect(c.networkChannelEntries.length, 2);
+  });
+
   test('kind, network, and search filters compose independently', () async {
     final c = await controller(
       [local('Local design', activity: t1)],

@@ -295,6 +295,19 @@ final class ChatListController extends ChangeNotifier {
     return List.unmodifiable(entries);
   }
 
+  /// Every projected NETWORK CHANNEL row with read-marker state applied —
+  /// regardless of the active filter/search/network facet. The networks
+  /// sidebar's channel drill-down builds its rows from this projection
+  /// (each entry carries its [ChatListEntry.networkId]); the live
+  /// session's `channels` snapshot is empty at runtime.
+  List<ChatListEntry> get networkChannelEntries {
+    final entries = <ChatListEntry>[
+      for (final entry in _entries)
+        if (entry.kind == ChatListEntryKind.networkChannel) entry,
+    ]..sort(_compareActivity);
+    return List.unmodifiable(entries);
+  }
+
   List<ChatListEntry> get visibleEntries {
     final query = _search.trim().toLowerCase();
     return List.unmodifiable([

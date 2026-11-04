@@ -1796,6 +1796,7 @@ class _WideLayoutShellState extends State<WideLayoutShell>
     return ChatNetworksPanel(
       manager: widget.networkSessions,
       mode: widget.networkMode,
+      chatList: _chatController,
       onBack: () => setState(() => _networksSurfaceOpen = false),
       onManageNetworks: () => unawaited(
         showChatNetworksDialog(

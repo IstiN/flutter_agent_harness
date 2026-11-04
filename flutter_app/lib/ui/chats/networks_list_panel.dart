@@ -7,6 +7,9 @@ import 'package:fa/network/key_wallet.dart' show NetworkEntry;
 import 'package:fa/network/models.dart' show Channel;
 import 'package:fa/network/network_mode.dart';
 import 'package:fa/network/network_session_manager.dart';
+import 'package:fa/ui/chats/chat_list_controller.dart';
+import 'package:fa/ui/chats/chat_list_entry.dart';
+import 'package:fa/ui/chats/chat_list_panel.dart' show chatListRelativeTime;
 import 'package:fa/ui/chats/local_sessions_panel.dart' show LocalSessionsPanel;
 import 'package:fa/ui/widgets/folder_avatar.dart';
 import 'package:fa_ui/fa_ui.dart';
@@ -30,6 +33,7 @@ class ChatNetworksPanel extends StatefulWidget {
     super.key,
     required this.manager,
     this.mode,
+    this.chatList,
     required this.onBack,
     required this.onManageNetworks,
     required this.onOpenChannel,
@@ -52,6 +56,14 @@ class ChatNetworksPanel extends StatefulWidget {
 
   /// The mode controller — the selected network/channel highlight.
   final NetworkModeController? mode;
+
+  /// The chat-list projection (owner pass): channel rows come from the
+  /// controller's [ChatListController.networkChannelEntries] (each entry
+  /// carries its networkId — the same rows the Channels rail lists). The
+  /// live session's `channels` snapshot stays the fallback ONLY when the
+  /// projection yields none for the drilled network; null keeps the old
+  /// snapshot-only behaviour (tests).
+  final ChatListController? chatList;
 
   /// The networks level's '<' chevron: back to the normal chats.
   final VoidCallback onBack;
@@ -87,9 +99,22 @@ class _ChatNetworksPanelState extends State<ChatNetworksPanel> {
     return ColoredBox(
       color: colors.panel,
       child: ListenableBuilder(
-        listenable: Listenable.merge([?manager, ?widget.mode]),
+        listenable: Listenable.merge([
+          ?manager,
+          ?widget.mode,
+          ?widget.chatList,
+        ]),
         builder: (context, _) {
           final session = openId == null ? null : manager?.sessions[openId];
+          // The drilled network's channel rows: the chat-list projection
+          // wins; the live session snapshot is the fallback when the
+          // projection yields none for this network.
+          final entryChannels = <ChatListEntry>[
+            for (final entry
+                in widget.chatList?.networkChannelEntries ??
+                    const <ChatListEntry>[])
+              if (entry.networkId == openId) entry,
+          ];
           return Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
@@ -163,7 +188,9 @@ class _ChatNetworksPanelState extends State<ChatNetworksPanel> {
                           Expanded(
                             child: _ChannelsList(
                               networkId: openId,
-                              channels: session?.channels ?? const [],
+                              entries: entryChannels,
+                              sessionChannels:
+                                  session?.channels ?? const <Channel>[],
                               selectedChannelId:
                                   widget.mode?.networkId == openId
                                   ? widget.mode?.channelId
@@ -416,24 +443,37 @@ class _NetworksStrip extends StatelessWidget {
 }
 
 /// Level 2: the drilled-into network's channels — the SAME row anatomy
-/// over the [Channel]s the live session already loaded (name, public/
-/// private meta). No session → the honest empty state.
+/// over the chat-list projection's rows for this network (owner pass: the
+/// projection is what the Channels rail lists; the live session's
+/// `channels` snapshot is empty at runtime), with the session snapshot as
+/// the fallback when the projection yields none. Neither → the honest
+/// empty state.
 class _ChannelsList extends StatelessWidget {
   const _ChannelsList({
     required this.networkId,
-    required this.channels,
+    required this.entries,
+    required this.sessionChannels,
     required this.selectedChannelId,
     required this.onOpenChannel,
   });
 
   final String networkId;
-  final List<Channel> channels;
+
+  /// The projection's channel entries for the drilled network.
+  final List<ChatListEntry> entries;
+
+  /// The live session's channel snapshot (the fallback source).
+  final List<Channel> sessionChannels;
   final String? selectedChannelId;
   final ValueChanged<Channel> onOpenChannel;
 
   @override
   Widget build(BuildContext context) {
-    if (channels.isEmpty) {
+    // The projection wins (owner pass); the session snapshot is consulted
+    // ONLY when it yields nothing — never a merge, so a live session with
+    // a stale snapshot cannot shadow the inbox rows.
+    final fromEntries = entries.isNotEmpty;
+    if (!fromEntries && sessionChannels.isEmpty) {
       return Center(
         child: Text(
           context.l10n.chatNetworkChannelsEmpty,
@@ -441,27 +481,60 @@ class _ChannelsList extends StatelessWidget {
         ),
       );
     }
+    final rows = <_ChannelRowData>[
+      if (fromEntries)
+        for (final entry in entries)
+          (
+            key: ValueKey('chatNetworkChannel-${entry.id.value}'),
+            title: entry.title,
+            // The projection carries no public/private flag — show the
+            // last-activity meta instead. Never fabricate a visibility.
+            meta: chatListRelativeTime(context, entry.lastActivity).trim(),
+            channel: Channel(
+              id: entry.id.value,
+              networkId: networkId,
+              name: entry.title,
+            ),
+          )
+      else
+        for (final channel in sessionChannels)
+          (
+            key: ValueKey('chatNetworkChannel-${channel.id}'),
+            title: channel.name ?? channel.id,
+            meta: channel.isPublic
+                ? context.l10n.chatNetworkChannelPublic
+                : context.l10n.chatNetworkChannelPrivate,
+            channel: channel,
+          ),
+    ];
     return ListView.builder(
       key: const ValueKey('chatNetworkChannels'),
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      itemCount: channels.length,
+      itemCount: rows.length,
       itemBuilder: (context, index) {
-        final channel = channels[index];
-        final name = channel.name ?? channel.id;
+        final row = rows[index];
         return _PanelRow(
-          key: ValueKey('chatNetworkChannel-${channel.id}'),
-          title: name,
-          meta: channel.isPublic
-              ? context.l10n.chatNetworkChannelPublic
-              : context.l10n.chatNetworkChannelPrivate,
-          selected: selectedChannelId == channel.id,
-          hairline: index < channels.length - 1,
-          onTap: () => onOpenChannel(channel),
+          key: row.key,
+          title: row.title,
+          meta: row.meta,
+          selected: selectedChannelId == row.channel.id,
+          hairline: index < rows.length - 1,
+          onTap: () => onOpenChannel(row.channel),
         );
       },
     );
   }
 }
+
+/// One row of [_ChannelsList]: stable key + identity, title, meta line and
+/// the [Channel] handed to [ChatNetworksPanel.onOpenChannel] (built from
+/// the projection entry when the row comes from the chat list).
+typedef _ChannelRowData = ({
+  Key key,
+  String title,
+  String meta,
+  Channel channel,
+});
 
 /// One Telegram row of the networks panel: 70pt pitch, the NEUTRAL tag
 /// glyph (owner pass — channels are not identities), 14pt semibold title,
@@ -478,7 +551,7 @@ class _PanelRow extends StatelessWidget {
   });
 
   final String title;
-  final String meta;
+  final String? meta;
   final bool selected;
   final bool hairline;
   final VoidCallback onTap;
@@ -527,17 +600,20 @@ class _PanelRow extends StatelessWidget {
                                 height: 1.2,
                               ),
                             ),
-                            const SizedBox(height: 3),
-                            Text(
-                              meta,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                color: subdued,
-                                fontSize: 12.5,
-                                height: 1.2,
+                            if (meta case final metaText?
+                                when metaText.isNotEmpty) ...[
+                              const SizedBox(height: 3),
+                              Text(
+                                metaText,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  color: subdued,
+                                  fontSize: 12.5,
+                                  height: 1.2,
+                                ),
                               ),
-                            ),
+                            ],
                           ],
                         ),
                       ),

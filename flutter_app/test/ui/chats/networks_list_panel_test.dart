@@ -13,6 +13,10 @@ import 'package:fa/network/network_mode.dart';
 import 'package:fa/network/network_session.dart';
 import 'package:fa/network/network_session_manager.dart';
 import 'package:fa/ui/app_theme.dart';
+import 'package:fa/ui/chats/chat_list_controller.dart';
+import 'package:fa/ui/chats/chat_list_entry.dart';
+import 'package:fa/ui/chats/local_chat_list_adapter.dart';
+import 'package:fa/ui/chats/network_inbox_adapter.dart';
 import 'package:fa/ui/chats/networks_list_panel.dart';
 import 'package:fa/ui/widgets/folder_avatar.dart';
 import 'package:flutter/material.dart';
@@ -67,10 +71,24 @@ Future<_ManagerRig> _manager({
   return (manager: manager, session: session);
 }
 
+/// A chat-list controller whose network inbox holds [items] — the
+/// projection the networks panel's channel drill-down reads (owner pass).
+Future<ChatListController> chatListWith(
+  List<NetworkInboxItem> items,
+) async {
+  final controller = ChatListController(
+    localAdapter: StaticChatListAdapter(const []),
+    networkAdapter: FixtureNetworkInboxAdapter(items: items),
+  );
+  await controller.load();
+  return controller;
+}
+
 Future<void> pumpPanel(
   WidgetTester tester, {
   required NetworkSessionManager? manager,
   NetworkModeController? mode,
+  ChatListController? chatList,
   VoidCallback? onBack,
   List<(String, String)>? opened,
 }) async {
@@ -86,6 +104,7 @@ Future<void> pumpPanel(
         body: ChatNetworksPanel(
           manager: manager,
           mode: mode,
+          chatList: chatList,
           onBack: onBack ?? () {},
           onManageNetworks: () {},
           onOpenChannel: (networkId, channel) =>
@@ -349,6 +368,112 @@ void main() {
     expect(find.byKey(const ValueKey('networkRow-net1')), findsOneWidget);
     expect(find.text('fa-team'), findsOneWidget, reason: 'the strip label');
     expect(find.text('No networks yet'), findsNothing);
+  });
+
+  testWidgets('channels come from the chat-list projection (owner pass): '
+      'only the drilled network renders, tap hands off the entry', (
+    tester,
+  ) async {
+    final rig = await _manager(); // live net1 session with channels c1/c2
+    final chatList = await chatListWith([
+      NetworkInboxItem(
+        kind: ChatListEntryKind.networkChannel,
+        networkId: 'net1',
+        id: 'e1',
+        title: 'inbox-general',
+        unreadCount: 2,
+        lastActivity: DateTime.utc(2026, 1, 2, 9, 30),
+      ),
+      NetworkInboxItem(
+        kind: ChatListEntryKind.networkChannel,
+        networkId: 'net1',
+        id: 'e2',
+        title: 'inbox-launch',
+      ),
+      NetworkInboxItem(
+        kind: ChatListEntryKind.networkChannel,
+        networkId: 'net2',
+        id: 'e3',
+        title: 'other-net-channel',
+      ),
+    ]);
+    addTearDown(chatList.dispose);
+    final opens = <(String, String)>[];
+    await pumpPanel(
+      tester,
+      manager: rig.manager,
+      chatList: chatList,
+      opened: opens,
+    );
+
+    await tester.tap(find.byKey(const ValueKey('networkRow-net1')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 250));
+
+    // The drilled network lists ITS inbox channels — the (empty at
+    // runtime) live session snapshot does not shadow them, and other
+    // networks' entries stay out.
+    expect(find.byKey(const ValueKey('chatNetworkChannel-e1')), findsOneWidget);
+    expect(find.byKey(const ValueKey('chatNetworkChannel-e2')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('chatNetworkChannel-e3')),
+      findsNothing,
+    );
+    expect(find.text('inbox-general'), findsOneWidget);
+    expect(find.text('inbox-launch'), findsOneWidget);
+    expect(find.text('other-net-channel'), findsNothing);
+    expect(find.byKey(const ValueKey('chatNetworkChannel-c1')), findsNothing);
+    expect(find.byKey(const ValueKey('chatNetworkChannel-c2')), findsNothing);
+    // Entry rows carry the activity meta — the public/private copy is
+    // unknown from the projection and is never fabricated.
+    expect(find.text('Private channel'), findsNothing);
+    expect(find.text('Public channel'), findsNothing);
+
+    // A row tap hands the entry's (network, channel) to the shell — the
+    // same onOpenChannel contract.
+    await tester.tap(find.byKey(const ValueKey('chatNetworkChannel-e2')));
+    await tester.pump();
+    expect(opens, [('net1', 'e2')]);
+    await rig.session?.close();
+  });
+
+  testWidgets('the live session channels remain the fallback when the '
+      'projection yields none for the drilled network', (tester) async {
+    final rig = await _manager(); // live net1 session with channels c1/c2
+    final chatList = await chatListWith([
+      NetworkInboxItem(
+        kind: ChatListEntryKind.networkChannel,
+        networkId: 'net2',
+        id: 'e3',
+        title: 'other-net-channel',
+      ),
+    ]);
+    addTearDown(chatList.dispose);
+    await pumpPanel(tester, manager: rig.manager, chatList: chatList);
+
+    await tester.tap(find.byKey(const ValueKey('networkRow-net1')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 250));
+    // No net1 entries in the projection AND the session carries channels
+    // → the session snapshot renders (with its public/private meta).
+    expect(find.byKey(const ValueKey('chatNetworkChannel-c1')), findsOneWidget);
+    expect(find.byKey(const ValueKey('chatNetworkChannel-c2')), findsOneWidget);
+    expect(find.text('Private channel'), findsOneWidget);
+    expect(find.text('Public channel'), findsOneWidget);
+
+    // The other network has entries and no session → its projection row.
+    await tester.tap(find.byKey(const ValueKey('chatNetworkRow-net2')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 250));
+    expect(
+      find.byKey(const ValueKey('chatNetworkChannel-e3')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('chatNetworkChannel-c1')),
+      findsNothing,
+    );
+    await rig.session?.close();
   });
 
   testWidgets('the channel highlight stays mode-driven inside the open '
