@@ -13,6 +13,33 @@ block a release again.
 
 ## Unreleased
 
+- fix(gh-2055): the daily-publish `cli` leg red-failed in `pod install`
+  (Build macOS x86_64, run 41778615815) because the vendored macOS pod's
+  XCFramework download block guarded on the downloaded-zip MARKER
+  (`if [ ! -f wasm_run-v0.1.0.zip ]`) instead of on the artifact the build
+  consumes. A fresh CI clone never has the marker, so pod install re-ran
+  the block on every build: it removed the WasmRun.xcframework the
+  build-macos.yml restore step had already placed (cache hit,
+  sha256-verified), re-downloaded the 92.7 MB asset with a bare
+  no-`--fail` curl, and one transient reset (curl 56 at ~3 MB/92.7 MB)
+  left the Podfile `nm -gU` symbol check with no
+  macos-arm64_x86_64/libwasm_run_dart.a to read. The guard now keys on
+  `WasmRun.xcframework/macos-arm64_x86_64/libwasm_run_dart.a` — the exact
+  path the Podfile force_loads and nm-checks — so the block is a no-op
+  whenever the restore step (or a previous run) put the framework in
+  place, and the fallback download for a truly cold tree carries
+  `--fail` AND aborts the block at the curl step on failure
+  (`|| { echo "wasm_run download failed" >&2; exit 1; }` — a swallowed
+  status fell through to unzip/truncate residue and masked the root cause
+  behind the Podfile `nm` diagnostic; review round 1 on this PR), and the
+  podspec now assigns the backtick result and raises "wasm_run framework
+  fetch failed" unless `$?.success?` — Ruby ignores a bare backtick's
+  exit status, so pod install would otherwise have sailed past the failed
+  fetch to the downstream `nm` diagnostic (review round 2). Linted
+  behaviorally (stubbed curl, no network; POSIX-gated sandbox, plus a
+  ruby evaluation of the real fetch statement) by
+  test/wasmrun_macos_podspec_download_guard_test.dart.
+
 - fix(gh-2050): the daily-publish `cli` leg red-failed daily when its
   macOS attach arrived after a sibling train had already PUBLISHED the
   derived tag (the same-tag convergence race: mobile leg drafts + the tag
