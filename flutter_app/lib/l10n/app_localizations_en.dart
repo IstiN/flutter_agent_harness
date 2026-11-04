@@ -3034,4 +3034,14 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get fontPresetTitle => 'Font';
+
+  @override
+  String chatSubagentFilterActive(Object count) {
+    return 'Active ($count)';
+  }
+
+  @override
+  String chatSubagentFilterDone(Object count) {
+    return 'Done ($count)';
+  }
 }

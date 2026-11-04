@@ -52,7 +52,7 @@ import 'package:fa/ui/network/join_sheet.dart';
 import 'package:fa/ui/network/network_chat_page.dart';
 import 'package:fa/ui/screens/chat_screen.dart';
 import 'package:fa/ui/widgets/quick_model_chip.dart';
-import 'package:fa/ui/widgets/subagent_chat_switcher.dart';
+import 'package:fa/ui/widgets/subagent_chat_badge.dart';
 import 'package:fa/ui/screens/models_settings_page.dart';
 import 'package:fa/ui/screens/settings.dart';
 import 'package:fa/ui/widgets/boot_oversize_notice.dart';
@@ -1728,12 +1728,12 @@ class _WideLayoutShellState extends State<WideLayoutShell>
           : ChatScreen(
               manager: widget.manager,
               sessionTitle: _sessionDisplayTitle(),
-              inputHeader: SubagentChatSwitcher(
-                // The subagent switcher above the composer (subagent
-                // sessions owner pass): a parent chat lists its subagent
-                // chips; a subagent chat lists its siblings plus the
-                // parent chip first. Taps run the SAME open flow a chat
-                // list row uses, and mark the row read.
+              inputHeader: SubagentChatBadge(
+                // The subagent badge above the composer (subagent sessions
+                // owner pass): one compact icon with the running count;
+                // tapping it opens the anchored picker popover. Rows run
+                // the SAME open flow a chat list row uses, and mark the
+                // row read.
                 controller: _chatController,
                 sessionId: active?.id,
                 onOpen: _openLocalEntry,
@@ -1830,7 +1830,39 @@ class _WideLayoutShellState extends State<WideLayoutShell>
         }
         if (!mounted) return;
         await mode.selectChannel(channel.id);
-        setState(() => _networksSurfaceOpen = false);
+        // Land the tap exactly like the chat-list row open does: the
+        // projection's row becomes the selected network entry — the
+        // content pane mounts the channel's message view and the All home
+        // highlights the row — then the sidebar swaps back to the chats
+        // home. Session-snapshot fallback rows have no projection row; a
+        // minimal stand-in entry keeps the content-pane contract there.
+        final entry = _chatController.networkChannelEntries
+            .where(
+              (candidate) =>
+                  candidate.networkId == networkId &&
+                  candidate.id.value == channel.id,
+            )
+            .firstOrNull;
+        if (!mounted) return;
+        setState(() {
+          _activeNetworkEntry =
+              entry ??
+              ChatListEntry(
+                id: ChatEntryId.network(
+                  ChatListEntryKind.networkChannel,
+                  networkId: networkId,
+                  id: channel.id,
+                ),
+                kind: ChatListEntryKind.networkChannel,
+                networkId: networkId,
+                networkName: manager.wallet.networks[networkId]?.name,
+                title: channel.name ?? channel.id,
+                createdAt: DateTime.now(),
+              );
+          _networksSurfaceOpen = false;
+        });
+        // The row-open parity: the tap marks the projection row read.
+        if (entry != null) await _chatController.markOpened(entry);
       },
     );
   }

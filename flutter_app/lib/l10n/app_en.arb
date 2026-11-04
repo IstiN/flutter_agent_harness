@@ -48,9 +48,17 @@
   "appsWidgetStoreSubtitle": "Browse and install widgets into My Apps.",
   "appsWidgetCatalog": "Widget catalog",
   "appsInstalledCount": "{count} installed",
-  "@appsInstalledCount": {"placeholders": {"count": {}}},
+  "@appsInstalledCount": {
+    "placeholders": {
+      "count": {}
+    }
+  },
   "appsActiveCount": "{count} active apps",
-  "@appsActiveCount": {"placeholders": {"count": {}}},
+  "@appsActiveCount": {
+    "placeholders": {
+      "count": {}
+    }
+  },
   "appsRunning": "Running",
   "appsQuickOpen": "Quick open",
   "appsFullTooltip": "Full",
@@ -71,7 +79,7 @@
   "chatFilterChannels": "Channels",
   "chatAllNetworks": "All networks",
   "chatMyNetwork": "My network",
-    "chatManageNetworks": "Manage networks",
+  "chatManageNetworks": "Manage networks",
   "chatNetworkStatusConnected": "Connected",
   "@chatNetworkStatusConnected": {
     "description": "Networks-list row meta for a membership with a live relay session"
@@ -128,7 +136,7 @@
   "chatSearchShortcut": "⌘F",
   "chatMoreActions": "Chat actions",
   "chatExpand": "Expand subagents",
-  "chatCollapse": "Collapse subagents",
+  "chatCollapse": "Collapse",
   "wideNavActivity": "Activity",
   "activityRunning": "Running",
   "activityRecent": "Recent",
@@ -217,7 +225,6 @@
   "chatAttachNoName": "Could not attach \"{name}\": no usable file name.",
   "chatAttachTooltip": "Attach",
   "chatCamera": "Camera",
-  "chatCollapse": "Collapse",
   "chatCopiedToClipboard": "Session copied to clipboard",
   "chatCopySessionTooltip": "Copy session",
   "chatFilesTooltip": "Files",
@@ -1814,5 +1821,19 @@
   "fontPresetTitle": "Font",
   "@fontPresetTitle": {
     "description": "Fa 2.0 font preset settings title"
+  },
+  "chatSubagentFilterActive": "Active ({count})",
+  "@chatSubagentFilterActive": {
+    "description": "Subagent picker activity filter: active sessions",
+    "placeholders": {
+      "count": {}
+    }
+  },
+  "chatSubagentFilterDone": "Done ({count})",
+  "@chatSubagentFilterDone": {
+    "description": "Subagent picker activity filter: finished sessions",
+    "placeholders": {
+      "count": {}
+    }
   }
 }

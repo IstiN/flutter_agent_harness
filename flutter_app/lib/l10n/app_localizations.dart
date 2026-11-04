@@ -5383,6 +5383,18 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Font'**
   String get fontPresetTitle;
+
+  /// Subagent picker activity filter: active sessions
+  ///
+  /// In en, this message translates to:
+  /// **'Active ({count})'**
+  String chatSubagentFilterActive(Object count);
+
+  /// Subagent picker activity filter: finished sessions
+  ///
+  /// In en, this message translates to:
+  /// **'Done ({count})'**
+  String chatSubagentFilterDone(Object count);
 }
 
 class _AppLocalizationsDelegate

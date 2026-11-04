@@ -45,9 +45,17 @@
   "appsWidgetStoreSubtitle": "Просмотр и установка виджетов в Мои приложения.",
   "appsWidgetCatalog": "Каталог виджетов",
   "appsInstalledCount": "Установлено: {count}",
-  "@appsInstalledCount": {"placeholders": {"count": {}}},
+  "@appsInstalledCount": {
+    "placeholders": {
+      "count": {}
+    }
+  },
   "appsActiveCount": "Активных приложений: {count}",
-  "@appsActiveCount": {"placeholders": {"count": {}}},
+  "@appsActiveCount": {
+    "placeholders": {
+      "count": {}
+    }
+  },
   "appsRunning": "Запущенные",
   "appsQuickOpen": "Быстрое открытие",
   "appsFullTooltip": "На весь экран",
@@ -68,7 +76,7 @@
   "chatFilterChannels": "Каналы",
   "chatAllNetworks": "Все сети",
   "chatMyNetwork": "Моя сеть",
-    "chatManageNetworks": "Управление сетями",
+  "chatManageNetworks": "Управление сетями",
   "chatNetworkStatusConnected": "Подключена",
   "chatNetworkStatusOffline": "Релей офлайн",
   "chatNetworkStatusIdle": "Не подключена",
@@ -107,7 +115,7 @@
   "chatSearchShortcut": "⌘F",
   "chatMoreActions": "Действия с чатом",
   "chatExpand": "Развернуть субагентов",
-  "chatCollapse": "Свернуть субагентов",
+  "chatCollapse": "Свернуть",
   "wideNavActivity": "Активность",
   "activityRunning": "В работе",
   "activityRecent": "Недавние",
@@ -196,7 +204,6 @@
   "chatAttachNoName": "Не удалось прикрепить «{name}»: нет подходящего имени файла.",
   "chatAttachTooltip": "Прикрепить",
   "chatCamera": "Камера",
-  "chatCollapse": "Свернуть",
   "chatCopiedToClipboard": "Сессия скопирована в буфер обмена",
   "chatCopySessionTooltip": "Копировать сессию",
   "chatFilesTooltip": "Файлы",
@@ -278,8 +285,7 @@
   "keysValueHint": "Вставьте значение ключа",
   "keysValueLabel": "Значение",
   "launcherChatActionsTooltip": "Действия чата",
-  "faEntryHintTooltip":
-      "Касание: продолжить активный чат · Долгое нажатие: новый чат",
+  "faEntryHintTooltip": "Касание: продолжить активный чат · Долгое нажатие: новый чат",
   "launcherChatEmptyHint": "Пока пусто — спросите Fa о чём угодно.",
   "launcherDissolveFolder": "Убрать папку",
   "launcherFolderDefaultName": "Папка",
@@ -1262,5 +1268,19 @@
   "fontPresetTitle": "Шрифт",
   "@fontPresetTitle": {
     "description": "Fa 2.0 font preset settings title"
+  },
+  "chatSubagentFilterActive": "Активные ({count})",
+  "@chatSubagentFilterActive": {
+    "description": "Subagent picker activity filter: active sessions",
+    "placeholders": {
+      "count": {}
+    }
+  },
+  "chatSubagentFilterDone": "Завершённые ({count})",
+  "@chatSubagentFilterDone": {
+    "description": "Subagent picker activity filter: finished sessions",
+    "placeholders": {
+      "count": {}
+    }
   }
 }

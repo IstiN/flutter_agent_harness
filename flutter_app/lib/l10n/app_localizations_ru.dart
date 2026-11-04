@@ -3069,4 +3069,14 @@ class AppLocalizationsRu extends AppLocalizations {
 
   @override
   String get fontPresetTitle => 'Шрифт';
+
+  @override
+  String chatSubagentFilterActive(Object count) {
+    return 'Активные ($count)';
+  }
+
+  @override
+  String chatSubagentFilterDone(Object count) {
+    return 'Завершённые ($count)';
+  }
 }

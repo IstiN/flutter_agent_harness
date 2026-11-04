@@ -3011,8 +3011,8 @@ void main() {
     },
   );
 
-  // Subagent sessions owner pass: the switcher chips docked above the
-  // composer, and the subagent chat's close returning to its parent.
+  // Subagent sessions owner pass: the badge docks above the composer and
+  // the subagent chat's close returns to its parent.
   group('subagent switcher', () {
     Future<void> createSubagent(
       JsonlSessionRepo repo, {
@@ -3026,8 +3026,8 @@ void main() {
       ),
     );
 
-    testWidgets('a parent chat lists its subagent chips above the composer; '
-        'a chip tap opens that subagent chat', (tester) async {
+    testWidgets('a parent chat shows the subagent badge above the composer; '
+        'a popover row tap opens that subagent chat', (tester) async {
       final env = MemoryExecutionEnv();
       final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
         ..addSession('fake-session', _fakeService(env));
@@ -3045,40 +3045,48 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      // One chip per subagent session of the open PARENT chat — no
-      // parent chip while the parent itself is open.
+      // One badge above the composer for the open PARENT chat; the
+      // subagent rows stay hidden until summoned.
+      expect(find.byKey(const ValueKey('chatSubagentBadge')), findsOneWidget);
       expect(
         find.byKey(const ValueKey('chatSubagentChip-sub-scan')),
+        findsNothing,
+      );
+      expect(find.text('scan-agent'), findsNothing);
+
+      await tester.tap(find.byKey(const ValueKey('chatSubagentBadge')));
+      await tester.pumpAndSettle();
+
+      // The picker popover: one row per subagent, no parent chip while
+      // the parent itself is open.
+      expect(
+        find.byKey(const ValueKey('chatSubagentEntry-sub-scan')),
         findsOneWidget,
       );
       expect(
-        find.byKey(const ValueKey('chatSubagentChip-sub-watch')),
+        find.byKey(const ValueKey('chatSubagentEntry-sub-watch')),
         findsOneWidget,
       );
-      expect(find.text('scan-agent'), findsOneWidget);
-      expect(find.text('← poc'), findsNothing);
+      expect(find.text('←'), findsNothing);
 
       await tester.tap(
-        find.byKey(const ValueKey('chatSubagentChip-sub-scan')),
+        find.byKey(const ValueKey('chatSubagentEntry-sub-scan')),
       );
       await tester.pumpAndSettle();
       await tester.pump(const Duration(seconds: 10));
       await tester.pumpAndSettle();
 
-      // The chip opened the SUBAGENT chat through the same clone flow a
+      // The row opened the SUBAGENT chat through the same clone flow a
       // chat list row uses.
       expect(manager.activeId, 'sub-scan');
-      // The switcher flipped: the parent chip leads, the subagent chips
-      // follow with the current one highlighted (the title also rides
-      // the header's session label — scope to the chip).
-      expect(find.text('← poc'), findsOneWidget);
-      expect(
-        find.descendant(
-          of: find.byKey(const ValueKey('chatSubagentChip-sub-scan')),
-          matching: find.text('scan-agent'),
-        ),
-        findsOneWidget,
-      );
+      // The badge persists for the subagent chat: its popover lists the
+      // parent chip first (the title also rides the header's session
+      // label — scope to rows via keys).
+      await tester.tap(find.byKey(const ValueKey('chatSubagentBadge')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('chatSubagentEntry-fake-session')),
+          findsOneWidget);
+      expect(find.text('←'), findsOneWidget);
 
       final opened = manager.sessions.firstWhere((s) => s.id == 'sub-scan');
       manager.switchTo('fake-session');
@@ -3107,26 +3115,28 @@ void main() {
       await tester.pumpAndSettle();
 
       // Parents only on the narrow Chats home: the subagent is NOT a
-      // row; the parent row opens its chat with the switcher chips.
+      // row; the parent row opens its chat with the badge above input.
       expect(find.text('scan-agent'), findsNothing);
       await tester.tap(find.text('poc'));
       await tester.pumpAndSettle();
       expect(find.byType(ChatScreen), findsOneWidget);
-      expect(
-        find.byKey(const ValueKey('chatSubagentChip-sub-scan')),
-        findsOneWidget,
-      );
+      expect(find.byKey(const ValueKey('chatSubagentBadge')), findsOneWidget);
 
-      // Chip tap → the subagent chat opens in the SAME narrow route.
+      // Badge → picker popover → row tap: the subagent chat opens in the
+      // SAME narrow route.
+      await tester.tap(find.byKey(const ValueKey('chatSubagentBadge')));
+      await tester.pumpAndSettle();
+      // The parent chat is open: no parent chip in the popover yet.
+      expect(find.text('←'), findsNothing);
       await tester.tap(
-        find.byKey(const ValueKey('chatSubagentChip-sub-scan')),
+        find.byKey(const ValueKey('chatSubagentEntry-sub-scan')),
       );
       await tester.pumpAndSettle();
       await tester.pump(const Duration(seconds: 10));
       await tester.pumpAndSettle();
       expect(manager.activeId, 'sub-scan');
       expect(find.byType(ChatScreen), findsOneWidget);
-      expect(find.text('← poc'), findsOneWidget);
+      expect(find.text('←'), findsNothing);
 
       // Back intercepts: the route STAYS and the parent chat takes over.
       await tester.tap(find.byType(BackButton).first);
