@@ -5,24 +5,26 @@
 import 'package:fa/l10n/l10n_ext.dart';
 import 'package:fa/network/key_wallet.dart' show NetworkEntry;
 import 'package:fa/network/models.dart' show Channel;
-import 'package:fa/network/network_session.dart' show NetworkSession;
 import 'package:fa/network/network_mode.dart';
 import 'package:fa/network/network_session_manager.dart';
 import 'package:fa/ui/chats/local_sessions_panel.dart' show LocalSessionsPanel;
 import 'package:fa/ui/widgets/folder_avatar.dart';
 import 'package:fa_ui/fa_ui.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
-/// The chat column's NETWORKS surface (Telegram pattern, owner pass): the
-/// identity globe swaps the center column to a networks list — one 70pt
-/// row per wallet membership: letter-gradient avatar (the folder-avatar
-/// algorithm seeded with the network id), 14pt semibold display name, and
-/// a status/meta second line from the live [NetworkSessionManager]
-/// (Connected / Relay offline / Not connected). Selecting a network drills
-/// in place to its channel list — the SAME row anatomy over the channels
-/// the live session already loaded; '<' walks back networks → chats
-/// ([onBack]) and channels → networks. Purely a presentation surface over
-/// the manager's existing state — no networking happens here.
+/// The chats sidebar's NETWORKS surface (Telegram pattern, owner pass):
+/// the identity globe swaps the SIDEBAR content to this surface — the
+/// same slot the Local drill-down uses; the message column keeps the
+/// chat. Level 1 is the compact avatar-only networks strip (letter-
+/// gradient avatars, the folder-avatar algorithm seeded with the network
+/// id — no name labels); selecting a network opens its channel list
+/// BESIDE the strip (the same 70pt Telegram rows over the channels the
+/// live session already loaded) and puts the network's display name in
+/// the surface header. The '<' chevrons walk channels → strip ([onBack]
+/// returns to the normal chats) and the manage gear keeps the management
+/// dialog reachable. Purely a presentation surface over the manager's
+/// existing state — no networking happens here.
 class ChatNetworksPanel extends StatefulWidget {
   const ChatNetworksPanel({
     super.key,
@@ -32,6 +34,15 @@ class ChatNetworksPanel extends StatefulWidget {
     required this.onManageNetworks,
     required this.onOpenChannel,
   });
+
+  /// The compact strip's geometry (the Local folder strip's contract):
+  /// ~70pt avatar-only column, Ø~50 avatars centered on a ~70pt pitch,
+  /// accent capsule ~6x51 flush to the strip's left edge.
+  static const double stripWidth = 70;
+  static const double stripItemPitch = 70;
+  static const double stripAvatarSize = 50;
+  static const double capsuleWidth = 6;
+  static const double capsuleHeight = 51;
 
   /// The session manager (wallet memberships + live sessions). Null (no
   /// network wiring) renders the empty state, like the old menu's guest
@@ -57,16 +68,21 @@ class ChatNetworksPanel extends StatefulWidget {
 }
 
 class _ChatNetworksPanelState extends State<ChatNetworksPanel> {
-  /// The drilled-into network id; null = the networks list.
+  /// The drilled-into network id; null = the strip level.
   String? _openNetworkId;
 
   @override
   Widget build(BuildContext context) {
     final colors = FahColors.of(context);
     final manager = widget.manager;
-    final openId = _openNetworkId;
     final networks = manager?.wallet.networks ?? const {};
+    final openId = _openNetworkId;
     final openName = openId == null ? null : networks[openId]?.name ?? openId;
+    final isMac = !kIsWeb && defaultTargetPlatform == TargetPlatform.macOS;
+    // The sidebar panel is flush with the window edge and must clear the
+    // native titlebar region (macOS fullSizeContentView inset; the same
+    // clearance the Local panel's header applies).
+    final titlebarHeight = isMac ? 46.0 : 0.0;
     return ColoredBox(
       color: colors.panel,
       child: ListenableBuilder(
@@ -77,6 +93,7 @@ class _ChatNetworksPanelState extends State<ChatNetworksPanel> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               _NetworksHeader(
+                titlebarHeight: titlebarHeight,
                 title: openName ?? context.l10n.networkNetworksTitle,
                 backKey: openId == null
                     ? const ValueKey('chatNetworksBack')
@@ -88,23 +105,42 @@ class _ChatNetworksPanelState extends State<ChatNetworksPanel> {
                 onManage: widget.onManageNetworks,
               ),
               Expanded(
-                child: openId == null
-                    ? _NetworksList(
-                        networks: networks,
-                        sessions: manager?.sessions ?? const {},
-                        selectedNetworkId: widget.mode?.networkId,
-                        onOpen: (networkId) =>
-                            setState(() => _openNetworkId = networkId),
-                      )
-                    : _ChannelsList(
-                        networkId: openId,
-                        channels: session?.channels ?? const [],
-                        selectedChannelId: widget.mode?.networkId == openId
-                            ? widget.mode?.channelId
-                            : null,
-                        onOpenChannel: (channel) =>
-                            widget.onOpenChannel(openId, channel),
-                      ),
+                key: const ValueKey('chatNetworksList'),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    _NetworksStrip(
+                      networks: networks,
+                      selectedNetworkId: openId,
+                      onOpen: (networkId) =>
+                          setState(() => _openNetworkId = networkId),
+                    ),
+                    Expanded(
+                      child: openId == null
+                          ? (networks.isEmpty
+                                ? Center(
+                                    child: Text(
+                                      context.l10n.networkEmptyTitle,
+                                      style: TextStyle(
+                                        color: FahColors.of(context).dim,
+                                        fontSize: 13,
+                                      ),
+                                    ),
+                                  )
+                                : const SizedBox.shrink())
+                          : _ChannelsList(
+                              networkId: openId,
+                              channels: session?.channels ?? const [],
+                              selectedChannelId:
+                                  widget.mode?.networkId == openId
+                                  ? widget.mode?.channelId
+                                  : null,
+                              onOpenChannel: (channel) =>
+                                  widget.onOpenChannel(openId, channel),
+                            ),
+                    ),
+                  ],
+                ),
               ),
             ],
           );
@@ -115,11 +151,15 @@ class _ChatNetworksPanelState extends State<ChatNetworksPanel> {
 }
 
 /// The Telegram '<' chevron header row (the Local panel's header anatomy):
-/// back key swaps between chatNetworksBack (networks → chats) and
-/// chatChannelsBack (channels → networks); the manage gear rides the
-/// networks level.
+/// back key swaps between chatNetworksBack (strip → normal chats) and
+/// chatChannelsBack (channels → strip); the title carries the surface's
+/// name (Networks at strip level, the open network's display name beside
+/// the channels) and the manage gear rides the strip level. The header
+/// reserves the floating sidebar toggle's top-right slot — the same 36pt
+/// contract as the shared section header.
 class _NetworksHeader extends StatelessWidget {
   const _NetworksHeader({
+    required this.titlebarHeight,
     required this.title,
     required this.backKey,
     required this.onBack,
@@ -127,6 +167,7 @@ class _NetworksHeader extends StatelessWidget {
     required this.onManage,
   });
 
+  final double titlebarHeight;
   final String title;
   final Key backKey;
   final VoidCallback onBack;
@@ -137,107 +178,144 @@ class _NetworksHeader extends StatelessWidget {
   Widget build(BuildContext context) {
     final colors = FahColors.of(context);
     return Container(
-      height: 54,
+      height: titlebarHeight + 54,
       color: colors.panel,
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(8, 7, 10, 7),
-        child: Row(
-          children: [
-            IconButton(
-              key: backKey,
-              tooltip: MaterialLocalizations.of(context).backButtonTooltip,
-              onPressed: onBack,
-              icon: const Icon(Icons.chevron_left_rounded),
-              iconSize: 26,
-              color: colors.text,
-              visualDensity: VisualDensity.compact,
-            ),
-            Expanded(
-              child: Text(
-                title,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  color: colors.text,
-                  fontSize: 17,
-                  fontWeight: FontWeight.w600,
-                ),
+      child: Column(
+        children: [
+          if (titlebarHeight > 0) SizedBox(height: titlebarHeight),
+          SizedBox(
+            height: 54,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(8, 7, 10, 7),
+              child: Row(
+                children: [
+                  IconButton(
+                    key: backKey,
+                    tooltip: MaterialLocalizations.of(
+                      context,
+                    ).backButtonTooltip,
+                    onPressed: onBack,
+                    icon: const Icon(Icons.chevron_left_rounded),
+                    iconSize: 26,
+                    color: colors.text,
+                    visualDensity: VisualDensity.compact,
+                  ),
+                  Expanded(
+                    child: Text(
+                      title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: colors.text,
+                        fontSize: 17,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                  if (showManage)
+                    SizedBox.square(
+                      dimension: 32,
+                      child: IconButton(
+                        key: const ValueKey('chatNetworksManage'),
+                        tooltip: context.l10n.chatManageNetworks,
+                        onPressed: onManage,
+                        icon: const Icon(Icons.settings_outlined),
+                        iconSize: 18,
+                        color: colors.dim,
+                        visualDensity: VisualDensity.compact,
+                        padding: EdgeInsets.zero,
+                      ),
+                    ),
+                  // The wide shell's floating sidebar toggle owns the
+                  // panel's top-right corner (the shared section header
+                  // reserves this exact 36pt slot) — the header never
+                  // places actions under it.
+                  const SizedBox(width: 4),
+                  const SizedBox.square(dimension: 32),
+                ],
               ),
             ),
-            if (showManage)
-              SizedBox.square(
-                dimension: 32,
-                child: IconButton(
-                  key: const ValueKey('chatNetworksManage'),
-                  tooltip: context.l10n.chatManageNetworks,
-                  onPressed: onManage,
-                  icon: const Icon(Icons.settings_outlined),
-                  iconSize: 18,
-                  color: colors.dim,
-                  visualDensity: VisualDensity.compact,
-                  padding: EdgeInsets.zero,
-                ),
-              ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
 }
 
-/// Level 1: one row per wallet membership (insertion order — the same set
-/// the old filter menu listed).
-class _NetworksList extends StatelessWidget {
-  const _NetworksList({
+/// Level 1: the compact avatar-only networks strip — one Ø50 letter-
+/// gradient avatar per [ChatNetworksPanel.stripItemPitch] cell, no name
+/// labels or status meta. The drilled network paints the accent capsule
+/// flush to the strip's left edge and squares its avatar (radius ~25%);
+/// a tap opens its channel list beside the strip.
+class _NetworksStrip extends StatelessWidget {
+  const _NetworksStrip({
     required this.networks,
-    required this.sessions,
     required this.selectedNetworkId,
     required this.onOpen,
   });
 
   final Map<String, NetworkEntry> networks;
-  final Map<String, NetworkSession> sessions;
   final String? selectedNetworkId;
   final ValueChanged<String> onOpen;
 
   @override
   Widget build(BuildContext context) {
-    if (networks.isEmpty) {
-      // The empty wallet keeps the list container (and its key) so the
-      // level's shape stays testable in the guest mode.
-      return SizedBox.expand(
-        key: const ValueKey('chatNetworksList'),
-        child: Center(
-          child: Text(
-            context.l10n.networkEmptyTitle,
-            style: TextStyle(color: FahColors.of(context).dim, fontSize: 13),
-          ),
-        ),
-      );
-    }
-    return ListView.builder(
-      key: const ValueKey('chatNetworksList'),
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      itemCount: networks.length,
-      itemBuilder: (context, index) {
-        final entry = networks.entries.elementAt(index);
-        final session = sessions[entry.key];
-        final meta = session == null
-            ? context.l10n.chatNetworkStatusIdle
-            : session.networkOffline
-            ? context.l10n.chatNetworkStatusOffline
-            : context.l10n.chatNetworkStatusConnected;
-        return _PanelRow(
-          key: ValueKey('chatNetworkRow-${entry.key}'),
-          avatarSeed: entry.key,
-          label: entry.value.name,
-          title: entry.value.name,
-          meta: meta,
-          selected: selectedNetworkId == entry.key,
-          hairline: index < networks.length - 1,
-          onTap: () => onOpen(entry.key),
-        );
-      },
+    final tokens = FaDesignTokens.of(context);
+    return SizedBox(
+      key: const ValueKey('networksStrip'),
+      width: ChatNetworksPanel.stripWidth,
+      child: networks.isEmpty
+          ? const SizedBox.shrink()
+          : ListView.builder(
+              padding: const EdgeInsets.symmetric(vertical: 4),
+              itemCount: networks.length,
+              itemBuilder: (context, index) {
+                final entry = networks.entries.elementAt(index);
+                final selected = entry.key == selectedNetworkId;
+                return SizedBox(
+                  key: ValueKey('chatNetworkRow-${entry.key}'),
+                  width: ChatNetworksPanel.stripWidth,
+                  height: ChatNetworksPanel.stripItemPitch,
+                  child: Material(
+                    color: Colors.transparent,
+                    child: InkWell(
+                      onTap: () => onOpen(entry.key),
+                      child: Stack(
+                        alignment: Alignment.center,
+                        children: [
+                          if (selected)
+                            Positioned(
+                              left: 0,
+                              top:
+                                  (ChatNetworksPanel.stripItemPitch -
+                                      ChatNetworksPanel.capsuleHeight) /
+                                  2,
+                              child: Container(
+                                key: const ValueKey('networkSelectedCapsule'),
+                                width: ChatNetworksPanel.capsuleWidth,
+                                height: ChatNetworksPanel.capsuleHeight,
+                                decoration: BoxDecoration(
+                                  color: tokens.accent,
+                                  borderRadius: BorderRadius.circular(
+                                    ChatNetworksPanel.capsuleWidth / 2,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          FolderAvatar(
+                            seed: entry.key,
+                            label: entry.value.name,
+                            size: ChatNetworksPanel.stripAvatarSize,
+                            circle: !selected,
+                            radiusFactor: selected ? 0.25 : 0.28,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                );
+              },
+            ),
     );
   }
 }

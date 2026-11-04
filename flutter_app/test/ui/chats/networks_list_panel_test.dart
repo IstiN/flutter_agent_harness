@@ -1,8 +1,10 @@
 @TestOn('vm')
-/// Widget tests for the chat column's NETWORKS panel (Telegram pattern,
-/// owner pass): membership rows (letter-gradient avatar, name, status
-/// meta), the in-place channel drill-down over the live session's
-/// channels, and the '<' chevrons walking channels → networks → chats.
+/// Widget tests for the chats sidebar's NETWORKS surface (Telegram
+/// pattern, owner pass): the avatar-only networks STRIP (no name labels,
+/// Ø50 letter-gradient circles, accent capsule + rounded-square
+/// selection), the in-place channel drill-down beside the strip, the
+/// network name in the surface header, and the '<' chevrons walking
+/// channels → strip → normal chats.
 library;
 
 import 'package:fa/l10n/app_localizations.dart';
@@ -12,6 +14,7 @@ import 'package:fa/network/network_session.dart';
 import 'package:fa/network/network_session_manager.dart';
 import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/chats/networks_list_panel.dart';
+import 'package:fa/ui/widgets/folder_avatar.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -68,6 +71,8 @@ Future<void> pumpPanel(
   WidgetTester tester, {
   required NetworkSessionManager? manager,
   NetworkModeController? mode,
+  VoidCallback? onBack,
+  List<(String, String)>? opened,
 }) async {
   tester.view.devicePixelRatio = 1.0;
   tester.view.physicalSize = const Size(520, 640);
@@ -81,9 +86,10 @@ Future<void> pumpPanel(
         body: ChatNetworksPanel(
           manager: manager,
           mode: mode,
-          onBack: () {},
+          onBack: onBack ?? () {},
           onManageNetworks: () {},
-          onOpenChannel: (_, _) {},
+          onOpenChannel: (networkId, channel) =>
+              opened?.add((networkId, channel.id)),
         ),
       ),
     ),
@@ -92,72 +98,118 @@ Future<void> pumpPanel(
 }
 
 void main() {
-  testWidgets('membership rows: avatar, name, live status meta', (
-    tester,
-  ) async {
+  testWidgets('the networks strip renders avatars only — no name labels, '
+      'Ø50 letter-gradient circles on the 70pt pitch', (tester) async {
     final rig = await _manager();
     await pumpPanel(tester, manager: rig.manager);
 
+    expect(find.byKey(const ValueKey('networksStrip')), findsOneWidget);
     expect(find.byKey(const ValueKey('chatNetworksList')), findsOneWidget);
     expect(find.byKey(const ValueKey('chatNetworkRow-net1')), findsOneWidget);
     expect(find.byKey(const ValueKey('chatNetworkRow-net2')), findsOneWidget);
-    expect(find.text('fa-team'), findsOneWidget);
-    expect(find.text('quiet-net'), findsOneWidget);
-    // The live membership reports Connected; the stored-only one says Not
-    // connected.
-    expect(find.text('Connected'), findsOneWidget);
-    expect(find.text('Not connected'), findsOneWidget);
-    // The networks level's chevron walks back to the chats.
+    // Avatar-only at strip level: no names, no status meta.
+    expect(find.text('fa-team'), findsNothing);
+    expect(find.text('quiet-net'), findsNothing);
+    expect(find.text('Connected'), findsNothing);
+    expect(find.text('Not connected'), findsNothing);
+    expect(find.text('Networks'), findsOneWidget, reason: 'the header title');
+    // Geometry: ~70pt strip, Ø~50 avatars, circles while unselected.
+    expect(
+      tester.getSize(find.byKey(const ValueKey('networksStrip'))).width,
+      ChatNetworksPanel.stripWidth,
+    );
+    final avatars = find.byType(FolderAvatar);
+    expect(avatars, findsNWidgets(2));
+    expect(tester.getSize(avatars.first).width, 50);
+    expect(tester.getSize(avatars.first).height, 50);
+    for (final avatar in avatars.evaluate()) {
+      expect((avatar.widget as FolderAvatar).circle, isTrue);
+    }
+    expect(find.byKey(const ValueKey('networkSelectedCapsule')), findsNothing);
+    // The networks level's chevron walks back to the normal chats.
     expect(find.byKey(const ValueKey('chatNetworksBack')), findsOneWidget);
     expect(find.byKey(const ValueKey('chatChannelsBack')), findsNothing);
     await rig.session?.close();
   });
 
-  testWidgets('selecting a network drills to its channels; the chevrons '
-      'walk channels → networks → chats', (tester) async {
+  testWidgets('selecting a network drills to its channels beside the strip, '
+      'names the header and paints the capsule', (tester) async {
     final rig = await _manager();
-    var backs = 0;
-    await tester.pumpWidget(
-      MaterialApp(
-        theme: buildFahTheme(),
-        localizationsDelegates: AppLocalizations.localizationsDelegates,
-        supportedLocales: AppLocalizations.supportedLocales,
-        home: Scaffold(
-          body: ChatNetworksPanel(
-            manager: rig.manager,
-            onBack: () => backs++,
-            onManageNetworks: () {},
-            onOpenChannel: (_, _) {},
-          ),
-        ),
-      ),
-    );
-    await tester.pump();
+    await pumpPanel(tester, manager: rig.manager);
 
     await tester.tap(find.byKey(const ValueKey('chatNetworkRow-net1')));
     await tester.pump();
 
-    // The channel drill-down: same row anatomy over the session's
-    // channels, with the channels-level chevron.
+    // The channel drill-down: same Telegram rows over the session's
+    // channels, BESIDE the still-visible strip, with the channels-level
+    // chevron and the network's name in the header.
+    final strip = tester.getRect(find.byKey(const ValueKey('networksStrip')));
+    final general = find.byKey(const ValueKey('chatNetworkChannel-c1'));
     expect(find.byKey(const ValueKey('chatNetworkChannels')), findsOneWidget);
     expect(find.byKey(const ValueKey('chatChannelsBack')), findsOneWidget);
     expect(find.byKey(const ValueKey('chatNetworksBack')), findsNothing);
+    expect(tester.getTopLeft(general).dx, greaterThan(strip.right));
     expect(find.text('general'), findsOneWidget);
     expect(find.text('launch'), findsOneWidget);
     expect(find.text('Private channel'), findsOneWidget);
     expect(find.text('Public channel'), findsOneWidget);
+    expect(find.text('fa-team'), findsOneWidget);
+    expect(find.text('quiet-net'), findsNothing);
 
-    // channels → networks.
+    // The drilled network wears the accent capsule flush to the strip's
+    // LEFT edge and its avatar re-renders as a rounded square (radius
+    // ~25%); the other stays a circle.
+    final capsule = tester.getRect(
+      find.byKey(const ValueKey('networkSelectedCapsule')),
+    );
+    expect(capsule.width, ChatNetworksPanel.capsuleWidth);
+    expect(capsule.height, ChatNetworksPanel.capsuleHeight);
+    expect(capsule.left, strip.left);
+    final selectedAvatar = tester.widget<FolderAvatar>(
+      find.descendant(
+        of: find.byKey(const ValueKey('chatNetworkRow-net1')),
+        matching: find.byType(FolderAvatar),
+      ),
+    );
+    expect(selectedAvatar.circle, isFalse);
+    expect(selectedAvatar.radiusFactor, 0.25);
+    final unselectedAvatar = tester.widget<FolderAvatar>(
+      find.descendant(
+        of: find.byKey(const ValueKey('chatNetworkRow-net2')),
+        matching: find.byType(FolderAvatar),
+      ),
+    );
+    expect(unselectedAvatar.circle, isTrue);
+    await rig.session?.close();
+  });
+
+  testWidgets('the chevrons walk channels → strip → normal chats and the '
+      'header titles follow', (tester) async {
+    final rig = await _manager(withLiveSession: false);
+    var backs = 0;
+    await pumpPanel(tester, manager: rig.manager, onBack: () => backs++);
+    expect(find.text('Networks'), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('chatNetworkRow-net1')));
+    await tester.pump();
+    expect(find.text('fa-team'), findsOneWidget);
+    expect(find.text('Networks'), findsNothing);
+
+    // channels → strip: the header restores the Networks title.
     await tester.tap(find.byKey(const ValueKey('chatChannelsBack')));
     await tester.pump();
+    expect(find.byKey(const ValueKey('chatNetworkChannels')), findsNothing);
+    expect(find.byKey(const ValueKey('networksStrip')), findsOneWidget);
     expect(find.byKey(const ValueKey('chatNetworksList')), findsOneWidget);
-    expect(find.text('fa-team'), findsOneWidget);
+    expect(find.text('Networks'), findsOneWidget);
+    expect(find.text('fa-team'), findsNothing);
+    expect(find.byKey(const ValueKey('networkSelectedCapsule')), findsNothing);
 
-    // networks → chats.
+    // strip → normal chats: the surface hands back to the shell.
     await tester.tap(find.byKey(const ValueKey('chatNetworksBack')));
     await tester.pump();
     expect(backs, 1);
-    await rig.session?.close();
+    expect(find.text('Networks'), findsOneWidget);
   });
 
   testWidgets('a channel tap hands the (network, channel) to the shell', (
@@ -165,23 +217,7 @@ void main() {
   ) async {
     final rig = await _manager();
     final opens = <(String, String)>[];
-    await tester.pumpWidget(
-      MaterialApp(
-        theme: buildFahTheme(),
-        localizationsDelegates: AppLocalizations.localizationsDelegates,
-        supportedLocales: AppLocalizations.supportedLocales,
-        home: Scaffold(
-          body: ChatNetworksPanel(
-            manager: rig.manager,
-            onBack: () {},
-            onManageNetworks: () {},
-            onOpenChannel: (networkId, channel) =>
-                opens.add((networkId, channel.id)),
-          ),
-        ),
-      ),
-    );
-    await tester.pump();
+    await pumpPanel(tester, manager: rig.manager, opened: opens);
     await tester.tap(find.byKey(const ValueKey('chatNetworkRow-net1')));
     await tester.pump();
     await tester.tap(find.byKey(const ValueKey('chatNetworkChannel-c2')));
@@ -194,6 +230,9 @@ void main() {
       'reachable from the rail)', (tester) async {
     final rig = await _manager(withLiveSession: false);
     var managed = 0;
+    tester.view.devicePixelRatio = 1.0;
+    tester.view.physicalSize = const Size(520, 640);
+    addTearDown(tester.view.reset);
     await tester.pumpWidget(
       MaterialApp(
         theme: buildFahTheme(),
@@ -216,77 +255,57 @@ void main() {
   });
 
   testWidgets('no wiring and an empty wallet each render their empty '
-      'state (the guest shape)', (tester) async {
+      'state inside the strip surface (the guest shape)', (tester) async {
     await pumpPanel(tester, manager: null);
     expect(find.byKey(const ValueKey('chatNetworksList')), findsOneWidget);
+    expect(find.byKey(const ValueKey('networksStrip')), findsOneWidget);
     expect(find.byKey(const ValueKey('chatNetworkRow-net1')), findsNothing);
+    expect(find.text('No networks yet'), findsOneWidget);
 
     final rig = await _manager(
       withLiveSession: false,
       withSecondNetwork: false,
     );
-    await tester.pumpWidget(
-      MaterialApp(
-        theme: buildFahTheme(),
-        localizationsDelegates: AppLocalizations.localizationsDelegates,
-        supportedLocales: AppLocalizations.supportedLocales,
-        home: Scaffold(
-          body: ChatNetworksPanel(
-            manager: rig.manager,
-            onBack: () {},
-            onManageNetworks: () {},
-            onOpenChannel: (_, _) {},
-          ),
-        ),
-      ),
-    );
-    await tester.pump();
+    await pumpPanel(tester, manager: rig.manager);
     expect(find.byKey(const ValueKey('chatNetworkRow-net1')), findsOneWidget);
-    expect(find.text('fa-team'), findsOneWidget);
+    expect(find.text('fa-team'), findsNothing);
+    expect(find.text('No networks yet'), findsNothing);
   });
 
-  testWidgets('the selected network highlights accent (mode-driven)', (
+  testWidgets('the channel highlight stays mode-driven inside the open '
+      'network; the strip capsule only follows the drilled network', (
     tester,
   ) async {
-    final rig = await _manager(withLiveSession: false);
+    final rig = await _manager();
     final mode = NetworkModeController.inMemory(
       mode: AppMode.network,
-      networkId: 'net2',
+      networkId: 'net1',
+      channelId: 'c2',
     );
-    await tester.pumpWidget(
-      MaterialApp(
-        theme: buildFahTheme(),
-        localizationsDelegates: AppLocalizations.localizationsDelegates,
-        supportedLocales: AppLocalizations.supportedLocales,
-        home: Scaffold(
-          body: ChatNetworksPanel(
-            manager: rig.manager,
-            mode: mode,
-            onBack: () {},
-            onManageNetworks: () {},
-            onOpenChannel: (_, _) {},
-          ),
-        ),
-      ),
-    );
+    await pumpPanel(tester, manager: rig.manager, mode: mode);
+    // Strip selection is the drilled network, not the mode's.
+    expect(find.byKey(const ValueKey('networkSelectedCapsule')), findsNothing);
+
+    await tester.tap(find.byKey(const ValueKey('chatNetworkRow-net1')));
     await tester.pump();
     final selectedRow = find
         .descendant(
-          of: find.byKey(const ValueKey('chatNetworkRow-net2')),
+          of: find.byKey(const ValueKey('chatNetworkChannel-c2')),
           matching: find.byType(Material),
         )
         .first;
     expect(
       tester.widget<Material>(selectedRow).color,
       isNot(Colors.transparent),
-      reason: 'the selected network row wears the accent fill',
+      reason: 'the selected channel row wears the accent fill',
     );
     final unselectedRow = find
         .descendant(
-          of: find.byKey(const ValueKey('chatNetworkRow-net1')),
+          of: find.byKey(const ValueKey('chatNetworkChannel-c1')),
           matching: find.byType(Material),
         )
         .first;
     expect(tester.widget<Material>(unselectedRow).color, Colors.transparent);
+    await rig.session?.close();
   });
 }

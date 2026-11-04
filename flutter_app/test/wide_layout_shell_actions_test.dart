@@ -1507,10 +1507,10 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    // Rail → Local folder list.
+    // Rail → the Local avatar-only strip (level 1).
     await tester.tap(find.byKey(const ValueKey('messengerPrimaryNav-local')));
     await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey('localFolderList')), findsOneWidget);
+    expect(find.byKey(const ValueKey('localFoldersStrip')), findsOneWidget);
     expect(
       find.byKey(const ValueKey('localFolder-/work/mono')),
       findsOneWidget,
@@ -1531,7 +1531,7 @@ void main() {
     // Back from the folder list; the drill-down state stays shell-owned.
     await tester.tap(find.byKey(const ValueKey('localFolderBack')));
     await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey('localFolderList')), findsOneWidget);
+    expect(find.byKey(const ValueKey('localFoldersStrip')), findsOneWidget);
     expect(
       find.byKey(const ValueKey('localSession-design-session')),
       findsNothing,
