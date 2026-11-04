@@ -139,6 +139,7 @@ void main() {
 
     await tester.tap(find.byKey(const ValueKey('networkRow-net1')));
     await tester.pump();
+    await tester.pump(const Duration(milliseconds: 250));
 
     // The channel drill-down: same Telegram rows over the session's
     // channels, BESIDE the still-visible strip, with the channels-level
@@ -217,6 +218,7 @@ void main() {
 
     await tester.tap(find.byKey(const ValueKey('networkRow-net1')));
     await tester.pump();
+    await tester.pump(const Duration(milliseconds: 250));
     expect(
       find.text('fa-team'),
       findsOneWidget,
@@ -227,6 +229,7 @@ void main() {
     // channels → strip: the header restores the Networks title.
     await tester.tap(find.byKey(const ValueKey('chatChannelsBack')));
     await tester.pump();
+    await tester.pump(const Duration(milliseconds: 250));
     expect(find.byKey(const ValueKey('chatNetworkChannels')), findsNothing);
     expect(find.byKey(const ValueKey('networksList')), findsOneWidget);
     expect(find.byKey(const ValueKey('networksStrip')), findsNothing);
@@ -241,6 +244,52 @@ void main() {
     expect(find.text('Networks'), findsOneWidget);
   });
 
+  testWidgets('the level swap animates in (200ms easeInOutCubic) and keys '
+      'stay stable after settle', (tester) async {
+    final rig = await _manager();
+    await pumpPanel(tester, manager: rig.manager);
+
+    final switcher = find.byType(AnimatedSwitcher);
+    expect(switcher, findsOneWidget);
+    final spec = tester.widget<AnimatedSwitcher>(switcher);
+    expect(spec.duration, const Duration(milliseconds: 200));
+    expect(spec.switchInCurve, Curves.easeInOutCubic);
+    expect(spec.switchOutCurve, Curves.easeInOutCubic);
+
+    // Drill: the incoming strip+channels level fades/slides in while the
+    // outgoing list fades out (the header never participates).
+    await tester.tap(find.byKey(const ValueKey('networkRow-net1')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(find.byKey(const ValueKey('networksList')), findsOneWidget);
+    expect(find.byKey(const ValueKey('networksStrip')), findsOneWidget);
+    await tester.pump(const Duration(milliseconds: 250));
+
+    // Settled: exactly the level-2 surface, with the stable keys.
+    expect(find.byKey(const ValueKey('networksList')), findsNothing);
+    expect(find.byKey(const ValueKey('networksStrip')), findsOneWidget);
+    expect(find.byKey(const ValueKey('chatNetworkChannels')), findsOneWidget);
+    expect(find.byKey(const ValueKey('chatNetworkRow-net1')), findsOneWidget);
+    expect(find.byKey(const ValueKey('chatNetworkChannel-c1')), findsOneWidget);
+
+    // Back runs the SAME transition (no special reverse animation).
+    await tester.tap(find.byKey(const ValueKey('chatChannelsBack')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(find.byKey(const ValueKey('networksList')), findsOneWidget);
+    expect(find.byKey(const ValueKey('networksStrip')), findsOneWidget);
+    await tester.pump(const Duration(milliseconds: 250));
+    expect(find.byKey(const ValueKey('networksList')), findsOneWidget);
+    expect(find.byKey(const ValueKey('networksStrip')), findsNothing);
+    expect(find.byKey(const ValueKey('chatNetworkChannels')), findsNothing);
+    expect(
+      find.byKey(const ValueKey('networkRow-net2')),
+      findsOneWidget,
+      reason: 'level-1 keys survive the round trip',
+    );
+    await rig.session?.close();
+  });
+
   testWidgets('a channel tap hands the (network, channel) to the shell', (
     tester,
   ) async {
@@ -249,6 +298,7 @@ void main() {
     await pumpPanel(tester, manager: rig.manager, opened: opens);
     await tester.tap(find.byKey(const ValueKey('networkRow-net1')));
     await tester.pump();
+    await tester.pump(const Duration(milliseconds: 250));
     await tester.tap(find.byKey(const ValueKey('chatNetworkChannel-c2')));
     await tester.pump();
     expect(opens, [('net1', 'c2')]);
@@ -317,6 +367,7 @@ void main() {
 
     await tester.tap(find.byKey(const ValueKey('networkRow-net1')));
     await tester.pump();
+    await tester.pump(const Duration(milliseconds: 250));
     final selectedRow = find
         .descendant(
           of: find.byKey(const ValueKey('chatNetworkChannel-c2')),

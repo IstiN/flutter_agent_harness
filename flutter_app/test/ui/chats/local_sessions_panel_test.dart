@@ -308,6 +308,54 @@ void main() {
     );
   });
 
+  testWidgets('the level swap animates in (200ms easeInOutCubic) and keys '
+      'stay stable after settle', (tester) async {
+    final c = await controller([
+      entry('design', folderPath: '/work/fa'),
+      entry('docs', folderPath: '/work/mono'),
+    ]);
+    await pumpPanel(tester, c);
+
+    final switcher = find.byType(AnimatedSwitcher);
+    expect(switcher, findsOneWidget);
+    final spec = tester.widget<AnimatedSwitcher>(switcher);
+    expect(spec.duration, const Duration(milliseconds: 200));
+    expect(spec.switchInCurve, Curves.easeInOutCubic);
+    expect(spec.switchOutCurve, Curves.easeInOutCubic);
+
+    // Drill: the incoming level is fading in while the outgoing one fades
+    // out (the header never participates).
+    await tester.tap(find.byKey(const ValueKey('localFolderRow-/work/fa')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(find.byKey(const ValueKey('localFoldersList')), findsOneWidget);
+    expect(find.byKey(const ValueKey('localSessionList')), findsOneWidget);
+    await tester.pumpAndSettle();
+
+    // Settled: exactly the level-2 surface, with the stable keys.
+    expect(find.byKey(const ValueKey('localFoldersList')), findsNothing);
+    expect(find.byKey(const ValueKey('localFoldersStrip')), findsOneWidget);
+    expect(find.byKey(const ValueKey('localSessionList')), findsOneWidget);
+    expect(find.byKey(ValueKey('localFolder-/work/fa')), findsOneWidget);
+    expect(find.byKey(const ValueKey('localSession-design')), findsOneWidget);
+
+    // Back runs the SAME transition (no special reverse animation).
+    await tester.tap(find.byKey(const ValueKey('localFolderBack')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(find.byKey(const ValueKey('localFoldersList')), findsOneWidget);
+    expect(find.byKey(const ValueKey('localSessionList')), findsOneWidget);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('localFoldersList')), findsOneWidget);
+    expect(find.byKey(const ValueKey('localFoldersStrip')), findsNothing);
+    expect(find.byKey(const ValueKey('localSessionList')), findsNothing);
+    expect(
+      find.byKey(ValueKey('localFolderRow-/work/mono')),
+      findsOneWidget,
+      reason: 'level-1 keys survive the round trip',
+    );
+  });
+
   testWidgets('back walks the open folder to the level-1 folder list and '
       'restores the Local header title', (tester) async {
     final c = await controller([entry('design', folderPath: '/work/fa')]);
