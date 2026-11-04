@@ -15,6 +15,7 @@ import 'package:fa/ui/chats/local_sessions_panel.dart';
 import 'package:fa/ui/widgets/folder_avatar.dart';
 import 'package:fa_ui/fa_ui.dart'
     show FaDesignTokens, FahColors, FaVisualDirection, buildFaTheme;
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:intl/date_symbol_data_local.dart';
@@ -388,5 +389,36 @@ void main() {
     // A folder id that is not in the projection falls back to the list.
     expect(find.byKey(const ValueKey('localFoldersList')), findsOneWidget);
     expect(find.text('No sessions in this folder yet'), findsNothing);
+  });
+
+  testWidgets('the folder strip paints NO scrollbar thumb (owner clip) — '
+      'wheel and drag scrolling still work', (tester) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+    try {
+      final c = await controller([
+        for (var i = 0; i < 30; i++) entry('s-$i', folderPath: '/work/f$i'),
+      ]);
+      await pumpPanel(tester, c, folderId: '/work/f3');
+
+      final strip = find.byKey(const ValueKey('localFoldersStrip'));
+      // The desktop platform attaches a Material scrollbar thumb to the
+      // strip's ListView by default — the owner clip: it must never paint.
+      expect(
+        find.descendant(of: strip, matching: find.byType(Scrollbar)),
+        findsNothing,
+      );
+      // …and the strip still scrolls (drag fling).
+      final position = tester
+          .state<ScrollableState>(
+            find.descendant(of: strip, matching: find.byType(Scrollable)),
+          )
+          .position;
+      final before = position.pixels;
+      await tester.fling(strip, const Offset(0, -160), 600);
+      await tester.pumpAndSettle();
+      expect(position.pixels, greaterThan(before), reason: 'drag still scrolls');
+    } finally {
+      debugDefaultTargetPlatformOverride = null;
+    }
   });
 }

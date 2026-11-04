@@ -19,6 +19,7 @@ import 'package:fa/ui/chats/local_chat_list_adapter.dart';
 import 'package:fa/ui/chats/network_inbox_adapter.dart';
 import 'package:fa/ui/chats/networks_list_panel.dart';
 import 'package:fa/ui/widgets/folder_avatar.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -513,5 +514,53 @@ void main() {
         .first;
     expect(tester.widget<Material>(unselectedRow).color, Colors.transparent);
     await rig.session?.close();
+  });
+
+  testWidgets('the networks strip paints NO scrollbar thumb (owner clip) — '
+      'drag scrolling still works', (tester) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+    try {
+      // A wallet with enough networks to overflow the 70pt-wide strip.
+      final wallet = await KeyWallet.load(MemoryWalletBackend());
+      await wallet.createIfMissing(displayName: 'Me');
+      for (var i = 0; i < 30; i++) {
+        await wallet.addNetwork(networkId: 'net$i', name: 'net-$i');
+      }
+      final manager = NetworkSessionManager(
+        baseUrl: testBase,
+        wallet: wallet,
+        httpClient: FakeHttpClient(),
+        wsConnector: FakeWsConnector(),
+      );
+      addTearDown(manager.disconnectAll);
+      final chatList = await chatListWith(const []);
+      await pumpPanel(
+        tester,
+        manager: manager,
+        chatList: chatList,
+        opened: const [],
+      );
+
+      await tester.tap(find.byKey(const ValueKey('networkRow-net3')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 250));
+
+      final strip = find.byKey(const ValueKey('networksStrip'));
+      expect(
+        find.descendant(of: strip, matching: find.byType(Scrollbar)),
+        findsNothing,
+      );
+      final position = tester
+          .state<ScrollableState>(
+            find.descendant(of: strip, matching: find.byType(Scrollable)),
+          )
+          .position;
+      final before = position.pixels;
+      await tester.fling(strip, const Offset(0, -160), 600);
+      await tester.pumpAndSettle();
+      expect(position.pixels, greaterThan(before), reason: 'drag still scrolls');
+    } finally {
+      debugDefaultTargetPlatformOverride = null;
+    }
   });
 }

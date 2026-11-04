@@ -167,9 +167,7 @@ class _ChatNetworksPanelState extends State<ChatNetworksPanel> {
                           ),
                         ),
                         child: KeyedSubtree(
-                          key: ValueKey(
-                            'networksContent-${openId ?? 'list'}',
-                          ),
+                          key: ValueKey('networksContent-${openId ?? 'list'}'),
                           child: openId == null
                               ? (networks.isEmpty
                                     ? Center(
@@ -388,55 +386,63 @@ class _NetworksStrip extends StatelessWidget {
       width: ChatNetworksPanel.stripWidth,
       child: networks.isEmpty
           ? const SizedBox.shrink()
-          : ListView.builder(
-              padding: const EdgeInsets.symmetric(vertical: 4),
-              itemCount: networks.length,
-              itemBuilder: (context, index) {
-                final entry = networks.entries.elementAt(index);
-                final selected = entry.key == selectedNetworkId;
-                return SizedBox(
-                  key: ValueKey('chatNetworkRow-${entry.key}'),
-                  width: ChatNetworksPanel.stripWidth,
-                  height: ChatNetworksPanel.stripItemPitch,
-                  child: Material(
-                    color: Colors.transparent,
-                    child: InkWell(
-                      onTap: () => onOpen(entry.key),
-                      child: Stack(
-                        alignment: Alignment.center,
-                        children: [
-                          FolderAvatar(
-                            seed: entry.key,
-                            label: entry.value.name,
-                            size: ChatNetworksPanel.stripAvatarSize,
-                            circle: !selected,
-                            radiusFactor: selected ? 0.25 : 0.28,
-                          ),
-                          if (selected)
-                            Positioned(
-                              left: 0,
-                              top:
-                                  (ChatNetworksPanel.stripItemPitch -
-                                      ChatNetworksPanel.capsuleHeight) /
-                                  2,
-                              child: Container(
-                                key: const ValueKey('networkSelectedCapsule'),
-                                width: ChatNetworksPanel.capsuleWidth,
-                                height: ChatNetworksPanel.capsuleHeight,
-                                decoration: BoxDecoration(
-                                  color: tokens.accent,
-                                  borderRadius: BorderRadius.circular(
-                                    ChatNetworksPanel.capsuleWidth / 2,
+          // The owner clip: the strip never paints a scrollbar thumb —
+          // scrolling stays on wheel/drag (scrollbars disabled, everything
+          // else from the ambient behavior).
+          : ScrollConfiguration(
+              behavior: ScrollConfiguration.of(
+                context,
+              ).copyWith(scrollbars: false),
+              child: ListView.builder(
+                padding: const EdgeInsets.symmetric(vertical: 4),
+                itemCount: networks.length,
+                itemBuilder: (context, index) {
+                  final entry = networks.entries.elementAt(index);
+                  final selected = entry.key == selectedNetworkId;
+                  return SizedBox(
+                    key: ValueKey('chatNetworkRow-${entry.key}'),
+                    width: ChatNetworksPanel.stripWidth,
+                    height: ChatNetworksPanel.stripItemPitch,
+                    child: Material(
+                      color: Colors.transparent,
+                      child: InkWell(
+                        onTap: () => onOpen(entry.key),
+                        child: Stack(
+                          alignment: Alignment.center,
+                          children: [
+                            FolderAvatar(
+                              seed: entry.key,
+                              label: entry.value.name,
+                              size: ChatNetworksPanel.stripAvatarSize,
+                              circle: !selected,
+                              radiusFactor: selected ? 0.25 : 0.28,
+                            ),
+                            if (selected)
+                              Positioned(
+                                left: 0,
+                                top:
+                                    (ChatNetworksPanel.stripItemPitch -
+                                        ChatNetworksPanel.capsuleHeight) /
+                                    2,
+                                child: Container(
+                                  key: const ValueKey('networkSelectedCapsule'),
+                                  width: ChatNetworksPanel.capsuleWidth,
+                                  height: ChatNetworksPanel.capsuleHeight,
+                                  decoration: BoxDecoration(
+                                    color: tokens.accent,
+                                    borderRadius: BorderRadius.circular(
+                                      ChatNetworksPanel.capsuleWidth / 2,
+                                    ),
                                   ),
                                 ),
                               ),
-                            ),
-                        ],
+                          ],
+                        ),
                       ),
                     ),
-                  ),
-                );
-              },
+                  );
+                },
+              ),
             ),
     );
   }

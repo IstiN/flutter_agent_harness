@@ -362,61 +362,69 @@ class _FolderStrip extends StatelessWidget {
       width: LocalSessionsPanel.stripWidth,
       child: folders.isEmpty
           ? const SizedBox.shrink()
-          : ListView.builder(
-              padding: const EdgeInsets.symmetric(vertical: 4),
-              itemCount: folders.length,
-              itemBuilder: (context, index) {
-                final folder = folders[index];
-                final selected = folder.id == selectedFolderId;
-                return SizedBox(
-                  key: ValueKey('localFolder-${folder.id}'),
-                  width: LocalSessionsPanel.stripWidth,
-                  height: LocalSessionsPanel.stripItemPitch,
-                  child: Material(
-                    color: Colors.transparent,
-                    child: InkWell(
-                      onTap: () => onOpen(folder.id),
-                      child: Stack(
-                        alignment: Alignment.center,
-                        children: [
-                          FutureBuilder<MemoryImage?>(
-                            future: iconResolver?.resolve(folder.id),
-                            builder: (context, snapshot) => FolderAvatar(
-                              seed: folder.avatarSeed,
-                              label: folder.name,
-                              size: LocalSessionsPanel.stripAvatarSize,
-                              image: snapshot.data,
-                              circle: !selected,
-                              radiusFactor: selected ? 0.25 : 0.28,
+          // The owner clip: the strip never paints a scrollbar thumb —
+          // scrolling stays on wheel/drag (scrollbars disabled, everything
+          // else from the ambient behavior).
+          : ScrollConfiguration(
+              behavior: ScrollConfiguration.of(
+                context,
+              ).copyWith(scrollbars: false),
+              child: ListView.builder(
+                padding: const EdgeInsets.symmetric(vertical: 4),
+                itemCount: folders.length,
+                itemBuilder: (context, index) {
+                  final folder = folders[index];
+                  final selected = folder.id == selectedFolderId;
+                  return SizedBox(
+                    key: ValueKey('localFolder-${folder.id}'),
+                    width: LocalSessionsPanel.stripWidth,
+                    height: LocalSessionsPanel.stripItemPitch,
+                    child: Material(
+                      color: Colors.transparent,
+                      child: InkWell(
+                        onTap: () => onOpen(folder.id),
+                        child: Stack(
+                          alignment: Alignment.center,
+                          children: [
+                            FutureBuilder<MemoryImage?>(
+                              future: iconResolver?.resolve(folder.id),
+                              builder: (context, snapshot) => FolderAvatar(
+                                seed: folder.avatarSeed,
+                                label: folder.name,
+                                size: LocalSessionsPanel.stripAvatarSize,
+                                image: snapshot.data,
+                                circle: !selected,
+                                radiusFactor: selected ? 0.25 : 0.28,
+                              ),
                             ),
-                          ),
-                          if (selected)
-                            Positioned(
-                              left: 0,
-                              top:
-                                  (LocalSessionsPanel.stripItemPitch -
-                                      LocalSessionsPanel.stripCapsuleHeight) /
-                                  2,
-                              child: Container(
-                                key: const ValueKey(
-                                  'localFolderSelectedCapsule',
-                                ),
-                                width: LocalSessionsPanel.stripCapsuleWidth,
-                                height: LocalSessionsPanel.stripCapsuleHeight,
-                                decoration: BoxDecoration(
-                                  color: tokens.accent,
-                                  borderRadius: BorderRadius.circular(
-                                    LocalSessionsPanel.stripCapsuleWidth / 2,
+                            if (selected)
+                              Positioned(
+                                left: 0,
+                                top:
+                                    (LocalSessionsPanel.stripItemPitch -
+                                        LocalSessionsPanel.stripCapsuleHeight) /
+                                    2,
+                                child: Container(
+                                  key: const ValueKey(
+                                    'localFolderSelectedCapsule',
+                                  ),
+                                  width: LocalSessionsPanel.stripCapsuleWidth,
+                                  height: LocalSessionsPanel.stripCapsuleHeight,
+                                  decoration: BoxDecoration(
+                                    color: tokens.accent,
+                                    borderRadius: BorderRadius.circular(
+                                      LocalSessionsPanel.stripCapsuleWidth / 2,
+                                    ),
                                   ),
                                 ),
                               ),
-                            ),
-                        ],
+                          ],
+                        ),
                       ),
                     ),
-                  ),
-                );
-              },
+                  );
+                },
+              ),
             ),
     );
   }
