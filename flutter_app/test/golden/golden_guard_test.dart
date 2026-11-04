@@ -31,6 +31,8 @@ const _coverage = <String, String>{
   'lib/ui/screens/settings_sections.dart':
       'test/golden/settings_golden_test.dart',
   'lib/ui/widgets/fah_wallpaper.dart': 'test/golden/settings_golden_test.dart',
+  'lib/ui/widgets/subagent_chat_badge.dart':
+      'test/golden/subagent_chat_badge_golden_test.dart',
   'lib/ui/screens/settings_key_dialogs.dart':
       'test/golden/dialogs_golden_test.dart',
   'lib/ui/screens/provider_editor_page.dart':

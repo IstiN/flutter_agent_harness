@@ -155,19 +155,22 @@ class _SubagentBadgeButton extends StatelessWidget {
                   ),
                   if (running > 0)
                     Positioned(
-                      right: -4,
+                      right: -6,
                       top: -4,
                       child: DecoratedBox(
                         decoration: BoxDecoration(
                           color: tokens.accent,
-                          shape: BoxShape.circle,
+                          borderRadius: BorderRadius.circular(999),
                         ),
                         child: Padding(
-                          padding: const EdgeInsets.all(3.5),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 4,
+                            vertical: 2,
+                          ),
                           child: Text(
                             '$running',
                             style: TextStyle(
-                              fontSize: 8,
+                              fontSize: 9,
                               height: 1,
                               fontWeight: FontWeight.w700,
                               color: tokens.accentInk,
