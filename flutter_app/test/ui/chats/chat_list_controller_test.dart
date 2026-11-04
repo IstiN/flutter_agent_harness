@@ -17,6 +17,7 @@ ChatListEntry local(
   int? unread = 0,
   int? messageCount,
   String? parentId,
+  bool isSubagent = false,
 }) => ChatListEntry(
   id: ChatEntryId.local(id),
   kind: ChatListEntryKind.localAgent,
@@ -26,6 +27,7 @@ ChatListEntry local(
   unreadCount: unread,
   localMessageCount: messageCount,
   parentId: parentId,
+  isSubagent: isSubagent,
 );
 
 NetworkInboxItem remote(
@@ -423,6 +425,105 @@ void main() {
 
     expect(AppLog.dump(), contains('[chats]'));
     expect(AppLog.dump(), contains('first emission'));
+  });
+
+  group('subagent projection (subagent sessions owner pass)', () {
+    ChatListEntry entryOf(ChatListController c, String title) =>
+        c.facetEntries.firstWhere((e) => e.title == title);
+
+    test('subagentsByParent groups subagent rows by their parent id', () async {
+      final c = await controller([
+        local('Main session', activity: t3, messageCount: 2),
+        local(
+          'child-a',
+          activity: t2,
+          parentId: 'Main session',
+          isSubagent: true,
+        ),
+        local(
+          'child-b',
+          activity: t1,
+          parentId: 'Main session',
+          isSubagent: true,
+        ),
+        local(
+          'other-child',
+          activity: t1,
+          parentId: 'Other parent',
+          isSubagent: true,
+        ),
+      ]);
+      expect(c.subagentsByParent.keys.toSet(), {
+        'Main session',
+        'Other parent',
+      });
+      // Per-parent rows keep the activity-descending projection order.
+      expect(c.subagentEntriesFor('Main session').map((e) => e.title), [
+        'child-a',
+        'child-b',
+      ]);
+      expect(c.subagentEntriesFor('Other parent').map((e) => e.title), [
+        'other-child',
+      ]);
+      expect(c.subagentEntriesFor('unknown'), isEmpty);
+      // The parent row carries the count; non-parents carry none.
+      expect(c.subagentCountFor(entryOf(c, 'Main session')), 2);
+      expect(c.subagentCountFor(entryOf(c, 'child-a')), 0);
+    });
+
+    test('rows without a parent id never join the grouping', () async {
+      final c = await controller([
+        local('Main session', activity: t3),
+        local('orphan', activity: t2, isSubagent: true),
+      ]);
+      expect(c.subagentsByParent, isEmpty);
+      expect(c.subagentEntriesFor('Main session'), isEmpty);
+      expect(c.subagentCountFor(entryOf(c, 'Main session')), 0);
+    });
+
+    test('network rows never join the grouping', () async {
+      final c = await controller(
+        [local('Local design', activity: t1)],
+        network: FixtureNetworkInboxAdapter(
+          items: [remote('Release channel', unreadCount: 2, activity: t3)],
+        ),
+      );
+      expect(c.subagentsByParent, isEmpty);
+    });
+
+    test('subagent rows ride the read-cursor projection (picker unread)',
+        () async {
+      final reads = ChatReadCursorStore.inMemory(accountId: 'a');
+      final c = await controller(
+        [
+          local('Main session', activity: t3, messageCount: 1),
+          local(
+            'child-a',
+            activity: t2,
+            parentId: 'Main session',
+            isSubagent: true,
+            messageCount: 5,
+          ),
+        ],
+        reads: reads,
+      );
+      await reads.markRead(ChatEntryId.local('child-a'), 2);
+      final child = c.subagentEntriesFor('Main session').single;
+      expect(child.unreadCount, 3);
+      expect(child.isSubagent, isTrue);
+      expect(child.parentId, 'Main session');
+    });
+
+    test('the grouping ignores the active search and kind filters', () async {
+      final c = await controller([
+        local('Main session', activity: t3),
+        local('child-a', activity: t2, parentId: 'Main session', isSubagent: true),
+      ]);
+      c.setSearch('child');
+      expect(c.subagentEntriesFor('Main session'), hasLength(1));
+      c.setFilter(ChatListFilter.unread);
+      expect(c.subagentsByParent['Main session'], hasLength(1));
+    });
   });
 }
 

@@ -451,18 +451,26 @@ void main() {
 
       // One flat list: newest activity first, channels and sessions
       // interleaved by time (the channel carries Jan 3; local entries pin
-      // Jan 2 — the channel leads, ties break by id). Sessions and
-      // subagents are siblings — every row at the same indent.
+      // Jan 2 — the channel leads, ties break by id). Subagent sessions
+      // never render as flat rows: the projection is PARENTS ONLY, and a
+      // parent with subagents carries the count chip instead.
       Rect rowOf(String title) => tester.getRect(find.text(title));
       final channel = rowOf('Network channel');
       final middle = rowOf('Middle session');
-      final child = rowOf('Child agent');
       final oldest = rowOf('Oldest session');
-      expect(channel.top, lessThan(child.top), reason: 'activity desc');
-      expect(child.top, lessThan(middle.top), reason: 'tie-break by id');
+      expect(channel.top, lessThan(middle.top), reason: 'activity desc');
       expect(middle.top, lessThan(oldest.top));
-      expect(child.left, middle.left, reason: 'flat — same indent');
-      expect(middle.left, oldest.left);
+      expect(find.text('Child agent'), findsNothing,
+          reason: 'parents only — the subagent rides the parent chip');
+      expect(middle.left, oldest.left, reason: 'flat — same indent');
+
+      // The parent row's chip counts its subagent sessions.
+      final chip = find.byKey(const ValueKey('chatSubagentChip'));
+      expect(chip, findsOneWidget);
+      expect(
+        find.descendant(of: chip, matching: find.text('1')),
+        findsOneWidget,
+      );
 
       // NO folder grouping leaked into All.
       expect(
@@ -614,8 +622,8 @@ void main() {
     expect(newCount, 1);
   });
 
-  testWidgets('subagents stay visible flat siblings with the subagent mark',
-      (tester) async {
+  testWidgets('the All home renders parents only; the subagent stays on '
+      'the parent chip, never as a flat row', (tester) async {
     final controller = await makeController([
       entry('Parent agent', folderName: 'project', folderPath: '/work/project'),
       entry(
@@ -629,10 +637,11 @@ void main() {
 
     await pumpPanel(tester, controller);
     expect(controller.networkStatus, ChatLoadState.empty);
-    // The flat home keeps both rows — nothing is dropped or nested; the
-    // subagent is marked inline instead of indented under its parent.
+    // Parents only: the subagent never renders a flat row and carries no
+    // inline mark on this surface — it lives behind the parent's chip.
     expect(find.text('Parent agent'), findsOneWidget);
-    expect(find.text('Child agent'), findsOneWidget);
+    expect(find.text('Child agent'), findsNothing);
+    expect(find.byType(SubagentMark), findsNothing);
     expect(
       find.byKey(const ValueKey('chatFolder-folder::/work/project')),
       findsNothing,
@@ -641,18 +650,66 @@ void main() {
       find.byKey(const ValueKey('chatTreeToggle-local:Parent agent')),
       findsNothing,
     );
-    final parent = tester.getRect(find.text('Parent agent'));
-    final child = tester.getRect(find.text('Child agent'));
-    expect(parent.left, child.left, reason: 'flat — no tree indent');
+    // The parent row carries the neutral count chip.
+    expect(find.byKey(const ValueKey('chatSubagentChip')), findsOneWidget);
+  });
+
+  testWidgets('the count chip is informational: tapping it opens the '
+      'PARENT chat, never a subagent', (tester) async {
+    final opened = <ChatListEntry>[];
+    final controller = await makeController([
+      entry('Parent agent', folderName: 'project', folderPath: '/work/project'),
+      entry(
+        'Child agent',
+        folderName: 'project',
+        folderPath: '/work/project',
+        parentId: 'Parent agent',
+        isSubagent: true,
+        unread: 2,
+      ),
+    ]);
+
+    await pumpPanel(tester, controller, onOpen: (e) async => opened.add(e));
+    // The chip sits inside the row's own tap target: a tap on the chip is
+    // a tap on the row — the parent chat opens.
+    await tester.tap(find.byKey(const ValueKey('chatSubagentChip')));
+    await tester.pumpAndSettle();
+    expect(opened.single.id.value, 'Parent agent');
+    expect(opened.single.isSubagent, isFalse);
+    // No anchored picker appears — the switcher lives above the composer.
     expect(
-      find.byType(SubagentMark),
+      find.byKey(const ValueKey('chatSubagentEntry-Child agent')),
+      findsNothing,
+    );
+  });
+
+  testWidgets('compact (narrow) rows carry the same count chip', (
+    tester,
+  ) async {
+    final controller = await makeController([
+      entry('Parent agent', folderName: 'project', folderPath: '/work/project'),
+      entry(
+        'Child agent',
+        folderName: 'project',
+        folderPath: '/work/project',
+        parentId: 'Parent agent',
+        isSubagent: true,
+        unread: 2,
+      ),
+    ]);
+
+    await pumpPanel(tester, controller, compact: true, width: 390);
+    expect(find.text('Child agent'), findsNothing);
+    expect(find.byKey(const ValueKey('chatSubagentChip')), findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('chatSubagentChip')),
+        matching: find.text('1'),
+      ),
       findsOneWidget,
-      reason: 'the subagent carries the inline mark',
     );
-    expect(
-      controller.visibleEntries.map((e) => e.id.value),
-      containsAll(['Parent agent', 'Child agent']),
-    );
+    // Rows without subagents carry no chip.
+    expect(find.text('Parent agent'), findsOneWidget);
   });
 
   testWidgets('desktop brand matches the native profile button and clears '

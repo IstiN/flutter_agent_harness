@@ -539,7 +539,20 @@ class _ChatListPanelState extends State<ChatListPanel> {
 
   Widget _buildBody(FahColors colors, {required double topPadding}) {
     final controller = widget.controller;
-    final visibleEntries = controller.visibleEntries.toList();
+    // The All home is ONE flat active list (owner pass): active sessions
+    // AND active channels, sorted by lastActivity desc — no folder
+    // grouping, no pinned/recent sections, no multi-level tree. The Local
+    // folder navigation lives in the Local section; Unread is the unread
+    // subset of this same flat projection ([ChatListController]
+    // facetEntries already applies both).
+    // Subagent sessions never render as flat rows (subagent sessions
+    // owner pass): the list is PARENTS ONLY, and a parent with subagent
+    // sessions carries the count chip — its picker opens the chats.
+    final subagentsByParent = controller.subagentsByParent;
+    final visibleEntries = [
+      for (final entry in controller.visibleEntries)
+        if (!entry.isSubagent) entry,
+    ];
     Widget state(Widget child) => child;
     if (controller.status == ChatLoadState.loading) {
       return state(const Center(child: CircularProgressIndicator()));
@@ -564,12 +577,6 @@ class _ChatListPanelState extends State<ChatListPanel> {
       }
       return state(_buildEmpty(colors));
     }
-    // The All home is ONE flat active list (owner pass): active sessions
-    // AND active channels, sorted by lastActivity desc — no folder
-    // grouping, no pinned/recent sections, no multi-level tree. The Local
-    // folder navigation lives in the Local section; Unread is the unread
-    // subset of this same flat projection ([ChatListController]
-    // facetEntries already applies both).
     return ListView.builder(
       key: const ValueKey('chatListScroll'),
       padding: EdgeInsets.only(
@@ -577,11 +584,18 @@ class _ChatListPanelState extends State<ChatListPanel> {
         bottom: widget.compact ? 76 : 10,
       ),
       itemCount: visibleEntries.length,
-      itemBuilder: (context, index) => _row(visibleEntries[index]),
+      itemBuilder: (context, index) =>
+          _row(visibleEntries[index], subagentsByParent),
     );
   }
 
-  Widget _row(ChatListEntry entry) {
+  Widget _row(
+    ChatListEntry entry,
+    Map<String, List<ChatListEntry>> subagentsByParent,
+  ) {
+    final subagents = entry.kind == ChatListEntryKind.localAgent
+        ? (subagentsByParent[entry.id.value] ?? const <ChatListEntry>[])
+        : const <ChatListEntry>[];
     return _ConversationRow(
       entry: entry,
       selected: entry.id == widget.selectedEntryId,
@@ -592,6 +606,7 @@ class _ChatListPanelState extends State<ChatListPanel> {
       onLocalMenu: entry.kind == ChatListEntryKind.localAgent
           ? widget.onLocalMenu
           : null,
+      subagentCount: subagents.length,
     );
   }
 
@@ -641,6 +656,7 @@ class _ConversationRow extends StatefulWidget {
     required this.onOpen,
     required this.onTogglePin,
     required this.onLocalMenu,
+    this.subagentCount = 0,
   });
 
   final ChatListEntry entry;
@@ -650,6 +666,12 @@ class _ConversationRow extends StatefulWidget {
   final VoidCallback? onOpen;
   final VoidCallback onTogglePin;
   final Future<void> Function(ChatListEntry entry, Rect anchor)? onLocalMenu;
+
+  /// How many subagent sessions nest under this row (parents only on the
+  /// All home — zero for every other row). Informational: the chip is
+  /// part of the row's own tap, which opens the PARENT chat; the actual
+  /// subagent switcher lives above the chat composer.
+  final int subagentCount;
 
   @override
   State<_ConversationRow> createState() => _ConversationRowState();
@@ -774,6 +796,13 @@ class _ConversationRowState extends State<_ConversationRow> {
                                     ),
                                   ),
                                   const SizedBox(width: 6),
+                                  if (widget.subagentCount > 0)
+                                    _SubagentChip(
+                                      count: widget.subagentCount,
+                                      selected: selected,
+                                    ),
+                                  if (widget.subagentCount > 0)
+                                    const SizedBox(width: 6),
                                   Text(
                                     chatListRelativeTime(
                                       context,
@@ -951,20 +980,108 @@ class _Avatar extends StatelessWidget {
         Positioned(
           right: -1,
           bottom: -1,
-          child: Container(
-            width: 10,
-            height: 10,
-            decoration: BoxDecoration(
-              color: switch (entry.presence) {
-                ChatPresence.offline => colors.dim,
-                _ => colors.teal,
-              },
-              shape: BoxShape.circle,
-              border: Border.all(color: ringColor, width: 2),
-            ),
+          child: ChatRunningDot(
+            entry: entry,
+            colors: colors,
+            ringColor: ringColor,
           ),
         ),
       ],
+    );
+  }
+}
+
+/// The running dot of the chat list rows — the live/streaming indicator
+/// over a conversation avatar (teal; dim for offline presence, ringed by
+/// the avatar's ring color). The subagent switcher above the composer
+/// reuses the SAME token, so one look means "running" on every surface.
+class ChatRunningDot extends StatelessWidget {
+  const ChatRunningDot({
+    super.key,
+    required this.entry,
+    required this.colors,
+    this.ringColor,
+    this.size = 10,
+    this.borderWidth = 0,
+  });
+
+  final ChatListEntry entry;
+  final FahColors colors;
+  final Color? ringColor;
+  final double size;
+  final double borderWidth;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        color: switch (entry.presence) {
+          ChatPresence.offline => colors.dim,
+          _ => colors.teal,
+        },
+        shape: BoxShape.circle,
+        border: ringColor == null || borderWidth == 0
+            ? null
+            : Border.all(color: ringColor!, width: borderWidth),
+      ),
+    );
+  }
+}
+
+/// The parent row's subagent count chip (subagent sessions owner pass): a
+/// compact NEUTRAL pill at the row's trailing edge — surface2 fill,
+/// hairline border, ink3 branch glyph + count. Informational: the chip is
+/// part of the row's own tap (which opens the PARENT chat); the actual
+/// per-subagent switcher lives above the chat composer
+/// ([SubagentChatSwitcher]).
+class _SubagentChip extends StatelessWidget {
+  const _SubagentChip({required this.count, required this.selected});
+
+  final int count;
+
+  /// The row's selection state — the neutral pill tints toward the
+  /// selection color so it never fights the selected row's accent fill.
+  final bool selected;
+
+  @override
+  Widget build(BuildContext context) {
+    final tokens = FaDesignTokens.of(context);
+    final onSelection = Theme.of(context).colorScheme.onPrimary;
+    final ink = selected ? onSelection : tokens.ink3;
+    return Container(
+      key: const ValueKey('chatSubagentChip'),
+      height: 18,
+      padding: const EdgeInsets.symmetric(horizontal: 5),
+      decoration: BoxDecoration(
+        color: selected
+            ? onSelection.withValues(alpha: .18)
+            : tokens.surface2,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(
+          color: selected
+              ? onSelection.withValues(alpha: .35)
+              : tokens.hairline,
+          width: .5,
+        ),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.account_tree_outlined, size: 11, color: ink),
+          const SizedBox(width: 3),
+          Text(
+            '$count',
+            style: TextStyle(
+              color: ink,
+              fontSize: 9.5,
+              fontWeight: FontWeight.w700,
+              height: 1.1,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

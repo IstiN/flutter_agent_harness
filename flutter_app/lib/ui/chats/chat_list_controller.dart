@@ -333,6 +333,47 @@ final class ChatListController extends ChangeNotifier {
     return List.unmodifiable(entries);
   }
 
+  /// Subagent sessions grouped by their parent session id — the data
+  /// behind the All home's per-parent count chip and its picker popover
+  /// (subagent sessions owner pass). Local rows only (network rows never
+  /// carry a parent link); the read-cursor projection applies, so picker
+  /// rows show live unread counts. Per-parent lists keep the activity-
+  /// descending projection order, and the grouping ignores the active
+  /// search/kind/network facets — a chip is a fact about the session
+  /// tree, never about the current filter. Rows without a parent id
+  /// (malformed headers) are not grouped: nothing anchors them to a row.
+  Map<String, List<ChatListEntry>> get subagentsByParent {
+    final result = <String, List<ChatListEntry>>{};
+    for (final entry in localEntries) {
+      if (!entry.isSubagent) continue;
+      final parent = entry.parentId;
+      if (parent == null || parent.isEmpty) continue;
+      result.putIfAbsent(parent, () => []).add(entry);
+    }
+    return result;
+  }
+
+  /// How many subagent sessions [entry] (a local parent row) carries —
+  /// zero for every non-parent row, including subagent rows themselves.
+  int subagentCountFor(ChatListEntry entry) =>
+      subagentsByParent[entry.id.value]?.length ?? 0;
+
+  /// The subagent rows nested under [parentSessionId], most recent
+  /// activity first (the picker's row order). Const when the parent has
+  /// none.
+  List<ChatListEntry> subagentEntriesFor(String parentSessionId) =>
+      List.unmodifiable(subagentsByParent[parentSessionId] ?? const []);
+
+  /// The projected row for one local session id (pin/unread applied), or
+  /// null when the projection does not know it — the picker and the
+  /// header's parent link resolve rows through this.
+  ChatListEntry? localEntryFor(String sessionId) {
+    for (final entry in localEntries) {
+      if (entry.id.value == sessionId) return entry;
+    }
+    return null;
+  }
+
   /// Every projected NETWORK CHANNEL row with read-marker state applied —
   /// regardless of the active filter/search/network facet. The networks
   /// sidebar's channel drill-down builds its rows from this projection
