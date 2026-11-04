@@ -87,12 +87,12 @@ class MessengerNavRail extends StatelessWidget {
     // Titlebar clearance: on macOS desktop the window is a fullSizeContent
     // view — MediaQuery.top reads 0 while the real traffic lights float
     // over the first ~28pt — so use a fixed macOS inset (the faAppBar
-    // clearance zone, 40pt: lights + breathing room). Everywhere else the
+    // clearance zone, 44pt: lights + breathing room). Everywhere else the
     // chats-sidebar formula applies: max(seam, MediaQuery top) — the card's
     // 8pt margin plus what remains of the platform titlebar.
     final titlebarTop = (!kIsWeb &&
             defaultTargetPlatform == TargetPlatform.macOS)
-        ? 40.0
+        ? 44.0
         : math.max(
             0.0,
             MediaQuery.paddingOf(context).top - MessengerNavRail.seam,

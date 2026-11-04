@@ -875,8 +875,10 @@ void main() {
     expect(sidebar.left, railRect.right);
     // The rail's surface is the chats panel's glass 1:1: same FaSurface
     // params (glass mode, one shared backdrop capture, card radius,
-    // surface1 tint) and the same 16pt gutter between the two cards
-    // (8pt floating margin on each).
+    // surface1 tint) and the same 8pt gutter between the two cards — the
+    // rail keeps its trailing 8pt margin-as-seam; the sidebar card leads
+    // with 0 and keeps its 8pt window margins elsewhere (owner: the gap
+    // halves to 8pt total).
     final railSurface = tester.widget<FaSurface>(
       find.descendant(
         of: find.byKey(const ValueKey('messengerNavRail')),
@@ -905,8 +907,10 @@ void main() {
     );
     expect(
       sidebarCard.left - railCard.right,
-      MessengerNavRail.seam * 2,
-      reason: '8pt floating margin on each card = the shared gutter',
+      MessengerNavRail.seam,
+      reason:
+          'the rail trailing 8pt seam margin is the shared gutter (one '
+          'margin, not two)',
     );
     // The horizontal section pill-bar is gone — its destinations moved
     // into the rail rows.

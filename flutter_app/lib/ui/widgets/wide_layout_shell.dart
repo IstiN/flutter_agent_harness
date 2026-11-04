@@ -1076,12 +1076,16 @@ class _WideLayoutShellState extends State<WideLayoutShell>
                 _sidebarWidth +
                 (_collapsedSidebarWidth - _sidebarWidth) * progress;
             final contentCollapsed = progress >= .5;
-            // The glass card keeps 8pt floating margins on BOTH sides —
-            // the content must live INSIDE them, never under the clip
-            // (the old -8 let rows bleed 8px past the card's right edge).
+            // The glass card keeps 8pt floating margins on the window edges
+            // (top, bottom, right) — the content must live INSIDE them,
+            // never under the clip (the old -8 let rows bleed 8px past the
+            // card's right edge). The LEADING margin is shared with the
+            // rail: its trailing 8pt margin-as-seam IS the card gutter
+            // (owner: the rail↔sidebar gap halves to 8pt total), so the
+            // leading margin is 0 and the content fills the rest.
             final contentWidth =
                 (contentCollapsed ? _collapsedSidebarWidth : _sidebarWidth) -
-                16;
+                8;
             final contentOpacity = contentCollapsed
                 ? (progress - .5) * 2
                 : 1 - progress * 2;
@@ -1133,10 +1137,12 @@ class _WideLayoutShellState extends State<WideLayoutShell>
                           width: sidebarWidth,
                           child: _desktopPanelFrame(
                             key: const ValueKey('glassSidebarPanel'),
-                            // Equal floating margins (8pt all around) — a
-                            // rounded card; the seam gutter to the center pane
-                            // matches the outer margin.
-                            padding: const EdgeInsets.all(8),
+                            // Floating margins: 8pt on the window edges
+                            // (top/right/bottom); the leading edge is 0 —
+                            // the rail's trailing 8pt margin-as-seam is the
+                            // shared rail↔sidebar gutter (owner: 8pt total,
+                            // both cards keep their outer window margins).
+                            padding: const EdgeInsets.fromLTRB(0, 8, 8, 8),
                             borderRadius: BorderRadius.circular(18),
                             tokens: tokens,
                             glass: true,

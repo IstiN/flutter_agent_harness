@@ -126,11 +126,11 @@ void main() {
     debugDefaultTargetPlatformOverride = null;
 
     // macOS desktop is a fullSizeContentView — MediaQuery.top reads 0 while
-    // the traffic lights float over the first ~28pt — so a fixed 40pt
-    // clearance applies: first row at 8 + 40 = 48.
+    // the traffic lights float over the first ~28pt — so a fixed 44pt
+    // clearance applies: first row at 8 + 44 = 52.
     debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
     await tester.pumpWidget(_wrap(rail()));
-    expect(firstRowTop().top, MessengerNavRail.seam + 40,
+    expect(firstRowTop().top, MessengerNavRail.seam + 44,
         reason: 'clears the macOS traffic lights');
     debugDefaultTargetPlatformOverride = null;
   });
