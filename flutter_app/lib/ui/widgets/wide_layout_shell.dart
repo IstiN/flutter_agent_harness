@@ -1770,11 +1770,10 @@ class _WideLayoutShellState extends State<WideLayoutShell>
   /// The chats sidebar's NETWORKS surface (Telegram pattern, owner pass):
   /// the identity globe swaps the SIDEBAR content to the networks strip
   /// with the in-place channel drill-down — the same slot the Local
-  /// drill-down uses; the message column keeps the chat. Back returns to
-  /// the normal chats; the manage gear keeps the management dialog
-  /// reachable; opening a channel applies the network chat filter (what
-  /// the old dropdown menu's per-network entry did) and returns to the
-  /// chats.
+  /// drill-down uses. Back chevrons close it (channels → strip → normal
+  /// chats); the manage gear keeps the management dialog reachable.
+  /// Opening a channel keeps the surface open: only the message column
+  /// swaps to the channel's messages and the tapped row highlights.
   Widget _buildNetworksSidebar() {
     return ChatNetworksPanel(
       manager: widget.networkSessions,
@@ -1830,11 +1829,14 @@ class _WideLayoutShellState extends State<WideLayoutShell>
         }
         if (!mounted) return;
         await mode.selectChannel(channel.id);
-        // Land the tap exactly like the chat-list row open does: the
-        // projection's row becomes the selected network entry — the
-        // content pane mounts the channel's message view and the All home
-        // highlights the row — then the sidebar swaps back to the chats
-        // home. Session-snapshot fallback rows have no projection row; a
+        // Land the tap exactly like the chat-list row open does, but the
+        // surface STAYS open (owner pass): ONLY the content pane swaps to
+        // the channel's message view; the strip + channels list keep
+        // their place and the tapped row highlights through
+        // mode.selectChannel above. The projection row still becomes the
+        // selected network entry so the All home carries the row's
+        // selection once the back chevrons close the surface.
+        // Session-snapshot fallback rows have no projection row; a
         // minimal stand-in entry keeps the content-pane contract there.
         final entry = _chatController.networkChannelEntries
             .where(
@@ -1859,7 +1861,6 @@ class _WideLayoutShellState extends State<WideLayoutShell>
                 title: channel.name ?? channel.id,
                 createdAt: DateTime.now(),
               );
-          _networksSurfaceOpen = false;
         });
         // The row-open parity: the tap marks the projection row read.
         if (entry != null) await _chatController.markOpened(entry);

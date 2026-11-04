@@ -637,8 +637,8 @@ void main() {
       });
     }
 
-    testWidgets('the networks surface channel tap opens the messages and '
-        'selects the row on the All home', (tester) async {
+    testWidgets('the networks surface channel tap keeps the surface and '
+        'selects the channel row', (tester) async {
       final wallet = await KeyWallet.load(MemoryWalletBackend());
       await wallet.addNetwork(networkId: 'net1', name: 'epam-public');
       final httpClient = FakeHttpClient()
@@ -707,12 +707,50 @@ void main() {
 
       expect(controller.networkId, 'net1');
       expect(controller.channelId, 'c1');
-      // The surface closed back to the chats home (NOT still networks).
+      // The surface STAYS open (Telegram drill-down): the strip + the
+      // channels list keep their place and ONLY the content pane swaps to
+      // the channel's messages — no All-home swap.
+      expect(find.byType(ChatNetworksPanel), findsOneWidget);
+      expect(find.byType(ChatListPanel), findsNothing);
+      expect(find.byType(NetworkChatPage), findsOneWidget);
+      expect(find.byKey(const ValueKey('networksStrip')), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('chatNetworkChannel-c1')),
+        findsOneWidget,
+      );
+      // The tapped channel row paints the accent selection tint (the
+      // chat-row selection anatomy).
+      final tokens = FaDesignTokens.of(
+        tester.element(find.byType(ChatNetworksPanel)),
+      );
+      final rowMaterial = tester.widget<Material>(
+        find
+            .descendant(
+              of: find.byKey(const ValueKey('chatNetworkChannel-c1')),
+              matching: find.byType(Material),
+            )
+            .first,
+      );
+      expect(rowMaterial.color, tokens.accent);
+      // The tap also clears the row's unread count (the chat-list row
+      // path marks the entry opened; the surface tap is the same open).
+      expect(inbox.readCalls.any((call) => call.channelId == 'c1'), isTrue);
+
+      // The back chevrons still own the surface explicitly: channels →
+      // strip (the chat stays open), then strip → the chats home, where
+      // the channel row is selected.
+      await tester.tap(find.byKey(const ValueKey('chatChannelsBack')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 250));
+      expect(find.byType(ChatNetworksPanel), findsOneWidget);
+      expect(find.byKey(const ValueKey('networksList')), findsOneWidget);
+      expect(find.byType(NetworkChatPage), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('chatNetworksBack')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 250));
       expect(find.byType(ChatNetworksPanel), findsNothing);
       expect(find.byType(ChatListPanel), findsOneWidget);
-      // The tapped channel's messages own the content pane immediately.
       expect(find.byType(NetworkChatPage), findsOneWidget);
-      // The channel row is visibly selected on the All home.
       final panel = tester.widget<ChatListPanel>(find.byType(ChatListPanel));
       expect(
         panel.selectedEntryId,
@@ -722,9 +760,6 @@ void main() {
           id: 'c1',
         ),
       );
-      // The tap also clears the row's unread count (the chat-list row
-      // path marks the entry opened; the surface tap is the same open).
-      expect(inbox.readCalls.any((call) => call.channelId == 'c1'), isTrue);
       await manager.disconnectAll();
       await tester.pump();
     });
