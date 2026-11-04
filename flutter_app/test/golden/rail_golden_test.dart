@@ -13,7 +13,6 @@
 library;
 
 import 'package:fa/network/key_wallet.dart';
-import 'package:fa/network/network_session.dart';
 import 'package:fa/network/network_session_manager.dart';
 import 'package:fa/ui/chats/chat_list_controller.dart';
 import 'package:fa/ui/chats/chat_list_entry.dart';
