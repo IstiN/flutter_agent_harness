@@ -56,8 +56,6 @@ List<MessengerRailDestination> _railDestinations({
 }) => [
   _dest(Icons.inbox_outlined, 'All', selected: selected),
   _dest(Icons.chat_bubble_outline_rounded, 'Unread', badge: badges ? 4 : null),
-  _dest(Icons.people_outline_rounded, 'Agents'),
-  _dest(Icons.tag_rounded, 'Channels'),
   _dest(
     Icons.folder_outlined,
     'Local',
@@ -65,9 +63,10 @@ List<MessengerRailDestination> _railDestinations({
     badge: badges ? 2 : null,
     badgeMuted: true,
   ),
+  _dest(Icons.public_outlined, 'Networks'),
+  _dest(Icons.tag_rounded, 'Channels'),
   _dest(Icons.notifications_none_rounded, 'Activity'),
   _dest(Icons.grid_view_rounded, 'Apps'),
-  _dest(Icons.public_outlined, 'Networks'),
 ];
 
 ChatListEntry _session(

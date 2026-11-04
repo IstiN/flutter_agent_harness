@@ -140,7 +140,7 @@ Future<void> _pumpNetworkCenter(
 Future<void> _openNetworkManagement(WidgetTester tester) async {
   // The identity globe opens the NETWORKS panel; management lives behind
   // the panel header's gear.
-  await tester.tap(find.byKey(const ValueKey('chatNetworkFilter')));
+  await tester.tap(find.byKey(const ValueKey('messengerPrimaryNav-network')));
   await tester.pump();
   await tester.pump(const Duration(milliseconds: 300));
   expect(find.byKey(const ValueKey('chatNetworksList')), findsOneWidget);

@@ -147,7 +147,7 @@ void main() {
       // The globe swaps the CHATS SIDEBAR content to the networks surface
       // in place (no tree swap to a network home, the chat column keeps
       // the chat); leaving it restores the classic sidebar content.
-      await tester.tap(find.byKey(const ValueKey('chatNetworkFilter')));
+      await tester.tap(find.byKey(const ValueKey('messengerPrimaryNav-network')));
       await tester.pumpAndSettle();
       expect(find.byKey(const ValueKey('chatNetworksList')), findsOneWidget);
       expect(find.byType(ChatListPanel), findsNothing);

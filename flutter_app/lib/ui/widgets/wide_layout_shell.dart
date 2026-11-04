@@ -1617,10 +1617,13 @@ class _WideLayoutShellState extends State<WideLayoutShell>
     );
   }
 
-  /// The vertical rail's destinations (the horizontal bar's section set,
-  /// re-ordered Telegram-style): the Chats filters first, then Local,
-  /// Activity, Apps and the identity (networks) row; Settings is the
-  /// pinned bottom slot.
+  /// The vertical rail's destinations (Telegram pattern): the Chats
+  /// filters All/Unread lead, then the Local section, the Network
+  /// destination (the identity globe, opening the networks surface), the
+  /// Channels filter, and the Activity/Apps sections. Agents have NO rail
+  /// row — their sessions live in Local folders and the flat All list
+  /// ([ChatListFilter.agents] stays a filter, the chats toolbar keeps it).
+  /// Settings is the pinned bottom slot.
   List<MessengerRailDestination> _railDestinations() {
     final filter = _chatController.filter;
     final chatsSelected = _section == _WideShellSection.chats;
@@ -1669,16 +1672,6 @@ class _WideLayoutShellState extends State<WideLayoutShell>
         context.l10n.chatFilterUnread,
         badge: unreadChats,
       ),
-      filterRow(
-        ChatListFilter.agents,
-        Icons.people_outline_rounded,
-        context.l10n.chatFilterAgents,
-      ),
-      filterRow(
-        ChatListFilter.channels,
-        Icons.tag_rounded,
-        context.l10n.chatFilterChannels,
-      ),
       MessengerRailDestination(
         rowKey: const ValueKey('messengerPrimaryNav-local'),
         icon: Icons.folder_outlined,
@@ -1687,6 +1680,23 @@ class _WideLayoutShellState extends State<WideLayoutShell>
         badge: runningSessions,
         badgeMuted: true,
         onTap: (_) => _selectSection(_WideShellSection.local),
+      ),
+      MessengerRailDestination(
+        rowKey: const ValueKey('messengerPrimaryNav-network'),
+        icon: Icons.public_outlined,
+        label: context.l10n.networkNetworksTitle,
+        selected: false,
+        onTap: (_) {
+          // The networks surface lives IN the chats sidebar (the same slot
+          // the Local drill-down uses); the message column keeps the chat.
+          _selectSection(_WideShellSection.chats);
+          setState(() => _networksSurfaceOpen = true);
+        },
+      ),
+      filterRow(
+        ChatListFilter.channels,
+        Icons.tag_rounded,
+        context.l10n.chatFilterChannels,
       ),
       sectionRow(
         _WideShellSection.activity,
@@ -1697,18 +1707,6 @@ class _WideLayoutShellState extends State<WideLayoutShell>
         _WideShellSection.apps,
         Icons.grid_view_rounded,
         context.l10n.appsGridTitle,
-      ),
-      MessengerRailDestination(
-        rowKey: const ValueKey('chatNetworkFilter'),
-        icon: Icons.public_outlined,
-        label: context.l10n.networkNetworksTitle,
-        selected: false,
-        onTap: (_) {
-          // The networks surface lives IN the chats sidebar (the same slot
-          // the Local drill-down uses); the message column keeps the chat.
-          _selectSection(_WideShellSection.chats);
-          setState(() => _networksSurfaceOpen = true);
-        },
       ),
     ];
   }

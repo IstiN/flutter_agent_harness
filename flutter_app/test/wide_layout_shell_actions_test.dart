@@ -288,8 +288,10 @@ void main() {
     // Secondary utilities live in Apps, not as a second navigation stack.
     expect(find.widgetWithText(SidebarNavItem, 'Files'), findsNothing);
     expect(find.widgetWithText(SidebarNavItem, 'Settings'), findsNothing);
-    // The vertical rail owns navigation now: the Chats filters lead it and
-    // Local/Activity/Apps follow; the horizontal toolbar is gone.
+    // The vertical rail owns navigation now: All/Unread lead, Local and
+    // the Network destination follow, Channels/Activity/Apps close; the
+    // horizontal toolbar is gone (agents sessions live in Local folders
+    // and the flat All list — no rail row).
     final rail = find.byKey(const ValueKey('messengerNavRail'));
     expect(rail, findsOneWidget);
     expect(find.byKey(const ValueKey('chatCategoryChips')), findsNothing);
@@ -301,9 +303,9 @@ void main() {
     for (final destination in const [
       'chatFilter-all',
       'chatFilter-unread',
-      'chatFilter-agents',
-      'chatFilter-channels',
       'messengerPrimaryNav-local',
+      'messengerPrimaryNav-network',
+      'chatFilter-channels',
       'messengerPrimaryNav-activity',
       'messengerPrimaryNav-apps',
     ]) {
@@ -313,6 +315,19 @@ void main() {
         reason: destination,
       );
     }
+    expect(
+      find.descendant(
+        of: rail,
+        matching: find.byKey(const ValueKey('chatFilter-agents')),
+      ),
+      findsNothing,
+      reason: 'agents have no rail row (Local folders own them)',
+    );
+    expect(
+      find.byKey(const ValueKey('chatNetworkFilter')),
+      findsNothing,
+      reason: 'the rail Network row is re-keyed messengerPrimaryNav-network',
+    );
     await tester.pump(const Duration(milliseconds: 100));
   });
 
@@ -1001,7 +1016,7 @@ void main() {
             'search': tester.getRect(search),
             'new': tester.getRect(newButton),
             if (section == 0)
-              for (final label in const ['All', 'Unread', 'Agents', 'Channels'])
+              for (final label in const ['All', 'Unread', 'Channels'])
                 'filter-$label': tester.getRect(
                   find.byKey(ValueKey('chatFilter-${label.toLowerCase()}')),
                 ),
@@ -1036,12 +1051,12 @@ void main() {
 
           if (section == 0) {
             // The rail: 78pt-wide rows on a fixed 64pt pitch, pictogram
-            // 25–28pt with the label centered below.
+            // 25–28pt with the label centered below. Order: All, Unread,
+            // Local, Network, Channels, Activity, Apps.
             final all = current['filter-All']!;
             final unread = current['filter-Unread']!;
-            final agents = current['filter-Agents']!;
             final channels = current['filter-Channels']!;
-            for (final rect in [all, unread, agents, channels]) {
+            for (final rect in [all, unread, channels]) {
               expect(rect.width, MessengerNavRail.width, reason: reason);
               expect(rect.height, MessengerNavRail.rowPitch, reason: reason);
             }
@@ -1050,13 +1065,24 @@ void main() {
               MessengerNavRail.rowPitch,
               reason: reason,
             );
+            final local = tester.getRect(
+              find.byKey(const ValueKey('messengerPrimaryNav-local')),
+            );
+            final network = tester.getRect(
+              find.byKey(const ValueKey('messengerPrimaryNav-network')),
+            );
             expect(
-              agents.top - unread.top,
+              local.top - unread.top,
+              MessengerNavRail.rowPitch,
+              reason: 'Local moved up, right after Unread',
+            );
+            expect(
+              network.top - local.top,
               MessengerNavRail.rowPitch,
               reason: reason,
             );
             expect(
-              channels.top - agents.top,
+              channels.top - network.top,
               MessengerNavRail.rowPitch,
               reason: reason,
             );
@@ -1073,11 +1099,7 @@ void main() {
               greaterThan(icon.center.dy),
               reason: reason,
             );
-            // Local, Activity, Apps and the identity row follow on the
-            // same pitch.
-            final local = tester.getRect(
-              find.byKey(const ValueKey('messengerPrimaryNav-local')),
-            );
+            // Activity and Apps close the rail on the same pitch.
             final activity = tester.getRect(
               find.byKey(const ValueKey('messengerPrimaryNav-activity')),
             );
@@ -1085,18 +1107,20 @@ void main() {
               find.byKey(const ValueKey('messengerPrimaryNav-apps')),
             );
             expect(
-              local.top - channels.top,
+              activity.top - channels.top,
+              MessengerNavRail.rowPitch,
+              reason: reason,
+            );
+            expect(
+              apps.top - activity.top,
               MessengerNavRail.rowPitch,
               reason: reason,
             );
             expect(local.height, MessengerNavRail.rowPitch, reason: reason);
+            expect(network.height, MessengerNavRail.rowPitch, reason: reason);
             expect(activity.height, MessengerNavRail.rowPitch, reason: reason);
             expect(apps.height, MessengerNavRail.rowPitch, reason: reason);
-            // The identity row is its own row; Settings is pinned last.
-            final network = tester.getRect(
-              find.byKey(const ValueKey('chatNetworkFilter')),
-            );
-            expect(network.height, MessengerNavRail.rowPitch, reason: reason);
+            // Settings is pinned last.
             final settings = tester.getRect(
               find.byKey(const ValueKey('railSettingsRow')),
             );
@@ -1169,7 +1193,7 @@ void main() {
         tester.widget<SizedBox>(find.byKey(ValueKey(key)));
     // Every rail row shows its label; selection is the accent tint.
     expect(find.text('All'), findsOneWidget);
-    for (final label in ['Unread', 'Agents', 'Channels']) {
+    for (final label in ['Unread', 'Channels']) {
       expect(find.text(label), findsOneWidget);
       expect(chip(label).properties.selected, isFalse);
     }
@@ -1181,20 +1205,10 @@ void main() {
       ),
       findsOneWidget,
     );
-    final agentsRow = find.byKey(const ValueKey('chatFilter-agents'));
     expect(
-      find.descendant(
-        of: agentsRow,
-        matching: find.byIcon(Icons.people_outline_rounded),
-      ),
-      findsOneWidget,
-    );
-    expect(
-      find.descendant(
-        of: agentsRow,
-        matching: find.byIcon(Icons.smart_toy_outlined),
-      ),
+      find.byKey(const ValueKey('chatFilter-agents')),
       findsNothing,
+      reason: 'agents have no rail row (Local folders own them)',
     );
     expect(
       find.byKey(const ValueKey('wideShellPrimaryNavigation')),
@@ -1259,7 +1273,7 @@ void main() {
         reason: selected,
       );
       // The filter rows quiet down while a section owns the rail.
-      for (final label in const ['All', 'Unread', 'Agents', 'Channels']) {
+      for (final label in const ['All', 'Unread', 'Channels']) {
         expect(chip(label).properties.selected, isFalse, reason: label);
       }
       for (final quiet in const ['activity', 'apps']) {
@@ -1287,7 +1301,7 @@ void main() {
       );
     }
 
-    for (final label in const ['Agents', 'Channels', 'All']) {
+    for (final label in const ['Channels', 'All']) {
       await tester.tap(
         find.byKey(ValueKey('chatFilter-${label.toLowerCase()}')),
       );
@@ -1298,10 +1312,11 @@ void main() {
         reason: '$label must be tappable',
       );
     }
-    // The identity row swaps the CHATS SIDEBAR content to the networks
-    // surface (the same slot the Local drill-down uses); the chat message
-    // column keeps the chat — the old chat-column surface is gone.
-    await tester.tap(find.byKey(const ValueKey('chatNetworkFilter')));
+    // The Network row (the identity globe, re-keyed) swaps the CHATS
+    // SIDEBAR content to the networks surface (the same slot the Local
+    // drill-down uses); the chat message column keeps the chat — the old
+    // chat-column surface is gone.
+    await tester.tap(find.byKey(const ValueKey('messengerPrimaryNav-network')));
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('chatNetworksList')), findsOneWidget);
     expect(find.byKey(const ValueKey('chatNetworksBack')), findsOneWidget);
