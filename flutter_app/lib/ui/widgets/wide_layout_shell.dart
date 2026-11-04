@@ -52,6 +52,7 @@ import 'package:fa/ui/network/join_sheet.dart';
 import 'package:fa/ui/network/network_chat_page.dart';
 import 'package:fa/ui/screens/chat_screen.dart';
 import 'package:fa/ui/widgets/quick_model_chip.dart';
+import 'package:fa/ui/widgets/subagent_chat_switcher.dart';
 import 'package:fa/ui/screens/models_settings_page.dart';
 import 'package:fa/ui/screens/settings.dart';
 import 'package:fa/ui/widgets/boot_oversize_notice.dart';
@@ -60,7 +61,12 @@ import 'package:fa_ui/fa_ui.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart'
-    show ExecutionEnv, SessionMetadata, leaseOwnerLabel;
+    show
+        ExecutionEnv,
+        SessionMetadata,
+        isSubagentSession,
+        leaseOwnerLabel,
+        subagentParentId;
 
 /// The responsive messenger shell: phones get a conversation list with
 /// Chats / Activity / Apps bottom navigation; wider layouts get a collapsible
@@ -1722,6 +1728,16 @@ class _WideLayoutShellState extends State<WideLayoutShell>
           : ChatScreen(
               manager: widget.manager,
               sessionTitle: _sessionDisplayTitle(),
+              inputHeader: SubagentChatSwitcher(
+                // The subagent switcher above the composer (subagent
+                // sessions owner pass): a parent chat lists its subagent
+                // chips; a subagent chat lists its siblings plus the
+                // parent chip first. Taps run the SAME open flow a chat
+                // list row uses, and mark the row read.
+                controller: _chatController,
+                sessionId: active?.id,
+                onOpen: _openLocalEntry,
+              ),
               registry: widget.registry,
               lastConnectionStore: widget.lastConnectionStore,
               uploadPicker: widget.uploadPicker,
@@ -2066,6 +2082,43 @@ class _WideLayoutShellState extends State<WideLayoutShell>
     }
   }
 
+  /// The parent session id when the ACTIVE session is a persisted
+  /// subagent, else null (subagent sessions owner pass). The persisted
+  /// listing is the SAME source the chat projection derives `parentId`
+  /// from, so the close flow and the projection always agree.
+  String? get _activeSubagentParentId {
+    final activeId = widget.manager.active?.id;
+    if (activeId == null) return null;
+    final metadata = _persistedSessions
+        .where((session) => session.id == activeId)
+        .firstOrNull;
+    if (metadata == null || !isSubagentSession(metadata)) return null;
+    return subagentParentId(metadata);
+  }
+
+  /// The subagent chat's close (the narrow chat route's back): return to
+  /// the PARENT session's chat — the active session switches in place and
+  /// the still-open chat route rebuilds with the parent's transcript. A
+  /// parent that is no longer openable (absent/ghost) leaves the pop to
+  /// behave normally.
+  Future<void> _revealSubagentParent() async {
+    final parentId = _activeSubagentParentId;
+    if (parentId == null) return;
+    final live = widget.manager.sessions
+        .where((session) => session.id == parentId)
+        .firstOrNull;
+    if (live != null) {
+      await _openLiveSession(parentId);
+      return;
+    }
+    final persisted = _persistedSessions
+        .where((session) => session.id == parentId)
+        .firstOrNull;
+    if (persisted != null) {
+      await _openPersistedSession(persisted);
+    }
+  }
+
   Future<void> _pushNarrowChat() async {
     final service = widget.manager.active?.service;
     if ((service == null && _activeNetworkEntry == null) ||
@@ -2077,9 +2130,30 @@ class _WideLayoutShellState extends State<WideLayoutShell>
       builder: (routeContext) => service == null
           ? _buildChatArea(FahColors.of(routeContext), narrowRoute: true)
           : ListenableBuilder(
-              listenable: service,
-              builder: (routeContext, _) =>
-                  _buildChatArea(FahColors.of(routeContext), narrowRoute: true),
+              // The route tracks the MANAGER too: an active-session switch
+              // under an open route (the subagent chips, or the subagent
+              // close returning to its parent) must rebuild the chat area
+              // around the new active session — the captured service alone
+              // never notifies on a switch.
+              listenable: Listenable.merge([service, widget.manager]),
+              builder: (routeContext, _) {
+                // The subagent chat's back is intercepted INSIDE the
+                // rebuild: the predicate re-evaluates on every manager
+                // notification (active-session switches), so once the
+                // parent takes over, back pops normally.
+                final interceptBack = _activeSubagentParentId != null;
+                return PopScope(
+                  canPop: !interceptBack,
+                  onPopInvokedWithResult: (didPop, result) {
+                    if (didPop) return;
+                    unawaited(_revealSubagentParent());
+                  },
+                  child: _buildChatArea(
+                    FahColors.of(routeContext),
+                    narrowRoute: true,
+                  ),
+                );
+              },
             ),
     );
     _narrowChatRoute = route;

@@ -3010,6 +3010,145 @@ void main() {
       }
     },
   );
+
+  // Subagent sessions owner pass: the switcher chips docked above the
+  // composer, and the subagent chat's close returning to its parent.
+  group('subagent switcher', () {
+    Future<void> createSubagent(
+      JsonlSessionRepo repo, {
+      required String id,
+      required String parent,
+    }) => repo.create(
+      JsonlSessionCreateOptions(
+        cwd: '/tmp',
+        id: id,
+        metadata: {'agent': 'subagent', 'parent': parent},
+      ),
+    );
+
+    testWidgets('a parent chat lists its subagent chips above the composer; '
+        'a chip tap opens that subagent chat', (tester) async {
+      final env = MemoryExecutionEnv();
+      final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
+        ..addSession('fake-session', _fakeService(env));
+      final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
+      await createSubagent(repo, id: 'sub-scan', parent: 'fake-session');
+      await createSubagent(repo, id: 'sub-watch', parent: 'fake-session');
+
+      await pumpShell(
+        tester,
+        manager: manager,
+        sessionNamesStore: SessionNamesStore.inMemory({
+          'fake-session': 'poc',
+          'sub-scan': 'scan-agent',
+        }),
+      );
+      await tester.pumpAndSettle();
+
+      // One chip per subagent session of the open PARENT chat — no
+      // parent chip while the parent itself is open.
+      expect(
+        find.byKey(const ValueKey('chatSubagentChip-sub-scan')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('chatSubagentChip-sub-watch')),
+        findsOneWidget,
+      );
+      expect(find.text('scan-agent'), findsOneWidget);
+      expect(find.text('← poc'), findsNothing);
+
+      await tester.tap(
+        find.byKey(const ValueKey('chatSubagentChip-sub-scan')),
+      );
+      await tester.pumpAndSettle();
+      await tester.pump(const Duration(seconds: 10));
+      await tester.pumpAndSettle();
+
+      // The chip opened the SUBAGENT chat through the same clone flow a
+      // chat list row uses.
+      expect(manager.activeId, 'sub-scan');
+      // The switcher flipped: the parent chip leads, the subagent chips
+      // follow with the current one highlighted (the title also rides
+      // the header's session label — scope to the chip).
+      expect(find.text('← poc'), findsOneWidget);
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey('chatSubagentChip-sub-scan')),
+          matching: find.text('scan-agent'),
+        ),
+        findsOneWidget,
+      );
+
+      final opened = manager.sessions.firstWhere((s) => s.id == 'sub-scan');
+      manager.switchTo('fake-session');
+      await manager.closeSession('sub-scan');
+      opened.service.dispose();
+      await tester.pumpAndSettle();
+    });
+
+    testWidgets('closing the subagent chat returns to the PARENT chat, '
+        'not the narrow home', (tester) async {
+      final env = MemoryExecutionEnv();
+      final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
+        ..addSession('fake-session', _fakeService(env));
+      final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
+      await createSubagent(repo, id: 'sub-scan', parent: 'fake-session');
+
+      await pumpShell(
+        tester,
+        manager: manager,
+        sessionNamesStore: SessionNamesStore.inMemory({
+          'fake-session': 'poc',
+          'sub-scan': 'scan-agent',
+        }),
+        size: const Size(390, 844),
+      );
+      await tester.pumpAndSettle();
+
+      // Parents only on the narrow Chats home: the subagent is NOT a
+      // row; the parent row opens its chat with the switcher chips.
+      expect(find.text('scan-agent'), findsNothing);
+      await tester.tap(find.text('poc'));
+      await tester.pumpAndSettle();
+      expect(find.byType(ChatScreen), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('chatSubagentChip-sub-scan')),
+        findsOneWidget,
+      );
+
+      // Chip tap → the subagent chat opens in the SAME narrow route.
+      await tester.tap(
+        find.byKey(const ValueKey('chatSubagentChip-sub-scan')),
+      );
+      await tester.pumpAndSettle();
+      await tester.pump(const Duration(seconds: 10));
+      await tester.pumpAndSettle();
+      expect(manager.activeId, 'sub-scan');
+      expect(find.byType(ChatScreen), findsOneWidget);
+      expect(find.text('← poc'), findsOneWidget);
+
+      // Back intercepts: the route STAYS and the parent chat takes over.
+      await tester.tap(find.byType(BackButton).first);
+      await tester.pumpAndSettle();
+      expect(manager.activeId, 'fake-session');
+      expect(find.byType(ChatScreen), findsOneWidget,
+          reason: 'close returns to the parent chat, not the home');
+      expect(find.text('← poc'), findsNothing);
+
+      // Now back pops to the narrow home normally.
+      await tester.tap(find.byType(BackButton).first);
+      await tester.pumpAndSettle();
+      expect(find.byType(ChatListPanel), findsOneWidget);
+      expect(find.byType(ChatScreen), findsNothing);
+
+      // Cleanup: release the cloned session's drive-lease heartbeat.
+      final opened = manager.sessions.firstWhere((s) => s.id == 'sub-scan');
+      await manager.closeSession('sub-scan');
+      opened.service.dispose();
+      await tester.pumpAndSettle();
+    });
+  });
 }
 
 /// The shared header's search/new slots captured for one section.
