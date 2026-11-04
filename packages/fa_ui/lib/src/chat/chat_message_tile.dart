@@ -184,6 +184,13 @@ class ChatMessageTile extends StatelessWidget {
       _bubbleContainer(context, isUser),
       alwaysVisible: false,
     );
+    // Chat gives the message tile the full row even though the bubble itself
+    // shrink-wraps. Anchor the user's bubble to the right edge of THAT row;
+    // otherwise a short message stays at the left edge with empty space to
+    // its right (the compact overlay adds its own outer gutter as before).
+    if (isUser && !compact) {
+      return Align(alignment: Alignment.centerRight, child: withCopy);
+    }
     return _withLeadingAvatar(context, isUser, withCopy);
   }
 

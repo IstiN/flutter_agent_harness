@@ -24,6 +24,38 @@ void main() {
     );
   }
 
+  testWidgets('a short user bubble shrink-wraps and aligns to the right', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      wrap(
+        Align(
+          alignment: Alignment.centerRight,
+          child: SizedBox(
+            key: const ValueKey('tight-user-row'),
+            width: 600,
+            child: ChatMessageTile(
+              message: FaChatMessage(role: 'user', content: 'short'),
+              images: images(),
+            ),
+          ),
+        ),
+      ),
+    );
+    final bubble = find.byWidgetPredicate(
+      (widget) =>
+          widget is Container &&
+          widget.padding ==
+              const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+    );
+    expect(bubble, findsOneWidget);
+    expect(tester.getSize(bubble).width, lessThan(200));
+    expect(
+      tester.getTopRight(bubble).dx,
+      tester.getTopRight(find.byKey(const ValueKey('tight-user-row'))).dx,
+    );
+  });
+
   testWidgets('assistant bubble shows the avatarBuilder widget', (
     tester,
   ) async {
