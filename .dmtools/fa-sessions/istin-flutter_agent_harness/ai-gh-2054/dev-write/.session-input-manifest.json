@@ -1,0 +1,143 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-11-04T08:52:02.565Z",
+  "ticketKey": "pr-2056",
+  "headSha": "962dd017100c73fc61e84b2b61e2b313060859d0",
+  "baseBranch": "main",
+  "reviewDecision": "NONE",
+  "labels": [],
+  "files": {
+    "ci_failures.md": {
+      "hash": "fnv1a64:322b878d3c3c2465",
+      "size": 288
+    },
+    "pr_diff.txt": {
+      "hash": "fnv1a64:b6765733697bba7f",
+      "size": 12301
+    },
+    "pr_discussions.md": {
+      "hash": "fnv1a64:5ffdf16368c6d8d6",
+      "size": 10538
+    },
+    "pr_discussions_raw.json": {
+      "hash": "fnv1a64:d5ad727d753d7b7a",
+      "size": 4473
+    },
+    "pr_info.md": {
+      "hash": "fnv1a64:65fa8d5fbbf3d41e",
+      "size": 2781
+    },
+    "request.md": {
+      "hash": "fnv1a64:7506a8e664db3ad5",
+      "size": 2444
+    },
+    "review_state.md": {
+      "hash": "fnv1a64:e91bd63534633bfd",
+      "size": 1138
+    },
+    "rework_base_head.txt": {
+      "hash": "fnv1a64:316ca112c9f427bd",
+      "size": 40
+    },
+    "ticket.json": {
+      "hash": "fnv1a64:7e5c79b35bfd6453",
+      "size": 2520
+    },
+    "ticket.md": {
+      "hash": "fnv1a64:7506a8e664db3ad5",
+      "size": 2444
+    }
+  },
+  "comments": [
+    {
+      "id": "PRRT_kwDOTXdlLc6zf-zb",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": ".github/workflows/build-mobile.yml",
+      "resolved": false,
+      "body": "🚨 **BLOCKING: `DOWNLOAD_CEILING=120` is 120 **seconds** (2 min), not the documented 20-minute ceiling**\n\n`DEADLINE=$(( $(date +%s) + DOWNLOAD_CEILING ))` adds the variable to **epoch seconds**, and the warning message itself interpolates it as `${DOWNLOAD_CEILING}s` — so the shipped watchdog kills the download after **2 minutes**, while the inline comment on this same line says `# 20m` and the PR description promises \"a 20-minute ceiling\" (twice). A healthy multi-GB `-downloadPlatform iOS` transfer routinely needs more than 2 minutes; on the only path that reaches this code (SDK genuinely missing), the watchdog will kill a **legitimate** download mid-transfer, the SDK stays missing, and `flutter build ios` fails — the fallback path can rarely complete its purpose, and the shipped behavior contradicts the PR's own stated contract.\n\n**Fix** (20 minutes, as documented):\n\n```bash\nDOWNLOAD_CEILING=1200 # 20m — ≪ the 90m build-ios job budget\n```\n\n(or, if 2 minutes was truly intended, fix the comment + PR description — but 1200 matches the stated 20-minute design and gives a cold-runner transfer room to finish while still bounding ≪ the 90m job budget).\n\nNote the new guard test cannot catch this: AC3 asserts only that `DEADLINE=`/`kill -9` exist (shape, not value). Suggest extending AC3 to pin `DOWNLOAD_CEILING=1200` (or assert `>= 600`) so the ceiling cannot silently shrink again.\n\nVerified by probe: with the same script shape and a stalled stub download, the watchdog fires `::warning::… exceeded <N>s` and keeps the step green — the mechanics are correct; only the ceiling value/units are wrong."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6zf-1_",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": ".github/workflows/build-mobile.yml:1053",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: watchdog `kill` can leak download helper processes into the following steps**\n\n`kill \"$DL_PID\"` / `kill -9` signal only the direct `xcodebuild` child. `xcodebuild -downloadPlatform` delegates the transfer to helper processes; a hard `kill -9` cannot trap-and-forward, so surviving descendants keep running detached after this step ends — still consuming bandwidth/disk during the subsequent ~24-minute IPA archive, and potentially holding a runtime-install lock that misbehaves the *next* daily download.\n\nVerified empirically with a stubbed `xcodebuild` (`sleep`-backed stall): after the watchdog fired, the stub's grandchild was still alive (`pgrep -af sleep 3000` → orphaned pid) even though the step had exited green.\n\nTwo bounded options:\n\n```bash\n# Option A — own process group, kill the whole tree:\nsetsid xcodebuild -downloadPlatform iOS &\nDL_PID=$!\n...\nkill -- -\"$DL_PID\" 2>/dev/null || true   # negative pid = the group\n```\n\n```bash\n# Option B — reap direct descendants before reaping the child:\npkill -TERM -P \"$DL_PID\" 2>/dev/null || true\nkill \"$DL_PID\" 2>/dev/null || true\n```\n\nThis does not undermine the bounded-duration goal (the step itself already returns promptly) — process-tree hygiene only, so the killed transfer cannot fight the real build for resources."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6zf-40",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "test/workflow_ios_platform_download_guard_test.dart:1",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: the gh-2054 incident run id is spelled three different ways in this PR**\n\n- `.github/workflows/build-mobile.yml:1017` (comment): `run 417861470`\n- this file, line 1: `child run 41778614770`\n- this file, line 82 (AC1 reason): `run 417861470`\n\nTwo distinct numbers for the same incident, and neither matches the repo's established 11-digit run-id format seen in neighboring incident comments (e.g. `run 38516656653`, `run 40455401630`, `run 40822964468`). One of them is a typo; please unify on the real id from run 417861470's post-mortem so the incident trail stays greppable (`git grep 41…` should hit all references from one search)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-04:3d7ade61",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-04",
+      "updatedAt": "2026-11-04",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🚨 **BLOCKING: `DOWNLOAD_CEILING=120` is 120 **seconds** (2 min), not the documented 20-minute ceiling**\n\n`DEADLINE=$(( $(date +%s) + DOWNLOAD_CEILING ))` adds the variable to **epoch seconds**, and the warning message itself interpolates it as `${DOWNLOAD_CEILING}s` — so the shipped watchdog kills the download after **2 minutes**, while the inline comment on this same line says `# 20m` and the PR description promises \"a 20-minute ceiling\" (twice). A healthy multi-GB `-downloadPlatform iOS` transfer routinely needs more than 2 minutes; on the only path that reaches this code (SDK genuinely missing), the watchdog will kill a **legitimate** download mid-transfer, the SDK stays missing, and `flutter build ios` fails — the fallback path can rarely complete its purpose, and the shipped behavior contradicts the PR's own stated contract.\n\n**Fix** (20 minutes, as documented):\n\n```bash\nDOWNLOAD_CEILING=1200 # 20m — ≪ the 90m build-ios job budget\n```\n\n(or, if 2 minutes was truly intended, fix the comment + PR description — but 1200 matches the stated 20-minute design and gives a cold-runner transfer room to finish while still bounding ≪ the 90m job budget).\n\nNote the new guard test cannot catch this: AC3 asserts only that `DEADLINE=`/`kill -9` exist (shape, not value). Suggest extending AC3 to pin `DOWNLOAD_CEILING=1200` (or assert `>= 600`) so the ceiling cannot silently shrink again.\n\nVerified by probe: with the same script shape and a stalled stub download, the watchdog fires `::warning::… exceeded <N>s` and keeps the step green — the mechanics are correct; only the ceiling value/units are wrong."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-04:a37ebbf8",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-04",
+      "updatedAt": "2026-11-04",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: watchdog `kill` can leak download helper processes into the following steps**\n\n`kill \"$DL_PID\"` / `kill -9` signal only the direct `xcodebuild` child. `xcodebuild -downloadPlatform` delegates the transfer to helper processes; a hard `kill -9` cannot trap-and-forward, so surviving descendants keep running detached after this step ends — still consuming bandwidth/disk during the subsequent ~24-minute IPA archive, and potentially holding a runtime-install lock that misbehaves the *next* daily download.\n\nVerified empirically with a stubbed `xcodebuild` (`sleep`-backed stall): after the watchdog fired, the stub's grandchild was still alive (`pgrep -af sleep 3000` → orphaned pid) even though the step had exited green.\n\nTwo bounded options:\n\n```bash\n# Option A — own process group, kill the whole tree:\nsetsid xcodebuild -downloadPlatform iOS &\nDL_PID=$!\n...\nkill -- -\"$DL_PID\" 2>/dev/null || true   # negative pid = the group\n```\n\n```bash\n# Option B — reap direct descendants before reaping the child:\npkill -TERM -P \"$DL_PID\" 2>/dev/null || true\nkill \"$DL_PID\" 2>/dev/null || true\n```\n\nThis does not undermine the bounded-duration goal (the step itself already returns promptly) — process-tree hygiene only, so the killed transfer cannot fight the real build for resources."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-04:93631196",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-04",
+      "updatedAt": "2026-11-04",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION: the gh-2054 incident run id is spelled three different ways in this PR**\n\n- `.github/workflows/build-mobile.yml:1017` (comment): `run 417861470`\n- this file, line 1: `child run 41778614770`\n- this file, line 82 (AC1 reason): `run 417861470`\n\nTwo distinct numbers for the same incident, and neither matches the repo's established 11-digit run-id format seen in neighboring incident comments (e.g. `run 38516656653`, `run 40455401630`, `run 40822964468`). One of them is a typo; please unify on the real id from run 417861470's post-mortem so the incident trail stays greppable (`git grep 41…` should hit all references from one search)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-04:56b26364",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-04",
+      "updatedAt": "2026-11-04",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — REQUEST_CHANGES\n\n**Summary**: One blocking issue — the watchdog ceiling `DOWNLOAD_CEILING=120` is 120 **seconds** (2 min), not the 20 minutes documented in the same line's comment and the PR description; on the SDK-missing path the watchdog will kill legitimate multi-GB downloads mid-transfer, defeating the fallback this PR adds (fix: `120`).\n\n**Key Issues**:\n- 🚨 BLOCKING: `.github/workflows/build-mobile.yml:103` — ceiling units bug (120s shipped vs 20m documented); verified `DEADLINE=$(( $(date +%s) + DOWNLOAD_CEILING ))` arithmetic and the `${DOWNLOAD_CEILING}s` warning text\n- 💡 Suggestions: watchdog `kill` may leak download helper processes into the archive step (verified with a stubbed stall — grandchild survived the kill); incident run id spelled three ways (`417861470` vs `41778614770`)\n\n**Next Steps**:\n1. Set `DOWNLOAD_CEILING=120` (or reconcile comment + PR description if 2 min was intended) and pin the value in AC3 of the new guard test\n2. Optionally kill the download's process tree (`setsid` + group kill) instead of the direct child only\n3. Unify the gh-2054 run id across the workflow comment and the test file\n\nThe approach itself is sound: gate-then-download verified (SDK-present fast path exits in <1s, stalled download killed with `::warning::` while the step stays green), best-effort semantics preserved, the stale `-buildVersion 26.5` pin is gone, and all 3 new ACs plus 127 related workflow-shape tests pass."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-11-04:779deadc",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-11-04",
+      "updatedAt": "2026-11-04",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🔄 zombie re-dispatch 962dd017100c73fc61e84b2b61e2b313060859d0 — zombie 1/3 at 2026-11-04T08:18:45.308Z\n\nThis head carried no dispatched validation run at all — the dispatch was lost (gh-821). CI was re-dispatched automatically (bounded: 1 per head per hour; 3 in a row on the same head park the PR validation_failed)."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-11-04:7218e17a",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-11-04",
+      "updatedAt": "2026-11-04",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🧵 Unresolved review threads — rework armed. This machine-authored PR is reviewed (ai_pr_reviewed) but still has open review threads. The rework leg owns open threads: agent:rework is armed on this PR and the rework runner will work through the threads and push. Validation re-runs automatically afterwards, and once the threads are resolved a fresh re-review is armed (review-threads-resolved)."
+    }
+  ]
+}
