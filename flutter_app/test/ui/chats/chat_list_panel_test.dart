@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:fa/l10n/app_localizations.dart';
 import 'package:fa/network/key_wallet.dart';
 import 'package:fa/network/network_session_manager.dart';
@@ -9,6 +11,7 @@ import 'package:fa/ui/chats/chat_list_stores.dart';
 import 'package:fa/ui/chats/local_chat_list_adapter.dart';
 import 'package:fa/ui/chats/network_inbox_adapter.dart';
 import 'package:fa/ui/network/sign_in_dialog.dart';
+import 'package:fa/ui/widgets/folder_avatar.dart';
 import 'package:fa/ui/widgets/subagent_mark.dart';
 import 'package:fa_ui/fa_ui.dart' show FaLogo, FaVisualDirection, buildFaTheme;
 import 'package:flutter/foundation.dart';
@@ -16,9 +19,17 @@ import 'package:flutter/gestures.dart' show PointerDeviceKind;
 import 'package:flutter/material.dart';
 import 'package:flutter/cupertino.dart' show CupertinoTextField;
 import 'package:flutter/services.dart';
+import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../../network/fakes.dart';
+
+final _tinyPng = Uint8List.fromList(
+  base64.decode(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJ'
+    'AAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+  ),
+);
 
 ChatListEntry entry(
   String id, {
@@ -30,6 +41,7 @@ ChatListEntry entry(
   String? folderPath,
   String? parentId,
   bool isSubagent = false,
+  bool isStreaming = false,
 }) => ChatListEntry(
   id: kind == ChatListEntryKind.localAgent
       ? ChatEntryId.local(id)
@@ -47,6 +59,7 @@ ChatListEntry entry(
   localMessageCount: kind == ChatListEntryKind.localAgent ? messageCount : null,
   parentId: parentId,
   isSubagent: isSubagent,
+  isStreaming: isStreaming,
 );
 
 Future<ChatListController> makeController(
@@ -76,6 +89,7 @@ Future<void> pumpPanel(
   Future<void> Function(ChatListEntry entry)? onOpen,
   VoidCallback? onNew,
   NetworkSessionManager? networkManager,
+  FolderIconResolver? iconResolver,
   ChatEntryId? selectedEntryId,
 }) async {
   await tester.pumpWidget(
@@ -93,6 +107,7 @@ Future<void> pumpPanel(
             onOpen: onOpen ?? (_) async {},
             onNew: onNew ?? () {},
             networkManager: networkManager,
+            iconResolver: iconResolver,
           ),
         ),
       ),
@@ -289,7 +304,9 @@ void main() {
   testWidgets(
     'selected rows use the accent and hover reveals desktop actions',
     (tester) async {
-      final controller = await makeController([entry('Design')]);
+      final controller = await makeController([
+        entry('Design', folderName: 'project', folderPath: '/work/project'),
+      ]);
       await pumpPanel(tester, controller);
       final row = find.byKey(
         ValueKey('chatRow-${ChatEntryId.local('Design')}'),
@@ -300,21 +317,25 @@ void main() {
       final avatar = find.byKey(
         ValueKey('chatAvatar-${ChatEntryId.local('Design')}'),
       );
-      Container avatarContainer() => tester.widget<Container>(
-        find.descendant(of: avatar, matching: find.byType(Container)),
+      FolderAvatar folderAvatar() => tester.widget<FolderAvatar>(
+        find.descendant(of: avatar, matching: find.byType(FolderAvatar)),
       );
-      final avatarColorBefore =
-          (avatarContainer().decoration! as BoxDecoration).color;
-      // The NEUTRAL glyph (owner pass): a surface2 rounded square with the
-      // ink3 chat bubble — no letter, no hue, on every selection state.
-      expect(
-        find.descendant(of: avatar, matching: find.byType(Text)),
-        findsNothing,
+      final avatarBefore = folderAvatar();
+      expect(avatarBefore.seed, '/work/project');
+      expect(avatarBefore.label, 'project');
+      expect(avatarBefore.size, 42);
+      expect(avatarBefore.circle, isTrue);
+      expect(find.descendant(of: avatar, matching: find.text('P')), findsOne);
+      final badge = find.descendant(
+        of: avatar,
+        matching: find.byKey(const ValueKey('chatAvatarFolderBadge')),
       );
+      expect(badge, findsOneWidget);
+      expect(tester.getSize(badge), const Size.square(18));
       expect(
         tester
             .widget<Icon>(
-              find.descendant(of: avatar, matching: find.byType(Icon)),
+              find.descendant(of: badge, matching: find.byType(Icon)),
             )
             .icon,
         Icons.chat_bubble_outline,
@@ -339,23 +360,26 @@ void main() {
       final material = tester.widget<Material>(row);
       expect(material.color, Theme.of(context).colorScheme.primary);
       expect(material.color, const Color(0xFF3F8FF7));
-      final avatarAfter = avatarContainer();
-      expect(
-        (avatarAfter.decoration! as BoxDecoration).color,
-        avatarColorBefore,
-      );
-      // Still the glyph — the selection never paints letters back in.
-      expect(
-        find.descendant(of: avatar, matching: find.byType(Text)),
-        findsNothing,
-      );
+      final avatarAfter = folderAvatar();
+      expect(avatarAfter.seed, avatarBefore.seed);
+      expect(avatarAfter.label, avatarBefore.label);
+      expect(avatarAfter.circle, avatarBefore.circle);
+      expect(badge, findsOneWidget);
       expect(pin, findsNothing);
     },
   );
 
-  testWidgets('network channel rows carry the neutral tag glyph', (
+  testWidgets('network channel rows use the wallet network avatar and badge', (
     tester,
   ) async {
+    final wallet = await KeyWallet.load(MemoryWalletBackend());
+    await wallet.addNetwork(networkId: 'remote', name: 'Wallet team');
+    final manager = NetworkSessionManager(
+      baseUrl: Uri.parse('https://example.test'),
+      wallet: wallet,
+      httpClient: FakeHttpClient(),
+    );
+    addTearDown(manager.dispose);
     final controller = await makeController(
       const [],
       network: FixtureNetworkInboxAdapter(
@@ -370,7 +394,7 @@ void main() {
         ],
       ),
     );
-    await pumpPanel(tester, controller);
+    await pumpPanel(tester, controller, networkManager: manager);
     final avatar = find.byKey(
       ValueKey(
         'chatAvatar-${ChatEntryId.network(ChatListEntryKind.networkChannel, networkId: 'remote', id: 'general')}',
@@ -378,18 +402,122 @@ void main() {
     );
     expect(avatar, findsOneWidget);
     expect(tester.getSize(avatar), const Size.square(42));
+    final networkAvatar = tester.widget<FolderAvatar>(
+      find.descendant(of: avatar, matching: find.byType(FolderAvatar)),
+    );
+    expect(networkAvatar.seed, 'remote');
+    expect(networkAvatar.label, 'Wallet team');
+    expect(networkAvatar.circle, isTrue);
+    expect(find.descendant(of: avatar, matching: find.text('W')), findsOne);
+    final badge = find.descendant(
+      of: avatar,
+      matching: find.byKey(const ValueKey('chatAvatarChannelBadge')),
+    );
+    expect(badge, findsOneWidget);
+    expect(tester.getSize(badge), const Size.square(18));
+    final badgeIcon = tester.widget<Icon>(
+      find.descendant(of: badge, matching: find.byType(Icon)),
+    );
+    expect(badgeIcon.icon, Icons.tag_rounded);
+    expect(badgeIcon.size, 12);
+  });
+
+  testWidgets('folder icon resolution is shared with Local folder rows', (
+    tester,
+  ) async {
+    final env = MemoryExecutionEnv();
+    await env.writeBinaryFile('/project/icon.png', _tinyPng);
+    final resolver = FolderIconResolver(
+      env,
+      hostToMountPath: (folderId) =>
+          folderId == '/work/project' ? '/project' : null,
+    );
+    final controller = await makeController([
+      entry('Design', folderName: 'project', folderPath: '/work/project'),
+    ]);
+
+    await pumpPanel(tester, controller, iconResolver: resolver);
+
+    final avatar = find.byKey(
+      ValueKey('chatAvatar-${ChatEntryId.local('Design')}'),
+    );
+    final folderAvatar = tester.widget<FolderAvatar>(
+      find.descendant(of: avatar, matching: find.byType(FolderAvatar)),
+    );
+    expect(folderAvatar.image, isA<MemoryImage>());
+    expect((folderAvatar.image! as MemoryImage).bytes, _tinyPng);
     expect(
-      tester
-          .widget<Icon>(
-            find.descendant(of: avatar, matching: find.byType(Icon)),
-          )
-          .icon,
-      Icons.tag_rounded,
+      find.descendant(of: avatar, matching: find.byType(Image)),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('narrow rows keep semantic avatars, badges, and running state', (
+    tester,
+  ) async {
+    final wallet = await KeyWallet.load(MemoryWalletBackend());
+    await wallet.addNetwork(networkId: 'remote', name: 'Remote team');
+    final manager = NetworkSessionManager(
+      baseUrl: Uri.parse('https://example.test'),
+      wallet: wallet,
+      httpClient: FakeHttpClient(),
+    );
+    addTearDown(manager.dispose);
+    final controller = await makeController(
+      [
+        entry(
+          'Design',
+          folderName: 'project',
+          folderPath: '/work/project',
+          isStreaming: true,
+        ),
+      ],
+      network: FixtureNetworkInboxAdapter(
+        items: [
+          NetworkInboxItem(
+            kind: ChatListEntryKind.networkChannel,
+            networkId: 'remote',
+            id: 'general',
+            title: 'General',
+          ),
+        ],
+      ),
+    );
+
+    await pumpPanel(tester, controller, compact: true, networkManager: manager);
+
+    final localAvatar = find.byKey(
+      ValueKey('chatAvatar-${ChatEntryId.local('Design')}'),
+    );
+    final channelAvatar = find.byKey(
+      ValueKey(
+        'chatAvatar-${ChatEntryId.network(ChatListEntryKind.networkChannel, networkId: 'remote', id: 'general')}',
+      ),
+    );
+    expect(tester.getSize(localAvatar), const Size.square(42));
+    expect(tester.getSize(channelAvatar), const Size.square(42));
+    expect(
+      find.descendant(of: localAvatar, matching: find.byType(FolderAvatar)),
+      findsOneWidget,
     );
     expect(
-      find.descendant(of: avatar, matching: find.byType(Text)),
-      findsNothing,
-      reason: 'no letters, no hue on channel rows',
+      find.descendant(of: channelAvatar, matching: find.byType(FolderAvatar)),
+      findsOneWidget,
+    );
+    final folderBadge = find.byKey(const ValueKey('chatAvatarFolderBadge'));
+    final channelBadge = find.byKey(const ValueKey('chatAvatarChannelBadge'));
+    expect(folderBadge, findsOneWidget);
+    expect(channelBadge, findsOneWidget);
+    final running = find.descendant(
+      of: localAvatar,
+      matching: find.byType(ChatRunningDot),
+    );
+    expect(running, findsOneWidget);
+    expect(
+      tester.getRect(running).overlaps(tester.getRect(folderBadge)),
+      isFalse,
+      reason:
+          'the type badge and running indicator must not obscure each other',
     );
   });
 
@@ -422,79 +550,78 @@ void main() {
     expect(opened, 0);
   });
 
-  testWidgets(
-    'the All home is ONE flat active list — sessions and channels by '
-    'last activity, no folder grouping, no sections, no tree',
-    (tester) async {
-      final reads = ChatReadCursorStore.inMemory(accountId: 'a');
-      final controller = await makeController(
-        [
-          entry('Oldest session', folderName: 'project', folderPath: '/work'),
-          entry('Middle session'),
-          entry('Child agent', parentId: 'Middle session', isSubagent: true),
+  testWidgets('the All home is ONE flat active list — sessions and channels by '
+      'last activity, no folder grouping, no sections, no tree', (
+    tester,
+  ) async {
+    final reads = ChatReadCursorStore.inMemory(accountId: 'a');
+    final controller = await makeController(
+      [
+        entry('Oldest session', folderName: 'project', folderPath: '/work'),
+        entry('Middle session'),
+        entry('Child agent', parentId: 'Middle session', isSubagent: true),
+      ],
+      network: FixtureNetworkInboxAdapter(
+        items: [
+          NetworkInboxItem(
+            kind: ChatListEntryKind.networkChannel,
+            networkId: 'remote',
+            id: 'channel',
+            title: 'Network channel',
+            lastActivity: DateTime.utc(2026, 1, 3),
+            unreadCount: 2,
+          ),
         ],
-        network: FixtureNetworkInboxAdapter(
-          items: [
-            NetworkInboxItem(
-              kind: ChatListEntryKind.networkChannel,
-              networkId: 'remote',
-              id: 'channel',
-              title: 'Network channel',
-              lastActivity: DateTime.utc(2026, 1, 3),
-              unreadCount: 2,
-            ),
-          ],
-        ),
-        reads: reads,
-      );
-      await pumpPanel(tester, controller);
+      ),
+      reads: reads,
+    );
+    await pumpPanel(tester, controller);
 
-      // One flat list: newest activity first, channels and sessions
-      // interleaved by time (the channel carries Jan 3; local entries pin
-      // Jan 2 — the channel leads, ties break by id). Subagent sessions
-      // never render as flat rows: the projection is PARENTS ONLY, and a
-      // parent with subagents carries the count chip instead.
-      Rect rowOf(String title) => tester.getRect(find.text(title));
-      final channel = rowOf('Network channel');
-      final middle = rowOf('Middle session');
-      final oldest = rowOf('Oldest session');
-      expect(channel.top, lessThan(middle.top), reason: 'activity desc');
-      expect(middle.top, lessThan(oldest.top));
-      expect(find.text('Child agent'), findsNothing,
-          reason: 'parents only — the subagent rides the parent chip');
-      expect(middle.left, oldest.left, reason: 'flat — same indent');
+    // One flat list: newest activity first, channels and sessions
+    // interleaved by time (the channel carries Jan 3; local entries pin
+    // Jan 2 — the channel leads, ties break by id). Subagent sessions
+    // never render as flat rows: the projection is PARENTS ONLY, and a
+    // parent with subagents carries the count chip instead.
+    Rect rowOf(String title) => tester.getRect(find.text(title));
+    final channel = rowOf('Network channel');
+    final middle = rowOf('Middle session');
+    final oldest = rowOf('Oldest session');
+    expect(channel.top, lessThan(middle.top), reason: 'activity desc');
+    expect(middle.top, lessThan(oldest.top));
+    expect(
+      find.text('Child agent'),
+      findsNothing,
+      reason: 'parents only — the subagent rides the parent chip',
+    );
+    expect(middle.left, oldest.left, reason: 'flat — same indent');
 
-      // The parent row's chip counts its subagent sessions.
-      final chip = find.byKey(const ValueKey('chatSubagentChip'));
-      expect(chip, findsOneWidget);
-      expect(
-        find.descendant(of: chip, matching: find.text('1')),
-        findsOneWidget,
-      );
+    // The parent row's chip counts its subagent sessions.
+    final chip = find.byKey(const ValueKey('chatSubagentChip'));
+    expect(chip, findsOneWidget);
+    expect(find.descendant(of: chip, matching: find.text('1')), findsOneWidget);
 
-      // NO folder grouping leaked into All.
-      expect(
-        find.byKey(const ValueKey('chatFolder-folder::/work')),
-        findsNothing,
-      );
-      // NO pinned/recent multi-level sections.
-      expect(find.text('Pinned'), findsNothing);
-      expect(find.text('Recent'), findsNothing);
-      // NO tree affordances.
-      expect(
-        find.byKey(const ValueKey('chatTreeToggle-local:Middle session')),
-        findsNothing,
-      );
+    // NO folder grouping leaked into All.
+    expect(
+      find.byKey(const ValueKey('chatFolder-folder::/work')),
+      findsNothing,
+    );
+    // NO pinned/recent multi-level sections.
+    expect(find.text('Pinned'), findsNothing);
+    expect(find.text('Recent'), findsNothing);
+    // NO tree affordances.
+    expect(
+      find.byKey(const ValueKey('chatTreeToggle-local:Middle session')),
+      findsNothing,
+    );
 
-      // Unread is the unread subset of the SAME flat list.
-      await tester.tap(find.byKey(const ValueKey('chatFilter-unread')));
-      await tester.pumpAndSettle();
-      expect(find.text('Network channel'), findsOneWidget);
-      expect(find.text('Oldest session'), findsNothing);
-      expect(find.text('Middle session'), findsNothing);
-      expect(find.text('Child agent'), findsNothing);
-    },
-  );
+    // Unread is the unread subset of the SAME flat list.
+    await tester.tap(find.byKey(const ValueKey('chatFilter-unread')));
+    await tester.pumpAndSettle();
+    expect(find.text('Network channel'), findsOneWidget);
+    expect(find.text('Oldest session'), findsNothing);
+    expect(find.text('Middle session'), findsNothing);
+    expect(find.text('Child agent'), findsNothing);
+  });
 
   testWidgets(
     'Local network facet shows flat local agent rows and excludes network rows',

@@ -198,6 +198,11 @@ void main() {
     // a wall clock time into every tile subtitle and flake the snapshot.
     final env = MemoryExecutionEnv();
     final services = {'sess-a': _fakeService(env), 'sess-b': _fakeService(env)};
+    for (final service in services.values) {
+      service.messages.add(
+        FahChatMessage(role: 'user', content: 'A searchable conversation'),
+      );
+    }
     final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
       ..addSession(
         'sess-a',

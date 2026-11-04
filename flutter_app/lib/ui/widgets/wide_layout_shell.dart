@@ -743,6 +743,7 @@ class _WideLayoutShellState extends State<WideLayoutShell>
           ? DapBindingStore.instance.boundSessionId
           : null,
       networkManager: widget.networkSessions,
+      iconResolver: _folderIcons,
       networkMode: widget.networkMode,
       onOpen: _openChatEntry,
       onNew: _newSession,

@@ -47,7 +47,10 @@ String compactChatFolderPath(String path, {String? homePath}) {
 /// True when [entry] is a subagent session whose parent chat is still in
 /// the projection — those ride the badge above the composer instead of a
 /// list row. Orphans (dead or unknown parent) render as plain rows.
-bool _isSubagentWithLiveParent(ChatListController controller, ChatListEntry entry) {
+bool _isSubagentWithLiveParent(
+  ChatListController controller,
+  ChatListEntry entry,
+) {
   if (!entry.isSubagent) return false;
   final parentId = entry.parentId;
   if (parentId == null) return false;
@@ -83,6 +86,7 @@ class ChatListPanel extends StatefulWidget {
     this.bodyKey,
     this.showFilterToolbar = true,
     this.networkManager,
+    this.iconResolver,
     this.networkMode,
     this.selectedEntryId,
     this.didOpen,
@@ -141,6 +145,10 @@ class ChatListPanel extends StatefulWidget {
   /// passes false; the narrow shell keeps the bar (horizontal adaptation).
   final bool showFilterToolbar;
   final NetworkSessionManager? networkManager;
+
+  /// The same mount-rebased, cached resolver used by Local folder rows.
+  /// Null keeps the deterministic gradient-letter fallback (tests/web).
+  final FolderIconResolver? iconResolver;
   final NetworkModeController? networkMode;
   final ChatEntryId? selectedEntryId;
   final bool Function(ChatListEntry entry)? didOpen;
@@ -619,6 +627,8 @@ class _ChatListPanelState extends State<ChatListPanel> {
       onLocalMenu: entry.kind == ChatListEntryKind.localAgent
           ? widget.onLocalMenu
           : null,
+      iconResolver: widget.iconResolver,
+      networkManager: widget.networkManager,
       subagentCount: subagents.length,
     );
   }
@@ -669,6 +679,8 @@ class _ConversationRow extends StatefulWidget {
     required this.onOpen,
     required this.onTogglePin,
     required this.onLocalMenu,
+    required this.iconResolver,
+    required this.networkManager,
     this.subagentCount = 0,
   });
 
@@ -679,6 +691,8 @@ class _ConversationRow extends StatefulWidget {
   final VoidCallback? onOpen;
   final VoidCallback onTogglePin;
   final Future<void> Function(ChatListEntry entry, Rect anchor)? onLocalMenu;
+  final FolderIconResolver? iconResolver;
+  final NetworkSessionManager? networkManager;
 
   /// How many subagent sessions nest under this row (parents only on the
   /// All home — zero for every other row). Informational: the chip is
@@ -759,6 +773,8 @@ class _ConversationRowState extends State<_ConversationRow> {
                           entry: entry,
                           colors: colors,
                           ringColor: selected ? accent : colors.panel,
+                          iconResolver: widget.iconResolver,
+                          networkManager: widget.networkManager,
                         ),
                         const SizedBox(width: 10),
                         Expanded(
@@ -956,28 +972,98 @@ class _Avatar extends StatelessWidget {
     required this.entry,
     required this.colors,
     required this.ringColor,
+    required this.iconResolver,
+    required this.networkManager,
   });
 
   final ChatListEntry entry;
   final FahColors colors;
   final Color ringColor;
+  final FolderIconResolver? iconResolver;
+  final NetworkSessionManager? networkManager;
 
   @override
   Widget build(BuildContext context) {
+    final local = entry.kind == ChatListEntryKind.localAgent;
     final channel = entry.kind == ChatListEntryKind.networkChannel;
-    // The NEUTRAL glyph (owner pass): sessions and channels are not
-    // identities — conversation rows carry ONE surface2 rounded square
-    // with an ink3 icon (chat bubble; the tag for channels), no letters,
-    // no hue.
+    final running = entry.presence != null || entry.isStreaming;
+    if (local || channel) {
+      final folderId = entry.folderPath ?? '';
+      final networkId = entry.networkId ?? '';
+      final network = networkManager?.wallet.networks[networkId];
+      final identity = local
+          ? FutureBuilder<MemoryImage?>(
+              future: iconResolver?.resolve(folderId),
+              builder: (context, snapshot) => FolderAvatar(
+                seed: folderId,
+                label: entry.folderName ?? context.l10n.sessionFolderPersonal,
+                size: 42,
+                image: snapshot.data,
+                circle: true,
+              ),
+            )
+          : FolderAvatar(
+              seed: networkId,
+              label: network?.name ?? entry.networkName ?? networkId,
+              size: 42,
+              circle: true,
+            );
+      return SizedBox.square(
+        key: ValueKey('chatAvatar-${entry.id}'),
+        dimension: 42,
+        child: Stack(
+          clipBehavior: Clip.none,
+          children: [
+            Positioned.fill(child: identity),
+            Positioned(
+              right: -2,
+              bottom: -2,
+              child: Container(
+                key: ValueKey(
+                  channel ? 'chatAvatarChannelBadge' : 'chatAvatarFolderBadge',
+                ),
+                width: 18,
+                height: 18,
+                decoration: BoxDecoration(
+                  color: colors.panel,
+                  shape: BoxShape.circle,
+                  border: Border.all(color: colors.border),
+                ),
+                alignment: Alignment.center,
+                child: Icon(
+                  channel ? Icons.tag_rounded : Icons.chat_bubble_outline,
+                  size: 12,
+                  color: colors.dim,
+                ),
+              ),
+            ),
+            if (running)
+              // The type badge owns the bottom-right corner. Keep the same
+              // running token visible at the opposite corner, unobscured.
+              Positioned(
+                right: -1,
+                top: -1,
+                child: ChatRunningDot(
+                  entry: entry,
+                  colors: colors,
+                  ringColor: ringColor,
+                ),
+              ),
+          ],
+        ),
+      );
+    }
+
+    // Network agents retain their existing direct/neutral avatar treatment.
     final Widget avatar = entry.avatarUrl == null
         ? NeutralGlyphAvatar(
             key: ValueKey('chatAvatar-${entry.id}'),
             size: 42,
-            icon: channel ? Icons.tag_rounded : Icons.chat_bubble_outline,
+            icon: Icons.chat_bubble_outline,
           )
         : ClipRRect(
             key: ValueKey('chatAvatar-${entry.id}'),
-            borderRadius: BorderRadius.circular(channel ? 12 : 21),
+            borderRadius: BorderRadius.circular(21),
             child: Image.network(
               entry.avatarUrl!,
               width: 42,
@@ -985,7 +1071,7 @@ class _Avatar extends StatelessWidget {
               fit: BoxFit.cover,
             ),
           );
-    if (entry.presence == null && !entry.isStreaming) return avatar;
+    if (!running) return avatar;
     return Stack(
       clipBehavior: Clip.none,
       children: [
@@ -1068,9 +1154,7 @@ class _SubagentChip extends StatelessWidget {
       height: 18,
       padding: const EdgeInsets.symmetric(horizontal: 5),
       decoration: BoxDecoration(
-        color: selected
-            ? onSelection.withValues(alpha: .18)
-            : tokens.surface2,
+        color: selected ? onSelection.withValues(alpha: .18) : tokens.surface2,
         borderRadius: BorderRadius.circular(8),
         border: Border.all(
           color: selected
