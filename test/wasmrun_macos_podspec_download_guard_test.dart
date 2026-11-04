@@ -43,6 +43,16 @@
 // (sh/chmod/#!/bin/sh stub) and skips elsewhere; the static lints run
 // everywhere. Static lint over the vendored pod, same style as
 // wasmrun_macos_pod_link_test.dart.
+//
+// Review round 2 (gh-2055 PR): Ruby does NOT check a bare backtick's exit
+// status — `$?` is set but nothing reads it, so even with the shell block
+// aborting at the curl step (round 1), pod install proceeded past the
+// failed fetch and died at the Podfile post_install `nm` check with the
+// root cause one screen up. The podspec must ASSIGN the backtick result
+// and raise on `$?.success?`; the ruby group below evaluates the REAL
+// statement (assignment → backtick block → raise) in the same
+// stubbed-curl sandbox (POSIX + ruby on PATH) to prove pod install
+// aborts AT the fetch step.
 import 'dart:io';
 
 import 'package:test/test.dart';
@@ -57,20 +67,86 @@ const consumedArchive =
 
 String read(String path) => File(path).readAsStringSync();
 
-/// The backtick shell block of the podspec: everything between the two
-/// standalone backtick fence lines.
+/// The backtick shell block of the podspec: everything between the opening
+/// fence (a standalone backtick, or the `fetch_output = ` assignment line
+/// that opens the block — gh-2055 review round 2) and the standalone
+/// closing backtick.
 String shellBlock(String podspec) {
   final lines = podspec.split('\n');
-  final fences = <int>[];
+  var open = -1;
+  var close = -1;
   for (var i = 0; i < lines.length; i++) {
-    if (lines[i].trim() == '`') fences.add(i);
+    final trimmed = lines[i].trim();
+    if (open < 0) {
+      if (trimmed == '`' || RegExp(r'^\w+ = `$').hasMatch(trimmed)) {
+        open = i;
+      }
+    } else if (trimmed == '`') {
+      close = i;
+      break;
+    }
   }
   expect(
-    fences,
-    hasLength(2),
+    open,
+    isNonNegative,
     reason: '$podspecPath must keep exactly one backtick shell block',
   );
-  return lines.sublist(fences[0] + 1, fences[1]).join('\n');
+  expect(
+    close,
+    greaterThan(open),
+    reason: '$podspecPath: the backtick shell block is never closed',
+  );
+  return lines.sublist(open + 1, close).join('\n');
+}
+
+/// The podspec's Ruby fetch statement: the `<var> = ` line that opens the
+/// backtick block, through the standalone closing backtick, PLUS the
+/// single line that must IMMEDIATELY follow it — the `$?.success?` guard.
+/// Raw (un-interpolated) lines; run through `interpolate` before
+/// executing.
+///
+/// The immediate-follow shape matters: Ruby's `$?` is the status of the
+/// last completed child process, so any intervening backtick/system call
+/// would clobber it before the guard reads it. Fails with a named reason
+/// when the assignment is absent — the exact gh-2055 round-2 finding (a
+/// bare backtick sets `$?` but nothing reads it, so the shell block's own
+/// abort never propagates into pod install).
+List<String> rubyFetchStatement(String podspec) {
+  final lines = podspec.split('\n');
+  final openIdx = lines.indexWhere(
+    (l) => RegExp(r'^\w+ = `$').hasMatch(l.trim()),
+  );
+  expect(
+    openIdx,
+    isNonNegative,
+    reason:
+        '$podspecPath: the backtick shell block must be ASSIGNED '
+        '(`fetch_output = `) — Ruby does not check a bare backtick\'s '
+        'exit status, so the block\'s abort never propagates and pod '
+        'install proceeds past a failed fetch to the downstream Podfile '
+        'nm diagnostic (gh-2055 review round 2)',
+  );
+  var closeIdx = -1;
+  for (var i = openIdx + 1; i < lines.length; i++) {
+    if (lines[i].trim() == '`') {
+      closeIdx = i;
+      break;
+    }
+  }
+  expect(
+    closeIdx,
+    greaterThan(openIdx),
+    reason: '$podspecPath: the backtick shell block is never closed',
+  );
+  expect(
+    lines.length,
+    greaterThan(closeIdx + 1),
+    reason:
+        '$podspecPath: nothing follows the closing backtick — the '
+        '`\$?.success?` guard must immediately follow it (any intervening '
+        'child process would clobber `\$?`)',
+  );
+  return lines.sublist(openIdx, closeIdx + 2);
 }
 
 /// Resolve the podspec's Ruby variables (`name = 'literal'` and
@@ -105,10 +181,12 @@ String interpolate(String text, String podspec) {
   });
 }
 
-/// Runs [script] in [cwd] with a stubbed `curl` first on PATH. The stub
+/// Installs the stubbed `curl` first on PATH inside [stubDir]. The stub
 /// records its invocation into `$CURL_STUB_LOG` and exits non-zero, so a
-/// download attempt is observable WITHOUT touching the network.
-ProcessResult runBlock(String script, String cwd, String stubDir, String log) {
+/// download attempt is observable WITHOUT touching the network. The chmod
+/// is asserted: PATH resolution skips non-executable entries and would
+/// fall through to the REAL curl.
+void installCurlStub(String stubDir, String log) {
   final bin = Directory(stubDir)..createSync(recursive: true);
   final stub = File('${bin.path}/curl');
   stub.writeAsStringSync(
@@ -123,13 +201,56 @@ ProcessResult runBlock(String script, String cwd, String stubDir, String log) {
         'non-executable entries and would fall through to the REAL curl, '
         'sending these tests to the network instead of the stub',
   );
+}
+
+/// A child environment that puts the stub first on PATH and points it at
+/// [log] (dart:io `environment` REPLACES the inherited environment, so
+/// PATH must be rebuilt explicitly).
+Map<String, String> sandboxEnv(String stubDir, String log) {
   final path = Platform.environment['PATH'] ?? '/usr/bin:/bin';
+  return {'PATH': '$stubDir:$path', 'CURL_STUB_LOG': log};
+}
+
+/// Runs [script] in [cwd] with a stubbed `curl` first on PATH — the sh
+/// half of the sandbox (the podspec's shell block as pod install runs it).
+ProcessResult runBlock(String script, String cwd, String stubDir, String log) {
+  installCurlStub(stubDir, log);
   return Process.runSync(
     'sh',
     ['-c', script],
     workingDirectory: cwd,
-    environment: {'PATH': '$stubDir:$path', 'CURL_STUB_LOG': log},
+    environment: sandboxEnv(stubDir, log),
   );
+}
+
+/// Evaluates the podspec fetch statement previously written to [rbFile]
+/// with `ruby` in [cwd], under the same stubbed-curl sandbox as [runBlock]
+/// — the Ruby-side half of the round-2 finding: inside pod install, the
+/// backtick's Process::Status must be read (`$?.success?`) and raised on.
+ProcessResult runRubyStatement(
+  String rbFile,
+  String cwd,
+  String stubDir,
+  String log,
+) {
+  installCurlStub(stubDir, log);
+  return Process.runSync(
+    'ruby',
+    [rbFile],
+    workingDirectory: cwd,
+    environment: sandboxEnv(stubDir, log),
+  );
+}
+
+/// `ruby` availability for the fetch-statement sandbox (the group is
+/// POSIX-only anyway): CI's ubuntu leg ships it; a box without ruby skips
+/// the group cleanly instead of erroring on spawn.
+bool rubyOnPath() {
+  try {
+    return Process.runSync('ruby', ['--version']).exitCode == 0;
+  } on ProcessException {
+    return false;
+  }
 }
 
 void main() {
@@ -140,6 +261,7 @@ void main() {
   // `chmod`; the static lints below stay unskipped everywhere
   // (same pattern as test/cli/clipboard_reader_test.dart).
   final posixSandbox = Platform.isLinux || Platform.isMacOS;
+  final rubySandbox = posixSandbox && rubyOnPath();
 
   group('wasm_run_flutter macOS podspec download guard (gh-2055)', () {
     group(
@@ -286,44 +408,143 @@ void main() {
                 'static lints below still run everywhere',
     );
 
-    group('static lint — pure text invariants, no sandbox', () {
-      test(
-        'guard keys on the archive the Podfile consumes, not the zip marker',
-        () {
+    group(
+      'behavioral — ruby evaluates the fetch statement (raise unless '
+      '\$?.success?)',
+      () {
+        test(
+          'a failed cold-tree download fails the RUBY evaluation at the '
+          'fetch step — pod install aborts before the downstream nm check',
+          () {
+            final tmp = Directory.systemTemp.createTempSync('gh2055-');
+            addTearDown(() => tmp.deleteSync(recursive: true));
+            final work = '${tmp.path}/work';
+            Directory('$work/Frameworks').createSync(recursive: true);
+
+            final podspec = read(podspecPath);
+            final statement = interpolate(
+              rubyFetchStatement(podspec).join('\n'),
+              podspec,
+            );
+            final rb = File('${tmp.path}/fetch.rb')
+              ..writeAsStringSync(statement);
+            final log = '${tmp.path}/stub.log';
+            final r = runRubyStatement(rb.path, work, '${tmp.path}/bin', log);
+
+            expect(
+              r.exitCode,
+              isNot(0),
+              reason:
+                  'the shell block already aborts at the curl step (round '
+                  '1), but Ruby does not check a bare backtick\'s exit '
+                  'status — without an assigned result plus a raise on '
+                  'its Process::Status, pod install sails past the failed '
+                  'fetch and dies at the Podfile post_install nm check '
+                  'with the root cause one screen up (gh-2055 review '
+                  'round 2, same stubbed-curl-exits-60 sandbox)',
+            );
+            expect(
+              r.stderr,
+              contains('wasm_run framework fetch failed'),
+              reason:
+                  'the raise must carry the purpose-built message so the '
+                  'failure surfaces AT the fetch step, with the curl '
+                  'error and the `wasm_run download failed` marker '
+                  'directly above it in the log',
+            );
+            expect(
+              File(log).existsSync(),
+              isTrue,
+              reason: 'the download must have been attempted before the raise',
+            );
+          },
+        );
+
+        test('a restored framework keeps the ruby evaluation green — the '
+            'raise must not fire on the healthy no-op path', () {
+          final tmp = Directory.systemTemp.createTempSync('gh2055-');
+          addTearDown(() => tmp.deleteSync(recursive: true));
+          final work = Directory('${tmp.path}/work')..createSync();
+          final framework = File('${work.path}/Frameworks/$consumedArchive')
+            ..createSync(recursive: true)
+            ..writeAsStringSync('fixture archive\n');
+
           final podspec = read(podspecPath);
-          final block = interpolate(shellBlock(podspec), podspec);
-          // Anchor POSITIVELY on the consumed-archive path, not on "the first
-          // line starting with `if `" — a second, unrelated `if` above the
-          // guard would silently re-latch the old anchor while the real guard
-          // regresses to the zip marker. singleWhere also fails if the archive
-          // path appears in more than one place, itself a drift signal.
-          final guardLine = block
-              .split('\n')
-              .singleWhere(
-                (l) => l.contains(consumedArchive),
-                orElse: () => fail(
-                  'the podspec shell block no longer keys its guard on '
-                  '$consumedArchive — the wasm_run-v0.1.0.zip-marker guard made '
-                  'the block run (and `rm -rf` the restored framework) on every '
-                  'fresh CI clone (gh-2055)',
-                ),
-              );
+          final statement = interpolate(
+            rubyFetchStatement(podspec).join('\n'),
+            podspec,
+          );
+          final rb = File('${tmp.path}/fetch.rb')..writeAsStringSync(statement);
+          final log = '${tmp.path}/stub.log';
+          final r = runRubyStatement(
+            rb.path,
+            work.path,
+            '${tmp.path}/bin',
+            log,
+          );
+
           expect(
-            guardLine.trimLeft().startsWith('if '),
-            isTrue,
+            r.exitCode,
+            0,
             reason:
-                'the archive-keyed line must be the if-guard itself, not a '
-                'mention elsewhere in the block',
+                'the archive-keyed guard (round 1) makes the block a '
+                'no-op when the framework is in place — the raise '
+                'guards ONLY the failed fetch and must keep this '
+                'path green',
           );
           expect(
-            guardLine.contains('[ ! -f'),
+            framework.existsSync(),
             isTrue,
-            reason:
-                'the guard must TEST for the archive\'s presence '
-                '("if [ ! -f … ]"), not merely reference it',
+            reason: 'the healthy path must still not touch the framework',
           );
-        },
-      );
+          expect(
+            File(log).existsSync(),
+            isFalse,
+            reason: 'no download attempted on the no-op path',
+          );
+        });
+      },
+      skip: rubySandbox
+          ? null
+          : 'ruby evaluates a real backtick statement — needs ruby on '
+                'PATH (POSIX); static lints below still run everywhere',
+    );
+
+    group('static lint — pure text invariants, no sandbox', () {
+      test('guard keys on the archive the Podfile consumes, not the zip marker', () {
+        final podspec = read(podspecPath);
+        final block = interpolate(shellBlock(podspec), podspec);
+        // Anchor POSITIVELY on the consumed-archive path, not on "the first
+        // line starting with `if `" — a second, unrelated `if` above the
+        // guard would silently re-latch the old anchor while the real guard
+        // regresses to the zip marker. singleWhere also fails if the archive
+        // path appears in more than one place, itself a drift signal.
+        final guardLine = block
+            .split('\n')
+            .singleWhere(
+              (l) => l.contains(consumedArchive),
+              orElse: () => fail(
+                'the podspec shell block no longer keys its guard on '
+                '$consumedArchive — the wasm_run-v0.1.0.zip-marker guard made '
+                'the block run (and `rm -rf` the restored framework) on every '
+                'fresh CI clone (gh-2055)',
+              ),
+            );
+        expect(
+          guardLine.trimLeft().startsWith('if '),
+          isTrue,
+          reason:
+              'the archive-keyed line must be the if-guard itself, not a '
+              'mention elsewhere in the block',
+        );
+        expect(
+          guardLine.contains('[ ! -f'),
+          isTrue,
+          reason:
+              'the guard must TEST for the archive\'s presence '
+              '("if [ ! -f … ]"), not merely reference it',
+        );
+      });
 
       test(
         'curl fails on HTTP errors AND aborts the block — gh-1149 posture',
@@ -361,11 +582,41 @@ void main() {
         },
       );
 
+      test('the backtick result is assigned and checked Ruby-side — raise '
+          'unless its status succeeded (review round 2)', () {
+        final guardLine = rubyFetchStatement(read(podspecPath)).last.trim();
+        expect(
+          guardLine.contains(r'$?.success?'),
+          isTrue,
+          reason:
+              'Ruby does NOT check a bare backtick\'s exit status — the '
+              'status is set but nothing reads it, so the shell block\'s '
+              'abort never propagates and pod install proceeds past the '
+              'failed fetch to the downstream Podfile nm diagnostic '
+              '(gh-2055 review round 2)',
+        );
+        expect(
+          guardLine.startsWith('raise'),
+          isTrue,
+          reason:
+              'pod install must abort AT the fetch step with a '
+              'purpose-built raise, not limp to the downstream nm check',
+        );
+        expect(
+          guardLine.contains('fetch failed'),
+          isTrue,
+          reason:
+              'the raise message must name the fetch so the failing '
+              'step is identified directly, adjacent to the curl error '
+              'above it in the log',
+        );
+      });
+
       test('the consumed archive path matches the Podfile slice', () {
         final podfile = read(podfilePath);
-        final slice = RegExp(
-          r"macos_slice = '[^']*libwasm_run_dart\.a'",
-        ).firstMatch(podfile)!.group(0)!;
+        final slice = RegExp(r"macos_slice = '[^']*libwasm_run_dart\.a'")
+            .firstMatch(podfile)!
+            .group(0)!;
         expect(
           slice,
           contains('Frameworks/$consumedArchive'),

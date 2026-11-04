@@ -31,8 +31,13 @@ block a release again.
   `--fail` AND aborts the block at the curl step on failure
   (`|| { echo "wasm_run download failed" >&2; exit 1; }` — a swallowed
   status fell through to unzip/truncate residue and masked the root cause
-  behind the Podfile `nm` diagnostic; review round 1 on this PR). Linted
-  behaviorally (stubbed curl, no network; POSIX-gated sandbox) by
+  behind the Podfile `nm` diagnostic; review round 1 on this PR), and the
+  podspec now assigns the backtick result and raises "wasm_run framework
+  fetch failed" unless `$?.success?` — Ruby ignores a bare backtick's
+  exit status, so pod install would otherwise have sailed past the failed
+  fetch to the downstream `nm` diagnostic (review round 2). Linted
+  behaviorally (stubbed curl, no network; POSIX-gated sandbox, plus a
+  ruby evaluation of the real fetch statement) by
   test/wasmrun_macos_podspec_download_guard_test.dart.
 
 - fix(gh-2050): the daily-publish `cli` leg red-failed daily when its

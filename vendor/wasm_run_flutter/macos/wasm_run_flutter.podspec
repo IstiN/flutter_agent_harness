@@ -6,7 +6,16 @@ framework_name = 'WasmRun.xcframework'
 remote_zip_name = "#{framework_name}.zip"
 url = "https://github.com/juancastillo0/wasm_run/releases/download/#{release_tag_name}/#{remote_zip_name}"
 local_zip_name = "#{release_tag_name}.zip"
-`
+# gh-2055 review round 2: Ruby does NOT check a bare backtick's exit status —
+# `$?` is set but nothing reads it, so the shell block's own abort
+# ("curl ... || exit 1") never propagated into pod install: a cold-tree
+# failed download proceeded past the fetch and died at the Podfile
+# post_install `nm` check with the root cause one screen up. Assigning the
+# result and raising on `$?.success?` fails pod install AT the fetch step,
+# with the curl error and the "wasm_run download failed" marker directly
+# above it in the log. The raise reads `$?` on the line right after the
+# closing backtick so no intervening child process can clobber the status.
+fetch_output = `
 cd Frameworks
 
 # gh-2055: the guard must key on the artifact pod install actually consumes —
@@ -37,6 +46,7 @@ fi
 
 cd -
 `
+raise "wasm_run framework fetch failed (see curl error above)" unless $?.success?
 
 Pod::Spec.new do |s|
   s.name          = 'wasm_run_flutter'
