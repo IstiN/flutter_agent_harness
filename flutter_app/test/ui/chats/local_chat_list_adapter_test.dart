@@ -1,9 +1,38 @@
 import 'dart:async';
 
+import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/flutter_session_manager.dart';
 import 'package:fa/ui/chats/local_chat_list_adapter.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+AgentService _service(ExecutionEnv env) => AgentService(
+  agent: Agent(
+    model: Model(
+      id: 'test-model',
+      api: 'test-api',
+      provider: 'test',
+      baseUrl: 'https://example.com',
+      contextWindow: 100000,
+      maxTokens: 4096,
+    ),
+    systemPrompt: 'You are Fa.',
+    streamFunction: (model, context, {cancelToken}) {
+      final stream = AssistantMessageEventStream();
+      stream.end();
+      return stream;
+    },
+    toolRegistry: ToolRegistry(const []),
+  ),
+  env: env,
+  sessionsRoot: '/sessions',
+  config: AgentConfig(
+    providerKind: 'test',
+    modelId: 'test-model',
+    baseUrl: 'https://example.com',
+    apiKey: '',
+  ),
+);
 
 /// A gated preview source: every read blocks on [gate] and serves
 /// [results] by session id. Counts reads so tests can pin the cache.
@@ -24,10 +53,7 @@ final class _GatedPreviewSource implements LocalChatPreviewSource {
 
 /// Waits (bounded) until [probe] returns non-null — the lazy background
 /// fills repaint through manager notifies, not through the load future.
-Future<void> _until(
-  Future<bool> Function() probe, {
-  int rounds = 400,
-}) async {
+Future<void> _until(Future<bool> Function() probe, {int rounds = 400}) async {
   for (var i = 0; i < rounds; i++) {
     if (await probe()) return;
     await Future<void>.delayed(const Duration(milliseconds: 1));
@@ -36,6 +62,33 @@ Future<void> _until(
 }
 
 void main() {
+  test(
+    'an unpersisted live placeholder is hidden until it has content',
+    () async {
+      final env = MemoryExecutionEnv();
+      final manager = FlutterSessionManager(
+        env: env,
+        sessionsRoot: '/sessions',
+        includeSharedSessionRoots: false,
+      );
+      final placeholder = _service(env);
+      final conversation = _service(env)
+        ..messages.add(FahChatMessage(role: 'user', content: 'Hello'));
+      manager
+        ..addSession('placeholder', placeholder)
+        ..addSession('conversation', conversation);
+      final adapter = LocalChatListAdapter(
+        manager: manager,
+        titleBuilder: (id, createdAt, isSubagent) => id,
+      );
+
+      final entries = await adapter.load();
+
+      expect(entries.map((entry) => entry.id.value), ['conversation']);
+      expect(entries.single.preview, 'Hello');
+    },
+  );
+
   test(
     'persisted sessions use real transcript previews and subagent metadata',
     () async {
@@ -165,9 +218,7 @@ void main() {
 
     // The live runtime: ~900 gated transcript reads must never gate the
     // first emission. The load resolves while the reads are still parked.
-    final entries = await adapter
-        .load()
-        .timeout(const Duration(seconds: 5));
+    final entries = await adapter.load().timeout(const Duration(seconds: 5));
     final byId = {for (final item in entries) item.id.value: item};
     expect(
       byId['parent']!.preview,
@@ -228,10 +279,9 @@ void main() {
     // re-read, and the preview catches up to the newest tail.
     await parent.appendMessage(UserMessage.text('Newer tail'));
     reader.results['parent'] = 'Newer tail';
-    Future<String?> currentPreview() async =>
-        ({
-          for (final item in await adapter.load()) item.id.value: item,
-        })['parent']!.preview;
+    Future<String?> currentPreview() async => ({
+      for (final item in await adapter.load()) item.id.value: item,
+    })['parent']!.preview;
     await _until(() async => await currentPreview() == 'Newer tail');
     expect(reader.reads, 2, reason: 'only the grown file is re-read');
   });

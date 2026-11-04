@@ -93,6 +93,11 @@ AgentService _fakeService(ExecutionEnv env) {
   );
 }
 
+/// A live fixture with real conversation content, so the All projection
+/// does not classify it as a newly-created empty placeholder.
+AgentService _listedService(ExecutionEnv env) => _fakeService(env)
+  ..messages.add(FahChatMessage(role: 'user', content: 'Listed conversation'));
+
 final class _CountingLocalChatListSource implements LocalChatListSource {
   int loadCount = 0;
 
@@ -858,7 +863,10 @@ void main() {
       find.byKey(const ValueKey('messengerPrimaryNav-activity')),
     );
     await tester.pumpAndSettle();
-    expect(find.widgetWithText(FaSectionEyebrow, 'All activity'), findsOneWidget);
+    expect(
+      find.widgetWithText(FaSectionEyebrow, 'All activity'),
+      findsOneWidget,
+    );
     // The count chip on the Activity toolbar stays a plain dim numeral.
     expect(find.byKey(const ValueKey('activityCount')), findsOneWidget);
   });
@@ -1173,7 +1181,7 @@ void main() {
   testWidgets('rail rows keep section selection and callbacks', (tester) async {
     final env = MemoryExecutionEnv();
     final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
-      ..addSession('design-session', _fakeService(env));
+      ..addSession('design-session', _listedService(env));
     await pumpShell(tester, manager: manager);
     await tester.pump(const Duration(milliseconds: 100));
 
@@ -1355,7 +1363,7 @@ void main() {
     (tester) async {
       final env = MemoryExecutionEnv();
       final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
-        ..addSession('design-session', _fakeService(env));
+        ..addSession('design-session', _listedService(env));
       await pumpShell(tester, manager: manager);
       await tester.pumpAndSettle();
 
@@ -2224,7 +2232,7 @@ void main() {
     ) async {
       final env = MemoryExecutionEnv();
       final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
-        ..addSession('design-session', _fakeService(env));
+        ..addSession('design-session', _listedService(env));
 
       await pumpShell(
         tester,
@@ -2628,7 +2636,7 @@ void main() {
     ) async {
       final env = MemoryExecutionEnv();
       final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
-        ..addSession('design-session', _fakeService(env));
+        ..addSession('design-session', _listedService(env));
 
       await pumpShell(
         tester,
@@ -2657,7 +2665,7 @@ void main() {
     ) async {
       final env = MemoryExecutionEnv();
       final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
-        ..addSession('design-session', _fakeService(env));
+        ..addSession('design-session', _listedService(env));
 
       await pumpShell(
         tester,
@@ -3030,7 +3038,7 @@ void main() {
         'a popover row tap opens that subagent chat', (tester) async {
       final env = MemoryExecutionEnv();
       final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
-        ..addSession('fake-session', _fakeService(env));
+        ..addSession('fake-session', _listedService(env));
       final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
       await createSubagent(repo, id: 'sub-scan', parent: 'fake-session');
       await createSubagent(repo, id: 'sub-watch', parent: 'fake-session');
@@ -3084,8 +3092,10 @@ void main() {
       // label — scope to rows via keys).
       await tester.tap(find.byKey(const ValueKey('chatSubagentBadge')));
       await tester.pumpAndSettle();
-      expect(find.byKey(const ValueKey('chatSubagentEntry-fake-session')),
-          findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('chatSubagentEntry-fake-session')),
+        findsOneWidget,
+      );
       expect(find.text('←'), findsOneWidget);
 
       final opened = manager.sessions.firstWhere((s) => s.id == 'sub-scan');
@@ -3099,7 +3109,7 @@ void main() {
         'not the narrow home', (tester) async {
       final env = MemoryExecutionEnv();
       final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
-        ..addSession('fake-session', _fakeService(env));
+        ..addSession('fake-session', _listedService(env));
       final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
       await createSubagent(repo, id: 'sub-scan', parent: 'fake-session');
 
@@ -3142,8 +3152,11 @@ void main() {
       await tester.tap(find.byType(BackButton).first);
       await tester.pumpAndSettle();
       expect(manager.activeId, 'fake-session');
-      expect(find.byType(ChatScreen), findsOneWidget,
-          reason: 'close returns to the parent chat, not the home');
+      expect(
+        find.byType(ChatScreen),
+        findsOneWidget,
+        reason: 'close returns to the parent chat, not the home',
+      );
       expect(find.text('← poc'), findsNothing);
 
       // Now back pops to the narrow home normally.

@@ -64,8 +64,7 @@ final class LocalChatListAdapter implements LocalChatListChangeSource {
     this.readPersistedNames = true,
     this.namesStore,
     LocalChatPreviewSource? previewReader,
-  }) : previewReader =
-           previewReader ?? LocalChatPreviewReader(manager.env);
+  }) : previewReader = previewReader ?? LocalChatPreviewReader(manager.env);
 
   final FlutterSessionManager manager;
   final Map<String, String> sessionInfoNames;
@@ -112,6 +111,11 @@ final class LocalChatListAdapter implements LocalChatListChangeSource {
     final entries = <ChatListEntry>[];
     for (final session in live) {
       final metadata = persistedById[session.id];
+      final preview = _livePreview(session.service);
+      // A newly-created own session has no transcript or listing metadata
+      // yet. Its in-memory activity stamp would otherwise keep an untitled
+      // placeholder at the top of All until the first real message lands.
+      if (metadata == null && preview == null) continue;
       final createdAt = metadata?.createdAt ?? session.createdAt;
       final isSubagent = metadata != null && isSubagentSession(metadata);
       final cwd =
@@ -128,7 +132,7 @@ final class LocalChatListAdapter implements LocalChatListChangeSource {
               metadata?.lastUpdatedAt ??
               metadata?.createdAt ??
               session.lastUpdatedAt,
-          preview: _livePreview(session.service),
+          preview: preview,
           folderName: _folderName(cwd),
           folderPath: _folderPath(cwd),
           unreadCount: 0,
@@ -209,7 +213,7 @@ final class LocalChatListAdapter implements LocalChatListChangeSource {
     AppLog.i(
       'chats',
       'local previews: $filled/${pending.length} filled in '
-      '${stopwatch.elapsedMilliseconds}ms',
+          '${stopwatch.elapsedMilliseconds}ms',
     );
     manager.notifySessionListeners();
   }
