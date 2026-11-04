@@ -182,16 +182,25 @@ void main() {
       includeSharedSessionRoots: false,
       repo: JsonlSessionRepo(fs: brokenFs, sessionsRoot: sessionsRoot),
     );
-    final entries = await LocalChatListAdapter(
+    final adapter = LocalChatListAdapter(
       manager: manager,
       titleBuilder: (id, createdAt, isSubagent) => id,
-    ).load();
+    );
+    final entries = await adapter.load();
 
     expect(entries.map((entry) => entry.id.value), contains('healthy'));
     expect(entries.map((entry) => entry.id.value), isNot(contains('broken')));
-    expect(
-      entries.singleWhere((entry) => entry.id.value == 'healthy').preview,
-      'row preview',
-    );
+    // Previews ride the lazy background fill (issue #2053) — wait for it
+    // to land, then assert the real transcript tail.
+    String? healthyPreview = entries
+        .singleWhere((entry) => entry.id.value == 'healthy')
+        .preview;
+    for (var i = 0; i < 200 && healthyPreview == null; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 1));
+      healthyPreview = (await adapter.load())
+          .singleWhere((entry) => entry.id.value == 'healthy')
+          .preview;
+    }
+    expect(healthyPreview, 'row preview');
   });
 }

@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:math' as math;
 
+import 'package:fa/services/app_log.dart';
 import 'package:flutter/foundation.dart';
 
 import 'chat_list_entry.dart';
@@ -71,6 +72,8 @@ final class ChatListController extends ChangeNotifier {
   Object? _networkError;
   int _localRequest = 0;
   int _networkRequest = 0;
+  bool _localLoadActive = false;
+  bool _localReloadQued = false;
 
   ChatListFilter _filter = ChatListFilter.all;
   ChatNetworkFilter _networkFilter = const ChatNetworkFilter.all();
@@ -90,6 +93,17 @@ final class ChatListController extends ChangeNotifier {
   }
 
   Future<void> _loadLocal() async {
+    // Coalescing: a notify landing mid-flight (the manager's lazy name and
+    // preview fills repaint exactly this way) queues ONE reload instead of
+    // superseding — superseding dropped the in-flight emission, so the
+    // sidebar could sit empty for a full reload cycle. Concurrent callers
+    // (the boot `load()` and the shell's projection refresh) still share
+    // the manager's single-flight listing underneath.
+    if (_localLoadActive) {
+      _localReloadQued = true;
+      return;
+    }
+    _localLoadActive = true;
     final request = ++_localRequest;
     _localStatus = ChatLoadState.loading;
     _localError = null;
@@ -99,12 +113,36 @@ final class ChatListController extends ChangeNotifier {
       if (request != _localRequest) return;
       _localEntries = entries;
       _localStatus = entries.isEmpty ? ChatLoadState.empty : ChatLoadState.data;
+      _logFirstLocalEmission(entries);
     } on Object catch (error) {
       if (request != _localRequest) return;
       _localError = error;
       _localStatus = ChatLoadState.error;
+    } finally {
+      _localLoadActive = false;
+    }
+    if (_localReloadQued) {
+      _localReloadQued = false;
+      unawaited(_loadLocal());
+      return;
     }
     notifyListeners();
+  }
+
+  /// Boot-to-first-rows stopwatch (owner pass): the Local section's
+  /// warm-start latency, logged once so the runtime path is verifiable
+  /// from the settings screen's debug log (target < 1s warm).
+  final Stopwatch _listingClock = Stopwatch()..start();
+  bool _firstEmissionLogged = false;
+
+  void _logFirstLocalEmission(List<ChatListEntry> entries) {
+    if (_firstEmissionLogged || entries.isEmpty) return;
+    _firstEmissionLogged = true;
+    AppLog.i(
+      'chats',
+      'local listing: first emission in '
+      '${_listingClock.elapsedMilliseconds}ms (${entries.length} rows)',
+    );
   }
 
   Future<void> _loadNetwork() async {

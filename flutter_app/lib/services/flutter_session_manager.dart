@@ -396,6 +396,13 @@ final class FlutterSessionManager extends ChangeNotifier {
     if (generation == _nameWarmGeneration) notifyListeners();
   }
 
+  /// Repaints the session-driven UI without a state mutation — the one
+  /// public hook for off-mutation refreshes. The chat-list adapter's lazy
+  /// preview fill (issue #2053) lands transcript tails AFTER its
+  /// projection returned; rows repaint through this (the same
+  /// manager-listener path the lazy name fill uses).
+  void notifySessionListeners() => notifyListeners();
+
   /// Hosted sessions (extension panel / app tab): the session files live
   /// in the SERVICE WORKER's filesystem — the page-local repo sees an
   /// empty tree and the sidebar collapses to a single row. The relay

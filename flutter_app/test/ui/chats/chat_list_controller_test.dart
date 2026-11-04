@@ -1,11 +1,13 @@
 import 'dart:async';
 
+import 'package:fa/services/app_log.dart';
 import 'package:fa/services/flutter_session_manager.dart';
 import 'package:fa/ui/chats/chat_list_controller.dart';
 import 'package:fa/ui/chats/chat_list_entry.dart';
 import 'package:fa/ui/chats/chat_list_stores.dart';
 import 'package:fa/ui/chats/local_chat_list_adapter.dart';
 import 'package:fa/ui/chats/network_inbox_adapter.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -364,6 +366,106 @@ void main() {
       );
     },
   );
+
+  test('a manager notify mid-load coalesces into one queued reload — '
+      'the in-flight emission is never dropped', () async {
+    final entry = local('parent', activity: DateTime.utc(2026, 1, 2));
+    final gate = Completer<void>();
+    final source = _ManualChangeSource([entry], gate);
+    final c = ChatListController(localAdapter: source);
+    final loading = c.load();
+    await _until(() => source.started >= 1);
+
+    // The runtime race: the manager's lazy name/preview fills notify
+    // WHILE the projection load is in flight. It must queue exactly one
+    // reload, not supersede (drop) the in-flight pass.
+    source.notify();
+    gate.complete();
+    await loading;
+
+    expect(
+      c.localEntries.map((e) => e.id.value),
+      contains('parent'),
+      reason: 'load() settles with rows even though a notify landed mid-air',
+    );
+    await _until(() => source.started >= 2);
+    source.release();
+    await _until(() => source.completed >= 2);
+    expect(
+      source.started,
+      2,
+      reason: 'exactly ONE coalesced reload follows — no duplicate passes',
+    );
+    expect(c.localEntries, isNotEmpty);
+  });
+
+  test('the first local emission logs the listing stopwatch (AppLog)',
+      () async {
+    AppLog.reset();
+    addTearDown(AppLog.reset);
+    final env = MemoryExecutionEnv();
+    final manager = FlutterSessionManager(
+      env: env,
+      sessionsRoot: '/sessions',
+      includeSharedSessionRoots: false,
+    );
+    final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
+    await repo.create(
+      const JsonlSessionCreateOptions(id: 'parent', cwd: '/work'),
+    );
+    final c = ChatListController(
+      localAdapter: LocalChatListAdapter(
+        manager: manager,
+        titleBuilder: (id, createdAt, isSubagent) => id,
+      ),
+    );
+    await c.load();
+
+    expect(AppLog.dump(), contains('[chats]'));
+    expect(AppLog.dump(), contains('first emission'));
+  });
+}
+
+/// Waits (bounded) until [condition] holds, pumping the event loop.
+Future<void> _until(bool Function() condition) async {
+  for (var i = 0; i < 400; i++) {
+    if (condition()) return;
+    await Future<void>.delayed(Duration.zero);
+  }
+  fail('condition never settled');
+}
+
+/// Counts load starts/completions; holds the first on a gate and the
+/// second on a release so the test can pin the coalescing behavior.
+final class _ManualChangeSource implements LocalChatListChangeSource {
+  _ManualChangeSource(this.entries, this._gate);
+
+  final List<ChatListEntry> entries;
+  final Completer<void> _gate;
+  final Completer<void> _release = Completer<void>();
+  final _Sink _sink = _Sink();
+  int started = 0;
+  int completed = 0;
+
+  @override
+  Listenable get changes => _sink;
+
+  void notify() => _sink.notify();
+
+  void release() => _release.complete();
+
+  @override
+  Future<List<ChatListEntry>> load() async {
+    started++;
+    if (started == 1) await _gate.future;
+    if (started == 2) await _release.future;
+    completed++;
+    return List.of(entries);
+  }
+}
+
+final class _Sink extends ChangeNotifier {
+  void notify() => notifyListeners();
 }
 
 final class _GatedNetworkAdapter implements NetworkInboxAdapter {
