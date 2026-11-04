@@ -22,6 +22,7 @@ import 'package:intl/intl.dart';
 
 import 'chat_list_controller.dart';
 import 'chat_list_entry.dart';
+import 'messenger_list_row_style.dart';
 
 /// Compact a host cwd for display without changing the absolute path used as
 /// the folder identity. Only a path-segment-boundary home prefix is shortened.
@@ -750,11 +751,7 @@ class _ConversationRowState extends State<_ConversationRow> {
           onExit: (_) => setState(() => _hovering = false),
           child: Material(
             key: ValueKey('chatRow-${entry.id}'),
-            color: selected
-                ? accent
-                : _hovering || _focused
-                ? colors.panelAlt
-                : Colors.transparent,
+            color: messengerListRowColor(selected: selected, accent: accent),
             shape: RoundedSuperellipseBorder(
               borderRadius: BorderRadius.circular(12),
             ),

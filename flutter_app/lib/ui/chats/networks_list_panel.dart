@@ -11,6 +11,7 @@ import 'package:fa/ui/chats/chat_list_controller.dart';
 import 'package:fa/ui/chats/chat_list_entry.dart';
 import 'package:fa/ui/chats/chat_list_panel.dart' show chatListRelativeTime;
 import 'package:fa/ui/chats/local_sessions_panel.dart' show LocalSessionsPanel;
+import 'package:fa/ui/chats/messenger_list_row_style.dart';
 import 'package:fa/ui/widgets/folder_avatar.dart';
 import 'package:fa_ui/fa_ui.dart';
 import 'package:flutter/foundation.dart';
@@ -571,7 +572,7 @@ class _PanelRow extends StatelessWidget {
         ? tokens.accentInk.withValues(alpha: .82)
         : colors.dim;
     return Material(
-      color: selected ? tokens.accent : Colors.transparent,
+      color: messengerListRowColor(selected: selected, accent: tokens.accent),
       shape: RoundedSuperellipseBorder(borderRadius: BorderRadius.circular(12)),
       clipBehavior: Clip.antiAlias,
       child: InkWell(

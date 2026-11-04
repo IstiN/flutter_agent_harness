@@ -341,6 +341,11 @@ void main() {
         Icons.chat_bubble_outline,
       );
       expect(pin, findsNothing);
+      expect(
+        tester.widget<Material>(row).color,
+        Colors.transparent,
+        reason: 'unselected All rows share the Local/Networks hover base',
+      );
 
       final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
       addTearDown(mouse.removePointer);
@@ -348,6 +353,11 @@ void main() {
       await mouse.moveTo(tester.getCenter(row));
       await tester.pump();
       expect(pin, findsOneWidget);
+      expect(
+        tester.widget<Material>(row).color,
+        Colors.transparent,
+        reason: 'hover rides the same InkWell treatment as Local/Networks',
+      );
 
       await mouse.moveTo(Offset.zero);
       await tester.pump();
