@@ -91,69 +91,69 @@ class LocalSessionsPanel extends StatelessWidget {
                 onNew: onNew,
               ),
               Expanded(
-                // The level1→level2 swap animates (owner pass): the
-                // incoming level slides/fades in over 200ms easeInOutCubic
-                // (instant under reduce-motion); the header is NOT part of
-                // the animation and every row/strip key stays stable after
-                // settle.
-                child: AnimatedSwitcher(
-                  duration: FaMotion.duration(
-                    context,
-                    const Duration(milliseconds: 200),
-                  ),
-                  switchInCurve: Curves.easeInOutCubic,
-                  switchOutCurve: Curves.easeInOutCubic,
-                  transitionBuilder: (child, animation) => FadeTransition(
-                    opacity: animation,
-                    child: SlideTransition(
-                      position: Tween(
-                        begin: const Offset(0.08, 0),
-                        end: Offset.zero,
-                      ).animate(animation),
-                      child: child,
-                    ),
-                  ),
-                  child: KeyedSubtree(
-                    key: ValueKey('localDrill-${openFolder?.id ?? 'list'}'),
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        if (openFolder == null)
-                          Expanded(
-                            child: folders.isEmpty
-                                ? Center(
-                                    child: Text(
-                                      context.l10n.localFoldersEmpty,
-                                      style: TextStyle(
-                                        color: colors.dim,
-                                        fontSize: 13,
-                                      ),
-                                    ),
-                                  )
-                                : _FolderList(
-                                    folders: folders,
-                                    iconResolver: iconResolver,
-                                    onOpen: onSelectFolder,
-                                  ),
-                          )
-                        else ...[
-                          _FolderStrip(
-                            folders: folders,
-                            selectedFolderId: selectedFolderId,
-                            iconResolver: iconResolver,
-                            onOpen: onSelectFolder,
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    // The strip is NOT animated (owner pass): switching
+                    // must not jitter the logos — only the content pane
+                    // slides/fades.
+                    if (openFolder != null)
+                      _FolderStrip(
+                        folders: folders,
+                        selectedFolderId: selectedFolderId,
+                        iconResolver: iconResolver,
+                        onOpen: onSelectFolder,
+                      ),
+                    Expanded(
+                      // Only the content pane animates (200ms
+                      // easeInOutCubic slide+fade; instant under
+                      // reduce-motion). Keys stay stable after settle.
+                      child: AnimatedSwitcher(
+                        duration: FaMotion.duration(
+                          context,
+                          const Duration(milliseconds: 200),
+                        ),
+                        switchInCurve: Curves.easeInOutCubic,
+                        switchOutCurve: Curves.easeInOutCubic,
+                        transitionBuilder: (child, animation) => FadeTransition(
+                          opacity: animation,
+                          child: SlideTransition(
+                            position: Tween(
+                              begin: const Offset(0.08, 0),
+                              end: Offset.zero,
+                            ).animate(animation),
+                            child: child,
                           ),
-                          Expanded(
-                            child: LocalFolderSessionList(
-                              sessions: openFolder.sessions,
-                              selectedSessionId: selectedSessionId,
-                              onOpenSession: onOpenSession,
-                            ),
+                        ),
+                        child: KeyedSubtree(
+                          key: ValueKey(
+                            'localContent-${openFolder?.id ?? 'list'}',
                           ),
-                        ],
-                      ],
+                          child: openFolder == null
+                              ? (folders.isEmpty
+                                    ? Center(
+                                        child: Text(
+                                          context.l10n.localFoldersEmpty,
+                                          style: TextStyle(
+                                            color: colors.dim,
+                                            fontSize: 13,
+                                          ),
+                                        ),
+                                      )
+                                    : _FolderList(
+                                        folders: folders,
+                                        iconResolver: iconResolver,
+                                        onOpen: onSelectFolder,
+                                      ))
+                              : LocalFolderSessionList(
+                                  sessions: openFolder.sessions,
+                                  selectedSessionId: selectedSessionId,
+                                  onOpenSession: onOpenSession,
+                                ),
+                        ),
+                      ),
                     ),
-                  ),
+                  ],
                 ),
               ),
             ],

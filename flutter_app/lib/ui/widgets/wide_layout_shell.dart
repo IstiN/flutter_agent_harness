@@ -1797,7 +1797,10 @@ class _WideLayoutShellState extends State<WideLayoutShell>
       manager: widget.networkSessions,
       mode: widget.networkMode,
       chatList: _chatController,
-      onBack: () => setState(() => _networksSurfaceOpen = false),
+      onBack: () {
+        _chatController.setNetworkFilter(const ChatNetworkFilter.all());
+        setState(() => _networksSurfaceOpen = false);
+      },
       onManageNetworks: () => unawaited(
         showChatNetworksDialog(
           context,
@@ -1805,8 +1808,45 @@ class _WideLayoutShellState extends State<WideLayoutShell>
           networkMode: widget.networkMode,
         ),
       ),
-      onOpenChannel: (networkId, channel) {
-        _chatController.setNetworkFilter(ChatNetworkFilter.network(networkId));
+      onOpenChannel: (networkId, channel) async {
+        // Select + open the tapped channel's messages right away
+        // (channel-rail contract). Deliberately NO setNetworkFilter here:
+        // a latched network filter narrowed the All facet to that
+        // network's rows only (owner bug).
+        final manager = widget.networkSessions;
+        final mode = widget.networkMode;
+        if (manager == null || mode == null) {
+          setState(() => _networksSurfaceOpen = false);
+          return;
+        }
+        await mode.enterNetwork(networkId);
+        if (!manager.sessions.containsKey(networkId)) {
+          if (manager.wallet.networks[networkId]?.password == null) {
+            if (!mounted) return;
+            await showJoinSheet(
+              context,
+              controller: mode,
+              manager: manager,
+              initialNetworkId: networkId,
+            );
+          } else {
+            try {
+              await manager.resume(networkId);
+            } on Object catch (error) {
+              if (mounted) showFahErrorSnack(context, error.toString());
+            }
+          }
+        }
+        final session = manager.sessions[networkId];
+        if (session != null) {
+          try {
+            await session.openChannel(channel.id);
+          } on Object catch (error) {
+            if (mounted) showFahErrorSnack(context, error.toString());
+          }
+        }
+        if (!mounted) return;
+        await mode.selectChannel(channel.id);
         setState(() => _networksSurfaceOpen = false);
       },
     );

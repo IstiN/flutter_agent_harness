@@ -291,12 +291,13 @@ void main() {
     expect(find.byKey(const ValueKey('chatNetworkRow-net1')), findsOneWidget);
     expect(find.byKey(const ValueKey('chatNetworkChannel-c1')), findsOneWidget);
 
-    // Back runs the SAME transition (no special reverse animation).
+    // Back swaps instantly for the chrome (the strip is never animated)
+    // while the level-1 list fades/slides in.
     await tester.tap(find.byKey(const ValueKey('chatChannelsBack')));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 100));
     expect(find.byKey(const ValueKey('networksList')), findsOneWidget);
-    expect(find.byKey(const ValueKey('networksStrip')), findsOneWidget);
+    expect(find.byKey(const ValueKey('networksStrip')), findsNothing);
     await tester.pump(const Duration(milliseconds: 250));
     expect(find.byKey(const ValueKey('networksList')), findsOneWidget);
     expect(find.byKey(const ValueKey('networksStrip')), findsNothing);

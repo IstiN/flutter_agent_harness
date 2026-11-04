@@ -132,77 +132,77 @@ class _ChatNetworksPanelState extends State<ChatNetworksPanel> {
               ),
               Expanded(
                 key: const ValueKey('chatNetworksList'),
-                // The network list → strip+channels swap animates (owner
-                // pass): the incoming level slides/fades in over 200ms
-                // easeInOutCubic (instant under reduce-motion); the header
-                // is NOT part of the animation and every key stays stable
-                // after settle.
-                child: AnimatedSwitcher(
-                  duration: FaMotion.duration(
-                    context,
-                    const Duration(milliseconds: 200),
-                  ),
-                  switchInCurve: Curves.easeInOutCubic,
-                  switchOutCurve: Curves.easeInOutCubic,
-                  transitionBuilder: (child, animation) => FadeTransition(
-                    opacity: animation,
-                    child: SlideTransition(
-                      position: Tween(
-                        begin: const Offset(0.08, 0),
-                        end: Offset.zero,
-                      ).animate(animation),
-                      child: child,
-                    ),
-                  ),
-                  child: KeyedSubtree(
-                    key: ValueKey('networksDrill-${openId ?? 'list'}'),
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        if (openId == null)
-                          Expanded(
-                            child: networks.isEmpty
-                                ? Center(
-                                    child: Text(
-                                      context.l10n.networkEmptyTitle,
-                                      style: TextStyle(
-                                        color: FahColors.of(context).dim,
-                                        fontSize: 13,
-                                      ),
-                                    ),
-                                  )
-                                : _NetworksList(
-                                    networks: networks,
-                                    onOpen: (networkId) => setState(
-                                      () => _openNetworkId = networkId,
-                                    ),
-                                  ),
-                          )
-                        else ...[
-                          _NetworksStrip(
-                            networks: networks,
-                            selectedNetworkId: openId,
-                            onOpen: (networkId) =>
-                                setState(() => _openNetworkId = networkId),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    // The strip is NOT animated (owner pass): switching
+                    // networks must not jitter the logos — only the
+                    // content pane slides/fades.
+                    if (openId != null)
+                      _NetworksStrip(
+                        networks: networks,
+                        selectedNetworkId: openId,
+                        onOpen: (networkId) =>
+                            setState(() => _openNetworkId = networkId),
+                      ),
+                    Expanded(
+                      // Only the content pane animates (200ms
+                      // easeInOutCubic slide+fade; instant under
+                      // reduce-motion). Keys stay stable after settle.
+                      child: AnimatedSwitcher(
+                        duration: FaMotion.duration(
+                          context,
+                          const Duration(milliseconds: 200),
+                        ),
+                        switchInCurve: Curves.easeInOutCubic,
+                        switchOutCurve: Curves.easeInOutCubic,
+                        transitionBuilder: (child, animation) => FadeTransition(
+                          opacity: animation,
+                          child: SlideTransition(
+                            position: Tween(
+                              begin: const Offset(0.08, 0),
+                              end: Offset.zero,
+                            ).animate(animation),
+                            child: child,
                           ),
-                          Expanded(
-                            child: _ChannelsList(
-                              networkId: openId,
-                              entries: entryChannels,
-                              sessionChannels:
-                                  session?.channels ?? const <Channel>[],
-                              selectedChannelId:
-                                  widget.mode?.networkId == openId
-                                  ? widget.mode?.channelId
-                                  : null,
-                              onOpenChannel: (channel) =>
-                                  widget.onOpenChannel(openId, channel),
-                            ),
+                        ),
+                        child: KeyedSubtree(
+                          key: ValueKey(
+                            'networksContent-${openId ?? 'list'}',
                           ),
-                        ],
-                      ],
+                          child: openId == null
+                              ? (networks.isEmpty
+                                    ? Center(
+                                        child: Text(
+                                          context.l10n.networkEmptyTitle,
+                                          style: TextStyle(
+                                            color: FahColors.of(context).dim,
+                                            fontSize: 13,
+                                          ),
+                                        ),
+                                      )
+                                    : _NetworksList(
+                                        networks: networks,
+                                        onOpen: (networkId) => setState(
+                                          () => _openNetworkId = networkId,
+                                        ),
+                                      ))
+                              : _ChannelsList(
+                                  networkId: openId,
+                                  entries: entryChannels,
+                                  sessionChannels:
+                                      session?.channels ?? const <Channel>[],
+                                  selectedChannelId:
+                                      widget.mode?.networkId == openId
+                                      ? widget.mode?.channelId
+                                      : null,
+                                  onOpenChannel: (channel) =>
+                                      widget.onOpenChannel(openId, channel),
+                                ),
+                        ),
+                      ),
                     ),
-                  ),
+                  ],
                 ),
               ),
             ],
