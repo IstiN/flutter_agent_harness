@@ -398,12 +398,6 @@ abstract class AppLocalizations {
   /// **'Local folders'**
   String get localFoldersTitle;
 
-  /// No description provided for @localFolderSessionCount.
-  ///
-  /// In en, this message translates to:
-  /// **'{count, plural, =1{1 session} other{{count} sessions}}'**
-  String localFolderSessionCount(num count);
-
   /// No description provided for @localSessionsEmpty.
   ///
   /// In en, this message translates to:

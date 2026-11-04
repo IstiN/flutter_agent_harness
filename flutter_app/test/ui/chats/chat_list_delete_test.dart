@@ -114,14 +114,9 @@ Future<void> _pumpApp(WidgetTester tester, _Fixture fixture) async {
   await _drainAsync(tester);
 }
 
-Future<void> _openFolder(WidgetTester tester, String path) async {
-  await tester.tap(find.byKey(ValueKey('chatFolder-folder::$path')));
-  await tester.pumpAndSettle();
-}
-
 Future<void> _deleteFromMenu(WidgetTester tester, String id) async {
   final entryId = ChatEntryId.local(id);
-  final row = find.byKey(ValueKey('localSession-$id'));
+  final row = find.byKey(ValueKey('chatRow-$entryId'));
   final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
   addTearDown(mouse.removePointer);
   await mouse.addPointer(location: Offset.zero);
@@ -143,8 +138,8 @@ void main() {
   setUp(() => debugFaGlassAlwaysFake = true);
   tearDown(() => debugFaGlassAlwaysFake = false);
 
-  testWidgets('successful menu delete removes drill-down row, search result, '
-      'empty folder, and rebuilt data', (tester) async {
+  testWidgets('successful menu delete removes the flat row, search result, '
+      'and rebuilt data', (tester) async {
     tester.view.devicePixelRatio = 1;
     tester.view.physicalSize = const Size(1280, 800);
     addTearDown(tester.view.reset);
@@ -152,11 +147,11 @@ void main() {
     await fixture.persist('deleted', '/work/project');
     await _pumpApp(tester, fixture);
 
-    const folder = ValueKey('chatFolder-folder::/work/project');
-    expect(find.byKey(folder), findsOneWidget);
+    expect(
+      find.byKey(ValueKey('chatRow-${ChatEntryId.local('deleted')}')),
+      findsOneWidget,
+    );
     expect(find.text('Network stays'), findsOneWidget);
-    await _openFolder(tester, '/work/project');
-    expect(find.text('Delete me'), findsOneWidget);
 
     await _deleteFromMenu(tester, 'deleted');
 
@@ -165,7 +160,6 @@ void main() {
       isNot(contains('deleted')),
     );
     expect(find.text('Delete me'), findsNothing);
-    expect(find.byKey(const ValueKey('chatSidebarLocalBack')), findsOneWidget);
     final controller = tester
         .widget<ChatListPanel>(find.byType(ChatListPanel))
         .controller;
@@ -173,9 +167,7 @@ void main() {
     await tester.pump();
     expect(controller.visibleEntries.map((entry) => entry.id.value), isEmpty);
     controller.setSearch('');
-    await tester.tap(find.byKey(const ValueKey('chatSidebarLocalBack')));
     await tester.pumpAndSettle();
-    expect(find.byKey(folder), findsNothing);
     expect(find.text('Network stays'), findsOneWidget);
 
     fixture.manager = FlutterSessionManager(
@@ -185,12 +177,11 @@ void main() {
     )..addSession('active', _service(fixture.env));
     await tester.pumpWidget(const SizedBox());
     await _pumpApp(tester, fixture);
-    expect(find.byKey(folder), findsNothing);
     expect(find.text('Delete me'), findsNothing);
   });
 
   testWidgets(
-    'folder and orphaned subagent stay when another session remains',
+    'an orphaned subagent stays when its parent is deleted',
     (tester) async {
       tester.view.devicePixelRatio = 1;
       tester.view.physicalSize = const Size(1280, 800);
@@ -208,15 +199,12 @@ void main() {
       );
       await fixture.persist('other', '/elsewhere/project');
       await _pumpApp(tester, fixture);
-      await _openFolder(tester, '/work/project');
 
       await _deleteFromMenu(tester, 'parent');
 
       expect(find.text('Parent'), findsNothing);
-      // The orphaned subagent is not a folder session (Telegram rows list
-      // the folder's own sessions) — it stays in the projection and keeps
-      // the folder destination alive.
-      expect(find.text('Child'), findsNothing);
+      // The flat home keeps the surviving rows — the orphaned subagent
+      // stays in the projection beside 'Other' and the network row.
       expect(
         tester
             .widget<ChatListPanel>(find.byType(ChatListPanel))
@@ -225,21 +213,13 @@ void main() {
             .map((entry) => entry.id.value),
         containsAll(<String>['child', 'other', 'network-stays']),
       );
-      await tester.tap(find.byKey(const ValueKey('chatSidebarLocalBack')));
-      await tester.pumpAndSettle();
-      expect(
-        find.byKey(const ValueKey('chatFolder-folder::/work/project')),
-        findsOneWidget,
-      );
-      expect(
-        find.byKey(const ValueKey('chatFolder-folder::/elsewhere/project')),
-        findsOneWidget,
-      );
+      expect(find.text('Child'), findsOneWidget);
+      expect(find.text('Other'), findsOneWidget);
     },
   );
 
   testWidgets(
-    'active delete selects a survivor and leaves a usable back path',
+    'active delete selects a survivor and keeps the list usable',
     (tester) async {
       tester.view.devicePixelRatio = 1;
       tester.view.physicalSize = const Size(1280, 800);
@@ -251,28 +231,16 @@ void main() {
         ..addSession('first', _service(fixture.env))
         ..addSession('second', _service(fixture.env));
       await _pumpApp(tester, fixture);
-      await _openFolder(tester, '/two');
 
       await _deleteFromMenu(tester, 'second');
 
       expect(fixture.manager.activeId, 'first');
       expect(fixture.manager.active, isNotNull);
       expect(find.text('Second'), findsNothing);
-      await tester.tap(find.byKey(const ValueKey('chatSidebarLocalBack')));
-      await tester.pumpAndSettle();
-      expect(
-        find.byKey(const ValueKey('chatFolder-folder::/two')),
-        findsNothing,
+      final panel = tester.widget<ChatListPanel>(
+        find.byType(ChatListPanel),
       );
-      expect(
-        find.byKey(const ValueKey('chatFolder-folder::/one')),
-        findsOneWidget,
-      );
-      await _openFolder(tester, '/one');
-      final selected = tester
-          .widget<ChatListPanel>(find.byType(ChatListPanel))
-          .selectedEntryId;
-      expect(selected, ChatEntryId.local('first'));
+      expect(panel.selectedEntryId, ChatEntryId.local('first'));
     },
   );
 
@@ -289,7 +257,6 @@ void main() {
       root: '/sessions',
     ).register(metadata.id, pid: 9999);
     await _pumpApp(tester, fixture);
-    await _openFolder(tester, '/work/project');
 
     await _deleteFromMenu(tester, 'deleted');
 
@@ -298,12 +265,6 @@ void main() {
     expect(
       (await fixture.repo.list()).map((item) => item.id),
       contains('deleted'),
-    );
-    await tester.tap(find.byKey(const ValueKey('chatSidebarLocalBack')));
-    await tester.pumpAndSettle();
-    expect(
-      find.byKey(const ValueKey('chatFolder-folder::/work/project')),
-      findsOneWidget,
     );
   });
 }

@@ -120,4 +120,29 @@ void main() {
       expect(folders.last.runningCount, 1);
     });
   });
+
+  group('folderPathMeta', () {
+    test('short paths render verbatim', () {
+      expect(folderPathMeta('/work/mono'), '/work/mono');
+      expect(folderPathMeta(''), '');
+    });
+
+    test('long paths middle-truncate to ~26 chars', () {
+      const long = '/Users/Uladzimir_Klyshevich/git/flutter_agent';
+      final meta = folderPathMeta(long);
+      expect(meta.length, lessThanOrEqualTo(26));
+      expect(meta, '/Users/Uladz…flutter_agent');
+      // Both halves come from the original path.
+      expect(long.startsWith(meta.split('…').first), isTrue);
+      expect(long.endsWith(meta.split('…').last), isTrue);
+    });
+
+    test('the cap is honoured at exactly the boundary', () {
+      final at = '/${'a' * 25}';
+      expect(folderPathMeta(at), at);
+      final over = '/${'a' * 26}';
+      expect(folderPathMeta(over).length, 26);
+      expect(folderPathMeta(over).contains('…'), isTrue);
+    });
+  });
 }

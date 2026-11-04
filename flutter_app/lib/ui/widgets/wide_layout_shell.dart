@@ -253,9 +253,6 @@ class _WideLayoutShellState extends State<WideLayoutShell>
   FolderIconResolver get _folderIcons =>
       _folderIconResolver ??= FolderIconResolver(widget.manager.env);
   String? _chatAccountKey;
-  String? _chatDirectory;
-  final Set<String> _localExpandedParents = <String>{};
-  final Set<String> _localCollapsedParents = <String>{};
 
   /// Lazily loaded sessions-tree prefs (issue #426) when the host did not
   /// inject one — per-parent expand/collapse survives an app restart.
@@ -748,17 +745,6 @@ class _WideLayoutShellState extends State<WideLayoutShell>
       onBrandLongPress: () => unawaited(_mintSessionFromBrand()),
       onCollapse: () => setState(() => _sidebarCollapsed = true),
       onLocalMenu: _showChatEntryMenu,
-      expandedParents:
-          widget.sessionPrefsStore?.expandedParents ??
-          _uiPrefs?.expandedParents ??
-          _localExpandedParents,
-      collapsedParents:
-          widget.sessionPrefsStore?.collapsedParents ??
-          _uiPrefs?.collapsedParents ??
-          _localCollapsedParents,
-      onToggleParent: _toggleChatParent,
-      currentDirectory: _chatDirectory,
-      onDirectoryChanged: (path) => setState(() => _chatDirectory = path),
       headerBottom: null,
       // The wide shell's vertical rail owns the section destinations and
       // chat filters; the narrow shell keeps the horizontal bar.
@@ -793,7 +779,6 @@ class _WideLayoutShellState extends State<WideLayoutShell>
         _WideShellSection.activity => _buildActivitySidebarBody,
         _WideShellSection.apps => _buildAppsSidebarBody,
       },
-      showCurrentDirectory: _section == _WideShellSection.chats,
     );
   }
 
@@ -821,22 +806,6 @@ class _WideLayoutShellState extends State<WideLayoutShell>
         ),
       ),
     );
-  }
-
-  void _toggleChatParent(String parentId, bool expand) {
-    final prefs = widget.sessionPrefsStore ?? _uiPrefs;
-    if (prefs != null) {
-      unawaited(prefs.setExpanded(parentId, expand));
-    }
-    setState(() {
-      if (expand) {
-        _localExpandedParents.add(parentId);
-        _localCollapsedParents.remove(parentId);
-      } else {
-        _localCollapsedParents.add(parentId);
-        _localExpandedParents.remove(parentId);
-      }
-    });
   }
 
   /// Opens a Local-section row through the existing open flow (live via

@@ -109,7 +109,7 @@ void main() {
     await pumpPanel(tester, c);
 
     // The list carries every folder (grouped by cwd, newest first) as
-    // standard [logo][name] rows with session-count meta.
+    // standard [logo][name] rows with the folder path as meta.
     expect(find.byKey(const ValueKey('localFoldersList')), findsOneWidget);
     expect(find.byKey(const ValueKey('localFoldersStrip')), findsNothing);
     expect(find.text('mono'), findsOneWidget);
@@ -132,7 +132,8 @@ void main() {
             .dy,
       ),
     );
-    expect(find.text('1 session'), findsNWidgets(2));
+    expect(find.text('/work/mono'), findsOneWidget);
+    expect(find.text('/work/fa'), findsOneWidget);
     expect(find.text('Local'), findsOneWidget, reason: 'the header title');
     expect(find.text('sub'), findsNothing);
 
@@ -158,6 +159,20 @@ void main() {
               .dy,
       LocalSessionsPanel.stripItemPitch,
     );
+
+    // Long cwds middle-truncate to a ~26-char meta, Personal shows none,
+    // and the session-count label is gone entirely.
+    final long = await controller([
+      entry(
+        'a',
+        folderPath: '/Users/Uladzimir_Klyshevich/git/flutter_agent',
+        lastActivity: DateTime.utc(2026, 1, 4),
+      ),
+      entry('b', lastActivity: DateTime.utc(2026, 1, 2)),
+    ]);
+    await pumpPanel(tester, long);
+    expect(find.text('/Users/Uladz…flutter_agent'), findsOneWidget);
+    expect(find.textContaining('session'), findsNothing);
     expect(
       find.byKey(const ValueKey('localFolderSelectedCapsule')),
       findsNothing,

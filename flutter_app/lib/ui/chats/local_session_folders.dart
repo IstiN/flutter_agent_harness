@@ -174,3 +174,15 @@ String folderAvatarLetter(String name) {
   final rune = trimmed.runes.first;
   return String.fromCharCode(rune).toUpperCase();
 }
+
+/// The level-1 folder row's path meta: the folder's cwd, middle-truncated
+/// so at most [maxChars] characters render (e.g.
+/// `/Users/Ula…flutter_agent`) — the full path stays the folder identity.
+String folderPathMeta(String path, {int maxChars = 26}) {
+  if (path.length <= maxChars) return path;
+  const ellipsis = '…';
+  final keep = maxChars - ellipsis.length;
+  final head = keep ~/ 2;
+  final tail = keep - head;
+  return '${path.substring(0, head)}$ellipsis${path.substring(path.length - tail)}';
+}

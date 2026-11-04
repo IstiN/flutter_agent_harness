@@ -376,15 +376,6 @@ void main() {
     await expectGolden(tester, 'wide_layout_shell_chats_files_resized');
   });
 
-  testWidgets('desktop folder drill-down keeps shared chrome pinned', (
-    tester,
-  ) async {
-    await pumpShell(tester, populateChats: true);
-    await tester.tap(find.byKey(const ValueKey('chatFolder-folder::/work/fa')));
-    await tester.pumpAndSettle();
-    await expectGolden(tester, 'wide_layout_shell_chats_folder');
-  });
-
   testWidgets('desktop collapsed Chats rail', (tester) async {
     debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
     addTearDown(() => debugDefaultTargetPlatformOverride = null);
@@ -727,16 +718,5 @@ void main() {
     expect(find.byType(MessengerBottomNavigation), findsOneWidget);
     expect(find.byType(MessengerNewChatButton), findsOneWidget);
     await expectGolden(tester, 'narrow_layout_shell_chats');
-  });
-
-  testWidgets('mobile folder drill-down keeps shared chrome pinned', (
-    tester,
-  ) async {
-    await pumpShell(tester, size: goldenSizePhone, populateChats: true);
-    await tester.tap(find.byKey(const ValueKey('chatFolder-folder::/work/fa')));
-    await tester.pump(const Duration(milliseconds: 100));
-    expect(tester.takeException(), isNull);
-    await tester.pumpAndSettle();
-    await expectGolden(tester, 'narrow_layout_shell_chats_folder');
   });
 }

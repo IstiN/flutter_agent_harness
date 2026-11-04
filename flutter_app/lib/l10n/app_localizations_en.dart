@@ -176,17 +176,6 @@ class AppLocalizationsEn extends AppLocalizations {
   String get localFoldersTitle => 'Local folders';
 
   @override
-  String localFolderSessionCount(num count) {
-    String _temp0 = intl.Intl.pluralLogic(
-      count,
-      locale: localeName,
-      other: '$count sessions',
-      one: '1 session',
-    );
-    return '$_temp0';
-  }
-
-  @override
   String get localSessionsEmpty => 'No sessions in this folder yet';
 
   @override

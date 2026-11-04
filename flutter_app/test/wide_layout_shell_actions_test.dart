@@ -214,8 +214,6 @@ void main() {
       manager: manager,
       sessionNamesStore: SessionNamesStore.inMemory({'ghost': 'Ghost chat'}),
     );
-    await tester.tap(find.byKey(const ValueKey('chatFolder-folder::/tmp')));
-    await tester.pumpAndSettle();
     await tester.tap(find.text('Ghost chat'));
     await tester.pumpAndSettle();
     // Wind the clock so short deferrals fire before the assertions.
@@ -846,21 +844,21 @@ void main() {
       ..addSession('design-session', _fakeService(env));
 
     await pumpShell(tester, manager: manager);
-    // Chats list sections and the Activity/Apps bodies all render their
-    // labels through one widget, so typography and case cannot drift.
-    Finder eyebrow(String label) =>
-        find.widgetWithText(FaSectionEyebrow, label);
-    expect(eyebrow('Recent'), findsWidgets);
+    // The flat Chats home renders NO section eyebrows (one flat active
+    // list — no Pinned/Recent split); the Activity/Apps bodies still name
+    // themselves through FaSectionEyebrow, so typography and case cannot
+    // drift where eyebrows do render.
+    expect(find.byType(FaSectionEyebrow), findsNothing);
 
     await tester.tap(find.byKey(const ValueKey('messengerPrimaryNav-apps')));
     await tester.pumpAndSettle();
-    expect(eyebrow('Apps'), findsOneWidget);
+    expect(find.widgetWithText(FaSectionEyebrow, 'Apps'), findsOneWidget);
 
     await tester.tap(
       find.byKey(const ValueKey('messengerPrimaryNav-activity')),
     );
     await tester.pumpAndSettle();
-    expect(eyebrow('All activity'), findsOneWidget);
+    expect(find.widgetWithText(FaSectionEyebrow, 'All activity'), findsOneWidget);
     // The count chip on the Activity toolbar stays a plain dim numeral.
     expect(find.byKey(const ValueKey('activityCount')), findsOneWidget);
   });
@@ -1426,7 +1424,7 @@ void main() {
     },
   );
 
-  testWidgets('folder drill-down retains state across sections and collapse', (
+  testWidgets('the flat chat list survives section switches and collapse', (
     tester,
   ) async {
     debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
@@ -1457,18 +1455,13 @@ void main() {
     Rect rect(String key) => tester.getRect(find.byKey(ValueKey(key)));
     final searchBefore = rect('messengerSearchField');
     final railBefore = rect('messengerNavRail');
-    await tester.tap(
+    // The flat home: same-cwd agents are plain rows — no folder
+    // destination, no drill-down chrome.
+    expect(
       find.byKey(const ValueKey('chatFolder-folder::/work/project')),
+      findsNothing,
     );
-    await tester.pump(const Duration(milliseconds: 100));
-    expect(tester.takeException(), isNull);
-    await tester.pumpAndSettle();
-    // Telegram-style in-place drill-down: the '<' chevron header row names
-    // the folder; the list is the folder's Telegram session rows.
-    expect(find.byKey(const ValueKey('chatCurrentFolder')), findsOneWidget);
-    expect(find.byKey(const ValueKey('chatSidebarLocalBack')), findsOneWidget);
-    expect(find.text('project'), findsOneWidget);
-    expect(find.byKey(const ValueKey('localSessionList')), findsOneWidget);
+    expect(find.byKey(const ValueKey('chatCurrentFolder')), findsNothing);
     expect(find.text('Agent one'), findsOneWidget);
     expect(rect('messengerSearchField'), searchBefore);
     expect(rect('messengerNavRail'), railBefore);
@@ -1480,7 +1473,8 @@ void main() {
     // Filters are the Chats home: tapping one returns from Apps.
     await tester.tap(find.byKey(const ValueKey('chatFilter-all')));
     await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey('chatCurrentFolder')), findsOneWidget);
+    expect(find.byKey(const ValueKey('chatCurrentFolder')), findsNothing);
+    expect(find.text('Agent one'), findsOneWidget);
     expect(find.text('Agent two'), findsOneWidget);
 
     final toggle = find.byKey(const ValueKey('wideShellSidebarToggle'));
@@ -1488,21 +1482,13 @@ void main() {
     await tester.pump(const Duration(milliseconds: 100));
     expect(tester.takeException(), isNull);
     await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey('chatCurrentFolder')), findsNothing);
+    expect(find.text('Agent one'), findsNothing, reason: 'collapsed sidebar');
     await tester.tap(toggle);
     await tester.pump(const Duration(milliseconds: 100));
     expect(tester.takeException(), isNull);
     await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey('chatCurrentFolder')), findsOneWidget);
     expect(find.text('Agent one'), findsOneWidget);
-
-    await tester.tap(find.byKey(const ValueKey('chatSidebarLocalBack')));
-    await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey('chatCurrentFolder')), findsNothing);
-    expect(
-      find.byKey(const ValueKey('chatFolder-folder::/work/project')),
-      findsOneWidget,
-    );
+    expect(find.text('Agent two'), findsOneWidget);
     debugDefaultTargetPlatformOverride = null;
   });
 

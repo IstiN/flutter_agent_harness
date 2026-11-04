@@ -22,8 +22,6 @@ import 'package:intl/intl.dart';
 
 import 'chat_list_controller.dart';
 import 'chat_list_entry.dart';
-import 'local_session_folders.dart';
-import 'local_sessions_panel.dart' show LocalFolderSessionList;
 
 /// Compact a host cwd for display without changing the absolute path used as
 /// the folder identity. Only a path-segment-boundary home prefix is shortened.
@@ -73,7 +71,6 @@ class ChatListPanel extends StatefulWidget {
     this.onSearch,
     this.bodyBuilder,
     this.bodyKey,
-    this.showCurrentDirectory = true,
     this.showFilterToolbar = true,
     this.networkManager,
     this.networkMode,
@@ -81,11 +78,6 @@ class ChatListPanel extends StatefulWidget {
     this.didOpen,
     this.onLocalMenu,
     this.hubBoundSessionId,
-    this.expandedParents = const {},
-    this.collapsedParents = const {},
-    this.onToggleParent,
-    this.currentDirectory,
-    this.onDirectoryChanged,
   });
 
   final ChatListController controller;
@@ -133,7 +125,6 @@ class ChatListPanel extends StatefulWidget {
   final ValueChanged<String>? onSearch;
   final Widget Function(double topPadding)? bodyBuilder;
   final Key? bodyKey;
-  final bool showCurrentDirectory;
 
   /// Whether the horizontal chat-filter/network toolbar renders. The wide
   /// shell's vertical rail owns those destinations now, so the wide panel
@@ -145,14 +136,6 @@ class ChatListPanel extends StatefulWidget {
   final bool Function(ChatListEntry entry)? didOpen;
   final Future<void> Function(ChatListEntry entry, Rect anchor)? onLocalMenu;
   final String? hubBoundSessionId;
-  final Set<String> expandedParents;
-  final Set<String> collapsedParents;
-  final void Function(String parentId, bool expanded)? onToggleParent;
-
-  /// Full working directory for the in-panel drill-down. The shell controls
-  /// this value so it survives section switches and sidebar collapse.
-  final String? currentDirectory;
-  final ValueChanged<String?>? onDirectoryChanged;
 
   @override
   State<ChatListPanel> createState() => _ChatListPanelState();
@@ -161,29 +144,13 @@ class ChatListPanel extends StatefulWidget {
 class _ChatListPanelState extends State<ChatListPanel> {
   final TextEditingController _searchController = TextEditingController();
   final FocusNode _searchFocus = FocusNode(debugLabel: 'chat-list-search');
-  String? _localDirectory;
   ChatListFilter? _renderedFilter;
-
-  String? get _currentDirectory {
-    if (!widget.showCurrentDirectory) return null;
-    return widget.onDirectoryChanged == null
-        ? _localDirectory
-        : widget.currentDirectory;
-  }
 
   TextEditingController get _effectiveSearchController =>
       widget.searchController ?? _searchController;
 
   FocusNode get _effectiveSearchFocusNode =>
       widget.searchFocusNode ?? _searchFocus;
-
-  void _setDirectory(String? path) {
-    if (widget.onDirectoryChanged case final callback?) {
-      callback(path);
-    } else {
-      setState(() => _localDirectory = path);
-    }
-  }
 
   @override
   void initState() {
@@ -291,8 +258,6 @@ class _ChatListPanelState extends State<ChatListPanel> {
             if (widget.showFilterToolbar) _buildFilters(colors),
             if (_networkLoading) const LinearProgressIndicator(minHeight: 1),
             if (_showNetworkBanner) _buildNetworkBanner(colors),
-            if (_currentDirectory case final directory?)
-              _buildCurrentDirectoryHeader(colors, directory),
           ],
         );
         // The chrome band IS the glass: search + segment controls sit on a
@@ -314,11 +279,7 @@ class _ChatListPanelState extends State<ChatListPanel> {
                     switchInCurve: Curves.easeInOutCubic,
                     switchOutCurve: Curves.easeInOutCubic,
                     child: KeyedSubtree(
-                      key:
-                          widget.bodyKey ??
-                          ValueKey(
-                            'chat-directory-${_currentDirectory ?? 'root'}',
-                          ),
+                      key: widget.bodyKey ?? const ValueKey('chatListBody'),
                       child:
                           widget.bodyBuilder?.call(
                             _chromeHeight() + titlebarTop,
@@ -387,8 +348,7 @@ class _ChatListPanelState extends State<ChatListPanel> {
         (widget.headerBottom == null ? 0 : 46) +
         (widget.showFilterToolbar ? MessengerFilterControl.height : 0) +
         (_networkLoading ? 1 : 0) +
-        (_showNetworkBanner ? 50 : 0) +
-        (_currentDirectory == null ? 0 : 56);
+        (_showNetworkBanner ? 50 : 0);
   }
 
   Widget _buildHeader() {
@@ -579,10 +539,7 @@ class _ChatListPanelState extends State<ChatListPanel> {
 
   Widget _buildBody(FahColors colors, {required double topPadding}) {
     final controller = widget.controller;
-    final directory = _currentDirectory;
-    bool inCurrentDirectory(ChatListEntry entry) =>
-        directory == null || _folderPath(entry) == directory;
-    final visibleEntries = controller.visibleEntries.where(inCurrentDirectory);
+    final visibleEntries = controller.visibleEntries.toList();
     Widget state(Widget child) => child;
     if (controller.status == ChatLoadState.loading) {
       return state(const Center(child: CircularProgressIndicator()));
@@ -607,196 +564,31 @@ class _ChatListPanelState extends State<ChatListPanel> {
       }
       return state(_buildEmpty(colors));
     }
-    // The LOCAL folder drill-down (Telegram pattern, owner pass): tapping a
-    // folder destination swaps the list to that folder's session list — the
-    // same 70pt Telegram rows the Local section uses (shared keys) — under
-    // the '<' back chevron header row. The search field stays on top and
-    // still filters inside the folder.
-    final directorySessions = directory == null
-        ? const <ChatListEntry>[]
-        : folderSessionList(visibleEntries.toList(), folderPath: directory);
-    if (directory != null) {
-      return state(
-        Padding(
-          padding: EdgeInsets.only(top: topPadding + 2),
-          child: LocalFolderSessionList(
-            sessions: directorySessions,
-            selectedSessionId: widget.selectedEntryId?.value,
-            onOpenSession: (entry) => unawaited(_open(entry)),
-            onLocalMenu: widget.onLocalMenu,
-          ),
-        ),
-      );
-    }
-    final pinned = controller.pinnedEntries.where(inCurrentDirectory).toList();
-    final recent = controller.recentEntries.where(inCurrentDirectory).toList();
-    return ListView(
+    // The All home is ONE flat active list (owner pass): active sessions
+    // AND active channels, sorted by lastActivity desc — no folder
+    // grouping, no pinned/recent sections, no multi-level tree. The Local
+    // folder navigation lives in the Local section; Unread is the unread
+    // subset of this same flat projection ([ChatListController]
+    // facetEntries already applies both).
+    return ListView.builder(
       key: const ValueKey('chatListScroll'),
       padding: EdgeInsets.only(
         top: topPadding + 2,
         bottom: widget.compact ? 76 : 10,
       ),
-      children: [
-        if (pinned.isNotEmpty) ...[
-          _SectionHeader(label: context.l10n.chatPinned),
-          ..._treeRows(pinned),
-        ],
-        if (recent.isNotEmpty) ...[
-          _SectionHeader(label: context.l10n.chatRecent),
-          ..._treeRows(recent),
-        ],
-      ],
+      itemCount: visibleEntries.length,
+      itemBuilder: (context, index) => _row(visibleEntries[index]),
     );
   }
 
-  List<Widget> _treeRows(List<ChatListEntry> entries) {
-    final byParent = <String, List<ChatListEntry>>{};
-    final ids = entries.map((entry) => entry.id.value).toSet();
-    for (final entry in entries) {
-      final parent = entry.parentId;
-      if (parent != null && ids.contains(parent)) {
-        byParent.putIfAbsent(parent, () => []).add(entry);
-      }
-    }
-    final topLevel = [
-      for (final entry in entries)
-        if (entry.parentId == null || !ids.contains(entry.parentId)) entry,
-    ];
-    final folderGroups = <String, List<ChatListEntry>>{};
-    for (final entry in topLevel) {
-      final key = _folderGroupKey(entry);
-      if (key != null) {
-        folderGroups.putIfAbsent(key, () => []).add(entry);
-      }
-    }
-    final searching = widget.controller.searchQuery.trim().isNotEmpty;
-    final renderedFolders = <String>{};
-    final rows = <Widget>[];
-    for (final entry in topLevel) {
-      final folderKey = _folderGroupKey(entry);
-      if (folderKey == null || _currentDirectory != null) {
-        rows.addAll(_entryTreeRows(entry, byParent, searching));
-        continue;
-      }
-      if (!renderedFolders.add(folderKey)) continue;
-      rows.add(
-        _folderDestination(entry, folderKey, folderGroups[folderKey]!.length),
-      );
-    }
-    return rows;
-  }
-
-  List<Widget> _entryTreeRows(
-    ChatListEntry entry,
-    Map<String, List<ChatListEntry>> byParent,
-    bool searching,
-  ) {
-    final children = byParent[entry.id.value] ?? const [];
-    final expanded =
-        searching ||
-        (widget.expandedParents.contains(entry.id.value) &&
-            !widget.collapsedParents.contains(entry.id.value));
-    return [
-      _row(entry, childCount: children.length),
-      if (expanded)
-        for (final child in children) _row(child, indent: 22),
-    ];
-  }
-
-  String? _folderPath(ChatListEntry entry) {
-    if (entry.kind != ChatListEntryKind.localAgent) return null;
-    final path = entry.folderPath ?? entry.folderName;
-    if (path == null || path.isEmpty) return null;
-    return path;
-  }
-
-  String? _folderGroupKey(ChatListEntry entry) {
-    final path = _folderPath(entry);
-    return path == null ? null : 'folder::$path';
-  }
-
-  String _directoryName(String path) {
-    final normalized = path.replaceAll('\\', '/');
-    final segments = normalized.split('/').where((part) => part.isNotEmpty);
-    return segments.isEmpty ? path : segments.last;
-  }
-
-  Widget _folderDestination(ChatListEntry entry, String key, int count) {
-    final path = _folderPath(entry)!;
-    return _ConversationRow(
-      materialKey: ValueKey('chatFolder-$key'),
-      entry: entry,
-      folderPath: compactChatFolderPath(path),
-      folderTitle: entry.folderName ?? _directoryName(path),
-      folderCount: count,
-      selected: false,
-      expanded: false,
-      childCount: 0,
-      indent: 0,
-      compact: widget.compact,
-      hubBound: false,
-      onOpen: () => _setDirectory(path),
-      onTogglePin: () {},
-      onToggleParent: null,
-      onLocalMenu: null,
-    );
-  }
-
-  /// The LOCAL folder drill-down's header row (Telegram pattern, owner
-  /// pass): a '<' chevron walks back to the normal chats list; the folder
-  /// name is the title. Sits under the search field (which stays on top).
-  Widget _buildCurrentDirectoryHeader(FahColors colors, String directory) {
-    return Container(
-      key: const ValueKey('chatCurrentFolder'),
-      height: 56,
-      padding: const EdgeInsets.symmetric(horizontal: 6),
-      color: _panelColor(colors),
-      child: Row(
-        children: [
-          IconButton(
-            key: const ValueKey('chatSidebarLocalBack'),
-            onPressed: () => _setDirectory(null),
-            tooltip: MaterialLocalizations.of(context).backButtonTooltip,
-            iconSize: 26,
-            color: colors.text,
-            visualDensity: VisualDensity.compact,
-            icon: const Icon(Icons.chevron_left_rounded),
-          ),
-          Expanded(
-            child: Text(
-              _directoryName(directory),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                color: colors.text,
-                fontSize: 16,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ),
-          const SizedBox(width: 8),
-        ],
-      ),
-    );
-  }
-
-  Widget _row(ChatListEntry entry, {int childCount = 0, double indent = 0}) {
-    final expanded =
-        widget.expandedParents.contains(entry.id.value) &&
-        !widget.collapsedParents.contains(entry.id.value);
+  Widget _row(ChatListEntry entry) {
     return _ConversationRow(
       entry: entry,
       selected: entry.id == widget.selectedEntryId,
-      expanded: expanded,
-      childCount: childCount,
-      indent: indent,
       compact: widget.compact,
       hubBound: entry.id.value == widget.hubBoundSessionId,
       onOpen: entry.isLoading ? null : () => unawaited(_open(entry)),
       onTogglePin: () => unawaited(widget.controller.togglePin(entry)),
-      onToggleParent: childCount == 0
-          ? null
-          : () => widget.onToggleParent?.call(entry.id.value, !expanded),
       onLocalMenu: entry.kind == ChatListEntryKind.localAgent
           ? widget.onLocalMenu
           : null,
@@ -844,35 +636,19 @@ class _ConversationRow extends StatefulWidget {
   const _ConversationRow({
     required this.entry,
     required this.selected,
-    required this.expanded,
-    required this.childCount,
-    required this.indent,
     required this.compact,
     required this.hubBound,
     required this.onOpen,
     required this.onTogglePin,
-    required this.onToggleParent,
     required this.onLocalMenu,
-    this.materialKey,
-    this.folderPath,
-    this.folderTitle,
-    this.folderCount = 0,
   });
 
-  final Key? materialKey;
-  final String? folderPath;
-  final String? folderTitle;
-  final int folderCount;
   final ChatListEntry entry;
   final bool selected;
-  final bool expanded;
-  final int childCount;
-  final double indent;
   final bool compact;
   final bool hubBound;
   final VoidCallback? onOpen;
   final VoidCallback onTogglePin;
-  final VoidCallback? onToggleParent;
   final Future<void> Function(ChatListEntry entry, Rect anchor)? onLocalMenu;
 
   @override
@@ -906,16 +682,12 @@ class _ConversationRowState extends State<_ConversationRow> {
       if (network case final value? when value.isNotEmpty) value,
       if (rawPreview case final value? when value.isNotEmpty) value,
     ];
-    final folder = widget.folderPath != null;
-    final preview = folder
-        ? widget.folderPath!
-        : previewParts.isNotEmpty
+    final preview = previewParts.isNotEmpty
         ? previewParts.join(' · ')
         : entry.kind == ChatListEntryKind.localAgent
         ? context.l10n.chatNoPreview
         : '';
     final unread = entry.unreadCount ?? 0;
-    final trailingCount = folder && unread == 0 ? widget.folderCount : unread;
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
@@ -928,7 +700,7 @@ class _ConversationRowState extends State<_ConversationRow> {
           onEnter: (_) => setState(() => _hovering = true),
           onExit: (_) => setState(() => _hovering = false),
           child: Material(
-            key: widget.materialKey ?? ValueKey('chatRow-${entry.id}'),
+            key: ValueKey('chatRow-${entry.id}'),
             color: selected
                 ? accent
                 : _hovering || _focused
@@ -944,12 +716,7 @@ class _ConversationRowState extends State<_ConversationRow> {
               child: Stack(
                 children: [
                   Padding(
-                    padding: EdgeInsets.fromLTRB(
-                      10 + widget.indent,
-                      10,
-                      10,
-                      10,
-                    ),
+                    padding: const EdgeInsets.fromLTRB(10, 10, 10, 10),
                     child: Row(
                       crossAxisAlignment: CrossAxisAlignment.center,
                       children: [
@@ -957,8 +724,6 @@ class _ConversationRowState extends State<_ConversationRow> {
                           entry: entry,
                           colors: colors,
                           ringColor: selected ? accent : colors.panel,
-                          folderBadge: folder,
-                          labelOverride: widget.folderTitle,
                         ),
                         const SizedBox(width: 10),
                         Expanded(
@@ -973,7 +738,7 @@ class _ConversationRowState extends State<_ConversationRow> {
                                       children: [
                                         Flexible(
                                           child: Text(
-                                            widget.folderTitle ?? entry.title,
+                                            entry.title,
                                             maxLines: 1,
                                             overflow: TextOverflow.ellipsis,
                                             style: TextStyle(
@@ -1038,7 +803,7 @@ class _ConversationRowState extends State<_ConversationRow> {
                                       ),
                                     ),
                                   ),
-                                  if (trailingCount > 0)
+                                  if (unread > 0)
                                     Container(
                                       margin: const EdgeInsets.only(left: 6),
                                       constraints: const BoxConstraints(
@@ -1049,20 +814,14 @@ class _ConversationRowState extends State<_ConversationRow> {
                                         vertical: 2,
                                       ),
                                       decoration: BoxDecoration(
-                                        color: folder && unread == 0
-                                            ? colors.panelAlt
-                                            : selected
-                                            ? onSelection
-                                            : accent,
+                                        color: selected ? onSelection : accent,
                                         borderRadius: BorderRadius.circular(9),
                                       ),
                                       child: Text(
-                                        '$trailingCount',
+                                        '$unread',
                                         textAlign: TextAlign.center,
                                         style: TextStyle(
-                                          color: folder && unread == 0
-                                              ? subdued
-                                              : selected
+                                          color: selected
                                               ? accent
                                               : onSelection,
                                           fontSize: 9.5,
@@ -1076,28 +835,7 @@ class _ConversationRowState extends State<_ConversationRow> {
                             ],
                           ),
                         ),
-                        if (_showActions && !folder) ...[
-                          if (widget.childCount > 0)
-                            IconButton(
-                              key: ValueKey('chatTreeToggle-${entry.id}'),
-                              onPressed: widget.onToggleParent,
-                              tooltip: widget.expanded
-                                  ? context.l10n.chatCollapse
-                                  : context.l10n.chatExpand,
-                              icon: Icon(
-                                widget.expanded
-                                    ? Icons.expand_more
-                                    : Icons.chevron_right,
-                                size: 17,
-                              ),
-                              color: actionColor,
-                              visualDensity: VisualDensity.compact,
-                              constraints: const BoxConstraints(
-                                minWidth: 25,
-                                minHeight: 32,
-                              ),
-                              padding: EdgeInsets.zero,
-                            ),
+                        if (_showActions) ...[
                           IconButton(
                             key: ValueKey('chatPin-${entry.id}'),
                             onPressed: widget.onTogglePin,
@@ -1153,7 +891,7 @@ class _ConversationRowState extends State<_ConversationRow> {
                   ),
                   if (!selected && !_hovering && !_focused)
                     Positioned(
-                      left: 62 + widget.indent,
+                      left: 62,
                       right: 12,
                       bottom: 0,
                       child: Container(
@@ -1176,100 +914,35 @@ class _Avatar extends StatelessWidget {
     required this.entry,
     required this.colors,
     required this.ringColor,
-    this.folderBadge = false,
-    this.labelOverride,
   });
 
   final ChatListEntry entry;
   final FahColors colors;
   final Color ringColor;
-  final bool folderBadge;
-  final String? labelOverride;
 
   @override
   Widget build(BuildContext context) {
     final channel = entry.kind == ChatListEntryKind.networkChannel;
-    final colors = this.colors;
     // The NEUTRAL glyph (owner pass): sessions and channels are not
     // identities — conversation rows carry ONE surface2 rounded square
     // with an ink3 icon (chat bubble; the tag for channels), no letters,
-    // no hue. FOLDER destination rows keep their letter identity (the
-    // folder badge rides it) — identity avatars stay as-is.
-    final Widget avatar;
-    if (folderBadge) {
-      final label = labelOverride != null
-          ? (labelOverride!.isEmpty ? '?' : labelOverride!.characters.first)
-          : '?';
-      avatar = Container(
-        key: ValueKey('chatFolderAvatar-${entry.id}'),
-        width: 42,
-        height: 42,
-        decoration: BoxDecoration(
-          color: colors.panelAlt,
-          borderRadius: BorderRadius.circular(21),
-        ),
-        alignment: Alignment.center,
-        child: entry.avatarUrl == null
-            ? Text(
-                label.toUpperCase(),
-                style: TextStyle(
-                  color: colors.text,
-                  fontSize: 13,
-                  fontWeight: FontWeight.w700,
-                ),
-              )
-            : ClipRRect(
-                borderRadius: BorderRadius.circular(21),
-                child: Image.network(
-                  entry.avatarUrl!,
-                  width: 42,
-                  height: 42,
-                  fit: BoxFit.cover,
-                  errorBuilder: (_, _, _) => Text(label.toUpperCase()),
-                ),
-              ),
-      );
-    } else {
-      avatar = entry.avatarUrl == null
-          ? NeutralGlyphAvatar(
-              key: ValueKey('chatAvatar-${entry.id}'),
-              size: 42,
-              icon: channel ? Icons.tag_rounded : Icons.chat_bubble_outline,
-            )
-          : ClipRRect(
-              key: ValueKey('chatAvatar-${entry.id}'),
-              borderRadius: BorderRadius.circular(channel ? 12 : 21),
-              child: Image.network(
-                entry.avatarUrl!,
-                width: 42,
-                height: 42,
-                fit: BoxFit.cover,
-              ),
-            );
-    }
-    if (folderBadge) {
-      return Stack(
-        clipBehavior: Clip.none,
-        children: [
-          avatar,
-          Positioned(
-            right: -2,
-            bottom: -2,
-            child: Container(
-              key: ValueKey('chatFolderBadge-${entry.id}'),
-              width: 17,
-              height: 17,
-              decoration: BoxDecoration(
-                color: colors.panelAlt,
-                shape: BoxShape.circle,
-                border: Border.all(color: ringColor, width: 2),
-              ),
-              child: Icon(Icons.folder_outlined, size: 10, color: colors.dim),
+    // no hue.
+    final Widget avatar = entry.avatarUrl == null
+        ? NeutralGlyphAvatar(
+            key: ValueKey('chatAvatar-${entry.id}'),
+            size: 42,
+            icon: channel ? Icons.tag_rounded : Icons.chat_bubble_outline,
+          )
+        : ClipRRect(
+            key: ValueKey('chatAvatar-${entry.id}'),
+            borderRadius: BorderRadius.circular(channel ? 12 : 21),
+            child: Image.network(
+              entry.avatarUrl!,
+              width: 42,
+              height: 42,
+              fit: BoxFit.cover,
             ),
-          ),
-        ],
-      );
-    }
+          );
     if (entry.presence == null && !entry.isStreaming) return avatar;
     return Stack(
       clipBehavior: Clip.none,
@@ -1293,17 +966,6 @@ class _Avatar extends StatelessWidget {
         ),
       ],
     );
-  }
-}
-
-class _SectionHeader extends StatelessWidget {
-  const _SectionHeader({required this.label});
-
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
-    return FaSectionEyebrow(label: label);
   }
 }
 

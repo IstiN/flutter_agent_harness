@@ -57,7 +57,6 @@
   "wideNavChats": "Чаты",
   "wideNavLocal": "Локальные",
   "localFoldersTitle": "Локальные папки",
-  "localFolderSessionCount": "{count, plural, =1{1 сессия} few{{count} сессии} many{{count} сессий} other{{count} сессии}}",
   "localSessionsEmpty": "В этой папке пока нет сессий",
   "localFoldersEmpty": "Пока нет папок проектов",
   "localFolderBack": "Назад к папкам",

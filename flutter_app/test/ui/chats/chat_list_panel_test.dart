@@ -9,6 +9,7 @@ import 'package:fa/ui/chats/chat_list_stores.dart';
 import 'package:fa/ui/chats/local_chat_list_adapter.dart';
 import 'package:fa/ui/chats/network_inbox_adapter.dart';
 import 'package:fa/ui/network/sign_in_dialog.dart';
+import 'package:fa/ui/widgets/subagent_mark.dart';
 import 'package:fa_ui/fa_ui.dart' show FaLogo, FaVisualDirection, buildFaTheme;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart' show PointerDeviceKind;
@@ -76,9 +77,6 @@ Future<void> pumpPanel(
   VoidCallback? onNew,
   NetworkSessionManager? networkManager,
   ChatEntryId? selectedEntryId,
-  Set<String> expandedParents = const {},
-  Set<String> collapsedParents = const {},
-  void Function(String parentId, bool expanded)? onToggleParent,
 }) async {
   await tester.pumpWidget(
     MaterialApp(
@@ -92,9 +90,6 @@ Future<void> pumpPanel(
             controller: controller,
             compact: compact,
             selectedEntryId: selectedEntryId,
-            expandedParents: expandedParents,
-            collapsedParents: collapsedParents,
-            onToggleParent: onToggleParent,
             onOpen: onOpen ?? (_) async {},
             onNew: onNew ?? () {},
             networkManager: networkManager,
@@ -428,7 +423,73 @@ void main() {
   });
 
   testWidgets(
-    'Local destination shows local folders and excludes network rows',
+    'the All home is ONE flat active list — sessions and channels by '
+    'last activity, no folder grouping, no sections, no tree',
+    (tester) async {
+      final reads = ChatReadCursorStore.inMemory(accountId: 'a');
+      final controller = await makeController(
+        [
+          entry('Oldest session', folderName: 'project', folderPath: '/work'),
+          entry('Middle session'),
+          entry('Child agent', parentId: 'Middle session', isSubagent: true),
+        ],
+        network: FixtureNetworkInboxAdapter(
+          items: [
+            NetworkInboxItem(
+              kind: ChatListEntryKind.networkChannel,
+              networkId: 'remote',
+              id: 'channel',
+              title: 'Network channel',
+              lastActivity: DateTime.utc(2026, 1, 3),
+              unreadCount: 2,
+            ),
+          ],
+        ),
+        reads: reads,
+      );
+      await pumpPanel(tester, controller);
+
+      // One flat list: newest activity first, channels and sessions
+      // interleaved by time (the channel carries Jan 3; local entries pin
+      // Jan 2 — the channel leads, ties break by id). Sessions and
+      // subagents are siblings — every row at the same indent.
+      Rect rowOf(String title) => tester.getRect(find.text(title));
+      final channel = rowOf('Network channel');
+      final middle = rowOf('Middle session');
+      final child = rowOf('Child agent');
+      final oldest = rowOf('Oldest session');
+      expect(channel.top, lessThan(child.top), reason: 'activity desc');
+      expect(child.top, lessThan(middle.top), reason: 'tie-break by id');
+      expect(middle.top, lessThan(oldest.top));
+      expect(child.left, middle.left, reason: 'flat — same indent');
+      expect(middle.left, oldest.left);
+
+      // NO folder grouping leaked into All.
+      expect(
+        find.byKey(const ValueKey('chatFolder-folder::/work')),
+        findsNothing,
+      );
+      // NO pinned/recent multi-level sections.
+      expect(find.text('Pinned'), findsNothing);
+      expect(find.text('Recent'), findsNothing);
+      // NO tree affordances.
+      expect(
+        find.byKey(const ValueKey('chatTreeToggle-local:Middle session')),
+        findsNothing,
+      );
+
+      // Unread is the unread subset of the SAME flat list.
+      await tester.tap(find.byKey(const ValueKey('chatFilter-unread')));
+      await tester.pumpAndSettle();
+      expect(find.text('Network channel'), findsOneWidget);
+      expect(find.text('Oldest session'), findsNothing);
+      expect(find.text('Middle session'), findsNothing);
+      expect(find.text('Child agent'), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'Local network facet shows flat local agent rows and excludes network rows',
     (tester) async {
       final controller = await makeController(
         [
@@ -462,108 +523,17 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(controller.networkFilter, const ChatNetworkFilter.my());
+      // Same-cwd agents do NOT collapse into a folder destination on the
+      // facet home — the flat list just shows the local rows.
       expect(
         find.byKey(const ValueKey('chatFolder-folder::/work/project')),
-        findsOneWidget,
+        findsNothing,
       );
-      expect(find.text('Agent one'), findsNothing);
-      expect(find.text('Agent two'), findsNothing);
-      expect(find.text('Remote agent'), findsNothing);
-      await tester.tap(
-        find.byKey(const ValueKey('chatFolder-folder::/work/project')),
-      );
-      await tester.pumpAndSettle();
       expect(find.text('Agent one'), findsOneWidget);
       expect(find.text('Agent two'), findsOneWidget);
+      expect(find.text('Remote agent'), findsNothing);
     },
   );
-
-  testWidgets('folder root row shares conversation metrics and avatar badge', (
-    tester,
-  ) async {
-    for (final compact in [false, true]) {
-      await tester.pumpWidget(const SizedBox());
-      await tester.pump();
-      final agent = entry(
-        'Agent one',
-        folderName: 'project',
-        folderPath: '/work/project',
-      );
-      final conversation = entry('General');
-      final controller = await makeController([agent, conversation]);
-      await pumpPanel(tester, controller, compact: compact);
-      await tester.tap(find.byKey(const ValueKey('chatNetworkFilter')));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Local').last);
-      await tester.pumpAndSettle();
-      final folder = find.byKey(
-        const ValueKey('chatFolder-folder::/work/project'),
-      );
-      final channel = find.byKey(ValueKey('chatRow-${conversation.id}'));
-      expect(folder, findsOneWidget);
-      expect(channel, findsOneWidget);
-      expect(tester.getSize(folder), tester.getSize(channel));
-      final folderAvatar = find.descendant(
-        of: folder,
-        matching: find.byKey(ValueKey('chatFolderAvatar-${agent.id}')),
-      );
-      final channelAvatar = find.descendant(
-        of: channel,
-        matching: find.byKey(ValueKey('chatAvatar-${conversation.id}')),
-      );
-      expect(tester.getSize(folderAvatar), const Size.square(42));
-      expect(tester.getSize(channelAvatar), const Size.square(42));
-      // Folder destinations keep their letter identity; conversation rows
-      // carry the neutral glyph instead.
-      expect(
-        find.descendant(of: folderAvatar, matching: find.byType(Text)),
-        findsOneWidget,
-      );
-      expect(
-        tester
-            .widget<Icon>(
-              find.descendant(of: channelAvatar, matching: find.byType(Icon)),
-            )
-            .icon,
-        Icons.chat_bubble_outline,
-      );
-      final badge = find.descendant(
-        of: folder,
-        matching: find.byKey(ValueKey('chatFolderBadge-${agent.id}')),
-      );
-      expect(badge, findsOneWidget);
-      expect(tester.getSize(badge), const Size.square(17));
-      expect(
-        tester.getTopLeft(badge).dx,
-        lessThan(tester.getRect(folderAvatar).right),
-      );
-      expect(
-        tester.getRect(badge).bottom,
-        greaterThan(tester.getRect(folderAvatar).bottom - 2),
-      );
-      expect(
-        find.descendant(of: folder, matching: find.byIcon(Icons.chevron_right)),
-        findsNothing,
-      );
-      expect(find.text('/work/project'), findsOneWidget);
-      // The row already shows the full path; a hover tooltip would only
-      // duplicate that visible text.
-      expect(
-        find.ancestor(of: folder, matching: find.byType(Tooltip)),
-        findsNothing,
-      );
-      await tester.tap(folder);
-      await tester.pumpAndSettle();
-      final currentFolder = find.byKey(const ValueKey('chatCurrentFolder'));
-      expect(currentFolder, findsOneWidget);
-      expect(
-        find.ancestor(of: currentFolder, matching: find.byType(Tooltip)),
-        findsNothing,
-      );
-      expect(find.text('Agent one'), findsOneWidget);
-      expect(tester.takeException(), isNull, reason: 'compact=$compact');
-    }
-  });
 
   testWidgets('empty conversation, filter, and search states are distinct', (
     tester,
@@ -644,88 +614,8 @@ void main() {
     expect(newCount, 1);
   });
 
-  testWidgets(
-    'local folders drill into full paths without old expand behavior',
-    (tester) async {
-      final network = FixtureNetworkInboxAdapter(
-        items: [
-          NetworkInboxItem(
-            kind: ChatListEntryKind.networkChannel,
-            networkId: 'remote',
-            id: 'remote',
-            title: 'Network row',
-            unreadCount: 0,
-          ),
-        ],
-      );
-      final controller = await makeController([
-        entry('One agent', folderName: 'project', folderPath: '/one/project'),
-        entry('One helper', folderName: 'project', folderPath: '/one/project'),
-        entry('Two agent', folderName: 'project', folderPath: '/two/project'),
-      ], network: network);
-      var parentToggles = 0;
-      var opened = 0;
-      await pumpPanel(
-        tester,
-        controller,
-        onOpen: (_) async => opened++,
-        onToggleParent: (_, _) => parentToggles++,
-      );
-
-      const oneFolder = ValueKey('chatFolder-folder::/one/project');
-      const twoFolder = ValueKey('chatFolder-folder::/two/project');
-      expect(find.byKey(oneFolder), findsOneWidget);
-      expect(find.byKey(twoFolder), findsOneWidget);
-      expect(find.text('One agent'), findsNothing);
-      expect(find.text('One helper'), findsNothing);
-      expect(find.text('Two agent'), findsNothing);
-      expect(find.text('Network row'), findsOneWidget);
-
-      await tester.tap(find.byKey(oneFolder));
-      await tester.pump(const Duration(milliseconds: 100));
-      expect(tester.takeException(), isNull);
-      await tester.pumpAndSettle();
-      expect(find.byKey(const ValueKey('chatCurrentFolder')), findsOneWidget);
-      // Telegram-style drill-down: the '<' header names the FOLDER (the
-      // full path is visible on the destination row at root).
-      expect(find.text('project'), findsOneWidget);
-      expect(find.text('/one/project'), findsNothing);
-      expect(
-        find.byKey(const ValueKey('chatSidebarLocalBack')),
-        findsOneWidget,
-      );
-      // The folder's Telegram session rows: newest first, flat — the old
-      // expand affordances are gone from the drill-down.
-      final oneAgent = tester.getRect(find.text('One agent'));
-      final oneHelper = tester.getRect(find.text('One helper'));
-      expect(oneAgent.top, lessThan(oneHelper.top));
-      expect(oneAgent.left, oneHelper.left);
-      expect(
-        find.byKey(const ValueKey('chatTreeToggle-local:One agent')),
-        findsNothing,
-      );
-      expect(find.text('Two agent'), findsNothing);
-      expect(find.text('Network row'), findsNothing);
-      expect(parentToggles, 0);
-
-      await tester.tap(find.text('One agent'));
-      await tester.pumpAndSettle();
-      expect(opened, 1);
-      expect(find.byKey(const ValueKey('chatCurrentFolder')), findsOneWidget);
-      expect(find.text('project'), findsOneWidget);
-
-      await tester.tap(find.byKey(const ValueKey('chatSidebarLocalBack')));
-      await tester.pumpAndSettle();
-      expect(find.byKey(oneFolder), findsOneWidget);
-      expect(find.byKey(twoFolder), findsOneWidget);
-      expect(find.text('Network row'), findsOneWidget);
-      expect(network.fetchCount, 1);
-    },
-  );
-
-  testWidgets('folder retains the offline agent to subagent tree', (
-    tester,
-  ) async {
+  testWidgets('subagents stay visible flat siblings with the subagent mark',
+      (tester) async {
     final controller = await makeController([
       entry('Parent agent', folderName: 'project', folderPath: '/work/project'),
       entry(
@@ -739,27 +629,29 @@ void main() {
 
     await pumpPanel(tester, controller);
     expect(controller.networkStatus, ChatLoadState.empty);
-    await tester.tap(
-      find.byKey(const ValueKey('chatFolder-folder::/work/project')),
-    );
-    await tester.pumpAndSettle();
-    // The Telegram drill-down lists the folder's own sessions; the
-    // subagent is not a folder session.
+    // The flat home keeps both rows — nothing is dropped or nested; the
+    // subagent is marked inline instead of indented under its parent.
     expect(find.text('Parent agent'), findsOneWidget);
-    expect(find.text('Child agent'), findsNothing);
-
-    // Back to the normal list: the folder destination survives (both rows
-    // stay in the projection — nothing was dropped), grouped as one
-    // destination with the parent on top.
+    expect(find.text('Child agent'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('chatFolder-folder::/work/project')),
+      findsNothing,
+    );
+    expect(
+      find.byKey(const ValueKey('chatTreeToggle-local:Parent agent')),
+      findsNothing,
+    );
+    final parent = tester.getRect(find.text('Parent agent'));
+    final child = tester.getRect(find.text('Child agent'));
+    expect(parent.left, child.left, reason: 'flat — no tree indent');
+    expect(
+      find.byType(SubagentMark),
+      findsOneWidget,
+      reason: 'the subagent carries the inline mark',
+    );
     expect(
       controller.visibleEntries.map((e) => e.id.value),
       containsAll(['Parent agent', 'Child agent']),
-    );
-    await tester.tap(find.byKey(const ValueKey('chatSidebarLocalBack')));
-    await tester.pumpAndSettle();
-    expect(
-      find.byKey(const ValueKey('chatFolder-folder::/work/project')),
-      findsOneWidget,
     );
   });
 
@@ -780,48 +672,6 @@ void main() {
     expect(tester.getSize(brand), const Size(30, 30));
     expect(tester.getRect(brand).top, greaterThanOrEqualTo(46));
     debugDefaultTargetPlatformOverride = null;
-  });
-
-  testWidgets('expanded child is visually indented and folder label is not '
-      'repeated in every row', (tester) async {
-    final controller = await makeController([
-      entry('Parent agent', folderName: 'project', folderPath: '/work/project'),
-      entry(
-        'Child agent',
-        folderName: 'project',
-        folderPath: '/work/project',
-        parentId: 'Parent agent',
-        isSubagent: true,
-      ),
-    ]);
-    await pumpPanel(
-      tester,
-      controller,
-      expandedParents: const {'Parent agent'},
-      selectedEntryId: ChatEntryId.local('Parent agent'),
-    );
-    await tester.tap(
-      find.byKey(const ValueKey('chatFolder-folder::/work/project')),
-    );
-    await tester.pumpAndSettle();
-
-    // The Telegram-style drill-down is FLAT: the folder name lives in the
-    // '<' header only, and the subagent is not a folder session (it stays
-    // under its parent in the root tree).
-    expect(find.text('project'), findsOneWidget);
-    expect(find.text('Parent agent'), findsOneWidget);
-    expect(find.text('Child agent'), findsNothing);
-    expect(
-      find.byKey(
-        ValueKey('chatTreeToggle-${ChatEntryId.local('Parent agent')}'),
-      ),
-      findsNothing,
-      reason: 'no tree affordances inside the Telegram drill-down',
-    );
-    final row = tester.getRect(
-      find.byKey(ValueKey('localSession-Parent agent')),
-    );
-    expect(row.height, 70);
   });
 
   testWidgets('compact scaffold uses text-led navigation hooks and FAB host', (

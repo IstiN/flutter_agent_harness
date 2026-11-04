@@ -313,14 +313,16 @@ class _FolderList extends StatelessWidget {
                             ),
                           ),
                           const SizedBox(height: 2),
-                          Text(
-                            context.l10n.localFolderSessionCount(
-                              folder.sessions.length,
+                          if (folder.id.isNotEmpty)
+                            Text(
+                              folderPathMeta(folder.id),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: tokens.ink3,
+                              ),
                             ),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(fontSize: 12, color: tokens.ink3),
-                          ),
                         ],
                       ),
                     ),

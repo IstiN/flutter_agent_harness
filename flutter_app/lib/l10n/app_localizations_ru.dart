@@ -178,19 +178,6 @@ class AppLocalizationsRu extends AppLocalizations {
   String get localFoldersTitle => 'Локальные папки';
 
   @override
-  String localFolderSessionCount(num count) {
-    String _temp0 = intl.Intl.pluralLogic(
-      count,
-      locale: localeName,
-      other: '$count сессии',
-      many: '$count сессий',
-      few: '$count сессии',
-      one: '1 сессия',
-    );
-    return '$_temp0';
-  }
-
-  @override
   String get localSessionsEmpty => 'В этой папке пока нет сессий';
 
   @override
