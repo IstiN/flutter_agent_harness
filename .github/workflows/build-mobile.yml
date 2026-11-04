@@ -1008,13 +1008,43 @@ jobs:
         run: |
           set -euo pipefail
           echo "Available iOS SDKs:"
-          xcodebuild -showsdks | grep iphoneos || true
-          echo "Downloading iOS platform if missing..."
-          xcodebuild -downloadPlatform iOS || true
-          # The attached device may run a newer iOS than the installed SDK;
-          # try to download the matching version. If this fails, the build
-          # will still fail with a clearer message.
-          xcodebuild -downloadPlatform iOS -buildVersion 26.5 || true
+          # gh-2054: an installed iphoneos* SDK IS this step's contract —
+          # `flutter build ios` links the device SDK that ships with Xcode
+          # (`-showsdks`), never the simulator runtimes -downloadPlatform
+          # fetches. The old step ran BOTH downloads unconditionally: the
+          # stale `-buildVersion 26.5` pin force-downloaded a multi-GB iOS
+          # 26.5 SIMULATOR runtime the SDK-27.1 runner never needed, the
+          # transfer stalled with zero output, and the unbounded step hung
+          # 77m35s until build-ios's 90m job ceiling cancelled the whole
+          # job (run 417861470 — no build, no submit, a lost TestFlight
+          # day). Now: SDK present => done in seconds; SDK missing => ONE
+          # unversioned download (hardcoded buildVersion pins rot) under a
+          # deadline watchdog that kills a stalled transfer instead of
+          # wedging the job.
+          if xcodebuild -showsdks | grep iphoneos; then
+            echo "iphoneos SDK installed — skipping the platform download (gh-2054)."
+            exit 0
+          fi
+          echo "No iphoneos SDK installed — downloading the iOS platform (bounded)..."
+          # Best-effort, as before: a failed/timed-out download never reds
+          # this step — the build below fails with xcodebuild's clearer
+          # message when the SDK is genuinely unusable. The watchdog bounds
+          # DURATION: `|| true` guards exit codes, never minutes.
+          DOWNLOAD_CEILING=120 # 20m — ≪ the 90m build-ios job budget
+          xcodebuild -downloadPlatform iOS &
+          DL_PID=$!
+          DEADLINE=$(( $(date +%s) + DOWNLOAD_CEILING ))
+          while kill -0 "$DL_PID" 2>/dev/null; do
+            if [ "$(date +%s)" -ge "$DEADLINE" ]; then
+              echo "::warning::iOS platform download exceeded ${DOWNLOAD_CEILING}s — killing the stalled transfer (gh-2054)"
+              kill "$DL_PID" 2>/dev/null || true
+              sleep 5
+              kill -9 "$DL_PID" 2>/dev/null || true
+              break
+            fi
+            sleep 10
+          done
+          wait "$DL_PID" 2>/dev/null || true
 
       - name: Create placeholder .env asset
         working-directory: flutter_app
