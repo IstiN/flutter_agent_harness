@@ -89,6 +89,8 @@ List<ChatListEntry> _goldenConversations({bool dense = false}) {
     String preview = 'No messages yet',
     String? folder,
     int unread = 0,
+    String? parentId,
+    bool isSubagent = false,
   }) {
     return ChatListEntry(
       id: ChatEntryId.local(id),
@@ -101,6 +103,8 @@ List<ChatListEntry> _goldenConversations({bool dense = false}) {
       lastActivity: activity,
       unreadCount: unread,
       localMessageCount: 2,
+      parentId: parentId,
+      isSubagent: isSubagent,
     );
   }
 
@@ -118,6 +122,17 @@ List<ChatListEntry> _goldenConversations({bool dense = false}) {
       preview: 'The release checklist is ready for review.',
       folder: 'fa',
       unread: 2,
+    ),
+    // A subagent of the release-planning parent (subagent sessions owner
+    // pass): never a flat row — it paints as the parent row's count chip.
+    conversation(
+      'release-scan',
+      'subagent 4a7f12c9',
+      DateTime.utc(2020, 1, 5, 10),
+      preview: 'The release scan finished without findings.',
+      folder: 'fa',
+      parentId: 'release-planning',
+      isSubagent: true,
     ),
     conversation(
       'research-notes',
