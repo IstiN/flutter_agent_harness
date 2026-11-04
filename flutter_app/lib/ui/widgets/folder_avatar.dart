@@ -2,6 +2,7 @@
 
 import 'package:fa/services/project_mount_env.dart';
 import 'package:fa/ui/chats/local_session_folders.dart';
+import 'package:fa_ui/fa_ui.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
@@ -84,6 +85,44 @@ class FolderAvatar extends StatelessWidget {
         fontWeight: FontWeight.w800,
         height: 1,
       ),
+    );
+  }
+}
+
+/// The NEUTRAL row glyph (owner pass): sessions and channels are not
+/// identities, so their rows carry no letter avatar and no hue — a
+/// rounded SQUARE ([size]·0.25 radius, the folder avatar's selected
+/// geometry) filled [FaDesignTokens.surface2] with a hairline
+/// [FahColors.border] border and a small [FaDesignTokens.ink3] icon
+/// (~42% of [size]). Session rows render the chat bubble; channel rows
+/// render [Icons.tag_rounded].
+class NeutralGlyphAvatar extends StatelessWidget {
+  const NeutralGlyphAvatar({
+    super.key,
+    required this.size,
+    this.icon = Icons.chat_bubble_outline,
+  });
+
+  final double size;
+
+  /// The ink3 glyph inside the tile (chat bubble for sessions, the tag
+  /// for channels).
+  final IconData icon;
+
+  @override
+  Widget build(BuildContext context) {
+    final tokens = FaDesignTokens.of(context);
+    final colors = FahColors.of(context);
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        color: tokens.surface2,
+        borderRadius: BorderRadius.circular(size * 0.25),
+        border: Border.all(color: colors.border),
+      ),
+      alignment: Alignment.center,
+      child: Icon(icon, size: size * 0.42, color: tokens.ink3),
     );
   }
 }

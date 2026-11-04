@@ -7,6 +7,7 @@ import 'package:fa/sandbox/env_factory.dart';
 import 'package:fa/ui/network/join_sheet.dart';
 import 'package:fa/ui/network/sign_in_dialog.dart';
 import 'package:fa/ui/widgets/dap_hub_mark.dart';
+import 'package:fa/ui/widgets/folder_avatar.dart';
 import 'package:fa/ui/widgets/messenger_navigation_controls.dart';
 import 'package:fa/ui/widgets/messenger_section_header.dart';
 import 'package:fa/ui/widgets/subagent_mark.dart';
@@ -1188,43 +1189,64 @@ class _Avatar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final channel = entry.kind == ChatListEntryKind.networkChannel;
-    final label = labelOverride != null
-        ? (labelOverride!.isEmpty ? '?' : labelOverride!.characters.first)
-        : channel
-        ? '#'
-        : (entry.avatarLabel ??
-              (entry.title.isEmpty ? '?' : entry.title.characters.first));
-    final avatar = Container(
-      key: folderBadge
-          ? ValueKey('chatFolderAvatar-${entry.id}')
-          : ValueKey('chatAvatar-${entry.id}'),
-      width: 42,
-      height: 42,
-      decoration: BoxDecoration(
-        color: colors.panelAlt,
-        borderRadius: BorderRadius.circular(channel ? 12 : 21),
-      ),
-      alignment: Alignment.center,
-      child: entry.avatarUrl == null
-          ? Text(
-              label.toUpperCase(),
-              style: TextStyle(
-                color: colors.text,
-                fontSize: 13,
-                fontWeight: FontWeight.w700,
+    final colors = this.colors;
+    // The NEUTRAL glyph (owner pass): sessions and channels are not
+    // identities — conversation rows carry ONE surface2 rounded square
+    // with an ink3 icon (chat bubble; the tag for channels), no letters,
+    // no hue. FOLDER destination rows keep their letter identity (the
+    // folder badge rides it) — identity avatars stay as-is.
+    final Widget avatar;
+    if (folderBadge) {
+      final label = labelOverride != null
+          ? (labelOverride!.isEmpty ? '?' : labelOverride!.characters.first)
+          : '?';
+      avatar = Container(
+        key: ValueKey('chatFolderAvatar-${entry.id}'),
+        width: 42,
+        height: 42,
+        decoration: BoxDecoration(
+          color: colors.panelAlt,
+          borderRadius: BorderRadius.circular(21),
+        ),
+        alignment: Alignment.center,
+        child: entry.avatarUrl == null
+            ? Text(
+                label.toUpperCase(),
+                style: TextStyle(
+                  color: colors.text,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                ),
+              )
+            : ClipRRect(
+                borderRadius: BorderRadius.circular(21),
+                child: Image.network(
+                  entry.avatarUrl!,
+                  width: 42,
+                  height: 42,
+                  fit: BoxFit.cover,
+                  errorBuilder: (_, _, _) => Text(label.toUpperCase()),
+                ),
               ),
+      );
+    } else {
+      avatar = entry.avatarUrl == null
+          ? NeutralGlyphAvatar(
+              key: ValueKey('chatAvatar-${entry.id}'),
+              size: 42,
+              icon: channel ? Icons.tag_rounded : Icons.chat_bubble_outline,
             )
           : ClipRRect(
+              key: ValueKey('chatAvatar-${entry.id}'),
               borderRadius: BorderRadius.circular(channel ? 12 : 21),
               child: Image.network(
                 entry.avatarUrl!,
                 width: 42,
                 height: 42,
                 fit: BoxFit.cover,
-                errorBuilder: (_, _, _) => Text(label.toUpperCase()),
               ),
-            ),
-    );
+            );
+    }
     if (folderBadge) {
       return Stack(
         clipBehavior: Clip.none,

@@ -121,10 +121,10 @@ class LocalSessionsPanel extends StatelessWidget {
                       ),
                       Expanded(
                         child: LocalFolderSessionList(
-                              sessions: openFolder.sessions,
-                              selectedSessionId: selectedSessionId,
-                              onOpenSession: onOpenSession,
-                            ),
+                          sessions: openFolder.sessions,
+                          selectedSessionId: selectedSessionId,
+                          onOpenSession: onOpenSession,
+                        ),
                       ),
                     ],
                   ],
@@ -293,10 +293,7 @@ class _FolderList extends StatelessWidget {
                             ),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: tokens.ink3,
-                            ),
+                            style: TextStyle(fontSize: 12, color: tokens.ink3),
                           ),
                         ],
                       ),
@@ -538,9 +535,7 @@ class _LocalSessionRowState extends State<LocalSessionRow> {
                       padding: const EdgeInsets.symmetric(horizontal: 10),
                       child: Row(
                         children: [
-                          FolderAvatar(
-                            seed: entry.id.value,
-                            label: entry.title,
+                          NeutralGlyphAvatar(
                             size: LocalSessionsPanel.avatarSize,
                           ),
                           const SizedBox(width: 10),

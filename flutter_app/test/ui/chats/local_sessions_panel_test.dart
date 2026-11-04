@@ -13,7 +13,8 @@ import 'package:fa/ui/chats/chat_list_entry.dart';
 import 'package:fa/ui/chats/local_chat_list_adapter.dart';
 import 'package:fa/ui/chats/local_sessions_panel.dart';
 import 'package:fa/ui/widgets/folder_avatar.dart';
-import 'package:fa_ui/fa_ui.dart' show FaVisualDirection, buildFaTheme;
+import 'package:fa_ui/fa_ui.dart'
+    show FaDesignTokens, FahColors, FaVisualDirection, buildFaTheme;
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:intl/date_symbol_data_local.dart';
@@ -147,8 +148,8 @@ void main() {
     expect(tester.getSize(avatars.first).height, 50);
     expect(
       tester
-          .getTopLeft(find.byKey(const ValueKey('localFolderRow-/work/fa')))
-          .dy -
+              .getTopLeft(find.byKey(const ValueKey('localFolderRow-/work/fa')))
+              .dy -
           tester
               .getTopLeft(
                 find.byKey(const ValueKey('localFolderRow-/work/mono')),
@@ -257,6 +258,54 @@ void main() {
     // Selected row keeps its key; the badge/preview stay visible.
     expect(find.byKey(const ValueKey('localSession-design')), findsOneWidget);
     expect(find.text('Preview of design'), findsOneWidget);
+  });
+
+  testWidgets('session rows carry the NEUTRAL glyph — no letter avatars '
+      '(owner pass)', (tester) async {
+    final c = await controller([
+      entry('design', folderPath: '/work/fa'),
+      entry('docs', folderPath: '/work/fa', isStreaming: true),
+    ]);
+    await pumpPanel(tester, c, folderId: '/work/fa');
+
+    // The Telegram session list shows NO colored FolderAvatar — sessions
+    // are not identities. Every row wears the neutral rounded-square
+    // glyph (surface2 fill, hairline border, ink3 chat bubble).
+    final sessionList = find.byKey(const ValueKey('localSessionList'));
+    expect(
+      find.descendant(of: sessionList, matching: find.byType(FolderAvatar)),
+      findsNothing,
+    );
+    final glyphs = find.descendant(
+      of: sessionList,
+      matching: find.byType(NeutralGlyphAvatar),
+    );
+    expect(glyphs, findsNWidgets(2));
+    expect(
+      tester.getSize(glyphs.first),
+      const Size.square(LocalSessionsPanel.avatarSize),
+    );
+    final icon = tester.widget<Icon>(
+      find.descendant(of: glyphs.first, matching: find.byType(Icon)),
+    );
+    expect(icon.icon, Icons.chat_bubble_outline);
+    expect(icon.size, closeTo(LocalSessionsPanel.avatarSize * 0.42, .001));
+    final tokens = FaDesignTokens.of(tester.element(sessionList));
+    final container = tester.widget<Container>(
+      find.descendant(of: glyphs.first, matching: find.byType(Container)),
+    );
+    final decoration = container.decoration! as BoxDecoration;
+    expect(decoration.color, tokens.surface2);
+    expect(decoration.borderRadius, BorderRadius.circular(46 * 0.25));
+    expect(
+      (decoration.border as Border).top.color,
+      FahColors.of(tester.element(sessionList)).border,
+    );
+    // No letter runs inside the glyph.
+    expect(
+      find.descendant(of: sessionList, matching: find.text('d')),
+      findsNothing,
+    );
   });
 
   testWidgets('back walks the open folder to the level-1 folder list and '

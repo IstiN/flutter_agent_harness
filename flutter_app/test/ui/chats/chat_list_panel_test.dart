@@ -305,11 +305,24 @@ void main() {
       final avatar = find.byKey(
         ValueKey('chatAvatar-${ChatEntryId.local('Design')}'),
       );
-      final avatarBefore = tester.widget<Container>(avatar);
+      Container avatarContainer() => tester.widget<Container>(
+        find.descendant(of: avatar, matching: find.byType(Container)),
+      );
       final avatarColorBefore =
-          (avatarBefore.decoration! as BoxDecoration).color;
-      final avatarTextBefore = tester.widget<Text>(
+          (avatarContainer().decoration! as BoxDecoration).color;
+      // The NEUTRAL glyph (owner pass): a surface2 rounded square with the
+      // ink3 chat bubble — no letter, no hue, on every selection state.
+      expect(
         find.descendant(of: avatar, matching: find.byType(Text)),
+        findsNothing,
+      );
+      expect(
+        tester
+            .widget<Icon>(
+              find.descendant(of: avatar, matching: find.byType(Icon)),
+            )
+            .icon,
+        Icons.chat_bubble_outline,
       );
       expect(pin, findsNothing);
 
@@ -331,18 +344,59 @@ void main() {
       final material = tester.widget<Material>(row);
       expect(material.color, Theme.of(context).colorScheme.primary);
       expect(material.color, const Color(0xFF3F8FF7));
-      final avatarAfter = tester.widget<Container>(avatar);
+      final avatarAfter = avatarContainer();
       expect(
         (avatarAfter.decoration! as BoxDecoration).color,
         avatarColorBefore,
       );
-      final avatarTextAfter = tester.widget<Text>(
+      // Still the glyph — the selection never paints letters back in.
+      expect(
         find.descendant(of: avatar, matching: find.byType(Text)),
+        findsNothing,
       );
-      expect(avatarTextAfter.style?.color, avatarTextBefore.style?.color);
       expect(pin, findsNothing);
     },
   );
+
+  testWidgets('network channel rows carry the neutral tag glyph', (
+    tester,
+  ) async {
+    final controller = await makeController(
+      const [],
+      network: FixtureNetworkInboxAdapter(
+        items: [
+          NetworkInboxItem(
+            kind: ChatListEntryKind.networkChannel,
+            networkId: 'remote',
+            id: 'general',
+            title: 'General',
+            unreadCount: 3,
+          ),
+        ],
+      ),
+    );
+    await pumpPanel(tester, controller);
+    final avatar = find.byKey(
+      ValueKey(
+        'chatAvatar-${ChatEntryId.network(ChatListEntryKind.networkChannel, networkId: 'remote', id: 'general')}',
+      ),
+    );
+    expect(avatar, findsOneWidget);
+    expect(tester.getSize(avatar), const Size.square(42));
+    expect(
+      tester
+          .widget<Icon>(
+            find.descendant(of: avatar, matching: find.byType(Icon)),
+          )
+          .icon,
+      Icons.tag_rounded,
+    );
+    expect(
+      find.descendant(of: avatar, matching: find.byType(Text)),
+      findsNothing,
+      reason: 'no letters, no hue on channel rows',
+    );
+  });
 
   testWidgets('network filter is independent and does not open a chat', (
     tester,
@@ -459,6 +513,20 @@ void main() {
       );
       expect(tester.getSize(folderAvatar), const Size.square(42));
       expect(tester.getSize(channelAvatar), const Size.square(42));
+      // Folder destinations keep their letter identity; conversation rows
+      // carry the neutral glyph instead.
+      expect(
+        find.descendant(of: folderAvatar, matching: find.byType(Text)),
+        findsOneWidget,
+      );
+      expect(
+        tester
+            .widget<Icon>(
+              find.descendant(of: channelAvatar, matching: find.byType(Icon)),
+            )
+            .icon,
+        Icons.chat_bubble_outline,
+      );
       final badge = find.descendant(
         of: folder,
         matching: find.byKey(ValueKey('chatFolderBadge-${agent.id}')),
@@ -683,10 +751,10 @@ void main() {
     // Back to the normal list: the folder destination survives (both rows
     // stay in the projection — nothing was dropped), grouped as one
     // destination with the parent on top.
-    expect(controller.visibleEntries.map((e) => e.id.value), containsAll([
-      'Parent agent',
-      'Child agent',
-    ]));
+    expect(
+      controller.visibleEntries.map((e) => e.id.value),
+      containsAll(['Parent agent', 'Child agent']),
+    );
     await tester.tap(find.byKey(const ValueKey('chatSidebarLocalBack')));
     await tester.pumpAndSettle();
     expect(

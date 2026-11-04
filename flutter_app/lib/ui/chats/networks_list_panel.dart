@@ -137,15 +137,14 @@ class _ChatNetworksPanelState extends State<ChatNetworksPanel> {
                       ),
                       Expanded(
                         child: _ChannelsList(
-                              networkId: openId,
-                              channels: session?.channels ?? const [],
-                              selectedChannelId:
-                                  widget.mode?.networkId == openId
-                                  ? widget.mode?.channelId
-                                  : null,
-                              onOpenChannel: (channel) =>
-                                  widget.onOpenChannel(openId, channel),
-                            ),
+                          networkId: openId,
+                          channels: session?.channels ?? const [],
+                          selectedChannelId: widget.mode?.networkId == openId
+                              ? widget.mode?.channelId
+                              : null,
+                          onOpenChannel: (channel) =>
+                              widget.onOpenChannel(openId, channel),
+                        ),
                       ),
                     ],
                   ],
@@ -423,8 +422,6 @@ class _ChannelsList extends StatelessWidget {
         final name = channel.name ?? channel.id;
         return _PanelRow(
           key: ValueKey('chatNetworkChannel-${channel.id}'),
-          avatarSeed: channel.id,
-          label: name,
           title: name,
           meta: channel.isPublic
               ? context.l10n.chatNetworkChannelPublic
@@ -438,14 +435,13 @@ class _ChannelsList extends StatelessWidget {
   }
 }
 
-/// One Telegram row of the networks panel: 70pt pitch, Ø46 letter-gradient
-/// avatar, 14pt semibold title, 12.5pt meta line, hairlines, accent
-/// highlight on the selected row (the Local sessions panel's row shape).
+/// One Telegram row of the networks panel: 70pt pitch, the NEUTRAL tag
+/// glyph (owner pass — channels are not identities), 14pt semibold title,
+/// 12.5pt meta line, hairlines, accent highlight on the selected row (the
+/// Local sessions panel's row shape).
 class _PanelRow extends StatelessWidget {
   const _PanelRow({
     super.key,
-    required this.avatarSeed,
-    required this.label,
     required this.title,
     required this.meta,
     required this.selected,
@@ -453,8 +449,6 @@ class _PanelRow extends StatelessWidget {
     required this.onTap,
   });
 
-  final String avatarSeed;
-  final String label;
   final String title;
   final String meta;
   final bool selected;
@@ -484,7 +478,10 @@ class _PanelRow extends StatelessWidget {
                   padding: const EdgeInsets.symmetric(horizontal: 10),
                   child: Row(
                     children: [
-                      FolderAvatar(seed: avatarSeed, label: label),
+                      const NeutralGlyphAvatar(
+                        size: LocalSessionsPanel.avatarSize,
+                        icon: Icons.tag_rounded,
+                      ),
                       const SizedBox(width: 12),
                       Expanded(
                         child: Column(

@@ -145,7 +145,28 @@ void main() {
     // chevron and the network's name in the header.
     final strip = tester.getRect(find.byKey(const ValueKey('networksStrip')));
     final general = find.byKey(const ValueKey('chatNetworkChannel-c1'));
-    expect(find.byKey(const ValueKey('chatNetworkChannels')), findsOneWidget);
+    final channels = find.byKey(const ValueKey('chatNetworkChannels'));
+    expect(channels, findsOneWidget);
+    // Channel rows carry the NEUTRAL tag glyph — no letter avatars.
+    expect(
+      find.descendant(of: channels, matching: find.byType(FolderAvatar)),
+      findsNothing,
+    );
+    expect(
+      find.descendant(of: channels, matching: find.byType(NeutralGlyphAvatar)),
+      findsNWidgets(2),
+    );
+    expect(
+      tester
+          .widgetList<Icon>(
+            find.descendant(
+              of: find.byKey(const ValueKey('chatNetworkChannel-c1')),
+              matching: find.byType(Icon),
+            ),
+          )
+          .map((icon) => icon.icon),
+      contains(Icons.tag_rounded),
+    );
     expect(find.byKey(const ValueKey('chatChannelsBack')), findsOneWidget);
     expect(find.byKey(const ValueKey('chatNetworksBack')), findsNothing);
     expect(tester.getTopLeft(general).dx, greaterThan(strip.right));
