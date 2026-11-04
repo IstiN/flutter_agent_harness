@@ -14,7 +14,7 @@ import 'package:fa/ui/chats/local_chat_list_adapter.dart';
 import 'package:fa/ui/chats/local_sessions_panel.dart';
 import 'package:fa/ui/widgets/folder_avatar.dart';
 import 'package:fa_ui/fa_ui.dart'
-    show FaDesignTokens, FahColors, FaVisualDirection, buildFaTheme;
+    show FaVisualDirection, buildFaTheme;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -276,7 +276,7 @@ void main() {
     expect(find.text('Preview of design'), findsOneWidget);
   });
 
-  testWidgets('session rows carry the NEUTRAL glyph — no letter avatars '
+  testWidgets('drilled session rows have NO leading glyph — title leads '
       '(owner pass)', (tester) async {
     final c = await controller([
       entry('design', folderPath: '/work/fa'),
@@ -284,44 +284,28 @@ void main() {
     ]);
     await pumpPanel(tester, c, folderId: '/work/fa');
 
-    // The Telegram session list shows NO colored FolderAvatar — sessions
-    // are not identities. Every row wears the neutral rounded-square
-    // glyph (surface2 fill, hairline border, ink3 chat bubble).
+    // Space is tight in the drilled pane: no neutral glyph, no letter
+    // avatar — the row is title (+time) over preview (+running dot).
     final sessionList = find.byKey(const ValueKey('localSessionList'));
     expect(
       find.descendant(of: sessionList, matching: find.byType(FolderAvatar)),
       findsNothing,
     );
-    final glyphs = find.descendant(
-      of: sessionList,
-      matching: find.byType(NeutralGlyphAvatar),
-    );
-    expect(glyphs, findsNWidgets(2));
     expect(
-      tester.getSize(glyphs.first),
-      const Size.square(LocalSessionsPanel.avatarSize),
-    );
-    final icon = tester.widget<Icon>(
-      find.descendant(of: glyphs.first, matching: find.byType(Icon)),
-    );
-    expect(icon.icon, Icons.chat_bubble_outline);
-    expect(icon.size, closeTo(LocalSessionsPanel.avatarSize * 0.42, .001));
-    final tokens = FaDesignTokens.of(tester.element(sessionList));
-    final container = tester.widget<Container>(
-      find.descendant(of: glyphs.first, matching: find.byType(Container)),
-    );
-    final decoration = container.decoration! as BoxDecoration;
-    expect(decoration.color, tokens.surface2);
-    expect(decoration.borderRadius, BorderRadius.circular(46 * 0.25));
-    expect(
-      (decoration.border as Border).top.color,
-      FahColors.of(tester.element(sessionList)).border,
-    );
-    // No letter runs inside the glyph.
-    expect(
-      find.descendant(of: sessionList, matching: find.text('d')),
+      find.descendant(of: sessionList, matching: find.byType(NeutralGlyphAvatar)),
       findsNothing,
     );
+    expect(find.byIcon(Icons.chat_bubble_outline), findsNothing);
+    // The title starts at the row's leading padding (no avatar offset).
+    final titleLeft = tester
+        .getTopLeft(find.text('design'))
+        .dx;
+    final rowLeft = tester
+        .getTopLeft(find.byKey(const ValueKey('localSession-design')))
+        .dx;
+    expect(titleLeft - rowLeft, closeTo(10, .5));
+    // Streaming dot still rides the row.
+    expect(find.byKey(const ValueKey('localSessionRunning')), findsOneWidget);
   });
 
   testWidgets('the level swap animates in (200ms easeInOutCubic) and keys '

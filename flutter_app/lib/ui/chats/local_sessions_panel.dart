@@ -571,10 +571,6 @@ class _LocalSessionRowState extends State<LocalSessionRow> {
                       padding: const EdgeInsets.symmetric(horizontal: 10),
                       child: Row(
                         children: [
-                          NeutralGlyphAvatar(
-                            size: LocalSessionsPanel.avatarSize,
-                          ),
-                          const SizedBox(width: 10),
                           Expanded(
                             child: Column(
                               mainAxisAlignment: MainAxisAlignment.center,
