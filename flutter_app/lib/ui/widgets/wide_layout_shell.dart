@@ -1401,7 +1401,13 @@ class _WideLayoutShellState extends State<WideLayoutShell>
         if (changed && !presentation.pinned) dismissPresentation = true;
       }
       if (changed && _filesPresentation != null) dismissPresentation = true;
-      if (changed) _networksSurfaceOpen = false;
+      if (changed) {
+        // The section-owned surfaces reset together (owner pass): the
+        // networks sidebar AND the Local drill — returning to Local shows
+        // the level-1 folder list, never the drilled folder.
+        _networksSurfaceOpen = false;
+        _localFolderId = null;
+      }
       _section = section;
       if (section == _WideShellSection.activity) {
         _narrowActivityDetailVisible = false;

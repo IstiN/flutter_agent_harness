@@ -27,6 +27,7 @@ import 'package:fa/ui/widgets/sidebar_nav_item.dart';
 import 'package:fa/ui/chats/chat_list_entry.dart';
 import 'package:fa/ui/chats/chat_list_panel.dart';
 import 'package:fa/ui/chats/local_chat_list_adapter.dart';
+import 'package:fa/ui/chats/local_sessions_panel.dart';
 import 'package:fa/ui/chats/networks_list_panel.dart';
 import 'package:fa/ui/widgets/wide_layout_shell.dart';
 import 'package:fa_ui/fa_ui.dart'
@@ -1488,6 +1489,56 @@ void main() {
       findsOneWidget,
     );
     debugDefaultTargetPlatformOverride = null;
+  });
+
+  testWidgets('Local drill state resets on a section switch (owner pass)', (
+    tester,
+  ) async {
+    final env = MemoryExecutionEnv();
+    final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions');
+    ChatListEntry folderEntry(String id, String cwd) => ChatListEntry(
+      id: ChatEntryId.local(id),
+      kind: ChatListEntryKind.localAgent,
+      title: id,
+      preview: 'Preview of $id',
+      createdAt: DateTime.utc(2025),
+      lastActivity: DateTime.utc(2026),
+      folderPath: cwd,
+      localMessageCount: 1,
+    );
+    await pumpShell(
+      tester,
+      manager: manager,
+      localChatAdapterFactory: () => _StaticLocalChatListSource([
+        folderEntry('design-session', '/work/fa'),
+        folderEntry('docs-session', '/work/mono'),
+      ]),
+    );
+    await tester.pumpAndSettle();
+
+    // Drill into a folder in the Local section.
+    await tester.tap(find.byKey(const ValueKey('messengerPrimaryNav-local')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('localFolderRow-/work/fa')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('localSessionList')), findsOneWidget);
+    expect(find.byKey(const ValueKey('localFoldersStrip')), findsOneWidget);
+
+    // A section switch (the Channels filter row selects Chats) must drop
+    // the shell-owned drill state along with the networks surface.
+    await tester.tap(find.byKey(const ValueKey('chatFilter-channels')));
+    await tester.pumpAndSettle();
+    expect(find.byType(LocalSessionsPanel), findsNothing);
+
+    // Back to Local: the LEVEL-1 folder list again — no strip, no drilled
+    // session list.
+    await tester.tap(find.byKey(const ValueKey('messengerPrimaryNav-local')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('localFoldersList')), findsOneWidget);
+    expect(find.byKey(const ValueKey('localFoldersStrip')), findsNothing);
+    expect(find.byKey(const ValueKey('localSessionList')), findsNothing);
+    expect(find.text('design-session'), findsNothing);
+    expect(find.text('fa'), findsOneWidget, reason: 'the list row name');
   });
 
   testWidgets('the Local rail row walks folders → sessions → open → back', (
