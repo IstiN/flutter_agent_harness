@@ -16,6 +16,7 @@ import 'dart:typed_data' show BytesBuilder, Uint8List;
 import 'package:http/http.dart' as http;
 
 import 'package:archive/archive.dart';
+import 'package:flutter_agent_harness/src/cli/binary_swap.dart';
 import 'package:crypto/crypto.dart' show sha256;
 import 'package:cryptography/cryptography.dart' show RsaPublicKey;
 import 'package:pointycastle/export.dart'
@@ -1021,32 +1022,18 @@ List<int>? _extractMacBinary(Archive archive) {
   return null;
 }
 
-/// Atomically replaces [target] with the file at [staging]. On Windows the
-/// locked executable is moved aside first; on Unix [staging] is renamed over
-/// [target] and made executable.
+/// Replaces [target] with the file at [staging] (issue #2052).
+///
+/// The swap itself lives in `lib/src/cli/binary_swap.dart`: a bare
+/// rename-aside + rename-in pair left the install with `fa.exe.old` and no
+/// `fa.exe` whenever the second rename failed or the process died between
+/// them, and nothing verified the result. The module validates the staged
+/// file, rolls the parked binary back on failure and verifies the target.
 Future<void> _atomicSwap(
   String staging,
   String target,
   Future<ProcessResult> Function(String, List<String>) runProcess,
-) async {
-  if (Platform.isWindows) {
-    final aside = '$target.old';
-    try {
-      File(aside).deleteSync();
-    } on PathNotFoundException {
-      // No stale aside file to clean up — safe to proceed.
-    }
-    File(target).renameSync(aside);
-    File(staging).renameSync(target);
-  } else {
-    if (File(target).existsSync()) {
-      // One-generation rollback copy, overwritten on every update.
-      await File(target).copy('$target.bak');
-    }
-    await File(staging).rename(target);
-    await runProcess('chmod', ['+x', target]);
-  }
-}
+) => swapBinary(staging: staging, target: target, runProcess: runProcess);
 
 /// Extracts a tar.gz archive into [tmpDir] via the system `tar` command.
 ///

@@ -246,6 +246,20 @@ void main() {
     }
   });
 
+  test('install.ps1 heals an interrupted self-update (issue #2052)', () {
+    final ps = rendered['site/install.ps1']!;
+    // An interrupted `fa update` leaves the previous binary parked as
+    // fa.exe.old with no fa.exe: every shell then answers "command not found"
+    // and nothing on the machine points at the copy. Re-running the documented
+    // installer has to recover that state instead of reporting a fresh install.
+    expect(ps, contains(r'$asideExe = Join-Path $binDir "$BinaryName.exe.old"'));
+    expect(
+      ps,
+      contains(r'if (-not (Test-Path $target) -and (Test-Path $asideExe)) {'),
+    );
+    expect(ps, contains('restoring the parked binary'));
+  });
+
   test('install.ps1 refuses to overwrite a running Fa (gh-1945)', () {
     final ps = rendered['site/install.ps1']!;
     // Windows locks a running executable: an in-place upgrade over an open TUI
