@@ -1,5 +1,7 @@
 // Copyright (c) 2026, the Flutter Agent Harness authors.
 
+import 'dart:math' as math;
+
 import 'package:fa_ui/fa_ui.dart';
 import 'package:flutter/material.dart';
 
@@ -36,13 +38,15 @@ class MessengerRailDestination {
 /// The vertical left rail (Telegram pattern) that replaces the floating
 /// horizontal section pill-bar in the wide shell.
 ///
-/// Geometry contract (owner spec): ~78pt wide, its own surface separated
-/// from the content column by an ~8pt seam; rows pitch ~64pt; a row is a
-/// pictogram (25–28pt) with a single-line ~10pt label CENTERED BELOW it;
-/// the unread badge is a 19–20pt circle overlapping the icon's top-right;
-/// the selected row tints icon+label ACCENT with NO background fill; the
-/// bottom slot is a pinned settings glyph; the tap target is the whole
-/// row (icon+label together).
+/// Geometry contract (owner spec): a floating glass card ~78pt wide —
+/// 1:1 with the collapsed chats sidebar's panel (8pt margins on every
+/// side, the same 18pt card radius, one shared backdrop capture) —
+/// separated from the content column by the card's 8pt seam; rows pitch
+/// ~64pt; a row is a pictogram (25–28pt) with a single-line ~10pt label
+/// CENTERED BELOW it; the unread badge is a 19–20pt circle overlapping
+/// the icon's top-right; the selected row tints icon+label ACCENT with NO
+/// background fill; the bottom slot is a pinned settings glyph; the tap
+/// target is the whole row (icon+label together).
 class MessengerNavRail extends StatelessWidget {
   const MessengerNavRail({
     super.key,
@@ -60,6 +64,12 @@ class MessengerNavRail extends StatelessWidget {
   static const double labelSize = 10;
   static const double badgeSize = 19;
 
+  /// The card radius, the same value the collapsed chats sidebar's glass
+  /// panel uses in wide_layout_shell.dart (owner: the rail is under glass
+  /// 1:1 with that panel — one radius, no drift; pinned equal by the
+  /// wide-shell surface test).
+  static const double glassRadius = 18;
+
   final List<MessengerRailDestination> destinations;
   final String settingsLabel;
   final VoidCallback onSettingsTap;
@@ -68,24 +78,46 @@ class MessengerNavRail extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final tokens = FaDesignTokens.of(context);
-    return ColoredBox(
-      color: tokens.backgroundAlt,
-      child: Column(
-        children: [
-          for (final destination in destinations)
-            MessengerNavRailItem(destination: destination),
-          const Spacer(),
-          MessengerNavRailItem(
-            destination: MessengerRailDestination(
-              rowKey: const ValueKey('railSettingsRow'),
-              icon: Icons.settings_outlined,
-              label: settingsLabel,
-              selected: false,
-              onTap: (_) => onSettingsTap(),
+    // One glass surface for the WHOLE rail (never per row): the same
+    // FaSurface glass treatment as the collapsed chats sidebar's panel —
+    // same tokens (surface1 tint, kit glass settings), same 18pt radius,
+    // same BackdropGroup participation — so content slides under it and
+    // blurs through 1:1 with that panel.
+    // Titlebar clearance mirrors the chats sidebar exactly (ChatListPanel
+    // non-compact): the chrome's first row sits at max(seam, MediaQuery
+    // top) from the window edge — the card's 8pt margin plus what remains
+    // of the macOS titlebar beyond it (zero in tests and web), so the
+    // first row clears the traffic lights on the same line the sidebar
+    // uses.
+    final titlebarTop = math.max(
+      0.0,
+      MediaQuery.paddingOf(context).top - MessengerNavRail.seam,
+    );
+    return Padding(
+      padding: const EdgeInsets.all(MessengerNavRail.seam),
+      child: FaSurface(
+        glass: true,
+        useBackdropGroup: true,
+        color: tokens.surface1,
+        borderRadius: BorderRadius.circular(MessengerNavRail.glassRadius),
+        child: Column(
+          children: [
+            SizedBox(height: titlebarTop),
+            for (final destination in destinations)
+              MessengerNavRailItem(destination: destination),
+            const Spacer(),
+            MessengerNavRailItem(
+              destination: MessengerRailDestination(
+                rowKey: const ValueKey('railSettingsRow'),
+                icon: Icons.settings_outlined,
+                label: settingsLabel,
+                selected: false,
+                onTap: (_) => onSettingsTap(),
+              ),
             ),
-          ),
-          SizedBox(height: bottomPadding),
-        ],
+            SizedBox(height: bottomPadding),
+          ],
+        ),
       ),
     );
   }

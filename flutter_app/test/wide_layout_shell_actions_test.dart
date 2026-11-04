@@ -856,13 +856,15 @@ void main() {
       ..addSession('design-session', _fakeService(env));
     await pumpShell(tester, manager: manager);
     await tester.pump(const Duration(milliseconds: 100));
-    // The rail is full-bled at the window's left edge with its own
-    // surface; the content column starts after the 8pt seam.
+    // The rail's floating glass card: the outer footprint starts at the
+    // window's left edge and carries the 8pt margins on every side; the
+    // sidebar column follows immediately (the rail's trailing margin is
+    // the seam, the sidebar's own margin completes the gutter).
     final railRect = tester.getRect(
       find.byKey(const ValueKey('messengerNavRail')),
     );
     expect(railRect.left, 0);
-    expect(railRect.width, MessengerNavRail.width);
+    expect(railRect.width, MessengerNavRail.width + MessengerNavRail.seam * 2);
     expect(
       railRect.height,
       tester.view.physicalSize.height / tester.view.devicePixelRatio,
@@ -870,7 +872,42 @@ void main() {
     final sidebar = tester.getRect(
       find.byKey(const ValueKey('desktopSidebarContainer')),
     );
-    expect(sidebar.left - railRect.right, MessengerNavRail.seam);
+    expect(sidebar.left, railRect.right);
+    // The rail's surface is the chats panel's glass 1:1: same FaSurface
+    // params (glass mode, one shared backdrop capture, card radius,
+    // surface1 tint) and the same 16pt gutter between the two cards
+    // (8pt floating margin on each).
+    final railSurface = tester.widget<FaSurface>(
+      find.descendant(
+        of: find.byKey(const ValueKey('messengerNavRail')),
+        matching: find.byType(FaSurface),
+      ),
+    );
+    final sidebarSurface = tester.widget<FaSurface>(
+      find.byKey(const ValueKey('glassSidebarPanel')),
+    );
+    expect(railSurface.glass, sidebarSurface.glass);
+    expect(railSurface.useBackdropGroup, sidebarSurface.useBackdropGroup);
+    expect(
+      railSurface.borderRadius?.topLeft.x,
+      sidebarSurface.borderRadius?.topLeft.x,
+      reason: 'one card radius: the rail matches the chats panel 1:1',
+    );
+    expect(railSurface.color, sidebarSurface.color);
+    final railCard = tester.getRect(
+      find.descendant(
+        of: find.byKey(const ValueKey('messengerNavRail')),
+        matching: find.byType(FaSurface),
+      ),
+    );
+    final sidebarCard = tester.getRect(
+      find.byKey(const ValueKey('glassSidebarPanel')),
+    );
+    expect(
+      sidebarCard.left - railCard.right,
+      MessengerNavRail.seam * 2,
+      reason: '8pt floating margin on each card = the shared gutter',
+    );
     // The horizontal section pill-bar is gone — its destinations moved
     // into the rail rows.
     expect(find.byKey(const ValueKey('chatCategoryChips')), findsNothing);

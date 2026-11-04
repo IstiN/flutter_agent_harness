@@ -1,7 +1,8 @@
 // Copyright (c) 2026, the Flutter Agent Harness authors.
 
 import 'package:fa/ui/widgets/messenger_nav_rail.dart';
-import 'package:fa_ui/fa_ui.dart' show FaVisualDirection, buildFaTheme;
+import 'package:fa_ui/fa_ui.dart'
+    show FaSurface, FaVisualDirection, buildFaTheme;
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -56,16 +57,82 @@ void main() {
     final label = tester.getRect(find.text('All'));
     expect(label.center.dx, closeTo(row.center.dx, .5), reason: 'centered');
     expect(label.center.dy, greaterThan(icon.center.dy), reason: 'below icon');
-    // The settings glyph is pinned to the rail's bottom slot.
+    // The settings glyph is pinned to the glass card's bottom slot (the
+    // card, not the rail's outer footprint, carries the 8pt margins).
     final settings = tester.getRect(
       find.byKey(const ValueKey('railSettingsRow')),
     );
-    final railRect = tester.getRect(find.byType(MessengerNavRail));
+    final card = tester.getRect(
+      find.descendant(
+        of: find.byType(MessengerNavRail),
+        matching: find.byType(FaSurface),
+      ),
+    );
     expect(
-      railRect.bottom - settings.bottom,
+      card.bottom - settings.bottom,
       inInclusiveRange(0, 12),
       reason: 'settings pinned to the bottom slot',
     );
+  });
+
+  testWidgets('rail surface is the collapsed sidebar panel floating glass '
+      'card (FaSurface, shared backdrop, 18pt radius, 8pt margins)', (
+    tester,
+  ) async {
+    await tester.pumpWidget(_wrap(rail()));
+    final surface = tester.widget<FaSurface>(
+      find.descendant(
+        of: find.byType(MessengerNavRail),
+        matching: find.byType(FaSurface),
+      ),
+    );
+    expect(surface.glass, isTrue, reason: 'under glass, like the sidebar');
+    expect(
+      surface.useBackdropGroup,
+      isTrue,
+      reason: 'one shared backdrop capture for the whole rail',
+    );
+    expect(
+      surface.borderRadius?.topLeft.x,
+      MessengerNavRail.glassRadius,
+      reason: 'the collapsed chats panel card radius',
+    );
+    // The floating-card geometry: 8pt margins on every side of the
+    // rail's outer footprint; the card itself stays the full rail width.
+    final railRect = tester.getRect(find.byType(MessengerNavRail));
+    final cardRect = tester.getRect(
+      find.descendant(
+        of: find.byType(MessengerNavRail),
+        matching: find.byType(FaSurface),
+      ),
+    );
+    expect(cardRect.left, MessengerNavRail.seam);
+    expect(cardRect.top, MessengerNavRail.seam);
+    expect(railRect.right - cardRect.right, MessengerNavRail.seam);
+    expect(railRect.bottom - cardRect.bottom, MessengerNavRail.seam);
+    expect(cardRect.width, MessengerNavRail.width);
+  });
+
+  testWidgets('first row clears the macOS titlebar like the chats sidebar '
+      '(mirror of its max(8, MediaQuery top) first-row line)', (tester) async {
+    Rect firstRowTop() => tester.getRect(find.byKey(const ValueKey('railAll')));
+
+    // No titlebar (tests/web): the card's 8pt margin is the only inset.
+    await tester.pumpWidget(_wrap(rail()));
+    expect(firstRowTop().top, MessengerNavRail.seam);
+
+    // macOS traffic lights: the sidebar's chrome starts at max(8, top),
+    // i.e. its 8pt panel margin + MediaQuery.top - 8 inside — the rail
+    // mirrors that exact value (52pt window padding → first row at 52).
+    await tester.pumpWidget(
+      _wrap(
+        MediaQuery(
+          data: const MediaQueryData(padding: EdgeInsets.only(top: 52)),
+          child: rail(),
+        ),
+      ),
+    );
+    expect(firstRowTop().top, 52, reason: 'same line as the sidebar chrome');
   });
 
   testWidgets('selected row tints accent without a background fill', (

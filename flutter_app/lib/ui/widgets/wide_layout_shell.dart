@@ -1094,10 +1094,13 @@ class _WideLayoutShellState extends State<WideLayoutShell>
             // gutter the open panel now keeps. Other platforms stay inside
             // the panel.
             final toggleShift = _isMacOS ? 60 * progress : 0.0;
-            // The vertical rail (left edge of the wide shell) + its 8pt
-            // seam precede the sidebar column, so floating chrome anchored
-            // to the sidebar's edges must clear the rail's footprint.
-            final railLeading = MessengerNavRail.width + MessengerNavRail.seam;
+            // The rail's floating glass card (8pt margins on every side,
+            // 1:1 with the collapsed chats panel) + its trailing 8pt
+            // margin-as-seam precede the sidebar column, so floating
+            // chrome anchored to the sidebar's edges must clear the
+            // rail's footprint.
+            final railLeading =
+                MessengerNavRail.width + MessengerNavRail.seam * 2;
             // The 36pt circle keeps the panel's 8pt gutter contract on
             // BOTH sides: 8pt card margin + 8pt gutter put its right edge
             // 16pt inside the sidebar's right edge (owner call: the open
@@ -1125,7 +1128,6 @@ class _WideLayoutShellState extends State<WideLayoutShell>
                     Row(
                       children: [
                         _buildNavRail(),
-                        const SizedBox(width: MessengerNavRail.seam),
                         SizedBox(
                           key: const ValueKey('desktopSidebarContainer'),
                           width: sidebarWidth,

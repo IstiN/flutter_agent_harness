@@ -8,6 +8,7 @@ import 'package:fa/main.dart';
 import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/flutter_session_manager.dart';
 import 'package:fa/services/session_ui_prefs_store.dart';
+import 'package:fa/ui/widgets/messenger_nav_rail.dart';
 import 'package:fa/ui/widgets/wide_layout_shell.dart';
 import 'package:fa_ui/fa_ui.dart'
     show
@@ -143,6 +144,11 @@ void main() {
   double handleCenterX(WidgetTester tester) =>
       tester.getRect(find.byKey(kSidebarDragHandleKey)).center.dx;
 
+  /// The rail's leading footprint (glass card + its 8pt margins) + the
+  /// trailing margin-as-seam: the sidebar column — and the card edge the
+  /// handle hugs — starts after it.
+  double railLeading() => MessengerNavRail.width + MessengerNavRail.seam * 2;
+
   testWidgets('the divider drag resizes the sessions sidebar, clamps to '
       'the 220-480 range, and persists on release (issue #426 item 4)', (
     tester,
@@ -153,13 +159,14 @@ void main() {
 
     await pumpShell(tester, manager: manager);
     // Compact reference 260: the handle hugs the panel's right edge
-    // (sidebarWidth - 8, the card's edge inside its outer margin).
-    expect(handleCenterX(tester), closeTo(260 - 8, 0.5));
+    // (railLeading() + sidebarWidth - 8, the card's edge inside its outer
+    // margin, after the rail's glass card).
+    expect(handleCenterX(tester), closeTo(railLeading() + 260 - 8, 0.5));
 
     // Drag right: the sidebar grows with the pointer.
     await tester.drag(find.byKey(kSidebarDragHandleKey), const Offset(90, 0));
     await tester.pumpAndSettle();
-    expect(handleCenterX(tester), closeTo(350 - 8, 0.5));
+    expect(handleCenterX(tester), closeTo(railLeading() + 350 - 8, 0.5));
     // The settled gesture wrote the store (the shell owns its instance —
     // verify through a fresh load, like a second reader would).
     expect(
@@ -172,7 +179,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(
       handleCenterX(tester),
-      closeTo(SessionUiPrefsStore.maxSidebarWidth - 8, 0.5),
+      closeTo(railLeading() + SessionUiPrefsStore.maxSidebarWidth - 8, 0.5),
     );
     expect(
       (await SessionUiPrefsStore.load(env)).sidebarWidth,
@@ -184,7 +191,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(
       handleCenterX(tester),
-      closeTo(SessionUiPrefsStore.minSidebarWidth - 8, 0.5),
+      closeTo(railLeading() + SessionUiPrefsStore.minSidebarWidth - 8, 0.5),
     );
     expect(
       (await SessionUiPrefsStore.load(env)).sidebarWidth,
@@ -256,7 +263,7 @@ void main() {
     await pumpShell(tester, manager: manager);
     // The boot adopts the stored width — the handle opens at 400.
     await tester.pumpAndSettle();
-    expect(handleCenterX(tester), closeTo(400 - 8, 0.5));
+    expect(handleCenterX(tester), closeTo(railLeading() + 400 - 8, 0.5));
   });
 
   testWidgets('a width stored out of range is clamped on load, never '
@@ -274,7 +281,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(
       handleCenterX(tester),
-      closeTo(SessionUiPrefsStore.maxSidebarWidth - 8, 0.5),
+      closeTo(railLeading() + SessionUiPrefsStore.maxSidebarWidth - 8, 0.5),
     );
   });
 
