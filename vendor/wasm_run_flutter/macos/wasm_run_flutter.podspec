@@ -9,10 +9,24 @@ local_zip_name = "#{release_tag_name}.zip"
 `
 cd Frameworks
 
-if [ ! -f #{local_zip_name} ]
+# gh-2055: the guard must key on the artifact pod install actually consumes —
+# the exact archive flutter_app/macos/Podfile force_loads and nm-checks —
+# NOT on the downloaded-zip marker. A fresh CI clone never has the marker,
+# so the old "if [ ! -f <zip> ]" guard made this block run on EVERY build:
+# it removed the WasmRun.xcframework the build-macos.yml "Restore vendored
+# WasmRun macOS framework" step had already placed (cache → local copy →
+# digest-verified resumable download, gh-1149/gh-1759), re-downloaded the
+# 92.7 MB asset with a bare curl, and one transient reset ("curl: (56)
+# Recv failure: Connection reset by peer", daily leg run 41778615815) left
+# pod install with NO framework — the Podfile nm check then failed on the
+# missing libwasm_run_dart.a. With the archive in place this block is now
+# a no-op; it stays as the local-dev fallback for a truly cold tree.
+# --fail keeps an HTTP error page from masquerading as a zip (the same
+# posture the workflow restore step is linted for).
+if [ ! -f #{framework_name}/macos-arm64_x86_64/libwasm_run_dart.a ]
 then
   rm -rf #{framework_name}
-  curl -L #{url} -o #{local_zip_name}
+  curl --fail -L #{url} -o #{local_zip_name}
   unzip #{local_zip_name}
   truncate -s 0 #{local_zip_name}
   rm -rf #{framework_name}/ios-*
