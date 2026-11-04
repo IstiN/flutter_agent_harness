@@ -44,6 +44,16 @@ String compactChatFolderPath(String path, {String? homePath}) {
   return path;
 }
 
+/// True when [entry] is a subagent session whose parent chat is still in
+/// the projection — those ride the badge above the composer instead of a
+/// list row. Orphans (dead or unknown parent) render as plain rows.
+bool _isSubagentWithLiveParent(ChatListController controller, ChatListEntry entry) {
+  if (!entry.isSubagent) return false;
+  final parentId = entry.parentId;
+  if (parentId == null) return false;
+  return controller.localEntryFor(parentId) != null;
+}
+
 /// Reference messenger conversation list shared by the wide sidebar and the
 /// narrow Chats home. It owns search/keyboard affordances; section navigation
 /// and the phone FAB stay in the responsive shell.
@@ -549,9 +559,12 @@ class _ChatListPanelState extends State<ChatListPanel> {
     // owner pass): the list is PARENTS ONLY, and a parent with subagent
     // sessions carries the count chip — its picker opens the chats.
     final subagentsByParent = controller.subagentsByParent;
+    // The All home lists PARENTS only — subagents surface through the
+    // badge above the composer. Orphaned subagents (their parent chat is
+    // gone) keep their row: the flat list is their only home.
     final visibleEntries = [
       for (final entry in controller.visibleEntries)
-        if (!entry.isSubagent) entry,
+        if (!_isSubagentWithLiveParent(controller, entry)) entry,
     ];
     Widget state(Widget child) => child;
     if (controller.status == ChatLoadState.loading) {
