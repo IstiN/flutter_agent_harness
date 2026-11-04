@@ -1,6 +1,6 @@
 @TestOn('vm')
 /// Widget tests for the Local section's folder-first navigation panels:
-/// the level-1 avatar-only folder STRIP (no name labels, Ø50 circle
+/// the level-1 folder STRIP (Ø50 circles + name labels,
 /// avatars on a 70pt pitch, accent capsule + rounded-square selection),
 /// the Telegram-style session list beside the strip (name, time, preview,
 /// badges, accent selection, hairlines), the folder name in the sidebar
@@ -88,8 +88,8 @@ void main() {
     await initializeDateFormatting('ru');
   });
 
-  testWidgets('the level-1 strip renders avatar-only — no name labels, '
-      'Ø50 circles on the 70pt pitch, newest folder first', (tester) async {
+  testWidgets('the level-1 strip renders avatars with name labels, '
+      'Ø50 circles on the 84pt pitch, newest folder first', (tester) async {
     final c = await controller([
       entry(
         'old',
@@ -106,9 +106,11 @@ void main() {
     ]);
     await pumpPanel(tester, c);
 
-    // The strip carries every folder (grouped by cwd, newest first) but
-    // NO name labels — avatar-only at this level.
+    // The strip carries every folder (grouped by cwd, newest first) and
+    // shows its name label under each avatar.
     expect(find.byKey(const ValueKey('localFoldersStrip')), findsOneWidget);
+    expect(find.text('mono'), findsOneWidget);
+    expect(find.text('fa'), findsOneWidget);
     expect(
       find.byKey(const ValueKey('localFolder-/work/mono')),
       findsOneWidget,
@@ -124,13 +126,15 @@ void main() {
             .dy,
       ),
     );
-    expect(find.text('mono'), findsNothing);
-    expect(find.text('fa'), findsNothing);
+    // Name labels ride under the avatars; no session-count meta at this
+    // level and the header still says Local.
+    expect(find.text('mono'), findsOneWidget);
+    expect(find.text('fa'), findsOneWidget);
     expect(find.text('1 session'), findsNothing);
     expect(find.text('Local'), findsOneWidget, reason: 'the header title');
     expect(find.text('sub'), findsNothing);
 
-    // Geometry: ~70pt strip, Ø~50 avatars, ~70pt pitch (~10pt gaps).
+    // Geometry: ~70pt strip, Ø~50 avatars, 84pt pitch.
     expect(
       tester.getSize(find.byKey(const ValueKey('localFoldersStrip'))).width,
       LocalSessionsPanel.stripWidth,
@@ -183,8 +187,9 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('localFolder-/work/fa')));
     await tester.pumpAndSettle();
 
-    // The folder's name lands in the sidebar header.
-    expect(find.text('fa'), findsOneWidget);
+    // The folder's name lands in the sidebar header (plus its strip
+    // label under the still-visible avatar).
+    expect(find.text('fa'), findsNWidgets(2));
 
     // The session list opens to the RIGHT of the (still visible) strip.
     final strip = tester.getRect(
@@ -259,14 +264,14 @@ void main() {
       'Local header title', (tester) async {
     final c = await controller([entry('design', folderPath: '/work/fa')]);
     await pumpPanel(tester, c, folderId: '/work/fa');
-    expect(find.text('fa'), findsOneWidget);
+    expect(find.text('fa'), findsNWidgets(2));
 
     await tester.tap(find.byKey(const ValueKey('localFolderBack')));
     await tester.pumpAndSettle();
 
     expect(find.byKey(const ValueKey('localFoldersStrip')), findsOneWidget);
     expect(find.byKey(const ValueKey('localSession-design')), findsNothing);
-    expect(find.text('fa'), findsNothing);
+    expect(find.text('fa'), findsOneWidget, reason: 'the strip label');
     expect(find.text('Local'), findsOneWidget);
     expect(
       find.byKey(const ValueKey('localFolderSelectedCapsule')),

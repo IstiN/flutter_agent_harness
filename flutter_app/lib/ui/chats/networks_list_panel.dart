@@ -39,7 +39,7 @@ class ChatNetworksPanel extends StatefulWidget {
   /// ~70pt avatar-only column, Ø~50 avatars centered on a ~70pt pitch,
   /// accent capsule ~6x51 flush to the strip's left edge.
   static const double stripWidth = 70;
-  static const double stripItemPitch = 70;
+  static const double stripItemPitch = 84;
   static const double stripAvatarSize = 50;
   static const double capsuleWidth = 6;
   static const double capsuleHeight = 51;
@@ -242,8 +242,8 @@ class _NetworksHeader extends StatelessWidget {
   }
 }
 
-/// Level 1: the compact avatar-only networks strip — one Ø50 letter-
-/// gradient avatar per [ChatNetworksPanel.stripItemPitch] cell, no name
+/// Level 1: the compact networks strip — one Ø50 letter-gradient
+/// avatar with its name label below, per [ChatNetworksPanel.stripItemPitch]
 /// labels or status meta. The drilled network paints the accent capsule
 /// flush to the strip's left edge and squares its avatar (radius ~25%);
 /// a tap opens its channel list beside the strip.
@@ -283,6 +283,33 @@ class _NetworksStrip extends StatelessWidget {
                       child: Stack(
                         alignment: Alignment.center,
                         children: [
+                          Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              FolderAvatar(
+                                seed: entry.key,
+                                label: entry.value.name,
+                                size: ChatNetworksPanel.stripAvatarSize,
+                                circle: !selected,
+                                radiusFactor: selected ? 0.25 : 0.28,
+                              ),
+                              const SizedBox(height: 2),
+                              SizedBox(
+                                width: ChatNetworksPanel.stripWidth - 8,
+                                child: Text(
+                                  entry.value.name,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  textAlign: TextAlign.center,
+                                  style: TextStyle(
+                                    fontSize: 10,
+                                    height: 1.1,
+                                    color: FaDesignTokens.of(context).ink3,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
                           if (selected)
                             Positioned(
                               left: 0,
@@ -302,13 +329,6 @@ class _NetworksStrip extends StatelessWidget {
                                 ),
                               ),
                             ),
-                          FolderAvatar(
-                            seed: entry.key,
-                            label: entry.value.name,
-                            size: ChatNetworksPanel.stripAvatarSize,
-                            circle: !selected,
-                            radiusFactor: selected ? 0.25 : 0.28,
-                          ),
                         ],
                       ),
                     ),

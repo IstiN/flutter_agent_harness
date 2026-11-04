@@ -1,6 +1,6 @@
 @TestOn('vm')
 /// Widget tests for the chats sidebar's NETWORKS surface (Telegram
-/// pattern, owner pass): the avatar-only networks STRIP (no name labels,
+/// pattern, owner pass): the networks STRIP (Ø50 circles + name labels,
 /// Ø50 letter-gradient circles, accent capsule + rounded-square
 /// selection), the in-place channel drill-down beside the strip, the
 /// network name in the surface header, and the '<' chevrons walking
@@ -98,8 +98,8 @@ Future<void> pumpPanel(
 }
 
 void main() {
-  testWidgets('the networks strip renders avatars only — no name labels, '
-      'Ø50 letter-gradient circles on the 70pt pitch', (tester) async {
+  testWidgets('the networks strip renders avatars with name labels, '
+      'Ø50 letter-gradient circles on the 84pt pitch', (tester) async {
     final rig = await _manager();
     await pumpPanel(tester, manager: rig.manager);
 
@@ -107,9 +107,9 @@ void main() {
     expect(find.byKey(const ValueKey('chatNetworksList')), findsOneWidget);
     expect(find.byKey(const ValueKey('chatNetworkRow-net1')), findsOneWidget);
     expect(find.byKey(const ValueKey('chatNetworkRow-net2')), findsOneWidget);
-    // Avatar-only at strip level: no names, no status meta.
-    expect(find.text('fa-team'), findsNothing);
-    expect(find.text('quiet-net'), findsNothing);
+    // Name labels under the avatars, but no status meta at strip level.
+    expect(find.text('fa-team'), findsOneWidget);
+    expect(find.text('quiet-net'), findsOneWidget);
     expect(find.text('Connected'), findsNothing);
     expect(find.text('Not connected'), findsNothing);
     expect(find.text('Networks'), findsOneWidget, reason: 'the header title');
@@ -153,8 +153,12 @@ void main() {
     expect(find.text('launch'), findsOneWidget);
     expect(find.text('Private channel'), findsOneWidget);
     expect(find.text('Public channel'), findsOneWidget);
-    expect(find.text('fa-team'), findsOneWidget);
-    expect(find.text('quiet-net'), findsNothing);
+    expect(
+      find.text('fa-team'),
+      findsNWidgets(2),
+      reason: 'the header name + the strip label',
+    );
+    expect(find.text('quiet-net'), findsOneWidget);
 
     // The drilled network wears the accent capsule flush to the strip's
     // LEFT edge and its avatar re-renders as a rounded square (radius
@@ -192,7 +196,11 @@ void main() {
 
     await tester.tap(find.byKey(const ValueKey('chatNetworkRow-net1')));
     await tester.pump();
-    expect(find.text('fa-team'), findsOneWidget);
+    expect(
+      find.text('fa-team'),
+      findsNWidgets(2),
+      reason: 'the header name + the strip label',
+    );
     expect(find.text('Networks'), findsNothing);
 
     // channels → strip: the header restores the Networks title.
@@ -202,7 +210,7 @@ void main() {
     expect(find.byKey(const ValueKey('networksStrip')), findsOneWidget);
     expect(find.byKey(const ValueKey('chatNetworksList')), findsOneWidget);
     expect(find.text('Networks'), findsOneWidget);
-    expect(find.text('fa-team'), findsNothing);
+    expect(find.text('fa-team'), findsOneWidget, reason: 'the strip label');
     expect(find.byKey(const ValueKey('networkSelectedCapsule')), findsNothing);
 
     // strip → normal chats: the surface hands back to the shell.
@@ -268,7 +276,7 @@ void main() {
     );
     await pumpPanel(tester, manager: rig.manager);
     expect(find.byKey(const ValueKey('chatNetworkRow-net1')), findsOneWidget);
-    expect(find.text('fa-team'), findsNothing);
+    expect(find.text('fa-team'), findsOneWidget, reason: 'the strip label');
     expect(find.text('No networks yet'), findsNothing);
   });
 

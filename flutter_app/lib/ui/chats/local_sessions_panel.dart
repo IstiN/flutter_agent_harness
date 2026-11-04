@@ -36,12 +36,12 @@ class LocalSessionsPanel extends StatelessWidget {
 
   // The level-1 compact avatar strip (Telegram pattern, owner pass): a
   // ~70pt avatar-only column on the left of the sidebar content; avatars
-  // Ø~50 circles centered on a ~70pt pitch (~10pt gaps); the selected
+  // Ø~50 circles with name labels on the 84pt pitch; the selected
   // folder wears an accent capsule bar (~6x51, fully rounded) flush
   // against the strip's LEFT edge and re-renders its avatar as a rounded
   // square (radius ~25% of the size). No name labels at this level.
   static const double stripWidth = 70;
-  static const double stripItemPitch = 70;
+  static const double stripItemPitch = 84;
   static const double stripAvatarSize = 50;
   static const double stripCapsuleWidth = 6;
   static const double stripCapsuleHeight = 51;
@@ -218,8 +218,8 @@ class _LocalHeader extends StatelessWidget {
   }
 }
 
-/// Level 1: the Telegram compact avatar-only strip — one Ø50 folder
-/// avatar per [LocalSessionsPanel.stripItemPitch] cell, no name labels.
+/// Level 1: the Telegram compact strip — one Ø50 folder avatar with
+/// its name label below, one folder per [LocalSessionsPanel.stripItemPitch] cell.
 /// The selected folder paints the accent capsule flush to the strip's
 /// left edge and squares its avatar (radius ~25%); a tap opens the
 /// folder's session list beside the strip.
@@ -261,6 +261,37 @@ class _FolderStrip extends StatelessWidget {
                       child: Stack(
                         alignment: Alignment.center,
                         children: [
+                          Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              FutureBuilder<MemoryImage?>(
+                                future: iconResolver?.resolve(folder.id),
+                                builder: (context, snapshot) => FolderAvatar(
+                                  seed: folder.avatarSeed,
+                                  label: folder.name,
+                                  size: LocalSessionsPanel.stripAvatarSize,
+                                  image: snapshot.data,
+                                  circle: !selected,
+                                  radiusFactor: selected ? 0.25 : 0.28,
+                                ),
+                              ),
+                              const SizedBox(height: 2),
+                              SizedBox(
+                                width: LocalSessionsPanel.stripWidth - 8,
+                                child: Text(
+                                  folder.name,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  textAlign: TextAlign.center,
+                                  style: TextStyle(
+                                    fontSize: 10,
+                                    height: 1.1,
+                                    color: FaDesignTokens.of(context).ink3,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
                           if (selected)
                             Positioned(
                               left: 0,
@@ -282,17 +313,6 @@ class _FolderStrip extends StatelessWidget {
                                 ),
                               ),
                             ),
-                          FutureBuilder<MemoryImage?>(
-                            future: iconResolver?.resolve(folder.id),
-                            builder: (context, snapshot) => FolderAvatar(
-                              seed: folder.avatarSeed,
-                              label: folder.name,
-                              size: LocalSessionsPanel.stripAvatarSize,
-                              image: snapshot.data,
-                              circle: !selected,
-                              radiusFactor: selected ? 0.25 : 0.28,
-                            ),
-                          ),
                         ],
                       ),
                     ),
