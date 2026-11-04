@@ -28,7 +28,11 @@ block a release again.
   path the Podfile force_loads and nm-checks — so the block is a no-op
   whenever the restore step (or a previous run) put the framework in
   place, and the fallback download for a truly cold tree carries
-  `--fail`. Linted behaviorally (stubbed curl, no network) by
+  `--fail` AND aborts the block at the curl step on failure
+  (`|| { echo "wasm_run download failed" >&2; exit 1; }` — a swallowed
+  status fell through to unzip/truncate residue and masked the root cause
+  behind the Podfile `nm` diagnostic; review round 1 on this PR). Linted
+  behaviorally (stubbed curl, no network; POSIX-gated sandbox) by
   test/wasmrun_macos_podspec_download_guard_test.dart.
 
 - fix(gh-2050): the daily-publish `cli` leg red-failed daily when its
