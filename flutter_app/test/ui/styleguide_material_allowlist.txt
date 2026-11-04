@@ -18,7 +18,7 @@ lib/apps/widgets_catalog_sheet.dart 5
 lib/services/aiin_connect_flow.dart 2
 lib/ui/activity/activity_surface.dart 7
 lib/ui/apps/apps_directory_panel.dart 6
-lib/ui/chats/chat_list_panel.dart 23
+lib/ui/chats/chat_list_panel.dart 24
 lib/ui/chats/local_sessions_panel.dart 3
 lib/ui/chats/networks_list_panel.dart 4
 lib/ui/network/add_agent_dialog.dart 14

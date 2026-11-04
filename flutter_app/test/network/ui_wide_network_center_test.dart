@@ -97,7 +97,12 @@ Future<FlutterSessionManager> _pumpWideHome(
   final env = MemoryExecutionEnv();
   final sessions = FlutterSessionManager(env: env, sessionsRoot: '/sessions');
   if (withLocalSession) {
-    sessions.addSession('local-session', _fakeLocalService(env));
+    sessions.addSession(
+      'local-session',
+      _fakeLocalService(env)
+        ..messages.add(FahChatMessage(role: 'user', content: 'Real content')),
+    );
+    sessions.addSession('empty-placeholder', _fakeLocalService(env));
   }
   await tester.pumpWidget(
     MaterialApp(
@@ -570,6 +575,17 @@ void main() {
             ],
           ),
         );
+
+        if (surface.width >= 700) {
+          expect(
+            find.byKey(const ValueKey('chatRow-local:local-session')),
+            findsOneWidget,
+          );
+          expect(
+            find.byKey(const ValueKey('chatRow-local:empty-placeholder')),
+            findsNothing,
+          );
+        }
 
         await tester.tap(find.text('general'));
         for (var index = 0; index < 6; index++) {
