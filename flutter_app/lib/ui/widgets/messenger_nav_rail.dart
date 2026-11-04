@@ -107,9 +107,20 @@ class MessengerNavRail extends StatelessWidget {
         child: Column(
           children: [
             SizedBox(height: titlebarTop),
-            for (final destination in destinations)
-              MessengerNavRailItem(destination: destination),
-            const Spacer(),
+            // The section list scrolls when the window is too short for
+            // every row — the rail never overflows its glass surface.
+            Expanded(
+              child: SizedBox(
+                width: MessengerNavRail.width,
+                child: ListView(
+                  padding: EdgeInsets.zero,
+                children: [
+                    for (final destination in destinations)
+                      MessengerNavRailItem(destination: destination),
+                  ],
+                ),
+              ),
+            ),
             MessengerNavRailItem(
               destination: MessengerRailDestination(
                 rowKey: const ValueKey('railSettingsRow'),
