@@ -7,13 +7,19 @@
 /// - the Local folder list (deterministic gradient-letter avatars,
 ///   session counts, running dots, latest-activity times);
 /// - an open folder's Telegram-style session list (name, time, preview,
-///   unread/running badges, accent-selected row, hairlines).
+///   unread/running badges, accent-selected row, hairlines);
+/// - the chat column's NETWORKS panel (membership rows, letter-gradient
+///   avatars, live status meta).
 library;
 
+import 'package:fa/network/key_wallet.dart';
+import 'package:fa/network/network_session.dart';
+import 'package:fa/network/network_session_manager.dart';
 import 'package:fa/ui/chats/chat_list_controller.dart';
 import 'package:fa/ui/chats/chat_list_entry.dart';
 import 'package:fa/ui/chats/local_chat_list_adapter.dart';
 import 'package:fa/ui/chats/local_sessions_panel.dart';
+import 'package:fa/ui/chats/networks_list_panel.dart';
 import 'package:fa/ui/widgets/messenger_nav_rail.dart';
 import 'package:fa_ui/fa_ui.dart'
     show FahColors, FaVisualDirection, buildFaTheme;
@@ -21,6 +27,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:intl/date_symbol_data_local.dart';
 
+import '../network/fakes.dart';
 import 'golden_test_helper.dart';
 
 /// Long-dead activity stamps (> 7 days old) so [chatListRelativeTime]
@@ -236,5 +243,52 @@ void main() {
         ),
       ]),
     );
+  });
+
+  testWidgets('chats networks panel: membership rows with live status',
+      (tester) async {
+    final wallet = await KeyWallet.load(MemoryWalletBackend());
+    await wallet.createIfMissing(displayName: 'Me');
+    await wallet.addNetwork(networkId: 'net1', name: 'fa-team');
+    await wallet.addNetwork(networkId: 'net2', name: 'quiet-net');
+    final session = buildSession(
+      httpClient: FakeHttpClient()
+        ..respond(
+          200,
+          body:
+              '[{"id":"c1","networkId":"net1","name":"general","public":false}]',
+        ) // start: channels
+        ..respond(200, body: membersBody), // start: members
+      connector: FakeWsConnector(),
+      wallet: wallet,
+    );
+    await session.start();
+    addTearDown(session.close);
+    final manager = NetworkSessionManager(
+      baseUrl: testBase,
+      wallet: wallet,
+      httpClient: FakeHttpClient(),
+      wsConnector: FakeWsConnector(),
+    );
+    manager.sessions['net1'] = session;
+    manager.notifyListeners();
+    addTearDown(manager.disconnectAll);
+
+    await pumpGolden(
+      tester,
+      ChatNetworksPanel(
+        manager: manager,
+        onBack: () {},
+        onManageNetworks: () {},
+        onOpenChannel: (_, _) {},
+      ),
+      size: const Size(360, 560),
+      theme: buildFaTheme(
+        direction: FaVisualDirection.glass,
+        brightness: Brightness.dark,
+      ),
+    );
+    await expectGolden(tester, 'chats_networks_panel');
+    await session.close();
   });
 }

@@ -143,9 +143,14 @@ void main() {
       expect(find.byType(NetworkCenterPane), findsNothing);
       expect(find.byType(NetworkHomePage), findsNothing);
 
+      // The globe opens the NETWORKS panel in place (no tree swap to a
+      // network home); leaving it restores the classic sidebar content.
       await tester.tap(find.byKey(const ValueKey('chatNetworkFilter')));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Local').last);
+      expect(find.byKey(const ValueKey('chatNetworksList')), findsOneWidget);
+      expect(find.byType(ChatListPanel), findsOneWidget);
+      expect(find.byType(NetworkCenterPane), findsNothing);
+      await tester.tap(find.byKey(const ValueKey('chatNetworksBack')));
       await tester.pumpAndSettle();
       expect(controller.mode, AppMode.local);
       expect(controller.networkId, isNull);

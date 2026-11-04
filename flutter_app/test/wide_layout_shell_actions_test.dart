@@ -1296,13 +1296,17 @@ void main() {
         reason: '$label must be tappable',
       );
     }
-    // The identity row opens the same network-filter menu the chat
-    // panel's trailing globe owned.
+    // The identity row opens the NETWORKS panel in the chat column
+    // (Telegram pattern — the old dropdown menu is gone).
     await tester.tap(find.byKey(const ValueKey('chatNetworkFilter')));
     await tester.pumpAndSettle();
-    expect(find.text('All networks'), findsOneWidget);
-    // One "Local" in the menu plus the rail's own Local row label.
-    expect(find.text('Local'), findsNWidgets(2));
+    expect(find.byKey(const ValueKey('chatNetworksList')), findsOneWidget);
+    expect(find.byKey(const ValueKey('chatNetworksBack')), findsOneWidget);
+    // Back walks the panel to the normal chats list.
+    await tester.tap(find.byKey(const ValueKey('chatNetworksBack')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('chatNetworksList')), findsNothing);
+    expect(find.byKey(const ValueKey('chatListScroll')), findsOneWidget);
     expect(chip('All').properties.selected, isTrue);
     // The rail row itself never becomes selected.
     railRow('chatFilter-all');

@@ -476,6 +476,42 @@ abstract class AppLocalizations {
   /// **'Manage networks'**
   String get chatManageNetworks;
 
+  /// Networks-list row meta for a membership with a live relay session
+  ///
+  /// In en, this message translates to:
+  /// **'Connected'**
+  String get chatNetworkStatusConnected;
+
+  /// Networks-list row meta for a membership whose relay dropped (network.offline)
+  ///
+  /// In en, this message translates to:
+  /// **'Relay offline'**
+  String get chatNetworkStatusOffline;
+
+  /// Networks-list row meta for a stored membership with no live session
+  ///
+  /// In en, this message translates to:
+  /// **'Not connected'**
+  String get chatNetworkStatusIdle;
+
+  /// Empty channel drill-down in the chat column's networks panel
+  ///
+  /// In en, this message translates to:
+  /// **'No channels yet'**
+  String get chatNetworkChannelsEmpty;
+
+  /// Channel row meta for a showcase (public) channel
+  ///
+  /// In en, this message translates to:
+  /// **'Public channel'**
+  String get chatNetworkChannelPublic;
+
+  /// Channel row meta for a private (keys-required) channel
+  ///
+  /// In en, this message translates to:
+  /// **'Private channel'**
+  String get chatNetworkChannelPrivate;
+
   /// No description provided for @chatSignInNetwork.
   ///
   /// In en, this message translates to:

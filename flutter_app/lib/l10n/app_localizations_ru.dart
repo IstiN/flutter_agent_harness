@@ -227,6 +227,24 @@ class AppLocalizationsRu extends AppLocalizations {
   String get chatManageNetworks => 'Управление сетями';
 
   @override
+  String get chatNetworkStatusConnected => 'Подключена';
+
+  @override
+  String get chatNetworkStatusOffline => 'Релей офлайн';
+
+  @override
+  String get chatNetworkStatusIdle => 'Не подключена';
+
+  @override
+  String get chatNetworkChannelsEmpty => 'Пока нет каналов';
+
+  @override
+  String get chatNetworkChannelPublic => 'Публичный канал';
+
+  @override
+  String get chatNetworkChannelPrivate => 'Приватный канал';
+
+  @override
   String get chatSignInNetwork => 'Войти в Fa Network';
 
   @override

@@ -1645,8 +1645,6 @@ Future<void> selectChatNetworkFilter(
   } else if (value == 'my') {
     controller.setNetworkFilter(const ChatNetworkFilter.my());
   } else if (value.startsWith('network:')) {
-    controller.setNetworkFilter(
-      ChatNetworkFilter.network(value.substring(8)),
-    );
+    controller.setNetworkFilter(ChatNetworkFilter.network(value.substring(8)));
   }
 }

@@ -72,7 +72,31 @@
   "chatFilterChannels": "Channels",
   "chatAllNetworks": "All networks",
   "chatMyNetwork": "My network",
-  "chatManageNetworks": "Manage networks",
+    "chatManageNetworks": "Manage networks",
+  "chatNetworkStatusConnected": "Connected",
+  "@chatNetworkStatusConnected": {
+    "description": "Networks-list row meta for a membership with a live relay session"
+  },
+  "chatNetworkStatusOffline": "Relay offline",
+  "@chatNetworkStatusOffline": {
+    "description": "Networks-list row meta for a membership whose relay dropped (network.offline)"
+  },
+  "chatNetworkStatusIdle": "Not connected",
+  "@chatNetworkStatusIdle": {
+    "description": "Networks-list row meta for a stored membership with no live session"
+  },
+  "chatNetworkChannelsEmpty": "No channels yet",
+  "@chatNetworkChannelsEmpty": {
+    "description": "Empty channel drill-down in the chat column's networks panel"
+  },
+  "chatNetworkChannelPublic": "Public channel",
+  "@chatNetworkChannelPublic": {
+    "description": "Channel row meta for a showcase (public) channel"
+  },
+  "chatNetworkChannelPrivate": "Private channel",
+  "@chatNetworkChannelPrivate": {
+    "description": "Channel row meta for a private (keys-required) channel"
+  },
   "chatSignInNetwork": "Sign in to Fa Network",
   "chatProfileSettings": "Profile & settings",
   "chatNew": "New",

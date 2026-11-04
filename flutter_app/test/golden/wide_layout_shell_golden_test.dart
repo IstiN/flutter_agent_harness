@@ -15,6 +15,7 @@ import 'package:fa/services/session_names_store.dart';
 import 'package:fa/ui/activity/activity_surface.dart' show ActivityListPanel;
 import 'package:fa/ui/apps/apps_directory_panel.dart';
 import 'package:fa/ui/apps/messenger_app_panel.dart';
+import 'package:fa/ui/chats/chat_list_controller.dart';
 import 'package:fa/ui/chats/chat_list_panel.dart';
 import 'package:fa/ui/widgets/messenger_navigation_controls.dart';
 import 'package:fa/ui/widgets/messenger_section_header.dart';
@@ -535,9 +536,10 @@ void main() {
     tester,
   ) async {
     await pumpShell(tester, populateChats: true, light: true);
-    await tester.tap(find.byKey(const ValueKey('chatNetworkFilter')));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Local').last);
+    // The old globe menu's "Local" entry became the panel — narrow the
+    // list through the controller the panel exposes.
+    final panel = tester.widget<ChatListPanel>(find.byType(ChatListPanel));
+    panel.controller.setNetworkFilter(const ChatNetworkFilter.my());
     await tester.pumpAndSettle();
     await expectGolden(tester, 'wide_layout_shell_chats_light');
   });

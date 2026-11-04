@@ -601,9 +601,7 @@ class _LocalSessionRowState extends State<LocalSessionRow> {
                                       buttonContext.findRenderObject()
                                           as RenderBox;
                                   final origin = box.localToGlobal(Offset.zero);
-                                  unawaited(
-                                    menu(entry, origin & box.size),
-                                  );
+                                  unawaited(menu(entry, origin & box.size));
                                 },
                                 tooltip: context.l10n.chatMoreActions,
                                 icon: const Icon(Icons.more_horiz, size: 17),

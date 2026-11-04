@@ -46,6 +46,7 @@ import 'package:fa/ui/chats/chat_list_stores.dart';
 import 'package:fa/ui/chats/local_chat_list_adapter.dart';
 import 'package:fa/ui/chats/local_sessions_panel.dart';
 import 'package:fa/ui/chats/network_inbox_adapter.dart';
+import 'package:fa/ui/chats/networks_list_panel.dart';
 import 'package:fa/ui/chats/network_inbox_http_adapter.dart';
 import 'package:fa/ui/network/join_sheet.dart';
 import 'package:fa/ui/network/network_chat_page.dart';
@@ -238,6 +239,12 @@ class _WideLayoutShellState extends State<WideLayoutShell>
   /// folder list). Shell-owned so it survives section switches and sidebar
   /// collapse, like the chats panel's drill-down directory.
   String? _localFolderId;
+
+  /// The chat column's NETWORKS surface (Telegram pattern): when open, the
+  /// center column shows [ChatNetworksPanel] instead of the chat — the
+  /// identity globe's networks list with the in-place channel drill-down.
+  /// Section switches close it, like a route pop.
+  bool _networksPaneOpen = false;
 
   /// Lazily built resolver for folders' well-known icon files (cached
   /// per folder in memory).
@@ -1084,8 +1091,7 @@ class _WideLayoutShellState extends State<WideLayoutShell>
             // (owner: the rail↔sidebar gap halves to 8pt total), so the
             // leading margin is 0 and the content fills the rest.
             final contentWidth =
-                (contentCollapsed ? _collapsedSidebarWidth : _sidebarWidth) -
-                8;
+                (contentCollapsed ? _collapsedSidebarWidth : _sidebarWidth) - 8;
             final contentOpacity = contentCollapsed
                 ? (progress - .5) * 2
                 : 1 - progress * 2;
@@ -1373,7 +1379,8 @@ class _WideLayoutShellState extends State<WideLayoutShell>
 
   Widget _buildCenterSurface(FahColors colors) {
     return switch (_section) {
-      _WideShellSection.chats => _buildChatArea(colors),
+      _WideShellSection.chats =>
+        _networksPaneOpen ? _buildNetworksPane() : _buildChatArea(colors),
       _WideShellSection.local => _buildChatArea(colors),
       _WideShellSection.activity => ActivityDetailPanel(
         controller: _activityController,
@@ -1394,6 +1401,7 @@ class _WideLayoutShellState extends State<WideLayoutShell>
         if (changed && !presentation.pinned) dismissPresentation = true;
       }
       if (changed && _filesPresentation != null) dismissPresentation = true;
+      if (changed) _networksPaneOpen = false;
       _section = section;
       if (section == _WideShellSection.activity) {
         _narrowActivityDetailVisible = false;
@@ -1688,41 +1696,9 @@ class _WideLayoutShellState extends State<WideLayoutShell>
         icon: Icons.public_outlined,
         label: context.l10n.networkNetworksTitle,
         selected: false,
-        onTap: _showRailNetworkMenu,
+        onTap: (_) => setState(() => _networksPaneOpen = true),
       ),
     ];
-  }
-
-  /// The identity globe stays its own rail row: tapping it opens the same
-  /// network-filter menu the chat panel's trailing globe showed, anchored
-  /// at the row.
-  Future<void> _showRailNetworkMenu(BuildContext rowContext) async {
-    if (!mounted) return;
-    final box = rowContext.findRenderObject();
-    if (box is! RenderBox || !box.attached) return;
-    final overlay =
-        Overlay.of(rowContext).context.findRenderObject() as RenderBox;
-    final position = RelativeRect.fromRect(
-      box.localToGlobal(Offset.zero, ancestor: overlay) & box.size,
-      Offset.zero & overlay.size,
-    );
-    final selection = await showMenu<String>(
-      context: rowContext,
-      position: position,
-      items: chatNetworkFilterMenuItems(
-        context,
-        controller: _chatController,
-        manager: widget.networkSessions,
-      ),
-    );
-    if (selection == null || !mounted) return;
-    await selectChatNetworkFilter(
-      context,
-      value: selection,
-      controller: _chatController,
-      manager: widget.networkSessions,
-      networkMode: widget.networkMode,
-    );
   }
 
   /// The wide shell's left rail surface + the 8pt seam before the content
@@ -1793,6 +1769,31 @@ class _WideLayoutShellState extends State<WideLayoutShell>
                   ? () => _selectSection(_WideShellSection.apps)
                   : null,
             ),
+    );
+  }
+
+  /// The identity globe's networks panel (Telegram pattern, owner pass):
+  /// the chat column swaps to the networks list with the in-place channel
+  /// drill-down. Back returns to the normal chats; the manage gear keeps
+  /// the management dialog reachable; opening a channel applies the
+  /// network chat filter (what the old dropdown menu's per-network entry
+  /// did) and returns to the chats.
+  Widget _buildNetworksPane() {
+    return ChatNetworksPanel(
+      manager: widget.networkSessions,
+      mode: widget.networkMode,
+      onBack: () => setState(() => _networksPaneOpen = false),
+      onManageNetworks: () => unawaited(
+        showChatNetworksDialog(
+          context,
+          manager: widget.networkSessions,
+          networkMode: widget.networkMode,
+        ),
+      ),
+      onOpenChannel: (networkId, channel) {
+        _chatController.setNetworkFilter(ChatNetworkFilter.network(networkId));
+        setState(() => _networksPaneOpen = false);
+      },
     );
   }
 

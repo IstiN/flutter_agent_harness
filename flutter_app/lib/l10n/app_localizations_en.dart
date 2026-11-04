@@ -223,6 +223,24 @@ class AppLocalizationsEn extends AppLocalizations {
   String get chatManageNetworks => 'Manage networks';
 
   @override
+  String get chatNetworkStatusConnected => 'Connected';
+
+  @override
+  String get chatNetworkStatusOffline => 'Relay offline';
+
+  @override
+  String get chatNetworkStatusIdle => 'Not connected';
+
+  @override
+  String get chatNetworkChannelsEmpty => 'No channels yet';
+
+  @override
+  String get chatNetworkChannelPublic => 'Public channel';
+
+  @override
+  String get chatNetworkChannelPrivate => 'Private channel';
+
+  @override
   String get chatSignInNetwork => 'Sign in to Fa Network';
 
   @override
