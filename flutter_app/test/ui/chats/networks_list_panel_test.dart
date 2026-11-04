@@ -98,25 +98,25 @@ Future<void> pumpPanel(
 }
 
 void main() {
-  testWidgets('the networks strip renders avatars with name labels, '
-      'Ø50 letter-gradient circles on the 84pt pitch', (tester) async {
+  testWidgets('the level-1 networks list renders standard [logo][name] '
+      'rows; no strip before a network is drilled', (tester) async {
     final rig = await _manager();
     await pumpPanel(tester, manager: rig.manager);
 
-    expect(find.byKey(const ValueKey('networksStrip')), findsOneWidget);
-    expect(find.byKey(const ValueKey('chatNetworksList')), findsOneWidget);
-    expect(find.byKey(const ValueKey('chatNetworkRow-net1')), findsOneWidget);
-    expect(find.byKey(const ValueKey('chatNetworkRow-net2')), findsOneWidget);
-    // Name labels under the avatars, but no status meta at strip level.
+    expect(find.byKey(const ValueKey('networksList')), findsOneWidget);
+    expect(find.byKey(const ValueKey('networksStrip')), findsNothing);
+    expect(find.byKey(const ValueKey('networkRow-net1')), findsOneWidget);
+    expect(find.byKey(const ValueKey('networkRow-net2')), findsOneWidget);
+    // Standard rows: the display name only.
     expect(find.text('fa-team'), findsOneWidget);
     expect(find.text('quiet-net'), findsOneWidget);
     expect(find.text('Connected'), findsNothing);
     expect(find.text('Not connected'), findsNothing);
     expect(find.text('Networks'), findsOneWidget, reason: 'the header title');
-    // Geometry: ~70pt strip, Ø~50 avatars, circles while unselected.
+    // Geometry: 70pt rows, Ø~50 avatars, circles while unselected.
     expect(
-      tester.getSize(find.byKey(const ValueKey('networksStrip'))).width,
-      ChatNetworksPanel.stripWidth,
+      tester.getSize(find.byKey(const ValueKey('networkRow-net1'))).height,
+      ChatNetworksPanel.stripItemPitch,
     );
     final avatars = find.byType(FolderAvatar);
     expect(avatars, findsNWidgets(2));
@@ -137,7 +137,7 @@ void main() {
     final rig = await _manager();
     await pumpPanel(tester, manager: rig.manager);
 
-    await tester.tap(find.byKey(const ValueKey('chatNetworkRow-net1')));
+    await tester.tap(find.byKey(const ValueKey('networkRow-net1')));
     await tester.pump();
 
     // The channel drill-down: same Telegram rows over the session's
@@ -155,10 +155,10 @@ void main() {
     expect(find.text('Public channel'), findsOneWidget);
     expect(
       find.text('fa-team'),
-      findsNWidgets(2),
-      reason: 'the header name + the strip label',
+      findsOneWidget,
+      reason: 'the header name; the strip is avatar-only',
     );
-    expect(find.text('quiet-net'), findsOneWidget);
+    expect(find.text('quiet-net'), findsNothing);
 
     // The drilled network wears the accent capsule flush to the strip's
     // LEFT edge and its avatar re-renders as a rounded square (radius
@@ -194,12 +194,12 @@ void main() {
     await pumpPanel(tester, manager: rig.manager, onBack: () => backs++);
     expect(find.text('Networks'), findsOneWidget);
 
-    await tester.tap(find.byKey(const ValueKey('chatNetworkRow-net1')));
+    await tester.tap(find.byKey(const ValueKey('networkRow-net1')));
     await tester.pump();
     expect(
       find.text('fa-team'),
-      findsNWidgets(2),
-      reason: 'the header name + the strip label',
+      findsOneWidget,
+      reason: 'the header name; the strip is avatar-only',
     );
     expect(find.text('Networks'), findsNothing);
 
@@ -207,10 +207,10 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('chatChannelsBack')));
     await tester.pump();
     expect(find.byKey(const ValueKey('chatNetworkChannels')), findsNothing);
-    expect(find.byKey(const ValueKey('networksStrip')), findsOneWidget);
-    expect(find.byKey(const ValueKey('chatNetworksList')), findsOneWidget);
+    expect(find.byKey(const ValueKey('networksList')), findsOneWidget);
+    expect(find.byKey(const ValueKey('networksStrip')), findsNothing);
     expect(find.text('Networks'), findsOneWidget);
-    expect(find.text('fa-team'), findsOneWidget, reason: 'the strip label');
+    expect(find.text('fa-team'), findsOneWidget, reason: 'the list row name');
     expect(find.byKey(const ValueKey('networkSelectedCapsule')), findsNothing);
 
     // strip → normal chats: the surface hands back to the shell.
@@ -226,7 +226,7 @@ void main() {
     final rig = await _manager();
     final opens = <(String, String)>[];
     await pumpPanel(tester, manager: rig.manager, opened: opens);
-    await tester.tap(find.byKey(const ValueKey('chatNetworkRow-net1')));
+    await tester.tap(find.byKey(const ValueKey('networkRow-net1')));
     await tester.pump();
     await tester.tap(find.byKey(const ValueKey('chatNetworkChannel-c2')));
     await tester.pump();
@@ -266,8 +266,8 @@ void main() {
       'state inside the strip surface (the guest shape)', (tester) async {
     await pumpPanel(tester, manager: null);
     expect(find.byKey(const ValueKey('chatNetworksList')), findsOneWidget);
-    expect(find.byKey(const ValueKey('networksStrip')), findsOneWidget);
-    expect(find.byKey(const ValueKey('chatNetworkRow-net1')), findsNothing);
+    expect(find.byKey(const ValueKey('networksList')), findsNothing);
+    expect(find.byKey(const ValueKey('networkRow-net1')), findsNothing);
     expect(find.text('No networks yet'), findsOneWidget);
 
     final rig = await _manager(
@@ -275,7 +275,7 @@ void main() {
       withSecondNetwork: false,
     );
     await pumpPanel(tester, manager: rig.manager);
-    expect(find.byKey(const ValueKey('chatNetworkRow-net1')), findsOneWidget);
+    expect(find.byKey(const ValueKey('networkRow-net1')), findsOneWidget);
     expect(find.text('fa-team'), findsOneWidget, reason: 'the strip label');
     expect(find.text('No networks yet'), findsNothing);
   });
@@ -294,7 +294,7 @@ void main() {
     // Strip selection is the drilled network, not the mode's.
     expect(find.byKey(const ValueKey('networkSelectedCapsule')), findsNothing);
 
-    await tester.tap(find.byKey(const ValueKey('chatNetworkRow-net1')));
+    await tester.tap(find.byKey(const ValueKey('networkRow-net1')));
     await tester.pump();
     final selectedRow = find
         .descendant(

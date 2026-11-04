@@ -1516,17 +1516,17 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    // Rail → the Local avatar-only strip (level 1).
+    // Rail → the Local standard folder list (level 1).
     await tester.tap(find.byKey(const ValueKey('messengerPrimaryNav-local')));
     await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey('localFoldersStrip')), findsOneWidget);
+    expect(find.byKey(const ValueKey('localFoldersList')), findsOneWidget);
     expect(
-      find.byKey(const ValueKey('localFolder-/work/mono')),
+      find.byKey(const ValueKey('localFolderRow-/work/mono')),
       findsOneWidget,
     );
 
-    // Folder → its Telegram-style session list.
-    await tester.tap(find.byKey(const ValueKey('localFolder-/work/fa')));
+    // Folder → its avatar strip + Telegram-style session list.
+    await tester.tap(find.byKey(const ValueKey('localFolderRow-/work/fa')));
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('localSessionList')), findsOneWidget);
     expect(find.text('design-session'), findsOneWidget);
@@ -1537,10 +1537,12 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byType(ChatScreen), findsOneWidget);
 
-    // Back from the folder list; the drill-down state stays shell-owned.
+    // Back from the drill-down to the folder list; the drill state stays
+    // shell-owned.
     await tester.tap(find.byKey(const ValueKey('localFolderBack')));
     await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey('localFoldersStrip')), findsOneWidget);
+    expect(find.byKey(const ValueKey('localFoldersList')), findsOneWidget);
+    expect(find.byKey(const ValueKey('localFoldersStrip')), findsNothing);
     expect(
       find.byKey(const ValueKey('localSession-design-session')),
       findsNothing,

@@ -13,9 +13,9 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 /// The Local section's folder-first navigation (Telegram pattern): level 1
-/// lists LOCAL SESSION FOLDERS (persisted sessions grouped by cwd, sorted
-/// by the most recent session); level 2 is the Telegram-style session list
-/// for one folder. Session state rides [ChatListController.localEntries]
+/// is the standard [logo][name] folder list (persisted sessions grouped by
+/// cwd, most-recent first); level 2 opens the avatar-only strip (capsule on
+/// the drilled folder) with the Telegram-style session list beside it. Session state rides [ChatListController.localEntries]
 /// (FlutterSessionManager's single-flight listing) — this panel only
 /// projects it. Opening a session stays the shell's existing open flow.
 class LocalSessionsPanel extends StatelessWidget {
@@ -34,14 +34,14 @@ class LocalSessionsPanel extends StatelessWidget {
   static const double sessionRowPitch = 70;
   static const double avatarSize = 46;
 
-  // The level-1 compact avatar strip (Telegram pattern, owner pass): a
+  // The level-2 avatar strip (Telegram pattern, owner pass): a
   // ~70pt avatar-only column on the left of the sidebar content; avatars
-  // Ø~50 circles with name labels on the 84pt pitch; the selected
+  // Ø~50 circles on the 70pt pitch; the selected
   // folder wears an accent capsule bar (~6x51, fully rounded) flush
   // against the strip's LEFT edge and re-renders its avatar as a rounded
   // square (radius ~25% of the size). No name labels at this level.
   static const double stripWidth = 70;
-  static const double stripItemPitch = 84;
+  static const double stripItemPitch = 70;
   static const double stripAvatarSize = 50;
   static const double stripCapsuleWidth = 6;
   static const double stripCapsuleHeight = 51;
@@ -94,31 +94,39 @@ class LocalSessionsPanel extends StatelessWidget {
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    _FolderStrip(
-                      folders: folders,
-                      selectedFolderId: selectedFolderId,
-                      iconResolver: iconResolver,
-                      onOpen: onSelectFolder,
-                    ),
-                    Expanded(
-                      child: openFolder == null
-                          ? (folders.isEmpty
-                                ? Center(
-                                    child: Text(
-                                      context.l10n.localFoldersEmpty,
-                                      style: TextStyle(
-                                        color: colors.dim,
-                                        fontSize: 13,
-                                      ),
-                                    ),
-                                  )
-                                : const SizedBox.shrink())
-                          : LocalFolderSessionList(
+                    if (openFolder == null)
+                      Expanded(
+                        child: folders.isEmpty
+                            ? Center(
+                                child: Text(
+                                  context.l10n.localFoldersEmpty,
+                                  style: TextStyle(
+                                    color: colors.dim,
+                                    fontSize: 13,
+                                  ),
+                                ),
+                              )
+                            : _FolderList(
+                                folders: folders,
+                                iconResolver: iconResolver,
+                                onOpen: onSelectFolder,
+                              ),
+                      )
+                    else ...[
+                      _FolderStrip(
+                        folders: folders,
+                        selectedFolderId: selectedFolderId,
+                        iconResolver: iconResolver,
+                        onOpen: onSelectFolder,
+                      ),
+                      Expanded(
+                        child: LocalFolderSessionList(
                               sessions: openFolder.sessions,
                               selectedSessionId: selectedSessionId,
                               onOpenSession: onOpenSession,
                             ),
-                    ),
+                      ),
+                    ],
                   ],
                 ),
               ),
@@ -218,8 +226,95 @@ class _LocalHeader extends StatelessWidget {
   }
 }
 
-/// Level 1: the Telegram compact strip — one Ø50 folder avatar with
-/// its name label below, one folder per [LocalSessionsPanel.stripItemPitch] cell.
+/// Level 1: the standard [logo][name] folder list — Telegram-style rows
+/// (70pt pitch, Ø50 avatar, name + session-count meta) that drill into
+/// the avatar-strip + session-list view when tapped.
+class _FolderList extends StatelessWidget {
+  const _FolderList({
+    required this.folders,
+    required this.iconResolver,
+    required this.onOpen,
+  });
+
+  final List<LocalSessionFolder> folders;
+  final FolderIconResolver? iconResolver;
+  final ValueChanged<String> onOpen;
+
+  @override
+  Widget build(BuildContext context) {
+    final tokens = FaDesignTokens.of(context);
+    return ListView.builder(
+      key: const ValueKey('localFoldersList'),
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      itemCount: folders.length,
+      itemBuilder: (context, index) {
+        final folder = folders[index];
+        return SizedBox(
+          key: ValueKey('localFolderRow-${folder.id}'),
+          height: LocalSessionsPanel.stripItemPitch,
+          child: Material(
+            color: Colors.transparent,
+            child: InkWell(
+              onTap: () => onOpen(folder.id),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 10),
+                child: Row(
+                  children: [
+                    FutureBuilder<MemoryImage?>(
+                      future: iconResolver?.resolve(folder.id),
+                      builder: (context, snapshot) => FolderAvatar(
+                        seed: folder.avatarSeed,
+                        label: folder.name,
+                        size: LocalSessionsPanel.stripAvatarSize,
+                        image: snapshot.data,
+                        circle: true,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            folder.name,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w600,
+                              color: tokens.ink1,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            context.l10n.localFolderSessionCount(
+                              folder.sessions.length,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: tokens.ink3,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+/// Level 2 (a folder is open): the Telegram avatar-only strip — one Ø50
+/// folder avatar per [LocalSessionsPanel.stripItemPitch] cell, no labels.
+/// Level 1 (nothing open) is the standard [logo][name] list.
 /// The selected folder paints the accent capsule flush to the strip's
 /// left edge and squares its avatar (radius ~25%); a tap opens the
 /// folder's session list beside the strip.
@@ -261,36 +356,16 @@ class _FolderStrip extends StatelessWidget {
                       child: Stack(
                         alignment: Alignment.center,
                         children: [
-                          Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              FutureBuilder<MemoryImage?>(
-                                future: iconResolver?.resolve(folder.id),
-                                builder: (context, snapshot) => FolderAvatar(
-                                  seed: folder.avatarSeed,
-                                  label: folder.name,
-                                  size: LocalSessionsPanel.stripAvatarSize,
-                                  image: snapshot.data,
-                                  circle: !selected,
-                                  radiusFactor: selected ? 0.25 : 0.28,
-                                ),
-                              ),
-                              const SizedBox(height: 2),
-                              SizedBox(
-                                width: LocalSessionsPanel.stripWidth - 8,
-                                child: Text(
-                                  folder.name,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  textAlign: TextAlign.center,
-                                  style: TextStyle(
-                                    fontSize: 10,
-                                    height: 1.1,
-                                    color: FaDesignTokens.of(context).ink3,
-                                  ),
-                                ),
-                              ),
-                            ],
+                          FutureBuilder<MemoryImage?>(
+                            future: iconResolver?.resolve(folder.id),
+                            builder: (context, snapshot) => FolderAvatar(
+                              seed: folder.avatarSeed,
+                              label: folder.name,
+                              size: LocalSessionsPanel.stripAvatarSize,
+                              image: snapshot.data,
+                              circle: !selected,
+                              radiusFactor: selected ? 0.25 : 0.28,
+                            ),
                           ),
                           if (selected)
                             Positioned(

@@ -36,10 +36,11 @@ class ChatNetworksPanel extends StatefulWidget {
   });
 
   /// The compact strip's geometry (the Local folder strip's contract):
-  /// ~70pt avatar-only column, Ø~50 avatars centered on a ~70pt pitch,
-  /// accent capsule ~6x51 flush to the strip's left edge.
+  /// ~70pt avatar-only column (level 2), Ø~50 avatars on a ~70pt pitch,
+  /// accent capsule ~6x51 flush to the strip's left edge. Level 1 (no
+  /// network open) is the standard [logo][name] list.
   static const double stripWidth = 70;
-  static const double stripItemPitch = 84;
+  static const double stripItemPitch = 70;
   static const double stripAvatarSize = 50;
   static const double capsuleWidth = 6;
   static const double capsuleHeight = 51;
@@ -109,26 +110,33 @@ class _ChatNetworksPanelState extends State<ChatNetworksPanel> {
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    _NetworksStrip(
-                      networks: networks,
-                      selectedNetworkId: openId,
-                      onOpen: (networkId) =>
-                          setState(() => _openNetworkId = networkId),
-                    ),
-                    Expanded(
-                      child: openId == null
-                          ? (networks.isEmpty
-                                ? Center(
-                                    child: Text(
-                                      context.l10n.networkEmptyTitle,
-                                      style: TextStyle(
-                                        color: FahColors.of(context).dim,
-                                        fontSize: 13,
-                                      ),
-                                    ),
-                                  )
-                                : const SizedBox.shrink())
-                          : _ChannelsList(
+                    if (openId == null)
+                      Expanded(
+                        child: networks.isEmpty
+                            ? Center(
+                                child: Text(
+                                  context.l10n.networkEmptyTitle,
+                                  style: TextStyle(
+                                    color: FahColors.of(context).dim,
+                                    fontSize: 13,
+                                  ),
+                                ),
+                              )
+                            : _NetworksList(
+                                networks: networks,
+                                onOpen: (networkId) =>
+                                    setState(() => _openNetworkId = networkId),
+                              ),
+                      )
+                    else ...[
+                      _NetworksStrip(
+                        networks: networks,
+                        selectedNetworkId: openId,
+                        onOpen: (networkId) =>
+                            setState(() => _openNetworkId = networkId),
+                      ),
+                      Expanded(
+                        child: _ChannelsList(
                               networkId: openId,
                               channels: session?.channels ?? const [],
                               selectedChannelId:
@@ -138,7 +146,8 @@ class _ChatNetworksPanelState extends State<ChatNetworksPanel> {
                               onOpenChannel: (channel) =>
                                   widget.onOpenChannel(openId, channel),
                             ),
-                    ),
+                      ),
+                    ],
                   ],
                 ),
               ),
@@ -242,9 +251,68 @@ class _NetworksHeader extends StatelessWidget {
   }
 }
 
-/// Level 1: the compact networks strip — one Ø50 letter-gradient
-/// avatar with its name label below, per [ChatNetworksPanel.stripItemPitch]
-/// labels or status meta. The drilled network paints the accent capsule
+/// Level 1: the standard [logo][name] networks list — Telegram-style
+/// rows (70pt pitch, Ø50 avatar, display name) that drill into the
+/// avatar-strip + channels view when tapped.
+class _NetworksList extends StatelessWidget {
+  const _NetworksList({required this.networks, required this.onOpen});
+
+  final Map<String, NetworkEntry> networks;
+  final ValueChanged<String> onOpen;
+
+  @override
+  Widget build(BuildContext context) {
+    final tokens = FaDesignTokens.of(context);
+    return ListView.builder(
+      key: const ValueKey('networksList'),
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      itemCount: networks.length,
+      itemBuilder: (context, index) {
+        final entry = networks.entries.elementAt(index);
+        return SizedBox(
+          key: ValueKey('networkRow-${entry.key}'),
+          height: ChatNetworksPanel.stripItemPitch,
+          child: Material(
+            color: Colors.transparent,
+            child: InkWell(
+              onTap: () => onOpen(entry.key),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 10),
+                child: Row(
+                  children: [
+                    FolderAvatar(
+                      seed: entry.key,
+                      label: entry.value.name,
+                      size: ChatNetworksPanel.stripAvatarSize,
+                      circle: true,
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        entry.value.name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                          color: tokens.ink1,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+/// Level 2: the compact avatar-only networks strip — one Ø50
+/// letter-gradient avatar per [ChatNetworksPanel.stripItemPitch] cell,
+/// no labels or status meta. The drilled network paints the accent capsule
 /// flush to the strip's left edge and squares its avatar (radius ~25%);
 /// a tap opens its channel list beside the strip.
 class _NetworksStrip extends StatelessWidget {
@@ -283,32 +351,12 @@ class _NetworksStrip extends StatelessWidget {
                       child: Stack(
                         alignment: Alignment.center,
                         children: [
-                          Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              FolderAvatar(
-                                seed: entry.key,
-                                label: entry.value.name,
-                                size: ChatNetworksPanel.stripAvatarSize,
-                                circle: !selected,
-                                radiusFactor: selected ? 0.25 : 0.28,
-                              ),
-                              const SizedBox(height: 2),
-                              SizedBox(
-                                width: ChatNetworksPanel.stripWidth - 8,
-                                child: Text(
-                                  entry.value.name,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  textAlign: TextAlign.center,
-                                  style: TextStyle(
-                                    fontSize: 10,
-                                    height: 1.1,
-                                    color: FaDesignTokens.of(context).ink3,
-                                  ),
-                                ),
-                              ),
-                            ],
+                          FolderAvatar(
+                            seed: entry.key,
+                            label: entry.value.name,
+                            size: ChatNetworksPanel.stripAvatarSize,
+                            circle: !selected,
+                            radiusFactor: selected ? 0.25 : 0.28,
                           ),
                           if (selected)
                             Positioned(
