@@ -618,9 +618,24 @@ void main() {
       expect(tester.takeException(), isNull);
       await tester.pumpAndSettle();
       expect(find.byKey(const ValueKey('chatCurrentFolder')), findsOneWidget);
-      expect(find.text('/one/project'), findsOneWidget);
-      expect(find.text('One agent'), findsOneWidget);
-      expect(find.text('One helper'), findsOneWidget);
+      // Telegram-style drill-down: the '<' header names the FOLDER (the
+      // full path is visible on the destination row at root).
+      expect(find.text('project'), findsOneWidget);
+      expect(find.text('/one/project'), findsNothing);
+      expect(
+        find.byKey(const ValueKey('chatSidebarLocalBack')),
+        findsOneWidget,
+      );
+      // The folder's Telegram session rows: newest first, flat — the old
+      // expand affordances are gone from the drill-down.
+      final oneAgent = tester.getRect(find.text('One agent'));
+      final oneHelper = tester.getRect(find.text('One helper'));
+      expect(oneAgent.top, lessThan(oneHelper.top));
+      expect(oneAgent.left, oneHelper.left);
+      expect(
+        find.byKey(const ValueKey('chatTreeToggle-local:One agent')),
+        findsNothing,
+      );
       expect(find.text('Two agent'), findsNothing);
       expect(find.text('Network row'), findsNothing);
       expect(parentToggles, 0);
@@ -629,9 +644,9 @@ void main() {
       await tester.pumpAndSettle();
       expect(opened, 1);
       expect(find.byKey(const ValueKey('chatCurrentFolder')), findsOneWidget);
-      expect(find.text('/one/project'), findsOneWidget);
+      expect(find.text('project'), findsOneWidget);
 
-      await tester.tap(find.byKey(const ValueKey('chatFolderBack')));
+      await tester.tap(find.byKey(const ValueKey('chatSidebarLocalBack')));
       await tester.pumpAndSettle();
       expect(find.byKey(oneFolder), findsOneWidget);
       expect(find.byKey(twoFolder), findsOneWidget);
@@ -660,16 +675,24 @@ void main() {
       find.byKey(const ValueKey('chatFolder-folder::/work/project')),
     );
     await tester.pumpAndSettle();
+    // The Telegram drill-down lists the folder's own sessions; the
+    // subagent is not a folder session.
     expect(find.text('Parent agent'), findsOneWidget);
     expect(find.text('Child agent'), findsNothing);
 
-    await pumpPanel(
-      tester,
-      controller,
-      expandedParents: const {'Parent agent'},
+    // Back to the normal list: the folder destination survives (both rows
+    // stay in the projection — nothing was dropped), grouped as one
+    // destination with the parent on top.
+    expect(controller.visibleEntries.map((e) => e.id.value), containsAll([
+      'Parent agent',
+      'Child agent',
+    ]));
+    await tester.tap(find.byKey(const ValueKey('chatSidebarLocalBack')));
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey('chatFolder-folder::/work/project')),
+      findsOneWidget,
     );
-    expect(find.text('Parent agent'), findsOneWidget);
-    expect(find.text('Child agent'), findsOneWidget);
   });
 
   testWidgets('desktop brand matches the native profile button and clears '
@@ -714,28 +737,23 @@ void main() {
     );
     await tester.pumpAndSettle();
 
+    // The Telegram-style drill-down is FLAT: the folder name lives in the
+    // '<' header only, and the subagent is not a folder session (it stays
+    // under its parent in the root tree).
     expect(find.text('project'), findsOneWidget);
-    final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
-    addTearDown(mouse.removePointer);
-    await mouse.addPointer(location: Offset.zero);
-    await mouse.moveTo(
-      tester.getCenter(
-        find.byKey(ValueKey('chatRow-${ChatEntryId.local('Parent agent')}')),
-      ),
-    );
-    await tester.pump();
-    final parentTitle = tester.getRect(find.text('Parent agent'));
-    final childTitle = tester.getRect(find.text('Child agent'));
-    expect(childTitle.left - parentTitle.left, 22);
-    final toggle = tester.getRect(
+    expect(find.text('Parent agent'), findsOneWidget);
+    expect(find.text('Child agent'), findsNothing);
+    expect(
       find.byKey(
         ValueKey('chatTreeToggle-${ChatEntryId.local('Parent agent')}'),
       ),
+      findsNothing,
+      reason: 'no tree affordances inside the Telegram drill-down',
     );
-    expect(
-      toggle.left,
-      greaterThan(tester.getRect(find.text('Parent agent')).right),
+    final row = tester.getRect(
+      find.byKey(ValueKey('localSession-Parent agent')),
     );
+    expect(row.height, 70);
   });
 
   testWidgets('compact scaffold uses text-led navigation hooks and FAB host', (

@@ -1,5 +1,7 @@
 // Copyright (c) 2026, the Flutter Agent Harness authors.
 
+import 'dart:async';
+
 import 'package:fa/l10n/l10n_ext.dart';
 import 'package:fa/ui/chats/chat_list_controller.dart';
 import 'package:fa/ui/chats/chat_list_entry.dart';
@@ -83,8 +85,8 @@ class LocalSessionsPanel extends StatelessWidget {
                         iconResolver: iconResolver,
                         onOpen: onSelectFolder,
                       )
-                    : _FolderSessionListView(
-                        folder: openFolder,
+                    : LocalFolderSessionList(
+                        sessions: openFolder.sessions,
                         selectedSessionId: selectedSessionId,
                         onOpenSession: onOpenSession,
                       ),
@@ -338,27 +340,44 @@ class _FolderRow extends StatelessWidget {
   }
 }
 
-/// Level 2: the Telegram-style session list for one folder — ~70pt rows,
+/// Level 2 — the Telegram-style session list for ONE folder: ~70pt rows,
 /// Ø46 letter avatar, 14pt semibold name, top-right last-activity time,
-/// 12–13pt preview line, running/unread badge, 1px hairlines, and an
-/// accent rounded highlight on the selected row.
-class _FolderSessionListView extends StatelessWidget {
-  const _FolderSessionListView({
-    required this.folder,
-    required this.selectedSessionId,
+/// 12–13pt preview line, running/unread badges, 1px hairlines, and an
+/// accent rounded highlight on the selected row. Shared verbatim by the
+/// Local panel's drill-down and the chats sidebar's in-place folder
+/// drill-down (same keys: `localSessionList`, `localSession-<id>`,
+/// `localSessionRunning`, `localSessionUnread`).
+class LocalFolderSessionList extends StatelessWidget {
+  const LocalFolderSessionList({
+    super.key,
+    required this.sessions,
+    this.selectedSessionId,
     required this.onOpenSession,
+    this.emptyText,
+    this.onLocalMenu,
   });
 
-  final LocalSessionFolder folder;
+  /// The folder's sessions, most recent first (the folder grouping's
+  /// order — see [groupLocalSessionFolders]).
+  final List<ChatListEntry> sessions;
+
+  /// The shell's ONE selected session id — the highlighted row.
   final String? selectedSessionId;
   final ValueChanged<ChatListEntry> onOpenSession;
 
+  /// The empty-state copy; defaults to the Local panel's "no sessions".
+  final String? emptyText;
+
+  /// Optional session-actions affordance (the chats sidebar's drill-down
+  /// keeps delete/rename reachable; the Local panel passes null).
+  final Future<void> Function(ChatListEntry entry, Rect anchor)? onLocalMenu;
+
   @override
   Widget build(BuildContext context) {
-    if (folder.sessions.isEmpty) {
+    if (sessions.isEmpty) {
       return Center(
         child: Text(
-          context.l10n.localSessionsEmpty,
+          emptyText ?? context.l10n.localSessionsEmpty,
           style: TextStyle(color: FahColors.of(context).dim, fontSize: 13),
         ),
       );
@@ -366,30 +385,37 @@ class _FolderSessionListView extends StatelessWidget {
     return ListView.builder(
       key: const ValueKey('localSessionList'),
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      itemCount: folder.sessions.length,
+      itemCount: sessions.length,
       itemBuilder: (context, index) {
-        final entry = folder.sessions[index];
-        return _SessionRow(
+        final entry = sessions[index];
+        return LocalSessionRow(
           key: ValueKey('localSession-${entry.id.value}'),
           entry: entry,
           selected: entry.id.value == selectedSessionId,
           hairline:
-              index < folder.sessions.length - 1 &&
+              index < sessions.length - 1 &&
               entry.id.value != selectedSessionId,
           onOpen: () => onOpenSession(entry),
+          onLocalMenu: onLocalMenu,
         );
       },
     );
   }
 }
 
-class _SessionRow extends StatelessWidget {
-  const _SessionRow({
+/// One Telegram-style session row of [LocalFolderSessionList]: accent
+/// highlight on selection, running/unread badges, hairline. The chats
+/// sidebar's drill-down passes [onLocalMenu] to keep the session actions
+/// (delete/rename) one hover away — the same `chatMenu-<id>` affordance
+/// key the conversation rows use; the Local panel passes null (pure rows).
+class LocalSessionRow extends StatefulWidget {
+  const LocalSessionRow({
     super.key,
     required this.entry,
     required this.selected,
     required this.hairline,
     required this.onOpen,
+    this.onLocalMenu,
   });
 
   final ChatListEntry entry;
@@ -397,10 +423,26 @@ class _SessionRow extends StatelessWidget {
   final bool hairline;
   final VoidCallback onOpen;
 
+  /// When set, hover/focus reveals the session-actions affordance.
+  final Future<void> Function(ChatListEntry entry, Rect anchor)? onLocalMenu;
+
+  @override
+  State<LocalSessionRow> createState() => _LocalSessionRowState();
+}
+
+class _LocalSessionRowState extends State<LocalSessionRow> {
+  bool _hovering = false;
+  bool _focused = false;
+
+  bool get _showActions => _hovering || _focused;
+
   @override
   Widget build(BuildContext context) {
+    final entry = widget.entry;
+    final selected = widget.selected;
     final colors = FahColors.of(context);
     final tokens = FaDesignTokens.of(context);
+    final actionColor = selected ? tokens.accentInk : colors.dim;
     final foreground = selected ? tokens.accentInk : colors.text;
     final subdued = selected
         ? tokens.accentInk.withValues(alpha: .82)
@@ -411,141 +453,182 @@ class _SessionRow extends StatelessWidget {
         ? entry.preview!.trim()
         : context.l10n.chatNoPreview;
     final unread = entry.unreadCount ?? 0;
-    return Material(
-      color: selected ? tokens.accent : Colors.transparent,
-      shape: RoundedSuperellipseBorder(borderRadius: BorderRadius.circular(12)),
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: onOpen,
-        child: SizedBox(
-          height: LocalSessionsPanel.sessionRowPitch,
-          child: Column(
-            children: [
-              Expanded(
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 10),
-                  child: Row(
-                    children: [
-                      FolderAvatar(
-                        seed: entry.id.value,
-                        label: entry.title,
-                        size: LocalSessionsPanel.avatarSize,
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
+    final menu = widget.onLocalMenu;
+    return Focus(
+      skipTraversal: true,
+      onFocusChange: (value) {
+        if (mounted) setState(() => _focused = value);
+      },
+      child: MouseRegion(
+        onEnter: (_) => setState(() => _hovering = true),
+        onExit: (_) => setState(() => _hovering = false),
+        child: Material(
+          color: selected ? tokens.accent : Colors.transparent,
+          shape: RoundedSuperellipseBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+          clipBehavior: Clip.antiAlias,
+          child: InkWell(
+            onTap: widget.onOpen,
+            child: SizedBox(
+              height: LocalSessionsPanel.sessionRowPitch,
+              child: Column(
+                children: [
+                  Expanded(
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 10),
+                      child: Row(
+                        children: [
+                          FolderAvatar(
+                            seed: entry.id.value,
+                            label: entry.title,
+                            size: LocalSessionsPanel.avatarSize,
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                Expanded(
-                                  child: Text(
-                                    entry.title,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: TextStyle(
-                                      color: foreground,
-                                      fontSize: 14,
-                                      fontWeight: FontWeight.w600,
-                                      height: 1.2,
-                                    ),
-                                  ),
-                                ),
-                                const SizedBox(width: 6),
-                                Text(
-                                  chatListRelativeTime(
-                                    context,
-                                    entry.lastActivity ?? entry.createdAt,
-                                  ),
-                                  style: TextStyle(
-                                    color: subdued,
-                                    fontSize: 10.5,
-                                    height: 1.2,
-                                  ),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 4),
-                            Row(
-                              children: [
-                                Expanded(
-                                  child: Text(
-                                    preview,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: TextStyle(
-                                      color: subdued,
-                                      fontSize: 12.5,
-                                      height: 1.25,
-                                    ),
-                                  ),
-                                ),
-                                if (entry.isStreaming)
-                                  Container(
-                                    key: const ValueKey('localSessionRunning'),
-                                    margin: const EdgeInsets.only(left: 6),
-                                    width: 10,
-                                    height: 10,
-                                    decoration: BoxDecoration(
-                                      shape: BoxShape.circle,
-                                      color: selected
-                                          ? tokens.accentInk
-                                          : colors.teal,
-                                    ),
-                                  )
-                                else if (unread > 0)
-                                  Container(
-                                    key: const ValueKey('localSessionUnread'),
-                                    margin: const EdgeInsets.only(left: 6),
-                                    constraints: const BoxConstraints(
-                                      minWidth: 19,
-                                    ),
-                                    height: 19,
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 5,
-                                    ),
-                                    alignment: Alignment.center,
-                                    decoration: BoxDecoration(
-                                      shape: unread > 9
-                                          ? BoxShape.rectangle
-                                          : BoxShape.circle,
-                                      borderRadius: unread > 9
-                                          ? BorderRadius.circular(9.5)
-                                          : null,
-                                      color: selected
-                                          ? tokens.accentInk
-                                          : tokens.accent,
-                                    ),
-                                    child: Text(
-                                      '$unread',
-                                      textAlign: TextAlign.center,
-                                      style: TextStyle(
-                                        color: selected
-                                            ? tokens.accent
-                                            : tokens.accentInk,
-                                        fontSize: 10,
-                                        fontWeight: FontWeight.w600,
-                                        height: 1,
+                                Row(
+                                  children: [
+                                    Expanded(
+                                      child: Text(
+                                        entry.title,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: TextStyle(
+                                          color: foreground,
+                                          fontSize: 14,
+                                          fontWeight: FontWeight.w600,
+                                          height: 1.2,
+                                        ),
                                       ),
                                     ),
-                                  ),
+                                    const SizedBox(width: 6),
+                                    Text(
+                                      chatListRelativeTime(
+                                        context,
+                                        entry.lastActivity ?? entry.createdAt,
+                                      ),
+                                      style: TextStyle(
+                                        color: subdued,
+                                        fontSize: 10.5,
+                                        height: 1.2,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 4),
+                                Row(
+                                  children: [
+                                    Expanded(
+                                      child: Text(
+                                        preview,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: TextStyle(
+                                          color: subdued,
+                                          fontSize: 12.5,
+                                          height: 1.25,
+                                        ),
+                                      ),
+                                    ),
+                                    if (entry.isStreaming)
+                                      Container(
+                                        key: const ValueKey(
+                                          'localSessionRunning',
+                                        ),
+                                        margin: const EdgeInsets.only(left: 6),
+                                        width: 10,
+                                        height: 10,
+                                        decoration: BoxDecoration(
+                                          shape: BoxShape.circle,
+                                          color: selected
+                                              ? tokens.accentInk
+                                              : colors.teal,
+                                        ),
+                                      )
+                                    else if (unread > 0)
+                                      Container(
+                                        key: const ValueKey(
+                                          'localSessionUnread',
+                                        ),
+                                        margin: const EdgeInsets.only(left: 6),
+                                        constraints: const BoxConstraints(
+                                          minWidth: 19,
+                                        ),
+                                        height: 19,
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 5,
+                                        ),
+                                        alignment: Alignment.center,
+                                        decoration: BoxDecoration(
+                                          shape: unread > 9
+                                              ? BoxShape.rectangle
+                                              : BoxShape.circle,
+                                          borderRadius: unread > 9
+                                              ? BorderRadius.circular(9.5)
+                                              : null,
+                                          color: selected
+                                              ? tokens.accentInk
+                                              : tokens.accent,
+                                        ),
+                                        child: Text(
+                                          '$unread',
+                                          textAlign: TextAlign.center,
+                                          style: TextStyle(
+                                            color: selected
+                                                ? tokens.accent
+                                                : tokens.accentInk,
+                                            fontSize: 10,
+                                            fontWeight: FontWeight.w600,
+                                            height: 1,
+                                          ),
+                                        ),
+                                      ),
+                                  ],
+                                ),
                               ],
                             ),
-                          ],
-                        ),
+                          ),
+                          if (menu != null && _showActions)
+                            Builder(
+                              builder: (buttonContext) => IconButton(
+                                key: ValueKey('chatMenu-${entry.id}'),
+                                onPressed: () {
+                                  final box =
+                                      buttonContext.findRenderObject()
+                                          as RenderBox;
+                                  final origin = box.localToGlobal(Offset.zero);
+                                  unawaited(
+                                    menu(entry, origin & box.size),
+                                  );
+                                },
+                                tooltip: context.l10n.chatMoreActions,
+                                icon: const Icon(Icons.more_horiz, size: 17),
+                                color: actionColor,
+                                visualDensity: VisualDensity.compact,
+                                constraints: const BoxConstraints(
+                                  minWidth: 25,
+                                  minHeight: 32,
+                                ),
+                                padding: EdgeInsets.zero,
+                              ),
+                            ),
+                        ],
                       ),
-                    ],
+                    ),
                   ),
-                ),
+                  if (widget.hairline)
+                    Container(
+                      height: 1,
+                      margin: const EdgeInsets.only(left: 66, right: 8),
+                      color: colors.border.withValues(alpha: .45),
+                    ),
+                ],
               ),
-              if (hairline)
-                Container(
-                  height: 1,
-                  margin: const EdgeInsets.only(left: 66, right: 8),
-                  color: colors.border.withValues(alpha: .45),
-                ),
-            ],
+            ),
           ),
         ),
       ),

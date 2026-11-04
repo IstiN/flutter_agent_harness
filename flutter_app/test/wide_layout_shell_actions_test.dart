@@ -1419,8 +1419,12 @@ void main() {
     await tester.pump(const Duration(milliseconds: 100));
     expect(tester.takeException(), isNull);
     await tester.pumpAndSettle();
+    // Telegram-style in-place drill-down: the '<' chevron header row names
+    // the folder; the list is the folder's Telegram session rows.
     expect(find.byKey(const ValueKey('chatCurrentFolder')), findsOneWidget);
-    expect(find.text('/work/project'), findsOneWidget);
+    expect(find.byKey(const ValueKey('chatSidebarLocalBack')), findsOneWidget);
+    expect(find.text('project'), findsOneWidget);
+    expect(find.byKey(const ValueKey('localSessionList')), findsOneWidget);
     expect(find.text('Agent one'), findsOneWidget);
     expect(rect('messengerSearchField'), searchBefore);
     expect(rect('messengerNavRail'), railBefore);
@@ -1448,7 +1452,7 @@ void main() {
     expect(find.byKey(const ValueKey('chatCurrentFolder')), findsOneWidget);
     expect(find.text('Agent one'), findsOneWidget);
 
-    await tester.tap(find.byKey(const ValueKey('chatFolderBack')));
+    await tester.tap(find.byKey(const ValueKey('chatSidebarLocalBack')));
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('chatCurrentFolder')), findsNothing);
     expect(

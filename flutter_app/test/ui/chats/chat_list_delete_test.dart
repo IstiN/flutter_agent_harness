@@ -121,7 +121,7 @@ Future<void> _openFolder(WidgetTester tester, String path) async {
 
 Future<void> _deleteFromMenu(WidgetTester tester, String id) async {
   final entryId = ChatEntryId.local(id);
-  final row = find.byKey(ValueKey('chatRow-$entryId'));
+  final row = find.byKey(ValueKey('localSession-$id'));
   final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
   addTearDown(mouse.removePointer);
   await mouse.addPointer(location: Offset.zero);
@@ -165,7 +165,7 @@ void main() {
       isNot(contains('deleted')),
     );
     expect(find.text('Delete me'), findsNothing);
-    expect(find.byKey(const ValueKey('chatFolderBack')), findsOneWidget);
+    expect(find.byKey(const ValueKey('chatSidebarLocalBack')), findsOneWidget);
     final controller = tester
         .widget<ChatListPanel>(find.byType(ChatListPanel))
         .controller;
@@ -173,7 +173,7 @@ void main() {
     await tester.pump();
     expect(controller.visibleEntries.map((entry) => entry.id.value), isEmpty);
     controller.setSearch('');
-    await tester.tap(find.byKey(const ValueKey('chatFolderBack')));
+    await tester.tap(find.byKey(const ValueKey('chatSidebarLocalBack')));
     await tester.pumpAndSettle();
     expect(find.byKey(folder), findsNothing);
     expect(find.text('Network stays'), findsOneWidget);
@@ -213,7 +213,10 @@ void main() {
       await _deleteFromMenu(tester, 'parent');
 
       expect(find.text('Parent'), findsNothing);
-      expect(find.text('Child'), findsOneWidget);
+      // The orphaned subagent is not a folder session (Telegram rows list
+      // the folder's own sessions) — it stays in the projection and keeps
+      // the folder destination alive.
+      expect(find.text('Child'), findsNothing);
       expect(
         tester
             .widget<ChatListPanel>(find.byType(ChatListPanel))
@@ -222,7 +225,7 @@ void main() {
             .map((entry) => entry.id.value),
         containsAll(<String>['child', 'other', 'network-stays']),
       );
-      await tester.tap(find.byKey(const ValueKey('chatFolderBack')));
+      await tester.tap(find.byKey(const ValueKey('chatSidebarLocalBack')));
       await tester.pumpAndSettle();
       expect(
         find.byKey(const ValueKey('chatFolder-folder::/work/project')),
@@ -255,7 +258,7 @@ void main() {
       expect(fixture.manager.activeId, 'first');
       expect(fixture.manager.active, isNotNull);
       expect(find.text('Second'), findsNothing);
-      await tester.tap(find.byKey(const ValueKey('chatFolderBack')));
+      await tester.tap(find.byKey(const ValueKey('chatSidebarLocalBack')));
       await tester.pumpAndSettle();
       expect(
         find.byKey(const ValueKey('chatFolder-folder::/two')),
@@ -296,7 +299,7 @@ void main() {
       (await fixture.repo.list()).map((item) => item.id),
       contains('deleted'),
     );
-    await tester.tap(find.byKey(const ValueKey('chatFolderBack')));
+    await tester.tap(find.byKey(const ValueKey('chatSidebarLocalBack')));
     await tester.pumpAndSettle();
     expect(
       find.byKey(const ValueKey('chatFolder-folder::/work/project')),

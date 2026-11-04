@@ -18,14 +18,14 @@ void main() {
       expect(a.$2, b.$2);
     });
 
-    test('hue derives from the cwd path string', () {
+    test('hue derives from the cwd path string (fixed palette slot)', () {
       final hue = folderAvatarHue(cwd);
-      expect(hue, cwd.hashCode.abs() % 360);
+      expect(hue, folderAvatarHues[cwd.hashCode.abs() % folderAvatarHues.length]);
       final (start, end) = folderAvatarGradient(cwd);
-      expect(start, HSLColor.fromAHSL(1, hue.toDouble(), 0.45, 0.42).toColor());
+      expect(start, HSLColor.fromAHSL(1, hue.toDouble(), 0.72, 0.58).toColor());
       expect(
         end,
-        HSLColor.fromAHSL(1, ((hue + 32) % 360).toDouble(), 0.5, 0.3).toColor(),
+        HSLColor.fromAHSL(1, ((hue + 30) % 360).toDouble(), 0.66, 0.42).toColor(),
       );
     });
 
@@ -66,7 +66,7 @@ void main() {
       title: title ?? id,
       createdAt: DateTime.utc(2026, 1, 1),
       lastActivity: activity ?? DateTime.utc(2026, 1, 2),
-      folderName: cwd == null ? null : cwd.split('/').last,
+      folderName: cwd?.split('/').last,
       folderPath: cwd,
       unreadCount: unread,
       isStreaming: streaming,

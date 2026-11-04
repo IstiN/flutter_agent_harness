@@ -100,13 +100,44 @@ String _basename(String cwd) {
 }
 
 class _SessionOrder {
-  static int compare(ChatListEntry a, ChatListEntry b) {
-    final aTime = a.lastActivity ?? a.createdAt;
-    final bTime = b.lastActivity ?? b.createdAt;
-    final byTime = bTime.compareTo(aTime);
-    return byTime != 0 ? byTime : a.id.canonical.compareTo(b.id.canonical);
-  }
+  static int compare(ChatListEntry a, ChatListEntry b) =>
+      compareSessionRecency(a, b);
 }
+
+/// The folder path a session entry belongs to: the entry's folderPath,
+/// falling back to its folderName — the SAME identity the chats sidebar's
+/// folder destinations group by (persisted rows may carry only the name).
+/// Null for unfoldered (Personal) rows and non-local entries.
+String? sessionEntryFolderPath(ChatListEntry entry) {
+  if (entry.kind != ChatListEntryKind.localAgent) return null;
+  final path = entry.folderPath ?? entry.folderName;
+  if (path == null || path.isEmpty) return null;
+  return path;
+}
+
+/// Orders folder sessions like the folder grouping does: most recent
+/// activity first (createdAt fallback), stable by canonical id.
+int compareSessionRecency(ChatListEntry a, ChatListEntry b) {
+  final aTime = a.lastActivity ?? a.createdAt;
+  final bTime = b.lastActivity ?? b.createdAt;
+  final byTime = bTime.compareTo(aTime);
+  return byTime != 0 ? byTime : a.id.canonical.compareTo(b.id.canonical);
+}
+
+/// The drill-down session list for one folder: every non-subagent entry
+/// under [folderPath] (see [sessionEntryFolderPath]), most recent first —
+/// the same rows [groupLocalSessionFolders] puts in the folder (subagents
+/// never became folder sessions; they stay under their parent at root).
+List<ChatListEntry> folderSessionList(
+  List<ChatListEntry> entries, {
+  required String folderPath,
+}) => entries
+    .where(
+      (entry) =>
+          sessionEntryFolderPath(entry) == folderPath && !entry.isSubagent,
+    )
+    .toList()
+  ..sort(compareSessionRecency);
 
 // ---------------------------------------------------------------------------
 // Folder avatar algorithm (yoloit tier-1 port, vision-audit rework)

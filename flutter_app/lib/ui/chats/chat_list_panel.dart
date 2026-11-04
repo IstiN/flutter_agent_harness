@@ -21,6 +21,8 @@ import 'package:intl/intl.dart';
 
 import 'chat_list_controller.dart';
 import 'chat_list_entry.dart';
+import 'local_session_folders.dart';
+import 'local_sessions_panel.dart' show LocalFolderSessionList;
 
 /// Compact a host cwd for display without changing the absolute path used as
 /// the folder identity. Only a path-segment-boundary home prefix is shortened.
@@ -604,6 +606,27 @@ class _ChatListPanelState extends State<ChatListPanel> {
       }
       return state(_buildEmpty(colors));
     }
+    // The LOCAL folder drill-down (Telegram pattern, owner pass): tapping a
+    // folder destination swaps the list to that folder's session list — the
+    // same 70pt Telegram rows the Local section uses (shared keys) — under
+    // the '<' back chevron header row. The search field stays on top and
+    // still filters inside the folder.
+    final directorySessions = directory == null
+        ? const <ChatListEntry>[]
+        : folderSessionList(visibleEntries.toList(), folderPath: directory);
+    if (directory != null) {
+      return state(
+        Padding(
+          padding: EdgeInsets.only(top: topPadding + 2),
+          child: LocalFolderSessionList(
+            sessions: directorySessions,
+            selectedSessionId: widget.selectedEntryId?.value,
+            onOpenSession: (entry) => unawaited(_open(entry)),
+            onLocalMenu: widget.onLocalMenu,
+          ),
+        ),
+      );
+    }
     final pinned = controller.pinnedEntries.where(inCurrentDirectory).toList();
     final recent = controller.recentEntries.where(inCurrentDirectory).toList();
     return ListView(
@@ -718,6 +741,9 @@ class _ChatListPanelState extends State<ChatListPanel> {
     );
   }
 
+  /// The LOCAL folder drill-down's header row (Telegram pattern, owner
+  /// pass): a '<' chevron walks back to the normal chats list; the folder
+  /// name is the title. Sits under the search field (which stays on top).
   Widget _buildCurrentDirectoryHeader(FahColors colors, String directory) {
     return Container(
       key: const ValueKey('chatCurrentFolder'),
@@ -727,42 +753,27 @@ class _ChatListPanelState extends State<ChatListPanel> {
       child: Row(
         children: [
           IconButton(
-            key: const ValueKey('chatFolderBack'),
+            key: const ValueKey('chatSidebarLocalBack'),
             onPressed: () => _setDirectory(null),
             tooltip: MaterialLocalizations.of(context).backButtonTooltip,
-            iconSize: 20,
-            style: IconButton.styleFrom(
-              minimumSize: const Size.square(40),
-              maximumSize: const Size.square(40),
-            ),
-            icon: const Icon(Icons.arrow_back_rounded),
+            iconSize: 26,
+            color: colors.text,
+            visualDensity: VisualDensity.compact,
+            icon: const Icon(Icons.chevron_left_rounded),
           ),
-          Icon(Icons.folder_outlined, size: 20, color: colors.dim),
-          const SizedBox(width: 8),
           Expanded(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  _directoryName(directory),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: colors.text,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-                Text(
-                  directory,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(color: colors.dim, fontSize: 10),
-                ),
-              ],
+            child: Text(
+              _directoryName(directory),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: colors.text,
+                fontSize: 16,
+                fontWeight: FontWeight.w600,
+              ),
             ),
           ),
+          const SizedBox(width: 8),
         ],
       ),
     );
