@@ -95,12 +95,20 @@ final class FilesAppPanel extends StatelessWidget {
           tintAmount: .4,
           tintOpacity: .78,
           borderRadius: BorderRadius.circular(18),
-          // 3pt top / 6pt elsewhere: with the band's topCenterline bias
-          // (4pt up) this lands the X's center on the chat header's shared
-          // action centerline — the collapse toggle's center (screen y=35
-          // in the docked panel: 8pt panel margin + 3pt card padding + 2pt
-          // band padding + 4pt centering gap + 18pt half-circle).
-          padding: const EdgeInsets.fromLTRB(6, 3, 6, 6),
+          // The docked macOS panel reserves the same compact titlebar
+          // clearance as the sidebar, putting its toolbar and X on the
+          // shared search/compose/collapse action centerline. Standalone
+          // routes and other platforms retain the original dense inset.
+          padding: EdgeInsets.fromLTRB(
+            6,
+            topCenterline
+                ? (!kIsWeb && defaultTargetPlatform == TargetPlatform.macOS
+                      ? 35
+                      : 5)
+                : 3,
+            6,
+            6,
+          ),
           child: FileBrowser(
             env: presentation.env,
             initialPath: presentation.initialPath,

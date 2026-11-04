@@ -1181,10 +1181,10 @@ class _WideLayoutShellState extends State<WideLayoutShell>
                     // only crossfade content and never duplicate the toggle.
                     Positioned(
                       left: toggleLeft,
-                      // Expanded: inside the ONE compact header row, below
-                      // the native titlebar and inside the rounded glass.
-                      // Collapsed: floating center chrome at its usual band.
-                      top: 17,
+                      // One shared action centerline in expanded and
+                      // collapsed states: below the compact native titlebar
+                      // on macOS, and at the dense content row elsewhere.
+                      top: _isMacOS ? 49 : 19,
                       child: MessengerSidebarToggle(
                         key: const ValueKey('wideShellSidebarToggle'),
                         expanded: !_sidebarCollapsed,

@@ -1666,8 +1666,8 @@ void main() {
             find.byKey(const ValueKey('glassCenterPanel')),
           );
           expect(
-            titlebar.contains(collapse.center),
-            isTrue,
+            collapse.center.dy,
+            greaterThan(titlebar.bottom),
             reason: '$reason titlebar=$titlebar toggle=$collapse',
           );
           expect(search.top, greaterThanOrEqualTo(titlebar.bottom));
@@ -2040,7 +2040,7 @@ void main() {
       final header = find.byType(MessengerSectionHeader);
       expect(header, findsOneWidget, reason: reason);
       final headerRect = tester.getRect(header);
-      expect(headerRect.height, 86, reason: reason);
+      expect(headerRect.height, 88, reason: reason);
       final glass = tester.getRect(
         find.byKey(const ValueKey('glassSidebarPanel')),
       );
@@ -2163,10 +2163,8 @@ void main() {
     expect(find.byKey(const ValueKey('filesAppClose')), findsOneWidget);
 
     // ONE centerline: the Files band X's vertical center equals the
-    // collapse toggle's (the header band's shared action centerline —
-    // screen y=35: the panel card's 8pt margin + 3pt card padding + the
-    // band's 2pt padding + the row's 4pt centering put the 36pt X's top
-    // at 17).
+    // collapse toggle's on the shared search/compose action row below
+    // the compact macOS titlebar clearance.
     final toggle = tester.getRect(
       find.byKey(const ValueKey('chatSidebarCollapse')),
     );
@@ -2352,8 +2350,8 @@ void main() {
           final brand = find.byKey(const ValueKey('wideShellFaBrand'));
           final titlebar = find.byKey(const ValueKey('macosSidebarTitlebar'));
           if (platform == TargetPlatform.macOS) {
-            expect(tester.getSize(titlebar).height, 28);
-            expect(tester.getTopLeft(brand).dy, greaterThanOrEqualTo(28));
+            expect(tester.getSize(titlebar).height, 30);
+            expect(tester.getTopLeft(brand).dy, greaterThanOrEqualTo(30));
           } else {
             expect(titlebar, findsNothing);
             expect(tester.getTopLeft(brand).dy, lessThan(28));
