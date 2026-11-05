@@ -4138,5 +4138,16 @@
       "cacheRead": 7396480,
       "model": "glm-5.3-flash"
     }
+  ],
+  "pr-2061": [
+    {
+      "leg": "rework",
+      "at": "2026-11-05T22:02:58Z",
+      "prompt": 6243,
+      "completion": 0,
+      "total": 6243,
+      "cacheRead": 0,
+      "model": "kimi-for-coding"
+    }
   ]
 }
