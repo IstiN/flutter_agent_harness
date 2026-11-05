@@ -95,6 +95,11 @@ function onAgentEvent(ev) {
     case 'steer_queued':
       steerMarkers.push(bubble('steer', 'steered - lands at the next step boundary'));
       break;
+    case 'system':
+      // gh-2059: host notices (compaction receipts, unknown-command
+      // answers) are plumbing rows, never fake assistant turns.
+      bubble('system', ev.text ?? '');
+      break;
     case 'delta':
       // ponytail: single trailing bubble per run; deltas arrive pre-coalesced.
       if (!streamingBubble) streamingBubble = bubble('assistant', '');
@@ -270,6 +275,7 @@ $('saveProvider').addEventListener('click', async () => {
     baseUrl: $('pBaseUrl').value,
     apiKey: $('pApiKey').value,
     model: $('pModel').value,
+    contextWindow: $('pContextWindow').value,
     approvalMode: $('pApproval').value,
   });
   if (res?.ok) log('provider saved (stored in the service worker only)');

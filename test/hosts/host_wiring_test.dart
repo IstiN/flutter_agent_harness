@@ -118,7 +118,9 @@ void main() {
         on,
         on,
         on,
-        off,
+        // gh-2059: the extension runs the SHARED compaction contract at
+        // full parity — settle/relief/manual wiring, notices, ladder.
+        on,
         tx('origin-storage'),
       ],
       HostCapability.loadModes: [
@@ -818,6 +820,9 @@ void main() {
     test('a profile wiring fewer capabilities needs fewer services', () {
       // The extension profile wires only hub messaging, remote MCP, the
       // extension runtime, on-device inference and the js-app subset.
+      // gh-2059: compaction is ON for the extension (the SW host runs the
+      // shared settle/relief/manual flow) — it needs no builder services
+      // (config rides the extension's own settings stores).
       final plan = HostWiringBuilder(
         profile: extensionProfile,
         platformServices: {
@@ -828,7 +833,10 @@ void main() {
           'dynamicMessageSink': Object(),
         },
       ).build();
-      expect(plan.planFor(HostCapability.compaction), isA<HiddenCapability>());
+      expect(
+        plan.planFor(HostCapability.compaction),
+        isA<WiredCapability>(),
+      );
     });
   });
 }

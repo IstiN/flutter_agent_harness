@@ -136,6 +136,16 @@ export 'src/cli/tui_mouse_mode.dart';
 export 'src/cli/resumed_context_cache.dart';
 export 'src/compaction/branch_summarization.dart';
 export 'src/compaction/host_wiring.dart';
+export 'src/compaction/host_compaction_flow.dart'
+    show
+        HostCompactionFlow,
+        HostCompactionNotices,
+        HostCompactionPath,
+        HostCompactionReceipt,
+        hostCompactionFailureNotice,
+        hostCompactionFailureNoticeLead,
+        hostCompactionManualReceipt,
+        hostCompactionReliefReceipt;
 export 'src/compaction/compaction.dart';
 export 'src/compaction/summary_sanitizer.dart';
 export 'src/compaction/token_estimation.dart';

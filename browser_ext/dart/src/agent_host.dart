@@ -18,12 +18,10 @@ import 'package:flutter_agent_harness/src/env/execution_env.dart';
 import 'package:flutter_agent_harness/src/agent/agent.dart';
 import 'package:flutter_agent_harness/src/agent/agent_loop.dart';
 import 'package:flutter_agent_harness/src/agent/agent_tool.dart';
-import 'package:flutter_agent_harness/src/agent/auto_compactor.dart';
 import 'package:flutter_agent_harness/src/agent/tool_registry.dart';
 import 'package:flutter_agent_harness/src/approval/approval.dart';
 import 'package:flutter_agent_harness/src/approval/approval_hook.dart';
 import 'package:flutter_agent_harness/src/cancel_token.dart';
-import 'package:flutter_agent_harness/src/compaction/compaction.dart';
 import 'package:flutter_agent_harness/src/context.dart';
 import 'package:flutter_agent_harness/src/model.dart';
 import 'package:flutter_agent_harness/src/session/session_storage.dart';
@@ -50,6 +48,8 @@ import 'dap/dap_frames.dart';
 import 'dap/dap_integration.dart';
 import 'dap/bound_session_routing.dart';
 import 'providers.dart';
+import 'compaction_flow.dart';
+import 'slash_commands.dart';
 import 'session_reset.dart';
 import 'tool_gate.dart';
 import 'ui_protocol.dart';
@@ -117,6 +117,7 @@ final class AgentHost implements UiHostBackend {
   /// the desired state, [_registry] mirrors it via [_gate].sync.
   late ToolGate _gate;
   late Agent _agent;
+  late ExtCompactionController _compaction;
   Session? _session;
   ProviderConfig? _provider;
   String _mailbox = '';
@@ -298,6 +299,21 @@ final class AgentHost implements UiHostBackend {
     _agent.externalSteeringProbe = () async => _mail.isNotEmpty;
     attachApproval(_agent, _approvals);
     _agent.subscribe(_onAgentEvent);
+    // gh-2059: the compaction glue — every config value resolves through
+    // the SHARED host wiring, the settle / relief / manual paths run
+    // HostCompactionFlow, and the loop guard's relief closure lands here
+    // (issue #387 parity with the CLI and app hosts).
+    final compactionNotices = ExtCompactionNotices()
+      ..noticeSink = _systemNotice;
+    _compaction = ExtCompactionController(
+      session: () => _session!,
+      state: () => _agent.state,
+      stream: () => _streamFn(),
+      notices: compactionNotices,
+      contextWindowCap: () => null,
+    );
+    _agent.overWindowRelief = (overWindow) =>
+        _compaction.relieveOverWindow(overWindow);
     _booted = true;
     // DAP attach must happen on the boot path too, not only in
     // reconfigure: after an extension reload the auto-boot reads faDap
@@ -476,6 +492,7 @@ final class AgentHost implements UiHostBackend {
         baseUrl: '',
         apiKey: '',
         model: 'fake:not-configured',
+        contextWindow: null,
       ));
     }
     return modelForConfig(provider);
@@ -503,8 +520,34 @@ final class AgentHost implements UiHostBackend {
 
   /// User turn from the panel composer (or CI). While a run is active the
   /// text is steered into the current run, sender-attributed.
+  /// Panel system-event sink (gh-2059 AC4): compaction receipts, the
+  /// unknown-command answer and mid-run command refusals surface in the
+  /// transcript as a `system` row — never as a fake assistant turn.
+  void _systemNotice(String text) => _sink({'type': 'system', 'text': text});
+
   @override
   void sendUser(String text, {String from = 'user'}) {
+    // gh-2059 AC2: slash commands are classified BEFORE anything enters
+    // the transcript — `/compact` compacts, an unknown command answers
+    // locally (CLI parity), and only ordinary text rides the wire.
+    if (from == 'user') {
+      switch (dispatchExtUserInput(text)) {
+        case ExtCompactCommand():
+          if (_running) {
+            _systemNotice(
+              '/compact is refused mid-run — finish the current turn first',
+            );
+            return;
+          }
+          unawaited(_manualCompact());
+          return;
+        case ExtUnknownCommand(:final command):
+          _systemNotice('unknown command: $command (try /compact)');
+          return;
+        case ExtUserMessage(text: final message):
+          text = message; // the dispatch trims — keep the trimmed form
+      }
+    }
     final attributed = from == 'user' ? text : '[from $from] $text';
     if (_running) {
       _agent.steer(UserMessage.text(attributed));
@@ -874,7 +917,12 @@ final class AgentHost implements UiHostBackend {
   /// the real session.
   Future<Map<String, dynamic>> selfTest() async {
     final testAgent = Agent(
-      model: modelForConfig((baseUrl: '', apiKey: '', model: 'fake:selftest')),
+      model: modelForConfig((
+        baseUrl: '',
+        apiKey: '',
+        model: 'fake:selftest',
+        contextWindow: null,
+      )),
       systemPrompt: _systemPrompt,
       streamFunction: fakeStream,
       toolRegistry: _registry,
@@ -957,7 +1005,7 @@ final class AgentHost implements UiHostBackend {
     if (event is MessageEndEvent) await _persistMessage(event.message);
     if (event case AgentSettledEvent()) {
       await _env.flush();
-      await _compactIfDue();
+      await _compactIfDue(runToken: token);
       return;
     }
     final uiEvent = hostEventOf(event);
@@ -976,26 +1024,34 @@ final class AgentHost implements UiHostBackend {
     }
   }
 
-  /// AC10: compaction stays functional — the shared AutoCompactor runs
-  /// against the session tree after every settled run.
-  Future<void> _compactIfDue() async {
-    final session = _session;
-    if (session == null) return;
-    final window = _agent.state.model.contextWindow;
-    await AutoCompactorFactory(
-      session: session,
-      state: _agent.state,
-      window: window,
-      settings: CompactionSettings.forWindow(window),
-      sources: AutoCompactorSources(
-        smolStream: _agent.streamFunction,
-        smolModel: _agent.state.model,
-        mainStream: _agent.streamFunction,
-        mainModel: _agent.state.model,
-      ),
-      hooks: _SilentHooks(),
-    ).run();
+  /// AC10: compaction stays functional — the shared HostCompactionFlow
+  /// runs against the session tree after every settled run, gated on the
+  /// SHARED wiring's trigger (the wiring the CLI and app hosts compute
+  /// through; gh-2059), with every pass line on the `[fah][sw]` console
+  /// and receipts as panel system events (the _SilentHooks silence is
+  /// gone — that was the incident's blind spot). The settle path links
+  /// the run's cancel token: a cancelled run never funnels a cancelled
+  /// compaction as a failed pass (issue #1085).
+  Future<void> _compactIfDue({CancelToken? runToken}) async {
+    if (_session == null) return;
+    await _compaction.settle(runToken: runToken);
     await _env.flush();
+  }
+
+  /// The `/compact` path (gh-2059 AC2, CLI parity): unconditional manual
+  /// compaction; the receipt lands as a panel system event from the flow's
+  /// notices — a failure here is VISIBLE, never silent.
+  Future<void> _manualCompact() async {
+    if (!_booted || _session == null) {
+      _systemNotice('/compact: agent not ready');
+      return;
+    }
+    try {
+      await _compaction.manual();
+      await _env.flush();
+    } on Object catch (error) {
+      _systemNotice('/compact failed: $error');
+    }
   }
 
   // -- Approvals ---------------------------------------------------------------
@@ -1199,20 +1255,7 @@ final class AgentHost implements UiHostBackend {
 String _uuid() => uuidv7();
 
 /// Compaction progress sink that reports nothing (headless SW).
-final class _SilentHooks implements AutoCompactorHooks {
-  @override
-  void onPass(AutoCompactorPass pass) {}
-  @override
-  void onRetry(int attempt, int maxAttempts, Duration backoff, Object error) {}
-  @override
-  void onDone(int passes, int tokens) {}
-  @override
-  void onBothRolesFailed(Object lastError) {}
-  @override
-  void onDelta(String delta) {}
-  @override
-  void onAttemptStart(String label, int attempt, Duration budget) {}
-}
+
 
 /// The ext_request backend over the SW's chrome binding + fetch client.
 final class _ExtOpsBackend implements ExtOpsBackend {

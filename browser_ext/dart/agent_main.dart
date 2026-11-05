@@ -726,11 +726,9 @@ HostConfig _configFrom({
   // the relay so a stale route never outlives its config.
   final entry = pickActiveEntry(legacy: provider, doc: providers);
   if (entry != null) {
-    resolved = (
-      baseUrl: entry.baseUrl,
-      apiKey: entry.apiKey,
-      model: entry.modelId,
-    );
+    // The full AC7 ladder resolves here (stored override → provider
+    // catalog → pinned fallback) — the same resolution every host uses.
+    resolved = configOfEntry(entry);
     activeRelay = routeFor(entry) == ProviderRoute.relay
         ? (relay: const BridgeRelayClient(), providerName: entry.name)
         : null;
@@ -740,7 +738,9 @@ HostConfig _configFrom({
       final apiKey = '${provider['apiKey'] ?? ''}';
       final model = '${provider['model'] ?? ''}'.trim();
       if (model.isNotEmpty) {
-        resolved = (baseUrl: baseUrl, apiKey: apiKey, model: model);
+        resolved = (
+          contextWindow: storedContextWindow(provider['contextWindow']),
+          baseUrl: baseUrl, apiKey: apiKey, model: model);
       }
     }
     activeRelay = null;
@@ -785,6 +785,8 @@ Future<JSAny?> _importFahx(JSAny? content, JSAny? passphrase) async {
           baseUrl: f.baseUrl,
           modelId: f.modelId,
           provenance: localProvenance,
+          // .fahx exports carry no window; catalog resolution applies (AC7).
+          contextWindow: null,
           apiKey: f.key ?? '',
         ),
     ];

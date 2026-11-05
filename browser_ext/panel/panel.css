@@ -103,6 +103,13 @@ select {
   font-style: italic;
   font-size: 11px;
 }
+.bubble.system {
+  align-self: center;
+  background: transparent;
+  color: var(--dim);
+  font-style: italic;
+  font-size: 11px;
+}
 .composer textarea { margin-top: 0; }
 .approval {
   border: 1px solid var(--warn);

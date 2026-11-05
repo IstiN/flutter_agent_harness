@@ -175,10 +175,13 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         agent.decide(String(msg.id ?? ''), !!msg.allow);
         return { ok: true };
       case 'provider.save': {
+        const ctxRaw = Number(String(msg.contextWindow ?? '').trim());
         const provider = {
           baseUrl: String(msg.baseUrl ?? '').trim(),
           apiKey: String(msg.apiKey ?? ''),
           model: String(msg.model ?? '').trim(),
+          // gh-2059 AC7: the owner cap — wins over the provider catalog.
+          contextWindow: Number.isFinite(ctxRaw) && ctxRaw > 0 ? Math.floor(ctxRaw) : null,
         };
         await store.set({ faProvider: provider, ...(msg.approvalMode ? { faApproval: msg.approvalMode } : {}) });
         // boot() rebuilds the whole config — pass the stored hub + approval

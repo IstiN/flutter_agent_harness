@@ -700,10 +700,13 @@ HostCapabilityProfile _sandboxedWebProfile(String name, String host) =>
           'origin-storage',
         }, '$host sandbox; config persisted in the host store'),
         HostCapability.compaction: name == 'extension'
-            ? CapabilityOffState(
-                'the extension panel window is too small for compaction to '
-                'pay off (matrix: "small window?")',
-              )
+            // gh-2059: the extension SW host runs the SHARED compaction
+            // contract at full parity (resolveCompactionHostWiring wiring,
+            // over-window relief, /compact, visible notices + the
+            // under-window re-fire ladder) — the old "panel window too
+            // small" off-cell predates that and described the silent
+            // settle-only hand-roll the incident discredited.
+            ? CapabilityState.on
             : CapabilityTransportState(
                 {'origin-storage'},
                 'compaction wired, but transcripts persist in the Office '

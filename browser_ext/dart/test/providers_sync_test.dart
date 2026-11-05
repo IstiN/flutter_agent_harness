@@ -9,6 +9,8 @@ import 'dart:io';
 
 import '../src/providers.dart';
 import 'package:flutter_agent_harness/src/cancel_token.dart';
+import 'package:flutter_agent_harness/src/providers/models_endpoint.dart'
+    show fallbackContextWindow;
 import 'package:flutter_agent_harness/src/context.dart';
 import 'package:flutter_agent_harness/src/event_stream.dart';
 import 'package:flutter_agent_harness/src/model.dart';
@@ -28,12 +30,15 @@ Map<String, dynamic> entryJson(
   String apiKey = '',
   String modelId = 'gpt-x',
   String baseUrl = 'https://api/v1',
+  int? contextWindow,
 }) => {
   'name': name,
   'apiType': 'openai',
   'baseUrl': baseUrl,
   'modelId': modelId,
   'provenance': provenance,
+  // ignore: use_null_aware_elements -- map-if reads clearer next to the apiKey if
+  if (contextWindow != null) 'contextWindow': contextWindow,
   if (apiKey.isNotEmpty) 'apiKey': apiKey,
 };
 
@@ -43,12 +48,14 @@ ProviderEntry entry(
   String apiKey = '',
   String modelId = 'gpt-x',
   String baseUrl = 'https://api/v1',
+  int? contextWindow,
 }) => (
   name: name,
   apiType: 'openai',
   baseUrl: baseUrl,
   modelId: modelId,
   provenance: provenance,
+  contextWindow: contextWindow,
   apiKey: apiKey,
 );
 
@@ -106,6 +113,7 @@ void main() {
           baseUrl: 'https://imported/v1',
           modelId: 'imported-model',
           provenance: localProvenance,
+          contextWindow: null,
           apiKey: 'sk-imported',
         ),
         (
@@ -114,6 +122,7 @@ void main() {
           baseUrl: 'https://b/v1',
           modelId: 'm2',
           provenance: localProvenance,
+          contextWindow: null,
           apiKey: 'k2',
         ),
       ]);
@@ -171,7 +180,7 @@ void main() {
     'E26: a dead relay surfaces "desktop link is down" as a clean error',
     () async {
       final events = relayTextStream(
-        modelForConfig((baseUrl: 'https://api/v1', apiKey: '', model: 'gpt-x')),
+        modelForConfig((baseUrl: 'https://api/v1', apiKey: '', model: 'gpt-x', contextWindow: null)),
         // The JS relay rejects with exactly this message (bridge.js E26);
         // relayTextStream must surface it as a clean ErrorEvent, not throw.
         Stream<String>.error(const SocketException('desktop link is down')),
@@ -186,7 +195,7 @@ void main() {
 
   test('relayTextStream streams deltas then DoneEvent', () async {
     final events = relayTextStream(
-      modelForConfig((baseUrl: 'b', apiKey: '', model: 'm')),
+      modelForConfig((baseUrl: 'b', apiKey: '', model: 'm', contextWindow: null)),
       Stream<String>.fromIterable(['he', 'llo']),
     );
     final terminals = <AssistantMessageEvent>[];
@@ -209,7 +218,12 @@ void main() {
     activeRelay = (relay: fakeRelay, providerName: 'p1');
     addSetterTearDown(() => activeRelay = null);
 
-    final keyless = (baseUrl: 'https://api/v1', apiKey: '', model: 'gpt-x');
+    final keyless = (
+      baseUrl: 'https://api/v1',
+      apiKey: '',
+      model: 'gpt-x',
+      contextWindow: null,
+    );
     var fn = resolveStreamFn(keyless);
     // The resolved function must call the relay, not fetch.
     fn(
@@ -219,13 +233,13 @@ void main() {
     expect(fakeRelay.calls, 1);
 
     // A keyed config ignores the installed relay.
-    resolveStreamFn((baseUrl: 'https://api/v1', apiKey: 'sk', model: 'gpt-x'));
+    resolveStreamFn((baseUrl: 'https://api/v1', apiKey: 'sk', model: 'gpt-x', contextWindow: null));
     expect(fakeRelay.calls, 1);
 
     // fake: stays scripted.
     expect(
       identical(
-        resolveStreamFn((baseUrl: '', apiKey: '', model: 'fake:echo')),
+        resolveStreamFn((baseUrl: '', apiKey: '', model: 'fake:echo', contextWindow: null)),
         fakeStream,
       ),
       isTrue,
@@ -245,6 +259,7 @@ void main() {
       baseUrl: 'https://codemie.lab.epam.com/code-assistant-api/v1',
       apiKey: '',
       model: 'gpt-x',
+      contextWindow: null,
     );
     expect(isCookieAuthUrl(codemie.baseUrl), isTrue);
     final fn = resolveStreamFn(codemie);
@@ -259,9 +274,10 @@ void main() {
       baseUrl: 'https://api/v1',
       apiKey: '',
       model: 'gpt-x',
+      contextWindow: null,
     ));
     relayed(
-      modelForConfig((baseUrl: 'https://api/v1', apiKey: '', model: 'gpt-x')),
+      modelForConfig((baseUrl: 'https://api/v1', apiKey: '', model: 'gpt-x', contextWindow: null)),
       Context(systemPrompt: null, messages: [UserMessage.text('hi')]),
     );
     expect(fakeRelay.calls, 1);
@@ -272,6 +288,82 @@ void main() {
     expect(isCookieAuthUrl('https://api.openai.com/v1'), isFalse);
     expect(isCookieAuthUrl('not a url'), isFalse);
     expect(isCookieAuthUrl(''), isFalse);
+  });
+
+  group('context window ladder (gh-2059 AC7)', () {
+    test('stored per-entry override wins over the provider catalog', () {
+      final e = entry('cli-one', contextWindow: 123456);
+      expect(configOfEntry(e).contextWindow, 123456);
+    });
+
+    test('no override: the provider catalog decides for a known apiType', () {
+      // apiType 'openai' maps into the catalog; the row carries a positive
+      // window (never a local guess).
+      final w = configOfEntry(entry('cli-one')).contextWindow;
+      expect(w, isNotNull);
+      expect(w, greaterThan(0));
+    });
+
+    test('no override, unknown apiType: the pinned fallback (128000)', () {
+      const e = (
+        name: 'p',
+        apiType: '',
+        baseUrl: 'https://api/v1',
+        modelId: 'gpt-x',
+        provenance: synced,
+        apiKey: '',
+        contextWindow: null,
+      );
+      expect(configOfEntry(e).contextWindow, fallbackContextWindow);
+    });
+
+    test('modelForConfig: config window wins, else the shared default', () {
+      final capped = modelForConfig((
+        baseUrl: 'b',
+        apiKey: '',
+        model: 'm',
+        contextWindow: 4000,
+      ));
+      expect(capped.contextWindow, 4000);
+      final fallback = modelForConfig((
+        baseUrl: 'b',
+        apiKey: '',
+        model: 'm',
+        contextWindow: null,
+      ));
+      expect(fallback.contextWindow, fallbackContextWindow);
+    });
+
+    test('parse: numeric string accepted, junk → null (catalog decides)', () {
+      final parsed = parseProvidersDoc(
+        doc([
+          {...entryJson('a'), 'contextWindow': '64000'},
+          {...entryJson('b'), 'contextWindow': 'not-a-number'},
+          {...entryJson('c'), 'contextWindow': -5},
+          entryJson('d'),
+        ]),
+      );
+      expect(parsed![0].contextWindow, 64000);
+      expect(parsed[1].contextWindow, isNull);
+      expect(parsed[2].contextWindow, isNull);
+      expect(parsed[3].contextWindow, isNull);
+    });
+
+    test('merge round-trip: contextWindow persists, null stays absent', () {
+      final merged = mergeSyncedProviders(
+        null,
+        doc([entryJson('cli-one', contextWindow: 4000)]),
+      );
+      final providers = merged['providers'] as List;
+      expect((providers[0] as Map)['contextWindow'], 4000);
+
+      final merged2 = mergeSyncedProviders(
+        null,
+        doc([entryJson('plain')]),
+      );
+      final providers2 = merged2['providers'] as List;
+      expect((providers2[0] as Map).containsKey('contextWindow'), isFalse);
+    });
   });
 }
 

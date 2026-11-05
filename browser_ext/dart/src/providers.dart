@@ -17,6 +17,8 @@ import 'dart:convert';
 import 'package:flutter_agent_harness/src/agent/agent_loop.dart'
     show StreamFunction;
 import 'package:flutter_agent_harness/src/cancel_token.dart';
+import 'package:flutter_agent_harness/src/compaction/host_wiring.dart'
+    show resolveAppContextWindow;
 import 'package:flutter_agent_harness/src/context.dart';
 import 'package:flutter_agent_harness/src/event_stream.dart';
 import 'package:flutter_agent_harness/src/model.dart';
@@ -31,7 +33,18 @@ import 'fetch_client.dart';
 export 'fake_provider.dart' show fakeStream;
 
 /// Resolved provider settings (the shape the agent host streams with).
-typedef ProviderConfig = ({String baseUrl, String apiKey, String model});
+/// [contextWindow] is the model's context window the compaction wiring and
+/// the over-window guard size against (gh-2059 AC7): resolved from the
+/// stored per-entry override (the panel "context window" field wins over
+/// everything), else the provider catalog (`apiType`), else the shared
+/// pinned fallback — NEVER a local constant. `null` = resolve at
+/// [modelForConfig] time.
+typedef ProviderConfig = ({
+  String baseUrl,
+  String apiKey,
+  String model,
+  int? contextWindow,
+});
 
 /// Provenance of an entry the user (or the panel import) owns locally.
 /// Re-pairing NEVER overwrites local entries (UT-S2/E27).
@@ -54,11 +67,22 @@ typedef ProviderEntry = ({
   String modelId,
   String provenance,
   String apiKey,
+  int? contextWindow,
 });
 
-/// The [ProviderConfig] the host streams with for [entry].
-ProviderConfig configOfEntry(ProviderEntry entry) =>
-    (baseUrl: entry.baseUrl, apiKey: entry.apiKey, model: entry.modelId);
+/// The [ProviderConfig] the host streams with for [entry]. The context
+/// window resolves through the SHARED ladder (gh-2059 AC7): the stored
+/// per-entry override wins, else the provider catalog for [entry.apiType],
+/// else the pinned fallback.
+ProviderConfig configOfEntry(ProviderEntry entry) => (
+  baseUrl: entry.baseUrl,
+  apiKey: entry.apiKey,
+  model: entry.modelId,
+  contextWindow: resolveAppContextWindow(
+    providerKind: entry.apiType,
+    storedWindow: entry.contextWindow,
+  ),
+);
 
 /// Parses the stored `faProviders` doc ({version, mode, host, providers})
 /// into normalized entries; null when the shape cannot be trusted.
@@ -85,9 +109,23 @@ List<ProviderEntry>? parseProvidersDoc(Object? doc) {
           ? provenance
           : localProvenance,
       apiKey: key is String ? key : '',
+      contextWindow: storedContextWindow(raw['contextWindow']),
     ));
   }
   return entries;
+}
+
+/// The stored `contextWindow` override: int → value, numeric string →
+/// parsed, anything else (missing, junk) → null (resolve at catalog level).
+/// Public: the legacy single-provider doc path (agent_main) parses the
+/// same field the registry entries carry.
+int? storedContextWindow(Object? raw) {
+  if (raw is int && raw > 0) return raw;
+  if (raw is String) {
+    final v = int.tryParse(raw.trim());
+    if (v != null && v > 0) return v;
+  }
+  return null;
 }
 
 /// Merges an incoming `providersSync` payload into the stored registry
@@ -126,6 +164,7 @@ Map<String, dynamic> mergeSyncedProviders(
     baseUrl: raw['baseUrl'] as String,
     modelId: raw['modelId'] is String ? raw['modelId'] as String : '',
     provenance: provenanceOf(raw),
+    contextWindow: storedContextWindow(raw['contextWindow']),
     apiKey: copyKeys[raw['name'] as String] ?? '',
   );
 
@@ -162,6 +201,8 @@ Map<String, dynamic> _entryJson(ProviderEntry entry) => {
   'baseUrl': entry.baseUrl,
   'modelId': entry.modelId,
   'provenance': entry.provenance,
+  if (entry.contextWindow != null)
+    'contextWindow': entry.contextWindow, // gh-2059 AC7
   if (entry.apiKey.isNotEmpty) 'apiKey': entry.apiKey,
 };
 
@@ -180,6 +221,7 @@ Map<String, dynamic> mergeLocalProviders(
         baseUrl: entry.baseUrl,
         modelId: entry.modelId,
         provenance: localProvenance,
+        contextWindow: entry.contextWindow,
         apiKey: entry.apiKey,
       ),
   ];
@@ -242,6 +284,7 @@ ProviderEntry? pickActiveEntry({Object? legacy, Object? doc}) {
         baseUrl: baseUrl,
         modelId: model,
         provenance: localProvenance,
+        contextWindow: storedContextWindow(legacy['contextWindow']),
         apiKey: '${legacy['apiKey'] ?? ''}',
       );
     }
@@ -314,14 +357,16 @@ bool isCookieAuthUrl(String url) =>
     Uri.tryParse(url)?.host.contains('codemie') ?? false;
 
 /// Builds the [Model] spec sent with every request (and persisted in
-/// `model_change` session records).
+/// `model_change` session records). The context window rides the config —
+/// already resolved through the shared ladder (stored override → provider
+/// catalog → pinned fallback, gh-2059 AC7); this is the fallback stop.
 Model modelForConfig(ProviderConfig config) => Model(
   id: config.model,
   name: config.model,
   api: 'openai-completions',
   provider: isFakeModel(config.model) ? 'fake' : 'openai-like',
   baseUrl: config.baseUrl,
-  contextWindow: 128000,
+  contextWindow: config.contextWindow ?? resolveAppContextWindow(),
   maxTokens: 8192,
 );
 

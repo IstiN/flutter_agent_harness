@@ -181,6 +181,26 @@ CompactionHostWiring resolveCliCompactionWiring({
   );
 }
 
+/// The extension SW host path (gh-2059): the third host joins the shared
+/// resolution. Same semantics as the CLI (no fixed request overhead — the
+/// loop's guard and the compaction trigger price the system prompt and the
+/// tool schemas through [estimateRequestTokens], not a window discount),
+/// no roles chain (the main stream summarizes — the wiring normalizes a
+/// same-model smol to null), the cap from the stored panel settings.
+/// Consumed by `browser_ext/dart` and compared against the CLI and app
+/// paths in the host-wiring parity test (`flutter_app/test/
+/// compaction_host_wiring_test.dart`) — drift in any of the three fails
+/// the test.
+CompactionHostWiring resolveExtensionCompactionWiring({
+  required Model mainModel,
+  int? contextWindowCap,
+  CompactionSettings? settingsOverride,
+}) => resolveCompactionHostWiring(
+  mainModel: mainModel,
+  contextWindowCap: contextWindowCap,
+  settingsOverride: settingsOverride,
+);
+
 /// Resolves the app's context window for a connection (gh-1077 fix
 /// contract 2 / AC3): the endpoint-reported or picker-stored value wins,
 /// else the provider-catalog window, else the pinned shared fallback
