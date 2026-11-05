@@ -443,6 +443,7 @@ void main() {
     );
     expect(blur.maxSigma, 8);
     expect(blur.direction, ProgressiveBlurDirection.topToBottom);
+    expect(blur.falloff, 1.2);
     final chromeStack = tester.widget<Stack>(
       find
           .ancestor(
@@ -482,7 +483,7 @@ void main() {
         .evaluate()
         .map((e) => e.findRenderObject()! as RenderBox)
         .map((box) => box.localToGlobal(Offset.zero) & box.size)
-        .where((r) => r.top < underlayRect.bottom - 12 && r.bottom > 0)
+        .where((r) => r.top < underlayRect.bottom - 6 && r.bottom > 0)
         .toList();
     expect(
       behind,

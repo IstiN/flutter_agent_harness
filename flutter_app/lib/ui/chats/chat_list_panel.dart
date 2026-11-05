@@ -312,14 +312,21 @@ class _ChatListPanelState extends State<ChatListPanel> {
               if (glass)
                 Positioned(
                   top: titlebarTop,
-                  left: 0,
-                  right: 0,
-                  height: _chromeHeight() + 12,
+                  left: 3,
+                  right: 3,
+                  height: _chromeHeight() + 6,
                   child: const IgnorePointer(
-                    child: ProgressiveBlur(
-                      key: ValueKey('chatListChromeUnderlay'),
-                      maxSigma: 8,
-                      direction: ProgressiveBlurDirection.topToBottom,
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.only(
+                        topLeft: Radius.circular(14),
+                        topRight: Radius.circular(14),
+                      ),
+                      child: ProgressiveBlur(
+                        key: ValueKey('chatListChromeUnderlay'),
+                        maxSigma: 8,
+                        direction: ProgressiveBlurDirection.topToBottom,
+                        falloff: 1.2,
+                      ),
                     ),
                   ),
                 ),
@@ -336,9 +343,9 @@ class _ChatListPanelState extends State<ChatListPanel> {
     );
   }
 
-  /// Opaque directions keep a flat chrome background. Glass uses the same
-  /// bare 12pt ProgressiveBlur tail as the chat header, inserted directly
-  /// into the panel's clipped Stack above — no tint band and no border bleed.
+  /// Opaque directions keep a flat chrome background. Glass uses a bare
+  /// ProgressiveBlur with 3pt side insets and rounded top corners, but no top
+  /// gap — no tint band, no border bleed, and zero blur at the bottom edge.
   Widget _buildChromeSurface(FahColors colors, Widget chrome) {
     if (FaDesignTokens.of(context).direction == FaVisualDirection.glass) {
       return chrome;

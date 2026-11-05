@@ -308,6 +308,29 @@ void main() {
         14,
         reason: 'the first row clears the search border before its glass fade',
       );
+      final glassRect = tester.getRect(
+        find.byKey(const ValueKey('chatListChromeUnderlay')),
+      );
+      final panelRect = tester.getRect(find.byType(ChatListPanel));
+      expect(glassRect.top, 0);
+      expect(glassRect.left, 3);
+      expect(panelRect.right - glassRect.right, 3);
+      expect(glassRect.height, 58);
+      final glassClip = tester.widget<ClipRRect>(
+        find
+            .ancestor(
+              of: find.byKey(const ValueKey('chatListChromeUnderlay')),
+              matching: find.byType(ClipRRect),
+            )
+            .first,
+      );
+      expect(
+        glassClip.borderRadius,
+        const BorderRadius.only(
+          topLeft: Radius.circular(14),
+          topRight: Radius.circular(14),
+        ),
+      );
       final button = tester.widget<IconButton>(newButton);
       expect(button.color, Colors.white);
       expect(
