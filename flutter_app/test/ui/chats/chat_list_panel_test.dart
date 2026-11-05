@@ -305,7 +305,7 @@ void main() {
       );
       expect(
         firstRow.top - search.bottom,
-        22,
+        14,
         reason: 'the first row clears the search border before its glass fade',
       );
       final button = tester.widget<IconButton>(newButton);

@@ -259,6 +259,8 @@ class _ChatListPanelState extends State<ChatListPanel> {
       listenable: widget.controller,
       builder: (context, _) {
         final colors = FahColors.of(context);
+        final glass =
+            FaDesignTokens.of(context).direction == FaVisualDirection.glass;
         // The wide panel starts to the RIGHT of the native traffic lights;
         // its actions share the y=35 chrome band, with no titlebar spacer.
         // Compact panels get their native clearance from the narrow shell.
@@ -282,6 +284,7 @@ class _ChatListPanelState extends State<ChatListPanel> {
         return ColoredBox(
           color: _panelColor(colors),
           child: Stack(
+            clipBehavior: Clip.hardEdge,
             children: [
               Positioned.fill(
                 child: ClipRect(
@@ -306,6 +309,20 @@ class _ChatListPanelState extends State<ChatListPanel> {
                   ),
                 ),
               ),
+              if (glass)
+                Positioned(
+                  top: titlebarTop,
+                  left: 0,
+                  right: 0,
+                  height: _chromeHeight() + 12,
+                  child: const IgnorePointer(
+                    child: ProgressiveBlur(
+                      key: ValueKey('chatListChromeUnderlay'),
+                      maxSigma: 8,
+                      direction: ProgressiveBlurDirection.topToBottom,
+                    ),
+                  ),
+                ),
               Positioned(
                 top: titlebarTop,
                 left: 0,
@@ -319,57 +336,14 @@ class _ChatListPanelState extends State<ChatListPanel> {
     );
   }
 
-  /// The glass-direction chrome underlay: a graduated backdrop blur plus a
-  /// matching tint fade. Both continue 28pt below the controls so rows melt
-  /// into the glass instead of meeting a hard horizontal border. The tail
-  /// must escape this Stack's bounds; both underlays ignore pointer input.
+  /// Opaque directions keep a flat chrome background. Glass uses the same
+  /// bare 12pt ProgressiveBlur tail as the chat header, inserted directly
+  /// into the panel's clipped Stack above — no tint band and no border bleed.
   Widget _buildChromeSurface(FahColors colors, Widget chrome) {
-    final tokens = FaDesignTokens.of(context);
-    if (tokens.direction != FaVisualDirection.glass) {
-      return ColoredBox(color: _panelColor(colors), child: chrome);
+    if (FaDesignTokens.of(context).direction == FaVisualDirection.glass) {
+      return chrome;
     }
-    const fadeHeight = 28.0;
-    return Stack(
-      clipBehavior: Clip.none,
-      children: [
-        Positioned(
-          top: 0,
-          left: 0,
-          right: 0,
-          height: _chromeHeight() + fadeHeight,
-          child: const IgnorePointer(
-            child: ProgressiveBlur(
-              key: ValueKey('chatListChromeUnderlay'),
-              maxSigma: 18,
-              direction: ProgressiveBlurDirection.topToBottom,
-              falloff: 1.0,
-            ),
-          ),
-        ),
-        Positioned(
-          top: _chromeHeight(),
-          left: 0,
-          right: 0,
-          height: fadeHeight,
-          child: IgnorePointer(
-            child: DecoratedBox(
-              key: const ValueKey('chatListChromeFade'),
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topCenter,
-                  end: Alignment.bottomCenter,
-                  colors: [
-                    tokens.surface1.withValues(alpha: kFaGlassTintAlpha),
-                    tokens.surface1.withValues(alpha: 0),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        ),
-        chrome,
-      ],
-    );
+    return ColoredBox(color: _panelColor(colors), child: chrome);
   }
 
   double _chromeHeight() {
@@ -383,11 +357,7 @@ class _ChatListPanelState extends State<ChatListPanel> {
     final searchHeight = widget.compact
         ? (isMac ? 84.0 : 54.0)
         : (isMac ? 54.0 : 58.0) - glassFrameCompensation;
-    // Eight extra points separate the first row from the search border;
-    // the glass/tint fade continues below this content-clearance inset.
-    final bodyClearance = widget.compact ? 0.0 : 8.0;
     return searchHeight +
-        bodyClearance +
         (widget.headerBottom == null ? 0 : 46) +
         (widget.showFilterToolbar ? MessengerFilterControl.height : 0) +
         (_networkLoading ? 1 : 0) +

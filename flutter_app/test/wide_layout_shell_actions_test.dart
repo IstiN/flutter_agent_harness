@@ -713,7 +713,7 @@ void main() {
       final underlay = tester.widget<ProgressiveBlur>(
         find.byKey(const ValueKey('chatListChromeUnderlay')),
       );
-      expect(underlay.maxSigma, 18);
+      expect(underlay.maxSigma, 8);
       final centerPanel = tester.widget<Container>(
         find.byKey(const ValueKey('glassCenterPanel')),
       );
@@ -955,7 +955,7 @@ void main() {
     final underlay = tester.widget<ProgressiveBlur>(
       find.byKey(const ValueKey('chatListChromeUnderlay')),
     );
-    expect(underlay.maxSigma, 18);
+    expect(underlay.maxSigma, 8);
     expect(underlay.direction, ProgressiveBlurDirection.topToBottom);
   });
 

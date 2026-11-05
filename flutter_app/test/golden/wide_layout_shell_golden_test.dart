@@ -28,7 +28,6 @@ import 'package:fa_ui/fa_ui.dart'
         FaSurface,
         FaVisualDirection,
         buildFaTheme,
-        kFaGlassTintAlpha,
         debugFaGlassAlwaysFake;
 import 'package:fa/ui/widgets/wide_layout_shell.dart';
 import 'package:flutter/foundation.dart';
@@ -442,7 +441,7 @@ void main() {
     final blur = tester.widget<ProgressiveBlur>(
       find.byKey(const ValueKey('chatListChromeUnderlay')),
     );
-    expect(blur.maxSigma, 18);
+    expect(blur.maxSigma, 8);
     expect(blur.direction, ProgressiveBlurDirection.topToBottom);
     final chromeStack = tester.widget<Stack>(
       find
@@ -454,19 +453,10 @@ void main() {
     );
     expect(
       chromeStack.clipBehavior,
-      Clip.none,
-      reason:
-          'the 28pt blur tail must paint below the header, not clip at its border',
+      Clip.hardEdge,
+      reason: 'the chat-style blur stays inside the sidebar border',
     );
-    final fade = tester.widget<DecoratedBox>(
-      find.byKey(const ValueKey('chatListChromeFade')),
-    );
-    final fadeGradient =
-        (fade.decoration as BoxDecoration).gradient! as LinearGradient;
-    expect(fadeGradient.colors.first.a, kFaGlassTintAlpha);
-    expect(fadeGradient.colors.last.a, 0);
-    expect(fadeGradient.begin, Alignment.topCenter);
-    expect(fadeGradient.end, Alignment.bottomCenter);
+    expect(find.byKey(const ValueKey('chatListChromeFade')), findsNothing);
     final scrollable = tester.widget<Scrollable>(
       find
           .descendant(
@@ -492,7 +482,7 @@ void main() {
         .evaluate()
         .map((e) => e.findRenderObject()! as RenderBox)
         .map((box) => box.localToGlobal(Offset.zero) & box.size)
-        .where((r) => r.top < underlayRect.bottom - 28 && r.bottom > 0)
+        .where((r) => r.top < underlayRect.bottom - 12 && r.bottom > 0)
         .toList();
     expect(
       behind,
