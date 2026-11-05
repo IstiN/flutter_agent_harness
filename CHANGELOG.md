@@ -13,6 +13,15 @@ block a release again.
 
 ## Unreleased
 
+- feat(gh-2059): browser-extension compaction parity with CLI — over-window
+  relief, `/compact` with visible receipts, and the shared under-window
+  guarantee ride the same `CompactionHostWiring` resolution as the CLI and
+  app (`resolveExtensionCompactionWiring`); receipts are durable across
+  panel attach/SW restart. Machine-review round 1: exact ladder pass
+  counts, busy-matrix routing (`routeUserInput`) for panel text and second
+  `/compact` during a pass, window settings from the ACTIVE stored source
+  with positive validation, string-encoded int merges.
+
 - fix(gh-2055): the daily-publish `cli` leg red-failed in `pod install`
   (Build macOS x86_64, run 41778615815) because the vendored macOS pod's
   XCFramework download block guarded on the downloaded-zip MARKER

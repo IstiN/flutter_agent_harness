@@ -406,12 +406,14 @@ void main() {
         rig.agent.state.messages = await rig.session.buildContextMessages();
         final transcriptBefore = rig.requestTokens;
 
-        await rig.runner.manualCompact();
+        final outcome = await rig.runner.manualCompact();
 
         final wiring = rig.runner.wiring;
         final trigger =
             wiring.conversationWindow - wiring.settings.reserveTokens;
-        final under = rig.requestTokens < trigger;
+        // The outcome carries the AC3 verdict itself (the digest item:
+        // the tests assert the shipped field, not re-derived math).
+        final under = outcome.underWindow;
         final noticed = rig.notices.isNotEmpty;
         expect(
           under || noticed,
@@ -515,6 +517,23 @@ void main() {
       expect(doneLines, 2, reason: 'initial pass + exactly one re-fire');
       expect(rig.logs.join('\n'), contains('re-firing'));
       expect(outcome.exhausted, isTrue);
+      // B1 (machine review): the receipt count equals the passes that
+      // ACTUALLY ran — the per-pass log lines are the ground truth. The
+      // pre-fix bug added the hooks' CUMULATIVE counter per ladder
+      // attempt (here it would read 9 while 6 ran: 3 + (3+3)); the delta
+      // fix lands exactly on the ran count. The shared engine
+      // multi-passes within one run here, so the count also proves the
+      // assertion non-vacuous.
+      final passLines = rig.logs
+          .where((l) => l.contains('[fah][sw] compaction pass '))
+          .length;
+      expect(passLines, greaterThan(doneLines));
+      expect(outcome.passes, passLines, reason: 'receipt == passes ran');
+      expect(
+        rig.notices.join('\n'),
+        contains('${outcome.passes} passes'),
+        reason: 'the receipt names the honest run count',
+      );
       expect(rig.notices.join('\n'), contains(extCompactionExhaustedNotice));
       // The transcript is intact, never silently dropped.
       expect(rig.agent.state.messages, isNotEmpty);
@@ -695,6 +714,95 @@ void main() {
         lessThan(runner0.conversationWindow - runner0.reserve),
         reason: 'the cap clamps the trigger through the shared resolution',
       );
+    });
+  });
+
+  group('busy routing (machine review B2/I1) — the pure decision matrix', () {
+    test('idle host: ordinary text runs a turn, /compact runs the pass, '
+        'unknown bare token is refused', () {
+      expect(
+        routeUserInput(text: 'hello', running: false, compacting: false),
+        isA<RouteRunTurn>(),
+      );
+      expect(
+        routeUserInput(text: '/compact', running: false, compacting: false),
+        isA<RouteCompact>(),
+      );
+      expect(
+        routeUserInput(text: '/nope', running: false, compacting: false),
+        RouteUnknown('/nope'),
+      );
+    });
+
+    test('B2: ordinary panel text during a manual /compact is refused '
+        '(a turn must never race the mutating transcript)', () {
+      final route = routeUserInput(
+        text: 'hello again',
+        running: false,
+        compacting: true,
+      );
+      expect(route, isA<RouteBusy>());
+      expect(
+        (route as RouteBusy).reason,
+        contains('manual /compact is running'),
+      );
+    });
+
+    test('B2 backstop: text during a RUNNING turn still steers (unchanged '
+        'steering contract)', () {
+      expect(
+        routeUserInput(text: 'hello', running: true, compacting: false),
+        isA<RouteSteer>(),
+      );
+    });
+
+    test('I1: a second /compact while one runs — and /compact during a '
+        'turn — get the busy ERROR, never a throw', () {
+      final midCompact = routeUserInput(
+        text: '/compact',
+        running: false,
+        compacting: true,
+      );
+      expect(midCompact, isA<RouteBusy>());
+      final midTurn = routeUserInput(
+        text: '/compact',
+        running: true,
+        compacting: false,
+      );
+      expect(midTurn, isA<RouteBusy>());
+      for (final busy in [midCompact as RouteBusy, midTurn as RouteBusy]) {
+        expect(busy.reason, contains('idle session'));
+      }
+    });
+  });
+
+  group('notice backlog (machine review S2) — durable receipts', () {
+    test('add keeps the newest [cap] receipts, oldest first', () {
+      final backlog = CompactionNoticeBacklog();
+      for (var i = 1; i <= CompactionNoticeBacklog.cap + 5; i++) {
+        backlog.add('notice $i');
+      }
+      expect(backlog.lines.length, CompactionNoticeBacklog.cap);
+      expect(backlog.lines.first, 'notice 6');
+      expect(backlog.lines.last, 'notice 25');
+    });
+
+    test('encode/decode round-trips; a corrupt payload decodes empty', () {
+      final backlog = CompactionNoticeBacklog()
+        ..add('compacted: 190000 → 64000 tokens (2 passes)')
+        ..add('nothing to compact');
+      final restored = CompactionNoticeBacklog.decode(backlog.encode());
+      expect(restored.lines, backlog.lines);
+
+      expect(CompactionNoticeBacklog.decode('not json').lines, isEmpty);
+      expect(CompactionNoticeBacklog.decode('{"a":1}').lines, isEmpty);
+      expect(CompactionNoticeBacklog.decode(null).lines, isEmpty);
+    });
+
+    test('clear empties the backlog (the session-scoped contract)', () {
+      final backlog = CompactionNoticeBacklog()..add('receipt');
+      backlog.clear();
+      expect(backlog.lines, isEmpty);
     });
   });
 }

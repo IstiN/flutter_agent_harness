@@ -541,3 +541,36 @@ AssistantMessageEventStream relayTextStream(
   );
   return events;
 }
+
+/// Reads an int setting tolerating the string-encoded form (a panel save
+/// may store numbers as strings); `null` when absent/unparseable.
+int? storedIntSetting(Map<Object?, Object?> map, String key) {
+  final v = map[key];
+  if (v is int) return v;
+  if (v is String) return int.tryParse(v.trim());
+  return null;
+}
+
+/// The per-model window inputs from the ACTIVE stored source (gh-2059 AC7
+/// + machine review I2): the legacy `faProvider` map contributes
+/// `contextWindow` / `contextWindowCap` ONLY when it produced the active
+/// provider — a synced registry entry (which carries no window today)
+/// yields null/null so a stale legacy override can never leak onto a
+/// different endpoint. Non-positive values are dropped: a `0` would
+/// silently disable every over-window protection.
+({int? contextWindow, int? contextWindowCap}) windowSettingsFromStored({
+  required bool legacyActive,
+  Map<Object?, Object?>? legacyProvider,
+}) {
+  int? read(String key) {
+    final v = legacyActive && legacyProvider is Map
+        ? storedIntSetting(legacyProvider, key)
+        : null;
+    return v != null && v > 0 ? v : null;
+  }
+
+  return (
+    contextWindow: read('contextWindow'),
+    contextWindowCap: read('contextWindowCap'),
+  );
+}

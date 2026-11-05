@@ -40,6 +40,8 @@
 /// Pure Dart: no `dart:io`, no `package:web`, no chrome imports.
 library;
 
+import 'dart:convert';
+
 import 'package:flutter_agent_harness/src/agent/agent.dart';
 import 'package:flutter_agent_harness/src/agent/auto_compactor.dart';
 import 'package:flutter_agent_harness/src/cancel_token.dart';
@@ -150,6 +152,141 @@ SlashDecision? parseSlashInput(String text) {
   return SlashUnknown(token);
 }
 
+/// The host-side routing decision for one panel input (gh-2059 machine
+/// review B2/I1): pure over (text, running, compacting) so the web-only
+/// host glue stays mechanical and the busy matrix is VM-testable.
+sealed class UserRoute {
+  const UserRoute();
+}
+
+/// Ordinary input, host idle → run the turn.
+final class RouteRunTurn extends UserRoute {
+  const RouteRunTurn();
+}
+
+/// Ordinary input while a turn already streams → steer the live turn
+/// (never a second concurrent stream).
+final class RouteSteer extends UserRoute {
+  const RouteSteer();
+}
+
+/// Input refused because the host is busy. A manual /compact MUTATES the
+/// transcript: no concurrent turn may start against it (B2), and a
+/// second /compact gets this busy error instead of an unhandled
+/// StateError from the single-flight guard (I1).
+final class RouteBusy extends UserRoute {
+  const RouteBusy(this.reason);
+
+  final String reason;
+
+  @override
+  bool operator ==(Object other) =>
+      other is RouteBusy && other.reason == reason;
+
+  @override
+  int get hashCode => reason.hashCode;
+}
+
+/// `/compact`, host idle → run the manual pass.
+final class RouteCompact extends UserRoute {
+  const RouteCompact();
+}
+
+/// A bare unknown `/token` → refused with the CLI wording.
+final class RouteUnknown extends UserRoute {
+  const RouteUnknown(this.token);
+
+  final String token;
+
+  @override
+  bool operator ==(Object other) =>
+      other is RouteUnknown && other.token == token;
+
+  @override
+  int get hashCode => token.hashCode;
+}
+
+UserRoute routeUserInput({
+  required String text,
+  required bool running,
+  required bool compacting,
+}) {
+  switch (parseSlashInput(text)) {
+    case SlashCompact():
+      // One compactor at a time: busy while ANY host work runs — a
+      // concurrent turn racing the pass mutation is the B2 race, a
+      // second concurrent /compact is the I1 StateError.
+      if (running || compacting) {
+        return const RouteBusy(
+          'busy: /compact needs an idle session — wait for the current '
+          'work to finish',
+        );
+      }
+      return const RouteCompact();
+    case SlashUnknown(:final token):
+      return RouteUnknown(token);
+    case null:
+      break;
+  }
+  // Ordinary panel text mid-compact is refused (B2): the pass mutates
+  // the very transcript a concurrent turn would read.
+  if (compacting) {
+    return const RouteBusy(
+      'busy: a manual /compact is running — it will report when done',
+    );
+  }
+  if (running) return const RouteSteer();
+  return const RouteRunTurn();
+}
+
+/// The durable compaction receipts (gh-2059 machine review S2): a
+/// bounded, session-scoped list of notice lines the host persists next to
+/// the session and replays to every attaching panel — a notice emitted
+/// while no panel was attached, or before an SW restart, still reaches
+/// the UI. Pure and VM-testable; the host binds the storage env.
+final class CompactionNoticeBacklog {
+  static const cap = 20;
+
+  /// The storage path (host root — session-adjacent, not per-session:
+  /// receipts describe the agent conversation the SW owns).
+  static const storagePath = '/fa-compaction-notices.json';
+
+  CompactionNoticeBacklog([List<String>? lines])
+    : _lines = List.of(lines ?? const []);
+
+  final List<String> _lines;
+
+  /// Oldest first, capped at [cap] (the newest receipts survive).
+  List<String> get lines => List.unmodifiable(_lines);
+
+  void add(String text) {
+    _lines.add(text);
+    if (_lines.length > cap) {
+      _lines.removeRange(0, _lines.length - cap);
+    }
+  }
+
+  void clear() => _lines.clear();
+
+  String encode() => jsonEncode(_lines);
+
+  /// Best-effort decode: a corrupt/truncated payload yields an empty
+  /// backlog (receipts are diagnostics — never a boot blocker).
+  factory CompactionNoticeBacklog.decode(Object? raw) {
+    if (raw is String) {
+      try {
+        final decoded = jsonDecode(raw);
+        if (decoded is List) {
+          return CompactionNoticeBacklog(decoded.whereType<String>().toList());
+        }
+      } on FormatException {
+        // fall through
+      }
+    }
+    return CompactionNoticeBacklog();
+  }
+}
+
 /// One compaction path's outcome: the honest numbers a host (or a test)
 /// asserts on.
 final class CompactionRunResult {
@@ -189,22 +326,28 @@ final class CompactionRunResult {
 }
 
 /// The manual `/compact` outcome (AC2): `ran` distinguishes a real pass
-/// from "nothing to compact"; `exhausted` is the AC5 terminal state (the
-/// ladder ran out with the context still over the trigger).
+/// from "nothing to compact"; `passes` is the exact delta the ladder
+/// added (machine-review B1 — the receipt count); `exhausted` is the AC5
+/// terminal state (the ladder ran out with the context still over the
+/// trigger); `underWindow` is the AC3 invariant for the settled estimate.
 final class ManualCompactionOutcome {
   const ManualCompactionOutcome({
     required this.ran,
     required this.before,
     required this.after,
+    this.passes = 0,
     this.failure,
     this.exhausted = false,
+    this.underWindow = false,
   });
 
   final bool ran;
+  final int passes;
   final int before;
   final int after;
   final Object? failure;
   final bool exhausted;
+  final bool underWindow;
 }
 
 /// The extension host's compaction paths, over the shared wiring. One
@@ -299,7 +442,11 @@ final class ExtensionCompactionRunner {
       );
       return null;
     }
-    final before = requestTokens;
+    final before = estimateRequestTokens(
+      overWindow,
+      systemPrompt: agent.state.systemPrompt,
+      tools: agent.state.tools,
+    );
     log('[fah][sw] compaction: over-window relief start tokens=$before');
     await _compact(runToken: runToken);
     final after = requestTokens;
@@ -316,14 +463,23 @@ final class ExtensionCompactionRunner {
 
   /// The manual `/compact` (CLI parity: unconditional `force`, the user
   /// asked for it). Emits the AC2 receipt notice with before/after
-  /// tokens; a cancelled pass surfaces `CancelledException` AFTER the
-  /// "compaction interrupted" notice (CLI `_runManualCompact` wording) —
-  /// never as a failed-pass mutation report.
+  /// tokens — only for a pass that actually FREED tokens (a pass that
+  /// grew the estimate is not a "compacted" receipt; the exhaustion
+  /// notice, when it fired, is that path's receipt); a cancelled pass
+  /// surfaces `CancelledException` AFTER the "compaction interrupted"
+  /// notice (CLI `_runManualCompact` wording) — never as a failed-pass
+  /// mutation report.
   Future<ManualCompactionOutcome> manualCompact({CancelToken? runToken}) async {
     if (agent.state.messages.isEmpty) {
       log('[fah][sw] compaction: manual /compact — nothing to compact');
       notice('nothing to compact — the transcript is empty');
-      return const ManualCompactionOutcome(ran: false, before: 0, after: 0);
+      // Zero tokens are trivially under any positive window.
+      return const ManualCompactionOutcome(
+        ran: false,
+        before: 0,
+        after: 0,
+        underWindow: true,
+      );
     }
     final result = await _compact(force: true, runToken: runToken);
     if (runToken?.isCancelled ?? false) {
@@ -333,18 +489,26 @@ final class ExtensionCompactionRunner {
     if (result.failure != null) {
       return ManualCompactionOutcome(
         ran: result.passes > 0,
+        passes: result.passes,
         before: result.before,
         after: result.after,
         failure: result.failure,
         exhausted: result.exhausted,
+        underWindow: _underWindow(result.after),
       );
     }
-    if (result.passes > 0) {
+    if (result.passes > 0 && result.after < result.before) {
+      // The AC2 receipt, with the honest exact pass count (the ladder
+      // delta, never the cumulative counter — machine-review B1).
       notice(
         'compacted: ${result.before} → ${result.after} tokens '
         '(${result.passes} pass${result.passes == 1 ? '' : 'es'})',
       );
-    } else {
+    } else if (!result.exhausted) {
+      // No freed tokens and no exhaustion receipt: say why instead of a
+      // misleading receipt (machine-review digest: a pass can run and
+      // still not shrink — the exhaustion notice covers the over-trigger
+      // case).
       notice(
         'nothing to compact — every message is already summarized or the '
         'transcript is at its smallest',
@@ -352,10 +516,19 @@ final class ExtensionCompactionRunner {
     }
     return ManualCompactionOutcome(
       ran: result.passes > 0,
+      passes: result.passes,
       before: result.before,
       after: result.after,
       exhausted: result.exhausted,
+      underWindow: _underWindow(result.after),
     );
+  }
+
+  /// The AC3 invariant for a live estimate: under the compaction trigger
+  /// (`conversationWindow - reserveTokens`, the strictest honest bound).
+  bool _underWindow(int tokens) {
+    final w = wiring;
+    return tokens < w.conversationWindow - w.settings.reserveTokens;
   }
 
   /// The shared path body: factory run + the re-fire ladder (arch 6 /
@@ -408,12 +581,16 @@ final class ExtensionCompactionRunner {
     );
   }
 
+  /// ONE factory run; returns only the passes THIS run added (the hooks
+  /// counter is cumulative across the ladder — a machine-review B1 fix:
+  /// adding the cumulative count per attempt inflated the receipt).
   Future<int> _runFactoryOnce({
     required CompactionHostWiring wiring,
     required _VisibleHooks hooks,
     required bool force,
     required CancelToken? runToken,
   }) async {
+    final before = hooks.passes;
     try {
       await AutoCompactorFactory(
         session: session,
@@ -440,7 +617,7 @@ final class ExtensionCompactionRunner {
         hooks.onBothRolesFailed(error);
       }
     }
-    return hooks.passes;
+    return hooks.passes - before;
   }
 }
 

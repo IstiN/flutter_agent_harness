@@ -124,5 +124,30 @@ void main() {
       expect(merged['contextWindow'], 264000);
       expect(merged['contextWindowCap'], 128000);
     });
+
+    test('S1 (machine review): string-encoded ints survive on BOTH sides '
+        '(panel saves may store numbers as strings)', () {
+      // Incoming string-encoded value wins over the stored int.
+      final incomingWins = mergeProvider(
+        const {'contextWindow': 128000, 'contextWindowCap': 128000},
+        const {'contextWindow': '264000'},
+      );
+      expect(incomingWins['contextWindow'], 264000);
+      expect(incomingWins['contextWindowCap'], 128000);
+      // A stored string-encoded value survives a save without the key.
+      final storedSurvives = mergeProvider(
+        const {'contextWindow': '264000', 'contextWindowCap': '128000'},
+        const {'model': 'm2'},
+      );
+      expect(storedSurvives['contextWindow'], 264000);
+      expect(storedSurvives['contextWindowCap'], 128000);
+      // A non-numeric incoming string falls back to the stored value —
+      // never thrown, never a wipe.
+      final garbage = mergeProvider(
+        const {'contextWindow': '264000'},
+        const {'contextWindow': 'abc'},
+      );
+      expect(garbage['contextWindow'], 264000);
+    });
   });
 }

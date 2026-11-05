@@ -342,6 +342,61 @@ void main() {
       );
     });
   });
+
+  group('windowSettingsFromStored (machine review I2 — the ACTIVE source '
+      'only, positive values only)', () {
+    test('a synced registry entry active: a stale legacy override NEVER '
+        'leaks onto the other endpoint', () {
+      final windows = windowSettingsFromStored(
+        legacyActive: false,
+        legacyProvider: const {
+          'baseUrl': 'https://legacy/v1',
+          'contextWindow': 264000,
+          'contextWindowCap': 128000,
+        },
+      );
+      expect(windows.contextWindow, isNull);
+      expect(windows.contextWindowCap, isNull);
+    });
+
+    test('the legacy map active: its ints (and string-encoded ints) are '
+        'the window inputs', () {
+      final windows = windowSettingsFromStored(
+        legacyActive: true,
+        legacyProvider: const {
+          'baseUrl': 'https://legacy/v1',
+          'contextWindow': '264000',
+          'contextWindowCap': 128000,
+        },
+      );
+      expect(windows.contextWindow, 264000);
+      expect(windows.contextWindowCap, 128000);
+    });
+
+    test('non-positive values are dropped — a stored 0 must not disable '
+        'the over-window protection', () {
+      final windows = windowSettingsFromStored(
+        legacyActive: true,
+        legacyProvider: const {'contextWindow': 0, 'contextWindowCap': -5},
+      );
+      expect(windows.contextWindow, isNull);
+      expect(windows.contextWindowCap, isNull);
+    });
+
+    test('no legacy map (or an unparseable one): null/null either way', () {
+      expect(
+        windowSettingsFromStored(legacyActive: true, legacyProvider: null),
+        (contextWindow: null, contextWindowCap: null),
+      );
+      expect(
+        windowSettingsFromStored(
+          legacyActive: true,
+          legacyProvider: const {'contextWindow': 'abc'},
+        ),
+        (contextWindow: null, contextWindowCap: null),
+      );
+    });
+  });
 }
 
 void addSetterTearDown(void Function() fn) => addTearDown(fn);
