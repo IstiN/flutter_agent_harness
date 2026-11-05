@@ -313,7 +313,7 @@ void main() {
       );
       final panelRect = tester.getRect(find.byType(ChatListPanel));
       expect(glassRect.top, 0);
-      expect(glassRect.left, 3);
+      expect(glassRect.left, 2);
       expect(panelRect.right - glassRect.right, 3);
       expect(glassRect.height, 58);
       final glassClip = tester.widget<ClipRRect>(
@@ -330,6 +330,16 @@ void main() {
           topLeft: Radius.circular(14),
           topRight: Radius.circular(14),
         ),
+      );
+      final scrollbarState = tester.state<RawScrollbarState>(
+        find.byWidgetPredicate((widget) => widget is RawScrollbar),
+      );
+      expect(
+        // The painter geometry is the exact contract under test.
+        // ignore: invalid_use_of_protected_member
+        scrollbarState.scrollbarPainter.padding,
+        const EdgeInsets.only(top: 58, right: 1),
+        reason: 'the thumb stays below the glass and clears the right border',
       );
       final button = tester.widget<IconButton>(newButton);
       expect(button.color, Colors.white);

@@ -12,8 +12,6 @@ import 'package:fa/ui/widgets/messenger_navigation_controls.dart';
 import 'package:fa/ui/widgets/messenger_section_header.dart';
 import 'package:fa/ui/widgets/subagent_mark.dart';
 import 'package:fa_ui/fa_ui.dart';
-import 'package:liquid_glass_widgets/liquid_glass_widgets.dart'
-    show ProgressiveBlur, ProgressiveBlurDirection;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -277,10 +275,9 @@ class _ChatListPanelState extends State<ChatListPanel> {
           ],
         );
         // The chrome band IS the glass: search + segment controls sit on a
-        // graduated backdrop blur and the list scrolls beneath the whole
-        // band (rows and the scrollbar's tip dissolve behind it). The blur
-        // is always armed; it only shows where content has actually
-        // climbed behind the band.
+        // graduated backdrop blur and rows scroll beneath the whole band.
+        // The desktop scrollbar starts below the glass instead of entering
+        // it. The blur only shows where content climbs behind the band.
         return ColoredBox(
           color: _panelColor(colors),
           child: Stack(
@@ -297,14 +294,17 @@ class _ChatListPanelState extends State<ChatListPanel> {
                     switchOutCurve: Curves.easeInOutCubic,
                     child: KeyedSubtree(
                       key: widget.bodyKey ?? const ValueKey('chatListBody'),
-                      child:
-                          widget.bodyBuilder?.call(
-                            _chromeHeight() + titlebarTop,
-                          ) ??
-                          _buildBody(
-                            colors,
-                            topPadding: _chromeHeight() + titlebarTop,
-                          ),
+                      child: widget.bodyBuilder == null
+                          ? _buildBody(
+                              colors,
+                              topPadding: _chromeHeight() + titlebarTop,
+                            )
+                          : _withDesktopScrollbarInsets(
+                              widget.bodyBuilder!(
+                                _chromeHeight() + titlebarTop,
+                              ),
+                              _chromeHeight() + titlebarTop,
+                            ),
                     ),
                   ),
                 ),
@@ -312,23 +312,10 @@ class _ChatListPanelState extends State<ChatListPanel> {
               if (glass)
                 Positioned(
                   top: titlebarTop,
-                  left: 3,
-                  right: 3,
+                  left: 0,
+                  right: 0,
                   height: _chromeHeight() + 6,
-                  child: const IgnorePointer(
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.only(
-                        topLeft: Radius.circular(14),
-                        topRight: Radius.circular(14),
-                      ),
-                      child: ProgressiveBlur(
-                        key: ValueKey('chatListChromeUnderlay'),
-                        maxSigma: 8,
-                        direction: ProgressiveBlurDirection.topToBottom,
-                        falloff: 1.2,
-                      ),
-                    ),
-                  ),
+                  child: const MessengerGlassUnderlay(),
                 ),
               Positioned(
                 top: titlebarTop,
@@ -344,8 +331,9 @@ class _ChatListPanelState extends State<ChatListPanel> {
   }
 
   /// Opaque directions keep a flat chrome background. Glass uses a bare
-  /// ProgressiveBlur with 3pt side insets and rounded top corners, but no top
-  /// gap — no tint band, no border bleed, and zero blur at the bottom edge.
+  /// ProgressiveBlur with small side insets and rounded top corners, but no
+  /// top gap. Its steep falloff leaves the lower region completely sharp, so
+  /// there is no visible seam, tint band, or border bleed.
   Widget _buildChromeSurface(FahColors colors, Widget chrome) {
     if (FaDesignTokens.of(context).direction == FaVisualDirection.glass) {
       return chrome;
@@ -600,7 +588,7 @@ class _ChatListPanelState extends State<ChatListPanel> {
       }
       return state(_buildEmpty(colors));
     }
-    return ListView.builder(
+    final list = ListView.builder(
       key: const ValueKey('chatListScroll'),
       padding: EdgeInsets.only(
         top: topPadding + 2,
@@ -609,6 +597,24 @@ class _ChatListPanelState extends State<ChatListPanel> {
       itemCount: visibleEntries.length,
       itemBuilder: (context, index) =>
           _row(visibleEntries[index], subagentsByParent),
+    );
+    return _withDesktopScrollbarInsets(list, topPadding);
+  }
+
+  /// Material's scrollbar painter reads MediaQuery.padding. Scope the
+  /// desktop-only inset to the scrolling body: its thumb starts below the
+  /// glass and sits 1pt farther left, without moving or resizing the rows.
+  Widget _withDesktopScrollbarInsets(Widget child, double topPadding) {
+    if (widget.compact) return child;
+    final query = MediaQuery.of(context);
+    return MediaQuery(
+      data: query.copyWith(
+        padding: query.padding.copyWith(
+          top: topPadding + 6,
+          right: query.padding.right + 1,
+        ),
+      ),
+      child: child,
     );
   }
 

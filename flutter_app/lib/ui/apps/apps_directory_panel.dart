@@ -21,7 +21,6 @@ final class AppsDirectoryPanel extends StatefulWidget {
     required this.runningAppName,
     required this.onOpenRunning,
     this.showSearch = true,
-    this.onOpenFiles,
   });
 
   final AppLauncherController controller;
@@ -29,10 +28,6 @@ final class AppsDirectoryPanel extends StatefulWidget {
   final String? runningAppName;
   final VoidCallback onOpenRunning;
   final bool showSearch;
-
-  /// Opens Files through the same presented-in-right-pane flow as JS
-  /// apps. Null (hosts without the presentation shell) hides the action.
-  final VoidCallback? onOpenFiles;
 
   @override
   State<AppsDirectoryPanel> createState() => _AppsDirectoryPanelState();
@@ -80,10 +75,7 @@ final class _AppsDirectoryPanelState extends State<AppsDirectoryPanel> {
                 hintText: context.l10n.launcherSearchHint,
               ),
             ),
-          _DirectoryToolbar(
-            running: widget.runningAppName != null,
-            onOpenFiles: widget.onOpenFiles,
-          ),
+          _DirectoryToolbar(running: widget.runningAppName != null),
           Expanded(
             child: AnimatedSwitcher(
               duration: FaMotion.duration(
@@ -148,14 +140,12 @@ final class _AppsDirectoryPanelState extends State<AppsDirectoryPanel> {
   }
 }
 
-/// The directory's capsule toolbar: a styleguide glass capsule carrying
-/// the section label and the Files entry — Files opens through the same
-/// presented-in-right-pane flow as JS apps, so it lives beside them.
+/// The directory's capsule toolbar carries only the section label and the
+/// running-app marker. Files intentionally lives in chat, not Apps.
 final class _DirectoryToolbar extends StatelessWidget {
-  const _DirectoryToolbar({required this.running, this.onOpenFiles});
+  const _DirectoryToolbar({required this.running});
 
   final bool running;
-  final VoidCallback? onOpenFiles;
 
   @override
   Widget build(BuildContext context) {
@@ -193,17 +183,6 @@ final class _DirectoryToolbar extends StatelessWidget {
                   decoration: BoxDecoration(
                     color: colors.teal,
                     shape: BoxShape.circle,
-                  ),
-                ),
-              ],
-              if (onOpenFiles != null) ...[
-                const SizedBox(width: 4),
-                SizedBox(
-                  key: const ValueKey('appsDirectoryFiles'),
-                  child: FaIconButton(
-                    icon: Icons.folder_open_outlined,
-                    tooltip: context.l10n.filesPanelTitle,
-                    onPressed: onOpenFiles,
                   ),
                 ),
               ],

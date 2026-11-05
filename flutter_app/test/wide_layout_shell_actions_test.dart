@@ -368,7 +368,12 @@ void main() {
           find.byKey(const ValueKey('appsDirectoryRunning')),
           findsOneWidget,
         );
-        expect(find.text('Files'), findsOneWidget);
+        expect(find.text('Files'), findsNothing);
+        expect(find.byKey(const ValueKey('appsDirectoryFiles')), findsNothing);
+        expect(
+          find.byKey(const ValueKey('launcherCell:system:files')),
+          findsNothing,
+        );
         // The directory's Settings tile plus the rail's pinned settings row.
         expect(find.text('Settings'), findsNWidgets(2));
         final appsRect = tester.getRect(find.byType(AppLauncherScreen));
@@ -2141,6 +2146,95 @@ void main() {
     debugDefaultTargetPlatformOverride = null;
   });
 
+  testWidgets('every messenger destination freezes the approved glass header', (
+    tester,
+  ) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+    addTearDown(() => debugDefaultTargetPlatformOverride = null);
+    final env = MemoryExecutionEnv();
+    final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
+      ..addSession('design-session', _fakeService(env));
+    await pumpShell(tester, manager: manager);
+    await tester.pumpAndSettle();
+
+    for (final destination in const [
+      'all',
+      'local',
+      'network',
+      'channels',
+      'activity',
+      'apps',
+    ]) {
+      if (destination != 'all') {
+        await tester.tap(
+          find.byKey(
+            ValueKey(
+              destination == 'channels'
+                  ? 'chatFilter-channels'
+                  : 'messengerPrimaryNav-$destination',
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+      }
+
+      final header = find.byType(MessengerSectionHeader);
+      expect(header, findsOneWidget, reason: destination);
+      expect(tester.getRect(header).height, 52, reason: destination);
+      final underlay = find.byType(MessengerGlassUnderlay);
+      expect(underlay, findsOneWidget, reason: destination);
+      final blurFinder = find.descendant(
+        of: underlay,
+        matching: find.byType(ProgressiveBlur),
+      );
+      final blur = tester.widget<ProgressiveBlur>(blurFinder);
+      expect(blur.maxSigma, 8, reason: destination);
+      expect(blur.falloff, 3.0, reason: destination);
+      expect(
+        blur.direction,
+        ProgressiveBlurDirection.topToBottom,
+        reason: destination,
+      );
+      final clip = tester.widget<ClipRRect>(
+        find.descendant(of: underlay, matching: find.byType(ClipRRect)),
+      );
+      expect(
+        clip.borderRadius,
+        const BorderRadius.only(
+          topLeft: Radius.circular(14),
+          topRight: Radius.circular(14),
+        ),
+        reason: destination,
+      );
+      final stackFinder = find
+          .ancestor(of: underlay, matching: find.byType(Stack))
+          .first;
+      final stack = tester.widget<Stack>(stackFinder);
+      expect(stack.clipBehavior, Clip.hardEdge, reason: destination);
+
+      final panelRect = tester.getRect(stackFinder);
+      final glassRect = tester.getRect(blurFinder);
+      expect(glassRect.top, closeTo(panelRect.top, .001), reason: destination);
+      expect(
+        glassRect.left,
+        closeTo(panelRect.left + 2, .001),
+        reason: destination,
+      );
+      expect(
+        glassRect.right,
+        closeTo(panelRect.right - 3, .001),
+        reason: destination,
+      );
+      expect(glassRect.height, 58, reason: destination);
+      expect(
+        find.byKey(const ValueKey('chatListChromeFade')),
+        findsNothing,
+        reason: destination,
+      );
+    }
+    debugDefaultTargetPlatformOverride = null;
+  });
+
   testWidgets('compact section headers keep identical search geometry', (
     tester,
   ) async {
@@ -2243,15 +2337,46 @@ void main() {
         .descendant(of: frameFinder, matching: find.byType(FaSurface))
         .first;
     expect(tester.getRect(glass), tester.getRect(frameFinder).deflate(1));
-    final browser = tester.widget<Material>(
-      find.byKey(const ValueKey('fileBrowserPanel')),
-    );
+    final browserFinder = find.byKey(const ValueKey('fileBrowserPanel'));
+    final browser = tester.widget<Material>(browserFinder);
     expect(browser.color, Colors.transparent);
+
+    // Chat Files uses the SAME approved underlay as every sidebar section,
+    // extended only by its path bar (52 header + 44 path + 1 divider + 6).
+    final filesUnderlay = find.descendant(
+      of: browserFinder,
+      matching: find.byType(MessengerGlassUnderlay),
+    );
+    expect(filesUnderlay, findsOneWidget);
+    final filesBlurFinder = find.descendant(
+      of: filesUnderlay,
+      matching: find.byType(ProgressiveBlur),
+    );
+    final filesBlur = tester.widget<ProgressiveBlur>(filesBlurFinder);
+    expect(filesBlur.maxSigma, 8);
+    expect(filesBlur.falloff, 3.0);
+    expect(filesBlur.direction, ProgressiveBlurDirection.topToBottom);
+    final browserRect = tester.getRect(browserFinder);
+    final filesGlassRect = tester.getRect(filesBlurFinder);
+    expect(filesGlassRect.top, closeTo(browserRect.top, .001));
+    expect(filesGlassRect.left, closeTo(browserRect.left + 2, .001));
+    expect(filesGlassRect.right, closeTo(browserRect.right - 3, .001));
+    expect(filesGlassRect.height, 103);
+    final filesClip = tester.widget<ClipRRect>(
+      find.descendant(of: filesUnderlay, matching: find.byType(ClipRRect)),
+    );
+    expect(
+      filesClip.borderRadius,
+      const BorderRadius.only(
+        topLeft: Radius.circular(14),
+        topRight: Radius.circular(14),
+      ),
+    );
     expect(tester.takeException(), isNull);
     debugDefaultTargetPlatformOverride = null;
   });
 
-  testWidgets('wide Apps Files route also uses the top action centerline', (
+  testWidgets('Files is absent from Apps and remains available from chat', (
     tester,
   ) async {
     debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
@@ -2263,7 +2388,17 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('messengerPrimaryNav-apps')));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Files'));
+
+    expect(find.text('Files'), findsNothing);
+    expect(find.byKey(const ValueKey('appsDirectoryFiles')), findsNothing);
+    expect(
+      find.byKey(const ValueKey('launcherCell:system:files')),
+      findsNothing,
+    );
+
+    await tester.tap(find.byKey(const ValueKey('chatFilter-all')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Open files'));
     await tester.pumpAndSettle();
 
     expect(find.byKey(const ValueKey('filesAppPanel')), findsOneWidget);

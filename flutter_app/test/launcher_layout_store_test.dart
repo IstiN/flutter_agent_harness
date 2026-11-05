@@ -39,6 +39,28 @@ void main() {
       );
     });
 
+    test(
+      'syncApps can retire the persisted Files tile from messenger Apps',
+      () {
+        final store = LauncherLayoutStore.inMemory();
+        store.syncApps(['weather']);
+        expect(store.topLevelKeys, contains(LauncherLayoutStore.filesKey));
+
+        store.syncApps(['weather'], includeFiles: false);
+        expect(store.topLevelKeys, [
+          'app:weather',
+          LauncherLayoutStore.settingsKey,
+        ]);
+
+        // A later sync must not resurrect the removed system destination.
+        store.syncApps(['weather'], includeFiles: false);
+        expect(
+          store.topLevelKeys,
+          isNot(contains(LauncherLayoutStore.filesKey)),
+        );
+      },
+    );
+
     test('syncApps appends new apps, prunes deleted ones, keeps order', () {
       final store = LauncherLayoutStore.inMemory();
       store.syncApps(['a', 'b', 'c']);

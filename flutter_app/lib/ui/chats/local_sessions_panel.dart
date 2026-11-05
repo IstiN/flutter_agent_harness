@@ -66,7 +66,6 @@ class LocalSessionsPanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colors = FahColors.of(context);
-    final tokens = FaDesignTokens.of(context);
     return ListenableBuilder(
       listenable: controller,
       builder: (context, _) {
@@ -79,98 +78,88 @@ class LocalSessionsPanel extends StatelessWidget {
             : folders
                   .where((folder) => folder.id == selectedFolderId)
                   .firstOrNull;
-        return ColoredBox(
-          color: tokens.direction == FaVisualDirection.glass
-              ? Colors.transparent
-              : colors.panel,
-          child: Column(
+        return MessengerGlassPanel(
+          compact: compact,
+          underlayKey: const ValueKey('localChromeUnderlay'),
+          header: MessengerSectionHeader(
+            title: openFolder?.name ?? context.l10n.wideNavLocal,
+            searchController: null,
+            searchHint: '',
+            onProfile: null,
+            onNew: onNew,
+            newButtonKey: const ValueKey('localNewButton'),
+            compact: compact,
+            onCollapse: onCollapse,
+            leading: openFolder == null
+                ? null
+                : IconButton(
+                    key: const ValueKey('localFolderBack'),
+                    tooltip: context.l10n.localFolderBack,
+                    onPressed: () => onSelectFolder(null),
+                    icon: const Icon(Icons.chevron_left_rounded),
+                    iconSize: 26,
+                    color: colors.text,
+                    visualDensity: VisualDensity.compact,
+                  ),
+          ),
+          body: Row(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              MessengerSectionHeader(
-                title: openFolder?.name ?? context.l10n.wideNavLocal,
-                searchController: null,
-                searchHint: '',
-                onProfile: null,
-                onNew: onNew,
-                newButtonKey: const ValueKey('localNewButton'),
-                compact: compact,
-                onCollapse: onCollapse,
-                leading: openFolder == null
-                    ? null
-                    : IconButton(
-                        key: const ValueKey('localFolderBack'),
-                        tooltip: context.l10n.localFolderBack,
-                        onPressed: () => onSelectFolder(null),
-                        icon: const Icon(Icons.chevron_left_rounded),
-                        iconSize: 26,
-                        color: colors.text,
-                        visualDensity: VisualDensity.compact,
-                      ),
-              ),
+              // The strip is NOT animated (owner pass): switching
+              // must not jitter the logos — only the content pane
+              // slides/fades.
+              if (openFolder != null)
+                _FolderStrip(
+                  folders: folders,
+                  selectedFolderId: selectedFolderId,
+                  iconResolver: iconResolver,
+                  onOpen: onSelectFolder,
+                ),
               Expanded(
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    // The strip is NOT animated (owner pass): switching
-                    // must not jitter the logos — only the content pane
-                    // slides/fades.
-                    if (openFolder != null)
-                      _FolderStrip(
-                        folders: folders,
-                        selectedFolderId: selectedFolderId,
-                        iconResolver: iconResolver,
-                        onOpen: onSelectFolder,
-                      ),
-                    Expanded(
-                      // Only the content pane animates (200ms
-                      // easeInOutCubic slide+fade; instant under
-                      // reduce-motion). Keys stay stable after settle.
-                      child: AnimatedSwitcher(
-                        duration: FaMotion.duration(
-                          context,
-                          const Duration(milliseconds: 200),
-                        ),
-                        switchInCurve: Curves.easeInOutCubic,
-                        switchOutCurve: Curves.easeInOutCubic,
-                        transitionBuilder: (child, animation) => FadeTransition(
-                          opacity: animation,
-                          child: SlideTransition(
-                            position: Tween(
-                              begin: const Offset(0.08, 0),
-                              end: Offset.zero,
-                            ).animate(animation),
-                            child: child,
-                          ),
-                        ),
-                        child: KeyedSubtree(
-                          key: ValueKey(
-                            'localContent-${openFolder?.id ?? 'list'}',
-                          ),
-                          child: openFolder == null
-                              ? (folders.isEmpty
-                                    ? Center(
-                                        child: Text(
-                                          context.l10n.localFoldersEmpty,
-                                          style: TextStyle(
-                                            color: colors.dim,
-                                            fontSize: 13,
-                                          ),
-                                        ),
-                                      )
-                                    : _FolderList(
-                                        folders: folders,
-                                        iconResolver: iconResolver,
-                                        onOpen: onSelectFolder,
-                                      ))
-                              : LocalFolderSessionList(
-                                  sessions: openFolder.sessions,
-                                  selectedSessionId: selectedSessionId,
-                                  onOpenSession: onOpenSession,
-                                ),
-                        ),
-                      ),
+                // Only the content pane animates (200ms
+                // easeInOutCubic slide+fade; instant under
+                // reduce-motion). Keys stay stable after settle.
+                child: AnimatedSwitcher(
+                  duration: FaMotion.duration(
+                    context,
+                    const Duration(milliseconds: 200),
+                  ),
+                  switchInCurve: Curves.easeInOutCubic,
+                  switchOutCurve: Curves.easeInOutCubic,
+                  transitionBuilder: (child, animation) => FadeTransition(
+                    opacity: animation,
+                    child: SlideTransition(
+                      position: Tween(
+                        begin: const Offset(0.08, 0),
+                        end: Offset.zero,
+                      ).animate(animation),
+                      child: child,
                     ),
-                  ],
+                  ),
+                  child: KeyedSubtree(
+                    key: ValueKey('localContent-${openFolder?.id ?? 'list'}'),
+                    child: openFolder == null
+                        ? (folders.isEmpty
+                              ? Center(
+                                  child: Text(
+                                    context.l10n.localFoldersEmpty,
+                                    style: TextStyle(
+                                      color: colors.dim,
+                                      fontSize: 13,
+                                    ),
+                                  ),
+                                )
+                              : _FolderList(
+                                  folders: folders,
+                                  iconResolver: iconResolver,
+                                  onOpen: onSelectFolder,
+                                ))
+                        : LocalFolderSessionList(
+                            sessions: openFolder.sessions,
+                            selectedSessionId: selectedSessionId,
+                            onOpenSession: onOpenSession,
+                          ),
+                  ),
                 ),
               ),
             ],

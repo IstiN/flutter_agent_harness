@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
 import 'package:fa/ui/widgets/file_preview.dart';
+import 'package:fa/ui/widgets/messenger_section_header.dart'
+    show MessengerGlassUnderlay;
 import 'package:fa/ui/widgets/session_search_field.dart'
     show SessionSearchField;
 import 'package:fa/services/icloud_sync_service.dart';
@@ -15,8 +17,6 @@ import 'package:fa/services/upload_picker_stub.dart'
     if (dart.library.io) 'package:fa/services/upload_picker_io.dart'
     if (dart.library.html) 'package:fa/services/upload_picker_web.dart';
 import 'package:fa_ui/fa_ui.dart' hide formatFileSize;
-import 'package:liquid_glass_widgets/liquid_glass_widgets.dart'
-    show ProgressiveBlur, ProgressiveBlurDirection;
 
 /// The default [ProjectFolderOps] on supported platforms (macOS), else null.
 ProjectFolderOps? _defaultProjectFolderOps() =>
@@ -656,14 +656,20 @@ class _FileBrowserState extends State<FileBrowser> {
           ? Border(left: BorderSide(color: colors.border, width: .5))
           : null,
       child: Stack(
+        clipBehavior: Clip.hardEdge,
         children: [
           Positioned.fill(child: _buildBody(context, chromeHeight)),
-          Positioned(
-            top: 0,
-            left: 0,
-            right: 0,
-            child: _buildChrome(context, chromeHeight),
-          ),
+          if (tokens.direction == FaVisualDirection.glass)
+            Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              height: chromeHeight + 6,
+              child: const MessengerGlassUnderlay(
+                underlayKey: ValueKey('fileBrowserChromeUnderlay'),
+              ),
+            ),
+          Positioned(top: 0, left: 0, right: 0, child: _buildChrome(context)),
         ],
       ),
     );
@@ -675,7 +681,7 @@ class _FileBrowserState extends State<FileBrowser> {
   /// the controls, so rows scrolling up dissolve behind the chrome itself
   /// (same pattern as the chat list). Opaque directions keep the flat
   /// panel color.
-  Widget _buildChrome(BuildContext context, double height) {
+  Widget _buildChrome(BuildContext context) {
     final colors = FahColors.of(context);
     final tokens = FaDesignTokens.of(context);
     final chrome = Column(
@@ -691,25 +697,7 @@ class _FileBrowserState extends State<FileBrowser> {
     if (tokens.direction != FaVisualDirection.glass) {
       return ColoredBox(color: colors.panel, child: chrome);
     }
-    return Stack(
-      children: [
-        Positioned(
-          top: 0,
-          left: 0,
-          right: 0,
-          height: height + 28,
-          child: const IgnorePointer(
-            child: ProgressiveBlur(
-              key: ValueKey('fileBrowserChromeUnderlay'),
-              maxSigma: 18,
-              direction: ProgressiveBlurDirection.topToBottom,
-              falloff: 1.0,
-            ),
-          ),
-        ),
-        chrome,
-      ],
-    );
+    return chrome;
   }
 
   /// One circular icon action in the panel chrome (path bar up button,

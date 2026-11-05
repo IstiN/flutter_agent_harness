@@ -811,7 +811,6 @@ class _WideLayoutShellState extends State<WideLayoutShell>
           onOpenRunning: () => setState(() {
             _appPresentation?.fullScreen = false;
           }),
-          onOpenFiles: _openFiles,
         ),
       ),
     );
@@ -1946,7 +1945,7 @@ class _WideLayoutShellState extends State<WideLayoutShell>
 
   Widget _buildAppsArea() {
     // The nested Navigator ensures that calls to Navigator.of(context)
-    // from within Apps (app launches via pushJsApp, Settings/Files tiles)
+    // from within Apps (app launches via pushJsApp, the Settings tile)
     // push within the center surface rather than replacing the shell.
     //
     // The MOBILE launcher is the single panel implementation on every
@@ -1959,6 +1958,7 @@ class _WideLayoutShellState extends State<WideLayoutShell>
           manager: widget.manager,
           controller: _appLauncherController,
           fullScreen: !_isNarrow,
+          showFilesTile: false,
           onProfile: _openNarrowProfile,
           registry: widget.registry,
           lastConnectionStore: widget.lastConnectionStore,

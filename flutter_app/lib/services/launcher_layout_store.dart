@@ -200,14 +200,20 @@ class LauncherLayoutStore extends ChangeNotifier {
   /// Reconciles the layout with the apps currently installed ([appIds]):
   /// drops `app:` keys (top level and inside folders) whose app is gone,
   /// dissolves folders left empty, appends new apps after the existing
-  /// tiles, and guarantees both system tiles exist. Only notifies/persists
-  /// when something actually changed.
-  void syncApps(Iterable<String> appIds, {bool includeNetworks = false}) {
+  /// tiles, and guarantees the Settings tile exists. Networks and Files
+  /// are optional; disabling either also prunes its persisted entry.
+  /// Only notifies/persists when something actually changed.
+  void syncApps(
+    Iterable<String> appIds, {
+    bool includeNetworks = false,
+    bool includeFiles = true,
+  }) {
     final known = appIds.toSet();
     var changed = false;
 
     bool prune(String key) {
-      if (key == networksKey && !includeNetworks) {
+      if ((key == networksKey && !includeNetworks) ||
+          (key == filesKey && !includeFiles)) {
         changed = true;
         return false;
       }
@@ -234,7 +240,7 @@ class LauncherLayoutStore extends ChangeNotifier {
     }
     for (final key in [
       settingsKey,
-      filesKey,
+      if (includeFiles) filesKey,
       if (includeNetworks) networksKey,
     ]) {
       if (!_order.contains(key)) {

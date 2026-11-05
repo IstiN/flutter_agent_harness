@@ -66,6 +66,7 @@ class AppLauncherScreen extends StatefulWidget {
     this.networkMode,
     this.networkSessions,
     this.onOpenNetworks,
+    this.showFilesTile = true,
     this.fullScreen = false,
     this.onProfile,
     this.controller,
@@ -100,6 +101,10 @@ class AppLauncherScreen extends StatefulWidget {
   /// Opens network management from the Apps system tile. Null keeps that
   /// tile out of hosts that have no network manager.
   final VoidCallback? onOpenNetworks;
+
+  /// Whether the standalone launcher includes its legacy Files system tile.
+  /// Messenger shell Apps disables it: Files is opened from the chat header.
+  final bool showFilesTile;
 
   /// Desktop shows the Apps overview header; narrow shows the PoC sidebar
   /// header. It never means that the launcher replaces the messenger shell.
@@ -330,6 +335,7 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
     _layout?.syncApps(
       apps.map((app) => app.id),
       includeNetworks: widget.onOpenNetworks != null,
+      includeFiles: widget.showFilesTile,
     );
   }
 

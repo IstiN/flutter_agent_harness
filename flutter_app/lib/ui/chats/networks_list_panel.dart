@@ -96,144 +96,129 @@ class _ChatNetworksPanelState extends State<ChatNetworksPanel> {
     final networks = manager?.wallet.networks ?? const {};
     final openId = _openNetworkId;
     final openName = openId == null ? null : networks[openId]?.name ?? openId;
-    final tokens = FaDesignTokens.of(context);
-    return ColoredBox(
-      color: tokens.direction == FaVisualDirection.glass
-          ? Colors.transparent
-          : colors.panel,
-      child: ListenableBuilder(
-        listenable: Listenable.merge([
-          ?manager,
-          ?widget.mode,
-          ?widget.chatList,
-        ]),
-        builder: (context, _) {
-          final session = openId == null ? null : manager?.sessions[openId];
-          // The drilled network's channel rows: the chat-list projection
-          // wins; the live session snapshot is the fallback when the
-          // projection yields none for this network.
-          final entryChannels = <ChatListEntry>[
-            for (final entry
-                in widget.chatList?.networkChannelEntries ??
-                    const <ChatListEntry>[])
-              if (entry.networkId == openId) entry,
-          ];
-          return Column(
+    return ListenableBuilder(
+      listenable: Listenable.merge([?manager, ?widget.mode, ?widget.chatList]),
+      builder: (context, _) {
+        final session = openId == null ? null : manager?.sessions[openId];
+        // The drilled network's channel rows: the chat-list projection
+        // wins; the live session snapshot is the fallback when the
+        // projection yields none for this network.
+        final entryChannels = <ChatListEntry>[
+          for (final entry
+              in widget.chatList?.networkChannelEntries ??
+                  const <ChatListEntry>[])
+            if (entry.networkId == openId) entry,
+        ];
+        return MessengerGlassPanel(
+          underlayKey: const ValueKey('networksChromeUnderlay'),
+          header: MessengerSectionHeader(
+            title: openName ?? context.l10n.networkNetworksTitle,
+            searchController: null,
+            searchHint: '',
+            onProfile: null,
+            onNew: null,
+            onCollapse: widget.onCollapse,
+            leading: IconButton(
+              key: openId == null
+                  ? const ValueKey('chatNetworksBack')
+                  : const ValueKey('chatChannelsBack'),
+              tooltip: MaterialLocalizations.of(context).backButtonTooltip,
+              onPressed: openId == null
+                  ? widget.onBack
+                  : () => setState(() => _openNetworkId = null),
+              icon: const Icon(Icons.chevron_left_rounded),
+              iconSize: 26,
+              color: colors.text,
+              visualDensity: VisualDensity.compact,
+            ),
+            trailing: openId != null
+                ? null
+                : SizedBox.square(
+                    dimension: 32,
+                    child: IconButton(
+                      key: const ValueKey('chatNetworksManage'),
+                      tooltip: context.l10n.chatManageNetworks,
+                      onPressed: widget.onManageNetworks,
+                      icon: const Icon(Icons.settings_outlined),
+                      iconSize: 18,
+                      color: colors.dim,
+                      visualDensity: VisualDensity.compact,
+                      padding: EdgeInsets.zero,
+                    ),
+                  ),
+          ),
+          body: Row(
+            key: const ValueKey('chatNetworksList'),
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              MessengerSectionHeader(
-                title: openName ?? context.l10n.networkNetworksTitle,
-                searchController: null,
-                searchHint: '',
-                onProfile: null,
-                onNew: null,
-                onCollapse: widget.onCollapse,
-                leading: IconButton(
-                  key: openId == null
-                      ? const ValueKey('chatNetworksBack')
-                      : const ValueKey('chatChannelsBack'),
-                  tooltip: MaterialLocalizations.of(context).backButtonTooltip,
-                  onPressed: openId == null
-                      ? widget.onBack
-                      : () => setState(() => _openNetworkId = null),
-                  icon: const Icon(Icons.chevron_left_rounded),
-                  iconSize: 26,
-                  color: colors.text,
-                  visualDensity: VisualDensity.compact,
+              // The strip is NOT animated (owner pass): switching
+              // networks must not jitter the logos — only the
+              // content pane slides/fades.
+              if (openId != null)
+                _NetworksStrip(
+                  networks: networks,
+                  selectedNetworkId: openId,
+                  onOpen: (networkId) =>
+                      setState(() => _openNetworkId = networkId),
                 ),
-                trailing: openId != null
-                    ? null
-                    : SizedBox.square(
-                        dimension: 32,
-                        child: IconButton(
-                          key: const ValueKey('chatNetworksManage'),
-                          tooltip: context.l10n.chatManageNetworks,
-                          onPressed: widget.onManageNetworks,
-                          icon: const Icon(Icons.settings_outlined),
-                          iconSize: 18,
-                          color: colors.dim,
-                          visualDensity: VisualDensity.compact,
-                          padding: EdgeInsets.zero,
-                        ),
-                      ),
-              ),
               Expanded(
-                key: const ValueKey('chatNetworksList'),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    // The strip is NOT animated (owner pass): switching
-                    // networks must not jitter the logos — only the
-                    // content pane slides/fades.
-                    if (openId != null)
-                      _NetworksStrip(
-                        networks: networks,
-                        selectedNetworkId: openId,
-                        onOpen: (networkId) =>
-                            setState(() => _openNetworkId = networkId),
-                      ),
-                    Expanded(
-                      // Only the content pane animates (200ms
-                      // easeInOutCubic slide+fade; instant under
-                      // reduce-motion). Keys stay stable after settle.
-                      child: AnimatedSwitcher(
-                        duration: FaMotion.duration(
-                          context,
-                          const Duration(milliseconds: 200),
-                        ),
-                        switchInCurve: Curves.easeInOutCubic,
-                        switchOutCurve: Curves.easeInOutCubic,
-                        transitionBuilder: (child, animation) => FadeTransition(
-                          opacity: animation,
-                          child: SlideTransition(
-                            position: Tween(
-                              begin: const Offset(0.08, 0),
-                              end: Offset.zero,
-                            ).animate(animation),
-                            child: child,
-                          ),
-                        ),
-                        child: KeyedSubtree(
-                          key: ValueKey('networksContent-${openId ?? 'list'}'),
-                          child: openId == null
-                              ? (networks.isEmpty
-                                    ? Center(
-                                        child: Text(
-                                          context.l10n.networkEmptyTitle,
-                                          style: TextStyle(
-                                            color: FahColors.of(context).dim,
-                                            fontSize: 13,
-                                          ),
-                                        ),
-                                      )
-                                    : _NetworksList(
-                                        networks: networks,
-                                        onOpen: (networkId) => setState(
-                                          () => _openNetworkId = networkId,
-                                        ),
-                                      ))
-                              : _ChannelsList(
-                                  networkId: openId,
-                                  entries: entryChannels,
-                                  sessionChannels:
-                                      session?.channels ?? const <Channel>[],
-                                  selectedChannelId:
-                                      widget.mode?.networkId == openId
-                                      ? widget.mode?.channelId
-                                      : null,
-                                  onOpenChannel: (channel) =>
-                                      widget.onOpenChannel(openId, channel),
-                                ),
-                        ),
-                      ),
+                // Only the content pane animates (200ms
+                // easeInOutCubic slide+fade; instant under
+                // reduce-motion). Keys stay stable after settle.
+                child: AnimatedSwitcher(
+                  duration: FaMotion.duration(
+                    context,
+                    const Duration(milliseconds: 200),
+                  ),
+                  switchInCurve: Curves.easeInOutCubic,
+                  switchOutCurve: Curves.easeInOutCubic,
+                  transitionBuilder: (child, animation) => FadeTransition(
+                    opacity: animation,
+                    child: SlideTransition(
+                      position: Tween(
+                        begin: const Offset(0.08, 0),
+                        end: Offset.zero,
+                      ).animate(animation),
+                      child: child,
                     ),
-                  ],
+                  ),
+                  child: KeyedSubtree(
+                    key: ValueKey('networksContent-${openId ?? 'list'}'),
+                    child: openId == null
+                        ? (networks.isEmpty
+                              ? Center(
+                                  child: Text(
+                                    context.l10n.networkEmptyTitle,
+                                    style: TextStyle(
+                                      color: FahColors.of(context).dim,
+                                      fontSize: 13,
+                                    ),
+                                  ),
+                                )
+                              : _NetworksList(
+                                  networks: networks,
+                                  onOpen: (networkId) => setState(
+                                    () => _openNetworkId = networkId,
+                                  ),
+                                ))
+                        : _ChannelsList(
+                            networkId: openId,
+                            entries: entryChannels,
+                            sessionChannels:
+                                session?.channels ?? const <Channel>[],
+                            selectedChannelId: widget.mode?.networkId == openId
+                                ? widget.mode?.channelId
+                                : null,
+                            onOpenChannel: (channel) =>
+                                widget.onOpenChannel(openId, channel),
+                          ),
+                  ),
                 ),
               ),
             ],
-          );
-        },
-      ),
+          ),
+        );
+      },
     );
   }
 }

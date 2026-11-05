@@ -443,7 +443,7 @@ void main() {
     );
     expect(blur.maxSigma, 8);
     expect(blur.direction, ProgressiveBlurDirection.topToBottom);
-    expect(blur.falloff, 1.2);
+    expect(blur.falloff, 3.0);
     final chromeStack = tester.widget<Stack>(
       find
           .ancestor(
@@ -589,7 +589,8 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byType(AppsDirectoryPanel), findsOneWidget);
     // The directory header is the sidebar chrome language: a glass
-    // capsule toolbar carrying the section eyebrow and the Files entry.
+    // capsule toolbar carrying only the section eyebrow and running state.
+    // Files is a chat destination, never an Apps destination.
     final toolbar = tester.widget<FaSurface>(
       find.byKey(const ValueKey('appsDirectoryToolbar')),
     );
@@ -600,7 +601,12 @@ void main() {
         of: find.byKey(const ValueKey('appsDirectoryToolbar')),
         matching: find.byKey(const ValueKey('appsDirectoryFiles')),
       ),
-      findsOneWidget,
+      findsNothing,
+    );
+    expect(find.text('Files'), findsNothing);
+    expect(
+      find.byKey(const ValueKey('launcherCell:system:files')),
+      findsNothing,
     );
     await expectGolden(tester, 'wide_layout_shell_apps');
   });
@@ -660,37 +666,6 @@ void main() {
     await disposeGoldenShell(tester);
   });
 
-  // Covers lib/ui/apps/files_presentation_panel.dart (filesAppPanel).
-  testWidgets('desktop Files presents through the animated app pane', (
-    tester,
-  ) async {
-    final manager = await pumpShell(tester, populateChats: true);
-    await manager.env.createDir('src');
-    await manager.env.writeFile('README.md', '# Presented files\n');
-    await manager.env.writeFile('pubspec.yaml', 'name: demo\n');
-    await tester.tap(find.byKey(const ValueKey('messengerPrimaryNav-apps')));
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey('appsDirectoryFiles')));
-    await tester.pump();
-    // Native presentation, animated entrance — never an instant pop.
-    expect(find.byKey(const ValueKey('filesAppPanel')), findsOneWidget);
-    final slot = find.byKey(const ValueKey('wideShellPresentationSlot'));
-    expect(tester.getSize(slot).width, lessThan(340));
-    await tester.pumpAndSettle();
-    expect(tester.getSize(slot).width, 340);
-    expect(find.byType(FileBrowser), findsOneWidget);
-    // Files presents in the right pane while the Apps overview stays in
-    // the center — the same docked surface a JS app occupies.
-    expect(find.byType(AppLauncherScreen), findsOneWidget);
-    await expectGolden(tester, 'wide_layout_shell_files_panel');
-    await tester.tap(find.byKey(const ValueKey('filesAppClose')));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 100));
-    expect(find.byKey(const ValueKey('filesAppPanel')), findsOneWidget);
-    await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey('filesAppPanel')), findsNothing);
-  });
-
   testWidgets('Russian desktop app side panel chrome', (tester) async {
     final manager = await pumpShell(tester, locale: const Locale('ru'));
     await openDemoApp(tester, manager);
@@ -708,22 +683,25 @@ void main() {
     await disposeGoldenShell(tester);
   });
 
-  testWidgets('mobile Files opens the shared Files card route', (tester) async {
-    final manager = await pumpShell(tester, size: goldenSizePhone);
+  testWidgets('mobile chat Files opens the shared end drawer', (tester) async {
+    final manager = await pumpShell(
+      tester,
+      size: goldenSizePhone,
+      populateChats: true,
+    );
     await manager.env.createDir('src');
     await manager.env.writeFile('README.md', '# Narrow shell files\n');
-    await tester.tap(find.text('Apps'));
+    await tester.tap(find.text('Fa 2.0 redesign'));
     await tester.pumpAndSettle();
-    // The launcher's Files tile pushes the SAME FilesAppPage card as the
-    // Apps directory's entry — the shared chrome band, not a Scaffold +
-    // app bar.
-    await tester.tap(find.text('Files'));
+    // The chat folder opens the SAME FilesAppPanel card as the desktop
+    // docked pane, hosted by the narrow chat's end drawer.
+    await tester.tap(find.byTooltip('Open files'));
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('filesAppPanel')), findsOneWidget);
     expect(find.byType(FileBrowser), findsOneWidget);
-    await expectGolden(tester, 'narrow_layout_shell_files_route');
-    // The band's close circle pops the route.
-    await tester.tap(find.byKey(const ValueKey('filesAppClose')));
+    await expectGolden(tester, 'narrow_layout_shell_chat_files');
+    // The narrow chat drawer intentionally closes through its scrim.
+    await tester.tapAt(const Offset(10, 400));
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('filesAppPanel')), findsNothing);
     await disposeGoldenShell(tester);

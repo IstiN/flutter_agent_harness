@@ -7,6 +7,105 @@ import 'package:fa/ui/widgets/session_search_field.dart';
 import 'package:fa_ui/fa_ui.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:liquid_glass_widgets/liquid_glass_widgets.dart'
+    show ProgressiveBlur, ProgressiveBlurDirection;
+
+/// The approved messenger glass underlay, shared by every sidebar section
+/// and Files. Parent supplies only the height and clips it to the panel:
+/// no top gap, 2pt left / 3pt right inset, 14pt top radii, and a steep
+/// falloff whose lower region is completely sharp (no visible bottom seam).
+final class MessengerGlassUnderlay extends StatelessWidget {
+  const MessengerGlassUnderlay({
+    super.key,
+    this.underlayKey = const ValueKey('chatListChromeUnderlay'),
+  });
+
+  /// Stable key for geometry tests; each host may use its own semantic key.
+  final Key underlayKey;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(left: 2, right: 3),
+      child: IgnorePointer(
+        child: ClipRRect(
+          borderRadius: const BorderRadius.only(
+            topLeft: Radius.circular(14),
+            topRight: Radius.circular(14),
+          ),
+          child: ProgressiveBlur(
+            key: underlayKey,
+            maxSigma: 8,
+            direction: ProgressiveBlurDirection.topToBottom,
+            falloff: 3.0,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Shared simple messenger panel: one header, a body starting at its real
+/// bottom, and the approved 6pt glass tail above scrolling content. Hosts
+/// with extra banner/filter rows use [MessengerGlassUnderlay] directly.
+final class MessengerGlassPanel extends StatelessWidget {
+  const MessengerGlassPanel({
+    super.key,
+    required this.header,
+    required this.body,
+    required this.underlayKey,
+    this.compact = false,
+  });
+
+  final Widget header;
+  final Widget body;
+  final Key underlayKey;
+  final bool compact;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = FahColors.of(context);
+    final tokens = FaDesignTokens.of(context);
+    final glass = tokens.direction == FaVisualDirection.glass;
+    final isMac = !kIsWeb && defaultTargetPlatform == TargetPlatform.macOS;
+    final headerHeight = compact ? (isMac ? 84.0 : 54.0) : 52.0;
+    final query = MediaQuery.of(context);
+    final scrollingBody = compact
+        ? body
+        : MediaQuery(
+            data: query.copyWith(
+              padding: query.padding.copyWith(
+                top: query.padding.top + 6,
+                right: query.padding.right + 1,
+              ),
+            ),
+            child: body,
+          );
+    return ColoredBox(
+      color: glass ? Colors.transparent : colors.panel,
+      child: Stack(
+        clipBehavior: Clip.hardEdge,
+        children: [
+          Positioned.fill(
+            child: Padding(
+              padding: EdgeInsets.only(top: headerHeight),
+              child: scrollingBody,
+            ),
+          ),
+          if (glass)
+            Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              height: headerHeight + 6,
+              child: MessengerGlassUnderlay(underlayKey: underlayKey),
+            ),
+          Positioned(top: 0, left: 0, right: 0, child: header),
+        ],
+      ),
+    );
+  }
+}
 
 /// Shared PoC sidebar header: circular Fa profile, optional compact title,
 /// search, and a desktop New action.
