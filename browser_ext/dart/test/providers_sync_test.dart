@@ -8,6 +8,8 @@ library;
 import 'dart:io';
 
 import '../src/providers.dart';
+import 'package:fa_browser_agent/fa_browser_agent.dart'
+    show resolveExtensionCompactionWiring;
 import 'package:flutter_agent_harness/src/cancel_token.dart';
 import 'package:flutter_agent_harness/src/context.dart';
 import 'package:flutter_agent_harness/src/event_stream.dart';
@@ -272,6 +274,70 @@ void main() {
     expect(isCookieAuthUrl('https://api.openai.com/v1'), isFalse);
     expect(isCookieAuthUrl('not a url'), isFalse);
     expect(isCookieAuthUrl(''), isFalse);
+  });
+
+  group('modelForConfig windows (gh-2059 AC7)', () {
+    test(
+      'no override resolves the shared fallback, never a local constant',
+      () {
+        final model = modelForConfig((
+          baseUrl: 'https://api/v1',
+          apiKey: '',
+          model: 'm',
+        ));
+        expect(
+          model.contextWindow,
+          200000,
+          reason:
+              'the pinned shared '
+              'fallback (gh-1077) — the extension carries no 128000 constant',
+        );
+      },
+    );
+
+    test('the stored settings override wins', () {
+      final model = modelForConfig((
+        baseUrl: 'https://api/v1',
+        apiKey: '',
+        model: 'm',
+      ), contextWindowOverride: 264000);
+      expect(model.contextWindow, 264000);
+    });
+
+    test('two model configs with different windows differ', () {
+      final small = modelForConfig((
+        baseUrl: 'https://api/v1',
+        apiKey: '',
+        model: 'm',
+      ), contextWindowOverride: 8192);
+      final big = modelForConfig((
+        baseUrl: 'https://api/v1',
+        apiKey: '',
+        model: 'm',
+      ), contextWindowOverride: 1000000);
+      expect(small.contextWindow, isNot(big.contextWindow));
+      // …and the compaction trigger differs with them (the shared
+      // resolution scales the reserve to the window).
+      final smallWiring = resolveExtensionCompactionWiring(
+        mainModel: small,
+        systemOverheadTokens: 0,
+      );
+      final bigWiring = resolveExtensionCompactionWiring(
+        mainModel: big,
+        systemOverheadTokens: 0,
+      );
+      expect(
+        smallWiring.settings.reserveTokens,
+        isNot(bigWiring.settings.reserveTokens),
+      );
+      expect(
+        smallWiring.conversationWindow - smallWiring.settings.reserveTokens,
+        lessThan(
+          bigWiring.conversationWindow - bigWiring.settings.reserveTokens,
+        ),
+        reason: 'different windows produce different compaction triggers',
+      );
+    });
   });
 }
 

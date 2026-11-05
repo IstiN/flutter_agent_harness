@@ -522,6 +522,46 @@ void main() {
     },
   );
 
+  test('a browser fetch death is transient-classified and retried before '
+      'the local trim (gh-2059 arch 7: the MV3 SW stream dies with '
+      'exactly "TypeError: Failed to fetch")', () async {
+    final session = await repo.create(JsonlSessionCreateOptions(cwd: '/w'));
+    for (var i = 0; i < 12; i++) {
+      await session.appendMessage(UserMessage.text('u$i${'a' * 400}'));
+    }
+    final state = AgentState(
+      model: _model,
+      messages: await session.buildContextMessages(),
+    );
+
+    var calls = 0;
+    Future<SummarizationResult> fetchDeath(SummarizationRequest request) async {
+      calls++;
+      throw const CompactionException('TypeError: Failed to fetch');
+    }
+
+    final hooks = _RecordingHooks();
+    final ok = await AutoCompactor(
+      session: session,
+      state: state,
+      window: 1000,
+      settings: settings,
+      summary: fetchDeath,
+      mainSummary: fetchDeath,
+      smolModel: null,
+      hooks: hooks,
+      baseBackoff: Duration.zero,
+    ).run();
+
+    // The dead endpoint gets its full retry ladder before the trim
+    // takes over — a fetch death mid-pass is a retried failure, never
+    // a silent single-shot collapse.
+    expect(ok, isTrue, reason: 'the local trim bounds the context');
+    expect(calls, 3, reason: 'maxAttempts on the transient fetch death');
+    final pass = hooks.passes.last;
+    expect(pass.fallback, 'local-trim');
+  });
+
   test('local trim never leaves an orphaned tool result (Kimi 400 '
       'tool_call_id wedge)', () async {
     final session = await repo.create(JsonlSessionCreateOptions(cwd: '/w'));

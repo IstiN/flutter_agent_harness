@@ -18,12 +18,10 @@ import 'package:flutter_agent_harness/src/env/execution_env.dart';
 import 'package:flutter_agent_harness/src/agent/agent.dart';
 import 'package:flutter_agent_harness/src/agent/agent_loop.dart';
 import 'package:flutter_agent_harness/src/agent/agent_tool.dart';
-import 'package:flutter_agent_harness/src/agent/auto_compactor.dart';
 import 'package:flutter_agent_harness/src/agent/tool_registry.dart';
 import 'package:flutter_agent_harness/src/approval/approval.dart';
 import 'package:flutter_agent_harness/src/approval/approval_hook.dart';
 import 'package:flutter_agent_harness/src/cancel_token.dart';
-import 'package:flutter_agent_harness/src/compaction/compaction.dart';
 import 'package:flutter_agent_harness/src/context.dart';
 import 'package:flutter_agent_harness/src/model.dart';
 import 'package:flutter_agent_harness/src/session/session_storage.dart';
@@ -46,6 +44,7 @@ import 'chrome_api.dart';
 import 'run_script_tool.dart';
 import 'chrome_storage_env.dart';
 import 'fetch_client.dart';
+import 'host_compaction.dart';
 import 'dap/dap_frames.dart';
 import 'dap/dap_integration.dart';
 import 'dap/bound_session_routing.dart';
@@ -75,6 +74,16 @@ typedef HostConfig = ({
   /// AC4d): tool name → enabled. Actual registration still requires the
   /// chrome permission to be granted (#19 capability floor).
   Map<String, bool> browserTools,
+
+  /// Per-model context window override (gh-2059 AC7): the `faProvider`
+  /// `contextWindow` setting, merged by [mergeProvider]. `null` = the
+  /// shared fallback rule decides ([modelForConfig]).
+  int? contextWindow,
+
+  /// Owner cap (`agent.contextWindowCap` analogue, gh-2059 RCA-6):
+  /// clamps the effective window in the shared compaction resolution AND
+  /// the loop's over-window guard (one clamp point downstream).
+  int? contextWindowCap,
 });
 
 const _sessionPath = '/session.jsonl';
@@ -122,6 +131,18 @@ final class AgentHost implements UiHostBackend {
   String _mailbox = '';
   bool _running = false;
   bool _booted = false;
+
+  /// Per-model window override (gh-2059 AC7) — read by [_currentModel].
+  int? _contextWindowOverride;
+
+  /// The compaction paths over the shared wiring (gh-2059): relief,
+  /// settle gate, manual /compact, visible hooks. Built in [_init].
+  late ExtensionCompactionRunner _compaction;
+
+  /// True while a manual /compact runs (no agent turn): `cancelTurn`
+  /// cancels the compaction token, busy-guards hold turns/sessions off.
+  bool _compacting = false;
+  CancelTokenSource? _compactAbort;
 
   /// Chat-attachment staging runs through this gate (issue #313 review
   /// E3): one op at a time, so the check-then-write in `stageUpload`
@@ -287,6 +308,7 @@ final class AgentHost implements UiHostBackend {
     final storage = await _openSession();
     _session = Session(storage);
     _provider = config.provider;
+    _contextWindowOverride = config.contextWindow;
     _agent = Agent(
       model: _currentModel(),
       systemPrompt: _systemPrompt,
@@ -294,9 +316,30 @@ final class AgentHost implements UiHostBackend {
       streamFunction: _streamFn(),
       toolRegistry: _registry,
       externalSteeringSource: _drainMail,
+      // gh-2059 RCA-6: the owner cap reaches the loop's over-window guard
+      // (effectiveContextWindow) — one clamp point shared with the
+      // compaction wiring below.
+      contextWindowCap: config.contextWindowCap,
     );
     _agent.externalSteeringProbe = () async => _mail.isNotEmpty;
     attachApproval(_agent, _approvals);
+    // gh-2059: the compaction paths consume the SHARED wiring (gh-1077) —
+    // resolveExtensionCompactionWiring inside the runner is the same
+    // resolution the CLI and the app compute through; only the host
+    // seams (SW log, panel notice) are injected here.
+    _compaction = ExtensionCompactionRunner(
+      session: _session!,
+      agent: _agent,
+      contextWindowCap: config.contextWindowCap,
+      log: providerDebug,
+      notice: (text) => _sink({'type': 'notice', 'text': text}),
+    );
+    // gh-2059 AC1 / issue #387 relief parity: the loop's over-window
+    // guard hands the transcript to ONE synchronous compaction before
+    // refusing, linked to the live run token (issue #1085 — a user abort
+    // mid-relief lands aborted, never as a failed pass).
+    _agent.overWindowRelief = (overWindow) =>
+        _compaction.relieveOverWindow(overWindow, runToken: _agent.cancelToken);
     _agent.subscribe(_onAgentEvent);
     _booted = true;
     // DAP attach must happen on the boot path too, not only in
@@ -356,6 +399,11 @@ final class AgentHost implements UiHostBackend {
     }
     _mailbox = config.mailbox;
     _provider = config.provider;
+    // gh-2059 AC7: a saved window override / owner cap applies live with
+    // the rest of the provider swap (the runner re-reads its wiring, the
+    // agent's cap reaches the loop guard on the next request).
+    _contextWindowOverride = config.contextWindow;
+    _compaction.contextWindowCap = config.contextWindowCap;
     _applyDapConfig(config.dap);
     applyToolVisibility(config.browserTools);
     _agent.streamFunction = _streamFn();
@@ -476,9 +524,12 @@ final class AgentHost implements UiHostBackend {
         baseUrl: '',
         apiKey: '',
         model: 'fake:not-configured',
-      ));
+      ), contextWindowOverride: _contextWindowOverride);
     }
-    return modelForConfig(provider);
+    return modelForConfig(
+      provider,
+      contextWindowOverride: _contextWindowOverride,
+    );
   }
 
   StreamFunction _streamFn() {
@@ -503,8 +554,40 @@ final class AgentHost implements UiHostBackend {
 
   /// User turn from the panel composer (or CI). While a run is active the
   /// text is steered into the current run, sender-attributed.
+  ///
+  /// Slash dispatch (gh-2059 AC2, CLI parity): `/compact` runs the manual
+  /// compaction pass and NEVER enters the transcript as a user message; a
+  /// bare unknown `/token` is refused with the CLI's wording. Multi-word
+  /// and path-like input stays an ordinary message
+  /// ([parseSlashInput] for the exact contract).
   @override
   void sendUser(String text, {String from = 'user'}) {
+    switch (parseSlashInput(text)) {
+      case SlashCompact():
+        if (_running) {
+          // CLI parity: /compact is an idle-input command. Mid-run the
+          // transcript is owned by the loop — refuse instead of steering
+          // (steering would append a user message, which /compact must
+          // never do).
+          _sink({
+            'type': 'error',
+            'error':
+                'busy: finish the current turn first — /compact runs '
+                'when the session is idle',
+          });
+          return;
+        }
+        unawaited(_runManualCompact());
+        return;
+      case SlashUnknown(:final token):
+        _sink({
+          'type': 'error',
+          'error': 'unknown command: $token (try /help)',
+        });
+        return;
+      case null:
+        break;
+    }
     final attributed = from == 'user' ? text : '[from $from] $text';
     if (_running) {
       _agent.steer(UserMessage.text(attributed));
@@ -517,12 +600,42 @@ final class AgentHost implements UiHostBackend {
     unawaited(_runTurn(attributed));
   }
 
-  /// Panel/protocol cancel (v2): aborts the active run. `_runTurn`'s
-  /// finally block resets `running` and emits the status event through
-  /// the normal sink, so callers get the settled state for free.
+  /// Panel/protocol cancel (v2): aborts the active run — or, while a
+  /// manual /compact runs (no agent turn), cancels the compaction's own
+  /// token (gh-2059 AC8). `_runTurn`'s finally block resets `running` and
+  /// emits the status event through the normal sink, so callers get the
+  /// settled state for free.
   @override
   void cancelTurn() {
+    if (_compacting) {
+      _compactAbort?.cancel('user cancel');
+      return;
+    }
     if (_running) _agent.abort();
+  }
+
+  /// `/compact` (gh-2059 AC2): the manual compaction pass over the shared
+  /// wiring — unconditional like the CLI's `_runManualCompact`, receipts
+  /// via notices/logs from the runner, cancel via [cancelTurn].
+  Future<void> _runManualCompact() async {
+    if (!_booted) throw StateError('not booted');
+    if (_running || _compacting) {
+      throw StateError('busy: finish the current turn first');
+    }
+    _compacting = true;
+    final abort = CancelTokenSource();
+    _compactAbort = abort;
+    _emitStatus();
+    try {
+      await _compaction.manualCompact(runToken: abort.token);
+    } on CancelledException {
+      // The runner already surfaced "compaction interrupted" — the
+      // receipt is the notice, not an error turn.
+    } finally {
+      _compacting = false;
+      _compactAbort = null;
+      _emitStatus();
+    }
   }
 
   /// `session_new` (panel "New session"): archive the live JSONL via
@@ -534,7 +647,9 @@ final class AgentHost implements UiHostBackend {
   @override
   Future<void> newSession() async {
     if (!_booted) throw StateError('not booted');
-    if (_running) throw StateError('busy: finish the current turn first');
+    if (_running || _compacting) {
+      throw StateError('busy: finish the current turn first');
+    }
     final oldId = sessionId;
     print('[dap-host] session_new: archiving $oldId');
     if (oldId.isNotEmpty) {
@@ -558,7 +673,7 @@ final class AgentHost implements UiHostBackend {
   @override
   Future<void> openSession(String requestedId) async {
     if (!_booted) throw StateError('not booted');
-    if (_running) {
+    if (_running || _compacting) {
       print(
         '[dap-host] session_open($requestedId) REFUSED: a turn is '
         'running — finish or cancel it first',
@@ -697,11 +812,14 @@ final class AgentHost implements UiHostBackend {
       return;
     }
     final visibleSession = sessionId;
-    if (!_running) await _ensureBoundSession();
+    if (!_running && !_compacting) await _ensureBoundSession();
     if (sessionId != visibleSession) {
       _sink({'type': 'mail_routed', 'from': from, 'sessionId': sessionId});
     }
-    if (_running) {
+    // A manual /compact owns the transcript exactly like a live run:
+    // mail queues for the next boundary instead of racing the compactor
+    // (gh-2059).
+    if (_running || _compacting) {
       _mail.add((from: from, text: text));
       _emitStatus();
       return;
@@ -810,8 +928,7 @@ final class AgentHost implements UiHostBackend {
   /// honest `size_precheck: "unknown"` instead of guessing a size.
   Future<int?> _downloadContentLength(String url) async {
     final uri = Uri.tryParse(url);
-    if (uri == null ||
-        !(uri.scheme == 'http' || uri.scheme == 'https')) {
+    if (uri == null || !(uri.scheme == 'http' || uri.scheme == 'https')) {
       return null;
     }
     final client = FetchClient();
@@ -840,6 +957,9 @@ final class AgentHost implements UiHostBackend {
     return {
       'running': _running,
       'booted': _booted,
+      // A manual /compact in flight (gh-2059): the panel's pending
+      // indicator reads this alongside `running`.
+      'compacting': _compacting,
       'mailbox': _mailbox,
       'provider': {
         'configured': provider != null && provider.model.isNotEmpty,
@@ -957,7 +1077,8 @@ final class AgentHost implements UiHostBackend {
     if (event is MessageEndEvent) await _persistMessage(event.message);
     if (event case AgentSettledEvent()) {
       await _env.flush();
-      await _compactIfDue();
+      await _compaction.compactIfDue();
+      await _env.flush();
       return;
     }
     final uiEvent = hostEventOf(event);
@@ -974,28 +1095,6 @@ final class AgentHost implements UiHostBackend {
       // Persistence must never break a live turn; the next flush retries.
       _persisted.remove(message);
     }
-  }
-
-  /// AC10: compaction stays functional — the shared AutoCompactor runs
-  /// against the session tree after every settled run.
-  Future<void> _compactIfDue() async {
-    final session = _session;
-    if (session == null) return;
-    final window = _agent.state.model.contextWindow;
-    await AutoCompactorFactory(
-      session: session,
-      state: _agent.state,
-      window: window,
-      settings: CompactionSettings.forWindow(window),
-      sources: AutoCompactorSources(
-        smolStream: _agent.streamFunction,
-        smolModel: _agent.state.model,
-        mainStream: _agent.streamFunction,
-        mainModel: _agent.state.model,
-      ),
-      hooks: _SilentHooks(),
-    ).run();
-    await _env.flush();
   }
 
   // -- Approvals ---------------------------------------------------------------
@@ -1197,22 +1296,6 @@ final class AgentHost implements UiHostBackend {
 /// share an id and one's archive file overwrote the other — sessions
 /// "disappeared" from the picker. uuidv7 is time-ordered and secure-random.
 String _uuid() => uuidv7();
-
-/// Compaction progress sink that reports nothing (headless SW).
-final class _SilentHooks implements AutoCompactorHooks {
-  @override
-  void onPass(AutoCompactorPass pass) {}
-  @override
-  void onRetry(int attempt, int maxAttempts, Duration backoff, Object error) {}
-  @override
-  void onDone(int passes, int tokens) {}
-  @override
-  void onBothRolesFailed(Object lastError) {}
-  @override
-  void onDelta(String delta) {}
-  @override
-  void onAttemptStart(String label, int attempt, Duration budget) {}
-}
 
 /// The ext_request backend over the SW's chrome binding + fetch client.
 final class _ExtOpsBackend implements ExtOpsBackend {

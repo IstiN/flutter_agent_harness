@@ -745,6 +745,11 @@ HostConfig _configFrom({
     }
     activeRelay = null;
   }
+  // gh-2059 AC7: the per-model window override + owner cap ride the
+  // stored `faProvider` map (mergeProvider keeps the int fields); the
+  // synced registry entries carry no window today — the shared fallback
+  // rule decides there.
+  final windowSource = provider is Map ? provider : const {};
   return (
     provider: resolved,
     approvalMode: approval is String ? approval : 'ask',
@@ -752,7 +757,18 @@ HostConfig _configFrom({
     mailbox: '',
     dap: _dapFrom(dap),
     browserTools: _browserToolsFrom(browserTools),
+    contextWindow: _intSetting(windowSource, 'contextWindow'),
+    contextWindowCap: _intSetting(windowSource, 'contextWindowCap'),
   );
+}
+
+/// Reads an int setting tolerating the string-encoded form (a panel save
+/// may store numbers as strings); `null` when absent/unparseable.
+int? _intSetting(Map<Object?, Object?> map, String key) {
+  final v = map[key];
+  if (v is int) return v;
+  if (v is String) return int.tryParse(v.trim());
+  return null;
 }
 
 /// faAgent.providersMerge: the SW's providersSync handler calls this with

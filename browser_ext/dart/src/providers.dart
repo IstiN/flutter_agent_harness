@@ -20,6 +20,8 @@ import 'package:flutter_agent_harness/src/cancel_token.dart';
 import 'package:flutter_agent_harness/src/context.dart';
 import 'package:flutter_agent_harness/src/event_stream.dart';
 import 'package:flutter_agent_harness/src/model.dart';
+import 'package:flutter_agent_harness/src/providers/models_endpoint.dart'
+    show fallbackContextWindow;
 import 'package:flutter_agent_harness/src/providers/openai_completions.dart';
 import 'package:flutter_agent_harness/src/providers/provider_common.dart'
     show providerHttpClientFactory;
@@ -315,15 +317,25 @@ bool isCookieAuthUrl(String url) =>
 
 /// Builds the [Model] spec sent with every request (and persisted in
 /// `model_change` session records).
-Model modelForConfig(ProviderConfig config) => Model(
-  id: config.model,
-  name: config.model,
-  api: 'openai-completions',
-  provider: isFakeModel(config.model) ? 'fake' : 'openai-like',
-  baseUrl: config.baseUrl,
-  contextWindow: 128000,
-  maxTokens: 8192,
-);
+///
+/// The context window is NEVER a local constant (gh-2059 AC10): the
+/// stored settings override ([contextWindowOverride] — the `faProvider`
+/// `contextWindow` field, merged by [mergeProvider]) wins; otherwise the
+/// shared fallback rule applies (`fallbackContextWindow`, the same pinned
+/// constant the app resolves unknown providers through). The owner cap
+/// (`contextWindowCap`) applies DOWNSTREAM — in the shared compaction
+/// resolution and the loop's over-window guard — never here, so the raw
+/// per-model value stays the single input.
+Model modelForConfig(ProviderConfig config, {int? contextWindowOverride}) =>
+    Model(
+      id: config.model,
+      name: config.model,
+      api: 'openai-completions',
+      provider: isFakeModel(config.model) ? 'fake' : 'openai-like',
+      baseUrl: config.baseUrl,
+      contextWindow: contextWindowOverride ?? fallbackContextWindow,
+      maxTokens: 8192,
+    );
 
 /// Streams via the core openai-completions adapter using the platform
 /// `fetch` (MV3 service workers have no XHR for package:http's default

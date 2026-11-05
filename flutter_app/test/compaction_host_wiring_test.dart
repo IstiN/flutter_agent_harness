@@ -21,10 +21,11 @@
 library;
 
 import 'package:fa/services/agent_service.dart';
+import 'package:fa_browser_agent/fa_browser_agent.dart';
+import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:fa/ui/screens/providers_section.dart' show agentConfigFrom;
 import 'package:fa_ui/fa_ui.dart'
     show FaChatModelConfig, TaskModelsStore, TaskRole, TaskRoleConfig;
-import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 /// The pinned fallback constant (gh-1077 pins its value and definition
@@ -352,6 +353,82 @@ void main() {
         ),
       );
       expect(reported.contextWindow, 264000);
+    });
+  });
+
+  group('UT-3 — the extension SW host joins the parity contract '
+      '(gh-2059 AC10, merge-blocking)', () {
+    // The extension resolves no smol role today (no Task-models surface
+    // on the SW host): its summarizer chain is main-only, like the
+    // no-smol CLI/app inputs below. Its per-model window comes from the
+    // stored settings override / the shared fallback — never a local
+    // constant (the grep guard lives in
+    // browser_ext/dart/test/host_compaction_test.dart).
+    test('extension wiring resolves semantic equals with CLI and app over '
+        'the same inputs', () {
+      for (final cap in [null, 64000, 1000000]) {
+        final cli = resolveCliCompactionWiring(
+          mainModel: _mainModel(),
+          rolesResolver: ModelRolesResolver(
+            config: ModelRolesConfig(roles: const {}),
+            secrets: const {},
+          ),
+          contextWindowCap: cap,
+        );
+        final app = resolveCompactionHostWiring(
+          mainModel: _mainModel(),
+          smolModel: null,
+          contextWindowCap: cap,
+        );
+        final ext = resolveExtensionCompactionWiring(
+          mainModel: _mainModel(),
+          systemOverheadTokens: 0,
+          contextWindowCap: cap,
+        );
+        expect(
+          ext.sameResolutionAs(cli),
+          isTrue,
+          reason: 'cap=$cap: extension and CLI wiring drifted',
+        );
+        expect(
+          ext.sameResolutionAs(app),
+          isTrue,
+          reason: 'cap=$cap: extension and app wiring drifted',
+        );
+      }
+    });
+
+    test('the extension overhead basis scales the conversation window '
+        'like the app', () {
+      const overhead = 2000;
+      final ext = resolveExtensionCompactionWiring(
+        mainModel: _mainModel(contextWindow: 8192),
+        systemOverheadTokens: overhead,
+      );
+      expect(ext.conversationWindow, 8192 - overhead);
+      // The trigger stays under the provider's hard limit (E5 parity).
+      expect(
+        ext.conversationWindow - ext.settings.reserveTokens,
+        lessThan(8192),
+      );
+    });
+
+    test('the extension window rides the shared fallback rule, not a '
+        'constant', () {
+      final ext = resolveExtensionCompactionWiring(
+        mainModel: _mainModel(contextWindow: fallbackContextWindow),
+        systemOverheadTokens: 0,
+      );
+      expect(ext.window, fallbackWindow);
+      // A settings override rides the model spec, and the cap clamps
+      // through the SAME shared resolution as the other hosts.
+      final clamped = resolveExtensionCompactionWiring(
+        mainModel: _mainModel(contextWindow: 200000),
+        systemOverheadTokens: 0,
+        contextWindowCap: 64000,
+      );
+      expect(clamped.window, 64000);
+      expect(clamped.settings.reserveTokens, 16000);
     });
   });
 }
