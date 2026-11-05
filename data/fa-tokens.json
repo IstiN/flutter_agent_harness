@@ -2,15 +2,6 @@
   "pr-1785": [
     {
       "leg": "rework",
-      "at": "2026-10-22T21:44:32Z",
-      "prompt": 184510,
-      "completion": 32797,
-      "total": 217307,
-      "cacheRead": 11599808,
-      "model": "glm-5.3-flash"
-    },
-    {
-      "leg": "rework",
       "at": "2026-10-22T22:14:53Z",
       "prompt": 81846,
       "completion": 23860,
@@ -4124,6 +4115,15 @@
       "prompt": 8697,
       "completion": 0,
       "total": 8697,
+      "cacheRead": 0,
+      "model": "kimi-for-coding"
+    },
+    {
+      "leg": "review",
+      "at": "2026-11-05T21:45:05Z",
+      "prompt": 9366,
+      "completion": 0,
+      "total": 9366,
       "cacheRead": 0,
       "model": "kimi-for-coding"
     }
