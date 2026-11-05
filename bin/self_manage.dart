@@ -16,9 +16,9 @@ import 'dart:typed_data' show BytesBuilder, Uint8List;
 import 'package:http/http.dart' as http;
 
 import 'package:archive/archive.dart';
-import 'package:flutter_agent_harness/src/cli/binary_swap.dart';
 import 'package:crypto/crypto.dart' show sha256;
 import 'package:cryptography/cryptography.dart' show RsaPublicKey;
+import 'package:flutter_agent_harness/src/cli/binary_swap.dart';
 import 'package:pointycastle/export.dart'
     show
         PublicKeyParameter,

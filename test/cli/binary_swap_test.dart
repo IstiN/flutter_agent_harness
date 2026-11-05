@@ -130,6 +130,48 @@ void main() {
       expect(readFile('fa.exe'), 'new-binary');
     });
 
+    test('a locked previous-generation side copy aborts with a named error', () {
+      writeFile('fa.exe', 'old-binary');
+      writeFile('fa.exe.new', 'new-binary');
+      // A directory where the aside FILE is expected: deleteSync throws
+      // FileSystemException — the shape an antivirus/indexer lock produces.
+      Directory(path('fa.exe.old')).createSync();
+
+      expect(
+        () => swapBinary(
+          staging: path('fa.exe.new'),
+          target: path('fa.exe'),
+          isWindows: true,
+        ),
+        throwsA(
+          isA<StateError>().having(
+            (e) => e.message,
+            'message',
+            contains('previous side copy'),
+          ),
+        ),
+      );
+
+      expect(readFile('fa.exe'), 'old-binary',
+          reason: 'the running binary must survive the abort');
+    });
+
+    test('a previous generation aside is replaced, never accumulated', () {
+      writeFile('fa.exe', 'older-binary');
+      writeFile('fa.exe.old', 'stale-aside');
+      writeFile('fa.exe.new', 'new-binary');
+
+      swapBinary(
+        staging: path('fa.exe.new'),
+        target: path('fa.exe'),
+        isWindows: true,
+      );
+
+      expect(readFile('fa.exe'), 'new-binary');
+      expect(readFile('fa.exe.old'), 'older-binary',
+          reason: 'the aside holds exactly the previous generation');
+    });
+
     test('neither target nor aside: a named error, not a silent no-op', () {
       writeFile('fa.exe.new', 'new-binary');
 
