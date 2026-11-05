@@ -8,8 +8,11 @@ library;
 import 'dart:io';
 
 import '../src/providers.dart';
-import 'package:fa_browser_agent/fa_browser_agent.dart'
-    show resolveExtensionCompactionWiring;
+// The in-package re-export shim (src/host_compaction.dart → lib/src/), NOT
+// the package URI: the Static gates analyze this test in the ROOT context,
+// where the nested fa_browser_agent package's own deps do not resolve
+// (gh-2059 gate fix). Same convention as the ../src/providers.dart import.
+import '../src/host_compaction.dart' show resolveExtensionCompactionWiring;
 import 'package:flutter_agent_harness/src/cancel_token.dart';
 import 'package:flutter_agent_harness/src/context.dart';
 import 'package:flutter_agent_harness/src/event_stream.dart';
