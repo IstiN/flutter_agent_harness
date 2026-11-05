@@ -51,6 +51,27 @@ CompactionHostWiring _wiring(
   contextWindowCap: contextWindowCap,
 );
 
+/// The same resolution with the master switch off (a host that resolved
+/// its compaction config off) or a fast retry ladder (test budget).
+CompactionHostWiring _wiringVariant(
+  Model model, {
+  bool enabled = true,
+  Duration baseBackoff = compactionSummarizerBaseBackoff,
+}) {
+  final base = _wiring(model);
+  return CompactionHostWiring(
+    window: base.window,
+    conversationWindow: base.conversationWindow,
+    settings: base.settings,
+    smolModel: base.smolModel,
+    enabled: enabled,
+    baseBackoff: baseBackoff,
+  );
+}
+
+CompactionHostWiring _offWiring(Model model) =>
+    _wiringVariant(model, enabled: false);
+
 AssistantMessage _assistant(String text, {List<ToolCall>? calls}) =>
     AssistantMessage(
       content: [TextContent(text: text), ...?calls],
@@ -314,6 +335,38 @@ void main() {
       expect(receipt.attempted, isFalse);
       expect(notices.logLines, isEmpty);
     });
+
+    test('a wiring with enabled: false short-circuits every path before the '
+        'trigger gate', () async {
+      // The extension resolver never produces enabled: false today (the
+      // resolver's `enabled` defaults on), but CompactionHostWiring is the
+      // shared contract every host constructs — a host that resolves its
+      // master switch off must get a not-attempted receipt on ALL paths,
+      // with no logs and no notices (the flow's first gate).
+      final session = await _fatSession(repo);
+      final model = _model();
+      final state = await _stateFor(session, model: model);
+      final notices = _RecordingNotices();
+      final off = _offWiring(model);
+
+      final flow = flowFor(session, state, wiring: off, notices: notices);
+
+      final settleReceipt = await flow.settle();
+      expect(settleReceipt.attempted, isFalse);
+      final manualReceipt = await flow.manual();
+      expect(manualReceipt.attempted, isFalse);
+      expect(notices.logLines, isEmpty, reason: 'no start line, no pass line');
+      expect(notices.notices, isEmpty);
+      // The relief path is gated by the guard contract, not the switch —
+      // but its inner _run still reports honestly.
+      final relieved = await flow.relieveOverWindow(state.messages.toList());
+      expect(relieved, isNull);
+      expect(
+        notices.logLines.join('\n'),
+        contains('relief no-op (nothing shrank)'),
+        reason: 'relief compares before/after honestly even gated off',
+      );
+    });
   });
 
   group('manual path (/compact, CLI parity)', () {
@@ -533,6 +586,115 @@ void main() {
       // Whatever passes completed before the cancel stay lossless — the
       // transcript keeps at least what it had (folds never drop records).
       expect(state.messages, isNotEmpty);
+    });
+
+    test('a cancel arriving mid-run on /compact reads as an interrupted '
+        'compaction, never a failure', () async {
+      // The post-run parity branch (distinct from the pre-pass gate): the
+      // cancel lands DURING the pass and the path is manual — the panel
+      // hears 'compaction interrupted' (CLI parity: an interrupt of a
+      // compaction-only command reads as one), never the failure notice.
+      final session = await _fatSession(repo);
+      final model = _model();
+      final state = await _stateFor(session, model: model);
+      final notices = _RecordingNotices();
+      final source = CancelTokenSource();
+      final flow = flowFor(
+        session,
+        state,
+        wiring: _wiring(model),
+        stream: _CancelMidRunStream(source).fn,
+        notices: notices,
+      );
+
+      final receipt = await flow.manual(runToken: source.token);
+
+      expect(receipt.cancelled, isTrue);
+      expect(receipt.ran, isTrue, reason: 'the pass started before the abort');
+      expect(notices.notices, hasLength(1));
+      expect(notices.notices.single, contains('interrupted'));
+      expect(
+        notices.notices.single,
+        isNot(contains('Context compaction failed')),
+        reason: 'issue #1085: a cancel is never a failed pass',
+      );
+    });
+  });
+
+  group('retry visibility (AC4/AC11 — the transient ladder logs itself)', () {
+    test('a transient first failure retries and the retry rides the log — '
+        'the pass still lands under the trigger', () async {
+      // The incident's fetch-death class is transient when the endpoint
+      // comes back: attempt 1 dies with a connection reset (the
+      // compactor's transient classifier), the retry ladder recovers on
+      // attempt 2 — and the flow's log alone answers "why did it stall,
+      // what recovered it" (AC11) via the onRetry hook line.
+      final session = await _fatSession(repo);
+      final model = _model();
+      final state = await _stateFor(session, model: model);
+      final notices = _RecordingNotices();
+      var calls = 0;
+      StreamFunction flakyThenUp() => (model, context, {cancelToken}) {
+        calls++;
+        final stream = AssistantMessageEventStream();
+        if (calls == 1) {
+          stream.push(
+            ErrorEvent(
+              reason: StopReason.error,
+              error: _errorAssistant(
+                'SocketException: Connection reset by peer (OS Error: '
+                'Connection reset by peer, errno = 104)',
+              ),
+            ),
+          );
+        } else {
+          final promptText = switch (context.messages.last) {
+            UserMessage(:final content) =>
+              content is String
+                  ? content
+                  : (content as List<Object>)
+                        .whereType<TextContent>()
+                        .map((b) => b.text)
+                        .join(),
+            _ => '',
+          };
+          final answer = promptText.contains('<conversation>')
+              ? 'checkpoint: the browsing task so far'
+              : '[1, 2, 3]';
+          final partial = _assistant(answer);
+          stream
+            ..push(StartEvent(partial: _assistant('')))
+            ..push(TextStartEvent(contentIndex: 0, partial: _assistant('')))
+            ..push(
+              TextDeltaEvent(contentIndex: 0, delta: answer, partial: partial),
+            )
+            ..push(DoneEvent(reason: StopReason.stop, message: partial));
+        }
+        stream.end();
+        return stream;
+      };
+
+      final receipt = await flowFor(
+        session,
+        state,
+        wiring: _wiringVariant(model, baseBackoff: const Duration(milliseconds: 1)),
+        stream: flakyThenUp(),
+        notices: notices,
+      ).settle();
+
+      expect(receipt.success, isTrue, reason: 'the retry recovered the pass');
+      expect(calls, greaterThanOrEqualTo(2));
+      final log = notices.logLines.join('\n');
+      expect(
+        log,
+        contains('retrying in'),
+        reason: 'AC4/AC11: the retry is visible on the host log channel',
+      );
+      expect(
+        log,
+        contains('Connection reset by peer'),
+        reason: 'the log names the transient cause',
+      );
     });
   });
 
