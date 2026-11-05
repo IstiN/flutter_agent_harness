@@ -146,7 +146,8 @@ String hostCompactionManualReceipt(
   int tokensBefore,
   int tokensAfter,
   int passes,
-) => 'Context compacted: $tokensBefore → $tokensAfter tokens '
+) =>
+    'Context compacted: $tokensBefore → $tokensAfter tokens '
     '($passes ${passes == 1 ? 'pass' : 'passes'}).';
 
 /// The relief receipt: the loop resumes on the compacted context (CLI
@@ -296,8 +297,33 @@ final class HostCompactionFlow {
     required bool force,
     required CancelToken? runToken,
   }) async {
-    final window = wiring.window;
-    final trigger = wiring.conversationWindow - wiring.settings.reserveTokens;
+    final gate = _gate(path, force: force, runToken: runToken);
+    if (gate != null) return gate;
+
+    final tokensBefore = liveTokens();
+    notices.log(
+      '[compaction] $path start tokens=$tokensBefore window=${wiring.window} '
+      'trigger=${wiring.conversationWindow - wiring.settings.reserveTokens}',
+    );
+
+    final tally = await _runLadder(force: force, runToken: runToken);
+    return _finish(
+      path,
+      tokensBefore: tokensBefore,
+      tally: tally,
+      runToken: runToken,
+    );
+  }
+
+  /// The pre-run gates, each with its not-attempted / cancelled receipt:
+  /// the master switch, the manual empty-transcript guard, the settle
+  /// trigger gate, and the cancel that arrived before the first pass
+  /// (issue #1085 — no factory run, no failed-pass verdict).
+  HostCompactionReceipt? _gate(
+    HostCompactionPath path, {
+    required bool force,
+    required CancelToken? runToken,
+  }) {
     if (!wiring.enabled) {
       return _notAttempted(path);
     }
@@ -308,8 +334,6 @@ final class HostCompactionFlow {
     if (!force && !overTrigger()) {
       return _notAttempted(path);
     }
-    // Cancel parity (issue #1085): a cancel that arrived before the pass
-    // short-circuits — no factory run, no failed-pass verdict.
     if (runToken?.isCancelled ?? false) {
       notices.log('[compaction] $path cancelled before the first pass');
       if (path == HostCompactionPath.manual) {
@@ -317,26 +341,26 @@ final class HostCompactionFlow {
       }
       return _cancelledReceipt(path);
     }
+    return null;
+  }
 
+  /// The re-fire ladder (AC5): a run that leaves the context over the
+  /// window gets exactly one more run per [maxRefires], then the flow
+  /// gives up VISIBLY. Bounded — no infinite loop.
+  Future<_LadderTally> _runLadder({
+    required bool force,
+    required CancelToken? runToken,
+  }) async {
     var runs = 0;
     var passes = 0;
-    var wasCancelled = false;
     var everRan = false;
+    var cancelled = false;
     Object? lastError;
-    final tokensBefore = liveTokens();
-    notices.log(
-      '[compaction] $path start tokens=$tokensBefore window=$window '
-      'trigger=$trigger',
-    );
-
-    // The re-fire ladder (AC5): a run that leaves the context over the
-    // window gets exactly one more run per [maxRefires], then the flow
-    // gives up VISIBLY. Bounded — no infinite loop.
     for (var attempt = 0; attempt <= maxRefires; attempt++) {
       if (attempt > 0) {
         notices.log(
           '[compaction] re-fire $attempt/$maxRefires: context still over '
-          'the window (${liveTokens()} >= $window)',
+          'the window (${liveTokens()} >= ${wiring.window})',
         );
       }
       runs++;
@@ -350,7 +374,7 @@ final class HostCompactionFlow {
       } on CancelledException catch (error) {
         // Cancel parity (issue #1085): the factory throws out of any run
         // the token touched — surface cancelled, never a failed pass.
-        wasCancelled = true;
+        cancelled = true;
         lastError = error;
         break;
       } on Object catch (error) {
@@ -368,72 +392,106 @@ final class HostCompactionFlow {
       lastError ??= _lastHookError;
       if (!overWindow()) break;
     }
+    return _LadderTally(
+      runs: runs,
+      passes: passes,
+      everRan: everRan,
+      cancelled: cancelled,
+      error: lastError,
+    );
+  }
 
+  /// Post-ladder verdict: the done/failure/interrupt reporting and the
+  /// receipt. Cancel parity — a cancelled compaction NEVER reads as a
+  /// failed pass (issue #1085 round-4) — no failure notice, no funnel.
+  HostCompactionReceipt _finish(
+    HostCompactionPath path, {
+    required int tokensBefore,
+    required _LadderTally tally,
+    required CancelToken? runToken,
+  }) {
     final afterTokens = liveTokens();
     final underTrigger = !shouldCompact(
       afterTokens,
       wiring.conversationWindow,
       wiring.settings,
     );
-
-    // Cancel parity: a cancelled compaction NEVER reads as a failed pass
-    // (the factory throws CanceledException out of any run the token
-    // touched — issue #1085 round-4) — no failure notice, no funnel.
-    if (runToken?.isCancelled ?? false) {
-      wasCancelled = true;
-      notices.log('[compaction] $path cancelled');
-      if (path == HostCompactionPath.manual) {
-        notices.notice('compaction interrupted');
-      }
-    } else {
-      notices.log(
-        '[compaction] $path done '
-        '${underTrigger ? 'ok' : 'failed'} '
-        'tokens=$tokensBefore→$afterTokens passes=$passes runs=$runs '
-        'window=$window',
-      );
-    }
-
-    // Visibility on the miss paths (AC3/AC5): ladder exhausted and the
-    // context is still over the trigger → the panel hears about it, the
-    // transcript stays intact (the compactor's folds are lossless and the
-    // local trim never silently dropped anything here).
-    if (!wasCancelled && !underTrigger) {
-      notices.notice(
-        hostCompactionFailureNotice(
-          lastError ??
-              'the context is still over the compaction trigger '
-                  '($afterTokens tokens, window $window) after $runs '
-                  'compaction ${runs == 1 ? 'run' : 'runs'}',
-        ),
-      );
-      notices.log(
-        '[compaction] $path failure detail: ${lastError ?? 'runs exhausted '
-            'with the context still over the trigger'}',
-      );
-    }
-    // The manual path receipts on success too (AC2: before/after tokens).
-    if (!wasCancelled &&
-        underTrigger &&
-        path == HostCompactionPath.manual &&
-        state.messages.isNotEmpty) {
-      notices.notice(
-        hostCompactionManualReceipt(tokensBefore, afterTokens, passes),
-      );
-    }
+    final cancelled = tally.cancelled || (runToken?.isCancelled ?? false);
+    _reportOutcome(
+      path,
+      cancelled: cancelled,
+      underTrigger: underTrigger,
+      tokensBefore: tokensBefore,
+      afterTokens: afterTokens,
+      tally: tally,
+    );
 
     return lastReceiptForTest = HostCompactionReceipt(
       path: path,
       attempted: true,
-      ran: everRan,
-      cancelled: wasCancelled,
+      ran: tally.everRan,
+      cancelled: cancelled,
       underTrigger: underTrigger,
       tokensBefore: tokensBefore,
       tokensAfter: afterTokens,
-      runs: runs,
-      passes: passes,
-      error: lastError,
+      runs: tally.runs,
+      passes: tally.passes,
+      error: tally.error,
     );
+  }
+
+  /// The visibility half of the verdict (AC3/AC4/AC5/AC11): the done log
+  /// on every completed path, the failure notice + detail line on a
+  /// ladder that ended over the trigger, the interrupt notice on a
+  /// cancelled manual `/compact`, and the manual before/after receipt.
+  void _reportOutcome(
+    HostCompactionPath path, {
+    required bool cancelled,
+    required bool underTrigger,
+    required int tokensBefore,
+    required int afterTokens,
+    required _LadderTally tally,
+  }) {
+    if (cancelled) {
+      notices.log('[compaction] $path cancelled');
+      if (path == HostCompactionPath.manual) {
+        notices.notice('compaction interrupted');
+      }
+      return;
+    }
+    notices.log(
+      '[compaction] $path done '
+      '${underTrigger ? 'ok' : 'failed'} '
+      'tokens=$tokensBefore→$afterTokens passes=${tally.passes} '
+      'runs=${tally.runs} window=${wiring.window}',
+    );
+
+    // A miss must be VISIBLE: ladder exhausted (or the runs failed) and
+    // the context is still over the trigger → the panel hears about it,
+    // the transcript stays intact (the compactor's folds are lossless and
+    // the local trim never silently dropped anything here).
+    if (!underTrigger) {
+      notices.notice(
+        hostCompactionFailureNotice(
+          tally.error ??
+              'the context is still over the compaction trigger '
+                  '($afterTokens tokens, window ${wiring.window}) after '
+                  '${tally.runs} compaction '
+                  '${tally.runs == 1 ? 'run' : 'runs'}',
+        ),
+      );
+      notices.log(
+        '[compaction] $path failure detail: ${tally.error ?? 'runs exhausted '
+                'with the context still over the trigger'}',
+      );
+      return;
+    }
+    // The manual path receipts on success too (AC2: before/after tokens).
+    if (path == HostCompactionPath.manual && state.messages.isNotEmpty) {
+      notices.notice(
+        hostCompactionManualReceipt(tokensBefore, afterTokens, tally.passes),
+      );
+    }
   }
 
   HostCompactionReceipt _notAttempted(HostCompactionPath path) =>
@@ -486,6 +544,33 @@ final class HostCompactionFlow {
     await compactor.run();
     return passes;
   }
+}
+
+/// The ladder's terminal tally — the input the receipt builder
+/// ([HostCompactionFlow._finish]) turns into the public receipt.
+final class _LadderTally {
+  const _LadderTally({
+    required this.runs,
+    required this.passes,
+    required this.everRan,
+    required this.cancelled,
+    required this.error,
+  });
+
+  /// Full compactor runs the path made, re-fires included (AC5's bound).
+  final int runs;
+
+  /// Passes the underlying compactors reported.
+  final int passes;
+
+  /// Whether any run reported at least one pass.
+  final bool everRan;
+
+  /// A run was cancelled (issue #1085 parity).
+  final bool cancelled;
+
+  /// The last error a failed ladder saw, when there was one.
+  final Object? error;
 }
 
 /// Maps the compactor's [AutoCompactorHooks] onto the flow's notice

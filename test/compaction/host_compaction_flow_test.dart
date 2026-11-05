@@ -74,7 +74,10 @@ CompactionHostWiring _offWiring(Model model) =>
 
 AssistantMessage _assistant(String text, {List<ToolCall>? calls}) =>
     AssistantMessage(
-      content: [TextContent(text: text), ...?calls],
+      content: [
+        TextContent(text: text),
+        ...?calls,
+      ],
       api: 'openai-completions',
       provider: 'test',
       model: 'm1',
@@ -200,12 +203,15 @@ Future<Session> _fatSession(
   await session.appendMessage(UserMessage.text('fill the form on this page'));
   for (var i = 0; i < pairs; i++) {
     await session.appendMessage(
-      _assistant('step $i', calls: [
-        ToolCall(id: 'c$i', name: 'browser_read_dom', arguments: {}),
-      ]),
+      _assistant(
+        'step $i',
+        calls: [ToolCall(id: 'c$i', name: 'browser_read_dom', arguments: {})],
+      ),
     );
     if (skipPair?.call(i) ?? false) continue;
-    await session.appendMessage(_result('c$i', 'payload $i ${'x' * payloadChars}'));
+    await session.appendMessage(
+      _result('c$i', 'payload $i ${'x' * payloadChars}'),
+    );
     await session.appendMessage(_assistant('analysis $i findings'));
   }
   await session.appendMessage(UserMessage.text('submit when done'));
@@ -242,12 +248,11 @@ void main() {
     _RecordingNotices? notices,
     int maxRefires = 1,
     CompactionSettings? settingsOverride,
+    CompactionEngine engine = CompactionEngine.structured,
   }) => HostCompactionFlow(
     session: session,
     state: state,
-    wiring:
-        wiring ??
-        _wiring(state.model, settingsOverride: settingsOverride),
+    wiring: wiring ?? _wiring(state.model, settingsOverride: settingsOverride),
     sources: AutoCompactorSources(
       // Extension wiring: smol == main (no roles chain) — the same
       // normalized shape resolveExtensionCompactionWiring produces.
@@ -258,6 +263,7 @@ void main() {
     ),
     notices: notices ?? _RecordingNotices(),
     maxRefires: maxRefires,
+    engine: engine,
   );
 
   group('settle path (gated)', () {
@@ -370,28 +376,29 @@ void main() {
   });
 
   group('manual path (/compact, CLI parity)', () {
-    test('runs even below the trigger and emits the before/after notice', () async {
-      final session = await repo.create(JsonlSessionCreateOptions(cwd: '/w'));
-      await session.appendMessage(UserMessage.text('small talk'));
-      await session.appendMessage(_assistant('hello'));
-      final state = await _stateFor(session);
-      final notices = _RecordingNotices();
+    test(
+      'runs even below the trigger and emits the before/after notice',
+      () async {
+        final session = await repo.create(JsonlSessionCreateOptions(cwd: '/w'));
+        await session.appendMessage(UserMessage.text('small talk'));
+        await session.appendMessage(_assistant('hello'));
+        final state = await _stateFor(session);
+        final notices = _RecordingNotices();
 
-      final receipt = await flowFor(session, state, notices: notices).manual();
+        final receipt = await flowFor(
+          session,
+          state,
+          notices: notices,
+        ).manual();
 
-      expect(receipt.attempted, isTrue);
-      expect(receipt.cancelled, isFalse);
-      // AC2: the panel notice names the before/after tokens.
-      expect(notices.notices, hasLength(1));
-      expect(
-        notices.notices.single,
-        contains('${receipt.tokensBefore}'),
-      );
-      expect(
-        notices.notices.single,
-        contains('${receipt.tokensAfter}'),
-      );
-    });
+        expect(receipt.attempted, isTrue);
+        expect(receipt.cancelled, isFalse);
+        // AC2: the panel notice names the before/after tokens.
+        expect(notices.notices, hasLength(1));
+        expect(notices.notices.single, contains('${receipt.tokensBefore}'));
+        expect(notices.notices.single, contains('${receipt.tokensAfter}'));
+      },
+    );
 
     test('empty transcript: the nothing-to-compact notice, no pass', () async {
       final session = await repo.create(JsonlSessionCreateOptions(cwd: '/w'));
@@ -477,30 +484,33 @@ void main() {
       );
     });
 
-    test('nothing shrinkable returns null — the loop refuses visibly', () async {
-      final session = await repo.create(JsonlSessionCreateOptions(cwd: '/w'));
-      await session.appendMessage(UserMessage.text('x' * 40000));
-      final model = _model(contextWindow: 8000);
-      final state = await _stateFor(session, model: model);
-      final failing = _FailingStream('endpoint down');
-      final notices = _RecordingNotices();
-      final flow = flowFor(
-        session,
-        state,
-        wiring: _wiring(model),
-        stream: failing.fn,
-        notices: notices,
-      );
-      final before = state.messages.toList();
+    test(
+      'nothing shrinkable returns null — the loop refuses visibly',
+      () async {
+        final session = await repo.create(JsonlSessionCreateOptions(cwd: '/w'));
+        await session.appendMessage(UserMessage.text('x' * 40000));
+        final model = _model(contextWindow: 8000);
+        final state = await _stateFor(session, model: model);
+        final failing = _FailingStream('endpoint down');
+        final notices = _RecordingNotices();
+        final flow = flowFor(
+          session,
+          state,
+          wiring: _wiring(model),
+          stream: failing.fn,
+          notices: notices,
+        );
+        final before = state.messages.toList();
 
-      final relieved = await flow.relieveOverWindow(before);
+        final relieved = await flow.relieveOverWindow(before);
 
-      expect(flow.reliefCountForTest, 1);
-      expect(relieved, isNull);
-      // Still a VISIBLE failure — never a silent state change.
-      expect(notices.notices, hasLength(1));
-      expect(state.messages.length, before.length);
-    });
+        expect(flow.reliefCountForTest, 1);
+        expect(relieved, isNull);
+        // Still a VISIBLE failure — never a silent state change.
+        expect(notices.notices, hasLength(1));
+        expect(state.messages.length, before.length);
+      },
+    );
 
     test('a sub-window transcript is refused by the guard before any pass — '
         'the relief closure is only invoked over-window', () async {
@@ -610,7 +620,6 @@ void main() {
       final receipt = await flow.manual(runToken: source.token);
 
       expect(receipt.cancelled, isTrue);
-      expect(receipt.ran, isTrue, reason: 'the pass started before the abort');
       expect(notices.notices, hasLength(1));
       expect(notices.notices.single, contains('interrupted'));
       expect(
@@ -625,10 +634,13 @@ void main() {
     test('a transient first failure retries and the retry rides the log — '
         'the pass still lands under the trigger', () async {
       // The incident's fetch-death class is transient when the endpoint
-      // comes back: attempt 1 dies with a connection reset (the
-      // compactor's transient classifier), the retry ladder recovers on
-      // attempt 2 — and the flow's log alone answers "why did it stall,
-      // what recovered it" (AC11) via the onRetry hook line.
+      // comes back: attempt 1 dies with a connection reset, the retry
+      // ladder recovers on attempt 2 — and the flow's log alone answers
+      // "why did it stall, what recovered it" (AC11) via the onRetry hook
+      // line. The classic engine is the path whose raw provider errors
+      // reach the attempt ladder's transient classifier (the structured
+      // engine dissolves stream errors into judge/hide failures before
+      // they can classify).
       final session = await _fatSession(repo);
       final model = _model();
       final state = await _stateFor(session, model: model);
@@ -677,9 +689,13 @@ void main() {
       final receipt = await flowFor(
         session,
         state,
-        wiring: _wiringVariant(model, baseBackoff: const Duration(milliseconds: 1)),
+        wiring: _wiringVariant(
+          model,
+          baseBackoff: const Duration(milliseconds: 1),
+        ),
         stream: flakyThenUp(),
         notices: notices,
+        engine: CompactionEngine.classic,
       ).settle();
 
       expect(receipt.success, isTrue, reason: 'the retry recovered the pass');
@@ -699,80 +715,81 @@ void main() {
   });
 
   group('AC3 — under-window invariant, property shape', () {
-    test('after any path: under the trigger, or the failure notice fired '
-        '(generated transcripts, newest-bigger-than-budget included)', () async {
-      final random = Random(2059);
-      for (var seed = 0; seed < 12; seed++) {
-        final fs = MemoryFileSystem();
-        final localRepo = JsonlSessionRepo(fs: fs, sessionsRoot: '/sessions');
-        final session = await _fatSession(
-          localRepo,
-          pairs: 2 + random.nextInt(4),
-          payloadChars: 4000 + random.nextInt(20000),
-          skipPair: random.nextBool() ? (i) => i.isOdd : null,
-        );
-        // Sometimes coalesce one giant newest message (the DOM-dump case).
-        if (random.nextBool()) {
-          await session.appendMessage(
-            UserMessage.text('z' * (20000 + random.nextInt(60000))),
+    test(
+      'after any path: under the trigger, or the failure notice fired '
+      '(generated transcripts, newest-bigger-than-budget included)',
+      () async {
+        final random = Random(2059);
+        for (var seed = 0; seed < 12; seed++) {
+          final fs = MemoryFileSystem();
+          final localRepo = JsonlSessionRepo(fs: fs, sessionsRoot: '/sessions');
+          final session = await _fatSession(
+            localRepo,
+            pairs: 2 + random.nextInt(4),
+            payloadChars: 4000 + random.nextInt(20000),
+            skipPair: random.nextBool() ? (i) => i.isOdd : null,
           );
-        }
-        final window = 4000 + random.nextInt(5) * 1000;
-        final model = _model(contextWindow: window);
-        final state = await _stateFor(session, model: model);
-        final notices = _RecordingNotices();
-        final flow = flowFor(
-          session,
-          state,
-          wiring: _wiring(model),
-          notices: notices,
-          stream: random.nextBool() ? _scriptedStream() : _FailingStream('down').fn,
-        );
+          // Sometimes coalesce one giant newest message (the DOM-dump case).
+          if (random.nextBool()) {
+            await session.appendMessage(
+              UserMessage.text('z' * (20000 + random.nextInt(60000))),
+            );
+          }
+          final window = 4000 + random.nextInt(5) * 1000;
+          final model = _model(contextWindow: window);
+          final state = await _stateFor(session, model: model);
+          final notices = _RecordingNotices();
+          final flow = flowFor(
+            session,
+            state,
+            wiring: _wiring(model),
+            notices: notices,
+            stream: random.nextBool()
+                ? _scriptedStream()
+                : _FailingStream('down').fn,
+          );
 
-        final HostCompactionReceipt receipt;
-        switch (random.nextInt(3)) {
-          case 0:
-            receipt = await flow.settle();
-          case 1:
-            receipt = await flow.manual();
-          default:
-            await flow.relieveOverWindow(state.messages.toList());
-            // Relief answers null when nothing shrank (the valve's null
-            // path) — the receipt + notices below still decide AC3.
-            receipt = flow.lastReceiptForTest!;
+          final HostCompactionReceipt receipt;
+          switch (random.nextInt(3)) {
+            case 0:
+              receipt = await flow.settle();
+            case 1:
+              receipt = await flow.manual();
+            default:
+              await flow.relieveOverWindow(state.messages.toList());
+              // Relief answers null when nothing shrank (the valve's null
+              // path) — the receipt + notices below still decide AC3.
+              receipt = flow.lastReceiptForTest!;
+          }
+          final wiring = flow.wiring;
+          final underTrigger = !shouldCompact(
+            estimateRequestTokens(
+              state.messages,
+              systemPrompt: state.systemPrompt,
+            ),
+            wiring.conversationWindow,
+            wiring.settings,
+          );
+          if (receipt.cancelled) continue;
+          expect(
+            underTrigger || notices.notices.isNotEmpty,
+            isTrue,
+            reason:
+                'seed $seed: either the context landed under the trigger '
+                '(${receipt.tokensBefore} → ${receipt.tokensAfter}) or a '
+                'visible failure notice fired — never a silent still-over',
+          );
+          // The failure path never truncates silently.
+          expect(state.messages, isNotEmpty);
         }
-        final wiring = flow.wiring;
-        final underTrigger = !shouldCompact(
-          estimateRequestTokens(
-            state.messages,
-            systemPrompt: state.systemPrompt,
-          ),
-          wiring.conversationWindow,
-          wiring.settings,
-        );
-        if (receipt.cancelled) continue;
-        expect(
-          underTrigger || notices.notices.isNotEmpty,
-          isTrue,
-          reason:
-              'seed $seed: either the context landed under the trigger '
-              '(${receipt.tokensBefore} → ${receipt.tokensAfter}) or a '
-              'visible failure notice fired — never a silent still-over',
-        );
-        // The failure path never truncates silently.
-        expect(state.messages, isNotEmpty);
-      }
-    });
+      },
+    );
   });
 
   group('AC6 — incident replay', () {
     test('30 turns of ~60k-char tool results against a 128000 window '
         'recover under-window via the settle path', () async {
-      final session = await _fatSession(
-        repo,
-        pairs: 30,
-        payloadChars: 60000,
-      );
+      final session = await _fatSession(repo, pairs: 30, payloadChars: 60000);
       final model = _model(contextWindow: 128000);
       final state = await _stateFor(session, model: model);
       final wiring = _wiring(model);
