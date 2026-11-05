@@ -1182,9 +1182,9 @@ class _WideLayoutShellState extends State<WideLayoutShell>
                     Positioned(
                       left: toggleLeft,
                       // One shared action centerline in expanded and
-                      // collapsed states: below the compact native titlebar
-                      // on macOS, and at the dense content row elsewhere.
-                      top: _isMacOS ? 49 : 19,
+                      // collapsed states: y=35 with the chat trajectory/copy
+                      // and the docked Files X/search/overflow controls.
+                      top: _isMacOS ? 17 : 19,
                       child: MessengerSidebarToggle(
                         key: const ValueKey('wideShellSidebarToggle'),
                         expanded: !_sidebarCollapsed,
@@ -1322,14 +1322,39 @@ class _WideLayoutShellState extends State<WideLayoutShell>
     return Padding(
       padding: padding,
       child: glass
-          ? FaSurface(
-              key: key,
-              glass: true,
-              useBackdropGroup: true,
-              color: tokens.surface1,
-              borderRadius: borderRadius,
-              child: child,
-            )
+          ? tokens.direction == FaVisualDirection.glass
+                ? DecoratedBox(
+                    key: key,
+                    decoration: BoxDecoration(
+                      color: tokens.surface1,
+                      borderRadius: borderRadius,
+                      border: Border.all(color: tokens.hairline),
+                    ),
+                    child: Padding(
+                      padding: const EdgeInsets.all(1),
+                      child: ClipRRect(
+                        borderRadius: borderRadius - BorderRadius.circular(1),
+                        // LightweightLiquidGlass lays its FittedBox child out
+                        // beyond the glass render box by the frame inset. Clip
+                        // at the inner boundary so no pixel reaches the border.
+                        child: FaSurface(
+                          glass: true,
+                          useBackdropGroup: true,
+                          color: tokens.surface1,
+                          borderRadius: borderRadius - BorderRadius.circular(1),
+                          child: child,
+                        ),
+                      ),
+                    ),
+                  )
+                : FaSurface(
+                    key: key,
+                    glass: true,
+                    useBackdropGroup: true,
+                    color: tokens.surface1,
+                    borderRadius: borderRadius,
+                    child: child,
+                  )
           : Container(
               key: key,
               decoration: BoxDecoration(

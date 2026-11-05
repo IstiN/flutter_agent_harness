@@ -14,7 +14,6 @@ import 'package:fa/ui/widgets/subagent_mark.dart';
 import 'package:fa_ui/fa_ui.dart';
 import 'package:liquid_glass_widgets/liquid_glass_widgets.dart'
     show ProgressiveBlur, ProgressiveBlurDirection;
-import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -260,14 +259,10 @@ class _ChatListPanelState extends State<ChatListPanel> {
       listenable: widget.controller,
       builder: (context, _) {
         final colors = FahColors.of(context);
-        // The panel floats 8pt below the window's top edge; the chrome must
-        // still clear the native titlebar/toolbar region (macOS
-        // fullSizeContentView inset; zero in tests and web), so the inset is
-        // what remains of the titlebar beyond the panel margin. Compact
-        // (narrow) panels get their inset from the shell's narrow-body wrap.
-        final titlebarTop = widget.compact
-            ? 0.0
-            : math.max(0.0, MediaQuery.paddingOf(context).top - 8);
+        // The wide panel starts to the RIGHT of the native traffic lights;
+        // its actions share the y=35 chrome band, with no titlebar spacer.
+        // Compact panels get their native clearance from the narrow shell.
+        const titlebarTop = 0.0;
         final chrome = Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -324,32 +319,51 @@ class _ChatListPanelState extends State<ChatListPanel> {
     );
   }
 
-  /// The glass-direction chrome underlay: a graduated backdrop blur
-  /// (`ProgressiveBlur`) that is strongest under the search row, eases to
-  /// sharp right below the segment toolbar, and reaches a further 28px into
-  /// The chrome band's background IS glass: a graduated backdrop blur
-  /// spanning the whole band (search + segments) plus a short tail, so
-  /// rows scrolling up dissolve behind the controls themselves. The
-  /// controls never live inside the blur layer. Opaque directions keep
-  /// the flat panel color.
+  /// The glass-direction chrome underlay: a graduated backdrop blur plus a
+  /// matching tint fade. Both continue 28pt below the controls so rows melt
+  /// into the glass instead of meeting a hard horizontal border. The tail
+  /// must escape this Stack's bounds; both underlays ignore pointer input.
   Widget _buildChromeSurface(FahColors colors, Widget chrome) {
     final tokens = FaDesignTokens.of(context);
     if (tokens.direction != FaVisualDirection.glass) {
       return ColoredBox(color: _panelColor(colors), child: chrome);
     }
+    const fadeHeight = 28.0;
     return Stack(
+      clipBehavior: Clip.none,
       children: [
         Positioned(
           top: 0,
           left: 0,
           right: 0,
-          height: _chromeHeight() + 28,
+          height: _chromeHeight() + fadeHeight,
           child: const IgnorePointer(
             child: ProgressiveBlur(
               key: ValueKey('chatListChromeUnderlay'),
               maxSigma: 18,
               direction: ProgressiveBlurDirection.topToBottom,
               falloff: 1.0,
+            ),
+          ),
+        ),
+        Positioned(
+          top: _chromeHeight(),
+          left: 0,
+          right: 0,
+          height: fadeHeight,
+          child: IgnorePointer(
+            child: DecoratedBox(
+              key: const ValueKey('chatListChromeFade'),
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [
+                    tokens.surface1.withValues(alpha: kFaGlassTintAlpha),
+                    tokens.surface1.withValues(alpha: 0),
+                  ],
+                ),
+              ),
             ),
           ),
         ),
@@ -360,10 +374,20 @@ class _ChatListPanelState extends State<ChatListPanel> {
 
   double _chromeHeight() {
     final isMac = !kIsWeb && defaultTargetPlatform == TargetPlatform.macOS;
+    final glassFrameCompensation =
+        FaDesignTokens.of(context).direction == FaVisualDirection.glass
+        ? 2.0
+        : 0.0;
+    // Keep the scroll body under the REAL header, not the retired 30pt
+    // titlebar spacer. Narrow macOS retains its 30pt native clearance.
     final searchHeight = widget.compact
-        ? (isMac ? 82.0 : 54.0)
-        : (isMac ? 86.0 : 58.0);
+        ? (isMac ? 84.0 : 54.0)
+        : (isMac ? 54.0 : 58.0) - glassFrameCompensation;
+    // Eight extra points separate the first row from the search border;
+    // the glass/tint fade continues below this content-clearance inset.
+    final bodyClearance = widget.compact ? 0.0 : 8.0;
     return searchHeight +
+        bodyClearance +
         (widget.headerBottom == null ? 0 : 46) +
         (widget.showFilterToolbar ? MessengerFilterControl.height : 0) +
         (_networkLoading ? 1 : 0) +

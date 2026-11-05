@@ -699,7 +699,12 @@ void main() {
       await tester.pumpAndSettle();
 
       final sidebarPanel = tester.widget<FaSurface>(
-        find.byKey(const ValueKey('glassSidebarPanel')),
+        find
+            .descendant(
+              of: find.byKey(const ValueKey('glassSidebarPanel')),
+              matching: find.byType(FaSurface),
+            )
+            .first,
       );
       expect(sidebarPanel.glass, isTrue);
       expect(sidebarPanel.color, const Color(0xFF1C1C1E));
@@ -909,14 +914,19 @@ void main() {
       ),
     );
     final sidebarSurface = tester.widget<FaSurface>(
-      find.byKey(const ValueKey('glassSidebarPanel')),
+      find
+          .descendant(
+            of: find.byKey(const ValueKey('glassSidebarPanel')),
+            matching: find.byType(FaSurface),
+          )
+          .first,
     );
     expect(railSurface.glass, sidebarSurface.glass);
     expect(railSurface.useBackdropGroup, sidebarSurface.useBackdropGroup);
     expect(
       railSurface.borderRadius?.topLeft.x,
-      sidebarSurface.borderRadius?.topLeft.x,
-      reason: 'one card radius: the rail matches the chats panel 1:1',
+      (sidebarSurface.borderRadius?.topLeft.x ?? 0) + 1,
+      reason: 'the inner glass radius sits inside the outer 1pt frame',
     );
     expect(railSurface.color, sidebarSurface.color);
     final railCard = tester.getRect(
@@ -1609,217 +1619,223 @@ void main() {
     );
   });
 
-  testWidgets('macOS titlebar keeps toggle clearance and collapsed identity', (
-    tester,
-  ) async {
-    debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
-    addTearDown(() => debugDefaultTargetPlatformOverride = null);
-    final env = MemoryExecutionEnv();
-    final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
-      ..addSession('design-session', _fakeService(env));
-    const labels = ['Chats', 'Activity', 'Apps'];
-    final expectedExpanded = <String, Rect>{};
-    final expectedCollapsed = <String, Rect>{};
+  testWidgets(
+    'wide macOS chrome shares the top centerline and collapsed identity',
+    (tester) async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+      addTearDown(() => debugDefaultTargetPlatformOverride = null);
+      final env = MemoryExecutionEnv();
+      final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
+        ..addSession('design-session', _fakeService(env));
+      const labels = ['Chats', 'Activity', 'Apps'];
+      final expectedExpanded = <String, Rect>{};
+      final expectedCollapsed = <String, Rect>{};
 
-    void expectSameRect(Rect actual, Rect expected, String reason) {
-      expect(actual.left, closeTo(expected.left, .001), reason: reason);
-      expect(actual.top, closeTo(expected.top, .001), reason: reason);
-      expect(actual.right, closeTo(expected.right, .001), reason: reason);
-      expect(actual.bottom, closeTo(expected.bottom, .001), reason: reason);
-    }
+      void expectSameRect(Rect actual, Rect expected, String reason) {
+        expect(actual.left, closeTo(expected.left, .001), reason: reason);
+        expect(actual.top, closeTo(expected.top, .001), reason: reason);
+        expect(actual.right, closeTo(expected.right, .001), reason: reason);
+        expect(actual.bottom, closeTo(expected.bottom, .001), reason: reason);
+      }
 
-    for (final direction in FaVisualDirection.values) {
-      for (final brightness in Brightness.values) {
-        await tester.pumpWidget(const SizedBox());
-        await tester.pump();
-        await pumpShell(
-          tester,
-          manager: manager,
-          direction: direction,
-          brightness: brightness,
-        );
-        await tester.pump(const Duration(milliseconds: 100));
-        for (var section = 0; section < labels.length; section++) {
-          final label = labels[section];
-          if (section > 0) {
-            await tester.tap(
-              find.byKey(
-                ValueKey('messengerPrimaryNav-${label.toLowerCase()}'),
+      for (final direction in FaVisualDirection.values) {
+        for (final brightness in Brightness.values) {
+          await tester.pumpWidget(const SizedBox());
+          await tester.pump();
+          await pumpShell(
+            tester,
+            manager: manager,
+            direction: direction,
+            brightness: brightness,
+          );
+          await tester.pump(const Duration(milliseconds: 100));
+          for (var section = 0; section < labels.length; section++) {
+            final label = labels[section];
+            if (section > 0) {
+              await tester.tap(
+                find.byKey(
+                  ValueKey('messengerPrimaryNav-${label.toLowerCase()}'),
+                ),
+              );
+              await tester.pumpAndSettle();
+            }
+            final reason = '$direction $brightness $label';
+            expect(
+              find.byKey(const ValueKey('macosSidebarTitlebar')),
+              findsNothing,
+            );
+            final collapse = tester.getRect(
+              find.byKey(const ValueKey('chatSidebarCollapse')),
+            );
+            final sidebar = tester.getRect(
+              find.byKey(const ValueKey('desktopSidebarContainer')),
+            );
+            final search = tester.getRect(
+              find.byKey(const ValueKey('messengerSearchField')),
+            );
+            final expandedCenter = tester.getRect(
+              find.byKey(const ValueKey('glassCenterPanel')),
+            );
+            expect(collapse.center.dy, closeTo(35, .001), reason: reason);
+            expect(
+              search.center.dy,
+              closeTo(collapse.center.dy, .001),
+              reason: reason,
+            );
+            // The panel's 8pt gutter contract on BOTH sides: 8pt card
+            // margin + 8pt gutter between the toggle's right edge and the
+            // panel's right edge (owner call: the open panel's toggle must
+            // not hug the panel edge).
+            expect(collapse.right, closeTo(sidebar.right - 16, .001));
+            final brand = find.byKey(const ValueKey('wideShellFaBrand'));
+            final expandedLogo = tester.widget<FaLogo>(
+              find.descendant(of: brand, matching: find.byType(FaLogo)),
+            );
+            expect(expandedLogo.size, 30);
+            expect(tester.getSize(brand), const Size(30, 30));
+
+            final previousExpanded = expectedExpanded[label];
+            if (previousExpanded == null) {
+              expectedExpanded[label] = collapse;
+            } else {
+              expectSameRect(collapse, previousExpanded, reason);
+            }
+
+            await tester.tap(find.byKey(const ValueKey('chatSidebarCollapse')));
+            await tester.pumpAndSettle();
+            final expand = tester.getRect(
+              find.byKey(const ValueKey('chatSidebarExpand')),
+            );
+            final collapsedSidebar = tester.getRect(
+              find.byKey(const ValueKey('desktopSidebarContainer')),
+            );
+            expect(collapsedSidebar.width, 96, reason: reason);
+            final collapsedCenter = tester.getRect(
+              find.byKey(const ValueKey('glassCenterPanel')),
+            );
+            expect(
+              collapsedCenter.left,
+              collapsedSidebar.right,
+              reason: reason,
+            );
+            expect(
+              collapsedCenter.width - expandedCenter.width,
+              closeTo(sidebar.width - collapsedSidebar.width, .001),
+              reason: '$reason center must not reserve a toggle column',
+            );
+            expect(
+              collapsedCenter.contains(expand.center),
+              isTrue,
+              reason: '$reason floating toggle=$expand center=$collapsedCenter',
+            );
+            // The floating toggle's pressable contract: the kit's
+            // GlassIconButton in the glass direction (FaIconActionButton
+            // delegates there), the flat Material IconButton everywhere else
+            // (real glass only in the glass direction).
+            final floatingFinder = find.byKey(
+              const ValueKey('chatSidebarExpand'),
+            );
+            if (direction == FaVisualDirection.glass) {
+              expect(
+                tester.widget<GlassIconButton>(floatingFinder).onPressed,
+                isNotNull,
+                reason: reason,
+              );
+            } else {
+              expect(
+                tester.widget<IconButton>(floatingFinder).onPressed,
+                isNotNull,
+                reason: reason,
+              );
+            }
+            // ONE style: the toggle renders the shared circular chrome
+            // (FaIconActionButton — token fill + hairline) in both states,
+            // floating or docked; no per-state glass variant.
+            final toggleChrome = tester.widget<FaIconActionButton>(
+              find.ancestor(
+                of: find.byKey(const ValueKey('chatSidebarExpand')),
+                matching: find.byType(FaIconActionButton),
               ),
             );
+            expect(
+              toggleChrome.diameter,
+              FaIconActionButton.defaultDiameter,
+              reason: reason,
+            );
+            expect(expand.center.dy, closeTo(collapse.center.dy, .001));
+            expect(
+              expand.left,
+              closeTo(collapsedSidebar.right + 8, .001),
+              reason: reason,
+            );
+            // Reserve the native traffic-light span even in the compact rail.
+            expect(expand.left, greaterThanOrEqualTo(72), reason: reason);
+            final previousCollapsed = expectedCollapsed[label];
+            if (previousCollapsed == null) {
+              expectedCollapsed[label] = expand;
+            } else {
+              expectSameRect(expand, previousCollapsed, reason);
+            }
+
+            final collapsedLogo = tester.widget<FaLogo>(
+              find.descendant(of: brand, matching: find.byType(FaLogo)),
+            );
+            expect(collapsedLogo.size, expandedLogo.size, reason: reason);
+            expect(
+              collapsedLogo.semanticLabel,
+              expandedLogo.semanticLabel,
+              reason: reason,
+            );
+            expect(tester.getSize(brand), const Size(30, 30), reason: reason);
+            expect(
+              find.descendant(of: brand, matching: find.text('Fa')),
+              findsNothing,
+            );
+            final axis = tester.getCenter(brand).dx;
+            // The rail owns navigation now: its rows share ONE axis (the
+            // rail's center) while the collapsed brand keeps the sidebar's.
+            final railRect = tester.getRect(
+              find.byKey(const ValueKey('messengerNavRail')),
+            );
+            final railAxis = railRect.center.dx;
+            expect(railAxis, isNot(closeTo(axis, 1)), reason: reason);
+            for (final navKey in const [
+              'chatFilter-all',
+              'messengerPrimaryNav-local',
+              'messengerPrimaryNav-activity',
+              'messengerPrimaryNav-apps',
+            ]) {
+              expect(
+                tester.getCenter(find.byKey(ValueKey(navKey))).dx,
+                closeTo(railAxis, .001),
+                reason: '$reason $navKey axis',
+              );
+            }
+            if (label == 'Chats') {
+              expect(
+                tester
+                    .getCenter(
+                      find.byKey(const ValueKey('collapsedSidebarNewSession')),
+                    )
+                    .dx,
+                closeTo(axis, .001),
+                reason: '$reason New axis',
+              );
+              expect(
+                tester.getRect(find.byType(ChatScreen)).left,
+                closeTo(collapsedCenter.left, .001),
+                reason: '$reason content extends beneath floating toggle',
+              );
+            }
+
+            await tester.tap(find.byKey(const ValueKey('chatSidebarExpand')));
             await tester.pumpAndSettle();
           }
-          final reason = '$direction $brightness $label';
-          final titlebar = tester.getRect(
-            find.byKey(const ValueKey('macosSidebarTitlebar')),
-          );
-          final collapse = tester.getRect(
-            find.byKey(const ValueKey('chatSidebarCollapse')),
-          );
-          final sidebar = tester.getRect(
-            find.byKey(const ValueKey('desktopSidebarContainer')),
-          );
-          final search = tester.getRect(
-            find.byKey(const ValueKey('messengerSearchField')),
-          );
-          final expandedCenter = tester.getRect(
-            find.byKey(const ValueKey('glassCenterPanel')),
-          );
-          expect(
-            collapse.center.dy,
-            greaterThan(titlebar.bottom),
-            reason: '$reason titlebar=$titlebar toggle=$collapse',
-          );
-          expect(search.top, greaterThanOrEqualTo(titlebar.bottom));
-          // The panel's 8pt gutter contract on BOTH sides: 8pt card
-          // margin + 8pt gutter between the toggle's right edge and the
-          // panel's right edge (owner call: the open panel's toggle must
-          // not hug the panel edge).
-          expect(collapse.right, closeTo(sidebar.right - 16, .001));
-          final brand = find.byKey(const ValueKey('wideShellFaBrand'));
-          final expandedLogo = tester.widget<FaLogo>(
-            find.descendant(of: brand, matching: find.byType(FaLogo)),
-          );
-          expect(expandedLogo.size, 30);
-          expect(tester.getSize(brand), const Size(30, 30));
-
-          final previousExpanded = expectedExpanded[label];
-          if (previousExpanded == null) {
-            expectedExpanded[label] = collapse;
-          } else {
-            expectSameRect(collapse, previousExpanded, reason);
-          }
-
-          await tester.tap(find.byKey(const ValueKey('chatSidebarCollapse')));
-          await tester.pumpAndSettle();
-          final expand = tester.getRect(
-            find.byKey(const ValueKey('chatSidebarExpand')),
-          );
-          final collapsedSidebar = tester.getRect(
-            find.byKey(const ValueKey('desktopSidebarContainer')),
-          );
-          expect(collapsedSidebar.width, 96, reason: reason);
-          final collapsedCenter = tester.getRect(
-            find.byKey(const ValueKey('glassCenterPanel')),
-          );
-          expect(collapsedCenter.left, collapsedSidebar.right, reason: reason);
-          expect(
-            collapsedCenter.width - expandedCenter.width,
-            closeTo(sidebar.width - collapsedSidebar.width, .001),
-            reason: '$reason center must not reserve a toggle column',
-          );
-          expect(
-            collapsedCenter.contains(expand.center),
-            isTrue,
-            reason: '$reason floating toggle=$expand center=$collapsedCenter',
-          );
-          // The floating toggle's pressable contract: the kit's
-          // GlassIconButton in the glass direction (FaIconActionButton
-          // delegates there), the flat Material IconButton everywhere else
-          // (real glass only in the glass direction).
-          final floatingFinder = find.byKey(
-            const ValueKey('chatSidebarExpand'),
-          );
-          if (direction == FaVisualDirection.glass) {
-            expect(
-              tester.widget<GlassIconButton>(floatingFinder).onPressed,
-              isNotNull,
-              reason: reason,
-            );
-          } else {
-            expect(
-              tester.widget<IconButton>(floatingFinder).onPressed,
-              isNotNull,
-              reason: reason,
-            );
-          }
-          // ONE style: the toggle renders the shared circular chrome
-          // (FaIconActionButton — token fill + hairline) in both states,
-          // floating or docked; no per-state glass variant.
-          final toggleChrome = tester.widget<FaIconActionButton>(
-            find.ancestor(
-              of: find.byKey(const ValueKey('chatSidebarExpand')),
-              matching: find.byType(FaIconActionButton),
-            ),
-          );
-          expect(
-            toggleChrome.diameter,
-            FaIconActionButton.defaultDiameter,
-            reason: reason,
-          );
-          expect(expand.center.dy, closeTo(collapse.center.dy, .001));
-          expect(
-            expand.left,
-            closeTo(collapsedSidebar.right + 8, .001),
-            reason: reason,
-          );
-          // Reserve the native traffic-light span even in the compact rail.
-          expect(expand.left, greaterThanOrEqualTo(72), reason: reason);
-          final previousCollapsed = expectedCollapsed[label];
-          if (previousCollapsed == null) {
-            expectedCollapsed[label] = expand;
-          } else {
-            expectSameRect(expand, previousCollapsed, reason);
-          }
-
-          final collapsedLogo = tester.widget<FaLogo>(
-            find.descendant(of: brand, matching: find.byType(FaLogo)),
-          );
-          expect(collapsedLogo.size, expandedLogo.size, reason: reason);
-          expect(
-            collapsedLogo.semanticLabel,
-            expandedLogo.semanticLabel,
-            reason: reason,
-          );
-          expect(tester.getSize(brand), const Size(30, 30), reason: reason);
-          expect(
-            find.descendant(of: brand, matching: find.text('Fa')),
-            findsNothing,
-          );
-          final axis = tester.getCenter(brand).dx;
-          // The rail owns navigation now: its rows share ONE axis (the
-          // rail's center) while the collapsed brand keeps the sidebar's.
-          final railRect = tester.getRect(
-            find.byKey(const ValueKey('messengerNavRail')),
-          );
-          final railAxis = railRect.center.dx;
-          expect(railAxis, isNot(closeTo(axis, 1)), reason: reason);
-          for (final navKey in const [
-            'chatFilter-all',
-            'messengerPrimaryNav-local',
-            'messengerPrimaryNav-activity',
-            'messengerPrimaryNav-apps',
-          ]) {
-            expect(
-              tester.getCenter(find.byKey(ValueKey(navKey))).dx,
-              closeTo(railAxis, .001),
-              reason: '$reason $navKey axis',
-            );
-          }
-          if (label == 'Chats') {
-            expect(
-              tester
-                  .getCenter(
-                    find.byKey(const ValueKey('collapsedSidebarNewSession')),
-                  )
-                  .dx,
-              closeTo(axis, .001),
-              reason: '$reason New axis',
-            );
-            expect(
-              tester.getRect(find.byType(ChatScreen)).left,
-              closeTo(collapsedCenter.left, .001),
-              reason: '$reason content extends beneath floating toggle',
-            );
-          }
-
-          await tester.tap(find.byKey(const ValueKey('chatSidebarExpand')));
-          await tester.pumpAndSettle();
         }
       }
-    }
-    debugDefaultTargetPlatformOverride = null;
-  });
+      debugDefaultTargetPlatformOverride = null;
+    },
+  );
 
   testWidgets('collapse and expand share one smooth boundary animation', (
     tester,
@@ -2017,6 +2033,34 @@ void main() {
     }
   });
 
+  testWidgets('glass stays inside the sidebar panel one-pixel frame', (
+    tester,
+  ) async {
+    final env = MemoryExecutionEnv();
+    final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
+      ..addSession('design-session', _fakeService(env));
+    await pumpShell(tester, manager: manager);
+    await tester.pumpAndSettle();
+
+    final frameFinder = find.byKey(const ValueKey('glassSidebarPanel'));
+    final frame = tester.widget<DecoratedBox>(frameFinder);
+    expect((frame.decoration as BoxDecoration).border, isA<Border>());
+    expect(
+      tester
+          .widget<Padding>(
+            find
+                .descendant(of: frameFinder, matching: find.byType(Padding))
+                .first,
+          )
+          .padding,
+      const EdgeInsets.all(1),
+    );
+    final glass = find
+        .descendant(of: frameFinder, matching: find.byType(FaSurface))
+        .first;
+    expect(tester.getRect(glass), tester.getRect(frameFinder).deflate(1));
+  });
+
   testWidgets('All Local and Networks share one compact glass header', (
     tester,
   ) async {
@@ -2040,12 +2084,19 @@ void main() {
       final header = find.byType(MessengerSectionHeader);
       expect(header, findsOneWidget, reason: reason);
       final headerRect = tester.getRect(header);
-      expect(headerRect.height, 88, reason: reason);
+      expect(headerRect.height, 52, reason: reason);
       final glass = tester.getRect(
         find.byKey(const ValueKey('glassSidebarPanel')),
       );
       expect(glass.contains(headerRect.topLeft), isTrue, reason: reason);
-      expect(headerRect.right, lessThanOrEqualTo(glass.right), reason: reason);
+      final clip = find
+          .ancestor(of: header, matching: find.byType(ClipRRect))
+          .first;
+      expect(
+        tester.getRect(clip),
+        glass.deflate(1),
+        reason: '$reason header=$headerRect glass=$glass',
+      );
       expect(
         headerRect.bottom,
         lessThanOrEqualTo(glass.bottom),
@@ -2055,10 +2106,7 @@ void main() {
         find.byKey(const ValueKey('chatSidebarCollapse')),
       );
       expect(glass.contains(toggle.center), isTrue, reason: reason);
-      final titlebar = tester.getRect(
-        find.byKey(const ValueKey('macosSidebarTitlebar')),
-      );
-      expect(toggle.center.dy, greaterThan(titlebar.bottom), reason: reason);
+      expect(find.byKey(const ValueKey('macosSidebarTitlebar')), findsNothing);
       final primary = tester.getRect(
         find.byKey(
           ValueKey(switch (destination) {
@@ -2073,6 +2121,7 @@ void main() {
         closeTo(primary.center.dy, .001),
         reason: reason,
       );
+      expect(primary.center.dy, closeTo(35, .001), reason: reason);
       contentRow ??= Rect.fromCenter(
         center: Offset(0, primary.center.dy),
         width: 1,
@@ -2147,9 +2196,11 @@ void main() {
     }
   });
 
-  testWidgets('the docked Files band X rides the collapse toggle centerline', (
+  testWidgets('docked Files and chat actions share the top centerline', (
     tester,
   ) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+    addTearDown(() => debugDefaultTargetPlatformOverride = null);
     final env = MemoryExecutionEnv();
     final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
       ..addSession('design-session', _fakeService(env));
@@ -2162,21 +2213,67 @@ void main() {
     expect(find.byKey(const ValueKey('faChatFilesPanel')), findsOneWidget);
     expect(find.byKey(const ValueKey('filesAppClose')), findsOneWidget);
 
-    // ONE centerline: the Files band X's vertical center equals the
-    // collapse toggle's on the shared search/compose action row below
-    // the compact macOS titlebar clearance.
+    // ONE top centerline across all three panes. Nothing except the narrow
+    // compact route reserves a second row below the macOS titlebar.
     final toggle = tester.getRect(
       find.byKey(const ValueKey('chatSidebarCollapse')),
     );
     final filesX = tester.getRect(find.byKey(const ValueKey('filesAppClose')));
-    expect(
-      filesX.center.dy,
-      closeTo(toggle.center.dy, .5),
-      reason: 'toggle=$toggle filesX=$filesX',
-    );
-    // And the X keeps the canonical 36pt circle.
+    final copy = tester.getRect(find.byTooltip('Copy session'));
+    final trajectory = tester.getRect(find.byIcon(Icons.timeline));
+    for (final rect in [toggle, filesX, copy, trajectory]) {
+      expect(rect.center.dy, closeTo(35, .5), reason: 'off-center $rect');
+    }
     expect(filesX.size, const Size.square(36));
+
+    final frameFinder = find.byKey(const ValueKey('filesAppPanelCard'));
+    final frame = tester.widget<DecoratedBox>(frameFinder);
+    expect((frame.decoration as BoxDecoration).border, isA<Border>());
+    expect(
+      tester
+          .widget<Padding>(
+            find
+                .descendant(of: frameFinder, matching: find.byType(Padding))
+                .first,
+          )
+          .padding,
+      const EdgeInsets.all(1),
+    );
+    final glass = find
+        .descendant(of: frameFinder, matching: find.byType(FaSurface))
+        .first;
+    expect(tester.getRect(glass), tester.getRect(frameFinder).deflate(1));
+    final browser = tester.widget<Material>(
+      find.byKey(const ValueKey('fileBrowserPanel')),
+    );
+    expect(browser.color, Colors.transparent);
     expect(tester.takeException(), isNull);
+    debugDefaultTargetPlatformOverride = null;
+  });
+
+  testWidgets('wide Apps Files route also uses the top action centerline', (
+    tester,
+  ) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+    addTearDown(() => debugDefaultTargetPlatformOverride = null);
+    final env = MemoryExecutionEnv();
+    final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
+      ..addSession('design-session', _fakeService(env));
+    await pumpShell(tester, manager: manager);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('messengerPrimaryNav-apps')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Files'));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('filesAppPanel')), findsOneWidget);
+    final filesX = tester.getRect(find.byKey(const ValueKey('filesAppClose')));
+    final toggle = tester.getRect(
+      find.byKey(const ValueKey('chatSidebarCollapse')),
+    );
+    expect(filesX.center.dy, closeTo(35, .5), reason: 'filesX=$filesX');
+    expect(filesX.center.dy, closeTo(toggle.center.dy, .5));
+    debugDefaultTargetPlatformOverride = null;
   });
 
   testWidgets('sidebar-left toggle hides and shows every section', (

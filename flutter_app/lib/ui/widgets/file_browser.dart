@@ -4,7 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
 import 'package:fa/ui/widgets/file_preview.dart';
-import 'package:fa/ui/widgets/session_search_field.dart' show SessionSearchField;
+import 'package:fa/ui/widgets/session_search_field.dart'
+    show SessionSearchField;
 import 'package:fa/services/icloud_sync_service.dart';
 import 'package:fa/services/project_folder_channel.dart';
 import 'package:fa/services/project_mount_env.dart';
@@ -632,6 +633,7 @@ class _FileBrowserState extends State<FileBrowser> {
   @override
   Widget build(BuildContext context) {
     final colors = FahColors.of(context);
+    final tokens = FaDesignTokens.of(context);
     // Chrome stack heights are fixed (header 52, identity chip 32, path or
     // preview bar 44, hairline 1) so the body can pad its top and scroll
     // beneath the chrome band, like the chat list.
@@ -643,7 +645,13 @@ class _FileBrowserState extends State<FileBrowser> {
         1.0;
     return Material(
       key: const ValueKey('fileBrowserPanel'),
-      color: colors.panel,
+      // The docked glass card owns the backdrop. An opaque Material here
+      // hid it everywhere except the circular buttons themselves.
+      color:
+          tokens.direction == FaVisualDirection.glass &&
+              widget.surfaceBorder == false
+          ? Colors.transparent
+          : colors.panel,
       shape: (widget.surfaceBorder ?? widget.showHeader)
           ? Border(left: BorderSide(color: colors.border, width: .5))
           : null,

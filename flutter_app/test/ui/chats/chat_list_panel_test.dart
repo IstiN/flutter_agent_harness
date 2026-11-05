@@ -91,6 +91,7 @@ Future<void> pumpPanel(
   NetworkSessionManager? networkManager,
   FolderIconResolver? iconResolver,
   ChatEntryId? selectedEntryId,
+  bool showFilterToolbar = true,
 }) async {
   await tester.pumpWidget(
     MaterialApp(
@@ -108,6 +109,7 @@ Future<void> pumpPanel(
             onNew: onNew ?? () {},
             networkManager: networkManager,
             iconResolver: iconResolver,
+            showFilterToolbar: showFilterToolbar,
           ),
         ),
       ),
@@ -279,31 +281,42 @@ void main() {
     }
   });
 
-  testWidgets('macOS desktop keeps one compact row below the titlebar', (
-    tester,
-  ) async {
-    debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
-    final controller = await makeController([entry('Design')]);
-    await pumpPanel(tester, controller);
+  testWidgets(
+    'wide macOS chrome starts at the top without titlebar clearance',
+    (tester) async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+      addTearDown(() => debugDefaultTargetPlatformOverride = null);
+      final controller = await makeController([entry('Design')]);
+      await pumpPanel(tester, controller, showFilterToolbar: false);
 
-    final search = tester.getRect(
-      find.byKey(const ValueKey('messengerSearchField')),
-    );
-    final newButton = find.byKey(const ValueKey('messengerNewButton'));
-    expect(search.top, greaterThanOrEqualTo(28));
-    expect(tester.getRect(newButton).top, greaterThanOrEqualTo(28));
-    expect(
-      search.center.dy,
-      closeTo(tester.getRect(newButton).center.dy, .001),
-    );
-    final button = tester.widget<IconButton>(newButton);
-    expect(button.color, Colors.white);
-    expect(
-      button.style?.backgroundColor?.resolve(const <WidgetState>{}),
-      const Color(0xFF3F8FF7),
-    );
-    debugDefaultTargetPlatformOverride = null;
-  });
+      final search = tester.getRect(
+        find.byKey(const ValueKey('messengerSearchField')),
+      );
+      final newButton = find.byKey(const ValueKey('messengerNewButton'));
+      expect(search.top, 10);
+      expect(tester.getRect(newButton).top, 10);
+      expect(search.center.dy, 26);
+      expect(
+        search.center.dy,
+        closeTo(tester.getRect(newButton).center.dy, .001),
+      );
+      final firstRow = tester.getRect(
+        find.byKey(ValueKey('chatRow-${ChatEntryId.local('Design')}')),
+      );
+      expect(
+        firstRow.top - search.bottom,
+        22,
+        reason: 'the first row clears the search border before its glass fade',
+      );
+      final button = tester.widget<IconButton>(newButton);
+      expect(button.color, Colors.white);
+      expect(
+        button.style?.backgroundColor?.resolve(const <WidgetState>{}),
+        const Color(0xFF3F8FF7),
+      );
+      debugDefaultTargetPlatformOverride = null;
+    },
+  );
 
   testWidgets(
     'selected rows use the accent and hover reveals desktop actions',
@@ -853,8 +866,9 @@ void main() {
     expect(find.text('Parent agent'), findsOneWidget);
   });
 
-  testWidgets('desktop brand matches the native profile button and clears '
-      'the macOS titlebar vertically', (tester) async {
+  testWidgets('wide desktop brand keeps its size and top padding on macOS', (
+    tester,
+  ) async {
     debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
     addTearDown(() => debugDefaultTargetPlatformOverride = null);
     final controller = await makeController([entry('Design')]);
@@ -868,7 +882,7 @@ void main() {
     );
     expect(find.text('Fa'), findsNothing);
     expect(tester.getSize(brand), const Size(30, 30));
-    expect(tester.getRect(brand).top, greaterThanOrEqualTo(28));
+    expect(tester.getRect(brand).top, 11);
     debugDefaultTargetPlatformOverride = null;
   });
 

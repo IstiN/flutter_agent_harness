@@ -82,49 +82,56 @@ final class FilesAppPanel extends StatelessWidget {
     // in-chat panel) carries the close, and surfaces without either (the
     // end drawer) keep no circle.
     final close = onClose ?? FaFilesPanelScope.maybeOf(context)?.closePanel;
+    final realGlass = tokens.direction == FaVisualDirection.glass;
+    final card = FaSurface(
+      key: realGlass ? null : const ValueKey('filesAppPanelCard'),
+      glass: true,
+      useBackdropGroup: true,
+      color: tokens.surface1,
+      tintAmount: .4,
+      tintOpacity: .78,
+      borderRadius: BorderRadius.circular(realGlass ? 17 : 18),
+      // The docked header shares y=35 with the sidebar and chat actions.
+      // Only standalone routes keep the original dense inset.
+      padding: EdgeInsets.fromLTRB(6, topCenterline ? 2 : 3, 6, 6),
+      child: FileBrowser(
+        env: presentation.env,
+        initialPath: presentation.initialPath,
+        topCenterline: topCenterline,
+        sessionFolder: presentation.sessionFolder,
+        inlinePreview: inlinePreview,
+        fsRevision: presentation.fsRevision,
+        onProjectMountChanged: presentation.onProjectMountChanged,
+        showHeader: true,
+        surfaceBorder: false,
+        onClose: close,
+        headerKey: const ValueKey('filesAppPanelToolbar'),
+        searchKey: const ValueKey('filesAppSearch'),
+        closeKey: const ValueKey('filesAppClose'),
+      ),
+    );
     return ColoredBox(
       key: const ValueKey('filesAppPanel'),
       color: Theme.of(context).scaffoldBackgroundColor,
       child: Padding(
         padding: const EdgeInsets.all(8),
-        child: FaSurface(
-          key: const ValueKey('filesAppPanelCard'),
-          glass: true,
-          useBackdropGroup: true,
-          color: tokens.surface1,
-          tintAmount: .4,
-          tintOpacity: .78,
-          borderRadius: BorderRadius.circular(18),
-          // The docked macOS panel reserves the same compact titlebar
-          // clearance as the sidebar, putting its toolbar and X on the
-          // shared search/compose/collapse action centerline. Standalone
-          // routes and other platforms retain the original dense inset.
-          padding: EdgeInsets.fromLTRB(
-            6,
-            topCenterline
-                ? (!kIsWeb && defaultTargetPlatform == TargetPlatform.macOS
-                      ? 35
-                      : 5)
-                : 3,
-            6,
-            6,
-          ),
-          child: FileBrowser(
-            env: presentation.env,
-            initialPath: presentation.initialPath,
-            topCenterline: topCenterline,
-            sessionFolder: presentation.sessionFolder,
-            inlinePreview: inlinePreview,
-            fsRevision: presentation.fsRevision,
-            onProjectMountChanged: presentation.onProjectMountChanged,
-            showHeader: true,
-            surfaceBorder: false,
-            onClose: close,
-            headerKey: const ValueKey('filesAppPanelToolbar'),
-            searchKey: const ValueKey('filesAppSearch'),
-            closeKey: const ValueKey('filesAppClose'),
-          ),
-        ),
+        child: realGlass
+            ? DecoratedBox(
+                key: const ValueKey('filesAppPanelCard'),
+                decoration: BoxDecoration(
+                  color: tokens.surface1,
+                  borderRadius: BorderRadius.circular(18),
+                  border: Border.all(color: tokens.hairline),
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.all(1),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(17),
+                    child: card,
+                  ),
+                ),
+              )
+            : card,
       ),
     );
   }
@@ -132,9 +139,9 @@ final class FilesAppPanel extends StatelessWidget {
 
 /// Files as a pushed full-page route (Apps → Files and the shell's
 /// narrow-layout Files): the SAME [FilesAppPanel] card — one Files look
-/// everywhere — with the band's close circle popping the route. macOS
-/// traffic lights float over content, so the card clears the same 32px
-/// strip the pushed app bars reserve ([faAppBar] clearance).
+/// everywhere — with the band's close circle popping the route. Wide macOS
+/// shares the docked y=35 action band; only a narrow macOS window clears the
+/// 32px traffic-light strip ([faAppBar] clearance).
 final class FilesAppPage extends StatelessWidget {
   const FilesAppPage({super.key, required this.presentation});
 
@@ -144,13 +151,18 @@ final class FilesAppPage extends StatelessWidget {
   Widget build(BuildContext context) {
     // Mirrors faAppBar's macOS clearance (wide_layout_shell owns that
     // symbol; importing it here would cycle the two libraries).
-    final trafficClearance =
-        !kIsWeb && defaultTargetPlatform == TargetPlatform.macOS ? 32.0 : 0.0;
+    final isMac = !kIsWeb && defaultTargetPlatform == TargetPlatform.macOS;
+    final wideMac = isMac && MediaQuery.sizeOf(context).width >= 700;
+    final trafficClearance = isMac && !wideMac ? 32.0 : 0.0;
     return Padding(
       padding: EdgeInsets.only(top: trafficClearance),
       child: FilesAppPanel(
         presentation: presentation,
         inlinePreview: false,
+        // The wide route sits to the right of the traffic lights, just like
+        // the docked pane: no second-row clearance, one shared y=35 band.
+        // A narrow macOS window still needs the native titlebar inset.
+        topCenterline: wideMac,
         onClose: () => Navigator.of(context).maybePop(),
       ),
     );
