@@ -28,17 +28,6 @@
       "model": "glm-5.3-flash"
     }
   ],
-  "issue-1784": [
-    {
-      "leg": "rework",
-      "at": "2026-10-22T23:05:05Z",
-      "prompt": 109094,
-      "completion": 23332,
-      "total": 132426,
-      "cacheRead": 5552768,
-      "model": "glm-5.3-flash"
-    }
-  ],
   "pr-1790": [
     {
       "leg": "review",
@@ -4151,6 +4140,15 @@
       "prompt": 10704,
       "completion": 0,
       "total": 10704,
+      "cacheRead": 0,
+      "model": "kimi-for-coding"
+    },
+    {
+      "leg": "review",
+      "at": "2026-11-05T23:07:09Z",
+      "prompt": 11373,
+      "completion": 0,
+      "total": 11373,
       "cacheRead": 0,
       "model": "kimi-for-coding"
     }
