@@ -39,17 +39,6 @@
       "model": "glm-5.3-flash"
     }
   ],
-  "issue-1787": [
-    {
-      "leg": "dev",
-      "at": "2026-10-22T23:44:34Z",
-      "prompt": 270362,
-      "completion": 111429,
-      "total": 381791,
-      "cacheRead": 27131584,
-      "model": "glm-5.3-flash"
-    }
-  ],
   "pr-1791": [
     {
       "leg": "review",
@@ -4111,6 +4100,15 @@
       "prompt": 11373,
       "completion": 0,
       "total": 11373,
+      "cacheRead": 0,
+      "model": "kimi-for-coding"
+    },
+    {
+      "leg": "review",
+      "at": "2026-11-05T23:46:06Z",
+      "prompt": 12042,
+      "completion": 0,
+      "total": 12042,
       "cacheRead": 0,
       "model": "kimi-for-coding"
     }
