@@ -30,17 +30,6 @@
       "model": "glm-5.3-flash"
     }
   ],
-  "pr-1791": [
-    {
-      "leg": "review",
-      "at": "2026-10-23T00:04:18Z",
-      "prompt": 62648,
-      "completion": 23151,
-      "total": 85799,
-      "cacheRead": 2088000,
-      "model": "glm-5.3-flash"
-    }
-  ],
   "pr-1794": [
     {
       "leg": "review",
@@ -4147,6 +4136,15 @@
       "prompt": 10035,
       "completion": 0,
       "total": 10035,
+      "cacheRead": 0,
+      "model": "kimi-for-coding"
+    },
+    {
+      "leg": "review",
+      "at": "2026-11-06T00:04:47Z",
+      "prompt": 10704,
+      "completion": 0,
+      "total": 10704,
       "cacheRead": 0,
       "model": "kimi-for-coding"
     }
