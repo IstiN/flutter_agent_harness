@@ -13,15 +13,6 @@
   "pr-1794": [
     {
       "leg": "review",
-      "at": "2026-10-23T01:24:33Z",
-      "prompt": 179810,
-      "completion": 16358,
-      "total": 196168,
-      "cacheRead": 6665856,
-      "model": "glm-5.3-flash"
-    },
-    {
-      "leg": "review",
       "at": "2026-10-23T02:24:18Z",
       "prompt": 252566,
       "completion": 8851,
@@ -4065,6 +4056,15 @@
       "prompt": 14049,
       "completion": 0,
       "total": 14049,
+      "cacheRead": 0,
+      "model": "kimi-for-coding"
+    },
+    {
+      "leg": "review",
+      "at": "2026-11-06T01:27:57Z",
+      "prompt": 14718,
+      "completion": 0,
+      "total": 14718,
       "cacheRead": 0,
       "model": "kimi-for-coding"
     }
