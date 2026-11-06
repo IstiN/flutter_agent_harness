@@ -1351,4 +1351,27 @@ void _reviewFixTests() {
     expect(service.messages.last.content, contains('sw-route'));
     addTearDown(channel.close);
   });
+
+  test('gh-2059: a SW compaction notice renders an in-chat system row at '
+      'arrival (gh-1077 AC2 shape)', () async {
+    final (:service, :channel) = await _attached();
+    var notifications = 0;
+    service.addListener(() => notifications++);
+    channel.fromWorker(
+      const StreamMsg(
+        event: {
+          'type': 'notice',
+          'text': 'compacted: 8500 → 86 tokens (2 passes)',
+        },
+      ),
+    );
+    await Future<void>.delayed(Duration.zero);
+    expect(notifications, greaterThan(0));
+    expect(service.messages.last.role, 'system');
+    expect(
+      service.messages.last.content,
+      contains('compacted: 8500 → 86 tokens'),
+    );
+    addTearDown(channel.close);
+  });
 }

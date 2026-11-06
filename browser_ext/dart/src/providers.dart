@@ -20,6 +20,8 @@ import 'package:flutter_agent_harness/src/cancel_token.dart';
 import 'package:flutter_agent_harness/src/context.dart';
 import 'package:flutter_agent_harness/src/event_stream.dart';
 import 'package:flutter_agent_harness/src/model.dart';
+import 'package:flutter_agent_harness/src/providers/models_endpoint.dart'
+    show fallbackContextWindow;
 import 'package:flutter_agent_harness/src/providers/openai_completions.dart';
 import 'package:flutter_agent_harness/src/providers/provider_common.dart'
     show providerHttpClientFactory;
@@ -315,15 +317,25 @@ bool isCookieAuthUrl(String url) =>
 
 /// Builds the [Model] spec sent with every request (and persisted in
 /// `model_change` session records).
-Model modelForConfig(ProviderConfig config) => Model(
-  id: config.model,
-  name: config.model,
-  api: 'openai-completions',
-  provider: isFakeModel(config.model) ? 'fake' : 'openai-like',
-  baseUrl: config.baseUrl,
-  contextWindow: 128000,
-  maxTokens: 8192,
-);
+///
+/// The context window is NEVER a local constant (gh-2059 AC10): the
+/// stored settings override ([contextWindowOverride] — the `faProvider`
+/// `contextWindow` field, merged by [mergeProvider]) wins; otherwise the
+/// shared fallback rule applies (`fallbackContextWindow`, the same pinned
+/// constant the app resolves unknown providers through). The owner cap
+/// (`contextWindowCap`) applies DOWNSTREAM — in the shared compaction
+/// resolution and the loop's over-window guard — never here, so the raw
+/// per-model value stays the single input.
+Model modelForConfig(ProviderConfig config, {int? contextWindowOverride}) =>
+    Model(
+      id: config.model,
+      name: config.model,
+      api: 'openai-completions',
+      provider: isFakeModel(config.model) ? 'fake' : 'openai-like',
+      baseUrl: config.baseUrl,
+      contextWindow: contextWindowOverride ?? fallbackContextWindow,
+      maxTokens: 8192,
+    );
 
 /// Streams via the core openai-completions adapter using the platform
 /// `fetch` (MV3 service workers have no XHR for package:http's default
@@ -528,4 +540,37 @@ AssistantMessageEventStream relayTextStream(
         finish(ErrorEvent(reason: StopReason.error, error: errorOf('$error'))),
   );
   return events;
+}
+
+/// Reads an int setting tolerating the string-encoded form (a panel save
+/// may store numbers as strings); `null` when absent/unparseable.
+int? storedIntSetting(Map<Object?, Object?> map, String key) {
+  final v = map[key];
+  if (v is int) return v;
+  if (v is String) return int.tryParse(v.trim());
+  return null;
+}
+
+/// The per-model window inputs from the ACTIVE stored source (gh-2059 AC7
+/// + machine review I2): the legacy `faProvider` map contributes
+/// `contextWindow` / `contextWindowCap` ONLY when it produced the active
+/// provider — a synced registry entry (which carries no window today)
+/// yields null/null so a stale legacy override can never leak onto a
+/// different endpoint. Non-positive values are dropped: a `0` would
+/// silently disable every over-window protection.
+({int? contextWindow, int? contextWindowCap}) windowSettingsFromStored({
+  required bool legacyActive,
+  Map<Object?, Object?>? legacyProvider,
+}) {
+  int? read(String key) {
+    final v = legacyActive && legacyProvider is Map
+        ? storedIntSetting(legacyProvider, key)
+        : null;
+    return v != null && v > 0 ? v : null;
+  }
+
+  return (
+    contextWindow: read('contextWindow'),
+    contextWindowCap: read('contextWindowCap'),
+  );
 }

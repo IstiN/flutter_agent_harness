@@ -745,6 +745,16 @@ HostConfig _configFrom({
     }
     activeRelay = null;
   }
+  // gh-2059 AC7: the per-model window override + owner cap come from the
+  // ACTIVE stored source only (machine review I2) — the legacy
+  // `faProvider` map when IT produced the provider, null/null when a
+  // synced registry entry is active (entries carry no window today; the
+  // shared fallback rule decides). The helper also drops non-positive
+  // values (a stored `0` must not disable over-window protection).
+  final windows = windowSettingsFromStored(
+    legacyActive: entry == null,
+    legacyProvider: provider is Map ? provider : null,
+  );
   return (
     provider: resolved,
     approvalMode: approval is String ? approval : 'ask',
@@ -752,6 +762,8 @@ HostConfig _configFrom({
     mailbox: '',
     dap: _dapFrom(dap),
     browserTools: _browserToolsFrom(browserTools),
+    contextWindow: windows.contextWindow,
+    contextWindowCap: windows.contextWindowCap,
   );
 }
 

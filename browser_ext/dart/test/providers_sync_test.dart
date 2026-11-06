@@ -8,6 +8,11 @@ library;
 import 'dart:io';
 
 import '../src/providers.dart';
+// The in-package re-export shim (src/host_compaction.dart → lib/src/), NOT
+// the package URI: the Static gates analyze this test in the ROOT context,
+// where the nested fa_browser_agent package's own deps do not resolve
+// (gh-2059 gate fix). Same convention as the ../src/providers.dart import.
+import '../src/host_compaction.dart' show resolveExtensionCompactionWiring;
 import 'package:flutter_agent_harness/src/cancel_token.dart';
 import 'package:flutter_agent_harness/src/context.dart';
 import 'package:flutter_agent_harness/src/event_stream.dart';
@@ -272,6 +277,125 @@ void main() {
     expect(isCookieAuthUrl('https://api.openai.com/v1'), isFalse);
     expect(isCookieAuthUrl('not a url'), isFalse);
     expect(isCookieAuthUrl(''), isFalse);
+  });
+
+  group('modelForConfig windows (gh-2059 AC7)', () {
+    test(
+      'no override resolves the shared fallback, never a local constant',
+      () {
+        final model = modelForConfig((
+          baseUrl: 'https://api/v1',
+          apiKey: '',
+          model: 'm',
+        ));
+        expect(
+          model.contextWindow,
+          200000,
+          reason:
+              'the pinned shared '
+              'fallback (gh-1077) — the extension carries no 128000 constant',
+        );
+      },
+    );
+
+    test('the stored settings override wins', () {
+      final model = modelForConfig((
+        baseUrl: 'https://api/v1',
+        apiKey: '',
+        model: 'm',
+      ), contextWindowOverride: 264000);
+      expect(model.contextWindow, 264000);
+    });
+
+    test('two model configs with different windows differ', () {
+      final small = modelForConfig((
+        baseUrl: 'https://api/v1',
+        apiKey: '',
+        model: 'm',
+      ), contextWindowOverride: 8192);
+      final big = modelForConfig((
+        baseUrl: 'https://api/v1',
+        apiKey: '',
+        model: 'm',
+      ), contextWindowOverride: 1000000);
+      expect(small.contextWindow, isNot(big.contextWindow));
+      // …and the compaction trigger differs with them (the shared
+      // resolution scales the reserve to the window).
+      final smallWiring = resolveExtensionCompactionWiring(
+        mainModel: small,
+        systemOverheadTokens: 0,
+      );
+      final bigWiring = resolveExtensionCompactionWiring(
+        mainModel: big,
+        systemOverheadTokens: 0,
+      );
+      expect(
+        smallWiring.settings.reserveTokens,
+        isNot(bigWiring.settings.reserveTokens),
+      );
+      expect(
+        smallWiring.conversationWindow - smallWiring.settings.reserveTokens,
+        lessThan(
+          bigWiring.conversationWindow - bigWiring.settings.reserveTokens,
+        ),
+        reason: 'different windows produce different compaction triggers',
+      );
+    });
+  });
+
+  group('windowSettingsFromStored (machine review I2 — the ACTIVE source '
+      'only, positive values only)', () {
+    test('a synced registry entry active: a stale legacy override NEVER '
+        'leaks onto the other endpoint', () {
+      final windows = windowSettingsFromStored(
+        legacyActive: false,
+        legacyProvider: const {
+          'baseUrl': 'https://legacy/v1',
+          'contextWindow': 264000,
+          'contextWindowCap': 128000,
+        },
+      );
+      expect(windows.contextWindow, isNull);
+      expect(windows.contextWindowCap, isNull);
+    });
+
+    test('the legacy map active: its ints (and string-encoded ints) are '
+        'the window inputs', () {
+      final windows = windowSettingsFromStored(
+        legacyActive: true,
+        legacyProvider: const {
+          'baseUrl': 'https://legacy/v1',
+          'contextWindow': '264000',
+          'contextWindowCap': 128000,
+        },
+      );
+      expect(windows.contextWindow, 264000);
+      expect(windows.contextWindowCap, 128000);
+    });
+
+    test('non-positive values are dropped — a stored 0 must not disable '
+        'the over-window protection', () {
+      final windows = windowSettingsFromStored(
+        legacyActive: true,
+        legacyProvider: const {'contextWindow': 0, 'contextWindowCap': -5},
+      );
+      expect(windows.contextWindow, isNull);
+      expect(windows.contextWindowCap, isNull);
+    });
+
+    test('no legacy map (or an unparseable one): null/null either way', () {
+      expect(
+        windowSettingsFromStored(legacyActive: true, legacyProvider: null),
+        (contextWindow: null, contextWindowCap: null),
+      );
+      expect(
+        windowSettingsFromStored(
+          legacyActive: true,
+          legacyProvider: const {'contextWindow': 'abc'},
+        ),
+        (contextWindow: null, contextWindowCap: null),
+      );
+    });
   });
 }
 
