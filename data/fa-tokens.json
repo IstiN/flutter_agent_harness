@@ -1,25 +1,5 @@
 {
-  "pr-1794": [
-    {
-      "leg": "rework",
-      "at": "2026-10-23T03:32:00Z",
-      "prompt": 433420,
-      "completion": 69350,
-      "total": 502770,
-      "cacheRead": 59254720,
-      "model": "glm-5.3-flash"
-    }
-  ],
   "pr-1797": [
-    {
-      "leg": "rework",
-      "at": "2026-10-23T03:47:13Z",
-      "prompt": 123733,
-      "completion": 43329,
-      "total": 167062,
-      "cacheRead": 7315008,
-      "model": "glm-5.3-flash"
-    },
     {
       "leg": "rework",
       "at": "2026-10-23T04:36:52Z",
@@ -4115,6 +4095,15 @@
       "prompt": 20070,
       "completion": 0,
       "total": 20070,
+      "cacheRead": 0,
+      "model": "kimi-for-coding"
+    },
+    {
+      "leg": "review",
+      "at": "2026-11-06T03:53:56Z",
+      "prompt": 20739,
+      "completion": 0,
+      "total": 20739,
       "cacheRead": 0,
       "model": "kimi-for-coding"
     }
