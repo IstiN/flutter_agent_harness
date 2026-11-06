@@ -74,6 +74,52 @@ const String extCompactionExhaustedNotice =
     'request may be refused. The transcript is intact; start a fresh '
     'session if the endpoint keeps refusing.';
 
+/// The zero-pass over-window notice (machine review round 2, S1): the
+/// compaction ran but nothing it could act on, and the transcript is
+/// STILL at/over the trigger. Distinct wording from
+/// [extCompactionExhaustedNotice] (passes ran, ladder gave out) — here
+/// nothing ran at all, and the honest line says the transcript itself is
+/// the problem (a single oversized newest message, or already-summarized
+/// history) with the same out: a fresh session.
+String extCompactionOverWindowNotice(int tokens, int trigger) =>
+    'Context is over the model window (~$tokens tokens, trigger $trigger) '
+    'and there is nothing left to compact — every message is already '
+    'summarized or a single message exceeds the budget. Start a fresh '
+    'session, or shrink the working set.';
+
+/// The settled verdict after a compaction path (machine review round 2,
+/// S1): what the host reports when the estimate is still at/over the
+/// trigger. Passes ran and nothing helped → the ladder-exhausted receipt;
+/// NOTHING ran that could shrink it → the over-window warning (the old
+/// code stayed silent here — the session can still dead-end on the next
+/// request); cancelled or failed → silence, those surface through their
+/// own channels. Pure and VM-tested; `_compact` applies it.
+({bool exhausted, String? logLine, String? notice}) compactionSettledVerdict({
+  required int after,
+  required int trigger,
+  required int passes,
+  required bool cancelled,
+  required bool failed,
+}) {
+  if (cancelled || failed || after < trigger) {
+    return (exhausted: false, logLine: null, notice: null);
+  }
+  if (passes > 0) {
+    return (
+      exhausted: true,
+      logLine: '[fah][sw] compaction: ladder exhausted tokens=$after',
+      notice: extCompactionExhaustedNotice,
+    );
+  }
+  return (
+    exhausted: true,
+    logLine:
+        '[fah][sw] compaction: over-window with nothing to compact '
+        'tokens=$after trigger=$trigger',
+    notice: extCompactionOverWindowNotice(after, trigger),
+  );
+}
+
 /// The extension's fixed request overhead (gh-1077 parity with the app's
 /// `_systemOverheadTokens`): the rendered system prompt's token estimate.
 /// The tool schemas ride the measurement basis itself
@@ -311,8 +357,9 @@ final class CompactionRunResult {
   /// factory threw). `null` = no pass failure.
   final Object? failure;
 
-  /// The re-fire ladder ran out with the context still at/over the
-  /// effective window (arch 6's visible terminal state).
+  /// The context settled at/over the effective window with a visible
+  /// notice already fired (arch 6's terminal state): the ladder gave out
+  /// after passes ran, or nothing ran that could shrink it (round-2 S1).
   final bool exhausted;
 
   bool get freed => after < before;
@@ -328,8 +375,9 @@ final class CompactionRunResult {
 /// The manual `/compact` outcome (AC2): `ran` distinguishes a real pass
 /// from "nothing to compact"; `passes` is the exact delta the ladder
 /// added (machine-review B1 — the receipt count); `exhausted` is the AC5
-/// terminal state (the ladder ran out with the context still over the
-/// trigger); `underWindow` is the AC3 invariant for the settled estimate.
+/// terminal state (the context settled at/over the window with a visible
+/// notice fired — ladder gave out, or nothing ran that could shrink it);
+/// `underWindow` is the AC3 invariant for the settled estimate.
 final class ManualCompactionOutcome {
   const ManualCompactionOutcome({
     required this.ran,
@@ -565,19 +613,23 @@ final class ExtensionCompactionRunner {
     // A user cancel is an ABORT, never a failed-pass report (issue #1085
     // parity): no exhaustion notice either — the loop/host surfaces the
     // abort.
-    final cancelled = runToken?.isCancelled ?? false;
-    var exhausted = false;
-    if (!cancelled && hooks.failure == null && after >= trigger && passes > 0) {
-      exhausted = true;
-      log('[fah][sw] compaction: ladder exhausted tokens=$after');
-      notice(extCompactionExhaustedNotice);
-    }
+    final verdict = compactionSettledVerdict(
+      after: after,
+      trigger: trigger,
+      passes: passes,
+      cancelled: runToken?.isCancelled ?? false,
+      failed: hooks.failure != null,
+    );
+    final logLine = verdict.logLine;
+    if (logLine != null) log(logLine);
+    final noticeLine = verdict.notice;
+    if (noticeLine != null) notice(noticeLine);
     return CompactionRunResult(
       before: before,
       after: after,
       passes: passes,
       failure: hooks.failure,
-      exhausted: exhausted,
+      exhausted: verdict.exhausted,
     );
   }
 

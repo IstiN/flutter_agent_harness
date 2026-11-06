@@ -804,6 +804,79 @@ void main() {
       backlog.clear();
       expect(backlog.lines, isEmpty);
     });
+
+    test('round-2 I: the session-switch re-scope — what the host persists '
+        'after a switch carries NO outgoing receipts', () {
+      // The host glue (openSession/newSession) is web-only (js_interop) —
+      // this pins the switch sequence's data contract: the outgoing
+      // backlog is cleared, the persisted payload is the cleared scope,
+      // and a boot of the next scope decodes EMPTY. No receipt from
+      // conversation A can reach conversation B.
+      final outgoing = CompactionNoticeBacklog()
+        ..add('compacted: 190000 → 64000 tokens (2 passes)');
+      // The switch sequence (agent_host: clear + persist):
+      outgoing.clear();
+      final persisted = outgoing.encode();
+      // The next boot / first attach of the switched-to session:
+      expect(CompactionNoticeBacklog.decode(persisted).lines, isEmpty);
+    });
+  });
+
+  group('zero-pass over-window (machine review round 2, S1) — the '
+      'settled verdict matrix', () {
+    test('still over the window with ZERO passes fires the over-window '
+        'warning, exhausted-set — never silence', () {
+      final verdict = compactionSettledVerdict(
+        after: 400,
+        trigger: 384,
+        passes: 0,
+        cancelled: false,
+        failed: false,
+      );
+      expect(verdict.exhausted, isTrue);
+      expect(verdict.notice, extCompactionOverWindowNotice(400, 384));
+      expect(verdict.notice, contains('nothing left to compact'));
+      expect(verdict.logLine, contains('over-window with nothing to'));
+    });
+
+    test('passes ran and nothing helped → the ladder-exhausted receipt '
+        '(distinct wording)', () {
+      final verdict = compactionSettledVerdict(
+        after: 400,
+        trigger: 384,
+        passes: 6,
+        cancelled: false,
+        failed: false,
+      );
+      expect(verdict.exhausted, isTrue);
+      expect(verdict.notice, extCompactionExhaustedNotice);
+      expect(
+        verdict.notice,
+        isNot(equals(extCompactionOverWindowNotice(400, 384))),
+      );
+    });
+
+    test(
+      'under the trigger, cancelled, or failed → silence, not exhausted',
+      () {
+        for (final c in const [
+          (after: 380, trigger: 384, cancelled: false, failed: false),
+          (after: 400, trigger: 384, cancelled: true, failed: false),
+          (after: 400, trigger: 384, cancelled: false, failed: true),
+        ]) {
+          final verdict = compactionSettledVerdict(
+            after: c.after,
+            trigger: c.trigger,
+            passes: c.cancelled || c.failed ? 0 : 6,
+            cancelled: c.cancelled,
+            failed: c.failed,
+          );
+          expect(verdict.exhausted, isFalse, reason: '$c');
+          expect(verdict.notice, isNull, reason: '$c');
+          expect(verdict.logLine, isNull, reason: '$c');
+        }
+      },
+    );
   });
 }
 

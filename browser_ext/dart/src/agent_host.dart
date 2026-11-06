@@ -721,6 +721,11 @@ final class AgentHost implements UiHostBackend {
     _session = Session(await JsonlSessionStorage.open(_env, _sessionPath));
     _persisted.clear();
     _agent.state.messages = await _session!.buildContextMessages();
+    // Receipts are session-scoped (round-2 I): switching conversations
+    // re-scopes the backlog exactly like a fresh session — the previous
+    // conversation's receipts must never replay into the opened one.
+    _noticeBacklog.clear();
+    _persistNotices();
     unawaited(_refreshArchives());
     _emitStatus();
   }
