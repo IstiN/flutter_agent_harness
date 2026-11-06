@@ -50,28 +50,6 @@
       "model": "glm-5.3-flash"
     }
   ],
-  "pr-1793": [
-    {
-      "leg": "review",
-      "at": "2026-10-23T01:05:52Z",
-      "prompt": 86350,
-      "completion": 26604,
-      "total": 112954,
-      "cacheRead": 3866048,
-      "model": "glm-5.3-flash"
-    }
-  ],
-  "pr-1792": [
-    {
-      "leg": "review",
-      "at": "2026-10-23T01:02:41Z",
-      "prompt": 71563,
-      "completion": 22851,
-      "total": 94414,
-      "cacheRead": 1020928,
-      "model": "glm-5.3-flash"
-    }
-  ],
   "pr-1797": [
     {
       "leg": "rework",
@@ -4143,6 +4121,15 @@
       "prompt": 12042,
       "completion": 0,
       "total": 12042,
+      "cacheRead": 0,
+      "model": "kimi-for-coding"
+    },
+    {
+      "leg": "review",
+      "at": "2026-11-06T01:19:03Z",
+      "prompt": 12711,
+      "completion": 0,
+      "total": 12711,
       "cacheRead": 0,
       "model": "kimi-for-coding"
     }
