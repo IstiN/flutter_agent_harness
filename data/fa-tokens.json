@@ -1,15 +1,6 @@
 {
   "pr-1797": [
     {
-      "leg": "rework",
-      "at": "2026-10-23T04:36:52Z",
-      "prompt": 168953,
-      "completion": 21709,
-      "total": 190662,
-      "cacheRead": 7972864,
-      "model": "glm-5.3-flash"
-    },
-    {
       "leg": "review",
       "at": "2026-10-23T05:04:11Z",
       "prompt": 56179,
@@ -4131,6 +4122,15 @@
       "prompt": 22746,
       "completion": 0,
       "total": 22746,
+      "cacheRead": 0,
+      "model": "kimi-for-coding"
+    },
+    {
+      "leg": "rework",
+      "at": "2026-11-06T04:37:55Z",
+      "prompt": 172452,
+      "completion": 0,
+      "total": 172452,
       "cacheRead": 0,
       "model": "kimi-for-coding"
     }
