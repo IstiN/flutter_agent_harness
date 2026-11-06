@@ -2,15 +2,6 @@
   "issue-1788": [
     {
       "leg": "rework",
-      "at": "2026-10-23T00:53:03Z",
-      "prompt": 158818,
-      "completion": 59114,
-      "total": 217932,
-      "cacheRead": 15151296,
-      "model": "glm-5.3-flash"
-    },
-    {
-      "leg": "rework",
       "at": "2026-10-23T02:04:38Z",
       "prompt": 285551,
       "completion": 21715,
@@ -4078,6 +4069,15 @@
       "prompt": 13380,
       "completion": 0,
       "total": 13380,
+      "cacheRead": 0,
+      "model": "kimi-for-coding"
+    },
+    {
+      "leg": "rework",
+      "at": "2026-11-06T01:01:28Z",
+      "prompt": 167765,
+      "completion": 0,
+      "total": 167765,
       "cacheRead": 0,
       "model": "kimi-for-coding"
     }
