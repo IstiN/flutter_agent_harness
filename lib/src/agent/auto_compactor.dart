@@ -283,11 +283,13 @@ final class AutoCompactor {
   final int messageCapMargin;
 
   /// Transient error markers worth retrying: 5xx HTTP, aborted /
-  /// reset / closed sockets. Hard refusals (rate limit, 429, content
-  /// filter, auth) fail fast.
+  /// reset / closed sockets, and the browser fetch death (`TypeError:
+  /// Failed to fetch` — an MV3 service-worker provider stream dies with
+  /// exactly that string; gh-2059 arch 7). Hard refusals (rate limit,
+  /// 429, content filter, auth) fail fast.
   static final _transient = RegExp(
     r'(?:5\d\d|connection\s+(?:closed|reset|aborted|refused)|'
-    r'socket\s+exception|stream\s+closed)',
+    r'socket\s+exception|stream\s+closed|failed\s+to\s+fetch)',
     caseSensitive: false,
   );
 
