@@ -7,6 +7,8 @@ import 'dart:convert';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
+import 'package:fa_ui/src/stores/versioned_store_file.dart';
+
 /// The per-modality model slots [MediaModelsStore] manages.
 ///
 /// Each slot may carry an override pointing at a dedicated endpoint. A slot
@@ -309,7 +311,9 @@ class MediaModelsStore extends ChangeNotifier {
     MediaKeyResolver? resolveKey,
   }) async {
     final override = _slots[slot];
-    if (override == null) return null; // UNCONFIGURED — never an implicit fallback
+    if (override == null) {
+      return null; // UNCONFIGURED — never an implicit fallback
+    }
     if (override.useMainConnection) {
       final modelId = slot == MediaSlot.vision
           ? fallback.modelId
@@ -367,28 +371,23 @@ class MediaModelsStore extends ChangeNotifier {
   }
 
   Future<void> _load() async {
-    final env = _env;
-    if (env == null) return;
-    try {
-      final text = (await env.readTextFile('${env.cwd}/$fileName')).valueOrNull;
-      if (text == null) return;
-      final decoded = jsonDecode(text);
-      if (decoded is! Map<String, dynamic>) return;
-      if (decoded['version'] != _version) return;
-      final slots = decoded['slots'];
-      if (slots is! Map) return;
-      _slots.clear();
-      for (final slot in MediaSlot.all) {
-        final entry = slots[slot];
-        if (entry is Map) {
-          _slots[slot] = MediaSlotOverride.fromJson(
-            entry.cast<String, dynamic>(),
-          );
+    await faLoadVersionedStore(
+      _env,
+      fileName: fileName,
+      version: _version,
+      payloadKey: 'slots',
+      decode: (env, slots) {
+        _slots.clear();
+        for (final slot in MediaSlot.all) {
+          final entry = slots[slot];
+          if (entry is Map) {
+            _slots[slot] = MediaSlotOverride.fromJson(
+              entry.cast<String, dynamic>(),
+            );
+          }
         }
-      }
-    } on Object {
-      // Corrupt or incompatible file → empty store, never crash boot.
-    }
+      },
+    );
   }
 
   Future<void> _save() async {

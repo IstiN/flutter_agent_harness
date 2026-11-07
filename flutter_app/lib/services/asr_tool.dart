@@ -160,31 +160,11 @@ AgentTool transcriptionTool(
       final path = (arguments['path'] ?? '').toString();
       final language = arguments['language']?.toString();
 
-      final filename = path.split(RegExp(r'[/\\]')).last;
-      final dot = filename.lastIndexOf('.');
-      final extension = dot >= 0
-          ? filename.substring(dot + 1).toLowerCase()
-          : '';
-      if (!supportedAudioExtensions.contains(extension)) {
-        throw StateError(
-          'Unsupported audio format: $filename (supported: '
-          '${(supportedAudioExtensions.toList()..sort()).join(', ')})',
-        );
-      }
-
-      final read = await env.readBinaryFile(path);
-      if (read.isErr) {
-        throw StateError('${read.errorOrNull}');
-      }
-      final bytes = read.valueOrNull!;
-      cancelToken?.throwIfCancelled();
-
-      if (bytes.length > maxTranscribeAudioBytes) {
-        throw StateError(
-          'Audio file too large: ${bytes.length} bytes exceeds the 25MB '
-          'transcription limit',
-        );
-      }
+      final (filename, bytes) = await readTranscribeAudioPayload(
+        env,
+        path,
+        cancelToken: cancelToken,
+      );
 
       final transcriber = await resolveTranscriber();
       if (transcriber == null) {

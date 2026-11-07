@@ -118,7 +118,7 @@ extension SettingsFlow on AgentCli {
   }) {
     bool mediaOk(String kind) =>
         !openAiCompatibleOnly ||
-        kind == 'openai-completions' ||
+        kind == _factoryProviderKind ||
         kind == 'minimax';
     return [
       for (final entry in saved)
@@ -148,7 +148,7 @@ extension SettingsFlow on AgentCli {
     String? token,
     String? mediaSlot,
   }) async {
-    if (spec.kind == 'openai-completions' ||
+    if (spec.kind == _factoryProviderKind ||
         spec.kind == 'minimax' ||
         spec.name == 'dial') {
       io.writeln('fetching models from $baseUrl ...');
@@ -247,7 +247,7 @@ extension SettingsFlow on AgentCli {
         models.setSlotOverride(
           selectedSlot,
           MediaSlotModelConfig(
-            providerKind: 'openai-completions',
+            providerKind: _factoryProviderKind,
             baseUrl: choice.baseUrl,
             modelId: choice.modelId,
             // The saved custom provider's key authenticates the media
@@ -380,7 +380,7 @@ extension SettingsFlow on AgentCli {
       final snapshot = _dapHubSnapshot;
       final picked = await _pickOption('dap / hub', [
         ('view', 'View current config', 'url, agent name, connection state'),
-        ('url', 'Set hub URL', snapshot?.url ?? 'not configured'),
+        ('url', 'Set hub URL', snapshot?.url ?? _notConfiguredLabel),
         ('name', 'Set agent name', snapshot?.name ?? 'not set'),
         (
           'test',
@@ -394,7 +394,7 @@ extension SettingsFlow on AgentCli {
           'Opt out of the hub plugin',
           'writes hub: false to .fah/packages.yaml',
         ),
-        ('done', 'Done', ''),
+        (_menuDoneKey, _menuDoneLabel, ''),
       ]);
       switch (picked) {
         case null:
@@ -593,9 +593,9 @@ extension SettingsFlow on AgentCli {
         for (final rule in current.rules)
           ('rule:${rule.name}', rule.name, _ttsrRuleDescription(rule)),
         ('add', 'Add a rule', 'name, pattern, body, scope'),
-        ('done', 'Done', ''),
+        (_menuDoneKey, _menuDoneLabel, ''),
       ]);
-      if (picked == null || picked == 'done') return;
+      if (picked == null || picked == _menuDoneKey) return;
       if (picked == 'add') {
         await _ttsrAddAction(path);
         continue;
@@ -626,14 +626,16 @@ extension SettingsFlow on AgentCli {
     if (rule == null) return;
     final action = await _pickOption('rule ${rule.name}', [
       (
-        'toggle',
+        _ttsrRuleActionToggle,
         rule.enabled ? 'Disable' : 'Enable',
         'persists and applies ${ttsr == null ? 'at next boot' : 'live'}',
       ),
-      ('delete', 'Delete', 'remove from the section'),
+      (_ttsrRuleActionDelete, 'Delete', 'remove from the section'),
       ('back', 'Back', ''),
     ]);
-    if (action != 'toggle' && action != 'delete') return;
+    if (action != _ttsrRuleActionToggle && action != _ttsrRuleActionDelete) {
+      return;
+    }
     final fresh = await _readTtsrSection(path);
     if (fresh == null) return;
     final target = _ttsrFindRule(fresh.rules, name);
@@ -641,7 +643,7 @@ extension SettingsFlow on AgentCli {
       io.writeln('ttsr: rule "$name" is gone from $path — not saved');
       return;
     }
-    if (action == 'toggle') {
+    if (action == _ttsrRuleActionToggle) {
       await _ttsrToggleRule(path, fresh, target);
     } else {
       await _ttsrDeleteRule(path, fresh, name);
@@ -927,7 +929,7 @@ extension SettingsFlow on AgentCli {
       return '$count rule${count == 1 ? '' : 's'} · live';
     }
     final section = config.ttsr;
-    if (section == null) return 'not configured';
+    if (section == null) return _notConfiguredLabel;
     if (!section.settings.enabled) return 'disabled';
     return 'inactive this session';
   }
@@ -939,7 +941,7 @@ extension SettingsFlow on AgentCli {
     final manager = _mcp.manager;
     final section = manager?.config ?? config.mcpConfig?.config;
     if (section == null || section.servers.isEmpty) {
-      return manager == null ? 'not configured' : '0 servers · live';
+      return manager == null ? _notConfiguredLabel : '0 servers · live';
     }
     var connected = 0;
     for (final state in manager?.states.values ?? const <McpServerState>[]) {
@@ -985,9 +987,9 @@ extension SettingsFlow on AgentCli {
       for (final server in current.servers.values)
         ('server:${server.name}', server.name, _mcpServerDescription(server)),
       ('add', 'Add a server', 'stdio (command) or remote (url)'),
-      ('done', 'Done', ''),
+      (_menuDoneKey, _menuDoneLabel, ''),
     ]);
-    if (picked == null || picked == 'done') return false;
+    if (picked == null || picked == _menuDoneKey) return false;
     if (picked == 'add') {
       await _mcpAddAction(path);
       return true;
@@ -1054,9 +1056,9 @@ extension SettingsFlow on AgentCli {
     (
       'edit',
       'Edit',
-      '${server is McpStdioServerConfig ? 'stdio' : 'remote'} fields',
+      '${server is McpStdioServerConfig ? _mcpKindStdio : _mcpKindRemote} fields',
     ),
-    ('delete', 'Delete', 'remove from the section (confirm)'),
+    (_mcpServerActionDelete, 'Delete', 'remove from the section (confirm)'),
     ('back', 'Back', ''),
   ];
 
@@ -1149,15 +1151,23 @@ extension SettingsFlow on AgentCli {
   /// empty name, or a body the user aborted (reported).
   Future<McpServerConfig?> _mcpPromptNewServer() async {
     final kind = await _pickOption('add server — kind', [
-      ('stdio', 'stdio', 'spawns a local command (process-capable hosts)'),
-      ('remote', 'remote', 'HTTP endpoint (streamable-http or sse)'),
+      (
+        _mcpKindStdio,
+        _mcpKindStdio,
+        'spawns a local command (process-capable hosts)',
+      ),
+      (
+        _mcpKindRemote,
+        _mcpKindRemote,
+        'HTTP endpoint (streamable-http or sse)',
+      ),
     ]);
     if (kind == null) return null;
     final name = (await _askLine('server name: '))?.trim() ?? '';
     if (name.isEmpty) return null;
     return _promptMcpServerBody(
       name,
-      kind == 'stdio'
+      kind == _mcpKindStdio
           ? const McpStdioServerConfig(name: '', command: '')
           : const McpHttpServerConfig(name: '', url: ''),
     );
@@ -1528,7 +1538,7 @@ extension SettingsFlow on AgentCli {
   Future<void> startRedactionFlow() async {
     for (;;) {
       final picked = await _pickOption('redaction', _redactionMenuOptions());
-      if (picked == null || picked == 'done') return;
+      if (picked == null || picked == _menuDoneKey) return;
       await _applyRedactionPick(picked);
     }
   }
@@ -1540,37 +1550,37 @@ extension SettingsFlow on AgentCli {
     switch (picked) {
       case 'enabled':
         await _writeRedactionKey(const [
-          'redact',
+          _redactSectionKey,
           'enabled',
         ], '${!_redactionConfig.enabled}');
       case 'blockMode':
         await _writeRedactionKey(const [
-          'redact',
+          _redactSectionKey,
           'blockMode',
         ], '${!_redactionConfig.blockMode}');
       case 'minEntropy':
         await _askRedactionScalar(const [
-          'redact',
-          'minEntropy',
+          _redactSectionKey,
+          _redactionKeyMinEntropy,
         ], 'min entropy in bits/char');
       case 'minLength':
         await _askRedactionScalar(const [
-          'redact',
-          'minLength',
+          _redactSectionKey,
+          _redactionKeyMinLength,
         ], 'min token length');
       case 'allowlist':
         await _askRedactionList(const [
-          'redact',
-          'allowlist',
+          _redactSectionKey,
+          _redactionKeyAllowlist,
         ], 'allowlist regex(es)');
       case 'toolAllow':
         await _askRedactionList(const [
-          'redact',
-          'toolAllow',
+          _redactSectionKey,
+          _redactionKeyToolAllow,
         ], 'tool allow (only these)');
       case 'toolDeny':
         await _askRedactionList(const [
-          'redact',
+          _redactSectionKey,
           'toolDeny',
         ], 'tool deny (never redacted)');
       case 'layers':
@@ -1586,21 +1596,29 @@ extension SettingsFlow on AgentCli {
     final cfg = _redactionConfig;
     final layers = RedactionLayer.values;
     return [
-      ('enabled', 'Toggle redaction', cfg.enabled ? 'on → off' : 'off → on'),
+      (
+        'enabled',
+        'Toggle redaction',
+        cfg.enabled ? 'on → off' : _toggleDirectionOn,
+      ),
       (
         'blockMode',
         'Toggle block mode',
-        cfg.blockMode ? 'on → off' : 'off → on',
+        cfg.blockMode ? 'on → off' : _toggleDirectionOn,
       ),
-      ('minEntropy', 'Entropy threshold', '${cfg.minEntropy} bits/char'),
-      ('minLength', 'Entropy min length', '${cfg.minLength} chars'),
       (
-        'allowlist',
+        _redactionKeyMinEntropy,
+        'Entropy threshold',
+        '${cfg.minEntropy} bits/char',
+      ),
+      (_redactionKeyMinLength, 'Entropy min length', '${cfg.minLength} chars'),
+      (
+        _redactionKeyAllowlist,
         'Allowlist regexes',
         '${cfg.allowlistRegexes.length} pattern(s)',
       ),
       (
-        'toolAllow',
+        _redactionKeyToolAllow,
         'Tool allow list',
         cfg.toolAllow.isEmpty ? '(all tools)' : cfg.toolAllow.join(', '),
       ),
@@ -1619,7 +1637,7 @@ extension SettingsFlow on AgentCli {
         'Reset stats',
         '${config.redactionPipeline?.stats.total ?? 0} match(es)',
       ),
-      ('done', 'Done', ''),
+      (_menuDoneKey, _menuDoneLabel, ''),
     ];
   }
 
@@ -1647,7 +1665,7 @@ extension SettingsFlow on AgentCli {
   /// into the running pipeline whenever one exists; only the pipeline-less
   /// boot (`redact.enabled: false`) must wait for the next start.
   String _redactionNote() => config.redactionPipeline == null
-      ? applicationNote('redact')
+      ? applicationNote(_redactSectionKey)
       : 'applies live — the running pipeline reloads the saved section';
 
   /// Reload-after-write (E3): what's live is what's on disk — the saved
@@ -1675,14 +1693,14 @@ extension SettingsFlow on AgentCli {
   /// parser would silently fall back to the default, breaking the
   /// round-trip AC).
   Future<void> _askRedactionScalar(List<String> segments, String label) async {
-    final current = segments.last == 'minEntropy'
+    final current = segments.last == _redactionKeyMinEntropy
         ? _redactionConfig.minEntropy
         : _redactionConfig.minLength;
     final answer = await _askLine("$label (empty keeps '$current'): ");
     if (answer == null) return;
     final value = answer.trim();
     if (value.isEmpty) return;
-    final parsed = segments.last == 'minLength'
+    final parsed = segments.last == _redactionKeyMinLength
         ? int.tryParse(value)
         : double.tryParse(value);
     if (parsed == null) {
@@ -1697,8 +1715,8 @@ extension SettingsFlow on AgentCli {
   /// empty answer keeps the current value.
   Future<void> _askRedactionList(List<String> segments, String label) async {
     final current = switch (segments.last) {
-      'allowlist' => _redactionConfig.allowlistRegexes.length,
-      'toolAllow' => _redactionConfig.toolAllow.length,
+      _redactionKeyAllowlist => _redactionConfig.allowlistRegexes.length,
+      _redactionKeyToolAllow => _redactionConfig.toolAllow.length,
       _ => _redactionConfig.toolDeny.length,
     };
     final answer = await _askLine(
@@ -1726,11 +1744,11 @@ extension SettingsFlow on AgentCli {
       final picked = await _pickOption('redaction layers', [
         for (final layer in RedactionLayer.values)
           (layer.name, layer.name, cfg.isLayerEnabled(layer) ? 'on' : 'off'),
-        ('done', 'Done', ''),
+        (_menuDoneKey, _menuDoneLabel, ''),
       ]);
-      if (picked == null || picked == 'done') return;
+      if (picked == null || picked == _menuDoneKey) return;
       await _writeRedactionKey([
-        'redact',
+        _redactSectionKey,
         'layers',
         picked,
       ], '${!cfg.isLayerEnabled(RedactionLayer.values.byName(picked))}');
@@ -1770,8 +1788,8 @@ extension SettingsFlow on AgentCli {
   /// what's live is what's on disk). Loops until cancelled or `done`.
   Future<void> startImagesFlow() async {
     for (;;) {
-      final picked = await _pickOption('images', _imagesMenuOptions());
-      if (picked == null || picked == 'done') return;
+      final picked = await _pickOption(_imagesSectionKey, _imagesMenuOptions());
+      if (picked == null || picked == _menuDoneKey) return;
       await _applyImagesPick(picked);
     }
   }
@@ -1783,7 +1801,7 @@ extension SettingsFlow on AgentCli {
     switch (picked) {
       case 'registry':
         await _writeImagesKey(const [
-          'images',
+          _imagesSectionKey,
           'registry',
         ], '${!imageRegistryConfig.enabled}');
       case 'maxPerRequest':
@@ -1801,7 +1819,9 @@ extension SettingsFlow on AgentCli {
       (
         'registry',
         'Toggle registry (kill switch)',
-        cfg.enabled ? 'on → off (byte-identical legacy requests)' : 'off → on',
+        cfg.enabled
+            ? 'on → off (byte-identical legacy requests)'
+            : _toggleDirectionOn,
       ),
       (
         'maxPerRequest',
@@ -1814,7 +1834,7 @@ extension SettingsFlow on AgentCli {
         '~${(cfg.maxBytesPerRequest / (1024 * 1024)).toStringAsFixed(0)}MB '
             'of base64 per request',
       ),
-      ('done', 'Done', ''),
+      (_menuDoneKey, _menuDoneLabel, ''),
     ];
   }
 
@@ -1842,8 +1862,8 @@ extension SettingsFlow on AgentCli {
   /// — what's live is what's on disk). Loops until cancelled or `done`.
   Future<void> startPowerFlow() async {
     for (;;) {
-      final picked = await _pickOption('power', _powerMenuOptions());
-      if (picked == null || picked == 'done') return;
+      final picked = await _pickOption(_powerSectionKey, _powerMenuOptions());
+      if (picked == null || picked == _menuDoneKey) return;
       await _applyPowerPick(picked);
     }
   }
@@ -1877,7 +1897,7 @@ extension SettingsFlow on AgentCli {
         '${hold.value} → '
             '${hold == PowerAssertionHold.perRun ? 'session' : 'per-run'}',
       ),
-      ('done', 'Done', ''),
+      (_menuDoneKey, _menuDoneLabel, ''),
     ];
   }
 
@@ -1895,7 +1915,7 @@ extension SettingsFlow on AgentCli {
     if (answer == null) return;
     final value = answer.trim();
     if (value.isEmpty) return;
-    await _writePowerKey(const ['power', 'sleepPrevention'], value);
+    await _writePowerKey(const [_powerSectionKey, 'sleepPrevention'], value);
   }
 
   /// The hold toggle: per-run ↔ session, one keypress. The current value
@@ -1906,7 +1926,7 @@ extension SettingsFlow on AgentCli {
     final next = current == PowerAssertionHold.perRun
         ? PowerAssertionHold.session
         : PowerAssertionHold.perRun;
-    await _writePowerKey(const ['power', 'hold'], next.value);
+    await _writePowerKey(const [_powerSectionKey, 'hold'], next.value);
   }
 
   /// The shared write path: a USER-file upsert of [segments] → [value]
@@ -1977,7 +1997,7 @@ extension SettingsFlow on AgentCli {
     if (answer == null) return;
     final value = answer.trim();
     if (value.isEmpty) return;
-    await _writeImagesKey(const ['images', 'maxPerRequest'], value);
+    await _writeImagesKey(const [_imagesSectionKey, 'maxPerRequest'], value);
   }
 
   /// The per-request image byte budget prompt (issue #1916): a plain
@@ -1991,7 +2011,10 @@ extension SettingsFlow on AgentCli {
     if (answer == null) return;
     final value = answer.trim();
     if (value.isEmpty) return;
-    await _writeImagesKey(const ['images', 'maxBytesPerRequest'], value);
+    await _writeImagesKey(const [
+      _imagesSectionKey,
+      'maxBytesPerRequest',
+    ], value);
   }
 
   /// The shared write path: a USER-file upsert of [segments] → [value]
@@ -2070,7 +2093,7 @@ extension SettingsFlow on AgentCli {
   Future<void> startResilienceFlow() async {
     for (;;) {
       final picked = await _pickOption('resilience', _resilienceMenuOptions());
-      if (picked == null || picked == 'done') return;
+      if (picked == null || picked == _menuDoneKey) return;
       await _applyResiliencePick(picked);
     }
   }
@@ -2150,7 +2173,7 @@ extension SettingsFlow on AgentCli {
         'Key cooldown',
         '${retry.keyBackoff.inMilliseconds}ms (${inherit(retry.keyBackoff.inMilliseconds, defaults.keyBackoff.inMilliseconds)})',
       ),
-      ('done', 'Done', ''),
+      (_menuDoneKey, _menuDoneLabel, ''),
     ];
   }
 
@@ -2375,7 +2398,7 @@ extension SettingsFlow on AgentCli {
 
   /// The settings-hub row and `/settings` summary label: the resolved hub
   /// url, or the unconfigured note when no snapshot exists.
-  String _dapHubStatusLabel() => _dapHubSnapshot?.url ?? 'not configured';
+  String _dapHubStatusLabel() => _dapHubSnapshot?.url ?? _notConfiguredLabel;
 
   /// The flow's "view" action: the resolved hub url, the agent name, and
   /// the live connection state.
@@ -2424,7 +2447,8 @@ extension SettingsFlow on AgentCli {
       return;
     }
     final current = isUrl ? _dapHubSnapshot?.url : _dapHubSnapshot?.name;
-    final fallback = current ?? (isUrl ? 'not configured' : 'hostname default');
+    final fallback =
+        current ?? (isUrl ? _notConfiguredLabel : 'hostname default');
     final answer = await _askLine(
       "${isUrl ? 'hub url' : 'agent name'} (empty keeps '$fallback'): ",
     );
@@ -2560,7 +2584,7 @@ extension SettingsFlow on AgentCli {
         description: _resilienceStatusLabel(),
       ),
       MenuItem(
-        key: 'redact',
+        key: _redactSectionKey,
         label: 'Redaction',
         description: _redactionStatusLabel(),
       ),
@@ -2585,11 +2609,15 @@ extension SettingsFlow on AgentCli {
         description: _loadModeStatusLabel(),
       ),
       MenuItem(
-        key: 'images',
+        key: _imagesSectionKey,
         label: 'Images',
         description: _imagesStatusLabel(),
       ),
-      MenuItem(key: 'power', label: 'Power', description: _powerStatusLabel()),
+      MenuItem(
+        key: _powerSectionKey,
+        label: 'Power',
+        description: _powerStatusLabel(),
+      ),
       MenuItem(
         key: 'mcp',
         label: 'MCP servers',
@@ -2710,7 +2738,7 @@ extension SettingsFlow on AgentCli {
         'Load mode (tool schema preset)',
         _loadModeMenuOptions(),
       );
-      if (picked == null || picked == 'done') return;
+      if (picked == null || picked == _menuDoneKey) return;
       await _applyLoadModePick(picked);
     }
   }
@@ -2719,7 +2747,7 @@ extension SettingsFlow on AgentCli {
   List<FlowOption> _loadModeMenuOptions() => [
     for (final mode in AgentLoadMode.values)
       (mode.label, mode.label, mode == _liveLoadMode ? 'current' : ''),
-    ('done', 'Done', ''),
+    (_menuDoneKey, _menuDoneLabel, ''),
   ];
 
   /// Dispatches one [startLoadModeFlow] menu pick: a mode pick upserts

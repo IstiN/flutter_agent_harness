@@ -36,6 +36,20 @@ chmod +x "$INSTALL_DIR/fa"
 if [ "$(uname -s)" = "Darwin" ] && command -v codesign >/dev/null 2>&1; then
   codesign -s - -f "$INSTALL_DIR/fa" >/dev/null 2>&1 || true
 fi
+# gh-2040: build + ship the native fa-clip pasteboard helper beside the
+# binary (the CLI resolves it relative to the fa executable, never PATH).
+# A skipped build (non-macOS host or no swiftc) degrades to the named
+# pasteboard-unavailable path — never a failed install.
+FA_CLIP_HELPER="$INSTALL_DIR/fa-clip"
+if [ "$(uname -s)" = "Darwin" ]; then
+  if bash "$REPO_ROOT/scripts/build_fa_clip.sh" "$FA_CLIP_HELPER"; then
+    if command -v codesign >/dev/null 2>&1; then
+      codesign -s - -f "$FA_CLIP_HELPER" >/dev/null 2>&1 || true
+    fi
+  else
+    echo "⚠  fa-clip not built — image paste will report pasteboard-unavailable until a build with swiftc is installed (gh-2040)" >&2
+  fi
+fi
 cp "$BUNDLE_DIR/version.txt" "$INSTALL_DIR/version.txt"
 # gh-1574: the AOT binary's native-assets resolver looks for the bundle
 # libs in <exe_dir>/../lib — with the exe at $INSTALL_DIR/fa that is

@@ -18,11 +18,7 @@ import 'dart:math';
 import 'package:fa_ui/fa_ui.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart'
-    show
-        KaomojiFace,
-        KaomojiFacePicker,
-        MemoryExecutionEnv,
-        kKaomojiSwapPeriod;
+    show KaomojiFace, KaomojiFacePicker, MemoryExecutionEnv, kKaomojiSwapPeriod;
 import 'package:flutter_test/flutter_test.dart';
 
 import 'fake_chat_service.dart';
@@ -44,9 +40,13 @@ KaomojiFace replayFace(int seed, int swaps) {
 /// `find.byType(SizedBox)` matcher threw `Too many elements` (PR #1419
 /// re-review round 2). The key is ours alone and version-stable.
 KaomojiFace _shownFace(WidgetTester tester) =>
-    (tester.widget(find.byWidgetPredicate(
-      (w) => w.key is ValueKey<KaomojiFace>,
-    )).key! as ValueKey<KaomojiFace>).value;
+    (tester
+                .widget(
+                  find.byWidgetPredicate((w) => w.key is ValueKey<KaomojiFace>),
+                )
+                .key!
+            as ValueKey<KaomojiFace>)
+        .value;
 
 Widget _tileWrap(Widget child) {
   return FaUiThemeProvider(
@@ -90,11 +90,11 @@ class _TranscriptService extends FakeChatService {
 /// [KaomojiSwapper.active] flag (exactly one live), and only the live
 /// face ever moves.
 List<(bool, KaomojiFace)> _swapperStates(WidgetTester tester) => [
-      for (final swapper in tester.widgetList<KaomojiSwapper>(
-        find.byType(KaomojiSwapper),
-      ))
-        (swapper.active, _faceOf(tester, swapper)),
-    ];
+  for (final swapper in tester.widgetList<KaomojiSwapper>(
+    find.byType(KaomojiSwapper),
+  ))
+    (swapper.active, _faceOf(tester, swapper)),
+];
 
 /// The face a specific swapper's tile shows, through the keyed box its
 /// builder mounts ([_shownFace]'s matcher, scoped to one swapper).
@@ -109,8 +109,9 @@ KaomojiFace _faceOf(WidgetTester tester, KaomojiSwapper swapper) {
 }
 
 void main() {
-  testWidgets('KaomojiSwapper: random swap exactly on the ~0.9 s cadence',
-      (tester) async {
+  testWidgets('KaomojiSwapper: random swap exactly on the ~0.9 s cadence', (
+    tester,
+  ) async {
     await tester.pumpWidget(
       Directionality(
         textDirection: TextDirection.ltr,
@@ -135,8 +136,9 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
-  testWidgets('KaomojiSwapper: active=false freezes the face (AC4)',
-      (tester) async {
+  testWidgets('KaomojiSwapper: active=false freezes the face (AC4)', (
+    tester,
+  ) async {
     await tester.pumpWidget(
       Directionality(
         textDirection: TextDirection.ltr,
@@ -157,16 +159,17 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
-  testWidgets('KaomojiSwapper: going inactive mid-run stops the swaps',
-      (tester) async {
+  testWidgets('KaomojiSwapper: going inactive mid-run stops the swaps', (
+    tester,
+  ) async {
     Widget tree({required bool active}) => Directionality(
-          textDirection: TextDirection.ltr,
-          child: KaomojiSwapper(
-            active: active,
-            random: Random(7),
-            builder: (_, face) => Text(face.text),
-          ),
-        );
+      textDirection: TextDirection.ltr,
+      child: KaomojiSwapper(
+        active: active,
+        random: Random(7),
+        builder: (_, face) => Text(face.text),
+      ),
+    );
     await tester.pumpWidget(tree(active: true));
     await tester.pump(kKaomojiSwapPeriod);
     final afterFirstSwap = tester.widget<Text>(find.byType(Text)).data!;
@@ -198,13 +201,17 @@ void main() {
     expect(tester.takeException(), isNull);
     final frozen = _shownFace(tester);
     await tester.pump(const Duration(seconds: 2));
-    expect(_shownFace(tester), same(frozen),
-        reason: 'a finished thinking note keeps its frozen face');
+    expect(
+      _shownFace(tester),
+      same(frozen),
+      reason: 'a finished thinking note keeps its frozen face',
+    );
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
-  testWidgets('thinkingLive: the tile icon swaps on the ~0.9 s cadence',
-      (tester) async {
+  testWidgets('thinkingLive: the tile icon swaps on the ~0.9 s cadence', (
+    tester,
+  ) async {
     await tester.pumpWidget(
       _tileWrap(
         ChatMessageTile(
@@ -216,11 +223,17 @@ void main() {
     );
     final before = _shownFace(tester);
     await tester.pump(kKaomojiSwapPeriod - const Duration(milliseconds: 1));
-    expect(_shownFace(tester), same(before),
-        reason: 'no swap before the cadence boundary');
+    expect(
+      _shownFace(tester),
+      same(before),
+      reason: 'no swap before the cadence boundary',
+    );
     await tester.pump(const Duration(milliseconds: 1));
-    expect(_shownFace(tester), isNot(same(before)),
-        reason: 'the live thinking block animates');
+    expect(
+      _shownFace(tester),
+      isNot(same(before)),
+      reason: 'the live thinking block animates',
+    );
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
@@ -236,8 +249,7 @@ void main() {
   });
 
   testWidgets('status row (web TUI Working…): two-tone face spans, '
-      'random swap on the shared cadence, gone with the phase',
-      (tester) async {
+      'random swap on the shared cadence, gone with the phase', (tester) async {
     final service = _PhaseService()
       ..rows.add(FaChatMessage(role: 'user', content: 'go'))
       ..streaming = true
@@ -251,14 +263,16 @@ void main() {
 
     const eye = Color(0xFF60D0D0);
     const mouth = Color(0xFF70A0E0);
-    TextSpan richRoot() => tester
-        .widget<RichText>(
-          find.descendant(
-            of: find.byType(KaomojiFaceText),
-            matching: find.byType(RichText),
-          ),
-        )
-        .text as TextSpan;
+    TextSpan richRoot() =>
+        tester
+                .widget<RichText>(
+                  find.descendant(
+                    of: find.byType(KaomojiFaceText),
+                    matching: find.byType(RichText),
+                  ),
+                )
+                .text
+            as TextSpan;
 
     // Text.rich does NOT mount the given span as the RichText root — it
     // nests it under a wrapper span (text: null), so the run spans sit
@@ -269,9 +283,7 @@ void main() {
         span as TextSpan,
     ];
     String shown() => [for (final span in runs()) span.text!].join();
-    Set<Color> tones() => {
-      for (final span in runs()) span.style!.color!,
-    };
+    Set<Color> tones() => {for (final span in runs()) span.style!.color!};
 
     // First tick: the run opens on a random face.
     await tester.pump(const Duration(milliseconds: 100));
@@ -364,10 +376,16 @@ void main() {
       hasLength(1),
       reason: 'the gate stays single-live across the swap boundary',
     );
-    expect(after.firstWhere((s) => s.$1).$2, isNot(same(liveBefore)),
-        reason: 'the LIVE thinking block animates');
-    expect(after.firstWhere((s) => !s.$1).$2, same(frozenBefore),
-        reason: 'the finished thinking note keeps its frozen face');
+    expect(
+      after.firstWhere((s) => s.$1).$2,
+      isNot(same(liveBefore)),
+      reason: 'the LIVE thinking block animates',
+    );
+    expect(
+      after.firstWhere((s) => !s.$1).$2,
+      same(frozenBefore),
+      reason: 'the finished thinking note keeps its frozen face',
+    );
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
@@ -376,8 +394,8 @@ void main() {
     const blank = KaomojiFace(
       'test-blank',
       [(' ', false)],
-      [(' ', false)],
-      '',
+      fallbackRuns: [(' ', false)],
+      svg: '',
     );
     await tester.pumpWidget(
       Directionality(

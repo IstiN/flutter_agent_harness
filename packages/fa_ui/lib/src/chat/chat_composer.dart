@@ -55,6 +55,50 @@ final class FaChatMentionOption {
 typedef FaChatMentionOptionsBuilder =
     List<FaChatMentionOption> Function(String query);
 
+/// The pill-shaped multiline input decoration shared by every chat
+/// composer (the channel composer included): 16×8 inner air, borderless
+/// 24-radius capsule, filled.
+InputDecoration faComposerFieldDecoration(String hintText) {
+  return InputDecoration(
+    hintText: hintText,
+    contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+    border: const OutlineInputBorder(
+      borderRadius: BorderRadius.all(Radius.circular(24)),
+      borderSide: BorderSide.none,
+    ),
+    enabledBorder: const OutlineInputBorder(
+      borderRadius: BorderRadius.all(Radius.circular(24)),
+      borderSide: BorderSide.none,
+    ),
+    focusedBorder: const OutlineInputBorder(
+      borderRadius: BorderRadius.all(Radius.circular(24)),
+      borderSide: BorderSide.none,
+    ),
+    filled: true,
+  );
+}
+
+/// The circular send/stop shell: light theme a solid indigo circle, dark
+/// theme the brand gradient. [child] is the button itself.
+Widget faSendBubbleShell(
+  BuildContext context,
+  FahColors palette,
+  Widget child,
+) {
+  return Container(
+    decoration: BoxDecoration(
+      color: Theme.of(context).brightness == Brightness.light
+          ? palette.indigo
+          : null,
+      gradient: Theme.of(context).brightness == Brightness.dark
+          ? palette.brandGradient
+          : null,
+      shape: BoxShape.circle,
+    ),
+    child: child,
+  );
+}
+
 /// Backend-agnostic: sends through [FaChatService], picks files/images
 /// through [FaChatHost] hooks (or the constructor overrides, which tests
 /// inject), and reports analytics through [FaChatHost.track]. All strings
@@ -1328,26 +1372,28 @@ class ChatComposerState extends State<ChatComposer>
         controller: _textController,
         focusNode: _focusNode,
         style: TextStyle(color: palette.text, fontSize: 14, height: 1.4),
-        decoration: InputDecoration(
-          // The host-localized hint (the session surface scopes
-          // FaChatStrings; channel chats override it with "Message
-          // <channel>").
-          hintText: FaChatStrings.of(context).chatInputHint,
-          contentPadding: const EdgeInsets.fromLTRB(4, 8, 10, 8),
-          isDense: true,
-          // The outer FaSurface is the composer's ONLY filled, bordered
-          // surface. A nested InputDecorator fill/outline produced doubled
-          // horizontal rules and a second right edge with the real glass
-          // renderer; InputBorder.none keeps editing inside that one clip.
-          filled: false,
-          fillColor: Colors.transparent,
-          border: InputBorder.none,
-          enabledBorder: InputBorder.none,
-          focusedBorder: InputBorder.none,
-          disabledBorder: InputBorder.none,
-          errorBorder: InputBorder.none,
-          focusedErrorBorder: InputBorder.none,
-        ),
+        decoration:
+            // The host-localized hint (the session surface scopes
+            // FaChatStrings; channel chats override it with "Message
+            // <channel>").
+            faComposerFieldDecoration(
+              FaChatStrings.of(context).chatInputHint,
+            ).copyWith(
+              contentPadding: const EdgeInsets.fromLTRB(4, 8, 10, 8),
+              isDense: true,
+              // The outer FaSurface is the composer's ONLY filled, bordered
+              // surface. A nested InputDecorator fill/outline produced doubled
+              // horizontal rules and a second right edge with the real glass
+              // renderer; InputBorder.none keeps editing inside that one clip.
+              filled: false,
+              fillColor: Colors.transparent,
+              border: InputBorder.none,
+              enabledBorder: InputBorder.none,
+              focusedBorder: InputBorder.none,
+              disabledBorder: InputBorder.none,
+              errorBorder: InputBorder.none,
+              focusedErrorBorder: InputBorder.none,
+            ),
         // Multiline: Shift+Enter (hardware) or the touch return key
         // inserts a line break; plain Enter sends (_handleComposerKey).
         // The field grows 1→6 lines and then scrolls internally.

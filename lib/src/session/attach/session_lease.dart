@@ -237,9 +237,8 @@ final class FileSessionLeaseStore {
       final decoded = jsonDecode(raw);
       if (decoded is! Map<String, dynamic>) return LeaseInspect.free();
       lease = SessionLease.fromJson(decoded);
-    } on FormatException {
-      return LeaseInspect.free();
     } on Object {
+      // Malformed JSON or anything else — a corrupt sidecar is no lease.
       return LeaseInspect.free();
     }
     // Staleness on the sidecar's mtime vs the reader clock (E1): the

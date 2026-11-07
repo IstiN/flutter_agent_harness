@@ -54,14 +54,14 @@ List<SessionGroup> groupSessionsByParent(List<SessionMetadata> sessions) {
     if (!isSubagentSession(session)) continue;
     final parentId = subagentParentId(session);
     final parent = parentId == null ? null : byId[parentId];
-    if (parent == null || isSubagentSession(parent)) {
+    if (parentId == null || parent == null || isSubagentSession(parent)) {
       // Empty/missing parent id, parent absent from this list, or the
       // parent is itself a child (depth must never exceed one): render
       // top-level with a subagent marker — a subagent row can never
       // vanish from a tree listing.
       orphans.add(session);
     } else {
-      childrenByParent.putIfAbsent(parentId!, () => []).add(session);
+      childrenByParent.putIfAbsent(parentId, () => []).add(session);
     }
   }
   return [

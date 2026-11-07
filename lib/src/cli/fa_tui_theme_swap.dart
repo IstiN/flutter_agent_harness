@@ -17,7 +17,7 @@ extension FaTuiThemeSwap on FaTuiModel {
   /// diff then repaints every content row with the new colors. Frame-atomic
   /// in practice: palette reads happen between frames on the single update
   /// loop, so no torn half-themed frame is emitted.
-  (Model, Cmd?) _handleThemeSwapped() {
+  UiUpdate _handleThemeSwapped() {
     final next = copyWith()
       .._wrapCache = _WrapCache()
       .._stickyFmtRows = const []
@@ -32,7 +32,7 @@ extension FaTuiThemeSwap on FaTuiModel {
   /// `tui.theme`), the reply re-resolves the palette — a light terminal
   /// upgrades the boot default to `ohmypi-light` right after the first
   /// frame; dark keeps it (no swap, no repaint).
-  (Model, Cmd?) _handleBackgroundProbe(BackgroundColorMsg msg) {
+  UiUpdate _handleBackgroundProbe(BackgroundColorMsg msg) {
     final controller = FaThemeController.instance;
     controller.measuredTerminalBg = RgbColor(
       (msg.rgb >> 16) & 0xff,

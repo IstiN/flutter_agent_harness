@@ -2,8 +2,14 @@
 // Use of this source code is governed by a MIT license that can be found
 // in the LICENSE file.
 
+import 'dart:convert';
+
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart' as http_testing;
 import 'package:test/test.dart';
+
+final _utc = DateTime.utc(2026);
 
 /// Regression pin for the Phase 1 un-hide: the ChatGPT Codex provider must
 /// stay visible across the pickers, settings screens, and `enabledProviders`
@@ -207,6 +213,89 @@ void main() {
       final inherited = buildCliDefaultModel('kimi', modelId: 'k3-256k');
       expect(inherited.contextWindow, 200000);
       expect(inherited.maxTokens, 16384);
+    });
+  });
+
+  group('providerStreamFunction cache routing (issue #1992 CRAP tier)', () {
+    // Minimal openai-completions SSE: one content delta, then stop.
+    const sse =
+        'data: {"id":"c1","choices":[{"delta":{"content":"ack"}}]}\n\n'
+        'data: {"id":"c1","choices":[{"delta":{},"finish_reason":"stop"}]}\n\n'
+        'data: [DONE]\n\n';
+
+    const model = Model(
+      id: 'gpt-test',
+      api: 'openai-completions',
+      provider: 'openai',
+      baseUrl: 'https://api.openai.com/v1',
+      contextWindow: 100000,
+      maxTokens: 4096,
+    );
+
+    /// Drives the factory's StreamFunction against a body-capturing mock
+    /// and returns the decoded chat-completions request body. [routing]
+    /// wraps the call in a [StreamCacheRouting] override zone (the
+    /// compaction-bypass path); without it the factory defaults apply.
+    Future<Map<String, dynamic>> requestBody({
+      String? Function()? sessionId,
+      ({String? sessionId, String? cacheRetention})? routing,
+    }) async {
+      final captured = <String>[];
+      final client = http_testing.MockClient.streaming((request, body) async {
+        captured.add(utf8.decode(await body.toBytes()));
+        return http.StreamedResponse(
+          Stream.value(utf8.encode(sse)),
+          200,
+          headers: {'content-type': 'text/event-stream'},
+        );
+      });
+      final streamFunction = providerStreamFunction(
+        'openai-completions',
+        'key',
+        sessionId: sessionId,
+        httpClient: client,
+      );
+      AssistantMessageEventStream invoke() => streamFunction(
+        model,
+        Context(messages: [UserMessage.text('hi', timestamp: _utc)]),
+      );
+      final events =
+          await (routing == null
+                  ? invoke()
+                  : StreamCacheRouting.runWith(
+                      invoke,
+                      sessionId: routing.sessionId,
+                      cacheRetention: routing.cacheRetention,
+                    ))
+              .toList();
+      expect(
+        events.whereType<ErrorEvent>(),
+        isEmpty,
+        reason: 'the scripted stream must complete cleanly',
+      );
+      expect(captured, hasLength(1));
+      return jsonDecode(captured.single) as Map<String, dynamic>;
+    }
+
+    test('an unknown kind is rejected at the factory', () {
+      expect(
+        () => providerStreamFunction('bogus', 'key'),
+        throwsA(isA<ConfigException>()),
+      );
+    });
+
+    test('the factory sessionId rides the wire as prompt_cache_key', () async {
+      final body = await requestBody(sessionId: () => 'sess-factory');
+      expect(body['prompt_cache_key'], 'sess-factory');
+    });
+
+    test('an active StreamCacheRouting override wins per call', () async {
+      final body = await requestBody(
+        sessionId: () => 'sess-factory',
+        routing: (sessionId: 'sess-route', cacheRetention: 'long'),
+      );
+      expect(body['prompt_cache_key'], 'sess-route');
+      expect(body['prompt_cache_retention'], '24h');
     });
   });
 }

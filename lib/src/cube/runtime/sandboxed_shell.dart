@@ -291,21 +291,19 @@ final class SandboxedShell implements Shell {
       return;
     }
     final blocked = _kernel?.blockedNote;
-    if (blocked != null) {
-      if (spec.allowDegrade) {
-        // The explicit escape hatch: the staging location cannot be
-        // trusted, so kernel mode is undeliverable — degrade instead of
-        // hard-locking the spec (same contract as the unavailable
-        // backend above).
-        _kernel = null;
-        onDegrade?.call(
-          'fa_cube[${spec.name}]: kernel backend $blocked, '
-          'allowDegrade set — running in policy mode',
-        );
-      }
-      // Without the opt-in the per-exec path fail-closes with the
-      // remediation in the note (see [_KernelRun.stageVerified]).
+    // The explicit escape hatch: the staging location cannot be
+    // trusted, so kernel mode is undeliverable — degrade instead of
+    // hard-locking the spec (same contract as the unavailable
+    // backend above).
+    if (blocked != null && spec.allowDegrade) {
+      _kernel = null;
+      onDegrade?.call(
+        'fa_cube[${spec.name}]: kernel backend $blocked, '
+        'allowDegrade set — running in policy mode',
+      );
     }
+    // Without the opt-in the per-exec path fail-closes with the
+    // remediation in the note (see [_KernelRun.stageVerified]).
   }
 
   /// Leaves sandbox mode: every command is forwarded untouched.

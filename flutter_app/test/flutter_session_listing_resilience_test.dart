@@ -80,8 +80,7 @@ class _BrokenIoFs implements FileSystem {
   Future<Result<FileInfo, FileError>> fileInfo(String path) =>
       _delegate.fileInfo(path);
   @override
-  Future<Result<bool, FileError>> exists(String path) =>
-      _delegate.exists(path);
+  Future<Result<bool, FileError>> exists(String path) => _delegate.exists(path);
   @override
   Future<Result<void, FileError>> createDir(
     String path, {
@@ -111,39 +110,40 @@ void main() {
     await tmp.delete(recursive: true);
   });
 
-  test('an unreadable session file degrades the listing, not vanishes it',
-      () async {
-    final repo = JsonlSessionRepo(fs: env, sessionsRoot: sessionsRoot);
-    final healthy = await repo.create(
-      const JsonlSessionCreateOptions(id: 'healthy', cwd: '/work'),
-    );
-    await healthy.appendMessage(UserMessage.text('still visible'));
-    final broken = await repo.create(
-      const JsonlSessionCreateOptions(id: 'broken', cwd: '/work'),
-    );
-    final brokenPath = (await broken.getMetadata()).path;
+  test(
+    'an unreadable session file degrades the listing, not vanishes it',
+    () async {
+      final repo = JsonlSessionRepo(fs: env, sessionsRoot: sessionsRoot);
+      final healthy = await repo.create(
+        const JsonlSessionCreateOptions(id: 'healthy', cwd: '/work'),
+      );
+      await healthy.appendMessage(UserMessage.text('still visible'));
+      final broken = await repo.create(
+        const JsonlSessionCreateOptions(id: 'broken', cwd: '/work'),
+      );
+      final brokenPath = (await broken.getMetadata()).path;
 
-    final brokenFs = _BrokenIoFs(env)..unreadableFiles.add(brokenPath);
-    final manager = FlutterSessionManager(
-      env: env,
-      sessionsRoot: sessionsRoot,
-      includeSharedSessionRoots: false,
-      repo: JsonlSessionRepo(fs: brokenFs, sessionsRoot: sessionsRoot),
-    );
+      final brokenFs = _BrokenIoFs(env)..unreadableFiles.add(brokenPath);
+      final manager = FlutterSessionManager(
+        env: env,
+        sessionsRoot: sessionsRoot,
+        includeSharedSessionRoots: false,
+        repo: JsonlSessionRepo(fs: brokenFs, sessionsRoot: sessionsRoot),
+      );
 
-    // The failure mode that emptied the sidebar: one bad header read
-    // used to throw out of the whole listing (swallowed into const []).
-    final listed = await manager.listPersistedSessions();
-    expect(listed.map((m) => m.id), ['healthy']);
-  });
+      // The failure mode that emptied the sidebar: one bad header read
+      // used to throw out of the whole listing (swallowed into const []).
+      final listed = await manager.listPersistedSessions();
+      expect(listed.map((m) => m.id), ['healthy']);
+    },
+  );
 
   test('an unlistable session directory degrades the listing, not vanishes '
       'it', () async {
     final repo = JsonlSessionRepo(fs: env, sessionsRoot: sessionsRoot);
     await repo.create(const JsonlSessionCreateOptions(id: 'gone', cwd: '/a'));
     await repo.create(const JsonlSessionCreateOptions(id: 'kept', cwd: '/b'));
-    final goneDir = (await repo
-        .list())
+    final goneDir = (await repo.list())
         .singleWhere((m) => m.id == 'gone')
         .path
         .split('/')
@@ -151,7 +151,8 @@ void main() {
         .skip(1)
         .first;
 
-    final brokenFs = _BrokenIoFs(env)..unlistableDirs.add('$sessionsRoot/$goneDir');
+    final brokenFs = _BrokenIoFs(env)
+      ..unlistableDirs.add('$sessionsRoot/$goneDir');
     final manager = FlutterSessionManager(
       env: env,
       sessionsRoot: sessionsRoot,
@@ -163,44 +164,41 @@ void main() {
     expect(listed.map((m) => m.id), ['kept']);
   });
 
-  test('the chat-list adapter still projects the surviving local rows',
-      () async {
-    final repo = JsonlSessionRepo(fs: env, sessionsRoot: sessionsRoot);
-    final healthy = await repo.create(
-      const JsonlSessionCreateOptions(id: 'healthy', cwd: '/work'),
-    );
-    await healthy.appendMessage(UserMessage.text('row preview'));
-    final broken = await repo.create(
-      const JsonlSessionCreateOptions(id: 'broken', cwd: '/work'),
-    );
-    final brokenPath = (await broken.getMetadata()).path;
+  test(
+    'the chat-list adapter still projects the surviving local rows',
+    () async {
+      final repo = JsonlSessionRepo(fs: env, sessionsRoot: sessionsRoot);
+      final healthy = await repo.create(
+        const JsonlSessionCreateOptions(id: 'healthy', cwd: '/work'),
+      );
+      await healthy.appendMessage(UserMessage.text('row preview'));
+      final broken = await repo.create(
+        const JsonlSessionCreateOptions(id: 'broken', cwd: '/work'),
+      );
+      final brokenPath = (await broken.getMetadata()).path;
 
-    final brokenFs = _BrokenIoFs(env)..unreadableFiles.add(brokenPath);
-    final manager = FlutterSessionManager(
-      env: env,
-      sessionsRoot: sessionsRoot,
-      includeSharedSessionRoots: false,
-      repo: JsonlSessionRepo(fs: brokenFs, sessionsRoot: sessionsRoot),
-    );
-    final adapter = LocalChatListAdapter(
-      manager: manager,
-      titleBuilder: (id, createdAt, isSubagent) => id,
-    );
-    final entries = await adapter.load();
+      final brokenFs = _BrokenIoFs(env)..unreadableFiles.add(brokenPath);
+      final manager = FlutterSessionManager(
+        env: env,
+        sessionsRoot: sessionsRoot,
+        includeSharedSessionRoots: false,
+        repo: JsonlSessionRepo(fs: brokenFs, sessionsRoot: sessionsRoot),
+      );
+      final adapter = LocalChatListAdapter(
+        manager: manager,
+        titleBuilder: (id, createdAt, isSubagent) => id,
+      );
+      final entries = await adapter.load();
 
-    expect(entries.map((entry) => entry.id.value), contains('healthy'));
-    expect(entries.map((entry) => entry.id.value), isNot(contains('broken')));
-    // Previews ride the lazy background fill (issue #2053) — wait for it
-    // to land, then assert the real transcript tail.
-    String? healthyPreview = entries
-        .singleWhere((entry) => entry.id.value == 'healthy')
-        .preview;
-    for (var i = 0; i < 200 && healthyPreview == null; i++) {
-      await Future<void>.delayed(const Duration(milliseconds: 1));
-      healthyPreview = (await adapter.load())
+      expect(entries.map((entry) => entry.id.value), contains('healthy'));
+      expect(entries.map((entry) => entry.id.value), isNot(contains('broken')));
+      // Previews ride the viewport-triggered lazy fill (issue #2053). Warm
+      // the visible row through the adapter's public seam, then re-project.
+      await adapter.warmVisible(const ['healthy']);
+      final healthyPreview = (await adapter.load())
           .singleWhere((entry) => entry.id.value == 'healthy')
           .preview;
-    }
-    expect(healthyPreview, 'row preview');
-  });
+      expect(healthyPreview, 'row preview');
+    },
+  );
 }

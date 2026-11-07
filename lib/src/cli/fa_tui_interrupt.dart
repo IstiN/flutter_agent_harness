@@ -7,7 +7,7 @@ part of 'fa_tui.dart';
 extension FaTuiModelInterrupt on FaTuiModel {
   /// Normal-mode interrupt keys (ctrl+c double-press, esc aborts the run);
   /// null when the key belongs to another cluster.
-  (Model, Cmd?)? _handleInterruptKeys(KeyMsg msg) {
+  UiUpdate? _handleInterruptKeys(KeyMsg msg) {
     switch (msg.key) {
       case 'ctrl+c':
         return _handleCtrlCPress();
@@ -34,7 +34,7 @@ extension FaTuiModelInterrupt on FaTuiModel {
   /// Press 1 aborts the in-flight run (bounded downstream), clears the
   /// composer when idle, and arms the footer hint; press 2 within the
   /// window runs the SIGINT-parity exit (resume hint, 130).
-  (Model, Cmd?) _handleCtrlCPress() {
+  UiUpdate _handleCtrlCPress() {
     callbacks.onInterrupt?.call();
     if (sigintPolicy.press(headless: false) == SigintAction.exitInteractive) {
       final exit = callbacks.onCtrlCExit;
@@ -74,7 +74,7 @@ extension FaTuiModelInterrupt on FaTuiModel {
 
   /// SIGINT press 1 routed in from the host (isig terminals never deliver
   /// ctrl+c as a key): same stay state + expiry schedule as the key path.
-  (Model, Cmd?) _handleInterruptArmed() =>
+  UiUpdate _handleInterruptArmed() =>
       (_stayAfterCtrlC(), _scheduleWindowExpiry());
 
   /// The window ran out: the armed hint would now lie (the next press is
@@ -83,7 +83,7 @@ extension FaTuiModelInterrupt on FaTuiModel {
   /// timer from a previous arm must neither disarm the model nor touch
   /// the policy when the user re-armed in between (otherwise press 2
   /// silently stopped exiting — re-review regression fix).
-  (Model, Cmd?) _handleWindowExpired(CtrlCWindowExpiredMsg msg) {
+  UiUpdate _handleWindowExpired(CtrlCWindowExpiredMsg msg) {
     if (!ctrlCArmed || msg.generation != ctrlCGeneration) {
       return (this, null);
     }
@@ -107,9 +107,9 @@ extension FaTuiModelInterrupt on FaTuiModel {
   /// Any input other than a ctrl+c press resets the double-press window
   /// (issue #830): the next ctrl+c is a fresh press 1 and the footer hint
   /// goes away. Ctrl+c itself keeps the window so press 2 can land.
-  (Model, Cmd?) _withFreshCtrlCWindow(
+  UiUpdate _withFreshCtrlCWindow(
     Msg msg,
-    (Model, Cmd?) Function() handle, {
+    UiUpdate Function() handle, {
     bool keepWindow = false,
   }) {
     if (keepWindow || (!ctrlCArmed && !sigintPolicy.armed)) return handle();

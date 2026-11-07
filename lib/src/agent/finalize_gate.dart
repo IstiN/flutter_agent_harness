@@ -40,12 +40,15 @@ const String taskLedgerFence = 'task-ledger';
 /// Per-item verification outcome. `fixed` = failed, then fixed and
 /// re-verified — counts as verified (the fix loop is the contract's point).
 enum TaskLedgerItemStatus {
-  pass,
-  fail,
-  fixed;
+  pass('pass'),
+  fail('fail'),
+  fixed('fixed');
 
-  /// The payload spelling.
-  String get jsonName => name;
+  const TaskLedgerItemStatus(this.jsonName);
+
+  /// The payload spelling — a pinned literal, so renaming the identifier
+  /// cannot silently change persisted values.
+  final String jsonName;
 
   /// Tolerant parse: a missing or unrecognized status is [fail] — an
   /// unverified item must never silently count as verified.

@@ -11,6 +11,7 @@ import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/ondevice_config_store.dart';
 import 'package:fa/transformers_js/transformers_js_types.dart';
 import 'package:fa/webllm/webllm_types.dart';
+import 'package:fa_ui/fa_ui.dart';
 
 /// The provider/model combination of the last successful connection.
 ///
@@ -142,32 +143,27 @@ class LastConnectionStore {
       save(LastConnection.fromConfig(config));
 
   Future<void> _load() async {
-    final env = _env;
-    if (env == null) return;
-    try {
-      final text = (await env.readTextFile('${env.cwd}/$fileName')).valueOrNull;
-      if (text == null) return;
-      final decoded = jsonDecode(text);
-      if (decoded is! Map<String, dynamic>) return;
-      if (decoded['version'] != _version) return;
-      final connection = decoded['connection'];
-      if (connection is! Map) return;
-      final restored = LastConnection.fromJson(
-        connection.cast<String, dynamic>(),
-      );
-      if (_isRemovedKind(restored.providerKind)) {
-        // gh-2004: the gemma stack is gone — a persisted gemma connection
-        // resets SILENTLY to the default (no last connection), no notice,
-        // no migration. The stale file is dropped best-effort so the next
-        // save starts clean.
-        _connection = null;
-        unawaited(env.remove('${env.cwd}/$fileName', force: true));
-        return;
-      }
-      _connection = restored;
-    } on Object {
-      // Corrupt or incompatible file → empty store, never crash boot.
-    }
+    await faLoadVersionedStore(
+      _env,
+      fileName: fileName,
+      version: _version,
+      payloadKey: 'connection',
+      decode: (env, connection) {
+        final restored = LastConnection.fromJson(
+          connection.cast<String, dynamic>(),
+        );
+        if (_isRemovedKind(restored.providerKind)) {
+          // gh-2004: the gemma stack is gone — a persisted gemma connection
+          // resets SILENTLY to the default (no last connection), no notice,
+          // no migration. The stale file is dropped best-effort so the next
+          // save starts clean.
+          _connection = null;
+          unawaited(env.remove('${env.cwd}/$fileName', force: true));
+          return;
+        }
+        _connection = restored;
+      },
+    );
   }
 }
 

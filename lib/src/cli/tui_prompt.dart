@@ -423,14 +423,9 @@ _PromptKeyResult? _handleBufferCharKey(
   required bool useAskCursor,
 }) {
   if (key is! PromptChar && key is! PromptPaste) return null;
-  final String text;
-  if (key is PromptChar) {
-    text = key.text;
-  } else if (key is PromptPaste) {
-    text = key.text;
-  } else {
-    return null;
-  }
+  // The twin `text = key.text` arms collapsed: the guard above guarantees
+  // exactly one of the two types (identical-branches audit #1998).
+  final text = key is PromptChar ? key.text : (key as PromptPaste).text;
   if (text.isEmpty) return null;
   final buffer = state.secretValue;
   final cursor = useAskCursor ? state.askCursor : state.secretCursor;
@@ -1391,10 +1386,7 @@ String _secretValueSegmentRow({
   final isFirst = index == 0;
   final marker = focused && isFirst ? '${_accent('>')} ' : '  ';
   if (focused && isFirst && state.secretValue.isEmpty) {
-    return _wrapBodyLine(
-      '$marker${_dim('(paste or type secret)')}',
-      inner,
-    );
+    return _wrapBodyLine('$marker${_dim('(paste or type secret)')}', inner);
   }
   if (focused && isFirst) {
     final clampedCursor = state.secretCursor.clamp(0, segment.length);

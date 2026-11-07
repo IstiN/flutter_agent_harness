@@ -13,6 +13,95 @@ block a release again.
 
 ## Unreleased
 
+- feat(gh-2059): browser-extension compaction parity with CLI — over-window
+  relief, `/compact` with visible receipts, and the shared under-window
+  guarantee ride the same `CompactionHostWiring` resolution as the CLI and
+  app (`resolveExtensionCompactionWiring`); receipts are durable across
+  panel attach/SW restart. Machine-review round 1: exact ladder pass
+  counts, busy-matrix routing (`routeUserInput`) for panel text and second
+  `/compact` during a pass, window settings from the ACTIVE stored source
+  with positive validation, string-encoded int merges.
+
+- fix(gh-2055): the daily-publish `cli` leg red-failed in `pod install`
+  (Build macOS x86_64, run 41778615815) because the vendored macOS pod's
+  XCFramework download block guarded on the downloaded-zip MARKER
+  (`if [ ! -f wasm_run-v0.1.0.zip ]`) instead of on the artifact the build
+  consumes. A fresh CI clone never has the marker, so pod install re-ran
+  the block on every build: it removed the WasmRun.xcframework the
+  build-macos.yml restore step had already placed (cache hit,
+  sha256-verified), re-downloaded the 92.7 MB asset with a bare
+  no-`--fail` curl, and one transient reset (curl 56 at ~3 MB/92.7 MB)
+  left the Podfile `nm -gU` symbol check with no
+  macos-arm64_x86_64/libwasm_run_dart.a to read. The guard now keys on
+  `WasmRun.xcframework/macos-arm64_x86_64/libwasm_run_dart.a` — the exact
+  path the Podfile force_loads and nm-checks — so the block is a no-op
+  whenever the restore step (or a previous run) put the framework in
+  place, and the fallback download for a truly cold tree carries
+  `--fail` AND aborts the block at the curl step on failure
+  (`|| { echo "wasm_run download failed" >&2; exit 1; }` — a swallowed
+  status fell through to unzip/truncate residue and masked the root cause
+  behind the Podfile `nm` diagnostic; review round 1 on this PR), and the
+  podspec now assigns the backtick result and raises "wasm_run framework
+  fetch failed" unless `$?.success?` — Ruby ignores a bare backtick's
+  exit status, so pod install would otherwise have sailed past the failed
+  fetch to the downstream `nm` diagnostic (review round 2). Linted
+  behaviorally (stubbed curl, no network; POSIX-gated sandbox, plus a
+  ruby evaluation of the real fetch statement) by
+  test/wasmrun_macos_podspec_download_guard_test.dart.
+
+- fix(gh-2050): the daily-publish `cli` leg red-failed daily when its
+  macOS attach arrived after a sibling train had already PUBLISHED the
+  derived tag (the same-tag convergence race: mobile leg drafts + the tag
+  train publishes ~25 min after dispatch while the serialized self-hosted
+  mac builds need ~66 min — v1.0.685: draft 05:22:46, published 05:44:52,
+  mac leg attached 06:28:53). `scripts/release_asset_gate.sh` gains a
+  caller-declared pre-stage policy — `RELEASE_GATE_PUBLISHED_SKIP=1` —
+  that turns the PUBLISHED+unattached-fa-* verdict into a loud whole-call
+  skip (`::warning::`, exit 0, nothing uploaded, no twin create, no flip;
+  all-or-nothing so `latest-mac.yml` can never land alone on a release
+  whose zips were skipped). The default stays the gh-2042 AC1 loud
+  refusal; only build-macos.yml's `release-macos` desktop attach opts in
+  (its DMGs/zips/manifest are clobber-refresher pre-stage assets, not
+  publish blockers), the CLI-tar/extension attaches keep the refusal (they
+  carry REQUIRED release assets). The stranded desktop feed self-heals:
+  the next daily leg pre-stages the next version's draft with fresh
+  assets.
+
+- fix(gh-2044): the auto-compact fragile-band escalation could fold the
+  ENTIRE visible projection when the remaining path fit inside
+  `keepRecentTokens` — the keep-recent walk defaulted to folding
+  everything when its budget never exhausted, swallowing the live tail
+  (the newest user ask and assistant turn included). Real-world trigger:
+  resumed subagent runs ended with no assistant message at all
+  (`subagent produced no assistant message` — CI cores shards 1/4 and
+  3/4, hostile-env, both red). `_pickCheckpointRange` now declines the
+  fold when the whole foldable path fits the keep-recent region and
+  still carries live records; all-marker paths keep the lossless
+  deterministic consolidation (issue #387). The escalation receipt also
+  reports the REAL summarizer call count (a #729 chunked fold makes N
+  calls, not 1), and the factory wires its run token into the engine's
+  `cancelToken` so a watchdog-shaped cancel reason (any
+  `TimeoutException`) can no longer dissolve a user abort into a
+  "summarizer returned no text" failed receipt while the run reports
+  success (#1085). Follow-up CI red on the same branch: the decline
+  moved tiny-transcript runs to the classic residual engine, where an
+  EMPTY summarizable region folded zero #729 chunks into a blank
+  summary that still landed as a junk CompactionRecord and a hollow
+  `success: true` through the no-work terminal — `compactSession` now
+  refuses that empty-region blank fold (gh-1743's failure-verdict
+  contract kept; a dialed blank answer over a real region still lands
+  as a record, issue #578 unchanged). Third CI red on the same branch
+  (flutter-app over-window relief, both shards): the whole-world decline
+  lived in the shared `_pickCheckpointRange`, so it also starved the
+  checkpoint LADDER — a tool-result-heavy transcript whose every ledger
+  token fits `keepRecentTokens` (the request estimate is far over the
+  trigger) lost its only summarizer-based relief, and the hosted app's
+  over-window guard ended the turn instead of continuing it. The decline
+  is now escalation-only: ladder passes run over the trigger, where the
+  fold IS the relief (the escalation still declines — semantic 5 — and
+  its pass body was extracted below the CRAP ratchet's 12.00).
+  (gh-2044 rework, UT-ESC-13)
+
 - fix(gh-2003): the Copilot picker filter is tier-aware. Individual-tier
   `/models` responses omit `model_picker_enabled` entirely, so phase 1
   dropped every such entry as «picker flag absent» and individual/OAuth

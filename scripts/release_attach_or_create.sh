@@ -41,28 +41,40 @@ if [ "${#assets[@]}" -eq 0 ]; then
   exit 1
 fi
 
-upload_all() { # exists-path: upload + (servable-only) publish + latest
-  for asset in "${assets[@]}"; do
-    gh release upload "$tag" "$asset" --clobber --repo "$repo"
-  done
-  # Latest policy (#282 + gh-1801 rework): publish + latest ONLY when the
-  # release can actually serve `fa update` — that means the signed
+upload_all() { # exists-path: gate-guarded attach + (servable DRAFT-only) publish + latest
+  # gh-2042 (AC1): every upload passes the immutability gate — on a
+  # PUBLISHED release an unattached fa-* asset refuses the whole call loud,
+  # an already-attached one skips, and non-fa store/DMG refreshers keep
+  # their clobber-refresh contract. Drafts attach exactly as before.
+  # gh-2042 (review): ONE call for the WHOLE list — the gate's contract is
+  # per-call all-or-nothing ("refuse before any upload"), so per-asset
+  # invocation would judge each asset against its own release-view
+  # snapshot (N round-trips, a wider draft→published TOCTOU window, and a
+  # partial mutation when an early benign asset uploads before a later
+  # fa-* refusal).
+  bash "$(dirname "$0")/release_asset_gate.sh" "$tag" "${assets[@]}"
+  # Latest policy (#282 + gh-1801 rework + gh-2042): publish + latest ONLY
+  # when the release can actually serve `fa update` — that means the signed
   # checksums are already on it (`fa update` hard-fails without
-  # SHA256SUMS(.sig), bin/self_manage.dart provenance gate). A release
-  # carrying them but still draft means provenance ran and its own flip
-  # failed — recover it here. Any other case stays draft/unflipped: the
-  # tag-run release-provenance job (ci.yml) is the single owner of the
-  # --draft=false --latest flip, and a red provenance must leave the
-  # PREVIOUS release as latest instead of stranding a provenance-less one
-  # (the v1.0.630 incident window).
+  # SHA256SUMS(.sig), bin/self_manage.dart provenance gate) — AND it is
+  # still a DRAFT (the provenance-flip recovery window). A PUBLISHED
+  # release is never re-flaged `--latest` here: on an older release that
+  # would drag the latest badge (and `fa update`) backwards to a downgrade.
   if release_serves_fa_update; then
-    gh release edit "$tag" --draft=false --latest --repo "$repo"
-    # gh-1899: same duplicate-tag race as the tag train — a twin draft
-    # minted by a sibling leg of THIS run would otherwise rot until the
-    # 24h sweeper. The tag is published and servable here (the flip is
-    # gated on the signed checksums), so own-run twin drafts are orphans.
-    bash "$(dirname "$0")/release_draft_dedupe.sh" "$tag" \
-      || echo "::warning::gh-1899 twin-draft dedupe failed — the release is published and servable, so this is cleanup noise only; the 24h sweeper remains the backstop"
+    case "$(gh release view "$tag" --repo "$repo" --json isDraft --jq .isDraft 2>/dev/null || echo false)" in
+      true)
+        gh release edit "$tag" --draft=false --latest --repo "$repo"
+        # gh-1899: same duplicate-tag race as the tag train — a twin draft
+        # minted by a sibling leg of THIS run would otherwise rot until the
+        # 24h sweeper. The tag is published and servable here (the flip is
+        # gated on the signed checksums), so own-run twin drafts are orphans.
+        bash "$(dirname "$0")/release_draft_dedupe.sh" "$tag" \
+          || echo "::warning::gh-1899 twin-draft dedupe failed — the release is published and servable, so this is cleanup noise only; the 24h sweeper remains the backstop"
+        ;;
+      *)
+        echo "release $tag is already published — publish/latest flip skipped (gh-2042: latest never moves backwards; the signed SHA256SUMS re-upload is release-provenance's job)"
+        ;;
+    esac
   else
     echo "release $tag is not yet servable (no SHA256SUMS on it) — publish+latest left to the release-provenance step (gh-1801)"
   fi
@@ -92,11 +104,18 @@ grep -qF "$marker" "$notes" || printf '\n%s\n' "$marker" >> "$notes"
 
 # A `gh release create` for a MISSING tag mints a lightweight API tag:
 # no push event → no ci.yml tag run → no publish/binaries (the v0.1.408
-# silent class, issue #597). If the ref is absent, create it as an
+# silent class, issue #597). If the ref is absent, mint it as an
 # ANNOTATED tag and push it with the PAT the job already carries
-# (GH_TOKEN=RELEASE_PAT in build-macos) so the tag CI fires. A push with
-# the workflow's default github.token would be equally dead — GitHub
-# suppresses events triggered by GITHUB_TOKEN.
+# (GH_TOKEN=RELEASE_PAT in build-macos) so the tag CI fires. The mint
+# itself (GH_TOKEN guard, persisted-checkout-extraheader strip, push,
+# train-start verification) lives in scripts/release_tag_mint.sh —
+# gh-2026: the v1.0.663 / v1.0.665 minted pushes rode actions/checkout's
+# persisted GITHUB_TOKEN extraheader (it outranks the URL credentials),
+# GitHub suppresses workflow triggers for GITHUB_TOKEN pushes, no tag run
+# ever existed on those refs, and the drafts rotted behind green legs.
+# A mint whose train does not start now fails loud BEFORE any draft is
+# created, so the leg goes red and the failure-path draft guard has
+# nothing to reclaim.
 # Gate on the DEFINITE missing verdict (ls-remote --exit-code rc 2):
 # sandboxes without an origin remote fatal with 128 — indeterminable
 # falls through to the plain create path (test fixtures rely on it).
@@ -105,25 +124,7 @@ git ls-remote --exit-code origin "refs/tags/$tag" >/dev/null 2>&1
 ls_remote_rc=$?
 set -e
 if [ "$ls_remote_rc" -eq 2 ]; then
-  # Fail fast BEFORE the cryptic crash: the push URL below collapses to ''
-  # when GH_TOKEN is unset, and git's `fatal: bad repository ''` does not
-  # point at the env gap (run 39766453580, v1.0.626 mobile leg). Callers
-  # must export GH_TOKEN=RELEASE_PAT (or a job-scoped App token) — the
-  # workflow GITHUB_TOKEN is not a substitute (GitHub suppresses events it
-  # triggers, so the tag CI would never fire).
-  if [ -z "${GH_TOKEN:-}" ]; then
-    echo "::error::tag $tag is missing but GH_TOKEN is not set — the annotated-tag push would run 'git push \"\"'. Set GH_TOKEN (PAT/App token) on the calling step, or the tag can never be minted here." >&2
-    exit 1
-  fi
-  target="${RELEASE_TARGET_SHA:-${GITHUB_SHA:?}}"
-  echo "tag $tag missing — creating annotated tag at $target (PAT push, fires tag CI)"
-  git fetch origin "$target" --depth=1 2>/dev/null || git fetch origin main --depth=50
-  # CI checkout carries no identity; annotate as the actions bot without
-  # touching global config (empty ident → exit 128, run 35426119831).
-  git -c user.name="github-actions[bot]" \
-      -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
-      tag -a "$tag" -m "Release $tag" "$target"
-  git push "${GH_TOKEN:+https://x-access-token:${GH_TOKEN}@github.com/${repo}.git}" "refs/tags/$tag"
+  bash "$(dirname "$0")/release_tag_mint.sh" "$tag"
 fi
 
 # Bare vX.Y.Z title (#282): matches the tag, matches pub.dev. gh-1801

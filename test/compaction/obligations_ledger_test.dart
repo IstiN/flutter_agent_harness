@@ -709,4 +709,21 @@ void main() {
       expect(block, contains('timer-1'));
     });
   });
+
+  group('ObligationStatus persisted-name contract (issue #1999)', () {
+    test('statuses round-trip through pinned payload spellings', () {
+      expect(ObligationStatus.open.jsonName, 'open');
+      expect(ObligationStatus.done.jsonName, 'done');
+      expect(ObligationStatus.superseded.jsonName, 'superseded');
+      for (final status in ObligationStatus.values) {
+        expect(ObligationStatus.fromName(status.jsonName), status);
+      }
+    });
+
+    test('unknown/missing payload names degrade to open, never crash', () {
+      expect(ObligationStatus.fromName(null), ObligationStatus.open);
+      expect(ObligationStatus.fromName('bogus'), ObligationStatus.open);
+      expect(ObligationStatus.fromName(42), ObligationStatus.open);
+    });
+  });
 }

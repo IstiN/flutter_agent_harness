@@ -277,7 +277,7 @@ void main() {
     });
 
     test('a custom profile missing a capability is rejected (E2/UT-2)', () {
-      final states = {
+      final states = <HostCapability, CapabilityState>{
         for (final c in HostCapability.values) c: CapabilityState.on,
       }..remove(HostCapability.compaction);
       expect(
@@ -290,6 +290,102 @@ void main() {
           ),
         ),
       );
+    });
+
+    test('a blank off reason is rejected at construction', () {
+      final states = <HostCapability, CapabilityState>{
+        for (final c in HostCapability.values) c: CapabilityState.on,
+      }..[HostCapability.jsApps] = CapabilityState.off('  ');
+      expect(
+        () => HostCapabilityProfile(name: 'blank-off', states: states),
+        throwsA(
+          isA<HostProfileViolation>().having(
+            (e) => e.message,
+            'message',
+            contains('non-empty reason'),
+          ),
+        ),
+      );
+    });
+
+    test('a blank transport reason is rejected at construction', () {
+      final states = <HostCapability, CapabilityState>{
+        for (final c in HostCapability.values) c: CapabilityState.on,
+      }..[HostCapability.mcp] = CapabilityState.transport({'remote'}, ' ');
+      expect(
+        () => HostCapabilityProfile(name: 'blank-tx', states: states),
+        throwsA(
+          isA<HostProfileViolation>().having(
+            (e) => e.message,
+            'message',
+            contains('non-empty reason'),
+          ),
+        ),
+      );
+    });
+
+    test('a transport naming an out-of-vocabulary transport is rejected', () {
+      final states =
+          <HostCapability, CapabilityState>{
+              for (final c in HostCapability.values) c: CapabilityState.on,
+            }
+            ..[HostCapability.mcp] = CapabilityState.transport({
+              'smoke-signal',
+            }, 'carrier pigeon only');
+      expect(
+        () => HostCapabilityProfile(name: 'bad-tx', states: states),
+        throwsA(
+          isA<HostProfileViolation>()
+              .having(
+                (e) => e.message,
+                'message',
+                contains('unknown transports'),
+              )
+              .having(
+                (e) => e.message,
+                'names the offender',
+                contains('smoke-signal'),
+              ),
+        ),
+      );
+    });
+
+    test('an empty transport set is rejected at construction', () {
+      final states =
+          <HostCapability, CapabilityState>{
+              for (final c in HostCapability.values) c: CapabilityState.on,
+            }
+            ..[HostCapability.mcp] = CapabilityState.transport(
+              {},
+              'wired but to nothing',
+            );
+      expect(
+        () => HostCapabilityProfile(name: 'empty-tx', states: states),
+        throwsA(
+          isA<HostProfileViolation>().having(
+            (e) => e.message,
+            'message',
+            contains('unknown transports'),
+          ),
+        ),
+      );
+    });
+
+    test('isWired is true for on/transport and false for off', () {
+      final states =
+          <HostCapability, CapabilityState>{
+              for (final c in HostCapability.values) c: CapabilityState.on,
+            }
+            ..[HostCapability.jsApps] = CapabilityState.off(
+              'kiosk host renders no browser APIs',
+            )
+            ..[HostCapability.mcp] = CapabilityState.transport({
+              'remote',
+            }, 'kiosk allows remote only');
+      final profile = HostCapabilityProfile(name: 'kiosk', states: states);
+      expect(profile.isWired(HostCapability.jsApps), isFalse);
+      expect(profile.isWired(HostCapability.mcp), isTrue);
+      expect(profile.isWired(HostCapability.compaction), isTrue);
     });
 
     test('a custom host can construct its own complete profile', () {
@@ -382,7 +478,7 @@ void main() {
 
     test('a custom profile force-enabling past an explicit floor throws '
         'at construction', () {
-      final states = {
+      final states = <HostCapability, CapabilityState>{
         for (final c in HostCapability.values) c: CapabilityState.on,
       }..[HostCapability.onDeviceProviders] = CapabilityState.on;
       expect(

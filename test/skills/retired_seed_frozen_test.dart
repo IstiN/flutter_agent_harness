@@ -2,10 +2,11 @@
 /// CQE1): the app deletes a seeded copy of a retired skill from user
 /// machines ONLY when its SKILL.md is byte-identical to the last bytes the
 /// old seeder wrote — the `_staleSeedFingerprints` map in
-/// `flutter_app/lib/services/agent_service_skills.dart`. The repo's own
-/// `.fah/skills/<name>/SKILL.md` copies ARE those bytes (the seeder's
-/// historical source), so they are FROZEN: any edit — even a docs
-/// improvement — changes the hash, the cleanup stops matching, and
+/// `flutter_app/lib/services/agent_service_skills.dart`. The frozen bytes
+/// live in `flutter_app/test/fixtures/retired_<name>_skill.md`: they were
+/// moved out of `.fah/skills` when live project copies were replaced by
+/// builtin pointers, so the historical fixtures cannot shadow live skills.
+/// They are FROZEN: any edit — even a docs improvement — changes the hash, the cleanup stops matching, and
 /// `flutter_app/test/skills_toggles_store_test.dart` fails from the app
 /// side. This guard fails at CLI-suite level, right where such an edit
 /// happens (gh-1198: an Output-section addition to the retired
@@ -25,6 +26,11 @@ import 'package:crypto/crypto.dart';
 import 'package:test/test.dart';
 
 final _repoRoot = Directory.current.path;
+
+File _retiredFixture(String name) => File(
+  '$_repoRoot/flutter_app/test/fixtures/retired_${name.replaceAll('-', '_')}_skill.md',
+);
+
 final _appSource = File(
   '$_repoRoot/flutter_app/lib/services/agent_service_skills.dart',
 ).readAsStringSync();
@@ -105,13 +111,13 @@ void main() {
       for (final match in _fingerprintEntries) {
         final name = match.group(1)!;
         final fingerprint = match.group(2)!;
-        final file = File('$_repoRoot/.fah/skills/$name/SKILL.md');
+        final file = _retiredFixture(name);
         expect(
           file.existsSync(),
           isTrue,
           reason:
-              '$name has a stale-seed fingerprint in the app but no repo '
-              'copy at .fah/skills/$name/SKILL.md',
+              '$name has a stale-seed fingerprint but no frozen fixture '
+              'at ${file.path}',
         );
         final actual = sha256
             .convert(utf8.encode(file.readAsStringSync()))
@@ -120,8 +126,8 @@ void main() {
           actual,
           fingerprint,
           reason:
-              '.fah/skills/$name/SKILL.md drifted from the last-seeded bytes '
-              'pinned in the app\'s _staleSeedFingerprints — the app can no '
+              '${file.path} drifted from the last-seeded bytes pinned in '
+              'the app\'s _staleSeedFingerprints — the app can no '
               'longer recognize (and clean up) stale seeds on user machines. '
               'The retired seed is FROZEN; document changes go to the live '
               'skill (prompts/skills/<live-name>/SKILL.md) instead.',
@@ -150,9 +156,7 @@ void main() {
       final hashes = RegExp(
         r"'([0-9a-f]{64})'",
       ).allMatches(match.group(2)!).map((m) => m.group(1)!).toSet();
-      final fixture = File(
-        '$_repoRoot/flutter_app/test/fixtures/retired_${name.replaceAll('-', '_')}_skill.md',
-      );
+      final fixture = _retiredFixture(name);
       expect(
         fixture.existsSync(),
         isTrue,

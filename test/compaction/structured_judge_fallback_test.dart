@@ -86,7 +86,9 @@ void main() {
   );
 
   /// A session over the 6000 trigger: user ask + [pairs] read pairs
-  /// (16k chars ≈ 4k tok each).
+  /// (12k chars ≈ 3k tok each — sized so one-pair relief clears the
+  /// fragile band and these tests stay in the legacy no-escalation regime;
+  /// the escalation band itself is gh-2044's structured_escalation_test).
   Future<(Session, AgentState)> pairSession(int pairs) async {
     final session = await repo.create(JsonlSessionCreateOptions(cwd: '/work'));
     await session.appendMessage(UserMessage.text('fix the login crash'));
@@ -97,7 +99,7 @@ void main() {
           calls: [ToolCall(id: 'c$i', name: 'read', arguments: {})],
         ),
       );
-      await session.appendMessage(_result('c$i', 'read', 'x' * 16000));
+      await session.appendMessage(_result('c$i', 'read', 'x' * 12000));
     }
     final messages = await session.buildContextMessages();
     return (session, stateFor(messages));

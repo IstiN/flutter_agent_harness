@@ -10,6 +10,7 @@ import 'package:fa_ui/src/stores/media_models_store.dart';
 import 'package:fa_ui/src/stores/provider_registry.dart';
 import 'package:fa_ui/src/stores/task_models_store.dart';
 import 'package:fa_ui/src/utils/page_presentation.dart';
+import 'package:fa_ui/src/widgets/settings_scaffold.dart';
 
 /// The settings "Task models" section: one row per [TaskRole.all] entry
 /// showing the effective endpoint — the role's override (`modelId`) or the
@@ -62,27 +63,17 @@ class TaskModelsSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
     final store = this.store ?? TaskModelsScope.maybeOf(context);
-    if (store == null) return const SizedBox.shrink();
-    return ListenableBuilder(
-      listenable: store,
-      builder: (context, _) {
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            for (final role in TaskRole.all)
-              _buildRoleRow(context, theme, store, role),
-          ],
-        );
-      },
+    return faStoreSection(
+      store,
+      (context, store) => [
+        for (final role in TaskRole.all) _buildRoleRow(context, store, role),
+      ],
     );
   }
 
   Widget _buildRoleRow(
     BuildContext context,
-    ThemeData theme,
     TaskModelsStore store,
     String role,
   ) {
@@ -91,39 +82,11 @@ class TaskModelsSection extends StatelessWidget {
     final subtitle = override?.modelId.isNotEmpty == true
         ? override!.modelId
         : 'Same as main'; // l10n:ignore
-    return InkWell(
+    return FaSettingsRow(
+      icon: roleIcons[role] ?? Icons.tune,
+      title: title,
+      subtitle: subtitle,
       onTap: () => _editRole(context, store, role),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 6),
-        child: Row(
-          children: [
-            Icon(
-              roleIcons[role] ?? Icons.tune,
-              size: 20,
-              color: theme.colorScheme.primary,
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(title),
-                  Text(
-                    subtitle,
-                    style: theme.textTheme.bodySmall,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ],
-              ),
-            ),
-            Icon(
-              Icons.chevron_right,
-              size: 18,
-              color: theme.colorScheme.onSurfaceVariant,
-            ),
-          ],
-        ),
-      ),
     );
   }
 

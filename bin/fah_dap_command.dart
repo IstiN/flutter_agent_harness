@@ -634,11 +634,10 @@ class DapHubController {
       final peers = await answer.future.timeout(const Duration(seconds: 3));
       await sub.cancel();
       return peers;
-    } on TimeoutException {
-      // The WS upgrade worked — a DAP-shaped endpoint that does not (yet)
-      // answer presence. Running, peers unknown.
-      return null;
     } on Object {
+      // The WS upgrade worked but the probe got no usable presence
+      // answer (timeout, a DAP-shaped endpoint that does not (yet)
+      // answer presence, malformed frames). Running, peers unknown.
       return null;
     } finally {
       await ws.close();

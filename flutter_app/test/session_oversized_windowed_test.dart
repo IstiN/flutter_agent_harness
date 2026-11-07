@@ -417,11 +417,8 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      // The messenger list groups persisted sessions by working directory.
-      await tester.tap(
-        find.byKey(const ValueKey('chatFolder-folder::/work')),
-      );
-      await tester.pumpAndSettle();
+      // Fa2's messenger list is flat in the All facet: persisted sessions
+      // carry a folder avatar instead of sitting behind a folder drill-in.
       await tester.tap(find.text('Giant chat'));
       await tester.pumpAndSettle();
 
@@ -439,78 +436,67 @@ void main() {
   // AC5 E2E (window + paging half): the real chat surface over the
   // opened giant — only the tail window loaded, and "Load earlier" pages
   // up through the file.
-  testWidgets('E2E-windowed-chat: the opened giant shows the tail window; Load '
-      'earlier pages up through the file', (tester) async {
-    final env = MemoryExecutionEnv();
-    await env.writeFile('/sessions/giant.jsonl', _sessionBody('giant', 300));
-    final service = AgentService(
-      agent: _createAgent(),
-      env: env,
-      sessionsRoot: '/sessions',
-      config: _config,
-      watchExternalSessions: false,
-    );
-    final manager = FlutterSessionManager(
-      env: env,
-      sessionsRoot: '/sessions',
-      maxSessionLoadBytes: 1024,
-    )..addSession('live-a', service);
-    final metadata = await service.listSessions();
-    await manager.openSession(
-      metadata.first,
-      config: _config,
-      serviceFactory: () async => service.clone(),
-    );
+  testWidgets(
+    'E2E-windowed-chat: the opened giant shows the tail window; older '
+    'history pages up through the file',
+    (tester) async {
+      final env = MemoryExecutionEnv();
+      await env.writeFile('/sessions/giant.jsonl', _sessionBody('giant', 300));
+      final service = AgentService(
+        agent: _createAgent(),
+        env: env,
+        sessionsRoot: '/sessions',
+        config: _config,
+        watchExternalSessions: false,
+      );
+      final manager = FlutterSessionManager(
+        env: env,
+        sessionsRoot: '/sessions',
+        maxSessionLoadBytes: 1024,
+      )..addSession('live-a', service);
+      final metadata = await service.listSessions();
+      await manager.openSession(
+        metadata.first,
+        config: _config,
+        serviceFactory: () async => service.clone(),
+      );
 
-    await tester.pumpWidget(
-      MaterialApp(
-        theme: buildFahTheme(),
-        localizationsDelegates: AppLocalizations.localizationsDelegates,
-        supportedLocales: AppLocalizations.supportedLocales,
-        home: ChatScreen(manager: manager),
-      ),
-    );
-    await tester.pumpAndSettle();
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildFahTheme(),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: ChatScreen(manager: manager),
+        ),
+      );
+      await tester.pumpAndSettle();
 
-    // The window is visible: newest records rendered, head not loaded.
-    expect(find.textContaining('message 299'), findsOneWidget);
-    expect(find.textContaining('message 0 '), findsNothing);
-    // The composer is live (interactive chat, not a loading shell).
-    expect(find.byType(ChatComposer), findsOneWidget);
+      // The window is visible: newest records rendered, head not loaded.
+      expect(find.textContaining('message 299'), findsOneWidget);
+      expect(find.textContaining('message 0 '), findsNothing);
+      // The composer is live (interactive chat, not a loading shell).
+      expect(find.byType(ChatComposer), findsOneWidget);
 
-    // "Load earlier" pages up: one chunk covers the remaining 100
-    // records, so the head lands in the view. The list opens scrolled
-    // to the tail, and the banner reveals on scroll-to-top only
-    // (issue #974) — drag to the oldest edge until it appears. The
-    // transcript's scrollable is found through the list's key, not
-    // tree order, so chrome scrollables can never eat the drags.
-    final transcript = find.descendant(
-      of: find.byKey(const ValueKey('faChatTranscriptList')),
-      matching: find.byType(Scrollable),
-    );
-    await tester.scrollUntilVisible(
-      find.textContaining('Load earlier'),
-      500,
-      scrollable: transcript,
-      maxScrolls: 120,
-    );
-    await tester.pumpAndSettle();
-    await tester.tap(find.textContaining('Load earlier').first);
-    await tester.pumpAndSettle();
-    // The head decoded into the service (300 = full file); the
-    // "Load earlier" banner turned into its terminal state in place —
-    // which reveals on scroll-to-top too, so drag to the new oldest
-    // edge to see it (issue #974).
-    expect(manager.active!.service.messages, hasLength(300));
-    expect(manager.active!.service.historyAboveCount, 0);
-    await tester.scrollUntilVisible(
-      find.textContaining('Beginning of session'),
-      500,
-      scrollable: transcript,
-      maxScrolls: 120,
-    );
-    await tester.pumpAndSettle();
-    expect(find.textContaining('Load earlier'), findsNothing);
-    expect(find.textContaining('Beginning of session'), findsOneWidget);
-  });
+      // One chunk covers the remaining 100 records. Fa2 automatically
+      // pages older history when a real scroll reaches the prefetch band;
+      // jumping to the reversed list's oldest edge exercises that path.
+      final transcript = find.byType(Scrollable).first;
+      final scrollable = tester.state<ScrollableState>(transcript);
+      scrollable.position.jumpTo(scrollable.position.maxScrollExtent);
+      await tester.pump();
+      await tester.pumpAndSettle();
+      // The head decoded into the service (300 = full file). Reveal the
+      // terminal banner at the new oldest edge (issue #974).
+      expect(manager.active!.service.messages, hasLength(300));
+      expect(manager.active!.service.historyAboveCount, 0);
+      // The terminal label needs the explicit whole-file count; paging
+      // alone intentionally does not scan the remaining record index.
+      await manager.active!.service.loadHistoryCount();
+      scrollable.position.jumpTo(scrollable.position.maxScrollExtent);
+      await tester.pump();
+      await tester.pumpAndSettle();
+      expect(find.textContaining('Load earlier'), findsNothing);
+      expect(find.textContaining('Beginning of session'), findsOneWidget);
+    },
+  );
 }

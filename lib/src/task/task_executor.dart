@@ -132,16 +132,20 @@ final class TaskExecutor {
   /// The session's durable-deliverable capture (issue #1829). One instance
   /// per executor — it owns the chunk ledgers. Null without a
   /// [subagentManager] — no handles to record on and no budget to honor.
-  late final DeliverableCapture? _capture = subagentManager == null
-      ? null
-      : DeliverableCapture(
-          store: store,
-          manager: subagentManager!,
-          redact: deliverableRedactor,
-          autoSpill: replyAutoSpill,
-          persistArtifact: deliverableArtifactSink,
-          restoreArtifacts: deliverableArtifactSource,
-        );
+  late final DeliverableCapture? _capture = _buildCapture();
+
+  DeliverableCapture? _buildCapture() {
+    final manager = subagentManager;
+    if (manager == null) return null;
+    return DeliverableCapture(
+      store: store,
+      manager: manager,
+      redact: deliverableRedactor,
+      autoSpill: replyAutoSpill,
+      persistArtifact: deliverableArtifactSink,
+      restoreArtifacts: deliverableArtifactSource,
+    );
+  }
 
   /// The tool-misuse circuit breaker switch (issue #862, default true):
   /// every spawned child agent gets a breaker wired into its loop.
@@ -1089,8 +1093,9 @@ final class TaskExecutor {
     onProgress?.call(index, id, TaskSpawnPhase.running);
 
     // Register in the retained-subagent manager (Phase 3a).
-    if (subagentManager != null) {
-      await subagentManager!.register(
+    final retained = subagentManager;
+    if (retained != null) {
+      await retained.register(
         id: id,
         name: taskItemNameBase(item),
         agentType: agentName,
@@ -1099,7 +1104,7 @@ final class TaskExecutor {
         // context into the child's system prompt.
         context: context,
       );
-      await subagentManager!.update(id, status: SubagentStatus.running);
+      await retained.update(id, status: SubagentStatus.running);
     }
 
     final wiring = _resolveChildWiring(definition);
@@ -1194,11 +1199,20 @@ final class TaskExecutor {
       existingOutput: capped.$1,
     );
     // The stored artifact IS the source of truth for the result output:
-    // base content, or base + the single-sourced warning.
-    final output = store.get(id)!;
+    // base content, or base + the single-sourced warning. The duplicate
+    // -note path may have rewritten it, hence the re-read.
+    final output = store.get(id);
+    if (output == null) {
+      throw StateError('task output for $id missing right after store.put');
+    }
     final usage = _usageStats(child);
 
     final failed = structured?.status == StructuredValidationStatus.invalid;
+    // `failed` implies `structured != null` (status is non-null there);
+    // `?.` keeps it null-safe without re-asserting in two call sites.
+    final schemaViolation = failed
+        ? 'schema_violation: ${structured?.error}'
+        : null;
     onProgress?.call(
       index,
       id,
@@ -1225,13 +1239,14 @@ final class TaskExecutor {
     // Update the retained-subagent handle with the final status. Usage
     // was billed incrementally at turn boundaries (plus the final delta
     // here) - never in one completion lump.
-    if (subagentManager != null) {
+    final retained = subagentManager;
+    if (retained != null) {
       _billChildUsage(id, child);
-      await subagentManager!.update(
+      await retained.update(
         id,
         status: failed ? SubagentStatus.failed : SubagentStatus.completed,
         modelId: wiring.model.id,
-        error: failed ? 'schema_violation: ${structured!.error}' : null,
+        error: schemaViolation,
       );
     }
 
@@ -1247,7 +1262,7 @@ final class TaskExecutor {
       tokens: usage.tokens,
       requests: usage.requests,
       model: wiring.model.id,
-      error: failed ? 'schema_violation: ${structured!.error}' : null,
+      error: schemaViolation,
       structuredOutput: structured,
       reply: reply,
       deliverables: deliverables,
@@ -1291,6 +1306,7 @@ final class TaskExecutor {
     required ({Model model, StreamFunction stream}) wiring,
     required CancelToken? cancelToken,
   }) {
+    final retained = subagentManager;
     final child = Agent(
       model: wiring.model,
       // gh-1742 review round 1, comment 2: the child loop shares the
@@ -1305,16 +1321,16 @@ final class TaskExecutor {
       toolRegistry: toolRegistry,
       // The child's inbox: messages from the parent/siblings (and other Fa
       // instances sharing the messaging root) arrive at turn boundaries.
-      externalSteeringSource: subagentManager == null
+      externalSteeringSource: retained == null
           ? null
           : () => _inboxSteeringMessages(id),
       // The delivery SLO (issue #647): inbox mail must soft-yield a long
       // tool call within 2s. The probe is the slow (cross-process) fallback;
       // the manager-event subscription below pokes the same path instantly
       // for same-host mail.
-      externalSteeringProbe: subagentManager == null
+      externalSteeringProbe: retained == null
           ? null
-          : () => subagentManager!.hasPendingMessages(id),
+          : () => retained.hasPendingMessages(id),
       // Issue #862: children get the same misuse circuit breaker as the
       // parent loop — the luna death was a child.
       toolMisuseBreaker: misuseBreaker ? ToolMisuseBreaker() : null,
@@ -1402,14 +1418,15 @@ final class TaskExecutor {
       );
     }
     onProgress?.call(index, id, TaskSpawnPhase.running);
-    if (subagentManager != null) {
-      await subagentManager!.register(
+    final retained = subagentManager;
+    if (retained != null) {
+      await retained.register(
         id: id,
         name: taskItemNameBase(item),
         agentType: 'a2a:$serverName',
         task: item.task,
       );
-      await subagentManager!.update(id, status: SubagentStatus.running);
+      await retained.update(id, status: SubagentStatus.running);
     }
     try {
       final remoteTask = await manager.send(
@@ -1463,14 +1480,12 @@ final class TaskExecutor {
       id,
       failed || aborted ? TaskSpawnPhase.failed : TaskSpawnPhase.completed,
     );
-    if (subagentManager != null) {
-      await subagentManager!.update(
-        id,
-        status: _a2aSubagentStatus(settled.state),
-        modelId: 'a2a:$serverName',
-        error: failed ? 'remote task failed' : null,
-      );
-    }
+    await subagentManager?.update(
+      id,
+      status: _a2aSubagentStatus(settled.state),
+      modelId: 'a2a:$serverName',
+      error: failed ? 'remote task failed' : null,
+    );
     return TaskSingleResult(
       index: index,
       id: id,
@@ -1506,8 +1521,9 @@ final class TaskExecutor {
   /// messages, mirroring the local child's user prompt.
   Future<String> _a2aPrompt(TaskItem item, String subagentId) async {
     final buffer = StringBuffer(item.task.trim());
-    if (subagentManager != null) {
-      final queued = await subagentManager!.drainMessages(subagentId);
+    final retained = subagentManager;
+    if (retained != null) {
+      final queued = await retained.drainMessages(subagentId);
       for (final message in queued) {
         buffer.writeln();
         buffer.writeln('from ${message.fromId}: ${message.text.trim()}');
@@ -1525,10 +1541,11 @@ final class TaskExecutor {
     String finalText,
     CancelToken? cancelToken,
   ) async {
-    if (item.outputSchema == null) return (finalText, null);
+    final outputSchema = item.outputSchema;
+    if (outputSchema == null) return (finalText, null);
     final validation = await _validateStructured(
       child: child,
-      outputSchema: item.outputSchema!,
+      outputSchema: outputSchema,
       finalText: finalText,
       cancelToken: cancelToken,
     );
@@ -1658,8 +1675,9 @@ final class TaskExecutor {
     final userPrompt = StringBuffer(
       taskAssignmentPrompt.replaceAll('{{task}}', item.task.trim()),
     );
-    if (subagentId != null && subagentManager != null) {
-      final queued = await subagentManager!.drainMessages(subagentId);
+    final retained = subagentManager;
+    if (subagentId != null && retained != null) {
+      final queued = await retained.drainMessages(subagentId);
       if (queued.isNotEmpty) {
         userPrompt
           ..writeln()
@@ -1971,7 +1989,8 @@ final class TaskExecutor {
     final fence = RegExp('```(?:json|JSON)?\\s*\\r?\\n([\\s\\S]*?)```');
     final matches = fence.allMatches(trimmed).toList();
     for (final match in matches.reversed) {
-      final value = _tryParseJson(match.group(1)!.trim());
+      final captured = match.group(1);
+      final value = captured == null ? null : _tryParseJson(captured.trim());
       if (value != null) return value;
     }
     return null;
@@ -2057,9 +2076,7 @@ final class TaskExecutor {
     SubagentStatus status, {
     String? error,
   }) async {
-    if (subagentManager != null) {
-      await subagentManager!.update(id, status: status, error: error);
-    }
+    await subagentManager?.update(id, status: status, error: error);
   }
 }
 

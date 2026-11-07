@@ -1242,16 +1242,7 @@ class _DapConnectionEditorPageState extends State<DapConnectionEditorPage> {
                           autocorrect: false,
                           enableSuggestions: false,
                         ),
-                        if (_error != null) ...[
-                          const SizedBox(height: 12),
-                          Text(
-                            _error!,
-                            style: TextStyle(
-                              color: faui.FaDesignTokens.of(context).danger,
-                            ),
-                          ),
-                        ],
-                        const SizedBox(height: 24),
+                        ...faui.faFormErrorBlock(context, _error),
                         Row(
                           children: [
                             const Spacer(),

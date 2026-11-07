@@ -13,7 +13,7 @@ extension _TuiMouseRegions on FaTuiModel {
   /// composer caret is the exception: X10 (modes 9/1000) reports presses
   /// only, so mousedown already homes the caret; the SGR release then
   /// re-activates idempotently.
-  (Model, Cmd?) _handleMouseClick(MouseClickMsg msg) {
+  UiUpdate _handleMouseClick(MouseClickMsg msg) {
     if (!mouseCapture) return (this, null);
     _mouseRouter.pressAt(msg.mouse.x, msg.mouse.y);
     final region = _hitRegions.hitTest(msg.mouse.x, msg.mouse.y);
@@ -26,7 +26,7 @@ extension _TuiMouseRegions on FaTuiModel {
   /// Motion while pressed: past the drag threshold the gesture becomes a
   /// drag and its release activates nothing (E1 — a drag with capture on
   /// is the user attempting a selection).
-  (Model, Cmd?) _handleMouseMotion(MouseMotionMsg msg) {
+  UiUpdate _handleMouseMotion(MouseMotionMsg msg) {
     if (!mouseCapture) return (this, null);
     _mouseRouter.motionTo(msg.mouse.x, msg.mouse.y);
     return (this, null);
@@ -35,7 +35,7 @@ extension _TuiMouseRegions on FaTuiModel {
   /// Release: [TuiMouseRouter.releaseAt] classifies the gesture and
   /// hit-tests the release point (topmost region wins); a click on a
   /// region routes to [_activateRegion].
-  (Model, Cmd?) _handleMouseRelease(MouseReleaseMsg msg) {
+  UiUpdate _handleMouseRelease(MouseReleaseMsg msg) {
     if (!mouseCapture) return (this, null);
     final gesture = _mouseRouter.releaseAt(
       msg.mouse.x,
@@ -49,7 +49,7 @@ extension _TuiMouseRegions on FaTuiModel {
   /// Per-region-type routing (AC1): composer → caret move, menu row →
   /// accept, queue row → drop, scrollback → consumed no-op (the click
   /// must not fall through to unclaimed-chrome behavior).
-  (Model, Cmd?) _activateRegion(TuiHitRegion region, int x, int y) {
+  UiUpdate _activateRegion(TuiHitRegion region, int x, int y) {
     switch (region.kind) {
       case TuiRegionKind.composer:
         final caret = _caretForComposerClick(y - region.y, x);
@@ -130,7 +130,7 @@ extension _TuiMouseRegions on FaTuiModel {
   /// `/mouse` flips; an explicit arg must parse. OFF prints the
   /// keyboard-degrade hint once per session (E4). Null when [text] is
   /// not the /mouse command.
-  (FaTuiModel, Cmd?)? _handleMouseCommand(String text) {
+  FaTuiUpdate? _handleMouseCommand(String text) {
     const cmd = '/mouse';
     if (text != cmd && !text.startsWith('$cmd ')) return null;
     final arg = text == cmd ? '' : text.substring(cmd.length + 1).trim();

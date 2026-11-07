@@ -25,11 +25,11 @@ Future<(int, String)> _get(String url) async {
 void main() {
   // The loopback callback server binds real sockets, so every test owns its
   // server and closes it in teardown — no shared state between tests.
-  late OpenRouterOAuthCallbackServer server;
+  late OpenRouterOAuthLocalCallbackServer server;
   late String url;
 
   setUp(() async {
-    server = OpenRouterOAuthCallbackServer();
+    server = OpenRouterOAuthLocalCallbackServer();
     url = await server.start(timeout: const Duration(seconds: 30));
     addTearDown(server.close);
   });
@@ -56,7 +56,7 @@ void main() {
     fail('port $port was never freed for the rebind check: $lastError');
   }
 
-  group('OpenRouterOAuthCallbackServer', () {
+  group('OpenRouterOAuthLocalCallbackServer', () {
     test('start binds loopback and serves the callback URL', () {
       expect(url, startsWith('http://127.0.0.1:'));
       expect(url, endsWith('/'));
@@ -64,11 +64,11 @@ void main() {
     });
 
     test('callbackUrl is null before start', () {
-      expect(OpenRouterOAuthCallbackServer().callbackUrl, isNull);
+      expect(OpenRouterOAuthLocalCallbackServer().callbackUrl, isNull);
     });
 
     test('waitForCode before start completes with null', () async {
-      expect(await OpenRouterOAuthCallbackServer().waitForCode(), isNull);
+      expect(await OpenRouterOAuthLocalCallbackServer().waitForCode(), isNull);
     });
 
     test(
@@ -159,7 +159,7 @@ void main() {
     );
 
     test('the timeout completes waitForCode with null and closes', () async {
-      final timedOut = OpenRouterOAuthCallbackServer();
+      final timedOut = OpenRouterOAuthLocalCallbackServer();
       final url2 = await timedOut.start(
         timeout: const Duration(milliseconds: 50),
       );
@@ -183,7 +183,7 @@ void main() {
     test(
       'a close landing while another close is in flight awaits the release',
       () async {
-        final closing = OpenRouterOAuthCallbackServer();
+        final closing = OpenRouterOAuthLocalCallbackServer();
         final url3 = await closing.start();
         final port = Uri.parse(url3).port;
         // The exact shape of the timeout path: one close kicked off

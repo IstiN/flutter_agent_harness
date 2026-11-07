@@ -8,7 +8,7 @@ extension FaTuiModelHub on FaTuiModel {
   /// Host push of fresh hub content (open or refresh): carries the local
   /// interactive bits over so a re-push never resets the user's selection
   /// or scroll anchor.
-  (Model, Cmd?) _handleHubStateMsg(HubStateMsg msg) {
+  UiUpdate _handleHubStateMsg(HubStateMsg msg) {
     // Refresh-only pushes never open a closed overlay (issue #382). The
     // guard reads the live state at handling time, so a close that raced
     // the in-flight push still wins.
@@ -18,7 +18,7 @@ extension FaTuiModelHub on FaTuiModel {
 
   /// The open hub overlay owns every key; wheel scrolling moves its tree
   /// selection instead of the chat history.
-  (Model, Cmd?) _handleHubKey(KeyMsg msg) {
+  UiUpdate _handleHubKey(KeyMsg msg) {
     // ctrl+c outranks the modal: the same double-press contract as on the
     // main path (issue #830) — press 1 aborts + hints and stays, press 2
     // exits with SIGINT parity.

@@ -61,10 +61,7 @@ final class _CountingFs
       return ranged.readRange(path, start, end);
     }
     return Err(
-      const FileError(
-        FileErrorCode.notSupported,
-        'ranged reads not supported',
-      ),
+      const FileError(FileErrorCode.notSupported, 'ranged reads not supported'),
     );
   }
 
@@ -93,10 +90,7 @@ final class _CountingFs
       return renamable.renamePath(from, to);
     }
     return Err(
-      const FileError(
-        FileErrorCode.notSupported,
-        'rename not supported',
-      ),
+      const FileError(FileErrorCode.notSupported, 'rename not supported'),
     );
   }
 
@@ -123,8 +117,7 @@ final class _CountingFs
   Future<Result<FileInfo, FileError>> fileInfo(String path) =>
       _delegate.fileInfo(path);
   @override
-  Future<Result<bool, FileError>> exists(String path) =>
-      _delegate.exists(path);
+  Future<Result<bool, FileError>> exists(String path) => _delegate.exists(path);
   @override
   Future<Result<void, FileError>> createDir(
     String path, {
@@ -183,9 +176,7 @@ Future<void> _seed(
   for (var d = 0; d < dirs.length; d++) {
     for (var i = 0; i < perDir; i++) {
       final id = idFor?.call(d, i) ?? 's-$d-$i';
-      await repo.create(
-        JsonlSessionCreateOptions(id: id, cwd: dirs[d]),
-      );
+      await repo.create(JsonlSessionCreateOptions(id: id, cwd: dirs[d]));
     }
   }
 }
@@ -220,35 +211,40 @@ void main() {
   });
 
   group('AC1 — warm boot is index-priced', () {
-    test('warm list() performs zero header reads and zero window reads', () async {
-      await _seed(fs, dirs: ['/work/a', '/work/b'], perDir: 3);
-      await repo.list(); // cold: writes the index
+    test(
+      'warm list() performs zero header reads and zero window reads',
+      () async {
+        await _seed(fs, dirs: ['/work/a', '/work/b'], perDir: 3);
+        await repo.list(); // cold: writes the index
 
-      fs.headerReads = 0;
-      fs.windowReads = 0;
-      fs.indexWrites = 0;
-      final warm = await repo.list();
+        fs.headerReads = 0;
+        fs.windowReads = 0;
+        fs.indexWrites = 0;
+        final warm = await repo.list();
 
-      expect(warm, hasLength(6));
-      expect(fs.headerReads, 0, reason: 'AC1: warm listing is index-priced');
-      expect(fs.windowReads, 0);
-      expect(fs.indexWrites, 0, reason: 'steady state: no index churn');
-    });
+        expect(warm, hasLength(6));
+        expect(fs.headerReads, 0, reason: 'AC1: warm listing is index-priced');
+        expect(fs.windowReads, 0);
+        expect(fs.indexWrites, 0, reason: 'steady state: no index churn');
+      },
+    );
 
-    test('a created/deleted/mutated file since the index costs one re-read',
-        () async {
-      await _seed(fs, dirs: ['/work/a'], perDir: 3);
-      await repo.list();
+    test(
+      'a created/deleted/mutated file since the index costs one re-read',
+      () async {
+        await _seed(fs, dirs: ['/work/a'], perDir: 3);
+        await repo.list();
 
-      fs.headerReads = 0;
-      await _header('late', '/work/a').write(
-        base,
-        '$_root/--work-a--/20260201T00-00-00-000_late.jsonl',
-      );
-      final listed = await repo.list();
-      expect(listed, hasLength(4));
-      expect(fs.headerReads, 1, reason: 'only the new file is read');
-    });
+        fs.headerReads = 0;
+        await _header(
+          'late',
+          '/work/a',
+        ).write(base, '$_root/--work-a--/20260201T00-00-00-000_late.jsonl');
+        final listed = await repo.list();
+        expect(listed, hasLength(4));
+        expect(fs.headerReads, 1, reason: 'only the new file is read');
+      },
+    );
   });
 
   group('AC2 — cold path is semantically identical', () {
@@ -333,10 +329,10 @@ void main() {
     test('created since index: seen', () async {
       await _seed(fs, dirs: ['/work/a'], perDir: 2);
       await repo.list();
-      await _header('new-guy', '/work/a').write(
-        base,
-        '$_root/--work-a--/20260202T00-00-00-000_new-guy.jsonl',
-      );
+      await _header(
+        'new-guy',
+        '/work/a',
+      ).write(base, '$_root/--work-a--/20260202T00-00-00-000_new-guy.jsonl');
       final listed = await repo.list();
       expect(listed.map((m) => m.id), contains('new-guy'));
     });
@@ -365,9 +361,7 @@ void main() {
 
       // Append past the tiny rotation threshold: the primary is renamed
       // to a part and reseeded (writer path — the index hook fires).
-      await session.appendMessage(
-        UserMessage.text('x' * 256),
-      );
+      await session.appendMessage(UserMessage.text('x' * 256));
 
       final listed = await repo.list();
       final row = listed.where((m) => m.id == 'rotates').single;
@@ -400,36 +394,42 @@ void main() {
       expect(listed.where((m) => m.id == victim.id).single.path, newName);
     });
 
-    test('same-size same-mtime swap inside a directory is still caught', () async {
-      // The documented fingerprint residual (count+size+mtime identical):
-      // two same-size files swapping identities. The per-entry stat
-      // cross-check catches it — a stale entry can never serve the wrong
-      // file's metadata.
-      final repoA = JsonlSessionRepo(fs: fs, sessionsRoot: _root);
-      final s1 = await repoA.create(
-        const JsonlSessionCreateOptions(id: 'swap-a', cwd: '/work/s'),
-      );
-      final s2 = await repoA.create(
-        const JsonlSessionCreateOptions(id: 'swap-b', cwd: '/work/s'),
-      );
-      await repoA.list();
+    test(
+      'same-size same-mtime swap inside a directory is still caught',
+      () async {
+        // The documented fingerprint residual (count+size+mtime identical):
+        // two same-size files swapping identities. The per-entry stat
+        // cross-check catches it — a stale entry can never serve the wrong
+        // file's metadata.
+        final repoA = JsonlSessionRepo(fs: fs, sessionsRoot: _root);
+        const p1 = '$_root/--work-s--/20260115T10-00-00-000_swap-a.jsonl';
+        const p2 = '$_root/--work-s--/20260115T10-00-00-001_swap-b.jsonl';
+        await _JsonlHeaderLine('swap-a', '/work/s', null, null).write(base, p1);
+        await _JsonlHeaderLine('swap-b', '/work/s', null, null).write(base, p2);
+        base
+          ..setMtime(p1, 1000)
+          ..setMtime(p2, 1000);
+        await repoA.list();
 
-      // Swap the file CONTENTS (headers) 1:1 — same sizes, and force the
-      // same mtime by writing both then pinning mtimes through a rewrite.
-      final p1 = (s1.getStorage() as JsonlSessionStorage).cachedMetadata.path;
-      final p2 = (s2.getStorage() as JsonlSessionStorage).cachedMetadata.path;
-      final c1 = (await base.readTextFile(p1)).valueOrNull!;
-      final c2 = (await base.readTextFile(p2)).valueOrNull!;
-      await base.writeFile(p1, c2);
-      await base.writeFile(p2, c1);
+        // Swap the file CONTENTS (headers) 1:1, then restore the identical
+        // size+mtime stat pair whose bytes fed the index.
+        final c1 = (await base.readTextFile(p1)).valueOrNull!;
+        final c2 = (await base.readTextFile(p2)).valueOrNull!;
+        expect(utf8.encode(c1).length, utf8.encode(c2).length);
+        await base.writeFile(p1, c2);
+        await base.writeFile(p2, c1);
+        base
+          ..setMtime(p1, 1000)
+          ..setMtime(p2, 1000);
 
-      final listed = await repoA.list();
-      expect(listed.where((m) => m.id == 'swap-a').single.path, p1);
-      expect(listed.where((m) => m.id == 'swap-b').single.path, p2);
-      final rowA = listed.where((m) => m.id == 'swap-a').single;
-      final statA = (await base.fileInfo(p1)).valueOrNull!;
-      expect(rowA.sizeBytes, statA.size);
-    });
+        final listed = await repoA.list();
+        expect(listed.where((m) => m.id == 'swap-a').single.path, p1);
+        expect(listed.where((m) => m.id == 'swap-b').single.path, p2);
+        final rowA = listed.where((m) => m.id == 'swap-a').single;
+        final statA = (await base.fileInfo(p1)).valueOrNull!;
+        expect(rowA.sizeBytes, statA.size);
+      },
+    );
   });
 
   group('AC6 — writers keep the index fresh', () {
@@ -442,9 +442,7 @@ void main() {
       );
       expect(fs.indexWrites, 1, reason: 'AC6: index updated by create');
       final raw = await base.readTextFile('$_root/.listing-index.json');
-      final index = SessionListingIndex.fromJson(
-        jsonDecode(raw.valueOrNull!),
-      )!;
+      final index = SessionListingIndex.fromJson(jsonDecode(raw.valueOrNull!))!;
       expect(index.entryById('fresh'), isNotNull);
 
       // And the next listing is already warm (the writer refreshed the
@@ -454,23 +452,23 @@ void main() {
       expect(fs.headerReads, 0);
     });
 
-    test('delete (soft) drops the sidecar entry in the same operation', () async {
-      await _seed(fs, dirs: ['/work/a'], perDir: 2);
-      final before = await repo.list();
-      final victim = before.first;
-      fs.indexWrites = 0;
-      await repo.delete(victim);
-      expect(fs.indexWrites, 1, reason: 'AC6: index updated by delete');
-      final raw = await base.readTextFile('$_root/.listing-index.json');
-      final index = SessionListingIndex.fromJson(
-        jsonDecode(raw.valueOrNull!),
-      )!;
-      expect(index.entryById(victim.id), isNull);
-      expect(
-        index.entries.map((e) => e.path),
-        isNot(contains(victim.path)),
-      );
-    });
+    test(
+      'delete (soft) drops the sidecar entry in the same operation',
+      () async {
+        await _seed(fs, dirs: ['/work/a'], perDir: 2);
+        final before = await repo.list();
+        final victim = before.first;
+        fs.indexWrites = 0;
+        await repo.delete(victim);
+        expect(fs.indexWrites, 1, reason: 'AC6: index updated by delete');
+        final raw = await base.readTextFile('$_root/.listing-index.json');
+        final index = SessionListingIndex.fromJson(
+          jsonDecode(raw.valueOrNull!),
+        )!;
+        expect(index.entryById(victim.id), isNull);
+        expect(index.entries.map((e) => e.path), isNot(contains(victim.path)));
+      },
+    );
 
     test('rotation fires the storage hook and updates the sidecar', () async {
       final session = await repo.create(
@@ -486,9 +484,7 @@ void main() {
 
       expect(fs.indexWrites, 1, reason: 'AC6: rotation updates the index');
       final raw = await base.readTextFile('$_root/.listing-index.json');
-      final index = SessionListingIndex.fromJson(
-        jsonDecode(raw.valueOrNull!),
-      )!;
+      final index = SessionListingIndex.fromJson(jsonDecode(raw.valueOrNull!))!;
       final entry = index.entryById('rotator')!;
       expect(entry.hasParts, isTrue, reason: 'segment knowledge persisted');
       final info = (await base.fileInfo(entry.path)).valueOrNull!;
@@ -518,32 +514,35 @@ void main() {
       );
       // The opened storage rides the shipped rotation threshold; shrink
       // it for the test (the hook rides the rebuilt storage too).
-      final limited = (viaHooked.getStorage() as JsonlSessionStorage)
-          .withRotationLimits(rotateBytes: 64)
-        ..onMutated = (path) async => rotations.add(path);
+      final limited =
+          (viaHooked.getStorage() as JsonlSessionStorage).withRotationLimits(
+            rotateBytes: 64,
+          )..onMutated = (path) async => rotations.add(path);
       await Session(limited).appendMessage(UserMessage.text('z' * 300));
       expect(rotations, hasLength(1));
     });
 
-    test('CLI + app racing: last-writer-wins converges via the fingerprint',
-        () async {
-      await _seed(fs, dirs: ['/work/a'], perDir: 2);
-      final app = JsonlSessionRepo(fs: fs, sessionsRoot: _root);
-      final cli = JsonlSessionRepo(fs: fs, sessionsRoot: _root);
+    test(
+      'CLI + app racing: last-writer-wins converges via the fingerprint',
+      () async {
+        await _seed(fs, dirs: ['/work/a'], perDir: 2);
+        final app = JsonlSessionRepo(fs: fs, sessionsRoot: _root);
+        final cli = JsonlSessionRepo(fs: fs, sessionsRoot: _root);
 
-      final appView = await app.list(); // app writes the index
-      await cli.create(
-        const JsonlSessionCreateOptions(id: 'from-cli', cwd: '/work/b'),
-      ); // CLI rewrites the index last
+        final appView = await app.list(); // app writes the index
+        await cli.create(
+          const JsonlSessionCreateOptions(id: 'from-cli', cwd: '/work/b'),
+        ); // CLI rewrites the index last
 
-      // The app's next listing must see the CLI's session — the index the
-      // CLI wrote is validated by the fingerprint and merged.
-      final converged = await app.list();
-      expect(converged.map((m) => m.id), contains('from-cli'));
-      expect(converged.length, appView.length + 1);
-      // And a warm re-list stays consistent.
-      _expectSameListings(converged, await app.list());
-    });
+        // The app's next listing must see the CLI's session — the index the
+        // CLI wrote is validated by the fingerprint and merged.
+        final converged = await app.list();
+        expect(converged.map((m) => m.id), contains('from-cli'));
+        expect(converged.length, appView.length + 1);
+        // And a warm re-list stays consistent.
+        _expectSameListings(converged, await app.list());
+      },
+    );
   });
 
   group('AC7 — fail-open everywhere', () {
@@ -564,21 +563,24 @@ void main() {
       }
     });
 
-    test('missing sessions root lists empty, with or without an index', () async {
-      final emptyRepo = JsonlSessionRepo(
-        fs: fs,
-        sessionsRoot: '/sessions-does-not-exist',
-      );
-      expect(await emptyRepo.list(), isEmpty);
-    });
+    test(
+      'missing sessions root lists empty, with or without an index',
+      () async {
+        final emptyRepo = JsonlSessionRepo(
+          fs: fs,
+          sessionsRoot: '/sessions-does-not-exist',
+        );
+        expect(await emptyRepo.list(), isEmpty);
+      },
+    );
 
     test('empty root and single-file root', () async {
       expect(await repo.list(), isEmpty);
       await base.createDir('$_root/--work--', recursive: true);
-      await _header('only', '/work').write(
-        base,
-        '$_root/--work--/20260101T00-00-00-000_only.jsonl',
-      );
+      await _header(
+        'only',
+        '/work',
+      ).write(base, '$_root/--work--/20260101T00-00-00-000_only.jsonl');
       final listed = await repo.list();
       expect(listed, hasLength(1));
       final warm = await repo.list();
@@ -587,42 +589,52 @@ void main() {
   });
 
   group('AC8 — segment discovery shortcut', () {
-    test('cold listing + names with no segments: no per-session listDirs',
-        () async {
-      await _seed(fs, dirs: ['/work/a'], perDir: 3);
-      final named = await repo.create(
-        const JsonlSessionCreateOptions(id: 'named', cwd: '/work/a'),
-      );
-      await named.appendSessionName('The Named One');
-      final sessions = await repo.list();
-      expect(sessions, hasLength(4));
+    test(
+      'cold listing + names with no segments: no per-session listDirs',
+      () async {
+        await _seed(fs, dirs: ['/work/a'], perDir: 3);
+        final named = await repo.create(
+          const JsonlSessionCreateOptions(id: 'named', cwd: '/work/a'),
+        );
+        await named.appendSessionName('The Named One');
+        final sessions = await repo.list();
+        expect(sessions, hasLength(4));
 
-      fs.listDirCalls.clear();
-      final names = await repo.sessionNamesQuick(sessions);
-      expect(names['named'], 'The Named One');
-      // The walk already saw every directory; name resolution adds ZERO
-      // directory reads when no `.part-` siblings exist.
-      expect(fs.listDirCalls, isEmpty,
-          reason: 'AC8: segment discovery rides the walk');
-    });
+        fs.listDirCalls.clear();
+        final names = await repo.sessionNamesQuick(sessions);
+        expect(names['named'], 'The Named One');
+        // The walk already saw every directory; name resolution adds ZERO
+        // directory reads when no `.part-` siblings exist.
+        expect(
+          fs.listDirCalls,
+          isEmpty,
+          reason: 'AC8: segment discovery rides the walk',
+        );
+      },
+    );
 
-    test('with segments present: names still resolve (discovery unchanged)',
-        () async {
-      final rotated = await repo.create(
-        const JsonlSessionCreateOptions(
-          id: 'rotated-named',
-          cwd: '/work/a',
-          rotateBytes: 64,
-        ),
-      );
-      await rotated.appendMessage(UserMessage.text('filler' * 40));
-      await rotated.appendSessionName('Newest Name');
+    test(
+      'with segments present: names still resolve (discovery unchanged)',
+      () async {
+        final rotated = await repo.create(
+          const JsonlSessionCreateOptions(
+            id: 'rotated-named',
+            cwd: '/work/a',
+            rotateBytes: 64,
+          ),
+        );
+        await rotated.appendMessage(UserMessage.text('filler' * 40));
+        await rotated.appendSessionName('Newest Name');
 
-      final sessions = await repo.list();
-      final names = await repo.sessionNamesQuick(sessions);
-      expect(names['rotated-named'], 'Newest Name',
-          reason: 'the newest session_info wins, wherever it lives');
-    });
+        final sessions = await repo.list();
+        final names = await repo.sessionNamesQuick(sessions);
+        expect(
+          names['rotated-named'],
+          'Newest Name',
+          reason: 'the newest session_info wins, wherever it lives',
+        );
+      },
+    );
 
     test('a stale walk hint is dropped by writer mutations', () async {
       await _seed(fs, dirs: ['/work/a'], perDir: 2);
@@ -639,52 +651,55 @@ void main() {
   });
 
   group('AC4 core — lazy name persistence', () {
-    test('rememberSessionNames persists a learned name for the next boot',
-        () async {
-      final session = await repo.create(
-        const JsonlSessionCreateOptions(id: 'labelled', cwd: '/work/a'),
-      );
-      await session.appendSessionName('Persisted Name');
-      final sessions = await repo.list();
-      expect(await repo.knownSessionNames(), isEmpty);
+    test(
+      'rememberSessionNames persists a learned name for the next boot',
+      () async {
+        final session = await repo.create(
+          const JsonlSessionCreateOptions(id: 'labelled', cwd: '/work/a'),
+        );
+        await session.appendSessionName('Persisted Name');
+        final sessions = await repo.list();
+        expect(await repo.knownSessionNames(), isEmpty);
 
-      final probed = await repo.sessionNamesQuick(sessions);
-      expect(probed['labelled'], 'Persisted Name');
-      await repo.rememberSessionNames(probed);
+        final probed = await repo.sessionNamesQuick(sessions);
+        expect(probed['labelled'], 'Persisted Name');
+        await repo.rememberSessionNames(probed);
 
-      // The NEXT boot (fresh repo instance) knows the name with zero
-      // window reads.
-      final freshRepo = JsonlSessionRepo(fs: fs, sessionsRoot: _root);
-      fs.windowReads = 0;
-      expect(await freshRepo.knownSessionNames(), {
-        'labelled': 'Persisted Name',
-      });
-      expect(fs.windowReads, 0);
-      await freshRepo.list(); // warm
-      fs.windowReads = 0;
-      expect(fs.windowReads, 0);
-    });
+        // The NEXT boot (fresh repo instance) knows the name with zero
+        // window reads.
+        final freshRepo = JsonlSessionRepo(fs: fs, sessionsRoot: _root);
+        fs.windowReads = 0;
+        expect(await freshRepo.knownSessionNames(), {
+          'labelled': 'Persisted Name',
+        });
+        expect(fs.windowReads, 0);
+        await freshRepo.list(); // warm
+        fs.windowReads = 0;
+        expect(fs.windowReads, 0);
+      },
+    );
 
-    test('rememberSessionNames is guarded: a changed file drops the name',
-        () async {
-      final session = await repo.create(
-        const JsonlSessionCreateOptions(id: 'renamed-later', cwd: '/work/a'),
-      );
-      final sessions = await repo.list();
-      expect(sessions, hasLength(1));
-      await repo.rememberSessionNames({
-        'renamed-later': 'First Name',
-      });
-      expect(await repo.knownSessionNames(), {
-        'renamed-later': 'First Name',
-      });
+    test(
+      'rememberSessionNames is guarded: a changed file drops the name',
+      () async {
+        final session = await repo.create(
+          const JsonlSessionCreateOptions(id: 'renamed-later', cwd: '/work/a'),
+        );
+        final sessions = await repo.list();
+        expect(sessions, hasLength(1));
+        await repo.rememberSessionNames({'renamed-later': 'First Name'});
+        expect(await repo.knownSessionNames(), {'renamed-later': 'First Name'});
 
-      // A /rename appends a record — the file's stats change, so the next
-      // boot must NOT serve the frozen name (it may be stale).
-      await session.appendSessionName('Second Name');
-      expect((await repo.knownSessionNames())['renamed-later'], isNull,
-          reason: 'the fingerprint caught the append: name re-learned lazily');
-    });
+        // A /rename appends a record — the file's stats change, so the next
+        // boot must NOT serve the frozen name (it may be stale).
+        await session.appendSessionName('Second Name');
+        expect(
+          (await repo.knownSessionNames())['renamed-later'],
+          isNull,
+          reason: 'the fingerprint caught the append: name re-learned lazily',
+        );
+      },
+    );
   });
 
   group('index store — two-process write races', () {
@@ -692,11 +707,9 @@ void main() {
       const store = SessionListingIndexStore();
       await base.createDir(_root, recursive: true);
       final first = SessionListingIndex(
-        dirStats: const {'': ListingDirStats(
-          fileCount: 1,
-          totalBytes: 10,
-          maxMtimeMs: 1,
-        )},
+        dirStats: const {
+          '': ListingDirStats(fileCount: 1, totalBytes: 10, maxMtimeMs: 1),
+        },
         entries: [
           const SessionListingIndexEntry(
             id: 'a',
@@ -828,8 +841,7 @@ final class _FailNextPrimaryWrite
   Future<Result<List<FileInfo>, FileError>> listDir(String path) =>
       _delegate.listDir(path);
   @override
-  Future<Result<bool, FileError>> exists(String path) =>
-      _delegate.exists(path);
+  Future<Result<bool, FileError>> exists(String path) => _delegate.exists(path);
   @override
   Future<Result<void, FileError>> createDir(
     String path, {
@@ -863,10 +875,7 @@ final class _FailNextPrimaryWrite
       return ranged.readRange(path, start, end);
     }
     return Err(
-      const FileError(
-        FileErrorCode.notSupported,
-        'ranged reads not supported',
-      ),
+      const FileError(FileErrorCode.notSupported, 'ranged reads not supported'),
     );
   }
 }

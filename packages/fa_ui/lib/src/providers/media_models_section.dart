@@ -13,6 +13,7 @@ import 'package:fa_ui/src/strings/fa_ui_strings.dart';
 import 'package:fa_ui/src/theme/fa2_tokens.dart';
 import 'package:fa_ui/src/utils/page_presentation.dart';
 import 'package:fa_ui/src/widgets/fa2_controls.dart';
+import 'package:fa_ui/src/widgets/settings_scaffold.dart';
 
 /// The settings "Media models" section: one row per [MediaSlot] showing the
 /// slot's override (`model · provider`), the explicit "Same as main
@@ -81,71 +82,57 @@ class MediaModelsSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final tokens = FaDesignTokens.of(context);
-    final theme = Theme.of(context);
-    final strings = FaUiStrings.of(context);
     final store = this.store ?? MediaModelsScope.maybeOf(context);
-    if (store == null) return const SizedBox.shrink();
-    return ListenableBuilder(
-      listenable: store,
-      builder: (context, _) {
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            // The section eyebrow: the shared dim label treatment so the
-            // card reads as one settings group.
-            Padding(
-              padding: const EdgeInsets.fromLTRB(4, 0, 4, 4),
-              child: Text(
-                strings.mediaModelsSectionTitle,
-                style: TextStyle(
-                  color: tokens.ink2,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w600,
-                  letterSpacing: .2,
-                ),
-              ),
+    return faStoreSection(store, (context, store) {
+      final tokens = FaDesignTokens.of(context);
+      final strings = FaUiStrings.of(context);
+      return [
+        // The section eyebrow: the shared dim label treatment so the
+        // card reads as one settings group.
+        Padding(
+          padding: const EdgeInsets.fromLTRB(4, 0, 4, 4),
+          child: Text(
+            strings.mediaModelsSectionTitle,
+            style: TextStyle(
+              color: tokens.ink2,
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+              letterSpacing: .2,
             ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(4, 0, 4, 8),
-              child: Text(
-                strings.mediaModelsSectionNote,
-                style: TextStyle(
-                  color: tokens.ink2,
-                  fontSize: 12,
-                  height: 1.35,
-                ),
-              ),
-            ),
-            // One grouped card: 44px+ token rows with hairline separators
-            // (the bare list-with-chevrons idiom leaked stock M3 ink).
-            FaSurface(
-              borderRadius: BorderRadius.circular(14),
-              child: Column(
-                children: [
-                  for (final (i, slot) in MediaSlot.all.indexed) ...[
-                    if (i > 0)
-                      Divider(
-                        height: 1,
-                        thickness: 1,
-                        indent: 48,
-                        color: tokens.hairline,
-                      ),
-                    _buildSlotRow(context, theme, strings, store, slot),
-                  ],
-                ],
-              ),
-            ),
-          ],
-        );
-      },
-    );
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(4, 0, 4, 8),
+          child: Text(
+            strings.mediaModelsSectionNote,
+            style: TextStyle(color: tokens.ink2, fontSize: 12, height: 1.35),
+          ),
+        ),
+        // One grouped card: 44px+ token rows with hairline separators
+        // (the bare list-with-chevrons idiom leaked stock M3 ink).
+        FaSurface(
+          borderRadius: BorderRadius.circular(14),
+          child: Column(
+            children: [
+              for (final (i, slot) in MediaSlot.all.indexed) ...[
+                if (i > 0)
+                  Divider(
+                    height: 1,
+                    thickness: 1,
+                    indent: 48,
+                    color: tokens.hairline,
+                  ),
+                _buildSlotRow(context, strings, store, slot),
+              ],
+            ],
+          ),
+        ),
+      ];
+    });
   }
 
   Widget _buildSlotRow(
     BuildContext context,
-    ThemeData theme,
     FaUiStrings strings,
     MediaModelsStore store,
     String slot,

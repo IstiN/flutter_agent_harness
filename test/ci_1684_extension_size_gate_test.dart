@@ -154,10 +154,11 @@ void main() {
       );
       expect(
         steps,
-        contains(r'gh release upload "$RELEASE_TAG" "$asset"'),
+        contains(r'release_asset_gate.sh "$RELEASE_TAG" "$asset"'),
         reason:
             'AC2: fa-extension.zip attached to releases, latest '
-            'tag onward (--clobber keeps the stable asset name)',
+            'tag onward — through the gh-2042 immutability gate (the gate '
+            'uploads with --clobber, keeping the stable asset name)',
       );
     });
   });

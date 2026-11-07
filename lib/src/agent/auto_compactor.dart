@@ -55,6 +55,9 @@ final class AutoCompactorPass {
     this.hiddenRecords = 0,
     this.summarizedMessages = 0,
     this.droppedMessages = 0,
+    this.marginTokens,
+    this.bandTokens,
+    this.hideableRemaining,
   });
 
   /// 1-based pass number.
@@ -91,6 +94,19 @@ final class AutoCompactorPass {
   /// summaries, so a report showing only hidden/summarized cannot explain
   /// where the tokens went. 0 for every summarizer pass.
   final int droppedMessages;
+
+  /// gh-2044 fragile-band escalation metadata (optional, never content):
+  /// the settled margin that triggered the structured engine's escalation
+  /// pass. Null on every pass except `structured·ckpt-escalation`.
+  final int? marginTokens;
+
+  /// gh-2044: the band the margin was measured against
+  /// (`settings.reserveTokens`). Null except on escalation passes.
+  final int? bandTokens;
+
+  /// gh-2044: remaining hideable-entry count at escalation time — a
+  /// diagnostic count only. Null except on escalation passes.
+  final int? hideableRemaining;
 }
 
 /// Hooks for a host UI to observe progress. Implementations should not
@@ -267,11 +283,13 @@ final class AutoCompactor {
   final int messageCapMargin;
 
   /// Transient error markers worth retrying: 5xx HTTP, aborted /
-  /// reset / closed sockets. Hard refusals (rate limit, 429, content
-  /// filter, auth) fail fast.
+  /// reset / closed sockets, and the browser fetch death (`TypeError:
+  /// Failed to fetch` — an MV3 service-worker provider stream dies with
+  /// exactly that string; gh-2059 arch 7). Hard refusals (rate limit,
+  /// 429, content filter, auth) fail fast.
   static final _transient = RegExp(
     r'(?:5\d\d|connection\s+(?:closed|reset|aborted|refused)|'
-    r'socket\s+exception|stream\s+closed)',
+    r'socket\s+exception|stream\s+closed|failed\s+to\s+fetch)',
     caseSensitive: false,
   );
 
@@ -537,18 +555,7 @@ final class AutoCompactor {
   /// [runFallback] is true. Returns the outcome, the fallback label used and
   /// the winning attempt's record data (summary + hidden/summarized counts)
   /// for the pass report.
-  Future<
-    ({
-      bool ok,
-      Object? error,
-      bool noWork,
-      String? fallback,
-      String? summary,
-      int hiddenRecords,
-      int summarizedMessages,
-    })
-  >
-  _pickAttempt(
+  Future<_PickOutcome> _pickAttempt(
     int pass, {
     required bool runFallback,
     required String mainLabel,
@@ -566,7 +573,7 @@ final class AutoCompactor {
         summarizerWindow: smolModel?.contextWindow,
       );
       if (smolOk.ok) {
-        return (
+        return _PickOutcome(
           ok: true,
           error: null,
           noWork: smolOk.noWork,
@@ -584,7 +591,7 @@ final class AutoCompactor {
         summarizerWindow: window,
       );
       if (mainOk.ok) {
-        return (
+        return _PickOutcome(
           ok: true,
           error: null,
           noWork: mainOk.noWork,
@@ -594,7 +601,7 @@ final class AutoCompactor {
           summarizedMessages: mainOk.summarizedMessages,
         );
       }
-      return (
+      return _PickOutcome(
         ok: false,
         error: mainOk.error ?? smolOk.error,
         noWork: false,
@@ -614,7 +621,7 @@ final class AutoCompactor {
       summarizerWindow: window,
     );
     if (mainOk.ok) {
-      return (
+      return _PickOutcome(
         ok: true,
         error: null,
         noWork: mainOk.noWork,
@@ -624,7 +631,7 @@ final class AutoCompactor {
         summarizedMessages: mainOk.summarizedMessages,
       );
     }
-    return (
+    return _PickOutcome(
       ok: false,
       error: mainOk.error,
       noWork: false,
@@ -642,17 +649,7 @@ final class AutoCompactor {
   /// nothing left to compact (already compacted at the leaf) — the caller
   /// stops the pass loop instead of spinning identical no-op passes to
   /// [maxPasses].
-  Future<
-    ({
-      bool ok,
-      Object? error,
-      bool noWork,
-      String? summary,
-      int hiddenRecords,
-      int summarizedMessages,
-    })
-  >
-  _attempt(
+  Future<_AttemptOutcome> _attempt(
     String label, {
     required SummarizeFn summarize,
     required int pass,
@@ -664,7 +661,7 @@ final class AutoCompactor {
     }
     for (var attempt = 1; attempt <= maxAttempts; attempt++) {
       if (clock.elapsed >= totalBudget) {
-        return (
+        return _AttemptOutcome(
           ok: false,
           error: TimeoutException(
             'compaction total budget (${totalBudget.inSeconds}s) exhausted '
@@ -726,7 +723,7 @@ final class AutoCompactor {
           },
         );
         if (record == null) {
-          return (
+          return _AttemptOutcome(
             ok: true,
             error: null,
             noWork: true,
@@ -736,7 +733,7 @@ final class AutoCompactor {
           );
         }
         final (hidden, summarized) = await _compactionCounts(record);
-        return (
+        return _AttemptOutcome(
           ok: true,
           error: null,
           noWork: false,
@@ -754,7 +751,7 @@ final class AutoCompactor {
         // 400 in a transient-shaped message.
         final isOverflow = _overflow.hasMatch(errorText);
         if (isOverflow || attempt >= maxAttempts || !isTransient) {
-          return (
+          return _AttemptOutcome(
             ok: false,
             error: error,
             noWork: false,
@@ -768,7 +765,7 @@ final class AutoCompactor {
         await Future<void>.delayed(backoff);
       }
     }
-    return (
+    return _AttemptOutcome(
       ok: false,
       error: StateError('unreachable: compact attempt loop'),
       noWork: false,
@@ -794,6 +791,51 @@ final class AutoCompactor {
 }
 
 String _modelLabel(Model m) => '${m.provider}/${m.id}';
+
+/// One summarizer attempt's outcome: the ok/error verdict plus, on
+/// success, the compaction record's summary and hidden/summarized
+/// counts. A class, not a record — 6 fields exceeded the record_size
+/// cap (issue #1997).
+final class _AttemptOutcome {
+  const _AttemptOutcome({
+    required this.ok,
+    required this.error,
+    required this.noWork,
+    required this.summary,
+    required this.hiddenRecords,
+    required this.summarizedMessages,
+  });
+
+  final bool ok;
+  final Object? error;
+  final bool noWork;
+  final String? summary;
+  final int hiddenRecords;
+  final int summarizedMessages;
+}
+
+/// [_AttemptOutcome] plus the fallback label that won (smol/main), for
+/// the pass report. A class for the same record_size reason (issue
+/// #1997).
+final class _PickOutcome {
+  const _PickOutcome({
+    required this.ok,
+    required this.error,
+    required this.noWork,
+    required this.fallback,
+    required this.summary,
+    required this.hiddenRecords,
+    required this.summarizedMessages,
+  });
+
+  final bool ok;
+  final Object? error;
+  final bool noWork;
+  final String? fallback;
+  final String? summary;
+  final int hiddenRecords;
+  final int summarizedMessages;
+}
 
 /// The mechanical over-window valve, host-callable (the resume boot cap
 /// applies it INSTANTLY when a resumed transcript cannot fit the window:
@@ -1121,6 +1163,20 @@ class AutoCompactorFactory {
       state: state,
       window: window,
       settings: settings,
+      // gh-2044 rework (review thread 3): the factory's run token is the
+      // AUTHORITATIVE user-abort signal for the engine's `_runCancelled`.
+      // Before this wiring the engine inferred "user abort" from a
+      // cancel-REASON type heuristic on the budget token
+      // (`cancelReason is! TimeoutException`), so a watchdog-shaped
+      // cancel (any TimeoutException reason — the link forwards
+      // `runToken.cancelReason` verbatim) was silently misclassified as
+      // a budget kill: the escalation proceeded, its LM call died, and
+      // the abort dissolved into a "summarizer returned no text" failed
+      // receipt while the run reported success (#1085). With the token
+      // wired, the first `_runCancelled` clause decides and the
+      // reason-type heuristic degrades to a harmless fallback for
+      // callers that only pass budgetSource.
+      cancelToken: runToken,
       judge: streamFunctionHideJudge(
         smolStream,
         smolModel,
@@ -1253,6 +1309,7 @@ final class _StructuredHooksAdapter implements StructuredCompactorHooks {
         // (issue #541).
         fallback: switch (pass.kind) {
           'checkpoint' => 'structured·ckpt',
+          'checkpoint-escalation' => 'structured·ckpt-escalation',
           'hide-fallback' => 'structured·hide-fallback',
           'hide-lru' => 'structured·hide-lru',
           _ => 'structured·hide',
@@ -1262,6 +1319,11 @@ final class _StructuredHooksAdapter implements StructuredCompactorHooks {
         hiddenRecords: pass.hiddenCount,
         summarizedMessages: pass.summarizedCount,
         summary: pass.summary,
+        // gh-2044: the escalation's numeric reason rides to the host
+        // reporting (margin/band/outcome) — counts only, never content.
+        marginTokens: pass.marginTokens,
+        bandTokens: pass.bandTokens,
+        hideableRemaining: pass.hideableRemaining,
       ),
     );
   }

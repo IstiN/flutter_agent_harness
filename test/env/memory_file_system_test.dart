@@ -182,8 +182,7 @@ void main() {
       expect(snapshot.files, isEmpty);
     });
 
-    test('exports the subtree below cwd, deep-first and name-sorted',
-        () async {
+    test('exports the subtree below cwd, deep-first and name-sorted', () async {
       final fs = MemoryFileSystem(cwd: '/work');
       await fs.writeFile('/work/b/2.txt', 'two');
       await fs.writeFile('/work/a.txt', 'a');
@@ -198,24 +197,27 @@ void main() {
         '/work/b/1.txt',
         '/work/b/2.txt',
       ]);
-      expect(
-        snapshot.files.entries.map((e) => utf8.decode(e.value)),
-        ['a', 'one', 'two'],
-      );
+      expect(snapshot.files.entries.map((e) => utf8.decode(e.value)), [
+        'a',
+        'one',
+        'two',
+      ]);
     });
 
-    test('deep-copies file bytes (later writes cannot mutate the export)',
-        () async {
-      final fs = MemoryFileSystem(cwd: '/');
-      // writeBinaryFile stores the caller's buffer BY REFERENCE, so a
-      // shallow export would observe this later mutation.
-      final bytes = Uint8List.fromList(utf8.encode('before'));
-      await fs.writeBinaryFile('/f.bin', bytes);
-      final snapshot = fs.exportSnapshot();
-      bytes[0] = 'X'.codeUnitAt(0);
-      await fs.appendFile('/f.bin', '!');
-      expect(utf8.decode(snapshot.files['/f.bin']!), 'before');
-    });
+    test(
+      'deep-copies file bytes (later writes cannot mutate the export)',
+      () async {
+        final fs = MemoryFileSystem(cwd: '/');
+        // writeBinaryFile stores the caller's buffer BY REFERENCE, so a
+        // shallow export would observe this later mutation.
+        final bytes = Uint8List.fromList(utf8.encode('before'));
+        await fs.writeBinaryFile('/f.bin', bytes);
+        final snapshot = fs.exportSnapshot();
+        bytes[0] = 'X'.codeUnitAt(0);
+        await fs.appendFile('/f.bin', '!');
+        expect(utf8.decode(snapshot.files['/f.bin']!), 'before');
+      },
+    );
 
     test('export order matches an async listDir walk', () async {
       final fs = MemoryFileSystem(cwd: '/');
@@ -257,6 +259,164 @@ void main() {
       final result = await env.exec('anything');
       expect(result.getOrThrow().stdout, 'fake');
     });
+  });
+
+  group('restoreSnapshotEnvelope', () {
+    Future<MemoryExecutionEnv> restoredFrom(
+      Map<String, Object?> envelope,
+    ) async {
+      final env = MemoryExecutionEnv(cwd: '/');
+      final isV1 = await restoreSnapshotEnvelope(env, jsonEncode(envelope), 2);
+      expect(isV1, envelope['version'] == 1, reason: 'v1-ness of $envelope');
+      return env;
+    }
+
+    test('replays a current-version envelope into the delegate', () async {
+      final env = await restoredFrom({
+        'version': 2,
+        'dirs': ['/a', '/a/b'],
+        'files': [
+          {'path': '/a/one.txt', 'data': base64Encode(utf8.encode('one'))},
+          {'path': '/a/b/two.txt', 'data': base64Encode(utf8.encode('two'))},
+        ],
+      });
+      expect((await env.readTextFile('/a/one.txt')).valueOrNull, 'one');
+      expect((await env.readTextFile('/a/b/two.txt')).valueOrNull, 'two');
+      expect(
+        (await env.listDir('/a')).valueOrNull!.map((entry) => entry.path),
+        containsAll(['/a/b', '/a/one.txt']),
+      );
+    });
+
+    test('a v1 (sessions-inline) envelope restores and reports isV1', () async {
+      final env = await restoredFrom({
+        'version': 1,
+        'dirs': [],
+        'files': [
+          {'path': '/session.jsonl', 'data': base64Encode(utf8.encode('chat'))},
+        ],
+      });
+      expect((await env.readTextFile('/session.jsonl')).valueOrNull, 'chat');
+    });
+
+    test(
+      'unreadable JSON answers null and leaves the tree untouched',
+      () async {
+        final env = MemoryExecutionEnv(cwd: '/');
+        expect(await restoreSnapshotEnvelope(env, '{not json', 2), isNull);
+        expect((await env.listDir('/')).valueOrNull, isEmpty);
+      },
+    );
+
+    test('a non-object JSON document answers null', () async {
+      final env = MemoryExecutionEnv(cwd: '/');
+      expect(await restoreSnapshotEnvelope(env, jsonEncode(['x']), 2), isNull);
+      expect(await restoreSnapshotEnvelope(env, '"envelope"', 2), isNull);
+    });
+
+    test('an unhandled newer version answers null (never wipes)', () async {
+      final env = MemoryExecutionEnv(cwd: '/');
+      final raw = jsonEncode({
+        'version': 99,
+        'dirs': ['/newer'],
+        'files': <Object>[],
+      });
+      expect(await restoreSnapshotEnvelope(env, raw, 2), isNull);
+      expect((await env.exists('/newer')).valueOrNull, isFalse);
+    });
+
+    test(
+      'a files entry with the wrong shape answers null WITHOUT half-restoring',
+      () async {
+        // Parse-then-touch ordering: the whole envelope validates before the
+        // first createDir, so a corrupt snapshot cannot leave a partial tree.
+        final env = MemoryExecutionEnv(cwd: '/');
+        final raw = jsonEncode({
+          'version': 2,
+          'dirs': ['/should-never-exist'],
+          'files': [
+            {'path': 42, 'data': 'AAA='},
+          ],
+        });
+        expect(await restoreSnapshotEnvelope(env, raw, 2), isNull);
+        expect((await env.exists('/should-never-exist')).valueOrNull, isFalse);
+      },
+    );
+
+    test('missing dirs/files keys answer null (corrupt envelope)', () async {
+      final env = MemoryExecutionEnv(cwd: '/');
+      expect(
+        await restoreSnapshotEnvelope(env, jsonEncode({'version': 2}), 2),
+        isNull,
+      );
+    });
+  });
+
+  group('restoreSessionRecords', () {
+    // The class-specific key shape stays with each twin (issue #1996); the
+    // tests stand in for it with an `s:<path>` prefix.
+    String? sessionPathOf(String key) =>
+        key.startsWith('s:') ? key.substring(2) : null;
+
+    test(
+      'overlays records onto the tree and seeds the eviction key set',
+      () async {
+        final env = MemoryExecutionEnv(cwd: '/');
+        final keys = await restoreSessionRecords(env, {
+          's:/sessions/a.jsonl': base64Encode(utf8.encode('alpha')),
+          's:/sessions/b.jsonl': base64Encode(utf8.encode('beta')),
+        }, sessionPathOf);
+        expect(keys, {'s:/sessions/a.jsonl', 's:/sessions/b.jsonl'});
+        expect(
+          (await env.readTextFile('/sessions/a.jsonl')).valueOrNull,
+          'alpha',
+        );
+        expect(
+          (await env.readTextFile('/sessions/b.jsonl')).valueOrNull,
+          'beta',
+        );
+      },
+    );
+
+    test(
+      'non-session keys are skipped and never enter the eviction set',
+      () async {
+        final env = MemoryExecutionEnv(cwd: '/');
+        final keys = await restoreSessionRecords(env, {
+          's:/sessions/a.jsonl': base64Encode(utf8.encode('alpha')),
+          'junk-record': base64Encode(utf8.encode('junk')),
+        }, sessionPathOf);
+        expect(keys, {'s:/sessions/a.jsonl'});
+        expect((await env.exists('/junk-record')).valueOrNull, isFalse);
+      },
+    );
+
+    test(
+      'a non-String record value counts the key but writes nothing',
+      () async {
+        final env = MemoryExecutionEnv(cwd: '/');
+        final keys = await restoreSessionRecords(env, {
+          's:/sessions/torn.jsonl': 42,
+        }, sessionPathOf);
+        expect(keys, {'s:/sessions/torn.jsonl'});
+        expect((await env.exists('/sessions/torn.jsonl')).valueOrNull, isFalse);
+      },
+    );
+
+    test(
+      'a torn (undecodable) record is skipped without crashing boot',
+      () async {
+        final env = MemoryExecutionEnv(cwd: '/');
+        final keys = await restoreSessionRecords(env, {
+          's:/sessions/corrupt.jsonl': '!!not-base64!!',
+        }, sessionPathOf);
+        expect(keys, {'s:/sessions/corrupt.jsonl'});
+        expect(
+          (await env.exists('/sessions/corrupt.jsonl')).valueOrNull,
+          isFalse,
+        );
+      },
+    );
   });
 }
 

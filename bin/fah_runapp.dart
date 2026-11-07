@@ -468,15 +468,7 @@ Future<void> _runApp(List<String> args) async {
     );
   }
 
-  late final ({
-    CliArgs args,
-    String provider,
-    EnvProviderPreconfig? faPreconfig,
-    String? unknownSavedProvider,
-    String? incompatibleSavedEndpoint,
-    List<String> bindingWarnings,
-  })
-  cliStartup;
+  late final EffectiveCliArgs cliStartup;
   try {
     cliStartup = resolveEffectiveCliArgs(
       parsed,

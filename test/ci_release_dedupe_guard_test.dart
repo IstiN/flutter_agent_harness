@@ -160,13 +160,12 @@ void main() {
       expect(
         checkoutWith?['filter'].toString(),
         'blob:none',
-        reason: 'blobless (gh-1477 convention) — the check never reads '
+        reason:
+            'blobless (gh-1477 convention) — the check never reads '
             'blobs, only the gh run list API',
       );
       final checkoutAt = stepMaps.indexOf(checkout);
-      final check = stepMaps.singleWhere(
-        (s) => s['id']?.toString() == 'check',
-      );
+      final check = stepMaps.singleWhere((s) => s['id']?.toString() == 'check');
       expect(
         checkoutAt,
         lessThan(stepMaps.indexOf(check)),
@@ -506,10 +505,19 @@ void main() {
           .join('\n');
       expect(
         jobText,
+        contains('release_asset_gate.sh'),
+        reason:
+            'gh-2042 AC1: the attach rides the immutability gate (a '
+            'published release skips attached assets / refuses unattached '
+            'fa-* assets loud)',
+      );
+      expect(
+        File('scripts/release_asset_gate.sh').readAsStringSync(),
         contains('--clobber'),
         reason:
             'AC4: both twins may attach the same asset — the upload '
-            'must stay idempotent (last wins), exactly as before',
+            'must stay idempotent (last wins), exactly as before (the '
+            'gate performs the --clobber upload now)',
       );
     });
 
@@ -550,7 +558,8 @@ void main() {
       expect(
         smokeIf,
         isNot(contains('release-dedupe')),
-        reason: 'no dedupe clause — installer-smoke runs on the deduped '
+        reason:
+            'no dedupe clause — installer-smoke runs on the deduped '
             'twin exactly as on the push twin',
       );
     });

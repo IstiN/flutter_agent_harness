@@ -75,7 +75,7 @@ String renderInlineMarkdown(String text) {
 (String, int, int, String, int)? _matchInlineCode(String text, int start) {
   final end = text.indexOf('`', start + 1);
   if (end <= start + 1) return null;
-  return ('\x1b[2m\x1b[37m', start + 1, end, '\x1b[0m', end + 1);
+  return ('\x1b[2m\x1b[37m', start + 1, end, AnsiMarkdown._reset, end + 1);
 }
 
 /// Bold: `**x**`. Requires a `**` ahead of any closing pair. Empty
@@ -755,7 +755,7 @@ final class _WrapState {
 /// the continuation row re-opens them (dart_tui redraws rows independently,
 /// so terminal state never carries across a newline).
 void _wrapCloseRow(_WrapState s) {
-  if (s.activeSgr.isNotEmpty) s.row.write('\x1b[0m');
+  if (s.activeSgr.isNotEmpty) s.row.write(AnsiMarkdown._reset);
   s.rows.add(s.row.toString());
   s.row
     ..clear()
@@ -767,7 +767,7 @@ void _wrapCloseRow(_WrapState s) {
 /// re-emits (`\x1b[0m` clears; anything else stacks).
 void _wrapWriteStyle(_WrapState s, String token) {
   s.row.write(token);
-  if (token == '\x1b[0m') {
+  if (token == AnsiMarkdown._reset) {
     s.activeSgr.clear();
   } else {
     s.activeSgr.add(token);

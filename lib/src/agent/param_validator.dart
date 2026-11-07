@@ -312,7 +312,8 @@ Object? _validateNested(
       path,
       errors,
     );
-  } else if (_matchesType(value, 'array')) {
+  }
+  if (_matchesType(value, 'array')) {
     return _validateArray(value! as List, schema, path, errors);
   }
   return coerced;
@@ -327,14 +328,14 @@ _ValueOutcome _checkEnum(
   List<String> errors,
 ) {
   final enumValues = schema['enum'];
-  if (enumValues is List && enumValues.isNotEmpty) {
-    if (!enumValues.any((allowed) => _enumEquals(allowed, coerced))) {
-      errors.add(
-        '$path: must be one of ${jsonEncode(enumValues)}, '
-        'got ${jsonEncode(coerced)}',
-      );
-      return const _Invalid();
-    }
+  if (enumValues is List &&
+      enumValues.isNotEmpty &&
+      !enumValues.any((allowed) => _enumEquals(allowed, coerced))) {
+    errors.add(
+      '$path: must be one of ${jsonEncode(enumValues)}, '
+      'got ${jsonEncode(coerced)}',
+    );
+    return const _Invalid();
   }
   return _Valid(coerced);
 }

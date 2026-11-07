@@ -95,16 +95,15 @@ void main() {
         'customized overrides stay (issue #1151 review CQE1)', () async {
       final env = MemoryExecutionEnv();
       // What earlier app versions wrote for create-goal: the LAST
-      // SEEDED bytes (the repo's .fah/skills copy at the time — the
-      // drift guard pinned assets byte-identical to it; the builtin
-      // port tweaked two sentences, so this copy carries the OLD
-      // description). fa-self-config names a retired skill.
+      // SEEDED bytes (kept byte-identical in the retired-skill fixture;
+      // the builtin port tweaked two sentences, so this copy carries the
+      // OLD description). fa-self-config names a retired skill.
       final stale = await File(
-        '../.fah/skills/create-goal/SKILL.md',
+        'test/fixtures/retired_create_goal_skill.md',
       ).readAsString();
       await env.writeFile('${env.cwd}/.fah/skills/create-goal/SKILL.md', stale);
       final orphan = await File(
-        '../.fah/skills/fa-self-config/SKILL.md',
+        'test/fixtures/retired_fa_self_config_skill.md',
       ).readAsString();
       await env.writeFile(
         '${env.cwd}/.fah/skills/fa-self-config/SKILL.md',
@@ -164,11 +163,11 @@ void main() {
       // device that ALREADY ran the retirement (files gone, ghost dir
       // left behind — the exact state #1334 was filed from).
       final stale = await File(
-        '../.fah/skills/create-goal/SKILL.md',
+        'test/fixtures/retired_create_goal_skill.md',
       ).readAsString();
       await env.writeFile('${env.cwd}/.fah/skills/create-goal/SKILL.md', stale);
       final orphan = await File(
-        '../.fah/skills/fa-self-config/SKILL.md',
+        'test/fixtures/retired_fa_self_config_skill.md',
       ).readAsString();
       await env.writeFile(
         '${env.cwd}/.fah/skills/fa-self-config/SKILL.md',

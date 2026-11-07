@@ -540,7 +540,7 @@ extension on AgentCli {
     if (entry.spec.kind == 'dial') {
       return fetchDialModels(entry.baseUrl, cookieOrKey);
     }
-    if (entry.spec.kind == 'copilot') {
+    if (entry.spec.kind == copilotDispatchHint) {
       final (ids, report) = await _fetchCopilotModelsAndLimits(
         entry.baseUrl,
         apiKey: cookieOrKey,
@@ -578,7 +578,7 @@ extension on AgentCli {
     CustomProviderEntry entry,
     String cookieOrKey,
   ) async {
-    if (entry.spec.api != 'openai-completions') return const [];
+    if (entry.spec.api != _factoryProviderKind) return const [];
     final override = config.modelsFetcher;
     if (override != null) return override(entry.baseUrl, apiKey: cookieOrKey);
     return _fetchOpenAiCompatibleModels(
@@ -775,7 +775,7 @@ extension on AgentCli {
       // already feed the picker, and the live /models round-trip is skipped
       // (stale-while-revalidate keeps boot HTTP at zero for fresh caches).
       if (_modelCacheFresh.contains(model.provider)) return;
-      if (model.api == 'openai-completions') {
+      if (model.api == _factoryProviderKind) {
         final ids = await _fetchActiveProviderModels(model);
         if (ids.isNotEmpty) {
           _modelCache = ids;
@@ -944,8 +944,8 @@ extension on AgentCli {
     final report = await fetchModelsForEndpointReport(
       baseUrl,
       apiKey: apiKey ?? _apiKey,
-      provider: 'copilot',
-      client: modelFetchClient('copilot'),
+      provider: copilotDispatchHint,
+      client: modelFetchClient(copilotDispatchHint),
     );
     final (ids, windows, maxTokens) = report.info;
     if (windows.isNotEmpty) _modelContextWindows = windows;
@@ -1150,7 +1150,7 @@ extension on AgentCli {
     models.setSlotOverride(
       slot,
       MediaSlotModelConfig(
-        providerKind: 'openai-completions',
+        providerKind: _factoryProviderKind,
         baseUrl: baseUrl,
         modelId: parts[1],
       ),

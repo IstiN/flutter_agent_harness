@@ -1277,12 +1277,11 @@ StatusLineGit parseGitStatusPorcelain(String output) {
     // untracked work, so they never count toward `?N`.
     if (x == '?') {
       untracked++;
-    } else if (x == '!') {
       continue;
-    } else {
-      if (x != ' ') staged++;
-      if (y != ' ') unstaged++;
     }
+    if (x == '!') continue;
+    if (x != ' ') staged++;
+    if (y != ' ') unstaged++;
   }
   return StatusLineGit(
     branch: branch,

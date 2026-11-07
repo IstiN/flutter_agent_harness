@@ -8,6 +8,7 @@ import 'package:flutter/widgets.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
 import 'package:fa_ui/src/stores/keychain_store.dart';
+import 'package:fa_ui/src/stores/versioned_store_file.dart';
 
 /// The well-known key names the Keys settings section always lists, even
 /// when unset. User-saved names beyond these are listed too (see
@@ -134,26 +135,21 @@ class SessionKeysStore extends ChangeNotifier {
   }
 
   Future<void> _loadFile() async {
-    final env = _env;
-    if (env == null) return;
-    try {
-      final text = (await env.readTextFile('${env.cwd}/$fileName')).valueOrNull;
-      if (text == null) return;
-      final decoded = jsonDecode(text);
-      if (decoded is! Map<String, dynamic>) return;
-      if (decoded['version'] != _version) return;
-      final keys = decoded['keys'];
-      if (keys is! Map) return;
-      _keys
-        ..clear()
-        ..addAll({
-          for (final entry in keys.entries)
-            if (entry.value is String)
-              entry.key as String: entry.value as String,
-        });
-    } on Object {
-      // Corrupt or incompatible file → empty store, never crash boot.
-    }
+    await faLoadVersionedStore(
+      _env,
+      fileName: fileName,
+      version: _version,
+      payloadKey: 'keys',
+      decode: (env, keys) {
+        _keys
+          ..clear()
+          ..addAll({
+            for (final entry in keys.entries)
+              if (entry.value is String)
+                entry.key as String: entry.value as String,
+          });
+      },
+    );
   }
 
   Future<void> _save() async {

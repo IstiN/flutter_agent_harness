@@ -10,7 +10,7 @@ extension _TuiViewport on FaTuiModel {
   /// Resize (gh-1433 E8 + gh-1439 E2). Split out of fa_tui.dart to keep
   /// the model file under the repo's ≤2800-line gate — the scroll math
   /// lives here with the rest of the viewport machinery.
-  (Model, Cmd?) _handleWindowSize(WindowSizeMsg msg) {
+  UiUpdate _handleWindowSize(WindowSizeMsg msg) {
     // Same-size report is a no-op (issue #1977 edge case): re-clamping an
     // unchanged layout plus the ClearScreenMsg below would burn a full
     // repaint for zero geometry change. The program already skips its
@@ -41,7 +41,7 @@ extension _TuiViewport on FaTuiModel {
   /// Mouse-wheel routing (issue #278 + gh-1439). Split out of fa_tui.dart
   /// to keep the model file under the repo's ≤2800-line gate — same
   /// library (`part of`), so the extension sees the model's privates.
-  (Model, Cmd?) _handleMouseWheel(MouseWheelMsg msg) {
+  UiUpdate _handleMouseWheel(MouseWheelMsg msg) {
     // Capture off: the hint says wheel is disabled — honor it even for
     // bytes a not-yet-disarmed terminal still sends (issue #278, AC4).
     if (!mouseCapture) return (this, null);
@@ -72,7 +72,7 @@ extension _TuiViewport on FaTuiModel {
   /// The hub overlay's wheel half: each notch steps the fleet-tree
   /// selection one visible row; the transcript scroll state and the
   /// follow contract stand still while the overlay is up.
-  (Model, Cmd?) _wheelToHubSelection(MouseWheelMsg msg) {
+  UiUpdate _wheelToHubSelection(MouseWheelMsg msg) {
     final delta = switch (msg.mouse.button) {
       MouseButton.wheelUp => -1,
       MouseButton.wheelDown => 1,
@@ -89,7 +89,7 @@ extension _TuiViewport on FaTuiModel {
   /// The transcript's wheel half (gh-1439): the wheel is a page gesture —
   /// up disengages follow, down re-arms inside the shared near-bottom
   /// band; any other button is not a scroll gesture at all.
-  (Model, Cmd?) _wheelTranscript(MouseWheelMsg msg) {
+  UiUpdate _wheelTranscript(MouseWheelMsg msg) {
     switch (msg.mouse.button) {
       case MouseButton.wheelUp:
         return (_scrolledTo(scrollOffset - 3, pageGesture: true), null);
@@ -167,7 +167,7 @@ extension _TuiViewport on FaTuiModel {
   /// derived from the PRE-trim wrap cache (read before any re-sync).
   /// Returns `(newAnchorLine, newOffset)`; an unheld or anchorless state
   /// passes through clamped unchanged.
-  (int, int) _heldAnchorShiftedByCut(int cut) {
+  HeldAnchor _heldAnchorShiftedByCut(int cut) {
     final bottom = _scrollBottom(_wrappedLines());
     if (!follow.isHeld || heldAnchorLine < 0) {
       return (heldAnchorLine, scrollOffset.clamp(0, bottom));
@@ -222,7 +222,7 @@ extension _TuiViewport on FaTuiModel {
   /// Host-driven state pushes: the hub overlay board and the composer
   /// text/history setters. Split out of [_updateAfterExitCheck] to keep
   /// the dispatcher's decision count under the CRAP ratchet.
-  (Model, Cmd?)? _handleHostStateMsg(Msg msg) {
+  UiUpdate? _handleHostStateMsg(Msg msg) {
     if (msg is HubStateMsg) return _handleHubStateMsg(msg);
     if (msg is _CloseHubMsg) return (copyWith(clearHub: true), null);
     if (msg is SetBootAnchorMsg) {

@@ -11,23 +11,22 @@
 /// [exec] calls pick them up.
 library;
 
-import 'dart:typed_data';
+import 'dart:async';
 
+import 'delegating_execution_env.dart';
 import 'execution_env.dart';
 import 'secret_presence.dart';
 
 /// An [ExecutionEnv] that injects secret env vars into every [exec].
-final class SecretsExecutionEnv
-    implements
-        ExecutionEnv,
-        BackgroundShell,
-        RangedReadFileSystem,
-        RenamableFileSystem {
+final class SecretsExecutionEnv extends ForwardingFs
+    with
+        ForwardingBackgroundShell,
+        ForwardingRangedReadFs,
+        ForwardingRenamableFs {
   /// Creates a decorator over [delegate] injecting [secrets] (name → value).
-  SecretsExecutionEnv(this._delegate, Map<String, String> secrets)
+  SecretsExecutionEnv(super.delegate, Map<String, String> secrets)
     : _secrets = Map.of(secrets);
 
-  final ExecutionEnv _delegate;
   final Map<String, String> _secrets;
 
   /// Secret NAMES known to the host beyond the live values (gh-1444 AC4):
@@ -36,9 +35,6 @@ final class SecretsExecutionEnv
   /// disappearing, so secret-absence is provable, not guessable. Names
   /// only, never values.
   final Set<String> _knownNames = {};
-
-  /// The wrapped environment.
-  ExecutionEnv get delegate => _delegate;
 
   /// Every secret name this env announces in exec envs: the live values'
   /// names plus the host-registered roster, sorted.
@@ -50,9 +46,7 @@ final class SecretsExecutionEnv
   /// Extends the announced secret-name roster (names only). Hosts pass the
   /// system-prompt "Available secret env vars" list here so `env` can show
   /// `NAME: ABSENT` for a not-currently-granted name.
-  void registerSecretNames(Iterable<String> names) => _knownNames.addAll(
-    names,
-  );
+  void registerSecretNames(Iterable<String> names) => _knownNames.addAll(names);
 
   /// Merges [secrets] into the injected map at runtime; later [exec] calls
   /// see them. Per-call [ShellExecOptions.env] entries still win over the
@@ -78,7 +72,16 @@ final class SecretsExecutionEnv
   Map<String, String> secretsSnapshot() => Map.of(_secrets);
 
   @override
-  String get cwd => _delegate.cwd;
+  FutureOr<ShellExecOptions?> mergeExecOptions(ShellExecOptions? options) {
+    if (_secrets.isEmpty && _knownNames.isEmpty) return options;
+    return _optionsWithMergedEnv(options);
+  }
+
+  @override
+  FutureOr<ShellExecOptions?> mergeJobOptions(ShellExecOptions? options) {
+    if (_secrets.isEmpty && _knownNames.isEmpty) return options;
+    return _optionsWithMergedEnv(options);
+  }
 
   /// The exec env with the secret values AND the presence roster
   /// ([secretPresenceEnvVar] — names only) merged in. Per-call env entries
@@ -113,160 +116,4 @@ final class SecretsExecutionEnv
       jobLogRedactor: options?.jobLogRedactor,
     );
   }
-
-  @override
-  Future<Result<ShellExecResult, ExecutionError>> exec(
-    String command, {
-    ShellExecOptions? options,
-  }) {
-    if (_secrets.isEmpty && _knownNames.isEmpty) {
-      return _delegate.exec(command, options: options);
-    }
-    return _delegate.exec(command, options: _optionsWithMergedEnv(options));
-  }
-
-  // Background shell jobs: forwarded with the same secrets merged in —
-  // a detached command expands `$NAME` exactly like a foreground one.
-
-  @override
-  bool get backgroundJobsSupported {
-    final delegate = _delegate;
-    if (delegate case final BackgroundShell bg) {
-      return bg.backgroundJobsSupported;
-    }
-    return false;
-  }
-
-  @override
-  Future<Result<ShellJob, ExecutionError>> startShellJob(
-    String command, {
-    required String id,
-    required String logPath,
-    ShellExecOptions? options,
-  }) {
-    final delegate = _delegate;
-    if (delegate is! BackgroundShell) {
-      return Future.value(
-        const Err(
-          ExecutionError(
-            ExecutionErrorCode.shellUnavailable,
-            'background shell jobs are not supported by this shell',
-          ),
-        ),
-      );
-    }
-    final bg = delegate as BackgroundShell;
-    if (_secrets.isEmpty && _knownNames.isEmpty) {
-      return bg.startShellJob(
-        command,
-        id: id,
-        logPath: logPath,
-        options: options,
-      );
-    }
-    return bg.startShellJob(
-      command,
-      id: id,
-      logPath: logPath,
-      options: _optionsWithMergedEnv(options),
-    );
-  }
-
-  @override
-  Future<Result<String, FileError>> absolutePath(String path) =>
-      _delegate.absolutePath(path);
-
-  @override
-  Future<Result<String, FileError>> joinPath(List<String> parts) =>
-      _delegate.joinPath(parts);
-
-  @override
-  Future<Result<String, FileError>> readTextFile(String path) =>
-      _delegate.readTextFile(path);
-
-  @override
-  Future<Result<Uint8List, FileError>> readBinaryFile(String path) =>
-      _delegate.readBinaryFile(path);
-
-  @override
-  Future<Result<Uint8List, FileError>> readRange(
-    String path,
-    int start,
-    int end,
-  ) {
-    final delegate = _delegate;
-    if (delegate case final RangedReadFileSystem ranged) {
-      return ranged.readRange(path, start, end);
-    }
-    return Future.value(
-      Err(
-        FileError(
-          FileErrorCode.notSupported,
-          'readRange not supported by $_delegate',
-          path: path,
-        ),
-      ),
-    );
-  }
-
-  @override
-  Future<Result<void, FileError>> renamePath(String from, String to) {
-    final delegate = _delegate;
-    if (delegate case final RenamableFileSystem renamable) {
-      return renamable.renamePath(from, to);
-    }
-    return Future.value(
-      Err(
-        FileError(
-          FileErrorCode.notSupported,
-          'renamePath not supported by $_delegate',
-          path: from,
-        ),
-      ),
-    );
-  }
-
-  @override
-  Future<Result<List<String>, FileError>> readTextLines(
-    String path, {
-    int? maxLines,
-  }) => _delegate.readTextLines(path, maxLines: maxLines);
-
-  @override
-  Future<Result<void, FileError>> writeBinaryFile(
-    String path,
-    Uint8List content,
-  ) => _delegate.writeBinaryFile(path, content);
-
-  @override
-  Future<Result<void, FileError>> writeFile(String path, String content) =>
-      _delegate.writeFile(path, content);
-
-  @override
-  Future<Result<void, FileError>> appendFile(String path, String content) =>
-      _delegate.appendFile(path, content);
-
-  @override
-  Future<Result<FileInfo, FileError>> fileInfo(String path) =>
-      _delegate.fileInfo(path);
-
-  @override
-  Future<Result<List<FileInfo>, FileError>> listDir(String path) =>
-      _delegate.listDir(path);
-
-  @override
-  Future<Result<bool, FileError>> exists(String path) => _delegate.exists(path);
-
-  @override
-  Future<Result<void, FileError>> createDir(
-    String path, {
-    bool recursive = true,
-  }) => _delegate.createDir(path, recursive: recursive);
-
-  @override
-  Future<Result<void, FileError>> remove(
-    String path, {
-    bool recursive = false,
-    bool force = false,
-  }) => _delegate.remove(path, recursive: recursive, force: force);
 }

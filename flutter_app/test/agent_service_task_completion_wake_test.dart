@@ -33,13 +33,18 @@ const _testModel = Model(
 
 String _userText(List<FaChatMessage> messages) {
   for (final message in messages.reversed) {
-    if (message.role == 'user') return message.content;
+    if (message.role == 'user' || message.role == 'systemNotice') {
+      return message.content;
+    }
   }
   return '';
 }
 
-bool _hasUserText(List<FaChatMessage> messages, Pattern needle) =>
-    messages.any((m) => m.role == 'user' && m.content.contains(needle));
+bool _hasUserText(List<FaChatMessage> messages, Pattern needle) => messages.any(
+  (m) =>
+      (m.role == 'user' || m.role == 'systemNotice') &&
+      m.content.contains(needle),
+);
 
 bool _hasAssistantText(List<FaChatMessage> messages, String text) =>
     messages.any((m) => m.role == 'assistant' && m.content == text);

@@ -17,7 +17,14 @@ import 'package:http/io_client.dart';
 /// platforms keep the standard [IOClient].
 http.Client createPlatformHttpClientImpl() {
   if (Platform.isIOS || Platform.isMacOS) {
-    return CupertinoClient.defaultSessionConfiguration();
+    try {
+      return CupertinoClient.defaultSessionConfiguration();
+    } on ArgumentError {
+      // Headless tests and embedders without the Cupertino native asset can
+      // still boot over dart:io; an unavailable optional transport must not
+      // prevent storage, routes, and every unrelated service from loading.
+      return IOClient();
+    }
   }
   return IOClient();
 }

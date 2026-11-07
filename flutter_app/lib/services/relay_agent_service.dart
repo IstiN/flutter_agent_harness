@@ -886,9 +886,25 @@ final class RelayAgentService extends AgentService {
         _onHostProgressEvent(event, silent: silent);
       case 'mail_routed':
         _onHostMailRoutedEvent(event, silent);
+      case 'notice':
+        _onHostNoticeEvent(event, silent);
       default:
         _onHostDiagnosticsEvent(event, silent: silent);
     }
+  }
+
+  /// gh-2059 (gh-1077 AC2 shape): a SW-side compaction receipt/failure —
+  /// an in-chat system row, exactly like the app's own compaction
+  /// notices. Live events repaint immediately; the SW's event ring
+  /// replays them to the next attaching panel.
+  void _onHostNoticeEvent(Map<String, dynamic> event, bool silent) {
+    _append(
+      fa_ui.FaChatMessage(
+        role: 'system',
+        content: event['text'] as String? ?? '',
+      ),
+    );
+    if (!silent) notifyListeners();
   }
 
   /// Per-turn progress: the tool_result row and the running/provider

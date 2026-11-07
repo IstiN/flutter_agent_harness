@@ -741,4 +741,19 @@ void main() {
       }
     });
   });
+
+  group('herdr wire vocabulary pins (issue #1999)', () {
+    test('pane-state `--state` spellings are pinned literals', () {
+      expect(HerdrPaneState.idle.wire, 'idle');
+      expect(HerdrPaneState.working.wire, 'working');
+      expect(HerdrPaneState.blocked.wire, 'blocked');
+    });
+
+    test('blocked-label `--message` spellings are pinned literals', () {
+      expect(HerdrBlockedLabel.approval.wire, 'approval');
+      expect(HerdrBlockedLabel.ask.wire, 'ask');
+      expect(HerdrBlockedLabel.secret.wire, 'secret');
+      expect(HerdrBlockedLabel.hostModel.wire, 'host-model');
+    });
+  });
 }

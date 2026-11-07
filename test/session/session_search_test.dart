@@ -73,6 +73,23 @@ Future<({List<String> ids, Session session, String checkpointId})> _seedArchive(
 }
 
 void main() {
+  group('session search persisted-name contract (issue #1999)', () {
+    test('modes/scopes round-trip through pinned payload spellings', () {
+      expect(SessionSearchMode.fromName('search'), SessionSearchMode.search);
+      expect(SessionSearchMode.fromName('map'), SessionSearchMode.map);
+      expect(SessionSearchScope.fromName('branch'), SessionSearchScope.branch);
+      expect(SessionSearchScope.fromName('tree'), SessionSearchScope.tree);
+    });
+
+    test('null/unknown/legacy values degrade to defaults, never crash', () {
+      expect(SessionSearchMode.fromName(null), SessionSearchMode.search);
+      expect(SessionSearchMode.fromName('bogus'), SessionSearchMode.search);
+      expect(SessionSearchScope.fromName(null), SessionSearchScope.branch);
+      expect(SessionSearchScope.fromName('bogus'), SessionSearchScope.branch);
+      expect(SessionSearchScope.fromName(42), SessionSearchScope.branch);
+    });
+  });
+
   late MemoryFileSystem fs;
   late JsonlSessionRepo repo;
 

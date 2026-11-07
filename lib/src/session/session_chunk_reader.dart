@@ -845,10 +845,8 @@ final class SessionChunkReader {
 
   /// File facts for staleness guards; `null` when the file is gone.
   Future<({int size, int mtimeMs})?> stat() async {
-    final result = await fs.fileInfo(path);
-    if (result.isErr) return null;
-    final info = result.valueOrNull!;
-    if (info.kind != FileKind.file) return null;
+    final info = (await fs.fileInfo(path)).valueOrNull;
+    if (info == null || info.kind != FileKind.file) return null;
     _noteParseCacheStamp(info.size, info.mtimeMs);
     return (size: info.size, mtimeMs: info.mtimeMs);
   }
@@ -1006,12 +1004,13 @@ final class SessionChunkReader {
   Future<Uint8List> _readRange(int start, int end) async {
     if (fs case final RangedReadFileSystem ranged) {
       final result = await ranged.readRange(path, start, end);
-      if (result.isErr) {
+      if (result is Err<Uint8List, FileError>) {
+        final error = result.error;
         throw SessionException(
           'Failed to read session range [$start, $end) of $path: '
-          '${result.errorOrNull!.message}',
+          '${error.message}',
           code: SessionErrorCode.storage,
-          cause: result.errorOrNull,
+          cause: error,
         );
       }
       return result.valueOrNull ?? Uint8List(0);
@@ -1153,9 +1152,10 @@ final class SessionChunkReader {
   Future<SessionParseResult> _parseMissBatch(_MissBatchPlan plan, int b) async {
     final existing = plan.results[b];
     if (existing != null) return existing;
-    final result = parseExecutor == null
+    final executor = parseExecutor;
+    final result = executor == null
         ? parseSessionEntryLinesSync(plan.batches[b])
-        : await parseExecutor!.parse(plan.batches[b]);
+        : await executor.parse(plan.batches[b]);
     return plan.results[b] = result;
   }
 
@@ -1300,7 +1300,13 @@ final class SessionChunkReader {
             bytes: weight,
             record: record,
           );
-          results[lineIdxByOffset[offset]!] = entry;
+          final slot = lineIdxByOffset[offset];
+          if (slot == null) {
+            throw StateError(
+              'parsed offset $offset missing from the scan index of $path',
+            );
+          }
+          results[slot] = entry;
           _parseCacheStore(entry, shallowGiantCustoms);
         }
       }

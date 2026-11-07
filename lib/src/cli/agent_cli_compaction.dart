@@ -120,6 +120,15 @@ class _AutoCompactorCliHooks implements AutoCompactorHooks {
   void onPass(AutoCompactorPass pass) {
     _closeDeltaStreamLine();
     _runTokensBefore ??= pass.tokensBefore;
+    // gh-2044: the escalation's numeric reason rides the diagnostic line
+    // — counts only (settled tokens, margin, band, hideables left), never
+    // rendered ledger/message content. Absent on every other pass kind,
+    // so existing lines stay byte-identical.
+    final escalationCounts = pass.marginTokens == null
+        ? ''
+        : 'margin=${pass.marginTokens} '
+              'band=${pass.bandTokens} '
+              'hideable-left=${pass.hideableRemaining ?? 0} ';
     if (!pass.ok) {
       // The pass failed: onBothRolesFailed already prints the user-facing
       // hint. Printing the success-looking "auto-compacted" line here
@@ -127,6 +136,7 @@ class _AutoCompactorCliHooks implements AutoCompactorHooks {
       cli._logDiagnostic(
         'auto-compact pass ${pass.pass} FAILED '
         'tokens ${pass.tokensBefore}→${pass.tokensAfter} '
+        '$escalationCounts'
         'error=${pass.error ?? '-'}',
       );
       return;
@@ -170,6 +180,7 @@ class _AutoCompactorCliHooks implements AutoCompactorHooks {
       'auto-compact pass ${pass.pass} '
       'fallback=${pass.fallback ?? '-'} '
       'tokens ${pass.tokensBefore}→${pass.tokensAfter} '
+      '$escalationCounts'
       'ok=${pass.ok} error=${pass.error ?? '-'}',
     );
   }

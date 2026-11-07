@@ -8,7 +8,7 @@ part of 'fa_tui.dart';
 extension FaTuiModelSlashMenu on FaTuiModel {
   /// Slash/menu mode: arrows navigate, enter/tab accept, esc closes, and
   /// typing keeps editing the input so `/models` can be typed in full.
-  (Model, Cmd?) _handleSlashMenuKey(KeyMsg msg) {
+  UiUpdate _handleSlashMenuKey(KeyMsg msg) {
     return _handleSlashMenuNavKey(msg) ??
         _handleSlashMenuAcceptKey(msg) ??
         _handleSlashMenuEditKey(msg);
@@ -16,7 +16,7 @@ extension FaTuiModelSlashMenu on FaTuiModel {
 
   /// Path-completion overlay keys: Tab accepts, arrows navigate, esc
   /// closes; everything else falls through (Enter SUBMITS, editing edits).
-  (Model, Cmd?)? _handlePathMenuKey(KeyMsg msg) {
+  UiUpdate? _handlePathMenuKey(KeyMsg msg) {
     switch (msg.key) {
       case 'tab':
         return _acceptSlashMenuItem();
@@ -32,7 +32,7 @@ extension FaTuiModelSlashMenu on FaTuiModel {
 
   /// Slash-menu navigation keys (esc/up/down); null when the key belongs to
   /// the accept or edit clusters.
-  (Model, Cmd?)? _handleSlashMenuNavKey(KeyMsg msg) {
+  UiUpdate? _handleSlashMenuNavKey(KeyMsg msg) {
     switch (msg.key) {
       case 'esc':
         return (copyWith(menuOpen: false, menuTokenStart: -1), null);
@@ -56,7 +56,7 @@ extension FaTuiModelSlashMenu on FaTuiModel {
   }
 
   /// Slash-menu accept keys (enter/tab); null for every other key.
-  (Model, Cmd?)? _handleSlashMenuAcceptKey(KeyMsg msg) {
+  UiUpdate? _handleSlashMenuAcceptKey(KeyMsg msg) {
     switch (msg.key) {
       case 'enter':
       case 'tab':
@@ -75,7 +75,7 @@ extension FaTuiModelSlashMenu on FaTuiModel {
   /// Same guard as the other insert surfaces (_handleCharInsertKey,
   /// _pickerTypeFilter); shift is deliberately not blocked so shifted
   /// letters still type.
-  (Model, Cmd?) _handleSlashMenuEditKey(KeyMsg msg) {
+  UiUpdate _handleSlashMenuEditKey(KeyMsg msg) {
     switch (msg.key) {
       case 'backspace':
         if (cursor > 0 && inputText.isNotEmpty) {
@@ -101,7 +101,7 @@ extension FaTuiModelSlashMenu on FaTuiModel {
   /// Slash-menu accept (enter/tab): fills the input with the picked command,
   /// or switches into the models picker, or submits picker-opening commands
   /// (/sessions, /mode, /approval) immediately.
-  (Model, Cmd?) _acceptSlashMenuItem() {
+  UiUpdate _acceptSlashMenuItem() {
     if (menuItems.isEmpty) return (this, null);
     final item = menuItems[menuSelected];
     if (item.key == '/model' || item.key == '/models') {

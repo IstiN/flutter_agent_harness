@@ -32,27 +32,30 @@ import 'tui_prompt.dart';
 /// `unknown` is its pre-registration default — fa's boot report exists
 /// precisely so the pane never sits in it.
 enum HerdrPaneState {
-  idle,
-  working,
-  blocked;
+  idle('idle'),
+  working('working'),
+  blocked('blocked');
 
-  /// The exact `--state` byte string herdr expects.
-  String get wire => name;
+  const HerdrPaneState(this.wire);
+
+  /// The exact `--state` byte string herdr expects — a pinned literal,
+  /// so renaming the identifier cannot silently change the argv.
+  final String wire;
 }
 
 /// The static `--message` labels for the blocked state — a closed enum,
 /// never dynamic text (herdr shows the message next to the pane name).
 enum HerdrBlockedLabel {
-  approval,
-  ask,
-  secret,
-  hostModel;
+  approval('approval'),
+  ask('ask'),
+  secret('secret'),
+  hostModel('host-model');
 
-  /// The exact `--message` byte string herdr expects.
-  String get wire => switch (this) {
-    hostModel => 'host-model',
-    _ => name,
-  };
+  const HerdrBlockedLabel(this.wire);
+
+  /// The exact `--message` byte string herdr expects — a pinned literal,
+  /// so renaming the identifier cannot silently change the argv.
+  final String wire;
 }
 
 /// Reports fa's own pane state to herdr, fire-and-forget.

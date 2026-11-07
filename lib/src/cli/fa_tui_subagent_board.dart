@@ -11,7 +11,7 @@ part of 'fa_tui.dart';
 extension _TuiSubagentBoard on FaTuiModel {
   /// The board's push (gh-1415): the host replaces the whole row set; an
   /// empty list hides the region (quiet zero — AC4).
-  (Model, Cmd?) _handleSubagentBoard(SubagentBoardMsg msg) =>
+  UiUpdate _handleSubagentBoard(SubagentBoardMsg msg) =>
       (copyWith(subagentBoardRows: msg.rows), null);
 
   /// The subagent rows one frame paints — exactly [plan.subagents] of

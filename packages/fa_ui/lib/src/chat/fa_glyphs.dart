@@ -104,3 +104,22 @@ class FaAiAvatar extends StatelessWidget {
     );
   }
 }
+
+/// The square theme-following brand-tile shell: [dark] forces the dark
+/// form, null follows the ambient brightness; [darkSvg]/[lightSvg] render
+/// centered into a [size] square. Shared by the app's launcher-geometry
+/// brand tile and other SVG brand surfaces.
+Widget faBrandSvgTile(
+  BuildContext context, {
+  required double size,
+  required bool? dark,
+  required String darkSvg,
+  required String lightSvg,
+}) {
+  final isDark = dark ?? Theme.of(context).brightness == Brightness.dark;
+  return SizedBox(
+    width: size,
+    height: size,
+    child: SvgPicture.string(isDark ? darkSvg : lightSvg, fit: BoxFit.contain),
+  );
+}

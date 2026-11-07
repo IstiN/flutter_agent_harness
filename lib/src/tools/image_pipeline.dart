@@ -12,6 +12,8 @@ import 'dart:typed_data';
 
 import 'package:image/image.dart';
 
+import 'media_reference_images.dart';
+
 /// Maximum width/height for inline images (pi's `maxWidth`/`maxHeight`).
 const defaultImageMaxDimension = 2000;
 
@@ -47,7 +49,7 @@ bool isInlineImageFormat(ImageFormat format) =>
 
 String? mimeTypeForImageFormat(ImageFormat format) {
   return switch (format) {
-    ImageFormat.png => 'image/png',
+    ImageFormat.png => defaultImageMimeType,
     ImageFormat.jpg => 'image/jpeg',
     ImageFormat.gif => 'image/gif',
     ImageFormat.webp => 'image/webp',
@@ -142,7 +144,7 @@ InlineImageResult keepOriginalImage(
     final decoded = decodeImageOrThrow(bytes);
     final image = bakeExifOrientation(decoded);
     return InlineImageResult(
-      mimeType: mimeTypeForImageFormat(format) ?? 'image/png',
+      mimeType: mimeTypeForImageFormat(format) ?? defaultImageMimeType,
       base64: base64Encode(bytes),
       width: image.width,
       height: image.height,
@@ -207,7 +209,7 @@ InlineImageResult resizeInlineImage(
       height <= maxDimension &&
       base64Length(bytes) < maxBase64Bytes) {
     return InlineImageResult(
-      mimeType: mimeTypeForImageFormat(format) ?? 'image/png',
+      mimeType: mimeTypeForImageFormat(format) ?? defaultImageMimeType,
       base64: base64Encode(bytes),
       width: width,
       height: height,
@@ -364,7 +366,7 @@ InlineImageResult? fitImageAtSize(
   final png = Uint8List.fromList(encodePng(candidate));
   if (base64Length(png) < maxBase64Bytes) {
     return InlineImageResult(
-      mimeType: 'image/png',
+      mimeType: defaultImageMimeType,
       base64: base64Encode(png),
       width: width,
       height: height,

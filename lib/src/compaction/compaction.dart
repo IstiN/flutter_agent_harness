@@ -1584,6 +1584,34 @@ final class CompactionManager {
       customInstructions: customInstructions,
       cancelToken: cancelToken,
     );
+    // gh-2044 rework CI fix: an EMPTY region with a BLANK answer must not
+    // become a checkpoint. generateSummary's #729 chunked path over zero
+    // summarizable messages returns '' without any LM call, and this
+    // method used to append that empty summary as a junk CompactionRecord
+    // — the transcript then LOOKED compacted while nothing was folded,
+    // the leaf record made every later prepareCompaction decline ("last
+    // entry is already a compaction"), and the classic pass ladder
+    // reported a hollow `success: true` through its no-work terminal
+    // while the context was still over the trigger (CI red, core shard
+    // 1/4 + hostile-env: "gh-1743: when nothing is droppable the budget
+    // timeout keeps the failure verdict" — the branch settled under the
+    // trigger, fell through to the classic engine, and that hollow
+    // success flipped the failure verdict). A run that cannot produce
+    // relief fails honestly instead (gh-1743's failure-verdict
+    // contract). The dial itself is untouched — issue #515's
+    // budget-kill pin rides the in-flight call even over an empty region
+    // — and issue #578's dialed-blank-summary contract (a real region,
+    // the summarizer answered blank, the record still lands) is the case
+    // this guard deliberately does NOT touch.
+    if (result.summary.trim().isEmpty &&
+        preparation.messagesToSummarize.isEmpty &&
+        preparation.turnPrefixMessages.isEmpty) {
+      throw const CompactionException(
+        'compaction had nothing to summarize above the keep-recent cut — '
+        'the foldable region is empty',
+        code: CompactionErrorCode.invalidSession,
+      );
+    }
     final recordId = await session.appendCompaction(
       summary: result.summary,
       firstKeptEntryId: result.firstKeptEntryId,

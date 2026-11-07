@@ -18,8 +18,8 @@ import 'package:fa/services/provider_registry.dart';
 import 'package:fa/services/session_keys_store.dart';
 import 'package:fa/services/sessions_root.dart';
 import 'package:fa/ui/app_theme.dart';
+import 'package:fa/ui/chats/chat_list_panel.dart';
 import 'package:fa/ui/screens/onboarding_screen.dart';
-import 'package:fa/ui/widgets/sidebar_sessions_list.dart';
 import 'package:fa/ui/widgets/wide_layout_shell.dart';
 import 'package:fa_ui/fa_ui.dart' show ProviderEditorPage;
 import 'package:flutter/material.dart';
@@ -219,7 +219,7 @@ void main() {
 
         // Connected: the narrow-layout home is the Chats conversation list.
         expect(find.byType(WideLayoutShell), findsOneWidget);
-        expect(find.byType(SidebarSessionsList), findsOneWidget);
+        expect(find.byType(ChatListPanel), findsOneWidget);
 
         // The connection persisted — non-secret parts only.
         final raw = (await env.readTextFile(

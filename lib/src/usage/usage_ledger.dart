@@ -23,17 +23,20 @@ library;
 /// segment/total.
 enum UsageSource {
   /// Every request in the scope carried provider-reported usage.
-  reported,
+  reported('reported'),
 
   /// At least one request in the scope lacked provider usage and was
   /// priced by the estimator; none were reported.
-  estimated,
+  estimated('estimated'),
 
   /// Both reported and estimated requests are present in the scope.
-  mixed;
+  mixed('mixed');
 
-  /// The wire name written into usage.json.
-  String get wire => name;
+  const UsageSource(this.wire);
+
+  /// The wire name written into usage.json — a pinned literal, so
+  /// renaming the identifier cannot silently change persisted values.
+  final String wire;
 
   /// Parses a wire name; tolerates unknown values by treating them as
   /// [UsageSource.estimated] — forward-compat: an older reader must not

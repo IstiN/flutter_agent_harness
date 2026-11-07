@@ -117,6 +117,17 @@
         38047875908,
         38041880102
       ]
+    },
+    {
+      "file": "test/integration/job_card_heredoc_pty_test.dart",
+      "test": "60-line heredoc job: bounded card, body never rendered, viewport pages over the block with the composer reserved",
+      "issue": "https://github.com/IstiN/flutter_agent_harness/issues/2024",
+      "since": "2026-10-31",
+      "runs": [
+        41201279756,
+        41196649826,
+        41191984311
+      ]
     }
   ]
 }

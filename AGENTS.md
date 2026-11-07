@@ -7,6 +7,18 @@ factual: paths, commands, invariants — no essays.
 
 - `lib/` — the `flutter_agent_harness` package (pure Dart core). `test/`
   mirrors it. `prompts/` — all LLM prompts as Markdown (see rules below).
+- `tools/fa-clip/` — the native macOS pasteboard helper (gh-2040): a plain
+  `NSPasteboard` reader (`fa-clip <png|jpeg|tiff>` → bytes on stdout, exit
+  2 = flavor absent), built by `scripts/build_fa_clip.sh` into the macOS
+  CLI bundles (`bundle/bin/fa-clip`, per-arch) and shipped beside the `fa`
+  binary — install.sh, install_local.sh and the self-update swap all copy
+  it. The CLI resolves it relative to its own executable, never PATH; a
+  missing/broken helper degrades to the named pasteboard-unavailable path.
+  NEVER reintroduce the AppleScript/Apple Events clipboard transport
+  (`osascript` is grep-gated out of `bin/` + `lib/src/cli/` —
+  test/cli/fa_clip_helper_test.dart); the TCC «access data from other
+  apps» dialog class must stay dead. macOS text reads stay on `pbpaste`
+  (already prompt-free — documented split, gh-2040 AC4).
 - `lib/flutter_agent_harness.dart` (the barrel) — gh-1232 policy:
   GROUPED APPEND-ONLY export sections, one `// ── <subsystem> ──` comment
   header per group, exports sorted by path within a group, new exports

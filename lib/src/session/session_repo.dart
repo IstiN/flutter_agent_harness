@@ -10,6 +10,7 @@ library;
 import 'dart:async';
 import 'dart:convert' as json_conv;
 import 'dart:math' as math;
+import 'dart:typed_data';
 
 import 'package:meta/meta.dart';
 import '../env/execution_env.dart';
@@ -150,26 +151,31 @@ final RegExp _slugEscape = RegExp(r'%([0-9A-Fa-f]{2})');
 bool _hasReversibleEscape(String inner) => _slugEscape
     .allMatches(inner)
     .any(
-      (m) => const {
-        '25',
-        '2D',
-        '2F',
-        '5C',
-        '3A',
-      }.contains(m.group(1)!.toUpperCase()),
+      (m) => switch (m.group(1)) {
+        final captured? => const {
+          '25',
+          '2D',
+          '2F',
+          '5C',
+          '3A',
+        }.contains(captured.toUpperCase()),
+        _ => false,
+      },
     );
 
 /// Undoes [_encodeCwd]'s percent-escapes in one segment. Unknown `%XX`
 /// sequences stay literal (legacy text).
 String _unescapeSlugPart(String part) => part.replaceAllMapped(
   _slugEscape,
-  (m) => switch (m.group(1)!.toUpperCase()) {
+  (m) => switch (m.group(1)?.toUpperCase()) {
     '25' => '%',
     '2D' => '-',
     '2F' => '/',
     '5C' => r'\',
     '3A' => ':',
-    _ => m.group(0)!,
+    // Unknown %XX stays literal (legacy text); the regex always has a
+    // match body, so the fallback only covers the impossible null group.
+    _ => m.group(0) ?? part.substring(m.start, m.end),
   },
 );
 
@@ -382,19 +388,17 @@ final class JsonlSessionRepo implements SessionRepo {
     );
   }
 
-  T _fsOrThrow<T>(Result<T, FileError> result, String message) {
-    if (result.isErr) {
-      final error = result.errorOrNull!;
-      throw SessionException(
-        '$message: ${error.message}',
-        code: error.code == FileErrorCode.notFound
-            ? SessionErrorCode.notFound
-            : SessionErrorCode.storage,
-        cause: error,
-      );
-    }
-    return result.valueOrNull as T;
-  }
+  T _fsOrThrow<T>(Result<T, FileError> result, String message) =>
+      switch (result) {
+        Ok<T, FileError>(:final value) => value,
+        Err<T, FileError>(:final error) => throw SessionException(
+          '$message: ${error.message}',
+          code: error.code == FileErrorCode.notFound
+              ? SessionErrorCode.notFound
+              : SessionErrorCode.storage,
+          cause: error,
+        ),
+      };
 
   @override
   Future<Session> create(JsonlSessionCreateOptions options) async {
@@ -463,7 +467,8 @@ final class JsonlSessionRepo implements SessionRepo {
     // Resume-timing caller attribution: full opens on big sessions are the
     // expensive kind — the log must name who asked (issue: slow resume
     // investigation). Windowed opens stay caller-less (they are cheap).
-    if (!windowed && timingLog != null) {
+    final log = timingLog;
+    if (!windowed && log != null) {
       final frames = StackTrace.current
           .toString()
           .split('\n')
@@ -471,7 +476,7 @@ final class JsonlSessionRepo implements SessionRepo {
           .take(3)
           .map((l) => l.trim())
           .join(' <- ');
-      timingLog!.call(
+      log.call(
         'resume_timing open-caller file=${metadata.path.split('/').last} $frames',
       );
     }
@@ -689,8 +694,8 @@ final class JsonlSessionRepo implements SessionRepo {
       path,
       trashPath,
     );
-    if (renamed.isErr) {
-      final error = renamed.errorOrNull!;
+    if (renamed is Err<void, FileError>) {
+      final error = renamed.error;
       if (error.code != FileErrorCode.notSupported) {
         _fsOrThrow(renamed, 'Failed to move session $path to trash $trashPath');
       }
@@ -960,8 +965,7 @@ final class JsonlSessionRepo implements SessionRepo {
     // per-session segment `listDir` is skipped. Null keeps the discovery
     // exactly as before (the CLI `--session` single-session path and any
     // caller without fresh listing knowledge).
-    final partsKnown =
-        hasRotatedSegments ?? _lastListingParts?[metadata.path];
+    final partsKnown = hasRotatedSegments ?? _lastListingParts?[metadata.path];
     final paths = partsKnown == false
         ? <String>[metadata.path]
         : await listSessionSegmentPaths(_fs, metadata.path);
@@ -1064,15 +1068,17 @@ final class JsonlSessionRepo implements SessionRepo {
     // and misses. Records are SHARED between callers — the codebase
     // treats them as immutable (read-only payload consumers).
     final fingerprint = await _scanChainFingerprint(scanned);
-    final memo = fingerprint == null ? null : _scanMemo[metadata.path];
-    if (memo != null &&
-        memo.matches(
-          types: types,
-          lastSegmentOnly: lastSegmentOnly,
-          tailCapBytes: cap,
-          fingerprint: fingerprint!,
-        )) {
-      return List.of(memo.records);
+    if (fingerprint case final fp?) {
+      final memo = _scanMemo[metadata.path];
+      if (memo != null &&
+          memo.matches(
+            types: types,
+            lastSegmentOnly: lastSegmentOnly,
+            tailCapBytes: cap,
+            fingerprint: fp,
+          )) {
+        return List.of(memo.records);
+      }
     }
     final records = <CustomRecord>[];
     final seen = <String>{};
@@ -1194,9 +1200,9 @@ final class JsonlSessionRepo implements SessionRepo {
   ) async {
     final blockBytes = debugCustomRecordScanBlockBytes;
     final info = await fs.fileInfo(path);
-    if (info.isErr) return const [];
-    if (info.valueOrNull!.kind != FileKind.file) return const [];
-    final size = info.valueOrNull!.size;
+    final FileInfo? info0 = info.valueOrNull;
+    if (info0 == null || info0.kind != FileKind.file) return const [];
+    final size = info0.size;
     final scanner = _CustomRecordBlockScanner(types);
     // Start inside the tail region: a line torn at the boundary simply
     // fails the field-shaped gate (or jsonDecode) and is skipped — the
@@ -1205,8 +1211,8 @@ final class JsonlSessionRepo implements SessionRepo {
     while (offset < size) {
       final end = (offset + blockBytes).clamp(0, size);
       final read = await ranged.readRange(path, offset, end);
-      if (read.isErr) return const [];
-      final block = read.valueOrNull!;
+      final Uint8List? block = read.valueOrNull;
+      if (block == null) return const [];
       if (block.isEmpty) break;
       offset = end;
       scanner.scanBlock(json_conv.latin1.decode(block));
@@ -1333,6 +1339,11 @@ final class JsonlSessionRepo implements SessionRepo {
 
   static final RegExp _partSuffixPattern = RegExp(r'\.jsonl\.part-\d+$');
 
+  static bool _reusableListingEntry(
+    SessionListingIndexEntry entry,
+    FileInfo file,
+  ) => entry.sizeBytes == file.size && entry.mtimeMs == file.mtimeMs;
+
   /// Issue #2053: the indexed listing — the walk validates the persisted
   /// sidecar, and warm boots serve rows from it with ZERO per-file header
   /// reads (AC1). Cold (no index / foreign shape) falls back to today's
@@ -1348,34 +1359,29 @@ final class JsonlSessionRepo implements SessionRepo {
   Future<List<SessionMetadata>> _collectSessionsIndexed(String root) async {
     final walk = await _walkRoot(root);
     _lastListingParts = {
-      for (final file in walk.files) file.path: walk.partPrimaries.contains(
-        file.path,
-      ),
+      for (final file in walk.files)
+        file.path: walk.partPrimaries.contains(file.path),
     };
     final index = await _listingIndexStore.read(_fs, root);
     if (index == null) {
       // Cold / corrupt / foreign-version index: today's full scan, then a
       // fresh sidecar (no names — those are learned lazily, AC4).
       final sessions = await _loadSessionMetadataBatch(walk.files);
-      await _writeIndexSnapshot(
-        root,
-        walk,
-        [for (final session in sessions) _entryFromMetadata(session)],
-      );
+      await _writeIndexSnapshot(root, walk, [
+        for (final session in sessions) _entryFromMetadata(session),
+      ]);
       return sessions;
     }
-    final byPath = {
-      for (final entry in index.entries) entry.path: entry,
-    };
-    bool reusable(SessionListingIndexEntry entry, FileInfo file) =>
-        entry.sizeBytes == file.size && entry.mtimeMs == file.mtimeMs;
+    final byPath = {for (final entry in index.entries) entry.path: entry};
     final stale = <FileInfo>[];
     for (final file in walk.files) {
       final entry = byPath[file.path];
       // No entry (created since the index) or changed stats (appended /
       // rotated / touched): the header is re-read — AC3's incremental
       // refresh. Everything else is served from the index (AC1).
-      if (entry == null || !reusable(entry, file)) stale.add(file);
+      if (entry == null || !_reusableListingEntry(entry, file)) {
+        stale.add(file);
+      }
     }
     final fresh = await _mapBounded<FileInfo, SessionMetadata?>(
       stale,
@@ -1386,21 +1392,47 @@ final class JsonlSessionRepo implements SessionRepo {
       final metadata = fresh[i];
       if (metadata != null) freshByPath[stale[i].path] = metadata;
     }
+    final merged = _mergeIndexedSessions(
+      walk: walk,
+      byPath: byPath,
+      freshByPath: freshByPath,
+    );
+    // Skip the rewrite when the walk agreed with the sidecar completely —
+    // repeated warm boots must not churn the root (AC1's zero-write
+    // steady state; the file's own mtime is then stable too).
+    if (merged.mutated || !_sameDirStats(root, walk, index.dirStats)) {
+      await _writeIndexSnapshot(root, walk, merged.entries);
+    }
+    return merged.sessions;
+  }
+
+  /// Merges stat-validated index rows with freshly read headers. Keeping
+  /// this per-file decision out of the orchestration makes the cold,
+  /// incremental, and warm paths independently reviewable.
+  ({
+    List<SessionListingIndexEntry> entries,
+    List<SessionMetadata> sessions,
+    bool mutated,
+  })
+  _mergeIndexedSessions({
+    required _RootWalk walk,
+    required Map<String, SessionListingIndexEntry> byPath,
+    required Map<String, SessionMetadata> freshByPath,
+  }) {
     final entries = <SessionListingIndexEntry>[];
     final sessions = <SessionMetadata>[];
     var mutated = false;
     for (final file in walk.files) {
       final entry = byPath[file.path];
       final hasParts = walk.partPrimaries.contains(file.path);
-      if (entry != null && reusable(entry, file)) {
-        final settled =
-            entry.hasParts == hasParts
-                ? entry
-                : entry.withStats(
-                  sizeBytes: entry.sizeBytes,
-                  mtimeMs: entry.mtimeMs,
-                  hasParts: hasParts,
-                );
+      if (entry != null && _reusableListingEntry(entry, file)) {
+        final settled = entry.hasParts == hasParts
+            ? entry
+            : entry.withStats(
+                sizeBytes: entry.sizeBytes,
+                mtimeMs: entry.mtimeMs,
+                hasParts: hasParts,
+              );
         if (!identical(settled, entry)) mutated = true;
         entries.add(settled);
         sessions.add(_metadataFromEntry(settled));
@@ -1425,13 +1457,7 @@ final class JsonlSessionRepo implements SessionRepo {
       sessions.add(metadata);
       mutated = true;
     }
-    // Skip the rewrite when the walk agreed with the sidecar completely —
-    // repeated warm boots must not churn the root (AC1's zero-write
-    // steady state; the file's own mtime is then stable too).
-    if (mutated || !_sameDirStats(root, walk, index.dirStats)) {
-      await _writeIndexSnapshot(root, walk, entries);
-    }
-    return sessions;
+    return (entries: entries, sessions: sessions, mutated: mutated);
   }
 
   /// The pre-#2053 cold scan: walk + one bounded header-read fan-out.
@@ -1441,9 +1467,8 @@ final class JsonlSessionRepo implements SessionRepo {
   Future<List<SessionMetadata>> _collectSessionsInDir(String dirPath) async {
     final walk = await _walkRoot(dirPath);
     _lastListingParts = {
-      for (final file in walk.files) file.path: walk.partPrimaries.contains(
-        file.path,
-      ),
+      for (final file in walk.files)
+        file.path: walk.partPrimaries.contains(file.path),
     };
     return _loadSessionMetadataBatch(walk.files);
   }
@@ -1592,11 +1617,9 @@ final class JsonlSessionRepo implements SessionRepo {
         mtimeMs: file.mtimeMs,
         hasParts: true,
       );
-      await _persistMutatedIndex(
-        root,
-        index,
-        [for (final e in index.entries) e.path == primaryPath ? updated : e],
-      );
+      await _persistMutatedIndex(root, index, [
+        for (final e in index.entries) e.path == primaryPath ? updated : e,
+      ]);
     } on Object {
       // Cache-only: never fail (or even log) an append for its cache.
     }
@@ -1634,15 +1657,11 @@ final class JsonlSessionRepo implements SessionRepo {
         parentSessionPath: parentSessionPath,
         metadata: metadata,
       );
-      await _persistMutatedIndex(
-        root,
-        index,
-        [
-          for (final e in index.entries)
-            if (e.path != filePath) e,
-          entry,
-        ],
-      );
+      await _persistMutatedIndex(root, index, [
+        for (final e in index.entries)
+          if (e.path != filePath) e,
+        entry,
+      ]);
     } on Object {
       // Cache-only: never fail a create for its cache.
     }
@@ -1677,9 +1696,7 @@ final class JsonlSessionRepo implements SessionRepo {
   ) async {
     // The mutated file lives in exactly one directory; refresh only that
     // directory's terms so the next warm boot still validates cleanly.
-    final dirs = <String>{
-      for (final entry in entries) _dirOf(entry.path),
-    };
+    final dirs = <String>{for (final entry in entries) _dirOf(entry.path)};
     final dirStats = Map.of(index.dirStats);
     for (final dir in dirs) {
       final refreshed = await _refreshDirStats(dir);
@@ -1752,7 +1769,8 @@ final class JsonlSessionRepo implements SessionRepo {
         if (name == null || name.trim().isEmpty) continue;
         final info = await _fs.fileInfo(entry.path);
         final file = info.valueOrNull;
-        final unchanged = file != null &&
+        final unchanged =
+            file != null &&
             file.kind == FileKind.file &&
             file.size == entry.sizeBytes &&
             file.mtimeMs == entry.mtimeMs;
@@ -1779,26 +1797,13 @@ final class JsonlSessionRepo implements SessionRepo {
       var changed = false;
       final entries = <SessionListingIndexEntry>[];
       for (final entry in index.entries) {
-        final name = namesById[entry.id];
-        final learnable = name != null &&
-            name.trim().isNotEmpty &&
-            entry.name != name;
-        if (!learnable) {
+        final learned = await _learnSessionName(entry, namesById[entry.id]);
+        if (learned == null) {
           entries.add(entry);
-          continue;
+        } else {
+          entries.add(learned);
+          changed = true;
         }
-        final info = await _fs.fileInfo(entry.path);
-        final file = info.valueOrNull;
-        final unchanged = file != null &&
-            file.kind == FileKind.file &&
-            file.size == entry.sizeBytes &&
-            file.mtimeMs == entry.mtimeMs;
-        if (!unchanged) {
-          entries.add(entry);
-          continue;
-        }
-        entries.add(entry.withName(name));
-        changed = true;
       }
       if (changed) {
         await _listingIndexStore.write(_fs, root, index.withEntries(entries));
@@ -1806,6 +1811,26 @@ final class JsonlSessionRepo implements SessionRepo {
     } on Object {
       // Cache-only: never fail a name probe for its cache.
     }
+  }
+
+  /// Returns [entry] with a newly learned [name], or null when the name is
+  /// absent/unchanged or the session file moved past the indexed stat pair.
+  Future<SessionListingIndexEntry?> _learnSessionName(
+    SessionListingIndexEntry entry,
+    String? name,
+  ) async {
+    if (name == null || name.trim().isEmpty || entry.name == name) {
+      return null;
+    }
+    final info = await _fs.fileInfo(entry.path);
+    final file = info.valueOrNull;
+    final unchanged =
+        file != null &&
+        file.kind == FileKind.file &&
+        file.size == entry.sizeBytes &&
+        file.mtimeMs == entry.mtimeMs;
+    if (!unchanged) return null;
+    return entry.withName(name);
   }
 
   /// Runs [task] over [items] with at most [_listConcurrency] in flight;
@@ -1871,10 +1896,8 @@ final class JsonlSessionRepo implements SessionRepo {
   /// One `session_list_skip` diagnostic line through the ioRetry logger
   /// (the sink hosts already wire for `session_io_retry`). Silent when
   /// no logger is configured.
-  void _logListSkip(String path, SessionException error) =>
-      _ioRetry.logger?.call(
-        'session_list_skip path=$path error=${error.message}',
-      );
+  void _logListSkip(String path, SessionException error) => _ioRetry.logger
+      ?.call('session_list_skip path=$path error=${error.message}');
 
   Future<List<SessionRecord>> _entriesToFork(
     SessionStorage storage,

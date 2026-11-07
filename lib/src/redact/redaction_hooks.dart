@@ -36,7 +36,10 @@ const _credentialBasenames = {
 /// [_credentialBasenames] (with `config.json` only counting under a
 /// `.docker` directory), or it is a `.env.*` variant.
 bool isCredentialFilePath(String path) {
-  final normalized = path.replaceFirst('^~/', '/').toLowerCase();
+  // ponytail: the old `replaceFirst('^~/', '/')` was dead — a String
+  // pattern matches `^` literally, so it never fired; basename/parent
+  // checks are prefix-insensitive, so no substitute is needed.
+  final normalized = path.toLowerCase();
   final segments = normalized.split('/');
   final basename = segments.last;
   if (basename == '.env' || basename.startsWith('.env.')) return true;

@@ -198,4 +198,24 @@ void main() {
       expect(matches.single.kindLabel, highEntropyLabel);
     });
   });
+
+  group('structured-identifier anchors (issue #1999)', () {
+    test('uuid/hex shapes match as end-anchored regexes', () {
+      expect(
+        isStructuredIdentifier('01a05ea4-c7fe-7cbe-9e93-1575eed34d59'),
+        isTrue,
+      );
+      expect(
+        isStructuredIdentifier('a3f5b2c8d71e94f60218b7cd45e6a190f83b27d4'),
+        isTrue,
+      );
+      expect(isStructuredIdentifier('deadbeef_cafef00d'), isTrue);
+      expect(
+        // The anchors must be real `$` end-anchors, not a literal `\$`
+        // suffix requirement: a plain uuid classifies without any dollar.
+        isStructuredIdentifier('01a05ea4-c7fe-7cbe-9e93-1575eed34d5X'),
+        isFalse,
+      );
+    });
+  });
 }

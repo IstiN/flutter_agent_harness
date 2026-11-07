@@ -6,13 +6,39 @@ framework_name = 'WasmRun.xcframework'
 remote_zip_name = "#{framework_name}.zip"
 url = "https://github.com/juancastillo0/wasm_run/releases/download/#{release_tag_name}/#{remote_zip_name}"
 local_zip_name = "#{release_tag_name}.zip"
-`
+# gh-2055 review round 2: Ruby does NOT check a bare backtick's exit status —
+# `$?` is set but nothing reads it, so the shell block's own abort
+# ("curl ... || exit 1") never propagated into pod install: a cold-tree
+# failed download proceeded past the fetch and died at the Podfile
+# post_install `nm` check with the root cause one screen up. Assigning the
+# result and raising on `$?.success?` fails pod install AT the fetch step,
+# with the curl error and the "wasm_run download failed" marker directly
+# above it in the log. The raise reads `$?` on the line right after the
+# closing backtick so no intervening child process can clobber the status.
+fetch_output = `
 cd Frameworks
 
-if [ ! -f #{local_zip_name} ]
+# gh-2055: the guard must key on the artifact pod install actually consumes —
+# the exact archive flutter_app/macos/Podfile force_loads and nm-checks —
+# NOT on the downloaded-zip marker. A fresh CI clone never has the marker,
+# so the old "if [ ! -f <zip> ]" guard made this block run on EVERY build:
+# it removed the WasmRun.xcframework the build-macos.yml "Restore vendored
+# WasmRun macOS framework" step had already placed (cache → local copy →
+# digest-verified resumable download, gh-1149/gh-1759), re-downloaded the
+# 92.7 MB asset with a bare curl, and one transient reset ("curl: (56)
+# Recv failure: Connection reset by peer", daily leg run 41778615815) left
+# pod install with NO framework — the Podfile nm check then failed on the
+# missing libwasm_run_dart.a. With the archive in place this block is now
+# a no-op; it stays as the local-dev fallback for a truly cold tree.
+# --fail keeps an HTTP error page from masquerading as a zip (the same
+# posture the workflow restore step is linted for); the || guard fails the
+# block AT the curl step so a dead download surfaces its own error instead
+# of being swallowed into unzip/truncate residue and the downstream
+# Podfile nm diagnostic (gh-2055 review).
+if [ ! -f #{framework_name}/macos-arm64_x86_64/libwasm_run_dart.a ]
 then
   rm -rf #{framework_name}
-  curl -L #{url} -o #{local_zip_name}
+  curl --fail -L #{url} -o #{local_zip_name} || { echo "wasm_run download failed" >&2; exit 1; }
   unzip #{local_zip_name}
   truncate -s 0 #{local_zip_name}
   rm -rf #{framework_name}/ios-*
@@ -20,6 +46,7 @@ fi
 
 cd -
 `
+raise "wasm_run framework fetch failed (see curl error above)" unless $?.success?
 
 Pod::Spec.new do |s|
   s.name          = 'wasm_run_flutter'

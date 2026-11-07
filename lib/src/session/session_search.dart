@@ -33,6 +33,7 @@
 library;
 
 import 'dart:convert' as json_conv;
+import 'dart:typed_data';
 
 import '../compaction/structured/projection.dart' show recordPreviewSource;
 import '../env/execution_env.dart';
@@ -47,9 +48,6 @@ enum SessionSearchScope {
   /// The whole tree, forks included — an abandoned branch still happened.
   tree;
 
-  /// The payload spelling.
-  String get jsonName => name;
-
   /// Tolerant parse: null/unknown falls back to [branch].
   static SessionSearchScope fromName(Object? name) =>
       name == 'tree' ? tree : branch;
@@ -62,9 +60,6 @@ enum SessionSearchMode {
 
   /// Archive structure: counts, hidden totals, checkpoint tree.
   map;
-
-  /// The payload spelling.
-  String get jsonName => name;
 
   /// Tolerant parse: null/unknown falls back to [search].
   static SessionSearchMode fromName(Object? name) =>
@@ -1031,9 +1026,10 @@ Future<void> _scanFileBlocks(
   while (offset < size) {
     final end = (offset + blockBytes).clamp(0, size);
     final read = await fs.readRange(path, offset, end);
-    if (read.isErr) return;
+    final Uint8List? block = read.valueOrNull;
+    if (block == null) return;
     offset = end;
-    carry = _scanBlock(accumulator, read.valueOrNull!, carry);
+    carry = _scanBlock(accumulator, block, carry);
     accumulator.checkDeadline();
     if (accumulator.stopped) return;
   }

@@ -9,6 +9,20 @@
 library;
 
 export '../src/ui_port_server.dart' show UiPortServer;
+export '../src/host_compaction.dart'
+    show
+        CompactionRunResult,
+        ExtensionCompactionRunner,
+        ManualCompactionOutcome,
+        SlashCompact,
+        SlashDecision,
+        SlashUnknown,
+        extCompactionExhaustedNotice,
+        extCompactionFailureNotice,
+        extCompactionFailureNoticeLead,
+        extensionSystemOverheadTokens,
+        parseSlashInput,
+        resolveExtensionCompactionWiring;
 export '../src/ui_protocol.dart'
     show
         ApprovalRequestMsg,

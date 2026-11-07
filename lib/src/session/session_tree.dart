@@ -273,6 +273,25 @@ final class Session {
     );
   }
 
+  /// Pages older blocks until a record that projects into conversation
+  /// context is resident. Registry-only live tails (subagent/shell custom
+  /// records) otherwise make a windowed open look like an empty chat even
+  /// though messages exist immediately above the tail. The walk keeps the
+  /// newest side anchored and is bounded by [maxPages]; full storages are a
+  /// no-op. Returns false only when that page bound is exhausted.
+  Future<bool> ensureConversationResident({int maxPages = 16}) async {
+    final storage = _storage;
+    if (storage is! WindowedSessionStorage) return true;
+    return storage.growOlderUntil(
+      (record) =>
+          record is MessageRecord ||
+          record is CustomMessageRecord ||
+          record is CompactionRecord ||
+          (record is BranchSummaryRecord && record.summary.isNotEmpty),
+      maxPages: maxPages,
+    );
+  }
+
   /// Brings the whole file into residency for the read-everything
   /// surfaces (the headless trajectory cost/inspect views, gh-1555 W1)
   /// on a windowed open: a sequential forward scan in bounded chunks, so

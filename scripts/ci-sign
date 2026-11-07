@@ -147,7 +147,8 @@ p12_env_value() { # p12_env_value <VARNAME>
 
 label_env() { # label_env <label> <SUFFIX> -> prints resolved env var VALUE
   local label="$1" suffix="$2"
-  local upper="${label^^}"
+  local upper
+  upper="$(printf '%s' "$label" | tr '[:lower:]' '[:upper:]')"
   upper="${upper//-/_}"
   if [ -n "${CI_SIGN_P12_B64_ENV:-}" ] || [ -n "${CI_SIGN_P12_PASSWORD_ENV:-}" ]; then
     # Legacy secret names, mapped explicitly by the caller.
@@ -201,7 +202,7 @@ verify_label_identity() { # verify_label_identity <label>; echoes sha1
   sha1="$(sed -n 's/^sha1=//p' "$mf")"
   [ -n "$sha1" ] || die "corrupt manifest for '$label'"
   do_unlock
-  if ! security find-identity -v -p codesigning "$KC" | grep -qi "$sha1"; then
+  if ! security find-identity -v "$KC" | grep -qi "$sha1"; then
     die "identity $sha1 (label '$label') is not a VALID codesigning identity in the signing keychain — re-run 'ci-sign install $label --force'"
   fi
   printf '%s' "$sha1"
@@ -293,18 +294,21 @@ case "$CMD" in
     if [ "$FORCE" -eq 0 ] && [ "$NEW_FP" = "$OLD_FP" ]; then
       # Same certificate as the manifest claims — make sure it is REALLY a
       # valid identity (covers partial imports), then we are done.
-      if security find-identity -v -p codesigning "$KC" | grep -qi "$NEW_FP"; then
+      if security find-identity -v "$KC" | grep -qi "$NEW_FP"; then
         # gh-2008 shadow sweep: Xcode's export -allowProvisioningUpdates
-        # silently imports Apple-issued certs into the persistent keychain
-        # (observed: an extra "Apple Distribution" shadowing the pinned
-        # "iPhone Distribution" same-CN cert). Any codesigning identity
-        # that is NOT the pinned SHA-1 is a shadow — remove it so the
-        # search list can never resolve the wrong one (gh-1865 class).
+        # silently imports Apple-issued certs into the persistent keychain.
+        # gh-2026 hotfix: the keychain is SHARED by all labels (fa-ios,
+        # fa-macos, fa-macos-installer) — an identity is a shadow ONLY if
+        # no label manifest in $LABELS_DIR pins its SHA-1. The #2009 form
+        # ("not the current label pin") deleted the other labels' live
+        # identities (run 41276487426 arm64 attempt 2), and its echo died
+        # under set -u on a never-assigned variable in the echo.
+        ALL_PINNED="$(sed -n 's/^sha1=//p' "$LABELS_DIR"/* 2>/dev/null | tr 'a-f' 'A-F')"
         for FP in $(security find-identity -v -p codesigning "$KC" | sed -n 's/^ *[0-9]*) \([0-9A-F]\{40\}\) .*/\1/p'); do
-          if [ "$FP" != "$NEW_FP" ]; then
+          if [ "$FP" != "$NEW_FP" ] && ! printf '%s\n' "$ALL_PINNED" | grep -qxF "$FP"; then
             security delete-identity -Z "$FP" "$KC" 2>/dev/null \
               || err "could not remove shadow identity $FP (continuing)"
-            echo "ci-sign: swept shadow identity $FP from '$KC_BASE'"
+            echo "ci-sign: swept shadow identity $FP from '$(basename "$KC")'"
           fi
         done
         echo "ci-sign: identity for '$LABEL' is up to date ($NEW_FP)"
@@ -324,12 +328,21 @@ case "$CMD" in
     # ("SecKeychainItemImport: User canceled the operation", run
     # 40857357741). unlock-keychain -p never prompts.
     security unlock-keychain -p "$(kc_password)" "$KC"
-    security import "$TMP/cert.p12" -k "$KC" -P "$P12_PW" -T /usr/bin/codesign
+    # gh-2026: -T grants import-time key ACL per consumer binary. codesign alone
+    # is NOT enough — productbuild (TestFlight PKG) is not covered by the
+    # apple-tool:/apple: partition list and its first signing raised a modal
+    # SecurityAgent dialog that hung the arm64 leg 1h42m (run 41354303751).
+    security import "$TMP/cert.p12" -k "$KC" -P "$P12_PW" \
+      -T /usr/bin/codesign -T /usr/bin/productbuild \
+      -T /usr/bin/productsign -T /usr/bin/security
     # Partition the private key so codesign never needs interactive auth
     # (this is what prevents GUI keychain prompts).
+    # applied twice: the first apply does not always stick on a fresh
+    # import (fastlane folklore, cheap and harmless).
+    security set-key-partition-list -S apple-tool:,apple: -s -k "$(kc_password)" "$KC" >/dev/null
     security set-key-partition-list -S apple-tool:,apple: -s -k "$(kc_password)" "$KC" >/dev/null
 
-    if ! security find-identity -v -p codesigning "$KC" | grep -qi "$NEW_FP"; then
+    if ! security find-identity -v "$KC" | grep -qi "$NEW_FP"; then
       die "imported P12 for '$LABEL' but it is not a valid codesigning identity (expired, revoked, or key/cert mismatch). Try 'ci-sign install $LABEL --force', then check the certificate in Apple Developer Portal."
     fi
 

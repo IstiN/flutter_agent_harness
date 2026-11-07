@@ -150,5 +150,14 @@ void main() {
         expect(UsageSource.parse('Reported'), UsageSource.estimated);
       },
     );
+
+    test('wire names are pinned literals and round-trip (issue #1999)', () {
+      expect(UsageSource.reported.wire, 'reported');
+      expect(UsageSource.estimated.wire, 'estimated');
+      expect(UsageSource.mixed.wire, 'mixed');
+      for (final source in UsageSource.values) {
+        expect(UsageSource.parse(source.wire), source);
+      }
+    });
   });
 }

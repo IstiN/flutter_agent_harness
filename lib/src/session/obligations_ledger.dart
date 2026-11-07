@@ -93,16 +93,19 @@ enum ObligationKind {
 /// closed explicitly (`obligation_mark_done`); the owner overriding a
 /// rule supersedes the old entry (kept, auditable).
 enum ObligationStatus {
-  open,
+  open('open'),
 
   /// Explicitly discharged.
-  done,
+  done('done'),
 
   /// Overridden by a later rule/ask; the entry stays for the audit trail.
-  superseded;
+  superseded('superseded');
 
-  /// The payload spelling.
-  String get jsonName => name;
+  const ObligationStatus(this.jsonName);
+
+  /// The payload spelling — a pinned literal, so renaming the identifier
+  /// cannot silently change persisted values.
+  final String jsonName;
 
   /// Tolerant parse (E6): unknown or missing names default to [open].
   static ObligationStatus fromName(Object? name) => switch (name) {

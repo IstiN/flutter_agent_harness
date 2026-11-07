@@ -153,7 +153,7 @@ extension _TuiRowRenderers on FaTuiModel {
   /// tail-follow hint names these), [below] the wrapped rows under its
   /// bottom edge (the detached percent rule). ONE computation for both
   /// directions — the two indicators can never drift apart.
-  (int above, int below) _foldAccount(List<String> wrapped, int offset) {
+  FoldAccount _foldAccount(List<String> wrapped, int offset) {
     final bottom = _scrollBottom(wrapped);
     return (
       offset.clamp(0, wrapped.length),
@@ -435,7 +435,7 @@ extension _TuiRowRenderers on FaTuiModel {
   /// The visible-waiting push (issue #450): replaces the waiter aggregate;
   /// while a timer countdown is on screen, arms the shared minute-boundary
   /// tick (one chain — [scheduledTickPending] guards it).
-  (Model, Cmd?) _handleWaitingStatus(WaitingStatusMsg msg) {
+  UiUpdate _handleWaitingStatus(WaitingStatusMsg msg) {
     final next = copyWith(
       waitingJobs: msg.jobs,
       waitingTimers: msg.timers,
@@ -458,7 +458,7 @@ extension _TuiRowRenderers on FaTuiModel {
 List<String> waitingRowLines({
   required bool busy,
   required List<String> waitingJobs,
-  required List<({int dueMs, String preview})> waitingTimers,
+  required List<WaitingTimer> waitingTimers,
   required int waitingLostJobs,
   required int nowMs,
 }) {
@@ -482,7 +482,7 @@ List<String> waitingRowLines({
 /// job purpose and/or the nearest timer wake follow.
 String _waitingHeadLine(
   List<String> jobs,
-  List<({int dueMs, String preview})> timers,
+  List<WaitingTimer> timers,
   String Function(int) etaOf,
 ) {
   final head = StringBuffer(
@@ -510,7 +510,7 @@ String _waitingHeadLine(
 /// the job board above already lists every job live. Capped at two rows.
 List<String> _waitingDetailLines(
   List<String> jobs,
-  List<({int dueMs, String preview})> timers,
+  List<WaitingTimer> timers,
   String Function(int) etaOf,
 ) {
   final details = <String>[
