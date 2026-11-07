@@ -27,19 +27,20 @@ import 'package:flutter_chat_ui/flutter_chat_ui.dart';
 
 import '../theme/app_theme.dart';
 import '../theme/fa2_tokens.dart';
-import '../theme/fa2_typography.dart';
 import '../theme/fa_ui_theme.dart';
 import '../trajectory/trajectory_controller.dart';
 import '../trajectory/trajectory_panel.dart';
 import '../trajectory/trajectory_view.dart';
 import '../trajectory/trajectory_strings.dart';
 import '../widgets/fa2_controls.dart';
+import '../widgets/fa_icon_action_band.dart';
 import '../widgets/fa_icon_action_button.dart' show FaIconActionButton;
 import '../widgets/pane_resize_handle.dart';
 import '../widgets/snackbars.dart';
 import 'approval_ui.dart';
 import 'ask_ui.dart';
 import 'chat_composer.dart';
+import 'chat_message_projection.dart';
 import 'chat_message_tile.dart';
 import 'chat_strings.dart';
 import 'fa_adaptive_header.dart';
@@ -409,6 +410,15 @@ class _FaChatScreenState extends State<FaChatScreen>
   /// top banner to reveal.
   static const double _topRevealSlack = 64;
 
+  /// Start paging before the oldest edge is reached, so the next chunk is
+  /// already arriving by the time the user sees the end of the window.
+  static const double _historyPrefetchSlack = 320;
+
+  /// One automatic page per approach to the older edge. Leaving the
+  /// prefetch band rearms it; scroll notifications and layout settles in
+  /// one gesture therefore cannot issue duplicate reads.
+  bool _olderEdgeAutoLoadArmed = true;
+
   /// The live reveal computation: a REVERSED list keeps the oldest edge
   /// at maxScrollExtent, so "parked at the top" is pixels within the
   /// slack of it. A transcript that fits the viewport (or has no list at
@@ -641,6 +651,7 @@ class _FaChatScreenState extends State<FaChatScreen>
       // record — held never persists across a restart (gh-1439 AC5).
       _follow = const FollowMode.live();
       _userNearBottom = true;
+      _olderEdgeAutoLoadArmed = true;
       _unbindTrajectory();
       if (widget.features.trajectory) _trajectory;
       _mirrorServiceState();
@@ -690,6 +701,31 @@ class _FaChatScreenState extends State<FaChatScreen>
       // AC4).
       _followTailIfPinned();
     }
+    _maybeLoadOlderHistory();
+  }
+
+  /// Infinite-scroll companion to the manual history banner. Only real
+  /// transcript scroll activity calls this: opening a short tail or a
+  /// layout settle never starts reading the session by itself.
+  void _maybeLoadOlderHistory() {
+    if (!_chatScrollController.hasClients) return;
+    final position = _chatScrollController.position;
+    if (!position.hasContentDimensions) return;
+    final nearOlderEdge =
+        position.pixels >= position.maxScrollExtent - _historyPrefetchSlack;
+    if (!nearOlderEdge) {
+      _olderEdgeAutoLoadArmed = true;
+      return;
+    }
+    if (!_olderEdgeAutoLoadArmed ||
+        _historyLoading ||
+        _historyLoadError != null ||
+        (_historyAbove != null && _historyAbove! <= 0) ||
+        (_lastSynced.isEmpty && (_historyAbove ?? 0) <= 0)) {
+      return;
+    }
+    _olderEdgeAutoLoadArmed = false;
+    unawaited(widget.service.loadOlderHistory());
   }
 
   /// One trackable scroll update: measures the landing position, applies
@@ -1181,12 +1217,7 @@ class _FaChatScreenState extends State<FaChatScreen>
     _isSyncing = true;
 
     try {
-      final converted = await Future.wait(
-        widget.service.messages.indexed.map(
-          (entry) => _toMessage(entry.$1, entry.$2),
-        ),
-      );
-      final newList = converted.toList();
+      final newList = projectFaChatMessages(widget.service.messages);
       // The top banner's empty-session escape (issue #223) reads the
       // synced window; an emptiness flip must repaint it even when no
       // service field changed (the initial history sync notifies nobody).
@@ -1408,72 +1439,6 @@ class _FaChatScreenState extends State<FaChatScreen>
     };
   }
 
-  Future<Message> _toMessage(int index, FaChatMessage chat) async {
-    final id = 'msg-$index';
-    final now = DateTime.now();
-
-    switch (chat.role) {
-      case 'user':
-        // Issue #461: user messages with attachments render through the
-        // shared ChatMessageTile (thumbnails/chips inside the bubble), the
-        // same way every other surface renders them. Text-only messages
-        // keep the plain text row.
-        if (chat.attachments.isNotEmpty) {
-          return Message.custom(
-            id: id,
-            authorId: 'user',
-            createdAt: now,
-            metadata: <String, dynamic>{
-              'role': 'user',
-              'content': chat.content,
-              'attachments': chat.attachments,
-            },
-          );
-        }
-        return Message.text(
-          id: id,
-          authorId: 'user',
-          text: chat.content,
-          createdAt: now,
-        );
-      case 'assistant':
-        return Message.text(
-          id: id,
-          authorId: 'assistant',
-          text: chat.content,
-          createdAt: now,
-        );
-      case 'system':
-      case 'tool':
-      case 'thinking':
-      case 'widget':
-        return Message.custom(
-          id: id,
-          authorId: chat.role == 'tool' ? 'tool' : 'system',
-          createdAt: now,
-          metadata: <String, dynamic>{
-            'role': chat.role,
-            'toolName': chat.toolName,
-            'content': chat.content,
-            'isError': chat.isError,
-            'data': chat.data,
-            // The transcript position (issue #1374): the thinking tile's
-            // live gate identifies the streaming block by index — the
-            // tile rebuilds a fresh FaChatMessage, so message identity
-            // cannot survive this mapping.
-            'transcriptIndex': index,
-          },
-        );
-      default:
-        return Message.text(
-          id: id,
-          authorId: 'system',
-          text: chat.content,
-          createdAt: now,
-        );
-    }
-  }
-
   Future<User?> _resolveUser(UserID id) async {
     return switch (id) {
       'user' => _user,
@@ -1580,10 +1545,11 @@ class _FaChatScreenState extends State<FaChatScreen>
     final strings = FaChatStrings.of(context);
     // Pinned history banners (issue #135): "Load earlier" at the top of
     // the loaded range, "Load newer" at the bottom (the page-down path
-    // back to the live tail after deep paging). Both are tap-only (no
-    // scroll-triggered loads), show a spinner while a page is in flight,
-    // and turn into the terminal "Beginning of session (1 of N)" once
-    // the top of the file is reached (E6).
+    // back to the live tail after deep paging). Older pages prefetch on
+    // a deliberate approach to the oldest edge; the banner remains the
+    // manual fallback/retry. Both show a spinner while a page is in
+    // flight, and the older one turns into the terminal
+    // "Beginning of session (1 of N)" once the top is reached (E6).
     final historyAbove = _historyAbove;
     // The transcript always scrolls beneath the same floating chrome.
     // Visual directions only change how those surfaces are painted.
@@ -1605,7 +1571,6 @@ class _FaChatScreenState extends State<FaChatScreen>
       ?_buildWidgetOpenChip(context),
       if (_historyHasNewer) _buildNewerHistoryBanner(strings),
       if (_follow.isHeld && _follow.unseen > 0) _followLivePill(strings),
-      ?widget.inputHeader,
     ];
     Widget body = DropTarget(
       enable: widget.features.attachments,
@@ -1807,7 +1772,7 @@ class _FaChatScreenState extends State<FaChatScreen>
 
   Widget _buildComposer(BuildContext context) {
     final composerBuilder = widget.composerBuilder;
-    return composerBuilder != null
+    final composer = composerBuilder != null
         ? composerBuilder(context, widget.service, _dropBridge)
         : ChatComposer(
             service: widget.service,
@@ -1815,6 +1780,18 @@ class _FaChatScreenState extends State<FaChatScreen>
             mentionOptionsBuilder: widget.mentionOptionsBuilder,
             dropBridge: _dropBridge,
           );
+    // Measure the agents/header slot WITH the composer. The transcript's
+    // bottom inset then reserves it automatically instead of letting the
+    // floating header cover the newest message.
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (widget.inputHeader case final header?)
+          Padding(padding: const EdgeInsets.only(bottom: 4), child: header),
+        composer,
+      ],
+    );
   }
 
   /// The transcript column child: scroll/metrics notification plumbing
@@ -2195,13 +2172,24 @@ class _FaChatScreenState extends State<FaChatScreen>
     final strings = FaChatStrings.of(context);
     return [
       ?_streamingStopAction(strings),
-      // Wide: the app-bar entry pushes the full-screen master-detail
-      // route (AC1). Narrow uses the switcher below the app bar instead.
-      if (widget.features.trajectory && isWide)
+      // One adaptive Trajectory action on every form factor. Wide pushes
+      // the master-detail route; narrow swaps the body in place. The
+      // adaptive header demotes it into ⋮ when the width runs out.
+      if (widget.features.trajectory)
         FaHeaderAction(
-          icon: Icons.timeline,
-          label: strings.chatTrajectoryTooltip,
-          onPressed: _openTrajectoryRoute,
+          icon: !isWide && _showTrajectory
+              ? Icons.chat_bubble_outline
+              : Icons.timeline,
+          label: !isWide && _showTrajectory
+              ? TrajectoryStrings.of(context).switcherChat
+              : strings.chatTrajectoryTooltip,
+          onPressed: () {
+            if (isWide) {
+              _openTrajectoryRoute();
+            } else {
+              setState(() => _showTrajectory = !_showTrajectory);
+            }
+          },
         ),
       if (widget.features.copyTranscript)
         FaHeaderAction(
@@ -2261,7 +2249,6 @@ class _FaChatScreenState extends State<FaChatScreen>
     bool isWide,
     List<FaHeaderAction> headerActions,
   ) {
-    final tokens = FaDesignTokens.of(context);
     return NotificationListener<SizeChangedLayoutNotification>(
       onNotification: _onGlassChromeResized,
       child: SizeChangedLayoutNotifier(
@@ -2269,115 +2256,52 @@ class _FaChatScreenState extends State<FaChatScreen>
           key: _glassHeaderMeasureKey,
           child: SafeArea(
             bottom: false,
-            child: isWide
-                ? _buildDesktopGlassHeader(headerActions)
-                : Padding(
-                    padding: const EdgeInsets.fromLTRB(8, 6, 8, 0),
-                    child: FaSurface(
-                      key: const ValueKey('faChatFloatingHeader'),
-                      glass: true,
-                      useBackdropGroup: true,
-                      color: tokens.surface1,
-                      tintAmount: .10,
-                      tintOpacity: .35,
-                      borderRadius: BorderRadius.circular(18),
-                      padding: const EdgeInsets.symmetric(horizontal: 6),
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          SizedBox(
-                            height: 48,
-                            child: FaAdaptiveHeader(
-                              leading: Navigator.canPop(context)
-                                  ? const BackButton()
-                                  : null,
-                              overflowMenuKey: const ValueKey(
-                                'faChatHeaderOverflow',
-                              ),
-                              title: widget.title,
-                              titleStyle: Theme.of(context).textTheme.titleSmall
-                                  ?.copyWith(fontWeight: FontWeight.w600),
-                              projectIcon: widget.projectIcon,
-                              projectIconColor: widget.projectIconColor,
-                              projectLabel: widget.projectLabel,
-                              onProjectTap: widget.onProjectTap,
-                              chip: widget.modelChip,
-                              onChipTap: widget.onModelChipTap,
-                              chipMenuLabel: widget.chipMenuLabel,
-                              actions: headerActions,
-                              visualDensity: VisualDensity.compact,
-                              iconSize: 18,
-                              actionGap: 8,
-                              // Floating on the header backdrop with no
-                              // surface of its own: the glass underlay
-                              // state (owner rule). The chat bar's circles
-                              // sit at the ONE control scale — the 36pt
-                              // FaIconActionButton default, the same circle
-                              // edge as the sidebar toggle and the Files
-                              // band (user direction: trajectory/copy/files
-                              // must not outsize the expand toggle).
-                              actionBuilder: (context, action, button) =>
-                                  FaHeaderCircularAction(
-                                    dimension:
-                                        FaIconActionButton.defaultDiameter,
-                                    glass: true,
-                                    child: button,
-                                  ),
-                              overflowBuilder: (context, button) =>
-                                  FaHeaderCircularAction(
-                                    dimension:
-                                        FaIconActionButton.defaultDiameter,
-                                    glass: true,
-                                    child: button,
-                                  ),
-                            ),
-                          ),
-                          if (widget.features.trajectory)
-                            SizedBox(
-                              height: 52,
-                              child: Padding(
-                                padding: const EdgeInsets.fromLTRB(
-                                  10,
-                                  4,
-                                  10,
-                                  8,
-                                ),
-                                child: Center(
-                                  child: _trajectorySwitcher(context),
-                                ),
-                              ),
-                            ),
-                        ],
-                      ),
-                    ),
-                  ),
+            // Keep the avatar + centered title pill stacked at every width.
+            // Narrow routes add Back independently; actions still demote into
+            // the adaptive overflow instead of switching to the compact bar.
+            child: _buildStackedGlassHeader(
+              headerActions,
+              showBack: !isWide && Navigator.canPop(context),
+            ),
           ),
         ),
       ),
     );
   }
 
-  Widget _buildDesktopGlassHeader(List<FaHeaderAction> headerActions) {
+  Widget _buildStackedGlassHeader(
+    List<FaHeaderAction> headerActions, {
+    bool showBack = false,
+  }) {
     final tokens = FaDesignTokens.of(context);
     return Padding(
       key: const ValueKey('faChatFloatingHeader'),
       padding: const EdgeInsets.fromLTRB(8, 6, 8, 6),
       child: LayoutBuilder(
         builder: (context, constraints) {
-          final actionWidth = math.min(360.0, constraints.maxWidth * .38);
+          // Title sizing retains the original side budget. The action row
+          // itself may use all safe space to the right of the centered avatar
+          // so a long model id is not truncated by an artificial 38% cap.
+          final titleSideWidth = math.min(360.0, constraints.maxWidth * .38);
+          final actionWidth = math.max(0.0, constraints.maxWidth / 2 - 18 - 12);
+          final chipReserve = math.min(
+            constraints.maxWidth < 600 ? 96.0 : 112.0,
+            math.min(240.0, actionWidth),
+          );
+          final headerChipWidth = math.min(240.0, actionWidth);
           // A fixed, viewport-derived pill width keeps geometry identical
           // across direction-specific font families while remaining a
           // centered identity control rather than a full-width app bar.
           final titleWidth = math.min(
             320.0,
-            math.max(200.0, constraints.maxWidth - 2 * (actionWidth + 12)),
+            math.max(200.0, constraints.maxWidth - 2 * (titleSideWidth + 12)),
           );
           final builtAvatar = widget.avatarBuilder?.call(context, 'assistant');
           return SizedBox(
             // 11 (identity air) + 36 (avatar) + 4 + 40 (pill): the avatar's
             // center (11 + 18 = 29) sits ON the action row's center
             // (Positioned top 9 + 40/2) — one centerline for the whole
-            // desktop glass header, and the circle clears the band's top
+            // stacked glass header, and the circle clears the band's top
             // edge (the old top-0 avatar read clipped at the window edge).
             height: 91,
             child: Stack(
@@ -2474,6 +2398,24 @@ class _FaChatScreenState extends State<FaChatScreen>
                     ],
                   ),
                 ),
+                if (showBack)
+                  Positioned(
+                    top: 9,
+                    left: 0,
+                    width: 40,
+                    height: 40,
+                    child: _glassHeaderAction(
+                      IconTheme.merge(
+                        data: const IconThemeData(size: 18),
+                        child: const BackButton(
+                          key: ValueKey('faChatHeaderBack'),
+                          style: ButtonStyle(
+                            visualDensity: VisualDensity.compact,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
                 Positioned(
                   top: 9,
                   right: 0,
@@ -2483,17 +2425,29 @@ class _FaChatScreenState extends State<FaChatScreen>
                     visualDensity: VisualDensity.compact,
                     overflowMenuKey: const ValueKey('faChatHeaderOverflow'),
                     chip: widget.modelChip,
-                    chipMaxWidth: 112,
+                    chipMinWidth: chipReserve,
+                    chipMaxWidth: headerChipWidth,
                     onChipTap: widget.onModelChipTap,
                     chipMenuLabel: widget.chipMenuLabel,
                     actions: headerActions,
                     iconSize: 18,
-                    actionGap: 8,
+                    actionGap: 0,
                     menuColor: tokens.surface2,
-                    actionBuilder: (context, action, button) =>
-                        _glassHeaderAction(button),
-                    overflowBuilder: (context, button) =>
-                        _glassHeaderAction(button),
+                    actionBandBuilder:
+                        (context, actions, overflowItems, onSelected) =>
+                            FaIconActionBand<String>(
+                              actions: actions,
+                              overflowItems: overflowItems,
+                              onOverflowSelected: onSelected,
+                              overflowMenuKey: const ValueKey(
+                                'faChatHeaderOverflow',
+                              ),
+                              overflowTooltip: FaChatStrings.of(
+                                context,
+                              ).chatMoreTooltip,
+                              menuColor: tokens.surface2,
+                              glass: true,
+                            ),
                   ),
                 ),
               ],
@@ -2667,61 +2621,6 @@ class _FaChatScreenState extends State<FaChatScreen>
             ],
           );
         },
-      ),
-    );
-  }
-
-  /// The narrow Chat | Trajectory segmented switcher (app-bar bottom
-  /// slot); swaps the screen body between the transcript and the
-  /// trajectory page. Controller state lives at screen level, so the swap
-  /// never loses scroll, selection, or filters (AC2/E6).
-  Widget _trajectorySwitcher(BuildContext context) {
-    final trajectoryStrings = TrajectoryStrings.of(context);
-    final colors = FahColors.of(context);
-    final typography = FaTypography.of(context);
-    return SegmentedButton<bool>(
-      segments: [
-        ButtonSegment(
-          value: false,
-          label: Text(trajectoryStrings.switcherChat),
-        ),
-        ButtonSegment(
-          value: true,
-          label: Text(trajectoryStrings.switcherTrajectory),
-        ),
-      ],
-      selected: {_showTrajectory},
-      showSelectedIcon: false,
-      onSelectionChanged: (selection) =>
-          setState(() => _showTrajectory = selection.first),
-      style: ButtonStyle(
-        visualDensity: VisualDensity.compact,
-        side: WidgetStatePropertyAll(BorderSide(color: colors.border)),
-        backgroundColor: WidgetStateProperty.resolveWith(
-          (states) =>
-              states.contains(WidgetState.selected) ? colors.panelAlt : null,
-        ),
-        foregroundColor: WidgetStateProperty.resolveWith(
-          (states) =>
-              states.contains(WidgetState.selected) ? colors.text : colors.dim,
-        ),
-        // fontFamily is required: a widget-level textStyle replaces
-        // labelLarge outright, so a family-less style falls back to the
-        // platform font (issue #947 — Ahem placeholder bars in the store
-        // goldens). Same contract as the button themes in app_theme.dart.
-        textStyle: WidgetStatePropertyAll(
-          TextStyle(
-            fontFamily:
-                FaUiThemeProvider.of(context).fontFamily ??
-                Theme.of(context).textTheme.bodyMedium?.fontFamily ??
-                typography.uiFamily,
-            fontFamilyFallback:
-                Theme.of(context).textTheme.bodyMedium?.fontFamilyFallback ??
-                typography.body.fontFamilyFallback,
-            fontSize: 13,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
       ),
     );
   }

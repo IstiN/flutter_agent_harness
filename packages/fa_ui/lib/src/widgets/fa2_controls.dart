@@ -75,6 +75,7 @@ class FaSurface extends StatelessWidget {
     this.circular = false,
     this.tintAmount,
     this.tintOpacity,
+    this.borderSide,
   });
 
   final Widget child;
@@ -83,6 +84,11 @@ class FaSurface extends StatelessWidget {
   final bool glass;
   final VoidCallback? onTap;
   final Color? color;
+
+  /// Explicit outline for surfaces that need a visible frame in glass mode.
+  /// Null keeps the kit's rim-only glass and the token hairline on opaque
+  /// surfaces; a supplied side is applied consistently in both modes.
+  final BorderSide? borderSide;
 
   /// Shares one backdrop capture with sibling chrome over the same content.
   ///
@@ -130,8 +136,11 @@ class FaSurface extends StatelessWidget {
     if (glass && tokens.direction == FaVisualDirection.glass) {
       return AdaptiveGlass(
         shape: circular
-            ? const LiquidOval()
-            : LiquidRoundedSuperellipse(borderRadius: radius.topLeft.x),
+            ? LiquidOval(side: borderSide ?? BorderSide.none)
+            : LiquidRoundedSuperellipse(
+                borderRadius: radius.topLeft.x,
+                side: borderSide ?? BorderSide.none,
+              ),
         settings: faGlassSettings(
           tint: _glassTint(tokens),
           frost: tokens.glassBlur,
@@ -146,10 +155,10 @@ class FaSurface extends StatelessWidget {
     return Material(
       color: color ?? tokens.surface1.withValues(alpha: glass ? .94 : 1),
       shape: circular
-          ? CircleBorder(side: BorderSide(color: tokens.hairline))
+          ? CircleBorder(side: borderSide ?? BorderSide(color: tokens.hairline))
           : RoundedSuperellipseBorder(
               borderRadius: radius,
-              side: BorderSide(color: tokens.hairline),
+              side: borderSide ?? BorderSide(color: tokens.hairline),
             ),
       clipBehavior: Clip.antiAlias,
       child: interactive,
@@ -159,7 +168,7 @@ class FaSurface extends StatelessWidget {
 
 enum FaButtonVariant { primary, secondary, ghost, danger }
 
-/// A 48-pixel-high action with the four styleguide variants.
+/// A 48-pixel-high action (36px when [dense]) with the styleguide variants.
 class FaButton extends StatelessWidget {
   const FaButton({
     super.key,
@@ -169,6 +178,7 @@ class FaButton extends StatelessWidget {
     this.variant = FaButtonVariant.primary,
     this.busy = false,
     this.expanded = false,
+    this.dense = false,
   });
 
   final String label;
@@ -177,6 +187,10 @@ class FaButton extends StatelessWidget {
   final FaButtonVariant variant;
   final bool busy;
   final bool expanded;
+
+  /// Compact 36px action for secondary surfaces such as promo banners.
+  /// The default remains the accessible 48px styleguide action.
+  final bool dense;
 
   @override
   Widget build(BuildContext context) {
@@ -217,10 +231,16 @@ class FaButton extends StatelessWidget {
             ],
           );
     final style = ButtonStyle(
-      minimumSize: const WidgetStatePropertyAll(Size(44, 48)),
-      padding: const WidgetStatePropertyAll(
-        EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+      minimumSize: WidgetStatePropertyAll(Size(44, dense ? 36 : 48)),
+      padding: WidgetStatePropertyAll(
+        EdgeInsets.symmetric(
+          horizontal: dense ? 12 : 20,
+          vertical: dense ? 8 : 12,
+        ),
       ),
+      tapTargetSize: dense
+          ? MaterialTapTargetSize.shrinkWrap
+          : MaterialTapTargetSize.padded,
       foregroundColor: WidgetStatePropertyAll(foreground),
       backgroundColor: WidgetStateProperty.resolveWith(
         (states) => states.contains(WidgetState.disabled)
@@ -598,12 +618,12 @@ class FaChip extends StatelessWidget {
   }
 }
 
-/// Styleguide switch: a custom-painted capsule track with an animated
-/// squircle thumb, sized for desktop rows (40 × 24). Theming a Material
-/// `Switch` cannot reshape its stock M3 geometry, so the toggle is painted
-/// straight from [FaDesignTokens] — accent track + accentInk thumb when on,
-/// surface3 track + ink1 thumb when off, a 55% wash when disabled — while
-/// the public API (`value`/`onChanged`) and the toggle semantics stay.
+/// Styleguide switch at the desktop-row footprint (40 × 24). Enabled glass
+/// switches delegate to the kit's real [GlassSwitch] with Fa token colors
+/// and material settings; opaque directions keep the custom-painted
+/// squircle capsule. A null [onChanged] always uses the inert, washed
+/// painter so disabled glass cannot acquire an enabled kit control's
+/// gestures, focus, or semantics. The public API is unchanged.
 class FaSwitch extends StatefulWidget {
   const FaSwitch({super.key, required this.value, required this.onChanged});
 
@@ -630,6 +650,30 @@ class _FaSwitchState extends State<FaSwitch> {
   @override
   Widget build(BuildContext context) {
     final tokens = FaDesignTokens.of(context);
+    if (_enabled && tokens.direction == FaVisualDirection.glass) {
+      return GlassSwitch(
+        value: widget.value,
+        onChanged: widget.onChanged!,
+        width: FaSwitchPainter.switchSize.width,
+        height: FaSwitchPainter.switchSize.height,
+        activeColor: tokens.accent,
+        inactiveColor: tokens.surface3,
+        thumbColor: widget.value ? tokens.accentInk : tokens.ink1,
+        settings: faGlassSettings(
+          tint: tokens.surface1.withValues(alpha: kFaGlassTintAlpha),
+          frost: tokens.glassBlur,
+        ),
+        useOwnLayer: true,
+        quality: debugFaGlassAlwaysFake
+            ? GlassQuality.minimal
+            : GlassQuality.standard,
+        // The kit has no animation-duration/reduced-motion switch. It does
+        // honor the accessibility scope for keyboard haptics; disabling its
+        // haptic output here also covers taps and drags.
+        enableHaptics: !MediaQuery.disableAnimationsOf(context),
+        focusNode: _focusNode,
+      );
+    }
     return Semantics(
       toggled: widget.value,
       enabled: _enabled,

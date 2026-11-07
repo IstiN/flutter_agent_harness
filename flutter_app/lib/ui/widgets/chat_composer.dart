@@ -14,6 +14,7 @@ import 'package:fa/services/upload.dart';
 import 'package:fa/services/upload_picker_stub.dart'
     if (dart.library.io) 'package:fa/services/upload_picker_io.dart'
     if (dart.library.html) 'package:fa/services/upload_picker_web.dart';
+import 'package:fa/ui/screens/asr_settings_navigation.dart';
 
 /// The chat composer: attachment chips + staging into the sandbox `uploads/`
 /// folder, the streaming/queued-steer indicators, the text field, the
@@ -38,6 +39,7 @@ class ChatComposer extends StatelessWidget {
     this.hideMicWhenNotEmpty = false,
     this.onSent,
     this.onSubmit,
+    this.onOpenAsrSettings,
     this.onFocusChanged,
     this.autofocus = true,
   });
@@ -89,6 +91,10 @@ class ChatComposer extends StatelessWidget {
   /// Host-owned submit interception (DAP enrollment in the full chat).
   final fa_ui.FaChatSubmitInterceptor? onSubmit;
 
+  /// Opens transcription settings after the missing-endpoint dialog. Null
+  /// uses the shared [openAsrTranscriptionSettings] navigation helper.
+  final Future<void> Function()? onOpenAsrSettings;
+
   /// Fired when the input field's focus changes (the session chat sheet
   /// opens its panel on focus).
   final ValueChanged<bool>? onFocusChanged;
@@ -133,6 +139,11 @@ class ChatComposer extends StatelessWidget {
       hideMicWhenNotEmpty: hideMicWhenNotEmpty,
       onSent: onSent,
       onSubmit: onSubmit,
+      onVoiceInputSettings: () {
+        final openSettings = onOpenAsrSettings;
+        if (openSettings != null) return openSettings();
+        return openAsrTranscriptionSettings(context, service: service);
+      },
       onFocusChanged: onFocusChanged,
       autofocus: autofocus,
     );
@@ -162,7 +173,8 @@ class ChatComposer extends StatelessWidget {
 /// lazily per take through the session's media gateway (the
 /// media_models.json `transcription` slot, falling back to the active
 /// provider) so slot edits and provider switches are picked up.
-final class _AsrVoiceInput implements fa_ui.FaChatVoiceInput {
+final class _AsrVoiceInput
+    implements fa_ui.FaChatVoiceInput, fa_ui.FaChatVoiceInputConfiguration {
   _AsrVoiceInput({required this.service, AsrApi? asr, this.transcriber})
     : _asr = asr ?? createAsrService(),
       _injectedAsr = asr != null;
@@ -183,6 +195,10 @@ final class _AsrVoiceInput implements fa_ui.FaChatVoiceInput {
 
   @override
   String? get unavailableReason => null;
+
+  @override
+  Future<bool> get isConfigured async =>
+      transcriber != null || await _resolveTranscriber() != null;
 
   @override
   Future<bool> start() async {

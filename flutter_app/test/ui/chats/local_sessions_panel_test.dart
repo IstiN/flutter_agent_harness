@@ -13,8 +13,9 @@ import 'package:fa/ui/chats/chat_list_entry.dart';
 import 'package:fa/ui/chats/local_chat_list_adapter.dart';
 import 'package:fa/ui/chats/local_sessions_panel.dart';
 import 'package:fa/ui/widgets/folder_avatar.dart';
-import 'package:fa_ui/fa_ui.dart'
-    show FaVisualDirection, buildFaTheme;
+import 'package:fa/ui/widgets/messenger_section_header.dart';
+import 'package:fa/ui/widgets/session_search_field.dart';
+import 'package:fa_ui/fa_ui.dart' show FaVisualDirection, buildFaTheme;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -134,7 +135,26 @@ void main() {
     );
     expect(find.text('/work/mono'), findsOneWidget);
     expect(find.text('/work/fa'), findsOneWidget);
-    expect(find.text('Local'), findsOneWidget, reason: 'the header title');
+    expect(
+      find.text('Search folders'),
+      findsOneWidget,
+      reason: 'root search shares the chats header geometry',
+    );
+    expect(find.byKey(const ValueKey('localFolderBack')), findsNothing);
+    expect(find.byKey(const ValueKey('wideShellFaBrand')), findsOneWidget);
+    expect(find.byKey(const ValueKey('localChromeUnderlay')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('messengerRealGlass')),
+      findsNothing,
+      reason: 'the header fades through blur, not a bounded glass card',
+    );
+    final frost = tester.widget<DecoratedBox>(
+      find.byKey(const ValueKey('messengerGlassFrost')),
+    );
+    final frostGradient = frost.decoration as BoxDecoration;
+    final gradient = frostGradient.gradient! as LinearGradient;
+    expect(gradient.colors.first.a, greaterThan(0));
+    expect(gradient.colors.last.a, 0);
     expect(find.text('sub'), findsNothing);
 
     // Geometry: 70pt rows, Ø50 avatars.
@@ -176,6 +196,98 @@ void main() {
     expect(
       find.byKey(const ValueKey('localFolderSelectedCapsule')),
       findsNothing,
+    );
+  });
+
+  testWidgets('search filters folders and drilled sessions, with clear and '
+      'level-reset behavior', (tester) async {
+    final c = await controller([
+      entry('alpha', folderPath: '/work/mono'),
+      entry('beta', folderPath: '/work/mono'),
+      entry('other', folderPath: '/work/fa'),
+    ]);
+    await pumpPanel(tester, c);
+    final search = find.byType(SessionSearchField);
+    expect(search, findsOneWidget);
+    expect(find.text('Search folders'), findsOneWidget);
+
+    Future<void> type(String query) async {
+      await tester.enterText(search, query);
+      await tester.pump(const Duration(milliseconds: 200));
+    }
+
+    // Folder path is searchable as well as its display name.
+    await type('/work/mo');
+    expect(
+      find.byKey(const ValueKey('localFolderRow-/work/mono')),
+      findsOneWidget,
+    );
+    expect(find.byKey(const ValueKey('localFolderRow-/work/fa')), findsNothing);
+
+    await type('zzz');
+    expect(find.textContaining('No matches'), findsOneWidget);
+    await tester.tap(find.text('Clear'));
+    await tester.pump(const Duration(milliseconds: 200));
+    expect(
+      find.byKey(const ValueKey('localFolderRow-/work/mono')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('localFolderRow-/work/fa')),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.byKey(const ValueKey('localFolderRow-/work/mono')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 250));
+    await tester.tap(find.byKey(const ValueKey('messengerSearchReveal')));
+    await tester.pump();
+    expect(find.text('Search sessions'), findsOneWidget);
+    await type('alp');
+    expect(find.text('alpha'), findsOneWidget);
+    expect(find.text('beta'), findsNothing);
+
+    await type('zzz');
+    expect(find.textContaining('No matches'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('localFolderBack')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 250));
+    // Back resets the detail query instead of hiding root rows with it.
+    expect(
+      find.byKey(const ValueKey('localFolderRow-/work/mono')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('localFolderRow-/work/fa')),
+      findsOneWidget,
+    );
+    expect(find.text('Search folders'), findsOneWidget);
+  });
+
+  testWidgets('session rows scroll underneath the Local glass header', (
+    tester,
+  ) async {
+    final c = await controller([
+      for (var index = 0; index < 20; index++)
+        entry(
+          'session-$index',
+          folderPath: '/work/fa',
+          lastActivity: DateTime.utc(2026, 1, 20 - index),
+        ),
+    ]);
+    await pumpPanel(tester, c, folderId: '/work/fa');
+
+    final list = find.byKey(const ValueKey('localSessionList'));
+    final first = find.byKey(const ValueKey('localSession-session-0'));
+    expect(tester.getRect(first).top, greaterThanOrEqualTo(52));
+    await tester.drag(list, const Offset(0, -80));
+    await tester.pump();
+    expect(
+      tester.getRect(first).top,
+      lessThan(
+        tester.getRect(find.byKey(const ValueKey('localChromeUnderlay'))).top,
+      ),
+      reason: 'the row must move behind the blur, not stop below the header',
     );
   });
 
@@ -232,11 +344,15 @@ void main() {
     expect(capsule.width, LocalSessionsPanel.stripCapsuleWidth);
     expect(capsule.height, LocalSessionsPanel.stripCapsuleHeight);
     expect(capsule.left, strip.left);
+    final glassInset = MessengerGlassBodyInsets.topOf(
+      tester.element(find.byKey(const ValueKey('localFoldersStrip'))),
+    );
+    expect(glassInset, 52);
     expect(
       capsule.center.dy,
       inInclusiveRange(
-        strip.top,
-        strip.top + LocalSessionsPanel.stripItemPitch,
+        strip.top + glassInset,
+        strip.top + glassInset + LocalSessionsPanel.stripItemPitch,
       ),
       reason: 'the capsule rides the selected folder row',
     );
@@ -292,14 +408,15 @@ void main() {
       findsNothing,
     );
     expect(
-      find.descendant(of: sessionList, matching: find.byType(NeutralGlyphAvatar)),
+      find.descendant(
+        of: sessionList,
+        matching: find.byType(NeutralGlyphAvatar),
+      ),
       findsNothing,
     );
     expect(find.byIcon(Icons.chat_bubble_outline), findsNothing);
     // The title starts at the row's leading padding (no avatar offset).
-    final titleLeft = tester
-        .getTopLeft(find.text('design'))
-        .dx;
+    final titleLeft = tester.getTopLeft(find.text('design')).dx;
     final rowLeft = tester
         .getTopLeft(find.byKey(const ValueKey('localSession-design')))
         .dx;
@@ -357,7 +474,7 @@ void main() {
   });
 
   testWidgets('back walks the open folder to the level-1 folder list and '
-      'restores the Local header title', (tester) async {
+      'restores root folder search', (tester) async {
     final c = await controller([entry('design', folderPath: '/work/fa')]);
     await pumpPanel(tester, c, folderId: '/work/fa');
     expect(find.text('fa'), findsOneWidget);
@@ -369,7 +486,7 @@ void main() {
     expect(find.byKey(const ValueKey('localFoldersStrip')), findsNothing);
     expect(find.byKey(const ValueKey('localSession-design')), findsNothing);
     expect(find.text('fa'), findsOneWidget, reason: 'the list row name');
-    expect(find.text('Local'), findsOneWidget);
+    expect(find.text('Search folders'), findsOneWidget);
     expect(
       find.byKey(const ValueKey('localFolderSelectedCapsule')),
       findsNothing,
@@ -415,7 +532,11 @@ void main() {
       final before = position.pixels;
       await tester.fling(strip, const Offset(0, -160), 600);
       await tester.pumpAndSettle();
-      expect(position.pixels, greaterThan(before), reason: 'drag still scrolls');
+      expect(
+        position.pixels,
+        greaterThan(before),
+        reason: 'drag still scrolls',
+      );
     } finally {
       debugDefaultTargetPlatformOverride = null;
     }

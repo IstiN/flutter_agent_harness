@@ -14,6 +14,7 @@ import 'package:fa/ui/chats/local_sessions_panel.dart' show LocalSessionsPanel;
 import 'package:fa/ui/chats/messenger_list_row_style.dart';
 import 'package:fa/ui/widgets/folder_avatar.dart';
 import 'package:fa/ui/widgets/messenger_section_header.dart';
+import 'package:fa/ui/widgets/session_search_field.dart';
 import 'package:fa_ui/fa_ui.dart';
 import 'package:flutter/material.dart';
 
@@ -25,20 +26,22 @@ import 'package:flutter/material.dart';
 /// id — no name labels); selecting a network opens its channel list
 /// BESIDE the strip (the same 70pt Telegram rows over the channels the
 /// live session already loaded) and puts the network's display name in
-/// the surface header. The '<' chevrons walk channels → strip ([onBack]
-/// returns to the normal chats) and the manage gear keeps the management
-/// dialog reachable. Purely a presentation surface over the manager's
-/// existing state — no networking happens here.
+/// the surface header. Networks itself is a root destination with the same
+/// brand and title geometry as Local; only the drilled channel list gets a
+/// back chevron. The manage action keeps network management reachable. This
+/// is purely a presentation surface over the manager's existing state — no
+/// networking happens here.
 class ChatNetworksPanel extends StatefulWidget {
   const ChatNetworksPanel({
     super.key,
     required this.manager,
     this.mode,
     this.chatList,
-    required this.onBack,
     required this.onManageNetworks,
     required this.onOpenChannel,
     this.onCollapse,
+    this.onSettings,
+    this.compact = false,
   });
 
   /// The compact strip's geometry (the Local folder strip's contract):
@@ -67,9 +70,6 @@ class ChatNetworksPanel extends StatefulWidget {
   /// snapshot-only behaviour (tests).
   final ChatListController? chatList;
 
-  /// The networks level's '<' chevron: back to the normal chats.
-  final VoidCallback onBack;
-
   /// The header's manage action (the management dialog the old menu
   /// opened) — keeps network management reachable from the rail.
   final VoidCallback onManageNetworks;
@@ -81,21 +81,104 @@ class ChatNetworksPanel extends StatefulWidget {
   /// Reserves the same wide-shell sidebar-toggle slot as All and Local.
   final VoidCallback? onCollapse;
 
+  /// Explicit phone Settings action, shared with the other compact sections.
+  final VoidCallback? onSettings;
+
+  /// Uses the narrow shell's traffic-light-aware compact chrome.
+  final bool compact;
+
   @override
   State<ChatNetworksPanel> createState() => _ChatNetworksPanelState();
 }
 
 class _ChatNetworksPanelState extends State<ChatNetworksPanel> {
-  /// The drilled-into network id; null = the strip level.
+  /// The drilled-into network id; null = the root networks list.
   String? _openNetworkId;
+  final _searchController = TextEditingController();
+  final _searchFocus = FocusNode(debugLabel: 'networks-search');
+  var _query = '';
+  var _searchExpanded = false;
+
+  bool get _searchShown =>
+      _searchExpanded ||
+      _searchController.text.trim().isNotEmpty ||
+      _searchFocus.hasFocus;
+
+  @override
+  void initState() {
+    super.initState();
+    _searchController.addListener(_onSearchStateChanged);
+    _searchFocus.addListener(_onSearchStateChanged);
+  }
+
+  void _onSearchStateChanged() {
+    if (mounted) setState(() {});
+  }
+
+  @override
+  void dispose() {
+    _searchController.removeListener(_onSearchStateChanged);
+    _searchFocus.removeListener(_onSearchStateChanged);
+    _searchController.dispose();
+    _searchFocus.dispose();
+    super.dispose();
+  }
+
+  void _openNetwork(String? networkId) {
+    _searchController.clear();
+    _searchFocus.unfocus();
+    _query = '';
+    _searchExpanded = false;
+    setState(() => _openNetworkId = networkId);
+  }
+
+  void _revealSearch() {
+    setState(() => _searchExpanded = true);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _searchFocus.requestFocus();
+    });
+  }
+
+  void _closeSearch() {
+    _searchController.clear();
+    _searchFocus.unfocus();
+    setState(() {
+      _query = '';
+      _searchExpanded = false;
+    });
+  }
+
+  void _clearSearch() {
+    _searchController.clear();
+    setState(() => _query = '');
+  }
 
   @override
   Widget build(BuildContext context) {
     final colors = FahColors.of(context);
+    final tokens = FaDesignTokens.of(context);
     final manager = widget.manager;
-    final networks = manager?.wallet.networks ?? const {};
+    final allNetworks =
+        manager?.wallet.networks ?? const <String, NetworkEntry>{};
     final openId = _openNetworkId;
-    final openName = openId == null ? null : networks[openId]?.name ?? openId;
+    final openName = openId == null
+        ? null
+        : allNetworks[openId]?.name ?? openId;
+    final rankedNetworks = rankSessionEntries(
+      allNetworks.entries.toList(),
+      _query,
+      (entry) => (
+        title: entry.value.name,
+        id: entry.key,
+        cwd: null,
+        updatedAt:
+            DateTime.tryParse(entry.value.joinedAt) ??
+            DateTime.fromMillisecondsSinceEpoch(0),
+      ),
+    );
+    final networks = openId == null
+        ? Map<String, NetworkEntry>.fromEntries(rankedNetworks)
+        : allNetworks;
     return ListenableBuilder(
       listenable: Listenable.merge([?manager, ?widget.mode, ?widget.chatList]),
       builder: (context, _) {
@@ -110,41 +193,52 @@ class _ChatNetworksPanelState extends State<ChatNetworksPanel> {
             if (entry.networkId == openId) entry,
         ];
         return MessengerGlassPanel(
+          compact: widget.compact,
           underlayKey: const ValueKey('networksChromeUnderlay'),
           header: MessengerSectionHeader(
             title: openName ?? context.l10n.networkNetworksTitle,
-            searchController: null,
-            searchHint: '',
+            searchController: _searchController,
+            searchFocusNode: _searchFocus,
+            searchHint: openId == null
+                ? context.l10n.networkSearchHint
+                : context.l10n.networkChannelsSearchHint,
+            onSearch: (query) => setState(() => _query = query),
+            searchCollapsed:
+                (widget.compact || openId != null) && !_searchShown,
+            onSearchReveal: (widget.compact || openId != null) && !_searchShown
+                ? _revealSearch
+                : null,
+            onSearchClose: (widget.compact || openId != null) && _searchShown
+                ? _closeSearch
+                : null,
             onProfile: null,
+            onSettings: widget.onSettings,
             onNew: null,
+            compact: widget.compact,
             onCollapse: widget.onCollapse,
-            leading: IconButton(
-              key: openId == null
-                  ? const ValueKey('chatNetworksBack')
-                  : const ValueKey('chatChannelsBack'),
-              tooltip: MaterialLocalizations.of(context).backButtonTooltip,
-              onPressed: openId == null
-                  ? widget.onBack
-                  : () => setState(() => _openNetworkId = null),
-              icon: const Icon(Icons.chevron_left_rounded),
-              iconSize: 26,
-              color: colors.text,
-              visualDensity: VisualDensity.compact,
-            ),
+            leading: openId == null
+                ? null
+                : IconButton(
+                    key: const ValueKey('chatChannelsBack'),
+                    tooltip: MaterialLocalizations.of(
+                      context,
+                    ).backButtonTooltip,
+                    onPressed: () => _openNetwork(null),
+                    icon: const Icon(Icons.chevron_left_rounded),
+                    iconSize: 26,
+                    color: colors.text,
+                    visualDensity: VisualDensity.compact,
+                  ),
             trailing: openId != null
                 ? null
-                : SizedBox.square(
-                    dimension: 32,
-                    child: IconButton(
-                      key: const ValueKey('chatNetworksManage'),
-                      tooltip: context.l10n.chatManageNetworks,
-                      onPressed: widget.onManageNetworks,
-                      icon: const Icon(Icons.settings_outlined),
-                      iconSize: 18,
-                      color: colors.dim,
-                      visualDensity: VisualDensity.compact,
-                      padding: EdgeInsets.zero,
-                    ),
+                : FaIconActionButton(
+                    buttonKey: const ValueKey('chatNetworksManage'),
+                    diameter: 32,
+                    glyphSize: 18,
+                    glass: tokens.direction == FaVisualDirection.glass,
+                    tooltip: context.l10n.chatManageNetworks,
+                    onPressed: widget.onManageNetworks,
+                    child: const Icon(Icons.settings_outlined),
                   ),
           ),
           body: Row(
@@ -158,8 +252,7 @@ class _ChatNetworksPanelState extends State<ChatNetworksPanel> {
                 _NetworksStrip(
                   networks: networks,
                   selectedNetworkId: openId,
-                  onOpen: (networkId) =>
-                      setState(() => _openNetworkId = networkId),
+                  onOpen: _openNetwork,
                 ),
               Expanded(
                 // Only the content pane animates (200ms
@@ -185,7 +278,7 @@ class _ChatNetworksPanelState extends State<ChatNetworksPanel> {
                   child: KeyedSubtree(
                     key: ValueKey('networksContent-${openId ?? 'list'}'),
                     child: openId == null
-                        ? (networks.isEmpty
+                        ? (allNetworks.isEmpty
                               ? Center(
                                   child: Text(
                                     context.l10n.networkEmptyTitle,
@@ -195,11 +288,19 @@ class _ChatNetworksPanelState extends State<ChatNetworksPanel> {
                                     ),
                                   ),
                                 )
+                              : networks.isEmpty
+                              ? sessionSearchEmptyState(
+                                  context,
+                                  colors,
+                                  _query,
+                                  _clearSearch,
+                                  noMatches: context.l10n.listSearchNoMatches(
+                                    _query,
+                                  ),
+                                )
                               : _NetworksList(
                                   networks: networks,
-                                  onOpen: (networkId) => setState(
-                                    () => _openNetworkId = networkId,
-                                  ),
+                                  onOpen: _openNetwork,
                                 ))
                         : _ChannelsList(
                             networkId: openId,
@@ -209,6 +310,8 @@ class _ChatNetworksPanelState extends State<ChatNetworksPanel> {
                             selectedChannelId: widget.mode?.networkId == openId
                                 ? widget.mode?.channelId
                                 : null,
+                            query: _query,
+                            onClearSearch: _clearSearch,
                             onOpenChannel: (channel) =>
                                 widget.onOpenChannel(openId, channel),
                           ),
@@ -237,7 +340,10 @@ class _NetworksList extends StatelessWidget {
     final tokens = FaDesignTokens.of(context);
     return ListView.builder(
       key: const ValueKey('networksList'),
-      padding: const EdgeInsets.symmetric(vertical: 4),
+      padding: EdgeInsets.only(
+        top: MessengerGlassBodyInsets.topOf(context) + 4,
+        bottom: 4,
+      ),
       itemCount: networks.length,
       itemBuilder: (context, index) {
         final entry = networks.entries.elementAt(index);
@@ -314,7 +420,10 @@ class _NetworksStrip extends StatelessWidget {
                 context,
               ).copyWith(scrollbars: false),
               child: ListView.builder(
-                padding: const EdgeInsets.symmetric(vertical: 4),
+                padding: EdgeInsets.only(
+                  top: MessengerGlassBodyInsets.topOf(context) + 4,
+                  bottom: 4,
+                ),
                 itemCount: networks.length,
                 itemBuilder: (context, index) {
                   final entry = networks.entries.elementAt(index);
@@ -380,6 +489,8 @@ class _ChannelsList extends StatelessWidget {
     required this.entries,
     required this.sessionChannels,
     required this.selectedChannelId,
+    required this.query,
+    required this.onClearSearch,
     required this.onOpenChannel,
   });
 
@@ -391,6 +502,8 @@ class _ChannelsList extends StatelessWidget {
   /// The live session's channel snapshot (the fallback source).
   final List<Channel> sessionChannels;
   final String? selectedChannelId;
+  final String query;
+  final VoidCallback onClearSearch;
   final ValueChanged<Channel> onOpenChannel;
 
   @override
@@ -407,7 +520,7 @@ class _ChannelsList extends StatelessWidget {
         ),
       );
     }
-    final rows = <_ChannelRowData>[
+    final allRows = <_ChannelRowData>[
       if (fromEntries)
         for (final entry in entries)
           (
@@ -433,9 +546,33 @@ class _ChannelsList extends StatelessWidget {
             channel: channel,
           ),
     ];
+    final normalizedQuery = query.trim().toLowerCase();
+    final rows = normalizedQuery.isEmpty
+        ? allRows
+        : allRows
+              .where(
+                (row) =>
+                    row.title.toLowerCase().contains(normalizedQuery) ||
+                    row.channel.id.toLowerCase().contains(normalizedQuery),
+              )
+              .toList();
+    if (rows.isEmpty) {
+      return sessionSearchEmptyState(
+        context,
+        FahColors.of(context),
+        query,
+        onClearSearch,
+        noMatches: context.l10n.listSearchNoMatches(query),
+      );
+    }
     return ListView.builder(
       key: const ValueKey('chatNetworkChannels'),
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      padding: EdgeInsets.only(
+        left: 8,
+        right: 8,
+        top: MessengerGlassBodyInsets.topOf(context) + 4,
+        bottom: 4,
+      ),
       itemCount: rows.length,
       itemBuilder: (context, index) {
         final row = rows[index];

@@ -32,10 +32,12 @@ class ToolsAvailabilitySection extends StatelessWidget {
       builder: (context, _) {
         final availability = service.toolAvailability;
         final ids = availability.keys.toList()..sort();
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
+        return SettingsGroup(
+          // One card per section: header row inside, tool rows on the
+          // card's 16pt insets with interleaved hairlines.
+          header: Padding(
+            padding: const EdgeInsets.fromLTRB(12, 4, 12, 4),
+            child: Row(
               children: [
                 Icon(Icons.tune, size: 20, color: tokens.ink2),
                 const SizedBox(width: 12),
@@ -58,6 +60,8 @@ class ToolsAvailabilitySection extends StatelessWidget {
                 ),
               ],
             ),
+          ),
+          children: [
             for (final id in ids)
               SettingsSwitchRow(
                 value: availability[id]!.enabled,

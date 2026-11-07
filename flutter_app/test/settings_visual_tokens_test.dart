@@ -234,8 +234,13 @@ void main() {
           await tester.pumpAndSettle();
 
           final bannerText = find.text('Connect a provider to start chatting.');
+          // The page platter and grouped cards are FaSurfaces too:
+          // `find.ancestor` yields ancestors nearest-first, so `.first`
+          // is the banner's OWN accentSoft surface, not the host platter.
           final surface = tester.widget<FaSurface>(
-            find.ancestor(of: bannerText, matching: find.byType(FaSurface)),
+            find
+                .ancestor(of: bannerText, matching: find.byType(FaSurface))
+                .first,
           );
           expect(surface.color, tokens.accentSoft);
           expect(surface.padding, const EdgeInsets.all(16));

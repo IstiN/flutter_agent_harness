@@ -6,6 +6,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:fa_ui/fa_ui.dart';
+import 'package:flutter/gestures.dart' show PointerDeviceKind;
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
@@ -677,6 +678,60 @@ void main() {
       );
       expect(find.byType(MarkdownBody), findsNothing);
       expect(find.byType(FaAiAvatar), findsNothing);
+    });
+
+    testWidgets('whitespace-only user and nameless tool rows render nothing', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        themedWrap(tile(FaChatMessage(role: 'user', content: ' \n  '))),
+      );
+      expect(find.byType(MarkdownBody), findsNothing);
+      expect(tester.getSize(find.byType(ChatMessageTile)), Size.zero);
+
+      await tester.pumpWidget(
+        themedWrap(
+          tile(FaChatMessage(role: 'tool', content: ' \n', toolName: ' ')),
+        ),
+      );
+      expect(find.byIcon(Icons.keyboard_arrow_down), findsNothing);
+      expect(find.byIcon(Icons.copy_rounded), findsNothing);
+      expect(tester.getSize(find.byType(ChatMessageTile)), Size.zero);
+    });
+
+    testWidgets('hover copy action stays inside the bubble clip bounds', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        themedWrap(tile(FaChatMessage(role: 'assistant', content: 'hello'))),
+      );
+      final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
+      await mouse.addPointer(location: Offset.zero);
+      addTearDown(() => mouse.removePointer());
+      await mouse.moveTo(tester.getCenter(find.byType(ChatMessageTile)));
+      await tester.pump();
+      final positioned = find
+          .ancestor(
+            of: find.byIcon(Icons.copy_rounded),
+            matching: find.byType(Positioned),
+          )
+          .first;
+      final action = tester.widget<Positioned>(positioned);
+      expect(action.top, 0);
+      expect(action.right, 0);
+    });
+
+    testWidgets('whitespace output of a named tool keeps its honest stub', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        themedWrap(
+          tile(FaChatMessage(role: 'tool', content: ' \n', toolName: 'bash')),
+        ),
+      );
+      expect(find.text('(no output)'), findsOneWidget);
+      expect(find.byIcon(Icons.check), findsOneWidget);
+      expect(find.byIcon(Icons.keyboard_arrow_down), findsOneWidget);
     });
 
     testWidgets('a thinking message renders the reasoning row, not a '

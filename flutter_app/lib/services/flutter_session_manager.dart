@@ -154,6 +154,11 @@ final class FlutterSessionManager extends ChangeNotifier {
   /// whole-file load.
   static const int defaultMaxSessionLoadBytes = 64 * 1024 * 1024;
 
+  /// Test seam holding a disk open so widget tests can verify immediate
+  /// pending-state UX without depending on file size or machine speed.
+  @visibleForTesting
+  static Future<void> Function(String sessionId)? debugOpenSessionGate;
+
   /// The execution environment shared by all sessions.
   final ExecutionEnv env;
 
@@ -203,6 +208,12 @@ final class FlutterSessionManager extends ChangeNotifier {
   final SubagentParentResolver _parentResolver;
 
   final Map<String, FlutterManagedSession> _sessions = {};
+
+  /// Same-id disk opens share one service factory + load. Selection intent
+  /// still belongs to each caller: the LAST tap activates the shared result,
+  /// while an older completion can never leave a freshly loaded session
+  /// sitting in the background behind an empty/wrong transcript.
+  final Map<String, Future<FlutterManagedSession>> _openingSessions = {};
   String? _activeId;
 
   /// Selection intent, not load completion, owns the active session. Rapid
@@ -270,23 +281,49 @@ final class FlutterSessionManager extends ChangeNotifier {
   /// Issue #2053 AC5 — single-flight: concurrent callers (the chat-list
   /// adapter and the wide-layout shell both load at boot) share ONE
   /// listing pass; the in-flight future is handed to everyone who asks
-  /// while it runs. Mutations call [invalidateListing], so a post-delete
-  /// load always re-lists.
+  /// while it runs. A just-completed pass is reused for one second so
+  /// decoration notifications do not cause back-to-back full stat passes.
+  /// Mutations call [invalidateListing], so a post-delete load always
+  /// re-lists.
   Future<List<SessionMetadata>> listPersistedSessions() {
     final inFlight = _listingInFlight;
     if (inFlight != null) return inFlight;
+    final cached = _listingResult;
+    final completedAt = _listingCompletedAt;
+    if (cached != null &&
+        completedAt != null &&
+        DateTime.now().difference(completedAt) < _listingResultLifetime) {
+      return Future.value(cached);
+    }
+    final generation = _listingGeneration;
     final future = _listPersistedUncached();
     _listingInFlight = future;
-    return future.whenComplete(() {
-      if (identical(_listingInFlight, future)) _listingInFlight = null;
-    });
+    return future
+        .then((rows) {
+          if (generation == _listingGeneration) {
+            _listingResult = rows;
+            _listingCompletedAt = DateTime.now();
+          }
+          return rows;
+        })
+        .whenComplete(() {
+          if (identical(_listingInFlight, future)) _listingInFlight = null;
+        });
   }
 
   /// Drops the shared in-flight listing (and any result it may have
   /// seeded) so the next [listPersistedSessions] re-lists from the repo —
   /// the explicit invalidation point for deletes, closes and refreshes.
   void invalidateListing() {
+    _listingGeneration++;
     _listingInFlight = null;
+    _listingResult = null;
+    _listingCompletedAt = null;
+    // An explicit refresh may have brought a new parent registry online.
+    // Retry still-unresolved VISIBLE children; ordinary decoration
+    // notifications never clear this negative cache and cannot cause a
+    // resolve → notify → resolve loop.
+    _subagentResolutionAttempted.clear();
   }
 
   /// The one listing pass behind [listPersistedSessions].
@@ -297,12 +334,13 @@ final class FlutterSessionManager extends ChangeNotifier {
     }
     try {
       final listed = await _listAcrossRoots();
-      // Issue #426: legacy child files carry `parent: ""` (both hosts
-      // pinned the subagent manager's parentSessionId before the session
-      // id existed). Re-link them from the parent transcripts'
-      // subagent_registry records — bounded + cached, so a listing with
-      // nothing to resolve costs nothing.
-      final relinked = await _parentResolver.resolve(listed);
+      // Issue #2053: the first emission is index-priced. Legacy parent
+      // resolution scans real transcripts (16 MiB per parent in the worst
+      // case), so it runs ONLY for visible rows through
+      // [warmSubagentParents]. Previously resolved links ride the listing
+      // from this in-memory snapshot; unresolved children render as
+      // orphans until their own visible-row request lands.
+      final relinked = _resolvedSubagentParents;
       // Issue #2053 AC4: names the persisted listing index already knows
       // ride along for free — zero probes (the lazy fill tops up the
       // rest, see [warmSessionNames]).
@@ -325,8 +363,96 @@ final class FlutterSessionManager extends ChangeNotifier {
     }
   }
 
-  /// The shared in-flight listing (single-flight, AC5).
+  /// The shared in-flight listing plus a one-second completed-result
+  /// window. Decoration notifications (preview/name/parent fills)
+  /// otherwise launch another full 1000-file stat pass as soon as the
+  /// previous one finishes. Generation guards keep stale async results
+  /// from crossing an explicit invalidation.
   Future<List<SessionMetadata>>? _listingInFlight;
+  List<SessionMetadata>? _listingResult;
+  DateTime? _listingCompletedAt;
+  int _listingGeneration = 0;
+  static const Duration _listingResultLifetime = Duration(seconds: 1);
+
+  /// Resolved legacy child → parent links, applied to every later listing.
+  final Map<String, String> _resolvedSubagentParents = {};
+
+  /// Visible legacy children already attempted in this manager lifetime.
+  /// Includes misses: 156/312 unresolved children on the real corpus have
+  /// no recoverable registry link, and re-scanning every parent on each
+  /// repaint was the multi-second boot regression behind #2053.
+  final Set<String> _subagentResolutionAttempted = {};
+
+  /// Coalesced on-demand work. The universe supplies parent candidates,
+  /// while only [sessions] passed to [warmSubagentParents] are unresolved
+  /// children to scan for — never the entire corpus by default.
+  final Map<String, SessionMetadata> _subagentResolutionPending = {};
+  List<SessionMetadata> _subagentResolutionUniverse = const [];
+  Future<void>? _subagentResolutionInFlight;
+
+  /// Resolves legacy parent links for VISIBLE [sessions] only. Calls are
+  /// coalesced into one drain; resolved links repaint once and subsequent
+  /// listings reuse them. Misses are cached until [invalidateListing].
+  Future<void> warmSubagentParents(
+    List<SessionMetadata> sessions, {
+    List<SessionMetadata>? allSessions,
+  }) {
+    if (_isHostedListing(active?.service)) return Future.value();
+    if (allSessions != null) {
+      _subagentResolutionUniverse = allSessions;
+    } else if (_subagentResolutionUniverse.isEmpty) {
+      _subagentResolutionUniverse = sessions;
+    }
+    for (final session in sessions) {
+      if (!isSubagentSession(session) ||
+          subagentParentId(session) != null ||
+          _resolvedSubagentParents.containsKey(session.id) ||
+          _subagentResolutionAttempted.contains(session.id)) {
+        continue;
+      }
+      _subagentResolutionPending[session.id] = session;
+    }
+    final inFlight = _subagentResolutionInFlight;
+    if (inFlight != null) return inFlight;
+    if (_subagentResolutionPending.isEmpty) return Future.value();
+    final future = _drainSubagentParentWarm();
+    _subagentResolutionInFlight = future;
+    return future.whenComplete(() {
+      if (identical(_subagentResolutionInFlight, future)) {
+        _subagentResolutionInFlight = null;
+      }
+    });
+  }
+
+  Future<void> _drainSubagentParentWarm() async {
+    while (_subagentResolutionPending.isNotEmpty) {
+      final batch = _subagentResolutionPending.values.toList();
+      _subagentResolutionPending.clear();
+      _subagentResolutionAttempted.addAll(batch.map((session) => session.id));
+      final candidates = <SessionMetadata>[
+        for (final session in _subagentResolutionUniverse)
+          if (!isSubagentSession(session)) session,
+        ...batch,
+      ];
+      try {
+        final resolved = await _parentResolver.resolve(candidates);
+        var changed = false;
+        for (final entry in resolved.entries) {
+          if (_resolvedSubagentParents[entry.key] == entry.value) continue;
+          _resolvedSubagentParents[entry.key] = entry.value;
+          changed = true;
+        }
+        final cached = _listingResult;
+        if (cached != null && resolved.isNotEmpty) {
+          _listingResult = relinkSubagentParents(cached, resolved);
+        }
+        if (changed) notifyListeners();
+      } on Object catch (error) {
+        // Decorative hierarchy repair must never break the visible rows.
+        debugPrint('[fah][sessions] lazy parent resolve failed: $error');
+      }
+    }
+  }
 
   /// Display names learned WITHOUT boot probes: the persisted listing
   /// index's names plus everything [warmSessionNames] has probed so far.
@@ -618,10 +744,41 @@ final class FlutterSessionManager extends ChangeNotifier {
       notifyListeners();
       return existing;
     }
+    final pending = _openingSessions[metadata.id];
+    if (pending != null) {
+      debugPrint(
+        '[fah][sessions] open ${metadata.id}: awaiting the in-flight open',
+      );
+      return _finishOpenSession(await pending, selection);
+    }
     debugPrint(
       '[fah][sessions] open ${metadata.id}: not in memory — loading from '
       'disk (${_sessions.length} loaded)',
     );
+    final opening = _loadPersistedSession(
+      metadata,
+      config: config,
+      serviceFactory: serviceFactory,
+    );
+    _openingSessions[metadata.id] = opening;
+    try {
+      return _finishOpenSession(await opening, selection);
+    } finally {
+      if (identical(_openingSessions[metadata.id], opening)) {
+        _openingSessions.remove(metadata.id);
+      }
+    }
+  }
+
+  /// The shared disk half of [openSession]. It deliberately has no selection
+  /// generation: every same-id caller applies its own intent in
+  /// [_finishOpenSession] when this one load completes.
+  Future<FlutterManagedSession> _loadPersistedSession(
+    SessionMetadata metadata, {
+    required AgentConfig config,
+    required FutureOr<AgentService> Function() serviceFactory,
+  }) async {
+    final openWatch = Stopwatch()..start();
     // Issue #381: over-budget sessions route through the WINDOWED open —
     // the old refuse-gate sat in front of a loader that only materializes
     // the tail window. The full-open fallback is refused for them: a
@@ -632,9 +789,18 @@ final class FlutterSessionManager extends ChangeNotifier {
     // Ownership lease (#428): a live lease means another host is
     // DRIVING this session — refuse before any second writer exists.
     await _acquireDriveLease(metadata);
+    final leaseMs = openWatch.elapsedMilliseconds;
     final service = await serviceFactory();
+    final factoryMs = openWatch.elapsedMilliseconds - leaseMs;
+    await debugOpenSessionGate?.call(metadata.id);
     try {
       await service.loadSession(metadata, allowFullOpenFallback: !oversized);
+      debugPrint(
+        '[fah][sessions] open ${metadata.id}: lease=${leaseMs}ms '
+        'factory=${factoryMs}ms '
+        'load=${openWatch.elapsedMilliseconds - leaseMs - factoryMs}ms '
+        'total=${openWatch.elapsedMilliseconds}ms',
+      );
     } on Object catch (error) {
       if (!oversized) rethrow;
       debugPrint(
@@ -651,12 +817,19 @@ final class FlutterSessionManager extends ChangeNotifier {
       lastUpdatedAt: metadata.lastUpdatedAt ?? metadata.createdAt,
     );
     _sessions[metadata.id] = managed;
+    return managed;
+  }
+
+  FlutterManagedSession _finishOpenSession(
+    FlutterManagedSession managed,
+    int selection,
+  ) {
     if (selection == _selectionGeneration) {
-      _activeId = metadata.id;
-      _rememberActive(metadata.id);
+      _activeId = managed.id;
+      _rememberActive(managed.id);
     } else {
       debugPrint(
-        '[fah][sessions] open ${metadata.id}: loaded in background — a '
+        '[fah][sessions] open ${managed.id}: loaded in background — a '
         'newer selection owns the active session',
       );
     }

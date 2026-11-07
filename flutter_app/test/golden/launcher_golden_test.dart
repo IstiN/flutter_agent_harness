@@ -555,6 +555,8 @@ void main() {
       // The SAME presented-Files card — one chrome band with the search
       // capsule — never a legacy app-bar duplicate.
       expect(find.byKey(const ValueKey('filesAppPanel')), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('fileBrowserSearchReveal')));
+      await tester.pumpAndSettle();
       expect(find.byKey(const ValueKey('filesAppSearch')), findsOneWidget);
       expect(find.byType(FileBrowser), findsOneWidget);
       await expectGolden(tester, 'launcher/files_route');

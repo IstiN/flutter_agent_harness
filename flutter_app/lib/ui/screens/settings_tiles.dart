@@ -23,9 +23,10 @@ class SettingsGroup extends StatelessWidget {
     this.label,
     this.hint,
     this.header,
+    this.action,
     required this.children,
     this.footer,
-    this.padding = const EdgeInsets.symmetric(vertical: 8),
+    this.padding = const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
   });
 
   /// The dim eyebrow above the card (the section's name).
@@ -34,8 +35,11 @@ class SettingsGroup extends StatelessWidget {
   /// One-line helper under the eyebrow.
   final String? hint;
 
-  /// A full-width header row inside the card (e.g. a trailing action).
+  /// A full-width header row inside the card.
   final Widget? header;
+
+  /// Optional action aligned with the outside section label.
+  final Widget? action;
 
   /// The group's rows; hairlines are interleaved automatically.
   final List<Widget> children;
@@ -60,20 +64,27 @@ class SettingsGroup extends StatelessWidget {
       children: [
         if (label != null)
           Padding(
-            padding: const EdgeInsets.fromLTRB(4, 0, 4, 4),
-            child: Text(
-              label!,
-              style: TextStyle(
-                color: tokens.ink2,
-                fontSize: 11,
-                fontWeight: FontWeight.w600,
-                letterSpacing: .2,
-              ),
+            padding: const EdgeInsets.fromLTRB(0, 0, 0, 6),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    label!,
+                    style: TextStyle(
+                      color: tokens.ink2,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      letterSpacing: .1,
+                    ),
+                  ),
+                ),
+                ?action,
+              ],
             ),
           ),
         if (hint != null)
           Padding(
-            padding: const EdgeInsets.fromLTRB(4, 0, 4, 8),
+            padding: const EdgeInsets.fromLTRB(0, 0, 0, 8),
             child: Text(
               hint!,
               style: TextStyle(color: tokens.ink2, fontSize: 12, height: 1.35),
@@ -338,6 +349,8 @@ class SettingsDropdown<T> extends StatelessWidget {
       onChanged: enabled ? onChanged : null,
       style: baseStyle.copyWith(color: tokens.ink1, fontSize: 14, height: 1.3),
       dropdownColor: tokens.surface2,
+      icon: const faui.FaIcon(faui.FaSemanticIcon.expandMore),
+      iconSize: 24,
       iconEnabledColor: tokens.ink2,
       iconDisabledColor: tokens.ink3,
       elevation: 8,

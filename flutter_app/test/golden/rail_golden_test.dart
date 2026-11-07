@@ -243,8 +243,9 @@ void main() {
     );
   });
 
-  testWidgets('chats networks panel: membership rows with live status',
-      (tester) async {
+  testWidgets('chats networks panel: membership rows with live status', (
+    tester,
+  ) async {
     final wallet = await KeyWallet.load(MemoryWalletBackend());
     await wallet.createIfMissing(displayName: 'Me');
     await wallet.addNetwork(networkId: 'net1', name: 'fa-team');
@@ -276,7 +277,6 @@ void main() {
       tester,
       ChatNetworksPanel(
         manager: manager,
-        onBack: () {},
         onManageNetworks: () {},
         onOpenChannel: (_, _) {},
       ),

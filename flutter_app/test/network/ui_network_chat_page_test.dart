@@ -15,6 +15,7 @@ import 'package:fa/network/network_session_manager.dart';
 import 'package:fa/network/showcase_viewer.dart';
 import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/network/network_chat_page.dart';
+import 'package:fa/ui/widgets/fah_wallpaper.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -167,6 +168,7 @@ void main() {
       final rig = await pumpChat(tester);
       expect(find.textContaining('from olya'), findsWidgets);
       expect(find.textContaining('Olya'), findsWidgets);
+      expect(find.byType(FahWallpaper), findsOneWidget);
       // Close inside the body: the WS heartbeat timer must not outlive
       // the test (fake-async invariant).
       await rig.session.close();

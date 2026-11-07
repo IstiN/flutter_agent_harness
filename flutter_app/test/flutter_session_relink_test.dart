@@ -6,6 +6,7 @@ import 'dart:io';
 
 import 'package:fa/services/flutter_session_manager.dart';
 import 'package:fa/services/subagent_parent_resolver.dart';
+import 'package:fa/ui/chats/local_chat_list_adapter.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_agent_harness/io.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -35,8 +36,8 @@ void main() {
     await tmp.delete(recursive: true);
   });
 
-  test('listPersistedSessions relinks legacy children (header parent '
-      '"") from the parent transcript registry (issue #426)', () async {
+  test('legacy children list immediately, then relink in the background '
+      '(issues #426/#2053)', () async {
     final parent = await repo.create(
       JsonlSessionCreateOptions(
         cwd: 'proj',
@@ -57,6 +58,18 @@ void main() {
       ),
     );
     final childMeta = await child.getMetadata();
+    final offscreen = await repo.create(
+      JsonlSessionCreateOptions(
+        cwd: 'proj',
+        metadata: const {
+          'agent': 'subagent',
+          'id': 'offscr',
+          'parent': '',
+          'model': 'm',
+        },
+      ),
+    );
+    final offscreenMeta = await offscreen.getMetadata();
 
     // The parent transcript's registry record — what hosts append at turn
     // boundaries naming every child session file they spawned.
@@ -73,11 +86,32 @@ void main() {
     );
 
     final listed = await manager.listPersistedSessions();
-    final relinked = listed.firstWhere((m) => m.id == childMeta.id);
-    // The listing's metadata now carries the resolved parent — the exact
+    final initial = listed.firstWhere((m) => m.id == childMeta.id);
+    expect(
+      subagentParentId(initial),
+      isNull,
+      reason: 'the legacy transcript scan must not block the first emission',
+    );
+
+    final adapter = LocalChatListAdapter(
+      manager: manager,
+      titleBuilder: (id, createdAt, isSubagent) => id,
+      readPersistedNames: false,
+    );
+    await adapter.load();
+    await adapter.warmVisible({childMeta.id});
+    final later = await manager.listPersistedSessions();
+    final relinked = later.firstWhere((m) => m.id == childMeta.id);
+    // The visible-row result lands in the listing's metadata — the exact
     // shape sessionTreeRows' grouping consumes.
     expect(isSubagentSession(relinked), isTrue);
     expect(subagentParentId(relinked), parentMeta.id);
+    final untouched = later.firstWhere((m) => m.id == offscreenMeta.id);
+    expect(
+      subagentParentId(untouched),
+      isNull,
+      reason: 'offscreen legacy children never enter the resolver batch',
+    );
   });
 
   test('fresh children with a real header parent list untouched', () async {

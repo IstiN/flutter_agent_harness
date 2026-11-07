@@ -5,11 +5,17 @@
 /// Fakes mirror `wide_layout_shell_sidebar_resize_test.dart`.
 library;
 
+import 'dart:async';
+
 import 'package:fa/apps/apps_store.dart';
+import 'package:fa/apps/js_app_view.dart';
 import 'package:fa/apps/js_app_navigation.dart';
 import 'package:fa/apps/widgets_catalog_sheet.dart';
 import 'package:fa/l10n/app_localizations.dart';
 import 'package:fa/main.dart';
+import 'package:fa/network/key_wallet.dart';
+import 'package:fa/network/network_mode.dart';
+import 'package:fa/network/network_session_manager.dart';
 import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/flutter_session_manager.dart';
 import 'package:fa/services/session_names_store.dart';
@@ -24,11 +30,13 @@ import 'package:fa/ui/widgets/messenger_nav_rail.dart';
 import 'package:fa/ui/widgets/messenger_section_header.dart';
 import 'package:fa/ui/widgets/session_search_field.dart';
 import 'package:fa/ui/widgets/sidebar_nav_item.dart';
+import 'package:fa/ui/chats/chat_list_controller.dart';
 import 'package:fa/ui/chats/chat_list_entry.dart';
 import 'package:fa/ui/chats/chat_list_panel.dart';
 import 'package:fa/ui/chats/local_chat_list_adapter.dart';
 import 'package:fa/ui/chats/local_sessions_panel.dart';
 import 'package:fa/ui/chats/networks_list_panel.dart';
+import 'package:fa/ui/network/network_chat_page.dart';
 import 'package:fa/ui/widgets/wide_layout_shell.dart';
 import 'package:fa_ui/fa_ui.dart'
     show
@@ -44,10 +52,13 @@ import 'package:liquid_glass_widgets/liquid_glass_widgets.dart'
     show GlassIconButton, ProgressiveBlur, ProgressiveBlurDirection;
 import 'package:flutter/cupertino.dart' show CupertinoTextField;
 import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart' show PointerDeviceKind;
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:intl/date_symbol_data_local.dart';
+
+import 'network/fakes.dart';
 
 StreamFunction _singleTextResponse(String text) {
   return (model, context, {cancelToken}) {
@@ -117,6 +128,36 @@ final class _StaticLocalChatListSource implements LocalChatListSource {
   Future<List<ChatListEntry>> load() async => entries;
 }
 
+Future<NetworkSessionManager> _narrowNetworkManager() async {
+  final wallet = await KeyWallet.load(MemoryWalletBackend());
+  await wallet.createIfMissing(displayName: 'Me');
+  await wallet.addNetwork(networkId: 'net1', name: 'fa-team', password: 'pw-1');
+  final manager = NetworkSessionManager(
+    baseUrl: testBase,
+    wallet: wallet,
+    httpClient: FakeHttpClient(),
+    wsConnector: FakeWsConnector(),
+  );
+  final session = buildSession(
+    httpClient: FakeHttpClient()
+      ..respond(
+        200,
+        body:
+            '[{"id":"c1","networkId":"net1","name":"general",'
+            '"public":false}]',
+      )
+      ..respond(200, body: membersBody)
+      ..respond(200, body: '{"items":[],"nextCursor":""}'),
+    connector: FakeWsConnector(),
+    wallet: wallet,
+  );
+  await session.start();
+  manager.sessions['net1'] = session;
+  manager.notifyListeners();
+  addTearDown(manager.disconnectAll);
+  return manager;
+}
+
 void main() {
   setUpAll(() async {
     await initializeDateFormatting('en');
@@ -135,6 +176,8 @@ void main() {
     FaVisualDirection direction = FaVisualDirection.glass,
     Brightness brightness = Brightness.dark,
     bool reducedMotion = false,
+    NetworkModeController? networkMode,
+    NetworkSessionManager? networkSessions,
   }) async {
     tester.view.devicePixelRatio = 1.0;
     tester.view.physicalSize = size;
@@ -152,17 +195,24 @@ void main() {
         localizationsDelegates: AppLocalizations.localizationsDelegates,
         supportedLocales: AppLocalizations.supportedLocales,
         home: Builder(
-          builder: (context) => localChatAdapterFactory == null
-              ? faHomeScreen(
-                  context: context,
-                  manager: manager,
-                  sessionNamesStore: sessionNamesStore,
-                )
-              : WideLayoutShell(
-                  manager: manager,
-                  sessionNamesStore: sessionNamesStore,
-                  localChatAdapterFactory: localChatAdapterFactory,
-                ),
+          builder: (context) {
+            if (localChatAdapterFactory == null &&
+                networkMode == null &&
+                networkSessions == null) {
+              return faHomeScreen(
+                context: context,
+                manager: manager,
+                sessionNamesStore: sessionNamesStore,
+              );
+            }
+            return WideLayoutShell(
+              manager: manager,
+              sessionNamesStore: sessionNamesStore,
+              localChatAdapterFactory: localChatAdapterFactory,
+              networkMode: networkMode,
+              networkSessions: networkSessions,
+            );
+          },
         ),
       ),
     );
@@ -240,6 +290,86 @@ void main() {
     ghostSession.service.dispose();
     await tester.pumpAndSettle();
   });
+
+  testWidgets('local session click responds immediately while open is gated', (
+    tester,
+  ) async {
+    final env = MemoryExecutionEnv();
+    final gate = Completer<void>();
+    FlutterSessionManager.debugOpenSessionGate = (_) => gate.future;
+    addTearDown(() => FlutterSessionManager.debugOpenSessionGate = null);
+    final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
+      ..addSession('fake-session', _fakeService(env));
+    await JsonlSessionRepo(
+      fs: env,
+      sessionsRoot: '/sessions',
+    ).create(const JsonlSessionCreateOptions(cwd: '/tmp', id: 'ghost'));
+
+    await pumpShell(
+      tester,
+      manager: manager,
+      sessionNamesStore: SessionNamesStore.inMemory({'ghost': 'Ghost chat'}),
+    );
+    await tester.tap(find.text('Ghost chat'));
+    await tester.pump(const Duration(milliseconds: 30));
+
+    expect(
+      find.byKey(const ValueKey('sessionOpeningIndicator')),
+      findsOneWidget,
+    );
+    expect(manager.active?.id, 'fake-session');
+
+    gate.complete();
+    await tester.pumpAndSettle();
+    expect(manager.active?.id, 'ghost');
+    expect(find.byKey(const ValueKey('sessionOpeningIndicator')), findsNothing);
+
+    final opened = manager.sessions.firstWhere((s) => s.id == 'ghost');
+    await manager.closeSession('ghost');
+    await tester.pumpAndSettle();
+    opened.service.dispose();
+    await tester.pumpAndSettle();
+  });
+
+  testWidgets(
+    'local session switch keeps existing transcript visible while open is gated',
+    (tester) async {
+      final env = MemoryExecutionEnv();
+      final gate = Completer<void>();
+      FlutterSessionManager.debugOpenSessionGate = (_) => gate.future;
+      addTearDown(() => FlutterSessionManager.debugOpenSessionGate = null);
+      final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
+        ..addSession('fake-session', _listedService(env));
+      await JsonlSessionRepo(
+        fs: env,
+        sessionsRoot: '/sessions',
+      ).create(const JsonlSessionCreateOptions(cwd: '/tmp', id: 'ghost'));
+
+      await pumpShell(
+        tester,
+        manager: manager,
+        sessionNamesStore: SessionNamesStore.inMemory({'ghost': 'Ghost chat'}),
+      );
+      expect(find.text('Listed conversation'), findsWidgets);
+      await tester.tap(find.text('Ghost chat'));
+      await tester.pump(const Duration(milliseconds: 30));
+
+      expect(manager.active?.id, 'fake-session');
+      expect(
+        find.byKey(const ValueKey('sessionOpeningIndicator')),
+        findsNothing,
+      );
+      expect(find.text('Listed conversation'), findsWidgets);
+
+      gate.complete();
+      await tester.pumpAndSettle();
+      final opened = manager.sessions.firstWhere((s) => s.id == 'ghost');
+      await manager.closeSession('ghost');
+      await tester.pumpAndSettle();
+      opened.service.dispose();
+      await tester.pumpAndSettle();
+    },
+  );
 
   testWidgets('the session info dialog shows the folder state, the '
       'mailbox note and closes', (tester) async {
@@ -390,7 +520,8 @@ void main() {
         await tester.tap(find.byKey(const ValueKey('appsDirectoryMyApps')));
         await tester.pumpAndSettle();
         expect(find.byType(WidgetsCatalogSheet), findsNothing);
-        await tester.tap(find.byKey(const ValueKey('appsQuickOpen')));
+        expect(find.byKey(const ValueKey('appsQuickOpen')), findsNothing);
+        await tester.tap(find.byKey(const ValueKey('messengerSearchField')));
         await tester.pump();
         final search = tester.widget<CupertinoTextField>(
           find.descendant(
@@ -509,7 +640,8 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('appFull')));
     await tester.pumpAndSettle();
     expect(tester.getRect(find.byType(MessengerAppPanel)).width, 1280);
-    expect(find.text('Exit full'), findsOneWidget);
+    expect(find.byTooltip('Exit full'), findsOneWidget);
+    expect(find.byIcon(Icons.close_fullscreen), findsOneWidget);
 
     await tester.tap(find.byKey(const ValueKey('appFull')));
     await tester.pumpAndSettle();
@@ -529,6 +661,147 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('chatFilter-all')));
     await tester.pumpAndSettle();
     expect(find.byType(MessengerAppPanel), findsNothing);
+  });
+
+  testWidgets('desktop running apps minimize, keep their JS view, and switch', (
+    tester,
+  ) async {
+    final env = MemoryExecutionEnv();
+    final service = _fakeService(env);
+    final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
+      ..addSession('design-session', service);
+    const first = JsAppInfo(
+      id: 'demo',
+      name: 'Demo app',
+      description: 'Demo',
+      icon: 'D',
+      declaredPermissions: AppPermissions(),
+    );
+    const second = JsAppInfo(
+      id: 'second',
+      name: 'Second app',
+      description: 'Second',
+      icon: 'S',
+      declaredPermissions: AppPermissions(),
+    );
+
+    await pumpShell(tester, manager: manager);
+    Future<void> open(JsAppInfo app) => pushJsApp(
+      tester.element(find.byType(ChatScreen)),
+      manager: manager,
+      app: app,
+      source: 'test',
+    );
+    Future<void> revealDock() async {
+      if (find
+          .byKey(const ValueKey('runningAppsDockList'))
+          .evaluate()
+          .isEmpty) {
+        await tester.tap(find.byKey(const ValueKey('runningAppsDockHandle')));
+        await tester.pumpAndSettle();
+      }
+    }
+
+    await open(first);
+    await tester.pumpAndSettle();
+    final firstViewKey = tester.widget<JsAppView>(find.byType(JsAppView)).key;
+
+    await tester.tap(find.byKey(const ValueKey('presentedAppMinimizeButton')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('runningAppsDock')), findsOneWidget);
+    expect(find.byKey(const ValueKey('runningAppsDockHandle')), findsOneWidget);
+    expect(find.byKey(const ValueKey('runningApp-demo')), findsNothing);
+    await revealDock();
+    expect(find.byKey(const ValueKey('runningApp-demo')), findsOneWidget);
+    expect(
+      tester
+          .widget<JsAppView>(
+            find.byWidgetPredicate(
+              (widget) => widget is JsAppView && widget.app.id == first.id,
+              skipOffstage: false,
+            ),
+          )
+          .key,
+      same(firstViewKey),
+    );
+
+    await open(second);
+    await tester.pumpAndSettle();
+    await revealDock();
+    expect(find.byKey(const ValueKey('runningApp-demo')), findsOneWidget);
+    expect(find.byKey(const ValueKey('runningApp-second')), findsOneWidget);
+    expect(
+      tester
+          .widget<IndexedStack>(find.byKey(const ValueKey('runningAppsStack')))
+          .index,
+      1,
+    );
+
+    await tester.tap(find.byKey(const ValueKey('runningApp-demo')));
+    await tester.pumpAndSettle();
+    expect(
+      tester
+          .widget<IndexedStack>(find.byKey(const ValueKey('runningAppsStack')))
+          .index,
+      0,
+    );
+    expect(
+      tester
+          .widget<JsAppView>(
+            find.byWidgetPredicate(
+              (widget) => widget is JsAppView && widget.app.id == first.id,
+              skipOffstage: false,
+            ),
+          )
+          .key,
+      same(firstViewKey),
+    );
+
+    await tester.tap(find.byKey(const ValueKey('messengerPrimaryNav-local')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('messengerPrimaryNav-apps')));
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey('appsDirectoryRunningApp-demo')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('appsDirectoryRunningApp-second')),
+      findsOneWidget,
+    );
+    expect(find.text('2 active apps'), findsOneWidget);
+    await tester.tap(
+      find.byKey(const ValueKey('appsDirectoryRunningApp-demo')),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('appClose')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('runningApp-demo')), findsNothing);
+    await revealDock();
+    expect(find.byKey(const ValueKey('runningApp-second')), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('runningApp-second')));
+    await tester.pumpAndSettle();
+    expect(
+      tester
+          .widget<IndexedStack>(find.byKey(const ValueKey('runningAppsStack')))
+          .index,
+      0,
+    );
+
+    final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
+    await mouse.addPointer(location: Offset.zero);
+    addTearDown(mouse.removePointer);
+    await mouse.moveTo(
+      tester.getCenter(find.byKey(const ValueKey('runningAppsDockHandle'))),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('runningAppsDockList')), findsOneWidget);
+    expect(find.byKey(const ValueKey('runningApp-second')), findsOneWidget);
+    await mouse.moveTo(const Offset(10, 10));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('runningAppsDockHandle')), findsOneWidget);
+    expect(find.byKey(const ValueKey('runningApp-second')), findsNothing);
   });
 
   testWidgets('narrow Apps opens one full surface and Close returns to the '
@@ -867,7 +1140,15 @@ void main() {
 
     await tester.tap(find.byKey(const ValueKey('messengerPrimaryNav-apps')));
     await tester.pumpAndSettle();
-    expect(find.widgetWithText(FaSectionEyebrow, 'Apps'), findsOneWidget);
+    expect(find.widgetWithText(FaSectionEyebrow, 'Apps'), findsNothing);
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('appsOverviewHeader')),
+        matching: find.text('Apps'),
+      ),
+      findsOneWidget,
+    );
+    expect(find.byKey(const ValueKey('appsDirectoryToolbar')), findsNothing);
 
     await tester.tap(
       find.byKey(const ValueKey('messengerPrimaryNav-activity')),
@@ -1210,8 +1491,6 @@ void main() {
           )
           .first,
     );
-    SizedBox railRow(String key) =>
-        tester.widget<SizedBox>(find.byKey(ValueKey(key)));
     // Every rail row shows its label; selection is the accent tint.
     expect(find.text('All'), findsOneWidget);
     for (final label in ['Unread', 'Channels']) {
@@ -1340,7 +1619,10 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('messengerPrimaryNav-network')));
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('chatNetworksList')), findsOneWidget);
-    expect(find.byKey(const ValueKey('chatNetworksBack')), findsOneWidget);
+    expect(find.byKey(const ValueKey('chatNetworksBack')), findsNothing);
+    expect(find.byKey(const ValueKey('wideShellFaBrand')), findsOneWidget);
+    expect(chip('Networks').properties.selected, isTrue);
+    expect(chip('All').properties.selected, isFalse);
     expect(find.byType(ChatNetworksPanel), findsOneWidget);
     expect(
       find.descendant(
@@ -1362,15 +1644,38 @@ void main() {
     // The sidebar swapped: the chat list panel is replaced while the
     // surface is open.
     expect(find.byType(ChatListPanel), findsNothing);
-    // Back walks the surface to the normal chats list.
-    await tester.tap(find.byKey(const ValueKey('chatNetworksBack')));
+
+    // Root destinations share the exact same search geometry and glass
+    // chrome. Only Local's drilled folder (and Networks' channel list) may
+    // introduce a back button.
+    final networksSearch = tester.getRect(
+      find.byKey(const ValueKey('messengerSearchField')),
+    );
+    await tester.tap(find.byKey(const ValueKey('messengerPrimaryNav-local')));
+    await tester.pumpAndSettle();
+    expect(find.byType(LocalSessionsPanel), findsOneWidget);
+    expect(find.byKey(const ValueKey('localFolderBack')), findsNothing);
+    expect(find.byKey(const ValueKey('localChromeUnderlay')), findsOneWidget);
+    final localSearch = tester.getRect(
+      find.byKey(const ValueKey('messengerSearchField')),
+    );
+    expect(localSearch.left, networksSearch.left);
+    expect(localSearch.top, networksSearch.top);
+    expect(localSearch.width, networksSearch.width);
+    expect(chip('Local').properties.selected, isTrue);
+    expect(chip('Networks').properties.selected, isFalse);
+    await tester.tap(find.byKey(const ValueKey('messengerPrimaryNav-network')));
+    await tester.pumpAndSettle();
+
+    // All is the chats-home destination; selecting it restores the list and
+    // moves rail selection away from Networks.
+    await tester.tap(find.byKey(const ValueKey('chatFilter-all')));
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('chatNetworksList')), findsNothing);
     expect(find.byKey(const ValueKey('chatListScroll')), findsOneWidget);
     expect(find.byType(ChatListPanel), findsOneWidget);
     expect(chip('All').properties.selected, isTrue);
-    // The rail row itself never becomes selected.
-    railRow('chatFilter-all');
+    expect(chip('Networks').properties.selected, isFalse);
   });
 
   testWidgets(
@@ -1506,6 +1811,14 @@ void main() {
     expect(tester.takeException(), isNull);
     await tester.pumpAndSettle();
     expect(find.text('Agent one'), findsNothing, reason: 'collapsed sidebar');
+    expect(
+      find.byKey(const ValueKey('collapsedChatAvatarList')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('collapsedChatAvatar-local:Agent one')),
+      findsOneWidget,
+    );
     await tester.tap(toggle);
     await tester.pump(const Duration(milliseconds: 100));
     expect(tester.takeException(), isNull);
@@ -1514,6 +1827,95 @@ void main() {
     expect(find.text('Agent two'), findsOneWidget);
     debugDefaultTargetPlatformOverride = null;
   });
+
+  testWidgets(
+    'collapsed Activity and Apps stay useful and the brand never jumps',
+    (tester) async {
+      final env = MemoryExecutionEnv();
+      final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
+        ..addSession('design-session', _fakeService(env));
+      final entry = ChatListEntry(
+        id: ChatEntryId.local('design-session'),
+        kind: ChatListEntryKind.localAgent,
+        title: 'design-session',
+        createdAt: DateTime.utc(2025),
+        lastActivity: DateTime.utc(2026),
+        folderPath: '/work/fa',
+        localMessageCount: 1,
+      );
+      await pumpShell(
+        tester,
+        manager: manager,
+        localChatAdapterFactory: () => _StaticLocalChatListSource([entry]),
+      );
+      await tester.pumpAndSettle();
+      final toggle = find.byKey(const ValueKey('wideShellSidebarToggle'));
+      final brand = find.byKey(const ValueKey('wideShellFaBrand'));
+
+      await tester.tap(
+        find.byKey(const ValueKey('messengerPrimaryNav-activity')),
+      );
+      await tester.pumpAndSettle();
+      final expandedBrandY = tester.getRect(brand).center.dy;
+      expect(
+        find.descendant(
+          of: find.byType(MessengerSectionHeader),
+          matching: find.text('Fa'),
+        ),
+        findsNothing,
+        reason: 'the mark already contains Fa; no duplicate wordmark',
+      );
+      expect(
+        tester
+            .widget<FaLogo>(
+              find.descendant(of: brand, matching: find.byType(FaLogo)),
+            )
+            .trailingDot,
+        isFalse,
+      );
+      await tester.tap(toggle);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 160));
+      final midFlightRail = find.byKey(
+        const ValueKey('collapsedChatAvatarRail'),
+      );
+      expect(midFlightRail, findsOneWidget);
+      for (final pointer in tester.widgetList<IgnorePointer>(
+        find.ancestor(of: midFlightRail, matching: find.byType(IgnorePointer)),
+      )) {
+        expect(pointer.ignoring, isFalse);
+      }
+      await tester.pumpAndSettle();
+      expect(tester.getRect(brand).center.dy, closeTo(expandedBrandY, .001));
+      expect(
+        tester
+            .widget<FaLogo>(
+              find.descendant(of: brand, matching: find.byType(FaLogo)),
+            )
+            .trailingDot,
+        isTrue,
+      );
+      expect(
+        find.byKey(const ValueKey('collapsedChatAvatar-local:design-session')),
+        findsOneWidget,
+      );
+
+      await tester.tap(toggle);
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('messengerPrimaryNav-apps')));
+      await tester.pumpAndSettle();
+      final appsBrandY = tester.getRect(brand).center.dy;
+      await tester.tap(toggle);
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('collapsedAppsList')), findsOneWidget);
+      expect(find.byKey(const ValueKey('collapsedAppsMyApps')), findsOneWidget);
+      expect(find.byKey(const ValueKey('collapsedAppsStore')), findsOneWidget);
+      expect(tester.getRect(brand).center.dy, closeTo(appsBrandY, .001));
+      await tester.tap(find.byKey(const ValueKey('collapsedAppsStore')));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   testWidgets('Local drill state resets on a section switch (owner pass)', (
     tester,
@@ -1820,11 +2222,11 @@ void main() {
               expect(
                 tester
                     .getCenter(
-                      find.byKey(const ValueKey('collapsedSidebarNewSession')),
+                      find.byKey(const ValueKey('collapsedChatAvatarRail')),
                     )
                     .dx,
                 closeTo(axis, .001),
-                reason: '$reason New axis',
+                reason: '$reason avatar-rail axis',
               );
               expect(
                 tester.getRect(find.byType(ChatScreen)).left,
@@ -1864,13 +2266,10 @@ void main() {
     void expectSingleActionTree() {
       expect(toggleFinder, findsOneWidget);
       expect(find.byKey(const ValueKey('messengerProfile')), findsOneWidget);
-      final newActions =
-          find.byKey(const ValueKey('messengerNewButton')).evaluate().length +
-          find
-              .byKey(const ValueKey('collapsedSidebarNewSession'))
-              .evaluate()
-              .length;
-      expect(newActions, lessThanOrEqualTo(1));
+      expect(
+        find.byKey(const ValueKey('messengerNewButton')).evaluate().length,
+        lessThanOrEqualTo(1),
+      );
       expect(tester.takeException(), isNull);
     }
 
@@ -2027,7 +2426,7 @@ void main() {
         expect(composer.height, 40, reason: reason);
         expect(row.height, 40, reason: reason);
         expect(send.size, const Size(40, 34), reason: reason);
-        expect(composer.right - send.right, 2, reason: 'flush right');
+        expect(composer.right - send.right, 4, reason: 'trailing optical air');
         expect(attach.size, const Size.square(36), reason: reason);
         expect(composer.contains(send.center), isTrue, reason: reason);
         expect(composer.contains(attach.center), isTrue, reason: reason);
@@ -2183,6 +2582,14 @@ void main() {
       expect(tester.getRect(header).height, 52, reason: destination);
       final underlay = find.byType(MessengerGlassUnderlay);
       expect(underlay, findsOneWidget, reason: destination);
+      expect(
+        find.descendant(
+          of: underlay,
+          matching: find.byKey(const ValueKey('messengerRealGlass')),
+        ),
+        findsNothing,
+        reason: '$destination must fade without a bounded glass rectangle',
+      );
       final blurFinder = find.descendant(
         of: underlay,
         matching: find.byType(ProgressiveBlur),
@@ -2235,7 +2642,7 @@ void main() {
     debugDefaultTargetPlatformOverride = null;
   });
 
-  testWidgets('compact section headers keep identical search geometry', (
+  testWidgets('compact search geometry is shared and Apps uses floating chrome', (
     tester,
   ) async {
     final env = MemoryExecutionEnv();
@@ -2253,7 +2660,7 @@ void main() {
         );
         Rect? expectedSearch;
         Color? expectedFill;
-        for (final label in ['Chats', 'Activity', 'Apps']) {
+        for (final label in ['Chats', 'Activity', 'Local']) {
           if (label != 'Chats') {
             await tester.tap(
               find.byKey(
@@ -2263,14 +2670,32 @@ void main() {
             await tester.pumpAndSettle();
           }
           final finder = find.byKey(const ValueKey('messengerSearchField'));
+          final reveal = find.byKey(const ValueKey('messengerSearchReveal'));
+          expect(finder, findsNothing, reason: '$label starts collapsed');
+          expect(reveal, findsOneWidget);
+          await tester.tap(reveal);
+          await tester.pumpAndSettle();
           expect(finder, findsOneWidget);
+          expect(
+            find.byKey(const ValueKey('messengerSearchClose')),
+            findsOneWidget,
+            reason: '$direction/$brightness/$label',
+          );
           final rect = tester.getRect(finder);
+          // Removing the compact gear must give its width to Search rather
+          // than leaving a blank trailing action slot.
+          expect(rect.right, 380, reason: '$direction/$brightness/$label');
+          expect(
+            find.byKey(const ValueKey('narrowSettingsButton')),
+            findsNothing,
+          );
           final field = tester.widget<CupertinoTextField>(
             find.descendant(
               of: finder,
               matching: find.byType(CupertinoTextField),
             ),
           );
+          expect(field.focusNode?.hasFocus, isTrue, reason: '$label reveal');
           if (expectedSearch == null) {
             expectedSearch = rect;
             expectedFill = field.decoration?.color;
@@ -2283,11 +2708,107 @@ void main() {
             );
             expect(field.decoration?.color, expectedFill);
           }
+          await tester.enterText(finder, 'active query');
+          await tester.pump(const Duration(milliseconds: 200));
+          field.focusNode?.unfocus();
+          await tester.pump();
+          expect(finder, findsOneWidget, reason: '$label active query');
+          await tester.tap(find.byKey(const ValueKey('messengerSearchClose')));
+          await tester.pumpAndSettle();
+          expect(finder, findsNothing, reason: '$label close');
+          expect(reveal, findsOneWidget, reason: '$label close');
+          expect(field.focusNode?.hasFocus, isFalse, reason: '$label close');
         }
+        await tester.tap(
+          find.byKey(const ValueKey('messengerPrimaryNav-apps')),
+        );
+        await tester.pumpAndSettle();
+        expect(
+          find.byKey(const ValueKey('messengerSearchField')),
+          findsNothing,
+        );
+        expect(find.byKey(const ValueKey('appsSearchField')), findsNothing);
+        expect(
+          find.byKey(const ValueKey('appsNarrowSearchReveal')),
+          findsOneWidget,
+        );
+        final header = find.byKey(const ValueKey('appsOverviewHeader'));
+        final pill = find.descendant(
+          of: header,
+          matching: find.byKey(const ValueKey('messengerPageTitlePill')),
+        );
+        final surface = tester.widget<FaSurface>(pill);
+        expect(surface.glass, isTrue);
+        expect(surface.borderRadius, BorderRadius.circular(14));
+        expect(tester.getSize(pill).height, 40);
+        expect(tester.getSize(pill).width, lessThanOrEqualTo(320));
+        expect(find.byKey(const ValueKey('appsBackButton')), findsNothing);
+        expect(find.byKey(const ValueKey('messengerPageIcon')), findsOneWidget);
+        expect(
+          find.byKey(const ValueKey('narrowSettingsButton')),
+          findsNothing,
+        );
+        expect(
+          find.descendant(
+            of: find.byKey(const ValueKey('narrowShellNavigation')),
+            matching: find.byKey(
+              const ValueKey('messengerPrimaryNav-settings'),
+            ),
+          ),
+          findsNothing,
+        );
         await tester.pumpWidget(const SizedBox());
         await tester.pump();
       }
     }
+  });
+
+  testWidgets('compact Networks root search reveals and preserves a query', (
+    tester,
+  ) async {
+    final env = MemoryExecutionEnv();
+    final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
+      ..addSession('design-session', _fakeService(env));
+    await pumpShell(tester, manager: manager, size: const Size(390, 844));
+    await tester.tap(find.byKey(const ValueKey('messengerPrimaryNav-network')));
+    await tester.pumpAndSettle();
+
+    final finder = find.byKey(const ValueKey('messengerSearchField'));
+    final reveal = find.byKey(const ValueKey('messengerSearchReveal'));
+    expect(finder, findsNothing);
+    expect(reveal, findsOneWidget);
+    await tester.tap(reveal);
+    await tester.pumpAndSettle();
+    expect(finder, findsOneWidget);
+    final field = tester.widget<CupertinoTextField>(
+      find.descendant(of: finder, matching: find.byType(CupertinoTextField)),
+    );
+    expect(field.focusNode?.hasFocus, isTrue);
+    await tester.enterText(finder, 'active network');
+    await tester.pump(const Duration(milliseconds: 200));
+    field.focusNode?.unfocus();
+    await tester.pump();
+    expect(finder, findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('messengerSearchClose')));
+    await tester.pumpAndSettle();
+    expect(finder, findsNothing);
+    expect(reveal, findsOneWidget);
+  });
+
+  testWidgets('wide shell Apps retains Back to Chats', (tester) async {
+    final env = MemoryExecutionEnv();
+    final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
+      ..addSession('design-session', _fakeService(env));
+    await pumpShell(tester, manager: manager);
+    await tester.tap(find.byKey(const ValueKey('messengerPrimaryNav-apps')));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(AppLauncherScreen), findsOneWidget);
+    expect(find.byKey(const ValueKey('appsBackButton')), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('appsBackButton')));
+    await tester.pumpAndSettle();
+    expect(find.byType(AppLauncherScreen), findsNothing);
+    expect(find.byKey(const ValueKey('messengerSearchField')), findsOneWidget);
   });
 
   testWidgets('docked Files and chat actions share the top centerline', (
@@ -2555,7 +3076,13 @@ void main() {
         findsOneWidget,
       );
       expect(find.text('Fa 2.0 redesign'), findsOneWidget);
-      expect(find.text('Search chats'), findsOneWidget);
+      expect(find.text('Chats'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('messengerSearchReveal')),
+        findsOneWidget,
+      );
+      expect(find.byKey(const ValueKey('messengerSearchField')), findsNothing);
+      expect(find.byKey(const ValueKey('chatCategoryChips')), findsNothing);
       expect(find.byType(ChatScreen), findsNothing);
       expect(find.byType(AppLauncherScreen), findsNothing);
       expect(find.byKey(const ValueKey('narrowShellNewChat')), findsOneWidget);
@@ -2599,8 +3126,15 @@ void main() {
       final env = MemoryExecutionEnv();
       final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
         ..addSession('design-session', _fakeService(env));
-      const labels = ['Chats', 'Local', 'Activity', 'Apps'];
-      const ids = ['chats', 'local', 'activity', 'apps'];
+      const labels = ['All', 'Local', 'Networks', 'Activity', 'Apps', 'More'];
+      const ids = [
+        'chatFilter-all',
+        'messengerPrimaryNav-local',
+        'messengerPrimaryNav-network',
+        'messengerPrimaryNav-activity',
+        'messengerPrimaryNav-apps',
+        'messengerPrimaryNav-more',
+      ];
 
       for (final direction in FaVisualDirection.values) {
         for (final brightness in Brightness.values) {
@@ -2644,11 +3178,9 @@ void main() {
           expect(dock.bottom - pill.bottom, 4, reason: reason);
 
           for (var index = 0; index < labels.length; index++) {
-            final item = find.byKey(
-              ValueKey('messengerPrimaryNav-${ids[index]}'),
-            );
+            final item = find.byKey(ValueKey(ids[index]));
             final rect = tester.getRect(item);
-            expect(rect.width, closeTo(280 / 4, .001), reason: reason);
+            expect(rect.width, closeTo(280 / 6, .001), reason: reason);
             expect(rect.height, 56, reason: reason);
             expect(rect.center.dy, dock.center.dy, reason: reason);
             final icon = tester.getRect(
@@ -2676,7 +3208,7 @@ void main() {
           }
           final selectedIcon = tester.widget<Icon>(
             find.descendant(
-              of: find.byKey(const ValueKey('messengerPrimaryNav-chats')),
+              of: find.byKey(const ValueKey('chatFilter-all')),
               matching: find.byType(Icon),
             ),
           );
@@ -2695,9 +3227,305 @@ void main() {
             findsNothing,
             reason: reason,
           );
+          await tester.tap(
+            find.byKey(const ValueKey('messengerPrimaryNav-more')),
+          );
+          await tester.pumpAndSettle();
+          final sheet = tester.widget<FaSurface>(
+            find.byKey(const ValueKey('narrowShellMoreSheet')),
+          );
+          expect(
+            sheet.glass,
+            direction == FaVisualDirection.glass,
+            reason: reason,
+          );
+          expect(sheet.useBackdropGroup, isTrue, reason: reason);
+          expect(
+            sheet.color!.a,
+            direction == FaVisualDirection.glass ? .92 : 1,
+          );
+          await tester.tap(find.byKey(const ValueKey('narrowShellMoreClose')));
+          await tester.pumpAndSettle();
           expect(tester.takeException(), isNull, reason: reason);
         }
       }
+    });
+
+    testWidgets('dock exposes rail destinations responsively with one More', (
+      tester,
+    ) async {
+      final env = MemoryExecutionEnv();
+      final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
+        ..addSession('design-session', _fakeService(env));
+      const primary = [
+        'chatFilter-all',
+        'messengerPrimaryNav-local',
+        'messengerPrimaryNav-network',
+        'messengerPrimaryNav-activity',
+        'messengerPrimaryNav-apps',
+      ];
+      const all = [
+        'chatFilter-all',
+        'chatFilter-unread',
+        'messengerPrimaryNav-local',
+        'messengerPrimaryNav-network',
+        'chatFilter-channels',
+        'messengerPrimaryNav-activity',
+        'messengerPrimaryNav-apps',
+        'messengerPrimaryNav-settings',
+      ];
+      const secondary = [
+        'chatFilter-unread',
+        'chatFilter-channels',
+        'messengerPrimaryNav-settings',
+      ];
+      final cases = <(Size, List<String>, List<String>)>[
+        (const Size(320, 700), primary, secondary),
+        (const Size(390, 844), primary, secondary),
+        (const Size(430, 844), primary, secondary),
+        (
+          const Size(500, 844),
+          const [
+            'chatFilter-all',
+            'messengerPrimaryNav-local',
+            'messengerPrimaryNav-network',
+            'chatFilter-channels',
+            'messengerPrimaryNav-activity',
+            'messengerPrimaryNav-apps',
+          ],
+          const ['chatFilter-unread', 'messengerPrimaryNav-settings'],
+        ),
+      ];
+      for (final (size, direct, overflow) in cases) {
+        await tester.pumpWidget(const SizedBox());
+        await tester.pump();
+        await pumpShell(tester, manager: manager, size: size);
+        await tester.pumpAndSettle();
+        final navigation = find.byKey(const ValueKey('narrowShellNavigation'));
+        for (final id in all) {
+          expect(
+            find.descendant(of: navigation, matching: find.byKey(ValueKey(id))),
+            direct.contains(id) ? findsOneWidget : findsNothing,
+            reason: '$size/$id',
+          );
+        }
+        final more = find.byKey(const ValueKey('messengerPrimaryNav-more'));
+        if (overflow.isEmpty) {
+          expect(more, findsNothing, reason: '$size');
+        } else {
+          expect(more, findsOneWidget, reason: '$size');
+          await tester.tap(more);
+          await tester.pumpAndSettle();
+          expect(
+            find.byKey(const ValueKey('narrowShellMoreSheet')),
+            findsOneWidget,
+          );
+          for (final id in overflow) {
+            expect(
+              find.byKey(ValueKey('narrowShellMore-$id')),
+              findsOneWidget,
+              reason: '$size/$id',
+            );
+          }
+          if (overflow.contains('chatFilter-channels') &&
+              overflow.contains('messengerPrimaryNav-settings')) {
+            expect(
+              tester
+                      .getRect(
+                        find.byKey(
+                          const ValueKey('narrowShellMore-chatFilter-channels'),
+                        ),
+                      )
+                      .top <
+                  tester
+                      .getRect(
+                        find.byKey(
+                          const ValueKey(
+                            'narrowShellMore-messengerPrimaryNav-settings',
+                          ),
+                        ),
+                      )
+                      .top,
+              isTrue,
+              reason: '$size must prioritize Channels above Settings',
+            );
+          }
+          await tester.tap(find.byKey(const ValueKey('narrowShellMoreClose')));
+          await tester.pumpAndSettle();
+        }
+        expect(tester.takeException(), isNull, reason: '$size');
+      }
+    });
+
+    testWidgets('Networks is direct and More reaches Unread and Channels', (
+      tester,
+    ) async {
+      final env = MemoryExecutionEnv();
+      final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
+        ..addSession('design-session', _fakeService(env));
+      await pumpShell(tester, manager: manager, size: const Size(390, 844));
+      final more = find.byKey(const ValueKey('messengerPrimaryNav-more'));
+
+      Future<void> openDestination(String id) async {
+        await tester.tap(more);
+        await tester.pumpAndSettle();
+        await tester.tap(find.byKey(ValueKey('narrowShellMore-$id')));
+        await tester.pumpAndSettle();
+        final moreSemantics = tester.widget<Semantics>(
+          find.descendant(
+            of: more,
+            matching: find.byWidgetPredicate(
+              (widget) =>
+                  widget is Semantics &&
+                  widget.properties.button == true &&
+                  widget.properties.label == 'More',
+            ),
+          ),
+        );
+        expect(moreSemantics.properties.selected, isTrue, reason: id);
+      }
+
+      Future<void> openNetworks() async {
+        await tester.tap(
+          find.byKey(const ValueKey('messengerPrimaryNav-network')),
+        );
+        await tester.pumpAndSettle();
+      }
+
+      final controller = tester
+          .widget<ChatListPanel>(find.byType(ChatListPanel))
+          .controller;
+      Future<void> expectNetworks() async {
+        expect(find.byType(ChatNetworksPanel), findsOneWidget);
+        expect(find.byKey(const ValueKey('chatNetworksList')), findsOneWidget);
+        expect(find.byType(ChatListPanel), findsNothing);
+        expect(
+          find.byKey(const ValueKey('narrowSettingsButton')),
+          findsNothing,
+        );
+      }
+
+      await openNetworks();
+      await expectNetworks();
+      await openDestination('chatFilter-unread');
+      expect(controller.filter, ChatListFilter.unread);
+      expect(find.byType(ChatNetworksPanel), findsNothing);
+      expect(find.byType(ChatListPanel), findsOneWidget);
+
+      await openNetworks();
+      await expectNetworks();
+      await openDestination('chatFilter-channels');
+      expect(controller.filter, ChatListFilter.channels);
+      expect(find.byType(ChatNetworksPanel), findsNothing);
+      expect(find.byType(ChatListPanel), findsOneWidget);
+
+      await openNetworks();
+      await expectNetworks();
+      expect(find.byKey(const ValueKey('chatNetworksBack')), findsNothing);
+      await tester.tap(find.byKey(const ValueKey('chatFilter-all')));
+      await tester.pumpAndSettle();
+      expect(find.byType(ChatListPanel), findsOneWidget);
+      expect(controller.filter, ChatListFilter.all);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('dock and More badges update from the rail descriptor model', (
+      tester,
+    ) async {
+      final env = MemoryExecutionEnv();
+      final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
+        ..addSession('design-session', _fakeService(env));
+      final entries = [
+        ChatListEntry(
+          id: ChatEntryId.local('Busy'),
+          kind: ChatListEntryKind.localAgent,
+          title: 'Busy',
+          preview: 'Preview',
+          createdAt: DateTime.utc(2025),
+          unreadCount: 3,
+          isStreaming: true,
+          localMessageCount: 1,
+        ),
+      ];
+      await pumpShell(
+        tester,
+        manager: manager,
+        size: const Size(390, 844),
+        localChatAdapterFactory: () => _StaticLocalChatListSource(entries),
+      );
+      await tester.pumpAndSettle();
+      final navigation = find.byKey(const ValueKey('narrowShellNavigation'));
+      final more = find.byKey(const ValueKey('messengerPrimaryNav-more'));
+      final local = find.byKey(const ValueKey('messengerPrimaryNav-local'));
+      expect(
+        find.descendant(of: more, matching: find.text('1')),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(of: local, matching: find.text('1')),
+        findsOneWidget,
+      );
+      await tester.tap(more);
+      await tester.pumpAndSettle();
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey('narrowShellMore-chatFilter-unread')),
+          matching: find.text('1'),
+        ),
+        findsOneWidget,
+      );
+      await tester.tap(find.byKey(const ValueKey('narrowShellMoreClose')));
+      await tester.pumpAndSettle();
+
+      final controller = tester
+          .widget<ChatListPanel>(find.byType(ChatListPanel))
+          .controller;
+      await controller.replaceLocalEntries(const []);
+      await tester.pumpAndSettle();
+      expect(find.descendant(of: more, matching: find.text('1')), findsNothing);
+      expect(
+        find.descendant(of: local, matching: find.text('1')),
+        findsNothing,
+      );
+      expect(navigation, findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('narrow Networks opens a channel in the full chat route', (
+      tester,
+    ) async {
+      final env = MemoryExecutionEnv();
+      final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
+        ..addSession('design-session', _fakeService(env));
+      final networkSessions = await _narrowNetworkManager();
+      final networkMode = NetworkModeController.inMemory();
+      addTearDown(networkMode.dispose);
+      await pumpShell(
+        tester,
+        manager: manager,
+        size: const Size(390, 844),
+        networkMode: networkMode,
+        networkSessions: networkSessions,
+      );
+      await tester.tap(
+        find.byKey(const ValueKey('messengerPrimaryNav-network')),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('networkRow-net1')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('chatNetworkChannel-c1')));
+      await tester.pumpAndSettle();
+
+      expect(networkMode.networkId, 'net1');
+      expect(networkMode.channelId, 'c1');
+      expect(find.byType(NetworkChatPage), findsOneWidget);
+      expect(find.byKey(const ValueKey('narrowShellNavigation')), findsNothing);
+      await tester.tap(find.byType(BackButton).first);
+      await tester.pumpAndSettle();
+      expect(find.byType(ChatNetworksPanel), findsOneWidget);
+      expect(tester.takeException(), isNull);
+      await networkSessions.disconnectAll();
+      await tester.pump();
     });
 
     testWidgets('dock and compact scroll ends stay reachable at 320px', (
@@ -2760,10 +3588,12 @@ void main() {
         find.byKey(const ValueKey('narrowShellNewChat')),
       );
       expect(last.bottom, lessThanOrEqualTo(fab.top));
-      for (final id in ['activity', 'apps', 'chats']) {
-        await tester.tap(
-          find.byKey(ValueKey('messengerPrimaryNav-$id')).hitTestable(),
-        );
+      for (final id in [
+        'messengerPrimaryNav-activity',
+        'messengerPrimaryNav-apps',
+        'chatFilter-all',
+      ]) {
+        await tester.tap(find.byKey(ValueKey(id)).hitTestable());
         await tester.pumpAndSettle();
         expect(tester.takeException(), isNull, reason: id);
       }
@@ -2819,7 +3649,7 @@ void main() {
       final initialPill = tester.getRect(pill);
       expect(initialPill.left, closeTo(59, .001));
       expect(initialPill.top, 784);
-      expect(initialPill.width, closeTo(280 / 4 - 8, .001));
+      expect(initialPill.width, closeTo(280 / 6 - 8, .001));
       expect(initialPill.bottom, 832);
       var animated = tester.widget<AnimatedPositioned>(pill);
       expect(animated.duration, const Duration(milliseconds: 200));
@@ -2827,7 +3657,7 @@ void main() {
 
       Future<void> verify(String id, {required bool forward}) async {
         final previous = tester.getRect(pill);
-        await tester.tap(find.byKey(ValueKey('messengerPrimaryNav-$id')));
+        await tester.tap(find.byKey(ValueKey(id)));
         await tester.pump();
         expect(tester.getRect(pill), previous);
         var prior = previous;
@@ -2842,20 +3672,18 @@ void main() {
           );
           prior = current;
         }
-        final item = tester.getRect(
-          find.byKey(ValueKey('messengerPrimaryNav-$id')),
-        );
+        final item = tester.getRect(find.byKey(ValueKey(id)));
         expect(prior.center.dx, closeTo(item.center.dx, .001));
         expect(
           find.byType(AppLauncherScreen),
-          id == 'apps' ? findsOneWidget : findsNothing,
+          id == 'messengerPrimaryNav-apps' ? findsOneWidget : findsNothing,
         );
         expect(tester.takeException(), isNull);
       }
 
-      await verify('activity', forward: true);
-      await verify('apps', forward: true);
-      await verify('chats', forward: false);
+      await verify('messengerPrimaryNav-activity', forward: true);
+      await verify('messengerPrimaryNav-apps', forward: true);
+      await verify('chatFilter-all', forward: false);
 
       await pumpShell(
         tester,
@@ -2865,12 +3693,14 @@ void main() {
       );
       animated = tester.widget<AnimatedPositioned>(pill);
       expect(animated.duration, Duration.zero);
-      for (final id in ['activity', 'apps', 'chats']) {
-        await tester.tap(find.byKey(ValueKey('messengerPrimaryNav-$id')));
+      for (final id in [
+        'messengerPrimaryNav-activity',
+        'messengerPrimaryNav-apps',
+        'chatFilter-all',
+      ]) {
+        await tester.tap(find.byKey(ValueKey(id)));
         await tester.pump();
-        final item = tester.getRect(
-          find.byKey(ValueKey('messengerPrimaryNav-$id')),
-        );
+        final item = tester.getRect(find.byKey(ValueKey(id)));
         expect(tester.getRect(pill).center.dx, closeTo(item.center.dx, .001));
         await tester.pump(const Duration(milliseconds: 200));
         expect(tester.takeException(), isNull);

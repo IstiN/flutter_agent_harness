@@ -17,6 +17,7 @@ import 'fa_glyphs.dart';
 import 'markdown_style.dart';
 import 'media_player.dart';
 import 'media_tool_names.dart';
+import 'system_notice_tile.dart';
 import 'fa_chat_host.dart';
 import 'fa_kaomoji.dart';
 import 'upload_utils.dart' show isInlineImageMimeType, mimeTypeForUploadName;
@@ -141,11 +142,29 @@ class ChatMessageTile extends StatelessWidget {
   /// tool/system rows for everything else (incl. `widget` with no builder
   /// or a null tile).
   Widget _roleTile(BuildContext context) {
+    if (message.role == 'systemNoticeHidden') return const SizedBox.shrink();
+    final systemNotices = _systemNotices;
+    if (systemNotices != null) {
+      return SystemNoticeTile(notices: systemNotices);
+    }
     if (message.role == 'widget') return _dynamicTile(context);
     if (message.role == 'user') return _textBubble(context, isUser: true);
     if (message.role == 'assistant') return _textBubble(context, isUser: false);
     if (message.role == 'thinking') return _thinkingTile(context);
     return _toolOrSystemTile(context);
+  }
+
+  List<String>? get _systemNotices {
+    final data = message.data;
+    if (message.role == 'systemNoticeGroup' && data is Map) {
+      final raw = data['systemNotices'];
+      if (raw is List) {
+        final notices = raw.whereType<String>().toList(growable: false);
+        if (notices.isNotEmpty) return notices;
+      }
+    }
+    if (isFaSystemNoticeContent(message.content)) return [message.content];
+    return null;
   }
 
   /// A `widget`-role message renders as the host's live dynamic-message
@@ -174,9 +193,11 @@ class ChatMessageTile extends StatelessWidget {
   };
 
   Widget _textBubble(BuildContext context, {required bool isUser}) {
-    // Empty assistant bubbles (model returned no text) render as nothing —
-    // they would otherwise show as a blank gray rectangle between tool calls.
-    if (message.content.trim().isEmpty && !isUser) {
+    // Whitespace-only text has no visible payload: never leave an empty
+    // assistant card or blue user capsule behind. A user message with real
+    // attachments still renders its attachment strip without a text body.
+    if (message.content.trim().isEmpty &&
+        (!isUser || message.attachments.isEmpty)) {
       return const SizedBox.shrink();
     }
     final withCopy = _wrapWithCopyButton(
@@ -529,8 +550,16 @@ class ChatMessageTile extends StatelessWidget {
   }
 
   Widget _toolOrSystemTile(BuildContext context) {
-    final toolName = message.toolName;
-    final content = message.content;
+    final rawToolName = message.toolName;
+    final toolName = rawToolName == null || rawToolName.trim().isEmpty
+        ? null
+        : rawToolName;
+    final content = message.content.trim().isEmpty ? '' : message.content;
+    // A nameless whitespace-only system/tool row has no status, heading or
+    // output to show; rendering its shell leaves only chevron/copy chrome.
+    if (toolName == null && content.isEmpty) {
+      return const SizedBox.shrink();
+    }
     final isError = message.isError;
     final palette = fahChatColorsOf(context);
     final isLight = Theme.of(context).brightness == Brightness.light;
@@ -874,10 +903,11 @@ class _HoverCopyWrapState extends State<_HoverCopyWrap> {
           widget.child,
           if (show)
             Positioned(
-              // Sits half-outside the bubble's padding: breathing room
-              // from the text without covering the first line.
-              top: -6,
-              right: -6,
+              // Keep the whole 28px hit target inside the bubble's clip
+              // bounds; the previous negative offset cropped the glyph at
+              // rounded corners and at the transcript viewport edge.
+              top: 0,
+              right: 0,
               child: _CopyIconButton(
                 text: widget.copy,
                 color: FahColors.of(context).dim.withValues(alpha: 0.7),

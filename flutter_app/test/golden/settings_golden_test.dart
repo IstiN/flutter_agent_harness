@@ -20,6 +20,7 @@ import 'package:fa/l10n/app_localizations.dart';
 import 'package:fa/l10n/l10n_ext.dart';
 import 'package:fa/services/agent_network_controller.dart';
 import 'package:fa/services/agent_service.dart';
+import 'package:fa/services/image_preview_store.dart';
 import 'package:fa/services/media_models_store.dart';
 import 'package:fa/services/provider_registry.dart';
 import 'package:fa/services/session_keys_store.dart';
@@ -42,6 +43,7 @@ import 'package:fa/ui/screens/tools_availability_section.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
+import 'package:fa_ui/fa_ui.dart' as faui;
 import 'package:flutter_test/flutter_test.dart';
 
 import 'golden_test_helper.dart';
@@ -364,6 +366,13 @@ void main() {
       }
 
       // Wired tools toggle live; absent capabilities show their reason.
+      // Fit the frame to the full tools list (see the controls frames):
+      // a fixed viewport crops the last wired tool mid-row.
+      final position = tester
+          .state<ScrollableState>(find.byType(Scrollable))
+          .position;
+      tester.view.physicalSize = Size(1280, 800 + position.maxScrollExtent);
+      await tester.pump();
       await expectGolden(tester, 'settings_tools_availability');
     });
 
@@ -608,6 +617,179 @@ void main() {
 
       // Icon + title + hint, the switch at the core default (on).
       await expectGolden(tester, 'settings_redaction');
+    });
+  });
+
+  group('settings screen host frames', () {
+    setUp(() => faui.debugFaGlassAlwaysFake = true);
+    tearDown(() => faui.debugFaGlassAlwaysFake = false);
+
+    /// The full SettingsScreen with a live fake service, so the grouped
+    /// Providers/Models/Skills/Tools/Redaction cards all render.
+    Widget screen() {
+      final service = _fakeService();
+      return FahThemeScope(
+        controller: ThemeController.inMemory(),
+        child: ImagePreviewScope(
+          store: ImagePreviewStore(MemoryExecutionEnv()),
+          child: SettingsScreen(service: service),
+        ),
+      );
+    }
+
+    testWidgets('settings screen on a narrow phone frame (glass)', (
+      tester,
+    ) async {
+      await pumpGolden(
+        tester,
+        screen(),
+        size: goldenSizePhone,
+        theme: faui.buildFaTheme(
+          direction: faui.FaVisualDirection.glass,
+          brightness: Brightness.dark,
+        ),
+        wrap: (child) => child,
+      );
+      await expectGolden(tester, 'settings_screen_phone_glass_dark');
+    });
+
+    testWidgets('settings screen on a narrow phone frame (opaque)', (
+      tester,
+    ) async {
+      await pumpGolden(
+        tester,
+        screen(),
+        size: goldenSizePhone,
+        theme: faui.buildFaTheme(
+          direction: faui.FaVisualDirection.graphite,
+          brightness: Brightness.dark,
+        ),
+        wrap: (child) => child,
+      );
+      await expectGolden(tester, 'settings_screen_phone_graphite_dark');
+    });
+
+    /// A vivid, non-uniform home behind the dialog: a strong token
+    /// gradient plus a grid of app cards exactly where the dialog lands,
+    /// so the transparent glass has high-contrast content to blur.
+    Widget behindDialog() {
+      return Builder(
+        builder: (context) {
+          final tokens = faui.FaDesignTokens.of(context);
+          return DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [
+                  tokens.accent.withValues(alpha: .65),
+                  tokens.accentSoft,
+                  tokens.backgroundAlt,
+                  tokens.accentSoft.withValues(alpha: .8),
+                ],
+                stops: const [0, .35, .7, 1],
+              ),
+            ),
+            child: Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    'Fa workspace',
+                    style: Theme.of(context).textTheme.headlineMedium,
+                  ),
+                  const SizedBox(height: 12),
+                  Wrap(
+                    spacing: 12,
+                    runSpacing: 12,
+                    children: [
+                      for (final label in [
+                        'Chat',
+                        'Agents',
+                        'Files',
+                        'Apps',
+                        'Activity',
+                        'Store',
+                      ])
+                        faui.FaSurface(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 20,
+                            vertical: 14,
+                          ),
+                          child: Text(
+                            label,
+                            style: Theme.of(context).textTheme.titleMedium,
+                          ),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  TextButton(
+                    onPressed: () => faui.pushFaPage<void>(
+                      context,
+                      screen(),
+                      dialogMaxWidth: 840,
+                    ),
+                    child: const Text('Open settings'),
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      );
+    }
+
+    Future<void> openDialog(
+      WidgetTester tester, {
+      Brightness brightness = Brightness.dark,
+    }) async {
+      await pumpGolden(
+        tester,
+        behindDialog(),
+        size: goldenSizeDesktop,
+        theme: faui.buildFaTheme(
+          direction: faui.FaVisualDirection.glass,
+          brightness: brightness,
+        ),
+      );
+      await tester.tap(find.text('Open settings'));
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('settings screen in the wide glass dialog', (tester) async {
+      await openDialog(tester);
+      // Top of the scroll: providers/models/visual-direction groups over
+      // the live backdrop. The bottom edge clips mid-content, which is
+      // simply the scrollable surface's viewport.
+      await expectGolden(tester, 'settings_screen_dialog_glass_dark');
+    });
+
+    testWidgets('settings screen in the wide light glass dialog', (
+      tester,
+    ) async {
+      await openDialog(tester, brightness: Brightness.light);
+      // Regression for the user-visible murky-gray sheet: the light platter
+      // must stay readable over the dark, saturated workspace behind it.
+      await expectGolden(tester, 'settings_screen_dialog_glass_light');
+    });
+
+    testWidgets('settings dialog scrolled to the content end', (tester) async {
+      await openDialog(tester);
+      // The content END: the frame closes on the scroll view's real
+      // bottom padding — no row clipped mid-glyph, no flush-boundary
+      // ambiguity about whether the list continues.
+      final scrollable = tester.state<ScrollableState>(
+        find
+            .descendant(
+              of: find.byType(Dialog),
+              matching: find.byType(Scrollable),
+            )
+            .first,
+      );
+      scrollable.position.jumpTo(scrollable.position.maxScrollExtent);
+      await tester.pumpAndSettle();
+      await expectGolden(tester, 'settings_screen_dialog_glass_dark_end');
     });
   });
 

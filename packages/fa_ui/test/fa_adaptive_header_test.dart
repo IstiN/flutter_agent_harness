@@ -438,4 +438,47 @@ void main() {
     expect(tester.getSize(find.byType(FaHeaderCircularAction)).width, 36);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('action-only chip reserves a small fit width then grows', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(
+          body: SizedBox(
+            width: 240,
+            child: FaAdaptiveHeader(
+              chipMinWidth: 80,
+              chipMaxWidth: 200,
+              chip: SizedBox(
+                key: ValueKey('growingChip'),
+                height: 28,
+                child: Text(
+                  'provider/a-very-long-model-name',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              actions: [
+                FaHeaderAction(
+                  key: ValueKey('chipAction'),
+                  icon: Icons.timeline,
+                  label: 'Trajectory',
+                  onPressed: _noop,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+
+    expect(find.byKey(const ValueKey('chipAction')), findsOneWidget);
+    expect(
+      tester.getSize(find.byKey(const ValueKey('growingChip'))).width,
+      192,
+    );
+  });
 }
+
+void _noop() {}

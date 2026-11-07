@@ -75,6 +75,11 @@ final class ChatListController extends ChangeNotifier {
   bool _localLoadActive = false;
   bool _localReloadQued = false;
 
+  /// Viewport ids built during one frame, coalesced into one decoration
+  /// request. Nothing warms the non-visible corpus (issue #2053 follow-up).
+  final Set<String> _visibleLocalIds = {};
+  bool _visibleWarmScheduled = false;
+
   ChatListFilter _filter = ChatListFilter.all;
   ChatNetworkFilter _networkFilter = const ChatNetworkFilter.all();
   String _search = '';
@@ -90,6 +95,23 @@ final class ChatListController extends ChangeNotifier {
 
   Future<void> load() async {
     await Future.wait([_loadLocal(), _loadNetwork()]);
+  }
+
+  /// Queues lazy name/preview/legacy-parent work for one visible local row.
+  /// Calls from all itemBuilders in a frame share a single microtask batch.
+  void warmVisibleLocalEntry(String sessionId) {
+    _visibleLocalIds.add(sessionId);
+    if (_visibleWarmScheduled) return;
+    _visibleWarmScheduled = true;
+    scheduleMicrotask(() {
+      _visibleWarmScheduled = false;
+      final ids = _visibleLocalIds.toList();
+      _visibleLocalIds.clear();
+      final adapter = _localAdapter;
+      if (adapter is LocalChatListAdapter) {
+        unawaited(adapter.warmVisible(ids));
+      }
+    });
   }
 
   Future<void> _loadLocal() async {
@@ -141,7 +163,7 @@ final class ChatListController extends ChangeNotifier {
     AppLog.i(
       'chats',
       'local listing: first emission in '
-      '${_listingClock.elapsedMilliseconds}ms (${entries.length} rows)',
+          '${_listingClock.elapsedMilliseconds}ms (${entries.length} rows)',
     );
   }
 

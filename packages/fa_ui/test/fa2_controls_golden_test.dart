@@ -4,9 +4,10 @@
 
 /// Control-family goldens: a switch/radio/checkbox/slider row shot in
 /// every Fa 2.0 direction × brightness, so the token-themed controls
-/// (custom [FaSwitch] capsule, themed radios/checkboxes/sliders) are
-/// locked pixel-by-pixel in light AND dark. Fonts are loaded by the
-/// package test bootstrap (`test/flutter_test_config.dart`).
+/// (kit [GlassSwitch] in glass, the custom capsule elsewhere, and themed
+/// radios/checkboxes/sliders) are locked pixel-by-pixel in light AND dark.
+/// Fonts are loaded by the package test bootstrap
+/// (`test/flutter_test_config.dart`).
 library;
 
 import 'package:fa_ui/fa_ui.dart';
@@ -14,39 +15,41 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  setUp(() => debugFaGlassAlwaysFake = true);
+  tearDown(() => debugFaGlassAlwaysFake = false);
+
   for (final direction in FaVisualDirection.values) {
     for (final brightness in Brightness.values) {
-      testWidgets(
-        'controls row ${direction.name} ${brightness.name}',
-        (tester) async {
-          tester.view.physicalSize = const Size(420, 320);
-          tester.view.devicePixelRatio = 1.0;
-          addTearDown(tester.view.reset);
-          await tester.pumpWidget(
-            MaterialApp(
-              debugShowCheckedModeBanner: false,
-              // The bundled Inter preset: the package golden env registers
-              // Inter (not the platform faces the system preset requests),
-              // and this golden locks control styling, not type.
-              theme: buildFaTheme(
-                direction: direction,
-                brightness: brightness,
-                fontPreset: FaFontPreset.inter,
-              ),
-              home: Scaffold(
-                body: Center(child: _ControlsRow(direction: direction)),
-              ),
+      testWidgets('controls row ${direction.name} ${brightness.name}', (
+        tester,
+      ) async {
+        tester.view.physicalSize = const Size(420, 320);
+        tester.view.devicePixelRatio = 1.0;
+        addTearDown(tester.view.reset);
+        await tester.pumpWidget(
+          MaterialApp(
+            debugShowCheckedModeBanner: false,
+            // The bundled Inter preset: the package golden env registers
+            // Inter (not the platform faces the system preset requests),
+            // and this golden locks control styling, not type.
+            theme: buildFaTheme(
+              direction: direction,
+              brightness: brightness,
+              fontPreset: FaFontPreset.inter,
             ),
-          );
-          await tester.pumpAndSettle();
-          await expectLater(
-            find.byType(MaterialApp),
-            matchesGoldenFile(
-              'goldens/fa2_controls_${direction.name}_${brightness.name}.png',
+            home: Scaffold(
+              body: Center(child: _ControlsRow(direction: direction)),
             ),
-          );
-        },
-      );
+          ),
+        );
+        await tester.pumpAndSettle();
+        await expectLater(
+          find.byType(MaterialApp),
+          matchesGoldenFile(
+            'goldens/fa2_controls_${direction.name}_${brightness.name}.png',
+          ),
+        );
+      });
     }
   }
 }

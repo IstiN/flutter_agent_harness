@@ -232,6 +232,8 @@ void main() {
       wrap: (child) => child,
     );
 
+    await tester.tap(find.byKey(const ValueKey('messengerSearchReveal')));
+    await tester.pump();
     await typeAndBlur(tester, 'alpha');
     expect(find.text('Alpha chat'), findsOneWidget);
     expect(find.text('Beta chat'), findsNothing);

@@ -2,6 +2,7 @@
 // Use of this source code is governed by a MIT-style license that can be
 // found in the LICENSE file.
 
+import 'package:fa/ui/apps/presentation_panel_card.dart';
 import 'package:fa/ui/widgets/file_browser.dart';
 import 'package:fa_ui/fa_ui.dart';
 import 'package:flutter/foundation.dart' show defaultTargetPlatform, kIsWeb;
@@ -77,23 +78,16 @@ final class FilesAppPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final tokens = FaDesignTokens.of(context);
     // Explicit onClose wins; otherwise the host's docked-panel scope (the
     // in-chat panel) carries the close, and surfaces without either (the
     // end drawer) keep no circle.
     final close = onClose ?? FaFilesPanelScope.maybeOf(context)?.closePanel;
-    final realGlass = tokens.direction == FaVisualDirection.glass;
-    final card = FaSurface(
-      key: realGlass ? null : const ValueKey('filesAppPanelCard'),
-      glass: true,
-      useBackdropGroup: true,
-      color: tokens.surface1,
-      tintAmount: .4,
-      tintOpacity: .78,
-      borderRadius: BorderRadius.circular(realGlass ? 17 : 18),
+    return FaPresentationPanelCard(
+      key: const ValueKey('filesAppPanel'),
+      cardKey: const ValueKey('filesAppPanelCard'),
       // The docked header shares y=35 with the sidebar and chat actions.
       // Only standalone routes keep the original dense inset.
-      padding: EdgeInsets.fromLTRB(6, topCenterline ? 2 : 3, 6, 6),
+      contentPadding: EdgeInsets.fromLTRB(6, topCenterline ? 2 : 3, 6, 6),
       child: FileBrowser(
         env: presentation.env,
         initialPath: presentation.initialPath,
@@ -108,30 +102,6 @@ final class FilesAppPanel extends StatelessWidget {
         headerKey: const ValueKey('filesAppPanelToolbar'),
         searchKey: const ValueKey('filesAppSearch'),
         closeKey: const ValueKey('filesAppClose'),
-      ),
-    );
-    return ColoredBox(
-      key: const ValueKey('filesAppPanel'),
-      color: Theme.of(context).scaffoldBackgroundColor,
-      child: Padding(
-        padding: const EdgeInsets.all(8),
-        child: realGlass
-            ? DecoratedBox(
-                key: const ValueKey('filesAppPanelCard'),
-                decoration: BoxDecoration(
-                  color: tokens.surface1,
-                  borderRadius: BorderRadius.circular(18),
-                  border: Border.all(color: tokens.hairline),
-                ),
-                child: Padding(
-                  padding: const EdgeInsets.all(1),
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(17),
-                    child: card,
-                  ),
-                ),
-              )
-            : card,
       ),
     );
   }

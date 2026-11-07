@@ -15,6 +15,7 @@ import 'package:fa/network/models.dart';
 import 'package:fa/network/network_mode.dart';
 import 'package:fa/network/network_session.dart';
 import 'package:fa/network/network_session_manager.dart';
+import 'package:fa/ui/widgets/fah_wallpaper.dart';
 
 import 'add_agent_dialog.dart';
 import 'channel_key_import_dialog.dart';
@@ -306,6 +307,9 @@ class _NetworkChatPageState extends State<NetworkChatPage> {
                   ),
                   title: label,
                   showAppBar: widget.showAppBar,
+                  // Network channels are the same transparent chat surface
+                  // as Local sessions, never an opaque black Scaffold.
+                  wallpaperBuilder: (_) => const FahWallpaper(),
                   mentionOptionsBuilder: (query) =>
                       _mentionOptions(session, query),
                   projectIcon: widget.showAppBar

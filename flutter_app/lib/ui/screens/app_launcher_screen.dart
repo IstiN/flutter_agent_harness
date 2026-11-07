@@ -30,9 +30,11 @@ import 'package:fa/services/launcher_layout_store.dart';
 import 'package:fa/services/widget_publication_store.dart';
 import 'package:fa/services/widget_publish_service.dart';
 import 'package:fa/ui/apps/app_launcher_controller.dart';
+import 'package:fa/ui/widgets/fah_wallpaper.dart';
 import 'package:fa/ui/widgets/github_account_section.dart';
 import 'package:fa/ui/widgets/messenger_navigation_controls.dart';
 import 'package:fa/ui/widgets/messenger_section_header.dart';
+import 'package:fa/ui/widgets/session_search_field.dart';
 import 'package:fa/ui/widgets/widget_publish_sheet.dart';
 import 'package:fa/ui/screens/settings.dart';
 import 'package:fa/ui/network/network_mode_chip.dart';
@@ -69,6 +71,8 @@ class AppLauncherScreen extends StatefulWidget {
     this.showFilesTile = true,
     this.fullScreen = false,
     this.onProfile,
+    this.onBack,
+    this.onOpenSettings,
     this.controller,
   });
 
@@ -113,7 +117,16 @@ class AppLauncherScreen extends StatefulWidget {
   /// Opens the same profile surface as the messenger's other sections.
   final VoidCallback? onProfile;
 
-  /// Shares section, search, and Quick open state with the Apps directory.
+  /// Returns from the shell's Apps surface to Chats. Standalone routes use
+  /// [Navigator.maybePop] when no explicit callback is supplied.
+  final VoidCallback? onBack;
+
+  /// Shell-owned Settings navigation. When supplied, the system Settings
+  /// tile uses the same categorized sidebar/content surface as the rail
+  /// instead of pushing the legacy dialog inside Apps.
+  final Future<void> Function()? onOpenSettings;
+
+  /// Shares section and search state with the Apps directory.
   final AppLauncherController? controller;
 
   @override
@@ -138,12 +151,20 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
   LauncherLayoutStore? _layout;
   late final AppsStore _appsStore;
   List<JsAppInfo>? _apps;
+  int _appsReloadGeneration = 0;
   Object? _error;
   String? _openFolderId;
 
   /// Search field above the grid; a non-empty query swaps the draggable
   /// grid for a flat filtered results grid (no drag&drop in search mode).
   TextEditingController get _searchController => _controller.searchController;
+
+  var _narrowSearchVisible = false;
+
+  bool get _narrowSearchShown =>
+      _narrowSearchVisible ||
+      _searchController.text.trim().isNotEmpty ||
+      _controller.searchFocusNode.hasFocus;
 
   late final AppLauncherController _controller;
   late final bool _ownsController;
@@ -185,6 +206,7 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
     _attachFsRevision();
     _layout?.addListener(_onLayoutChanged);
     _searchController.addListener(_onSearchChanged);
+    _controller.searchFocusNode.addListener(_onSearchFocusChanged);
     if (_layout == null) unawaited(_loadLayout());
     unawaited(_reloadApps());
     unawaited(_autoUpdateWidgets());
@@ -215,6 +237,7 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
   void dispose() {
     widget.manager.removeListener(_onManagerChanged);
     _controller.removeListener(_onControllerChanged);
+    _controller.searchFocusNode.removeListener(_onSearchFocusChanged);
     if (_ownsController) {
       _searchController.removeListener(_onSearchChanged);
       _controller.dispose();
@@ -240,6 +263,23 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
 
   void _onSearchChanged() {
     if (mounted) setState(() {});
+  }
+
+  void _onSearchFocusChanged() {
+    if (mounted) setState(() {});
+  }
+
+  void _onSearchReveal() {
+    setState(() => _narrowSearchVisible = true);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _controller.searchFocusNode.requestFocus();
+    });
+  }
+
+  void _onSearchClose() {
+    _searchController.clear();
+    _controller.searchFocusNode.unfocus();
+    setState(() => _narrowSearchVisible = false);
   }
 
   Future<void> _loadLayout() async {
@@ -293,20 +333,24 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
   }
 
   Future<void> _reloadApps() async {
+    final generation = ++_appsReloadGeneration;
+    bool stale() => !mounted || generation != _appsReloadGeneration;
     try {
       // The publish ledger persists in the app sandbox (issue #35); the
       // launcher owns the env, so it initializes the shared instance the
       // settings section and menus read.
       unawaited(initSharedWidgetPublicationStore(widget.manager.env));
       await _appsStore.seedBundledApps();
+      if (stale()) return;
       final apps = await _appsStore.listApps();
+      if (stale()) return;
       // Publish eligibility (issue #35): catalog downloads are already
       // published BY the catalog — only user/agent-created widgets publish.
       final installed = <String>{};
       for (final app in apps) {
         if (await _appsStore.isCatalogInstalled(app.id)) installed.add(app.id);
+        if (stale()) return;
       }
-      if (!mounted) return;
       setState(() {
         _apps = apps;
         _catalogInstalled = installed;
@@ -314,7 +358,7 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
       });
       _syncApps();
     } on Object catch (error) {
-      if (mounted) setState(() => _error = error);
+      if (!stale()) setState(() => _error = error);
     }
   }
 
@@ -875,13 +919,29 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
     AppAnalytics.instance.widgetEvent('remove', params: {'id': app.id});
     final removed = await _appsStore.removeWidget(app.id, force: true);
     if (!mounted) return;
-    await _finishRemove(removed, l10n.launcherRestoreDemoAppFailed);
+    await _finishRemove(
+      removed,
+      l10n.launcherRestoreDemoAppFailed,
+      appId: app.id,
+    );
   }
 
-  /// The removal tail (gh-1848 split): refresh the grid on success; the
-  /// failure snack covers the rare storage error without dying silently.
-  Future<void> _finishRemove(bool removed, String failureMessage) async {
+  /// The removal tail: take the confirmed tile out of the visible projection
+  /// immediately, then reconcile from storage. A slow pre-delete reload is
+  /// generation-stale and cannot resurrect it.
+  Future<void> _finishRemove(
+    bool removed,
+    String failureMessage, {
+    required String appId,
+  }) async {
     if (removed) {
+      setState(() {
+        _apps = _apps?.where((app) => app.id != appId).toList();
+        _catalogInstalled = _catalogInstalled
+            .where((id) => id != appId)
+            .toSet();
+      });
+      _syncApps();
       await _reloadApps();
     } else {
       showFahErrorSnack(context, failureMessage);
@@ -950,8 +1010,11 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
   }
 
   Future<void> _openSettings() async {
+    if (widget.onOpenSettings case final openSettings?) {
+      await openSettings();
+      return;
+    }
     final service = widget.manager.active?.service;
-    if (service == null) return;
     AppAnalytics.instance.settingsOpened();
     // The Fa2 page presentation — the same centered/adaptive surface the
     // shell's Settings entry uses, instead of a raw full-page Material
@@ -961,12 +1024,14 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
       SettingsScreen(
         service: service,
         env: widget.manager.env,
+        categorized: true,
         registry: widget.registry,
         lastConnectionStore: widget.lastConnectionStore,
         // The same store instance the launcher listens to — grid changes
         // apply live.
         layoutStore: _layout,
       ),
+      dialogMaxWidth: 840,
     );
   }
 
@@ -1009,14 +1074,10 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
       context: context,
       builder: (dialogContext) => AlertDialog(
         title: Text(dialogContext.l10n.launcherRenameFolderTooltip),
-        content: TextField(
-          // Raw TextField (not FaTextField): the dialog needs autofocus +
-          // Enter-to-submit, which FaTextField doesn't expose yet.
+        content: FaTextField(
           controller: controller,
           autofocus: true,
-          decoration: InputDecoration(
-            hintText: dialogContext.l10n.launcherFolderNameHint,
-          ),
+          hintText: dialogContext.l10n.launcherFolderNameHint,
           onSubmitted: (value) => Navigator.of(dialogContext).pop(value),
         ),
         actions: [
@@ -1054,97 +1115,114 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
       // Let the Apps surface and wallpaper reach the bottom edge; the grid
       // applies its own safe-area clearance.
       backgroundColor: colors.bg,
-      body: SafeArea(
-        bottom: false,
-        child: Stack(
-          children: [
-            _buildGridArea(colors),
-            if (_openFolderId != null) ...[
-              _buildFolderBarrier(colors),
-              _buildFolderPanel(colors),
-            ],
-          ],
-        ),
+      body: Stack(
+        fit: StackFit.expand,
+        children: [
+          const Positioned.fill(child: FahWallpaper()),
+          SafeArea(
+            bottom: false,
+            child: Stack(
+              children: [
+                _buildGridArea(colors),
+                if (_openFolderId != null) ...[
+                  _buildFolderBarrier(colors),
+                  _buildFolderPanel(colors),
+                ],
+              ],
+            ),
+          ),
+        ],
       ),
+    );
+  }
+
+  Widget? _buildBackButton() {
+    var onBack = widget.onBack;
+    if (onBack == null && Navigator.of(context).canPop()) {
+      onBack = () => unawaited(Navigator.of(context).maybePop());
+    }
+    if (onBack == null) return null;
+    return FaIconActionButton(
+      buttonKey: const ValueKey('appsBackButton'),
+      onPressed: onBack,
+      tooltip: MaterialLocalizations.of(context).backButtonTooltip,
+      diameter: 36,
+      glyphSize: 20,
+      glass: true,
+      child: const FaIcon(FaSemanticIcon.back),
     );
   }
 
   Widget _buildNarrowHeader(FahColors colors) {
-    return MessengerSectionHeader(
+    return MessengerFloatingPageHeader(
+      key: const ValueKey('appsOverviewHeader'),
       title: context.l10n.appsGridTitle,
-      searchController: _searchController,
-      searchFocusNode: _controller.searchFocusNode,
-      searchHint: context.l10n.launcherSearchHint,
-      onProfile: widget.onProfile ?? () {},
-      onNew: () {},
-      compact: true,
+      subtitle: context.l10n.appsOverviewSubtitle,
+      icon: Icons.grid_view_rounded,
+      onIconTap: widget.onProfile,
+      leading: _buildBackButton(),
     );
   }
 
   Widget _buildOverviewHeader(FahColors colors) {
-    // The ONE chrome band (styleguide audit): eyebrow + title + capsule
-    // actions on a single shared 16pt inset over one hairline — the old
-    // bare strip with its muted-blue TextButton is gone.
-    return Container(
+    return MessengerFloatingPageHeader(
       key: const ValueKey('appsOverviewHeader'),
-      padding: const EdgeInsets.fromLTRB(16, 8, 12, 8),
-      decoration: BoxDecoration(
-        border: Border(
-          bottom: BorderSide(color: colors.border.withValues(alpha: .55)),
-        ),
-      ),
-      child: Row(
-        children: [
-          Expanded(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // The band's eyebrow carries the shared FaSectionEyebrow
-                // typography as a plain Text — the sidebar's directory
-                // toolbar owns the one widget-level eyebrow for 'Apps'
-                // (the shell test pins that count).
-                Text(
-                  context.l10n.appsGridTitle,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: colors.dim,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w600,
-                    letterSpacing: .2,
-                  ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  context.l10n.appsOverviewSubtitle,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: colors.text,
-                    fontSize: 15,
-                    fontWeight: FontWeight.w600,
-                    height: 1.2,
-                  ),
-                ),
-              ],
-            ),
+      title: context.l10n.appsGridTitle,
+      subtitle: context.l10n.appsOverviewSubtitle,
+      icon: Icons.grid_view_rounded,
+      onIconTap: widget.onProfile,
+      leading: _buildBackButton(),
+      actions: [
+        if (widget.networkMode != null && widget.networkSessions != null)
+          NetworkModeChip(
+            controller: widget.networkMode!,
+            manager: widget.networkSessions!,
           ),
-          if (widget.networkMode != null && widget.networkSessions != null) ...[
-            NetworkModeChip(
-              controller: widget.networkMode!,
-              manager: widget.networkSessions!,
-            ),
-            const SizedBox(width: 8),
-          ],
-          FaButton(
-            key: const ValueKey('appsQuickOpen'),
-            label: context.l10n.appsQuickOpen,
-            variant: FaButtonVariant.secondary,
-            onPressed: _controller.quickOpen,
+      ],
+    );
+  }
+
+  Widget _buildNarrowSearch() {
+    final compact =
+        faWindowClassForWidth(MediaQuery.sizeOf(context).width) ==
+        FaWindowClass.small;
+    if (compact && !_narrowSearchShown) {
+      return Align(
+        alignment: Alignment.centerRight,
+        child: FaIconActionButton(
+          buttonKey: const ValueKey('appsNarrowSearchReveal'),
+          onPressed: _onSearchReveal,
+          tooltip: context.l10n.launcherSearchHint,
+          diameter: 32,
+          glyphSize: 21,
+          glass: false,
+          child: const FaIcon(FaSemanticIcon.search),
+        ),
+      );
+    }
+    return Row(
+      children: [
+        Expanded(
+          child: SessionSearchField(
+            key: const ValueKey('appsSearchField'),
+            controller: _searchController,
+            focusNode: _controller.searchFocusNode,
+            hintText: context.l10n.launcherSearchHint,
+          ),
+        ),
+        if (compact) ...[
+          const SizedBox(width: 8),
+          FaIconActionButton(
+            buttonKey: const ValueKey('appsSearchClose'),
+            onPressed: _onSearchClose,
+            tooltip: MaterialLocalizations.of(context).backButtonTooltip,
+            diameter: 32,
+            glyphSize: 22,
+            glass: false,
+            child: const FaIcon(FaSemanticIcon.back),
           ),
         ],
-      ),
+      ],
     );
   }
 
@@ -1157,12 +1235,15 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
     if (_apps == null || layout == null) {
       return const Center(child: CircularProgressIndicator());
     }
-    return Column(
+    final content = Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        widget.fullScreen
-            ? _buildOverviewHeader(colors)
-            : _buildNarrowHeader(colors),
+        const SizedBox(height: MessengerFloatingPageScaffold.bodyTop),
+        if (!widget.fullScreen)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+            child: _buildNarrowSearch(),
+          ),
         if (widget.fullScreen &&
             _tab == _LauncherTab.widgets &&
             _searchController.text.trim().isEmpty)
@@ -1312,6 +1393,12 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
               : _buildLauncherBody(colors),
         ),
       ],
+    );
+    return MessengerFloatingPageScaffold(
+      header: widget.fullScreen
+          ? _buildOverviewHeader(colors)
+          : _buildNarrowHeader(colors),
+      body: content,
     );
   }
 
@@ -1529,11 +1616,14 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
                   crossAxisCount * LauncherGridSpec.cellCrossExtent +
                   (crossAxisCount - 1) * spacing;
               return SingleChildScrollView(
+                key: const ValueKey('appsGridScrollView'),
                 padding: EdgeInsets.fromLTRB(
                   16,
                   8,
                   16,
-                  MediaQuery.viewPaddingOf(context).bottom + 16,
+                  // Clear the floating bottom navigation just like the
+                  // search-results grid; 16 hid the last row behind it.
+                  MediaQuery.viewPaddingOf(context).bottom + 128,
                 ),
                 // Desktop: the grid's left edge sits on the band's 16pt
                 // inset (the audit's 130px dead flank). The phone keeps

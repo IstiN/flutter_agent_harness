@@ -36,6 +36,7 @@ class ModelsSettingsPage extends StatefulWidget {
     this.webLlmEngine,
     this.transformersJsEngine,
     this.queueSection,
+    this.contentOnly = false,
   });
 
   /// The live service the chat-model flow reconfigures and the role/media
@@ -66,6 +67,11 @@ class ModelsSettingsPage extends StatefulWidget {
   /// the session's config scopes.
   final Widget? queueSection;
 
+  /// Returns only the concrete model controls, without route chrome or a
+  /// nested scroll view. The categorized Settings pane embeds these
+  /// controls directly below Providers.
+  final bool contentOnly;
+
   @override
   State<ModelsSettingsPage> createState() => _ModelsSettingsPageState();
 }
@@ -82,66 +88,71 @@ class _ModelsSettingsPageState extends State<ModelsSettingsPage> {
     final taskModels =
         widget.taskModelsStore ?? TaskModelsScope.maybeOf(context);
     final onDeviceConfig = OnDeviceConfigScope.maybeOf(context);
+    final content = Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        // Presets first (one-tap combos), then the main chat model,
+        // the task-role overrides and the media slots.
+        ModelPresetsSection(
+          service: widget.service,
+          lastConnectionStore: widget.lastConnectionStore,
+          taskModelsStore: taskModels,
+        ),
+        const SizedBox(height: 24),
+        const Divider(),
+        const SizedBox(height: 16),
+        DefaultChatModelSection(
+          service: widget.service,
+          registry: widget.registry,
+          lastConnectionStore: widget.lastConnectionStore,
+          modelsFetcher: widget.modelsFetcher,
+          webLlmEngine: widget.webLlmEngine,
+          transformersJsEngine: widget.transformersJsEngine,
+          onDeviceConfigStore: onDeviceConfig,
+        ),
+        const SizedBox(height: 24),
+        const Divider(),
+        const SizedBox(height: 16),
+        if (taskModels != null) ...[
+          faui.TaskModelsSection(
+            store: taskModels,
+            mainBaseUrl: widget.service.activeBaseUrl,
+            mainModelId: widget.service.agentModelId,
+            registry: widget.registry,
+          ),
+          const SizedBox(height: 24),
+          const Divider(),
+          const SizedBox(height: 16),
+        ],
+        // The provider-queue editor (issue #693): the ordered
+        // main-model failover chain picked with the SAME two-step
+        // provider→model flow as the roles above.
+        widget.queueSection ??
+            ProviderQueueSection(
+              projectDir: widget.service.env.sessionCwd,
+              registry: widget.registry,
+              modelsFetcher: widget.modelsFetcher,
+            ),
+        const SizedBox(height: 24),
+        const Divider(),
+        const SizedBox(height: 16),
+        MediaModelsSection(
+          service: widget.service,
+          registry: widget.registry,
+          modelsFetcher: widget.modelsFetcher,
+        ),
+      ],
+    );
+    if (widget.contentOnly) return content;
     return Scaffold(
-      appBar: faAppBar(title: Text(context.l10n.settingsModelsGroupTitle)),
+      appBar: faAppBar(
+        context: context,
+        title: Text(context.l10n.settingsModelsGroupTitle),
+      ),
       body: SafeArea(
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(24),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              // Presets first (one-tap combos), then the main chat model,
-              // the task-role overrides and the media slots.
-              ModelPresetsSection(
-                service: widget.service,
-                lastConnectionStore: widget.lastConnectionStore,
-                taskModelsStore: taskModels,
-              ),
-              const SizedBox(height: 24),
-              const Divider(),
-              const SizedBox(height: 16),
-              DefaultChatModelSection(
-                service: widget.service,
-                registry: widget.registry,
-                lastConnectionStore: widget.lastConnectionStore,
-                modelsFetcher: widget.modelsFetcher,
-                webLlmEngine: widget.webLlmEngine,
-                transformersJsEngine: widget.transformersJsEngine,
-                onDeviceConfigStore: onDeviceConfig,
-              ),
-              const SizedBox(height: 24),
-              const Divider(),
-              const SizedBox(height: 16),
-              if (taskModels != null) ...[
-                faui.TaskModelsSection(
-                  store: taskModels,
-                  mainBaseUrl: widget.service.activeBaseUrl,
-                  mainModelId: widget.service.agentModelId,
-                  registry: widget.registry,
-                ),
-                const SizedBox(height: 24),
-                const Divider(),
-                const SizedBox(height: 16),
-              ],
-              // The provider-queue editor (issue #693): the ordered
-              // main-model failover chain picked with the SAME two-step
-              // provider→model flow as the roles above.
-              widget.queueSection ??
-                  ProviderQueueSection(
-                    projectDir: widget.service.env.sessionCwd,
-                    registry: widget.registry,
-                    modelsFetcher: widget.modelsFetcher,
-                  ),
-              const SizedBox(height: 24),
-              const Divider(),
-              const SizedBox(height: 16),
-              MediaModelsSection(
-                service: widget.service,
-                registry: widget.registry,
-                modelsFetcher: widget.modelsFetcher,
-              ),
-            ],
-          ),
+          child: content,
         ),
       ),
     );

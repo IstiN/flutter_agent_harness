@@ -174,6 +174,8 @@ class _FileBrowserState extends State<FileBrowser> {
   final TextEditingController _ownedSearch = TextEditingController();
   late final TextEditingController _search =
       widget.filterController ?? _ownedSearch;
+  final _searchFocus = FocusNode(debugLabel: 'file-browser-search');
+  var _searchVisible = false;
 
   List<FileInfo>? _entries;
   String? _error;
@@ -290,6 +292,7 @@ class _FileBrowserState extends State<FileBrowser> {
     super.initState();
     widget.fsRevision?.addListener(_onFsRevision);
     _search.addListener(_onFilterChanged);
+    _searchFocus.addListener(_onSearchFocusChanged);
     _segments.addAll(_initialSegments(widget.initialPath));
     _load();
   }
@@ -320,13 +323,32 @@ class _FileBrowserState extends State<FileBrowser> {
   void dispose() {
     widget.fsRevision?.removeListener(_onFsRevision);
     _search.removeListener(_onFilterChanged);
+    _searchFocus.removeListener(_onSearchFocusChanged);
     if (widget.filterController == null) _ownedSearch.dispose();
+    _searchFocus.dispose();
     super.dispose();
   }
 
   /// Host-side search capsule typed into — re-run the (cheap) name filter.
   void _onFilterChanged() {
     if (mounted) setState(() {});
+  }
+
+  void _onSearchFocusChanged() {
+    if (mounted) setState(() {});
+  }
+
+  void _onSearchReveal() {
+    setState(() => _searchVisible = true);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _searchFocus.requestFocus();
+    });
+  }
+
+  void _onSearchClose() {
+    _search.clear();
+    _searchFocus.unfocus();
+    setState(() => _searchVisible = false);
   }
 
   /// Agent-side filesystem change ("hook"): reload the listing and force
@@ -718,6 +740,14 @@ class _FileBrowserState extends State<FileBrowser> {
 
   Widget _buildHeader(BuildContext context) {
     final tokens = FaDesignTokens.of(context);
+    final compact =
+        faWindowClassForWidth(MediaQuery.sizeOf(context).width) ==
+        FaWindowClass.small;
+    final searchShown =
+        !compact ||
+        _searchVisible ||
+        _search.text.trim().isNotEmpty ||
+        _searchFocus.hasFocus;
     final actions = <FaHeaderAction>[
       FaHeaderAction(
         key: const ValueKey('fileBrowserRefresh'),
@@ -744,6 +774,10 @@ class _FileBrowserState extends State<FileBrowser> {
     return FilesChrome(
       key: widget.headerKey ?? const ValueKey('fileBrowserHeader'),
       searchController: _search,
+      searchFocusNode: _searchFocus,
+      searchCollapsed: !searchShown,
+      onSearchReveal: compact && !searchShown ? _onSearchReveal : null,
+      onSearchClose: compact && searchShown ? _onSearchClose : null,
       actions: actions,
       menuColor: tokens.surface2,
       onClose: widget.onClose,
@@ -1213,16 +1247,11 @@ class _FileBrowserState extends State<FileBrowser> {
   }
 }
 
-/// One circular chrome action in the Files surfaces (band actions, the
-/// close circle, the path-bar up/back buttons) — the same
-/// [FaHeaderCircularAction] family everywhere, so every icon button in
-/// Files reads as one chrome instead of ad-hoc circles.
-///
-/// One circular icon action in the Files chrome — now a thin delegate to
-/// the fa_ui styleguide's ONE [FaIconActionButton] (36pt composer scale,
-/// token fill/hairline/ink), so the band's ✕/⋮/refresh/upload circles,
-/// the chat header circles and the sidebar toggle all share a single
-/// painter instead of ad-hoc per-surface circles.
+/// One circular chrome action for standalone Files controls (the close
+/// button and path/preview navigation) — a thin delegate to the fa_ui
+/// styleguide's [FaIconActionButton] (36pt composer scale, token
+/// fill/hairline/ink). Adjacent browser actions use [FaIconActionBand]
+/// instead, so they share one capsule rather than individual circles.
 ///
 /// [buttonKey] lands on the inner button — the keyed widget sits INSIDE
 /// its circular chrome (exactly where the pre-band header keyed its bar
@@ -1283,6 +1312,10 @@ final class FilesChrome extends StatelessWidget {
   const FilesChrome({
     super.key,
     required this.searchController,
+    this.searchFocusNode,
+    this.searchCollapsed = false,
+    this.onSearchReveal,
+    this.onSearchClose,
     this.actions = const <FaHeaderAction>[],
     this.onClose,
     this.closeKey,
@@ -1294,6 +1327,12 @@ final class FilesChrome extends StatelessWidget {
 
   /// The live filter the capsule types into (the browser's search state).
   final TextEditingController searchController;
+  final FocusNode? searchFocusNode;
+
+  /// Compact hosts collapse to a reveal action until search is active.
+  final bool searchCollapsed;
+  final VoidCallback? onSearchReveal;
+  final VoidCallback? onSearchClose;
 
   /// The browser actions (refresh, upload, iCloud sync, mount), in
   /// priority order — the tail demotes into the ⋮ menu first.
@@ -1369,11 +1408,12 @@ final class FilesChrome extends StatelessWidget {
             // [_titleExtras].
             double budget({required int inline, required bool overflow}) {
               var w = _searchTrailingGap;
-              w +=
-                  inline * _actionSlot +
-                  (inline > 1 ? (inline - 1) * _actionGap : 0);
-              if (overflow) w += _actionGap + _actionSlot;
+              final bandActions = inline + (overflow ? 1 : 0);
+              // The inline actions and overflow share one capsule: no
+              // per-action gap, just the band's 2pt inset on either side.
+              if (bandActions > 0) w += bandActions * _actionSlot + 4;
               if (onClose != null) w += _actionGap + _actionSlot;
+              if (onSearchClose != null) w += _actionGap + _actionSlot;
               return width - w;
             }
 
@@ -1450,22 +1490,49 @@ final class FilesChrome extends StatelessWidget {
                 // headers render — the old sidebar look, NOT a taller
                 // Files-specific capsule. The browser filters from its
                 // own controller listener.
-                Expanded(
-                  child: SessionSearchField(
-                    key: searchKey ?? const ValueKey('fileBrowserSearch'),
-                    controller: searchController,
-                    hintText: context.l10n.filesSearchHint,
+                if (searchCollapsed)
+                  Expanded(
+                    child: Align(
+                      alignment: Alignment.centerRight,
+                      child: FaIconActionButton(
+                        buttonKey: const ValueKey('fileBrowserSearchReveal'),
+                        onPressed: onSearchReveal,
+                        tooltip: context.l10n.filesSearchHint,
+                        diameter: 32,
+                        glyphSize: 21,
+                        glass: false,
+                        child: const FaIcon(FaSemanticIcon.search),
+                      ),
+                    ),
+                  )
+                else
+                  Expanded(
+                    child: SessionSearchField(
+                      key: searchKey ?? const ValueKey('fileBrowserSearch'),
+                      controller: searchController,
+                      focusNode: searchFocusNode,
+                      hintText: context.l10n.filesSearchHint,
+                    ),
                   ),
-                ),
-                const SizedBox(width: _searchTrailingGap),
-                for (var i = 0; i < inline; i++) ...[
-                  if (i > 0) const SizedBox(width: _actionGap),
-                  _circle(context, actions[i]),
-                ],
-                if (overflow) ...[
+                if (onSearchClose != null) ...[
                   const SizedBox(width: _actionGap),
-                  _overflowMenu(context, demoted),
+                  FaIconActionButton(
+                    buttonKey: const ValueKey('fileBrowserSearchClose'),
+                    onPressed: onSearchClose,
+                    tooltip: MaterialLocalizations.of(
+                      context,
+                    ).backButtonTooltip,
+                    diameter: 32,
+                    glyphSize: 22,
+                    glass: false,
+                    child: const FaIcon(FaSemanticIcon.back),
+                  ),
                 ],
+                const SizedBox(width: _searchTrailingGap),
+                if (inline > 0 || overflow)
+                  _actionBand(context, [
+                    for (var i = 0; i < inline; i++) actions[i],
+                  ], overflow ? demoted : const <FaHeaderAction>[]),
               ],
             );
           },
@@ -1474,45 +1541,38 @@ final class FilesChrome extends StatelessWidget {
     );
   }
 
-  Widget _circle(BuildContext context, FaHeaderAction action) =>
-      FilesCircleAction(
-        buttonKey: action.key,
-        icon: action.icon!,
-        tooltip: action.label,
-        onPressed: action.onPressed,
-      );
-
-  /// The demoted tail, reachable through the same ⋮ menu family the
-  /// adaptive headers use — accessibility keeps the action's name
-  /// wherever it renders.
-  Widget _overflowMenu(BuildContext context, List<FaHeaderAction> demoted) =>
-      FaHeaderCircularAction(
-        dimension: _actionSlot,
-        child: PopupMenuButton<int>(
-          key: overflowKey ?? const ValueKey('fileBrowserOverflow'),
-          tooltip: FaChatStrings.of(context).chatMoreTooltip,
-          color: menuColor,
-          icon: const Icon(Icons.more_vert, size: 18),
-          onSelected: (index) => demoted[index].onPressed?.call(),
-          itemBuilder: (context) => [
-            for (var i = 0; i < demoted.length; i++)
-              PopupMenuItem(
-                value: i,
-                child: Row(
-                  children: [
-                    Icon(demoted[i].icon, size: 18),
-                    const SizedBox(width: 10),
-                    Flexible(
-                      child: Text(
-                        demoted[i].label,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                  ],
+  /// Browser actions and their demoted tail share the same single-capsule
+  /// chrome as presented apps. The close control stays on the other side of
+  /// the search field because it belongs to the panel, not this action group.
+  Widget _actionBand(
+    BuildContext context,
+    List<FaHeaderAction> inline,
+    List<FaHeaderAction> demoted,
+  ) => FaIconActionBand<int>(
+    key: const ValueKey('filesChromeActions'),
+    actions: inline,
+    menuColor: menuColor,
+    overflowMenuKey: overflowKey ?? const ValueKey('fileBrowserOverflow'),
+    overflowTooltip: FaChatStrings.of(context).chatMoreTooltip,
+    overflowItems: [
+      for (var i = 0; i < demoted.length; i++)
+        PopupMenuItem(
+          value: i,
+          child: Row(
+            children: [
+              Icon(demoted[i].icon, size: 18),
+              const SizedBox(width: 10),
+              Flexible(
+                child: Text(
+                  demoted[i].label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                 ),
               ),
-          ],
+            ],
+          ),
         ),
-      );
+    ],
+    onOverflowSelected: (index) => demoted[index].onPressed?.call(),
+  );
 }

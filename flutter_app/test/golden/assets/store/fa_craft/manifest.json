@@ -1,0 +1,70 @@
+{
+  "id": "fa-craft",
+  "name": "Fa Craft",
+  "description": "Minecraft-like voxel sandbox with light survival — fully local, plays on macOS, iOS, Android and web.",
+  "version": "0.2.32",
+  "icon": "⛏️",
+  "allowedCommands": [],
+  "network": false,
+  "cli": {
+    "summary": "Playable voxel sandbox: walk, break and place blocks, craft, survive falls, persistent world.",
+    "events": [
+      {
+        "id": "hotbar",
+        "description": "Select hotbar slot (payload {slot: 1-8}) or cycle when payload omitted"
+      },
+      {
+        "id": "break",
+        "description": "Break the targeted block"
+      },
+      {
+        "id": "breakHold",
+        "description": "Start hold-to-mine (long press): breaks the targeted block and repeats every 280 ms until breakEnd"
+      },
+      {
+        "id": "breakEnd",
+        "description": "Stop hold-to-mine"
+      },
+      {
+        "id": "place",
+        "description": "Place the selected block against the targeted face"
+      },
+      {
+        "id": "craft",
+        "description": "Open the crafting sheet"
+      },
+      {
+        "id": "craftRecipe",
+        "description": "Craft a recipe (payload {id}) or first recipe when omitted"
+      },
+      {
+        "id": "closeCraft",
+        "description": "Close the crafting sheet"
+      },
+      {
+        "id": "fly",
+        "description": "Toggle fly (creative only)"
+      },
+      {
+        "id": "mode",
+        "description": "Toggle creative/survival"
+      },
+      {
+        "id": "respawn",
+        "description": "Respawn after death"
+      },
+      {
+        "id": "debug",
+        "description": "Toggle F3-style debug overlay"
+      }
+    ],
+    "read": {
+      "state": "jsr.exportState snapshot: pos, health, mode, selected, inventory, dayTime"
+    },
+    "examples": [
+      "jsr app:run fa-craft",
+      "jsr app:execute fa-craft hotbar",
+      "jsr app:execute fa-craft craftRecipe"
+    ]
+  }
+}

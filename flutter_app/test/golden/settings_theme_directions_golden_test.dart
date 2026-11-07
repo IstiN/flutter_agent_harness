@@ -93,8 +93,35 @@ class _FakeDapHubService implements DapHubService {
   }) async {}
 }
 
+/// Captures [name] at the scroll view's FULL content height: the fixed
+/// 800px viewport crops the last card mid-row (and, for the controls,
+/// hid the keys group entirely). `maxScrollExtent` is exactly the
+/// overflow, so adding it to the current window height fits every group
+/// with its real bottom padding and no dead space. The width is left
+/// untouched, so text wrapping (and therefore the measurement) is
+/// identical between measurement and capture. The previous viewport is
+/// restored right after the capture — the tearDown reset is the backstop.
+Future<void> _expectFullHeightGolden(WidgetTester tester, String name) async {
+  final position = tester
+      .state<ScrollableState>(find.byType(Scrollable))
+      .position;
+  final size = tester.view.physicalSize;
+  tester.view.physicalSize = Size(
+    size.width,
+    size.height + position.maxScrollExtent,
+  );
+  await tester.pump();
+  await expectGolden(tester, name);
+  tester.view.physicalSize = size;
+  await tester.pump();
+}
+
 /// One direction/brightness combination to shoot every screen in.
-typedef _Variant = ({String name, FaVisualDirection direction, Brightness brightness});
+typedef _Variant = ({
+  String name,
+  FaVisualDirection direction,
+  Brightness brightness,
+});
 
 const _variants = <_Variant>[
   (
@@ -121,10 +148,16 @@ const _variants = <_Variant>[
 
 /// Pumps [child] in the settings frame (app bar + centered 560px column)
 /// under [variant]'s real shared theme builder.
-Future<void> _pumpSection(WidgetTester tester, _Variant variant, Widget child) {
+Future<void> _pumpSection(
+  WidgetTester tester,
+  _Variant variant,
+  Widget child, {
+  Size? size,
+}) {
   return pumpGolden(
     tester,
     child,
+    size: size ?? goldenSizeTall,
     theme: buildFaTheme(
       direction: variant.direction,
       brightness: variant.brightness,
@@ -186,7 +219,7 @@ void main() {
           ),
         ),
       );
-      await expectGolden(tester, 'settings_theme_${variant.name}');
+      await _expectFullHeightGolden(tester, 'settings_theme_${variant.name}');
     });
 
     testWidgets('control sections (${variant.name})', (tester) async {
@@ -205,6 +238,9 @@ void main() {
       await _pumpSection(
         tester,
         variant,
+        // Measure and capture at the SAME width: the extent below is only
+        // valid for this viewport (the 500px default wraps differently).
+        size: goldenSizeDesktop,
         SessionKeysScope(
           store: keys,
           child: Column(
@@ -222,7 +258,10 @@ void main() {
           ),
         ),
       );
-      await expectGolden(tester, 'settings_controls_${variant.name}');
+      await _expectFullHeightGolden(
+        tester,
+        'settings_controls_${variant.name}',
+      );
     });
 
     testWidgets('model presets card (${variant.name})', (tester) async {

@@ -28,10 +28,10 @@ import 'package:fa/services/dap_enrollment_service.dart';
 import 'package:fa/services/flutter_session_manager.dart';
 import 'package:fa/services/image_preview_store.dart';
 import 'package:fa/services/last_connection.dart';
-import 'package:fa/services/project_mount_flow.dart'
-    show visibleFolderRoot;
+import 'package:fa/services/project_mount_flow.dart' show visibleFolderRoot;
 import 'package:fa/services/provider_registry.dart';
 import 'package:fa/services/upload.dart';
+import 'package:fa/ui/screens/asr_settings_navigation.dart';
 import 'package:fa/ui/screens/settings.dart';
 import 'package:fa/ui/apps/files_presentation_panel.dart';
 import 'package:fa/ui/widgets/chat_composer.dart';
@@ -112,6 +112,7 @@ class ChatScreen extends StatefulWidget {
     this.lastConnectionStore,
     this.asr,
     this.asrTranscriber,
+    this.onOpenAsrSettings,
     this.audioControllerFactory,
     this.videoControllerFactory,
     this.onAppsToggle,
@@ -174,6 +175,11 @@ class ChatScreen extends StatefulWidget {
   /// session's provider config at stop time (an OpenAI-compatible
   /// endpoint). Tests inject a fake.
   final AsrTranscriber? asrTranscriber;
+
+  /// Host navigation override for the missing-transcription dialog's
+  /// Settings action. Null opens the existing Transcription media-slot
+  /// editor (or Providers & Models when no media store is mounted).
+  final Future<void> Function()? onOpenAsrSettings;
 
   /// Playback engine factory for inline audio players (sandbox-generated
   /// `speak`/`generate_music`/`.mp3…` media); null uses the real
@@ -326,30 +332,9 @@ class _ChatScreenState extends State<ChatScreen> {
         ),
       );
     };
-    // The Apps toggle (issue #224): narrow full-chat only in v1 — tapping
-    // pops back to the launcher home (apps expand; the sheet collapses
-    // itself via [ChatScreen.onAppsToggle]). The wide apps-panel wiring is
-    // a follow-up, so the wide bar renders exactly as before (null).
-    fa_ui.FaChatHost.appsToggleButtonBuilder = (context, chatService) {
-      if (MediaQuery.sizeOf(context).width >= fa_ui.kWideLayoutBreakpoint) {
-        return null;
-      }
-      void toggle() {
-        widget.onAppsToggle?.call();
-        Navigator.of(context).maybePop();
-      }
-
-      return fa_ui.FaChatHeaderAction(
-        widget: IconButton(
-          key: const ValueKey('chatAppsToggle'),
-          icon: const Icon(Icons.apps),
-          tooltip: context.l10n.appsShowAppsTooltip,
-          onPressed: toggle,
-        ),
-        label: context.l10n.appsShowAppsTooltip,
-        onPressed: toggle,
-      );
-    };
+    // Apps is a shell destination, not a phone chat-header action. Keeping
+    // this host slot unset leaves room for Trajectory in the adaptive row.
+    fa_ui.FaChatHost.appsToggleButtonBuilder = null;
   }
 
   void _uninstallDynamicHosts() {
@@ -498,6 +483,14 @@ class _ChatScreenState extends State<ChatScreen> {
         uploadPicker: widget.uploadPicker,
         asr: widget.asr,
         asrTranscriber: widget.asrTranscriber,
+        onOpenAsrSettings:
+            widget.onOpenAsrSettings ??
+            () => openAsrTranscriptionSettings(
+              context,
+              service: service,
+              registry: widget.registry,
+              lastConnectionStore: widget.lastConnectionStore,
+            ),
         dropBridge: drop,
         onSubmit: _interceptDapSubmit,
       ),

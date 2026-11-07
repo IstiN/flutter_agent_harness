@@ -819,30 +819,21 @@ void main() {
       // path marks the entry opened; the surface tap is the same open).
       expect(inbox.readCalls.any((call) => call.channelId == 'c1'), isTrue);
 
-      // The back chevrons still own the surface explicitly: channels →
-      // strip (the chat stays open), then strip → the chats home, where
-      // the channel row is selected.
+      // Channel back returns to the ROOT Networks list (no second back
+      // chevron). All is the explicit chats-home reset.
       await tester.tap(find.byKey(const ValueKey('chatChannelsBack')));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 250));
       expect(find.byType(ChatNetworksPanel), findsOneWidget);
       expect(find.byKey(const ValueKey('networksList')), findsOneWidget);
+      expect(find.byKey(const ValueKey('chatNetworksBack')), findsNothing);
       expect(find.byType(NetworkChatPage), findsOneWidget);
-      await tester.tap(find.byKey(const ValueKey('chatNetworksBack')));
+      await tester.tap(find.byKey(const ValueKey('chatFilter-all')));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 250));
       expect(find.byType(ChatNetworksPanel), findsNothing);
       expect(find.byType(ChatListPanel), findsOneWidget);
-      expect(find.byType(NetworkChatPage), findsOneWidget);
-      final panel = tester.widget<ChatListPanel>(find.byType(ChatListPanel));
-      expect(
-        panel.selectedEntryId,
-        ChatEntryId.network(
-          ChatListEntryKind.networkChannel,
-          networkId: 'net1',
-          id: 'c1',
-        ),
-      );
+      expect(find.byType(NetworkChatPage), findsNothing);
       await manager.disconnectAll();
       await tester.pump();
     });

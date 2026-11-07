@@ -176,6 +176,8 @@ Future<_Harness> _pumpLauncher(
   bool useEnvLayout = false,
   Size? surface,
   VoidCallback? onOpenNetworks,
+  bool pushed = false,
+  bool revealSearch = false,
 }) async {
   if (surface != null) {
     tester.view.physicalSize = surface;
@@ -199,21 +201,36 @@ Future<_Harness> _pumpLauncher(
     gridColumns: gridColumns,
     tileSizes: tileSizes.isEmpty ? null : tileSizes,
   );
+  final launcher = AppLauncherScreen(
+    manager: manager,
+    layoutStore: useEnvLayout ? null : layout,
+    appsStore: _appsStore(env),
+    tileEngineFactory: tileEngineFactory,
+    onOpenNetworks: onOpenNetworks,
+  );
   await tester.pumpWidget(
     MaterialApp(
       theme: buildFahTheme(),
       localizationsDelegates: AppLocalizations.localizationsDelegates,
       supportedLocales: AppLocalizations.supportedLocales,
-      home: AppLauncherScreen(
-        manager: manager,
-        layoutStore: useEnvLayout ? null : layout,
-        appsStore: _appsStore(env),
-        tileEngineFactory: tileEngineFactory,
-        onOpenNetworks: onOpenNetworks,
-      ),
+      home: pushed
+          ? Builder(
+              builder: (context) => TextButton(
+                key: const ValueKey('openStandaloneApps'),
+                onPressed: () => Navigator.of(
+                  context,
+                ).push(MaterialPageRoute<void>(builder: (_) => launcher)),
+                child: const Text('Open Apps'),
+              ),
+            )
+          : launcher,
     ),
   );
   await tester.pumpAndSettle();
+  if (revealSearch) {
+    await tester.tap(find.byKey(const ValueKey('appsNarrowSearchReveal')));
+    await tester.pumpAndSettle();
+  }
   return _Harness(env, manager, layout);
 }
 
@@ -245,6 +262,17 @@ void main() {
       expect(find.text('Gamma'), findsOneWidget);
       expect(find.text('Settings'), findsOneWidget);
       expect(find.text('Files'), findsOneWidget);
+    });
+
+    testWidgets('main grid reserves bottom navigation clearance', (
+      tester,
+    ) async {
+      await _pumpLauncher(tester, surface: const Size(390, 844));
+      final scroll = tester.widget<SingleChildScrollView>(
+        find.byKey(const ValueKey('appsGridScrollView')),
+      );
+      final padding = scroll.padding! as EdgeInsets;
+      expect(padding.bottom, 128);
     });
 
     testWidgets('network-capable host exposes Networks as an Apps tile', (
@@ -454,6 +482,22 @@ void main() {
         'app:gamma',
       ]);
       expect(find.byKey(const ValueKey('launcherFolderPanel')), findsNothing);
+    });
+
+    testWidgets('standalone pushed Apps keeps Navigator back without a gear', (
+      tester,
+    ) async {
+      await _pumpLauncher(tester, surface: const Size(390, 844), pushed: true);
+      await tester.tap(find.byKey(const ValueKey('openStandaloneApps')));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(AppLauncherScreen), findsOneWidget);
+      expect(find.byKey(const ValueKey('appsBackButton')), findsOneWidget);
+      expect(find.byKey(const ValueKey('narrowSettingsButton')), findsNothing);
+      await tester.tap(find.byKey(const ValueKey('appsBackButton')));
+      await tester.pumpAndSettle();
+      expect(find.byType(AppLauncherScreen), findsNothing);
+      expect(find.byKey(const ValueKey('openStandaloneApps')), findsOneWidget);
     });
 
     testWidgets('settings tile pushes the settings screen', (tester) async {
@@ -839,6 +883,34 @@ void main() {
       expect(find.byIcon(Icons.delete_outline), findsOneWidget);
     });
 
+    testWidgets('Remove widget deletes the tile and it stays deleted after '
+        'a subsequent reload', (tester) async {
+      final harness = await _pumpLauncher(tester);
+      expect(_cell('app:beta'), findsOneWidget);
+      final gesture = await tester.startGesture(
+        tester.getCenter(_cell('app:beta')),
+      );
+      await tester.pump(const Duration(milliseconds: 700));
+      await gesture.up();
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Remove widget'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Delete'));
+      await tester.pumpAndSettle();
+
+      expect(_cell('app:beta'), findsNothing);
+      expect(harness.layout.topLevelKeys, isNot(contains('app:beta')));
+      expect(
+        (await harness.env.readTextFile('apps/beta/manifest.json')).valueOrNull,
+        isNull,
+      );
+
+      harness.manager.active!.service.fsRevision.value++;
+      await tester.pump(const Duration(milliseconds: 700));
+      await tester.pumpAndSettle();
+      expect(_cell('app:beta'), findsNothing);
+    });
+
     testWidgets('a layout JSON edit + fsRevision bump reconfigures the grid', (
       tester,
     ) async {
@@ -992,11 +1064,60 @@ void main() {
   // CupertinoTextField carries the hint as the placeholder.
   Finder searchField() => find.byWidgetPredicate(
     (w) =>
-        w is CupertinoTextField &&
-        w.placeholder == 'Search apps and widgets…',
+        w is CupertinoTextField && w.placeholder == 'Search apps and widgets…',
   );
 
   group('AppLauncherScreen search', () {
+    testWidgets('compact search reveal focuses and close collapses', (
+      tester,
+    ) async {
+      await _pumpLauncher(tester, surface: const Size(390, 844));
+      final search = find.byKey(const ValueKey('appsSearchField'));
+      final reveal = find.byKey(const ValueKey('appsNarrowSearchReveal'));
+      expect(search, findsNothing);
+      expect(reveal, findsOneWidget);
+
+      await tester.tap(reveal);
+      await tester.pumpAndSettle();
+      expect(search, findsOneWidget);
+      final editable = tester.widget<EditableText>(
+        find.descendant(of: search, matching: find.byType(EditableText)),
+      );
+      expect(editable.focusNode.hasFocus, isTrue);
+
+      await tester.enterText(search, 'active query');
+      editable.focusNode.unfocus();
+      await tester.pump();
+      expect(search, findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('appsSearchClose')));
+      await tester.pumpAndSettle();
+      expect(search, findsNothing);
+      expect(reveal, findsOneWidget);
+    });
+
+    testWidgets('compact search filters tiles after reveal', (tester) async {
+      await _pumpLauncher(
+        tester,
+        surface: const Size(390, 844),
+        revealSearch: true,
+      );
+      expect(find.text('Alpha'), findsOneWidget);
+      expect(find.text('Beta'), findsOneWidget);
+      expect(find.text('Gamma'), findsOneWidget);
+      await tester.enterText(
+        find.byKey(const ValueKey('appsSearchField')),
+        'alp',
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Alpha'), findsOneWidget);
+      expect(find.text('Beta'), findsNothing);
+      expect(find.text('Gamma'), findsNothing);
+      expect(
+        find.byKey(const ValueKey('appsNarrowSearchReveal')),
+        findsNothing,
+      );
+    });
+
     testWidgets('search filters the grid to matching tiles', (tester) async {
       await _pumpLauncher(tester);
 

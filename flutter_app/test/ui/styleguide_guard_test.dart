@@ -7,7 +7,7 @@
 ///
 /// | section           | catches                                              |
 /// |-------------------|------------------------------------------------------|
-/// | `icons`           | material icon glyphs (`Icons.add`, ...)              |
+/// | `icons`           | concrete glyphs (`Icons.add`, `CupertinoIcons.*`)   |
 /// | `material_colors` | hardcoded Material palette swatches (`Colors.blue`,  |
 /// |                   | `Colors.white54`, `Colors.green.shade400`, ...;      |
 /// |                   | `Colors.transparent` is exempt — a plain constant,   |
@@ -59,9 +59,27 @@ const String appRoot = 'lib/main.dart';
 /// `Accent` stripped, e.g. `white54` → `white`, `redAccent` → `red`).
 /// `transparent` is deliberately absent (exempt).
 const Set<String> _materialSwatches = {
-  'amber', 'black', 'blue', 'blueGrey', 'brown', 'cyan', 'deepOrange',
-  'deepPurple', 'green', 'grey', 'indigo', 'lightBlue', 'lightGreen',
-  'lime', 'orange', 'pink', 'purple', 'red', 'teal', 'violet', 'white',
+  'amber',
+  'black',
+  'blue',
+  'blueGrey',
+  'brown',
+  'cyan',
+  'deepOrange',
+  'deepPurple',
+  'green',
+  'grey',
+  'indigo',
+  'lightBlue',
+  'lightGreen',
+  'lime',
+  'orange',
+  'pink',
+  'purple',
+  'red',
+  'teal',
+  'violet',
+  'white',
   'yellow',
 };
 
@@ -103,40 +121,41 @@ const _sections = <_Section>[
   _Section(
     'icons',
     'use the shared icon helpers / existing styleguide iconography '
-    'instead of new material glyphs',
+        'instead of new material glyphs',
     count: _countIcons,
   ),
   _Section(
     'material_colors',
     'use FahColors.of(context) / FaDesignTokens / theme colorScheme '
-    'roles instead of hardcoded Material swatches '
-    '(Colors.transparent is exempt)',
+        'roles instead of hardcoded Material swatches '
+        '(Colors.transparent is exempt)',
     count: countMaterialColorSwatches,
   ),
   _Section(
     'material_widgets',
     'use the fa_ui equivalents instead: FaButton (all button variants), '
-    'FaIconButton (IconButton), FaTextField (TextField)',
+        'FaIconButton (IconButton), FaTextField (TextField)',
     count: _countRawMaterialWidgets,
   ),
   _Section(
     'material_app',
     'only lib/main.dart may construct MaterialApp; screens inherit the '
-    'root widget',
+        'root widget',
     count: _countMaterialApp,
     rootExempt: true,
   ),
   _Section(
     'theme_data',
     'the theme comes from fa_ui buildFaTheme/buildFaTheme overrides; '
-    'do not inline raw ThemeData( in app code',
+        'do not inline raw ThemeData( in app code',
     count: _countThemeData,
     rootExempt: true,
   ),
 ];
 
-int _countIcons(String source) =>
-    RegExp(r'\bIcons\.[A-Za-z_]\w*').allMatches(source).length;
+int _countIcons(String source) => RegExp(
+  r'\b(?:Icons|CupertinoIcons)\.[A-Za-z_]\w*',
+).allMatches(source).length;
 
 int _countRawMaterialWidgets(String source) => RegExp(
   r'\b(?:ElevatedButton|FilledButton|TextButton|OutlinedButton|IconButton'
@@ -144,9 +163,7 @@ int _countRawMaterialWidgets(String source) => RegExp(
 ).allMatches(source).length;
 
 int _countMaterialApp(String source) =>
-    RegExp(r'\bMaterialApp(?:\.[A-Za-z_]\w*)?\s*\(')
-        .allMatches(source)
-        .length;
+    RegExp(r'\bMaterialApp(?:\.[A-Za-z_]\w*)?\s*\(').allMatches(source).length;
 
 int _countThemeData(String source) =>
     RegExp(r'\bThemeData\s*\(').allMatches(source).length;
@@ -164,7 +181,9 @@ bool _scanned(String path) =>
 /// Keys are always rooted at `lib/...` regardless of where [libRoot]
 /// lives, so real scans and self-test fixtures key identically.
 Map<String, int> _scanSection(_Section section, String libRoot) {
-  final root = libRoot.endsWith('/') ? libRoot.substring(0, libRoot.length - 1) : libRoot;
+  final root = libRoot.endsWith('/')
+      ? libRoot.substring(0, libRoot.length - 1)
+      : libRoot;
   final counts = <String, int>{};
   for (final entity in Directory(root).listSync(recursive: true)) {
     if (entity is! File) continue;
@@ -186,8 +205,11 @@ class _Diff {
   final List<String> shrinkHints;
 }
 
-_Diff _diffCounts(String sectionName, Map<String, int> current,
-    Map<String, int> ceilings,) {
+_Diff _diffCounts(
+  String sectionName,
+  Map<String, int> current,
+  Map<String, int> ceilings,
+) {
   final violations = <String>[];
   final hints = <String>[];
   for (final entry in current.entries) {
@@ -230,7 +252,10 @@ Map<String, Map<String, int>> parseAllowlist(String content) {
     }
     final parts = line.split(RegExp(r'\s+'));
     final count = int.tryParse(parts.last);
-    if (parts.length < 2 || count == null || count < 0 || !parts.first.startsWith('lib/')) {
+    if (parts.length < 2 ||
+        count == null ||
+        count < 0 ||
+        !parts.first.startsWith('lib/')) {
       throw FormatException('malformed allowlist entry: $line');
     }
     sections[current]![parts.first] = count;
@@ -241,8 +266,12 @@ Map<String, Map<String, int>> parseAllowlist(String content) {
 Map<String, Map<String, int>> _loadAllowlist() =>
     parseAllowlist(File(allowlistPath).readAsStringSync());
 
-void _emitSummary(String name, Map<String, int> current,
-    Map<String, int> ceilings, _Diff diff,) {
+void _emitSummary(
+  String name,
+  Map<String, int> current,
+  Map<String, int> ceilings,
+  _Diff diff,
+) {
   final total = current.values.fold<int>(0, (a, b) => a + b);
   // ignore: avoid_print
   print(
@@ -296,8 +325,10 @@ void main() {
     for (final section in _sections) {
       for (final path in allowlist[section.name]?.keys ?? const <String>[]) {
         if (!File(path).existsSync()) {
-          problems.add('${section.name}: $path does not exist — remove '
-              'the stale entry (regenerate the allowlist)');
+          problems.add(
+            '${section.name}: $path does not exist — remove '
+            'the stale entry (regenerate the allowlist)',
+          );
         }
       }
     }
@@ -309,7 +340,8 @@ void main() {
       // icons
       expect(_countIcons('Icon(Icons.add)'), 1);
       expect(_countIcons('a ? Icons.check : Icons.close'), 2);
-      expect(_countIcons('FahIcons.plus'), 0); // not the material Icons
+      expect(_countIcons('FahIcons.plus'), 0); // not a concrete glyph set
+      expect(_countIcons('Icon(CupertinoIcons.search)'), 1);
       // material_colors
       expect(countMaterialColorSwatches('color: Colors.blue'), 1);
       expect(countMaterialColorSwatches('Colors.green.shade400'), 1);
@@ -329,37 +361,39 @@ void main() {
       expect(_countThemeData('required ThemeData theme,'), 0);
     });
 
-    test('the scan+diff pipeline flags new and grown usage end-to-end',
-        () {
+    test('the scan+diff pipeline flags new and grown usage end-to-end', () {
       final tmp = Directory.systemTemp.createTempSync('material_guard');
       try {
         final lib = Directory('${tmp.path}/lib')..createSync();
         Directory('${tmp.path}/lib/l10n')
           ..createSync()
           ..existsSync();
-        File('${lib.path}/good.dart')
-            .writeAsStringSync('// clean, styleguide-only\n');
-        File('${lib.path}/okay.dart')
-            .writeAsStringSync('Icon(Icons.add);\n');
+        File(
+          '${lib.path}/good.dart',
+        ).writeAsStringSync('// clean, styleguide-only\n');
+        File('${lib.path}/okay.dart').writeAsStringSync('Icon(Icons.add);\n');
         File('${lib.path}/bad_new.dart').writeAsStringSync(
           'Icon(Icons.delete);\ncolor: Colors.red;\nTextButton(\n',
         );
-        File('${lib.path}/main.dart')
-            .writeAsStringSync('return MaterialApp(\n  ThemeData(\n');
-        File('${tmp.path}/lib/l10n/generated.dart')
-            .writeAsStringSync('Icon(Icons.abc);\ncolor: Colors.blue;\n');
+        File(
+          '${lib.path}/main.dart',
+        ).writeAsStringSync('return MaterialApp(\n  ThemeData(\n');
+        File(
+          '${tmp.path}/lib/l10n/generated.dart',
+        ).writeAsStringSync('Icon(Icons.abc);\ncolor: Colors.blue;\n');
 
         final icons = _sections.firstWhere((s) => s.name == 'icons');
         final colors = _sections.firstWhere((s) => s.name == 'material_colors');
-        final widgets =
-            _sections.firstWhere((s) => s.name == 'material_widgets');
-        final materialApp =
-            _sections.firstWhere((s) => s.name == 'material_app');
+        final widgets = _sections.firstWhere(
+          (s) => s.name == 'material_widgets',
+        );
+        final materialApp = _sections.firstWhere(
+          (s) => s.name == 'material_app',
+        );
         final themeData = _sections.firstWhere((s) => s.name == 'theme_data');
 
         final okayCeilings = {'lib/okay.dart': 1};
-        final grownDiff =
-            _diffCounts('icons', _scanSection(icons, lib.path), {
+        final grownDiff = _diffCounts('icons', _scanSection(icons, lib.path), {
           'lib/okay.dart': 1,
         });
         expect(
@@ -368,7 +402,8 @@ void main() {
             'icons: lib/bad_new.dart has NEW usage (1x) — the file is '
                 'not in the allowlist',
           ]),
-          reason: 'a file with Icons. usage but no allowlist entry must '
+          reason:
+              'a file with Icons. usage but no allowlist entry must '
               'be reported',
         );
         expect(
@@ -383,21 +418,25 @@ void main() {
         );
 
         // A lowered current count produces a shrink hint, not a failure.
-        final shrinkDiff = _diffCounts('icons', {
-          'lib/okay.dart': 1,
-        }, {
-          'lib/okay.dart': 2,
-        });
+        final shrinkDiff = _diffCounts(
+          'icons',
+          {'lib/okay.dart': 1},
+          {'lib/okay.dart': 2},
+        );
         expect(shrinkDiff.violations, isEmpty);
-        expect(shrinkDiff.shrinkHints.single,
-            contains('lib/okay.dart shrank 2 → 1'));
+        expect(
+          shrinkDiff.shrinkHints.single,
+          contains('lib/okay.dart shrank 2 → 1'),
+        );
 
         // Growth within an allowlisted file fails.
         final grewDiff = _diffCounts('icons', {
           'lib/okay.dart': 3,
         }, okayCeilings);
-        expect(grewDiff.violations.single,
-            'icons: lib/okay.dart count grew 1 → 3');
+        expect(
+          grewDiff.violations.single,
+          'icons: lib/okay.dart count grew 1 → 3',
+        );
 
         // The app root and generated files are exempt where designed.
         expect(

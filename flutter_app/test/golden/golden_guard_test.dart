@@ -26,6 +26,10 @@ const _coverage = <String, String>{
   'lib/ui/network/channel_key_import_dialog.dart':
       'test/golden/channel_key_import_dialog_golden_test.dart',
   'lib/ui/screens/settings.dart': 'test/golden/settings_golden_test.dart',
+  'lib/ui/screens/settings_navigation.dart':
+      'test/golden/wide_layout_shell_golden_test.dart',
+  'lib/ui/network/network_chat_page.dart':
+      'test/golden/network_chat_golden_test.dart',
   'lib/ui/screens/skills_toggles_section.dart':
       'test/golden/settings_golden_test.dart',
   'lib/ui/screens/settings_sections.dart':
@@ -84,6 +88,10 @@ const _coverage = <String, String>{
   'lib/ui/apps/files_presentation_panel.dart':
       'test/golden/wide_layout_shell_golden_test.dart',
   'lib/ui/apps/messenger_app_panel.dart':
+      'test/golden/wide_layout_shell_golden_test.dart',
+  'lib/ui/apps/presentation_panel_card.dart':
+      'test/golden/wide_layout_shell_golden_test.dart',
+  'lib/ui/apps/running_apps_dock.dart':
       'test/golden/wide_layout_shell_golden_test.dart',
   'lib/ui/widgets/messenger_navigation_controls.dart':
       'test/golden/wide_layout_shell_golden_test.dart',
@@ -151,7 +159,6 @@ const _exempt = <String, String>{
       'fa_network #955: no goldens yet',
   'lib/ui/network/join_sheet.dart': 'fa_network #955: no goldens yet',
   'lib/ui/network/network_center.dart': 'fa_network #955: no goldens yet',
-  'lib/ui/network/network_chat_page.dart': 'fa_network #955: no goldens yet',
   'lib/ui/network/network_home.dart': 'fa_network #955: no goldens yet',
   'lib/ui/network/network_mode_chip.dart': 'fa_network #955: no goldens yet',
   'lib/ui/network/networks_sidebar.dart': 'fa_network #955: no goldens yet',

@@ -85,7 +85,8 @@ void main() {
       final wide = width >= fa_ui.kWideLayoutBreakpoint;
       final keys = <String>[
         'faChatFloatingHeader',
-        if (wide) ...['faChatHeaderAvatar', 'faChatHeaderTitlePill'],
+        'faChatHeaderAvatar',
+        'faChatHeaderTitlePill',
         'faChatTranscriptList',
         'faChatFloatingComposer',
         'faChatComposerFieldRow',
@@ -109,52 +110,37 @@ void main() {
           if (wide) {
             final copy = find.byIcon(Icons.copy_outlined);
             final actionFinder = find
+                .ancestor(of: copy, matching: find.byType(IconButton))
+                .first;
+            final bandFinder = find
                 .ancestor(
                   of: copy,
-                  matching: find.byType(fa_ui.FaHeaderCircularAction),
+                  matching: find.byType(fa_ui.FaIconActionBand<String>),
                 )
                 .first;
             current['copyAction'] = tester.getRect(actionFinder);
-            // The chrome surface differs by direction: in the glass
-            // direction the adapter pass renders the kit's GlassIconButton
-            // (the kit glass surface replaces the token fill+ring); other
-            // directions keep the flat token Material circle.
+            expect(
+              find.ancestor(
+                of: copy,
+                matching: find.byType(fa_ui.FaHeaderCircularAction),
+              ),
+              findsNothing,
+              reason: '$reason: grouped actions have no per-icon circles',
+            );
+            expect(
+              find.descendant(
+                of: bandFinder,
+                matching: find.byType(fa_ui.FaSurface),
+              ),
+              findsOneWidget,
+              reason: '$reason: one shared capsule surface',
+            );
             final tokens = fa_ui.FaDesignTokens.of(tester.element(copy));
-            if (direction == fa_ui.FaVisualDirection.glass) {
-              // The header circles ride FaAdaptiveHeader's FaSurface glass
-              // mode (the kit AdaptiveGlass underlay).
-              expect(
-                find.descendant(
-                  of: actionFinder,
-                  matching: find.byType(fa_ui.FaSurface),
-                ),
-                findsOneWidget,
-                reason: reason,
-              );
-              expect(
-                IconTheme.of(tester.element(copy)).color,
-                tokens.ink1,
-                reason: reason,
-              );
-            } else {
-              // The glass underlay adds an unshaded Material wrapper; the
-              // chrome's own circle is the shaped one.
-              final material = tester
-                  .widgetList<Material>(
-                    find.descendant(
-                      of: actionFinder,
-                      matching: find.byType(Material),
-                    ),
-                  )
-                  .firstWhere((m) => m.shape != null);
-              expect(material.color, tokens.surface2, reason: reason);
-              expect(material.shape, isA<CircleBorder>(), reason: reason);
-              expect(
-                (material.shape! as CircleBorder).side.color,
-                tokens.hairline,
-                reason: reason,
-              );
-            }
+            expect(
+              IconTheme.of(tester.element(copy)).color,
+              tokens.ink1,
+              reason: reason,
+            );
             final copyRect = current['copyAction']!;
             // The ONE control scale: the chat header circles are the 36pt
             // FaIconActionButton default — the sidebar toggle's circle.
@@ -168,14 +154,11 @@ void main() {
             final timeline = find.byIcon(Icons.timeline);
             if (timeline.evaluate().isNotEmpty) {
               final timelineAction = find
-                  .ancestor(
-                    of: timeline,
-                    matching: find.byType(fa_ui.FaHeaderCircularAction),
-                  )
+                  .ancestor(of: timeline, matching: find.byType(IconButton))
                   .first;
               expect(
                 copyRect.left - tester.getRect(timelineAction).right,
-                8,
+                0,
                 reason: reason,
               );
             }
@@ -205,8 +188,8 @@ void main() {
                 : Rect.zero;
             if (hasOverflow) {
               expect(
-                tester.widget<IconButton>(overflow).onPressed,
-                isNotNull,
+                tester.widget<PopupMenuButton<String>>(overflow).enabled,
+                isTrue,
                 reason: reason,
               );
             }
@@ -217,11 +200,16 @@ void main() {
                 : tester.getRect(copy);
             if (copy.evaluate().isNotEmpty) {
               final copyAction = find
-                  .ancestor(
-                    of: copy,
-                    matching: find.byType(fa_ui.FaHeaderCircularAction),
-                  )
+                  .ancestor(of: copy, matching: find.byType(IconButton))
                   .first;
+              expect(
+                find.ancestor(
+                  of: copy,
+                  matching: find.byType(fa_ui.FaHeaderCircularAction),
+                ),
+                findsNothing,
+                reason: reason,
+              );
               expect(
                 tester.getSize(copyAction),
                 Size.square(fa_ui.FaIconActionButton.defaultDiameter),
@@ -231,17 +219,14 @@ void main() {
               final folder = find.byTooltip('Open files');
               if (folder.evaluate().isNotEmpty) {
                 final folderAction = find
-                    .ancestor(
-                      of: folder,
-                      matching: find.byType(fa_ui.FaHeaderCircularAction),
-                    )
+                    .ancestor(of: folder, matching: find.byType(IconButton))
                     .first;
                 // Files is the RIGHTMOST chat-header action (user
                 // direction): it trails copy (host widgets may sit
                 // between on narrow surfaces).
                 expect(
                   tester.getRect(folderAction).left,
-                  greaterThan(tester.getRect(copyAction).right),
+                  greaterThanOrEqualTo(tester.getRect(copyAction).right),
                   reason: reason,
                 );
               }
@@ -253,12 +238,41 @@ void main() {
                 : Rect.zero;
             if (hasOverflow) {
               expect(
-                tester.widget<IconButton>(overflow).onPressed,
-                isNotNull,
+                tester.widget<PopupMenuButton<String>>(overflow).enabled,
+                isTrue,
                 reason: reason,
               );
             }
           }
+          expect(
+            find.byType(fa_ui.FaIconActionBand<String>),
+            findsOneWidget,
+            reason: '$reason: one grouped header action capsule',
+          );
+          final avatarRect = tester.getRect(
+            find.byKey(const ValueKey('faChatHeaderAvatar')),
+          );
+          final titlePillRect = tester.getRect(
+            find.byKey(const ValueKey('faChatHeaderTitlePill')),
+          );
+          expect(
+            tester
+                .getCenter(find.byKey(const ValueKey('faChatHeaderAvatar')))
+                .dx,
+            closeTo(width / 2, .001),
+            reason: reason,
+          );
+          expect(
+            titlePillRect.center.dx,
+            closeTo(width / 2, .001),
+            reason: reason,
+          );
+          expect(
+            titlePillRect.top,
+            greaterThanOrEqualTo(avatarRect.bottom),
+            reason:
+                '$reason: keep the stacked header instead of the compact row',
+          );
           expect(find.text('fa_network'), findsOneWidget, reason: reason);
           expect(find.text('Release review'), findsOneWidget, reason: reason);
           expect(find.text('Fa'), findsNothing, reason: reason);
@@ -273,7 +287,7 @@ void main() {
               _expectRect(
                 current['copyAction']!,
                 baseline['copyAction']!,
-                '$reason: circular action',
+                '$reason: grouped action',
               );
               _expectRect(
                 current['overflow']!,
@@ -346,7 +360,7 @@ void main() {
             reason: reason,
           );
           expect(send.size, const Size(40, 34), reason: reason);
-          expect(composer.right - send.right, 2, reason: 'flush right');
+          expect(composer.right - send.right, 4, reason: 'trailing air');
           expect(fade.left, 0, reason: reason);
           expect(fade.right, width, reason: reason);
           expect(fade.bottom, 700, reason: reason);

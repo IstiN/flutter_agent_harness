@@ -10,6 +10,7 @@ import 'package:fa/ui/chats/local_session_folders.dart';
 import 'package:fa/ui/chats/messenger_list_row_style.dart';
 import 'package:fa/ui/widgets/folder_avatar.dart';
 import 'package:fa/ui/widgets/messenger_section_header.dart';
+import 'package:fa/ui/widgets/session_search_field.dart';
 import 'package:fa_ui/fa_ui.dart';
 import 'package:flutter/material.dart';
 
@@ -19,7 +20,7 @@ import 'package:flutter/material.dart';
 /// the drilled folder) with the Telegram-style session list beside it. Session state rides [ChatListController.localEntries]
 /// (FlutterSessionManager's single-flight listing) — this panel only
 /// projects it. Opening a session stays the shell's existing open flow.
-class LocalSessionsPanel extends StatelessWidget {
+class LocalSessionsPanel extends StatefulWidget {
   const LocalSessionsPanel({
     super.key,
     required this.controller,
@@ -29,6 +30,7 @@ class LocalSessionsPanel extends StatelessWidget {
     required this.onOpenSession,
     required this.onNew,
     this.onCollapse,
+    this.onSettings,
     this.compact = false,
     this.iconResolver,
   });
@@ -61,41 +63,150 @@ class LocalSessionsPanel extends StatelessWidget {
   final ValueChanged<ChatListEntry> onOpenSession;
   final VoidCallback onNew;
   final VoidCallback? onCollapse;
+  final VoidCallback? onSettings;
   final FolderIconResolver? iconResolver;
+
+  @override
+  State<LocalSessionsPanel> createState() => _LocalSessionsPanelState();
+}
+
+class _LocalSessionsPanelState extends State<LocalSessionsPanel> {
+  final _searchController = TextEditingController();
+  final _searchFocus = FocusNode(debugLabel: 'local-sessions-search');
+  var _query = '';
+  var _searchExpanded = false;
+
+  bool get _searchShown =>
+      _searchExpanded ||
+      _searchController.text.trim().isNotEmpty ||
+      _searchFocus.hasFocus;
+
+  @override
+  void initState() {
+    super.initState();
+    _searchController.addListener(_onSearchStateChanged);
+    _searchFocus.addListener(_onSearchStateChanged);
+  }
+
+  void _onSearchStateChanged() {
+    if (mounted) setState(() {});
+  }
+
+  @override
+  void didUpdateWidget(covariant LocalSessionsPanel oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.selectedFolderId != widget.selectedFolderId) {
+      _searchController.clear();
+      _searchFocus.unfocus();
+      _query = '';
+      _searchExpanded = false;
+    }
+  }
+
+  @override
+  void dispose() {
+    _searchController.removeListener(_onSearchStateChanged);
+    _searchFocus.removeListener(_onSearchStateChanged);
+    _searchController.dispose();
+    _searchFocus.dispose();
+    super.dispose();
+  }
+
+  void _revealSearch() {
+    setState(() => _searchExpanded = true);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _searchFocus.requestFocus();
+    });
+  }
+
+  void _closeSearch() {
+    _searchController.clear();
+    _searchFocus.unfocus();
+    setState(() {
+      _query = '';
+      _searchExpanded = false;
+    });
+  }
+
+  void _clearSearch() {
+    _searchController.clear();
+    setState(() => _query = '');
+  }
 
   @override
   Widget build(BuildContext context) {
     final colors = FahColors.of(context);
     return ListenableBuilder(
-      listenable: controller,
+      listenable: widget.controller,
       builder: (context, _) {
-        final folders = groupLocalSessionFolders(
-          controller.localEntries,
+        final allFolders = groupLocalSessionFolders(
+          widget.controller.localEntries,
           personalName: context.l10n.sessionFolderPersonal,
         );
-        final openFolder = selectedFolderId == null
+        final folders = widget.selectedFolderId == null
+            ? rankSessionEntries(
+                allFolders,
+                _query,
+                (folder) => (
+                  title: folder.name,
+                  id: folder.id,
+                  cwd: folder.id,
+                  updatedAt:
+                      folder.latestActivity ??
+                      DateTime.fromMillisecondsSinceEpoch(0),
+                ),
+              )
+            : allFolders;
+        final openFolder = widget.selectedFolderId == null
             ? null
-            : folders
-                  .where((folder) => folder.id == selectedFolderId)
+            : allFolders
+                  .where((folder) => folder.id == widget.selectedFolderId)
                   .firstOrNull;
+        final visibleSessions = openFolder == null
+            ? const <ChatListEntry>[]
+            : rankSessionEntries(
+                openFolder.sessions,
+                _query,
+                (entry) => (
+                  title: entry.title,
+                  id: entry.id.value,
+                  cwd: entry.folderPath,
+                  updatedAt: entry.lastActivity ?? entry.createdAt,
+                ),
+              );
         return MessengerGlassPanel(
-          compact: compact,
+          compact: widget.compact,
           underlayKey: const ValueKey('localChromeUnderlay'),
           header: MessengerSectionHeader(
             title: openFolder?.name ?? context.l10n.wideNavLocal,
-            searchController: null,
-            searchHint: '',
+            searchController: _searchController,
+            searchFocusNode: _searchFocus,
+            searchHint: openFolder == null
+                ? context.l10n.localFoldersSearchHint
+                : context.l10n.sidebarSearchHint,
+            onSearch: (query) => setState(() => _query = query),
+            searchCollapsed:
+                (widget.compact || openFolder != null) && !_searchShown,
+            onSearchReveal:
+                (widget.compact || openFolder != null) && !_searchShown
+                ? _revealSearch
+                : null,
+            onSearchClose:
+                (widget.compact || openFolder != null) && _searchShown
+                ? _closeSearch
+                : null,
             onProfile: null,
-            onNew: onNew,
+            onSettings: widget.onSettings,
+            onNew: widget.onNew,
             newButtonKey: const ValueKey('localNewButton'),
-            compact: compact,
-            onCollapse: onCollapse,
+            compact: widget.compact,
+            onCollapse: widget.onCollapse,
             leading: openFolder == null
                 ? null
                 : IconButton(
                     key: const ValueKey('localFolderBack'),
                     tooltip: context.l10n.localFolderBack,
-                    onPressed: () => onSelectFolder(null),
+                    onPressed: () => widget.onSelectFolder(null),
                     icon: const Icon(Icons.chevron_left_rounded),
                     iconSize: 26,
                     color: colors.text,
@@ -111,9 +222,9 @@ class LocalSessionsPanel extends StatelessWidget {
               if (openFolder != null)
                 _FolderStrip(
                   folders: folders,
-                  selectedFolderId: selectedFolderId,
-                  iconResolver: iconResolver,
-                  onOpen: onSelectFolder,
+                  selectedFolderId: widget.selectedFolderId,
+                  iconResolver: widget.iconResolver,
+                  onOpen: widget.onSelectFolder,
                 ),
               Expanded(
                 // Only the content pane animates (200ms
@@ -139,7 +250,7 @@ class LocalSessionsPanel extends StatelessWidget {
                   child: KeyedSubtree(
                     key: ValueKey('localContent-${openFolder?.id ?? 'list'}'),
                     child: openFolder == null
-                        ? (folders.isEmpty
+                        ? (allFolders.isEmpty
                               ? Center(
                                   child: Text(
                                     context.l10n.localFoldersEmpty,
@@ -149,15 +260,35 @@ class LocalSessionsPanel extends StatelessWidget {
                                     ),
                                   ),
                                 )
+                              : folders.isEmpty
+                              ? sessionSearchEmptyState(
+                                  context,
+                                  colors,
+                                  _query,
+                                  _clearSearch,
+                                  noMatches: context.l10n.listSearchNoMatches(
+                                    _query,
+                                  ),
+                                )
                               : _FolderList(
                                   folders: folders,
-                                  iconResolver: iconResolver,
-                                  onOpen: onSelectFolder,
+                                  iconResolver: widget.iconResolver,
+                                  onOpen: widget.onSelectFolder,
                                 ))
+                        : visibleSessions.isEmpty && _query.trim().isNotEmpty
+                        ? sessionSearchEmptyState(
+                            context,
+                            colors,
+                            _query,
+                            _clearSearch,
+                            noMatches: context.l10n.listSearchNoMatches(_query),
+                          )
                         : LocalFolderSessionList(
-                            sessions: openFolder.sessions,
-                            selectedSessionId: selectedSessionId,
-                            onOpenSession: onOpenSession,
+                            sessions: visibleSessions,
+                            selectedSessionId: widget.selectedSessionId,
+                            onOpenSession: widget.onOpenSession,
+                            onVisibleSession:
+                                widget.controller.warmVisibleLocalEntry,
                           ),
                   ),
                 ),
@@ -189,7 +320,10 @@ class _FolderList extends StatelessWidget {
     final tokens = FaDesignTokens.of(context);
     return ListView.builder(
       key: const ValueKey('localFoldersList'),
-      padding: const EdgeInsets.symmetric(vertical: 4),
+      padding: EdgeInsets.only(
+        top: MessengerGlassBodyInsets.topOf(context) + 4,
+        bottom: 4,
+      ),
       itemCount: folders.length,
       itemBuilder: (context, index) {
         final folder = folders[index];
@@ -290,7 +424,10 @@ class _FolderStrip extends StatelessWidget {
                 context,
               ).copyWith(scrollbars: false),
               child: ListView.builder(
-                padding: const EdgeInsets.symmetric(vertical: 4),
+                padding: EdgeInsets.only(
+                  top: MessengerGlassBodyInsets.topOf(context) + 4,
+                  bottom: 4,
+                ),
                 itemCount: folders.length,
                 itemBuilder: (context, index) {
                   final folder = folders[index];
@@ -365,6 +502,7 @@ class LocalFolderSessionList extends StatelessWidget {
     required this.onOpenSession,
     this.emptyText,
     this.onLocalMenu,
+    this.onVisibleSession,
   });
 
   /// The folder's sessions, most recent first (the folder grouping's
@@ -382,6 +520,9 @@ class LocalFolderSessionList extends StatelessWidget {
   /// keeps delete/rename reachable; the Local panel passes null).
   final Future<void> Function(ChatListEntry entry, Rect anchor)? onLocalMenu;
 
+  /// Lazy decoration request for a session row that reached the viewport.
+  final ValueChanged<String>? onVisibleSession;
+
   @override
   Widget build(BuildContext context) {
     if (sessions.isEmpty) {
@@ -394,10 +535,16 @@ class LocalFolderSessionList extends StatelessWidget {
     }
     return ListView.builder(
       key: const ValueKey('localSessionList'),
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      padding: EdgeInsets.only(
+        left: 8,
+        right: 8,
+        top: MessengerGlassBodyInsets.topOf(context) + 4,
+        bottom: 4,
+      ),
       itemCount: sessions.length,
       itemBuilder: (context, index) {
         final entry = sessions[index];
+        onVisibleSession?.call(entry.id.value);
         return LocalSessionRow(
           key: ValueKey('localSession-${entry.id.value}'),
           entry: entry,

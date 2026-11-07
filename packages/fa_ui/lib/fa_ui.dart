@@ -87,5 +87,8 @@ export 'src/widgets/snackbars.dart';
 export 'src/widgets/fa2_adaptive.dart';
 export 'src/widgets/fa2_controls.dart';
 export 'src/widgets/fa_icon_action_button.dart';
+export 'src/widgets/fa_icon_action_band.dart';
 export 'src/widgets/fa_logo.dart';
 export 'src/widgets/fa2_section_eyebrow.dart';
+export 'src/widgets/fa_icons.dart';
+export 'src/widgets/fa_route_header.dart';

@@ -112,8 +112,9 @@ Widget sessionSearchEmptyState(
   BuildContext context,
   FahColors colors,
   String query,
-  VoidCallback onClear,
-) {
+  VoidCallback onClear, {
+  String? noMatches,
+}) {
   return Center(
     child: Padding(
       padding: const EdgeInsets.all(16),
@@ -121,7 +122,7 @@ Widget sessionSearchEmptyState(
         mainAxisSize: MainAxisSize.min,
         children: [
           Text(
-            context.l10n.sidebarSearchNoMatches(query),
+            noMatches ?? context.l10n.sidebarSearchNoMatches(query),
             textAlign: TextAlign.center,
             style: Theme.of(
               context,
@@ -200,7 +201,12 @@ class _SessionSearchFieldState extends State<SessionSearchField> {
   void didUpdateWidget(covariant SessionSearchField oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.controller != widget.controller) {
-      oldWidget.controller?.removeListener(_onTyped);
+      final oldController = oldWidget.controller ?? _ownController;
+      oldController?.removeListener(_onTyped);
+      if (oldWidget.controller == null) {
+        _ownController?.dispose();
+        _ownController = null;
+      }
       _controller.addListener(_onTyped);
     }
     if (oldWidget.focusNode != widget.focusNode) {
@@ -211,6 +217,10 @@ class _SessionSearchFieldState extends State<SessionSearchField> {
 
   @override
   void dispose() {
+    // The host may keep an injected controller alive while collapsing this
+    // field (Local/Networks detail search). Detach FIRST: later host clears
+    // must not call setState on this defunct element.
+    _controller.removeListener(_onTyped);
     _debounce?.cancel();
     _ownController?.dispose();
     _ownFocus?.dispose();
@@ -240,6 +250,7 @@ class _SessionSearchFieldState extends State<SessionSearchField> {
   Widget build(BuildContext context) {
     final colors = FahColors.of(context);
     final tokens = FaDesignTokens.of(context);
+    final typography = FaTypography.of(context);
     final ridesGlass = tokens.direction == FaVisualDirection.glass;
     final hint = widget.hintText ?? context.l10n.sidebarSearchHint;
     return CallbackShortcuts(
@@ -261,8 +272,15 @@ class _SessionSearchFieldState extends State<SessionSearchField> {
           focusNode: _focus,
           height: kSearchFieldHeight,
           placeholder: hint,
-          textStyle: TextStyle(color: tokens.ink1, fontSize: 13, height: 1.4),
-          placeholderStyle: TextStyle(color: tokens.ink3, fontSize: 13),
+          textStyle: typography.body.copyWith(
+            color: tokens.ink1,
+            fontSize: 13,
+            height: 1.4,
+          ),
+          placeholderStyle: typography.body.copyWith(
+            color: tokens.ink3,
+            fontSize: 13,
+          ),
           prefixIcon: Icon(Icons.search, size: 17, color: colors.dim),
           inputFormatters: [
             // The .search constructor pins maxLength; the 100-char paste

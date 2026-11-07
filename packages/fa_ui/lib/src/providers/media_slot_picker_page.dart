@@ -18,6 +18,7 @@ import 'package:fa_ui/src/stores/provider_registry.dart';
 import 'package:fa_ui/src/stores/session_keys_store.dart';
 import 'package:fa_ui/src/utils/page_presentation.dart';
 import 'package:fa_ui/src/strings/fa_ui_strings.dart';
+import 'package:fa_ui/src/widgets/fa_route_header.dart';
 import 'package:fa_ui/src/widgets/model_list_picker.dart';
 
 /// The outcome of the media slot flow ([MediaSlotProviderPickerPage] →
@@ -120,7 +121,7 @@ class MediaSlotProviderPickerPage extends StatelessWidget {
         ? null
         : providerForBaseUrl(initial.baseUrl, registry);
     return Scaffold(
-      appBar: AppBar(title: Text(title)),
+      appBar: faRouteAppBar(context: context, title: Text(title)),
       body: SafeArea(
         child: ListenableBuilder(
           listenable: registry,
@@ -619,7 +620,8 @@ class _MediaSlotModelPageState extends State<MediaSlotModelPage> {
     final strings = FaUiStrings.of(context);
     final capabilities = _suggestedCapabilities;
     return Scaffold(
-      appBar: AppBar(
+      appBar: faRouteAppBar(
+        context: context,
         title: Text(providerDisplayName(context, widget.provider)),
       ),
       body: SafeArea(

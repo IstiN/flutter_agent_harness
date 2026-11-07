@@ -73,6 +73,68 @@ SessionMetadata _metadata(String root, String id) => SessionMetadata(
 );
 
 void main() {
+  test('duplicate opens of the same persisted session share one load and '
+      'activate its messages', () async {
+    final tmp = await io.Directory.systemTemp.createTemp('fa_same_open_race');
+    addTearDown(() => _deleteTmpDir(tmp));
+    await io.File('${tmp.path}/target.jsonl').writeAsString(
+      '{"type":"session","version":3,"id":"target",'
+      '"timestamp":"2026-01-01T00:00:00.000Z","cwd":"${tmp.path}"}\n'
+      '{"type":"message","id":"m1","parentId":null,'
+      '"timestamp":"2026-01-01T00:00:00.000Z","message":{"role":"user",'
+      '"content":[{"type":"text","text":"running session transcript"}]}}\n',
+    );
+    final gated = GatedFileSystem(
+      LocalFileSystem(cwd: tmp.path),
+      gatePath: 'target.jsonl',
+    )..armGate();
+    final manager = FlutterSessionManager(
+      env: LocalExecutionEnv(cwd: tmp.path),
+      sessionsRoot: tmp.path,
+      includeSharedSessionRoots: false,
+    );
+    final current = _service(tmp.path, LocalFileSystem(cwd: tmp.path));
+    manager.addSession('current', current);
+    final services = <AgentService>[];
+    var factoryCalls = 0;
+    AgentService buildService() {
+      factoryCalls++;
+      final service = _service(tmp.path, gated);
+      services.add(service);
+      return service;
+    }
+
+    addTearDown(() {
+      current.dispose();
+      for (final service in services) {
+        service.dispose();
+      }
+      manager.dispose();
+    });
+    final metadata = _metadata(tmp.path, 'target');
+    final first = manager.openSession(
+      metadata,
+      config: _config,
+      serviceFactory: buildService,
+    );
+    // A duplicate row tap arrives while the first disk read is parked.
+    final second = manager.openSession(
+      metadata,
+      config: _config,
+      serviceFactory: buildService,
+    );
+    gated.releaseGate();
+    final opened = await Future.wait([first, second]);
+
+    expect(factoryCalls, 1);
+    expect(identical(opened[0], opened[1]), isTrue);
+    expect(manager.activeId, 'target');
+    expect(
+      manager.active?.service.messages.map((message) => message.content),
+      contains('running session transcript'),
+    );
+  });
+
   test(
     'a stale open completion cannot override the latest session selection',
     () async {

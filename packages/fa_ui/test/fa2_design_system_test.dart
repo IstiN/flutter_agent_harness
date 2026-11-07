@@ -159,9 +159,7 @@ void main() {
         // frosted fallback, deterministic on any host renderer.
         expect(find.byType(AdaptiveGlass), findsOneWidget);
         expect(
-          tester
-              .widget<AdaptiveGlass>(find.byType(AdaptiveGlass))
-              .quality,
+          tester.widget<AdaptiveGlass>(find.byType(AdaptiveGlass)).quality,
           GlassQuality.minimal,
         );
         expect(find.text('Glass content'), findsOneWidget);
@@ -192,6 +190,20 @@ void main() {
       await tester.tap(find.text('Continue'));
       expect(taps, 1);
     });
+
+    testWidgets(
+      'dense buttons stay compact instead of Material-padding to 48',
+      (tester) async {
+        var taps = 0;
+        await _pump(
+          tester,
+          FaButton(label: 'Beta', dense: true, onPressed: () => taps++),
+        );
+        expect(tester.getSize(find.byType(FaButton)).height, 36);
+        await tester.tap(find.text('Beta'));
+        expect(taps, 1);
+      },
+    );
 
     testWidgets('reduced motion resolves to zero', (tester) async {
       late Duration resolved;

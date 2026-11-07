@@ -41,28 +41,34 @@ class AgentsSection extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final children = manager.handles;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        _MainRow(description: mainDescription, theme: theme),
-        if (children.isEmpty)
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: 6),
-            child: Text(
-              'No subagents yet — the task tool spawns them', // l10n:ignore
-              style: theme.textTheme.bodySmall,
-            ),
-          )
-        else
-          for (final handle in children)
-            _ChildRow(
-              handle: handle,
-              theme: theme,
-              inboxCount: manager.pendingInboxCount(handle.id),
-              onTap: () => _openDetail(context, handle),
-            ),
-      ],
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _MainRow(description: mainDescription, theme: theme),
+          if (children.isEmpty)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(32, 0, 0, 8),
+              child: Text(
+                'No subagents yet — the task tool spawns them', // l10n:ignore
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                  fontWeight: FontWeight.w400,
+                ),
+              ),
+            )
+          else
+            for (final handle in children)
+              _ChildRow(
+                handle: handle,
+                theme: theme,
+                inboxCount: manager.pendingInboxCount(handle.id),
+                onTap: () => _openDetail(context, handle),
+              ),
+        ],
+      ),
     );
   }
 
@@ -87,7 +93,7 @@ class _MainRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6),
+      padding: const EdgeInsets.symmetric(vertical: 10),
       child: Row(
         children: [
           Icon(

@@ -4,6 +4,30 @@
 
 part of 'settings.dart';
 
+/// One aligned label for a control inside a grouped settings card.
+class _SettingsControlLabel extends StatelessWidget {
+  const _SettingsControlLabel(this.text);
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    final tokens = faui.FaDesignTokens.of(context);
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Text(
+        text,
+        style: TextStyle(
+          color: tokens.ink2,
+          fontSize: 12,
+          fontWeight: FontWeight.w600,
+          letterSpacing: .1,
+        ),
+      ),
+    );
+  }
+}
+
 /// The settings "Theme" section: a dropdown over [FahThemeMode] bound to the
 /// app-wide [ThemeController] (explicit [controller], else the nearest
 /// [FahThemeScope]). Hidden when no controller is available (tests pumping
@@ -16,7 +40,6 @@ class ThemeModeSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final tokens = faui.FaDesignTokens.of(context);
     final controller = this.controller ?? FahThemeScope.maybeOf(context);
     if (controller == null) return const SizedBox.shrink();
     return ListenableBuilder(
@@ -28,18 +51,7 @@ class ThemeModeSection extends StatelessWidget {
           children: [
             // The dim eyebrow: section headers stay out of the field so
             // the capsule carries no floating M3 label.
-            Padding(
-              padding: const EdgeInsets.fromLTRB(4, 0, 4, 8),
-              child: Text(
-                context.l10n.settingsThemeLabel,
-                style: TextStyle(
-                  color: tokens.ink2,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w600,
-                  letterSpacing: .2,
-                ),
-              ),
-            ),
+            _SettingsControlLabel(context.l10n.settingsThemeLabel),
             SettingsDropdown<FahThemeMode>(
               // The key forces the FormField to re-seed when the mode is
               // changed from elsewhere.
@@ -87,11 +99,16 @@ class ImagePreviewsSection extends StatelessWidget {
     return ListenableBuilder(
       listenable: store,
       builder: (context, _) {
-        return SettingsSwitchRow(
-          value: store.highQuality,
-          onChanged: store.setHighQuality,
-          title: Text(context.l10n.settingsImagePreviewsLabel),
-          subtitle: Text(context.l10n.settingsImagePreviewsHelper),
+        // One grouped card, like the other settings switch sections.
+        return SettingsGroup(
+          children: [
+            SettingsSwitchRow(
+              value: store.highQuality,
+              onChanged: store.setHighQuality,
+              title: Text(context.l10n.settingsImagePreviewsLabel),
+              subtitle: Text(context.l10n.settingsImagePreviewsHelper),
+            ),
+          ],
         );
       },
     );
@@ -102,9 +119,17 @@ class ImagePreviewsSection extends StatelessWidget {
 /// is built by the real shared theme builder, so it cannot drift from the
 /// palette the user gets after tapping it.
 class VisualDirectionSection extends StatelessWidget {
-  const VisualDirectionSection({super.key, this.controller});
+  const VisualDirectionSection({
+    super.key,
+    this.controller,
+    this.includeThemeMode = false,
+  });
 
   final ThemeController? controller;
+
+  /// The full Settings page groups brightness with direction and font;
+  /// standalone design-system previews keep the narrower direction-only API.
+  final bool includeThemeMode;
 
   @override
   Widget build(BuildContext context) {
@@ -112,71 +137,69 @@ class VisualDirectionSection extends StatelessWidget {
     if (controller == null) return const SizedBox.shrink();
     return ListenableBuilder(
       listenable: controller,
-      builder: (context, _) => Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
+      builder: (context, _) => SettingsGroup(
+        label: context.l10n.visualDirectionTitle,
+        hint: context.l10n.visualDirectionSubtitle,
         children: [
-          Text(
-            context.l10n.visualDirectionTitle,
-            style: Theme.of(context).textTheme.titleSmall,
-          ),
-          const SizedBox(height: 4),
-          Text(
-            context.l10n.visualDirectionSubtitle,
-            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-              color: faui.FaDesignTokens.of(context).ink2,
-            ),
-          ),
-          const SizedBox(height: 12),
-          LayoutBuilder(
-            builder: (context, constraints) => Wrap(
-              spacing: 12,
-              runSpacing: 12,
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                for (final direction in faui.FaVisualDirection.values)
-                  SizedBox(
-                    width: (constraints.maxWidth - 12) / 2,
-                    height: 88,
-                    child: _DirectionPreview(
-                      direction: direction,
-                      fontPreset: controller.fontPreset,
-                      selected: controller.visualDirection == direction,
-                      onTap: () => controller.setVisualDirection(direction),
-                    ),
-                  ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 20),
-          Text(
-            context.l10n.fontPresetTitle,
-            style: Theme.of(context).textTheme.titleSmall,
-          ),
-          const SizedBox(height: 8),
-          SettingsDropdown<faui.FaFontPreset>(
-            itemKey: ValueKey<faui.FaFontPreset>(controller.fontPreset),
-            value: controller.fontPreset,
-            items: [
-              for (final preset in faui.FaFontPreset.values)
-                DropdownMenuItem(
-                  value: preset,
-                  child: Text(
-                    switch (preset) {
-                      faui.FaFontPreset.system => 'System SF',
-                      faui.FaFontPreset.geist => 'Geist',
-                      faui.FaFontPreset.jakarta => 'Jakarta',
-                      faui.FaFontPreset.inter => 'Inter',
-                      faui.FaFontPreset.outfit => 'Outfit + Inter',
-                    },
-                    style: faui.FaTypography.forDirection(
-                      controller.visualDirection,
-                      preset: preset,
-                    ).body.copyWith(fontSize: 14),
+                LayoutBuilder(
+                  builder: (context, constraints) => Wrap(
+                    spacing: 12,
+                    runSpacing: 12,
+                    children: [
+                      for (final direction in faui.FaVisualDirection.values)
+                        SizedBox(
+                          width: (constraints.maxWidth - 12) / 2,
+                          height: 88,
+                          child: _DirectionPreview(
+                            direction: direction,
+                            fontPreset: controller.fontPreset,
+                            selected: controller.visualDirection == direction,
+                            onTap: () =>
+                                controller.setVisualDirection(direction),
+                          ),
+                        ),
+                    ],
                   ),
                 ),
-            ],
-            onChanged: (preset) {
-              if (preset != null) controller.setFontPreset(preset);
-            },
+                const SizedBox(height: 20),
+                _SettingsControlLabel(context.l10n.fontPresetTitle),
+                SettingsDropdown<faui.FaFontPreset>(
+                  itemKey: ValueKey<faui.FaFontPreset>(controller.fontPreset),
+                  value: controller.fontPreset,
+                  items: [
+                    for (final preset in faui.FaFontPreset.values)
+                      DropdownMenuItem(
+                        value: preset,
+                        child: Text(
+                          switch (preset) {
+                            faui.FaFontPreset.system => 'System SF',
+                            faui.FaFontPreset.geist => 'Geist',
+                            faui.FaFontPreset.jakarta => 'Jakarta',
+                            faui.FaFontPreset.inter => 'Inter',
+                            faui.FaFontPreset.outfit => 'Outfit + Inter',
+                          },
+                          style: faui.FaTypography.forDirection(
+                            controller.visualDirection,
+                            preset: preset,
+                          ).body.copyWith(fontSize: 14),
+                        ),
+                      ),
+                  ],
+                  onChanged: (preset) {
+                    if (preset != null) controller.setFontPreset(preset);
+                  },
+                ),
+                if (includeThemeMode) ...[
+                  const SizedBox(height: 16),
+                  ThemeModeSection(controller: controller),
+                ],
+              ],
+            ),
           ),
         ],
       ),
@@ -224,11 +247,11 @@ class _DirectionPreview extends StatelessWidget {
             child: faui.FaSurface(
               onTap: onTap,
               color: selected ? tokens.accentSoft : tokens.surface1,
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
               child: Row(
                 children: [
-                  faui.FaLogo(size: 42, semanticLabel: ''),
-                  const SizedBox(width: 10),
+                  faui.FaLogo(size: 36, semanticLabel: ''),
+                  const SizedBox(width: 8),
                   Expanded(
                     child: Text(
                       name,
@@ -241,8 +264,13 @@ class _DirectionPreview extends StatelessWidget {
                       ),
                     ),
                   ),
-                  if (selected)
-                    Icon(Icons.check_circle, size: 19, color: tokens.accent),
+                  faui.FaIcon(
+                    selected
+                        ? faui.FaSemanticIcon.checkCircle
+                        : faui.FaSemanticIcon.radioUnchecked,
+                    size: 19,
+                    color: selected ? tokens.accent : tokens.ink3,
+                  ),
                 ],
               ),
             ),
@@ -350,55 +378,25 @@ class ThemePacksSection extends StatelessWidget {
     required ThemeController controller,
     required bool canPick,
   }) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      mainAxisSize: MainAxisSize.min,
+    return SettingsGroup(
+      label: context.l10n.themePacksTitle,
+      hint: context.l10n.themePacksSubtitle,
+      action: canPick
+          ? faui.FaButton(
+              label: context.l10n.themePackImport,
+              icon: Icons.upload_file,
+              variant: faui.FaButtonVariant.secondary,
+              onPressed: () => _import(context, store),
+            )
+          : null,
       children: [
-        _headerRow(context, theme, store, canPick),
-        const SizedBox(height: 4),
-        Text(
-          context.l10n.themePacksSubtitle,
-          style: theme.textTheme.bodySmall?.copyWith(
-            color: faui.FaDesignTokens.of(context).ink2,
-          ),
+        SettingsRadioRow(
+          selected: controller.packId == null,
+          onTap: () => controller.setPack(null),
+          title: Text(context.l10n.themePackDefault),
         ),
-        Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            SettingsRadioRow(
-              selected: controller.packId == null,
-              onTap: () => controller.setPack(null),
-              title: Text(context.l10n.themePackDefault),
-            ),
-            for (final pack in store.packs)
-              _packTile(context, theme, store, controller, pack),
-          ],
-        ),
-      ],
-    );
-  }
-
-  Widget _headerRow(
-    BuildContext context,
-    ThemeData theme,
-    ThemePackStore store,
-    bool canPick,
-  ) {
-    return Row(
-      children: [
-        Expanded(
-          child: Text(
-            context.l10n.themePacksTitle,
-            style: theme.textTheme.titleSmall,
-          ),
-        ),
-        if (canPick)
-          faui.FaButton(
-            label: context.l10n.themePackImport,
-            icon: Icons.upload_file,
-            variant: faui.FaButtonVariant.secondary,
-            onPressed: () => _import(context, store),
-          ),
+        for (final pack in store.packs)
+          _packTile(context, theme, store, controller, pack),
       ],
     );
   }

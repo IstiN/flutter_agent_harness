@@ -23,6 +23,8 @@ import 'package:fa/services/codemie_sso_flow.dart';
 import 'package:fa/services/github_account_store.dart';
 import 'package:fa/services/image_preview_store.dart';
 import 'package:fa/ui/widgets/github_account_section.dart';
+import 'package:fa/ui/widgets/fah_wallpaper.dart';
+import 'package:fa/ui/widgets/messenger_section_header.dart';
 import 'package:fa/ui/widgets/provider_selection_list.dart';
 import 'package:fa/ui/widgets/store_get_banner.dart';
 import 'package:fa/ui/app_theme.dart';
@@ -42,6 +44,7 @@ import 'package:fa/services/provider_registry.dart';
 import 'package:fa/services/session_keys_store.dart';
 import 'package:fa/services/skills_access_store.dart';
 import 'package:fa/ui/screens/settings_key_dialogs.dart';
+import 'package:fa/ui/screens/settings_navigation.dart';
 import 'package:fa/ui/screens/settings_tiles.dart';
 import 'package:fa/ui/screens/skills_toggles_section.dart';
 import 'package:fa/ui/screens/tools_availability_section.dart';
@@ -1250,6 +1253,10 @@ class SettingsScreen extends StatefulWidget {
     this.transformersJsEngine,
     this.modelsFetcher,
     this.taskModelsStore,
+    this.category,
+    this.embedded = false,
+    this.categorized = false,
+    this.onBack,
   });
 
   /// The service whose backend the default-chat-model flow reconfigures.
@@ -1293,15 +1300,55 @@ class SettingsScreen extends StatefulWidget {
   /// Task models section (tests pumping the bare form).
   final TaskModelsStore? taskModelsStore;
 
+  /// The category whose concrete controls replace the transcript in the
+  /// wide shell. Null in categorized narrow mode shows the category list.
+  final SettingsCategory? category;
+
+  /// Removes route-level chrome: the wide shell owns navigation and the
+  /// surrounding center panel.
+  final bool embedded;
+
+  /// Enables the six-category drill-down on narrow layouts. The default
+  /// keeps the legacy all-sections page for embedders that already provide
+  /// their own settings navigation.
+  final bool categorized;
+
+  /// Shell-owned back navigation. Category drill-down still returns to the
+  /// category root first; at the root this callback returns to Chats.
+  final VoidCallback? onBack;
+
   @override
   State<SettingsScreen> createState() => _SettingsScreenState();
 }
 
 class _SettingsScreenState extends State<SettingsScreen> {
+  final ScrollController _scrollController = ScrollController();
+  SettingsCategory? _selectedCategory;
+
+  bool get _isCategorized =>
+      widget.categorized || widget.embedded || widget.category != null;
+
+  SettingsCategory? get _effectiveCategory =>
+      widget.category ?? _selectedCategory;
+
   @override
   void initState() {
     super.initState();
     AppAnalytics.instance.screenOpened('settings');
+  }
+
+  @override
+  void didUpdateWidget(SettingsScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.category != widget.category && _scrollController.hasClients) {
+      _scrollController.jumpTo(0);
+    }
+  }
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
   }
 
   @override
@@ -1322,94 +1369,459 @@ class _SettingsScreenState extends State<SettingsScreen> {
     // model, media slots, approval mode, subagent manager) are
     // gated below; a small Add-provider CTA surfaces at the top so
     // the no-service case still has a clear next action.
-    return Scaffold(
-      appBar: faAppBar(title: Text(context.l10n.settingsTitle)),
-      body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              // The App Store Get banner (issue #691 AC4): web + macOS
-              // only, dismissible (persisted), non-blocking — a card at
-              // the top of the scroll, never an overlay. URLs resolve
-              // from the `links:` config section; `links.banner: false`
-              // mounts nothing (the AC7 regression switch).
-              if (widget.env != null)
-                StoreGetBanner(
-                  env: widget.env!,
-                  showOnPlatform:
-                      kIsWeb || defaultTargetPlatform == TargetPlatform.macOS,
-                ),
-              ..._noServiceHint(context, service),
-              _providersSection(context, service, onDeviceConfig),
-              const faui.FaHairline(),
-              // The Agents section / Models row / Approval mode all read
-              // from the live service (reconfigure, subagentManager,
-              // activeBaseUrl, …). Gate them on a non-null service
-              // so the no-service case still surfaces theme / keys /
-              // layout / debug logs / onboarding replay below.
-              if (service != null)
-                ..._modelsAndAgentsSections(service, taskModels),
-              const VisualDirectionSection(),
-              const SizedBox(height: 20),
-              const ThemeModeSection(),
-              const ThemePacksSection(),
-              const SizedBox(height: 24),
-
-              const faui.FaHairline(),
-              // The DAP/1 hub connection (machine-shared `~/.dap` config,
-              // docs/dap.md §9) — service-independent, so it shows without
-              // an active agent service too.
-              const DapHubSection(),
-              const faui.FaHairline(),
-              // The GitHub account used for widget publishing (issue #35)
-              // — resolves its store from SessionKeysScope, so it renders
-              // without an active agent service, like DapHubSection. The
-              // env wires "My publications" to the live status polling.
-              GithubAccountSection(env: widget.env),
-              const faui.FaHairline(),
-              const ChatTextSection(),
-              const faui.FaHairline(),
-              // Issue #207: chat image previews decode downscaled (600px)
-              // by default; this switch lifts the constraint live.
-              const ImagePreviewsSection(),
-              const faui.FaHairline(),
-              if (widget.layoutStore != null) ...[
-                HomeGridSection(layoutStore: widget.layoutStore!),
-                const faui.FaHairline(),
-              ],
-              if (service != null) ...[
-                ResetAppsSection(service: service),
-                const faui.FaHairline(),
-              ],
-              KeysSection(registry: widget.registry),
-              const faui.FaHairline(),
-              if (service != null) ..._approvalAndToolsSections(service),
-              // Registry-classified CLI-only settings, listed with their
-              // reasons — never a silent absence (issue #288 AC4).
-              // Deliberately OUTSIDE the `service != null` gate: the
-              // listing is registry-driven and static, so a fresh install
-              // with no service yet still shows WHY those settings are
-              // CLI-only.
-              const CliOnlySettingsSection(),
-              const faui.FaHairline(),
-              WebLlmCacheSection(engine: widget.webLlmEngine),
-              ..._onDeviceCacheSections(),
-              const faui.FaHairline(),
-              OnboardingReplaySection(
-                mediaModelsStore: MediaModelsScope.maybeOf(context),
-                lastConnectionStore: widget.lastConnectionStore,
-                registry: widget.registry,
-              ),
-              const faui.FaHairline(),
-              const DebugLogsSection(),
-              const SizedBox(height: 24),
-            ],
+    final tokens = faui.FaDesignTokens.of(context);
+    final glass = tokens.direction == faui.FaVisualDirection.glass;
+    // Wide glass dialogs present this page over the live app (see
+    // faui.pushFaPage): the platter samples the app behind the dialog.
+    // Standalone glass routes get a local token gradient underlay
+    // instead, so the glass has something to sample there too.
+    final inGlassDialog = faui.FaGlassDialogScope.of(context);
+    final inDialog = faui.FaDialogScope.of(context);
+    if (_isCategorized) {
+      return _buildCategorized(context, service, taskModels, onDeviceConfig);
+    }
+    final header = faAppBar(
+      context: context,
+      title: Text(context.l10n.settingsTitle),
+      toolbarHeight: 48,
+      centerTitle: false,
+      trafficLightClearance: !inDialog,
+      leading: Padding(
+        padding: const EdgeInsets.only(left: 12),
+        child: Center(
+          child: faui.FaIconActionButton(
+            buttonKey: const ValueKey('settingsBackButton'),
+            diameter: 36,
+            glyphSize: 20,
+            tooltip: MaterialLocalizations.of(context).backButtonTooltip,
+            onPressed: () => Navigator.of(context).maybePop(),
+            child: const faui.FaIcon(faui.FaSemanticIcon.back),
           ),
         ),
       ),
     );
+    final theme = Theme.of(context);
+    final wide = MediaQuery.sizeOf(context).width >= 840;
+    final floatingPlatter = wide || inDialog;
+    final page = Theme(
+      // Header and body share ONE platter. A separately painted AppBar was
+      // the visible gray band/seam in both opaque and glass directions.
+      data: theme.copyWith(
+        appBarTheme: theme.appBarTheme.copyWith(
+          backgroundColor: Colors.transparent,
+          surfaceTintColor: Colors.transparent,
+          elevation: 0,
+          scrolledUnderElevation: 0,
+          shape: const Border(),
+        ),
+      ),
+      child: Scaffold(
+        backgroundColor: glass ? Colors.transparent : tokens.background,
+        body: SafeArea(
+          child: Padding(
+            // A dialog is a floating platter; a phone is a full-bleed page,
+            // not a shrunken desktop card with bright strips at its edges.
+            padding: inDialog
+                ? EdgeInsets.zero
+                : floatingPlatter
+                ? const EdgeInsets.fromLTRB(8, 0, 8, 8)
+                : EdgeInsets.zero,
+            // The page platter: real liquid glass in the glass direction,
+            // the direction's opaque background elsewhere. Sections group
+            // into SOLID SettingsGroup cards on top — never glass-in-glass.
+            child: faui.FaSurface(
+              // The dialog route already owns the glass platter. Painting a
+              // second glass surface here produced the double frame and
+              // translucent text slivers visible in the Settings screenshot.
+              glass: glass && !inDialog,
+              useBackdropGroup: glass && !inDialog,
+              color: glass && !inDialog
+                  ? tokens.surface1.withValues(
+                      alpha: theme.brightness == Brightness.light ? .92 : .78,
+                    )
+                  : tokens.background,
+              borderRadius: BorderRadius.circular(
+                floatingPlatter && !inDialog ? 18 : 0,
+              ),
+              borderSide: inDialog
+                  ? BorderSide.none
+                  : BorderSide(color: tokens.hairline),
+              child: Column(
+                children: [
+                  SizedBox(
+                    key: const ValueKey('settingsHeader'),
+                    height: header.preferredSize.height,
+                    child: header,
+                  ),
+                  const faui.FaHairline(),
+                  Expanded(
+                    child: Scrollbar(
+                      key: const ValueKey('settingsScrollbar'),
+                      controller: _scrollController,
+                      thumbVisibility: true,
+                      thickness: 5,
+                      radius: const Radius.circular(8),
+                      child: SingleChildScrollView(
+                        controller: _scrollController,
+                        padding: const EdgeInsets.fromLTRB(16, 12, 20, 32),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            // The App Store Get banner (issue #691 AC4): web + macOS
+                            // only, dismissible (persisted), non-blocking — a card at
+                            // the top of the scroll, never an overlay. URLs resolve
+                            // from the `links:` config section; `links.banner: false`
+                            // mounts nothing (the AC7 regression switch).
+                            if (widget.env != null)
+                              StoreGetBanner(
+                                env: widget.env!,
+                                showOnPlatform:
+                                    kIsWeb ||
+                                    defaultTargetPlatform ==
+                                        TargetPlatform.macOS,
+                              ),
+                            ..._noServiceHint(context, service),
+                            SettingsGroup(
+                              label: context.l10n.settingsProvidersSectionTitle,
+                              children: [
+                                _providersSection(
+                                  context,
+                                  service,
+                                  onDeviceConfig,
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 16),
+                            // The Agents section / Models row / Approval mode all read
+                            // from the live service (reconfigure, subagentManager,
+                            // activeBaseUrl, …). Gate them on a non-null service
+                            // so the no-service case still surfaces theme / keys /
+                            // layout / debug logs / onboarding replay below.
+                            if (service != null)
+                              ..._modelsAndAgentsSections(service, taskModels),
+                            const VisualDirectionSection(
+                              includeThemeMode: true,
+                            ),
+                            const SizedBox(height: 16),
+                            const ThemePacksSection(),
+                            const SizedBox(height: 16),
+                            // The DAP/1 hub connection (machine-shared `~/.dap` config,
+                            // docs/dap.md §9) — service-independent, so it shows without
+                            // an active agent service too.
+                            const DapHubSection(),
+                            const SizedBox(height: 16),
+                            // The GitHub account used for widget publishing (issue #35)
+                            // — resolves its store from SessionKeysScope, so it renders
+                            // without an active agent service, like DapHubSection. The
+                            // env wires "My publications" to the live status polling.
+                            GithubAccountSection(env: widget.env),
+                            const SizedBox(height: 16),
+                            const ChatTextSection(),
+                            const SizedBox(height: 16),
+                            // Issue #207: chat image previews decode downscaled (600px)
+                            // by default; this switch lifts the constraint live.
+                            const ImagePreviewsSection(),
+                            const SizedBox(height: 16),
+                            if (widget.layoutStore != null) ...[
+                              HomeGridSection(layoutStore: widget.layoutStore!),
+                              const SizedBox(height: 16),
+                            ],
+                            if (service != null) ...[
+                              ResetAppsSection(service: service),
+                              const SizedBox(height: 16),
+                            ],
+                            KeysSection(registry: widget.registry),
+                            const SizedBox(height: 16),
+                            if (service != null)
+                              ..._approvalAndToolsSections(service),
+                            // Registry-classified CLI-only settings, listed with their
+                            // reasons — never a silent absence (issue #288 AC4).
+                            // Deliberately OUTSIDE the `service != null` gate: the
+                            // listing is registry-driven and static, so a fresh install
+                            // with no service yet still shows WHY those settings are
+                            // CLI-only.
+                            const CliOnlySettingsSection(),
+                            const SizedBox(height: 16),
+                            WebLlmCacheSection(engine: widget.webLlmEngine),
+                            ..._onDeviceCacheSections(),
+                            const SizedBox(height: 16),
+                            OnboardingReplaySection(
+                              mediaModelsStore: MediaModelsScope.maybeOf(
+                                context,
+                              ),
+                              lastConnectionStore: widget.lastConnectionStore,
+                              registry: widget.registry,
+                            ),
+                            const SizedBox(height: 16),
+                            const DebugLogsSection(),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    if (!glass) return page;
+    // The wide dialog already has the live app behind it — no underlay.
+    if (inGlassDialog) return page;
+    // Standalone glass route (pushed opaque route = nothing painted
+    // below): a subtle token gradient underlay, local to this page, so
+    // the glass platter and header have something real to sample.
+    return DecoratedBox(
+      key: const ValueKey('settingsGlassUnderlay'),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [
+            tokens.background,
+            tokens.accentSoft.withValues(alpha: .20),
+            tokens.background,
+          ],
+          stops: const [0, .5, 1],
+        ),
+      ),
+      child: page,
+    );
+  }
+
+  Widget _buildCategorized(
+    BuildContext context,
+    AgentService? service,
+    TaskModelsStore? taskModels,
+    OnDeviceConfigStore? onDeviceConfig,
+  ) {
+    final tokens = faui.FaDesignTokens.of(context);
+    final category = _effectiveCategory;
+    final title = category?.label ?? context.l10n.settingsTitle;
+    final body = category == null
+        ? SettingsCategoryPanel(
+            selected: null,
+            showHeader: false,
+            topPadding: MessengerFloatingPageScaffold.bodyTop,
+            onSelected: _selectCategory,
+          )
+        : _categoryScroll(category, service, taskModels, onDeviceConfig);
+    final header = MessengerFloatingPageHeader(
+      key: const ValueKey('settingsCategoryHeader'),
+      title: title,
+      icon: Icons.settings_outlined,
+      trafficLightClearance:
+          !widget.embedded && !faui.FaDialogScope.of(context),
+      leading: !widget.embedded || widget.onBack != null
+          ? faui.FaIconActionButton(
+              buttonKey: const ValueKey('settingsBackButton'),
+              diameter: 36,
+              glyphSize: 20,
+              glass: true,
+              tooltip: MaterialLocalizations.of(context).backButtonTooltip,
+              onPressed: () {
+                if (widget.category == null && category != null) {
+                  setState(() => _selectedCategory = null);
+                } else if (widget.onBack != null) {
+                  widget.onBack!();
+                } else {
+                  Navigator.of(context).maybePop();
+                }
+              },
+              child: const faui.FaIcon(faui.FaSemanticIcon.back),
+            )
+          : null,
+    );
+    final page = MessengerFloatingPageScaffold(header: header, body: body);
+    if (widget.embedded) {
+      return Material(
+        type: MaterialType.transparency,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            const Positioned.fill(child: FahWallpaper()),
+            KeyedSubtree(
+              key: const ValueKey('settingsCategoryContent'),
+              child: page,
+            ),
+          ],
+        ),
+      );
+    }
+    return Scaffold(
+      key: const ValueKey('settingsCategoryContent'),
+      backgroundColor: tokens.background,
+      body: Stack(
+        fit: StackFit.expand,
+        children: [
+          // Match a standalone Local chat route: the short glass controls
+          // sample real wallpaper, not an opaque header slab.
+          const Positioned.fill(child: FahWallpaper()),
+          SafeArea(child: page),
+        ],
+      ),
+    );
+  }
+
+  void _selectCategory(SettingsCategory category) {
+    setState(() => _selectedCategory = category);
+    if (_scrollController.hasClients) _scrollController.jumpTo(0);
+  }
+
+  Widget _categoryScroll(
+    SettingsCategory category,
+    AgentService? service,
+    TaskModelsStore? taskModels,
+    OnDeviceConfigStore? onDeviceConfig,
+  ) {
+    return Scrollbar(
+      key: const ValueKey('settingsScrollbar'),
+      controller: _scrollController,
+      thumbVisibility: widget.embedded,
+      thickness: 5,
+      radius: const Radius.circular(8),
+      child: SingleChildScrollView(
+        controller: _scrollController,
+        padding: const EdgeInsets.fromLTRB(
+          20,
+          MessengerFloatingPageScaffold.bodyTop,
+          24,
+          32,
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: _categorySections(
+            category,
+            service,
+            taskModels,
+            onDeviceConfig,
+          ),
+        ),
+      ),
+    );
+  }
+
+  List<Widget> _categorySections(
+    SettingsCategory category,
+    AgentService? service,
+    TaskModelsStore? taskModels,
+    OnDeviceConfigStore? onDeviceConfig,
+  ) {
+    const gap = SizedBox(height: 16);
+    return switch (category) {
+      SettingsCategory.providersModels => [
+        ..._noServiceHint(context, service),
+        SettingsGroup(
+          label: context.l10n.settingsProvidersSectionTitle,
+          children: [_providersSection(context, service, onDeviceConfig)],
+        ),
+        if (service != null) ...[
+          gap,
+          ModelsSettingsPage(
+            service: service,
+            registry: widget.registry,
+            lastConnectionStore: widget.lastConnectionStore,
+            modelsFetcher: widget.modelsFetcher,
+            taskModelsStore: taskModels,
+            webLlmEngine: widget.webLlmEngine,
+            transformersJsEngine: widget.transformersJsEngine,
+            contentOnly: true,
+          ),
+        ],
+        gap,
+        WebLlmCacheSection(engine: widget.webLlmEngine),
+        if (transformersJsProviderSupported) ...[
+          gap,
+          TransformersJsCacheSection(engine: widget.transformersJsEngine),
+        ],
+      ],
+      SettingsCategory.uiTheme => [
+        const VisualDirectionSection(includeThemeMode: true),
+        gap,
+        const ThemePacksSection(),
+        gap,
+        const ChatTextSection(),
+        gap,
+        const ImagePreviewsSection(),
+        if (widget.layoutStore != null) ...[
+          gap,
+          HomeGridSection(layoutStore: widget.layoutStore!),
+        ],
+      ],
+      SettingsCategory.accountsSecrets => [
+        const DapHubSection(),
+        gap,
+        GithubAccountSection(env: widget.env),
+        gap,
+        KeysSection(registry: widget.registry),
+      ],
+      SettingsCategory.skillsTools => [
+        if (service != null) ...[
+          if (skillsConsentSurfacesVisible) ...[
+            SkillsAccessSection(service: service),
+            gap,
+          ],
+          SkillsTogglesSection(service: service),
+          gap,
+          ToolsAvailabilitySection(service: service),
+          gap,
+          RedactionSection(service: service),
+        ],
+        if (mobilePlatformSupported && mobileFlavor == 'god') ...[
+          if (service != null) gap,
+          const MobileAutomationSection(),
+        ],
+      ],
+      SettingsCategory.agentConfig => [
+        if (service != null) ...[
+          ApprovalModeSelector(service: service),
+          gap,
+          if (service.subagentManager case final manager?) ...[
+            SettingsGroup(
+              label: 'Agents', // l10n:ignore
+              children: [
+                faui.AgentsSection(
+                  manager: manager,
+                  mainDescription:
+                      '${service.agentModelId} · '
+                      '${service.messages.length} messages',
+                  observe: service.observeSubagent,
+                  send: service.sendToSubagent,
+                ),
+              ],
+            ),
+            gap,
+          ],
+          CompactionSection(
+            projectDir: service.env.sessionCwd,
+            docsUrl: Uri.parse(
+              'https://github.com/IstiN/flutter_agent_harness/tree/'
+              'main/docs',
+            ),
+          ),
+          gap,
+        ],
+        const CliOnlySettingsSection(),
+      ],
+      SettingsCategory.others => [
+        if (widget.env != null)
+          StoreGetBanner(
+            env: widget.env!,
+            showOnPlatform:
+                kIsWeb || defaultTargetPlatform == TargetPlatform.macOS,
+          ),
+        if (widget.env != null) gap,
+        if (service != null) ...[ResetAppsSection(service: service), gap],
+        OnboardingReplaySection(
+          mediaModelsStore: MediaModelsScope.maybeOf(context),
+          lastConnectionStore: widget.lastConnectionStore,
+          registry: widget.registry,
+        ),
+        gap,
+        const DebugLogsSection(),
+      ],
+    };
   }
 
   /// The connect-a-provider CTA shown only when there is no active
@@ -1423,7 +1835,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     return [
       _NoServiceSettings(onAddProvider: () => _addProviderFromCta(context)),
       const SizedBox(height: 16),
-      const faui.FaHairline(),
     ];
   }
 
@@ -1493,6 +1904,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       modelsFetcher: widget.modelsFetcher,
       // Quota meters + pull-to-refresh (issue #823 AC6).
       quotas: QuotaStore.instance.service,
+      showTitle: false,
       openRouterOAuthCallbackUrl:
           OpenRouterOAuthCoordinator.instance.platformCallbackUrl,
       openRouterOAuthCapture: OpenRouterOAuthCoordinator.instance.capture,
@@ -1566,44 +1978,48 @@ class _SettingsScreenState extends State<SettingsScreen> {
     TaskModelsStore? taskModels,
   ) {
     return [
-      _ModelsRow(
-        onTap: () {
-          // pushFaPage: a centered dialog on wide canvases
-          // (desktop/tablet), a full-screen page on the phone.
-          unawaited(
-            faui.pushFaPage<void>(
-              context,
-              ModelsSettingsPage(
-                service: service,
-                registry: widget.registry,
-                lastConnectionStore: widget.lastConnectionStore,
-                modelsFetcher: widget.modelsFetcher,
-                taskModelsStore: taskModels,
-                webLlmEngine: widget.webLlmEngine,
-                transformersJsEngine: widget.transformersJsEngine,
-              ),
-            ),
-          );
-        },
+      SettingsGroup(
+        children: [
+          _ModelsRow(
+            onTap: () {
+              // pushFaPage: a centered dialog on wide canvases
+              // (desktop/tablet), a full-screen page on the phone.
+              unawaited(
+                faui.pushFaPage<void>(
+                  context,
+                  ModelsSettingsPage(
+                    service: service,
+                    registry: widget.registry,
+                    lastConnectionStore: widget.lastConnectionStore,
+                    modelsFetcher: widget.modelsFetcher,
+                    taskModelsStore: taskModels,
+                    webLlmEngine: widget.webLlmEngine,
+                    transformersJsEngine: widget.transformersJsEngine,
+                  ),
+                ),
+              );
+            },
+          ),
+        ],
       ),
-      const faui.FaHairline(),
+      const SizedBox(height: 16),
       // The live subagent tree (CLI `/agents` panel parity):
       // main + retained children with observe/send.
       if (service.subagentManager case final manager?) ...[
-        Text(
-          'Agents', // l10n:ignore
-          style: Theme.of(context).textTheme.titleSmall,
+        SettingsGroup(
+          label: 'Agents', // l10n:ignore
+          children: [
+            faui.AgentsSection(
+              manager: manager,
+              mainDescription:
+                  '${service.agentModelId} · '
+                  '${service.messages.length} messages',
+              observe: service.observeSubagent,
+              send: service.sendToSubagent,
+            ),
+          ],
         ),
-        const SizedBox(height: 8),
-        faui.AgentsSection(
-          manager: manager,
-          mainDescription:
-              '${service.agentModelId} · '
-              '${service.messages.length} messages',
-          observe: service.observeSubagent,
-          send: service.sendToSubagent,
-        ),
-        const faui.FaHairline(),
+        const SizedBox(height: 16),
       ],
     ];
   }
@@ -1615,25 +2031,25 @@ class _SettingsScreenState extends State<SettingsScreen> {
   List<Widget> _approvalAndToolsSections(AgentService service) {
     return [
       ApprovalModeSelector(service: service),
-      const faui.FaHairline(),
+      const SizedBox(height: 16),
       // Third-party skills consent — the roots don't exist on
       // mobile, so the section hides there entirely.
       if (skillsConsentSurfacesVisible) ...[
         SkillsAccessSection(service: service),
-        const faui.FaHairline(),
+        const SizedBox(height: 16),
       ],
       // Per-skill toggles (issue #1151): the package builtins are embedded
       // data on every host — the rows render wherever the settings screen
       // does, no consent-style platform gating.
       SkillsTogglesSection(service: service),
-      const faui.FaHairline(),
+      const SizedBox(height: 16),
       // Capability-gated tools (issue #19): live toggles, every
       // platform — the tool set exists everywhere.
       ToolsAvailabilitySection(service: service),
-      const faui.FaHairline(),
+      const SizedBox(height: 16),
       // Secret redaction (issue #1078 AC4/E3): the live pipeline toggle.
       RedactionSection(service: service),
-      const faui.FaHairline(),
+      const SizedBox(height: 16),
       // Compaction engine picker (issue #287): structured (2.0)
       // is the default; classic stays the in-settings rollback.
       // Resolves/writes the same config layers the per-compaction
@@ -1646,7 +2062,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           'main/docs',
         ),
       ),
-      const faui.FaHairline(),
+      const SizedBox(height: 16),
     ];
   }
 
@@ -1664,7 +2080,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       // show it.
       if (mobilePlatformSupported && mobileFlavor == 'god') ...[
         const MobileAutomationSection(),
-        const faui.FaHairline(),
+        const SizedBox(height: 16),
       ],
     ];
   }
@@ -1685,7 +2101,7 @@ class _ModelsRow extends StatelessWidget {
       borderRadius: BorderRadius.circular(tokens.radiusMd),
       onTap: onTap,
       child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
         child: Row(
           children: [
             faui.FaModelGlyph(size: 20, color: tokens.ink2),

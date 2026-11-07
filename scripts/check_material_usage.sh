@@ -4,7 +4,7 @@
 #
 # Prints the CURRENT Material-usage counts for flutter_app/lib in the exact
 # allowlist format the guard test parses. The five sections:
-#   [icons]            material icon glyphs (`Icons.*`)
+#   [icons]            concrete icon glyphs (`Icons.*`, `CupertinoIcons.*`)
 #   [material_colors]  hardcoded Material palette swatches (`Colors.blue`,
 #                      `Colors.white54`, `Colors.green.shade400`, ...;
 #                      `Colors.transparent` is exempt — a plain constant,
@@ -42,9 +42,9 @@ readonly COLOR_SET='^(amber|black|blue|blueGrey|brown|cyan|deepOrange|deepPurple
 # lib/l10n is generated localizations; *.g.dart is generated code — skipped.
 readonly SKIP='^lib/l10n/|\.g\.dart:'
 
-# [icons] — material icon glyphs.
+# [icons] — concrete icon glyphs; apps use theme-owned semantic FaIcons.
 count_icons() {
-  { grep -arEo "\bIcons\.[a-zA-Z_][a-zA-Z0-9_]*" lib --include='*.dart' \
+  { grep -arEo "\b(Icons|CupertinoIcons)\.[a-zA-Z_][a-zA-Z0-9_]*" lib --include='*.dart' \
       | grep -Ev "$SKIP" | cut -d: -f1 || true; }
 }
 

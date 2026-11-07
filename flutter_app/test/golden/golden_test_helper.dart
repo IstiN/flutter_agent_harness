@@ -201,6 +201,9 @@ Future<void> pumpGolden(
   ThemeData? theme,
   Widget Function(Widget child)? wrap,
 
+  /// App-level scopes that must remain above pushed routes as well as home.
+  Widget Function(BuildContext context, Widget? navigator)? builder,
+
   /// False for frames with infinite animations (spinners): settles by
   /// pumping one frame instead of pumpAndSettle, which would time out.
   bool settle = true,
@@ -215,6 +218,7 @@ Future<void> pumpGolden(
       locale: locale,
       localizationsDelegates: AppLocalizations.localizationsDelegates,
       supportedLocales: AppLocalizations.supportedLocales,
+      builder: builder,
       home: wrap != null ? wrap(child) : Scaffold(body: Center(child: child)),
     ),
   );

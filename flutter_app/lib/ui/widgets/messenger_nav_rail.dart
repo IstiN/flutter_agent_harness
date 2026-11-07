@@ -54,6 +54,7 @@ class MessengerNavRail extends StatelessWidget {
     required this.destinations,
     required this.settingsLabel,
     required this.onSettingsTap,
+    this.settingsSelected = false,
     this.bottomPadding = 10,
   });
 
@@ -74,6 +75,7 @@ class MessengerNavRail extends StatelessWidget {
   final List<MessengerRailDestination> destinations;
   final String settingsLabel;
   final VoidCallback onSettingsTap;
+  final bool settingsSelected;
   final double bottomPadding;
 
   @override
@@ -90,8 +92,8 @@ class MessengerNavRail extends StatelessWidget {
     // clearance zone, 44pt: lights + breathing room). Everywhere else the
     // chats-sidebar formula applies: max(seam, MediaQuery top) — the card's
     // 8pt margin plus what remains of the platform titlebar.
-    final titlebarTop = (!kIsWeb &&
-            defaultTargetPlatform == TargetPlatform.macOS)
+    final titlebarTop =
+        (!kIsWeb && defaultTargetPlatform == TargetPlatform.macOS)
         ? 44.0
         : math.max(
             0.0,
@@ -114,7 +116,7 @@ class MessengerNavRail extends StatelessWidget {
                 width: MessengerNavRail.width,
                 child: ListView(
                   padding: EdgeInsets.zero,
-                children: [
+                  children: [
                     for (final destination in destinations)
                       MessengerNavRailItem(destination: destination),
                   ],
@@ -126,7 +128,7 @@ class MessengerNavRail extends StatelessWidget {
                 rowKey: const ValueKey('railSettingsRow'),
                 icon: Icons.settings_outlined,
                 label: settingsLabel,
-                selected: false,
+                selected: settingsSelected,
                 onTap: (_) => onSettingsTap(),
               ),
             ),

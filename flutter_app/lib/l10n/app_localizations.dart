@@ -416,6 +416,18 @@ abstract class AppLocalizations {
   /// **'Back to folders'**
   String get localFolderBack;
 
+  /// No description provided for @localFoldersSearchHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Search folders'**
+  String get localFoldersSearchHint;
+
+  /// No description provided for @listSearchNoMatches.
+  ///
+  /// In en, this message translates to:
+  /// **'No matches for \"{query}\"'**
+  String listSearchNoMatches(Object query);
+
   /// No description provided for @wideChatsSearchHint.
   ///
   /// In en, this message translates to:
@@ -691,6 +703,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Chat actions'**
   String get chatMoreActions;
+
+  /// No description provided for @commonMore.
+  ///
+  /// In en, this message translates to:
+  /// **'More'**
+  String get commonMore;
 
   /// No description provided for @chatExpand.
   ///
@@ -4501,6 +4519,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Search networks'**
   String get networkSearchHint;
+
+  /// No description provided for @networkChannelsSearchHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Search channels'**
+  String get networkChannelsSearchHint;
 
   /// Sign-in dialog title, button and sidebar row
   ///

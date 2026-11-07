@@ -10,7 +10,7 @@ import 'package:flutter/material.dart';
 /// apps are presented by the shell's app panel rather than fabricated here.
 enum AppsDirectorySection { myApps, widgetStore }
 
-/// Shared state for the Apps directory, overview, and Quick open action.
+/// Shared section and search state for the Apps directory and overview.
 final class AppLauncherController extends ChangeNotifier {
   final TextEditingController searchController = TextEditingController();
   final FocusNode searchFocusNode = FocusNode();
@@ -24,9 +24,6 @@ final class AppLauncherController extends ChangeNotifier {
     _section = section;
     notifyListeners();
   }
-
-  /// Matches the PoC Quick open action: focus the directory/search field.
-  void quickOpen() => searchFocusNode.requestFocus();
 
   @override
   void dispose() {

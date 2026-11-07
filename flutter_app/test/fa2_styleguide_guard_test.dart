@@ -5,11 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 void main() {
   group('Fa 2.0 styleguide architecture', () {
     const redesignedSurfaces = <String, List<String>>{
-      'lib/main.dart': [
-        'buildFaTheme(',
-        'faWindowClassForWidth(',
-        'fontPreset: theme.fontPreset',
-      ],
+      'lib/main.dart': ['buildFaTheme(', 'fontPreset: theme.fontPreset'],
       'lib/services/theme_controller.dart': [
         'FaFontPreset',
         "'font': _fontPreset.name",
@@ -17,6 +13,7 @@ void main() {
       'lib/ui/screens/app_launcher_screen.dart': [
         'FaDesignTokens.of(context)',
         'FaTextField(',
+        'MessengerFloatingPageHeader(',
         'RoundedSuperellipseBorder(',
       ],
       'lib/ui/screens/settings_sections.dart': [
@@ -31,7 +28,7 @@ void main() {
       ],
       'lib/ui/widgets/wide_layout_shell.dart': [
         'FaDesignTokens.of(context)',
-        'FaWindowClass.large',
+        'faWindowClassForWidth(',
       ],
       'lib/ui/widgets/fa_mark.dart': ['FaLogo('],
     };

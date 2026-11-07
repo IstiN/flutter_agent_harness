@@ -169,6 +169,32 @@ void main() {
       }
     });
 
+    test('horizontal accent moves the dot to the right of the a', () {
+      final tokens = FaDesignTokens.forDirection(
+        FaVisualDirection.glass,
+        Brightness.dark,
+      );
+      final canvas = TestRecordingCanvas();
+      FaLogoPainter(
+        tokens,
+        trailingDot: true,
+      ).paint(canvas, const Size.square(68));
+
+      final circles = _calls(canvas, #drawCircle);
+      final dot = circles.singleWhere(
+        (call) =>
+            call.invocation.positionalArguments[0] == const Offset(56, 36),
+      );
+      expect(dot.invocation.positionalArguments[1], 3.2);
+      expect(
+        circles.where(
+          (call) =>
+              call.invocation.positionalArguments[0] == const Offset(48, 22),
+        ),
+        isEmpty,
+      );
+    });
+
     testWidgets('assistant avatar uses only the shared logo at every slot', (
       tester,
     ) async {

@@ -129,6 +129,17 @@ void main() {
       final composerRect = tester.getRect(find.byType(fa_ui.ChatComposer));
       expect(probeRect.bottom, lessThanOrEqualTo(composerRect.top + 1));
       expect(probeRect.height, 20);
+      final transcript = tester.widget(
+        find.byKey(const ValueKey('faChatTranscriptList')),
+      );
+      final bottomPadding = (transcript as dynamic).bottomPadding as double;
+      expect(
+        bottomPadding,
+        greaterThanOrEqualTo(composerRect.height + probeRect.height + 16),
+        reason:
+            'the agents header must reserve transcript space, not overlap '
+            'the last message',
+      );
     });
 
     testWidgets('wide: the Files presentation carries the session folder '
@@ -147,9 +158,7 @@ void main() {
       // The browser learns the session's OWN folder alongside the visible
       // initialPath: a session whose folder differs from the mount shows
       // the access gate instead of a silently wrong listing.
-      final panel = tester.widget<FilesAppPanel>(
-        find.byType(FilesAppPanel),
-      );
+      final panel = tester.widget<FilesAppPanel>(find.byType(FilesAppPanel));
       expect(panel.presentation.sessionFolder, service.currentSessionCwd);
       // The initialPath stays the visibility seam's decision.
       expect(
@@ -424,14 +433,25 @@ void main() {
           expect(find.text('test-model'), findsOneWidget);
           expect(find.byIcon(Icons.folder_outlined), findsOneWidget);
           expect(find.byIcon(Icons.copy_outlined), findsOneWidget);
+          final copyIcon = find.byIcon(Icons.copy_outlined);
           final copySurface = find
-              .ancestor(
-                of: find.byIcon(Icons.copy_outlined),
-                matching: find.byType(fa_ui.FaHeaderCircularAction),
-              )
+              .ancestor(of: copyIcon, matching: find.byType(IconButton))
               .first;
-          // The ONE control scale: the chat header circles are the 36pt
-          // FaIconActionButton default (the sidebar toggle's circle).
+          expect(
+            find.ancestor(
+              of: copyIcon,
+              matching: find.byType(fa_ui.FaIconActionBand<String>),
+            ),
+            findsOneWidget,
+          );
+          expect(
+            find.ancestor(
+              of: copyIcon,
+              matching: find.byType(fa_ui.FaHeaderCircularAction),
+            ),
+            findsNothing,
+          );
+          // Grouped actions retain the 36pt control target inside one band.
           expect(
             tester.getRect(copySurface).width,
             fa_ui.FaIconActionButton.defaultDiameter,

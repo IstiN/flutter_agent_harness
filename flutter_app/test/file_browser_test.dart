@@ -10,6 +10,7 @@ import 'package:fa_ui/fa_ui.dart'
         FaButtonVariant,
         FaDesignTokens,
         FaHeaderCircularAction,
+        FaIconActionBand,
         FaSectionEyebrow,
         FaVisualDirection,
         FahColors,
@@ -585,6 +586,49 @@ void main() {
       ]);
     });
 
+    testWidgets('compact search reveals, preserves a query, and closes', (
+      tester,
+    ) async {
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+      final env = await _seededEnv();
+      await tester.pumpWidget(_wrap(FileBrowser(env: env)));
+      await tester.pumpAndSettle();
+      final search = find.byKey(const ValueKey('fileBrowserSearch'));
+      final reveal = find.byKey(const ValueKey('fileBrowserSearchReveal'));
+      expect(search, findsNothing);
+      expect(reveal, findsOneWidget);
+
+      await tester.tap(reveal);
+      await tester.pumpAndSettle();
+      expect(search, findsOneWidget);
+      final editable = tester.widget<EditableText>(
+        find.descendant(of: search, matching: find.byType(EditableText)),
+      );
+      expect(editable.focusNode.hasFocus, isTrue);
+      await tester.enterText(search, 'notes');
+      editable.focusNode.unfocus();
+      await tester.pump();
+      expect(search, findsOneWidget);
+
+      await tester.tap(find.byKey(const ValueKey('fileBrowserSearchClose')));
+      await tester.pumpAndSettle();
+      expect(search, findsNothing);
+      expect(reveal, findsOneWidget);
+      await tester.tap(reveal);
+      await tester.pumpAndSettle();
+      expect(
+        tester
+            .widget<EditableText>(
+              find.descendant(of: search, matching: find.byType(EditableText)),
+            )
+            .controller
+            .text,
+        isEmpty,
+      );
+    });
+
     testWidgets('the band capsule filters the listing live', (tester) async {
       final env = await _seededEnv();
       await tester.pumpWidget(_wrap(FileBrowser(env: env)));
@@ -648,6 +692,12 @@ void main() {
               ),
             );
             await tester.pumpAndSettle();
+            if (width < 600) {
+              await tester.tap(
+                find.byKey(const ValueKey('fileBrowserSearchReveal')),
+              );
+              await tester.pumpAndSettle();
+            }
             final reason = '$direction $brightness at $width';
             // ONE band: the search capsule always fills the header, and
             // its width grows with the band — the desktop minimum holds
@@ -745,12 +795,8 @@ void main() {
               reason: reason,
             );
             if (width >= 800) {
-              Finder action(String key) => find
-                  .ancestor(
-                    of: find.byKey(ValueKey('fileBrowser$key')),
-                    matching: find.byType(FaHeaderCircularAction),
-                  )
-                  .first;
+              Finder action(String key) =>
+                  find.byKey(ValueKey('fileBrowser$key'));
               final upload = action('Upload');
               final sync = action('ICloudSync');
               final refresh = action('Refresh');
@@ -761,31 +807,48 @@ void main() {
                   reason: reason,
                 );
               }
-              // Priority order on the band: refresh, upload, sync.
+              // Priority order inside ONE capsule: refresh, upload, sync.
               expect(
                 tester.getRect(upload).left - tester.getRect(refresh).right,
-                8,
+                0,
                 reason: reason,
               );
               expect(
                 tester.getRect(sync).left - tester.getRect(upload).right,
-                8,
+                0,
+                reason: reason,
+              );
+              final band = find
+                  .ancestor(
+                    of: refresh,
+                    matching: find.byType(FaIconActionBand<int>),
+                  )
+                  .first;
+              expect(
+                find.descendant(
+                  of: band,
+                  matching: find.byType(FaHeaderCircularAction),
+                ),
+                findsNothing,
                 reason: reason,
               );
               final material = tester.widget<Material>(
                 find
-                    .descendant(of: refresh, matching: find.byType(Material))
+                    .descendant(of: band, matching: find.byType(Material))
                     .first,
               );
+              final tokens = FaDesignTokens.of(tester.element(refresh));
+              expect(material.color, tokens.surface2, reason: reason);
               expect(
-                material.color,
-                FaDesignTokens.of(tester.element(refresh)).surface2,
+                material.shape,
+                isA<RoundedSuperellipseBorder>(),
                 reason: reason,
               );
-              expect(material.shape, isA<CircleBorder>(), reason: reason);
+              final shape = material.shape! as RoundedSuperellipseBorder;
+              expect(shape.side.color, tokens.hairline, reason: reason);
               expect(
-                (material.shape! as CircleBorder).side.color,
-                FaDesignTokens.of(tester.element(refresh)).hairline,
+                shape.borderRadius.resolve(TextDirection.ltr).topLeft,
+                const Radius.circular(20),
                 reason: reason,
               );
             } else {
@@ -852,7 +915,9 @@ void main() {
     });
 
     testWidgets('band chrome: the close circle LEADS the search capsule; '
-        'capsule and circles share the composer scale', (tester) async {
+        'capsule and grouped action targets share the composer scale', (
+      tester,
+    ) async {
       final env = await _seededEnv();
       await tester.pumpWidget(_wrap(FileBrowser(env: env, onClose: () {})));
       await tester.pumpAndSettle();
@@ -871,27 +936,23 @@ void main() {
       // chats/activity/apps headers render (user call: search files was
       // to become search chats, not the other way around).
       expect(capsule.height, kSearchFieldHeight);
-      // Every band circle shares that composer scale (shrunken from the
-      // chat header's 40pt chrome) with the 18px glyph.
-      Finder circleOf(Key key) => find
+      // The standalone close circle and grouped action hit targets share
+      // the composer scale (shrunken from the chat header's 40pt chrome),
+      // but only close owns an individual circle.
+      final closeCircle = find
           .ancestor(
-            of: find.byKey(key),
+            of: find.byKey(const ValueKey('filesAppClose')),
             matching: find.byType(FaHeaderCircularAction),
           )
           .first;
-      expect(
-        tester.getSize(circleOf(const ValueKey('filesAppClose'))),
-        const Size.square(36),
-      );
-      expect(
-        tester.getSize(circleOf(const ValueKey('fileBrowserRefresh'))),
-        const Size.square(36),
-      );
+      final refresh = find.byKey(const ValueKey('fileBrowserRefresh'));
+      expect(tester.getSize(closeCircle), const Size.square(36));
+      expect(tester.getSize(refresh), const Size.square(36));
       expect(
         tester
             .widget<Icon>(
               find.descendant(
-                of: circleOf(const ValueKey('fileBrowserRefresh')),
+                of: refresh,
                 matching: find.byIcon(Icons.refresh),
               ),
             )
@@ -926,14 +987,8 @@ void main() {
       );
       expect(
         fieldRect.center.dy,
-        moreOrLessEquals(
-          tester
-              .getRect(circleOf(const ValueKey('fileBrowserRefresh')))
-              .center
-              .dy,
-          epsilon: 0.5,
-        ),
-        reason: 'capsule center on the refresh circle center',
+        moreOrLessEquals(tester.getRect(refresh).center.dy, epsilon: 0.5),
+        reason: 'capsule center on the refresh action center',
       );
       // The editable text inside paints within the capsule, vertically
       // centered in it (the visual "tiny strip above the buttons" guard:

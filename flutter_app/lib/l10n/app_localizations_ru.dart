@@ -187,6 +187,14 @@ class AppLocalizationsRu extends AppLocalizations {
   String get localFolderBack => 'Назад к папкам';
 
   @override
+  String get localFoldersSearchHint => 'Поиск папок';
+
+  @override
+  String listSearchNoMatches(Object query) {
+    return 'Ничего не найдено по запросу «$query»';
+  }
+
+  @override
   String get wideChatsSearchHint => 'Поиск чатов';
 
   @override
@@ -325,6 +333,9 @@ class AppLocalizationsRu extends AppLocalizations {
 
   @override
   String get chatMoreActions => 'Действия с чатом';
+
+  @override
+  String get commonMore => 'Ещё';
 
   @override
   String get chatExpand => 'Развернуть субагентов';
@@ -2539,6 +2550,9 @@ class AppLocalizationsRu extends AppLocalizations {
 
   @override
   String get networkSearchHint => 'Поиск сетей';
+
+  @override
+  String get networkChannelsSearchHint => 'Поиск каналов';
 
   @override
   String get networkSignInTitle => 'Войти';

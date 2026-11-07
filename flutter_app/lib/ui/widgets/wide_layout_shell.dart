@@ -33,8 +33,10 @@ import 'package:fa/ui/apps/app_launcher_controller.dart';
 import 'package:fa/ui/apps/apps_directory_panel.dart';
 import 'package:fa/ui/apps/files_presentation_panel.dart';
 import 'package:fa/ui/apps/messenger_app_panel.dart';
+import 'package:fa/ui/apps/running_apps_dock.dart';
 import 'package:fa/ui/screens/app_launcher_screen.dart';
 import 'package:fa/ui/widgets/fa_mark.dart';
+import 'package:fa/ui/widgets/fa_route_header.dart';
 import 'package:fa/ui/widgets/folder_avatar.dart';
 import 'package:fa/ui/widgets/messenger_nav_rail.dart';
 import 'package:fa/ui/widgets/messenger_navigation_controls.dart';
@@ -55,6 +57,7 @@ import 'package:fa/ui/widgets/quick_model_chip.dart';
 import 'package:fa/ui/widgets/subagent_chat_badge.dart';
 import 'package:fa/ui/screens/models_settings_page.dart';
 import 'package:fa/ui/screens/settings.dart';
+import 'package:fa/ui/screens/settings_navigation.dart';
 import 'package:fa/ui/widgets/boot_oversize_notice.dart';
 import 'package:fa/ui/widgets/sidebar_sessions_list.dart';
 import 'package:fa_ui/fa_ui.dart';
@@ -67,6 +70,13 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart'
         isSubagentSession,
         leaseOwnerLabel,
         subagentParentId;
+
+export 'package:fa/ui/widgets/fa_route_header.dart'
+    show faAppBar, faIsMacOSDesktop;
+
+part 'wide_layout_shell_settings.dart';
+part 'wide_layout_shell_panels.dart';
+part 'wide_layout_shell_navigation.dart';
 
 /// The responsive messenger shell: phones get a conversation list with
 /// Chats / Activity / Apps bottom navigation; wider layouts get a collapsible
@@ -133,42 +143,10 @@ class WideLayoutShell extends StatefulWidget {
   State<WideLayoutShell> createState() => _WideLayoutShellState();
 }
 
-/// Whether we're on macOS desktop (traffic lights float over content).
-bool get faIsMacOSDesktop =>
-    !kIsWeb && defaultTargetPlatform == TargetPlatform.macOS;
-
 /// The sessions sidebar's resize handle (tests find it by this key).
 const Key kSidebarDragHandleKey = ValueKey('sidebar-drag-handle');
 
-/// An [AppBar] with the macOS traffic-light clearance baked in. Pushed
-/// routes (Settings, Files, provider editor, …) otherwise render their
-/// back button/title under the floating traffic lights — the window uses
-/// fullSizeContentView and only the shell screens reserve their own strip.
-PreferredSizeWidget faAppBar({
-  Widget? title,
-  List<Widget>? actions,
-  Widget? leading,
-  bool? centerTitle,
-  bool trafficLightClearance = true,
-}) {
-  final bar = AppBar(
-    title: title,
-    actions: actions,
-    leading: leading,
-    centerTitle: centerTitle,
-  );
-  if (!faIsMacOSDesktop || !trafficLightClearance) return bar;
-  const inset = 32.0;
-  return PreferredSize(
-    preferredSize: const Size.fromHeight(kToolbarHeight + inset),
-    child: Padding(
-      padding: const EdgeInsets.only(top: inset),
-      child: bar,
-    ),
-  );
-}
-
-enum _WideShellSection { chats, local, activity, apps }
+enum _WideShellSection { chats, local, activity, apps, settings }
 
 class _WideLayoutShellState extends State<WideLayoutShell>
     with TickerProviderStateMixin {
@@ -180,12 +158,18 @@ class _WideLayoutShellState extends State<WideLayoutShell>
   /// never an instant pop.
   static const _presentationRevealDuration = Duration(milliseconds: 200);
 
-  /// The docked presentation slot's width (the card inside keeps 8pt
-  /// floating margins, matching the sidebar's panel margins).
-  static const _presentationSlotWidth = 340.0;
+  /// The docked presentation slot's current width. Apps can resize it with
+  /// the shared leading-edge [FaPaneResizeHandle]; Files keeps its own panel
+  /// behavior and the reveal still uses a fixed inner canvas per frame.
+  double _presentationWidth = 340.0;
+
+  /// Lets panel part-extensions update this [State] without calling the
+  /// protected [setState] member outside the concrete state subclass.
+  void _updateShell(VoidCallback update) => setState(update);
 
   bool _sidebarCollapsed = false;
   _WideShellSection _section = _WideShellSection.chats;
+  SettingsCategory _settingsCategory = SettingsCategory.providersModels;
 
   /// The Apps section's nested Navigator — registered on [FaChatHost] so
   /// JS apps open inside the shell instead of replacing the whole screen.
@@ -211,6 +195,12 @@ class _WideLayoutShellState extends State<WideLayoutShell>
       TextEditingController();
   late final AppsStore _appsStore;
   MessengerAppPresentation? _appPresentation;
+
+  /// Every launched app stays mounted until its explicit Close action.
+  /// Minimizing or opening another app only changes the active presentation;
+  /// each [MessengerAppPresentation.viewKey] preserves its JS runtime while
+  /// the IndexedStack moves between visible and offstage hosts.
+  final List<MessengerAppPresentation> _runningApps = [];
 
   /// The native Files presentation — a parallel of [_appPresentation]:
   /// the same right-pane surface flow, real (non-JS) content. Exactly one
@@ -395,7 +385,8 @@ class _WideLayoutShellState extends State<WideLayoutShell>
   /// snapshot — ZERO name-probe window reads here. The bounded background
   /// fill ([FlutterSessionManager.warmSessionNames]) lands the CLI /rename
   /// names after the first frame and repaints through the manager
-  /// listener; this method then runs again and picks them up.
+  /// listener; this method then runs again and picks them up. The visible
+  /// ListView rows — not this whole-corpus reload — request the lazy fill.
   Future<void> _reloadPersistedSessions() async {
     final all = await widget.manager.listPersistedSessions();
     final names = widget.manager.knownSessionNames;
@@ -404,7 +395,6 @@ class _WideLayoutShellState extends State<WideLayoutShell>
       _persistedSessions = all;
       _jsonlNames = names;
     });
-    unawaited(widget.manager.warmSessionNames(all));
     unawaited(_refreshChatProjection());
   }
 
@@ -513,6 +503,10 @@ class _WideLayoutShellState extends State<WideLayoutShell>
     final runBoundary = _lastServiceStreaming != streaming;
     _lastServiceStreaming = streaming;
     if (streaming && !runBoundary) return;
+    // Activity/config changes can update persisted stamps and ordering;
+    // decoration-only manager notifications deliberately reuse the short
+    // listing result cache instead.
+    widget.manager.invalidateListing();
     unawaited(_refreshChatProjection());
     if (mounted) setState(() {});
   }
@@ -669,12 +663,6 @@ class _WideLayoutShellState extends State<WideLayoutShell>
   }
 
   Widget _buildNarrowNavigation() {
-    final labels = [
-      context.l10n.wideNavChats,
-      context.l10n.wideNavLocal,
-      context.l10n.wideNavActivity,
-      context.l10n.appsGridTitle,
-    ];
     return SafeArea(
       top: false,
       child: Padding(
@@ -684,133 +672,97 @@ class _WideLayoutShellState extends State<WideLayoutShell>
           MessengerBottomNavigation.horizontalMargin,
           MessengerBottomNavigation.bottomGap,
         ),
-        child: MessengerBottomNavigation(
-          key: const ValueKey('narrowShellNavigation'),
-          selectedIndex: _section.index,
-          children: [
-            for (var index = 0; index < labels.length; index++)
-              MessengerBottomNavigationItem(
-                key: ValueKey(
-                  'messengerPrimaryNav-${_WideShellSection.values[index].name}',
-                ),
-                icon: switch (_WideShellSection.values[index]) {
-                  _WideShellSection.chats => Icons.chat_bubble_outline_rounded,
-                  _WideShellSection.local => Icons.folder_outlined,
-                  _WideShellSection.activity =>
-                    Icons.notifications_none_rounded,
-                  _WideShellSection.apps => Icons.grid_view_rounded,
-                },
-                label: labels[index],
-                selected: _section.index == index,
-                onTap: () => _selectSection(_WideShellSection.values[index]),
-              ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildChatPanel({bool compact = false, bool collapsed = false}) {
-    final dapStore = DapBindingStore.instance;
-    return ListenableBuilder(
-      listenable: _chatController,
-      builder: (context, _) => ListenableBuilder(
-        listenable: dapStore,
-        builder: (context, _) => _chatPanel(
-          dapBound: dapStore.boundSessionId != null,
-          compact: compact,
-          collapsed: collapsed,
-        ),
-      ),
-    );
-  }
-
-  Widget _chatPanel({
-    required bool dapBound,
-    required bool compact,
-    required bool collapsed,
-  }) {
-    return ChatListPanel(
-      controller: _chatController,
-      compact: compact,
-      selectedEntryId:
-          _activeNetworkEntry?.id ??
-          (_selectedSessionId == null
-              ? null
-              : ChatEntryId.local(_selectedSessionId!)),
-      didOpen: (entry) =>
-          entry.kind == ChatListEntryKind.localAgent &&
-          widget.manager.active?.id == entry.id.value,
-      hubBoundSessionId: dapBound
-          ? DapBindingStore.instance.boundSessionId
-          : null,
-      networkManager: widget.networkSessions,
-      iconResolver: _folderIcons,
-      networkMode: widget.networkMode,
-      onOpen: _openChatEntry,
-      onNew: _newSession,
-      onProfile: _openNarrowProfile,
-      onBrandTap: compact ? () => unawaited(_pushNarrowChat()) : null,
-      onBrandLongPress: () => unawaited(_mintSessionFromBrand()),
-      onCollapse: () => setState(() => _sidebarCollapsed = true),
-      onLocalMenu: _showChatEntryMenu,
-      headerBottom: null,
-      // The wide shell's vertical rail owns the section destinations and
-      // chat filters; the narrow shell keeps the horizontal bar.
-      showFilterToolbar: compact || collapsed,
-      searchController: switch (_section) {
-        _WideShellSection.chats => null,
-        _WideShellSection.local => null,
-        _WideShellSection.activity => _activitySearchController,
-        _WideShellSection.apps => _appLauncherController.searchController,
-      },
-      searchFocusNode: _section == _WideShellSection.apps
-          ? _appLauncherController.searchFocusNode
-          : null,
-      searchHint: switch (_section) {
-        _WideShellSection.chats => null,
-        _WideShellSection.local => null,
-        _WideShellSection.activity => context.l10n.activitySearchHint,
-        _WideShellSection.apps => context.l10n.launcherSearchHint,
-      },
-      onSearch: switch (_section) {
-        _WideShellSection.chats => null,
-        _WideShellSection.local => null,
-        _WideShellSection.activity => _activityController.setSearch,
-        _WideShellSection.apps => (_) {},
-      },
-      bodyKey: _section == _WideShellSection.chats
-          ? null
-          : ValueKey('wide-sidebar-${_section.name}'),
-      bodyBuilder: switch (_section) {
-        _WideShellSection.chats => null,
-        _WideShellSection.local => null,
-        _WideShellSection.activity => _buildActivitySidebarBody,
-        _WideShellSection.apps => _buildAppsSidebarBody,
-      },
-    );
-  }
-
-  Widget _buildActivitySidebarBody(double topPadding) {
-    return Padding(
-      padding: EdgeInsets.only(top: topPadding),
-      child: ActivityListPanel(controller: _activityController),
-    );
-  }
-
-  Widget _buildAppsSidebarBody(double topPadding) {
-    return Padding(
-      padding: EdgeInsets.only(top: topPadding),
-      child: ListenableBuilder(
-        listenable: _appLauncherController,
-        builder: (context, _) => AppsDirectoryPanel(
-          controller: _appLauncherController,
-          appsStore: _appsStore,
-          runningAppName: _appPresentation?.app.name,
-          showSearch: false,
-          onOpenRunning: () => setState(() {
-            _appPresentation?.fullScreen = false;
-          }),
+        child: ListenableBuilder(
+          listenable: _chatController,
+          builder: (context, _) {
+            final destinations = _railDestinations();
+            const primaryKeys = <String>{
+              'chatFilter-all',
+              'messengerPrimaryNav-local',
+              'messengerPrimaryNav-network',
+              'messengerPrimaryNav-activity',
+              'messengerPrimaryNav-apps',
+            };
+            const overflowOrder = <String>[
+              'chatFilter-channels',
+              'chatFilter-unread',
+              'messengerPrimaryNav-settings',
+            ];
+            final screenWidth = MediaQuery.sizeOf(context).width;
+            final phone = screenWidth <= 400;
+            final widthLimit = phone
+                ? MessengerBottomNavigation.maxWidth
+                : MessengerBottomNavigation.expandedMaxWidth;
+            final dockWidth = math.min(
+              widthLimit,
+              screenWidth - 2 * MessengerBottomNavigation.horizontalMargin,
+            );
+            // Five primary destinations plus More fit the existing 280pt
+            // phone dock. Networks stays direct; Channels is promoted from
+            // overflow before Unread and Settings as capacity grows.
+            final slotCapacity = phone
+                ? 6
+                : (dockWidth / 64).floor().clamp(6, destinations.length);
+            final visibleOverflowCount = slotCapacity >= destinations.length
+                ? overflowOrder.length
+                : slotCapacity - primaryKeys.length - 1;
+            final visibleKeys = <String>{
+              ...primaryKeys,
+              ...overflowOrder.take(visibleOverflowCount),
+            };
+            String nameOf(MessengerRailDestination destination) =>
+                (destination.rowKey as ValueKey<String>).value;
+            final direct = [
+              for (final destination in destinations)
+                if (visibleKeys.contains(nameOf(destination))) destination,
+            ];
+            final overflow = [
+              for (final destination in destinations)
+                if (!visibleKeys.contains(nameOf(destination))) destination,
+            ];
+            final moreSelected = overflow.any(
+              (destination) => destination.selected,
+            );
+            var selectedIndex = direct.indexWhere(
+              (destination) => destination.selected,
+            );
+            if (selectedIndex < 0) {
+              selectedIndex = moreSelected ? direct.length : 0;
+            }
+            final moreBadge = overflow.fold<int>(
+              0,
+              (total, destination) =>
+                  total + (destination.badgeMuted ? 0 : destination.badge ?? 0),
+            );
+            return MessengerBottomNavigation(
+              key: const ValueKey('narrowShellNavigation'),
+              widthLimit: widthLimit,
+              selectedIndex: selectedIndex,
+              children: [
+                for (final destination in direct)
+                  MessengerBottomNavigationItem(
+                    key: destination.rowKey,
+                    icon: destination.icon,
+                    label: destination.label,
+                    selected: destination.selected,
+                    badge: destination.badge,
+                    badgeMuted: destination.badgeMuted,
+                    onTap: () => destination.onTap?.call(context),
+                  ),
+                if (overflow.isNotEmpty)
+                  MessengerBottomNavigationItem(
+                    key: const ValueKey('messengerPrimaryNav-more'),
+                    icon: FaIconThemeData.of(
+                      context,
+                    ).resolve(FaSemanticIcon.more),
+                    label: context.l10n.commonMore,
+                    selected: moreSelected,
+                    badge: moreBadge == 0 ? null : moreBadge,
+                    onTap: () => _showNarrowMoreSheet(overflow),
+                  ),
+              ],
+            );
+          },
         ),
       ),
     );
@@ -821,6 +773,10 @@ class _WideLayoutShellState extends State<WideLayoutShell>
   /// row's unread count the same way the chat list does.
   Future<void> _openLocalEntry(ChatListEntry entry) async {
     if (entry.kind != ChatListEntryKind.localAgent) return;
+    await _openCollapsedChatEntry(entry);
+  }
+
+  Future<void> _openCollapsedChatEntry(ChatListEntry entry) async {
     await _openChatEntry(entry);
     await _chatController.markOpened(entry);
   }
@@ -924,7 +880,10 @@ class _WideLayoutShellState extends State<WideLayoutShell>
     final base = switch (_section) {
       // Top clearance comes from the single narrow-body wrap below — no
       // per-branch SafeArea (it would double the inset on macOS).
-      _WideShellSection.chats => _buildChatPanel(compact: true),
+      _WideShellSection.chats =>
+        _networksSurfaceOpen
+            ? _buildNetworksSidebar()
+            : _buildChatPanel(compact: true),
       _WideShellSection.local => _buildLocalPanel(compact: true),
       _WideShellSection.activity =>
         _narrowActivityDetailVisible
@@ -937,28 +896,9 @@ class _WideLayoutShellState extends State<WideLayoutShell>
                   setState(() => _narrowActivityDetailVisible = false);
                 },
               )
-            : Column(
-                children: [
-                  MessengerSectionHeader(
-                    title: context.l10n.wideNavActivity,
-                    searchController: _activitySearchController,
-                    searchHint: context.l10n.activitySearchHint,
-                    onSearch: _activityController.setSearch,
-                    onProfile: _openNarrowProfile,
-                    onNew: _newSession,
-                    compact: true,
-                  ),
-                  Expanded(
-                    child: ActivityListPanel(
-                      controller: _activityController,
-                      compact: true,
-                      onSelect: (_) =>
-                          setState(() => _narrowActivityDetailVisible = true),
-                    ),
-                  ),
-                ],
-              ),
+            : _buildChatPanel(compact: true),
       _WideShellSection.apps => _buildAppsArea(),
+      _WideShellSection.settings => _buildSettingsPanel(),
     };
     // One shared titlebar inset for every narrow section (the wide sidebar
     // panels are flush with the window edge and clear it themselves —
@@ -968,28 +908,37 @@ class _WideLayoutShellState extends State<WideLayoutShell>
       padding: EdgeInsets.only(top: inset),
       child: base,
     );
-    if (!(_presentationMounted || _presentationReveal.value > 0)) {
-      return positioned;
-    }
+    final showPresentation =
+        _presentationMounted || _presentationReveal.value > 0;
     // The presented surface (app or Files) fades in/out over the section.
-    Widget surface = _buildPresentedSurface();
+    final surface = showPresentation ? _buildPresentedSurface() : null;
     return Stack(
       children: [
         positioned,
-        Positioned.fill(
-          child: AnimatedBuilder(
-            animation: _presentationReveal,
-            builder: (context, _) {
-              final t = Curves.easeInOutCubic.transform(
-                _presentationReveal.value,
-              );
-              return IgnorePointer(
-                ignoring: t < .02,
-                child: Opacity(opacity: t, child: surface),
-              );
-            },
+        if (_appPresentation == null && _runningApps.isNotEmpty)
+          Positioned.fill(child: Offstage(child: _buildRunningAppsStack())),
+        if (surface != null)
+          Positioned.fill(
+            child: AnimatedBuilder(
+              animation: _presentationReveal,
+              builder: (context, _) {
+                final t = Curves.easeInOutCubic.transform(
+                  _presentationReveal.value,
+                );
+                return IgnorePointer(
+                  ignoring: t < .02,
+                  child: Opacity(opacity: t, child: surface),
+                );
+              },
+            ),
           ),
-        ),
+        if (_runningApps.isNotEmpty)
+          Positioned(
+            right: 0,
+            top: 88,
+            bottom: 88,
+            child: Center(child: _buildRunningAppsDock()),
+          ),
       ],
     );
   }
@@ -999,7 +948,10 @@ class _WideLayoutShellState extends State<WideLayoutShell>
       MaterialPageRoute<void>(
         builder: (routeContext) => Scaffold(
           key: const ValueKey('narrowShellProfileRoute'),
-          appBar: faAppBar(title: Text(context.l10n.appTitle)),
+          appBar: faAppBar(
+            context: context,
+            title: Text(context.l10n.appTitle),
+          ),
           body: SafeArea(
             child: ListView(
               padding: const EdgeInsets.all(16),
@@ -1137,14 +1089,16 @@ class _WideLayoutShellState extends State<WideLayoutShell>
                                 maxWidth: contentWidth,
                                 child: SizedBox(
                                   width: contentWidth,
-                                  child: IgnorePointer(
-                                    ignoring: contentInTransition,
-                                    child: ExcludeFocus(
-                                      excluding: contentInTransition,
-                                      child: Opacity(
-                                        opacity: contentOpacity,
-                                        child: sidebarContent,
-                                      ),
+                                  // Geometry may be mid-flight, but the
+                                  // visible controls remain live. Blocking
+                                  // the whole sidebar until an animation
+                                  // completes made startup/collapse clicks
+                                  // silently disappear on slow first frames.
+                                  child: ExcludeFocus(
+                                    excluding: contentInTransition,
+                                    child: Opacity(
+                                      opacity: contentOpacity,
+                                      child: sidebarContent,
                                     ),
                                   ),
                                 ),
@@ -1230,8 +1184,19 @@ class _WideLayoutShellState extends State<WideLayoutShell>
                         ),
                       ),
                     if (floatingPanel) _buildFloatingPresentationSlot(reveal),
+                    if (presentation == null && _runningApps.isNotEmpty)
+                      Positioned.fill(
+                        child: Offstage(child: _buildRunningAppsStack()),
+                      ),
                     if (presentation != null && full)
-                      Positioned.fill(child: _buildPresentedApp(presentation)),
+                      Positioned.fill(child: _buildRunningAppsStack()),
+                    if (_runningApps.isNotEmpty)
+                      Positioned(
+                        right: 0,
+                        top: 72,
+                        bottom: 72,
+                        child: Center(child: _buildRunningAppsDock()),
+                      ),
                   ],
                 );
               },
@@ -1242,61 +1207,10 @@ class _WideLayoutShellState extends State<WideLayoutShell>
     );
   }
 
-  /// The docked right-pane slot: its WIDTH animates (0 → 340) while the
-  /// card inside keeps its fixed size — a JS app must not reflow its
-  /// canvas mid-animation, so the pane reveals rather than squeezes.
-  Widget _buildDockedPresentationSlot(double reveal) {
-    return SizedBox(
-      key: const ValueKey('wideShellPresentationSlot'),
-      width: _presentationSlotWidth * reveal,
-      child: ClipRect(
-        child: OverflowBox(
-          alignment: Alignment.centerRight,
-          minWidth: _presentationSlotWidth,
-          maxWidth: _presentationSlotWidth,
-          child: SizedBox(
-            width: _presentationSlotWidth,
-            child: IgnorePointer(
-              ignoring: reveal < .02,
-              child: Opacity(
-                opacity: reveal,
-                child: Transform.translate(
-                  offset: Offset(32 * (1 - reveal), 0),
-                  child: _buildPresentedSurface(),
-                ),
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  /// The floating overlay presentation for tighter widths: slides in
-  /// from the window's right edge over the center surface.
-  Widget _buildFloatingPresentationSlot(double reveal) {
-    return Positioned(
-      top: 0,
-      right: 0,
-      bottom: 0,
-      width: _presentationSlotWidth,
-      child: IgnorePointer(
-        ignoring: reveal < .02,
-        child: Opacity(
-          opacity: reveal,
-          child: Transform.translate(
-            offset: Offset(_presentationSlotWidth * (1 - reveal), 0),
-            child: _buildPresentedSurface(),
-          ),
-        ),
-      ),
-    );
-  }
-
   /// The single presented surface: a JS app or the native Files browser.
   Widget _buildPresentedSurface() {
     final presentation = _appPresentation;
-    if (presentation != null) return _buildPresentedApp(presentation);
+    if (presentation != null) return _buildRunningAppsStack();
     final files = _filesPresentation;
     if (files == null) return const SizedBox.shrink();
     return FilesAppPanel(
@@ -1377,6 +1291,36 @@ class _WideLayoutShellState extends State<WideLayoutShell>
         presentation.pinned = !presentation.pinned;
       }),
       onClose: () => unawaited(_dismissPresentedSurface()),
+      onMinimize: () => unawaited(_minimizePresentedApp()),
+      // A root phone Apps destination has no Back-to-Chats chrome. Desktop
+      // docked and Full presentations always expose the same return action.
+      onBack: _isNarrow
+          ? null
+          : () => unawaited(_backToChatsFromPresentedApp()),
+    );
+  }
+
+  Widget _buildRunningAppsStack() {
+    final active = _appPresentation;
+    final activeIndex = active == null
+        ? 0
+        : _runningApps.indexWhere(
+            (presentation) => identical(presentation, active),
+          );
+    return IndexedStack(
+      key: const ValueKey('runningAppsStack'),
+      index: activeIndex < 0 ? 0 : activeIndex,
+      children: [for (final app in _runningApps) _buildPresentedApp(app)],
+    );
+  }
+
+  Widget _buildRunningAppsDock() {
+    return RunningAppsDock(
+      key: const ValueKey('runningAppsDock'),
+      apps: [for (final presentation in _runningApps) presentation.app],
+      activeAppId: _appPresentation?.app.id,
+      env: widget.manager.env,
+      onOpen: (app) => unawaited(_activateRunningApp(app.id)),
     );
   }
 
@@ -1390,6 +1334,7 @@ class _WideLayoutShellState extends State<WideLayoutShell>
         showFirstWhenUnselected: true,
       ),
       _WideShellSection.apps => _buildAppsArea(),
+      _WideShellSection.settings => _buildSettingsArea(),
     };
   }
 
@@ -1412,11 +1357,12 @@ class _WideLayoutShellState extends State<WideLayoutShell>
   void _selectSection(_WideShellSection section) {
     final changed = section != _section;
     var dismissPresentation = false;
+    var minimizeApp = false;
     setState(() {
       final presentation = _appPresentation;
       if (presentation != null) {
         presentation.fullScreen = false;
-        if (changed && !presentation.pinned) dismissPresentation = true;
+        if (changed && !presentation.pinned) minimizeApp = true;
       }
       if (changed && _filesPresentation != null) dismissPresentation = true;
       if (changed) {
@@ -1431,8 +1377,13 @@ class _WideLayoutShellState extends State<WideLayoutShell>
         _narrowActivityDetailVisible = false;
       }
     });
-    // Unpinned surfaces ride out with the section change (animated).
-    if (dismissPresentation) unawaited(_dismissPresentedSurface());
+    // Section navigation minimizes a JS runtime; only Close disposes it.
+    // Files has no persistent runtime and keeps the legacy dismissal.
+    if (minimizeApp) {
+      unawaited(_minimizePresentedApp());
+    } else if (dismissPresentation) {
+      unawaited(_dismissPresentedSurface());
+    }
   }
 
   void _openActivitySession(String sessionId) {
@@ -1460,15 +1411,24 @@ class _WideLayoutShellState extends State<WideLayoutShell>
     setState(() {
       final current = _appPresentation;
       if (current?.app.id == app.id) {
-        current!.fullScreen = false;
+        current!.fullScreen = _isNarrow;
       } else {
+        current?.fullScreen = false;
         _filesPresentation = null;
-        _appPresentation = MessengerAppPresentation(
-          app: app,
-          service: service,
-          appService: appService,
-          permissionsStore: permissionsStore,
-        );
+        final existing = _runningApps
+            .where((presentation) => presentation.app.id == app.id)
+            .firstOrNull;
+        final presentation =
+            existing ??
+            MessengerAppPresentation(
+              app: app,
+              service: service,
+              appService: appService,
+              permissionsStore: permissionsStore,
+            );
+        if (existing == null) _runningApps.add(presentation);
+        presentation.fullScreen = _isNarrow;
+        _appPresentation = presentation;
       }
     });
     _presentSurface();
@@ -1487,11 +1447,49 @@ class _WideLayoutShellState extends State<WideLayoutShell>
     unawaited(_presentationReveal.forward());
   }
 
-  /// Animates the presented surface out (~200ms), then clears it — JS
-  /// apps and Files close through the same motion. Reopening mid-flight
-  /// cancels the clear (the epoch guard).
+  Future<void> _activateRunningApp(String appId) async {
+    final presentation = _runningApps
+        .where((candidate) => candidate.app.id == appId)
+        .firstOrNull;
+    if (presentation == null || !mounted) return;
+    if (identical(_appPresentation, presentation)) {
+      await _minimizePresentedApp();
+      return;
+    }
+    setState(() {
+      _appPresentation?.fullScreen = false;
+      _filesPresentation = null;
+      presentation.fullScreen = _isNarrow;
+      _appPresentation = presentation;
+    });
+    _presentSurface();
+  }
+
+  /// Hides only the visible app. Its presentation stays in [_runningApps]
+  /// and its GlobalKey-mounted JS view moves offstage without losing state.
+  Future<void> _minimizePresentedApp() async {
+    final presentation = _appPresentation;
+    if (presentation == null) return;
+    _presentationEpoch++;
+    final epoch = _presentationEpoch;
+    presentation.fullScreen = false;
+    if (FaMotion.reduceMotionOf(context)) {
+      _presentationReveal.value = 0;
+    } else {
+      await _presentationReveal.reverse();
+    }
+    if (!mounted || _presentationEpoch != epoch) return;
+    if (identical(_appPresentation, presentation)) {
+      setState(() => _appPresentation = null);
+    }
+  }
+
+  /// Animates the presented surface out (~200ms), then clears it. Closing
+  /// a JS app also removes it from [_runningApps]; minimizing never calls
+  /// this method. Reopening mid-flight cancels the clear (the epoch guard).
   Future<void> _dismissPresentedSurface() async {
     if (!_presentationMounted && _presentationReveal.value == 0) return;
+    final closingApp = _appPresentation;
     _presentationEpoch++;
     final epoch = _presentationEpoch;
     if (FaMotion.reduceMotionOf(context)) {
@@ -1501,9 +1499,16 @@ class _WideLayoutShellState extends State<WideLayoutShell>
     }
     if (!mounted || _presentationEpoch != epoch) return;
     setState(() {
+      if (closingApp != null) _runningApps.remove(closingApp);
       _appPresentation = null;
       _filesPresentation = null;
     });
+  }
+
+  Future<void> _backToChatsFromPresentedApp() async {
+    await _minimizePresentedApp();
+    if (!mounted) return;
+    _selectSection(_WideShellSection.chats);
   }
 
   Future<void> _revealApps() async {
@@ -1522,8 +1527,9 @@ class _WideLayoutShellState extends State<WideLayoutShell>
       setState(() {
         _section = _WideShellSection.chats;
         if (narrow) {
-          // The narrow presentation covers everything — animate it out.
-          unawaited(_dismissPresentedSurface());
+          // The narrow presentation covers everything — minimize its live
+          // runtime rather than disposing it on a chat switch.
+          unawaited(_minimizePresentedApp());
         } else {
           _appPresentation?.fullScreen = false;
         }
@@ -1563,34 +1569,11 @@ class _WideLayoutShellState extends State<WideLayoutShell>
         color: _sidebarSurfaceColor(colors),
         child: Column(
           children: [
-            if (collapsed) _buildCollapsedChatHeader(),
+            if (collapsed && _section != _WideShellSection.settings)
+              _buildCollapsedChatHeader(),
             Expanded(
               child: collapsed
-                  ? _section == _WideShellSection.chats
-                        ? ListenableBuilder(
-                            listenable: DapBindingStore.instance,
-                            builder: (context, _) => SidebarSessionsList(
-                              manager: widget.manager,
-                              sessionNamesStore:
-                                  widget.sessionNamesStore ?? _namesStore,
-                              prefsStore: widget.sessionPrefsStore ?? _uiPrefs,
-                              collapsed: true,
-                              onNewSession: _newSession,
-                              onSessionTap: () => setState(() {}),
-                              persistedSessions: _persistedSessions,
-                              sessionInfoNames: _jsonlNames,
-                              onOpenPersisted: _openPersistedSession,
-                              onOpenLiveSession: _openLiveSession,
-                              hubBoundSessionId:
-                                  DapBindingStore.instance.boundSessionId,
-                              pendingSessionId: _pendingOpenId,
-                              selectedSessionId: _selectedSessionId,
-                              headerLabel: context.l10n.wideNavChats,
-                              searchHint: context.l10n.wideChatsSearchHint,
-                              unnamedTitle: context.l10n.wideChatFallbackTitle,
-                            ),
-                          )
-                        : const SizedBox.shrink()
+                  ? _buildCollapsedSidebarBody()
                   : switch (_section) {
                       _WideShellSection.chats =>
                         _networksSurfaceOpen
@@ -1599,29 +1582,12 @@ class _WideLayoutShellState extends State<WideLayoutShell>
                       _WideShellSection.activity || _WideShellSection.apps =>
                         _buildChatPanel(collapsed: collapsed),
                       _WideShellSection.local => _buildLocalPanel(),
+                      _WideShellSection.settings => _buildSettingsPanel(),
                     },
             ),
           ],
         ),
       ),
-    );
-  }
-
-  /// The Local section's sidebar: folder-first navigation (folders, then a
-  /// folder's Telegram-style session list), shell-owned drill-down state.
-  Widget _buildLocalPanel({bool compact = false}) {
-    return LocalSessionsPanel(
-      controller: _chatController,
-      compact: compact,
-      selectedFolderId: _localFolderId,
-      onSelectFolder: (folderId) => setState(() => _localFolderId = folderId),
-      selectedSessionId: _selectedSessionId,
-      onOpenSession: (entry) => unawaited(_openLocalEntry(entry)),
-      onNew: _newSession,
-      onCollapse: compact
-          ? null
-          : () => setState(() => _sidebarCollapsed = true),
-      iconResolver: _folderIcons,
     );
   }
 
@@ -1638,13 +1604,14 @@ class _WideLayoutShellState extends State<WideLayoutShell>
     );
   }
 
-  /// The vertical rail's destinations (Telegram pattern): the Chats
-  /// filters All/Unread lead, then the Local section, the Network
-  /// destination (the identity globe, opening the networks surface), the
-  /// Channels filter, and the Activity/Apps sections. Agents have NO rail
-  /// row — their sessions live in Local folders and the flat All list
-  /// ([ChatListFilter.agents] stays a filter, the chats toolbar keeps it).
-  /// Settings is the pinned bottom slot.
+  /// Shared rail/dock destinations (Telegram pattern): the Chats filters
+  /// All/Unread lead, then the Local section, the Network destination (the
+  /// identity globe, opening the networks surface), the Channels filter, and
+  /// the Activity/Apps sections. Agents have NO rail row — their sessions
+  /// live in Local folders and the flat All list ([ChatListFilter.agents]
+  /// stays a filter, the chats toolbar keeps it). The wide rail consumes
+  /// Settings through its pinned bottom slot; the phone dock consumes the
+  /// same descriptor as a direct destination.
   List<MessengerRailDestination> _railDestinations() {
     final filter = _chatController.filter;
     final chatsSelected = _section == _WideShellSection.chats;
@@ -1663,12 +1630,19 @@ class _WideLayoutShellState extends State<WideLayoutShell>
       rowKey: ValueKey('chatFilter-${value.name}'),
       icon: icon,
       label: label,
-      selected: chatsSelected && filter == value,
+      selected: chatsSelected && filter == value && !_networksSurfaceOpen,
       onTap: (_) {
         if (value == ChatListFilter.all) {
           _selectAllChats();
           return;
         }
+        // _selectSection(chats) is a no-op while Networks owns the Chats
+        // body. A facet tap must reveal that facet on every form factor and
+        // leave exactly one rail destination selected.
+        setState(() {
+          _networksSurfaceOpen = false;
+          if (_isNarrow) _activeNetworkEntry = null;
+        });
         _chatController.setFilter(value);
         _selectSection(_WideShellSection.chats);
       },
@@ -1710,7 +1684,7 @@ class _WideLayoutShellState extends State<WideLayoutShell>
         rowKey: const ValueKey('messengerPrimaryNav-network'),
         icon: Icons.public_outlined,
         label: context.l10n.networkNetworksTitle,
-        selected: false,
+        selected: chatsSelected && _networksSurfaceOpen,
         onTap: (_) {
           // The networks surface lives IN the chats sidebar (the same slot
           // the Local drill-down uses); the message column keeps the chat.
@@ -1733,6 +1707,13 @@ class _WideLayoutShellState extends State<WideLayoutShell>
         Icons.grid_view_rounded,
         context.l10n.appsGridTitle,
       ),
+      MessengerRailDestination(
+        rowKey: const ValueKey('messengerPrimaryNav-settings'),
+        icon: Icons.settings_outlined,
+        label: context.l10n.settingsTitle,
+        selected: _section == _WideShellSection.settings,
+        onTap: (_) => unawaited(_openSettings()),
+      ),
     ];
   }
 
@@ -1744,8 +1725,14 @@ class _WideLayoutShellState extends State<WideLayoutShell>
       listenable: _chatController,
       builder: (context, _) => MessengerNavRail(
         key: const ValueKey('messengerNavRail'),
-        destinations: _railDestinations(),
+        destinations: [
+          for (final destination in _railDestinations())
+            if (destination.rowKey !=
+                const ValueKey('messengerPrimaryNav-settings'))
+              destination,
+        ],
         settingsLabel: context.l10n.settingsTitle,
+        settingsSelected: _section == _WideShellSection.settings,
         onSettingsTap: () => unawaited(_openSettings()),
       ),
     );
@@ -1758,6 +1745,25 @@ class _WideLayoutShellState extends State<WideLayoutShell>
   Widget _buildChatArea(FahColors colors, {bool narrowRoute = false}) {
     final active = widget.manager.active;
     final networkEntry = _activeNetworkEntry;
+    final pendingOpen = _pendingOpenId;
+    if (pendingOpen != null &&
+        pendingOpen != active?.id &&
+        networkEntry == null &&
+        (active?.service.messages.isEmpty ?? true)) {
+      // With no current transcript an indicator communicates the open. When
+      // real content is already visible, keep it stable until the new loaded
+      // session activates — replacing it with a spinner reads as a flicker.
+      return Center(
+        child: SizedBox.square(
+          key: const ValueKey('sessionOpeningIndicator'),
+          dimension: 24,
+          child: CircularProgressIndicator(
+            strokeWidth: 2,
+            color: colors.indigo,
+          ),
+        ),
+      );
+    }
     if (active == null && networkEntry == null) {
       return _buildPlaceholder(colors);
     }
@@ -1803,7 +1809,6 @@ class _WideLayoutShellState extends State<WideLayoutShell>
                 key: const ValueKey('wideModelChip'),
                 modelId: active!.service.modelId,
                 tooltip: context.l10n.chatModelSwitchTooltip,
-                maxWidth: 132,
                 onTap: () => _openModelPicker(active),
                 onLongPress: () =>
                     unawaited(_openModelSettings(active.service)),
@@ -1820,20 +1825,20 @@ class _WideLayoutShellState extends State<WideLayoutShell>
   /// The chats sidebar's NETWORKS surface (Telegram pattern, owner pass):
   /// the identity globe swaps the SIDEBAR content to the networks strip
   /// with the in-place channel drill-down — the same slot the Local
-  /// drill-down uses. Back chevrons close it (channels → strip → normal
-  /// chats); the manage gear keeps the management dialog reachable.
-  /// Opening a channel keeps the surface open: only the message column
-  /// swaps to the channel's messages and the tapped row highlights.
+  /// drill-down uses. Networks is a ROOT destination: only a drilled
+  /// network's channel list has a back chevron; the manage action keeps the
+  /// management dialog reachable. Opening a channel keeps the surface open:
+  /// only the message column swaps to the channel's messages and the tapped
+  /// row highlights.
   Widget _buildNetworksSidebar() {
     return ChatNetworksPanel(
       manager: widget.networkSessions,
       mode: widget.networkMode,
       chatList: _chatController,
-      onCollapse: () => setState(() => _sidebarCollapsed = true),
-      onBack: () {
-        _chatController.setNetworkFilter(const ChatNetworkFilter.all());
-        setState(() => _networksSurfaceOpen = false);
-      },
+      compact: _isNarrow,
+      onCollapse: _isNarrow
+          ? null
+          : () => setState(() => _sidebarCollapsed = true),
       onManageNetworks: () => unawaited(
         showChatNetworksDialog(
           context,
@@ -1915,6 +1920,7 @@ class _WideLayoutShellState extends State<WideLayoutShell>
         });
         // The row-open parity: the tap marks the projection row read.
         if (entry != null) await _chatController.markOpened(entry);
+        if (mounted && _isNarrow) await _pushNarrowChat();
       },
     );
   }
@@ -1960,6 +1966,10 @@ class _WideLayoutShellState extends State<WideLayoutShell>
           fullScreen: !_isNarrow,
           showFilesTile: false,
           onProfile: _openNarrowProfile,
+          onBack: _isNarrow
+              ? null
+              : () => _selectSection(_WideShellSection.chats),
+          onOpenSettings: _openSettings,
           registry: widget.registry,
           lastConnectionStore: widget.lastConnectionStore,
           layoutStore: widget.layoutStore,
@@ -2260,7 +2270,7 @@ class _WideLayoutShellState extends State<WideLayoutShell>
       setState(() => _activeNetworkEntry = null);
     }
     if (_appPresentation?.pinned != true) {
-      unawaited(_dismissPresentedSurface());
+      unawaited(_minimizePresentedApp());
     }
     final relayOpen = active.service.openSessionAction;
     if (relayOpen != null) {
@@ -2284,7 +2294,7 @@ class _WideLayoutShellState extends State<WideLayoutShell>
       setState(() => _activeNetworkEntry = null);
     }
     if (_appPresentation?.pinned != true) {
-      unawaited(_dismissPresentedSurface());
+      unawaited(_minimizePresentedApp());
     }
     final relayOpen = service.openSessionAction;
     if (relayOpen != null) {
@@ -2306,6 +2316,9 @@ class _WideLayoutShellState extends State<WideLayoutShell>
     AgentService service,
     SessionMetadata metadata,
   ) async {
+    if (_pendingOpenId != metadata.id) {
+      setState(() => _pendingOpenId = metadata.id);
+    }
     try {
       await widget.manager.openSession(
         metadata,
@@ -2322,6 +2335,10 @@ class _WideLayoutShellState extends State<WideLayoutShell>
       // A torn/corrupt session file must not crash the shell — the entry
       // just stays in the list.
       debugPrint('[fah] open persisted session ${metadata.id} failed: $error');
+    } finally {
+      if (mounted && _pendingOpenId == metadata.id) {
+        setState(() => _pendingOpenId = null);
+      }
     }
   }
 
@@ -2627,25 +2644,6 @@ class _WideLayoutShellState extends State<WideLayoutShell>
         service: service,
         registry: widget.registry,
         lastConnectionStore: widget.lastConnectionStore,
-      ),
-    );
-  }
-
-  Future<void> _openSettings() async {
-    AppAnalytics.instance.settingsOpened();
-    if (!mounted) return;
-    // SettingsScreen handles service == null itself (renders a
-    // provider-first CTA at the top), so the post-onboarding
-    // empty-manager home opens Settings directly — no detour through
-    // OnboardingScreen.
-    await pushFaPage<void>(
-      context,
-      SettingsScreen(
-        service: widget.manager.active?.service,
-        env: widget.manager.env,
-        registry: widget.registry,
-        lastConnectionStore: widget.lastConnectionStore,
-        layoutStore: widget.layoutStore,
       ),
     );
   }

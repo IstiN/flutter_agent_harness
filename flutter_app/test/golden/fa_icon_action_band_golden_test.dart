@@ -1,10 +1,7 @@
-/// The ONE icon-action band (FaIconActionButton unification): sidebar
-/// toggle + chat-header circles + Files band ✕/search/refresh laid
-/// side-by-side, proving the family contract in one frame —
-///   - every circle is the same 36pt diameter,
-///   - every circle AND the 40pt search capsule share one centerline
-///     (epsilon 0.5),
-///   - one style: token surface2 fill + hairline ring + ink1 glyph.
+/// The icon-action family in one frame: sidebar toggle + the grouped
+/// chat-header capsule + Files ✕/search/refresh band. Every target stays
+/// 36pt on one centerline; adjacent chat/Files actions share one surface
+/// instead of rendering separate circles, with ink1 glyphs throughout.
 ///
 /// The snapshot doubles as the marketing shot of the unified header band.
 library;
@@ -22,8 +19,8 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'golden_test_helper.dart';
 
-/// The unified band: the shell's left toggle, the chat header's
-/// trajectory/copy circles, then the Files band (✕ · capsule · refresh).
+/// The unified family: the shell's left toggle, the chat header's
+/// grouped trajectory/copy band, then the Files band (✕ · capsule · refresh).
 class _Band extends StatelessWidget {
   const _Band();
 
@@ -42,34 +39,25 @@ class _Band extends StatelessWidget {
               tooltip: 'Collapse sidebar',
               onPressed: () {},
             ),
-            // Chat header circles (trajectory + copy) at the control
-            // scale — the REAL header chrome (FaHeaderCircularAction at
-            // the 36pt FaIconActionButton default, the glass underlay the
-            // floating header state carries), exactly what
-            // fa_chat_screen's action builders render.
+            // The real chat-header contract: adjacent actions share ONE
+            // capsule, with 36pt targets and no per-action circles.
             const SizedBox(width: 8),
-            FaHeaderCircularAction(
-              key: const ValueKey('bandTrajectory'),
-              dimension: FaIconActionButton.defaultDiameter,
+            FaIconActionBand<String>(
               glass: true,
-              child: IconButton(
-                onPressed: () {},
-                tooltip: 'Trajectory',
-                icon: const Icon(Icons.show_chart, size: 18),
-                visualDensity: VisualDensity.compact,
-              ),
-            ),
-            const SizedBox(width: 8),
-            FaHeaderCircularAction(
-              key: const ValueKey('bandCopy'),
-              dimension: FaIconActionButton.defaultDiameter,
-              glass: true,
-              child: IconButton(
-                onPressed: () {},
-                tooltip: 'Copy session',
-                icon: const Icon(Icons.copy_outlined, size: 18),
-                visualDensity: VisualDensity.compact,
-              ),
+              actions: [
+                FaHeaderAction(
+                  key: const ValueKey('bandTrajectory'),
+                  icon: Icons.show_chart,
+                  label: 'Trajectory',
+                  onPressed: () {},
+                ),
+                FaHeaderAction(
+                  key: const ValueKey('bandCopy'),
+                  icon: Icons.copy_outlined,
+                  label: 'Copy session',
+                  onPressed: () {},
+                ),
+              ],
             ),
             const SizedBox(width: 8),
             // The two glass states of the ONE action (owner rule): the
@@ -127,6 +115,7 @@ Finder _chromeOf(WidgetTester tester, Key key) {
   // The adapter pass: glass-direction buttons are the kit's
   // GlassIconButton — its own render box IS the circle.
   final w = tester.widget(of);
+  if (w is IconButton) return of;
   if (w is FaHeaderCircularAction || w is GlassIconButton) {
     return of;
   }
@@ -147,7 +136,8 @@ Finder _chromeOf(WidgetTester tester, Key key) {
       .first;
 }
 
-Rect _circleOf(WidgetTester tester, Key key) => tester.getRect(_chromeOf(tester, key));
+Rect _circleOf(WidgetTester tester, Key key) =>
+    tester.getRect(_chromeOf(tester, key));
 
 /// The sidebar toggle's two states (vision-confirmed owner rule): panel
 /// OPEN — the toggle sits ON the panel band → FLAT token surface; panel
@@ -205,20 +195,37 @@ void main() {
       ValueKey('filesAppClose'),
       ValueKey('fileBrowserRefresh'),
     ];
-    // Glass vs flat (same button, two states): the floating header
-    // chrome (sidebar toggle excluded — docked/flat here) carries the
-    // glass underlay — the two chat-header circles (FaSurface glass
-    // mode) and the folder toggle (the adapter pass: the kit's
-    // GlassIconButton IS the glass surface); the on-band folder twin and
-    // the Files band render none.
-    final glassSurfaces = find.byType(FaSurface).evaluate().length +
-        find.byType(GlassIconButton).evaluate().length;
-    expect(glassSurfaces, 3,
-        reason: 'the two header circles + the floating folder toggle');
-    final headerSurfaces = tester
-        .widgetList<FaSurface>(find.byType(FaSurface))
-        .every((surface) => surface.glass);
-    expect(headerSurfaces, isTrue, reason: 'FaSurface glass states only');
+    // The floating chat band is glass; the Files action band sitting on
+    // a parent surface is flat. Both contain no per-action chrome.
+    final headerBand = find
+        .ancestor(
+          of: find.byKey(const ValueKey('bandTrajectory')),
+          matching: find.byType(FaIconActionBand<String>),
+        )
+        .first;
+    final filesBand = find
+        .ancestor(
+          of: find.byKey(const ValueKey('fileBrowserRefresh')),
+          matching: find.byType(FaIconActionBand<int>),
+        )
+        .first;
+    final headerSurface = tester.widget<FaSurface>(
+      find.descendant(of: headerBand, matching: find.byType(FaSurface)).first,
+    );
+    final filesSurface = tester.widget<FaSurface>(
+      find.descendant(of: filesBand, matching: find.byType(FaSurface)).first,
+    );
+    expect(headerSurface.glass, isTrue);
+    expect(filesSurface.glass, isFalse);
+    for (final band in [headerBand, filesBand]) {
+      expect(
+        find.descendant(
+          of: band,
+          matching: find.byType(FaHeaderCircularAction),
+        ),
+        findsNothing,
+      );
+    }
 
     // EQUAL diameters: every circle in the band is 36pt — the sidebar
     // toggle (its key rides the inner button) and each chrome circle.
@@ -243,7 +250,9 @@ void main() {
 
     // EQUAL center ys (epsilon 0.5): the toggle, every circle AND the
     // shared search field sit on ONE centerline.
-    final capsule = tester.getRect(find.byKey(const ValueKey('fileBrowserSearch')));
+    final capsule = tester.getRect(
+      find.byKey(const ValueKey('fileBrowserSearch')),
+    );
     // The band renders the ONE SessionSearchField at the restored
     // sidebar-search height (the dense 32px inset, not the retired 40pt
     // capsule); its center rides the circles' centerline.
@@ -259,45 +268,17 @@ void main() {
     }
     expect(centerOf(capsule), closeTo(centerline, .5), reason: 'capsule');
 
-    // ONE style: ink1 glyph ink everywhere; the surface differs by state —
-    // the flat keys keep the token surface2 fill + hairline ring Material
-    // circle, the glass keys carry the kit's GlassIconButton (the adapter
-    // pass: the kit glass surface replaces the token fill+ring).
+    // One ink everywhere; standalone and grouped controls share the same
+    // glyph language without forcing the standalone chrome's shape.
     final tokens = FaDesignTokens.of(tester.element(find.byType(_Band)));
-    final glassKeys = {
-      ValueKey('bandTrajectory'),
-      ValueKey('bandCopy'),
-      ValueKey('bandFolderGlass'),
-    };
     for (final key in keys) {
       final chrome = _chromeOf(tester, key);
-      if (glassKeys.contains(key)) {
-        expect(chrome, findsOneWidget, reason: '$key kit glass surface');
-        expect(
-          IconTheme.of(tester.element(find.descendant(
-            of: chrome,
-            matching: find.byType(Icon),
-          ).first)).color,
-          tokens.ink1,
-          reason: '$key ink',
-        );
-        continue;
-      }
-      // The flat state's underlay adds an unshaded Material wrapper; the
-      // chrome's own circle is the shaped one.
-      final material = tester
-          .widgetList<Material>(
-            find.descendant(of: chrome, matching: find.byType(Material)),
-          )
-          .firstWhere((m) => m.shape != null);
-      final shape = material.shape! as CircleBorder;
-      expect(material.color, tokens.surface2, reason: '$key fill');
-      expect(shape.side.color, tokens.hairline, reason: '$key ring');
       expect(
-        IconTheme.of(tester.element(find.descendant(
-          of: chrome,
-          matching: find.byType(Icon),
-        ).first)).color,
+        IconTheme.of(
+          tester.element(
+            find.descendant(of: chrome, matching: find.byType(Icon)).first,
+          ),
+        ).color,
         tokens.ink1,
         reason: '$key ink',
       );
@@ -313,21 +294,23 @@ void main() {
       tester,
       const _SidebarToggleStates(),
       size: const Size(280, 120),
-      theme: buildFaTheme(direction: FaVisualDirection.glass, brightness: Brightness.dark),
+      theme: buildFaTheme(
+        direction: FaVisualDirection.glass,
+        brightness: Brightness.dark,
+      ),
       wrap: (child) => child,
     );
 
-    final openRect = tester.getRect(find.byKey(const ValueKey('sidebarToggleOpen')));
+    final openRect = tester.getRect(
+      find.byKey(const ValueKey('sidebarToggleOpen')),
+    );
     final closedRect = tester.getRect(
       find.byKey(const ValueKey('sidebarToggleClosed')),
     );
     // One diameter, one centerline — the two states differ ONLY in the
     // glass underlay.
     expect(openRect.size, closedRect.size);
-    expect(
-      openRect.size,
-      Size.square(FaIconActionButton.defaultDiameter),
-    );
+    expect(openRect.size, Size.square(FaIconActionButton.defaultDiameter));
     expect(openRect.center.dy, closeTo(closedRect.center.dy, .5));
     // Exactly ONE glass underlay: the floating (closed) state. The
     // adapter pass renders it as the kit's GlassIconButton (the glass
@@ -345,8 +328,11 @@ void main() {
           ),
         )
         .firstWhere((m) => m.shape != null);
-    expect(flatToggle.shape, isA<CircleBorder>(),
-        reason: 'docked twin keeps the token circle');
+    expect(
+      flatToggle.shape,
+      isA<CircleBorder>(),
+      reason: 'docked twin keeps the token circle',
+    );
     expect(flatToggle.color, tokens.surface2);
 
     await expectGolden(tester, 'fa_icon_action_glass_states');

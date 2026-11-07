@@ -2,6 +2,8 @@
 // Use of this source code is governed by a MIT license that can be found
 // in the LICENSE file.
 
+import 'dart:math' as math;
+
 import 'package:fa/l10n/l10n_ext.dart';
 import 'package:fa/ui/widgets/session_search_field.dart';
 import 'package:fa_ui/fa_ui.dart';
@@ -25,6 +27,8 @@ final class MessengerGlassUnderlay extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final tokens = FaDesignTokens.of(context);
+    final light = Theme.of(context).brightness == Brightness.light;
     return Padding(
       padding: const EdgeInsets.only(left: 2, right: 3),
       child: IgnorePointer(
@@ -33,11 +37,37 @@ final class MessengerGlassUnderlay extends StatelessWidget {
             topLeft: Radius.circular(14),
             topRight: Radius.circular(14),
           ),
-          child: ProgressiveBlur(
-            key: underlayKey,
-            maxSigma: 8,
-            direction: ProgressiveBlurDirection.topToBottom,
-            falloff: 3.0,
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              // No bounded AdaptiveGlass here: its own rounded outline and
+              // constant tint made a visible card with a hard bottom edge.
+              // The progressive blur + fading frost below ARE the transition.
+              ProgressiveBlur(
+                key: underlayKey,
+                maxSigma: 8,
+                direction: ProgressiveBlurDirection.topToBottom,
+                falloff: 3.0,
+              ),
+              // Blur alone is invisible until a row happens to scroll under
+              // it. A restrained token tint makes the header read as glass
+              // at rest too, then falls to zero before the content seam.
+              DecoratedBox(
+                key: const ValueKey('messengerGlassFrost'),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [
+                      tokens.surface1.withValues(alpha: light ? .76 : .58),
+                      tokens.surface1.withValues(alpha: light ? .36 : .26),
+                      tokens.surface1.withValues(alpha: 0),
+                    ],
+                    stops: const [0, .55, 1],
+                  ),
+                ),
+              ),
+            ],
           ),
         ),
       ),
@@ -45,8 +75,207 @@ final class MessengerGlassUnderlay extends StatelessWidget {
   }
 }
 
-/// Shared simple messenger panel: one header, a body starting at its real
-/// bottom, and the approved 6pt glass tail above scrolling content. Hosts
+/// Floating page chrome shared by Apps and categorized Settings. Geometry
+/// mirrors the desktop chat header: a small glass icon and title pill float
+/// over the page; back and secondary actions are independent controls.
+final class MessengerFloatingPageHeader extends StatelessWidget {
+  const MessengerFloatingPageHeader({
+    super.key,
+    required this.title,
+    this.subtitle,
+    this.icon,
+    this.onIconTap,
+    this.leading,
+    this.actions = const <Widget>[],
+    this.trafficLightClearance = false,
+  });
+
+  final String title;
+  final String? subtitle;
+  final IconData? icon;
+  final VoidCallback? onIconTap;
+  final Widget? leading;
+  final List<Widget> actions;
+
+  /// Full-window macOS routes lower only [leading] below the traffic lights.
+  /// The title/icon and page body keep their ordinary vertical position.
+  final bool trafficLightClearance;
+
+  @override
+  Widget build(BuildContext context) {
+    final tokens = FaDesignTokens.of(context);
+    final leadingTop = trafficLightClearance && FaWindowChrome.isMacOS
+        ? 9.0 + FaWindowChrome.titlebarHeight
+        : 9.0;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(8, 6, 8, 6),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final actionWidth = math.min(360.0, constraints.maxWidth * .38);
+          final titleWidth = math.min(
+            320.0,
+            math.max(200.0, constraints.maxWidth - 2 * (actionWidth + 12)),
+          );
+          return SizedBox(
+            height: 91,
+            child: Stack(
+              children: [
+                Align(
+                  alignment: Alignment.topCenter,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (icon case final icon?) ...[
+                        Padding(
+                          padding: const EdgeInsets.only(top: 11),
+                          child: FaHeaderCircularAction(
+                            key: const ValueKey('messengerPageIcon'),
+                            dimension: 36,
+                            glass: true,
+                            child: onIconTap == null
+                                ? Icon(icon, size: 18, color: tokens.ink1)
+                                : IconButton(
+                                    onPressed: onIconTap,
+                                    icon: Icon(
+                                      icon,
+                                      size: 18,
+                                      color: tokens.ink1,
+                                    ),
+                                  ),
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                      ],
+                      FaSurface(
+                        key: const ValueKey('messengerPageTitlePill'),
+                        glass: true,
+                        useBackdropGroup: true,
+                        color: tokens.surface1,
+                        borderRadius: BorderRadius.circular(14),
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                        child: SizedBox(
+                          width: titleWidth,
+                          height: 40,
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              if (subtitle case final subtitle?
+                                  when subtitle.isNotEmpty)
+                                Text(
+                                  subtitle,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  textAlign: TextAlign.center,
+                                  style: TextStyle(
+                                    color: tokens.ink2,
+                                    fontSize: 10,
+                                    height: 1.2,
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                              Text(
+                                title,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                  color: tokens.ink1,
+                                  fontSize: 13,
+                                  height: 1.25,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                if (leading case final leading?)
+                  Positioned(top: leadingTop, left: 0, child: leading),
+                if (actions.isNotEmpty)
+                  Positioned(
+                    top: 9,
+                    right: 0,
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        for (final action in actions) ...[
+                          action,
+                          const SizedBox(width: 8),
+                        ],
+                      ],
+                    ),
+                  ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
+
+/// Hosts a [MessengerFloatingPageHeader] over a full-size transparent body.
+/// Only the title pill and controls are glass; there is deliberately no
+/// full-width header surface or progressive blur band.
+final class MessengerFloatingPageScaffold extends StatelessWidget {
+  const MessengerFloatingPageScaffold({
+    super.key,
+    required this.header,
+    required this.body,
+  });
+
+  static const double bodyTop = 108;
+
+  final Widget header;
+  final Widget body;
+
+  @override
+  Widget build(BuildContext context) {
+    final tokens = FaDesignTokens.of(context);
+    final glass = tokens.direction == FaVisualDirection.glass;
+    // The host supplies token background + FahWallpaper, exactly like Local
+    // and Network chats. Another color here would hide the pixels the short
+    // glass controls need to sample.
+    final page = Stack(
+      fit: StackFit.expand,
+      children: [
+        Positioned.fill(child: body),
+        Positioned(top: 0, left: 0, right: 0, child: header),
+      ],
+    );
+    if (!glass || BackdropGroup.of(context) != null) return page;
+    return BackdropGroup(child: page);
+  }
+}
+
+/// The inset a glass-panel scroll view applies internally instead of placing
+/// the whole body below the header. This is what lets rows scroll under the
+/// blur, matching Channels and Messages.
+final class MessengerGlassBodyInsets extends InheritedWidget {
+  const MessengerGlassBodyInsets({
+    super.key,
+    required this.top,
+    required super.child,
+  });
+
+  final double top;
+
+  static double topOf(BuildContext context) =>
+      context
+          .dependOnInheritedWidgetOfExactType<MessengerGlassBodyInsets>()
+          ?.top ??
+      0;
+
+  @override
+  bool updateShouldNotify(MessengerGlassBodyInsets oldWidget) =>
+      top != oldWidget.top;
+}
+
+/// Shared simple messenger panel: one header and a full-size scrolling body.
+/// Scroll views consume [MessengerGlassBodyInsets] internally. Hosts
 /// with extra banner/filter rows use [MessengerGlassUnderlay] directly.
 final class MessengerGlassPanel extends StatelessWidget {
   const MessengerGlassPanel({
@@ -87,8 +316,8 @@ final class MessengerGlassPanel extends StatelessWidget {
         clipBehavior: Clip.hardEdge,
         children: [
           Positioned.fill(
-            child: Padding(
-              padding: EdgeInsets.only(top: headerHeight),
+            child: MessengerGlassBodyInsets(
+              top: headerHeight,
               child: scrollingBody,
             ),
           ),
@@ -123,6 +352,10 @@ final class MessengerSectionHeader extends StatelessWidget {
     this.onExpand,
     this.onCollapse,
     this.searchFocusNode,
+    this.searchCollapsed = false,
+    this.onSearchReveal,
+    this.onSearchClose,
+    this.onSettings,
     this.leading,
     this.trailing,
     this.newButtonKey,
@@ -133,6 +366,12 @@ final class MessengerSectionHeader extends StatelessWidget {
   final String title;
   final TextEditingController? searchController;
   final FocusNode? searchFocusNode;
+  final bool searchCollapsed;
+  final VoidCallback? onSearchReveal;
+  final VoidCallback? onSearchClose;
+
+  /// Explicit phone Settings action; wide layouts use the pinned rail row.
+  final VoidCallback? onSettings;
   final String searchHint;
   final VoidCallback? onProfile;
   final VoidCallback? onNew;
@@ -165,9 +404,9 @@ final class MessengerSectionHeader extends StatelessWidget {
     // and needs their 30pt clearance. The wide sidebar starts to their right:
     // its search/actions share the chat and Files centerline at y=35 instead
     // of dropping into a second row below the titlebar.
-    final titlebarHeight = isMac
-        ? (compact ? 30.0 : 0.0)
-        : (collapsed ? 58.0 : 0.0);
+    final titlebarHeight = isMac && compact ? 30.0 : 0.0;
+    final showSearch = searchController != null && !searchCollapsed;
+    const brandSize = 30.0;
     final brand = Semantics(
       button: onBrandTap != null || onProfile != null,
       label: context.l10n.chatProfileSettings,
@@ -175,10 +414,10 @@ final class MessengerSectionHeader extends StatelessWidget {
         key: const ValueKey('messengerProfile'),
         onTap: onBrandTap ?? onProfile,
         onLongPress: onBrandLongPress,
-        child: const SizedBox.square(
-          key: ValueKey('wideShellFaBrand'),
-          dimension: 30,
-          child: FaLogo(size: 30),
+        child: SizedBox.square(
+          key: const ValueKey('wideShellFaBrand'),
+          dimension: brandSize,
+          child: FaLogo(size: brandSize, trailingDot: collapsed),
         ),
       ),
     );
@@ -187,7 +426,9 @@ final class MessengerSectionHeader extends StatelessWidget {
     return Transform.translate(
       offset: Offset(compact || collapsed ? 0 : -glassFrameInset, 0),
       child: Container(
-        height: titlebarHeight + (collapsed ? 46.0 : contentHeight),
+        // Expanded and collapsed brands share one centerline. Collapse only
+        // moves the accent dot beside the `a`; no duplicate Fa wordmark.
+        height: titlebarHeight + contentHeight,
         color: tokens.direction == FaVisualDirection.glass
             ? Colors.transparent
             : colors.panel,
@@ -200,7 +441,10 @@ final class MessengerSectionHeader extends StatelessWidget {
                 height: titlebarHeight,
               ),
             if (collapsed)
-              SizedBox(height: 46, child: Center(child: brand))
+              SizedBox(
+                height: contentHeight,
+                child: Center(child: brand),
+              )
             else
               SizedBox(
                 height: contentHeight,
@@ -209,26 +453,43 @@ final class MessengerSectionHeader extends StatelessWidget {
                   child: Row(
                     children: [
                       leading ?? brand,
-                      if (compact && searchController != null) ...[
+                      if (compact && showSearch) ...[
                         const SizedBox(width: 8),
                         // A fixed title slot keeps Search at the same geometry
                         // for Chats, Activity and Apps in the compact shell.
                         SizedBox(
                           width: 64,
-                          child: Text(
-                            title,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              color: colors.text,
-                              fontSize: 17,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
+                          child: onSearchClose == null
+                              ? Text(
+                                  title,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    color: colors.text,
+                                    fontSize: 17,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                )
+                              : Align(
+                                  alignment: Alignment.centerLeft,
+                                  child: FaIconActionButton(
+                                    buttonKey: const ValueKey(
+                                      'messengerSearchClose',
+                                    ),
+                                    onPressed: onSearchClose,
+                                    tooltip: MaterialLocalizations.of(
+                                      context,
+                                    ).backButtonTooltip,
+                                    diameter: 32,
+                                    glyphSize: 22,
+                                    glass: false,
+                                    child: const FaIcon(FaSemanticIcon.back),
+                                  ),
+                                ),
                         ),
                       ],
-                      SizedBox(width: searchController == null ? 8 : 6),
-                      if (searchController != null)
+                      SizedBox(width: showSearch ? 6 : 8),
+                      if (showSearch)
                         // THE one search field (SessionSearchField): the
                         // same capsule the Files band renders.
                         Expanded(
@@ -253,6 +514,18 @@ final class MessengerSectionHeader extends StatelessWidget {
                             ),
                           ),
                         ),
+                      if (searchCollapsed && searchController != null) ...[
+                        const SizedBox(width: 8),
+                        FaIconActionButton(
+                          buttonKey: const ValueKey('messengerSearchReveal'),
+                          onPressed: onSearchReveal,
+                          tooltip: searchHint,
+                          diameter: 32,
+                          glyphSize: 21,
+                          glass: false,
+                          child: const FaIcon(FaSemanticIcon.search),
+                        ),
+                      ],
                       if (onNew != null &&
                           (!compact || searchController == null)) ...[
                         const SizedBox(width: 8),
@@ -279,8 +552,20 @@ final class MessengerSectionHeader extends StatelessWidget {
                         ),
                       ],
                       if (trailing != null) ...[
-                        const SizedBox(width: 4),
+                        const SizedBox(width: 8),
                         trailing!,
+                      ],
+                      if (compact && onSettings != null) ...[
+                        const SizedBox(width: 8),
+                        FaIconActionButton(
+                          buttonKey: const ValueKey('narrowSettingsButton'),
+                          onPressed: onSettings,
+                          tooltip: context.l10n.settingsTitle,
+                          diameter: 32,
+                          glyphSize: 20,
+                          glass: false,
+                          child: const Icon(Icons.settings_outlined),
+                        ),
                       ],
                       if (!compact && onCollapse != null) ...[
                         const SizedBox(width: 4),

@@ -54,6 +54,9 @@ void main() {
     tester,
   ) async {
     final env = MemoryExecutionEnv();
+    tester.view.physicalSize = const Size(1280, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
     await pump(
       tester,
       env: env,
@@ -66,6 +69,13 @@ void main() {
     expect(find.textContaining('free forever'), findsOneWidget);
     expect(find.textContaining('Android: coming soon'), findsOneWidget);
     expect(find.text('Open the App Store'), findsOneWidget);
+    expect(
+      tester
+          .getSize(find.byKey(const ValueKey('storeGetBannerSurface')))
+          .height,
+      lessThan(110),
+      reason: 'the promo must not consume the first Settings viewport',
+    );
   });
 
   testWidgets('a flipped links config flips the banner copy (AC1)', (
@@ -93,7 +103,7 @@ void main() {
     await pump(tester, env: env, links: const AppLinksResolution(off, []));
     await tester.pumpAndSettle();
     expect(find.byType(StoreGetBanner), findsOneWidget);
-    expect(find.byType(Card), findsNothing);
+    expect(find.byKey(const ValueKey('storeGetBannerSurface')), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
@@ -106,7 +116,7 @@ void main() {
       showOnPlatform: false,
     );
     await tester.pumpAndSettle();
-    expect(find.byType(Card), findsNothing);
+    expect(find.byKey(const ValueKey('storeGetBannerSurface')), findsNothing);
   });
 
   testWidgets(
@@ -148,7 +158,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.byTooltip('Hide banner'));
     await tester.pumpAndSettle();
-    expect(find.byType(Card), findsNothing);
+    expect(find.byKey(const ValueKey('storeGetBannerSurface')), findsNothing);
     final dismissed = events
         .where((e) => e.$1 == 'store_banner_dismissed')
         .toList();
@@ -162,7 +172,7 @@ void main() {
       links: const AppLinksResolution(LinksConfig(), []),
     );
     await tester.pumpAndSettle();
-    expect(find.byType(Card), findsNothing);
+    expect(find.byKey(const ValueKey('storeGetBannerSurface')), findsNothing);
     expect(await StoreBannerStore(env).loadDismissed(), isTrue);
   });
 
@@ -177,6 +187,6 @@ void main() {
       links: const AppLinksResolution(LinksConfig(), []),
     );
     await tester.pumpAndSettle();
-    expect(find.byType(Card), findsOneWidget);
+    expect(find.byKey(const ValueKey('storeGetBannerSurface')), findsOneWidget);
   });
 }

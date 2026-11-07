@@ -1502,7 +1502,7 @@ class _AgentNetworkSectionState extends State<AgentNetworkSection> {
         faui.FaTextField(
           controller: _url,
           dense: true,
-          labelText: context.l10n.settingsAgentNetworkUrl,
+          hintText: context.l10n.settingsAgentNetworkUrl,
         ),
         const SizedBox(height: 8),
         Row(
@@ -1511,7 +1511,7 @@ class _AgentNetworkSectionState extends State<AgentNetworkSection> {
               child: faui.FaTextField(
                 controller: _name,
                 dense: true,
-                labelText: context.l10n.settingsAgentNetworkName,
+                hintText: context.l10n.settingsAgentNetworkName,
               ),
             ),
             const SizedBox(width: 8),
@@ -1520,7 +1520,7 @@ class _AgentNetworkSectionState extends State<AgentNetworkSection> {
                 controller: _token,
                 dense: true,
                 obscureText: true,
-                labelText: context.l10n.settingsAgentNetworkToken,
+                hintText: context.l10n.settingsAgentNetworkToken,
               ),
             ),
           ],

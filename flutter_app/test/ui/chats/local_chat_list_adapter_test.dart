@@ -1,7 +1,9 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/flutter_session_manager.dart';
+import 'package:fa/ui/chats/chat_list_controller.dart';
 import 'package:fa/ui/chats/local_chat_list_adapter.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -41,11 +43,13 @@ final class _GatedPreviewSource implements LocalChatPreviewSource {
 
   final Completer<void> gate;
   final Map<String, String> results = {};
+  final List<String> readIds = [];
   int reads = 0;
 
   @override
   Future<String?> read(SessionMetadata metadata) async {
     reads++;
+    readIds.add(metadata.id);
     await gate.future;
     return results[metadata.id];
   }
@@ -73,7 +77,13 @@ void main() {
       );
       final placeholder = _service(env);
       final conversation = _service(env)
-        ..messages.add(FahChatMessage(role: 'user', content: 'Hello'));
+        ..messages.add(FahChatMessage(role: 'user', content: 'Hello'))
+        ..messages.add(
+          FahChatMessage(
+            role: 'user',
+            content: '<system-notice>Heartbeat only.</system-notice>',
+          ),
+        );
       manager
         ..addSession('placeholder', placeholder)
         ..addSession('conversation', conversation);
@@ -103,6 +113,12 @@ void main() {
         const JsonlSessionCreateOptions(id: 'parent', cwd: '/work'),
       );
       await parent.appendMessage(UserMessage.text('A real persisted preview'));
+      await parent.appendMessage(
+        UserMessage.text(
+          '<system-notice>Waiting heartbeat: background jobs pending.'
+          '</system-notice>',
+        ),
+      );
       await parent.appendSessionName('CLI parent');
       await repo.create(
         const JsonlSessionCreateOptions(
@@ -137,17 +153,9 @@ void main() {
       expect(byId['child']!.isSubagent, isTrue);
       expect(byId['empty']!.preview, isNull);
 
-      // The lazy fills learn the session_info name and the transcript
-      // preview (bounded, off the boot path); the next projection shows
-      // both.
-      await _until(() async {
-        final refilled = {
-          for (final item in await adapter.load()) item.id.value: item,
-        };
-        return refilled['parent']!.preview == 'A real persisted preview';
-      });
-      final persisted = await manager.listPersistedSessions();
-      await manager.warmSessionNames(persisted);
+      // The visible parent learns its session_info name and transcript
+      // preview; offscreen rows remain unread.
+      await adapter.warmVisible({'parent'});
       final refilled = {
         for (final item in await adapter.load()) item.id.value: item,
       };
@@ -156,6 +164,45 @@ void main() {
       expect(refilled['empty']!.preview, isNull);
     },
   );
+
+  test('wide-shell name snapshots still warm the visible row', () async {
+    final env = MemoryExecutionEnv();
+    final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
+    final manager = FlutterSessionManager(
+      env: env,
+      sessionsRoot: '/sessions',
+      includeSharedSessionRoots: false,
+      repo: repo,
+    );
+    final session = await repo.create(
+      const JsonlSessionCreateOptions(id: 'named', cwd: '/work'),
+    );
+    final metadata = await session.getMetadata();
+    // Append outside the repo's name-index writer: the visible quick probe
+    // — not a pre-populated index entry — must discover this name.
+    await env.appendFile(
+      metadata.path,
+      '${jsonEncode(SessionInfoRecord(id: 'name-1', parentId: null, timestamp: DateTime.utc(2026), name: 'poc').toJson())}\n',
+    );
+    final probes = <String>[];
+    repo.debugOnNameProbe = (metadata) => probes.add(metadata.id);
+
+    LocalChatListAdapter adapter() => LocalChatListAdapter(
+      manager: manager,
+      titleBuilder: (id, createdAt, isSubagent) => id,
+      sessionInfoNames: manager.knownSessionNames,
+      readPersistedNames: false,
+    );
+    final firstAdapter = adapter();
+    expect((await firstAdapter.load()).single.title, 'named');
+    expect(probes, isEmpty);
+
+    await firstAdapter.warmVisible({'named'});
+    expect(probes, ['named']);
+    expect(manager.knownSessionNames['named'], 'poc');
+    // Wide shell rebuilds with the refreshed manager snapshot.
+    expect((await adapter().load()).single.title, 'poc');
+  });
 
   test('subagents prefer their persisted human task identity', () async {
     final env = MemoryExecutionEnv();
@@ -226,20 +273,28 @@ void main() {
   test('previews fill off the first projection — rows emit before '
       'transcript reads land', () async {
     final env = MemoryExecutionEnv();
+    final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
     final manager = FlutterSessionManager(
       env: env,
       sessionsRoot: '/sessions',
       includeSharedSessionRoots: false,
+      repo: repo,
     );
-    final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
     final parent = await repo.create(
       const JsonlSessionCreateOptions(id: 'parent', cwd: '/work'),
     );
     await parent.appendMessage(UserMessage.text('A real persisted preview'));
+    final other = await repo.create(
+      const JsonlSessionCreateOptions(id: 'other', cwd: '/work'),
+    );
+    await other.appendMessage(UserMessage.text('Offscreen preview'));
+    final nameProbes = <String>[];
+    repo.debugOnNameProbe = (metadata) => nameProbes.add(metadata.id);
 
     final gate = Completer<void>();
     final reader = _GatedPreviewSource(gate)
-      ..results['parent'] = 'A real persisted preview';
+      ..results['parent'] = 'A real persisted preview'
+      ..results['other'] = 'Offscreen preview';
     final adapter = LocalChatListAdapter(
       manager: manager,
       titleBuilder: (id, createdAt, isSubagent) => id,
@@ -255,9 +310,15 @@ void main() {
       isNull,
       reason: 'the first paint renders without previews',
     );
-    expect(reader.reads, 1, reason: 'the background fill is kicked');
+    expect(reader.reads, 0, reason: 'no offscreen transcript reads');
+    expect(nameProbes, isEmpty, reason: 'no offscreen name probes');
 
+    final warming = adapter.warmVisible({'parent'});
+    await _until(() async => reader.reads == 1);
+    expect(reader.readIds, ['parent'], reason: 'only the visible row reads');
     gate.complete();
+    await warming;
+    expect(nameProbes, ['parent']);
     await _until(() async {
       final refilled = {
         for (final item in await adapter.load()) item.id.value: item,
@@ -268,6 +329,8 @@ void main() {
       for (final item in await adapter.load()) item.id.value: item,
     };
     expect(refilled['parent']!.preview, 'A real persisted preview');
+    expect(refilled['other']!.preview, isNull);
+    expect(reader.reads, 1, reason: 'offscreen rows stay unread');
   });
 
   test('preview cache keys on the file stamp — warm reloads re-read '
@@ -292,12 +355,12 @@ void main() {
       previewReader: reader,
     );
 
-    await _until(() async {
-      final entries = {
-        for (final item in await adapter.load()) item.id.value: item,
-      };
-      return entries['parent']!.preview != null;
-    });
+    final initial = await adapter.load();
+    expect(initial.single.preview, isNull);
+    expect(reader.reads, 0);
+    await adapter.warmVisible({'parent'});
+    final filled = await adapter.load();
+    expect(filled.single.preview, 'First tail');
     expect(reader.reads, 1);
 
     // Warm reloads: served from the stamp cache, zero extra reads.
@@ -308,11 +371,51 @@ void main() {
     // The transcript grows: the stamp no longer matches → exactly one
     // re-read, and the preview catches up to the newest tail.
     await parent.appendMessage(UserMessage.text('Newer tail'));
+    manager.invalidateListing();
     reader.results['parent'] = 'Newer tail';
-    Future<String?> currentPreview() async => ({
-      for (final item in await adapter.load()) item.id.value: item,
-    })['parent']!.preview;
-    await _until(() async => await currentPreview() == 'Newer tail');
+    await adapter.load();
+    expect(reader.reads, 1, reason: 'a reload alone never reads transcripts');
+    await adapter.warmVisible({'parent'});
+    final current = await adapter.load();
+    expect(current.single.preview, 'Newer tail');
     expect(reader.reads, 2, reason: 'only the grown file is re-read');
   });
+
+  test(
+    'controller coalesces viewport requests and never warms offscreen ids',
+    () async {
+      final env = MemoryExecutionEnv();
+      final manager = FlutterSessionManager(
+        env: env,
+        sessionsRoot: '/sessions',
+        includeSharedSessionRoots: false,
+      );
+      final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
+      for (final id in ['visible', 'offscreen']) {
+        final session = await repo.create(
+          JsonlSessionCreateOptions(id: id, cwd: '/work'),
+        );
+        await session.appendMessage(UserMessage.text('$id preview'));
+      }
+      final reader = _GatedPreviewSource(Completer<void>()..complete())
+        ..results['visible'] = 'visible preview'
+        ..results['offscreen'] = 'offscreen preview';
+      final controller = ChatListController(
+        localAdapter: LocalChatListAdapter(
+          manager: manager,
+          titleBuilder: (id, createdAt, isSubagent) => id,
+          previewReader: reader,
+        ),
+      );
+      await controller.load();
+      expect(reader.reads, 0);
+
+      controller.warmVisibleLocalEntry('visible');
+      controller.warmVisibleLocalEntry('visible');
+      await _until(() async => reader.reads == 1);
+      await controller.load();
+      expect(reader.readIds, ['visible']);
+      expect(controller.localEntries.length, 2);
+    },
+  );
 }

@@ -18,6 +18,7 @@ import 'chat_strings.dart';
 import 'fa_chat_features.dart';
 import 'fa_chat_host.dart';
 import 'fa_chat_service.dart';
+import 'system_notice_tile.dart';
 import 'fa_glyphs.dart';
 import 'upload_utils.dart';
 import '../widgets/snackbars.dart';
@@ -75,6 +76,7 @@ class ChatComposer extends StatefulWidget {
     this.hideMicWhenNotEmpty = false,
     this.onSent,
     this.onSubmit,
+    this.onVoiceInputSettings,
     this.mentionOptionsBuilder,
     this.onFocusChanged,
     this.autofocus = true,
@@ -147,6 +149,11 @@ class ChatComposer extends StatefulWidget {
   /// block). Runs before clearing/analytics/sendText; true consumes it.
   final FaChatSubmitInterceptor? onSubmit;
 
+  /// Opens the host's transcription/media-model settings when voice input
+  /// has no configured endpoint. The shared composer has no navigation
+  /// policy; hosts must supply this to show the dialog's Settings action.
+  final Future<void> Function()? onVoiceInputSettings;
+
   /// Optional roster/contact completion inside the SAME composer chrome.
   /// Selection inserts the literal `@label`; the service remains responsible
   /// for resolving that label to a provider-specific mention id on send.
@@ -212,7 +219,9 @@ class ChatComposerState extends State<ChatComposer>
   late final FaClipboardReader? _clipboardReader =
       widget.clipboardReader ?? FaChatHost.clipboardReader;
 
-  /// Voice-input state: idle → recording → transcribing → idle.
+  /// Voice-input state: idle → recording → transcribing → idle. Starting is
+  /// tracked separately while the asynchronous endpoint preflight runs.
+  bool _micStarting = false;
   bool _micRecording = false;
   bool _micTranscribing = false;
 
@@ -336,33 +345,88 @@ class ChatComposerState extends State<ChatComposer>
     if (mounted) setState(() {});
   }
 
-  /// Mic button tap: idle starts a recording (after the OS permission
-  /// prompt), recording stops it and transcribes the take into the input
-  /// field.
+  /// Mic button tap: idle verifies the transcription endpoint, then starts
+  /// a recording after the OS permission prompt. Recording stops and
+  /// transcribes the take into the input field on the second tap.
   Future<void> _toggleMic() async {
     final voiceInput = _voiceInput;
-    if (voiceInput == null || _micTranscribing) return;
+    if (voiceInput == null || _micStarting || _micTranscribing) return;
     if (_micRecording) {
       await _stopMic(voiceInput);
       return;
     }
     final strings = FaChatStrings.of(context);
-    final bool started;
+    _micStarting = true;
     try {
-      started = await voiceInput.start();
+      final FaChatVoiceInputConfiguration? configuration =
+          voiceInput is FaChatVoiceInputConfiguration
+          ? voiceInput as FaChatVoiceInputConfiguration
+          : null;
+      if (configuration != null && !await configuration.isConfigured) {
+        if (mounted) await _showVoiceInputConfigurationDialog();
+        return;
+      }
+      if (!mounted) return;
+      final started = await voiceInput.start();
+      if (!started) {
+        if (mounted) {
+          _showSnack(voiceInput.unavailableReason ?? strings.chatMicDenied);
+        }
+        return;
+      }
+      if (!mounted) return;
+      setState(() => _micRecording = true);
+      _micPulse.repeat(reverse: true);
     } on Object catch (e) {
       if (mounted) _showSnack(strings.chatMicError(e.toString()));
-      return;
+    } finally {
+      _micStarting = false;
     }
-    if (!started) {
-      if (mounted) {
-        _showSnack(voiceInput.unavailableReason ?? strings.chatMicDenied);
-      }
-      return;
-    }
-    if (!mounted) return;
-    setState(() => _micRecording = true);
-    _micPulse.repeat(reverse: true);
+  }
+
+  Future<void> _showVoiceInputConfigurationDialog() async {
+    final strings = FaChatStrings.of(context);
+    final openSettings = widget.onVoiceInputSettings;
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) {
+        final tokens = FaDesignTokens.of(dialogContext);
+        return AlertDialog(
+          key: const ValueKey('faChatAsrConfigurationDialog'),
+          backgroundColor: tokens.surface1,
+          surfaceTintColor: Colors.transparent,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(tokens.radiusLg),
+            side: BorderSide(color: tokens.hairline),
+          ),
+          title: Text(
+            strings.chatMicNotConfiguredTitle,
+            style: TextStyle(color: tokens.ink1),
+          ),
+          content: Text(
+            strings.chatMicNotConfiguredBody,
+            style: TextStyle(color: tokens.ink2, height: 1.4),
+          ),
+          actions: [
+            FaButton(
+              key: const ValueKey('faChatAsrCancelAction'),
+              label: MaterialLocalizations.of(dialogContext).cancelButtonLabel,
+              variant: FaButtonVariant.ghost,
+              onPressed: () => Navigator.of(dialogContext).pop(),
+            ),
+            if (openSettings != null)
+              FaButton(
+                key: const ValueKey('faChatAsrSettingsAction'),
+                label: strings.chatMicSettingsAction,
+                onPressed: () {
+                  Navigator.of(dialogContext).pop();
+                  unawaited(openSettings());
+                },
+              ),
+          ],
+        );
+      },
+    );
   }
 
   Future<void> _stopMic(FaChatVoiceInput voiceInput) async {
@@ -1166,12 +1230,17 @@ class ChatComposerState extends State<ChatComposer>
   Widget _buildSteerRows() {
     final theme = Theme.of(context);
     final palette = fahChatColorsOf(context);
+    final pending = widget.service.pendingSteerTexts;
+    final notices = pending.where(isFaSystemNoticeContent).toList();
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          for (final pending in widget.service.pendingSteerTexts)
+          if (notices.isNotEmpty) SystemNoticeTile(notices: notices),
+          for (final text in pending.where(
+            (text) => !isFaSystemNoticeContent(text),
+          ))
             Container(
               margin: const EdgeInsets.only(bottom: 6),
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
@@ -1184,7 +1253,7 @@ class ChatComposerState extends State<ChatComposer>
                 children: [
                   Expanded(
                     child: Text(
-                      pending,
+                      text,
                       style: theme.textTheme.bodyMedium,
                       maxLines: 3,
                       overflow: TextOverflow.ellipsis,
@@ -1207,13 +1276,10 @@ class ChatComposerState extends State<ChatComposer>
     final strings = FaChatStrings.of(context);
     return Padding(
       key: const ValueKey('faChatComposerFieldRow'),
-      // The trailing inset is 2px so the send capsule sits FLUSH with the
-      // pill's right edge (owner call: the old 12px let the oval float
-      // ~11pt off the pill); the mic re-adds 10px so its inset is
-      // unchanged. The 12px left inset is the kit's field padding norm
-      // (owner call: the placeholder sat ~60px from the pill's leading
-      // edge — a reserved-but-unrendered slot read as dead space).
-      padding: const EdgeInsets.fromLTRB(12, 2, 2, 2),
+      // Attachment hugs the leading edge; Send keeps two extra points of
+      // trailing optical air so its arrow never crowds the capsule rim.
+      // The text decorator owns the icon-to-text gap.
+      padding: const EdgeInsets.fromLTRB(2, 2, 4, 2),
       child: Row(
         children: [
           if (widget.leadingBuilder != null)
@@ -1252,10 +1318,9 @@ class ChatComposerState extends State<ChatComposer>
 
   Widget _buildTextField() {
     final palette = fahChatColorsOf(context);
-    // No wrapper padding: the 10px InputDecorator inset IS the
-    // icon-to-text gap — the kit's iconSpacing norm (owner call: the old
-    // 16px decorator inset + 6px wrapper read as a ~22px dead zone after
-    // the attach glyph, ~60px from the pill's edge).
+    // No wrapper padding: a 4px leading InputDecorator inset keeps the
+    // caret close to the attachment control. The trailing inset stays 10px
+    // so text does not collide with the microphone.
     return Focus(
       onKeyEvent: _handleComposerKey,
       child: TextField(
@@ -1268,10 +1333,7 @@ class ChatComposerState extends State<ChatComposer>
           // FaChatStrings; channel chats override it with "Message
           // <channel>").
           hintText: FaChatStrings.of(context).chatInputHint,
-          contentPadding: const EdgeInsets.symmetric(
-            horizontal: 10,
-            vertical: 8,
-          ),
+          contentPadding: const EdgeInsets.fromLTRB(4, 8, 10, 8),
           isDense: true,
           // The outer FaSurface is the composer's ONLY filled, bordered
           // surface. A nested InputDecorator fill/outline produced doubled
@@ -1311,14 +1373,9 @@ class ChatComposerState extends State<ChatComposer>
     FahColors palette,
     FaChatStrings strings,
   ) {
-    // The mic re-adds the 10px the field row no longer carries (the
-    // trailing inset went to the flush send capsule), keeping its inset.
     return [
-      if (_slotShowsMic)
-        Padding(
-          padding: const EdgeInsets.only(right: 10),
-          child: _buildMicButton(context),
-        ),
+      if (_slotShowsMic) _buildMicButton(context),
+      // One compact, explicit gap: no legacy trailing inset on the mic.
       if (_slotShowsMic && _slotShowsSendStop) const SizedBox(width: 4),
       if (_slotShowsSendStop) _buildSendStopButton(palette, strings),
     ];
@@ -1336,12 +1393,7 @@ class ChatComposerState extends State<ChatComposer>
       child: _slotShowsMic
           ? KeyedSubtree(
               key: const ValueKey('composerTrailingMic'),
-              // The mic re-adds the 10px the field row no longer carries
-              // (the trailing inset went to the flush send capsule).
-              child: Padding(
-                padding: const EdgeInsets.only(right: 10),
-                child: _buildMicButton(context),
-              ),
+              child: _buildMicButton(context),
             )
           : _slotShowsSendStop
           ? KeyedSubtree(
@@ -1353,12 +1405,13 @@ class ChatComposerState extends State<ChatComposer>
   }
 
   /// The send/stop control: a solid accent capsule (40x34, radius 17)
-  /// flush with the composer pill's right edge, 2pt inset. The corner
-  /// radius (17 = pillRadius - inset) continues the pill's curvature as
+  /// inset 4pt from the composer pill's right edge. The corner
+  /// radius (17 = pillRadius - leadingInset) continues the pill's curvature as
   /// a concentric arc. Stop while streaming with an empty field, send
   /// (or steer-send mid-stream) otherwise. The capsule is the
-  /// owner-approved prototype look — solid opaque accent, no glass, no
-  /// border/shadow — and a disabled arm renders the same capsule dimmed.
+  /// owner-approved prototype look — solid opaque accent, no glass or
+  /// border, with only a soft accent halo — and a disabled arm renders the
+  /// same capsule dimmed.
   Widget _buildSendStopButton(FahColors palette, FaChatStrings strings) {
     // Stop only while streaming AND nothing typed; with text in the
     // field the button is a steer-send (interrupt the turn and run
@@ -1374,32 +1427,47 @@ class ChatComposerState extends State<ChatComposer>
       key: const ValueKey('faChatComposerSendButton'),
       width: 40,
       height: 34,
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(17),
-        child: ColoredBox(
-          color: palette.indigo,
-          child: IconButton(
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints.tightFor(width: 40, height: 34),
-            style: IconButton.styleFrom(
-              minimumSize: const Size(40, 34),
-              maximumSize: const Size(40, 34),
+      child: DecoratedBox(
+        key: const ValueKey('faChatComposerSendGlow'),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(17),
+          boxShadow: [
+            BoxShadow(
+              color: palette.indigo.withValues(alpha: .14),
+              blurRadius: 8,
+              spreadRadius: -1,
+            ),
+          ],
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(17),
+          child: ColoredBox(
+            color: palette.indigo,
+            child: IconButton(
               padding: EdgeInsets.zero,
-              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              constraints: const BoxConstraints.tightFor(width: 40, height: 34),
+              style: IconButton.styleFrom(
+                minimumSize: const Size(40, 34),
+                maximumSize: const Size(40, 34),
+                padding: EdgeInsets.zero,
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+              icon: showStop
+                  ? const Icon(Icons.stop, size: 22.5)
+                  : const Center(
+                      key: ValueKey('faChatComposerSendGlyph'),
+                      // Material's unrotated plane is the horizontal mark.
+                      // Center it exactly; no optical offset or extra tilt.
+                      child: Icon(Icons.send_rounded, size: 24),
+                    ),
+              color: palette.onAccent,
+              tooltip: showStop
+                  ? strings.chatAbortTooltip
+                  : (_isStreaming
+                        ? strings.chatSteerTooltip
+                        : strings.chatSendTooltip),
+              onPressed: onPressed,
             ),
-            icon: Icon(
-              // The prototype's paper-plane glyph: a filled send mark
-              // pointing up-right (Icons.stop keeps the interrupt arm).
-              showStop ? Icons.stop : Icons.send_rounded,
-              size: 22.5,
-            ),
-            color: palette.onAccent,
-            tooltip: showStop
-                ? strings.chatAbortTooltip
-                : (_isStreaming
-                      ? strings.chatSteerTooltip
-                      : strings.chatSendTooltip),
-            onPressed: onPressed,
           ),
         ),
       ),

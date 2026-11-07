@@ -5,6 +5,7 @@ import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/app_log.dart';
 import 'package:fa/services/flutter_session_manager.dart';
 import 'package:fa/services/session_names_store.dart';
+import 'package:fa_ui/fa_ui.dart' show isFaSystemNoticeContent;
 import 'package:flutter/foundation.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:path/path.dart' as p;
@@ -50,10 +51,10 @@ final _previewWarmStates = Expando<_PreviewWarmState>();
 /// emission: the boot path previously awaited one 128 KiB tail read per
 /// persisted session (hundreds of IPC round-trips on the mount env ≈ the
 /// reported ~6 s before the Local folders painted). The projection now
-/// emits immediately with whatever the stamp cache holds and fills the
-/// rest through a bounded background pass that notifies once at
-/// completion. Stamps (size + mtime) key the cache, so a grown transcript
-/// re-reads exactly once.
+/// emits immediately with whatever the stamp cache holds. Only rows that
+/// reach the viewport request a bounded fill, which notifies once at
+/// completion; offscreen transcripts are never opened. Stamps (size +
+/// mtime) key the cache, so a grown visible transcript re-reads once.
 /// Projects live + persisted Flutter sessions into messenger rows without
 /// opening every session or inventing persisted previews.
 final class LocalChatListAdapter implements LocalChatListChangeSource {
@@ -69,12 +70,19 @@ final class LocalChatListAdapter implements LocalChatListChangeSource {
   final FlutterSessionManager manager;
   final Map<String, String> sessionInfoNames;
 
-  /// False when the host already supplied the authoritative JSONL name
-  /// snapshot in [sessionInfoNames], avoiding a duplicate disk scan.
+  /// False when the host supplies the JSONL-name snapshot used during
+  /// projection in [sessionInfoNames]. Visible rows still warm unknown
+  /// names through the manager so that host snapshot can refresh.
   final bool readPersistedNames;
   final SessionNamesStore? namesStore;
   final LocalChatTitleBuilder titleBuilder;
   final LocalChatPreviewSource previewReader;
+
+  /// Last index-priced listing used by [warmVisible]. Metadata is cheap;
+  /// no transcript content is read until a row reaches the viewport.
+  List<SessionMetadata> _lastPersisted = const [];
+  Map<String, SessionMetadata> _lastPersistedById = const {};
+  Set<String> _lastLiveIds = const {};
 
   @override
   Listenable get changes => manager;
@@ -91,23 +99,16 @@ final class LocalChatListAdapter implements LocalChatListChangeSource {
     final persistedById = {
       for (final metadata in persisted) metadata.id: metadata,
     };
-    // Issue #2053 AC4: names leave the boot path. Rows render with the
-    // names already known (persisted listing index + previous fills) and
-    // the bounded background fill tops up the rest — it completes after
-    // this projection and repaints through [changes] (the manager).
+    _lastPersisted = persisted;
+    _lastPersistedById = persistedById;
+    _lastLiveIds = liveIds;
+    // Names and previews leave BOTH the boot path and the all-corpus
+    // background path. Rows render cached/derived values; only the
+    // viewport calls [warmVisible] for real transcript/name probes.
     var jsonlNames = const <String, String>{};
-    if (readPersistedNames) {
-      jsonlNames = manager.knownSessionNames;
-      if (persisted.isNotEmpty) {
-        unawaited(manager.warmSessionNames(persisted));
-      }
-    }
+    if (readPersistedNames) jsonlNames = manager.knownSessionNames;
     final infoNames = {...jsonlNames, ...sessionInfoNames};
-    // Previews leave the boot path too (see [_PreviewWarmState]): rows
-    // carry whatever the stamp cache already holds; the misses go to the
-    // bounded background fill.
     final warm = _previewWarmStates[manager] ??= _PreviewWarmState();
-    final previewMisses = <SessionMetadata>[];
     final entries = <ChatListEntry>[];
     for (final session in live) {
       final metadata = persistedById[session.id];
@@ -154,7 +155,6 @@ final class LocalChatListAdapter implements LocalChatListChangeSource {
       if (liveIds.contains(metadata.id)) continue;
       final isSubagent = isSubagentSession(metadata);
       final cached = warm.byStamp[_previewStamp(metadata)];
-      if (cached == null) previewMisses.add(metadata);
       entries.add(
         ChatListEntry(
           id: ChatEntryId.local(metadata.id),
@@ -178,10 +178,29 @@ final class LocalChatListAdapter implements LocalChatListChangeSource {
         ),
       );
     }
-    if (previewMisses.isNotEmpty) {
-      unawaited(_warmPreviews(warm, previewMisses));
-    }
     return entries;
+  }
+
+  /// Warms decorations for rows that actually reached the viewport.
+  /// Repeated builds are served by the managers' positive/negative caches;
+  /// live sessions already have an in-memory preview and are not re-read.
+  Future<void> warmVisible(Iterable<String> sessionIds) async {
+    final selected = <SessionMetadata>[
+      for (final id in sessionIds) ?_lastPersistedById[id],
+    ];
+    if (selected.isEmpty) return;
+    final warm = _previewWarmStates[manager] ??= _PreviewWarmState();
+    final previewMisses = <SessionMetadata>[
+      for (final metadata in selected)
+        if (!_lastLiveIds.contains(metadata.id) &&
+            warm.byStamp[_previewStamp(metadata)] == null)
+          metadata,
+    ];
+    await Future.wait([
+      manager.warmSessionNames(selected),
+      if (previewMisses.isNotEmpty) _warmPreviews(warm, previewMisses),
+      manager.warmSubagentParents(selected, allSessions: _lastPersisted),
+    ]);
   }
 
   /// The cache key for one persisted session: id + file stamp, so a grown
@@ -281,7 +300,8 @@ final class LocalChatListAdapter implements LocalChatListChangeSource {
     for (final message in service.messages.reversed) {
       if (message.role != 'user' && message.role != 'assistant') continue;
       final text = message.content.trim();
-      if (text.isNotEmpty) return text;
+      if (text.isEmpty || isFaSystemNoticeContent(text)) continue;
+      return text;
     }
     return null;
   }
@@ -344,7 +364,11 @@ final class LocalChatPreviewReader implements LocalChatPreviewSource {
           final preview = AgentService.tailMessagePairs([
             message,
           ], 1).first.$2.trim();
-          if (preview.isNotEmpty) return preview;
+          // System notices are agent bookkeeping, not the conversation's
+          // last human-readable reply. Keep walking the persisted tail.
+          if (preview.isNotEmpty && !isFaSystemNoticeContent(preview)) {
+            return preview;
+          }
         } on Object {
           // Ignore non-message/torn tail lines and keep looking backwards.
         }

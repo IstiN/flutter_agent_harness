@@ -80,14 +80,14 @@ void main() {
   Future<void> flushTimers(WidgetTester tester) =>
       tester.pump(const Duration(seconds: 4));
 
-  /// Opens the narrow trajectory page via the switcher and settles.
+  /// Opens the narrow trajectory page via the adaptive header action.
   Future<void> openTrajectory(WidgetTester tester) async {
-    await tester.tap(find.text('Trajectory'));
+    await tester.tap(find.byTooltip('Trajectory'));
     await tester.pump();
     await tester.pump(const Duration(seconds: 4)); // debounce + throttle
   }
 
-  testWidgets('wide shows the timeline icon, narrow the switcher', (
+  testWidgets('wide and narrow show the adaptive timeline action', (
     tester,
   ) async {
     final service = FakeChatService();
@@ -98,10 +98,9 @@ void main() {
     service.feed.dispose();
 
     await _pumpScreen(tester, service, size: const Size(600, 1000));
-    expect(find.byIcon(Icons.timeline), findsNothing);
-    expect(find.byType(SegmentedButton<bool>), findsOneWidget);
-    expect(find.text('Chat'), findsOneWidget);
-    expect(find.text('Trajectory'), findsOneWidget);
+    expect(find.byIcon(Icons.timeline), findsOneWidget);
+    expect(find.byType(SegmentedButton<bool>), findsNothing);
+    expect(find.byTooltip('Trajectory'), findsOneWidget);
     await flushTimers(tester);
     service.feed.dispose();
   });
@@ -132,7 +131,7 @@ void main() {
     expect(find.byType(Dialog), findsNothing);
 
     // Back to chat: the page goes away, the transcript stays.
-    await tester.tap(find.text('Chat'));
+    await tester.tap(find.byTooltip('Chat'));
     await tester.pump();
     expect(find.byType(TrajectoryScreen), findsNothing);
     await flushTimers(tester);
@@ -161,9 +160,15 @@ void main() {
 
   /// Plain texts inside the details sheet (its content identifies the
   /// bound record).
-  Set<String> sheetTexts(WidgetTester tester) => tester.widgetList<Text>(
-    find.descendant(of: find.byType(BottomSheet), matching: find.byType(Text)),
-  ).map((text) => text.data ?? text.textSpan!.toPlainText()).toSet();
+  Set<String> sheetTexts(WidgetTester tester) => tester
+      .widgetList<Text>(
+        find.descendant(
+          of: find.byType(BottomSheet),
+          matching: find.byType(Text),
+        ),
+      )
+      .map((text) => text.data ?? text.textSpan!.toPlainText())
+      .toSet();
 
   /// Dismisses the details sheet through its modal barrier (the strip of
   /// screen above the sheet).
@@ -201,15 +206,18 @@ void main() {
     await dismissSheet(tester);
 
     // Chat and back: the query survives too.
-    await tester.tap(find.text('Chat'));
+    await tester.tap(find.byTooltip('Chat'));
     await tester.pump();
-    await tester.tap(find.text('Trajectory'));
+    await tester.tap(find.byTooltip('Trajectory'));
     await tester.pump();
     expect(find.text('1 of 1'), findsOneWidget);
-    expect(find.descendant(
-      of: find.byType(TrajectoryScreen),
-      matching: find.text('deploy'),
-    ), findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.byType(TrajectoryScreen),
+        matching: find.text('deploy'),
+      ),
+      findsOneWidget,
+    );
 
     // Reopening the details sheet shows the same record.
     await tester.tap(find.textContaining('deploy the service now'));
@@ -243,9 +251,9 @@ void main() {
     expect(offsetBefore, greaterThan(0));
 
     // Chat and back: everything survives the swap.
-    await tester.tap(find.text('Chat'));
+    await tester.tap(find.byTooltip('Chat'));
     await tester.pump();
-    await tester.tap(find.text('Trajectory'));
+    await tester.tap(find.byTooltip('Trajectory'));
     await tester.pump();
 
     expect(
@@ -306,9 +314,7 @@ void main() {
     // Same runtime type, no key: this drives didUpdateWidget. The unbind
     // swaps the ledger to service B's controller (the narrow page stays
     // mounted in its IndexedStack, hidden off the active index).
-    await tester.pumpWidget(
-      MaterialApp(home: FaChatScreen(service: serviceB)),
-    );
+    await tester.pumpWidget(MaterialApp(home: FaChatScreen(service: serviceB)));
     await flushTimers(tester);
     expect(find.textContaining('session B payload'), findsWidgets);
     expect(find.textContaining('reply 23'), findsNothing);
@@ -330,9 +336,7 @@ void main() {
     expect(find.byType(TrajectoryScreen), findsOneWidget);
 
     final serviceB = FakeChatService();
-    await tester.pumpWidget(
-      MaterialApp(home: FaChatScreen(service: serviceB)),
-    );
+    await tester.pumpWidget(MaterialApp(home: FaChatScreen(service: serviceB)));
     // The swap closes the stale session-A route outside the build phase;
     // its controller disposes only after the pop fully completes (no
     // use-after-dispose anywhere).

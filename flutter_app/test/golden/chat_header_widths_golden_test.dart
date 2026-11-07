@@ -1,12 +1,11 @@
-/// Width-sweep goldens for the ONE adaptive header (issue #225 AC2):
-/// the full chat surface — the merged project/title/chip/actions bar —
-/// at 320/400/600/1024pt. Each family width proves the row adapts
-/// (actions demote into the ⋮ menu, nothing overflows) instead of
-/// relying on the two historical fixed sizes only.
+/// Width-sweep goldens for the stacked chat header at
+/// 320/400/600/1024pt. Every width keeps the centered avatar above the
+/// title pill; the action row adapts by demoting into ⋮ rather than
+/// switching to a different compact bar.
 ///
-/// The pump uses the current narrow full-chat route payload (project
-/// identity + quick-model chip + apps toggle + files drawer), so the
-/// snapshots show the real narrow-phone header shape.
+/// The pump uses the current full-chat route payload (project identity +
+/// quick-model chip + trajectory + files drawer), so the snapshots show
+/// the real header shape and overflow.
 library;
 
 import 'package:fa/services/agent_service.dart';
@@ -99,7 +98,7 @@ Future<void> _pumpHeaderWidth(WidgetTester tester, double width) async {
     tester,
     ChatScreen(
       manager: manager,
-      // The current narrow full-chat route payload.
+      // The current full-chat route payload.
       projectIcon: Icons.folder_outlined,
       projectLabel: 'Personal',
       modelChip: QuickModelChip(
@@ -110,7 +109,6 @@ Future<void> _pumpHeaderWidth(WidgetTester tester, double width) async {
       ),
       onModelChipTap: () {},
       chipMenuLabel: service.modelId,
-      onAppsToggle: () {},
     ),
     size: Size(width, _heightFor(width)),
     wrap: (child) => child,
@@ -129,6 +127,15 @@ void main() {
     for (final width in <double>[320, 400, 600, 1024]) {
       testWidgets('header at $width pt', (tester) async {
         await _pumpHeaderWidth(tester, width);
+        final avatar = find.byKey(const ValueKey('faChatHeaderAvatar'));
+        final titlePill = find.byKey(const ValueKey('faChatHeaderTitlePill'));
+        expect(avatar, findsOneWidget);
+        expect(titlePill, findsOneWidget);
+        expect(
+          tester.getRect(titlePill).top,
+          greaterThanOrEqualTo(tester.getRect(avatar).bottom),
+          reason: 'never collapse into the one-row compact header',
+        );
         await expectGolden(tester, 'chat_header_${width.round()}');
       });
     }

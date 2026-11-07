@@ -4,6 +4,7 @@
 
 import 'package:flutter/material.dart';
 
+import '../widgets/fa_icons.dart';
 import 'app_theme.dart';
 import 'fa2_tokens.dart';
 import 'fa2_typography.dart';
@@ -101,10 +102,17 @@ ThemeData buildFaTheme({
         textStyle: WidgetStatePropertyAll(actionTextStyle),
       ),
     ),
-    extensions: [...base.extensions.values, tokens, typography],
-    splashFactory: direction == FaVisualDirection.glass
-        ? InkSparkle.splashFactory
-        : InkRipple.splashFactory,
+    extensions: [
+      ...base.extensions.values,
+      tokens,
+      typography,
+      const FaIconThemeData(),
+    ],
+    // InkSparkle's procedural turbulence reads as dirty pixel noise around
+    // glyphs during a press, especially over glass. Native liquid controls
+    // own their smooth squash/glow; ordinary InkWell destinations use the
+    // continuously rasterized ripple instead of the sparkling shader.
+    splashFactory: InkRipple.splashFactory,
   );
 }
 
@@ -142,22 +150,21 @@ RadioThemeData _faRadioTheme(FaDesignTokens tokens) => RadioThemeData(
   }),
 );
 
-CheckboxThemeData _faCheckboxTheme(FaDesignTokens tokens) =>
-  CheckboxThemeData(
-    fillColor: WidgetStateProperty.resolveWith((states) {
-      if (!states.contains(WidgetState.selected)) return Colors.transparent;
-      return states.contains(WidgetState.disabled)
-          ? _faControlDisabledWash(tokens.surface3)
-          : tokens.accent;
-    }),
-    checkColor: WidgetStatePropertyAll(tokens.accentInk),
-    // Unchecked boxes draw the hairline ring; once checked the accent fill
-    // covers it (CheckboxThemeData.side is stateless).
-    side: BorderSide(color: tokens.hairline, width: 1.5),
-    shape: RoundedSuperellipseBorder(
-      borderRadius: BorderRadius.circular(tokens.radiusXs),
-    ),
-  );
+CheckboxThemeData _faCheckboxTheme(FaDesignTokens tokens) => CheckboxThemeData(
+  fillColor: WidgetStateProperty.resolveWith((states) {
+    if (!states.contains(WidgetState.selected)) return Colors.transparent;
+    return states.contains(WidgetState.disabled)
+        ? _faControlDisabledWash(tokens.surface3)
+        : tokens.accent;
+  }),
+  checkColor: WidgetStatePropertyAll(tokens.accentInk),
+  // Unchecked boxes draw the hairline ring; once checked the accent fill
+  // covers it (CheckboxThemeData.side is stateless).
+  side: BorderSide(color: tokens.hairline, width: 1.5),
+  shape: RoundedSuperellipseBorder(
+    borderRadius: BorderRadius.circular(tokens.radiusXs),
+  ),
+);
 
 SliderThemeData _faSliderTheme(FaDesignTokens tokens) => SliderThemeData(
   trackHeight: 4,

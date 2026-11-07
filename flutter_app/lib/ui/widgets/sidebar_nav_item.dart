@@ -147,11 +147,15 @@ class SidebarNavItem extends StatelessWidget {
               children: [
                 Icon(icon, size: 22, color: fg),
                 const SizedBox(width: 12),
-                Text(
-                  label,
-                  style: typography.label.copyWith(
-                    color: fg,
-                    fontWeight: FontWeight.w500,
+                Expanded(
+                  child: Text(
+                    label,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: typography.label.copyWith(
+                      color: fg,
+                      fontWeight: FontWeight.w500,
+                    ),
                   ),
                 ),
               ],

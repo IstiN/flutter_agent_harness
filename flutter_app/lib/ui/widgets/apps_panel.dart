@@ -61,6 +61,7 @@ class _AppsPanelState extends State<AppsPanel> {
   List<JsAppInfo> _apps = const [];
   var _loading = true;
   var _filter = _AppFilter.all;
+  var _appsReloadGeneration = 0;
 
   /// Whether we're on macOS desktop (traffic lights float over content).
   static bool get _isMacOS =>
@@ -93,16 +94,17 @@ class _AppsPanelState extends State<AppsPanel> {
   }
 
   Future<void> _reloadApps() async {
+    final generation = ++_appsReloadGeneration;
+    bool stale() => !mounted || generation != _appsReloadGeneration;
     try {
       final apps = await _appsStore.listApps();
-      if (mounted) {
-        setState(() {
-          _apps = apps;
-          _loading = false;
-        });
-      }
+      if (stale()) return;
+      setState(() {
+        _apps = apps;
+        _loading = false;
+      });
     } on Object {
-      if (mounted) setState(() => _loading = false);
+      if (!stale()) setState(() => _loading = false);
     }
   }
 
@@ -282,6 +284,11 @@ class _AppsPanelState extends State<AppsPanel> {
     final removed = await _appsStore.removeWidget(app.id, force: true);
     if (!mounted) return;
     if (removed) {
+      // Take the confirmed tile out now; the storage reconciliation below
+      // must never leave the running tile visible while I/O settles.
+      setState(() {
+        _apps = _apps.where((candidate) => candidate.id != app.id).toList();
+      });
       await _reloadApps();
     } else {
       showFahErrorSnack(context, 'Could not remove ${app.name}.');

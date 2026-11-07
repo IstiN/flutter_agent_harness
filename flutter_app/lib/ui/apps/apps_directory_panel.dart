@@ -4,11 +4,15 @@
 
 import 'dart:async';
 
+import 'package:fa/apps/app_icon.dart';
 import 'package:fa/apps/apps_store.dart';
 import 'package:fa/l10n/l10n_ext.dart';
 import 'package:fa/ui/apps/app_launcher_controller.dart';
+import 'package:fa/ui/apps/running_apps_dock.dart';
 import 'package:fa_ui/fa_ui.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_agent_harness/flutter_agent_harness.dart'
+    show ExecutionEnv;
 
 /// The desktop Apps directory from the messenger PoC: a glass capsule
 /// toolbar (the sidebar chrome language), then My Apps, Widgets Catalog,
@@ -18,16 +22,22 @@ final class AppsDirectoryPanel extends StatefulWidget {
     super.key,
     required this.controller,
     required this.appsStore,
-    required this.runningAppName,
+    required this.runningApps,
+    required this.activeAppId,
+    required this.env,
     required this.onOpenRunning,
     this.showSearch = true,
+    this.topPadding = 0,
   });
 
   final AppLauncherController controller;
   final AppsStore appsStore;
-  final String? runningAppName;
-  final VoidCallback onOpenRunning;
+  final List<JsAppInfo> runningApps;
+  final String? activeAppId;
+  final ExecutionEnv env;
+  final ValueChanged<JsAppInfo> onOpenRunning;
   final bool showSearch;
+  final double topPadding;
 
   @override
   State<AppsDirectoryPanel> createState() => _AppsDirectoryPanelState();
@@ -75,7 +85,6 @@ final class _AppsDirectoryPanelState extends State<AppsDirectoryPanel> {
                 hintText: context.l10n.launcherSearchHint,
               ),
             ),
-          _DirectoryToolbar(running: widget.runningAppName != null),
           Expanded(
             child: AnimatedSwitcher(
               duration: FaMotion.duration(
@@ -87,9 +96,10 @@ final class _AppsDirectoryPanelState extends State<AppsDirectoryPanel> {
               child: ListView(
                 key: ValueKey(
                   'apps-directory-${widget.controller.section.name}-'
-                  '${widget.runningAppName}-$_installedCount',
+                  '${widget.runningApps.map((app) => app.id).join(',')}-'
+                  '${widget.activeAppId}-$_installedCount',
                 ),
-                padding: const EdgeInsets.symmetric(vertical: 4),
+                padding: EdgeInsets.only(top: widget.topPadding + 4, bottom: 4),
                 children: [
                   _DirectoryRow(
                     key: const ValueKey('appsDirectoryMyApps'),
@@ -120,16 +130,31 @@ final class _AppsDirectoryPanelState extends State<AppsDirectoryPanel> {
                   _DirectoryRow(
                     key: const ValueKey('appsDirectoryRunning'),
                     icon: Icons.bolt_rounded,
-                    live: widget.runningAppName != null,
+                    live: widget.runningApps.isNotEmpty,
                     title: context.l10n.appsRunning,
-                    subtitle:
-                        widget.runningAppName ??
-                        context.l10n.appsActiveCount(0),
-                    selected: widget.runningAppName != null,
-                    onTap: widget.runningAppName == null
+                    subtitle: context.l10n.appsActiveCount(
+                      widget.runningApps.length,
+                    ),
+                    selected: widget.activeAppId != null,
+                    onTap: widget.runningApps.isEmpty
                         ? null
-                        : widget.onOpenRunning,
+                        : () => widget.onOpenRunning(
+                            widget.runningApps
+                                    .where(
+                                      (app) => app.id == widget.activeAppId,
+                                    )
+                                    .firstOrNull ??
+                                widget.runningApps.last,
+                          ),
                   ),
+                  for (final app in widget.runningApps)
+                    _RunningAppDirectoryEntry(
+                      key: ValueKey('appsDirectoryRunningApp-${app.id}'),
+                      app: app,
+                      env: widget.env,
+                      selected: app.id == widget.activeAppId,
+                      onTap: () => widget.onOpenRunning(app),
+                    ),
                 ],
               ),
             ),
@@ -140,53 +165,167 @@ final class _AppsDirectoryPanelState extends State<AppsDirectoryPanel> {
   }
 }
 
-/// The directory's capsule toolbar carries only the section label and the
-/// running-app marker. Files intentionally lives in chat, not Apps.
-final class _DirectoryToolbar extends StatelessWidget {
-  const _DirectoryToolbar({required this.running});
+final class _RunningAppDirectoryEntry extends StatelessWidget {
+  const _RunningAppDirectoryEntry({
+    super.key,
+    required this.app,
+    required this.env,
+    required this.selected,
+    required this.onTap,
+  });
 
-  final bool running;
+  final JsAppInfo app;
+  final ExecutionEnv env;
+  final bool selected;
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
     final colors = FahColors.of(context);
-    final tokens = FaDesignTokens.of(context);
     return Padding(
-      padding: const EdgeInsets.fromLTRB(8, 6, 8, 4),
-      child: FaSurface(
-        key: const ValueKey('appsDirectoryToolbar'),
-        glass: true,
-        useBackdropGroup: true,
-        color: tokens.surface1,
-        tintAmount: .22,
-        tintOpacity: .55,
-        borderRadius: BorderRadius.circular(14),
-        padding: const EdgeInsets.symmetric(horizontal: 10),
-        child: SizedBox(
-          height: 34,
-          child: Row(
-            children: [
-              Icon(Icons.grid_view_rounded, size: 15, color: colors.dim),
-              const SizedBox(width: 8),
-              Expanded(
-                child: FaSectionEyebrow(
-                  label: context.l10n.appsGridTitle,
-                  padding: EdgeInsets.zero,
-                ),
-              ),
-              if (running) ...[
-                const SizedBox(width: 6),
-                Container(
-                  key: const ValueKey('appsDirectoryRunningDot'),
-                  width: 7,
-                  height: 7,
-                  decoration: BoxDecoration(
-                    color: colors.teal,
-                    shape: BoxShape.circle,
+      padding: const EdgeInsets.fromLTRB(18, 2, 8, 2),
+      child: Material(
+        color: selected ? colors.panelAlt : Colors.transparent,
+        shape: const RoundedSuperellipseBorder(
+          borderRadius: BorderRadius.all(Radius.circular(12)),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: onTap,
+          hoverColor: colors.panelAlt,
+          child: SizedBox(
+            height: 46,
+            child: Row(
+              children: [
+                AppIcon(app: app, env: env, size: 30),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    app.name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: colors.text,
+                      fontSize: 13,
+                      fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+                    ),
                   ),
                 ),
+                Icon(
+                  selected ? Icons.remove_rounded : Icons.bolt_rounded,
+                  size: 15,
+                  color: selected ? colors.indigo : colors.teal,
+                ),
+                const SizedBox(width: 10),
               ],
-            ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Collapsed Apps keeps the two real destinations and every running app
+/// visible instead of reducing the section to an empty strip.
+final class CollapsedAppsDirectory extends StatelessWidget {
+  const CollapsedAppsDirectory({
+    super.key,
+    required this.controller,
+    required this.runningApps,
+    required this.activeAppId,
+    required this.env,
+    required this.onOpenRunning,
+  });
+
+  final AppLauncherController controller;
+  final List<JsAppInfo> runningApps;
+  final String? activeAppId;
+  final ExecutionEnv env;
+  final ValueChanged<JsAppInfo> onOpenRunning;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListenableBuilder(
+      listenable: controller,
+      builder: (context, _) => ListView(
+        key: const ValueKey('collapsedAppsList'),
+        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 6),
+        children: [
+          _CollapsedDirectoryButton(
+            key: const ValueKey('collapsedAppsMyApps'),
+            icon: Icons.apps_rounded,
+            tooltip: context.l10n.appsMyApps,
+            selected: controller.section == AppsDirectorySection.myApps,
+            onTap: () => controller.select(AppsDirectorySection.myApps),
+          ),
+          _CollapsedDirectoryButton(
+            key: const ValueKey('collapsedAppsStore'),
+            icon: Icons.download_rounded,
+            tooltip: context.l10n.appsWidgetStore,
+            selected: controller.section == AppsDirectorySection.widgetStore,
+            onTap: () => controller.select(AppsDirectorySection.widgetStore),
+          ),
+          if (runningApps.isNotEmpty) ...[
+            const SizedBox(height: 6),
+            for (final app in runningApps)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 2),
+                child: RunningAppIconButton(
+                  key: ValueKey('collapsedRunningApp-${app.id}'),
+                  app: app,
+                  env: env,
+                  selected: app.id == activeAppId,
+                  onTap: () => onOpenRunning(app),
+                  size: 54,
+                ),
+              ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+final class _CollapsedDirectoryButton extends StatelessWidget {
+  const _CollapsedDirectoryButton({
+    super.key,
+    required this.icon,
+    required this.tooltip,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String tooltip;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = FahColors.of(context);
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      child: Tooltip(
+        message: tooltip,
+        child: Material(
+          color: selected
+              ? colors.indigo.withValues(alpha: .22)
+              : Colors.transparent,
+          shape: RoundedSuperellipseBorder(
+            borderRadius: BorderRadius.circular(14),
+          ),
+          clipBehavior: Clip.antiAlias,
+          child: InkWell(
+            onTap: onTap,
+            child: SizedBox(
+              height: 54,
+              child: Icon(
+                icon,
+                size: 25,
+                color: selected ? colors.indigo : colors.dim,
+              ),
+            ),
           ),
         ),
       ),

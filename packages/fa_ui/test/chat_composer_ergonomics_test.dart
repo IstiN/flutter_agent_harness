@@ -8,6 +8,19 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'fake_chat_service.dart';
 
+final class _AvailableVoiceInput implements FaChatVoiceInput {
+  @override
+  bool get isAvailable => true;
+  @override
+  String? get unavailableReason => null;
+  @override
+  Future<bool> start() async => true;
+  @override
+  Future<String?> stopAndTranscribe() async => null;
+  @override
+  Future<void> cancel() async {}
+}
+
 /// Composer ergonomics (issue #459): the mobile vertical budget (AC1) and
 /// the attach glyph's hit target (AC2).
 ///
@@ -62,18 +75,19 @@ void main() {
     expect(
       sendSize,
       const Size(40, 34),
-      reason: 'the send capsule: 40x34 (2px vertical inset in the pill), '
+      reason:
+          'the send capsule: 40x34 (2px vertical inset in the pill), '
           'not a circle',
     );
-    // The capsule is flush with the pill's right edge (2px inset) and
-    // vertically centered, with a corner radius concentric to the pill's.
+    // The capsule keeps 4px of trailing optical air and stays vertically
+    // centered, with a corner radius concentric to the pill's.
     final sendRect = tester.getRect(
       find.byKey(const ValueKey('faChatComposerSendButton')),
     );
     final surfaceRect = tester.getRect(
       find.byKey(const ValueKey('faChatFloatingComposer')),
     );
-    expect(surfaceRect.right - sendRect.right, 2, reason: 'flush right');
+    expect(surfaceRect.right - sendRect.right, 4, reason: 'trailing air');
     expect(sendRect.center.dy, surfaceRect.center.dy, reason: 'centered');
     final clip = tester.widget<ClipRRect>(
       find.descendant(
@@ -82,6 +96,30 @@ void main() {
       ),
     );
     expect(clip.borderRadius, BorderRadius.circular(17));
+
+    // Material's unrotated plane is horizontal. Keep it exactly centered,
+    // with no offset or rotation that would make it point up or down.
+    final glyphFinder = find.byKey(const ValueKey('faChatComposerSendGlyph'));
+    tester.widget<Center>(glyphFinder);
+    expect(
+      find.descendant(of: glyphFinder, matching: find.byType(Transform)),
+      findsNothing,
+    );
+    expect(tester.getRect(glyphFinder).center, sendRect.center);
+    final glow = tester.widget<DecoratedBox>(
+      find.byKey(const ValueKey('faChatComposerSendGlow')),
+    );
+    final shadow = (glow.decoration as BoxDecoration).boxShadow!.single;
+    expect(shadow.blurRadius, 8);
+    expect(shadow.color.a, closeTo(.14, .001));
+    final plane = tester.widget<Icon>(
+      find.descendant(
+        of: find.byKey(const ValueKey('faChatComposerSendGlyph')),
+        matching: find.byIcon(Icons.send_rounded),
+      ),
+    );
+    expect(plane.size, 24);
+    expect(sendSize, const Size(40, 34), reason: 'capsule geometry is fixed');
   });
 
   testWidgets('AC1 E3: without an inset (hardware keyboard) the paddings '
@@ -197,9 +235,9 @@ void main() {
     expect(send.size, const Size(40, 34));
   });
 
-  testWidgets('AC5: the placeholder starts at the kit iconSpacing norm from '
-      'the attach glyph (owner call: the old reserved-but-unrendered slot '
-      'pushed the hint ~60px from the pill edge)', (tester) async {
+  testWidgets('AC5: attachment is an edge control with the standard text gap', (
+    tester,
+  ) async {
     tester.view.physicalSize = const Size(390, 844);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
@@ -229,19 +267,49 @@ void main() {
     );
     final hint = tester.getRect(find.text('Type a message'));
 
-    // Icon-to-text gap: the field's content starts within the kit's
-    // iconSpacing norm (8-12px) of the prefix icon's right edge.
+    // The caret follows the attachment closely: the field adds only a
+    // 4px optical gap after the 36px prefix target.
     final gap = hint.left - attach.right;
-    expect(gap, greaterThanOrEqualTo(8));
-    expect(gap, lessThanOrEqualTo(16), reason: 'icon-to-text gap ≈ 10px');
-    // Field-left padding: the pill's leading edge to the prefix icon is
-    // the 12-16px norm.
-    final fieldLeft = attach.left - surface.left;
-    expect(fieldLeft, greaterThanOrEqualTo(12));
-    expect(fieldLeft, lessThanOrEqualTo(16));
-    // The whole leading inset (pill edge → caret) is fully accounted:
-    // 12px field-left + the 36px hit target + the 10px gap = 58. The old
-    // compact build put the caret 70px out with a 22px icon-to-text gap.
-    expect(hint.left - surface.left, closeTo(58, .5));
+    expect(gap, closeTo(4, .5));
+    // The attachment hit target sits at the same 2px edge inset as Send.
+    expect(attach.left - surface.left, 2);
+    // 2px edge + 36px target + 4px decorator gap = 42px to the hint/caret.
+    expect(hint.left - surface.left, closeTo(42, .5));
+  });
+
+  testWidgets('mic and Send retain 36/40px targets with one compact 4px gap', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Align(
+            alignment: Alignment.bottomCenter,
+            child: ChatComposer(
+              service: FakeChatService(),
+              voiceInput: _AvailableVoiceInput(),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final mic = tester.getRect(find.byTooltip('Voice input'));
+    final send = tester.getRect(
+      find.byKey(const ValueKey('faChatComposerSendButton')),
+    );
+    expect(mic.size, const Size.square(36));
+    expect(send.size, const Size(40, 34));
+    expect(send.left - mic.right, 4);
+    expect(
+      tester
+          .getSize(find.byKey(const ValueKey('faChatComposerFieldRow')))
+          .height,
+      40,
+    );
   });
 }

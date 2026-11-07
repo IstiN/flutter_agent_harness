@@ -11,10 +11,20 @@ import '../theme/fa2_tokens.dart';
 /// This is a vector painting, not a font glyph or raster asset: app icon,
 /// launcher mark and compact brand header therefore share the exact geometry.
 class FaLogo extends StatelessWidget {
-  const FaLogo({super.key, this.size = 64, this.semanticLabel = 'Fa'});
+  const FaLogo({
+    super.key,
+    this.size = 64,
+    this.semanticLabel = 'Fa',
+    this.trailingDot = false,
+  });
 
   final double size;
   final String semanticLabel;
+
+  /// Places the accent dot after the `a` instead of above it. The collapsed
+  /// messenger sidebar uses this slightly more horizontal mark; the canonical
+  /// identity remains unchanged everywhere else.
+  final bool trailingDot;
 
   @override
   Widget build(BuildContext context) => Semantics(
@@ -22,16 +32,22 @@ class FaLogo extends StatelessWidget {
     image: true,
     child: SizedBox.square(
       dimension: size,
-      child: CustomPaint(painter: FaLogoPainter(FaDesignTokens.of(context))),
+      child: CustomPaint(
+        painter: FaLogoPainter(
+          FaDesignTokens.of(context),
+          trailingDot: trailingDot,
+        ),
+      ),
     ),
   );
 }
 
 /// Paints the canonical 68×68 B3-square-accent mark in any token palette.
 class FaLogoPainter extends CustomPainter {
-  const FaLogoPainter(this.tokens);
+  const FaLogoPainter(this.tokens, {this.trailingDot = false});
 
   final FaDesignTokens tokens;
+  final bool trailingDot;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -83,7 +99,11 @@ class FaLogoPainter extends CustomPainter {
     final dotColor = tokens.agentHues.length > 1
         ? tokens.agentHues[1]
         : tokens.accent;
-    canvas.drawCircle(const Offset(48, 22), 3.2, Paint()..color = dotColor);
+    canvas.drawCircle(
+      trailingDot ? const Offset(56, 36) : const Offset(48, 22),
+      3.2,
+      Paint()..color = dotColor,
+    );
     canvas.restore();
   }
 
@@ -97,5 +117,5 @@ class FaLogoPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant FaLogoPainter oldDelegate) =>
-      oldDelegate.tokens != tokens;
+      oldDelegate.tokens != tokens || oldDelegate.trailingDot != trailingDot;
 }

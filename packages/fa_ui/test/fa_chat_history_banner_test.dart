@@ -280,6 +280,35 @@ void main() {
     expectNoTopBanner();
   });
 
+  testWidgets('approaching older history automatically pages once per edge '
+      'entry', (tester) async {
+    final service = _PagingService()
+      ..above = 42
+      ..total = 50
+      ..msgs = _msgs(40);
+    await _pumpScreen(tester, service);
+
+    // Opening the live tail must not start history IO by itself.
+    expect(service.loadCalls, 0);
+
+    Future<void> toOlderEdge() async {
+      await tester.drag(find.byType(Scrollable).first, const Offset(0, 3000));
+      await tester.pumpAndSettle();
+    }
+
+    await toOlderEdge();
+    expect(service.loadCalls, 1);
+    await tester.pump(const Duration(seconds: 1));
+    expect(service.loadCalls, 1, reason: 'the same edge entry is latched');
+
+    // Leaving the prefetch band rearms automatic paging for the next
+    // deliberate approach; no repeated Load earlier tap is needed.
+    await tester.drag(find.byType(Scrollable).first, const Offset(0, -3000));
+    await tester.pumpAndSettle();
+    await toOlderEdge();
+    expect(service.loadCalls, 2);
+  });
+
   testWidgets('UT-974-reveal: pages above reveal the banner only at the '
       'scroll top', (tester) async {
     final service = _PagingService()

@@ -3,6 +3,8 @@
 import 'package:fa_ui/fa_ui.dart';
 import 'package:flutter/material.dart';
 
+import 'messenger_nav_rail.dart';
+
 /// SF-like sidebar.left glyph shared by the expanded and collapsed shell.
 class MessengerSidebarLeftIcon extends StatelessWidget {
   const MessengerSidebarLeftIcon({super.key, this.color, this.size = 20});
@@ -349,16 +351,19 @@ class MessengerBottomNavigation extends StatelessWidget {
     super.key,
     required this.children,
     required this.selectedIndex,
+    this.widthLimit = maxWidth,
   }) : assert(children.length > 0),
        assert(selectedIndex >= 0 && selectedIndex < children.length);
 
   static const double height = 56;
   static const double maxWidth = 280;
+  static const double expandedMaxWidth = 448;
   static const double horizontalMargin = 12;
   static const double bottomGap = 8;
 
   final List<Widget> children;
   final int selectedIndex;
+  final double widthLimit;
 
   @override
   Widget build(BuildContext context) {
@@ -371,7 +376,7 @@ class MessengerBottomNavigation extends StatelessWidget {
       height: height,
       child: Center(
         child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: maxWidth),
+          constraints: BoxConstraints(maxWidth: widthLimit),
           child: FaSurface(
             glass: tokens.direction == FaVisualDirection.glass,
             useBackdropGroup: true,
@@ -472,18 +477,43 @@ class MessengerBottomNavigationItem extends StatelessWidget {
     required this.label,
     required this.selected,
     required this.onTap,
+    this.badge,
+    this.badgeMuted = false,
   });
 
   final IconData icon;
   final String label;
   final bool selected;
   final VoidCallback onTap;
+  final int? badge;
+  final bool badgeMuted;
 
   @override
   Widget build(BuildContext context) {
     final tokens = FaDesignTokens.of(context);
     final typography = FaTypography.of(context);
     final foreground = selected ? tokens.accent : tokens.ink2;
+    final showBadge = badge != null && badge! > 0;
+    final destinationIcon = showBadge
+        ? SizedBox(
+            width: 34,
+            height: 26,
+            child: Stack(
+              children: [
+                Positioned(
+                  left: 6,
+                  top: 2,
+                  child: Icon(icon, size: 22, color: foreground),
+                ),
+                Positioned(
+                  right: 0,
+                  top: 0,
+                  child: MessengerRailBadge(count: badge!, muted: badgeMuted),
+                ),
+              ],
+            ),
+          )
+        : Icon(icon, size: 22, color: foreground);
     return Tooltip(
       message: label,
       child: Semantics(
@@ -499,11 +529,11 @@ class MessengerBottomNavigationItem extends StatelessWidget {
             customBorder: const StadiumBorder(),
             onTap: onTap,
             child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
+              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 7),
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Icon(icon, size: 22, color: foreground),
+                  destinationIcon,
                   const SizedBox(height: 3),
                   Flexible(
                     child: AnimatedDefaultTextStyle(

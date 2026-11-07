@@ -60,10 +60,13 @@ void main() {
 
     expect(results[0], hasLength(3));
     expect(results[2], hasLength(3));
-    expect(store.listingCount(), 1,
-        reason: 'AC5: one repo listing, shared');
+    expect(store.listingCount(), 1, reason: 'AC5: one repo listing, shared');
 
-    // Sequential loads still re-list (freshness contract preserved).
+    // An immediate decoration repaint reuses the result; explicit
+    // invalidation is the freshness boundary and forces a new pass.
+    await manager.listPersistedSessions();
+    expect(store.listingCount(), 1);
+    manager.invalidateListing();
     await manager.listPersistedSessions();
     expect(store.listingCount(), 2);
   });
@@ -93,8 +96,11 @@ void main() {
 
     final after = await adapter.load();
     expect(after.map((e) => e.id.value), isNot(contains('victim')));
-    expect(store.listingCount(), greaterThan(before),
-        reason: 'the delete invalidated the shared pass');
+    expect(
+      store.listingCount(),
+      greaterThan(before),
+      reason: 'the delete invalidated the shared pass',
+    );
   });
 
   test('AC4 — boot performs zero name probes; names fill lazily', () async {
@@ -122,8 +128,11 @@ void main() {
     // THE BOOT listing: the shell-style reload — no name probes at all.
     final persisted = await manager.listPersistedSessions();
     expect(persisted, hasLength(7));
-    expect(store.probes, isEmpty,
-        reason: 'AC4: zero name-probe windows on the boot path');
+    expect(
+      store.probes,
+      isEmpty,
+      reason: 'AC4: zero name-probe windows on the boot path',
+    );
 
     // The first paint renders derived titles — a projection WITHOUT the
     // background fill (readPersistedNames: false is the pre-fill mode)
@@ -161,8 +170,11 @@ void main() {
       secondPaint.where((e) => e.id.value == 'named-a').single.title,
       'Title of named-a',
     );
-    expect(store.probes, hasLength(7),
-        reason: 'learned names serve from cache, never re-probed');
+    expect(
+      store.probes,
+      hasLength(7),
+      reason: 'learned names serve from cache, never re-probed',
+    );
   });
 
   test('AC4 — a warm call with nothing pending probes nothing', () async {
@@ -181,6 +193,7 @@ void main() {
     // name, so the next listing supplies it from the index.
     await manager.listPersistedSessions();
     await store.repo.rememberSessionNames({'s': 'Known'});
+    manager.invalidateListing();
     final persisted = await manager.listPersistedSessions();
     expect(persisted, hasLength(1));
     expect(manager.knownSessionNames['s'], 'Known');

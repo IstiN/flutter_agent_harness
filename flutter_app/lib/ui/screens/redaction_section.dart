@@ -28,19 +28,25 @@ class _RedactionSectionState extends State<RedactionSection> {
 
   @override
   Widget build(BuildContext context) {
-    return SettingsSwitchRow(
-      value: _enabled,
-      onChanged: (enabled) {
-        setState(() => _enabled = enabled);
-        widget.service.setRedactionEnabled(enabled);
-        AppAnalytics.instance.widgetEvent(
-          'redaction_toggled',
-          params: {'enabled': enabled},
-        );
-      },
-      leading: const Icon(Icons.visibility_off_outlined),
-      title: Text(context.l10n.settingsRedaction),
-      subtitle: Text(context.l10n.settingsRedactionHint),
+    // The single live switch sits in its own card, matching the other
+    // grouped settings sections (solid card, never glass-in-glass).
+    return SettingsGroup(
+      children: [
+        SettingsSwitchRow(
+          value: _enabled,
+          onChanged: (enabled) {
+            setState(() => _enabled = enabled);
+            widget.service.setRedactionEnabled(enabled);
+            AppAnalytics.instance.widgetEvent(
+              'redaction_toggled',
+              params: {'enabled': enabled},
+            );
+          },
+          leading: const Icon(Icons.visibility_off_outlined),
+          title: Text(context.l10n.settingsRedaction),
+          subtitle: Text(context.l10n.settingsRedactionHint),
+        ),
+      ],
     );
   }
 }

@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:fa/l10n/app_localizations.dart';
 import 'package:fa/network/key_wallet.dart';
 import 'package:fa/network/network_session_manager.dart';
+import 'package:fa/services/flutter_session_manager.dart';
 import 'package:fa/ui/chats/chat_list_controller.dart';
 import 'package:fa/ui/chats/chat_list_entry.dart';
 import 'package:fa/ui/chats/chat_list_panel.dart';
@@ -42,6 +43,7 @@ ChatListEntry entry(
   String? parentId,
   bool isSubagent = false,
   bool isStreaming = false,
+  DateTime? lastActivity,
 }) => ChatListEntry(
   id: kind == ChatListEntryKind.localAgent
       ? ChatEntryId.local(id)
@@ -54,7 +56,7 @@ ChatListEntry entry(
   title: id,
   preview: 'Preview for $id',
   createdAt: DateTime.utc(2025, 12, 31),
-  lastActivity: DateTime.utc(2026, 1, 2),
+  lastActivity: lastActivity ?? DateTime.utc(2026, 1, 2),
   unreadCount: unread,
   localMessageCount: kind == ChatListEntryKind.localAgent ? messageCount : null,
   parentId: parentId,
@@ -92,6 +94,9 @@ Future<void> pumpPanel(
   FolderIconResolver? iconResolver,
   ChatEntryId? selectedEntryId,
   bool showFilterToolbar = true,
+  TextEditingController? searchController,
+  FocusNode? searchFocusNode,
+  ValueChanged<String>? onSearch,
 }) async {
   await tester.pumpWidget(
     MaterialApp(
@@ -110,12 +115,25 @@ Future<void> pumpPanel(
             networkManager: networkManager,
             iconResolver: iconResolver,
             showFilterToolbar: showFilterToolbar,
+            searchController: searchController,
+            searchFocusNode: searchFocusNode,
+            onSearch: onSearch,
           ),
         ),
       ),
     ),
   );
   await tester.pumpAndSettle();
+}
+
+final class _CountingPreviewSource implements LocalChatPreviewSource {
+  final List<String> readIds = [];
+
+  @override
+  Future<String?> read(SessionMetadata metadata) async {
+    readIds.add(metadata.id);
+    return 'Preview for ${metadata.id}';
+  }
 }
 
 void main() {
@@ -135,6 +153,178 @@ void main() {
     );
     expect(compactChatFolderPath('/', homePath: '/'), '~');
     expect(compactChatFolderPath('/work', homePath: '/'), '~/work');
+  });
+
+  testWidgets('ListView warms visible rows only, never the whole corpus', (
+    tester,
+  ) async {
+    final env = MemoryExecutionEnv();
+    final manager = FlutterSessionManager(
+      env: env,
+      sessionsRoot: '/sessions',
+      includeSharedSessionRoots: false,
+    );
+    final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
+    for (var i = 0; i < 30; i++) {
+      await repo.create(
+        JsonlSessionCreateOptions(
+          id: 's-${i.toString().padLeft(2, '0')}',
+          cwd: '/work',
+        ),
+      );
+    }
+    final reader = _CountingPreviewSource();
+    final controller = ChatListController(
+      localAdapter: LocalChatListAdapter(
+        manager: manager,
+        titleBuilder: (id, createdAt, isSubagent) => id,
+        previewReader: reader,
+      ),
+    );
+    await controller.load();
+    expect(reader.readIds, isEmpty);
+
+    await pumpPanel(tester, controller);
+
+    expect(reader.readIds, isNotEmpty);
+    expect(
+      reader.readIds.length,
+      lessThan(30),
+      reason: 'offscreen itemBuilders never run and never read transcripts',
+    );
+    expect(reader.readIds, isNot(contains('s-00')));
+  });
+
+  testWidgets('collapsed avatar rail keeps All Local and Networks populated', (
+    tester,
+  ) async {
+    final controller = await makeController(
+      [entry('Design'), entry('Personal')],
+      network: FixtureNetworkInboxAdapter(
+        items: [
+          NetworkInboxItem(
+            kind: ChatListEntryKind.networkChannel,
+            networkId: 'remote',
+            id: 'channel',
+            title: 'Network channel',
+            unreadCount: 2,
+          ),
+        ],
+      ),
+    );
+    final opened = <String>[];
+
+    Future<void> pump({bool localOnly = false, bool networkOnly = false}) {
+      return tester.pumpWidget(
+        MaterialApp(
+          theme: buildFaTheme(
+            direction: FaVisualDirection.glass,
+            brightness: Brightness.dark,
+          ),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: Scaffold(
+            body: SizedBox(
+              width: 96,
+              child: CollapsedChatAvatarList(
+                controller: controller,
+                localOnly: localOnly,
+                networkOnly: networkOnly,
+                selectedEntryId: ChatEntryId.local('Design'),
+                onOpen: (entry) async => opened.add(entry.title),
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    await pump();
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey('collapsedChatAvatarList')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('collapsedChatAvatar-local:Design')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(
+        const ValueKey(
+          'collapsedChatAvatar-network:networkChannel:remote:channel',
+        ),
+      ),
+      findsOneWidget,
+    );
+    expect(find.text('Design'), findsNothing);
+    expect(find.text('Network channel'), findsNothing);
+    expect(
+      find.byKey(
+        const ValueKey(
+          'collapsedChatUnread-network:networkChannel:remote:channel',
+        ),
+      ),
+      findsOneWidget,
+    );
+    await tester.tap(
+      find.byKey(const ValueKey('collapsedChatAvatar-local:Design')),
+    );
+    expect(opened, ['Design']);
+
+    await pump(localOnly: true);
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey('collapsedChatAvatar-local:Personal')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(
+        const ValueKey(
+          'collapsedChatAvatar-network:networkChannel:remote:channel',
+        ),
+      ),
+      findsNothing,
+    );
+
+    await pump(networkOnly: true);
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey('collapsedChatAvatar-local:Design')),
+      findsNothing,
+    );
+    expect(
+      find.byKey(
+        const ValueKey(
+          'collapsedChatAvatar-network:networkChannel:remote:channel',
+        ),
+      ),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('row state follows its stable chat id across reorder', (
+    tester,
+  ) async {
+    final controller = await makeController([
+      entry('a', lastActivity: DateTime.utc(2026, 1, 3)),
+      entry('b', lastActivity: DateTime.utc(2026, 1, 2)),
+    ]);
+    await pumpPanel(tester, controller);
+    final key = const ValueKey('chatRowState-local:a');
+    final before = tester.element(find.byKey(key));
+
+    await controller.replaceLocalEntries([
+      entry('a', lastActivity: DateTime.utc(2026, 1, 1)),
+      entry('b', lastActivity: DateTime.utc(2026, 1, 4)),
+    ]);
+    await tester.pumpAndSettle();
+
+    expect(tester.element(find.byKey(key)), same(before));
+    expect(
+      tester.getTopLeft(find.byKey(const ValueKey('chatRow-local:b'))).dy,
+      lessThan(tester.getTopLeft(find.byKey(key)).dy),
+    );
   });
 
   testWidgets('filters, pin, and successful open work through the list', (
@@ -778,6 +968,69 @@ void main() {
     await tester.pump(const Duration(milliseconds: 300));
     expect(find.byType(SignInDialog), findsOneWidget);
     manager.dispose();
+  });
+
+  testWidgets('compact search reveals, focuses, clears, and closes in place', (
+    tester,
+  ) async {
+    final controller = await makeController([entry('Design')]);
+    final searchController = TextEditingController();
+    final searchFocus = FocusNode();
+    final queries = <String>[];
+    addTearDown(searchController.dispose);
+    addTearDown(searchFocus.dispose);
+    await pumpPanel(
+      tester,
+      controller,
+      compact: true,
+      showFilterToolbar: false,
+      searchController: searchController,
+      searchFocusNode: searchFocus,
+      onSearch: queries.add,
+    );
+
+    final reveal = find.byKey(const ValueKey('messengerSearchReveal'));
+    final field = find.byKey(const ValueKey('messengerSearchField'));
+    final close = find.byKey(const ValueKey('messengerSearchClose'));
+    expect(find.text('Chats'), findsOneWidget);
+    expect(reveal, findsOneWidget);
+    expect(field, findsNothing);
+    expect(close, findsNothing);
+    expect(find.byKey(const ValueKey('chatCategoryChips')), findsNothing);
+    expect(find.byKey(const ValueKey('messengerNewButton')), findsNothing);
+
+    await tester.tap(reveal);
+    await tester.pumpAndSettle();
+    expect(field, findsOneWidget);
+    expect(reveal, findsNothing);
+    expect(close, findsOneWidget);
+    expect(
+      tester
+          .widget<Icon>(find.descendant(of: close, matching: find.byType(Icon)))
+          .icon,
+      Icons.chevron_left_rounded,
+    );
+    expect(searchFocus.hasFocus, isTrue);
+    await tester.enterText(field, 'design');
+    await tester.pump(const Duration(milliseconds: 200));
+    expect(queries.last, 'design');
+    expect(find.text('Design'), findsOneWidget);
+
+    await tester.tap(close);
+    await tester.pumpAndSettle();
+    expect(searchController.text, isEmpty);
+    expect(queries.last, isEmpty);
+    expect(searchFocus.hasFocus, isFalse);
+    expect(field, findsNothing);
+    expect(reveal, findsOneWidget);
+
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyF);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+    await tester.pumpAndSettle();
+    expect(field, findsOneWidget);
+    expect(searchFocus.hasFocus, isTrue);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('Cmd/Ctrl+F focuses search and Q respects typing and modals', (

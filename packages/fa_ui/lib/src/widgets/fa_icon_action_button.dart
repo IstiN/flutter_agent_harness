@@ -158,6 +158,7 @@ class FaIconActionButton extends StatelessWidget {
         onPressed: onPressed,
         tooltip: tooltip,
         padding: EdgeInsets.zero,
+        iconSize: effectiveGlyphSize,
         constraints: BoxConstraints.tightFor(width: diameter, height: diameter),
         style: IconButton.styleFrom(
           minimumSize: Size.square(diameter),

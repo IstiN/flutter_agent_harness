@@ -7,6 +7,7 @@ import 'package:fa/apps/js_app_navigation.dart';
 import 'package:fa/apps/js_app_view.dart';
 import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/flutter_session_manager.dart';
+import 'package:fa/ui/apps/presentation_panel_card.dart';
 import 'package:fa_ui/fa_ui.dart';
 import 'package:flutter/material.dart';
 
@@ -43,6 +44,8 @@ final class MessengerAppPanel extends StatelessWidget {
     required this.onFullScreen,
     required this.onPin,
     required this.onClose,
+    this.onMinimize,
+    this.onBack,
   });
 
   final MessengerAppPresentation presentation;
@@ -50,10 +53,11 @@ final class MessengerAppPanel extends StatelessWidget {
   final VoidCallback onFullScreen;
   final VoidCallback onPin;
   final VoidCallback onClose;
+  final VoidCallback? onMinimize;
+  final VoidCallback? onBack;
 
   @override
   Widget build(BuildContext context) {
-    final tokens = FaDesignTokens.of(context);
     final service = presentation.service;
     final view = JsAppView(
       key: presentation.viewKey,
@@ -71,6 +75,8 @@ final class MessengerAppPanel extends StatelessWidget {
         onFullScreen: onFullScreen,
         onPin: onPin,
         onClose: onClose,
+        onMinimize: onMinimize,
+        onBack: onBack,
       ),
     );
     if (presentation.fullScreen) {
@@ -80,25 +86,22 @@ final class MessengerAppPanel extends StatelessWidget {
         child: view,
       );
     }
-    return ColoredBox(
+    final wide =
+        faWindowClassForWidth(MediaQuery.sizeOf(context).width) !=
+        FaWindowClass.small;
+    if (!wide) {
+      // Phone apps keep a full-bleed canvas: no desktop card, outer margin or
+      // resize substrate. The glass app chrome itself still applies.
+      return KeyedSubtree(
+        key: const ValueKey('messengerAppPanel'),
+        child: view,
+      );
+    }
+    return FaPresentationPanelCard(
       key: const ValueKey('messengerAppPanel'),
-      color: Theme.of(context).scaffoldBackgroundColor,
-      child: Padding(
-        padding: const EdgeInsets.all(8),
-        child: FaSurface(
-          key: const ValueKey('messengerAppPanelCard'),
-          glass: true,
-          useBackdropGroup: true,
-          color: tokens.surface1,
-          // A touch heavier tint than the sidebar card so the presented
-          // surface's edge reads against the wallpaper (the audit caught
-          // the old ~8% contrast ghosting the card into the background).
-          tintAmount: .4,
-          tintOpacity: .78,
-          borderRadius: BorderRadius.circular(18),
-          child: view,
-        ),
-      ),
+      cardKey: const ValueKey('messengerAppPanelCard'),
+      contentPadding: const EdgeInsets.fromLTRB(6, 2, 6, 6),
+      child: view,
     );
   }
 }

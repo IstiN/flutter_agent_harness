@@ -47,7 +47,10 @@ typedef FaChatAnalytics =
 /// (fa wraps its AsrApi + Whisper transcriber); when null, the mic button
 /// is hidden regardless of [FaChatFeatures.voiceInput].
 abstract interface class FaChatVoiceInput {
-  /// Whether voice input can run here (platform + configured endpoint).
+  /// Whether this platform exposes a usable microphone backend.
+  ///
+  /// Endpoint configuration is checked separately through
+  /// [FaChatVoiceInputConfiguration], immediately before recording starts.
   bool get isAvailable;
 
   /// A human-readable reason voice is unavailable (shown as a snackbar);
@@ -66,6 +69,19 @@ abstract interface class FaChatVoiceInput {
   /// disposed mid-take). Best effort: never leaves the native recorder
   /// running.
   Future<void> cancel();
+}
+
+/// Optional voice-input preflight for hosts whose transcription endpoint can
+/// be absent or change while settings are edited.
+///
+/// The composer awaits [isConfigured] before calling
+/// [FaChatVoiceInput.start], so an unconfigured backend never triggers the
+/// microphone permission prompt or captures audio. Implementations that do
+/// not support this optional interface retain the legacy behavior and are
+/// assumed to be configured.
+abstract interface class FaChatVoiceInputConfiguration {
+  /// Whether a transcription model/endpoint is currently configured.
+  Future<bool> get isConfigured;
 }
 
 /// Launches a js mini-app referenced by a tool result (fa-only feature).

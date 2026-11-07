@@ -8,6 +8,7 @@ import 'package:fa/ui/network/join_sheet.dart';
 import 'package:fa/ui/network/sign_in_dialog.dart';
 import 'package:fa/ui/widgets/dap_hub_mark.dart';
 import 'package:fa/ui/widgets/folder_avatar.dart';
+import 'package:fa/ui/widgets/messenger_nav_rail.dart';
 import 'package:fa/ui/widgets/messenger_navigation_controls.dart';
 import 'package:fa/ui/widgets/messenger_section_header.dart';
 import 'package:fa/ui/widgets/subagent_mark.dart';
@@ -46,13 +47,24 @@ String compactChatFolderPath(String path, {String? homePath}) {
 /// the projection — those ride the badge above the composer instead of a
 /// list row. Orphans (dead or unknown parent) render as plain rows.
 bool _isSubagentWithLiveParent(
-  ChatListController controller,
+  Set<String> localSessionIds,
   ChatListEntry entry,
 ) {
   if (!entry.isSubagent) return false;
   final parentId = entry.parentId;
-  if (parentId == null) return false;
-  return controller.localEntryFor(parentId) != null;
+  return parentId != null && localSessionIds.contains(parentId);
+}
+
+/// The one parent-only flat projection shared by expanded rows and the
+/// collapsed avatar rail. Orphaned subagents remain visible as plain chats.
+List<ChatListEntry> _visibleConversationEntries(ChatListController controller) {
+  final localSessionIds = {
+    for (final entry in controller.localEntries) entry.id.value,
+  };
+  return [
+    for (final entry in controller.visibleEntries)
+      if (!_isSubagentWithLiveParent(localSessionIds, entry)) entry,
+  ];
 }
 
 /// Reference messenger conversation list shared by the wide sidebar and the
@@ -64,8 +76,10 @@ class ChatListPanel extends StatefulWidget {
     required this.controller,
     required this.onOpen,
     required this.onNew,
+    this.title,
     this.compact = false,
     this.onProfile,
+    this.onSettings,
     this.onBrandTap,
     this.onBrandLongPress,
     this.onCollapse,
@@ -95,8 +109,12 @@ class ChatListPanel extends StatefulWidget {
   final ChatListController controller;
   final Future<void> Function(ChatListEntry entry) onOpen;
   final VoidCallback onNew;
+
+  /// Section-owned label; null keeps the ordinary Chats title.
+  final String? title;
   final bool compact;
   final VoidCallback? onProfile;
+  final VoidCallback? onSettings;
   final VoidCallback? onBrandTap;
   final VoidCallback? onBrandLongPress;
   final VoidCallback? onCollapse;
@@ -139,8 +157,8 @@ class ChatListPanel extends StatefulWidget {
   final Key? bodyKey;
 
   /// Whether the horizontal chat-filter/network toolbar renders. The wide
-  /// shell's vertical rail owns those destinations now, so the wide panel
-  /// passes false; the narrow shell keeps the bar (horizontal adaptation).
+  /// shell's vertical rail and phone dock own those destinations now, so
+  /// both shell forms pass false. Standalone panels retain the default bar.
   final bool showFilterToolbar;
   final NetworkSessionManager? networkManager;
 
@@ -161,6 +179,7 @@ class _ChatListPanelState extends State<ChatListPanel> {
   final TextEditingController _searchController = TextEditingController();
   final FocusNode _searchFocus = FocusNode(debugLabel: 'chat-list-search');
   ChatListFilter? _renderedFilter;
+  bool _compactSearchVisible = false;
 
   TextEditingController get _effectiveSearchController =>
       widget.searchController ?? _searchController;
@@ -168,20 +187,47 @@ class _ChatListPanelState extends State<ChatListPanel> {
   FocusNode get _effectiveSearchFocusNode =>
       widget.searchFocusNode ?? _searchFocus;
 
+  /// Every compact section starts with collapsed search. An active query or
+  /// focus keeps the existing field visible even when the shell rebuilds.
+  bool get _collapsibleSearch => widget.compact;
+
+  bool get _compactSearchShown =>
+      _compactSearchVisible ||
+      _effectiveSearchController.text.trim().isNotEmpty ||
+      _effectiveSearchFocusNode.hasFocus;
+
   @override
   void initState() {
     super.initState();
     HardwareKeyboard.instance.addHandler(_onKey);
+    _effectiveSearchController.addListener(_onSearchStateChanged);
+    _effectiveSearchFocusNode.addListener(_onSearchStateChanged);
   }
 
   @override
   void didUpdateWidget(covariant ChatListPanel oldWidget) {
     super.didUpdateWidget(oldWidget);
+    final oldController = oldWidget.searchController ?? _searchController;
+    final oldFocus = oldWidget.searchFocusNode ?? _searchFocus;
+    if (oldController != _effectiveSearchController) {
+      oldController.removeListener(_onSearchStateChanged);
+      _effectiveSearchController.addListener(_onSearchStateChanged);
+    }
+    if (oldFocus != _effectiveSearchFocusNode) {
+      oldFocus.removeListener(_onSearchStateChanged);
+      _effectiveSearchFocusNode.addListener(_onSearchStateChanged);
+    }
+  }
+
+  void _onSearchStateChanged() {
+    if (mounted) setState(() {});
   }
 
   @override
   void dispose() {
     HardwareKeyboard.instance.removeHandler(_onKey);
+    _effectiveSearchController.removeListener(_onSearchStateChanged);
+    _effectiveSearchFocusNode.removeListener(_onSearchStateChanged);
     _searchController.dispose();
     _searchFocus.dispose();
     super.dispose();
@@ -208,7 +254,7 @@ class _ChatListPanelState extends State<ChatListPanel> {
     final keyboard = HardwareKeyboard.instance;
     final command = keyboard.isMetaPressed || keyboard.isControlPressed;
     if (event.logicalKey == LogicalKeyboardKey.keyF && command) {
-      _effectiveSearchFocusNode.requestFocus();
+      _revealSearch();
       return true;
     }
     if (event.logicalKey != LogicalKeyboardKey.keyQ ||
@@ -228,6 +274,22 @@ class _ChatListPanelState extends State<ChatListPanel> {
     if (!mounted) return;
     if (widget.didOpen?.call(entry) ?? true) {
       await widget.controller.markOpened(entry);
+    }
+  }
+
+  void _revealSearch() {
+    if (_collapsibleSearch && !_compactSearchVisible) {
+      setState(() => _compactSearchVisible = true);
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _effectiveSearchFocusNode.requestFocus();
+    });
+  }
+
+  void _closeCompactSearch() {
+    _clearSearch();
+    if (_compactSearchVisible) {
+      setState(() => _compactSearchVisible = false);
     }
   }
 
@@ -331,9 +393,9 @@ class _ChatListPanelState extends State<ChatListPanel> {
   }
 
   /// Opaque directions keep a flat chrome background. Glass uses a bare
-  /// ProgressiveBlur with small side insets and rounded top corners, but no
-  /// top gap. Its steep falloff leaves the lower region completely sharp, so
-  /// there is no visible seam, tint band, or border bleed.
+  /// ProgressiveBlur plus the shared token frost gradient, with small side
+  /// insets and rounded top corners but no top gap. Its steep falloff leaves
+  /// the lower region completely sharp, so there is no seam or border bleed.
   Widget _buildChromeSurface(FahColors colors, Widget chrome) {
     if (FaDesignTokens.of(context).direction == FaVisualDirection.glass) {
       return chrome;
@@ -361,12 +423,20 @@ class _ChatListPanelState extends State<ChatListPanel> {
 
   Widget _buildHeader() {
     return MessengerSectionHeader(
-      title: context.l10n.wideNavChats,
+      title: widget.title ?? context.l10n.wideNavChats,
       searchController: _effectiveSearchController,
       searchFocusNode: _effectiveSearchFocusNode,
+      searchCollapsed: _collapsibleSearch && !_compactSearchShown,
+      onSearchReveal: _collapsibleSearch && !_compactSearchShown
+          ? _revealSearch
+          : null,
+      onSearchClose: _collapsibleSearch && _compactSearchShown
+          ? _closeCompactSearch
+          : null,
       searchHint: widget.searchHint ?? context.l10n.wideChatsSearchHint,
       onSearch: widget.onSearch ?? widget.controller.setSearch,
       onProfile: widget.onProfile,
+      onSettings: widget.onSettings,
       onNew: widget.onNew,
       onBrandTap: widget.onBrandTap,
       onBrandLongPress: widget.onBrandLongPress,
@@ -557,13 +627,11 @@ class _ChatListPanelState extends State<ChatListPanel> {
     // owner pass): the list is PARENTS ONLY, and a parent with subagent
     // sessions carries the count chip — its picker opens the chats.
     final subagentsByParent = controller.subagentsByParent;
-    // The All home lists PARENTS only — subagents surface through the
-    // badge above the composer. Orphaned subagents (their parent chat is
-    // gone) keep their row: the flat list is their only home.
-    final visibleEntries = [
-      for (final entry in controller.visibleEntries)
-        if (!_isSubagentWithLiveParent(controller, entry)) entry,
-    ];
+    final visibleEntries = _visibleConversationEntries(controller);
+    final rowIndexes = <String, int>{
+      for (final (index, entry) in visibleEntries.indexed)
+        'chatRowState-${entry.id.canonical}': index,
+    };
     Widget state(Widget child) => child;
     if (controller.status == ChatLoadState.loading) {
       return state(const Center(child: CircularProgressIndicator()));
@@ -595,8 +663,15 @@ class _ChatListPanelState extends State<ChatListPanel> {
         bottom: widget.compact ? 76 : 10,
       ),
       itemCount: visibleEntries.length,
-      itemBuilder: (context, index) =>
-          _row(visibleEntries[index], subagentsByParent),
+      findChildIndexCallback: (key) =>
+          key is ValueKey<String> ? rowIndexes[key.value] : null,
+      itemBuilder: (context, index) {
+        final entry = visibleEntries[index];
+        if (entry.kind == ChatListEntryKind.localAgent) {
+          controller.warmVisibleLocalEntry(entry.id.value);
+        }
+        return _row(entry, subagentsByParent);
+      },
     );
     return _withDesktopScrollbarInsets(list, topPadding);
   }
@@ -626,6 +701,7 @@ class _ChatListPanelState extends State<ChatListPanel> {
         ? (subagentsByParent[entry.id.value] ?? const <ChatListEntry>[])
         : const <ChatListEntry>[];
     return _ConversationRow(
+      key: ValueKey('chatRowState-${entry.id.canonical}'),
       entry: entry,
       selected: entry.id == widget.selectedEntryId,
       compact: widget.compact,
@@ -678,8 +754,128 @@ class _ChatListPanelState extends State<ChatListPanel> {
   }
 }
 
+/// Compact 96pt-sidebar content: the same chat/channel identities as the
+/// expanded flat list, without titles or previews. All, Local and Networks
+/// use this one rail instead of collapsing to an empty panel or old dots.
+class CollapsedChatAvatarList extends StatelessWidget {
+  const CollapsedChatAvatarList({
+    super.key,
+    required this.controller,
+    required this.onOpen,
+    this.selectedEntryId,
+    this.iconResolver,
+    this.networkManager,
+    this.localOnly = false,
+    this.networkOnly = false,
+    this.localSessionIds,
+  }) : assert(!(localOnly && networkOnly));
+
+  final ChatListController controller;
+  final Future<void> Function(ChatListEntry entry) onOpen;
+  final ChatEntryId? selectedEntryId;
+  final FolderIconResolver? iconResolver;
+  final NetworkSessionManager? networkManager;
+  final bool localOnly;
+  final bool networkOnly;
+
+  /// Optional Activity projection: only these managed local sessions stay
+  /// visible, in the same order as the expanded conversation list.
+  final Set<String>? localSessionIds;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListenableBuilder(
+      listenable: controller,
+      builder: (context, _) {
+        final colors = FahColors.of(context);
+        final accent = Theme.of(context).colorScheme.primary;
+        final entries = [
+          for (final entry in _visibleConversationEntries(controller))
+            if ((!localOnly || entry.kind == ChatListEntryKind.localAgent) &&
+                (!networkOnly || entry.kind != ChatListEntryKind.localAgent) &&
+                (localSessionIds == null ||
+                    (entry.kind == ChatListEntryKind.localAgent &&
+                        localSessionIds!.contains(entry.id.value))))
+              entry,
+        ];
+        if (entries.isEmpty) return const SizedBox.shrink();
+        return ListView.builder(
+          key: const ValueKey('collapsedChatAvatarList'),
+          padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 6),
+          itemCount: entries.length,
+          itemBuilder: (context, index) {
+            final entry = entries[index];
+            if (entry.kind == ChatListEntryKind.localAgent) {
+              controller.warmVisibleLocalEntry(entry.id.value);
+            }
+            final selected = entry.id == selectedEntryId;
+            final unread = entry.unreadCount ?? 0;
+            return Padding(
+              padding: const EdgeInsets.symmetric(vertical: 2),
+              child: Tooltip(
+                message: entry.title,
+                child: Semantics(
+                  button: true,
+                  label: entry.title,
+                  selected: selected,
+                  child: Material(
+                    key: ValueKey('collapsedChatAvatar-${entry.id.canonical}'),
+                    color: messengerListRowColor(
+                      selected: selected,
+                      accent: accent,
+                    ),
+                    shape: RoundedSuperellipseBorder(
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    clipBehavior: Clip.antiAlias,
+                    child: InkWell(
+                      onTap: entry.isLoading
+                          ? null
+                          : () => unawaited(onOpen(entry)),
+                      borderRadius: BorderRadius.circular(14),
+                      child: SizedBox(
+                        height: 54,
+                        child: Stack(
+                          clipBehavior: Clip.none,
+                          children: [
+                            Center(
+                              child: ChatListAvatar(
+                                entry: entry,
+                                colors: colors,
+                                ringColor: selected ? accent : colors.panel,
+                                iconResolver: iconResolver,
+                                networkManager: networkManager,
+                              ),
+                            ),
+                            if (unread > 0)
+                              Positioned(
+                                top: 1,
+                                right: 1,
+                                child: MessengerRailBadge(
+                                  key: ValueKey(
+                                    'collapsedChatUnread-${entry.id.canonical}',
+                                  ),
+                                  count: unread,
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+}
+
 class _ConversationRow extends StatefulWidget {
   const _ConversationRow({
+    super.key,
     required this.entry,
     required this.selected,
     required this.compact,
@@ -773,7 +969,7 @@ class _ConversationRowState extends State<_ConversationRow> {
                     child: Row(
                       crossAxisAlignment: CrossAxisAlignment.center,
                       children: [
-                        _Avatar(
+                        ChatListAvatar(
                           entry: entry,
                           colors: colors,
                           ringColor: selected ? accent : colors.panel,
@@ -971,8 +1167,10 @@ class _ConversationRowState extends State<_ConversationRow> {
   }
 }
 
-class _Avatar extends StatelessWidget {
-  const _Avatar({
+/// The same identity avatar in expanded rows and the collapsed avatar rail.
+class ChatListAvatar extends StatelessWidget {
+  const ChatListAvatar({
+    super.key,
     required this.entry,
     required this.colors,
     required this.ringColor,

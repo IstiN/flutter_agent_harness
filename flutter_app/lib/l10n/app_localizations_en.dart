@@ -185,6 +185,14 @@ class AppLocalizationsEn extends AppLocalizations {
   String get localFolderBack => 'Back to folders';
 
   @override
+  String get localFoldersSearchHint => 'Search folders';
+
+  @override
+  String listSearchNoMatches(Object query) {
+    return 'No matches for \"$query\"';
+  }
+
+  @override
   String get wideChatsSearchHint => 'Search chats';
 
   @override
@@ -323,6 +331,9 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get chatMoreActions => 'Chat actions';
+
+  @override
+  String get commonMore => 'More';
 
   @override
   String get chatExpand => 'Expand subagents';
@@ -2512,6 +2523,9 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get networkSearchHint => 'Search networks';
+
+  @override
+  String get networkChannelsSearchHint => 'Search channels';
 
   @override
   String get networkSignInTitle => 'Sign in';

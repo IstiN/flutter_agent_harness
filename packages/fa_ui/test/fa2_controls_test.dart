@@ -5,8 +5,8 @@
 /// Themed-control tests: the four Material control families (switch,
 /// radio, checkbox, slider) must read their colors from [FaDesignTokens]
 /// in every direction/brightness combination — never from the stock M3
-/// scheme — and [FaSwitch] must be the custom-painted styleguide capsule
-/// (not a raw Material `Switch`).
+/// scheme — and [FaSwitch] must use the kit's real glass switch in the
+/// glass direction while opaque directions keep the token-painted capsule.
 library;
 
 import 'package:fa_ui/fa_ui.dart';
@@ -14,6 +14,7 @@ import 'package:flutter/material.dart';
 import 'dart:ui' show Tristate;
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:liquid_glass_widgets/liquid_glass_widgets.dart';
 
 void main() {
   group('buildFaTheme control families', () {
@@ -79,9 +80,10 @@ void main() {
           expect(theme.sliderTheme.activeTrackColor, tokens.accent);
           expect(theme.sliderTheme.inactiveTrackColor, tokens.surface3);
           expect(theme.sliderTheme.thumbColor, tokens.accent);
-          expect(theme.sliderTheme.overlayColor, tokens.accent.withValues(
-            alpha: .12,
-          ));
+          expect(
+            theme.sliderTheme.overlayColor,
+            tokens.accent.withValues(alpha: .12),
+          );
           expect(theme.sliderTheme.valueIndicatorColor, tokens.surface2);
         });
 
@@ -119,64 +121,124 @@ void main() {
   });
 
   group('FaSwitch', () {
-    Widget host(Widget child) => MaterialApp(
-      theme: buildFaTheme(
-        direction: FaVisualDirection.glass,
-        brightness: Brightness.dark,
-      ),
+    Widget host(
+      Widget child, {
+      FaVisualDirection direction = FaVisualDirection.glass,
+      Brightness brightness = Brightness.dark,
+    }) => MaterialApp(
+      theme: buildFaTheme(direction: direction, brightness: brightness),
       home: Scaffold(body: Center(child: child)),
     );
 
-    FaSwitchPainter painterOf(WidgetTester tester) => tester
-        .widget<CustomPaint>(
-          find.descendant(
-            of: find.byType(FaSwitch),
-            matching: find.byType(CustomPaint),
-          ),
-        )
-        .painter! as FaSwitchPainter;
+    FaSwitchPainter painterOf(WidgetTester tester) =>
+        tester
+                .widget<CustomPaint>(
+                  find.descendant(
+                    of: find.byType(FaSwitch),
+                    matching: find.byType(CustomPaint),
+                  ),
+                )
+                .painter!
+            as FaSwitchPainter;
 
     final darkGlass = FaDesignTokens.forDirection(
       FaVisualDirection.glass,
       Brightness.dark,
     );
 
-    testWidgets('is a custom capsule, not a Material Switch', (tester) async {
-      await tester.pumpWidget(
-        host(const FaSwitch(value: true, onChanged: null)),
-      );
-      expect(find.byType(Switch), findsNothing);
-      expect(find.byType(FaSwitch), findsOneWidget);
-      expect(tester.getSize(find.byType(FaSwitch)), const Size(40, 24));
-      expect(painterOf(tester), isA<FaSwitchPainter>());
-    });
-
-    testWidgets('ON paints accent track + accentInk squircle thumb', (
+    testWidgets('enabled glass uses the kit switch with Fa tokens', (
       tester,
     ) async {
       await tester.pumpWidget(
         host(const FaSwitch(value: true, onChanged: _noop)),
       );
-      final painter = painterOf(tester);
-      expect(painter.trackColor, darkGlass.accent);
-      expect(painter.thumbColor, darkGlass.accentInk);
-      expect(painter.position, 1);
-    });
+      expect(find.byType(Switch), findsNothing);
+      expect(find.byType(FaSwitch), findsOneWidget);
+      expect(find.byType(GlassSwitch), findsOneWidget);
+      expect(tester.getSize(find.byType(FaSwitch)), const Size(40, 24));
 
-    testWidgets('OFF paints surface3 track + ink1 thumb', (tester) async {
-      await tester.pumpWidget(
-        host(const FaSwitch(value: false, onChanged: _noop)),
+      final kit = tester.widget<GlassSwitch>(find.byType(GlassSwitch));
+      expect(kit.width, 40);
+      expect(kit.height, 24);
+      expect(kit.activeColor, darkGlass.accent);
+      expect(kit.inactiveColor, darkGlass.surface3);
+      expect(kit.thumbColor, darkGlass.accentInk);
+      expect(kit.useOwnLayer, isTrue);
+      expect(kit.quality, GlassQuality.standard);
+      expect(kit.enableHaptics, isTrue);
+      expect(kit.focusNode, isNotNull);
+      expect(kit.settings?.blur, darkGlass.glassBlur);
+      expect(kit.settings?.chromaticAberration, 0);
+      expect(
+        kit.settings?.glassColor,
+        darkGlass.surface1.withValues(alpha: kFaGlassTintAlpha),
       );
-      final painter = painterOf(tester);
-      expect(painter.trackColor, darkGlass.surface3);
-      expect(painter.thumbColor, darkGlass.ink1);
-      expect(painter.position, 0);
     });
 
-    testWidgets('disabled fades both capsule and thumb', (tester) async {
+    testWidgets('enabled light glass OFF keeps the ink thumb', (tester) async {
+      final lightGlass = FaDesignTokens.forDirection(
+        FaVisualDirection.glass,
+        Brightness.light,
+      );
+      await tester.pumpWidget(
+        host(
+          const FaSwitch(value: false, onChanged: _noop),
+          brightness: Brightness.light,
+        ),
+      );
+      expect(tester.getSize(find.byType(FaSwitch)), const Size(40, 24));
+      final kit = tester.widget<GlassSwitch>(find.byType(GlassSwitch));
+      expect(kit.value, isFalse);
+      expect(kit.thumbColor, lightGlass.ink1);
+    });
+
+    testWidgets('opaque directions retain painter geometry and token colors', (
+      tester,
+    ) async {
+      for (final direction in FaVisualDirection.values.where(
+        (direction) => direction != FaVisualDirection.glass,
+      )) {
+        for (final brightness in Brightness.values) {
+          final combo = '${direction.name}/${brightness.name}';
+          final tokens = FaDesignTokens.forDirection(direction, brightness);
+          Future<void> pump(bool value) => tester.pumpWidget(
+            host(
+              FaSwitch(value: value, onChanged: _noop),
+              direction: direction,
+              brightness: brightness,
+            ),
+          );
+
+          await pump(true);
+          await tester.pumpAndSettle();
+          expect(find.byType(GlassSwitch), findsNothing, reason: combo);
+          expect(
+            tester.getSize(find.byType(FaSwitch)),
+            const Size(40, 24),
+            reason: combo,
+          );
+          final on = painterOf(tester);
+          expect(on.trackColor, tokens.accent, reason: combo);
+          expect(on.thumbColor, tokens.accentInk, reason: combo);
+          expect(on.position, 1, reason: combo);
+
+          await pump(false);
+          await tester.pumpAndSettle();
+          final off = painterOf(tester);
+          _expectColorClose(off.trackColor, tokens.surface3, combo);
+          _expectColorClose(off.thumbColor, tokens.ink1, combo);
+          expect(off.position, 0, reason: combo);
+        }
+      }
+    });
+
+    testWidgets('disabled glass falls back to the washed painter', (
+      tester,
+    ) async {
       await tester.pumpWidget(
         host(const FaSwitch(value: false, onChanged: null)),
       );
+      expect(find.byType(GlassSwitch), findsNothing);
       final painter = painterOf(tester);
       expect(painter.trackColor, darkGlass.surface3.withValues(alpha: .55));
       expect(painter.thumbColor, darkGlass.ink1.withValues(alpha: .55));
@@ -199,21 +261,56 @@ void main() {
       await tester.tap(find.byType(FaSwitch));
       await tester.pump();
       expect(value, isTrue);
-      final data = tester.getSemantics(find.byType(FaSwitch)).getSemanticsData();
+      final data = tester
+          .getSemantics(find.byType(FaSwitch))
+          .getSemanticsData();
       expect(data.flagsCollection.isToggled, Tristate.isTrue);
       expect(data.flagsCollection.isEnabled, Tristate.isTrue);
     });
 
     testWidgets('disabled switch is inert', (tester) async {
-      var tapped = false;
+      var enabled = true;
+      var value = false;
+      var calls = 0;
+      late StateSetter setHostState;
       await tester.pumpWidget(
-        host(FaSwitch(value: true, onChanged: null)),
+        host(
+          StatefulBuilder(
+            builder: (context, setState) {
+              setHostState = setState;
+              return FaSwitch(
+                value: value,
+                onChanged: enabled
+                    ? (v) {
+                        calls++;
+                        setState(() => value = v);
+                      }
+                    : null,
+              );
+            },
+          ),
+        ),
       );
+      setHostState(() => enabled = false);
+      await tester.pump();
+      expect(find.byType(GlassSwitch), findsNothing);
+
+      final focus = tester.widget<Focus>(
+        find.descendant(
+          of: find.byType(FaSwitch),
+          matching: find.byType(Focus),
+        ),
+      );
+      focus.focusNode!.requestFocus();
+      await tester.pump();
       await tester.tap(find.byType(FaSwitch), warnIfMissed: false);
-      expect(tapped, isFalse);
       await tester.sendKeyEvent(LogicalKeyboardKey.space);
-      expect(tapped, isFalse);
-      final data = tester.getSemantics(find.byType(FaSwitch)).getSemanticsData();
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      expect(calls, 0);
+      expect(value, isFalse);
+      final data = tester
+          .getSemantics(find.byType(FaSwitch))
+          .getSemanticsData();
       expect(data.flagsCollection.isEnabled, isNot(Tristate.isTrue));
     });
 
@@ -244,13 +341,22 @@ void main() {
       await tester.sendKeyEvent(LogicalKeyboardKey.space);
       await tester.pump();
       expect(value, isTrue, reason: 'the focused switch toggles via space');
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pump();
+      expect(value, isFalse, reason: 'enter toggles the focused kit switch');
+      await tester.sendKeyEvent(LogicalKeyboardKey.numpadEnter);
+      await tester.pump();
+      expect(value, isTrue, reason: 'numpad enter toggles as well');
     });
 
-    testWidgets('animates the thumb over the token fast duration', (
+    testWidgets('opaque thumb animates over the token fast duration', (
       tester,
     ) async {
       Future<void> pump(bool value) => tester.pumpWidget(
-        host(FaSwitch(value: value, onChanged: _noop)),
+        host(
+          FaSwitch(value: value, onChanged: _noop),
+          direction: FaVisualDirection.graphite,
+        ),
       );
 
       await pump(false);
@@ -261,16 +367,18 @@ void main() {
       expect(painterOf(tester).position, 1);
     });
 
-    testWidgets('reduced motion snaps instantly', (tester) async {
+    testWidgets('opaque reduced motion snaps instantly', (tester) async {
       await tester.pumpWidget(
         MaterialApp(
           theme: buildFaTheme(
-            direction: FaVisualDirection.glass,
+            direction: FaVisualDirection.graphite,
             brightness: Brightness.dark,
           ),
           home: const MediaQuery(
             data: MediaQueryData(disableAnimations: true),
-            child: Scaffold(body: Center(child: FaSwitch(value: true, onChanged: null))),
+            child: Scaffold(
+              body: Center(child: FaSwitch(value: true, onChanged: null)),
+            ),
           ),
         ),
       );
@@ -282,6 +390,25 @@ void main() {
       );
       expect(tween.duration, Duration.zero);
       expect(painterOf(tester).position, 1);
+    });
+
+    testWidgets('glass reduced motion suppresses kit haptics', (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildFaTheme(
+            direction: FaVisualDirection.glass,
+            brightness: Brightness.dark,
+          ),
+          home: const MediaQuery(
+            data: MediaQueryData(disableAnimations: true),
+            child: Scaffold(
+              body: Center(child: FaSwitch(value: true, onChanged: _noop)),
+            ),
+          ),
+        ),
+      );
+      final kit = tester.widget<GlassSwitch>(find.byType(GlassSwitch));
+      expect(kit.enableHaptics, isFalse);
     });
   });
 
@@ -310,9 +437,7 @@ void main() {
       );
       final slider = tester.widget<Slider>(find.byType(Slider));
       expect(slider.value, .25);
-      final theme = SliderTheme.of(
-        tester.element(find.byType(Slider)),
-      );
+      final theme = SliderTheme.of(tester.element(find.byType(Slider)));
       final tokens = FaDesignTokens.forDirection(
         FaVisualDirection.nebula,
         Brightness.light,
@@ -322,6 +447,16 @@ void main() {
       expect(theme.thumbColor, tokens.accent);
     });
   });
+}
+
+void _expectColorClose(Color actual, Color expected, String reason) {
+  // Color.lerp can leave sub-channel roundoff at the end of an implicit
+  // animation even when the logical endpoint is exact.
+  const tolerance = 1e-6;
+  expect(actual.a, closeTo(expected.a, tolerance), reason: reason);
+  expect(actual.r, closeTo(expected.r, tolerance), reason: reason);
+  expect(actual.g, closeTo(expected.g, tolerance), reason: reason);
+  expect(actual.b, closeTo(expected.b, tolerance), reason: reason);
 }
 
 void _noop(bool _) {}

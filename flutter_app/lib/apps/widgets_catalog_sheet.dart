@@ -524,11 +524,9 @@ class _WidgetsCatalogSheetState extends State<WidgetsCatalogSheet> {
             margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
-              color: theme.colorScheme.surfaceContainerLow,
+              color: FahColors.of(context).panelAlt,
               borderRadius: BorderRadius.circular(12),
-              border: Border.all(
-                color: theme.colorScheme.outlineVariant.withValues(alpha: 0.6),
-              ),
+              border: Border.all(color: FaDesignTokens.of(context).hairline),
             ),
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -657,6 +655,8 @@ class _CatalogTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final colors = FahColors.of(context);
+    final tokens = FaDesignTokens.of(context);
     final locale = Localizations.localeOf(context).toLanguageTag();
     final chips = <String>[
       for (final tag in entry.tags.take(2)) tag,
@@ -669,14 +669,15 @@ class _CatalogTile extends StatelessWidget {
     return InkWell(
       onTap: onTap,
       child: Container(
+        key: ValueKey('catalogTile-${entry.id}'),
         margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
-          color: theme.colorScheme.surfaceContainerLow,
+          // Match My Apps' token surface instead of Material's navy
+          // surfaceContainerLow, which sat outside the messenger palette.
+          color: colors.panelAlt,
           borderRadius: BorderRadius.circular(16),
-          border: Border.all(
-            color: theme.colorScheme.outlineVariant.withValues(alpha: 0.6),
-          ),
+          border: Border.all(color: tokens.hairline),
         ),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,

@@ -32,10 +32,12 @@ class SkillsTogglesSection extends StatelessWidget {
     return ListenableBuilder(
       listenable: service,
       builder: (context, _) {
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
+        return SettingsGroup(
+          // The section header stays inside the card; the rows below it
+          // sit on the card's 16pt insets with interleaved hairlines.
+          header: Padding(
+            padding: const EdgeInsets.fromLTRB(12, 4, 12, 4),
+            child: Row(
               children: [
                 Icon(Icons.extension_outlined, size: 20, color: tokens.ink2),
                 const SizedBox(width: 12),
@@ -58,6 +60,8 @@ class SkillsTogglesSection extends StatelessWidget {
                 ),
               ],
             ),
+          ),
+          children: [
             for (final skill in skills)
               SettingsSwitchRow(
                 value: service.isSkillEnabled(skill.name),

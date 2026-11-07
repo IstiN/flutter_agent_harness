@@ -19,6 +19,7 @@ import 'package:fa/ui/chats/local_chat_list_adapter.dart';
 import 'package:fa/ui/chats/network_inbox_adapter.dart';
 import 'package:fa/ui/chats/networks_list_panel.dart';
 import 'package:fa/ui/widgets/folder_avatar.dart';
+import 'package:fa/ui/widgets/session_search_field.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -74,9 +75,7 @@ Future<_ManagerRig> _manager({
 
 /// A chat-list controller whose network inbox holds [items] — the
 /// projection the networks panel's channel drill-down reads (owner pass).
-Future<ChatListController> chatListWith(
-  List<NetworkInboxItem> items,
-) async {
+Future<ChatListController> chatListWith(List<NetworkInboxItem> items) async {
   final controller = ChatListController(
     localAdapter: StaticChatListAdapter(const []),
     networkAdapter: FixtureNetworkInboxAdapter(items: items),
@@ -90,7 +89,6 @@ Future<void> pumpPanel(
   required NetworkSessionManager? manager,
   NetworkModeController? mode,
   ChatListController? chatList,
-  VoidCallback? onBack,
   List<(String, String)>? opened,
 }) async {
   tester.view.devicePixelRatio = 1.0;
@@ -106,7 +104,6 @@ Future<void> pumpPanel(
           manager: manager,
           mode: mode,
           chatList: chatList,
-          onBack: onBack ?? () {},
           onManageNetworks: () {},
           onOpenChannel: (networkId, channel) =>
               opened?.add((networkId, channel.id)),
@@ -132,7 +129,11 @@ void main() {
     expect(find.text('quiet-net'), findsOneWidget);
     expect(find.text('Connected'), findsNothing);
     expect(find.text('Not connected'), findsNothing);
-    expect(find.text('Networks'), findsOneWidget, reason: 'the header title');
+    expect(
+      find.text('Search networks'),
+      findsOneWidget,
+      reason: 'root search shares the chats header geometry',
+    );
     // Geometry: 70pt rows, Ø~50 avatars, circles while unselected.
     expect(
       tester.getSize(find.byKey(const ValueKey('networkRow-net1'))).height,
@@ -146,9 +147,73 @@ void main() {
       expect((avatar.widget as FolderAvatar).circle, isTrue);
     }
     expect(find.byKey(const ValueKey('networkSelectedCapsule')), findsNothing);
-    // The networks level's chevron walks back to the normal chats.
-    expect(find.byKey(const ValueKey('chatNetworksBack')), findsOneWidget);
+    // Networks is a root destination: brand + title, exactly like Local.
+    // Back belongs only to the drilled channel list.
+    expect(find.byKey(const ValueKey('wideShellFaBrand')), findsOneWidget);
+    expect(find.byKey(const ValueKey('chatNetworksBack')), findsNothing);
     expect(find.byKey(const ValueKey('chatChannelsBack')), findsNothing);
+    expect(find.byKey(const ValueKey('chatNetworksManage')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('networksChromeUnderlay')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('messengerRealGlass')),
+      findsNothing,
+      reason: 'the header fades through blur, not a bounded glass card',
+    );
+    await rig.session?.close();
+  });
+
+  testWidgets('search filters networks and drilled channels, with clear and '
+      'level-reset behavior', (tester) async {
+    final rig = await _manager();
+    await pumpPanel(tester, manager: rig.manager);
+    final search = find.byType(SessionSearchField);
+    expect(search, findsOneWidget);
+    expect(find.text('Search networks'), findsOneWidget);
+
+    Future<void> type(String query) async {
+      await tester.enterText(search, query);
+      await tester.pump(const Duration(milliseconds: 200));
+    }
+
+    await type('quiet');
+    expect(find.text('quiet-net'), findsOneWidget);
+    expect(find.text('fa-team'), findsNothing);
+    // Network ids are searchable too, not only their display labels.
+    await type('net1');
+    expect(find.text('fa-team'), findsOneWidget);
+    expect(find.text('quiet-net'), findsNothing);
+
+    await type('zzz');
+    expect(find.textContaining('No matches'), findsOneWidget);
+    await tester.tap(find.text('Clear'));
+    await tester.pump(const Duration(milliseconds: 200));
+    expect(find.text('fa-team'), findsOneWidget);
+    expect(find.text('quiet-net'), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('networkRow-net1')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 250));
+    await tester.tap(find.byKey(const ValueKey('messengerSearchReveal')));
+    await tester.pump();
+    expect(find.text('Search channels'), findsOneWidget);
+    await type('launch');
+    expect(find.byKey(const ValueKey('chatNetworkChannel-c2')), findsOneWidget);
+    expect(find.byKey(const ValueKey('chatNetworkChannel-c1')), findsNothing);
+
+    await type('zzz');
+    expect(find.textContaining('No matches'), findsOneWidget);
+    expect(find.byKey(const ValueKey('chatNetworkChannel-c1')), findsNothing);
+    expect(find.byKey(const ValueKey('chatNetworkChannel-c2')), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('chatChannelsBack')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 250));
+    // Root is restored with both memberships and a fresh root query.
+    expect(find.text('fa-team'), findsOneWidget);
+    expect(find.text('quiet-net'), findsOneWidget);
+    expect(find.text('Search networks'), findsOneWidget);
     await rig.session?.close();
   });
 
@@ -229,12 +294,11 @@ void main() {
     await rig.session?.close();
   });
 
-  testWidgets('the chevrons walk channels → strip → normal chats and the '
+  testWidgets('channel back returns to the root networks list and the '
       'header titles follow', (tester) async {
     final rig = await _manager(withLiveSession: false);
-    var backs = 0;
-    await pumpPanel(tester, manager: rig.manager, onBack: () => backs++);
-    expect(find.text('Networks'), findsOneWidget);
+    await pumpPanel(tester, manager: rig.manager);
+    expect(find.text('Search networks'), findsOneWidget);
 
     await tester.tap(find.byKey(const ValueKey('networkRow-net1')));
     await tester.pump();
@@ -246,22 +310,21 @@ void main() {
     );
     expect(find.text('Networks'), findsNothing);
 
-    // channels → strip: the header restores the Networks title.
+    // channels → root: the search-first root chrome returns.
     await tester.tap(find.byKey(const ValueKey('chatChannelsBack')));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 250));
     expect(find.byKey(const ValueKey('chatNetworkChannels')), findsNothing);
     expect(find.byKey(const ValueKey('networksList')), findsOneWidget);
     expect(find.byKey(const ValueKey('networksStrip')), findsNothing);
-    expect(find.text('Networks'), findsOneWidget);
+    expect(find.text('Search networks'), findsOneWidget);
     expect(find.text('fa-team'), findsOneWidget, reason: 'the list row name');
     expect(find.byKey(const ValueKey('networkSelectedCapsule')), findsNothing);
 
-    // strip → normal chats: the surface hands back to the shell.
-    await tester.tap(find.byKey(const ValueKey('chatNetworksBack')));
-    await tester.pump();
-    expect(backs, 1);
-    expect(find.text('Networks'), findsOneWidget);
+    // Root remains root after the round trip — no phantom back button.
+    expect(find.byKey(const ValueKey('chatNetworksBack')), findsNothing);
+    expect(find.byKey(const ValueKey('wideShellFaBrand')), findsOneWidget);
+    expect(find.text('Search networks'), findsOneWidget);
   });
 
   testWidgets('the level swap animates in (200ms easeInOutCubic) and keys '
@@ -341,7 +404,6 @@ void main() {
         home: Scaffold(
           body: ChatNetworksPanel(
             manager: rig.manager,
-            onBack: () {},
             onManageNetworks: () => managed++,
             onOpenChannel: (_, _) {},
           ),
@@ -417,10 +479,7 @@ void main() {
     // networks' entries stay out.
     expect(find.byKey(const ValueKey('chatNetworkChannel-e1')), findsOneWidget);
     expect(find.byKey(const ValueKey('chatNetworkChannel-e2')), findsOneWidget);
-    expect(
-      find.byKey(const ValueKey('chatNetworkChannel-e3')),
-      findsNothing,
-    );
+    expect(find.byKey(const ValueKey('chatNetworkChannel-e3')), findsNothing);
     expect(find.text('inbox-general'), findsOneWidget);
     expect(find.text('inbox-launch'), findsOneWidget);
     expect(find.text('other-net-channel'), findsNothing);
@@ -467,14 +526,8 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('chatNetworkRow-net2')));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 250));
-    expect(
-      find.byKey(const ValueKey('chatNetworkChannel-e3')),
-      findsOneWidget,
-    );
-    expect(
-      find.byKey(const ValueKey('chatNetworkChannel-c1')),
-      findsNothing,
-    );
+    expect(find.byKey(const ValueKey('chatNetworkChannel-e3')), findsOneWidget);
+    expect(find.byKey(const ValueKey('chatNetworkChannel-c1')), findsNothing);
     await rig.session?.close();
   });
 
@@ -558,7 +611,11 @@ void main() {
       final before = position.pixels;
       await tester.fling(strip, const Offset(0, -160), 600);
       await tester.pumpAndSettle();
-      expect(position.pixels, greaterThan(before), reason: 'drag still scrolls');
+      expect(
+        position.pixels,
+        greaterThan(before),
+        reason: 'drag still scrolls',
+      );
     } finally {
       debugDefaultTargetPlatformOverride = null;
     }

@@ -184,11 +184,15 @@ final class ActivityListPanel extends StatelessWidget {
     this.compact = false,
     this.navigation,
     this.onSelect,
+    this.topPadding = 0,
   });
 
   final ActivityController controller;
   final bool compact;
   final ValueChanged<String>? onSelect;
+
+  /// Inset owned by a host glass header; rows scroll underneath it.
+  final double topPadding;
 
   /// Optional host navigation below the compact Activity section heading.
   /// This is deliberately not a global brand header; the shell owns that.
@@ -198,29 +202,57 @@ final class ActivityListPanel extends StatelessWidget {
   Widget build(BuildContext context) {
     final tokens = FaDesignTokens.of(context);
     return ColoredBox(
-      color: !compact && tokens.direction == FaVisualDirection.glass
+      color: tokens.direction == FaVisualDirection.glass
           ? Colors.transparent
           : tokens.surface1,
       child: ListenableBuilder(
         listenable: controller,
         builder: (context, _) {
           final sessions = controller.filteredSessions;
-          return Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              if (compact && navigation != null) ...[
+          if (compact && navigation != null) {
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
                 _ActivitySectionHeader(title: context.l10n.wideNavActivity),
                 navigation!,
+                _FilterToolbar(controller: controller, count: sessions.length),
+                Expanded(
+                  child: sessions.isEmpty
+                      ? const _ActivityListEmpty()
+                      : _ActivityList(
+                          controller: controller,
+                          sessions: sessions,
+                          onSelect: onSelect,
+                        ),
+                ),
               ],
-              _FilterToolbar(controller: controller, count: sessions.length),
-              Expanded(
+            );
+          }
+          final listTop = topPadding + 45;
+          return Stack(
+            fit: StackFit.expand,
+            children: [
+              Positioned.fill(
                 child: sessions.isEmpty
-                    ? const _ActivityListEmpty()
+                    ? Padding(
+                        padding: EdgeInsets.only(top: listTop),
+                        child: const _ActivityListEmpty(),
+                      )
                     : _ActivityList(
                         controller: controller,
                         sessions: sessions,
                         onSelect: onSelect,
+                        topPadding: listTop,
                       ),
+              ),
+              Positioned(
+                top: topPadding,
+                left: 0,
+                right: 0,
+                child: _FilterToolbar(
+                  controller: controller,
+                  count: sessions.length,
+                ),
               ),
             ],
           );
@@ -333,11 +365,13 @@ final class _ActivityList extends StatelessWidget {
     required this.controller,
     required this.sessions,
     this.onSelect,
+    this.topPadding = 0,
   });
 
   final ActivityController controller;
   final List<FlutterManagedSession> sessions;
   final ValueChanged<String>? onSelect;
+  final double topPadding;
 
   @override
   Widget build(BuildContext context) {
@@ -348,7 +382,7 @@ final class _ActivityList extends StatelessWidget {
     final selectedId = controller.selectedSession?.id;
     return ListView(
       key: const ValueKey('activityList'),
-      padding: const EdgeInsets.symmetric(vertical: 4),
+      padding: EdgeInsets.only(top: topPadding + 4, bottom: 4),
       children: [
         if (running.isNotEmpty) ...[
           _ListSectionLabel(label: context.l10n.activityRunning),

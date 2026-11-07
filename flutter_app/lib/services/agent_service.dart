@@ -16,6 +16,7 @@ import 'package:fa_ui/fa_ui.dart'
         TrajectoryServiceFeed,
         hostedProviderKeyName,
         hostedProviderPresets,
+        isFaSystemNoticeContent,
         providerForBaseUrl;
 import 'package:fa_ui/fa_ui.dart' as fa_ui show emptyResponsePlaceholder;
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
@@ -1666,12 +1667,14 @@ class AgentService extends ChangeNotifier
   }
 
   /// Transcript records sitting above the loaded window
-  /// ([FaChatService.historyAboveCount]): `null` while the background
-  /// count is still running or unknown (right after a jump), `0` once
+  /// ([FaChatService.historyAboveCount]): `null` until an explicit
+  /// history action requests the count (or right after a jump), `0` once
   /// the whole transcript is loaded, `N` — what the "Load earlier"
   /// banner shows. A full-open session has no pages above anything —
   /// it reports the contract's complete-transcript `0`, so the banner
-  /// never renders on it (issue #974: the first-message sticker).
+  /// never renders on it (issue #974: the first-message sticker). Ordinary
+  /// paging deliberately leaves an unknown count unknown until the edge;
+  /// [loadHistoryCount] is the explicit whole-file scan.
   @override
   int? get historyAboveCount => _windowed == null ? 0 : _historyAboveCount;
   int? _historyAboveCount;
@@ -1698,7 +1701,7 @@ class AgentService extends ChangeNotifier
   @override
   bool get historyLoading => _loadingHistory;
 
-  /// The exact total record count once the background count landed —
+  /// The exact total record count once the on-demand count landed —
   /// the N of the terminal "Beginning of session (1 of N)" banner
   /// (issue #135 E6); `null` until then and for full-open sessions.
   @override
@@ -1732,8 +1735,8 @@ class AgentService extends ChangeNotifier
   List<SessionRecord>? _viewBranch;
 
   /// Pages one chunk of records above the window into the transcript
-  /// ([FaChatService.loadOlderHistory]). Re-entrant taps are ignored, as
-  /// is any tap mid-run.
+  /// ([FaChatService.loadOlderHistory]). Re-entrant requests are ignored,
+  /// as is any request mid-run. No exact whole-file count is required.
   @override
   Future<void> loadOlderHistory() async {
     if (_loadingHistory || isStreaming) return;
@@ -1749,7 +1752,7 @@ class AgentService extends ChangeNotifier
         await _syncViewToWindow(windowed);
         await _applyViewBranch();
       }
-      await _refreshHistoryAbove();
+      await _refreshHistoryAboveAfterWindowMove(windowed, gen);
       if (gen != _loadGeneration) return;
       if (_historyLoadError != null) {
         _historyLoadError = null;

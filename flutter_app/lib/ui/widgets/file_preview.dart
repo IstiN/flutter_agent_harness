@@ -559,7 +559,10 @@ class FilePreviewScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: faAppBar(title: Text(name, overflow: TextOverflow.ellipsis)),
+      appBar: faAppBar(
+        context: context,
+        title: Text(name, overflow: TextOverflow.ellipsis),
+      ),
       body: SafeArea(
         child: fsRevision == null
             ? _preview(0)

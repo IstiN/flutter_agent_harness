@@ -82,10 +82,7 @@ class DefaultChatModelSection extends StatelessWidget {
   /// Applies [config] as the main connection: reconfigure the service,
   /// persist the last connection.
   Future<void> _apply(AgentConfig config) async {
-    const onDeviceKinds = {
-      webLlmProviderKind,
-      transformersJsProviderKind,
-    };
+    const onDeviceKinds = {webLlmProviderKind, transformersJsProviderKind};
     if (onDeviceKinds.contains(config.providerKind)) {
       await onDeviceConfigStore?.markConfigured(config.providerKind);
     }
@@ -269,7 +266,7 @@ class _OnDeviceFormPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: faAppBar(title: Text(preset.labelFor(context))),
+      appBar: faAppBar(context: context, title: Text(preset.labelFor(context))),
       body: SafeArea(
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(24),
