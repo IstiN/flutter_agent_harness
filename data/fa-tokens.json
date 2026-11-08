@@ -2,15 +2,6 @@
   "pr-1881": [
     {
       "leg": "review",
-      "at": "2026-10-25T17:32:30Z",
-      "prompt": 264281,
-      "completion": 50670,
-      "total": 314951,
-      "cacheRead": 14892288,
-      "model": "kimi-for-coding"
-    },
-    {
-      "leg": "review",
       "at": "2026-10-25T18:12:02Z",
       "prompt": 100387,
       "completion": 21701,
@@ -2686,6 +2677,15 @@
       "completion": 11865,
       "total": 142872,
       "cacheRead": 2993984,
+      "model": "glm-5.3-flash"
+    },
+    {
+      "leg": "review",
+      "at": "2026-11-08T17:33:48Z",
+      "prompt": 150908,
+      "completion": 7598,
+      "total": 158506,
+      "cacheRead": 2597888,
       "model": "glm-5.3-flash"
     }
   ],
