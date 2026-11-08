@@ -45,8 +45,8 @@ if $PROGRAM_NAME == __FILE__
     unless StoreVersionCreate.needs_create?(existing: %w[1.0.548], version: "1.0.54")
   ok("substring look-alikes do not count as the version existing")
 
-  # create_attributes — the POST /v1/appStoreVersions body (Spaceship
-  # create_app_store_version), per platform
+  # create_attributes — the POST /v1/appStoreVersions body used by
+  # Spaceship App#ensure_version! when creation is required, per platform
   ios_attrs = StoreVersionCreate.create_attributes(platform: "IOS", version: "1.0.548")
   raise "FAIL: iOS attrs wrong, got #{ios_attrs.inspect}" \
     unless ios_attrs == { platform: "IOS", versionString: "1.0.548" }

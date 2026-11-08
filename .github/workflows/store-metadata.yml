@@ -9,6 +9,10 @@ name: Store Metadata & Screenshots
 on:
   workflow_dispatch:
     inputs:
+      version:
+        description: 'App Store version to update (e.g. 1.2.3, without a leading v)'
+        required: true
+        type: string
       ios_content:
         description: 'iOS: what to deploy'
         required: false
@@ -75,6 +79,7 @@ jobs:
           APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
           APP_STORE_CONNECT_KEY_CONTENT: ${{ secrets.APP_STORE_CONNECT_KEY_CONTENT }}
           IOS_BUNDLE_ID: dev.fa1.app
+          BUILD_NAME: ${{ inputs.version }}
         run: |
           set -euo pipefail
           case "${{ github.event.inputs.ios_content }}" in
@@ -111,6 +116,7 @@ jobs:
           APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
           APP_STORE_CONNECT_KEY_CONTENT: ${{ secrets.APP_STORE_CONNECT_KEY_CONTENT }}
           MACOS_BUNDLE_ID: dev.fa1.app
+          BUILD_NAME: ${{ inputs.version }}
         run: |
           set -euo pipefail
           case "${{ github.event.inputs.macos_content }}" in
