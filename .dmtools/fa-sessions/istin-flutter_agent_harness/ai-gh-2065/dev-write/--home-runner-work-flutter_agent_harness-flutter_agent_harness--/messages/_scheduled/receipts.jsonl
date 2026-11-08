@@ -1,0 +1,1 @@
+{"ts":"2026-11-08T16:20:54.761637Z","event":"scheduled","id":"1794154854760701_0000_1266ibr","dueMs":1794157254760,"to":"main","text":"Collect background job sh-32-hnz39lsxsbj1ksos (full hostile-env suite, log at /tmp/full_suite.log — expect \"SUITE_EXIT=0\" tail). If green: replace RESULT_PLACEHOLDER in outputs/response.md with the re"}

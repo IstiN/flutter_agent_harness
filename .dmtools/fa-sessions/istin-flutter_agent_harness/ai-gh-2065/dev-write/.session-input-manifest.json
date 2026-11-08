@@ -1,0 +1,155 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-11-08T16:09:56.853Z",
+  "ticketKey": "gh-2065",
+  "headSha": "2032b9e7144dece0813ea50f6d0914865c6cbeec",
+  "baseBranch": "main",
+  "reviewDecision": "NONE",
+  "labels": [],
+  "files": {
+    "ci_failures.md": {
+      "hash": "fnv1a64:32f9d0f639c9295e",
+      "size": 122571
+    },
+    "ci_failures_full.log": {
+      "hash": "fnv1a64:4b564f6955082f0e",
+      "size": 2258568
+    },
+    "ci_violations.json": {
+      "hash": "fnv1a64:b8e204962d3ce6e8",
+      "size": 503
+    },
+    "pr_diff.txt": {
+      "hash": "fnv1a64:0b882f4b5b330eb1",
+      "size": 12306
+    },
+    "pr_discussions.md": {
+      "hash": "fnv1a64:e4abad608d9be0ae",
+      "size": 11649
+    },
+    "pr_discussions_raw.json": {
+      "hash": "fnv1a64:4c8329ce2ae9bc6f",
+      "size": 5897
+    },
+    "pr_info.md": {
+      "hash": "fnv1a64:b849e32a14d728f7",
+      "size": 2996
+    },
+    "request.md": {
+      "hash": "fnv1a64:29dd01b0a27b83d9",
+      "size": 440
+    },
+    "review_policy.md": {
+      "hash": "fnv1a64:5fafdb4c1c158a34",
+      "size": 1514
+    },
+    "review_state.md": {
+      "hash": "fnv1a64:18f82fc293ff1a46",
+      "size": 1045
+    },
+    "rework_base_head.txt": {
+      "hash": "fnv1a64:b167027cc9f427bd",
+      "size": 40
+    },
+    "ticket.json": {
+      "hash": "fnv1a64:28792f8f1bcdfd66",
+      "size": 498
+    },
+    "ticket.md": {
+      "hash": "fnv1a64:29dd01b0a27b83d9",
+      "size": 440
+    }
+  },
+  "comments": [
+    {
+      "id": "PRRT_kwDOTXdlLc61CGQs",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "test/hub/local_hub_relay_concurrency_test.dart:167",
+      "resolved": false,
+      "body": "🚨 severity: BLOCKING —\n🚨 **BLOCKING: Scope violation — 128 unintended files (+~54.2k lines) committed with the fix**\n\nThis PR's described scope is two changes in **one file** (`test/hub/local_hub_relay_concurrency_test.dart`), and the description itself states \"No product-code change\". The actual diff contains **129 files**: 1 test fix + **128 added `.cursor/skills/dmtools*` files** (+54,189 lines) — the local DMtools skill installation of the authoring environment (vendor docs from epam/dm.ai, `setup-dmtools.sh`, `installed-skills.json`, a 10,597-line raw MCP `tools-raw.json` dump).\n\nEvidence (from `git diff --name-status origin/main...HEAD`):\n- 128 × `A .cursor/skills/dmtools-*/...` — none of them referenced anywhere in the repo; `.cursor/` is **untracked on `origin/main`** (`git ls-tree origin/main -- .cursor/` is empty).\n- The whole dump landed in the single fix commit `2032b9e714` — consistent with a `git add .` that swept local agent tooling state into the commit.\n\nThis contradicts the repo's documented hygiene policy: local tooling state stays out of git (`.gitignore:88-104` keeps local-only junk untracked behind an explicit whitelist; AGENTS.md:782 — \"logs/sessions/bash_jobs stay local\"). The repo's curated skills live under the whitelisted `.fah/skills/`, not `.cursor/skills/`.\n\nSecurity note (checked, and clean): I scanned all 128 files for secrets — PAT/token patterns, high-entropy strings, machine-specific paths, org names. Everything found is vendor placeholder text (`YOUR_ADO_PERSONAL_ACCESS_TOKEN`, `ghp_YourPersonalAccessTokenHere`, `[REDACTED:High-Entropy-String]` markers shipped by the vendor docs themselves). No real credentials are committed — the problem is scope/repo hygiene, not leakage.\n\n**Next steps**:\n1. Strip everything except `test/hub/local_hub_relay_concurrency_test.dart` from this branch (e.g. `git rm -r --cached .cursor && git commit --amend`, or rebase the single-commit branch onto `main` with only the test file staged).\n2. Optionally add `.cursor/` to `.gitignore` so this class of local state can never be staged again.\n3. Re-push — the test fix itself is solid (verified below); nothing else needs to change."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc61CGSL",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "test/hub/local_hub_relay_concurrency_test.dart:210",
+      "resolved": false,
+      "body": "💡 severity: SUGGESTION —\n💡 **SUGGESTION: The REG twin duplicates ~45 lines of the AC2-paced fixture**\n\nThis new test copies the AC2-paced fixture verbatim — `Socket.connect` + `addTearDown(socket.destroy)`, the `socket.done` swallow, the read-side `listen` with the `'413'`-contains completer, the raw HTTP headers block, the 32 KiB `Timer.periodic` pump — differing only in comments and the closing 100 ms grace delay.\n\nA small local helper would keep the twins in lockstep so a future change to one (e.g. a new header, a different chunk size) cannot silently diverge from the other:\n\n```dart\nFuture<(Socket, Timer, Completer<String>)> pumpOverCapUpload(LocalHub hub) async {\n  final socket = await Socket.connect('127.0.0.1', port);\n  addTearDown(socket.destroy);\n  unawaited(socket.done.then<void>((_) {}, onError: (Object _) {}));\n  final answer = Completer<String>();\n  socket.listen(/* shared 413/closed/error plumbing */);\n  socket.write('POST /relay HTTP/1.1\\r\\nHost: ...\\r\\n...\\r\\n\\r\\n');\n  final pump = Timer.periodic(/* 20 ms × 32 KiB */);\n  addTearDown(pump.cancel);\n  return (socket, pump, answer);\n}\n```\n\nBoth tests then read as scenario-specific one-liners (AC2-paced: answer-or-close within 1 s; REG: +100 ms post-RST grace), and the \"twin\" relationship becomes structural instead of copy-paste. Non-blocking polish — the duplication is clearly intentional (\"twin\") and each copy is fully commented."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc61CGT_",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "test/hub/local_hub_relay_concurrency_test.dart:235",
+      "resolved": false,
+      "body": "🪶 severity: NIT —\n🪶 **NIT: The file already has a helper for exactly this swallow idiom**\n\n`forget()` (defined at `local_hub_relay_concurrency_test.dart:66`) wraps \"fire-and-forget with the errors swallowed\" — semantically identical to this inline expression:\n\n```dart\nforget(socket.done); // instead of unawaited(socket.done.then<void>((_) {}, onError: (Object _) {}));\n```\n\nSame behavior, one line, and it reuses the file's established vocabulary instead of adding two more inline copies of the same idiom (the file already had three). Pure consistency — nothing behavioral."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc61CGUy",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "test/hub/local_hub_relay_concurrency_test.dart:271",
+      "resolved": false,
+      "body": "🪶 severity: NIT —\n🪶 **NIT: the final `expect` lacks the `reason:` its twin carries**\n\nThe AC2-paced test this twin is derived from asserts the same observable with an explanatory reason:\n\n```dart\nexpect(\n  hub.relayInFlight,\n  0,\n  reason: 'the worker is freed at the cap, not after the upload',\n);\n```\n\nThis test ends with a bare `expect(hub.relayInFlight, 0);` — if it ever fails, the failure message won't explain that the point is \"the worker is freed despite the post-RST pump tick\". One-line symmetry fix."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-08:8a8eaaee",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-08",
+      "updatedAt": "2026-11-08",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🚨 severity: BLOCKING —\n🚨 **BLOCKING: Scope violation — 128 unintended files (+~54.2k lines) committed with the fix**\n\nThis PR's described scope is two changes in **one file** (`test/hub/local_hub_relay_concurrency_test.dart`), and the description itself states \"No product-code change\". The actual diff contains **129 files**: 1 test fix + **128 added `.cursor/skills/dmtools*` files** (+54,189 lines) — the local DMtools skill installation of the authoring environment (vendor docs from epam/dm.ai, `setup-dmtools.sh`, `installed-skills.json`, a 10,597-line raw MCP `tools-raw.json` dump).\n\nEvidence (from `git diff --name-status origin/main...HEAD`):\n- 128 × `A .cursor/skills/dmtools-*/...` — none of them referenced anywhere in the repo; `.cursor/` is **untracked on `origin/main`** (`git ls-tree origin/main -- .cursor/` is empty).\n- The whole dump landed in the single fix commit `2032b9e714` — consistent with a `git add .` that swept local agent tooling state into the commit.\n\nThis contradicts the repo's documented hygiene policy: local tooling state stays out of git (`.gitignore:88-104` keeps local-only junk untracked behind an explicit whitelist; AGENTS.md:782 — \"logs/sessions/bash_jobs stay local\"). The repo's curated skills live under the whitelisted `.fah/skills/`, not `.cursor/skills/`.\n\nSecurity note (checked, and clean): I scanned all 128 files for secrets — PAT/token patterns, high-entropy strings, machine-specific paths, org names. Everything found is vendor placeholder text (`YOUR_ADO_PERSONAL_ACCESS_TOKEN`, `ghp_YourPersonalAccessTokenHere`, `[REDACTED:High-Entropy-String]` markers shipped by the vendor docs themselves). No real credentials are committed — the problem is scope/repo hygiene, not leakage.\n\n**Next steps**:\n1. Strip everything except `test/hub/local_hub_relay_concurrency_test.dart` from this branch (e.g. `git rm -r --cached .cursor && git commit --amend`, or rebase the single-commit branch onto `main` with only the test file staged).\n2. Optionally add `.cursor/` to `.gitignore` so this class of local state can never be staged again.\n3. Re-push — the test fix itself is solid (verified below); nothing else needs to change."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-08:c8f3ecb5",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-08",
+      "updatedAt": "2026-11-08",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 severity: SUGGESTION —\n💡 **SUGGESTION: The REG twin duplicates ~45 lines of the AC2-paced fixture**\n\nThis new test copies the AC2-paced fixture verbatim — `Socket.connect` + `addTearDown(socket.destroy)`, the `socket.done` swallow, the read-side `listen` with the `'413'`-contains completer, the raw HTTP headers block, the 32 KiB `Timer.periodic` pump — differing only in comments and the closing 100 ms grace delay.\n\nA small local helper would keep the twins in lockstep so a future change to one (e.g. a new header, a different chunk size) cannot silently diverge from the other:\n\n```dart\nFuture<(Socket, Timer, Completer<String>)> pumpOverCapUpload(LocalHub hub) async {\n  final socket = await Socket.connect('127.0.0.1', port);\n  addTearDown(socket.destroy);\n  unawaited(socket.done.then<void>((_) {}, onError: (Object _) {}));\n  final answer = Completer<String>();\n  socket.listen(/* shared 413/closed/error plumbing */);\n  socket.write('POST /relay HTTP/1.1\\r\\nHost: ...\\r\\n...\\r\\n\\r\\n');\n  final pump = Timer.periodic(/* 20 ms × 32 KiB */);\n  addTearDown(pump.cancel);\n  return (socket, pump, answer);\n}\n```\n\nBoth tests then read as scenario-specific one-liners (AC2-paced: answer-or-close within 1 s; REG: +100 ms post-RST grace), and the \"twin\" relationship becomes structural instead of copy-paste. Non-blocking polish — the duplication is clearly intentional (\"twin\") and each copy is fully commented."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-08:2fba4d57",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-08",
+      "updatedAt": "2026-11-08",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🪶 severity: NIT —\n🪶 **NIT: The file already has a helper for exactly this swallow idiom**\n\n`forget()` (defined at `local_hub_relay_concurrency_test.dart:66`) wraps \"fire-and-forget with the errors swallowed\" — semantically identical to this inline expression:\n\n```dart\nforget(socket.done); // instead of unawaited(socket.done.then<void>((_) {}, onError: (Object _) {}));\n```\n\nSame behavior, one line, and it reuses the file's established vocabulary instead of adding two more inline copies of the same idiom (the file already had three). Pure consistency — nothing behavioral."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-08:9b856e35",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-08",
+      "updatedAt": "2026-11-08",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🪶 severity: NIT —\n🪶 **NIT: the final `expect` lacks the `reason:` its twin carries**\n\nThe AC2-paced test this twin is derived from asserts the same observable with an explanatory reason:\n\n```dart\nexpect(\n  hub.relayInFlight,\n  0,\n  reason: 'the worker is freed at the cap, not after the upload',\n);\n```\n\nThis test ends with a bare `expect(hub.relayInFlight, 0);` — if it ever fails, the failure message won't explain that the point is \"the worker is freed despite the post-RST pump tick\". One-line symmetry fix."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-08:0ea110a5",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-08",
+      "updatedAt": "2026-11-08",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — REQUEST_CHANGES\n\n**Summary**: The gh-2065 test fix itself is correct and verified (10/10 relay tests green; I reproduced the REG test's claimed pre-fix RED — `SocketException: Broken pipe, errno = 32`, the same write-side channel as CI's errno 104 — by stripping the swallow lines, and restored GREEN post-fix). The blocker is scope: the single fix commit also carries **128 unintended files (+54,189 lines)** — the authoring environment's local `.cursor/skills/dmtools*` tooling state, untracked on `main` and contradicting the PR's own \"no product-code change\" description.\n\n**Key Issues**:\n- 🚨 BLOCKING — `.cursor/skills/dmtools*` dump (2.3 MB vendor docs, `setup-dmtools.sh`, 10.6k-line raw JSON) committed in `2032b9e714` alongside the fix; strip all but `test/hub/local_hub_relay_concurrency_test.dart`.\n- Security scan of the dump: clean — placeholders/redaction markers only, no secrets, no machine-specific data.\n- 💡 REG twin duplicates ~45 lines of the AC2-paced fixture (extract a shared fixture helper).\n- 🪶 ×2 — inline swallow re-implements the file's `forget()` helper; final `expect` missing the twin's `reason:`.\n\n**Next Steps**:\n1. Remove all `.cursor/skills/` files from the branch (rebase onto `main` with only the test file staged); consider adding `.cursor/` to `.gitignore`.\n2. No other changes needed — the test change itself passes review, analysis, and formatting."
+    }
+  ]
+}
