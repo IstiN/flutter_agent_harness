@@ -914,32 +914,110 @@ class _ConversationRowState extends State<_ConversationRow> {
 
   bool get _showActions => widget.compact || _hovering || _focused;
 
+  String? _networkName() {
+    final entry = widget.entry;
+    if (entry.kind == ChatListEntryKind.localAgent) return null;
+    return entry.networkName ?? entry.networkId;
+  }
+
+  String _rawPreview(BuildContext context) {
+    final entry = widget.entry;
+    if (entry.isStreaming) {
+      return '${context.l10n.chatWorking} ${entry.preview ?? ''}'.trim();
+    }
+    return entry.preview?.trim() ?? '';
+  }
+
+  String _fallbackPreview(BuildContext context) {
+    if (widget.entry.kind == ChatListEntryKind.localAgent) {
+      return context.l10n.chatNoPreview;
+    }
+    return '';
+  }
+
+  String _preview(BuildContext context) {
+    final parts = [
+      _networkName() ?? '',
+      _rawPreview(context),
+    ].where((part) => part.isNotEmpty);
+    if (parts.isNotEmpty) return parts.join(' · ');
+    return _fallbackPreview(context);
+  }
+
+  String _pinTooltip(BuildContext context) =>
+      widget.entry.pinned ? context.l10n.chatUnpin : context.l10n.chatPin;
+
+  IconData get _pinIcon =>
+      widget.entry.pinned ? Icons.push_pin : Icons.push_pin_outlined;
+
+  Color _pinColor(FahColors colors, Color actionColor) {
+    if (widget.entry.pinned && !widget.selected) return colors.indigo;
+    return actionColor;
+  }
+
+  Widget _pinButton(BuildContext context, FahColors colors, Color actionColor) {
+    final entry = widget.entry;
+    return IconButton(
+      key: ValueKey('chatPin-${entry.id}'),
+      onPressed: widget.onTogglePin,
+      tooltip: _pinTooltip(context),
+      icon: Icon(_pinIcon, size: 15),
+      color: _pinColor(colors, actionColor),
+      visualDensity: VisualDensity.compact,
+      constraints: const BoxConstraints(minWidth: 27, minHeight: 32),
+      padding: EdgeInsets.zero,
+    );
+  }
+
+  Widget _localMenuButton(BuildContext context, Color actionColor) {
+    final entry = widget.entry;
+    return Builder(
+      builder: (buttonContext) => IconButton(
+        key: ValueKey('chatMenu-${entry.id}'),
+        onPressed: () {
+          final box = buttonContext.findRenderObject() as RenderBox;
+          final origin = box.localToGlobal(Offset.zero);
+          unawaited(widget.onLocalMenu!(entry, origin & box.size));
+        },
+        tooltip: context.l10n.chatMoreActions,
+        icon: const Icon(Icons.more_horiz, size: 17),
+        color: actionColor,
+        visualDensity: VisualDensity.compact,
+        constraints: const BoxConstraints(minWidth: 25, minHeight: 32),
+        padding: EdgeInsets.zero,
+      ),
+    );
+  }
+
+  List<Widget> _actions(BuildContext context, Color actionColor) {
+    if (!_showActions) return const [];
+    return [
+      _pinButton(context, FahColors.of(context), actionColor),
+      if (widget.onLocalMenu != null) _localMenuButton(context, actionColor),
+    ];
+  }
+
+  Color _foreground(FahColors colors, ColorScheme scheme) =>
+      widget.selected ? scheme.onPrimary : colors.text;
+
+  Color _subdued(FahColors colors, ColorScheme scheme) =>
+      widget.selected ? scheme.onPrimary.withValues(alpha: .82) : colors.dim;
+
+  Color _actionColor(FahColors colors, ColorScheme scheme) =>
+      widget.selected ? scheme.onPrimary : colors.dim;
+
   @override
   Widget build(BuildContext context) {
     final entry = widget.entry;
     final colors = FahColors.of(context);
     final scheme = Theme.of(context).colorScheme;
     final accent = scheme.primary;
-    final selected = widget.selected;
     final onSelection = scheme.onPrimary;
-    final foreground = selected ? onSelection : colors.text;
-    final subdued = selected ? onSelection.withValues(alpha: .82) : colors.dim;
-    final actionColor = selected ? onSelection : colors.dim;
-    final network = entry.kind == ChatListEntryKind.localAgent
-        ? null
-        : entry.networkName ?? entry.networkId;
-    final rawPreview = entry.isStreaming
-        ? '${context.l10n.chatWorking} ${entry.preview ?? ''}'.trim()
-        : entry.preview?.trim();
-    final previewParts = [
-      if (network case final value? when value.isNotEmpty) value,
-      if (rawPreview case final value? when value.isNotEmpty) value,
-    ];
-    final preview = previewParts.isNotEmpty
-        ? previewParts.join(' · ')
-        : entry.kind == ChatListEntryKind.localAgent
-        ? context.l10n.chatNoPreview
-        : '';
+    final selected = widget.selected;
+    final foreground = _foreground(colors, scheme);
+    final subdued = _subdued(colors, scheme);
+    final actionColor = _actionColor(colors, scheme);
+    final preview = _preview(context);
     final unread = entry.unreadCount ?? 0;
 
     return Padding(
@@ -1093,57 +1171,7 @@ class _ConversationRowState extends State<_ConversationRow> {
                             ],
                           ),
                         ),
-                        if (_showActions) ...[
-                          IconButton(
-                            key: ValueKey('chatPin-${entry.id}'),
-                            onPressed: widget.onTogglePin,
-                            tooltip: entry.pinned
-                                ? context.l10n.chatUnpin
-                                : context.l10n.chatPin,
-                            icon: Icon(
-                              entry.pinned
-                                  ? Icons.push_pin
-                                  : Icons.push_pin_outlined,
-                              size: 15,
-                            ),
-                            color: entry.pinned && !selected
-                                ? colors.indigo
-                                : actionColor,
-                            visualDensity: VisualDensity.compact,
-                            constraints: const BoxConstraints(
-                              minWidth: 27,
-                              minHeight: 32,
-                            ),
-                            padding: EdgeInsets.zero,
-                          ),
-                          if (widget.onLocalMenu != null)
-                            Builder(
-                              builder: (buttonContext) => IconButton(
-                                key: ValueKey('chatMenu-${entry.id}'),
-                                onPressed: () {
-                                  final box =
-                                      buttonContext.findRenderObject()
-                                          as RenderBox;
-                                  final origin = box.localToGlobal(Offset.zero);
-                                  unawaited(
-                                    widget.onLocalMenu!(
-                                      entry,
-                                      origin & box.size,
-                                    ),
-                                  );
-                                },
-                                tooltip: context.l10n.chatMoreActions,
-                                icon: const Icon(Icons.more_horiz, size: 17),
-                                color: actionColor,
-                                visualDensity: VisualDensity.compact,
-                                constraints: const BoxConstraints(
-                                  minWidth: 25,
-                                  minHeight: 32,
-                                ),
-                                padding: EdgeInsets.zero,
-                              ),
-                            ),
-                        ],
+                        ..._actions(context, actionColor),
                       ],
                     ),
                   ),

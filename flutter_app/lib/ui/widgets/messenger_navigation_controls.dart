@@ -143,26 +143,31 @@ class MessengerChipGroup extends StatelessWidget {
     for (var start = 0; start < children.length; start += itemsPerRow) {
       if (rows.isNotEmpty) rows.add(const SizedBox(height: gap));
       final end = (start + itemsPerRow).clamp(0, children.length);
-      final rowChildren = children.sublist(start, end);
-      rows.add(
-        Row(
-          children: [
-            for (var index = 0; index < itemsPerRow; index++) ...[
-              if (index > 0) const SizedBox(width: gap),
-              Expanded(
-                child: SizedBox(
-                  height: 32,
-                  child: index < rowChildren.length
-                      ? rowChildren[index]
-                      : const SizedBox.shrink(),
-                ),
-              ),
-            ],
-          ],
-        ),
-      );
+      rows.add(_buildRow(children.sublist(start, end)));
     }
     return Column(mainAxisSize: MainAxisSize.min, children: rows);
+  }
+
+  Widget _buildRow(List<Widget> rowChildren) {
+    return Row(
+      children: [
+        for (var index = 0; index < itemsPerRow; index++) ...[
+          if (index > 0) const SizedBox(width: gap),
+          _buildRowCell(rowChildren, index),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildRowCell(List<Widget> rowChildren, int index) {
+    return Expanded(
+      child: SizedBox(
+        height: 32,
+        child: index < rowChildren.length
+            ? rowChildren[index]
+            : const SizedBox.shrink(),
+      ),
+    );
   }
 }
 
@@ -618,7 +623,48 @@ class MessengerCategoryChip extends StatelessWidget {
   Widget build(BuildContext context) {
     final tokens = FaDesignTokens.of(context);
     final foreground = selected ? tokens.accent : tokens.ink2;
-    final labelText = Text(
+    final duration = FaMotion.duration(
+      context,
+      const Duration(milliseconds: 200),
+    );
+    final animatedLabel = _buildAnimatedLabel(
+      _buildLabelText(foreground),
+      duration,
+    );
+    return Tooltip(
+      message: label,
+      child: Semantics(
+        button: true,
+        label: label,
+        selected: selected,
+        child: Material(
+          key: chipKey,
+          color: _backgroundColor(tokens),
+          shape: StadiumBorder(side: _borderSide(tokens)),
+          clipBehavior: Clip.antiAlias,
+          child: InkWell(
+            customBorder: const StadiumBorder(),
+            onTap: onTap,
+            child: SizedBox(
+              height: 32,
+              child: LayoutBuilder(
+                builder: (context, constraints) => _buildLayout(
+                  constraints,
+                  duration,
+                  animatedLabel,
+                  foreground,
+                  tokens,
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Text _buildLabelText(Color foreground) {
+    return Text(
       label,
       maxLines: 1,
       overflow: TextOverflow.ellipsis,
@@ -628,12 +674,11 @@ class MessengerCategoryChip extends StatelessWidget {
         fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
       ),
     );
-    final duration = FaMotion.duration(
-      context,
-      const Duration(milliseconds: 200),
-    );
+  }
+
+  Widget _buildAnimatedLabel(Text labelText, Duration duration) {
     final targetOpacity = iconOnly ? 0.0 : 1.0;
-    final animatedLabel = ClipRect(
+    return ClipRect(
       child: TweenAnimationBuilder<double>(
         tween: Tween(
           begin: animateLabel ? 1 - targetOpacity : targetOpacity,
@@ -641,137 +686,166 @@ class MessengerCategoryChip extends StatelessWidget {
         ),
         duration: duration,
         curve: Curves.easeInOutCubic,
-        builder: (context, opacity, child) => opacity <= .001
-            ? const SizedBox.shrink()
-            : Opacity(opacity: opacity, child: labelText),
+        builder: (context, opacity, child) =>
+            _buildLabelOpacity(opacity, labelText),
       ),
     );
-    Widget animatedIcon(double size) =>
-        Icon(icon, size: size, color: foreground);
-    return Tooltip(
-      message: label,
-      child: Semantics(
-        button: true,
-        label: label,
-        selected: selected,
-        child: Material(
-          key: chipKey,
-          color: selected && selectionBackground
-              ? tokens.accent.withValues(alpha: .12)
-              : iconOnly || !selectionBackground
-              ? Colors.transparent
-              : tokens.surface1.withValues(alpha: .55),
-          shape: StadiumBorder(
-            side: selected && selectionBackground
-                ? BorderSide(color: tokens.accent.withValues(alpha: .18))
-                : iconOnly || !selectionBackground
-                ? BorderSide.none
-                : BorderSide(color: tokens.hairline),
-          ),
-          clipBehavior: Clip.antiAlias,
-          child: InkWell(
-            customBorder: const StadiumBorder(),
-            onTap: onTap,
-            child: SizedBox(
-              height: 32,
-              child: LayoutBuilder(
-                builder: (context, constraints) {
-                  if (constraints.maxWidth < 12) {
-                    return const SizedBox.shrink();
-                  }
-                  // AnimatedPositioned changes the slot before the label's
-                  // directional fade completes. Keep the intermediate narrow
-                  // slot overflow-free instead of clipping a full-density row.
-                  final dense = constraints.maxWidth < 32;
-                  final denseIconSize = constraints.maxWidth < 14 ? 10.0 : 12.0;
-                  return Padding(
-                    padding: iconOnly
-                        ? EdgeInsets.zero
-                        : EdgeInsets.symmetric(
-                            horizontal: dense
-                                ? 0
-                                : (textLed ? 4 : (compact ? 6 : 14)),
-                          ),
-                    child: Row(
-                      mainAxisSize: expanded || compact
-                          ? MainAxisSize.max
-                          : MainAxisSize.min,
-                      // A text-led selected segment centers the icon+label
-                      // group like a segmented control; the dormant expanded
-                      // standalone label stays start-aligned.
-                      mainAxisAlignment: iconOnly || (textLed && compact)
-                          ? MainAxisAlignment.center
-                          : MainAxisAlignment.start,
-                      children: [
-                        // The dormant expanded label still participates during
-                        // the directional fade. Balance it so an icon-only glyph
-                        // remains centered both at rest and mid-transition.
-                        if (iconOnly) const Spacer(),
-                        animatedIcon(
-                          dense ? denseIconSize : (compact ? 15 : 16),
-                        ),
-                        AnimatedContainer(
-                          duration: duration,
-                          curve: Curves.easeInOutCubic,
-                          width: iconOnly || dense ? 0 : (compact ? 4 : 6),
-                        ),
-                        if (expanded || compact)
-                          // Flexible (not Expanded) lets the centered text-led
-                          // group hug its label instead of filling the slot.
-                          if (textLed && compact)
-                            Flexible(
-                              child: AnimatedContainer(
-                                duration: duration,
-                                curve: Curves.easeInOutCubic,
-                                width: iconOnly ? 0 : null,
-                                child: animatedLabel,
-                              ),
-                            )
-                          else
-                            Expanded(
-                              child: AnimatedContainer(
-                                duration: duration,
-                                curve: Curves.easeInOutCubic,
-                                width: iconOnly ? 0 : null,
-                                child: animatedLabel,
-                              ),
-                            )
-                        else
-                          animatedLabel,
-                        if (!dense)
-                          if (badge case final count? when count > 0) ...[
-                            const SizedBox(width: 6),
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 6,
-                                vertical: 2,
-                              ),
-                              decoration: BoxDecoration(
-                                color: tokens.accent,
-                                borderRadius: BorderRadius.circular(999),
-                              ),
-                              child: Text(
-                                count > 99 ? '99+' : '$count',
-                                style: TextStyle(
-                                  color: tokens.accentInk,
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                            ),
-                          ],
-                      ],
-                    ),
-                  );
-                },
-              ),
-            ),
-          ),
+  }
+
+  Widget _buildLabelOpacity(double opacity, Text labelText) {
+    return opacity <= .001
+        ? const SizedBox.shrink()
+        : Opacity(opacity: opacity, child: labelText);
+  }
+
+  Color _backgroundColor(FaDesignTokens tokens) {
+    if (selected && selectionBackground) {
+      return tokens.accent.withValues(alpha: .12);
+    }
+    if (iconOnly || !selectionBackground) return Colors.transparent;
+    return tokens.surface1.withValues(alpha: .55);
+  }
+
+  BorderSide _borderSide(FaDesignTokens tokens) {
+    if (selected && selectionBackground) {
+      return BorderSide(color: tokens.accent.withValues(alpha: .18));
+    }
+    if (iconOnly || !selectionBackground) return BorderSide.none;
+    return BorderSide(color: tokens.hairline);
+  }
+
+  Widget _buildLayout(
+    BoxConstraints constraints,
+    Duration duration,
+    Widget animatedLabel,
+    Color foreground,
+    FaDesignTokens tokens,
+  ) {
+    if (constraints.maxWidth < 12) return const SizedBox.shrink();
+    // Keep intermediate narrow slots overflow-free during directional fades.
+    final dense = constraints.maxWidth < 32;
+    return Padding(
+      padding: _horizontalPadding(dense),
+      child: Row(
+        mainAxisSize: _rowMainAxisSize(),
+        mainAxisAlignment: _rowMainAxisAlignment(),
+        children: _rowChildren(
+          dense,
+          constraints.maxWidth,
+          duration,
+          animatedLabel,
+          foreground,
+          tokens,
         ),
       ),
     );
   }
+
+  EdgeInsets _horizontalPadding(bool dense) {
+    if (iconOnly) return EdgeInsets.zero;
+    if (dense) return EdgeInsets.zero;
+    return EdgeInsets.symmetric(horizontal: textLed ? 4 : (compact ? 6 : 14));
+  }
+
+  MainAxisSize _rowMainAxisSize() =>
+      expanded || compact ? MainAxisSize.max : MainAxisSize.min;
+
+  MainAxisAlignment _rowMainAxisAlignment() => iconOnly || (textLed && compact)
+      ? MainAxisAlignment.center
+      : MainAxisAlignment.start;
+
+  double _iconSize(bool dense, double maxWidth) {
+    if (dense) return maxWidth < 14 ? 10.0 : 12.0;
+    return compact ? 15 : 16;
+  }
+
+  double _iconSpacing(bool dense) => iconOnly || dense ? 0 : (compact ? 4 : 6);
+
+  Widget _labelContainer(Widget animatedLabel, Duration duration) {
+    return AnimatedContainer(
+      duration: duration,
+      curve: Curves.easeInOutCubic,
+      width: iconOnly ? 0 : null,
+      child: animatedLabel,
+    );
+  }
+
+  Widget _labelSlot(Widget animatedLabel, Duration duration) {
+    if (!(expanded || compact)) return animatedLabel;
+    final child = _labelContainer(animatedLabel, duration);
+    // Flexible lets the centered text-led group hug its label.
+    if (textLed && compact) return Flexible(child: child);
+    return Expanded(child: child);
+  }
+
+  List<Widget> _rowChildren(
+    bool dense,
+    double maxWidth,
+    Duration duration,
+    Widget animatedLabel,
+    Color foreground,
+    FaDesignTokens tokens,
+  ) {
+    return [
+      // Balance the dormant expanded label so icon-only glyphs stay centered.
+      if (iconOnly) const Spacer(),
+      Icon(icon, size: _iconSize(dense, maxWidth), color: foreground),
+      AnimatedContainer(
+        duration: duration,
+        curve: Curves.easeInOutCubic,
+        width: _iconSpacing(dense),
+      ),
+      _labelSlot(animatedLabel, duration),
+      ..._badgeWidgets(dense, tokens),
+    ];
+  }
+
+  int? get _visibleBadge {
+    final count = badge;
+    if (count == null || count <= 0) return null;
+    return count;
+  }
+
+  String _badgeLabel(int count) => count > 99 ? '99+' : '$count';
+
+  List<Widget> _badgeWidgets(bool dense, FaDesignTokens tokens) {
+    if (dense) return const [];
+    final count = _visibleBadge;
+    if (count == null) return const [];
+    return [
+      const SizedBox(width: 6),
+      Container(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+        decoration: BoxDecoration(
+          color: tokens.accent,
+          borderRadius: BorderRadius.circular(999),
+        ),
+        child: Text(
+          _badgeLabel(count),
+          style: TextStyle(
+            color: tokens.accentInk,
+            fontSize: 10,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+      ),
+    ];
+  }
 }
+
+typedef _SegmentPosition = ({double left, double width});
+typedef _SegmentGeometry = ({
+  double gap,
+  double slot,
+  double selectedWidth,
+  double selectedExtraWidth,
+  bool selectedCategoryVisible,
+  bool selectedExtraVisible,
+});
+typedef _SegmentPositions = ({
+  List<_SegmentPosition> categories,
+  List<_SegmentPosition> extras,
+});
 
 /// The segment slot layout shared by both MessengerFilterControl capsules:
 /// fixed icon slots plus one or two expanded text slots and a moving
@@ -804,130 +878,186 @@ class _SegmentLayout extends StatelessWidget {
           context,
           const Duration(milliseconds: 200),
         );
-        const curve = Curves.easeInOutCubic;
-        final count = categories.length;
-        // The trailing selector is a control too: it occupies the final
-        // fixed slot and therefore participates in the width budget.
-        final controlCount = count + extraActions.length + 1;
-        final selectedExtraVisible =
-            selectedExtraIndex != null && highlightSelectedExtra;
-        final selectedCategoryVisible = highlightSelectedCategory;
-        final expandedCount =
-            (selectedCategoryVisible ? 1 : 0) + (selectedExtraVisible ? 1 : 0);
-        final fixedCount = controlCount - expandedCount;
-        final gap = constraints.maxWidth >= 300
-            ? MessengerFilterControl.gap
-            : 1.0;
-        // Two segmented groups can be selected at once (a chat filter
-        // and a shell section). Both keep their icon and gain a text
-        // slot; quiet icon slots retain a fixed hit rect. The section
-        // label gets the larger share so localized names stay readable.
-        const minSelectedWidth = 64.0;
-        const minSelectedExtraWidth = 72.0;
-        final minimumExpandedWidth =
-            (selectedCategoryVisible ? minSelectedWidth : 0.0) +
-            (selectedExtraVisible ? minSelectedExtraWidth : 0.0);
-        final slot =
-            ((constraints.maxWidth -
-                        gap * (controlCount - 1) -
-                        minimumExpandedWidth) /
-                    fixedCount)
-                .clamp(12.0, 36.0);
-        final expandedBudget =
-            (constraints.maxWidth -
-                    gap * (controlCount - 1) -
-                    slot * fixedCount)
-                .clamp(0.0, constraints.maxWidth);
-        final selectedWidth = !selectedCategoryVisible
-            ? 0.0
-            : selectedExtraVisible
-            ? expandedBudget *
-                  minSelectedWidth /
-                  (minSelectedWidth + minSelectedExtraWidth)
-            : expandedBudget;
-        final selectedExtraWidth = !selectedExtraVisible
-            ? 0.0
-            : selectedCategoryVisible
-            ? expandedBudget *
-                  minSelectedExtraWidth /
-                  (minSelectedWidth + minSelectedExtraWidth)
-            : expandedBudget;
-        final positions = <({double left, double width})>[];
-        var left = 0.0;
-        for (var index = 0; index < count; index++) {
-          final isSelected = index == selectedIndex;
-          final width = isSelected && selectedCategoryVisible
-              ? selectedWidth
-              : slot;
-          positions.add((left: left, width: width));
-          left += width + gap;
-        }
-        final extraPositions = <({double left, double width})>[];
-        for (var index = 0; index < extraActions.length; index++) {
-          final width = index == selectedExtraIndex && selectedExtraVisible
-              ? selectedExtraWidth
-              : slot;
-          extraPositions.add((left: left, width: width));
-          left += width + gap;
-        }
-        final selected = positions[selectedIndex];
+        final geometry = _geometry(constraints);
+        final positions = _positions(geometry);
         return Stack(
           clipBehavior: Clip.hardEdge,
           children: [
-            if (selectedCategoryVisible)
-              AnimatedPositioned(
-                key: const ValueKey('chatFilterSelectionPill'),
-                duration: duration,
-                curve: curve,
-                left: selected.left,
-                width: selected.width,
-                top: 0,
-                bottom: 0,
-                child: IgnorePointer(
-                  child: DecoratedBox(
-                    decoration: ShapeDecoration(
-                      color: tokens.accent.withValues(alpha: .12),
-                      shape: StadiumBorder(
-                        side: BorderSide(
-                          color: tokens.accent.withValues(alpha: .18),
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
+            if (geometry.selectedCategoryVisible)
+              _selectionPill(
+                positions.categories[selectedIndex],
+                duration,
+                tokens,
               ),
-            for (var index = 0; index < count; index++)
-              AnimatedPositioned(
-                key: ValueKey('chatFilterSlot-$index'),
-                duration: duration,
-                curve: curve,
-                left: positions[index].left,
-                width: positions[index].width,
-                top: 0,
-                bottom: 0,
-                child: categories[index],
-              ),
-            for (var index = 0; index < extraActions.length; index++)
-              AnimatedPositioned(
-                key: ValueKey('chatFilterExtraActionSlot-$index'),
-                duration: duration,
-                curve: curve,
-                left: extraPositions[index].left,
-                width: extraPositions[index].width,
-                top: 0,
-                bottom: 0,
-                child: extraActions[index],
-              ),
+            ..._categorySlots(positions.categories, duration),
+            ..._extraSlots(positions.extras, duration),
             Positioned(
               right: 0,
               top: 0,
               bottom: 0,
-              width: slot,
+              width: geometry.slot,
               child: trailing,
             ),
           ],
         );
       },
     );
+  }
+
+  _SegmentGeometry _geometry(BoxConstraints constraints) {
+    // The trailing selector occupies the final fixed slot.
+    final controlCount = categories.length + extraActions.length + 1;
+    final selectedExtraVisible =
+        selectedExtraIndex != null && highlightSelectedExtra;
+    final selectedCategoryVisible = highlightSelectedCategory;
+    final expandedCount =
+        (selectedCategoryVisible ? 1 : 0) + (selectedExtraVisible ? 1 : 0);
+    final fixedCount = controlCount - expandedCount;
+    final gap = constraints.maxWidth >= 300 ? MessengerFilterControl.gap : 1.0;
+    final widths = _selectedWidths(
+      constraints,
+      controlCount,
+      fixedCount,
+      gap,
+      selectedCategoryVisible,
+      selectedExtraVisible,
+    );
+    return (
+      gap: gap,
+      slot: widths.slot,
+      selectedWidth: widths.selectedWidth,
+      selectedExtraWidth: widths.selectedExtraWidth,
+      selectedCategoryVisible: selectedCategoryVisible,
+      selectedExtraVisible: selectedExtraVisible,
+    );
+  }
+
+  ({double slot, double selectedWidth, double selectedExtraWidth})
+  _selectedWidths(
+    BoxConstraints constraints,
+    int controlCount,
+    int fixedCount,
+    double gap,
+    bool selectedCategoryVisible,
+    bool selectedExtraVisible,
+  ) {
+    const minSelectedWidth = 64.0;
+    const minSelectedExtraWidth = 72.0;
+    final minimumExpandedWidth =
+        (selectedCategoryVisible ? minSelectedWidth : 0.0) +
+        (selectedExtraVisible ? minSelectedExtraWidth : 0.0);
+    final slot =
+        ((constraints.maxWidth -
+                    gap * (controlCount - 1) -
+                    minimumExpandedWidth) /
+                fixedCount)
+            .clamp(12.0, 36.0);
+    final expandedBudget =
+        (constraints.maxWidth - gap * (controlCount - 1) - slot * fixedCount)
+            .clamp(0.0, constraints.maxWidth);
+    final selectedWidth = !selectedCategoryVisible
+        ? 0.0
+        : selectedExtraVisible
+        ? expandedBudget *
+              minSelectedWidth /
+              (minSelectedWidth + minSelectedExtraWidth)
+        : expandedBudget;
+    final selectedExtraWidth = !selectedExtraVisible
+        ? 0.0
+        : selectedCategoryVisible
+        ? expandedBudget *
+              minSelectedExtraWidth /
+              (minSelectedWidth + minSelectedExtraWidth)
+        : expandedBudget;
+    return (
+      slot: slot,
+      selectedWidth: selectedWidth,
+      selectedExtraWidth: selectedExtraWidth,
+    );
+  }
+
+  _SegmentPositions _positions(_SegmentGeometry geometry) {
+    final positions = <_SegmentPosition>[];
+    var left = 0.0;
+    for (var index = 0; index < categories.length; index++) {
+      final width = index == selectedIndex && geometry.selectedCategoryVisible
+          ? geometry.selectedWidth
+          : geometry.slot;
+      positions.add((left: left, width: width));
+      left += width + geometry.gap;
+    }
+    final extraPositions = <_SegmentPosition>[];
+    for (var index = 0; index < extraActions.length; index++) {
+      final width = index == selectedExtraIndex && geometry.selectedExtraVisible
+          ? geometry.selectedExtraWidth
+          : geometry.slot;
+      extraPositions.add((left: left, width: width));
+      left += width + geometry.gap;
+    }
+    return (categories: positions, extras: extraPositions);
+  }
+
+  Widget _selectionPill(
+    _SegmentPosition selected,
+    Duration duration,
+    FaDesignTokens tokens,
+  ) {
+    return AnimatedPositioned(
+      key: const ValueKey('chatFilterSelectionPill'),
+      duration: duration,
+      curve: Curves.easeInOutCubic,
+      left: selected.left,
+      width: selected.width,
+      top: 0,
+      bottom: 0,
+      child: IgnorePointer(
+        child: DecoratedBox(
+          decoration: ShapeDecoration(
+            color: tokens.accent.withValues(alpha: .12),
+            shape: StadiumBorder(
+              side: BorderSide(color: tokens.accent.withValues(alpha: .18)),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  List<Widget> _categorySlots(
+    List<_SegmentPosition> positions,
+    Duration duration,
+  ) {
+    return [
+      for (var index = 0; index < positions.length; index++)
+        AnimatedPositioned(
+          key: ValueKey('chatFilterSlot-$index'),
+          duration: duration,
+          curve: Curves.easeInOutCubic,
+          left: positions[index].left,
+          width: positions[index].width,
+          top: 0,
+          bottom: 0,
+          child: categories[index],
+        ),
+    ];
+  }
+
+  List<Widget> _extraSlots(
+    List<_SegmentPosition> positions,
+    Duration duration,
+  ) {
+    return [
+      for (var index = 0; index < positions.length; index++)
+        AnimatedPositioned(
+          key: ValueKey('chatFilterExtraActionSlot-$index'),
+          duration: duration,
+          curve: Curves.easeInOutCubic,
+          left: positions[index].left,
+          width: positions[index].width,
+          top: 0,
+          bottom: 0,
+          child: extraActions[index],
+        ),
+    ];
   }
 }

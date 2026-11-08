@@ -645,8 +645,46 @@ class _JsAppViewState extends State<JsAppView> {
   PreferredSizeWidget? _buildAppBar(bool fullChrome) {
     final chrome = widget.panelChrome;
     if (fullChrome && chrome == null) return null;
+    if (chrome == null) return _defaultAppBar();
+    return _panelAppBar(chrome);
+  }
+
+  PreferredSizeWidget _defaultAppBar() {
+    return faAppBar(
+      context: context,
+      title: Row(
+        children: [
+          AppIcon(app: widget.app, env: widget.env, size: 24),
+          const SizedBox(width: 8),
+          Flexible(
+            child: Text(widget.app.name, overflow: TextOverflow.ellipsis),
+          ),
+        ],
+      ),
+      trafficLightClearance: FaWindowChrome.presentedAppClearance(
+        context,
+        embeddedInPanel: widget.embeddedInPanel,
+      ),
+      actions: [
+        IconButton(
+          icon: const Icon(Icons.shield_outlined),
+          tooltip: context.l10n.appsPermissionsTooltip,
+          onPressed: _openPermissions,
+        ),
+        IconButton(
+          icon: const Icon(Icons.refresh),
+          tooltip: context.l10n.appsReloadTooltip,
+          onPressed: () {
+            AppAnalytics.instance.jsAppReloaded();
+            unawaited(_restart());
+          },
+        ),
+      ],
+    );
+  }
+
+  PreferredSizeWidget _panelAppBar(JsAppPanelChrome chrome) {
     // Only compact/full presented chrome owns the window's leading edge.
-    // Wide inline panels start to the right of the native traffic lights.
     final trafficLightLeading =
         FaWindowChrome.presentedAppClearance(
           context,
@@ -654,38 +692,6 @@ class _JsAppViewState extends State<JsAppView> {
         )
         ? FaWindowChrome.compactLeadingInset
         : 0.0;
-    final title = Row(
-      children: [
-        AppIcon(app: widget.app, env: widget.env, size: 24),
-        const SizedBox(width: 8),
-        Flexible(child: Text(widget.app.name, overflow: TextOverflow.ellipsis)),
-      ],
-    );
-    if (chrome == null) {
-      return faAppBar(
-        context: context,
-        title: title,
-        trafficLightClearance: FaWindowChrome.presentedAppClearance(
-          context,
-          embeddedInPanel: widget.embeddedInPanel,
-        ),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.shield_outlined),
-            tooltip: context.l10n.appsPermissionsTooltip,
-            onPressed: _openPermissions,
-          ),
-          IconButton(
-            icon: const Icon(Icons.refresh),
-            tooltip: context.l10n.appsReloadTooltip,
-            onPressed: () {
-              AppAnalytics.instance.jsAppReloaded();
-              unawaited(_restart());
-            },
-          ),
-        ],
-      );
-    }
     // The card floats 8pt below the window top, so only the remainder of
     // the platform safe area is needed above the toolbar. Compact macOS
     // window controls are cleared horizontally by [trafficLightLeading].
@@ -805,6 +811,16 @@ class _JsAppViewState extends State<JsAppView> {
     );
   }
 
+  void _onAppPopInvoked(bool didPop, bool backRegistered) {
+    if (didPop) return;
+    final chrome = widget.panelChrome;
+    if (chrome != null && !backRegistered) {
+      chrome.onClose();
+    } else {
+      _forwardBackToApp();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -823,15 +839,8 @@ class _JsAppViewState extends State<JsAppView> {
       builder: (context, backRegistered, _) {
         return PopScope(
           canPop: widget.panelChrome == null && !backRegistered,
-          onPopInvokedWithResult: (didPop, _) {
-            if (didPop) return;
-            final chrome = widget.panelChrome;
-            if (chrome != null && !backRegistered) {
-              chrome.onClose();
-            } else {
-              _forwardBackToApp();
-            }
-          },
+          onPopInvokedWithResult: (didPop, _) =>
+              _onAppPopInvoked(didPop, backRegistered),
           child: Scaffold(
             extendBodyBehindAppBar: widget.panelChrome != null,
             appBar: _buildAppBar(fullChrome),

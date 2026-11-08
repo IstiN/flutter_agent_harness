@@ -110,7 +110,10 @@ class _SessionOrder {
 /// Null for unfoldered (Personal) rows and non-local entries.
 String? sessionEntryFolderPath(ChatListEntry entry) {
   if (entry.kind != ChatListEntryKind.localAgent) return null;
-  final path = entry.folderPath ?? entry.folderName;
+  return _nonEmptyFolderPath(entry.folderPath ?? entry.folderName);
+}
+
+String? _nonEmptyFolderPath(String? path) {
   if (path == null || path.isEmpty) return null;
   return path;
 }
@@ -131,13 +134,14 @@ int compareSessionRecency(ChatListEntry a, ChatListEntry b) {
 List<ChatListEntry> folderSessionList(
   List<ChatListEntry> entries, {
   required String folderPath,
-}) => entries
-    .where(
-      (entry) =>
-          sessionEntryFolderPath(entry) == folderPath && !entry.isSubagent,
-    )
-    .toList()
-  ..sort(compareSessionRecency);
+}) =>
+    entries
+        .where(
+          (entry) =>
+              sessionEntryFolderPath(entry) == folderPath && !entry.isSubagent,
+        )
+        .toList()
+      ..sort(compareSessionRecency);
 
 // ---------------------------------------------------------------------------
 // Folder avatar algorithm (yoloit tier-1 port, vision-audit rework)

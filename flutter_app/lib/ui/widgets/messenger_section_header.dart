@@ -391,23 +391,65 @@ final class MessengerSectionHeader extends StatelessWidget {
     final colors = FahColors.of(context);
     final tokens = FaDesignTokens.of(context);
     final isMac = !kIsWeb && defaultTargetPlatform == TargetPlatform.macOS;
-    // The real-glass frame's 1pt border insets its child; opaque frames do
-    // not. Compensate the row height so every visual direction keeps the
-    // same absolute action centerline instead of drifting by one pixel.
+    final geometry = _geometry(tokens, isMac);
+    final showSearch = searchController != null && !searchCollapsed;
+    final brand = _brand(context);
+    return Transform.translate(
+      offset: Offset(compact || collapsed ? 0 : -geometry.glassFrameInset, 0),
+      child: Container(
+        height: geometry.titlebarHeight + geometry.contentHeight,
+        color: tokens.direction == FaVisualDirection.glass
+            ? Colors.transparent
+            : colors.panel,
+        child: Column(
+          children: [
+            if (geometry.titlebarHeight > 0)
+              SizedBox(
+                key: const ValueKey('macosSidebarTitlebar'),
+                width: double.infinity,
+                height: geometry.titlebarHeight,
+              ),
+            if (collapsed)
+              SizedBox(
+                height: geometry.contentHeight,
+                child: Center(child: brand),
+              )
+            else
+              _expandedContent(
+                context,
+                brand,
+                colors,
+                tokens,
+                showSearch,
+                geometry,
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  ({double glassFrameInset, double contentHeight, double titlebarHeight})
+  _geometry(FaDesignTokens tokens, bool isMac) {
+    // Real glass insets its child by its 1pt border; opaque frames do not.
     final glassFrameInset = tokens.direction == FaVisualDirection.glass
         ? 1.0
         : 0.0;
     final contentHeight = compact
         ? 54.0
         : (isMac ? 54.0 : 58.0) - 2 * glassFrameInset;
-    // Only the narrow compact header sits beside the native traffic lights
-    // and needs their 30pt clearance. The wide sidebar starts to their right:
-    // its search/actions share the chat and Files centerline at y=35 instead
-    // of dropping into a second row below the titlebar.
+    // Only the narrow compact header clears the native traffic lights.
     final titlebarHeight = isMac && compact ? 30.0 : 0.0;
-    final showSearch = searchController != null && !searchCollapsed;
+    return (
+      glassFrameInset: glassFrameInset,
+      contentHeight: contentHeight,
+      titlebarHeight: titlebarHeight,
+    );
+  }
+
+  Widget _brand(BuildContext context) {
     const brandSize = 30.0;
-    final brand = Semantics(
+    return Semantics(
       button: onBrandTap != null || onProfile != null,
       label: context.l10n.chatProfileSettings,
       child: GestureDetector(
@@ -421,163 +463,168 @@ final class MessengerSectionHeader extends StatelessWidget {
         ),
       ),
     );
-    // WideLayoutShell owns the single toggle so it can follow the animated
-    // sidebar boundary without duplicating actions in the two content states.
-    return Transform.translate(
-      offset: Offset(compact || collapsed ? 0 : -glassFrameInset, 0),
-      child: Container(
-        // Expanded and collapsed brands share one centerline. Collapse only
-        // moves the accent dot beside the `a`; no duplicate Fa wordmark.
-        height: titlebarHeight + contentHeight,
-        color: tokens.direction == FaVisualDirection.glass
-            ? Colors.transparent
-            : colors.panel,
-        child: Column(
-          children: [
-            if (titlebarHeight > 0)
-              SizedBox(
-                key: const ValueKey('macosSidebarTitlebar'),
-                width: double.infinity,
-                height: titlebarHeight,
-              ),
-            if (collapsed)
-              SizedBox(
-                height: contentHeight,
-                child: Center(child: brand),
-              )
-            else
-              SizedBox(
-                height: contentHeight,
-                child: Padding(
-                  padding: EdgeInsets.fromLTRB(compact ? 12 : 10, 7, 10, 7),
-                  child: Row(
-                    children: [
-                      leading ?? brand,
-                      if (compact && showSearch) ...[
-                        const SizedBox(width: 8),
-                        // A fixed title slot keeps Search at the same geometry
-                        // for Chats, Activity and Apps in the compact shell.
-                        SizedBox(
-                          width: 64,
-                          child: onSearchClose == null
-                              ? Text(
-                                  title,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                    color: colors.text,
-                                    fontSize: 17,
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                )
-                              : Align(
-                                  alignment: Alignment.centerLeft,
-                                  child: FaIconActionButton(
-                                    buttonKey: const ValueKey(
-                                      'messengerSearchClose',
-                                    ),
-                                    onPressed: onSearchClose,
-                                    tooltip: MaterialLocalizations.of(
-                                      context,
-                                    ).backButtonTooltip,
-                                    diameter: 32,
-                                    glyphSize: 22,
-                                    glass: false,
-                                    child: const FaIcon(FaSemanticIcon.back),
-                                  ),
-                                ),
-                        ),
-                      ],
-                      SizedBox(width: showSearch ? 6 : 8),
-                      if (showSearch)
-                        // THE one search field (SessionSearchField): the
-                        // same capsule the Files band renders.
-                        Expanded(
-                          child: SessionSearchField(
-                            key: const ValueKey('messengerSearchField'),
-                            controller: searchController,
-                            focusNode: searchFocusNode,
-                            hintText: searchHint,
-                            onQueryChanged: onSearch,
-                          ),
-                        )
-                      else
-                        Expanded(
-                          child: Text(
-                            title,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              color: colors.text,
-                              fontSize: compact ? 16 : 17,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ),
-                      if (searchCollapsed && searchController != null) ...[
-                        const SizedBox(width: 8),
-                        FaIconActionButton(
-                          buttonKey: const ValueKey('messengerSearchReveal'),
-                          onPressed: onSearchReveal,
-                          tooltip: searchHint,
-                          diameter: 32,
-                          glyphSize: 21,
-                          glass: false,
-                          child: const FaIcon(FaSemanticIcon.search),
-                        ),
-                      ],
-                      if (onNew != null &&
-                          (!compact || searchController == null)) ...[
-                        const SizedBox(width: 8),
-                        SizedBox.square(
-                          dimension: 32,
-                          child: IconButton.filled(
-                            key:
-                                newButtonKey ??
-                                const ValueKey('messengerNewButton'),
-                            onPressed: onNew,
-                            tooltip: context.l10n.chatNew,
-                            iconSize: 18,
-                            color: Colors.white,
-                            padding: EdgeInsets.zero,
-                            style: IconButton.styleFrom(
-                              backgroundColor: tokens.accent,
-                              foregroundColor: tokens.accentInk,
-                              minimumSize: const Size.square(32),
-                              maximumSize: const Size.square(32),
-                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                            ),
-                            icon: const Icon(Icons.edit_outlined),
-                          ),
-                        ),
-                      ],
-                      if (trailing != null) ...[
-                        const SizedBox(width: 8),
-                        trailing!,
-                      ],
-                      if (compact && onSettings != null) ...[
-                        const SizedBox(width: 8),
-                        FaIconActionButton(
-                          buttonKey: const ValueKey('narrowSettingsButton'),
-                          onPressed: onSettings,
-                          tooltip: context.l10n.settingsTitle,
-                          diameter: 32,
-                          glyphSize: 20,
-                          glass: false,
-                          child: const Icon(Icons.settings_outlined),
-                        ),
-                      ],
-                      if (!compact && onCollapse != null) ...[
-                        const SizedBox(width: 4),
-                        const SizedBox.square(dimension: 36),
-                      ],
-                    ],
-                  ),
-                ),
-              ),
-          ],
+  }
+
+  Widget _expandedContent(
+    BuildContext context,
+    Widget brand,
+    FahColors colors,
+    FaDesignTokens tokens,
+    bool showSearch,
+    ({double glassFrameInset, double contentHeight, double titlebarHeight})
+    geometry,
+  ) {
+    return SizedBox(
+      height: geometry.contentHeight,
+      child: Padding(
+        padding: EdgeInsets.fromLTRB(compact ? 12 : 10, 7, 10, 7),
+        child: Row(
+          children: _rowChildren(context, brand, colors, tokens, showSearch),
         ),
       ),
     );
+  }
+
+  List<Widget> _rowChildren(
+    BuildContext context,
+    Widget brand,
+    FahColors colors,
+    FaDesignTokens tokens,
+    bool showSearch,
+  ) {
+    return [
+      leading ?? brand,
+      if (compact && showSearch) ...[
+        const SizedBox(width: 8),
+        SizedBox(width: 64, child: _compactTitle(context, colors)),
+      ],
+      SizedBox(width: showSearch ? 6 : 8),
+      Expanded(child: _searchOrTitle(colors, showSearch)),
+      ..._searchRevealWidgets(),
+      ..._newWidgets(context, tokens),
+      ..._trailingWidgets(),
+      ..._settingsWidgets(context),
+      ..._collapseWidgets(),
+    ];
+  }
+
+  Widget _compactTitle(BuildContext context, FahColors colors) {
+    if (onSearchClose == null) {
+      return Text(
+        title,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: TextStyle(
+          color: colors.text,
+          fontSize: 17,
+          fontWeight: FontWeight.w600,
+        ),
+      );
+    }
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: FaIconActionButton(
+        buttonKey: const ValueKey('messengerSearchClose'),
+        onPressed: onSearchClose,
+        tooltip: MaterialLocalizations.of(context).backButtonTooltip,
+        diameter: 32,
+        glyphSize: 22,
+        glass: false,
+        child: const FaIcon(FaSemanticIcon.back),
+      ),
+    );
+  }
+
+  Widget _searchOrTitle(FahColors colors, bool showSearch) {
+    if (showSearch) {
+      return SessionSearchField(
+        key: const ValueKey('messengerSearchField'),
+        controller: searchController,
+        focusNode: searchFocusNode,
+        hintText: searchHint,
+        onQueryChanged: onSearch,
+      );
+    }
+    return Text(
+      title,
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+      style: TextStyle(
+        color: colors.text,
+        fontSize: compact ? 16 : 17,
+        fontWeight: FontWeight.w600,
+      ),
+    );
+  }
+
+  List<Widget> _searchRevealWidgets() {
+    if (!searchCollapsed || searchController == null) return const [];
+    return [
+      const SizedBox(width: 8),
+      FaIconActionButton(
+        buttonKey: const ValueKey('messengerSearchReveal'),
+        onPressed: onSearchReveal,
+        tooltip: searchHint,
+        diameter: 32,
+        glyphSize: 21,
+        glass: false,
+        child: const FaIcon(FaSemanticIcon.search),
+      ),
+    ];
+  }
+
+  List<Widget> _newWidgets(BuildContext context, FaDesignTokens tokens) {
+    if (onNew == null || (compact && searchController != null)) {
+      return const [];
+    }
+    return [
+      const SizedBox(width: 8),
+      SizedBox.square(
+        dimension: 32,
+        child: IconButton.filled(
+          key: newButtonKey ?? const ValueKey('messengerNewButton'),
+          onPressed: onNew,
+          tooltip: context.l10n.chatNew,
+          iconSize: 18,
+          color: Colors.white,
+          padding: EdgeInsets.zero,
+          style: IconButton.styleFrom(
+            backgroundColor: tokens.accent,
+            foregroundColor: tokens.accentInk,
+            minimumSize: const Size.square(32),
+            maximumSize: const Size.square(32),
+            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          ),
+          icon: const Icon(Icons.edit_outlined),
+        ),
+      ),
+    ];
+  }
+
+  List<Widget> _trailingWidgets() {
+    final widget = trailing;
+    if (widget == null) return const [];
+    return [const SizedBox(width: 8), widget];
+  }
+
+  List<Widget> _settingsWidgets(BuildContext context) {
+    if (!compact || onSettings == null) return const [];
+    return [
+      const SizedBox(width: 8),
+      FaIconActionButton(
+        buttonKey: const ValueKey('narrowSettingsButton'),
+        onPressed: onSettings,
+        tooltip: context.l10n.settingsTitle,
+        diameter: 32,
+        glyphSize: 20,
+        glass: false,
+        child: const Icon(Icons.settings_outlined),
+      ),
+    ];
+  }
+
+  List<Widget> _collapseWidgets() {
+    if (compact || onCollapse == null) return const [];
+    return [const SizedBox(width: 4), const SizedBox.square(dimension: 36)];
   }
 }

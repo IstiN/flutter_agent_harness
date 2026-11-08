@@ -107,19 +107,33 @@ extension _WideLayoutShellPanels on _WideLayoutShellState {
     required bool compact,
     required bool collapsed,
   }) {
+    // Section-specific chrome is data, not a chain of switches in the panel
+    // assembly. Missing entries deliberately retain ChatListPanel's defaults.
+    final titles = <_WideShellSection, String>{
+      _WideShellSection.activity: context.l10n.wideNavActivity,
+      _WideShellSection.apps: context.l10n.appsGridTitle,
+    };
+    final searchControllers = <_WideShellSection, TextEditingController>{
+      _WideShellSection.activity: _activitySearchController,
+      _WideShellSection.apps: _appLauncherController.searchController,
+    };
+    final searchHints = <_WideShellSection, String>{
+      _WideShellSection.activity: context.l10n.activitySearchHint,
+      _WideShellSection.apps: context.l10n.launcherSearchHint,
+    };
+    final searchCallbacks = <_WideShellSection, ValueChanged<String>>{
+      _WideShellSection.activity: _activityController.setSearch,
+      _WideShellSection.apps: (_) {},
+    };
+    final bodyBuilders = <_WideShellSection, Widget Function(double)>{
+      _WideShellSection.activity: _buildActivitySidebarBody,
+      _WideShellSection.apps: _buildAppsSidebarBody,
+    };
     return ChatListPanel(
       controller: _chatController,
-      title: switch (_section) {
-        _WideShellSection.activity => context.l10n.wideNavActivity,
-        _WideShellSection.apps => context.l10n.appsGridTitle,
-        _ => null,
-      },
+      title: titles[_section],
       compact: compact,
-      selectedEntryId:
-          _activeNetworkEntry?.id ??
-          (_selectedSessionId == null
-              ? null
-              : ChatEntryId.local(_selectedSessionId!)),
+      selectedEntryId: _selectedChatPanelEntryId(),
       didOpen: (entry) =>
           entry.kind == ChatListEntryKind.localAgent &&
           widget.manager.active?.id == entry.id.value,
@@ -140,41 +154,25 @@ extension _WideLayoutShellPanels on _WideLayoutShellState {
       // The rail and narrow dock own the section/filter destinations. Only
       // the rail-independent collapsed desktop sidebar retains its toolbar.
       showFilterToolbar: collapsed,
-      searchController: switch (_section) {
-        _WideShellSection.chats => null,
-        _WideShellSection.local => null,
-        _WideShellSection.activity => _activitySearchController,
-        _WideShellSection.apps => _appLauncherController.searchController,
-        _WideShellSection.settings => null,
-      },
+      searchController: searchControllers[_section],
       searchFocusNode: _section == _WideShellSection.apps
           ? _appLauncherController.searchFocusNode
           : null,
-      searchHint: switch (_section) {
-        _WideShellSection.chats => null,
-        _WideShellSection.local => null,
-        _WideShellSection.activity => context.l10n.activitySearchHint,
-        _WideShellSection.apps => context.l10n.launcherSearchHint,
-        _WideShellSection.settings => null,
-      },
-      onSearch: switch (_section) {
-        _WideShellSection.chats => null,
-        _WideShellSection.local => null,
-        _WideShellSection.activity => _activityController.setSearch,
-        _WideShellSection.apps => (_) {},
-        _WideShellSection.settings => null,
-      },
+      searchHint: searchHints[_section],
+      onSearch: searchCallbacks[_section],
       bodyKey: _section == _WideShellSection.chats
           ? null
           : ValueKey('wide-sidebar-${_section.name}'),
-      bodyBuilder: switch (_section) {
-        _WideShellSection.chats => null,
-        _WideShellSection.local => null,
-        _WideShellSection.activity => _buildActivitySidebarBody,
-        _WideShellSection.apps => _buildAppsSidebarBody,
-        _WideShellSection.settings => null,
-      },
+      bodyBuilder: bodyBuilders[_section],
     );
+  }
+
+  ChatEntryId? _selectedChatPanelEntryId() {
+    final networkId = _activeNetworkEntry?.id;
+    if (networkId != null) return networkId;
+    final sessionId = _selectedSessionId;
+    if (sessionId == null) return null;
+    return ChatEntryId.local(sessionId);
   }
 
   Widget _buildActivitySidebarBody(double topPadding) {

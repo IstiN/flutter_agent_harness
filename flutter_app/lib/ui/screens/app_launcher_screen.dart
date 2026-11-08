@@ -1248,126 +1248,8 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
             _tab == _LauncherTab.widgets &&
             _searchController.text.trim().isEmpty)
           _buildFeaturedApps(colors),
-        // ── Tabs: the app grid or the widgets catalog ────────────
-        // Desktop shares the band's 16pt inset and capsule chips; the
-        // phone keeps its own centered 760 stage and MessengerCategoryChip
-        // pills (the narrow chrome and its goldens are unchanged).
-        Padding(
-          padding: widget.fullScreen
-              ? const EdgeInsets.fromLTRB(16, 10, 16, 4)
-              : const EdgeInsets.fromLTRB(20, 0, 20, 4),
-          child: widget.fullScreen
-              ? SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: Row(
-                    children: [
-                      for (final tab in _LauncherTab.values)
-                        Padding(
-                          padding: const EdgeInsets.only(right: 8),
-                          child: _OverviewChip(
-                            chipKey: ValueKey(
-                              tab == _LauncherTab.widgets
-                                  ? 'appsTab-myApps'
-                                  : 'appsTab-catalog',
-                            ),
-                            icon: tab == _LauncherTab.widgets
-                                ? Icons.apps_outlined
-                                : Icons.download_outlined,
-                            label: switch (tab) {
-                              _LauncherTab.widgets => context.l10n.appsMyApps,
-                              _LauncherTab.getWidgets =>
-                                context.l10n.appsWidgetStore,
-                            },
-                            selected: _tab == tab,
-                            onTap: () => _controller.select(
-                              tab == _LauncherTab.widgets
-                                  ? AppsDirectorySection.myApps
-                                  : AppsDirectorySection.widgetStore,
-                            ),
-                          ),
-                        ),
-                      // gh-1616: Chrome-parity "Load unpacked" — a local
-                      // apps/<id>/ folder loads, validates and persists like a
-                      // catalog install. Hidden on hosts with no folder picker.
-                      if (_unpackedPicker != null)
-                        Padding(
-                          padding: const EdgeInsets.only(right: 8),
-                          child: _OverviewChip(
-                            chipKey: const ValueKey('appsLoadUnpacked'),
-                            icon: Icons.folder_open_outlined,
-                            label: context.l10n.launcherLoadUnpacked,
-                            selected: false,
-                            onTap: () => unawaited(
-                              loadUnpackedWidget(
-                                context,
-                                manager: widget.manager,
-                                appsStore: _appsStore,
-                                picker: _unpackedPicker,
-                              ),
-                            ),
-                          ),
-                        ),
-                    ],
-                  ),
-                )
-              : Center(
-                  child: SizedBox(
-                    width: 760,
-                    child: SingleChildScrollView(
-                      scrollDirection: Axis.horizontal,
-                      child: Row(
-                        children: [
-                          for (final tab in _LauncherTab.values)
-                            Padding(
-                              padding: const EdgeInsets.only(right: 8),
-                              child: MessengerCategoryChip(
-                                chipKey: ValueKey(
-                                  tab == _LauncherTab.widgets
-                                      ? 'appsTab-myApps'
-                                      : 'appsTab-catalog',
-                                ),
-                                icon: tab == _LauncherTab.widgets
-                                    ? Icons.apps_outlined
-                                    : Icons.download_outlined,
-                                label: switch (tab) {
-                                  _LauncherTab.widgets =>
-                                    context.l10n.appsMyApps,
-                                  _LauncherTab.getWidgets =>
-                                    context.l10n.appsWidgetStore,
-                                },
-                                selected: _tab == tab,
-                                onTap: () => _controller.select(
-                                  tab == _LauncherTab.widgets
-                                      ? AppsDirectorySection.myApps
-                                      : AppsDirectorySection.widgetStore,
-                                ),
-                              ),
-                            ),
-                          // gh-1616: Chrome-parity "Load unpacked" — a local
-                          // apps/<id>/ folder loads, validates and persists
-                          // like a catalog install. Hidden on hosts with no
-                          // folder picker.
-                          if (_unpackedPicker != null)
-                            MessengerCategoryChip(
-                              chipKey: const ValueKey('appsLoadUnpacked'),
-                              icon: Icons.folder_open_outlined,
-                              label: context.l10n.launcherLoadUnpacked,
-                              selected: false,
-                              onTap: () => unawaited(
-                                loadUnpackedWidget(
-                                  context,
-                                  manager: widget.manager,
-                                  appsStore: _appsStore,
-                                  picker: _unpackedPicker,
-                                ),
-                              ),
-                            ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-        ),
+        // Desktop and phone keep their own tab chrome and geometry.
+        _buildLauncherTabs(),
         if (widget.fullScreen)
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
@@ -1399,6 +1281,126 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
           ? _buildOverviewHeader(colors)
           : _buildNarrowHeader(colors),
       body: content,
+    );
+  }
+
+  Widget _buildLauncherTabs() {
+    return Padding(
+      padding: widget.fullScreen
+          ? const EdgeInsets.fromLTRB(16, 10, 16, 4)
+          : const EdgeInsets.fromLTRB(20, 0, 20, 4),
+      child: widget.fullScreen
+          ? _buildWideLauncherTabs()
+          : _buildNarrowLauncherTabs(),
+    );
+  }
+
+  Widget _buildWideLauncherTabs() {
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Row(
+        children: [
+          for (final tab in _LauncherTab.values) _buildWideLauncherTab(tab),
+          if (_unpackedPicker != null) _buildWideUnpackedChip(),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildNarrowLauncherTabs() {
+    return Center(
+      child: SizedBox(
+        width: 760,
+        child: SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(
+            children: [
+              for (final tab in _LauncherTab.values)
+                _buildNarrowLauncherTab(tab),
+              if (_unpackedPicker != null) _buildNarrowUnpackedChip(),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  ValueKey<String> _launcherTabKey(_LauncherTab tab) => ValueKey(
+    tab == _LauncherTab.widgets ? 'appsTab-myApps' : 'appsTab-catalog',
+  );
+
+  IconData _launcherTabIcon(_LauncherTab tab) => tab == _LauncherTab.widgets
+      ? Icons.apps_outlined
+      : Icons.download_outlined;
+
+  String _launcherTabLabel(_LauncherTab tab) => switch (tab) {
+    _LauncherTab.widgets => context.l10n.appsMyApps,
+    _LauncherTab.getWidgets => context.l10n.appsWidgetStore,
+  };
+
+  void _selectLauncherTab(_LauncherTab tab) {
+    _controller.select(
+      tab == _LauncherTab.widgets
+          ? AppsDirectorySection.myApps
+          : AppsDirectorySection.widgetStore,
+    );
+  }
+
+  Widget _buildWideLauncherTab(_LauncherTab tab) {
+    return Padding(
+      padding: const EdgeInsets.only(right: 8),
+      child: _OverviewChip(
+        chipKey: _launcherTabKey(tab),
+        icon: _launcherTabIcon(tab),
+        label: _launcherTabLabel(tab),
+        selected: _tab == tab,
+        onTap: () => _selectLauncherTab(tab),
+      ),
+    );
+  }
+
+  Widget _buildNarrowLauncherTab(_LauncherTab tab) {
+    return Padding(
+      padding: const EdgeInsets.only(right: 8),
+      child: MessengerCategoryChip(
+        chipKey: _launcherTabKey(tab),
+        icon: _launcherTabIcon(tab),
+        label: _launcherTabLabel(tab),
+        selected: _tab == tab,
+        onTap: () => _selectLauncherTab(tab),
+      ),
+    );
+  }
+
+  Widget _buildWideUnpackedChip() {
+    return Padding(
+      padding: const EdgeInsets.only(right: 8),
+      child: _OverviewChip(
+        chipKey: const ValueKey('appsLoadUnpacked'),
+        icon: Icons.folder_open_outlined,
+        label: context.l10n.launcherLoadUnpacked,
+        selected: false,
+        onTap: () => unawaited(_loadUnpacked()),
+      ),
+    );
+  }
+
+  Widget _buildNarrowUnpackedChip() {
+    return MessengerCategoryChip(
+      chipKey: const ValueKey('appsLoadUnpacked'),
+      icon: Icons.folder_open_outlined,
+      label: context.l10n.launcherLoadUnpacked,
+      selected: false,
+      onTap: () => unawaited(_loadUnpacked()),
+    );
+  }
+
+  Future<void> _loadUnpacked() {
+    return loadUnpackedWidget(
+      context,
+      manager: widget.manager,
+      appsStore: _appsStore,
+      picker: _unpackedPicker,
     );
   }
 

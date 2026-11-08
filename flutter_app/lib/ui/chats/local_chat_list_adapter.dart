@@ -105,9 +105,7 @@ final class LocalChatListAdapter implements LocalChatListChangeSource {
     // Names and previews leave BOTH the boot path and the all-corpus
     // background path. Rows render cached/derived values; only the
     // viewport calls [warmVisible] for real transcript/name probes.
-    var jsonlNames = const <String, String>{};
-    if (readPersistedNames) jsonlNames = manager.knownSessionNames;
-    final infoNames = {...jsonlNames, ...sessionInfoNames};
+    final infoNames = _sessionNames();
     final warm = _previewWarmStates[manager] ??= _PreviewWarmState();
     final entries = <ChatListEntry>[];
     for (final session in live) {
@@ -179,6 +177,13 @@ final class LocalChatListAdapter implements LocalChatListChangeSource {
       );
     }
     return entries;
+  }
+
+  Map<String, String> _sessionNames() {
+    final jsonlNames = readPersistedNames
+        ? manager.knownSessionNames
+        : const <String, String>{};
+    return {...jsonlNames, ...sessionInfoNames};
   }
 
   /// Warms decorations for rows that actually reached the viewport.
@@ -275,10 +280,16 @@ final class LocalChatListAdapter implements LocalChatListChangeSource {
         }
       }
     }
-    final derived = titleBuilder(id, createdAt, isSubagent).trim();
-    if (derived.isNotEmpty) return derived;
-    return isSubagent && id.length > 8 ? id.substring(0, 8) : id;
+    return _derivedTitle(id, createdAt, isSubagent);
   }
+
+  String _derivedTitle(String id, DateTime createdAt, bool isSubagent) {
+    final derived = titleBuilder(id, createdAt, isSubagent).trim();
+    return derived.isNotEmpty ? derived : _idTitle(id, isSubagent);
+  }
+
+  static String _idTitle(String id, bool isSubagent) =>
+      isSubagent && id.length > 8 ? id.substring(0, 8) : id;
 
   static final RegExp _uuidPattern = RegExp(
     r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-'
@@ -325,57 +336,107 @@ final class LocalChatPreviewReader implements LocalChatPreviewSource {
   @override
   Future<String?> read(SessionMetadata metadata) async {
     try {
-      String? text;
-      var skipPartialFirstLine = false;
-      final env = this.env;
-      final ranged = env is RangedReadFileSystem
-          ? env as RangedReadFileSystem
-          : null;
-      if (ranged != null) {
-        final info = (await env.fileInfo(metadata.path)).valueOrNull;
-        if (info != null) {
-          final start = (info.size - tailBytes).clamp(0, info.size);
-          final bytes = (await ranged.readRange(
-            metadata.path,
-            start,
-            info.size,
-          )).valueOrNull;
-          if (bytes != null) {
-            text = utf8.decode(bytes, allowMalformed: true);
-            skipPartialFirstLine = start > 0;
-          }
-        }
-      }
-      text ??= (await env.readTextFile(metadata.path)).valueOrNull;
-      if (text == null || text.isEmpty) return null;
-      var lines = const LineSplitter().convert(text);
-      if (skipPartialFirstLine && lines.isNotEmpty) {
-        lines = lines.sublist(1);
-      }
-      for (final line in lines.reversed) {
-        if (line.trim().isEmpty) continue;
-        try {
-          final decoded = jsonDecode(line);
-          if (decoded is! Map<String, dynamic>) continue;
-          final record = SessionRecord.fromJson(decoded);
-          if (record is! MessageRecord) continue;
-          final message = record.message;
-          if (message is! UserMessage && message is! AssistantMessage) continue;
-          final preview = AgentService.tailMessagePairs([
-            message,
-          ], 1).first.$2.trim();
-          // System notices are agent bookkeeping, not the conversation's
-          // last human-readable reply. Keep walking the persisted tail.
-          if (preview.isNotEmpty && !isFaSystemNoticeContent(preview)) {
-            return preview;
-          }
-        } on Object {
-          // Ignore non-message/torn tail lines and keep looking backwards.
-        }
-      }
+      final tail = await _readTail(metadata);
+      return tail == null ? null : _previewFromTail(tail);
     } on Object {
       return null;
     }
+  }
+
+  Future<_TranscriptTail?> _readTail(SessionMetadata metadata) async {
+    final env = this.env;
+    final ranged = env is RangedReadFileSystem
+        ? env as RangedReadFileSystem
+        : null;
+    final tail = ranged == null
+        ? null
+        : await _readRangedTail(ranged, metadata);
+    return tail ?? await _readFullTail(metadata);
+  }
+
+  Future<_TranscriptTail?> _readRangedTail(
+    RangedReadFileSystem ranged,
+    SessionMetadata metadata,
+  ) async {
+    final info = (await env.fileInfo(metadata.path)).valueOrNull;
+    if (info == null) return null;
+    final start = (info.size - tailBytes).clamp(0, info.size);
+    final bytes = (await ranged.readRange(
+      metadata.path,
+      start,
+      info.size,
+    )).valueOrNull;
+    if (bytes == null) return null;
+    return _TranscriptTail(
+      utf8.decode(bytes, allowMalformed: true),
+      skipPartialFirstLine: start > 0,
+    );
+  }
+
+  Future<_TranscriptTail?> _readFullTail(SessionMetadata metadata) async {
+    final text = (await env.readTextFile(metadata.path)).valueOrNull;
+    return text == null ? null : _TranscriptTail(text);
+  }
+
+  static String? _previewFromTail(_TranscriptTail tail) {
+    if (tail.text.isEmpty) return null;
+    return _previewFromLines(_tailLines(tail).reversed);
+  }
+
+  static List<String> _tailLines(_TranscriptTail tail) {
+    final lines = const LineSplitter().convert(tail.text);
+    return tail.skipPartialFirstLine && lines.isNotEmpty
+        ? lines.sublist(1)
+        : lines;
+  }
+
+  static String? _previewFromLines(Iterable<String> lines) {
+    for (final line in lines) {
+      final preview = _linePreview(line);
+      if (preview != null) return preview;
+    }
     return null;
   }
+
+  static String? _linePreview(String line) {
+    try {
+      if (line.trim().isEmpty) return null;
+      return _decodedLinePreview(line);
+    } on Object {
+      // Ignore non-message/torn tail lines and keep looking backwards.
+      return null;
+    }
+  }
+
+  static String? _decodedLinePreview(String line) {
+    final message = _decodeMessage(line);
+    return message == null ? null : _messagePreview(message);
+  }
+
+  static Message? _decodeMessage(String line) {
+    final decoded = jsonDecode(line);
+    if (decoded is! Map<String, dynamic>) return null;
+    final record = SessionRecord.fromJson(decoded);
+    if (record is! MessageRecord) return null;
+    return _conversationMessage(record.message);
+  }
+
+  static Message? _conversationMessage(Message message) =>
+      message is UserMessage || message is AssistantMessage ? message : null;
+
+  static String? _messagePreview(Message message) {
+    final preview = AgentService.tailMessagePairs([message], 1).first.$2.trim();
+    // System notices are agent bookkeeping, not the conversation's last
+    // human-readable reply. Keep walking the persisted tail.
+    return preview.isNotEmpty && !isFaSystemNoticeContent(preview)
+        ? preview
+        : null;
+  }
+}
+
+final class _TranscriptTail {
+  const _TranscriptTail(this.text, {this.skipPartialFirstLine = false});
+
+  final String text;
+  final bool skipPartialFirstLine;
 }

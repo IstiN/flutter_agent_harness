@@ -374,6 +374,23 @@ class _FileBrowserState extends State<FileBrowser> {
   String _childPath(String name) =>
       _segments.isEmpty ? name : '${_segments.join('/')}/$name';
 
+  List<String> _segmentsOf(String path) => [
+    for (final segment in path.split('/'))
+      if (segment.isNotEmpty && segment != '.') segment,
+  ];
+
+  List<String> _resolveSegments(String target) {
+    final resolved = <String>[];
+    for (final segment in _segmentsOf(target)) {
+      if (segment == '..') {
+        if (resolved.isNotEmpty) resolved.removeLast();
+        continue;
+      }
+      resolved.add(segment);
+    }
+    return resolved;
+  }
+
   /// Segments (cwd-relative) that open the browser in [path]:
   /// [FileBrowser.initialPath] resolution. Relative paths resolve against
   /// the env cwd; absolute ones are used as-is, rebased onto the cwd when
@@ -387,21 +404,10 @@ class _FileBrowserState extends State<FileBrowser> {
     if (!target.startsWith('/')) {
       target = cwd.endsWith('/') ? '$cwd$target' : '$cwd/$target';
     }
-    List<String> segmentsOf(String p) => [
-      for (final segment in p.split('/'))
-        if (segment.isNotEmpty && segment != '.') segment,
-    ];
     // Resolve `..` on the absolute target (the cwd keeps `..` inside it —
     // the browser never escapes its root namespace).
-    final resolved = <String>[];
-    for (final segment in segmentsOf(target)) {
-      if (segment == '..') {
-        if (resolved.isNotEmpty) resolved.removeLast();
-        continue;
-      }
-      resolved.add(segment);
-    }
-    final cwdSegments = segmentsOf(cwd);
+    final resolved = _resolveSegments(target);
+    final cwdSegments = _segmentsOf(cwd);
     final underCwd =
         resolved.length >= cwdSegments.length &&
         _segmentsStartWith(resolved, cwdSegments);
@@ -416,7 +422,7 @@ class _FileBrowserState extends State<FileBrowser> {
     // container, so 'Users/…' resolves nowhere).
     final mountRoot = _mountEnv?.mountedRoot;
     if (mountRoot != null) {
-      final mountSegments = segmentsOf(mountRoot);
+      final mountSegments = _segmentsOf(mountRoot);
       if (resolved.length >= mountSegments.length &&
           _segmentsStartWith(resolved, mountSegments)) {
         return resolved.sublist(mountSegments.length);

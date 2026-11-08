@@ -1421,11 +1421,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
           child: Padding(
             // A dialog is a floating platter; a phone is a full-bleed page,
             // not a shrunken desktop card with bright strips at its edges.
-            padding: inDialog
-                ? EdgeInsets.zero
-                : floatingPlatter
-                ? const EdgeInsets.fromLTRB(8, 0, 8, 8)
-                : EdgeInsets.zero,
+            padding: _settingsPadding(
+              inDialog: inDialog,
+              floatingPlatter: floatingPlatter,
+            ),
             // The page platter: real liquid glass in the glass direction,
             // the direction's opaque background elsewhere. Sections group
             // into SOLID SettingsGroup cards on top — never glass-in-glass.
@@ -1441,7 +1440,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     )
                   : tokens.background,
               borderRadius: BorderRadius.circular(
-                floatingPlatter && !inDialog ? 18 : 0,
+                _settingsPlatterRadius(
+                  floatingPlatter: floatingPlatter,
+                  inDialog: inDialog,
+                ),
               ),
               borderSide: inDialog
                   ? BorderSide.none
@@ -1566,6 +1568,37 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ),
       ),
     );
+    return _settingsGlassUnderlay(
+      glass: glass,
+      inGlassDialog: inGlassDialog,
+      tokens: tokens,
+      page: page,
+    );
+  }
+
+  EdgeInsets _settingsPadding({
+    required bool inDialog,
+    required bool floatingPlatter,
+  }) {
+    if (inDialog) return EdgeInsets.zero;
+    if (floatingPlatter) return const EdgeInsets.fromLTRB(8, 0, 8, 8);
+    return EdgeInsets.zero;
+  }
+
+  double _settingsPlatterRadius({
+    required bool floatingPlatter,
+    required bool inDialog,
+  }) {
+    if (floatingPlatter && !inDialog) return 18;
+    return 0;
+  }
+
+  Widget _settingsGlassUnderlay({
+    required bool glass,
+    required bool inGlassDialog,
+    required faui.FaDesignTokens tokens,
+    required Widget page,
+  }) {
     if (!glass) return page;
     // The wide dialog already has the live app behind it — no underlay.
     if (inGlassDialog) return page;

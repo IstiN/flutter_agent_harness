@@ -191,9 +191,23 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     final manager = widget.networkSessions;
     if (controller == null || manager == null) return;
     await showJoinSheet(context, controller: controller, manager: manager);
+    _completeNetworkJoin();
+  }
+
+  void _completeNetworkJoin() {
     if (!mounted || !_networkSelected) return;
     setState(() => _providerConfigured = true);
+    _advanceFromProviderPage();
+  }
+
+  void _advanceFromProviderPage() {
     if (_page == 1) _next();
+  }
+
+  String get _primaryLabel {
+    if (_page == 2) return 'Continue without access';
+    if (_page == _pageCount - 1) return 'Open Fa';
+    return 'Continue';
   }
 
   @override
@@ -201,11 +215,6 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     final wide = MediaQuery.sizeOf(context).width >= 920;
     final last = _page == _pageCount - 1;
     final gated = _page == 1 && _providerGateActive;
-    final primaryLabel = switch (_page) {
-      2 => 'Continue without access',
-      _ when last => 'Open Fa',
-      _ => 'Continue',
-    };
     return Scaffold(
       backgroundColor: _onbBg(context),
       body: SafeArea(
@@ -253,7 +262,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
               page: _page,
               pageCount: _pageCount,
               wide: wide,
-              primaryLabel: primaryLabel,
+              primaryLabel: _primaryLabel,
               primaryEnabled: !gated && !(last && _providerGateActive),
               onPrimary: last ? () => _finish(skipped: false) : _next,
               onBack: _page > 0 ? _back : null,
@@ -1690,10 +1699,19 @@ class _NetworkCard extends StatelessWidget {
   final bool selected;
   final VoidCallback? onTap;
 
+  Color _background(BuildContext context) =>
+      selected ? _onbSelBg(context) : _onbCard(context);
+
+  Color _border(BuildContext context) =>
+      selected ? _onbPrimary(context) : _onbBorder(context);
+
+  IconData get _trailingIcon =>
+      selected ? Icons.check_circle : Icons.arrow_forward;
+
   @override
   Widget build(BuildContext context) {
     return Material(
-      color: selected ? _onbSelBg(context) : _onbCard(context),
+      color: _background(context),
       borderRadius: BorderRadius.circular(16),
       child: InkWell(
         onTap: onTap,
@@ -1701,9 +1719,7 @@ class _NetworkCard extends StatelessWidget {
         child: Container(
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
-            border: Border.all(
-              color: selected ? _onbPrimary(context) : _onbBorder(context),
-            ),
+            border: Border.all(color: _border(context)),
             borderRadius: BorderRadius.circular(16),
           ),
           child: Row(
@@ -1734,11 +1750,7 @@ class _NetworkCard extends StatelessWidget {
                   ],
                 ),
               ),
-              Icon(
-                selected ? Icons.check_circle : Icons.arrow_forward,
-                color: _onbPrimary(context),
-                size: 20,
-              ),
+              Icon(_trailingIcon, color: _onbPrimary(context), size: 20),
             ],
           ),
         ),

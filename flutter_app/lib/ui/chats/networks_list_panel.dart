@@ -153,6 +153,70 @@ class _ChatNetworksPanelState extends State<ChatNetworksPanel> {
     setState(() => _query = '');
   }
 
+  bool _searchCollapsed(String? openId) =>
+      (widget.compact || openId != null) && !_searchShown;
+
+  VoidCallback? _searchRevealCallback(String? openId) =>
+      (widget.compact || openId != null) && !_searchShown
+      ? _revealSearch
+      : null;
+
+  VoidCallback? _searchCloseCallback(String? openId) =>
+      (widget.compact || openId != null) && _searchShown ? _closeSearch : null;
+
+  Widget? _headerLeading(String? openId, FahColors colors) {
+    if (openId == null) return null;
+    return IconButton(
+      key: const ValueKey('chatChannelsBack'),
+      tooltip: MaterialLocalizations.of(context).backButtonTooltip,
+      onPressed: () => _openNetwork(null),
+      icon: const Icon(Icons.chevron_left_rounded),
+      iconSize: 26,
+      color: colors.text,
+      visualDensity: VisualDensity.compact,
+    );
+  }
+
+  Widget? _headerTrailing(String? openId, FaDesignTokens tokens) {
+    if (openId != null) return null;
+    return FaIconActionButton(
+      buttonKey: const ValueKey('chatNetworksManage'),
+      diameter: 32,
+      glyphSize: 18,
+      glass: tokens.direction == FaVisualDirection.glass,
+      tooltip: context.l10n.chatManageNetworks,
+      onPressed: widget.onManageNetworks,
+      child: const Icon(Icons.settings_outlined),
+    );
+  }
+
+  Widget _buildHeader(
+    String? openId,
+    String? openName,
+    FahColors colors,
+    FaDesignTokens tokens,
+  ) {
+    return MessengerSectionHeader(
+      title: openName ?? context.l10n.networkNetworksTitle,
+      searchController: _searchController,
+      searchFocusNode: _searchFocus,
+      searchHint: openId == null
+          ? context.l10n.networkSearchHint
+          : context.l10n.networkChannelsSearchHint,
+      onSearch: (query) => setState(() => _query = query),
+      searchCollapsed: _searchCollapsed(openId),
+      onSearchReveal: _searchRevealCallback(openId),
+      onSearchClose: _searchCloseCallback(openId),
+      onProfile: null,
+      onSettings: widget.onSettings,
+      onNew: null,
+      compact: widget.compact,
+      onCollapse: widget.onCollapse,
+      leading: _headerLeading(openId, colors),
+      trailing: _headerTrailing(openId, tokens),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final colors = FahColors.of(context);
@@ -195,52 +259,7 @@ class _ChatNetworksPanelState extends State<ChatNetworksPanel> {
         return MessengerGlassPanel(
           compact: widget.compact,
           underlayKey: const ValueKey('networksChromeUnderlay'),
-          header: MessengerSectionHeader(
-            title: openName ?? context.l10n.networkNetworksTitle,
-            searchController: _searchController,
-            searchFocusNode: _searchFocus,
-            searchHint: openId == null
-                ? context.l10n.networkSearchHint
-                : context.l10n.networkChannelsSearchHint,
-            onSearch: (query) => setState(() => _query = query),
-            searchCollapsed:
-                (widget.compact || openId != null) && !_searchShown,
-            onSearchReveal: (widget.compact || openId != null) && !_searchShown
-                ? _revealSearch
-                : null,
-            onSearchClose: (widget.compact || openId != null) && _searchShown
-                ? _closeSearch
-                : null,
-            onProfile: null,
-            onSettings: widget.onSettings,
-            onNew: null,
-            compact: widget.compact,
-            onCollapse: widget.onCollapse,
-            leading: openId == null
-                ? null
-                : IconButton(
-                    key: const ValueKey('chatChannelsBack'),
-                    tooltip: MaterialLocalizations.of(
-                      context,
-                    ).backButtonTooltip,
-                    onPressed: () => _openNetwork(null),
-                    icon: const Icon(Icons.chevron_left_rounded),
-                    iconSize: 26,
-                    color: colors.text,
-                    visualDensity: VisualDensity.compact,
-                  ),
-            trailing: openId != null
-                ? null
-                : FaIconActionButton(
-                    buttonKey: const ValueKey('chatNetworksManage'),
-                    diameter: 32,
-                    glyphSize: 18,
-                    glass: tokens.direction == FaVisualDirection.glass,
-                    tooltip: context.l10n.chatManageNetworks,
-                    onPressed: widget.onManageNetworks,
-                    child: const Icon(Icons.settings_outlined),
-                  ),
-          ),
+          header: _buildHeader(openId, openName, colors, tokens),
           body: Row(
             key: const ValueKey('chatNetworksList'),
             crossAxisAlignment: CrossAxisAlignment.stretch,

@@ -133,6 +133,54 @@ class _LocalSessionsPanelState extends State<LocalSessionsPanel> {
     setState(() => _query = '');
   }
 
+  bool _searchCollapsed(LocalSessionFolder? openFolder) =>
+      (widget.compact || openFolder != null) && !_searchShown;
+
+  VoidCallback? _searchRevealCallback(LocalSessionFolder? openFolder) =>
+      (widget.compact || openFolder != null) && !_searchShown
+      ? _revealSearch
+      : null;
+
+  VoidCallback? _searchCloseCallback(LocalSessionFolder? openFolder) =>
+      (widget.compact || openFolder != null) && _searchShown
+      ? _closeSearch
+      : null;
+
+  Widget? _headerLeading(LocalSessionFolder? openFolder, FahColors colors) {
+    if (openFolder == null) return null;
+    return IconButton(
+      key: const ValueKey('localFolderBack'),
+      tooltip: context.l10n.localFolderBack,
+      onPressed: () => widget.onSelectFolder(null),
+      icon: const Icon(Icons.chevron_left_rounded),
+      iconSize: 26,
+      color: colors.text,
+      visualDensity: VisualDensity.compact,
+    );
+  }
+
+  Widget _buildHeader(LocalSessionFolder? openFolder, FahColors colors) {
+    return MessengerSectionHeader(
+      title: openFolder?.name ?? context.l10n.wideNavLocal,
+      searchController: _searchController,
+      searchFocusNode: _searchFocus,
+      searchHint: openFolder == null
+          ? context.l10n.localFoldersSearchHint
+          : context.l10n.sidebarSearchHint,
+      onSearch: (query) => setState(() => _query = query),
+      searchCollapsed: _searchCollapsed(openFolder),
+      onSearchReveal: _searchRevealCallback(openFolder),
+      onSearchClose: _searchCloseCallback(openFolder),
+      onProfile: null,
+      onSettings: widget.onSettings,
+      onNew: widget.onNew,
+      newButtonKey: const ValueKey('localNewButton'),
+      compact: widget.compact,
+      onCollapse: widget.onCollapse,
+      leading: _headerLeading(openFolder, colors),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final colors = FahColors.of(context);
@@ -177,42 +225,7 @@ class _LocalSessionsPanelState extends State<LocalSessionsPanel> {
         return MessengerGlassPanel(
           compact: widget.compact,
           underlayKey: const ValueKey('localChromeUnderlay'),
-          header: MessengerSectionHeader(
-            title: openFolder?.name ?? context.l10n.wideNavLocal,
-            searchController: _searchController,
-            searchFocusNode: _searchFocus,
-            searchHint: openFolder == null
-                ? context.l10n.localFoldersSearchHint
-                : context.l10n.sidebarSearchHint,
-            onSearch: (query) => setState(() => _query = query),
-            searchCollapsed:
-                (widget.compact || openFolder != null) && !_searchShown,
-            onSearchReveal:
-                (widget.compact || openFolder != null) && !_searchShown
-                ? _revealSearch
-                : null,
-            onSearchClose:
-                (widget.compact || openFolder != null) && _searchShown
-                ? _closeSearch
-                : null,
-            onProfile: null,
-            onSettings: widget.onSettings,
-            onNew: widget.onNew,
-            newButtonKey: const ValueKey('localNewButton'),
-            compact: widget.compact,
-            onCollapse: widget.onCollapse,
-            leading: openFolder == null
-                ? null
-                : IconButton(
-                    key: const ValueKey('localFolderBack'),
-                    tooltip: context.l10n.localFolderBack,
-                    onPressed: () => widget.onSelectFolder(null),
-                    icon: const Icon(Icons.chevron_left_rounded),
-                    iconSize: 26,
-                    color: colors.text,
-                    visualDensity: VisualDensity.compact,
-                  ),
-          ),
+          header: _buildHeader(openFolder, colors),
           body: Row(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
@@ -593,22 +606,31 @@ class _LocalSessionRowState extends State<LocalSessionRow> {
 
   bool get _showActions => _hovering || _focused;
 
+  String _preview(BuildContext context) {
+    final entry = widget.entry;
+    if (entry.isStreaming) {
+      return '${context.l10n.chatWorking} ${entry.preview ?? ''}'.trim();
+    }
+    final preview = entry.preview?.trim();
+    if (preview != null && preview.isNotEmpty) return preview;
+    return context.l10n.chatNoPreview;
+  }
+
+  Color _actionColor(FahColors colors, FaDesignTokens tokens) =>
+      widget.selected ? tokens.accentInk : colors.dim;
+
   @override
   Widget build(BuildContext context) {
     final entry = widget.entry;
     final selected = widget.selected;
     final colors = FahColors.of(context);
     final tokens = FaDesignTokens.of(context);
-    final actionColor = selected ? tokens.accentInk : colors.dim;
+    final actionColor = _actionColor(colors, tokens);
     final foreground = selected ? tokens.accentInk : colors.text;
     final subdued = selected
         ? tokens.accentInk.withValues(alpha: .82)
         : colors.dim;
-    final preview = entry.isStreaming
-        ? '${context.l10n.chatWorking} ${entry.preview ?? ''}'.trim()
-        : entry.preview?.trim().isNotEmpty == true
-        ? entry.preview!.trim()
-        : context.l10n.chatNoPreview;
+    final preview = _preview(context);
     final unread = entry.unreadCount ?? 0;
     final menu = widget.onLocalMenu;
     return Focus(

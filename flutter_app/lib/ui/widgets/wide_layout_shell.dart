@@ -12,6 +12,7 @@ import 'package:fa/apps/apps_store.dart';
 import 'package:fa/apps/js_app_navigation.dart';
 import 'package:fa/l10n/app_localizations.dart';
 import 'package:fa/l10n/l10n_ext.dart';
+import 'package:fa/network/models.dart' show Channel;
 import 'package:fa/network/network_mode.dart';
 import 'package:fa/network/network_session_manager.dart';
 import 'package:fa/sandbox/env_factory.dart';
@@ -828,28 +829,58 @@ class _WideLayoutShellState extends State<WideLayoutShell>
   ) async {
     final networkId = entry.networkId!;
     await mode.enterNetwork(networkId);
-    if (!manager.sessions.containsKey(networkId)) {
-      if (manager.wallet.networks[networkId]?.password == null) {
-        if (!mounted) return;
-        await showJoinSheet(
-          context,
-          controller: mode,
-          manager: manager,
-          initialNetworkId: networkId,
-        );
-      } else {
-        try {
-          await manager.resume(networkId);
-        } on Object catch (error) {
-          if (mounted) showFahErrorSnack(context, error.toString());
-        }
-      }
-    }
+    await _ensureNetworkSession(networkId, manager, mode);
     if (!mounted || !manager.sessions.containsKey(networkId)) return;
     await mode.selectChannel(entry.id.value);
     if (!mounted) return;
     setState(() => _activeNetworkEntry = entry);
     if (_isNarrow) await _pushNarrowChat();
+  }
+
+  /// Enters an existing live session, or follows the same join/resume path
+  /// shared by chat rows and the Networks panel. Selection remains the
+  /// caller's concern because the two surfaces deliberately handle a failed
+  /// connection differently.
+  Future<void> _ensureNetworkSession(
+    String networkId,
+    NetworkSessionManager manager,
+    NetworkModeController mode,
+  ) async {
+    if (manager.sessions.containsKey(networkId)) return;
+    if (manager.wallet.networks[networkId]?.password != null) {
+      await _resumeNetworkSession(networkId, manager);
+      return;
+    }
+    await _joinNetworkSession(networkId, manager, mode);
+  }
+
+  Future<void> _joinNetworkSession(
+    String networkId,
+    NetworkSessionManager manager,
+    NetworkModeController mode,
+  ) async {
+    if (!mounted) return;
+    await showJoinSheet(
+      context,
+      controller: mode,
+      manager: manager,
+      initialNetworkId: networkId,
+    );
+  }
+
+  Future<void> _resumeNetworkSession(
+    String networkId,
+    NetworkSessionManager manager,
+  ) async {
+    try {
+      await manager.resume(networkId);
+    } on Object catch (error) {
+      _showNetworkErrorSnack(error);
+    }
+  }
+
+  void _showNetworkErrorSnack(Object error) {
+    if (mounted) showFahErrorSnack(context, error.toString());
   }
 
   Future<void> _showChatEntryMenu(ChatListEntry entry, Rect anchor) async {
@@ -997,6 +1028,41 @@ class _WideLayoutShellState extends State<WideLayoutShell>
     );
   }
 
+  ({
+    double sidebarWidth,
+    bool contentCollapsed,
+    double contentWidth,
+    double contentOpacity,
+    bool contentInTransition,
+    double toggleShift,
+    double railLeading,
+    double toggleLeft,
+  })
+  _sidebarGeometry(double progress) {
+    final sidebarWidth =
+        _sidebarWidth + (_collapsedSidebarWidth - _sidebarWidth) * progress;
+    final contentCollapsed = progress >= .5;
+    final contentWidth =
+        (contentCollapsed ? _collapsedSidebarWidth : _sidebarWidth) - 8;
+    final contentOpacity = contentCollapsed
+        ? (progress - .5) * 2
+        : 1 - progress * 2;
+    final contentInTransition = progress > 0 && progress < 1;
+    final toggleShift = _isMacOS ? 60 * progress : 0.0;
+    final railLeading = MessengerNavRail.width + MessengerNavRail.seam * 2;
+    final toggleLeft = railLeading + sidebarWidth - 52 + toggleShift;
+    return (
+      sidebarWidth: sidebarWidth,
+      contentCollapsed: contentCollapsed,
+      contentWidth: contentWidth,
+      contentOpacity: contentOpacity,
+      contentInTransition: contentInTransition,
+      toggleShift: toggleShift,
+      railLeading: railLeading,
+      toggleLeft: toggleLeft,
+    );
+  }
+
   Widget _buildBody(FahColors colors) {
     final tokens = FaDesignTokens.of(context);
     return LayoutBuilder(
@@ -1006,46 +1072,16 @@ class _WideLayoutShellState extends State<WideLayoutShell>
           duration: FaMotion.duration(context, _sidebarCollapseDuration),
           curve: Curves.easeInOutCubic,
           builder: (context, progress, _) {
-            // One value drives all visible geometry. TweenAnimationBuilder
-            // starts at its end on first mount, and an unchanged zero target
-            // makes persisted divider resize direct rather than animated.
-            final sidebarWidth =
-                _sidebarWidth +
-                (_collapsedSidebarWidth - _sidebarWidth) * progress;
-            final contentCollapsed = progress >= .5;
-            // The glass card keeps 8pt floating margins on the window edges
-            // (top, bottom, right) — the content must live INSIDE them,
-            // never under the clip (the old -8 let rows bleed 8px past the
-            // card's right edge). The LEADING margin is shared with the
-            // rail: its trailing 8pt margin-as-seam IS the card gutter
-            // (owner: the rail↔sidebar gap halves to 8pt total), so the
-            // leading margin is 0 and the content fills the rest.
-            final contentWidth =
-                (contentCollapsed ? _collapsedSidebarWidth : _sidebarWidth) - 8;
-            final contentOpacity = contentCollapsed
-                ? (progress - .5) * 2
-                : 1 - progress * 2;
-            final contentInTransition = progress > 0 && progress < 1;
-            // On macOS the collapsed toggle moves just outside the rail. The
-            // shift is tuned so the collapsed extreme lands at the same
-            // 8pt-outside-the-rail spot as before (left edge 104 at the
-            // 96px rail): 44 = the 48px rail travel + the circle's growth
-            // (+2px per side over the old 32pt circle) MINUS the 8pt right
-            // gutter the open panel now keeps. Other platforms stay inside
-            // the panel.
-            final toggleShift = _isMacOS ? 60 * progress : 0.0;
-            // The rail's floating glass card (8pt margins on every side,
-            // 1:1 with the collapsed chats panel) + its trailing 8pt
-            // margin-as-seam precede the sidebar column, so floating
-            // chrome anchored to the sidebar's edges must clear the
-            // rail's footprint.
-            final railLeading =
-                MessengerNavRail.width + MessengerNavRail.seam * 2;
-            // The 36pt circle keeps the panel's 8pt gutter contract on
-            // BOTH sides: 8pt card margin + 8pt gutter put its right edge
-            // 16pt inside the sidebar's right edge (owner call: the open
-            // panel's toggle must not hug the panel edge).
-            final toggleLeft = railLeading + sidebarWidth - 52 + toggleShift;
+            // One value drives all visible geometry, including persisted
+            // divider resizes and the animated collapse boundary.
+            final geometry = _sidebarGeometry(progress);
+            final sidebarWidth = geometry.sidebarWidth;
+            final contentCollapsed = geometry.contentCollapsed;
+            final contentWidth = geometry.contentWidth;
+            final contentOpacity = geometry.contentOpacity;
+            final contentInTransition = geometry.contentInTransition;
+            final railLeading = geometry.railLeading;
+            final toggleLeft = geometry.toggleLeft;
             final sidebarContent = _buildSidebar(
               colors,
               collapsed: contentCollapsed,
@@ -1742,14 +1778,19 @@ class _WideLayoutShellState extends State<WideLayoutShell>
   // Chat (center)
   // ---------------------------------------------------------------------------
 
+  bool get _chatIsOpening {
+    final active = widget.manager.active;
+    final pendingOpen = _pendingOpenId;
+    return pendingOpen != null &&
+        pendingOpen != active?.id &&
+        _activeNetworkEntry == null &&
+        (active?.service.messages.isEmpty ?? true);
+  }
+
   Widget _buildChatArea(FahColors colors, {bool narrowRoute = false}) {
     final active = widget.manager.active;
     final networkEntry = _activeNetworkEntry;
-    final pendingOpen = _pendingOpenId;
-    if (pendingOpen != null &&
-        pendingOpen != active?.id &&
-        networkEntry == null &&
-        (active?.service.messages.isEmpty ?? true)) {
+    if (_chatIsOpening) {
       // With no current transcript an indicator communicates the open. When
       // real content is already visible, keep it stable until the new loaded
       // session activates — replacing it with a spinner reads as a flicker.
@@ -1846,83 +1887,75 @@ class _WideLayoutShellState extends State<WideLayoutShell>
           networkMode: widget.networkMode,
         ),
       ),
-      onOpenChannel: (networkId, channel) async {
-        // Select + open the tapped channel's messages right away
-        // (channel-rail contract). Deliberately NO setNetworkFilter here:
-        // a latched network filter narrowed the All facet to that
-        // network's rows only (owner bug).
-        final manager = widget.networkSessions;
-        final mode = widget.networkMode;
-        if (manager == null || mode == null) {
-          setState(() => _networksSurfaceOpen = false);
-          return;
-        }
-        await mode.enterNetwork(networkId);
-        if (!manager.sessions.containsKey(networkId)) {
-          if (manager.wallet.networks[networkId]?.password == null) {
-            if (!mounted) return;
-            await showJoinSheet(
-              context,
-              controller: mode,
-              manager: manager,
-              initialNetworkId: networkId,
-            );
-          } else {
-            try {
-              await manager.resume(networkId);
-            } on Object catch (error) {
-              if (mounted) showFahErrorSnack(context, error.toString());
-            }
-          }
-        }
-        final session = manager.sessions[networkId];
-        if (session != null) {
-          try {
-            await session.openChannel(channel.id);
-          } on Object catch (error) {
-            if (mounted) showFahErrorSnack(context, error.toString());
-          }
-        }
-        if (!mounted) return;
-        await mode.selectChannel(channel.id);
-        // Land the tap exactly like the chat-list row open does, but the
-        // surface STAYS open (owner pass): ONLY the content pane swaps to
-        // the channel's message view; the strip + channels list keep
-        // their place and the tapped row highlights through
-        // mode.selectChannel above. The projection row still becomes the
-        // selected network entry so the All home carries the row's
-        // selection once the back chevrons close the surface.
-        // Session-snapshot fallback rows have no projection row; a
-        // minimal stand-in entry keeps the content-pane contract there.
-        final entry = _chatController.networkChannelEntries
-            .where(
-              (candidate) =>
-                  candidate.networkId == networkId &&
-                  candidate.id.value == channel.id,
-            )
-            .firstOrNull;
-        if (!mounted) return;
-        setState(() {
-          _activeNetworkEntry =
-              entry ??
-              ChatListEntry(
-                id: ChatEntryId.network(
-                  ChatListEntryKind.networkChannel,
-                  networkId: networkId,
-                  id: channel.id,
-                ),
-                kind: ChatListEntryKind.networkChannel,
-                networkId: networkId,
-                networkName: manager.wallet.networks[networkId]?.name,
-                title: channel.name ?? channel.id,
-                createdAt: DateTime.now(),
-              );
-        });
-        // The row-open parity: the tap marks the projection row read.
-        if (entry != null) await _chatController.markOpened(entry);
-        if (mounted && _isNarrow) await _pushNarrowChat();
-      },
+      onOpenChannel: _openNetworkChannelFromPanel,
     );
+  }
+
+  Future<void> _openNetworkChannelFromPanel(
+    String networkId,
+    Channel channel,
+  ) async {
+    // Deliberately no network filter: the All facet keeps every network.
+    final manager = widget.networkSessions;
+    final mode = widget.networkMode;
+    if (manager == null || mode == null) {
+      setState(() => _networksSurfaceOpen = false);
+      return;
+    }
+    await mode.enterNetwork(networkId);
+    await _ensureNetworkSession(networkId, manager, mode);
+    await _openPanelSessionChannel(networkId, channel, manager);
+    if (!mounted) return;
+    await mode.selectChannel(channel.id);
+    if (!mounted) return;
+    await _activatePanelNetworkEntry(networkId, channel, manager);
+    if (mounted && _isNarrow) await _pushNarrowChat();
+  }
+
+  Future<void> _openPanelSessionChannel(
+    String networkId,
+    Channel channel,
+    NetworkSessionManager manager,
+  ) async {
+    final session = manager.sessions[networkId];
+    if (session == null) return;
+    try {
+      await session.openChannel(channel.id);
+    } on Object catch (error) {
+      _showNetworkErrorSnack(error);
+    }
+  }
+
+  Future<void> _activatePanelNetworkEntry(
+    String networkId,
+    Channel channel,
+    NetworkSessionManager manager,
+  ) async {
+    final entry = _chatController.networkChannelEntries
+        .where(
+          (candidate) =>
+              candidate.networkId == networkId &&
+              candidate.id.value == channel.id,
+        )
+        .firstOrNull;
+    setState(() {
+      // Snapshot-only channels get a minimal projection stand-in.
+      _activeNetworkEntry =
+          entry ??
+          ChatListEntry(
+            id: ChatEntryId.network(
+              ChatListEntryKind.networkChannel,
+              networkId: networkId,
+              id: channel.id,
+            ),
+            kind: ChatListEntryKind.networkChannel,
+            networkId: networkId,
+            networkName: manager.wallet.networks[networkId]?.name,
+            title: channel.name ?? channel.id,
+            createdAt: DateTime.now(),
+          );
+    });
+    if (entry != null) await _chatController.markOpened(entry);
   }
 
   Widget _buildNetworkChatArea(ChatListEntry entry) {
@@ -2650,42 +2683,49 @@ class _WideLayoutShellState extends State<WideLayoutShell>
 
   Future<void> _openFiles() async {
     AppAnalytics.instance.filesOpened('sidebar');
-    if (!mounted) return;
-    final service = widget.manager.active?.service;
-    // Without an active service we still have an env (post-onboarding
-    // empty manager creates one for the home screen), so the file
-    // browser renders against the sandbox cwd.
-    final env = service?.env ?? await _resolveHomeEnv();
-    if (!mounted) return;
+    final request = await _filesRequest();
+    if (request == null) return;
     if (_isNarrow) {
-      final fsRevision = service?.fsRevision;
-      // The SAME Files card every other entry uses — the shared chrome
-      // band, never a legacy Scaffold + app-bar duplicate.
-      await Navigator.of(context).push(
-        MaterialPageRoute<void>(
-          builder: (_) => FilesAppPage(
-            presentation: FilesAppPresentation(
-              env: env,
-              // The active session's folder rides along: the browser
-              // gates on it (allow-access flow) instead of silently
-              // listing the active mount when the env cannot open it.
-              sessionFolder: service?.currentSessionCwd,
-              fsRevision: fsRevision,
-              onProjectMountChanged: service?.refreshProjectMountPrompt,
-            ),
-          ),
-        ),
-      );
+      await _openNarrowFiles(request.service, request.env);
       return;
     }
-    // Wide: Files presents through the same right-pane surface as JS
-    // apps — native content, one animated entrance, never an instant pop.
+    _openWideFiles(request.service, request.env);
+  }
+
+  Future<({AgentService? service, ExecutionEnv env})?> _filesRequest() async {
+    if (!mounted) return null;
+    final service = widget.manager.active?.service;
+    final env = await _filesEnv(service);
+    if (!mounted) return null;
+    return (service: service, env: env);
+  }
+
+  Future<ExecutionEnv> _filesEnv(AgentService? service) async =>
+      service?.env ?? await _resolveHomeEnv();
+
+  Future<void> _openNarrowFiles(AgentService? service, ExecutionEnv env) async {
+    // The SAME Files card every other entry uses — shared chrome, never a
+    // legacy Scaffold + app-bar duplicate.
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => FilesAppPage(
+          presentation: FilesAppPresentation(
+            env: env,
+            sessionFolder: service?.currentSessionCwd,
+            fsRevision: service?.fsRevision,
+            onProjectMountChanged: service?.refreshProjectMountPrompt,
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _openWideFiles(AgentService? service, ExecutionEnv env) {
+    // Wide Files uses the same animated right-pane surface as JS apps.
     setState(() {
       _appPresentation = null;
       _filesPresentation = FilesAppPresentation(
         env: env,
-        // The active session's folder rides along (the gate seam — see
-        // the narrow branch above).
         sessionFolder: service?.currentSessionCwd,
         fsRevision: service?.fsRevision,
         onProjectMountChanged: service?.refreshProjectMountPrompt,

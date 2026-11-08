@@ -398,11 +398,7 @@ final class FlutterSessionManager extends ChangeNotifier {
     List<SessionMetadata>? allSessions,
   }) {
     if (_isHostedListing(active?.service)) return Future.value();
-    if (allSessions != null) {
-      _subagentResolutionUniverse = allSessions;
-    } else if (_subagentResolutionUniverse.isEmpty) {
-      _subagentResolutionUniverse = sessions;
-    }
+    _updateSubagentResolutionUniverse(sessions, allSessions);
     for (final session in sessions) {
       if (!isSubagentSession(session) ||
           subagentParentId(session) != null ||
@@ -422,6 +418,17 @@ final class FlutterSessionManager extends ChangeNotifier {
         _subagentResolutionInFlight = null;
       }
     });
+  }
+
+  void _updateSubagentResolutionUniverse(
+    List<SessionMetadata> sessions,
+    List<SessionMetadata>? allSessions,
+  ) {
+    if (allSessions != null) {
+      _subagentResolutionUniverse = allSessions;
+    } else if (_subagentResolutionUniverse.isEmpty) {
+      _subagentResolutionUniverse = sessions;
+    }
   }
 
   Future<void> _drainSubagentParentWarm() async {
