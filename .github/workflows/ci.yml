@@ -531,7 +531,18 @@ jobs:
     runs-on: [self-hosted, macos-m5]
     needs: [release-pending, release-dedupe, changes]
     if: needs.changes.outputs.core == 'true' && needs.release-pending.outputs.pending == 'true' && needs.release-dedupe.outputs.dedupe != 'true'
-    timeout-minutes: 10
+    # gh-2070 (run 42511425580, v1.0.695): 10 min was sized to the healthy
+    # wall (~1-2 min total, checkout 1-3 s on the persistent workspace) and
+    # was the tightest ceiling on the box — a 9m32s checkout stall (cross-
+    # workflow contention on the ONE-host fa-m5 pool, the gh-2013 class)
+    # consumed it whole and the job died `cancelled` mid-step, redding the
+    # aggregate through the platform-leg verdict (anything not
+    # success/skipped is red, #1368) and killing the release train
+    # downstream. 30 min clears that stall with ~20 min of slack and sits
+    # at the sibling hosted-macos build leg class (build-ios: 30); a
+    # genuinely wedged box is still killed loudly, just later. Pinned by
+    # test/ci_cube_kernel_ceiling_guard_test.dart.
+    timeout-minutes: 30
     permissions:
       contents: read
     steps:
