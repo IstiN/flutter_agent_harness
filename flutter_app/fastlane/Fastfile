@@ -342,7 +342,8 @@ def ensure_app_store_version!(bundle_id:, platform:, version:)
 
   UI.message("App Store version #{version} (#{platform}) does not exist yet — creating the version record before deliver (gh-1519)")
   begin
-    app.create_app_store_version(
+    Spaceship::ConnectAPI.post_app_store_version(
+      app_id: app.id,
       attributes: StoreVersionCreate.create_attributes(platform: platform, version: version)
     )
   rescue => e
@@ -354,7 +355,7 @@ def ensure_app_store_version!(bundle_id:, platform:, version:)
     # metadata-only update). Re-read once (bounded retries) and no-op
     # when the version now exists; anything else still raises.
     if StoreVersionCreate.create_conflict?(message: e.message)
-      UI.important("create_app_store_version reports #{version} (#{platform}) already exists — re-reading once to confirm (ASC read lag)")
+      UI.important("post_app_store_version reports #{version} (#{platform}) already exists — re-reading once to confirm (ASC read lag)")
       existing = with_apple_retries(attempts: 3, delay: 20) do
         app.get_app_store_versions(filter: { platform: platform }).map(&:version_string)
       end

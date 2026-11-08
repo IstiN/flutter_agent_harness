@@ -21,7 +21,7 @@ module StoreVersionCreate
   end
 
   # Attributes for the POST /v1/appStoreVersions call (Spaceship
-  # create_app_store_version). Pure data — the Fastfile performs the POST.
+  # post_app_store_version). Pure data — the Fastfile performs the POST.
   def self.create_attributes(platform:, version:)
     { platform: platform, versionString: version }
   end
