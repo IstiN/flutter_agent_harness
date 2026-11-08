@@ -38,6 +38,96 @@
   "appsFaStatusWriting": "пишет…",
   "appsFollowUpHint": "Уточнить…",
   "appsGridTitle": "Приложения",
+  "appsOverviewSubtitle": "Мои приложения · Каталог виджетов",
+  "appsMyApps": "Мои приложения",
+  "appsMyAppsSubtitle": "Установленные приложения и виджеты.",
+  "appsWidgetStore": "Каталог виджетов",
+  "appsWidgetStoreSubtitle": "Просмотр и установка виджетов в Мои приложения.",
+  "appsWidgetCatalog": "Каталог виджетов",
+  "appsInstalledCount": "Установлено: {count}",
+  "@appsInstalledCount": {
+    "placeholders": {
+      "count": {}
+    }
+  },
+  "appsActiveCount": "Активных приложений: {count}",
+  "@appsActiveCount": {
+    "placeholders": {
+      "count": {}
+    }
+  },
+  "appsRunning": "Запущенные",
+  "appsQuickOpen": "Быстрое открытие",
+  "appsFullTooltip": "На весь экран",
+  "appsExitFullTooltip": "Выйти из полного экрана",
+  "appsPinTooltip": "Закрепить",
+  "appsUnpinTooltip": "Открепить",
+  "wideNavChats": "Чаты",
+  "wideNavLocal": "Локальные",
+  "localFoldersTitle": "Локальные папки",
+  "localSessionsEmpty": "В этой папке пока нет сессий",
+  "localFoldersEmpty": "Пока нет папок проектов",
+  "localFolderBack": "Назад к папкам",
+  "localFoldersSearchHint": "Поиск папок",
+  "listSearchNoMatches": "Ничего не найдено по запросу «{query}»",
+  "wideChatsSearchHint": "Поиск чатов",
+  "wideChatFallbackTitle": "Новый чат",
+  "chatFilterAll": "Все",
+  "chatFilterUnread": "Непрочитанные",
+  "chatFilterAgents": "Агенты",
+  "chatFilterChannels": "Каналы",
+  "chatAllNetworks": "Все сети",
+  "chatMyNetwork": "Моя сеть",
+  "chatManageNetworks": "Управление сетями",
+  "chatNetworkStatusConnected": "Подключена",
+  "chatNetworkStatusOffline": "Релей офлайн",
+  "chatNetworkStatusIdle": "Не подключена",
+  "chatNetworkChannelsEmpty": "Пока нет каналов",
+  "chatNetworkChannelPublic": "Публичный канал",
+  "chatNetworkChannelPrivate": "Приватный канал",
+  "chatSignInNetwork": "Войти в Fa Network",
+  "chatProfileSettings": "Профиль и настройки",
+  "chatNew": "Новый",
+  "chatPinned": "Закреплённые",
+  "chatRecent": "Недавние",
+  "chatNoConversationsTitle": "Чатов пока нет",
+  "chatNoConversationsBody": "Начните локальный чат. Вход в сеть необязателен.",
+  "chatStartChat": "Начать чат",
+  "chatNoUnread": "Нет непрочитанных чатов.",
+  "chatNoAgents": "Нет агентов по этому фильтру.",
+  "chatNoChannels": "Нет каналов по этому фильтру.",
+  "chatNoNetworkResults": "В этой сети нет чатов.",
+  "chatNoSearchResults": "По вашему запросу чатов не найдено.",
+  "chatClearSearch": "Очистить поиск",
+  "chatNoPreview": "Сообщений пока нет",
+  "chatNetworkUnavailable": "Сетевые чаты недоступны. Локальные чаты продолжают работать.",
+  "chatLoadError": "Не удалось загрузить чаты.",
+  "chatRetry": "Повторить",
+  "chatCreateJoinNetwork": "Создать сеть или присоединиться",
+  "chatOpenNetwork": "Открыть сеть",
+  "chatNetworksEmpty": "Вы пока не состоите ни в одной сети.",
+  "chatPin": "Закрепить чат",
+  "chatUnpin": "Открепить чат",
+  "chatWorking": "Работает…",
+  "chatTimeNow": "сейчас",
+  "chatMinuteSuffix": "м",
+  "chatHourSuffix": "ч",
+  "chatDaySuffix": "д",
+  "chatLocal": "Локально",
+  "chatSearchShortcut": "⌘F",
+  "chatMoreActions": "Действия с чатом",
+  "commonMore": "Ещё",
+  "chatExpand": "Развернуть субагентов",
+  "chatCollapse": "Свернуть",
+  "wideNavActivity": "Активность",
+  "activityRunning": "В работе",
+  "activityRecent": "Недавние",
+  "activityAll": "Вся активность",
+  "activitySearchHint": "Поиск активности",
+  "activityChoose": "Выберите элемент активности",
+  "activityStatus": "Статус",
+  "activityLastActivity": "Последняя активность",
+  "activityEmpty": "Пока нет активности сессий.",
   "appsHideAppsTooltip": "Скрыть приложения",
   "appsLoadError": "Не удалось загрузить приложения: {error}",
   "widgetsCatalogInstallFailed": "Не удалось установить: {error}",
@@ -117,7 +207,6 @@
   "chatAttachNoName": "Не удалось прикрепить «{name}»: нет подходящего имени файла.",
   "chatAttachTooltip": "Прикрепить",
   "chatCamera": "Камера",
-  "chatCollapse": "Свернуть",
   "chatCopiedToClipboard": "Сессия скопирована в буфер обмена",
   "chatCopySessionTooltip": "Копировать сессию",
   "chatFilesTooltip": "Файлы",
@@ -151,10 +240,13 @@
   "filePreviewTooLarge": "Файл слишком большой для предпросмотра",
   "filePreviewTruncated": "Показаны первые {size} — вывод обрезан",
   "filesBackTooltip": "Назад к файлам",
+  "filesCloseTooltip": "Закрыть файлы",
   "filesEmptyFileName": "(пустое имя файла)",
   "filesEmptyFolder": "Пустая папка",
+  "filesFilesSection": "Файлы",
   "filesFolderAccessDenied": "Не удалось получить доступ к этой папке.",
   "filesFolderPickerError": "Не удалось открыть выбор папки: {error}",
+  "filesFoldersSection": "Папки",
   "filesICloudSyncDone": "Синхронизировано файлов: {files} ({size}) — последняя синхронизация {when}",
   "filesICloudSyncFailed": "Ошибка синхронизации iCloud: {error}",
   "filesICloudSyncTooltip": "Синхронизировать сессии и приложения с iCloud",
@@ -162,10 +254,15 @@
   "filesListFolderError": "Не удалось прочитать содержимое папки",
   "filesMountUnavailableTooltip": "Ранее использованная папка недоступна: {path} — нажмите, чтобы выбрать снова",
   "filesOpenFolderError": "Не удалось открыть папку",
+  "filesSessionFolderGateTitle": "Папка этого чата недоступна",
+  "filesSessionFolderGateBody": "Files показывает только папки, к которым у Fa есть доступ. Этот диалог живёт в {folder} — разрешите доступ, чтобы видеть его файлы здесь.",
+  "filesSessionFolderGateAllow": "Разрешить доступ",
   "filesOpenProjectFolderTooltip": "Открыть папку проекта…",
   "filesPanelTitle": "Файлы",
   "filesRefreshTooltip": "Обновить",
   "filesRetryButton": "Повторить",
+  "filesSearchHint": "Поиск файлов…",
+  "filesNoSearchMatches": "Нет подходящих файлов",
   "filesUnmountTooltip": "Отключить {path}",
   "filesUpTooltip": "Вверх",
   "filesUploadFailed": "Ошибка загрузки: {error}",
@@ -191,8 +288,7 @@
   "keysValueHint": "Вставьте значение ключа",
   "keysValueLabel": "Значение",
   "launcherChatActionsTooltip": "Действия чата",
-  "faEntryHintTooltip":
-      "Касание: продолжить активный чат · Долгое нажатие: новый чат",
+  "faEntryHintTooltip": "Касание: продолжить активный чат · Долгое нажатие: новый чат",
   "launcherChatEmptyHint": "Пока пусто — спросите Fa о чём угодно.",
   "launcherDissolveFolder": "Убрать папку",
   "launcherFolderDefaultName": "Папка",
@@ -215,7 +311,7 @@
   },
   "launcherRemoveWidgetBody": "Файлы виджета удаляются; его данные (storage.json) сохраняются — при повторной установке состояние восстановится.",
   "@launcherRemoveWidgetBody": {},
-  "launcherSearchHint": "Поиск виджетов…",
+  "launcherSearchHint": "Поиск приложений и виджетов…",
   "@launcherSearchHint": {},
   "launcherTabWidgets": "Виджеты",
   "@launcherTabWidgets": {},
@@ -936,6 +1032,7 @@
   "networkNetworksTitle": "Сети",
   "networkBackTooltip": "Назад",
   "networkSearchHint": "Поиск сетей",
+  "networkChannelsSearchHint": "Поиск каналов",
   "networkSignInTitle": "Войти",
   "networkSignInHelper": "Войдите через аккаунт ai-native.cloud, чтобы создавать сети и управлять ими.",
   "networkSignInWithProvider": "Продолжить через {provider}",
@@ -1032,6 +1129,9 @@
   "@networkChannelDeleted": {
     "description": "Snackbar after a channel was deleted"
   },
+  "networkInvitePerson": "Пригласить человека…",
+  "networkInvitePersonTitle": "Пригласить человека",
+  "networkInvitePersonBody": "Эта ссылка даёт доступ ко всей сети. Любой, кто получит её, сможет ею воспользоваться.",
   "networkAddAgent": "Добавить агента…",
   "networkShowcasePublic": "Витрина (публичный)",
   "networkAddAgentTitle": "Добавить агента",
@@ -1148,5 +1248,43 @@
   "networkAddAgentPublicHint": "Эту ссылку видят все — канал публичный. Агенты подключаются без ключей.",
   "@networkAddAgentPublicHint": {
     "description": "Agent invite dialog hint for public (keyless) channels"
+  },
+  "onboardingJoinNetwork": "Присоединиться к сети",
+  "@onboardingJoinNetwork": {
+    "description": "Alternative to provider setup during onboarding"
+  },
+  "onboardingJoinNetworkSubtitle": "Работайте в подключённой сети — настройка AI‑провайдера не требуется.",
+  "@onboardingJoinNetworkSubtitle": {
+    "description": "Explains the network path through onboarding"
+  },
+  "visualDirectionTitle": "Визуальный стиль",
+  "@visualDirectionTitle": {
+    "description": "Fa 2.0 visual direction settings title"
+  },
+  "visualDirectionSubtitle": "Выберите общий язык поверхностей, цвета и движения. Каждый стиль поддерживает светлую и тёмную темы.",
+  "@visualDirectionSubtitle": {
+    "description": "Fa 2.0 visual direction settings explanation"
+  },
+  "visualDirectionSelected": "Выбрано",
+  "@visualDirectionSelected": {
+    "description": "Accessibility label for the selected visual direction"
+  },
+  "fontPresetTitle": "Шрифт",
+  "@fontPresetTitle": {
+    "description": "Fa 2.0 font preset settings title"
+  },
+  "chatSubagentFilterActive": "Активные ({count})",
+  "@chatSubagentFilterActive": {
+    "description": "Subagent picker activity filter: active sessions",
+    "placeholders": {
+      "count": {}
+    }
+  },
+  "chatSubagentFilterDone": "Завершённые ({count})",
+  "@chatSubagentFilterDone": {
+    "description": "Subagent picker activity filter: finished sessions",
+    "placeholders": {
+      "count": {}
+    }
   }
 }

@@ -1,19 +1,14 @@
 /// Google Play feature graphic (issue #289): the 1024×500 store-listing
-/// banner, rendered as a real widget so it stays golden-verified and
-/// on-brand (`test/golden/play_store_assets_test.dart` snapshots it
-/// straight into `fastlane/metadata/android/<locale>/images/featureGraphic.png`,
-/// which the `android play_store` fastlane lane uploads).
+/// banner, golden-rendered straight into the fastlane supply tree.
 ///
-/// Play placement rules shape the design: the graphic shows behind the
-/// listing video / at the top of the listing, so content stays centered
-/// inside a ~80% safe area (edges may crop), text is short and large, and
-/// the visual language matches [StoreFrame] — the same brand gradient and
-/// glow treatment the store screenshots use.
+/// The brand lockup and the chat-built dashboard tell the same story as the
+/// screenshot sequence. Both share [StoreBackdrop] with the store frames.
 library;
 
-import 'package:fa/ui/app_theme.dart';
-import 'package:fa/ui/widgets/fa_mark.dart';
+import 'package:fa_ui/fa_ui.dart' show FaLogo;
 import 'package:flutter/material.dart';
+
+import 'store_marketing_frame.dart';
 
 /// Localized feature-graphic tagline per language (`en` is the fallback).
 const kPlayFeatureTagline = <String, String>{
@@ -21,115 +16,257 @@ const kPlayFeatureTagline = <String, String>{
   'ru': 'Свои приложения — прямо из чата',
 };
 
-/// The 1024×500 Play feature graphic: brand gradient + glows, the app-icon
-/// tile and wordmark lockup, and the localized tagline.
+/// The 1024×500 Play feature graphic.
 class PlayFeatureGraphic extends StatelessWidget {
   const PlayFeatureGraphic({super.key, this.lang = 'en'});
 
-  /// Language code for the tagline (`en`, `ru`).
   final String lang;
 
   @override
   Widget build(BuildContext context) {
     final tagline = kPlayFeatureTagline[lang] ?? kPlayFeatureTagline['en']!;
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final w = constraints.maxWidth;
-        final h = constraints.maxHeight;
-        final tile = h * 0.34;
-        return Material(
-          color: FahPalette.bg,
-          child: Stack(
-            fit: StackFit.expand,
-            children: [
-              const Positioned.fill(
-                child: DecoratedBox(
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                      colors: [Color(0xFF101A2E), FahPalette.bg],
-                    ),
-                  ),
-                ),
-              ),
-              Positioned(
-                right: -w * 0.12,
-                top: -h * 0.45,
-                child: _Glow(color: FahPalette.indigo, size: w * 0.45),
-              ),
-              Positioned(
-                left: -w * 0.15,
-                bottom: -h * 0.55,
-                child: _Glow(color: FahPalette.teal, size: w * 0.4),
-              ),
-              Center(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        FaBrandTile(dark: true, size: tile),
-                        SizedBox(width: w * 0.028),
-                        // The wordmark — big enough to survive the small
-                        // placements (search drops, listing header).
-                        Baseline(
-                          baseline: h * 0.42,
-                          baselineType: TextBaseline.alphabetic,
-                          child: Text(
+    final ru = lang == 'ru';
+    return StoreBackdrop(
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final w = constraints.maxWidth;
+          final h = constraints.maxHeight;
+          return Padding(
+            padding: EdgeInsets.symmetric(
+              horizontal: w * 0.062,
+              vertical: h * 0.095,
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  flex: 12,
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _FeaturePill(
+                        label: ru
+                            ? 'ПЕРСОНАЛЬНЫЙ AI-АГЕНТ'
+                            : 'PERSONAL AI AGENT',
+                      ),
+                      SizedBox(height: h * 0.035),
+                      Row(
+                        children: [
+                          FaLogo(size: h * 0.18),
+                          SizedBox(width: w * 0.018),
+                          Text(
                             'Fa',
                             style: TextStyle(
-                              fontFamily: 'Inter',
-                              fontSize: h * 0.3,
-                              fontWeight: FontWeight.w700,
-                              height: 1.0,
-                              color: FahPalette.text,
+                              fontFamily: 'Manrope',
+                              fontSize: h * 0.19,
+                              fontWeight: FontWeight.w800,
+                              height: 1,
+                              letterSpacing: -3,
+                              color: const Color(0xFF12171C),
                             ),
                           ),
-                        ),
-                      ],
-                    ),
-                    SizedBox(height: h * 0.07),
-                    Text(
-                      tagline,
-                      style: TextStyle(
-                        fontFamily: 'Inter',
-                        fontSize: h * 0.072,
-                        fontWeight: FontWeight.w500,
-                        color: FahPalette.dim,
+                        ],
                       ),
-                    ),
-                  ],
+                      SizedBox(height: h * 0.035),
+                      Text(
+                        tagline,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontFamily: 'Manrope',
+                          fontSize: h * 0.061,
+                          fontWeight: FontWeight.w600,
+                          height: 1.18,
+                          color: const Color(0xFF46505B),
+                        ),
+                      ),
+                      SizedBox(height: h * 0.035),
+                      Text(
+                        ru
+                            ? 'ЧАТ  →  ПРИЛОЖЕНИЯ  →  ВИДЖЕТЫ'
+                            : 'CHAT  →  APPS  →  WIDGETS',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontFamily: 'Inter',
+                          fontSize: h * 0.024,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 1.2,
+                          color: const Color(0xFF1D6B65),
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
-              ),
-            ],
-          ),
-        );
-      },
+                SizedBox(width: w * 0.035),
+                Expanded(flex: 5, child: _FeatureDashboardArt(lang: lang)),
+              ],
+            ),
+          );
+        },
+      ),
     );
   }
 }
 
-/// A soft radial accent glow behind the content (same treatment as the
-/// store marketing frame).
-class _Glow extends StatelessWidget {
-  const _Glow({required this.color, required this.size});
+class _FeaturePill extends StatelessWidget {
+  const _FeaturePill({required this.label});
 
-  final Color color;
-  final double size;
+  final String label;
 
   @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: size,
-      height: size,
-      decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        gradient: RadialGradient(
-          colors: [color.withValues(alpha: 0.16), color.withValues(alpha: 0)],
-        ),
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 6),
+    decoration: BoxDecoration(
+      color: Colors.white.withValues(alpha: 0.62),
+      borderRadius: BorderRadius.circular(999),
+      border: Border.all(color: const Color(0xFFD5DCE3)),
+    ),
+    child: Text(
+      label,
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+      style: const TextStyle(
+        fontFamily: 'Inter',
+        fontSize: 10,
+        fontWeight: FontWeight.w700,
+        letterSpacing: 1.1,
+        color: Color(0xFF1D6B65),
       ),
-    );
-  }
+    ),
+  );
+}
+
+/// A compact vector dashboard vignette — decorative artwork, not a fake
+/// application screenshot. It echoes the Fa Craft app built in frame one.
+class _FeatureDashboardArt extends StatelessWidget {
+  const _FeatureDashboardArt({required this.lang});
+
+  final String lang;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.all(15),
+    decoration: BoxDecoration(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(28),
+      border: Border.all(color: const Color(0xFFD5DCE3)),
+      boxShadow: [
+        BoxShadow(
+          color: const Color(0xFF1D6B65).withValues(alpha: 0.12),
+          blurRadius: 36,
+          spreadRadius: -8,
+          offset: const Offset(0, 16),
+        ),
+      ],
+    ),
+    child: Column(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        Row(
+          children: [
+            const FaLogo(size: 20, semanticLabel: ''),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Container(
+                height: 5,
+                decoration: BoxDecoration(
+                  color: const Color(0xFFD5DCE3),
+                  borderRadius: BorderRadius.circular(99),
+                ),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Icon(
+              Icons.auto_awesome_rounded,
+              size: 17,
+              color: const Color(0xFF1D6B65),
+            ),
+          ],
+        ),
+        const SizedBox(height: 14),
+        Expanded(
+          child: Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              gradient: const LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [Color(0xFFF6F8FA), Color(0xFFD3E7E4)],
+              ),
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: const Color(0xFFD5DCE3)),
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Icon(
+                        Icons.sports_esports_rounded,
+                        color: Color(0xFF3E8C5D),
+                        size: 30,
+                      ),
+                      const SizedBox(height: 7),
+                      Text(
+                        'Fa Craft',
+                        style: const TextStyle(
+                          fontFamily: 'Inter',
+                          fontSize: 12,
+                          fontWeight: FontWeight.w500,
+                          color: Color(0xFF46505B),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const Text(
+                  '3D',
+                  style: TextStyle(
+                    fontFamily: 'Manrope',
+                    fontSize: 38,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: -1.5,
+                    color: Color(0xFF12171C),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 14),
+        const Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            _FeatureAppIcon(Icons.notes_rounded, Color(0xFF6366F1)),
+            _FeatureAppIcon(Icons.check_rounded, Color(0xFF22C55E)),
+            _FeatureAppIcon(Icons.calendar_month_rounded, Color(0xFF3B82F6)),
+            _FeatureAppIcon(Icons.show_chart_rounded, Color(0xFF10B981)),
+          ],
+        ),
+      ],
+    ),
+  );
+}
+
+class _FeatureAppIcon extends StatelessWidget {
+  const _FeatureAppIcon(this.icon, this.color);
+
+  final IconData icon;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    width: 38,
+    height: 38,
+    decoration: BoxDecoration(
+      color: color.withValues(alpha: 0.18),
+      borderRadius: BorderRadius.circular(12),
+      border: Border.all(color: color.withValues(alpha: 0.32)),
+    ),
+    child: Icon(icon, color: color, size: 20),
+  );
 }

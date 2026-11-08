@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
 /// Newest-first listing order: last-updated descending, creation time
@@ -28,8 +29,10 @@ Future<List<SessionMetadata>> mergeSessionsAcrossRoots({
           merged.add(item);
         }
       }
-    } on Object {
-      // Secondary root list failure is non-fatal.
+    } on Object catch (error) {
+      // Secondary root list failure is non-fatal — but logged, so a
+      // missing root never looks like vanished sessions.
+      debugPrint('[fah][sessions] root list failed ($root): $error');
     }
   }
   return merged..sort(compareSessionsNewestFirst);

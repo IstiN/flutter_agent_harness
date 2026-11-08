@@ -330,6 +330,68 @@ void main() {
   });
 
   test(
+    'dispose waits for in-flight boot seeding before final cleanup',
+    () async {
+      final environment = <String, String>{
+        hub.envMasterSecret: 'test-master',
+        'DAP_HUB_URL': _hubUrl,
+        'DAP_KEY_PASSPHRASE': 'pass',
+      };
+      final client = hub.HubClient(
+        config: const hub.HubConfig(url: _hubUrl),
+        identity: await hub.HubIdentity.generate(),
+      )..agentId = _selfId;
+      final plugin = _StubHubPlugin(
+        environment: environment,
+        home: home.path,
+        currentStatus: _connectedStatus,
+        memoryRepository: _MemoryHubRepository(client),
+      );
+      final readStarted = Completer<void>();
+      final releaseRead = Completer<void>();
+      addTearDown(() {
+        if (!releaseRead.isCompleted) releaseRead.complete();
+      });
+      final host = HubPluginHost(
+        plugin,
+        environment: environment,
+        home: home.path,
+        localHubUrl: _hubUrl,
+        hubHealthProbe: (port) async => false,
+        hubSpawner: (port) async {},
+      );
+      host.register(
+        PluginContext(
+          env: MemoryExecutionEnv(cwd: home.path),
+          io: _IO(),
+          readSessionRecords: (type) async {
+            if (!readStarted.isCompleted) readStarted.complete();
+            await releaseRead.future;
+            return const <Map<String, Object?>>[];
+          },
+        ),
+      );
+      await readStarted.future;
+
+      var disposed = false;
+      final disposing = host.dispose().then((_) => disposed = true);
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      expect(
+        disposed,
+        isFalse,
+        reason: 'cleanup must not run ahead of the in-flight overlay seed',
+      );
+
+      releaseRead.complete();
+      await disposing;
+      expect(
+        await File('${home.path}/.dap/runtime/channels.json').exists(),
+        isFalse,
+      );
+    },
+  );
+
+  test(
     'dispose() before register() never lets the host seed plaintext '
     'keys and does not permanently disable cleanup (gh-1895 review)',
     () async {

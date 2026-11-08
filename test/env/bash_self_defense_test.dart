@@ -137,6 +137,13 @@ void main() {
   final Object posixSkip = (Platform.isWindows || !hostHasPgrep)
       ? 'POSIX procps process semantics only'
       : false;
+  final timeoutProbe = Platform.isWindows
+      ? ''
+      : Process.runSync('sh', const [
+          '-c',
+          'command -v timeout || command -v gtimeout',
+        ]).stdout.trim();
+  final String hostTimeout = timeoutProbe;
 
   group('AC1: pkill/pgrep self-match immunity (gh-1763)', () {
     test(
@@ -422,7 +429,7 @@ void main() {
 
     test(
       'pkill -l defers to the real pkill (usage error) and signals nothing',
-      skip: posixSkip,
+      skip: Platform.isLinux ? posixSkip : 'procps pkill output semantics only',
       () async {
         final d1 = await Process.start('sleep', const ['177']);
         addTearDown(d1.kill);
@@ -452,7 +459,7 @@ void main() {
     test(
       'pkill --count defers to the real pkill instead of reading the count '
       'as a pid',
-      skip: posixSkip,
+      skip: Platform.isLinux ? posixSkip : 'procps pkill output semantics only',
       () async {
         final d1 = await Process.start('sleep', const ['177']);
         addTearDown(d1.kill);
@@ -612,9 +619,9 @@ void main() {
     test(
       'pkill --signal / killall --signal (dangling, last arg) terminate '
       'under bash-as-sh instead of looping forever',
-      skip: Platform.isWindows || !hostHasPgrep
-          ? 'POSIX procps process semantics only'
-          : false,
+      skip: hostTimeout.isEmpty
+          ? 'GNU timeout/gtimeout is required for the dangling-signal probe'
+          : posixSkip,
       () async {
         final provision = await provisionBashGuard();
         expect(provision?.shimDir, isNotNull);
@@ -623,7 +630,7 @@ void main() {
         // timeout). dash exits 2; the fixed shape execs the real binary
         // for the honest usage error (rc=2) on every shell.
         for (final tool in <String>['pkill', 'killall']) {
-          final r = await Process.run('timeout', <String>[
+          final r = await Process.run(hostTimeout, <String>[
             '10',
             'bash',
             '${provision!.shimDir}/$tool',
@@ -638,7 +645,7 @@ void main() {
           );
           // The honest outcome: whatever the real binary does with a
           // dangling --signal (pkill usage-errors rc=2, killall rc=1).
-          final real = await Process.run('timeout', <String>[
+          final real = await Process.run(hostTimeout, <String>[
             '10',
             tool,
             '--signal',
@@ -745,7 +752,10 @@ void main() {
         'pwd',
         options: ShellExecOptions(cwd: tempDir.path),
       );
-      expect(result.getOrThrow().stdout.trim(), tempDir.path);
+      expect(
+        result.getOrThrow().stdout.trim(),
+        tempDir.resolveSymbolicLinksSync(),
+      );
     });
   });
 }

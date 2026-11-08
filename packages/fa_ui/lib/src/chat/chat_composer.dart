@@ -12,13 +12,17 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../theme/app_theme.dart';
+import '../theme/fa2_tokens.dart';
+import '../widgets/fa2_controls.dart';
 import 'chat_strings.dart';
 import 'fa_chat_features.dart';
 import 'fa_chat_host.dart';
 import 'fa_chat_service.dart';
+import 'system_notice_tile.dart';
 import 'fa_glyphs.dart';
 import 'upload_utils.dart';
 import '../widgets/snackbars.dart';
+import 'chat_composer_draft.dart';
 
 /// The chat composer: attachment chips + staging into the sandbox `uploads/`
 /// folder, the queued-steer chips, the text field, the voice-input mic
@@ -31,6 +35,25 @@ import '../widgets/snackbars.dart';
 /// or analytics. The composer clears the consumed text and attachments.
 typedef FaChatSubmitInterceptor =
     bool Function(BuildContext context, String text);
+
+/// One roster/contact suggestion for the shared composer's `@` completion.
+final class FaChatMentionOption {
+  const FaChatMentionOption({
+    required this.id,
+    required this.label,
+    this.icon = Icons.person_outline,
+    this.online = false,
+  });
+
+  final String id;
+  final String label;
+  final IconData icon;
+  final bool online;
+}
+
+/// Builds suggestions for the unfinished `@prefix` at the collapsed caret.
+typedef FaChatMentionOptionsBuilder =
+    List<FaChatMentionOption> Function(String query);
 
 /// The pill-shaped multiline input decoration shared by every chat
 /// composer (the channel composer included): 16×8 inner air, borderless
@@ -84,6 +107,8 @@ class ChatComposer extends StatefulWidget {
   const ChatComposer({
     super.key,
     required this.service,
+    this.draftKey,
+    this.draftStore,
     this.features = const FaChatFeatures(),
     this.uploadPicker,
     this.galleryPicker,
@@ -95,12 +120,25 @@ class ChatComposer extends StatefulWidget {
     this.hideMicWhenNotEmpty = false,
     this.onSent,
     this.onSubmit,
+    this.onVoiceInputSettings,
+    this.mentionOptionsBuilder,
     this.onFocusChanged,
     this.autofocus = true,
   });
 
   /// The session this composer sends to.
   final FaChatService service;
+
+  /// Stable identity of the conversation owning this composer's draft.
+  ///
+  /// Hosts should pass a session/conversation id. Null falls back to the
+  /// [service] object, preserving the existing constructor contract while
+  /// still isolating drafts between service instances.
+  final Object? draftKey;
+
+  /// Draft storage override for embedding and isolated tests. Null uses the
+  /// process-lifetime [ChatComposerDraftStore.shared] store.
+  final ChatComposerDraftStore? draftStore;
 
   /// Capability flags; the defaults turn everything on and let the host
   /// hooks decide what is actually reachable.
@@ -155,6 +193,16 @@ class ChatComposer extends StatefulWidget {
   /// block). Runs before clearing/analytics/sendText; true consumes it.
   final FaChatSubmitInterceptor? onSubmit;
 
+  /// Opens the host's transcription/media-model settings when voice input
+  /// has no configured endpoint. The shared composer has no navigation
+  /// policy; hosts must supply this to show the dialog's Settings action.
+  final Future<void> Function()? onVoiceInputSettings;
+
+  /// Optional roster/contact completion inside the SAME composer chrome.
+  /// Selection inserts the literal `@label`; the service remains responsible
+  /// for resolving that label to a provider-specific mention id on send.
+  final FaChatMentionOptionsBuilder? mentionOptionsBuilder;
+
   /// Fired when the input field's focus changes (the launcher's bar opens
   /// the session panel the moment the user starts typing).
   final ValueChanged<bool>? onFocusChanged;
@@ -183,14 +231,18 @@ class ChatComposerState extends State<ChatComposer>
     with SingleTickerProviderStateMixin {
   final _textController = TextEditingController();
   final _focusNode = FocusNode();
+  late ChatComposerDraftStore _draftStore;
+  late Object _draftKey;
+  var _restoringDraft = false;
+  var _mentionHighlight = 0;
+  var _mentionMenuDismissed = false;
 
   /// Files attached in the composer but not sent yet. They are staged into
   /// the sandbox `uploads/` folder at PICK time (see
   /// [FaChatService.stageAttachment]) — attaching never sends anything by
   /// itself; on send the message references the staged [path]s plus the
   /// typed text.
-  final List<({String name, String path, Uint8List bytes, String mimeType})>
-  _pendingAttachments = [];
+  final List<ChatComposerDraftAttachment> _pendingAttachments = [];
 
   bool _isStreaming = false;
 
@@ -211,7 +263,9 @@ class ChatComposerState extends State<ChatComposer>
   late final FaClipboardReader? _clipboardReader =
       widget.clipboardReader ?? FaChatHost.clipboardReader;
 
-  /// Voice-input state: idle → recording → transcribing → idle.
+  /// Voice-input state: idle → recording → transcribing → idle. Starting is
+  /// tracked separately while the asynchronous endpoint preflight runs.
+  bool _micStarting = false;
   bool _micRecording = false;
   bool _micTranscribing = false;
 
@@ -230,6 +284,9 @@ class ChatComposerState extends State<ChatComposer>
       duration: const Duration(milliseconds: 900),
     );
     _isStreaming = widget.service.isStreaming;
+    _draftStore = widget.draftStore ?? ChatComposerDraftStore.shared;
+    _draftKey = widget.draftKey ?? widget.service;
+    _restoreDraft();
     widget.service.addListener(_onServiceChanged);
     // The send/stop button's look depends on the field being non-empty.
     _textController.addListener(_onTextChanged);
@@ -250,6 +307,13 @@ class ChatComposerState extends State<ChatComposer>
     if (oldWidget.dropBridge != widget.dropBridge) {
       oldWidget.dropBridge?.handler = null;
       widget.dropBridge?.handler = _handleSurfaceDrop;
+    }
+    final newDraftStore = widget.draftStore ?? ChatComposerDraftStore.shared;
+    final newDraftKey = widget.draftKey ?? widget.service;
+    if (!identical(_draftStore, newDraftStore) || _draftKey != newDraftKey) {
+      _draftStore = newDraftStore;
+      _draftKey = newDraftKey;
+      _restoreDraft();
     }
     if (oldWidget.service != widget.service) {
       oldWidget.service.removeListener(_onServiceChanged);
@@ -288,40 +352,125 @@ class ChatComposerState extends State<ChatComposer>
   }
 
   void _onTextChanged() {
+    if (_restoringDraft) return;
+    _mentionHighlight = 0;
+    _mentionMenuDismissed = false;
+    _persistDraft();
     if (mounted) setState(() {});
   }
 
-  void _onFocusChange() {
-    widget.onFocusChanged?.call(_focusNode.hasFocus);
+  void _restoreDraft() {
+    final draft = _draftStore.draftFor(_draftKey);
+    _restoringDraft = true;
+    _textController.value = TextEditingValue(
+      text: draft.text,
+      selection: TextSelection.collapsed(offset: draft.text.length),
+    );
+    _pendingAttachments
+      ..clear()
+      ..addAll(draft.attachments);
+    _restoringDraft = false;
   }
 
-  /// Mic button tap: idle starts a recording (after the OS permission
-  /// prompt), recording stops it and transcribes the take into the input
-  /// field.
+  void _persistDraft() {
+    _draftStore.save(
+      _draftKey,
+      ChatComposerDraft(
+        text: _textController.text,
+        attachments: _pendingAttachments,
+      ),
+    );
+  }
+
+  void _onFocusChange() {
+    _mentionHighlight = 0;
+    _mentionMenuDismissed = false;
+    widget.onFocusChanged?.call(_focusNode.hasFocus);
+    if (mounted) setState(() {});
+  }
+
+  /// Mic button tap: idle verifies the transcription endpoint, then starts
+  /// a recording after the OS permission prompt. Recording stops and
+  /// transcribes the take into the input field on the second tap.
   Future<void> _toggleMic() async {
     final voiceInput = _voiceInput;
-    if (voiceInput == null || _micTranscribing) return;
+    if (voiceInput == null || _micStarting || _micTranscribing) return;
     if (_micRecording) {
       await _stopMic(voiceInput);
       return;
     }
     final strings = FaChatStrings.of(context);
-    final bool started;
+    _micStarting = true;
     try {
-      started = await voiceInput.start();
+      final FaChatVoiceInputConfiguration? configuration =
+          voiceInput is FaChatVoiceInputConfiguration
+          ? voiceInput as FaChatVoiceInputConfiguration
+          : null;
+      if (configuration != null && !await configuration.isConfigured) {
+        if (mounted) await _showVoiceInputConfigurationDialog();
+        return;
+      }
+      if (!mounted) return;
+      final started = await voiceInput.start();
+      if (!started) {
+        if (mounted) {
+          _showSnack(voiceInput.unavailableReason ?? strings.chatMicDenied);
+        }
+        return;
+      }
+      if (!mounted) return;
+      setState(() => _micRecording = true);
+      _micPulse.repeat(reverse: true);
     } on Object catch (e) {
       if (mounted) _showSnack(strings.chatMicError(e.toString()));
-      return;
+    } finally {
+      _micStarting = false;
     }
-    if (!started) {
-      if (mounted) {
-        _showSnack(voiceInput.unavailableReason ?? strings.chatMicDenied);
-      }
-      return;
-    }
-    if (!mounted) return;
-    setState(() => _micRecording = true);
-    _micPulse.repeat(reverse: true);
+  }
+
+  Future<void> _showVoiceInputConfigurationDialog() async {
+    final strings = FaChatStrings.of(context);
+    final openSettings = widget.onVoiceInputSettings;
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) {
+        final tokens = FaDesignTokens.of(dialogContext);
+        return AlertDialog(
+          key: const ValueKey('faChatAsrConfigurationDialog'),
+          backgroundColor: tokens.surface1,
+          surfaceTintColor: Colors.transparent,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(tokens.radiusLg),
+            side: BorderSide(color: tokens.hairline),
+          ),
+          title: Text(
+            strings.chatMicNotConfiguredTitle,
+            style: TextStyle(color: tokens.ink1),
+          ),
+          content: Text(
+            strings.chatMicNotConfiguredBody,
+            style: TextStyle(color: tokens.ink2, height: 1.4),
+          ),
+          actions: [
+            FaButton(
+              key: const ValueKey('faChatAsrCancelAction'),
+              label: MaterialLocalizations.of(dialogContext).cancelButtonLabel,
+              variant: FaButtonVariant.ghost,
+              onPressed: () => Navigator.of(dialogContext).pop(),
+            ),
+            if (openSettings != null)
+              FaButton(
+                key: const ValueKey('faChatAsrSettingsAction'),
+                label: strings.chatMicSettingsAction,
+                onPressed: () {
+                  Navigator.of(dialogContext).pop();
+                  unawaited(openSettings());
+                },
+              ),
+          ],
+        );
+      },
+    );
   }
 
   Future<void> _stopMic(FaChatVoiceInput voiceInput) async {
@@ -428,20 +577,35 @@ class ChatComposerState extends State<ChatComposer>
       _showSnack(strings.chatAttachNoName(name));
       return;
     }
+    final service = widget.service;
+    final draftStore = _draftStore;
+    final draftKey = _draftKey;
     try {
-      final path = await widget.service.stageAttachment(
+      final path = await service.stageAttachment(name: clean, bytes: bytes);
+      final attachment = (
         name: clean,
+        path: path,
         bytes: bytes,
+        mimeType: mimeTypeForUploadName(clean),
       );
-      if (!mounted) return;
-      setState(() {
-        _pendingAttachments.add((
-          name: clean,
-          path: path,
-          bytes: bytes,
-          mimeType: mimeTypeForUploadName(clean),
-        ));
-      });
+      if (mounted &&
+          identical(_draftStore, draftStore) &&
+          _draftKey == draftKey) {
+        setState(() => _pendingAttachments.add(attachment));
+        _persistDraft();
+      } else {
+        // Staging can finish after a route unmount or session switch. Keep
+        // the result with the conversation that initiated it, never the
+        // conversation that happens to be visible when the future resumes.
+        final draft = draftStore.draftFor(draftKey);
+        draftStore.save(
+          draftKey,
+          ChatComposerDraft(
+            text: draft.text,
+            attachments: [...draft.attachments, attachment],
+          ),
+        );
+      }
       FaChatHost.track('upload_added', {'count': 1});
     } on Object catch (e) {
       if (mounted) {
@@ -453,9 +617,100 @@ class ChatComposerState extends State<ChatComposer>
   void _removePendingAttachment(int index) {
     final removed = _pendingAttachments[index];
     setState(() => _pendingAttachments.removeAt(index));
+    _persistDraft();
     // The file was staged at pick time; removing the chip drops it again
     // (best effort — a leftover in uploads/ is harmless).
     unawaited(widget.service.discardStagedAttachment(removed.path));
+  }
+
+  List<FaChatMentionOption> get _mentionOptions {
+    final builder = widget.mentionOptionsBuilder;
+    if (builder == null || _mentionMenuDismissed || !_focusNode.hasFocus) {
+      return const [];
+    }
+    final mention = _activeMention(_textController.value);
+    return mention == null ? const [] : builder(mention.query);
+  }
+
+  static ({int start, int end, String query})? _activeMention(
+    TextEditingValue value,
+  ) {
+    final selection = value.selection;
+    if (!selection.isValid || !selection.isCollapsed) return null;
+    final caret = selection.extentOffset;
+    if (caret <= 0 || caret > value.text.length) return null;
+    final beforeCaret = value.text.substring(0, caret);
+    final start = beforeCaret.lastIndexOf('@');
+    if (start < 0) return null;
+    if (start > 0) {
+      final previous = value.text.substring(start - 1, start);
+      if (previous.trim().isNotEmpty && !'([{<'.contains(previous)) {
+        return null;
+      }
+    }
+    final query = value.text.substring(start + 1, caret);
+    if (query.trim().length != query.length || query.contains(RegExp(r'\s'))) {
+      return null;
+    }
+    return (start: start, end: caret, query: query);
+  }
+
+  void _moveMentionHighlight(int delta, int optionCount) {
+    if (optionCount == 0) return;
+    setState(() {
+      _mentionHighlight = (_mentionHighlight + delta) % optionCount;
+      if (_mentionHighlight < 0) _mentionHighlight += optionCount;
+    });
+  }
+
+  void _insertMention(FaChatMentionOption option) {
+    final value = _textController.value;
+    final mention = _activeMention(value);
+    if (mention == null) return;
+    final inserted = '@${option.label} ';
+    _textController.value = TextEditingValue(
+      text: value.text.replaceRange(mention.start, mention.end, inserted),
+      selection: TextSelection.collapsed(
+        offset: mention.start + inserted.length,
+      ),
+    );
+    setState(() {
+      _mentionHighlight = 0;
+      _mentionMenuDismissed = true;
+    });
+    _focusNode.requestFocus();
+  }
+
+  KeyEventResult _handleMentionKey(
+    KeyEvent event,
+    List<FaChatMentionOption> options,
+  ) {
+    final key = event.logicalKey;
+    if (key == LogicalKeyboardKey.arrowDown) {
+      _moveMentionHighlight(1, options.length);
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.arrowUp) {
+      _moveMentionHighlight(-1, options.length);
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.escape) {
+      setState(() {
+        _mentionHighlight = 0;
+        _mentionMenuDismissed = true;
+      });
+      return KeyEventResult.handled;
+    }
+    final isEnter =
+        key == LogicalKeyboardKey.enter ||
+        key == LogicalKeyboardKey.numpadEnter;
+    if (key == LogicalKeyboardKey.tab ||
+        (isEnter && !HardwareKeyboard.instance.isShiftPressed)) {
+      final index = _mentionHighlight.clamp(0, options.length - 1);
+      _insertMention(options[index]);
+      return KeyEventResult.handled;
+    }
+    return KeyEventResult.ignored;
   }
 
   /// Enter sends; Shift+Enter inserts a newline (issue #973). The key
@@ -473,6 +728,14 @@ class ChatComposerState extends State<ChatComposer>
   /// staged as an upload chip, long or multi-line text becomes a staged
   /// `.txt` chip, and only short single-line text is pasted inline.
   KeyEventResult _handleComposerKey(FocusNode node, KeyEvent event) {
+    if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
+      return KeyEventResult.ignored;
+    }
+    final mentionOptions = _mentionOptions;
+    if (mentionOptions.isNotEmpty) {
+      final result = _handleMentionKey(event, mentionOptions);
+      if (result != KeyEventResult.ignored) return result;
+    }
     if (event is! KeyDownEvent) return KeyEventResult.ignored;
     final keyboard = HardwareKeyboard.instance;
     final isEnter =
@@ -596,6 +859,7 @@ class ChatComposerState extends State<ChatComposer>
         final consumed = List.of(_pendingAttachments);
         setState(() => _pendingAttachments.clear());
         _textController.clear();
+        _persistDraft();
         for (final attachment in consumed) {
           unawaited(widget.service.discardStagedAttachment(attachment.path));
         }
@@ -607,8 +871,17 @@ class ChatComposerState extends State<ChatComposer>
     // keeps the keyboard up instead — the follow-up message must not need a
     // re-tap. Defer past performAction's own unfocus (end of this frame).
     _scheduleFocusRestore();
+    final service = widget.service;
+    final draftStore = _draftStore;
+    final draftKey = _draftKey;
     final pending = _consumeComposedForSend(trimmed);
-    await _dispatchSend(trimmed, pending);
+    await _dispatchSend(
+      trimmed,
+      pending,
+      service: service,
+      draftStore: draftStore,
+      draftKey: draftKey,
+    );
   }
 
   /// Defers a focus restore to the end of the frame when the field holds
@@ -623,11 +896,11 @@ class ChatComposerState extends State<ChatComposer>
   /// Clears the composer for the send: the pending chips leave the list
   /// (their metadata rides the outgoing message), the field resets, and the
   /// send telemetry fires — metadata only (never the text, never the files).
-  List<({String name, String path, Uint8List bytes, String mimeType})>
-  _consumeComposedForSend(String trimmed) {
+  List<ChatComposerDraftAttachment> _consumeComposedForSend(String trimmed) {
     final pending = List.of(_pendingAttachments);
     setState(() => _pendingAttachments.clear());
     _textController.clear();
+    _persistDraft();
     FaChatHost.track('message_sent', {
       'has_attachments': pending.isNotEmpty,
       'text_length': trimmed.length,
@@ -637,9 +910,11 @@ class ChatComposerState extends State<ChatComposer>
 
   Future<void> _dispatchSend(
     String trimmed,
-    List<({String name, String path, Uint8List bytes, String mimeType})>
-    pending,
-  ) async {
+    List<ChatComposerDraftAttachment> pending, {
+    required FaChatService service,
+    required ChatComposerDraftStore draftStore,
+    required Object draftKey,
+  }) async {
     // Capture the pre-send streaming state: sendText STARTS a run when
     // idle, which flips the flag synchronously — aborting on the flipped
     // flag would kill the run we just started (that's the "empty session
@@ -647,17 +922,23 @@ class ChatComposerState extends State<ChatComposer>
     // ALREADY in flight when the user hit send.
     final wasStreaming = _isStreaming;
     try {
-      await _submitComposed(trimmed, pending);
+      await _submitComposed(trimmed, pending, service);
       // Steer-interrupt (pi semantics): a message sent mid-run interrupts
       // the current turn — the queued message gets its own run right after
       // the lifecycle ends (AgentEndEvent → continueRun), instead of
       // waiting out a long turn.
-      if (wasStreaming) widget.service.abort();
+      if (wasStreaming) service.abort();
       widget.onSent?.call();
     } on Object catch (e) {
       // The send itself failed before the run started: hand the chips and
       // the typed text back so nothing the user composed is lost.
-      _restoreFailedSend(trimmed, pending, e);
+      _restoreFailedSend(
+        trimmed,
+        pending,
+        e,
+        draftStore: draftStore,
+        draftKey: draftKey,
+      );
     }
   }
 
@@ -667,11 +948,11 @@ class ChatComposerState extends State<ChatComposer>
   /// reads the files with its tools (see FaChatService.sendAttachments).
   Future<void> _submitComposed(
     String trimmed,
-    List<({String name, String path, Uint8List bytes, String mimeType})>
-    pending,
+    List<ChatComposerDraftAttachment> pending,
+    FaChatService service,
   ) {
-    if (pending.isEmpty) return widget.service.sendText(trimmed);
-    return widget.service.sendAttachments(
+    if (pending.isEmpty) return service.sendText(trimmed);
+    return service.sendAttachments(
       attachments: [
         for (final attachment in pending)
           (
@@ -688,14 +969,30 @@ class ChatComposerState extends State<ChatComposer>
   /// the user composed is lost, plus the failure notice.
   void _restoreFailedSend(
     String trimmed,
-    List<({String name, String path, Uint8List bytes, String mimeType})>
-    pending,
-    Object error,
-  ) {
-    if (!mounted) return;
-    setState(() => _pendingAttachments.addAll(pending));
-    _textController.text = trimmed;
-    _showSnack(FaChatStrings.of(context).chatSendError(error.toString()));
+    List<ChatComposerDraftAttachment> pending,
+    Object error, {
+    required ChatComposerDraftStore draftStore,
+    required Object draftKey,
+  }) {
+    if (mounted &&
+        identical(_draftStore, draftStore) &&
+        _draftKey == draftKey) {
+      setState(() => _pendingAttachments.addAll(pending));
+      _textController.text = trimmed;
+      _persistDraft();
+      _showSnack(FaChatStrings.of(context).chatSendError(error.toString()));
+      return;
+    }
+    // A switch/unmount during the send must not resurrect A's failed draft
+    // inside B. Restore it directly to its original keyed snapshot instead.
+    final draft = draftStore.draftFor(draftKey);
+    draftStore.save(
+      draftKey,
+      ChatComposerDraft(
+        text: draft.text.isEmpty ? trimmed : draft.text,
+        attachments: [...draft.attachments, ...pending],
+      ),
+    );
   }
 
   /// Picks arbitrary files and stages them as pending attachments. Staging
@@ -862,25 +1159,94 @@ class ChatComposerState extends State<ChatComposer>
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      decoration: BoxDecoration(
-        // Keep the composer transparent so it inherits the scaffold/sheet
-        // surface underneath. This avoids a color mismatch in the iOS/macOS
-        // overlay/bottom-sheet where the panel background is panelAlt, not
-        // palette.bg.
-        // The top hairline still visually separates it from the transcript.
-        border: Border(top: BorderSide(color: Theme.of(context).dividerColor)),
-      ),
-      child: SafeArea(
-        top: false,
+    final mentionOptions = _mentionOptions;
+    final content = Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (_pendingAttachments.isNotEmpty) _buildAttachmentChipsRow(),
+        if (widget.service.pendingSteerTexts.isNotEmpty) _buildSteerRows(),
+        _buildFieldRow(),
+      ],
+    );
+    final tokens = FaDesignTokens.of(context);
+    // Safe-area and outer margins stay OUTSIDE the rounded surface. The
+    // field row is compact, while glass/material and its shadow remain
+    // clipped inside the same floating bounds in every visual direction.
+    return SafeArea(
+      top: false,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(8, 4, 8, 8),
         child: Column(
           mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            if (_pendingAttachments.isNotEmpty) _buildAttachmentChipsRow(),
-            if (widget.service.pendingSteerTexts.isNotEmpty) _buildSteerRows(),
-            _buildFieldRow(),
+            if (mentionOptions.isNotEmpty) _buildMentionMenu(mentionOptions),
+            FaSurface(
+              key: const ValueKey('faChatFloatingComposer'),
+              glass: true,
+              useBackdropGroup: true,
+              borderRadius: BorderRadius.circular(tokens.radiusLg),
+              tintAmount: .10,
+              tintOpacity: .35,
+              child: content,
+            ),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildMentionMenu(List<FaChatMentionOption> options) {
+    final palette = fahChatColorsOf(context);
+    final highlighted = _mentionHighlight.clamp(0, options.length - 1);
+    return Container(
+      key: const ValueKey('faChatMentionMenu'),
+      width: double.infinity,
+      margin: const EdgeInsets.only(left: 12, bottom: 6),
+      constraints: BoxConstraints(
+        maxWidth: (MediaQuery.sizeOf(context).width - 40).clamp(0.0, 320.0),
+        maxHeight: 240,
+      ),
+      decoration: BoxDecoration(
+        color: palette.panel,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: Theme.of(context).dividerColor),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: ListView.builder(
+        shrinkWrap: true,
+        padding: const EdgeInsets.symmetric(vertical: 4),
+        itemCount: options.length,
+        itemBuilder: (context, index) {
+          final option = options[index];
+          return Material(
+            color: index == highlighted
+                ? palette.indigo.withValues(alpha: .12)
+                : Colors.transparent,
+            child: ListTile(
+              key: ValueKey('mentionOption:${option.id}'),
+              dense: true,
+              minLeadingWidth: 24,
+              horizontalTitleGap: 8,
+              contentPadding: const EdgeInsets.symmetric(horizontal: 12),
+              leading: Icon(option.icon, size: 18, color: palette.dim),
+              title: Text(
+                option.label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+              trailing: Container(
+                width: 6,
+                height: 6,
+                decoration: BoxDecoration(
+                  color: option.online ? palette.teal : palette.dim,
+                  shape: BoxShape.circle,
+                ),
+              ),
+              onTap: () => _insertMention(option),
+            ),
+          );
+        },
       ),
     );
   }
@@ -908,12 +1274,17 @@ class ChatComposerState extends State<ChatComposer>
   Widget _buildSteerRows() {
     final theme = Theme.of(context);
     final palette = fahChatColorsOf(context);
+    final pending = widget.service.pendingSteerTexts;
+    final notices = pending.where(isFaSystemNoticeContent).toList();
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          for (final pending in widget.service.pendingSteerTexts)
+          if (notices.isNotEmpty) SystemNoticeTile(notices: notices),
+          for (final text in pending.where(
+            (text) => !isFaSystemNoticeContent(text),
+          ))
             Container(
               margin: const EdgeInsets.only(bottom: 6),
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
@@ -926,7 +1297,7 @@ class ChatComposerState extends State<ChatComposer>
                 children: [
                   Expanded(
                     child: Text(
-                      pending,
+                      text,
                       style: theme.textTheme.bodyMedium,
                       maxLines: 3,
                       overflow: TextOverflow.ellipsis,
@@ -948,12 +1319,11 @@ class ChatComposerState extends State<ChatComposer>
     final palette = fahChatColorsOf(context);
     final strings = FaChatStrings.of(context);
     return Padding(
-      // Compact single-layer vertical padding (issue #459): the field's
-      // contentPadding carries the pill's inner air; the row itself adds
-      // only a hairline 4dp above/below.
-      padding: widget.hideMicWhenNotEmpty
-          ? const EdgeInsets.fromLTRB(12, 4, 12, 4)
-          : const EdgeInsets.fromLTRB(8, 4, 8, 4),
+      key: const ValueKey('faChatComposerFieldRow'),
+      // Attachment hugs the leading edge; Send keeps two extra points of
+      // trailing optical air so its arrow never crowds the capsule rim.
+      // The text decorator owns the icon-to-text gap.
+      padding: const EdgeInsets.fromLTRB(2, 2, 4, 2),
       child: Row(
         children: [
           if (widget.leadingBuilder != null)
@@ -967,42 +1337,70 @@ class ChatComposerState extends State<ChatComposer>
     );
   }
 
+  ButtonStyle _compactControlStyle() => IconButton.styleFrom(
+    minimumSize: const Size.square(36),
+    maximumSize: const Size.square(36),
+    padding: EdgeInsets.zero,
+    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+  );
+
   Widget _buildAttachButton(FahColors palette, FaChatStrings strings) {
     return IconButton(
+      key: const ValueKey('faChatComposerAttachButton'),
       // The modern "add content" mark: a plus in a rounded square
       // (owner-approved B3, see [FaAttachGlyph]) — its 2px stroke rhymes
       // with the mic circle in the one-action slot.
-      icon: FaAttachGlyph(color: palette.dim),
+      icon: FaAttachGlyph(color: palette.dim, size: 18),
+      iconSize: 18,
+      padding: EdgeInsets.zero,
+      constraints: const BoxConstraints.tightFor(width: 36, height: 36),
+      style: _compactControlStyle(),
       tooltip: strings.chatAttachTooltip,
       onPressed: _showAttachmentSheet,
     );
   }
 
   Widget _buildTextField() {
-    return Padding(
-      padding: EdgeInsets.symmetric(
-        horizontal: widget.hideMicWhenNotEmpty ? 6 : 0,
-      ),
-      child: Focus(
-        onKeyEvent: _handleComposerKey,
-        child: TextField(
-          controller: _textController,
-          focusNode: _focusNode,
-          decoration:
-              // The host-localized hint (the session surface scopes
-              // FaChatStrings; channel chats override it with "Message
-              // <channel>").
-              faComposerFieldDecoration(
-                FaChatStrings.of(context).chatInputHint,
-              ),
-          // Multiline: Shift+Enter (hardware) or the touch return key
-          // inserts a line break; plain Enter sends (_handleComposerKey).
-          // The field grows 1→6 lines and then scrolls internally.
-          keyboardType: TextInputType.multiline,
-          textInputAction: TextInputAction.newline,
-          maxLines: 6,
-          minLines: 1,
-        ),
+    final palette = fahChatColorsOf(context);
+    // No wrapper padding: a 4px leading InputDecorator inset keeps the
+    // caret close to the attachment control. The trailing inset stays 10px
+    // so text does not collide with the microphone.
+    return Focus(
+      onKeyEvent: _handleComposerKey,
+      child: TextField(
+        key: const ValueKey('faChatComposerTextField'),
+        controller: _textController,
+        focusNode: _focusNode,
+        style: TextStyle(color: palette.text, fontSize: 14, height: 1.4),
+        decoration:
+            // The host-localized hint (the session surface scopes
+            // FaChatStrings; channel chats override it with "Message
+            // <channel>").
+            faComposerFieldDecoration(
+              FaChatStrings.of(context).chatInputHint,
+            ).copyWith(
+              contentPadding: const EdgeInsets.fromLTRB(4, 8, 10, 8),
+              isDense: true,
+              // The outer FaSurface is the composer's ONLY filled, bordered
+              // surface. A nested InputDecorator fill/outline produced doubled
+              // horizontal rules and a second right edge with the real glass
+              // renderer; InputBorder.none keeps editing inside that one clip.
+              filled: false,
+              fillColor: Colors.transparent,
+              border: InputBorder.none,
+              enabledBorder: InputBorder.none,
+              focusedBorder: InputBorder.none,
+              disabledBorder: InputBorder.none,
+              errorBorder: InputBorder.none,
+              focusedErrorBorder: InputBorder.none,
+            ),
+        // Multiline: Shift+Enter (hardware) or the touch return key
+        // inserts a line break; plain Enter sends (_handleComposerKey).
+        // The field grows 1→6 lines and then scrolls internally.
+        keyboardType: TextInputType.multiline,
+        textInputAction: TextInputAction.newline,
+        maxLines: 6,
+        minLines: 1,
       ),
     );
   }
@@ -1023,6 +1421,7 @@ class ChatComposerState extends State<ChatComposer>
   ) {
     return [
       if (_slotShowsMic) _buildMicButton(context),
+      // One compact, explicit gap: no legacy trailing inset on the mic.
       if (_slotShowsMic && _slotShowsSendStop) const SizedBox(width: 4),
       if (_slotShowsSendStop) _buildSendStopButton(palette, strings),
     ];
@@ -1051,36 +1450,72 @@ class ChatComposerState extends State<ChatComposer>
     );
   }
 
-  /// The circular send/stop button: stop while streaming with an empty
-  /// field, send (or steer-send mid-stream) otherwise. Light theme paints
-  /// a solid indigo circle; dark theme the brand gradient.
+  /// The send/stop control: a solid accent capsule (40x34, radius 17)
+  /// inset 4pt from the composer pill's right edge. The corner
+  /// radius (17 = pillRadius - leadingInset) continues the pill's curvature as
+  /// a concentric arc. Stop while streaming with an empty field, send
+  /// (or steer-send mid-stream) otherwise. The capsule is the
+  /// owner-approved prototype look — solid opaque accent, no glass or
+  /// border, with only a soft accent halo — and a disabled arm renders the
+  /// same capsule dimmed.
   Widget _buildSendStopButton(FahColors palette, FaChatStrings strings) {
-    return faSendBubbleShell(
-      context,
-      palette,
-      Builder(
-        builder: (context) {
-          // Stop only while streaming AND nothing typed; with text in the
-          // field the button is a steer-send (interrupt the turn and run
-          // the message).
-          final showStop = _isStreaming && _textController.text.trim().isEmpty;
-          return IconButton(
-            icon: Icon(
-              // Prototype uses an up-arrow (send-up) icon.
-              showStop ? Icons.stop : Icons.arrow_upward,
-              size: 20,
+    // Stop only while streaming AND nothing typed; with text in the
+    // field the button is a steer-send (interrupt the turn and run
+    // the message).
+    final showStop = _isStreaming && _textController.text.trim().isEmpty;
+    final VoidCallback onPressed = showStop
+        ? widget.service.abort
+        : () => _send(_textController.text);
+    // The arms are always wired today (send/steer/abort never unset), so
+    // the capsule renders enabled; the disabled contract is "the same
+    // capsule, dimmed" — never a shape or glyph swap.
+    return SizedBox(
+      key: const ValueKey('faChatComposerSendButton'),
+      width: 40,
+      height: 34,
+      child: DecoratedBox(
+        key: const ValueKey('faChatComposerSendGlow'),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(17),
+          boxShadow: [
+            BoxShadow(
+              color: palette.indigo.withValues(alpha: .14),
+              blurRadius: 8,
+              spreadRadius: -1,
             ),
-            color: palette.onAccent,
-            tooltip: showStop
-                ? strings.chatAbortTooltip
-                : (_isStreaming
-                      ? strings.chatSteerTooltip
-                      : strings.chatSendTooltip),
-            onPressed: showStop
-                ? widget.service.abort
-                : () => _send(_textController.text),
-          );
-        },
+          ],
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(17),
+          child: ColoredBox(
+            color: palette.indigo,
+            child: IconButton(
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints.tightFor(width: 40, height: 34),
+              style: IconButton.styleFrom(
+                minimumSize: const Size(40, 34),
+                maximumSize: const Size(40, 34),
+                padding: EdgeInsets.zero,
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+              icon: showStop
+                  ? const Icon(Icons.stop, size: 22.5)
+                  : const Center(
+                      key: ValueKey('faChatComposerSendGlyph'),
+                      // Material's unrotated plane is the horizontal mark.
+                      // Center it exactly; no optical offset or extra tilt.
+                      child: Icon(Icons.send_rounded, size: 24),
+                    ),
+              color: palette.onAccent,
+              tooltip: showStop
+                  ? strings.chatAbortTooltip
+                  : (_isStreaming
+                        ? strings.chatSteerTooltip
+                        : strings.chatSendTooltip),
+              onPressed: onPressed,
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -1092,12 +1527,13 @@ class ChatComposerState extends State<ChatComposer>
   Widget _buildMicButton(BuildContext context) {
     final strings = FaChatStrings.of(context);
     if (_micTranscribing) {
-      return const Padding(
-        padding: EdgeInsets.symmetric(horizontal: 12),
-        child: SizedBox(
-          width: 20,
-          height: 20,
-          child: CircularProgressIndicator(strokeWidth: 2),
+      return const SizedBox.square(
+        dimension: 36,
+        child: Center(
+          child: SizedBox.square(
+            dimension: 18,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
         ),
       );
     }
@@ -1108,28 +1544,32 @@ class ChatComposerState extends State<ChatComposer>
         builder: (context, child) => IconButton(
           icon: Icon(
             Icons.mic,
+            size: 18,
             color: Color.lerp(
               error,
               error.withValues(alpha: 0.35),
               _micPulse.value,
             ),
           ),
+          padding: EdgeInsets.zero,
+          constraints: const BoxConstraints.tightFor(width: 36, height: 36),
+          style: _compactControlStyle(),
           tooltip: strings.chatMicStopTooltip,
           onPressed: _toggleMic,
         ),
       );
     }
     final idle = IconButton(
-      icon: Icon(
-        Icons.mic_none,
-        // Match the send/stop circle's icon size in the one-action slot.
-        size: widget.hideMicWhenNotEmpty ? 20 : null,
-      ),
+      icon: const Icon(Icons.mic_none, size: 18),
+      iconSize: 18,
+      padding: EdgeInsets.zero,
+      constraints: const BoxConstraints.tightFor(width: 36, height: 36),
+      style: _compactControlStyle(),
       tooltip: strings.chatMicTooltip,
       onPressed: _toggleMic,
     );
     if (!widget.hideMicWhenNotEmpty) return idle;
-    // iMessage-style slot: the idle mic sits in the same 48px circle the
+    // iMessage-style slot: the idle mic sits in the same 36px circle the
     // send button occupies, filled with the text field's pill color plus a
     // hairline border so the two states of the slot read as one control.
     final palette = fahChatColorsOf(context);

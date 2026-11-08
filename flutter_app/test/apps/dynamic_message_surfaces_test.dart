@@ -5,7 +5,7 @@
 import 'package:fa/apps/dynamic_messages.dart';
 import 'package:fa/apps/dynamic_widget_tile.dart';
 import 'package:fa/apps/fa_chat_overlay.dart';
-import 'package:fa/apps/session_chat_sheet.dart';
+import 'package:fa/ui/screens/chat_screen.dart';
 import 'package:fa/l10n/app_localizations.dart';
 import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/flutter_session_manager.dart';
@@ -16,13 +16,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-final _sheetKey = GlobalKey<SessionChatSheetState>();
-
-/// The launcher chat surfaces (issue #336): the iOS app's home transcript
-/// is [SessionChatSheet]'s panel and [FaChatOverlay] — neither mounts the
-/// full [ChatScreen] that used to own the widget-tile builder, so a
-/// `widget`-role message degraded to the generic tool card there. These
-/// tests pin the tile rendering on every transcript surface.
+/// Dynamic-message transcript surfaces (issue #336): the current full chat
+/// route and [FaChatOverlay] must both mount the interactive widget-tile
+/// builder instead of degrading a `widget`-role message to a generic card.
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -105,7 +101,7 @@ void main() {
     return (service, definition);
   }
 
-  Future<void> pumpSheet(WidgetTester tester, AgentService service) async {
+  Future<void> pumpChat(WidgetTester tester, AgentService service) async {
     final manager = FlutterSessionManager(
       env: service.env,
       sessionsRoot: '/sessions',
@@ -115,26 +111,20 @@ void main() {
         theme: buildFahTheme(),
         localizationsDelegates: AppLocalizations.localizationsDelegates,
         supportedLocales: AppLocalizations.supportedLocales,
-        home: Scaffold(
-          body: SessionChatSheet(key: _sheetKey, manager: manager),
-        ),
+        home: ChatScreen(manager: manager),
       ),
     );
     await tester.pumpAndSettle();
-    // The launcher panel starts collapsed in tests (no persisted mode):
-    // expand it so the transcript actually builds.
-    _sheetKey.currentState!.expand();
-    await tester.pumpAndSettle();
   }
 
-  group('launcher sheet transcript (the iOS home chat surface)', () {
+  group('current ChatScreen transcript', () {
     testWidgets('mounts the interactive widget tile next to the tool card', (
       tester,
     ) async {
       final env = MemoryExecutionEnv();
       final (service, _) = serviceWithWidget(env);
       addTearDown(service.dispose);
-      await pumpSheet(tester, service);
+      await pumpChat(tester, service);
 
       expect(find.byType(DynamicWidgetTile), findsOneWidget);
       // The tile title bar shows the widget title...
@@ -150,7 +140,7 @@ void main() {
       final env = MemoryExecutionEnv();
       final (service, _) = serviceWithWidget(env, bootError: 'engine dead');
       addTearDown(service.dispose);
-      await pumpSheet(tester, service);
+      await pumpChat(tester, service);
 
       expect(find.byType(DynamicWidgetTile), findsOneWidget);
       expect(find.text('Widget error'), findsOneWidget);

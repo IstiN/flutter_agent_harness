@@ -5,6 +5,7 @@
 import 'package:flutter/material.dart';
 
 import 'package:fa_ui/src/strings/fa_ui_strings.dart';
+import 'package:fa_ui/src/theme/fa2_tokens.dart';
 
 /// The model-id field with the `/models` quick select shared by the
 /// connection form, the media slot editor, and the default-chat-model
@@ -61,22 +62,44 @@ class ModelIdAutocompleteField extends StatelessWidget {
       },
       onSelected: (id) => controller.text = id,
       fieldViewBuilder: (context, controller, focusNode, onFieldSubmitted) {
+        final tokens = FaDesignTokens.of(context);
+        OutlineInputBorder border(Color color, [double width = 1]) =>
+            OutlineInputBorder(
+              borderRadius: BorderRadius.circular(tokens.radiusMd),
+              borderSide: BorderSide(color: color, width: width),
+            );
         return TextField(
           controller: controller,
           focusNode: focusNode,
+          style: TextStyle(color: tokens.ink1, fontSize: 13, height: 1.4),
           decoration: InputDecoration(
-            labelText: strings.settingsModelIdLabel,
+            isDense: true,
+            hintText: strings.settingsModelIdLabel,
             helperText: loading ? strings.settingsModelsFetching : null,
+            helperStyle: TextStyle(color: tokens.ink3, fontSize: 12),
             suffixIcon: loading
-                ? const Padding(
-                    padding: EdgeInsets.all(12),
+                ? Padding(
+                    padding: const EdgeInsets.all(12),
                     child: SizedBox(
                       width: 16,
                       height: 16,
-                      child: CircularProgressIndicator(strokeWidth: 2),
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: tokens.accent,
+                      ),
                     ),
                   )
                 : null,
+            filled: true,
+            fillColor: tokens.surface2,
+            hintStyle: TextStyle(color: tokens.ink3),
+            contentPadding: const EdgeInsets.symmetric(
+              horizontal: 16,
+              vertical: 0,
+            ),
+            border: border(tokens.hairline),
+            enabledBorder: border(tokens.hairline),
+            focusedBorder: border(tokens.accent, 1.5),
           ),
         );
       },

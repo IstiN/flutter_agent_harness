@@ -147,7 +147,8 @@ p12_env_value() { # p12_env_value <VARNAME>
 
 label_env() { # label_env <label> <SUFFIX> -> prints resolved env var VALUE
   local label="$1" suffix="$2"
-  local upper="${label^^}"
+  local upper
+  upper="$(printf '%s' "$label" | tr '[:lower:]' '[:upper:]')"
   upper="${upper//-/_}"
   if [ -n "${CI_SIGN_P12_B64_ENV:-}" ] || [ -n "${CI_SIGN_P12_PASSWORD_ENV:-}" ]; then
     # Legacy secret names, mapped explicitly by the caller.

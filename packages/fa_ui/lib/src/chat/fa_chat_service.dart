@@ -9,6 +9,25 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
 import 'approval_ui.dart';
 
+/// Whether [content] is an agent-facing system-notice envelope.
+///
+/// These notices are persisted as user messages for the model, but must not
+/// render as user bubbles on any transcript surface.
+bool isFaSystemNoticeContent(String content) =>
+    content.trimLeft().startsWith('<system-notice>');
+
+/// Human-readable system-notice body without its XML envelope or layout spam.
+String faSystemNoticeText(String content) {
+  var text = content.trim();
+  const opening = '<system-notice>';
+  const closing = '</system-notice>';
+  if (text.startsWith(opening)) text = text.substring(opening.length);
+  if (text.endsWith(closing)) {
+    text = text.substring(0, text.length - closing.length);
+  }
+  return text.trim().replaceAll(RegExp(r'\s+'), ' ');
+}
+
 /// One message in the chat transcript the [FaChatScreen] renders.
 ///
 /// Moved out of the app's agent service so hosts can adapt any backend
@@ -25,7 +44,7 @@ final class FaChatMessage {
     this.data,
   });
 
-  /// `user` | `assistant` | `tool` | `system` | `widget`.
+  /// `user` | `assistant` | `tool` | `system` | `systemNotice` | `widget`.
   final String role;
 
   /// Plain-text (markdown for assistant messages) content. Mutable so
@@ -45,8 +64,8 @@ final class FaChatMessage {
   /// Whether this message reports a failure (tool result or provider error).
   final bool isError;
 
-  /// Opaque host payload (dynamic-message widget id); fa_ui never
-  /// interprets it.
+  /// Host payload: a dynamic-message widget id, or the internal
+  /// `systemNotices` list used by a grouped notice tile.
   final Object? data;
 }
 
@@ -61,10 +80,9 @@ typedef FaChatAttachment = ({Uint8List? bytes, String? path});
 /// transcript (one per LLM turn) — a `isStreaming`-only gate animated
 /// every one of them (a ticker + SVG re-parse each); only the live
 /// block may animate.
-int liveThinkingMessageIndex(FaChatService service) =>
-    service.isStreaming
-        ? service.messages.lastIndexWhere((m) => m.role == 'thinking')
-        : -1;
+int liveThinkingMessageIndex(FaChatService service) => service.isStreaming
+    ? service.messages.lastIndexWhere((m) => m.role == 'thinking')
+    : -1;
 
 /// The live thinking block itself. Candidates compare with [identical]
 /// against the SAME [FaChatService.messages] list the tile was built

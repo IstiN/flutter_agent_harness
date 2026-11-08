@@ -7,6 +7,7 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../strings/fa_ui_strings.dart';
+import '../widgets/fa2_controls.dart';
 import '../widgets/snackbars.dart';
 
 /// Callback invoked with the OpenRouter API key minted by the OAuth flow.
@@ -79,10 +80,11 @@ class OpenRouterOAuthButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final strings = FaUiStrings.of(context);
-    return OutlinedButton.icon(
+    return FaButton(
+      label: strings.settingsOpenRouterOAuthButton,
+      icon: Icons.open_in_browser,
+      variant: FaButtonVariant.secondary,
       onPressed: () => _startFlow(context),
-      icon: const Icon(Icons.open_in_browser, size: 18),
-      label: Text(strings.settingsOpenRouterOAuthButton),
     );
   }
 
@@ -224,19 +226,18 @@ class _OAuthCodeSheetState extends State<_OAuthCodeSheet> {
             const SizedBox(height: 8),
             Text(widget.strings.settingsOpenRouterOAuthSheetBody),
             const SizedBox(height: 16),
-            TextField(
+            FaTextField(
               controller: _controller,
               autofocus: true,
-              decoration: InputDecoration(
-                labelText: widget.strings.settingsOpenRouterOAuthCodeLabel,
-              ),
+              hintText: widget.strings.settingsOpenRouterOAuthCodeLabel,
+              onSubmitted: (code) => Navigator.of(context).pop(code.trim()),
             ),
             const SizedBox(height: 16),
-            FilledButton(
+            FaButton(
+              label: widget.strings.settingsOpenRouterOAuthConfirmButton,
               onPressed: () {
                 Navigator.of(context).pop(_controller.text.trim());
               },
-              child: Text(widget.strings.settingsOpenRouterOAuthConfirmButton),
             ),
           ],
         ),

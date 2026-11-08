@@ -10,7 +10,9 @@ import 'package:fa_ui/src/providers/provider_preset.dart';
 import 'package:fa_ui/src/stores/media_models_store.dart';
 import 'package:fa_ui/src/stores/provider_registry.dart';
 import 'package:fa_ui/src/strings/fa_ui_strings.dart';
+import 'package:fa_ui/src/theme/fa2_tokens.dart';
 import 'package:fa_ui/src/utils/page_presentation.dart';
+import 'package:fa_ui/src/widgets/fa2_controls.dart';
 import 'package:fa_ui/src/widgets/settings_scaffold.dart';
 
 /// The settings "Media models" section: one row per [MediaSlot] showing the
@@ -82,18 +84,49 @@ class MediaModelsSection extends StatelessWidget {
   Widget build(BuildContext context) {
     final store = this.store ?? MediaModelsScope.maybeOf(context);
     return faStoreSection(store, (context, store) {
-      final theme = Theme.of(context);
+      final tokens = FaDesignTokens.of(context);
       final strings = FaUiStrings.of(context);
       return [
-        Text(
-          strings.mediaModelsSectionTitle,
-          style: theme.textTheme.titleSmall,
+        // The section eyebrow: the shared dim label treatment so the
+        // card reads as one settings group.
+        Padding(
+          padding: const EdgeInsets.fromLTRB(4, 0, 4, 4),
+          child: Text(
+            strings.mediaModelsSectionTitle,
+            style: TextStyle(
+              color: tokens.ink2,
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+              letterSpacing: .2,
+            ),
+          ),
         ),
-        const SizedBox(height: 4),
-        Text(strings.mediaModelsSectionNote, style: theme.textTheme.bodySmall),
-        const SizedBox(height: 8),
-        for (final slot in MediaSlot.all)
-          _buildSlotRow(context, strings, store, slot),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(4, 0, 4, 8),
+          child: Text(
+            strings.mediaModelsSectionNote,
+            style: TextStyle(color: tokens.ink2, fontSize: 12, height: 1.35),
+          ),
+        ),
+        // One grouped card: 44px+ token rows with hairline separators
+        // (the bare list-with-chevrons idiom leaked stock M3 ink).
+        FaSurface(
+          borderRadius: BorderRadius.circular(14),
+          child: Column(
+            children: [
+              for (final (i, slot) in MediaSlot.all.indexed) ...[
+                if (i > 0)
+                  Divider(
+                    height: 1,
+                    thickness: 1,
+                    indent: 48,
+                    color: tokens.hairline,
+                  ),
+                _buildSlotRow(context, strings, store, slot),
+              ],
+            ],
+          ),
+        ),
       ];
     });
   }
@@ -104,6 +137,7 @@ class MediaModelsSection extends StatelessWidget {
     MediaModelsStore store,
     String slot,
   ) {
+    final tokens = FaDesignTokens.of(context);
     final override = store.overrideFor(slot);
     // Overrides are summarized with the provider NAME, never the raw URL;
     // an override whose URL matches no known provider falls back to the
@@ -111,7 +145,8 @@ class MediaModelsSection extends StatelessWidget {
     final provider = override == null
         ? null
         : providerForBaseUrl(override.baseUrl, registry);
-    final summary = override == null
+    final unconfigured = override == null;
+    final summary = unconfigured
         // gh-1844: no override = UNCONFIGURED — never an inherited main
         // endpoint.
         ? strings.mediaModelsUnconfiguredSummary
@@ -123,11 +158,50 @@ class MediaModelsSection extends StatelessWidget {
                 : _hostOf(override.baseUrl),
             override.modelId,
           );
-    return FaSettingsRow(
-      icon: slotIcons[slot] ?? Icons.tune,
-      title: slotLabelFor(strings, slot),
-      subtitle: summary,
+    // Hierarchy: a configured slot's summary is secondary ink; the dim
+    // tertiary ink is reserved for the unconfigured callout.
+    final summaryColor = unconfigured ? tokens.ink3 : tokens.ink2;
+    return InkWell(
       onTap: () => _editSlot(context, store, slot),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(minHeight: 44),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+          child: Row(
+            children: [
+              Icon(slotIcons[slot] ?? Icons.tune, size: 20, color: tokens.ink2),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      slotLabelFor(strings, slot),
+                      style: TextStyle(
+                        color: tokens.ink1,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w500,
+                        height: 1.3,
+                      ),
+                    ),
+                    Text(
+                      summary,
+                      style: TextStyle(
+                        color: summaryColor,
+                        fontSize: 12,
+                        height: 1.35,
+                      ),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 12),
+              Icon(Icons.chevron_right, size: 18, color: tokens.ink3),
+            ],
+          ),
+        ),
+      ),
     );
   }
 

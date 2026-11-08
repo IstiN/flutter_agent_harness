@@ -9,6 +9,7 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
 import 'package:fa/l10n/l10n_ext.dart';
 import 'package:fa/services/agent_service.dart';
+import 'package:fa/ui/screens/settings_tiles.dart';
 import 'package:fa_ui/fa_ui.dart';
 
 /// The settings "Built-in skills" rows (issue #1151): one live switch per
@@ -26,17 +27,19 @@ class SkillsTogglesSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colors = FahColors.of(context);
+    final tokens = FaDesignTokens.of(context);
     final skills = builtinSkills();
     return ListenableBuilder(
       listenable: service,
       builder: (context, _) {
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
+        return SettingsGroup(
+          // The section header stays inside the card; the rows below it
+          // sit on the card's 16pt insets with interleaved hairlines.
+          header: Padding(
+            padding: const EdgeInsets.fromLTRB(12, 4, 12, 4),
+            child: Row(
               children: [
-                Icon(Icons.extension_outlined, size: 20, color: colors.dim),
+                Icon(Icons.extension_outlined, size: 20, color: tokens.ink2),
                 const SizedBox(width: 12),
                 Expanded(
                   child: Column(
@@ -50,31 +53,25 @@ class SkillsTogglesSection extends StatelessWidget {
                         context.l10n.settingsSkillsTogglesHint,
                         style: Theme.of(
                           context,
-                        ).textTheme.bodySmall?.copyWith(color: colors.dim),
+                        ).textTheme.bodySmall?.copyWith(color: tokens.ink2),
                       ),
                     ],
                   ),
                 ),
               ],
             ),
+          ),
+          children: [
             for (final skill in skills)
-              SwitchListTile(
+              SettingsSwitchRow(
                 value: service.isSkillEnabled(skill.name),
                 onChanged: (enabled) =>
                     unawaited(service.setSkillToggle(skill.name, enabled)),
-                dense: true,
-                contentPadding: EdgeInsets.zero,
-                title: Text(
-                  skill.name,
-                  style: Theme.of(context).textTheme.bodyMedium,
-                ),
+                title: Text(skill.name),
                 subtitle: Text(
                   skill.description,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: Theme.of(
-                    context,
-                  ).textTheme.bodySmall?.copyWith(color: colors.dim),
                 ),
               ),
           ],

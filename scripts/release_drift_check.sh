@@ -38,9 +38,9 @@
 #      remediation step pages from it; default drift-details.txt in the CWD),
 #      FA_DRIFT_RETRY_SLEEP (seconds between download retries; default 2).
 #
-# GNU-bound (sha256sum -c, find -printf, comm): this check targets the
-# ubuntu-latest workflow runner — it fails confusingly if run locally on
-# macOS/BSD.
+# Requires sha256sum and comm (the ubuntu-latest workflow provides both).
+# Asset discovery intentionally uses the shell glob + basename instead of
+# GNU find -printf so the same behavioral suite runs on macOS/BSD.
 set -euo pipefail
 
 tag="${1:?usage: release_drift_check.sh <tag>}"
@@ -129,8 +129,13 @@ fi
 # actually on the release. The names are read LINE-WISE (gh-2042 review):
 # release asset names may contain spaces, and a word-split loop would
 # report one bogus per-word "asset" instead of the whole name.
-manifest_names=$(sed -n 's/^[0-9a-fA-F]\{64\}[[:space:]]\+\*\?//p' "$workdir/SHA256SUMS" 2>/dev/null || true)
-local_names=$(find "$workdir" -maxdepth 1 -name 'fa-*' -type f -printf '%f\n' 2>/dev/null | sort)
+manifest_names=$(sed -E -n 's/^[0-9a-fA-F]{64}[[:space:]]+\*?//p' "$workdir/SHA256SUMS" 2>/dev/null || true)
+local_names=$(
+  for asset in "$workdir"/fa-*; do
+    [ -f "$asset" ] || continue
+    basename "$asset"
+  done | sort
+)
 unlisted=$(comm -23 <(printf '%s\n' "$local_names" | sort -u) <(printf '%s\n' "$manifest_names" | sort -u) | sed '/^$/d')
 uncovered=$(comm -13 <(printf '%s\n' "$local_names" | sort -u) <(printf '%s\n' "$manifest_names" | sort -u) | sed '/^$/d')
 while IFS= read -r name; do

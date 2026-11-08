@@ -60,8 +60,7 @@ String stripComments(String content) => content
 void main() {
   test('AC1 — build-mobile.yml pins the iOS identity by SHA-1 via ci-sign '
       '(gh-1865)', () {
-    final mobile =
-        stripComments(read('.github/workflows/build-mobile.yml'));
+    final mobile = stripComments(read('.github/workflows/build-mobile.yml'));
 
     expect(
       mobile,
@@ -83,8 +82,7 @@ void main() {
     );
     expect(
       mobile,
-      contains(RegExp(r'IOS_SIGNING_IDENTITY="\$IOS_CERT_SHA1"'),
-          ),
+      contains(RegExp(r'IOS_SIGNING_IDENTITY="\$IOS_CERT_SHA1"')),
       reason:
           'the fastlane leg must receive the SHA-1 fingerprint as '
           'IOS_SIGNING_IDENTITY (the local-dev "iPhone Distribution" '
@@ -127,12 +125,10 @@ void main() {
     final nameBasedSigning = RegExp(
       r'--sign "\$(MACOS_CERTIFICATE_ID|MACOS_INSTALLER_CERT_ID)"',
     );
-    for (final wf in Directory('.github/workflows')
-        .listSync()
-        .whereType<File>()
-        .where((f) => f.path.endsWith('.yml'))) {
-      final matches =
-          nameBasedSigning.allMatches(stripComments(read(wf.path)));
+    for (final wf in Directory(
+      '.github/workflows',
+    ).listSync().whereType<File>().where((f) => f.path.endsWith('.yml'))) {
+      final matches = nameBasedSigning.allMatches(stripComments(read(wf.path)));
       expect(
         matches,
         isEmpty,
@@ -173,11 +169,11 @@ void main() {
 
   test('AC5 — owner option B: profile serials are asserted BEFORE the '
       'build in both legs (gh-1865, v1.0.659 regression)', () {
-    final mobile =
-        stripComments(read('.github/workflows/build-mobile.yml'));
+    final mobile = stripComments(read('.github/workflows/build-mobile.yml'));
     expect(
-      RegExp(r'ci-sign doctor [^\n]*profile\.mobileprovision fa-ios')
-          .hasMatch(mobile),
+      RegExp(
+        r'ci-sign doctor [^\n]*profile\.mobileprovision fa-ios',
+      ).hasMatch(mobile),
       isTrue,
       reason:
           'build-mobile.yml must fail fast via ci-sign doctor on the '
@@ -185,8 +181,9 @@ void main() {
           'class — run 40455401630 died at gym on BOTH targets).',
     );
     expect(
-      RegExp(r'ci-sign doctor [^\n]*liveactivity\.mobileprovision fa-ios')
-          .hasMatch(mobile),
+      RegExp(
+        r'ci-sign doctor [^\n]*liveactivity\.mobileprovision fa-ios',
+      ).hasMatch(mobile),
       isTrue,
       reason:
           'the FaLiveActivity extension signs with its own profile — its '
@@ -194,8 +191,9 @@ void main() {
     );
     final macos = stripComments(read('.github/workflows/build-macos.yml'));
     expect(
-      RegExp(r'ci-sign doctor [^\n]*profile\.provisionprofile fa-macos')
-          .hasMatch(macos),
+      RegExp(
+        r'ci-sign doctor [^\n]*profile\.provisionprofile fa-macos',
+      ).hasMatch(macos),
       isTrue,
       reason:
           'build-macos.yml must fail fast via ci-sign doctor on the macOS '
@@ -210,7 +208,9 @@ void main() {
       'update_code_signing_settings calls (gh-1865)', () {
     final fastfile = stripComments(read('flutter_app/fastlane/Fastfile'));
     expect(
-      RegExp('signing_identity = ENV\\["IOS_SIGNING_IDENTITY"\\]').hasMatch(fastfile),
+      RegExp(
+        'signing_identity = ENV\\["IOS_SIGNING_IDENTITY"\\]',
+      ).hasMatch(fastfile),
       isTrue,
       reason:
           'the Fastfile must take the identity from IOS_SIGNING_IDENTITY '
@@ -218,7 +218,9 @@ void main() {
           'is a local-dev fallback only.',
     );
     expect(
-      RegExp(r'code_sign_identity: signing_identity').allMatches(fastfile).length,
+      RegExp(
+        r'code_sign_identity: signing_identity',
+      ).allMatches(fastfile).length,
       greaterThanOrEqualTo(2),
       reason:
           'BOTH update_code_signing_settings calls (Runner + FaLiveActivity '

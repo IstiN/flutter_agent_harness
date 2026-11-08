@@ -102,8 +102,12 @@ void main() {
         moreOrLessEquals(gammaTop, epsilon: 0.5),
       );
 
-      // Settings tile → Home grid section → pick 3 icons per row.
+      // Settings tile → UI Theme category → Home grid section → pick 3
+      // icons per row. Fa2 presents categorized settings instead of the
+      // legacy single scrolling settings page.
       await tester.tap(cell(LauncherLayoutStore.settingsKey));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('settingsCategory-uiTheme')));
       await tester.pumpAndSettle();
       expect(find.byType(HomeGridSection), findsOneWidget);
       // The settings page is scrollable; the dropdown may sit below the
@@ -126,7 +130,11 @@ void main() {
 
       // Back on the launcher the grid reflowed: 3 columns push the settings
       // tile off row 0.
-      await tester.tap(find.byTooltip('Back'));
+      // First back leaves the category drill-down; the second pops the
+      // presented Settings page and returns to the launcher.
+      await tester.pageBack();
+      await tester.pumpAndSettle();
+      await tester.pageBack();
       await tester.pumpAndSettle();
       expect(find.byType(AppLauncherScreen), findsOneWidget);
       expect(

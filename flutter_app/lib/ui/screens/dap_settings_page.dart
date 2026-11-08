@@ -14,11 +14,69 @@ import 'package:fa/services/dap_service_web_core.dart'
     show ExtensionDapHubService, normalizeWebDapHost;
 import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/widgets/dap_hub_mark.dart';
-import 'package:fa/ui/widgets/wide_layout_shell.dart';
 import 'package:fa_ui/fa_ui.dart' as faui;
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart'
     show AgentPresence, HubLinkState, MailboxEntry;
+
+/// The shared readable column for the DAP pages (760 max, centered):
+/// full-width content stretched into an unreadable strip on wide windows.
+Widget _readableColumn(BuildContext context, {required Widget child}) => Center(
+  child: ConstrainedBox(
+    constraints: const BoxConstraints(maxWidth: 760),
+    child: child,
+  ),
+);
+
+/// The DAP pages' Fa2 chrome band: [faui.FaAdaptiveHeader] (title +
+/// circular back action) over one token hairline — the stock AppBar
+/// leaked the M3 surface and its full-width hairline.
+class _DapHeader extends StatelessWidget {
+  const _DapHeader({required this.title, this.onBack});
+
+  final String title;
+
+  /// The detail-view back affordance; null keeps the bar action-free.
+  final VoidCallback? onBack;
+
+  @override
+  Widget build(BuildContext context) {
+    final tokens = faui.FaDesignTokens.of(context);
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Container(
+          color: tokens.direction == faui.FaVisualDirection.glass
+              ? Colors.transparent
+              : tokens.surface1,
+          padding: const EdgeInsets.fromLTRB(16, 10, 8, 6),
+          child: SizedBox(
+            height: 40,
+            child: faui.FaAdaptiveHeader(
+              title: title,
+              titleStyle: TextStyle(
+                color: tokens.ink1,
+                fontSize: 17,
+                fontWeight: FontWeight.w600,
+                height: 1.2,
+              ),
+              leading: onBack == null
+                  ? null
+                  : faui.FaIconButton(
+                      icon: Icons.arrow_back,
+                      onPressed: onBack,
+                    ),
+              visualDensity: VisualDensity.compact,
+              iconSize: 18,
+            ),
+          ),
+        ),
+        Container(height: 1, color: tokens.hairline),
+      ],
+    );
+  }
+}
 
 /// The settings "DAP hub" row: opens the dedicated [DapHubPage] (connection,
 /// identity, channels) so the top level stays provider-focused. The
@@ -333,11 +391,22 @@ class _DapHubPageState extends State<DapHubPage> {
   Widget build(BuildContext context) {
     final selected = _selected;
     return Scaffold(
-      appBar: faAppBar(
-        title: Text(_hubTitle(context, selected)),
-        leading: _hubLeading(context, selected),
+      // Fa2 chrome: the header band + one token hairline replace the stock
+      // AppBar (its M3 surface + full-width hairline leaked the old look).
+      body: SafeArea(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _DapHeader(
+              title: _hubTitle(context, selected),
+              onBack: selected == null
+                  ? null
+                  : () => setState(() => _selected = null),
+            ),
+            Expanded(child: _hubBody(context, _snapshot, selected)),
+          ],
+        ),
       ),
-      body: _hubBody(context, _snapshot, selected),
     );
   }
 
@@ -347,15 +416,6 @@ class _DapHubPageState extends State<DapHubPage> {
       selected == null
       ? context.l10n.settingsDapHubTitle
       : (selected.name.isEmpty ? selected.url : selected.name);
-
-  /// The back affordance, only when a detail is open.
-  Widget? _hubLeading(BuildContext context, DapSavedConnection? selected) =>
-      selected == null
-      ? null
-      : IconButton(
-          icon: const Icon(Icons.arrow_back),
-          onPressed: () => setState(() => _selected = null),
-        );
 
   /// The body state machine: loading/error → unsupported note → the list
   /// or the selected detail.
@@ -377,11 +437,12 @@ class _DapHubPageState extends State<DapHubPage> {
   /// The connections list: the active connection first (always present —
   /// synthesized from the snapshot when never bookmarked), then the
   /// bookmarks. Tapping a row opens its details; Add appends a new hub.
+  /// Content sits on the shared readable column (760 max, centered).
   Widget _listBody(BuildContext context, DapHubSnapshot snapshot) {
-    final theme = Theme.of(context);
-    final colors = FahColors.of(context);
+    final tokens = faui.FaDesignTokens.of(context);
     final rows = _rowsFor(snapshot);
-    return SafeArea(
+    return _readableColumn(
+      context,
       child: SingleChildScrollView(
         padding: const EdgeInsets.all(24),
         child: Column(
@@ -389,29 +450,60 @@ class _DapHubPageState extends State<DapHubPage> {
           children: [
             Text(
               context.l10n.settingsDapHubIntro,
-              style: theme.textTheme.bodySmall?.copyWith(color: colors.dim),
+              style: TextStyle(color: tokens.ink2, fontSize: 13, height: 1.4),
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 24),
             AgentNetworkSection(controller: widget.agentNetwork),
-            const SizedBox(height: 16),
+            const SizedBox(height: 24),
             Text(
               context.l10n.settingsDapSavedTitle,
-              style: theme.textTheme.titleSmall,
+              style: TextStyle(
+                color: tokens.ink2,
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+                letterSpacing: .2,
+              ),
             ),
             const SizedBox(height: 4),
             Text(
               context.l10n.settingsDapSavedHint,
-              style: theme.textTheme.bodySmall?.copyWith(color: colors.dim),
+              style: TextStyle(color: tokens.ink2, fontSize: 12, height: 1.35),
             ),
             const SizedBox(height: 8),
-            for (final row in rows)
-              _connectionRow(context, snapshot, row.connection, row.active),
+            if (rows.isNotEmpty)
+              faui.FaSurface(
+                borderRadius: BorderRadius.circular(14),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      for (var i = 0; i < rows.length; i++) ...[
+                        if (i > 0)
+                          Container(
+                            margin: const EdgeInsets.only(left: 16),
+                            height: 1,
+                            color: tokens.hairline,
+                          ),
+                        _connectionRow(
+                          context,
+                          snapshot,
+                          rows[i].connection,
+                          rows[i].active,
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+            const SizedBox(height: 16),
             Align(
               alignment: Alignment.centerLeft,
-              child: TextButton.icon(
+              child: faui.FaButton(
+                label: context.l10n.settingsDapAddConnection,
+                icon: Icons.add,
+                variant: faui.FaButtonVariant.secondary,
                 onPressed: _addConnection,
-                icon: const Icon(Icons.add, size: 18),
-                label: Text(context.l10n.settingsDapAddConnection),
               ),
             ),
           ],
@@ -465,32 +557,37 @@ class _DapHubPageState extends State<DapHubPage> {
     DapSavedConnection entry,
     bool active,
   ) {
-    final theme = Theme.of(context);
     final colors = FahColors.of(context);
     final selected = _selected?.url == entry.url;
-    return ListTile(
+    return InkWell(
       key: ValueKey('dapConn-${entry.url}'),
-      contentPadding: EdgeInsets.zero,
-      dense: true,
-      leading: _activeDot(colors, active),
-      title: Row(
-        children: [
-          Expanded(child: _connectionTitle(context, entry, active)),
-          if (active) _activeChip(context),
-        ],
-      ),
-      subtitle: Text(
-        entry.url,
-        style: theme.textTheme.bodySmall?.copyWith(
-          color: colors.dim,
-          fontFamily: 'JetBrainsMono',
+      onTap: () => setState(() => _selected = entry),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        child: Row(
+          children: [
+            _activeDot(colors, active),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _connectionTitle(context, entry, active),
+                  Text(
+                    entry.url,
+                    style: FahPalette.mono(color: colors.dim, fontSize: 12),
+                  ),
+                ],
+              ),
+            ),
+            if (active) ...[const SizedBox(width: 8), _activeChip(context)],
+            Icon(
+              Icons.chevron_right,
+              color: selected ? colors.teal : colors.dim,
+            ),
+          ],
         ),
       ),
-      trailing: Icon(
-        Icons.chevron_right,
-        color: selected ? colors.teal : colors.dim,
-      ),
-      onTap: () => setState(() => _selected = entry),
     );
   }
 
@@ -501,10 +598,9 @@ class _DapHubPageState extends State<DapHubPage> {
     DapSavedConnection entry,
     bool active,
   ) {
-    final theme = Theme.of(context);
     return Text(
       entry.name.isEmpty ? entry.url : entry.name,
-      style: theme.textTheme.bodyMedium?.copyWith(
+      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
         fontWeight: active ? FontWeight.w600 : null,
       ),
     );
@@ -531,8 +627,8 @@ class _DapHubPageState extends State<DapHubPage> {
     );
   }
 
-  /// A non-active bookmark's details: its coordinates, the shared agent
-  /// identity, and the live switch.
+  /// The bookmark's details: its coordinates, the shared agent
+  /// identity, and the live switch — on the readable column.
   Widget _bookmarkDetailBody(
     BuildContext context,
     DapHubSnapshot snapshot,
@@ -540,7 +636,8 @@ class _DapHubPageState extends State<DapHubPage> {
   ) {
     final theme = Theme.of(context);
     final colors = FahColors.of(context);
-    return SafeArea(
+    return _readableColumn(
+      context,
       child: SingleChildScrollView(
         padding: const EdgeInsets.all(24),
         child: Column(
@@ -580,44 +677,41 @@ class _DapHubPageState extends State<DapHubPage> {
 
   /// The live switch: swaps the spinner in while a switch is in flight.
   Widget _makeActiveButton(BuildContext context, DapSavedConnection entry) {
-    return FilledButton.icon(
+    return faui.FaButton(
+      label: context.l10n.settingsDapMakeActive,
+      icon: Icons.swap_horiz,
+      busy: _switchingConnection,
+      expanded: true,
       onPressed: _switchingConnection
           ? null
           : () async {
               await _switchTo(entry);
               if (mounted) setState(() => _selected = entry);
             },
-      icon: _switchingConnection
-          ? const SizedBox(
-              width: 16,
-              height: 16,
-              child: CircularProgressIndicator(strokeWidth: 2),
-            )
-          : const Icon(Icons.swap_horiz, size: 18),
-      label: Text(context.l10n.settingsDapMakeActive),
     );
   }
 
   /// Drops the bookmark from the detail view.
   Widget _removeSavedButton(BuildContext context, DapSavedConnection entry) {
-    final theme = Theme.of(context);
-    return OutlinedButton.icon(
+    return faui.FaButton(
+      label: context.l10n.settingsDapRemoveSaved,
+      icon: Icons.bookmark_remove_outlined,
+      variant: faui.FaButtonVariant.danger,
+      expanded: true,
       onPressed: _switchingConnection
           ? null
           : () async {
               await _removeSaved(entry);
               if (mounted) setState(() => _selected = null);
             },
-      icon: const Icon(Icons.bookmark_remove_outlined, size: 18),
-      label: Text(context.l10n.settingsDapRemoveSaved),
-      style: OutlinedButton.styleFrom(foregroundColor: theme.colorScheme.error),
     );
   }
 
   Widget _connectionBody(BuildContext context, DapHubSnapshot snapshot) {
     final colors = FahColors.of(context);
     final theme = Theme.of(context);
-    return SafeArea(
+    return _readableColumn(
+      context,
       child: SingleChildScrollView(
         padding: const EdgeInsets.all(24),
         child: Column(
@@ -637,8 +731,9 @@ class _DapHubPageState extends State<DapHubPage> {
                       ),
                       Text(
                         snapshot.url,
-                        style: theme.textTheme.bodyLarge?.copyWith(
-                          fontFamily: 'JetBrainsMono',
+                        style: FahPalette.mono(
+                          color: theme.textTheme.bodyLarge!.color!,
+                          fontSize: 15,
                         ),
                       ),
                     ],
@@ -650,16 +745,12 @@ class _DapHubPageState extends State<DapHubPage> {
             const SizedBox(height: 8),
             Align(
               alignment: Alignment.centerLeft,
-              child: OutlinedButton.icon(
+              child: faui.FaButton(
+                label: context.l10n.settingsDapProbeButton,
+                icon: Icons.wifi_tethering,
+                variant: faui.FaButtonVariant.secondary,
+                busy: _probing,
                 onPressed: _probing ? null : _probe,
-                icon: _probing
-                    ? const SizedBox(
-                        width: 16,
-                        height: 16,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Icon(Icons.wifi_tethering, size: 18),
-                label: Text(context.l10n.settingsDapProbeButton),
               ),
             ),
             if (snapshot.envLocked) ...[
@@ -670,7 +761,7 @@ class _DapHubPageState extends State<DapHubPage> {
                   Icon(
                     Icons.info_outline,
                     size: 16,
-                    color: theme.colorScheme.tertiary,
+                    color: faui.FaDesignTokens.of(context).info,
                   ),
                   const SizedBox(width: 8),
                   Expanded(
@@ -683,11 +774,14 @@ class _DapHubPageState extends State<DapHubPage> {
               ),
             ],
             const SizedBox(height: 24),
-            const Divider(),
-            const SizedBox(height: 16),
             Text(
               context.l10n.settingsDapIdentityTitle,
-              style: theme.textTheme.titleSmall,
+              style: TextStyle(
+                color: faui.FaDesignTokens.of(context).ink2,
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+                letterSpacing: .2,
+              ),
             ),
             const SizedBox(height: 4),
             Text(
@@ -706,16 +800,17 @@ class _DapHubPageState extends State<DapHubPage> {
               snapshot.agentId ?? '—',
               mono: true,
             ),
-            const SizedBox(height: 24),
-            const Divider(),
-            const SizedBox(height: 16),
+            const faui.FaHairline(),
             ..._inboundSection(context, snapshot),
-            const SizedBox(height: 24),
-            const Divider(),
-            const SizedBox(height: 16),
+            const faui.FaHairline(),
             Text(
               context.l10n.settingsDapChannelsTitle,
-              style: theme.textTheme.titleSmall,
+              style: TextStyle(
+                color: faui.FaDesignTokens.of(context).ink2,
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+                letterSpacing: .2,
+              ),
             ),
             const SizedBox(height: 8),
             if (snapshot.channels.isEmpty)
@@ -729,21 +824,19 @@ class _DapHubPageState extends State<DapHubPage> {
                 runSpacing: 8,
                 children: [
                   for (final channel in snapshot.channels)
-                    Chip(
-                      label: Text(
-                        '#$channel', // l10n:ignore — channel name (data)
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          fontFamily: 'JetBrainsMono',
-                        ),
-                      ),
+                    faui.FaChip(
+                      // l10n:ignore — channel name (data)
+                      label: '#$channel',
                     ),
                 ],
               ),
             const SizedBox(height: 24),
-            OutlinedButton.icon(
+            faui.FaButton(
+              label: context.l10n.settingsDapEditConnection,
+              icon: Icons.edit_outlined,
+              variant: faui.FaButtonVariant.secondary,
+              expanded: true,
               onPressed: _edit,
-              icon: const Icon(Icons.edit_outlined, size: 18),
-              label: Text(context.l10n.settingsDapEditConnection),
             ),
           ],
         ),
@@ -871,7 +964,7 @@ class _DapHubPageState extends State<DapHubPage> {
             Icon(
               selected ? Icons.radio_button_checked : Icons.radio_button_off,
               size: 18,
-              color: selected ? theme.colorScheme.primary : colors.dim,
+              color: selected ? colors.teal : colors.dim,
             ),
             const SizedBox(width: 10),
             Expanded(
@@ -918,9 +1011,12 @@ class _DapHubPageState extends State<DapHubPage> {
           Expanded(
             child: Text(
               value,
-              style: theme.textTheme.bodyMedium?.copyWith(
-                fontFamily: mono ? 'JetBrainsMono' : null,
-              ),
+              style: mono
+                  ? FahPalette.mono(
+                      color: theme.textTheme.bodyMedium!.color!,
+                      fontSize: 13,
+                    )
+                  : theme.textTheme.bodyMedium,
             ),
           ),
         ],
@@ -939,12 +1035,12 @@ class _DapHubPageState extends State<DapHubPage> {
       true => (
         icon: Icons.check_circle_outline,
         label: context.l10n.settingsDapStatusConnected,
-        color: theme.colorScheme.primary,
+        color: faui.FaDesignTokens.of(context).success,
       ),
       false => (
         icon: Icons.cancel_outlined,
         label: context.l10n.settingsDapStatusOffline,
-        color: theme.colorScheme.error,
+        color: faui.FaDesignTokens.of(context).danger,
       ),
     };
     return Container(
@@ -974,7 +1070,8 @@ class _DapHubPageState extends State<DapHubPage> {
   Widget _messageBody(BuildContext context, String message) {
     final colors = FahColors.of(context);
     final theme = Theme.of(context);
-    return SafeArea(
+    return _readableColumn(
+      context,
       child: Center(
         child: Padding(
           padding: const EdgeInsets.all(24),
@@ -1098,67 +1195,76 @@ class _DapConnectionEditorPageState extends State<DapConnectionEditorPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: faAppBar(
-        title: Text(
-          _isAdd
-              ? context.l10n.settingsDapAddConnection
-              : context.l10n.settingsDapEditConnection,
-        ),
-      ),
+      // Fa2 chrome: the header band + one token hairline replace the stock
+      // AppBar (the editor is a pushed page of its own).
       body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              TextField(
-                controller: _urlController,
-                decoration: InputDecoration(
-                  labelText: context.l10n.settingsDapUrlLabel,
-                  hintText: context.l10n.settingsDapUrlHint,
-                  helperText: context.l10n.settingsDapUrlHint,
-                ),
-                autocorrect: false,
-                enableSuggestions: false,
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: _nameController,
-                decoration: InputDecoration(
-                  labelText: context.l10n.settingsDapAgentNameLabel,
-                  hintText: context.l10n.settingsDapNameHint,
-                ),
-                autocorrect: false,
-                enableSuggestions: false,
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: _secretController,
-                decoration: InputDecoration(
-                  labelText: context.l10n.settingsDapPasswordLabel,
-                  helperText: context.l10n.settingsDapPasswordHint,
-                ),
-                obscureText: true,
-                autocorrect: false,
-                enableSuggestions: false,
-              ),
-              ...faui.faFormErrorBlock(context, _error),
-              Row(
-                children: [
-                  const Spacer(),
-                  TextButton(
-                    onPressed: () => Navigator.of(context).pop(),
-                    child: Text(context.l10n.settingsCancelButton),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _DapHeader(
+              title: _isAdd
+                  ? context.l10n.settingsDapAddConnection
+                  : context.l10n.settingsDapEditConnection,
+            ),
+            Expanded(
+              child: _readableColumn(
+                context,
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.all(24),
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 760),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        faui.FaTextField(
+                          controller: _urlController,
+                          dense: true,
+                          hintText: context.l10n.settingsDapUrlLabel,
+                          helperText: context.l10n.settingsDapUrlHint,
+                          autocorrect: false,
+                          enableSuggestions: false,
+                        ),
+                        const SizedBox(height: 12),
+                        faui.FaTextField(
+                          controller: _nameController,
+                          dense: true,
+                          hintText: context.l10n.settingsDapAgentNameLabel,
+                          autocorrect: false,
+                          enableSuggestions: false,
+                        ),
+                        const SizedBox(height: 12),
+                        faui.FaTextField(
+                          controller: _secretController,
+                          dense: true,
+                          hintText: context.l10n.settingsDapPasswordLabel,
+                          helperText: context.l10n.settingsDapPasswordHint,
+                          obscureText: true,
+                          autocorrect: false,
+                          enableSuggestions: false,
+                        ),
+                        ...faui.faFormErrorBlock(context, _error),
+                        Row(
+                          children: [
+                            const Spacer(),
+                            faui.FaButton(
+                              label: context.l10n.settingsCancelButton,
+                              variant: faui.FaButtonVariant.ghost,
+                              onPressed: () => Navigator.of(context).pop(),
+                            ),
+                            const SizedBox(width: 12),
+                            faui.FaButton(
+                              label: context.l10n.settingsSaveButton,
+                              onPressed: _save,
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
                   ),
-                  const SizedBox(width: 12),
-                  FilledButton(
-                    onPressed: _save,
-                    child: Text(context.l10n.settingsSaveButton),
-                  ),
-                ],
+                ),
               ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );
@@ -1296,47 +1402,50 @@ class _AgentNetworkSectionState extends State<AgentNetworkSection> {
     }
     final store = controller.store;
     final enabled = store.enabled;
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        border: Border.all(color: colors.dim.withValues(alpha: 0.3)),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      context.l10n.settingsAgentNetworkJoin,
-                      style: theme.textTheme.titleSmall,
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      context.l10n.settingsAgentNetworkJoinHint,
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: colors.dim,
+    // The styleguide surface card: the join switch lives in the card's
+    // header row (never parked at the window's far edge — the readable
+    // column above bounds it).
+    return faui.FaSurface(
+      borderRadius: BorderRadius.circular(14),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        context.l10n.settingsAgentNetworkJoin,
+                        style: theme.textTheme.titleSmall,
                       ),
-                    ),
-                  ],
+                      const SizedBox(height: 2),
+                      Text(
+                        context.l10n.settingsAgentNetworkJoinHint,
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: colors.dim,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
-              ),
-              Switch(value: enabled, onChanged: _toggle),
+                const SizedBox(width: 16),
+                faui.FaSwitch(value: enabled, onChanged: _toggle),
+              ],
+            ),
+            if (enabled) ...[
+              const SizedBox(height: 12),
+              _statusRow(context, controller),
+              const SizedBox(height: 12),
+              _connectionFields(context),
+              const SizedBox(height: 12),
+              _peersList(context, controller),
             ],
-          ),
-          if (enabled) ...[
-            const SizedBox(height: 12),
-            _statusRow(context, controller),
-            const SizedBox(height: 12),
-            _connectionFields(context),
-            const SizedBox(height: 12),
-            _peersList(context, controller),
           ],
-        ],
+        ),
       ),
     );
   }
@@ -1344,15 +1453,16 @@ class _AgentNetworkSectionState extends State<AgentNetworkSection> {
   /// The live link state: chip + this agent's hub address.
   Widget _statusRow(BuildContext context, AgentNetworkController controller) {
     final colors = FahColors.of(context);
+    final tokens = faui.FaDesignTokens.of(context);
     final theme = Theme.of(context);
     final (label, color) = switch (controller.state) {
       HubLinkState.connected => (
         context.l10n.settingsAgentNetworkConnected,
-        Colors.green,
+        tokens.success,
       ),
       HubLinkState.connecting => (
         context.l10n.settingsAgentNetworkConnecting,
-        Colors.orange,
+        tokens.warning,
       ),
       _ => (context.l10n.settingsAgentNetworkOffline, colors.dim),
     };
@@ -1369,10 +1479,7 @@ class _AgentNetworkSectionState extends State<AgentNetworkSection> {
         Expanded(
           child: Text(
             controller.agentId ?? '',
-            style: theme.textTheme.bodySmall?.copyWith(
-              color: colors.dim,
-              fontFamily: 'JetBrainsMono',
-            ),
+            style: FahPalette.mono(color: colors.dim, fontSize: 12),
             overflow: TextOverflow.ellipsis,
           ),
         ),
@@ -1381,36 +1488,30 @@ class _AgentNetworkSectionState extends State<AgentNetworkSection> {
   }
 
   Widget _connectionFields(BuildContext context) {
-    final theme = Theme.of(context);
-    InputDecoration decoration(String label) => InputDecoration(
-      labelText: label,
-      isDense: true,
-      border: const OutlineInputBorder(),
-    );
     return Column(
       children: [
-        TextField(
+        faui.FaTextField(
           controller: _url,
-          decoration: decoration(context.l10n.settingsAgentNetworkUrl),
-          style: theme.textTheme.bodySmall,
+          dense: true,
+          hintText: context.l10n.settingsAgentNetworkUrl,
         ),
         const SizedBox(height: 8),
         Row(
           children: [
             Expanded(
-              child: TextField(
+              child: faui.FaTextField(
                 controller: _name,
-                decoration: decoration(context.l10n.settingsAgentNetworkName),
-                style: theme.textTheme.bodySmall,
+                dense: true,
+                hintText: context.l10n.settingsAgentNetworkName,
               ),
             ),
             const SizedBox(width: 8),
             Expanded(
-              child: TextField(
+              child: faui.FaTextField(
                 controller: _token,
+                dense: true,
                 obscureText: true,
-                decoration: decoration(context.l10n.settingsAgentNetworkToken),
-                style: theme.textTheme.bodySmall,
+                hintText: context.l10n.settingsAgentNetworkToken,
               ),
             ),
           ],
@@ -1418,10 +1519,12 @@ class _AgentNetworkSectionState extends State<AgentNetworkSection> {
         const SizedBox(height: 8),
         Align(
           alignment: Alignment.centerLeft,
-          child: TextButton.icon(
+          child: faui.FaButton(
+            label: context.l10n.settingsAgentNetworkSave,
+            icon: Icons.save_outlined,
+            variant: faui.FaButtonVariant.secondary,
+            busy: _saving,
             onPressed: _saving ? null : _save,
-            icon: const Icon(Icons.save_outlined, size: 18),
-            label: Text(context.l10n.settingsAgentNetworkSave),
           ),
         ),
       ],
@@ -1452,21 +1555,22 @@ class _AgentNetworkSectionState extends State<AgentNetworkSection> {
           Row(
             children: [
               Expanded(
+                // [FaTextField] has no onSubmitted seam; the themed
+                // inputDecorationTheme keeps this field on-brand.
                 child: TextField(
                   controller: _dm,
                   focusNode: _dmFocus,
                   decoration: InputDecoration(
                     labelText: context.l10n.settingsAgentNetworkDmHint,
                     isDense: true,
-                    border: const OutlineInputBorder(),
                   ),
                   style: theme.textTheme.bodySmall,
                   onSubmitted: (_) => _sendDm(),
                 ),
               ),
-              IconButton(
+              faui.FaIconButton(
                 tooltip: context.l10n.settingsAgentNetworkSend,
-                icon: const Icon(Icons.send_outlined, size: 18),
+                icon: Icons.send_outlined,
                 onPressed: _sendDm,
               ),
             ],
@@ -1489,7 +1593,7 @@ class _AgentNetworkSectionState extends State<AgentNetworkSection> {
             Icon(
               selected ? Icons.chat_bubble_outline : Icons.computer,
               size: 16,
-              color: selected ? theme.colorScheme.primary : colors.dim,
+              color: selected ? colors.teal : colors.dim,
             ),
             const SizedBox(width: 8),
             Expanded(

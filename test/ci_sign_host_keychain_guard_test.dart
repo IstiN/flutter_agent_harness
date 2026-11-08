@@ -121,97 +121,139 @@ void main() {
     final script = read('scripts/ci-sign');
     // Idempotent provisioning: create-if-missing + survival-verified
     // additive search-list membership (never a fixed-list replace).
-    expect(script, contains('create-keychain'),
-        reason: 'ci-sign must create the persistent keychain if missing');
-    expect(script, contains(RegExp(r'list-keychains\s+-d\s+user\s+-s')),
-        reason:
-            'ci-sign is the single allowed search-list writer — it adds '
-            'the persistent keychain idempotently, preserving concurrent '
-            'entries (the gh-1866 union logic, applied once)');
-    expect(script, contains(RegExp(r'grep\s+-qxF')),
-        reason:
-            'the search-list membership add must be survival-verified with '
-            'a fixed-string whole-line match (gh-1866 review thread)');
+    expect(
+      script,
+      contains('create-keychain'),
+      reason: 'ci-sign must create the persistent keychain if missing',
+    );
+    expect(
+      script,
+      contains(RegExp(r'list-keychains\s+-d\s+user\s+-s')),
+      reason:
+          'ci-sign is the single allowed search-list writer — it adds '
+          'the persistent keychain idempotently, preserving concurrent '
+          'entries (the gh-1866 union logic, applied once)',
+    );
+    expect(
+      script,
+      contains(RegExp(r'grep\s+-qxF')),
+      reason:
+          'the search-list membership add must be survival-verified with '
+          'a fixed-string whole-line match (gh-1866 review thread)',
+    );
     // No interactive keychain prompts: partition the private key.
-    expect(script, contains('set-key-partition-list'),
-        reason:
-            'ci-sign must partition the signing key for codesign — without '
-            'it SecurityAgent pops an interactive keychain-password dialog '
-            'in the owner\'s GUI session (observed 2026-10-28)');
+    expect(
+      script,
+      contains('set-key-partition-list'),
+      reason:
+          'ci-sign must partition the signing key for codesign — without '
+          'it SecurityAgent pops an interactive keychain-password dialog '
+          'in the owner\'s GUI session (observed 2026-10-28)',
+    );
     // Deterministic identity resolution (gh-1865 option A).
-    expect(script, contains('find-identity'),
-        reason: 'ci-sign resolves the identity fingerprint via find-identity');
-    expect(script, contains('sha1='),
-        reason:
-            'ci-sign persists the SHA-1 fingerprint per label — resolution '
-            'is pinned by fingerprint, never by generic name (gh-1865: '
-            'same-subject duplicate certificates in the search list made '
-            'name resolution ambiguous)');
+    expect(
+      script,
+      contains('find-identity'),
+      reason: 'ci-sign resolves the identity fingerprint via find-identity',
+    );
+    expect(
+      script,
+      contains('sha1='),
+      reason:
+          'ci-sign persists the SHA-1 fingerprint per label — resolution '
+          'is pinned by fingerprint, never by generic name (gh-1865: '
+          'same-subject duplicate certificates in the search list made '
+          'name resolution ambiguous)',
+    );
     // Fail-fast profile precheck (gh-1865 option B) without a default
     // keychain (default-keychain writes are part of the retired model).
-    expect(script, contains('doctor'),
-        reason:
-            'ci-sign doctor must verify profile certificates against the '
-            'keychain BEFORE the archive (the ~24-minute gym failure '
-            'class, run 40455401630)');
-    expect(script, contains('openssl cms -inform DER -verify -noverify'),
-        reason:
-            'profile decoding must not depend on `security cms -D`, which '
-            'requires a default keychain (none exists on this host by '
-            'design)');
+    expect(
+      script,
+      contains('doctor'),
+      reason:
+          'ci-sign doctor must verify profile certificates against the '
+          'keychain BEFORE the archive (the ~24-minute gym failure '
+          'class, run 40455401630)',
+    );
+    expect(
+      script,
+      contains('openssl cms -inform DER -verify -noverify'),
+      reason:
+          'profile decoding must not depend on `security cms -D`, which '
+          'requires a default keychain (none exists on this host by '
+          'design)',
+    );
   });
 
   test('AC3 — every signing surface routes through ci-sign', () {
     final mobile = read('.github/workflows/build-mobile.yml');
-    expect(mobile, contains('ci-sign install fa-ios'),
-        reason:
-            'build-mobile.yml iOS leg must provision/verify its identity '
-            'via ci-sign install fa-ios (persistent keychain, idempotent)');
     expect(
-        RegExp(r'ci-sign doctor .*profile\.mobileprovision').hasMatch(mobile),
-        isTrue,
-        reason:
-            'build-mobile.yml must fail fast via ci-sign doctor on the '
-            'Runner profile before the archive (gh-1865 option B)');
+      mobile,
+      contains('ci-sign install fa-ios'),
+      reason:
+          'build-mobile.yml iOS leg must provision/verify its identity '
+          'via ci-sign install fa-ios (persistent keychain, idempotent)',
+    );
     expect(
-        RegExp(r'ci-sign doctor .*liveactivity\.mobileprovision')
-            .hasMatch(mobile),
-        isTrue,
-        reason:
-            'the FaLiveActivity extension signs with its own profile — its '
-            'mismatch must also abort BEFORE the archive');
+      RegExp(r'ci-sign doctor .*profile\.mobileprovision').hasMatch(mobile),
+      isTrue,
+      reason:
+          'build-mobile.yml must fail fast via ci-sign doctor on the '
+          'Runner profile before the archive (gh-1865 option B)',
+    );
+    expect(
+      RegExp(
+        r'ci-sign doctor .*liveactivity\.mobileprovision',
+      ).hasMatch(mobile),
+      isTrue,
+      reason:
+          'the FaLiveActivity extension signs with its own profile — its '
+          'mismatch must also abort BEFORE the archive',
+    );
 
     final macos = read('.github/workflows/build-macos.yml');
-    expect(macos, contains('ci-sign install fa-macos'),
-        reason:
-            'build-macos.yml legs must provision/verify via ci-sign install '
-            'macos — per-arch temporary keychains are retired (their '
-            'delete+create race was gh-1852)');
+    expect(
+      macos,
+      contains('ci-sign install fa-macos'),
+      reason:
+          'build-macos.yml legs must provision/verify via ci-sign install '
+          'macos — per-arch temporary keychains are retired (their '
+          'delete+create race was gh-1852)',
+    );
 
     final fastfile = read('flutter_app/fastlane/Fastfile');
-    expect(fastfile, contains('sh(ci_sign, "unlock")'),
-        reason:
-            'the Fastfile build_only lane must explicitly unlock the '
-            'persistent keychain before gym — hours can pass between the '
-            'workflow\'s install step and the archive, and an unlock is '
-            'cheaper and more honest than a job-length auto-lock window '
-            '(the gh-1798 window hack is retired with per-job keychains)');
+    expect(
+      fastfile,
+      contains('sh(ci_sign, "unlock")'),
+      reason:
+          'the Fastfile build_only lane must explicitly unlock the '
+          'persistent keychain before gym — hours can pass between the '
+          'workflow\'s install step and the archive, and an unlock is '
+          'cheaper and more honest than a job-length auto-lock window '
+          '(the gh-1798 window hack is retired with per-job keychains)',
+    );
   });
 
   test('AC4 — the retired additive helper is gone (gh-1866 model v2 → v3)', () {
-    expect(File('scripts/keychain_searchlist_add.sh').existsSync(), isFalse,
-        reason:
-            'scripts/keychain_searchlist_add.sh is retired: the additive '
-            'union kept concurrent keychains but made same-subject '
-            'certificates ambiguous (gh-1865, run 40455401630). The '
-            'persistent-keychain model replaces it — a lingering copy '
-            'would invite per-job search-list writes back.');
+    expect(
+      File('scripts/keychain_searchlist_add.sh').existsSync(),
+      isFalse,
+      reason:
+          'scripts/keychain_searchlist_add.sh is retired: the additive '
+          'union kept concurrent keychains but made same-subject '
+          'certificates ambiguous (gh-1865, run 40455401630). The '
+          'persistent-keychain model replaces it — a lingering copy '
+          'would invite per-job search-list writes back.',
+    );
     for (final path in _keychainSurfaces) {
-      expect(read(path), isNot(contains('keychain_searchlist_add')),
-          reason:
-              '$path still references the retired '
-              'keychain_searchlist_add.sh helper — remove the reference '
-              'and route signing through ci-sign.');
+      expect(
+        read(path),
+        isNot(contains('keychain_searchlist_add')),
+        reason:
+            '$path still references the retired '
+            'keychain_searchlist_add.sh helper — remove the reference '
+            'and route signing through ci-sign.',
+      );
     }
   });
 
@@ -219,33 +261,51 @@ void main() {
       'on ONE pinned registration', () {
     const provision = '.github/workflows/host-signing-provision.yml';
     final content = read(provision);
-    expect(content, contains('workflow_dispatch'),
-        reason:
-            '$provision must be workflow_dispatch-only — provisioning '
-            'touches persistent host state and must never ride a push or '
-            'schedule');
-    expect(content, contains('[self-hosted, macos-m5]'),
-        reason:
-            'the provisioning job routes through the macos-m5 pool '
-            '(gh-1906: fa-m5-* runner-NAME labels are banned from '
-            'workflows — a name pin silently matches zero runners after '
-            'the label cleanup). Cross-registration double-provisioning '
-            'is safe by construction: ci-sign install is idempotent and '
-            'serializes concurrent runs on its lock dir.');
-    expect(content, contains('ci-sign install fa-ios'),
-        reason: 'the iOS distribution certificate must be provisioned');
-    expect(content, contains('ci-sign install fa-macos'),
-        reason: 'the macOS distribution certificate must be provisioned');
-    expect(content, contains('ci-sign cleanup-legacy'),
-        reason:
-            'provisioning must sweep the per-job keychains left by the '
-            'retired workflows — orphans of those are what produced the '
-            'interactive SecurityAgent prompts in the owner\'s session');
+    expect(
+      content,
+      contains('workflow_dispatch'),
+      reason:
+          '$provision must be workflow_dispatch-only — provisioning '
+          'touches persistent host state and must never ride a push or '
+          'schedule',
+    );
+    expect(
+      content,
+      contains('[self-hosted, macos-m5]'),
+      reason:
+          'the provisioning job routes through the macos-m5 pool '
+          '(gh-1906: fa-m5-* runner-NAME labels are banned from '
+          'workflows — a name pin silently matches zero runners after '
+          'the label cleanup). Cross-registration double-provisioning '
+          'is safe by construction: ci-sign install is idempotent and '
+          'serializes concurrent runs on its lock dir.',
+    );
+    expect(
+      content,
+      contains('ci-sign install fa-ios'),
+      reason: 'the iOS distribution certificate must be provisioned',
+    );
+    expect(
+      content,
+      contains('ci-sign install fa-macos'),
+      reason: 'the macOS distribution certificate must be provisioned',
+    );
+    expect(
+      content,
+      contains('ci-sign cleanup-legacy'),
+      reason:
+          'provisioning must sweep the per-job keychains left by the '
+          'retired workflows — orphans of those are what produced the '
+          'interactive SecurityAgent prompts in the owner\'s session',
+    );
   });
 
   test('AC6 — incident-forensics breadcrumbs keep full issue numbers '
       '(gh-1865 / gh-1866, review thread)', () {
-    final typo = RegExp('gh-18' r'6\b');
+    final typo = RegExp(
+      'gh-18'
+      r'6\b',
+    );
     final surfaces = <String>{
       'scripts/ci-sign',
       'flutter_app/fastlane/Fastfile',
@@ -281,13 +341,12 @@ void main() {
       final lines = f.readAsLinesSync();
       for (var i = 0; i < lines.length; i++) {
         if (lines[i].contains('install -m 755 scripts/ci-sign')) {
-          final context = lines
-              .sublist(i > 4 ? i - 4 : 0, i)
-              .join('\n');
+          final context = lines.sublist(i > 4 ? i - 4 : 0, i).join('\n');
           expect(
             context,
             contains('mkdir -p "\$HOME/bin"'),
-            reason: '$wf:${i + 1} installs ci-sign into \$HOME/bin — the '
+            reason:
+                '$wf:${i + 1} installs ci-sign into \$HOME/bin — the '
                 'parent directory must be created first (install(1) never '
                 'mkdirs parents; on a fresh runner \$HOME/bin is absent)',
           );
@@ -302,7 +361,8 @@ void main() {
     expect(
       script,
       contains('OpenSSL\\ 3*'),
-      reason: 'the legacy flag must be conditional on OpenSSL 3.x — '
+      reason:
+          'the legacy flag must be conditional on OpenSSL 3.x — '
           'LibreSSL (macOS /usr/bin/openssl) does not know -legacy',
     );
     final lines = script.split('\n');
@@ -311,7 +371,8 @@ void main() {
         expect(
           lines[i],
           contains('\$OSS_LEGACY'),
-          reason: 'scripts/ci-sign:${i + 1} — RC2-40-CBC-encrypted P12 '
+          reason:
+              'scripts/ci-sign:${i + 1} — RC2-40-CBC-encrypted P12 '
               '(standard for older Apple exports) is unreadable by '
               'OpenSSL 3.x without the legacy provider: '
               '"inner_evp_generic_fetch:unsupported ... Algorithm '
@@ -330,7 +391,8 @@ void main() {
     expect(
       errLine,
       contains('::error::ci-sign: \$*" >&2'),
-      reason: 'import_fingerprint runs inside NEW_FP="\$(...)" — err() on '
+      reason:
+          'import_fingerprint runs inside NEW_FP="\$(...)" — err() on '
           'stdout is captured into the variable and never reaches the '
           'Actions log (three diagnostic runs printed nothing)',
     );
@@ -346,7 +408,8 @@ void main() {
     expect(
       lane,
       contains('list-keychains'),
-      reason: 'the persistent ci-signing.keychain-db must be VISIBLE to '
+      reason:
+          'the persistent ci-signing.keychain-db must be VISIBLE to '
           'xcodebuild at gym time — provision-time doctor is not enough '
           '(a concurrent leg can rewrite the list during the 15-minute '
           'compile window)',
@@ -355,7 +418,8 @@ void main() {
     expect(
       lane,
       isNot(contains('saved_search_list')),
-      reason: 'gh-1972 root cause: no save/restore — the captured copy '
+      reason:
+          'gh-1972 root cause: no save/restore — the captured copy '
           'entrenched a System duplicate across runs; the canonical pin '
           'IS the persistent state, nothing to restore',
     );
@@ -368,20 +432,23 @@ void main() {
     expect(
       cisign,
       contains("security unlock-keychain -p \"\$(kc_password)\" \"\$KC\""),
-      reason: 'the signing keychain must NEVER auto-lock: gym runs '
+      reason:
+          'the signing keychain must NEVER auto-lock: gym runs '
           'xcodebuild -showBuildSettings ~15 min after ci-sign unlock; a '
           'locked keychain means a headless GUI password prompt = timeout',
     );
     expect(
       cisign,
       isNot(contains('set-keychain-settings -l ')),
-      reason: '-l (lock on system sleep) locks the keychain mid-build '
+      reason:
+          '-l (lock on system sleep) locks the keychain mid-build '
           'when the host dozes during long SPM/CocoaPods phases',
     );
     expect(
       cisign,
       contains('delete-keychain'),
-      reason: '--force must DELETE and recreate the keychain: '
+      reason:
+          '--force must DELETE and recreate the keychain: '
           'set-keychain-settings only works non-interactively on a '
           'freshly created keychain (existing one prompts via GUI)',
     );
@@ -402,7 +469,8 @@ void main() {
     expect(
       helper,
       contains('mtime'),
-      reason: 'a gym log older than the lane start is STALE — printing it '
+      reason:
+          'a gym log older than the lane start is STALE — printing it '
           'attributes a previous build error to the current failure',
     );
   });
@@ -416,9 +484,13 @@ void main() {
     final gymPos = lane.indexOf('build_app(');
     final beforeGym = lane.substring(0, gymPos);
     final unlockPos = beforeGym.lastIndexOf('"unlock"');
-    expect(unlockPos, greaterThan(beforeGym.indexOf('cocoapods')),
-        reason: 'an unlock at lane start goes stale during the 15-minute '
-            'CocoaPods/SPM phase — re-unlock right before build_app');
+    expect(
+      unlockPos,
+      greaterThan(beforeGym.indexOf('cocoapods')),
+      reason:
+          'an unlock at lane start goes stale during the 15-minute '
+          'CocoaPods/SPM phase — re-unlock right before build_app',
+    );
   });
 
   test('AC14 — set-keychain-settings is GONE from ci-sign (gh-2008 final: '
@@ -429,12 +501,17 @@ void main() {
     final cisign = File('scripts/ci-sign').readAsStringSync();
     final settingsLines = cisign
         .split('\n')
-        .where((l) => l.contains('set-keychain-settings') && !l.trimLeft().startsWith('#'))
+        .where(
+          (l) =>
+              l.contains('set-keychain-settings') &&
+              !l.trimLeft().startsWith('#'),
+        )
         .join('\n');
     expect(
       settingsLines,
       '',
-      reason: 'no invocation of set-keychain-settings may exist, bounded '
+      reason:
+          'no invocation of set-keychain-settings may exist, bounded '
           'or not — the GUI prompt must never be spawnable from ci-sign',
     );
   });
@@ -446,13 +523,21 @@ void main() {
     final laneStart = fastfile.indexOf('lane :build_only do');
     final laneEnd = fastfile.indexOf('lane :', laneStart + 10);
     final lane = fastfile.substring(laneStart, laneEnd);
-    expect(lane, contains('unlock_watchdog'),
-        reason: 'a background thread must re-unlock the keychain for the '
-            'whole gym window — the only prompt-free anti-lock mechanism '
-            'on this host');
-    expect(lane, contains('unlock_watchdog.kill'),
-        reason: 'the watchdog must be killed in ensure so it cannot '
-            'outlive the lane');
+    expect(
+      lane,
+      contains('unlock_watchdog'),
+      reason:
+          'a background thread must re-unlock the keychain for the '
+          'whole gym window — the only prompt-free anti-lock mechanism '
+          'on this host',
+    );
+    expect(
+      lane,
+      contains('unlock_watchdog.kill'),
+      reason:
+          'the watchdog must be killed in ensure so it cannot '
+          'outlive the lane',
+    );
   });
 
   test('AC16 — ci-sign install waits on the lock up to 600s (gh-1964: '
@@ -462,7 +547,8 @@ void main() {
     expect(
       cisign,
       contains('seq 1 300'),
-      reason: 'a real re-import (delete + create + import + partition) '
+      reason:
+          'a real re-import (delete + create + import + partition) '
           'takes ~2 min on the shared host; the concurrent wave must WAIT '
           '(600s), not fail — the lock holder always finishes',
     );
@@ -478,9 +564,13 @@ void main() {
         .split('\n')
         .where((l) => !l.trimLeft().startsWith('#'))
         .join('\n');
-    expect(code, isNot(contains('set-keychain-settings')),
-        reason: 'anti-lock = point-of-use unlocks + Fastfile watchdog, '
-            'never settings');
+    expect(
+      code,
+      isNot(contains('set-keychain-settings')),
+      reason:
+          'anti-lock = point-of-use unlocks + Fastfile watchdog, '
+          'never settings',
+    );
   });
 
   test('AC18 — install rewrites the search list defensively: login kept '
@@ -489,17 +579,33 @@ void main() {
       'default dangling → "A keychain cannot be found to store" dialogs '
       'and gh auth failures on the shared host)', () {
     final cisign = File('scripts/ci-sign').readAsStringSync();
-    expect(cisign, contains("login_kc=\"\$HOME/Library/Keychains/login.keychain-db\""),
-        reason: 'the login keychain path must be pinned explicitly');
-    expect(cisign, contains("awk '!seen[\$0]++'"),
-        reason: 'the rewrite must dedupe entries');
-    final loginWrite = cisign.indexOf('security list-keychains -d user -s "\$login_kc"');
-    final appendWrite = cisign.indexOf('security list-keychains -d user -s \$rest');
-    expect(loginWrite, greaterThan(-1),
-        reason: 'login must be written FIRST in the explicit list');
+    expect(
+      cisign,
+      contains("login_kc=\"\$HOME/Library/Keychains/login.keychain-db\""),
+      reason: 'the login keychain path must be pinned explicitly',
+    );
+    expect(
+      cisign,
+      contains("awk '!seen[\$0]++'"),
+      reason: 'the rewrite must dedupe entries',
+    );
+    final loginWrite = cisign.indexOf(
+      'security list-keychains -d user -s "\$login_kc"',
+    );
+    final appendWrite = cisign.indexOf(
+      'security list-keychains -d user -s \$rest',
+    );
+    expect(
+      loginWrite,
+      greaterThan(-1),
+      reason: 'login must be written FIRST in the explicit list',
+    );
     expect(appendWrite, greaterThan(-1));
-    expect(loginWrite, lessThan(appendWrite),
-        reason: 'login-first branch precedes the fallback');
+    expect(
+      loginWrite,
+      lessThan(appendWrite),
+      reason: 'login-first branch precedes the fallback',
+    );
   });
 
   test('AC19 — Fastfile gym guard has NO save/restore of the search list '
@@ -507,14 +613,26 @@ void main() {
       'entrenching a System duplicate across runs; the pinned list is '
       'canonical — restore removed)', () {
     final fastfile = File('flutter_app/fastlane/Fastfile').readAsStringSync();
-    expect(fastfile, isNot(contains('saved_search_list')),
-        reason: 'no captured copy to restore — the pin is the state');
-    expect(fastfile, isNot(contains("scan(/\"([^\"]+)\"/)")),
-        reason: 'the write-back restore must not exist');
-    expect(fastfile, contains('/Library/Keychains/System.keychain'),
-        reason: 'the canonical pin keeps login/System/ci-signing');
-    expect(fastfile, contains('ci-signing.keychain-db'),
-        reason: 'the canonical pin keeps ci-signing LAST');
+    expect(
+      fastfile,
+      isNot(contains('saved_search_list')),
+      reason: 'no captured copy to restore — the pin is the state',
+    );
+    expect(
+      fastfile,
+      isNot(contains("scan(/\"([^\"]+)\"/)")),
+      reason: 'the write-back restore must not exist',
+    );
+    expect(
+      fastfile,
+      contains('/Library/Keychains/System.keychain'),
+      reason: 'the canonical pin keeps login/System/ci-signing',
+    );
+    expect(
+      fastfile,
+      contains('ci-signing.keychain-db'),
+      reason: 'the canonical pin keeps ci-signing LAST',
+    );
   });
 
   test('AC20 — install sweeps shadow identities on the up-to-date path '
@@ -524,14 +642,20 @@ void main() {
       'codesigning identity that is not the pinned SHA-1 is deleted, even '
       'when the pinned one is already current)', () {
     final cisign = File('scripts/ci-sign').readAsStringSync();
-    expect(cisign, contains('swept shadow identity'),
-        reason: 'the up-to-date fast path must sweep shadows');
+    expect(
+      cisign,
+      contains('swept shadow identity'),
+      reason: 'the up-to-date fast path must sweep shadows',
+    );
     final sweepAt = cisign.indexOf('swept shadow identity');
     final upToDateAt = cisign.indexOf("identity for '\$LABEL' is up to date");
     expect(sweepAt, greaterThan(-1));
     expect(upToDateAt, greaterThan(-1));
-    expect(sweepAt, lessThan(upToDateAt),
-        reason: 'the sweep runs BEFORE declaring up-to-date');
+    expect(
+      sweepAt,
+      lessThan(upToDateAt),
+      reason: 'the sweep runs BEFORE declaring up-to-date',
+    );
   });
   test('AC21 — sweep spares OTHER labels pinned identities + no undefined vars '
       '(gh-2026 hotfix: the persistent keychain is shared by fa-ios, fa-macos '
@@ -540,19 +664,34 @@ void main() {
       'run 41276487426 arm64 attempt 2 then died on the sweep echo: '
       '"KC_BASE: unbound variable" under set -u)', () {
     final cisign = File('scripts/ci-sign').readAsStringSync();
-    expect(cisign, isNot(contains('KC_BASE')),
-        reason: 'KC_BASE was never assigned — set -u kills the sweep echo');
+    expect(
+      cisign,
+      isNot(contains('KC_BASE')),
+      reason: 'KC_BASE was never assigned — set -u kills the sweep echo',
+    );
     final sweepAt = cisign.indexOf('swept shadow identity');
     expect(sweepAt, greaterThan(-1));
     final crossLabelGuard = cisign.indexOf('ALL_PINNED');
-    expect(crossLabelGuard, greaterThan(-1),
-        reason: 'the sweep must collect every label manifest sha1');
-    expect(crossLabelGuard, lessThan(sweepAt),
-        reason: 'ALL_PINNED is computed before the sweep loop');
-    expect(cisign, contains('grep -qxF "\$FP"'),
-        reason: 'an identity pinned by ANY label is never a shadow');
-    expect(cisign, contains("from '\$(basename \"\$KC\")'"),
-        reason: 'the echo names the keychain via defined variables only');
+    expect(
+      crossLabelGuard,
+      greaterThan(-1),
+      reason: 'the sweep must collect every label manifest sha1',
+    );
+    expect(
+      crossLabelGuard,
+      lessThan(sweepAt),
+      reason: 'ALL_PINNED is computed before the sweep loop',
+    );
+    expect(
+      cisign,
+      contains('grep -qxF "\$FP"'),
+      reason: 'an identity pinned by ANY label is never a shadow',
+    );
+    expect(
+      cisign,
+      contains("from '\$(basename \"\$KC\")'"),
+      reason: 'the echo names the keychain via defined variables only',
+    );
   });
   test('AC22 — Fastfile gives xcodebuild -showBuildSettings a real budget '
       '(gh-2026: fastlane probes build settings with a 3 s base timeout; on '
@@ -562,16 +701,22 @@ void main() {
       '3/6/12/24 s. A healthy build must not fail on a contended probe)', () {
     final fastfile = File('flutter_app/fastlane/Fastfile').readAsStringSync();
     expect(
-        fastfile, contains('ENV["FASTLANE_XCODEBUILD_SETTINGS_TIMEOUT"] ||='),
-        reason: 'the probe timeout must be raised above the 3 s default');
+      fastfile,
+      contains('ENV["FASTLANE_XCODEBUILD_SETTINGS_TIMEOUT"] ||='),
+      reason: 'the probe timeout must be raised above the 3 s default',
+    );
     expect(
-        fastfile, contains('ENV["FASTLANE_XCODEBUILD_SETTINGS_RETRIES"] ||='),
-        reason: 'retries widen the window the same way');
-    final envAt =
-        fastfile.indexOf('FASTLANE_XCODEBUILD_SETTINGS_TIMEOUT');
+      fastfile,
+      contains('ENV["FASTLANE_XCODEBUILD_SETTINGS_RETRIES"] ||='),
+      reason: 'retries widen the window the same way',
+    );
+    final envAt = fastfile.indexOf('FASTLANE_XCODEBUILD_SETTINGS_TIMEOUT');
     final firstLaneAt = fastfile.indexOf('lane :');
-    expect(envAt, lessThan(firstLaneAt),
-        reason: 'file-scope ENV must be set before any lane can run');
+    expect(
+      envAt,
+      lessThan(firstLaneAt),
+      reason: 'file-scope ENV must be set before any lane can run',
+    );
   });
   test('AC23 — identity VALIDITY checks must not filter by codesigning '
       'policy (gh-2026: the fa-macos-installer P12 imports fine but its '
@@ -584,13 +729,24 @@ void main() {
       'SWEEP enumeration keeps -p codesigning on purpose: installer '
       'identities are not shadow candidates)', () {
     final cisign = File('scripts/ci-sign').readAsStringSync();
-    expect(cisign, isNot(contains('find-identity -v -p codesigning "\$KC" | grep -qi')),
-        reason: 'no VALIDITY check may use the codesigning-only policy');
-    final sweepLoopAt = cisign.indexOf('for FP in \$(security find-identity -v -p codesigning');
-    expect(sweepLoopAt, greaterThan(-1),
-        reason: 'the sweep enumeration stays codesigning-scoped');
-    expect(cisign, contains('security find-identity -v "\$KC" | grep -qi "\$NEW_FP"'),
-        reason: 'post-import validity uses the policy-free valid list');
+    expect(
+      cisign,
+      isNot(contains('find-identity -v -p codesigning "\$KC" | grep -qi')),
+      reason: 'no VALIDITY check may use the codesigning-only policy',
+    );
+    final sweepLoopAt = cisign.indexOf(
+      'for FP in \$(security find-identity -v -p codesigning',
+    );
+    expect(
+      sweepLoopAt,
+      greaterThan(-1),
+      reason: 'the sweep enumeration stays codesigning-scoped',
+    );
+    expect(
+      cisign,
+      contains('security find-identity -v "\$KC" | grep -qi "\$NEW_FP"'),
+      reason: 'post-import validity uses the policy-free valid list',
+    );
   });
   test('AC24 — import ACL authorizes every CI signing consumer, not just '
       'codesign (gh-2026: run 41354303751 arm64 hung 1h42m in a GUI '
@@ -611,15 +767,23 @@ void main() {
       '/usr/bin/codesign',
       '/usr/bin/productbuild',
       '/usr/bin/productsign',
-      '/usr/bin/security'
+      '/usr/bin/security',
     ]) {
-      expect(importLine, contains('-T $tool'),
-          reason: '$tool must hold import-time key ACL or its first use '
-              'raises a modal SecurityAgent dialog');
+      expect(
+        importLine,
+        contains('-T $tool'),
+        reason:
+            '$tool must hold import-time key ACL or its first use '
+            'raises a modal SecurityAgent dialog',
+      );
     }
     final partitionCount = 'set-key-partition-list'.allMatches(cisign).length;
-    expect(partitionCount, greaterThanOrEqualTo(2),
-        reason: 'the partition list is applied twice (fastlane folklore: '
-            'the first apply does not always stick on a fresh import)');
+    expect(
+      partitionCount,
+      greaterThanOrEqualTo(2),
+      reason:
+          'the partition list is applied twice (fastlane folklore: '
+          'the first apply does not always stick on a fresh import)',
+    );
   });
 }

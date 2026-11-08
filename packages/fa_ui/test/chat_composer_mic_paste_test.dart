@@ -95,15 +95,19 @@ void main() {
     WidgetTester tester, {
     FaChatVoiceInput? voiceInput,
     FaClipboardReader? clipboardReader,
+    Future<void> Function()? onVoiceInputSettings,
+    ThemeData? theme,
   }) async {
     final service = FakeChatService();
     await tester.pumpWidget(
       MaterialApp(
+        theme: theme,
         home: Scaffold(
           body: ChatComposer(
             service: service,
             voiceInput: voiceInput,
             clipboardReader: clipboardReader,
+            onVoiceInputSettings: onVoiceInputSettings,
           ),
         ),
       ),
@@ -189,6 +193,42 @@ void main() {
       expect(fieldText(tester), 'draft from mic');
     });
 
+    testWidgets('missing transcription configuration opens Settings before '
+        'permission or recording', (tester) async {
+      final voice = _FakeVoiceInput(configured: false);
+      var settingsOpened = 0;
+      await pumpComposer(
+        tester,
+        voiceInput: voice,
+        onVoiceInputSettings: () async => settingsOpened++,
+      );
+
+      await tester.tap(find.byTooltip('Voice input'));
+      await tester.pumpAndSettle();
+
+      expect(voice.configurationChecks, 1);
+      expect(voice.starts, 0, reason: 'start includes the permission prompt');
+      expect(voice.stops, 0);
+      expect(
+        find.byKey(const ValueKey('faChatAsrConfigurationDialog')),
+        findsOneWidget,
+      );
+      expect(find.text('Transcription is not configured'), findsOneWidget);
+      expect(find.textContaining('Recording has not started'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('faChatAsrCancelAction')),
+        findsOneWidget,
+      );
+
+      await tester.tap(find.byKey(const ValueKey('faChatAsrSettingsAction')));
+      await tester.pumpAndSettle();
+
+      expect(settingsOpened, 1);
+      expect(voice.starts, 0);
+      expect(voice.stops, 0);
+      expect(find.byType(AlertDialog), findsNothing);
+    });
+
     testWidgets('a null take leaves the field untouched and returns to idle', (
       tester,
     ) async {
@@ -272,6 +312,50 @@ void main() {
       );
       expect(find.byTooltip('Stop recording'), findsNothing);
     });
+
+    for (final brightness in Brightness.values)
+      testWidgets('composer errors use the FaSurface token language in '
+          '${brightness.name}', (tester) async {
+        final tokens = FaDesignTokens.forDirection(
+          FaVisualDirection.graphite,
+          brightness,
+        );
+        final voice = _FakeVoiceInput(startError: Exception('themed boom'));
+        await pumpComposer(
+          tester,
+          voiceInput: voice,
+          theme: ThemeData(brightness: brightness, extensions: [tokens]),
+        );
+
+        await tester.tap(find.byTooltip('Voice input'));
+        await tester.pumpAndSettle();
+
+        final snack = tester.widget<SnackBar>(find.byType(SnackBar));
+        expect(snack.behavior, SnackBarBehavior.floating);
+        expect(snack.backgroundColor, Colors.transparent);
+        expect(snack.elevation, 0);
+        final surfaceFinder = find.descendant(
+          of: find.byType(SnackBar),
+          matching: find.byKey(const ValueKey('fahSnackSurface')),
+        );
+        final surface = tester.widget<FaSurface>(surfaceFinder);
+        expect(surface.glass, isTrue);
+        expect(surface.borderRadius, BorderRadius.circular(tokens.radiusMd));
+        final message = tester.widget<Text>(
+          find.text('Voice input failed: Exception: themed boom'),
+        );
+        expect(message.style?.color, tokens.ink1);
+        final tone = tester.widget<Container>(
+          find.descendant(
+            of: surfaceFinder,
+            matching: find.byKey(const ValueKey('fahSnackTone')),
+          ),
+        );
+        expect((tone.decoration! as BoxDecoration).color, tokens.danger);
+
+        await tester.pump(const Duration(seconds: 4));
+        await tester.pump(const Duration(seconds: 1));
+      });
 
     testWidgets('start() false with a reason shows the host reason', (
       tester,
@@ -541,9 +625,11 @@ void main() {
 
 /// Scripted [FaChatVoiceInput]: records call counts and replays the
 /// start/transcript outcome the test wants.
-final class _FakeVoiceInput implements FaChatVoiceInput {
+final class _FakeVoiceInput
+    implements FaChatVoiceInput, FaChatVoiceInputConfiguration {
   _FakeVoiceInput({
     this.startResult = true,
+    this.configured = true,
     this.reason,
     Object? startError,
     this.transcript,
@@ -554,6 +640,7 @@ final class _FakeVoiceInput implements FaChatVoiceInput {
        _stopGate = stopGate;
 
   final bool startResult;
+  final bool configured;
   final String? reason;
   final Object? _startError;
   final String? transcript;
@@ -563,9 +650,16 @@ final class _FakeVoiceInput implements FaChatVoiceInput {
   int starts = 0;
   int stops = 0;
   int cancels = 0;
+  int configurationChecks = 0;
 
   @override
   bool get isAvailable => true;
+  @override
+  Future<bool> get isConfigured async {
+    configurationChecks++;
+    return configured;
+  }
+
   @override
   String? get unavailableReason => reason;
 

@@ -67,10 +67,10 @@ class _ChannelRailState extends State<ChannelRail> {
       context: context,
       isScrollControlled: true,
       builder: (context) {
-        if (session == null) return const _NetworkRosterSheet(session: null);
+        if (session == null) return const NetworkRosterSheet(session: null);
         return ListenableBuilder(
           listenable: session,
-          builder: (context, _) => _NetworkRosterSheet(
+          builder: (context, _) => NetworkRosterSheet(
             session: session,
             channelId: channelId,
             canDropAgents: _canManageNetwork,
@@ -390,18 +390,27 @@ class _ChannelRailState extends State<ChannelRail> {
 
 /// Live roster behind the presence counter. Names are shown verbatim so a
 /// member can be addressed with the same `@displayName` in the composer.
-class _NetworkRosterSheet extends StatelessWidget {
-  const _NetworkRosterSheet({
+class NetworkRosterSheet extends StatelessWidget {
+  const NetworkRosterSheet({
+    super.key,
     required this.session,
     this.channelId,
     this.canDropAgents = false,
     this.onDropAgent,
+    this.title,
+    this.titleIcon,
+    this.actions = const [],
   });
 
   final NetworkSession? session;
   final String? channelId;
   final bool canDropAgents;
   final ValueChanged<Member>? onDropAgent;
+
+  /// Optional channel-details heading and invite/management actions.
+  final String? title;
+  final IconData? titleIcon;
+  final List<Widget> actions;
 
   @override
   Widget build(BuildContext context) {
@@ -420,14 +429,21 @@ class _NetworkRosterSheet extends StatelessWidget {
               padding: const EdgeInsets.fromLTRB(20, 16, 20, 12),
               child: Row(
                 children: [
-                  Icon(Icons.group_outlined, size: 20, color: colors.dim),
+                  Icon(
+                    titleIcon ?? Icons.group_outlined,
+                    size: 20,
+                    color: colors.dim,
+                  ),
                   const SizedBox(width: 10),
                   Expanded(
                     child: Text(
-                      context.l10n.networkRosterTitle,
+                      title ?? context.l10n.networkRosterTitle,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                       style: Theme.of(context).textTheme.titleMedium,
                     ),
                   ),
+                  ...actions,
                 ],
               ),
             ),

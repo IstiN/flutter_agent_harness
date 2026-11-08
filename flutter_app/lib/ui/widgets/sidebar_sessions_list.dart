@@ -47,6 +47,10 @@ class SidebarSessionsList extends StatefulWidget {
     this.pendingSessionId,
     this.selectedSessionId,
     this.prefsStore,
+    this.headerLabel,
+    this.searchHint,
+    this.unnamedTitle,
+    this.showHeader = true,
   });
 
   /// The session the user just asked to open (a `session_open` dispatch is
@@ -63,6 +67,16 @@ class SidebarSessionsList extends StatefulWidget {
   /// Per-parent expand/collapse persistence (issue #426). Null keeps the
   /// choice in memory only (tests, injected-store-less hosts).
   final SessionUiPrefsStore? prefsStore;
+
+  /// Messenger terminology overrides used by the Fa2 wide shell. Other
+  /// session-list hosts retain their established Sessions wording.
+  final String? headerLabel;
+  final String? searchHint;
+  final String? unnamedTitle;
+
+  /// Whether the list draws its own heading and inline New chat button.
+  /// The narrow shell supplies a compact Fa header and floating action.
+  final bool showHeader;
 
   final FlutterSessionManager manager;
   final SessionNamesStore? sessionNamesStore;
@@ -195,6 +209,7 @@ class _SidebarSessionsListState extends State<SidebarSessionsList> {
       namesStore: widget.sessionNamesStore,
       sessionInfoNames: widget.sessionInfoNames,
       subagent: subagent,
+      unnamedTitle: widget.unnamedTitle,
     );
   }
 
@@ -314,32 +329,37 @@ class _SidebarSessionsListState extends State<SidebarSessionsList> {
     );
     return Column(
       children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 8, 8, 4),
-          child: Row(
-            children: [
-              Text(
-                context.l10n.sidebarSessionsHeader.toUpperCase(),
-                style: TextStyle(
-                  color: colors.dim,
-                  fontSize: 12,
-                  fontWeight: FontWeight.bold,
-                  letterSpacing: 0.5,
+        if (widget.showHeader)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 8, 4),
+            child: Row(
+              children: [
+                Text(
+                  (widget.headerLabel ?? context.l10n.sidebarSessionsHeader)
+                      .toUpperCase(),
+                  style: TextStyle(
+                    color: colors.dim,
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                    letterSpacing: 0.5,
+                  ),
                 ),
-              ),
-              const Spacer(),
-              IconButton(
-                icon: const Icon(Icons.add_circle_outline),
-                onPressed: widget.onNewSession,
-                tooltip: context.l10n.sidebarNewSessionTooltip,
-                iconSize: 20,
-                color: colors.dim,
-                padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-              ),
-            ],
+                const Spacer(),
+                IconButton(
+                  icon: const Icon(Icons.add_circle_outline),
+                  onPressed: widget.onNewSession,
+                  tooltip: context.l10n.sidebarNewSessionTooltip,
+                  iconSize: 20,
+                  color: colors.dim,
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(
+                    minWidth: 32,
+                    minHeight: 32,
+                  ),
+                ),
+              ],
+            ),
           ),
-        ),
         // The search row sits pinned between the header and the list —
         // it does not scroll away.
         Padding(
@@ -347,6 +367,7 @@ class _SidebarSessionsListState extends State<SidebarSessionsList> {
           child: SessionSearchField(
             controller: _searchController,
             focusNode: _searchFocus,
+            hintText: widget.searchHint,
             onQueryChanged: (q) {
               if (q != _query) setState(() => _query = q);
             },
@@ -453,6 +474,7 @@ class _SidebarSessionsListState extends State<SidebarSessionsList> {
     return Column(
       children: [
         IconButton(
+          key: const ValueKey('collapsedSidebarNewSession'),
           icon: const Icon(Icons.add_circle_outline),
           onPressed: widget.onNewSession,
           tooltip: context.l10n.sidebarNewSessionTooltip,
@@ -689,15 +711,16 @@ List<SessionListRow> sessionTreeRows(
 }
 
 /// The display title for a session row — the app-local rename over the
-/// CLI-written `session_info` name over the derived date title. Unnamed
-/// subagent children degrade to `subagent <short-id>` (never a bare
-/// timestamp), matching the CLI's tree rows.
+/// CLI-written `session_info` name over [unnamedTitle] or the derived date
+/// title. Unnamed subagent children degrade to `subagent <short-id>` (never
+/// a bare timestamp), matching the CLI's tree rows.
 String sessionEntryTitle(
   BuildContext context,
   SessionEntry entry, {
   SessionNamesStore? namesStore,
   Map<String, String> sessionInfoNames = const {},
   bool subagent = false,
+  String? unnamedTitle,
 }) {
   final named = namesStore?.titleFor(entry.id) ?? sessionInfoNames[entry.id];
   if (named != null) return named;
@@ -705,7 +728,8 @@ String sessionEntryTitle(
     final shortId = entry.id.length < 8 ? entry.id : entry.id.substring(0, 8);
     return context.l10n.sidebarSubagentTitle(shortId);
   }
-  return derivedSessionTitle(context, id: entry.id, createdAt: entry.createdAt);
+  return unnamedTitle ??
+      derivedSessionTitle(context, id: entry.id, createdAt: entry.createdAt);
 }
 
 /// A small date header label (Today, Yesterday, May 7, ...).
@@ -791,7 +815,7 @@ String sessionFolderGroupLabel(String? cwd, String personalLabel) {
 /// The session tile's 3-dot menu, shared by the wide sidebar and the
 /// mobile chat sheet's sessions drawer: rename (via the shared rename
 /// dialog, like the CLI `/rename`) and delete (with confirmation). Works
-/// for live and persisted-only sessions alike. [onDeleted] fires after a
+/// for live and persisted-only sessions alike. [onDeleted] is awaited after a
 /// successful delete so hosts listing on-disk sessions can resync.
 Future<void> showSessionActionsMenu(
   BuildContext context, {
@@ -802,7 +826,7 @@ Future<void> showSessionActionsMenu(
   required DateTime createdAt,
   FlutterManagedSession? live,
   SessionMetadata? persisted,
-  VoidCallback? onDeleted,
+  FutureOr<void> Function()? onDeleted,
 }) async {
   final l10n = context.l10n;
   // Hosted rows (extension panel / relay shell) live in the service
@@ -878,7 +902,7 @@ Future<void> _deleteSession(
   required String sessionId,
   required FlutterManagedSession? live,
   required SessionMetadata? persisted,
-  VoidCallback? onDeleted,
+  FutureOr<void> Function()? onDeleted,
 }) async {
   // Defense in depth for the gated menu entry (issue #863 review round
   // 2): a hosted row has no delete path from this surface.
@@ -896,9 +920,7 @@ Future<void> _deleteSession(
           Text(
             title ??
                 l10n.sidebarDeletePersistedContent(
-                  sessionId.length < 8
-                      ? sessionId
-                      : sessionId.substring(0, 8),
+                  sessionId.length < 8 ? sessionId : sessionId.substring(0, 8),
                 ),
             style: const TextStyle(fontWeight: FontWeight.w600),
           ),
@@ -921,7 +943,7 @@ Future<void> _deleteSession(
   if (confirmed != true || !context.mounted) return;
   try {
     await manager.deleteSession(sessionId, metadata: persisted);
-    onDeleted?.call();
+    await onDeleted?.call();
     // Deleting the active (and only) session must not strand the shell on
     // the "No active session" placeholder — mint a fresh one on the same
     // connection, like the chat screen's ensureActiveSession path.

@@ -69,6 +69,10 @@ final class CountingFileSystem implements FileSystem, RangedReadFileSystem {
   /// Bytes moved by ranged (seek) reads — the windowed path.
   int rangedBytes = 0;
 
+  /// Successful ranges, in call order. Besides byte totals this pins the
+  /// shape of an explicit newline count: one sequential zero-to-EOF pass.
+  final rangedReads = <({String path, int start, int end})>[];
+
   /// Bytes moved by whole-file reads — must stay 0 while windowed.
   int bulkBytes = 0;
   @override
@@ -153,7 +157,10 @@ final class CountingFileSystem implements FileSystem, RangedReadFileSystem {
         FileError(FileErrorCode.notSupported, 'no ranged reads', path: path),
       );
     }
-    if (result.isOk) rangedBytes += result.valueOrNull!.length;
+    if (result.isOk) {
+      rangedBytes += result.valueOrNull!.length;
+      rangedReads.add((path: path, start: start, end: end));
+    }
     return result;
   }
 }
@@ -280,7 +287,11 @@ Future<void> deleteTempTree(io.Directory dir) async {
 void main() {
   /// Builds a big session file in one write — thousands of awaited storage
   /// appends would dominate the test runtime.
-  Future<void> seedRaw(String path, int count) async {
+  Future<void> seedRaw(
+    String path,
+    int count, {
+    int tailCustomBytes = 0,
+  }) async {
     const iso = '2026-01-01T00:00:00.000Z';
     final buffer = StringBuffer(
       '{"type":"session","version":3,"id":"big","timestamp":"$iso",'
@@ -294,6 +305,14 @@ void main() {
         '"message $i with a bit of body to be realistic"}]}}\n',
       );
     }
+    if (tailCustomBytes > 0) {
+      final blob = 'x'.padLeft(tailCustomBytes, 'x');
+      buffer.write(
+        '{"type":"custom","id":"tail-registry","parentId":"e${count - 1}",'
+        '"timestamp":"$iso","customType":"shell_job_registry",'
+        '"data":{"blob":"$blob"}}\n',
+      );
+    }
     await io.File(path).writeAsString(buffer.toString());
   }
 
@@ -301,10 +320,15 @@ void main() {
     int count, {
     CountingFileSystem? countingFs,
     Agent Function()? agentBuilder,
+    int tailCustomBytes = 0,
   }) async {
     final tmp = await io.Directory.systemTemp.createTemp('fa_windowed');
     addTearDown(() => deleteTempTree(tmp));
-    await seedRaw('${tmp.path}/big.jsonl', count);
+    await seedRaw(
+      '${tmp.path}/big.jsonl',
+      count,
+      tailCustomBytes: tailCustomBytes,
+    );
     final counting =
         countingFs ?? CountingFileSystem(LocalFileSystem(cwd: tmp.path));
     final service = AgentService(
@@ -322,13 +346,46 @@ void main() {
     // Count only the OPEN path: list bookkeeping may bulk-read headers.
     counting
       ..bulkBytes = 0
-      ..rangedBytes = 0;
+      ..rangedBytes = 0
+      ..rangedReads.clear();
     await service.loadSession(stored);
     return (service, counting);
   }
 
-  /// The history count lands via an unawaited background refresh.
+  /// Number of contiguous zero-to-EOF passes using countRecords' 1-MiB
+  /// blocks. Unknown-id locate has the same shape; this test jumps only to
+  /// already-indexed records, so every observed pass is an explicit count.
+  /// The independent custom-record recovery scan uses 8-MiB blocks (or one
+  /// whole small-file read) and must not be mistaken for a history count.
+  int fullFilePasses(CountingFileSystem counting, int fileSize) {
+    const countBlockBytes = 1 << 20;
+    var continuation = -1;
+    var passes = 0;
+    for (final read in counting.rangedReads.where(
+      (read) => read.path.endsWith('/big.jsonl'),
+    )) {
+      if (read.end - read.start > countBlockBytes) {
+        continuation = -1;
+        continue;
+      }
+      if (read.start == 0) {
+        continuation = read.end;
+      } else if (continuation >= 0 && read.start == continuation) {
+        continuation = read.end;
+      } else {
+        continuation = -1;
+      }
+      if (continuation == fileSize) {
+        passes++;
+        continuation = -1;
+      }
+    }
+    return passes;
+  }
+
+  /// Counts are explicit history work, never an automatic open/append scan.
   Future<void> waitForCount(AgentService service, int expected) async {
+    await service.loadHistoryCount();
     for (var i = 0; i < 300; i++) {
       if (service.historyAboveCount == expected) return;
       await Future<void>.delayed(const Duration(milliseconds: 10));
@@ -370,7 +427,7 @@ void main() {
     },
   );
 
-  test('loadSession opens windowed: tail chunk only, count lands', () async {
+  test('loadSession opens windowed: tail only; count is on demand', () async {
     final (service, counting) = await loadedService(20000);
     addTearDown(service.dispose);
 
@@ -380,9 +437,98 @@ void main() {
     // Ranged reads moved the window; no whole-file read ever happened.
     expect(counting.rangedBytes, greaterThan(0));
     expect(counting.bulkBytes, 0);
-    // The background count fills in the records above the window.
+    // Opening performs no whole-file count. An explicit history metadata
+    // request does it once; subsequent calls use the storage memo.
+    expect(service.historyAboveCount, isNull);
+    final openedRangedBytes = counting.rangedBytes;
+    await Future<void>.delayed(const Duration(milliseconds: 30));
+    expect(counting.bulkBytes, 0);
+    expect(counting.rangedBytes, openedRangedBytes);
     await waitForCount(service, 19800);
+    expect(counting.rangedBytes, greaterThan(openedRangedBytes));
   });
+
+  test(
+    'open backfills past a giant registry-only tail to chat content',
+    () async {
+      final (service, counting) = await loadedService(
+        1,
+        tailCustomBytes: 9 << 20,
+      );
+      addTearDown(service.dispose);
+
+      expect(service.messages, hasLength(1));
+      expect(
+        service.messages.single.content,
+        'message 0 with a bit of body to be realistic',
+      );
+      expect(counting.bulkBytes, 0);
+      // The extra block is bounded ranged IO, not a 9-MiB custom-payload
+      // fallback to the whole session.
+      expect(counting.rangedBytes, lessThan(32 << 20));
+    },
+  );
+
+  test('loadOlderHistory does not require a whole-file record count', () async {
+    final (service, _) = await loadedService(5000);
+    addTearDown(service.dispose);
+
+    expect(service.historyAboveCount, isNull);
+    expect(service.historyTotalCount, isNull);
+    await service.loadOlderHistory();
+
+    expect(service.messages, hasLength(400));
+    // Ordinary scrolling must stay a bounded page read. The exact count
+    // remains available through the explicit metadata request instead of
+    // turning the first page into a full-session newline scan.
+    expect(service.historyAboveCount, isNull);
+    expect(service.historyTotalCount, isNull);
+    await waitForCount(service, 4600);
+  });
+
+  test(
+    'open, append, page and indexed jump never trigger an implicit count',
+    () async {
+      final (service, counting) = await loadedService(20000);
+      addTearDown(service.dispose);
+
+      expect(
+        fullFilePasses(
+          counting,
+          io.File('${counting.cwd}/big.jsonl').lengthSync(),
+        ),
+        0,
+      );
+      await service.sendText('live append');
+      await service.waitForIdle();
+      await service.loadOlderHistory();
+      expect(await service.jumpToMessage('e19800'), isTrue);
+
+      expect(service.historyTotalCount, isNull);
+      final fileSize = io.File('${counting.cwd}/big.jsonl').lengthSync();
+      expect(
+        fullFilePasses(counting, fileSize),
+        0,
+        reason:
+            'the hot path must stay bounded; only explicit metadata may scan',
+      );
+
+      await service.loadHistoryCount();
+      final expectedRecords =
+          io.File('${counting.cwd}/big.jsonl').readAsLinesSync().length - 1;
+      expect(service.historyTotalCount, expectedRecords);
+      expect(fullFilePasses(counting, fileSize), 1);
+
+      await service.loadHistoryCount();
+      await service.loadOlderHistory();
+      expect(await service.jumpToMessage('e19800'), isTrue);
+      expect(
+        fullFilePasses(counting, fileSize),
+        1,
+        reason: 'the memo survives repeat counts, paging and indexed jumps',
+      );
+    },
+  );
 
   test('loadOlderHistory pages the next chunk into the transcript', () async {
     // 5000 records: big enough to force many pages, small enough that

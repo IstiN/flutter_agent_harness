@@ -10,12 +10,9 @@
 library;
 
 import 'dart:io' as io;
-import 'dart:typed_data';
-
-import 'package:fa/apps/session_chat_sheet.dart';
 import 'package:fa/l10n/app_localizations.dart';
+import 'package:fa/main.dart' show faHomeScreen;
 import 'package:fa/services/agent_service.dart';
-import 'package:fa/services/asr_service.dart';
 import 'package:fa/services/flutter_session_manager.dart';
 import 'package:fa/services/session_names_store.dart';
 import 'package:fa/ui/app_theme.dart';
@@ -257,41 +254,58 @@ void main() {
     expect(flaky.bulkBytes, greaterThan(0));
   });
 
-  // AC4 UT-boot-toast (manager half): boot skips the oversized last-active
-  // and records it for the UI notice instead of silently swapping.
-  test('UT-boot-skipped: an oversized last-active session is not resumed at '
-      'boot; the skip is surfaced on the manager', () async {
-    final env = MemoryExecutionEnv();
-    final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
-    await env.writeFile('/sessions/giant.jsonl', _sessionBody('giant', 50));
-    await env.writeFile(
-      '/sessions/${FlutterSessionManager.lastActiveFile}',
-      '{"version":1,"id":"giant"}',
-    );
+  // Boot must use the same windowed route as an explicit open. Falling
+  // through to a fresh session both loses the user's place and surfaces the
+  // oversize notice even though the existing loader can open the session.
+  test('UT-boot-windowed: an oversized last-active session opens windowed '
+      'without a fresh fallback or notice', () async {
+    final tmp = await io.Directory.systemTemp.createTemp('fa_boot_windowed');
+    addTearDown(() => _deleteTmpDir(tmp));
+    await io.File(
+      '${tmp.path}/giant.jsonl',
+    ).writeAsString(_sessionBody('giant', 300));
+    await io.File(
+      '${tmp.path}/${FlutterSessionManager.lastActiveFile}',
+    ).writeAsString('{"version":1,"id":"giant"}');
+    final counting = CountingFileSystem(LocalFileSystem(cwd: tmp.path));
     final manager = FlutterSessionManager(
-      env: env,
-      sessionsRoot: '/sessions',
-      repo: repo,
+      env: LocalExecutionEnv(cwd: tmp.path),
+      sessionsRoot: tmp.path,
+      repo: JsonlSessionRepo(fs: counting, sessionsRoot: tmp.path),
       maxSessionLoadBytes: 1024,
+      includeSharedSessionRoots: false,
     );
+    final service = _service(tmp.path, counting);
+    addTearDown(service.dispose);
+    var createCalls = 0;
+    var openCalls = 0;
 
     final booted = await manager.createOrResumeSession(
       config: _config,
-      createFactory: () async => AgentService(
-        agent: _createAgent(),
-        env: env,
-        sessionsRoot: '/sessions',
-        config: _config,
-        watchExternalSessions: false,
-      ),
-      openFactory: () async => throw StateError('must not open the giant'),
+      createFactory: () async {
+        createCalls++;
+        throw StateError('fresh fallback must not be created');
+      },
+      openFactory: () async {
+        openCalls++;
+        return service;
+      },
     );
 
-    // A fresh session, not the giant; the skip is on the manager for
-    // the shell notice.
-    expect(booted.id, isNot('giant'));
-    expect(manager.bootSkippedOversize?.id, 'giant');
-    expect(manager.bootSkippedOversize?.sizeBytes, greaterThan(1024));
+    expect(booted.id, 'giant');
+    expect(manager.activeId, 'giant');
+    expect(manager.sessions.map((session) => session.id), ['giant']);
+    expect(createCalls, 0);
+    expect(openCalls, 1);
+    expect(booted.service.messages, hasLength(200));
+    expect(booted.service.messages.last.content, contains('message 299'));
+    expect(counting.rangedBytes, greaterThan(0));
+    expect(
+      manager.bootSkippedOversize,
+      isNull,
+      reason: 'no boot oversize notice should be shown',
+    );
+    expect(await manager.listPersistedSessions(), hasLength(1));
   });
 
   // AC4 UT-boot-toast (UI half): the notice names the skipped session and
@@ -357,13 +371,16 @@ void main() {
     },
   );
 
-  // AC5 E2E (sidebar half): through the real sheet surface — drawer-open
-  // an over-budget session and the chat opens with the tail window
-  // instead of the old "Session too large" refusal.
+  // AC5 E2E (conversation-list half): through the current narrow shell,
+  // open an over-budget persisted session and its full chat route shows the
+  // tail window instead of the old "Session too large" refusal.
   testWidgets(
-    'E2E-sidebar-open: drawer-open of an over-budget session opens its '
-    'windowed chat (no refusal)',
+    'E2E-current-narrow-open: an over-budget persisted session opens its '
+    'windowed ChatScreen route (no refusal)',
     (tester) async {
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
       final env = MemoryExecutionEnv();
       await env.writeFile('/sessions/giant.jsonl', _sessionBody('giant', 300));
       final service = AgentService(
@@ -387,24 +404,28 @@ void main() {
           theme: buildFahTheme(),
           localizationsDelegates: AppLocalizations.localizationsDelegates,
           supportedLocales: AppLocalizations.supportedLocales,
-          home: Scaffold(
-            body: SessionChatSheet(manager: manager, asr: _FakeAsrApi()),
+          home: Builder(
+            builder: (context) => faHomeScreen(
+              context: context,
+              manager: manager,
+              sessionNamesStore: SessionNamesStore.inMemory({
+                'giant': 'Giant chat',
+              }),
+            ),
           ),
         ),
       );
       await tester.pumpAndSettle();
 
-      // Drawer → persisted giant row.
-      await tester.tap(find.byKey(const ValueKey('sessionChatDrawerButton')));
-      await tester.pumpAndSettle();
-      await tester.tap(
-        find.byKey(const ValueKey('sessionChatDrawerEntry:giant')),
-      );
+      // Fa2's messenger list is flat in the All facet: persisted sessions
+      // carry a folder avatar instead of sitting behind a folder drill-in.
+      await tester.tap(find.text('Giant chat'));
       await tester.pumpAndSettle();
 
-      // The chat opened: composer live, tail window loaded — newest
-      // record visible, the file's head NOT bulk-read into memory, and
-      // none of the old "too large" refusal snackbar.
+      // The current chat route opened: composer live, tail window loaded —
+      // newest record visible, the file's head NOT bulk-read into memory,
+      // and none of the old "too large" refusal snackbar.
+      expect(find.byType(ChatScreen), findsOneWidget);
       expect(find.byType(ChatComposer), findsOneWidget);
       expect(find.textContaining('message 299'), findsOneWidget);
       expect(find.textContaining('message 0 '), findsNothing);
@@ -415,99 +436,67 @@ void main() {
   // AC5 E2E (window + paging half): the real chat surface over the
   // opened giant — only the tail window loaded, and "Load earlier" pages
   // up through the file.
-  testWidgets('E2E-windowed-chat: the opened giant shows the tail window; Load '
-      'earlier pages up through the file', (tester) async {
-    final env = MemoryExecutionEnv();
-    await env.writeFile('/sessions/giant.jsonl', _sessionBody('giant', 300));
-    final service = AgentService(
-      agent: _createAgent(),
-      env: env,
-      sessionsRoot: '/sessions',
-      config: _config,
-      watchExternalSessions: false,
-    );
-    final manager = FlutterSessionManager(
-      env: env,
-      sessionsRoot: '/sessions',
-      maxSessionLoadBytes: 1024,
-    )..addSession('live-a', service);
-    final metadata = await service.listSessions();
-    await manager.openSession(
-      metadata.first,
-      config: _config,
-      serviceFactory: () async => service.clone(),
-    );
+  testWidgets(
+    'E2E-windowed-chat: the opened giant shows the tail window; older '
+    'history pages up through the file',
+    (tester) async {
+      final env = MemoryExecutionEnv();
+      await env.writeFile('/sessions/giant.jsonl', _sessionBody('giant', 300));
+      final service = AgentService(
+        agent: _createAgent(),
+        env: env,
+        sessionsRoot: '/sessions',
+        config: _config,
+        watchExternalSessions: false,
+      );
+      final manager = FlutterSessionManager(
+        env: env,
+        sessionsRoot: '/sessions',
+        maxSessionLoadBytes: 1024,
+      )..addSession('live-a', service);
+      final metadata = await service.listSessions();
+      await manager.openSession(
+        metadata.first,
+        config: _config,
+        serviceFactory: () async => service.clone(),
+      );
 
-    await tester.pumpWidget(
-      MaterialApp(
-        theme: buildFahTheme(),
-        localizationsDelegates: AppLocalizations.localizationsDelegates,
-        supportedLocales: AppLocalizations.supportedLocales,
-        home: ChatScreen(manager: manager),
-      ),
-    );
-    await tester.pumpAndSettle();
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildFahTheme(),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: ChatScreen(manager: manager),
+        ),
+      );
+      await tester.pumpAndSettle();
 
-    // The window is visible: newest records rendered, head not loaded.
-    expect(find.textContaining('message 299'), findsOneWidget);
-    expect(find.textContaining('message 0 '), findsNothing);
-    // The composer is live (interactive chat, not a loading shell).
-    expect(find.byType(ChatComposer), findsOneWidget);
+      // The window is visible: newest records rendered, head not loaded.
+      expect(find.textContaining('message 299'), findsOneWidget);
+      expect(find.textContaining('message 0 '), findsNothing);
+      // The composer is live (interactive chat, not a loading shell).
+      expect(find.byType(ChatComposer), findsOneWidget);
 
-    // "Load earlier" pages up: one chunk covers the remaining 100
-    // records, so the head lands in the view. The list opens scrolled
-    // to the tail, and the banner reveals on scroll-to-top only
-    // (issue #974) — drag to the oldest edge until it appears. The
-    // transcript's scrollable is found through the list's key, not
-    // tree order, so chrome scrollables can never eat the drags.
-    final transcript = find.descendant(
-      of: find.byKey(const ValueKey('faChatTranscriptList')),
-      matching: find.byType(Scrollable),
-    );
-    await tester.scrollUntilVisible(
-      find.textContaining('Load earlier'),
-      500,
-      scrollable: transcript,
-      maxScrolls: 120,
-    );
-    await tester.pumpAndSettle();
-    await tester.tap(find.textContaining('Load earlier').first);
-    await tester.pumpAndSettle();
-    // The head decoded into the service (300 = full file); the
-    // "Load earlier" banner turned into its terminal state in place —
-    // which reveals on scroll-to-top too, so drag to the new oldest
-    // edge to see it (issue #974).
-    expect(manager.active!.service.messages, hasLength(300));
-    expect(manager.active!.service.historyAboveCount, 0);
-    await tester.scrollUntilVisible(
-      find.textContaining('Beginning of session'),
-      500,
-      scrollable: transcript,
-      maxScrolls: 120,
-    );
-    await tester.pumpAndSettle();
-    expect(find.textContaining('Load earlier'), findsNothing);
-    expect(find.textContaining('Beginning of session'), findsOneWidget);
-  });
-}
-
-/// Fake [AsrApi] — widget tests never touch the real method channel (the
-/// session_chat_sheet_test pattern).
-final class _FakeAsrApi implements AsrApi {
-  @override
-  Future<bool> get isAvailable async => true;
-
-  @override
-  Future<bool> requestAccess() async => true;
-
-  @override
-  Future<void> startRecording() async {}
-
-  @override
-  Future<AsrRecording> stopRecording() async =>
-      (path: '/tmp/fah-mic-test.m4a', durationMs: 5000, sampleRate: 44100);
-
-  @override
-  Future<Uint8List> readRecording(String path) async =>
-      Uint8List.fromList(const [1, 2, 3]);
+      // One chunk covers the remaining 100 records. Fa2 automatically
+      // pages older history when a real scroll reaches the prefetch band;
+      // jumping to the reversed list's oldest edge exercises that path.
+      final transcript = find.byType(Scrollable).first;
+      final scrollable = tester.state<ScrollableState>(transcript);
+      scrollable.position.jumpTo(scrollable.position.maxScrollExtent);
+      await tester.pump();
+      await tester.pumpAndSettle();
+      // The head decoded into the service (300 = full file). Reveal the
+      // terminal banner at the new oldest edge (issue #974).
+      expect(manager.active!.service.messages, hasLength(300));
+      expect(manager.active!.service.historyAboveCount, 0);
+      // The terminal label needs the explicit whole-file count; paging
+      // alone intentionally does not scan the remaining record index.
+      await manager.active!.service.loadHistoryCount();
+      scrollable.position.jumpTo(scrollable.position.maxScrollExtent);
+      await tester.pump();
+      await tester.pumpAndSettle();
+      expect(find.textContaining('Load earlier'), findsNothing);
+      expect(find.textContaining('Beginning of session'), findsOneWidget);
+    },
+  );
 }

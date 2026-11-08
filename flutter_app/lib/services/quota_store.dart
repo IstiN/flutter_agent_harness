@@ -87,6 +87,10 @@ class QuotaStore extends ChangeNotifier {
   String? _storedKey(String mark) {
     final registry = _registry;
     if (registry == null) return null;
+    return _storedKeyForRegistry(registry, mark);
+  }
+
+  String? _storedKeyForRegistry(ProviderRegistry registry, String mark) {
     for (final provider in registry.providers) {
       if (providerMarkKeyForBaseUrl(provider.baseUrl) == mark) {
         return registry.keyFor(provider.id);

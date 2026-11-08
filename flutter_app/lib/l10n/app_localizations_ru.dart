@@ -122,6 +122,255 @@ class AppLocalizationsRu extends AppLocalizations {
   String get appsGridTitle => 'Приложения';
 
   @override
+  String get appsOverviewSubtitle => 'Мои приложения · Каталог виджетов';
+
+  @override
+  String get appsMyApps => 'Мои приложения';
+
+  @override
+  String get appsMyAppsSubtitle => 'Установленные приложения и виджеты.';
+
+  @override
+  String get appsWidgetStore => 'Каталог виджетов';
+
+  @override
+  String get appsWidgetStoreSubtitle =>
+      'Просмотр и установка виджетов в Мои приложения.';
+
+  @override
+  String get appsWidgetCatalog => 'Каталог виджетов';
+
+  @override
+  String appsInstalledCount(Object count) {
+    return 'Установлено: $count';
+  }
+
+  @override
+  String appsActiveCount(Object count) {
+    return 'Активных приложений: $count';
+  }
+
+  @override
+  String get appsRunning => 'Запущенные';
+
+  @override
+  String get appsQuickOpen => 'Быстрое открытие';
+
+  @override
+  String get appsFullTooltip => 'На весь экран';
+
+  @override
+  String get appsExitFullTooltip => 'Выйти из полного экрана';
+
+  @override
+  String get appsPinTooltip => 'Закрепить';
+
+  @override
+  String get appsUnpinTooltip => 'Открепить';
+
+  @override
+  String get wideNavChats => 'Чаты';
+
+  @override
+  String get wideNavLocal => 'Локальные';
+
+  @override
+  String get localFoldersTitle => 'Локальные папки';
+
+  @override
+  String get localSessionsEmpty => 'В этой папке пока нет сессий';
+
+  @override
+  String get localFoldersEmpty => 'Пока нет папок проектов';
+
+  @override
+  String get localFolderBack => 'Назад к папкам';
+
+  @override
+  String get localFoldersSearchHint => 'Поиск папок';
+
+  @override
+  String listSearchNoMatches(Object query) {
+    return 'Ничего не найдено по запросу «$query»';
+  }
+
+  @override
+  String get wideChatsSearchHint => 'Поиск чатов';
+
+  @override
+  String get wideChatFallbackTitle => 'Новый чат';
+
+  @override
+  String get chatFilterAll => 'Все';
+
+  @override
+  String get chatFilterUnread => 'Непрочитанные';
+
+  @override
+  String get chatFilterAgents => 'Агенты';
+
+  @override
+  String get chatFilterChannels => 'Каналы';
+
+  @override
+  String get chatAllNetworks => 'Все сети';
+
+  @override
+  String get chatMyNetwork => 'Моя сеть';
+
+  @override
+  String get chatManageNetworks => 'Управление сетями';
+
+  @override
+  String get chatNetworkStatusConnected => 'Подключена';
+
+  @override
+  String get chatNetworkStatusOffline => 'Релей офлайн';
+
+  @override
+  String get chatNetworkStatusIdle => 'Не подключена';
+
+  @override
+  String get chatNetworkChannelsEmpty => 'Пока нет каналов';
+
+  @override
+  String get chatNetworkChannelPublic => 'Публичный канал';
+
+  @override
+  String get chatNetworkChannelPrivate => 'Приватный канал';
+
+  @override
+  String get chatSignInNetwork => 'Войти в Fa Network';
+
+  @override
+  String get chatProfileSettings => 'Профиль и настройки';
+
+  @override
+  String get chatNew => 'Новый';
+
+  @override
+  String get chatPinned => 'Закреплённые';
+
+  @override
+  String get chatRecent => 'Недавние';
+
+  @override
+  String get chatNoConversationsTitle => 'Чатов пока нет';
+
+  @override
+  String get chatNoConversationsBody =>
+      'Начните локальный чат. Вход в сеть необязателен.';
+
+  @override
+  String get chatStartChat => 'Начать чат';
+
+  @override
+  String get chatNoUnread => 'Нет непрочитанных чатов.';
+
+  @override
+  String get chatNoAgents => 'Нет агентов по этому фильтру.';
+
+  @override
+  String get chatNoChannels => 'Нет каналов по этому фильтру.';
+
+  @override
+  String get chatNoNetworkResults => 'В этой сети нет чатов.';
+
+  @override
+  String get chatNoSearchResults => 'По вашему запросу чатов не найдено.';
+
+  @override
+  String get chatClearSearch => 'Очистить поиск';
+
+  @override
+  String get chatNoPreview => 'Сообщений пока нет';
+
+  @override
+  String get chatNetworkUnavailable =>
+      'Сетевые чаты недоступны. Локальные чаты продолжают работать.';
+
+  @override
+  String get chatLoadError => 'Не удалось загрузить чаты.';
+
+  @override
+  String get chatRetry => 'Повторить';
+
+  @override
+  String get chatCreateJoinNetwork => 'Создать сеть или присоединиться';
+
+  @override
+  String get chatOpenNetwork => 'Открыть сеть';
+
+  @override
+  String get chatNetworksEmpty => 'Вы пока не состоите ни в одной сети.';
+
+  @override
+  String get chatPin => 'Закрепить чат';
+
+  @override
+  String get chatUnpin => 'Открепить чат';
+
+  @override
+  String get chatWorking => 'Работает…';
+
+  @override
+  String get chatTimeNow => 'сейчас';
+
+  @override
+  String get chatMinuteSuffix => 'м';
+
+  @override
+  String get chatHourSuffix => 'ч';
+
+  @override
+  String get chatDaySuffix => 'д';
+
+  @override
+  String get chatLocal => 'Локально';
+
+  @override
+  String get chatSearchShortcut => '⌘F';
+
+  @override
+  String get chatMoreActions => 'Действия с чатом';
+
+  @override
+  String get commonMore => 'Ещё';
+
+  @override
+  String get chatExpand => 'Развернуть субагентов';
+
+  @override
+  String get chatCollapse => 'Свернуть';
+
+  @override
+  String get wideNavActivity => 'Активность';
+
+  @override
+  String get activityRunning => 'В работе';
+
+  @override
+  String get activityRecent => 'Недавние';
+
+  @override
+  String get activityAll => 'Вся активность';
+
+  @override
+  String get activitySearchHint => 'Поиск активности';
+
+  @override
+  String get activityChoose => 'Выберите элемент активности';
+
+  @override
+  String get activityStatus => 'Статус';
+
+  @override
+  String get activityLastActivity => 'Последняя активность';
+
+  @override
+  String get activityEmpty => 'Пока нет активности сессий.';
+
+  @override
   String get appsHideAppsTooltip => 'Скрыть приложения';
 
   @override
@@ -369,9 +618,6 @@ class AppLocalizationsRu extends AppLocalizations {
   String get chatCamera => 'Камера';
 
   @override
-  String get chatCollapse => 'Свернуть';
-
-  @override
   String get chatCopiedToClipboard => 'Сессия скопирована в буфер обмена';
 
   @override
@@ -482,10 +728,16 @@ class AppLocalizationsRu extends AppLocalizations {
   String get filesBackTooltip => 'Назад к файлам';
 
   @override
+  String get filesCloseTooltip => 'Закрыть файлы';
+
+  @override
   String get filesEmptyFileName => '(пустое имя файла)';
 
   @override
   String get filesEmptyFolder => 'Пустая папка';
+
+  @override
+  String get filesFilesSection => 'Файлы';
 
   @override
   String get filesFolderAccessDenied =>
@@ -495,6 +747,9 @@ class AppLocalizationsRu extends AppLocalizations {
   String filesFolderPickerError(Object error) {
     return 'Не удалось открыть выбор папки: $error';
   }
+
+  @override
+  String get filesFoldersSection => 'Папки';
 
   @override
   String filesICloudSyncDone(Object files, Object size, Object when) {
@@ -526,6 +781,17 @@ class AppLocalizationsRu extends AppLocalizations {
   String get filesOpenFolderError => 'Не удалось открыть папку';
 
   @override
+  String get filesSessionFolderGateTitle => 'Папка этого чата недоступна';
+
+  @override
+  String filesSessionFolderGateBody(Object folder) {
+    return 'Files показывает только папки, к которым у Fa есть доступ. Этот диалог живёт в $folder — разрешите доступ, чтобы видеть его файлы здесь.';
+  }
+
+  @override
+  String get filesSessionFolderGateAllow => 'Разрешить доступ';
+
+  @override
   String get filesOpenProjectFolderTooltip => 'Открыть папку проекта…';
 
   @override
@@ -536,6 +802,12 @@ class AppLocalizationsRu extends AppLocalizations {
 
   @override
   String get filesRetryButton => 'Повторить';
+
+  @override
+  String get filesSearchHint => 'Поиск файлов…';
+
+  @override
+  String get filesNoSearchMatches => 'Нет подходящих файлов';
 
   @override
   String filesUnmountTooltip(Object path) {
@@ -682,7 +954,7 @@ class AppLocalizationsRu extends AppLocalizations {
       'Файлы виджета удаляются; его данные (storage.json) сохраняются — при повторной установке состояние восстановится.';
 
   @override
-  String get launcherSearchHint => 'Поиск виджетов…';
+  String get launcherSearchHint => 'Поиск приложений и виджетов…';
 
   @override
   String get launcherTabWidgets => 'Виджеты';
@@ -2280,6 +2552,9 @@ class AppLocalizationsRu extends AppLocalizations {
   String get networkSearchHint => 'Поиск сетей';
 
   @override
+  String get networkChannelsSearchHint => 'Поиск каналов';
+
+  @override
   String get networkSignInTitle => 'Войти';
 
   @override
@@ -2549,6 +2824,16 @@ class AppLocalizationsRu extends AppLocalizations {
   String get networkChannelDeleted => 'Канал удалён';
 
   @override
+  String get networkInvitePerson => 'Пригласить человека…';
+
+  @override
+  String get networkInvitePersonTitle => 'Пригласить человека';
+
+  @override
+  String get networkInvitePersonBody =>
+      'Эта ссылка даёт доступ ко всей сети. Любой, кто получит её, сможет ею воспользоваться.';
+
+  @override
   String get networkAddAgent => 'Добавить агента…';
 
   @override
@@ -2778,4 +3063,34 @@ class AppLocalizationsRu extends AppLocalizations {
   @override
   String get networkAddAgentPublicHint =>
       'Эту ссылку видят все — канал публичный. Агенты подключаются без ключей.';
+
+  @override
+  String get onboardingJoinNetwork => 'Присоединиться к сети';
+
+  @override
+  String get onboardingJoinNetworkSubtitle =>
+      'Работайте в подключённой сети — настройка AI‑провайдера не требуется.';
+
+  @override
+  String get visualDirectionTitle => 'Визуальный стиль';
+
+  @override
+  String get visualDirectionSubtitle =>
+      'Выберите общий язык поверхностей, цвета и движения. Каждый стиль поддерживает светлую и тёмную темы.';
+
+  @override
+  String get visualDirectionSelected => 'Выбрано';
+
+  @override
+  String get fontPresetTitle => 'Шрифт';
+
+  @override
+  String chatSubagentFilterActive(Object count) {
+    return 'Активные ($count)';
+  }
+
+  @override
+  String chatSubagentFilterDone(Object count) {
+    return 'Завершённые ($count)';
+  }
 }

@@ -47,7 +47,10 @@ typedef FaChatAnalytics =
 /// (fa wraps its AsrApi + Whisper transcriber); when null, the mic button
 /// is hidden regardless of [FaChatFeatures.voiceInput].
 abstract interface class FaChatVoiceInput {
-  /// Whether voice input can run here (platform + configured endpoint).
+  /// Whether this platform exposes a usable microphone backend.
+  ///
+  /// Endpoint configuration is checked separately through
+  /// [FaChatVoiceInputConfiguration], immediately before recording starts.
   bool get isAvailable;
 
   /// A human-readable reason voice is unavailable (shown as a snackbar);
@@ -66,6 +69,19 @@ abstract interface class FaChatVoiceInput {
   /// disposed mid-take). Best effort: never leaves the native recorder
   /// running.
   Future<void> cancel();
+}
+
+/// Optional voice-input preflight for hosts whose transcription endpoint can
+/// be absent or change while settings are edited.
+///
+/// The composer awaits [isConfigured] before calling
+/// [FaChatVoiceInput.start], so an unconfigured backend never triggers the
+/// microphone permission prompt or captures audio. Implementations that do
+/// not support this optional interface retain the legacy behavior and are
+/// assumed to be configured.
+abstract interface class FaChatVoiceInputConfiguration {
+  /// Whether a transcription model/endpoint is currently configured.
+  Future<bool> get isConfigured;
 }
 
 /// Launches a js mini-app referenced by a tool result (fa-only feature).
@@ -158,12 +174,19 @@ abstract final class FaChatHost {
   /// Mini-app launcher for js-app tool results; null hides the affordance.
   static FaChatAppLauncher? appLauncher;
 
-  /// The Navigator key of the apps side panel on wide screens. Set by the
-  /// host's wide layout shell when it mounts the panel, cleared on dispose.
-  /// `pushJsApp` checks this first: when present, agent-launched apps open
-  /// inside the panel instead of pushing a full-screen route over the whole
-  /// shell.
+  /// The Navigator key of the Apps section on wide screens. Set by the
+  /// host's wide layout shell and cleared on dispose. `pushJsApp` reveals
+  /// that section and then uses this key so agent-launched apps stay inside
+  /// the shell instead of pushing a full-screen route over it.
   static GlobalKey<NavigatorState>? jsAppNavigatorKey;
+
+  /// Reveals the wide shell's Apps section before [jsAppNavigatorKey] is
+  /// used. Null on surfaces without an embedded Apps section.
+  static Future<void> Function()? revealJsApps;
+
+  /// Leaves an embedded app and reveals its active/app-bound full chat.
+  /// The host owns section and route changes; null keeps the local pop fallback.
+  static Future<void> Function()? revealActiveChat;
 
   /// Builder of the files side panel shown by the toolbar's files button;
   /// null hides the button regardless of [FaChatFeatures.fileBrowser].

@@ -113,13 +113,24 @@ void main() {
       final run = runAttach(
         'policy-published-fa',
         releaseState: 'false',
-        attachedNames: ['fa-macos-arm64.tar.gz', 'SHA256SUMS', 'SHA256SUMS.sig'],
-        assets: ['fa-macos-arm64-1.0.685.dmg', 'fa-macos-arm64-mac.zip', 'latest-mac.yml'],
+        attachedNames: [
+          'fa-macos-arm64.tar.gz',
+          'SHA256SUMS',
+          'SHA256SUMS.sig',
+        ],
+        assets: [
+          'fa-macos-arm64-1.0.685.dmg',
+          'fa-macos-arm64-mac.zip',
+          'latest-mac.yml',
+        ],
         env: {'RELEASE_GATE_PUBLISHED_SKIP': '1'},
       );
       expect(run.exitCode, 0, reason: run.out);
-      expect(run.out, contains('::warning::'),
-          reason: 'the skip is loud — a green annotation, never silence');
+      expect(
+        run.out,
+        contains('::warning::'),
+        reason: 'the skip is loud — a green annotation, never silence',
+      );
       expect(run.out.toLowerCase(), contains('published'));
       expect(
         run.log.where((l) => l.contains('release upload')),

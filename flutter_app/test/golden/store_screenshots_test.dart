@@ -12,17 +12,14 @@
 /// The five frames tell one continuous story — "your own apps, built by
 /// chat" (a mobile agent harness — banned-claim copy is gated by
 /// test/store_copy_compliance_test.dart, issue #643):
-///  1. store_chat — THE ASK: the user asks Fa to build a personal weather
-///     app with a dashboard widget; tool-call tiles write the manifest,
-///     the app and the widget, then `open_app` opens it.
-///  2. store_apps — THE DASHBOARD: the apps-launcher home grid with LIVE
-///     widget tiles (the just-built weather app as a 4x2 widget) and the
-///     mini session-chat bar docked at the bottom.
-///  3. store_inapp — THE APP + FA INSIDE: the weather app open with the
-///     session chat sheet pulled up over it — a follow-up ("add a weekly
-///     forecast") without leaving the app.
-///  4. store_media — generation capabilities: an inline generated
-///     wallpaper, a video clip tile and a voice-summary player in chat.
+///  1. store_chat — THE ASK: the user asks Fa to build a playable
+///     Minecraft-style voxel game with a live world widget.
+///  2. store_apps — THE DASHBOARD: the selected Apps grid with LIVE widget
+///     tiles (the just-built Fa Craft as a 4x2 world widget).
+///  3. store_inapp — THE FOLLOW-UP: the real FaChatOverlay adds crafting
+///     and survival UI over the running voxel world.
+///  4. store_media — generation capabilities: an inline generated travel
+///     wallpaper and a voice-summary player in chat.
 ///  5. store_providers — any provider, keys in the Keychain.
 ///
 /// The generated wallpaper inside the media frame is a REAL picture (see
@@ -30,19 +27,22 @@
 /// written into the in-memory sandbox — tests never touch the network.
 ///
 /// Devices (App Store sizes): iPhone 6.9" 1290x2796 @3x, iPad Pro 13"
-/// 2064x2752 @2x, Mac 2560x1600 @2x. All fakes and pump dances are the
-/// proven patterns from the sibling golden tests (chat/launcher/apps/
-/// settings) — no network, no clocks, no real JS engine.
+/// 2064x2752 @2x, Mac 2560x1600 @2x. Phone captures use the focused screen;
+/// iPad/Mac captures use the production [WideLayoutShell] (rail, session or
+/// category sidebar, adaptive content) and the real JS-app presentation
+/// pane. All fakes and pump dances are the proven patterns from the sibling
+/// golden tests — no network or wall-clock dependency.
 library;
 
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:fa/apps/app_icon.dart';
 import 'package:fa/apps/app_tile_host.dart';
 import 'package:fa/apps/apps_store.dart';
+import 'package:fa/apps/fa_chat_overlay.dart';
 import 'package:fa/apps/js_app_engine.dart';
-import 'package:fa/apps/session_chat_sheet.dart';
+import 'package:fa/apps/js_app_navigation.dart';
+import 'package:fa/apps/js_app_view.dart';
 import 'package:fa/l10n/app_localizations.dart';
 import 'package:fa/l10n/l10n_ext.dart';
 import 'package:fa/services/agent_service.dart';
@@ -50,10 +50,24 @@ import 'package:fa/services/flutter_session_manager.dart';
 import 'package:fa/services/launcher_layout_store.dart';
 import 'package:fa/services/provider_registry.dart';
 import 'package:fa/services/session_names_store.dart';
-import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/screens/app_launcher_screen.dart';
 import 'package:fa/ui/screens/chat_screen.dart';
 import 'package:fa/ui/screens/providers_section.dart';
+import 'package:fa/ui/widgets/wide_layout_shell.dart';
+import 'package:fa_ui/fa_ui.dart'
+    show
+        FaChatScreen,
+        FaVisualDirection,
+        MediaModelsScope,
+        MediaModelsSection,
+        MediaModelsStore,
+        MediaSlot,
+        MediaSlotOverride,
+        TaskModelsScope,
+        TaskModelsStore,
+        TaskRole,
+        TaskRoleConfig,
+        buildFaTheme;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
@@ -73,6 +87,11 @@ const _devices = <_Device>[
 ];
 
 const _locales = [Locale('en'), Locale('ru')];
+
+/// iPad and Mac captures must exercise the production wide messenger, not
+/// a phone screen scaled to a larger viewport.
+bool _isWideDevice(_Device device) =>
+    device.name == 'ipad' || device.name == 'mac';
 
 // ── Google Play listing targets (issue #289) ─────────────────────────────
 // The same story frames at Play Console sizes, snapshotted DIRECTLY into
@@ -112,6 +131,10 @@ String _playImagesDir(String lang) =>
 /// The real photo inside the media frame (see assets/store/README.md),
 /// written into the in-memory sandbox as the "generated" wallpaper.
 late Uint8List _wallpaperBytes;
+
+/// Fa Craft sources read once in real async setup; widget-test fake zones
+/// must never await host file I/O before the first frame.
+late Map<String, String> _craftSourceFiles;
 
 // --- Service fakes (verbatim patterns from chat/launcher golden tests) -----
 
@@ -166,28 +189,28 @@ AgentService _fakeService(
 // --- Story scaffolding ------------------------------------------------------
 
 /// The story session ids.
-const _weatherSessionId = 'a11ce001-weather-app';
+const _craftSessionId = 'a11ce001-fa-craft';
 const _wallpaperSessionId = 'b22ce002-wallpaper';
 const _notesSessionId = 'c33ce003-notes';
 
 /// The story sessions shown in the chat sheet header (and kept in the
 /// manager for realism): the app-build chat, the wallpaper session and a
 /// persisted one. Titles ride the `session_names.json` overlay the stores
-/// load from the env (or `SessionNamesStore.inMemory` where a store can be
+/// load from the env (or an in-memory session-names store where one can be
 /// injected).
 Map<String, String> _sessionNames(String lang) => lang == 'ru'
     ? {
-        _weatherSessionId: 'Погода',
-        _wallpaperSessionId: 'Обои для дашборда',
+        _craftSessionId: 'Fa Craft — свой мир',
+        _wallpaperSessionId: 'Постер путешествия',
         _notesSessionId: 'Идеи виджета заметок',
       }
     : {
-        _weatherSessionId: 'Weather app',
-        _wallpaperSessionId: 'Dashboard wallpaper',
+        _craftSessionId: 'Fa Craft world',
+        _wallpaperSessionId: 'Travel wallpaper',
         _notesSessionId: 'Notes widget ideas',
       };
 
-/// Writes the session-titles overlay exactly where `SessionNamesStore`
+/// Writes the session-titles overlay exactly where the session-names store
 /// reads it (`<cwd>/session_names.json`, envelope version 1).
 Future<void> _seedSessionNames(MemoryExecutionEnv env, String lang) {
   return env.writeFile(
@@ -211,9 +234,9 @@ Future<FlutterSessionManager> _storyManager(
       metadata: const {'agent': 'fa', 'model': 'old-model'},
     ),
   );
-  final otherId = activeId == _weatherSessionId
+  final otherId = activeId == _craftSessionId
       ? _wallpaperSessionId
-      : _weatherSessionId;
+      : _craftSessionId;
   return FlutterSessionManager(env: env, sessionsRoot: '/sessions')
     ..addSession(otherId, _fakeService(env))
     ..addSession(activeId, active);
@@ -240,7 +263,10 @@ Future<void> _pumpStore(
       // controller) would survive and show the previous capture's messages.
       key: ValueKey('store-${device.name}-${locale.languageCode}-$screen'),
       debugShowCheckedModeBanner: false,
-      theme: buildFahTheme(),
+      theme: buildFaTheme(
+        direction: FaVisualDirection.porcelain,
+        brightness: Brightness.light,
+      ),
       locale: locale,
       localizationsDelegates: AppLocalizations.localizationsDelegates,
       supportedLocales: AppLocalizations.supportedLocales,
@@ -250,14 +276,25 @@ Future<void> _pumpStore(
   // Issue #947: no Ahem placeholder blocks may reach a store golden —
   // a family-less label style falls back to the test font.
   expectRealFontText(tester);
+  for (final element in find.byType(EditableText).evaluate()) {
+    final input = element.widget as EditableText;
+    expect(
+      input.style.fontFamily,
+      isNotNull,
+      reason:
+          'Store input/placeholder text must use a real loaded font, not '
+          'the Ahem test fallback ($screen, ${device.name}, $locale).',
+    );
+  }
 }
 
 Future<void> _expectStore(
   WidgetTester tester,
   _Device device,
   Locale locale,
-  String screen,
-) {
+  String screen, {
+  bool disposeAfter = false,
+}) async {
   // App Store devices land in test/golden/goldens/store/<lang>/<device>/; the
   // Play devices land straight in the supply metadata tree with their
   // listing order prefix (Play sorts screenshots by file name).
@@ -275,7 +312,14 @@ Future<void> _expectStore(
       golden =
           '../goldens/store/${locale.languageCode}/${device.name}/$screen.png';
   }
-  return expectLater(find.byType(MaterialApp), matchesGoldenFile(golden));
+  await expectLater(find.byType(MaterialApp), matchesGoldenFile(golden));
+  if (_isWideDevice(device) || disposeAfter) {
+    // The real shell and every presented JS app can arm delayed load/watchdog
+    // futures. Dispose them before the next capture in the device loop.
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump(const Duration(seconds: 10));
+    await tester.pumpAndSettle();
+  }
 }
 
 /// Lets sandbox reads + image codec decodes (real async hops) land: the
@@ -294,143 +338,113 @@ Future<void> _settleRealAsync(
   });
 }
 
-/// Pins every Scrollable to its tail (the chat list after image loads grew
-/// the content; short side lists are unaffected).
-void _jumpScrollablesToTail(WidgetTester tester) {
+/// Pins each Scrollable to its semantic story end. ChatAnimatedList is
+/// reversed (newest at offset zero); regular lists and the app overlay use
+/// their maximum extent. Treating every list alike hid the assistant answer
+/// behind the composer in the original store captures.
+void _jumpScrollablesToStoryEnd(WidgetTester tester) {
   for (final element in find.byType(Scrollable).evaluate()) {
     final state = (element as StatefulElement).state as ScrollableState;
-    state.position.jumpTo(state.position.maxScrollExtent);
+    // Exact-type ScrollView never matches the transcript's
+    // CustomScrollView (nor a ListView): both are subclasses, so the old
+    // check silently pinned the "reversed" chat to its OLDEST offset.
+    final custom = element.findAncestorWidgetOfExactType<CustomScrollView>();
+    final list = element.findAncestorWidgetOfExactType<ListView>();
+    final reverse = custom?.reverse ?? list?.reverse ?? false;
+    final extent = reverse
+        ? state.position.minScrollExtent
+        : state.position.maxScrollExtent;
+    state.position.jumpTo(extent);
   }
 }
 
 // --- The story conversations ------------------------------------------------
 
 /// Frame 1 (and the dashboard mini bar): the user asks Fa to build a
-/// personal weather app; the tool tiles write the manifest, the app and
-/// the live widget, then `open_app` opens the result.
-List<FahChatMessage> _weatherBuildConversation(String lang) {
+/// playable voxel world. One representative write plus `open_app` keeps
+/// the request, tool work and finished result visible.
+List<FahChatMessage> _craftBuildConversation(String lang) {
   final ru = lang == 'ru';
   return [
     FahChatMessage(
       role: 'user',
       content: ru
-          ? 'Сделай приложение погоды для Минска с живым виджетом '
-                'на дашборд.'
-          : 'Build me a weather app for Minsk with a live dashboard widget.',
+          ? 'Создай игру в стиле Minecraft с живым виджетом мира.'
+          : 'Build a Minecraft-style voxel game with a live world widget.',
     ),
     FahChatMessage(
       role: 'tool',
       toolName: 'write',
-      content: 'apps/weather/manifest.json (214 bytes)',
-    ),
-    FahChatMessage(
-      role: 'tool',
-      toolName: 'write',
-      content: 'apps/weather/widget.js (1841 bytes)',
-    ),
-    FahChatMessage(
-      role: 'tool',
-      toolName: 'write',
-      content: 'apps/weather/widget_tile.js (967 bytes)',
+      content: 'apps/fa-craft/game/main.js (24 KB)',
     ),
     FahChatMessage(
       role: 'tool',
       toolName: 'open_app',
-      content: 'Opened "Weather" (apps/weather).',
+      content: 'Opened "Fa Craft" (apps/fa-craft).',
     ),
     FahChatMessage(
       role: 'assistant',
       content: ru
-          ? 'Готово — **Погода** собрана и уже на домашнем экране. Виджет '
-                '4×2 показывает Минск: 21°, переменная облачность. Нажмите '
-                'на виджет, чтобы открыть весь прогноз.'
-          : 'Done — **Weather** is built and already on your home screen. '
-                'The 4×2 widget shows Minsk: 21°, partly cloudy. Tap the '
-                'tile to open the full forecast.',
+          ? 'Готово — **Fa Craft**: 3D-мир, блоки и живой виджет 4×2 '
+                'на домашнем экране.'
+          : 'Done — **Fa Craft** with a 3D world, blocks and a live 4×2 '
+                'widget on your home screen.',
     ),
   ];
 }
 
 /// Frame 3 (the sheet over the open app): a follow-up tweak without
-/// leaving the weather app.
+/// leaving the voxel world.
 List<FahChatMessage> _inappConversation(String lang) {
   final ru = lang == 'ru';
   return [
     FahChatMessage(
       role: 'user',
       content: ru
-          ? 'Добавь в приложение прогноз на неделю'
-          : 'Add a weekly forecast to the app',
-    ),
-    FahChatMessage(
-      role: 'tool',
-      toolName: 'write',
-      content: 'apps/weather/widget.js (2310 bytes)',
+          ? 'Добавь крафт, инвентарь и сердечки выживания'
+          : 'Add crafting, an inventory and survival hearts',
     ),
     FahChatMessage(
       role: 'assistant',
       content: ru
-          ? 'Готово — теперь в приложении прогноз на всю неделю, а виджет '
-                'на дашборде уже обновился.'
-          : 'Done — the app now shows the whole week, and the dashboard '
-                'widget picked up the update too.',
+          ? 'Готово — крафт и хотбар добавлены, а мир сохраняется '
+                'локально на устройстве.'
+          : 'Done — crafting and a hotbar are in. Your world saves '
+                'locally on the device.',
     ),
   ];
 }
 
-/// Frame 4: the generation tools — a wallpaper image inline, a video clip
-/// tile and a voice-summary player.
+/// Frame 4: a real generated Lisbon wallpaper and a voice-summary player.
 List<FahChatMessage> _mediaConversation(String lang) {
   final ru = lang == 'ru';
   return [
     FahChatMessage(
       role: 'user',
       content: ru
-          ? 'Дашборд выглядит пустовато — сгенерируй спокойные обои для '
-                'него, короткий ролик с облаками и зачитай прогноз на '
-                'сегодня.'
-          : 'My dashboard feels plain — generate a calm wallpaper for it, '
-                'a short clouds clip, and read me today\'s forecast aloud.',
-    ),
-    FahChatMessage(
-      role: 'tool',
-      toolName: 'generate_video',
-      content: 'Video saved to generated/clouds-loop.mp4 (~4 s, 1280x720).',
+          ? 'Создай обои Лиссабона и озвучь маршрут субботы.'
+          : 'Create a Lisbon wallpaper and narrate Saturday.',
     ),
     FahChatMessage(
       role: 'tool',
       toolName: 'generate_image',
       content:
-          'Generated image saved to generated/dashboard-wallpaper.png '
-          '(41934 bytes, 900x600). Reference it as '
-          '![image](generated/dashboard-wallpaper.png) to display it inline '
-          'in the chat.',
+          'Generated image saved to generated/lisbon-wallpaper.png '
+          '(1200x320).',
     ),
     FahChatMessage(
       role: 'tool',
       toolName: 'speak',
-      content: 'Speech saved to generated/forecast.mp3 (voice "alloy", ~7 s).',
-    ),
-    FahChatMessage(
-      role: 'assistant',
-      content: ru
-          ? 'Всё готово:\n\n'
-                '- **Обои** — спокойное озеро выше, нажмите для просмотра\n'
-                '- **Ролик с облаками** — 4 секунды, для фона виджета\n'
-                '- **Прогноз** — голосовая сводка прямо над этим сообщением'
-          : 'All set:\n\n'
-                '- **Wallpaper** — the calm lake above; tap to preview\n'
-                '- **Clouds clip** — a 4 s loop for the widget background\n'
-                '- **Forecast** — the audio summary is right above this',
+      content:
+          'Speech saved to generated/saturday-itinerary.mp3 '
+          '(voice "alloy", ~8 s).',
     ),
   ];
 }
 
 // --- Frame 1: store_chat — the ask ------------------------------------------
 
-/// store_chat: the full ChatScreen with the app-build conversation (the
-/// session sidebar is gone — sessions live in the launcher's chat sheet —
-/// so the shot is the pure conversation on every device).
+/// store_chat: the full current ChatScreen with the app-build conversation.
 Future<void> _chatShot(
   WidgetTester tester,
   _Device device,
@@ -439,12 +453,19 @@ Future<void> _chatShot(
   final env = MemoryExecutionEnv();
   await _seedSessionNames(env, locale.languageCode);
   final service = _fakeService(env);
-  service.messages.addAll(_weatherBuildConversation(locale.languageCode));
-  final manager = await _storyManager(env, _weatherSessionId, service);
+  service.messages.addAll(_craftBuildConversation(locale.languageCode));
+  final manager = await _storyManager(env, _craftSessionId, service);
 
   await _pumpStore(
     tester,
-    ChatScreen(manager: manager),
+    _isWideDevice(device)
+        ? WideLayoutShell(
+            manager: manager,
+            sessionNamesStore: SessionNamesStore.inMemory(
+              _sessionNames(locale.languageCode),
+            ),
+          )
+        : ChatScreen(manager: manager),
     device: device,
     locale: locale,
     screen: 'store_chat',
@@ -454,7 +475,7 @@ Future<void> _chatShot(
   for (var i = 0; i < 6; i++) {
     await tester.pump(const Duration(milliseconds: 500));
   }
-  _jumpScrollablesToTail(tester);
+  _jumpScrollablesToStoryEnd(tester);
   await tester.pump();
   // Let the list's scroll-to-bottom button fade out after the tail jump.
   await tester.pump(const Duration(milliseconds: 400));
@@ -472,15 +493,21 @@ String _badgeIcon(String bg, String shape) =>
 
 const _fg = '#f8fafc';
 
-/// The sun badge of the story's weather app (icon + live 4x2 widget).
-final _weatherSvgIcon = _badgeIcon(
-  '#0ea5e9',
-  "<circle cx='12' cy='12' r='5' fill='$_fg'/>"
-      "<rect x='11' y='2' width='2' height='4' rx='1' fill='$_fg'/>"
-      "<rect x='11' y='18' width='2' height='4' rx='1' fill='$_fg'/>"
-      "<rect x='2' y='11' width='4' height='2' rx='1' fill='$_fg'/>"
-      "<rect x='18' y='11' width='4' height='2' rx='1' fill='$_fg'/>",
-);
+/// The canonical Fa Craft voxel-block icon (fa-craft 0.2.32, MIT).
+const _craftSvgIcon = '''
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <rect width="64" height="64" rx="12" fill="#1b2432"/>
+  <g stroke="#101722" stroke-width="1.5" stroke-linejoin="round">
+    <polygon points="32,10 54,22 32,34 10,22" fill="#7ec850"/>
+    <polygon points="10,22 32,34 32,56 10,44" fill="#5c9a38"/>
+    <polygon points="54,22 32,34 32,56 54,44" fill="#41702a"/>
+  </g>
+  <g fill="#8d6e4f" stroke="#101722" stroke-width="1.5" stroke-linejoin="round">
+    <polygon points="32,22 43,28 32,34 21,28"/>
+    <polygon points="21,28 32,34 32,45 21,39"/>
+    <polygon points="43,28 32,34 32,45 43,39"/>
+  </g>
+</svg>''';
 
 final _bellSvgIcon = _badgeIcon(
   '#f59e0b',
@@ -569,10 +596,18 @@ Map<String, List<String>> get _staticApps => {
   ],
 };
 
+/// Installs the pinned fa-craft 0.2.32 fixture into the in-memory app
+/// sandbox, preserving relative imports under `game/`.
+Future<void> _installCraftAppSources(MemoryExecutionEnv env) async {
+  for (final entry in _craftSourceFiles.entries) {
+    await env.writeFile('apps/fa-craft/${entry.key}', entry.value);
+  }
+}
+
 /// Seeds the launcher's apps into the env (no bundled-asset seeding):
-/// the story's weather app with a live 4x2 widget tile, a reminders app
-/// with a 2x2 tile, and eight static-icon apps.
-Future<MemoryExecutionEnv> _seededLauncherEnv() async {
+/// Fa Craft with a live 4x2 world tile, a reminders app with a 2x2 tile,
+/// and eight static-icon apps.
+Future<MemoryExecutionEnv> _seededLauncherEnv([String lang = 'en']) async {
   final env = MemoryExecutionEnv();
   Future<void> app(String id, String manifest) async {
     await env.writeFile('apps/$id/manifest.json', manifest);
@@ -580,13 +615,16 @@ Future<MemoryExecutionEnv> _seededLauncherEnv() async {
   }
 
   await app(
-    'weather',
-    '{"id": "weather", "name": "Weather", "description": "Weather app", '
-        '"icon": ${_jsonString(_weatherSvgIcon)}, '
+    'fa-craft',
+    '{"id": "fa-craft", "name": "Fa Craft", '
+        '"description": "A playable voxel sandbox", '
+        '"version": "0.2.32", '
+        '"icon": ${_jsonString(_craftSvgIcon)}, '
         '"widget": {"entry": "widget_tile.js", "size": "4x2", '
         '"refreshSeconds": 900}}',
   );
-  await env.writeFile('apps/weather/widget_tile.js', '(function(){})();');
+  await env.writeFile('apps/fa-craft/widget_tile.js', '(function(){})();');
+  await _installCraftAppSources(env);
   await app(
     'reminders',
     '{"id": "reminders", "name": "Reminders", '
@@ -620,7 +658,7 @@ final class _FakeTileEngine extends JsAppEngine {
 
   final String lang;
 
-  Map<String, dynamic> get _weatherTree => {
+  Map<String, dynamic> get _craftTree => {
     'type': 'container',
     'padding': [18, 12, 18, 12],
     'child': {
@@ -630,19 +668,24 @@ final class _FakeTileEngine extends JsAppEngine {
         {
           'type': 'column',
           'mainAxisSize': 'min',
-          'crossAxisAlignment': 'center',
+          'crossAxisAlignment': 'start',
           'children': [
             {
               'type': 'icon',
-              'name': 'wb_sunny',
-              'color': '#FBBF24',
-              'size': 34,
+              'name': 'sports_esports',
+              'color': '#7EC850',
+              'size': 32,
             },
-            {'type': 'sizedBox', 'height': 4},
+            {'type': 'sizedBox', 'height': 5},
             {
               'type': 'text',
-              'data': lang == 'ru' ? 'Минск' : 'Minsk',
-              'style': {'fontSize': 12},
+              'data': 'Fa Craft',
+              'style': {'fontSize': 18, 'fontWeight': 'w700'},
+            },
+            {
+              'type': 'text',
+              'data': lang == 'ru' ? '3D-МИР ИЗ БЛОКОВ' : 'VOXEL WORLD',
+              'style': {'fontSize': 10, 'color': '#A8B3C7'},
             },
           ],
         },
@@ -657,13 +700,25 @@ final class _FakeTileEngine extends JsAppEngine {
           'children': [
             {
               'type': 'text',
-              'data': '21°',
-              'style': {'fontSize': 42, 'fontWeight': 'w700'},
+              'data': lang == 'ru' ? 'ТВОРЧЕСКИЙ РЕЖИМ' : 'CREATIVE MODE',
+              'style': {
+                'fontSize': 10,
+                'fontWeight': 'w700',
+                'color': '#7EC850',
+              },
+            },
+            {'type': 'sizedBox', 'height': 5},
+            {
+              'type': 'text',
+              'data': lang == 'ru' ? 'Мир 07' : 'World 07',
+              'style': {'fontSize': 14, 'fontWeight': 'w600'},
             },
             {
               'type': 'text',
-              'data': lang == 'ru' ? 'Переменная облачность' : 'Partly cloudy',
-              'style': {'fontSize': 11},
+              'data': lang == 'ru'
+                  ? '9 чанков • локальное сохранение'
+                  : '9 chunks • local save',
+              'style': {'fontSize': 10, 'color': '#A8B3C7'},
             },
           ],
         },
@@ -721,7 +776,7 @@ final class _FakeTileEngine extends JsAppEngine {
   @override
   Future<void> start() async {
     tree.value = switch (app.id) {
-      'weather' => _weatherTree,
+      'fa-craft' => _craftTree,
       'reminders' => _remindersTree,
       _ => const {'type': 'text', 'data': 'TILE'},
     };
@@ -745,21 +800,11 @@ TileEngineFactory _fakeTileEngineFactory(String lang) =>
       lang: lang,
     );
 
-/// JSON-encodes [value] as a string literal (double quotes, escaped).
-String _jsonString(String value) {
-  final buffer = StringBuffer('"');
-  for (final unit in value.codeUnits) {
-    final char = String.fromCharCode(unit);
-    if (char == '"' || char == '\\') buffer.write('\\');
-    buffer.write(char);
-  }
-  buffer.write('"');
-  return buffer.toString();
-}
+/// JSON-encodes [value] as a string literal (including multiline SVG icons).
+String _jsonString(String value) => jsonEncode(value);
 
-/// store_apps: the apps-launcher home — live widget tiles (the just-built
-/// weather app as a 4x2 widget, reminders 2x2), static app icons, the
-/// system tiles and the mini session-chat bar docked at the bottom. Also
+/// store_apps: the selected Apps surface — live widget tiles (Fa Craft as
+/// a 4x2 world, reminders 2x2), static app icons and the system tiles. Also
 /// serves the square promo shot ([golden] = `store_promo`).
 Future<void> _appsShot(
   WidgetTester tester,
@@ -768,46 +813,66 @@ Future<void> _appsShot(
   String golden = 'store_apps',
 }) async {
   final lang = locale.languageCode;
-  final env = await _seededLauncherEnv();
+  final env = await _seededLauncherEnv(lang);
   final service = _fakeService(env);
-  service.messages.addAll(_weatherBuildConversation(lang));
-  final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
-    ..addSession(_weatherSessionId, service);
+  service.messages.addAll(_craftBuildConversation(lang));
+  final manager = await _storyManager(env, _craftSessionId, service);
+  final layoutStore = LauncherLayoutStore.inMemory(
+    order: const [
+      'app:fa-craft',
+      'app:reminders',
+      'app:notes',
+      'app:pomodoro',
+      'app:habits',
+      'app:dice',
+      'app:calendar',
+      'app:map',
+      'app:stocks',
+      'app:crypto',
+      LauncherLayoutStore.settingsKey,
+      LauncherLayoutStore.filesKey,
+    ],
+  );
+  final appsStore = AppsStore(
+    env,
+    readAsset: (path) async =>
+        throw StateError('no bundled assets in this test'),
+    seedDemoIds: const [],
+  );
+  final tileEngineFactory = _fakeTileEngineFactory(lang);
 
   await _pumpStore(
     tester,
-    AppLauncherScreen(
-      manager: manager,
-      layoutStore: LauncherLayoutStore.inMemory(
-        order: const [
-          'app:weather',
-          'app:reminders',
-          'app:notes',
-          'app:pomodoro',
-          'app:habits',
-          'app:dice',
-          'app:calendar',
-          'app:map',
-          'app:stocks',
-          'app:crypto',
-          LauncherLayoutStore.settingsKey,
-          LauncherLayoutStore.filesKey,
-        ],
-      ),
-      appsStore: AppsStore(
-        env,
-        readAsset: (path) async =>
-            throw StateError('no bundled assets in this test'),
-        seedDemoIds: const [],
-      ),
-      sessionNamesStore: SessionNamesStore.inMemory(_sessionNames(lang)),
-      tileEngineFactory: _fakeTileEngineFactory(lang),
-    ),
+    _isWideDevice(device)
+        ? WideLayoutShell(
+            manager: manager,
+            sessionNamesStore: SessionNamesStore.inMemory(_sessionNames(lang)),
+            layoutStore: layoutStore,
+            appsStore: appsStore,
+            tileEngineFactory: tileEngineFactory,
+          )
+        : AppLauncherScreen(
+            manager: manager,
+            layoutStore: layoutStore,
+            appsStore: appsStore,
+            tileEngineFactory: tileEngineFactory,
+          ),
     device: device,
     locale: locale,
-    screen: 'store_apps',
+    screen: golden,
   );
   await tester.pumpAndSettle();
+  if (_isWideDevice(device)) {
+    await tester.tap(find.byKey(const ValueKey('messengerPrimaryNav-apps')));
+    await tester.pumpAndSettle();
+    expect(find.text('Fa Craft'), findsWidgets);
+    expect(find.text(lang == 'ru' ? 'Мир 07' : 'World 07'), findsWidgets);
+  } else {
+    // The newly built app is the hero: never scroll its first row away.
+    expect(find.text('Fa Craft'), findsOneWidget);
+    expect(find.text(lang == 'ru' ? 'Мир 07' : 'World 07'), findsOneWidget);
+  }
+  await tester.pump();
   await _expectStore(tester, device, locale, golden);
 }
 
@@ -818,286 +883,178 @@ Future<void> _promoShot(WidgetTester tester, Locale locale) {
   return _appsShot(tester, device, locale, golden: 'store_promo');
 }
 
-// --- Frame 3: store_inapp — Fa inside the weather app -----------------------
+// --- Frame 3: store_inapp — the follow-up inside the open app -----------
 
-/// One hourly-forecast cell in the hand-built weather canvas.
-Widget _hourCell(FahColors colors, String hour, IconData icon, String temp) {
-  return Column(
-    mainAxisSize: MainAxisSize.min,
-    children: [
-      Text(hour, style: TextStyle(fontSize: 11, color: colors.dim)),
-      const SizedBox(height: 6),
-      Icon(icon, size: 20, color: FahPalette.text),
-      const SizedBox(height: 6),
-      Text(
-        temp,
-        style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
-      ),
-    ],
-  );
-}
+JsAppInfo _craftAppInfo() => JsAppInfo.fromManifest(
+  {
+    'id': 'fa-craft',
+    'name': 'Fa Craft',
+    'description': 'A playable voxel sandbox',
+    'version': '0.2.32',
+    'icon': _craftSvgIcon,
+  },
+  bundled: false,
+  fallbackId: 'fa-craft',
+);
 
-/// One daily-forecast row in the weather canvas.
-Widget _dayRow(
-  FahColors colors,
-  String day,
-  IconData icon,
-  Color iconColor,
-  String temps,
-) {
-  return Padding(
-    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 7),
-    child: Row(
+/// The production standalone app host with its expanded Fa overlay. The
+/// pinned game boots inside the real JS/voxel engine on every form factor.
+Future<Widget> _inappCraftHost(
+  AgentService service,
+  MemoryExecutionEnv env, {
+  double overlayHeight = 0.58,
+}) async {
+  final permissions = await AppPermissionsStore.load(env);
+  return LayoutBuilder(
+    builder: (context, constraints) => Stack(
       children: [
-        SizedBox(
-          width: 44,
-          child: Text(
-            day,
-            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+        Positioned.fill(
+          child: JsAppView(
+            app: _craftAppInfo(),
+            env: env,
+            permissionsStore: permissions,
+            agentService: service,
+            onSendToAgent: (_) async => service,
           ),
         ),
-        Icon(icon, size: 18, color: iconColor),
-        const Spacer(),
-        Text(temps, style: TextStyle(fontSize: 13, color: colors.dim)),
+        Positioned(
+          left: 0,
+          right: 0,
+          bottom: 0,
+          height: constraints.maxHeight * overlayHeight,
+          child: FaChatOverlay(
+            service: service,
+            onSend: (_) async {},
+            onCollapse: () {},
+            onOpenFullChat: () {},
+          ),
+        ),
       ],
     ),
   );
 }
 
-/// The hand-built weather app canvas (same trick as the calculator canvas
-/// in the apps golden tests — no JS engine): hero block on top, an hourly
-/// strip and the week the frame-3 follow-up added.
-Widget _weatherCanvas(String lang) {
-  const colors = FahColors.dark;
-  final ru = lang == 'ru';
-  return ColoredBox(
-    color: colors.bg,
-    child: SingleChildScrollView(
-      physics: const NeverScrollableScrollPhysics(),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Container(
-            padding: const EdgeInsets.fromLTRB(20, 28, 20, 24),
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-                colors: [
-                  FahPalette.indigo.withValues(alpha: 0.28),
-                  colors.bg.withValues(alpha: 0),
-                ],
-              ),
-            ),
-            child: Column(
-              children: [
-                Text(
-                  ru ? 'Минск' : 'Minsk',
-                  style: TextStyle(fontSize: 15, color: colors.dim),
-                ),
-                const SizedBox(height: 2),
-                const Text(
-                  '21°',
-                  style: TextStyle(fontSize: 64, fontWeight: FontWeight.w700),
-                ),
-                Text(
-                  ru ? 'Переменная облачность' : 'Partly cloudy',
-                  style: const TextStyle(fontSize: 14),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  ru ? 'Макс. 23° · мин. 15°' : 'H 23° · L 15°',
-                  style: TextStyle(fontSize: 12, color: colors.dim),
-                ),
-              ],
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                _hourCell(colors, ru ? 'Сейчас' : 'Now', Icons.wb_sunny, '21°'),
-                _hourCell(colors, '15:00', Icons.wb_sunny, '22°'),
-                _hourCell(colors, '16:00', Icons.wb_cloudy, '22°'),
-                _hourCell(colors, '17:00', Icons.cloud, '20°'),
-                _hourCell(colors, '18:00', Icons.cloud, '19°'),
-              ],
-            ),
-          ),
-          Divider(height: 16, color: colors.border),
-          _dayRow(
-            colors,
-            ru ? 'Вт' : 'Tue',
-            Icons.wb_sunny,
-            const Color(0xFFFBBF24),
-            '24° / 16°',
-          ),
-          _dayRow(
-            colors,
-            ru ? 'Ср' : 'Wed',
-            Icons.wb_cloudy,
-            const Color(0xFF94A3B8),
-            '21° / 14°',
-          ),
-          _dayRow(
-            colors,
-            ru ? 'Чт' : 'Thu',
-            Icons.umbrella,
-            const Color(0xFF60A5FA),
-            '18° / 12°',
-          ),
-          _dayRow(
-            colors,
-            ru ? 'Пт' : 'Fri',
-            Icons.wb_sunny,
-            const Color(0xFFFBBF24),
-            '23° / 15°',
-          ),
-        ],
-      ),
-    ),
-  );
-}
-
-/// A JsAppView-like scaffold for the weather app with the session chat
-/// sheet hosted over the canvas (the launcher pattern, reused in-app).
-/// The sheet sizes its expanded panel off its LayoutBuilder constraints
-/// (expanded = [SessionChatSheet.panelFraction] of the available height),
-/// so the fraction is picked to land the expanded panel's top edge right
-/// below the canvas's hourly strip ([_kSheetTopInset] px from the body
-/// top) — the hero block and the hourly forecast stay fully visible above
-/// the sheet on every device, under the sheet's full-area scrim.
-Widget _weatherAppHost(
-  MemoryExecutionEnv env,
-  FlutterSessionManager manager,
-  String lang, {
-  GlobalKey<SessionChatSheetState>? sheetKey,
-}) {
-  final weatherApp = JsAppInfo.fromManifest(
-    {'id': 'weather', 'name': 'Weather', 'icon': _weatherSvgIcon},
-    bundled: false,
-    fallbackId: 'weather',
-  );
-  return Scaffold(
-    appBar: AppBar(
-      title: Row(
-        children: [
-          AppIcon(app: weatherApp, env: env, size: 24),
-          const SizedBox(width: 8),
-          const Flexible(
-            child: Text('Weather', overflow: TextOverflow.ellipsis),
-          ),
-        ],
-      ),
-      actions: [
-        IconButton(icon: const Icon(Icons.shield_outlined), onPressed: () {}),
-        IconButton(icon: const Icon(Icons.refresh), onPressed: () {}),
-      ],
-    ),
-    body: LayoutBuilder(
-      builder: (context, constraints) {
-        // Panel height = fraction * body height = body height minus the
-        // inset, so the expanded panel's top edge parks _kSheetTopInset px
-        // below the body top.
-        final fraction =
-            (constraints.maxHeight - _kSheetTopInset) / constraints.maxHeight;
-        return Stack(
-          children: [
-            Positioned.fill(child: _weatherCanvas(lang)),
-            Positioned.fill(
-              child: SessionChatSheet(
-                key: sheetKey,
-                manager: manager,
-                sessionNamesStore: SessionNamesStore.inMemory(
-                  _sessionNames(lang),
-                ),
-                panelFraction: fraction < 0 ? 0.0 : fraction,
-              ),
-            ),
-          ],
-        );
-      },
-    ),
-  );
-}
-
-/// Body-top inset where the expanded chat sheet's top edge lands in the
-/// store_inapp frame: just below the weather canvas's hourly strip
-/// (hero block + hourly row + divider).
-const _kSheetTopInset = 292.0;
-
-/// store_inapp: the follow-up edit ("add a weekly forecast") done from the
-/// session chat sheet pulled up over the weather app.
+/// store_inapp: a crafting/survival follow-up without leaving Fa Craft.
 Future<void> _inappShot(
   WidgetTester tester,
   _Device device,
   Locale locale,
 ) async {
   final lang = locale.languageCode;
-  final env = MemoryExecutionEnv();
+  final env = await _seededLauncherEnv(lang);
   final service = _fakeService(env);
   service.messages.addAll(_inappConversation(lang));
-  final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
-    ..addSession(_weatherSessionId, service);
-  final sheetKey = GlobalKey<SessionChatSheetState>();
+  final wide = _isWideDevice(device);
+  final wideShell = wide && device.name != 'ipad';
+  final manager = wideShell
+      ? await _storyManager(env, _craftSessionId, service)
+      : null;
 
   await _pumpStore(
     tester,
-    _weatherAppHost(env, manager, lang, sheetKey: sheetKey),
+    wideShell
+        ? WideLayoutShell(
+            manager: manager!,
+            sessionNamesStore: SessionNamesStore.inMemory(_sessionNames(lang)),
+          )
+        : await _inappCraftHost(
+            service,
+            env,
+            overlayHeight: wide ? 0.42 : 0.58,
+          ),
     device: device,
     locale: locale,
     screen: 'store_inapp',
   );
-  await tester.pumpAndSettle();
-  // The new session-chat sheet starts with the panel closed; expand it
-  // programmatically so the in-app screenshot shows the transcript over the
-  // weather canvas (same visual intent as the old mini-bar tap).
-  sheetKey.currentState?.expand();
-  await tester.pumpAndSettle();
-  _jumpScrollablesToTail(tester);
-  await tester.pump();
-  await _expectStore(tester, device, locale, 'store_inapp');
+  for (var i = 0; i < 6; i++) {
+    await tester.pump(const Duration(milliseconds: 500));
+  }
+  if (wideShell) {
+    await pushJsApp(
+      tester.element(find.byType(ChatScreen)),
+      manager: manager!,
+      app: _craftAppInfo(),
+      source: 'store_golden',
+    );
+    for (var i = 0; i < 6; i++) {
+      await tester.pump(const Duration(milliseconds: 500));
+    }
+    expect(
+      find.byKey(const ValueKey('messengerPrimaryNav-apps')),
+      findsOneWidget,
+    );
+  } else {
+    expect(find.byType(FaChatOverlay), findsOneWidget);
+  }
+  await _settleRealAsync(tester);
+  _jumpScrollablesToStoryEnd(tester);
+  await tester.pump(const Duration(milliseconds: 400));
+  expect(find.byType(JsAppView), findsOneWidget);
+  expect(find.text('Craft'), findsWidgets);
+  expect(
+    find.text(
+      lang == 'ru'
+          ? 'Добавь крафт, инвентарь и сердечки выживания'
+          : 'Add crafting, an inventory and survival hearts',
+    ),
+    findsOneWidget,
+  );
+  await _expectStore(tester, device, locale, 'store_inapp', disposeAfter: true);
 }
 
-// --- Frame 4: store_media — generated image, clip and voice -----------------
+// --- Frame 4: store_media — generated image and voice -----------------------
 
-/// store_media: the full ChatScreen with the media conversation — the
-/// generated wallpaper inline, the clouds-clip video tile and the
-/// voice-summary player (fake media controllers, real image bytes staged
-/// in the in-memory sandbox).
+/// store_media: the production embedded FaChatScreen with a compact host
+/// app bar — generated Lisbon wallpaper and voice player fit instead of
+/// spending the viewport on the adaptive chat header.
 Future<void> _mediaShot(
   WidgetTester tester,
   _Device device,
   Locale locale,
 ) async {
   final env = MemoryExecutionEnv();
+  await env.writeBinaryFile('generated/lisbon-wallpaper.png', _wallpaperBytes);
   await env.writeBinaryFile(
-    'generated/dashboard-wallpaper.png',
-    _wallpaperBytes,
-  );
-  await env.writeBinaryFile(
-    'generated/forecast.mp3',
+    'generated/saturday-itinerary.mp3',
     Uint8List.fromList(List<int>.filled(64, 7)),
   );
-  await env.writeBinaryFile(
-    'generated/clouds-loop.mp4',
-    Uint8List.fromList(List<int>.filled(64, 9)),
-  );
-  await _seedSessionNames(env, locale.languageCode);
   final service = _fakeService(env);
   service.messages.addAll(_mediaConversation(locale.languageCode));
-  final manager = await _storyManager(env, _wallpaperSessionId, service);
+  final wide = _isWideDevice(device);
+  final manager = wide
+      ? await _storyManager(env, _wallpaperSessionId, service)
+      : null;
+  FakeAudioController audioFactory(Uint8List bytes) =>
+      FakeAudioController(duration: const Duration(seconds: 8));
 
   await _pumpStore(
     tester,
-    ChatScreen(
-      manager: manager,
-      audioControllerFactory: (bytes) =>
-          FakeAudioController(duration: const Duration(seconds: 7)),
-      videoControllerFactory: (path, bytes) =>
-          FakeVideoController(duration: const Duration(seconds: 4)),
-    ),
+    wide
+        ? WideLayoutShell(
+            manager: manager!,
+            sessionNamesStore: SessionNamesStore.inMemory(
+              _sessionNames(locale.languageCode),
+            ),
+            audioControllerFactory: audioFactory,
+          )
+        : Scaffold(
+            extendBodyBehindAppBar: false,
+            appBar: AppBar(
+              centerTitle: false,
+              title: const Row(
+                children: [
+                  Icon(Icons.map_outlined, color: Color(0xFFFB923C)),
+                  SizedBox(width: 9),
+                  Text('Lisbon Weekend'),
+                ],
+              ),
+            ),
+            body: FaChatScreen(
+              service: service,
+              showAppBar: false,
+              audioControllerFactory: audioFactory,
+            ),
+          ),
     device: device,
     locale: locale,
     screen: 'store_media',
@@ -1115,13 +1072,15 @@ Future<void> _mediaShot(
   // Pin the chat to the tail: image loads grew the content after the last
   // follow-scroll, so jump deterministically, let the newly built tail
   // decode, then jump again (the content grew meanwhile).
-  _jumpScrollablesToTail(tester);
+  _jumpScrollablesToStoryEnd(tester);
   await tester.pump();
   await _settleRealAsync(tester, rounds: 12);
-  _jumpScrollablesToTail(tester);
+  _jumpScrollablesToStoryEnd(tester);
   await tester.pump();
   // Let the list's scroll-to-bottom button fade out after the tail jump.
   await tester.pump(const Duration(milliseconds: 400));
+  expect(find.textContaining('lisbon-wallpaper.png'), findsWidgets);
+  expect(find.textContaining('saturday-itinerary.mp3'), findsWidgets);
   await _expectStore(tester, device, locale, 'store_media');
 }
 
@@ -1145,7 +1104,8 @@ Widget _settingsFrame(BuildContext context, Widget child) {
     child: Scaffold(
       appBar: AppBar(title: Text(context.l10n.settingsTitle)),
       body: SafeArea(
-        child: Center(
+        child: Align(
+          alignment: Alignment.topCenter,
           child: SingleChildScrollView(
             padding: const EdgeInsets.all(24),
             child: ConstrainedBox(
@@ -1159,11 +1119,8 @@ Widget _settingsFrame(BuildContext context, Widget child) {
   );
 }
 
-/// store_providers: the providers-first settings list — the OpenRouter
-/// preset marked current, two saved custom providers (a hosted frontier
-/// endpoint and a local Ollama), the add row, and the default chat model
-/// row. Names stay REALISTIC (this frame ships to the App Store and the
-/// promo video crops it).
+/// store_providers: hosted OpenRouter/Kimi/OpenAI, local Ollama, a default
+/// chat model from the active connection, and real media-model overrides.
 Future<void> _providersShot(
   WidgetTester tester,
   _Device device,
@@ -1171,43 +1128,121 @@ Future<void> _providersShot(
 ) async {
   final registry = ProviderRegistry.inMemory();
   await registry.add(
+    name: 'OpenRouter',
+    baseUrl: 'https://openrouter.ai/api/v1',
+    modelId: 'moonshotai/kimi-k2.6',
+  );
+  await registry.add(
     name: 'Kimi',
     baseUrl: 'https://api.kimi.com/coding/v1',
     modelId: 'kimi-for-coding',
+  );
+  await registry.add(
+    name: 'OpenAI',
+    baseUrl: 'https://api.openai.com/v1',
+    modelId: 'gpt-4o-mini',
   );
   await registry.add(
     name: 'Ollama',
     baseUrl: 'http://localhost:11434/v1',
     modelId: 'qwen3:32b',
   );
+  final mediaStore = MediaModelsStore.inMemory();
+  const openAi = 'https://api.openai.com/v1';
+  for (final (slot, model) in [
+    (MediaSlot.imageGeneration, 'gpt-image-1'),
+    (MediaSlot.audioTts, 'tts-1'),
+    (MediaSlot.vision, 'gpt-4o'),
+    (MediaSlot.transcription, 'whisper-1'),
+  ]) {
+    await mediaStore.setOverride(
+      slot,
+      MediaSlotOverride(
+        providerKind: 'openai-completions',
+        baseUrl: openAi,
+        modelId: model,
+        voice: slot == MediaSlot.audioTts ? 'alloy' : null,
+      ),
+    );
+  }
+  final taskStore = TaskModelsStore.inMemory({
+    TaskRole.smol: const TaskRoleConfig(
+      providerKind: 'openai-completions',
+      baseUrl: 'https://openrouter.ai/api/v1',
+      modelId: 'google/gemini-3.5-flash-lite',
+    ),
+    TaskRole.subagent: const TaskRoleConfig(
+      providerKind: 'openai-completions',
+      baseUrl: 'https://openrouter.ai/api/v1',
+      modelId: 'moonshotai/kimi-k2.6',
+    ),
+  });
+  final env = MemoryExecutionEnv();
   final service = _fakeService(
-    MemoryExecutionEnv(),
-    modelId: 'kimi-for-coding',
-    baseUrl: 'https://api.kimi.com/coding/v1',
+    env,
+    modelId: 'moonshotai/kimi-k2.6',
+    baseUrl: 'https://openrouter.ai/api/v1',
   );
+  final wide = _isWideDevice(device);
+  final manager = wide
+      ? await _storyManager(env, _craftSessionId, service)
+      : null;
   await _pumpStore(
     tester,
-    Builder(
-      builder: (context) => _settingsFrame(
-        context,
-        Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ProvidersSection(registry: registry),
-            const SizedBox(height: 24),
-            const Divider(),
-            const SizedBox(height: 16),
-            DefaultChatModelSection(service: service, registry: registry),
-          ],
-        ),
-      ),
-    ),
+    wide
+        ? MediaModelsScope(
+            store: mediaStore,
+            child: TaskModelsScope(
+              store: taskStore,
+              child: WideLayoutShell(
+                manager: manager!,
+                registry: registry,
+                sessionNamesStore: SessionNamesStore.inMemory(
+                  _sessionNames(locale.languageCode),
+                ),
+              ),
+            ),
+          )
+        : Builder(
+            builder: (context) => _settingsFrame(
+              context,
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  ProvidersSection(registry: registry),
+                  const SizedBox(height: 24),
+                  const Divider(),
+                  const SizedBox(height: 16),
+                  DefaultChatModelSection(service: service, registry: registry),
+                  const SizedBox(height: 24),
+                  MediaModelsSection(
+                    store: mediaStore,
+                    mainBaseUrl: 'https://openrouter.ai/api/v1',
+                    registry: registry,
+                  ),
+                ],
+              ),
+            ),
+          ),
     device: device,
     locale: locale,
     screen: 'store_providers',
   );
   await tester.pumpAndSettle();
+  if (wide) {
+    await tester.tap(find.byKey(const ValueKey('railSettingsRow')));
+    await tester.pumpAndSettle();
+  }
+  expect(find.text('OpenRouter'), findsOneWidget);
+  expect(find.text('Kimi'), findsOneWidget);
+  expect(find.text('OpenAI'), findsOneWidget);
+  expect(find.text('Ollama'), findsOneWidget);
+  expect(find.textContaining('moonshotai/kimi-k2.6'), findsWidgets);
+  if (!wide) {
+    expect(find.textContaining('gpt-image-1'), findsOneWidget);
+    expect(find.textContaining('tts-1'), findsOneWidget);
+  }
   await _expectStore(tester, device, locale, 'store_providers');
 }
 
@@ -1215,12 +1250,19 @@ void main() {
   setUpAll(() async {
     await ensureGoldenFonts();
     _wallpaperBytes = await File(
-      'test/golden/assets/store/dashboard_wallpaper.jpg',
+      'test/golden/assets/store/lisbon_wallpaper.png',
     ).readAsBytes();
+    _craftSourceFiles = {};
+    final craftRoot = Directory('test/golden/assets/store/fa_craft');
+    await for (final entity in craftRoot.list(recursive: true)) {
+      if (entity is! File || !entity.path.endsWith('.js')) continue;
+      final rel = entity.path.substring(craftRoot.path.length + 1);
+      _craftSourceFiles[rel] = await entity.readAsString();
+    }
   });
 
   group('App Store screenshots — the "your own apps, built by chat" story', () {
-    testWidgets('store_chat — the ask: build a weather app with a widget', (
+    testWidgets('store_chat — the ask: build a voxel game with a widget', (
       tester,
     ) async {
       for (final device in _devices) {
@@ -1246,7 +1288,7 @@ void main() {
       }
     });
 
-    testWidgets('store_inapp — the session chat sheet over the weather app', (
+    testWidgets('store_inapp — the follow-up in the current ChatScreen', (
       tester,
     ) async {
       for (final device in _devices) {
@@ -1256,7 +1298,7 @@ void main() {
       }
     });
 
-    testWidgets('store_media — wallpaper, clip and voice summary in chat', (
+    testWidgets('store_media — wallpaper and voice itinerary in chat', (
       tester,
     ) async {
       for (final device in _devices) {

@@ -58,6 +58,9 @@ abstract class FaChatStrings {
   String get chatMicTooltip;
   String get chatMicStopTooltip;
   String get chatMicDenied;
+  String get chatMicNotConfiguredTitle;
+  String get chatMicNotConfiguredBody;
+  String get chatMicSettingsAction;
   String chatMicError(String error);
   String chatAttachNoName(String name);
   String chatAttachError(String error, String name);
@@ -94,6 +97,14 @@ abstract class FaChatStrings {
 
   /// Stub body for a tool result with no output — no clamp UI.
   String get chatNoOutput;
+
+  /// Compact header for one or more grouped system notices.
+  String chatSystemNotices(int count);
+
+  /// Structured obligations-ledger summary and its engine-truncated tail.
+  String chatOpenObligations(int count);
+  String chatObligationKind(String kind);
+  String chatObligationsSurplus(int count);
   String approvalAllowToolTitle(String tool);
   String approvalTierLabel(String tier);
   String get approvalDeny;
@@ -164,7 +175,9 @@ class FaChatStringsEn extends FaChatStrings {
   @override
   String get chatMoreTooltip => 'More actions';
   @override
-  String get chatFilesTooltip => 'Files';
+  // The header folder icon only OPENS the Files surface — while the panel
+  // is open the action hides and the band's own X ('Close files') closes.
+  String get chatFilesTooltip => 'Open files';
   @override
   String get chatCopySessionTooltip => 'Copy session';
   @override
@@ -215,6 +228,15 @@ class FaChatStringsEn extends FaChatStrings {
   String get chatMicDenied =>
       'Microphone access was denied. Enable it in the system privacy settings (Privacy & Security → Microphone), then try again.';
   @override
+  String get chatMicNotConfiguredTitle => 'Transcription is not configured';
+  @override
+  String get chatMicNotConfiguredBody =>
+      'Voice input needs an ASR transcription model. Configure the '
+      'Transcription media slot or an OpenAI-compatible provider in '
+      'Settings, then try again. Recording has not started.';
+  @override
+  String get chatMicSettingsAction => 'Settings';
+  @override
   String chatMicError(String error) => 'Voice input failed: $error';
   @override
   String chatAttachNoName(String name) =>
@@ -248,6 +270,19 @@ class FaChatStringsEn extends FaChatStrings {
   String get chatShowLess => 'Show less';
   @override
   String get chatNoOutput => '(no output)';
+  @override
+  String chatSystemNotices(int count) =>
+      count == 1 ? 'System notice' : 'System notices · $count';
+  @override
+  String chatOpenObligations(int count) => 'Open obligations · $count';
+  @override
+  String chatObligationKind(String kind) => switch (kind) {
+    'pending-wait' => 'Pending wait',
+    _ => kind.replaceAll('-', ' '),
+  };
+  @override
+  String chatObligationsSurplus(int count) =>
+      '$count more in the session ledger';
   @override
   String get chatLoadEarlier => 'Load earlier';
   @override
@@ -374,7 +409,8 @@ class FaChatStringsRu extends FaChatStrings {
   @override
   String get chatMoreTooltip => 'Ещё действия';
   @override
-  String get chatFilesTooltip => 'Файлы';
+  // See [FaChatStringsEn.chatFilesTooltip]: the header icon opens.
+  String get chatFilesTooltip => 'Открыть файлы';
   @override
   String get chatCopySessionTooltip => 'Копировать сессию';
   @override
@@ -426,6 +462,15 @@ class FaChatStringsRu extends FaChatStrings {
   String get chatMicDenied =>
       'Доступ к микрофону запрещён. Разрешите его в системных настройках конфиденциальности (Конфиденциальность и безопасность → Микрофон) и попробуйте снова.';
   @override
+  String get chatMicNotConfiguredTitle => 'Транскрипция не настроена';
+  @override
+  String get chatMicNotConfiguredBody =>
+      'Для голосового ввода нужна модель транскрипции ASR. Настройте '
+      'медиаслот «Транскрипция» или OpenAI-совместимого провайдера в '
+      'настройках и повторите попытку. Запись не началась.';
+  @override
+  String get chatMicSettingsAction => 'Настройки';
+  @override
   String chatMicError(String error) => 'Ошибка голосового ввода: $error';
   @override
   String chatAttachNoName(String name) =>
@@ -469,6 +514,18 @@ class FaChatStringsRu extends FaChatStrings {
   String get chatShowLess => 'Свернуть';
   @override
   String get chatNoOutput => '(нет вывода)';
+  @override
+  String chatSystemNotices(int count) =>
+      count == 1 ? 'Системное уведомление' : 'Системные уведомления · $count';
+  @override
+  String chatOpenObligations(int count) => 'Открытые задачи · $count';
+  @override
+  String chatObligationKind(String kind) => switch (kind) {
+    'pending-wait' => 'Ожидание',
+    _ => kind.replaceAll('-', ' '),
+  };
+  @override
+  String chatObligationsSurplus(int count) => 'Ещё $count в ledger сессии';
   @override
   String get chatLoadEarlier => 'Загрузить более ранние';
   @override

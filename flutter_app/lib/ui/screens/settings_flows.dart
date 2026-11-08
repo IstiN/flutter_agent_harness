@@ -109,17 +109,11 @@ extension _SettingsFormFlowHelpers on _AgentSettingsFormState {
   /// "Back to providers" link.
   Widget _buildChangeProviderLink() => Align(
     alignment: Alignment.centerLeft,
-    child: TextButton.icon(
+    child: faui.FaButton(
+      label: 'Change provider', // l10n:ignore — see above
+      icon: Icons.arrow_back,
+      variant: faui.FaButtonVariant.ghost,
       onPressed: () => _formSetState(() => _showProviderListOnly = true),
-      icon: const Icon(Icons.arrow_back, size: 16),
-      label: const Text(
-        'Change provider',
-      ), // l10n:ignore — prototype redesign ships en-only copy for now
-      style: TextButton.styleFrom(
-        padding: EdgeInsets.zero,
-        minimumSize: Size.zero,
-        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-      ),
     ),
   );
 
@@ -161,16 +155,14 @@ extension _SettingsFormFlowHelpers on _AgentSettingsFormState {
 
   Widget _buildApiKeyField() {
     final keyOptional = _keyIsOptional;
-    return TextField(
+    return faui.FaTextField(
       controller: _keyController,
-      decoration: InputDecoration(
-        labelText: keyOptional
-            ? context.l10n.settingsApiKeyOptionalLabel
-            : context.l10n.settingsApiKeyLabel,
-        hintText: keyOptional ? null : context.l10n.settingsApiKeyHint,
-        helperText: keyOptional ? context.l10n.settingsApiKeyLocalHelper : null,
-      ),
+      dense: true,
       obscureText: true,
+      hintText: keyOptional
+          ? context.l10n.settingsApiKeyOptionalLabel
+          : context.l10n.settingsApiKeyLabel,
+      helperText: keyOptional ? context.l10n.settingsApiKeyLocalHelper : null,
       autocorrect: false,
       enableSuggestions: false,
     );
@@ -198,33 +190,31 @@ extension _SettingsFormFlowHelpers on _AgentSettingsFormState {
     emptyReason: _models.emptyReason,
   );
 
-  Widget _buildVisionCheckbox() => CheckboxListTile(
+  Widget _buildVisionCheckbox() => SettingsSwitchRow(
     value: _vision,
     onChanged: (value) => _formSetState(() {
-      _vision = value ?? false;
+      _vision = value;
       _visionOverridden = true;
     }),
     title: Text(context.l10n.settingsVisionLabel),
-    dense: true,
-    contentPadding: EdgeInsets.zero,
-    controlAffinity: ListTileControlAffinity.leading,
   );
 
-  Widget _buildBaseUrlField() => TextField(
+  Widget _buildBaseUrlField() => faui.FaTextField(
     controller: _urlController,
+    dense: true,
     enabled: _hasEditableBaseUrl,
-    decoration: InputDecoration(
-      labelText: context.l10n.settingsBaseUrlLabel,
-      helperText: _hasEditableBaseUrl
-          ? context.l10n.settingsBaseUrlHelper
-          : null,
-    ),
+    hintText: context.l10n.settingsBaseUrlLabel,
+    helperText: _hasEditableBaseUrl ? context.l10n.settingsBaseUrlHelper : null,
   );
 
   Widget _buildKeyNoteRow(ThemeData theme, Object selection) => Row(
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
-      Icon(Icons.lock_outline, size: 16, color: theme.colorScheme.primary),
+      Icon(
+        Icons.lock_outline,
+        size: 16,
+        color: faui.FaDesignTokens.of(context).accent,
+      ),
       const SizedBox(width: 8),
       Expanded(
         child: Text(
@@ -245,7 +235,11 @@ extension _SettingsFormFlowHelpers on _AgentSettingsFormState {
   Widget _infoNote(ThemeData theme, String text) => Row(
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
-      Icon(Icons.info_outline, size: 16, color: theme.colorScheme.tertiary),
+      Icon(
+        Icons.info_outline,
+        size: 16,
+        color: faui.FaDesignTokens.of(context).info,
+      ),
       const SizedBox(width: 8),
       Expanded(child: Text(text, style: theme.textTheme.bodySmall)),
     ],
@@ -253,28 +247,22 @@ extension _SettingsFormFlowHelpers on _AgentSettingsFormState {
 
   Widget _buildErrorText(ThemeData theme) => Padding(
     padding: const EdgeInsets.only(bottom: 12),
-    child: Text(_error!, style: TextStyle(color: theme.colorScheme.error)),
+    child: Text(
+      _error!,
+      style: TextStyle(color: faui.FaDesignTokens.of(context).danger),
+    ),
   );
 
-  Widget _buildConnectButton(ThemeData theme) => FilledButton(
+  Widget _buildConnectButton(ThemeData theme) => faui.FaButton(
+    label: _connectButtonLabel(),
+    busy: _loading,
+    expanded: true,
     onPressed: _loading ? null : _connect,
-    child: _connectButtonChild(theme),
   );
 
-  Widget _connectButtonChild(ThemeData theme) =>
-      _loading && !_isOnDevice && !_isTransformersJs
-      ? const SizedBox(
-          width: 20,
-          height: 20,
-          child: CircularProgressIndicator(strokeWidth: 2),
-        )
-      : _connectButtonLabel();
-
-  Widget _connectButtonLabel() => Text(
-    _loading
-        ? context.l10n.settingsLoadingModel
-        : widget.connectLabel ?? context.l10n.settingsStartChat,
-  );
+  String _connectButtonLabel() => _loading
+      ? context.l10n.settingsLoadingModel
+      : widget.connectLabel ?? context.l10n.settingsStartChat;
 
   // ─── _applyLastConnection (gh-1848 tier-4) ───────────────────────────────
 

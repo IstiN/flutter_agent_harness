@@ -257,9 +257,9 @@ extension AgentServiceSessions on AgentService {
           '${openSw.elapsedMilliseconds}ms '
           '(${_viewBranch?.length ?? 0} records in view)',
     );
-    // Background count of the records above the window (newline stream,
-    // no decode): fills in the banner count without blocking the load.
-    unawaited(_refreshHistoryAbove());
+    // Record counts are decorative and may require a whole-file newline
+    // scan. They load only with an explicit history action, never as an
+    // automatic O(file-size) tail to opening a multi-GiB transcript.
   }
 
   /// Stage 1 of [loadSession]: the post-idle generation check, the
@@ -302,6 +302,11 @@ extension AgentServiceSessions on AgentService {
     required int storageMs,
     required Stopwatch openSw,
   }) async {
+    // Registry-only live tails (subagent/shell snapshots) contain no chat
+    // rows. Backfill bounded older blocks to the nearest conversation record
+    // instead of presenting a false empty session while a peer is active.
+    await session.ensureConversationResident();
+    if (gen != _loadGeneration) return null;
     // The count belongs to the session being opened; the background
     // refresh at the end of the load fills it in.
     _historyAboveCount = null;
@@ -330,29 +335,21 @@ extension AgentServiceSessions on AgentService {
     List<Message> contextMessages,
     int gen,
   ) async {
-    // gh-1449 AC6: seed the one-shot orphan-report latch from the
-    // persisted `orphan_report` records — a resumed session never
-    // re-reports an orphan it already reported. Best-effort: a scan
-    // failure must not break the open.
-    //
-    // lastSegmentOnly (gh-1449 rework): this rides the UI OPEN PATH, so
-    // it reads the primary segment only — orphan_report records are
-    // tail-appended during runs and the primary is rotation-bounded
-    // (kSessionSegmentRotateBytes); a record already rotated into a
-    // `.part-NN` segment may cost one re-report, the accepted trade
-    // against a whole-chain scan here (issue #503 precedent).
+    // gh-1449 AC6: seed the one-shot latch from orphan reports already
+    // resident in the opened branch. Do NOT rescan up to 95 MiB of the live
+    // file on every switch: a report older than the bounded window may cost
+    // one repeated notice, the same accepted degradation as segment-only
+    // seeding, without adding disk IO to the open critical path.
     // clear() first: the same Agent serves every subsequently opened
     // session, so the latch must be strictly per-session.
-    try {
-      final reports = await _repo.readCustomRecordsOfType(metadata, {
-        orphanReportRecordType,
-      }, lastSegmentOnly: true);
-      _agent.reportedOrphanKeys
-        ..clear()
-        ..addAll(orphanReportKeysFromRecords(reports));
-    } on Object catch (error) {
-      AppLog.i('open', 'orphan_report seed failed: $error');
-    }
+    final residentReports = <CustomRecord>[
+      for (final record in _viewBranch ?? const <SessionRecord>[])
+        if (record case CustomRecord(customType: orphanReportRecordType))
+          record,
+    ];
+    _agent.reportedOrphanKeys
+      ..clear()
+      ..addAll(orphanReportKeysFromRecords(residentReports));
     _session = session;
     _setMailboxPrefix(metadata.id);
     // Follow external appends (a running fa CLI on the same session).
@@ -566,8 +563,9 @@ extension AgentServiceSessions on AgentService {
 
   /// The windowed external-append ingest: a truncation/rotation
   /// re-anchors view AND provider context (stale anything is never
-  /// kept), a plain append joins the view and grows the context, and
-  /// the banner count refreshes in the background either way.
+  /// kept), and a plain append joins the view and grows the context.
+  /// Decorative whole-file record counts stay on the explicit history
+  /// path; a live append must not start one in the background.
   Future<void> _ingestExternalWindowed(
     Session session,
     WindowedSessionStorage windowed,
@@ -580,7 +578,6 @@ extension AgentServiceSessions on AgentService {
         : ingest.delta.isEmpty ||
               await _appendExternalDelta(session, ingest.delta, gen);
     if (!ingested) return;
-    unawaited(_refreshHistoryAbove());
   }
 
   /// Truncation/rotation: the view (and the provider context) reset to

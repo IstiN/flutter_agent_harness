@@ -5,13 +5,13 @@
 import 'package:flutter/foundation.dart' show defaultTargetPlatform, kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
+import 'package:fa_ui/fa_ui.dart' as faui;
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../l10n/l10n_ext.dart';
 import '../../services/analytics.dart';
 import '../../services/links_loader.dart';
 import '../../services/store_banner_store.dart';
-import '../app_theme.dart';
 
 /// The dismissible, non-blocking App Store Get banner (issue #691 AC4):
 /// shown on the web + macOS Get surface (Settings top) only — iOS and
@@ -78,68 +78,103 @@ class _StoreGetBannerState extends State<StoreGetBanner> {
       return const SizedBox.shrink();
     }
     final l10n = context.l10n;
-    final colors = FahColors.of(context);
+    final tokens = faui.FaDesignTokens.of(context);
     // Until the persisted dismissal loads, reserve nothing — the banner
     // appears at most one frame later on a fresh sandbox.
     if (!_ready) return const SizedBox.shrink();
-    return Card(
-      margin: const EdgeInsets.only(bottom: 16),
-      color: colors.panel,
-      shape: RoundedRectangleBorder(
+    final androidLabel = _view.androidComingSoon
+        ? l10n.storeBannerAndroidSoon
+        : _view.androidLabel;
+    final copy = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          l10n.storeBannerTitle,
+          style: TextStyle(
+            color: tokens.ink1,
+            fontWeight: FontWeight.w600,
+            fontSize: 14,
+          ),
+        ),
+        const SizedBox(height: 3),
+        Text(
+          '${l10n.storeBannerBody} · $androidLabel',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(color: tokens.ink2, fontSize: 12, height: 1.3),
+        ),
+      ],
+    );
+    final actions = Wrap(
+      spacing: 6,
+      runSpacing: 4,
+      children: [
+        faui.FaButton(
+          label: l10n.storeBannerCta,
+          dense: true,
+          onPressed: () => _open(_view.appstoreUrl, target: 'appstore'),
+        ),
+        faui.FaButton(
+          label: l10n.storeBannerBeta,
+          variant: faui.FaButtonVariant.ghost,
+          dense: true,
+          onPressed: () => _open(_view.testflightUrl, target: 'testflight'),
+        ),
+      ],
+    );
+    final dismiss = faui.FaIconActionButton(
+      diameter: 32,
+      glyphSize: 16,
+      glass: false,
+      tooltip: l10n.storeBannerDismiss,
+      onPressed: _dismiss,
+      child: const faui.FaIcon(faui.FaSemanticIcon.close),
+    );
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: faui.FaSurface(
+        key: const ValueKey('storeGetBannerSurface'),
+        color: tokens.surface1,
         borderRadius: BorderRadius.circular(12),
-        side: BorderSide(color: colors.border),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 12, 8, 12),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Icon(Icons.phone_iphone, size: 22, color: colors.teal),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    l10n.storeBannerTitle,
-                    style: TextStyle(
-                      color: colors.text,
-                      fontWeight: FontWeight.w600,
-                      fontSize: 14,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(12, 10, 6, 10),
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final icon = faui.FaIcon(
+                faui.FaSemanticIcon.phone,
+                size: 20,
+                color: tokens.accent,
+              );
+              if (constraints.maxWidth < 900) {
+                return Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    icon,
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [copy, const SizedBox(height: 8), actions],
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    '${l10n.storeBannerBody}\n'
-                    '${_view.androidComingSoon ? l10n.storeBannerAndroidSoon : _view.androidLabel}',
-                    style: TextStyle(color: colors.dim, fontSize: 12.5),
-                  ),
-                  const SizedBox(height: 8),
-                  Wrap(
-                    spacing: 14,
-                    runSpacing: 4,
-                    children: [
-                      TextButton(
-                        onPressed: () =>
-                            _open(_view.appstoreUrl, target: 'appstore'),
-                        child: Text(l10n.storeBannerCta),
-                      ),
-                      TextButton(
-                        onPressed: () =>
-                            _open(_view.testflightUrl, target: 'testflight'),
-                        child: Text(l10n.storeBannerBeta),
-                      ),
-                    ],
-                  ),
+                    dismiss,
+                  ],
+                );
+              }
+              return Row(
+                children: [
+                  icon,
+                  const SizedBox(width: 10),
+                  Expanded(child: copy),
+                  const SizedBox(width: 12),
+                  actions,
+                  dismiss,
                 ],
-              ),
-            ),
-            IconButton(
-              icon: const Icon(Icons.close, size: 18),
-              tooltip: l10n.storeBannerDismiss,
-              onPressed: _dismiss,
-            ),
-          ],
+              );
+            },
+          ),
         ),
       ),
     );

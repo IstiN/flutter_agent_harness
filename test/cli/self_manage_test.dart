@@ -408,12 +408,11 @@ void main() {
         runProcess: (exe, args) async => ProcessResult(0, 0, '', ''),
       );
       if (Platform.isMacOS) {
-        // The archive miss routes into _zipAssetName's stable zip; the
-        // zip is downloaded, then the update aborts on provenance (the
-        // fallback verifies against the pinned release key, and these
-        // are test fixtures) — the old binary is kept.
-        expect(code, 1);
-        expect(target.readAsStringSync(), 'old');
+        // The archive miss routes into _zipAssetName's stable zip. The
+        // injected fixture key verifies its signed provenance, so the new
+        // app-bundle executable replaces the old binary atomically.
+        expect(code, 0);
+        expect(target.readAsStringSync(), 'new-zip-binary');
       } else {
         // No zip fallback off macOS: the download failure stands.
         expect(code, 1);

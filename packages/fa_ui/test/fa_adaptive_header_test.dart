@@ -14,49 +14,48 @@ void main() {
     List<PopupMenuEntry<String>>? menu,
     void Function()? onChipTap,
     String? chipMenuLabel,
-  }) =>
-      MaterialApp(
-        home: Scaffold(
-          body: SizedBox(
-            width: width,
-            child: Material(
-              child: FaAdaptiveHeader(
-                projectIcon: Icons.folder_outlined,
-                projectLabel: 'Personal',
-                title: 'Fa',
-                chip: const SizedBox(
-                  key: ValueKey('testChip'),
-                  width: 120,
-                  height: 28,
-                ),
-                actions: [
-                  FaHeaderAction(
-                    key: const ValueKey('testFiles'),
-                    icon: Icons.folder_outlined,
-                    label: 'Files',
-                    onPressed: () {},
-                  ),
-                  FaHeaderAction(
-                    key: const ValueKey('testTrajectory'),
-                    icon: Icons.timeline,
-                    label: 'Trajectory',
-                    onPressed: () {},
-                  ),
-                  FaHeaderAction(
-                    key: const ValueKey('testCopy'),
-                    icon: Icons.copy_outlined,
-                    label: 'Copy session',
-                    onPressed: () {},
-                  ),
-                ],
-                menuItems: menu ?? const <PopupMenuEntry<String>>[],
-                onChipTap: onChipTap,
-                chipMenuLabel: chipMenuLabel,
-              ),
+  }) => MaterialApp(
+    home: Scaffold(
+      body: SizedBox(
+        width: width,
+        child: Material(
+          child: FaAdaptiveHeader(
+            projectIcon: Icons.folder_outlined,
+            projectLabel: 'Personal',
+            title: 'Fa',
+            chip: const SizedBox(
+              key: ValueKey('testChip'),
+              width: 120,
+              height: 28,
             ),
+            actions: [
+              FaHeaderAction(
+                key: const ValueKey('testFiles'),
+                icon: Icons.folder_outlined,
+                label: 'Files',
+                onPressed: () {},
+              ),
+              FaHeaderAction(
+                key: const ValueKey('testTrajectory'),
+                icon: Icons.timeline,
+                label: 'Trajectory',
+                onPressed: () {},
+              ),
+              FaHeaderAction(
+                key: const ValueKey('testCopy'),
+                icon: Icons.copy_outlined,
+                label: 'Copy session',
+                onPressed: () {},
+              ),
+            ],
+            menuItems: menu ?? const <PopupMenuEntry<String>>[],
+            onChipTap: onChipTap,
+            chipMenuLabel: chipMenuLabel,
           ),
         ),
-      );
+      ),
+    ),
+  );
 
   testWidgets('wide: project, title, chip and every action render inline '
       '(issue #225 AC1)', (tester) async {
@@ -151,8 +150,9 @@ void main() {
     expect(find.byKey(const ValueKey('testWidgetAction')), findsOneWidget);
   });
 
-  testWidgets('the pinned action never demotes (issue #225 E2)',
-      (tester) async {
+  testWidgets('the pinned action never demotes (issue #225 E2)', (
+    tester,
+  ) async {
     var stopped = 0;
     await tester.pumpWidget(
       MaterialApp(
@@ -194,8 +194,9 @@ void main() {
     expect(find.byKey(const ValueKey('testStop')), findsOneWidget);
   });
 
-  testWidgets('no demotion and no menu items hides the ⋮ (issue #225 E4)',
-      (tester) async {
+  testWidgets('no demotion and no menu items hides the ⋮ (issue #225 E4)', (
+    tester,
+  ) async {
     await tester.pumpWidget(
       MaterialApp(
         home: Scaffold(
@@ -250,4 +251,234 @@ void main() {
     await tester.pumpAndSettle();
     expect(selected, 'new');
   });
+
+  testWidgets('compact phone sheet reserves leading and overflow widths', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SizedBox(
+            width: 374,
+            child: FaAdaptiveHeader(
+              leading: IconButton(
+                visualDensity: VisualDensity.compact,
+                onPressed: () {},
+                icon: const Icon(Icons.menu),
+              ),
+              title: 'Session',
+              chip: const SizedBox(width: 132, height: 28),
+              visualDensity: VisualDensity.compact,
+              iconSize: 20,
+              actions: [
+                FaHeaderAction(
+                  icon: Icons.copy_outlined,
+                  label: 'Copy',
+                  onPressed: () {},
+                ),
+                FaHeaderAction(
+                  icon: Icons.apps,
+                  label: 'Apps',
+                  onPressed: () {},
+                ),
+              ],
+              menuItems: const [
+                PopupMenuItem(value: 'close', child: Text('Close')),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+
+    expect(tester.takeException(), isNull);
+    expect(tester.getSize(find.byType(FaAdaptiveHeader)).width, 374);
+  });
+
+  testWidgets(
+    '8px circular-action gaps participate in demotion and callbacks',
+    (tester) async {
+      var thirdCalls = 0;
+      Widget gapHeader(double width) => MaterialApp(
+        home: Scaffold(
+          body: SizedBox(
+            width: width,
+            height: 40,
+            child: FaAdaptiveHeader(
+              visualDensity: VisualDensity.compact,
+              iconSize: 18,
+              actionGap: 8,
+              actionBuilder: (context, action, button) =>
+                  FaHeaderCircularAction(child: button),
+              overflowBuilder: (context, button) =>
+                  FaHeaderCircularAction(child: button),
+              actions: [
+                FaHeaderAction(
+                  key: const ValueKey('gapFirst'),
+                  icon: Icons.folder_outlined,
+                  label: 'First',
+                  onPressed: () {},
+                ),
+                FaHeaderAction(
+                  key: const ValueKey('gapSecond'),
+                  icon: Icons.timeline,
+                  label: 'Second',
+                  onPressed: () {},
+                ),
+                FaHeaderAction(
+                  key: const ValueKey('gapThird'),
+                  icon: Icons.copy_outlined,
+                  label: 'Third',
+                  onPressed: () => thirdCalls++,
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+
+      await tester.pumpWidget(gapHeader(136));
+      final first = tester.getRect(find.byKey(const ValueKey('gapFirst')));
+      final second = tester.getRect(find.byKey(const ValueKey('gapSecond')));
+      final third = tester.getRect(find.byKey(const ValueKey('gapThird')));
+      expect(second.left - first.right, 8);
+      expect(third.left - second.right, 8);
+      expect(find.byIcon(Icons.more_vert), findsNothing);
+      expect(tester.takeException(), isNull);
+
+      await tester.pumpWidget(gapHeader(128));
+      expect(find.byKey(const ValueKey('gapFirst')), findsOneWidget);
+      expect(find.byKey(const ValueKey('gapSecond')), findsNothing);
+      expect(find.byKey(const ValueKey('gapThird')), findsNothing);
+      expect(tester.takeException(), isNull);
+      await tester.tap(find.byIcon(Icons.more_vert));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Third'));
+      await tester.pumpAndSettle();
+      expect(thirdCalls, 1);
+    },
+  );
+
+  testWidgets('tiny local widths never create negative constraints or flex '
+      'overflow', (tester) async {
+    for (final width in <double>[0, 20, 39, 40, 41.6, 48, 80, 120]) {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SizedBox(
+              width: width,
+              height: 40,
+              child: FaAdaptiveHeader(
+                leading: const Icon(Icons.menu),
+                projectIcon: Icons.folder_outlined,
+                projectLabel: 'Personal',
+                title: 'A session title',
+                chip: const SizedBox(width: 120, height: 28),
+                visualDensity: VisualDensity.compact,
+                actionGap: 8,
+                actionBuilder: (context, action, button) =>
+                    FaHeaderCircularAction(child: button),
+                overflowBuilder: (context, button) =>
+                    FaHeaderCircularAction(child: button),
+                actions: [
+                  FaHeaderAction(
+                    icon: Icons.stop,
+                    label: 'Stop',
+                    pinned: true,
+                    onPressed: () {},
+                  ),
+                  FaHeaderAction(
+                    icon: Icons.folder_outlined,
+                    label: 'Files',
+                    onPressed: () {},
+                  ),
+                  FaHeaderAction(
+                    icon: Icons.copy_outlined,
+                    label: 'Copy',
+                    onPressed: () {},
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      expect(tester.takeException(), isNull, reason: 'width=$width');
+    }
+  });
+
+  testWidgets('FaHeaderCircularAction dimension: 40 default, shrinkable', (
+    tester,
+  ) async {
+    Widget circle({double? dimension}) => MaterialApp(
+      home: Scaffold(
+        body: Material(
+          child: Builder(
+            builder: (context) {
+              final action = IconButton(
+                onPressed: () {},
+                icon: const Icon(Icons.folder_outlined, size: 18),
+              );
+              return dimension == null
+                  ? FaHeaderCircularAction(child: action)
+                  : FaHeaderCircularAction(dimension: dimension, child: action);
+            },
+          ),
+        ),
+      ),
+    );
+
+    await tester.pumpWidget(circle());
+    expect(tester.getSize(find.byType(FaHeaderCircularAction)).width, 40);
+
+    // The Files chrome matches the composer's control scale (36) without
+    // disturbing the chat header's default.
+    await tester.pumpWidget(circle(dimension: 36));
+    expect(tester.getSize(find.byType(FaHeaderCircularAction)).width, 36);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('action-only chip reserves a small fit width then grows', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(
+          body: SizedBox(
+            width: 240,
+            child: FaAdaptiveHeader(
+              chipMinWidth: 80,
+              chipMaxWidth: 200,
+              chip: SizedBox(
+                key: ValueKey('growingChip'),
+                height: 28,
+                child: Text(
+                  'provider/a-very-long-model-name',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              actions: [
+                FaHeaderAction(
+                  key: ValueKey('chipAction'),
+                  icon: Icons.timeline,
+                  label: 'Trajectory',
+                  onPressed: _noop,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+
+    expect(find.byKey(const ValueKey('chipAction')), findsOneWidget);
+    expect(
+      tester.getSize(find.byKey(const ValueKey('growingChip'))).width,
+      192,
+    );
+  });
 }
+
+void _noop() {}

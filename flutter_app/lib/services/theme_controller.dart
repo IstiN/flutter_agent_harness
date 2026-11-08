@@ -4,6 +4,7 @@
 
 import 'dart:convert';
 
+import 'package:fa_ui/fa_ui.dart' show FaFontPreset, FaVisualDirection;
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
@@ -51,6 +52,8 @@ class ThemeController extends ChangeNotifier {
 
   final ExecutionEnv? _env;
   FahThemeMode _mode = FahThemeMode.system;
+  FaVisualDirection _visualDirection = FaVisualDirection.glass;
+  FaFontPreset _fontPreset = FaFontPreset.system;
   String? _packId;
   String? _wallpaperPackId;
 
@@ -64,6 +67,30 @@ class ThemeController extends ChangeNotifier {
 
   /// The selected appearance choice.
   FahThemeMode get mode => _mode;
+
+  /// The selected Fa 2.0 visual direction (Liquid Glass by default).
+  FaVisualDirection get visualDirection => _visualDirection;
+
+  /// The active styleguide font preset (native system typography by default).
+  FaFontPreset get fontPreset => _fontPreset;
+
+  /// Selects and persists a font preset without touching the direction or
+  /// brightness. An explicit theme-pack `fontFamily` still takes precedence.
+  Future<void> setFontPreset(FaFontPreset preset) async {
+    if (preset == _fontPreset) return;
+    _fontPreset = preset;
+    await _persist();
+    notifyListeners();
+  }
+
+  /// Selects and persists a visual direction without touching brightness or
+  /// theme-pack choices.
+  Future<void> setVisualDirection(FaVisualDirection direction) async {
+    if (direction == _visualDirection) return;
+    _visualDirection = direction;
+    await _persist();
+    notifyListeners();
+  }
 
   /// The active theme pack id (null = the stock Fa look), persisted in the
   /// same `theme.json` envelope. The id survives pack updates (E1) and a
@@ -119,6 +146,8 @@ class ThemeController extends ChangeNotifier {
         jsonEncode({
           'version': _version,
           'mode': _mode.name,
+          'direction': _visualDirection.name,
+          'font': _fontPreset.name,
           if (_packId != null) 'pack': _packId,
           if (_wallpaperPackId != null) 'wallpaper': _wallpaperPackId,
         }),
@@ -138,6 +167,12 @@ class ThemeController extends ChangeNotifier {
       if (decoded is! Map<String, dynamic>) return;
       if (decoded['version'] != _version) return;
       _mode = FahThemeMode.parse(decoded['mode'] as String?);
+      _visualDirection =
+          FaVisualDirection.values.asNameMap()[decoded['direction']] ??
+          FaVisualDirection.glass;
+      _fontPreset =
+          FaFontPreset.values.asNameMap()[decoded['font']] ??
+          FaFontPreset.system;
       final pack = decoded['pack'];
       if (pack is String && pack.isNotEmpty) _packId = pack;
       final wallpaper = decoded['wallpaper'];

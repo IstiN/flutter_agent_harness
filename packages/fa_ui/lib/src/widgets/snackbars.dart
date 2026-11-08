@@ -6,6 +6,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../chat/chat_strings.dart';
+import '../theme/fa2_tokens.dart';
+import 'fa2_controls.dart';
 
 /// The app's ONE feedback module (issue #869): every SnackBar is built here —
 /// informational snacks via [showFahSnack], error surfaces via
@@ -139,6 +141,56 @@ class _FahErrorCopyButtonState extends State<FahErrorCopyButton> {
   }
 }
 
+/// Tokenized floating surface shared by informational and error snacks.
+/// The SnackBar itself is only the messenger/animation host: all visible
+/// chrome, ink, and icon roles come from the ambient Fa theme.
+class _FahSnackContent extends StatelessWidget {
+  const _FahSnackContent({
+    required this.message,
+    required this.error,
+    this.trailing = const [],
+  });
+
+  final String message;
+  final bool error;
+  final List<Widget> trailing;
+
+  @override
+  Widget build(BuildContext context) {
+    final tokens = FaDesignTokens.of(context);
+    return FaSurface(
+      key: const ValueKey('fahSnackSurface'),
+      glass: true,
+      color: tokens.surface1.withValues(alpha: .96),
+      borderRadius: BorderRadius.circular(tokens.radiusMd),
+      borderSide: BorderSide(color: tokens.hairline),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      child: Row(
+        children: [
+          Container(
+            key: const ValueKey('fahSnackTone'),
+            width: 3,
+            height: 18,
+            decoration: BoxDecoration(
+              color: error ? tokens.danger : tokens.info,
+              borderRadius: BorderRadius.circular(tokens.radiusPill),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              message,
+              style: TextStyle(color: tokens.ink1, fontSize: 14, height: 1.35),
+            ),
+          ),
+          if (trailing.isNotEmpty) const SizedBox(width: 8),
+          ...trailing,
+        ],
+      ),
+    );
+  }
+}
+
 /// Plain informational snack (no copy affordance).
 void showFahSnack(
   BuildContext context,
@@ -148,7 +200,15 @@ void showFahSnack(
 }) {
   _showSnack(
     context,
-    SnackBar(content: Text(message), duration: duration),
+    SnackBar(
+      content: _FahSnackContent(message: message, error: false),
+      duration: duration,
+      behavior: SnackBarBehavior.floating,
+      margin: const EdgeInsets.all(12),
+      padding: EdgeInsets.zero,
+      backgroundColor: Colors.transparent,
+      elevation: 0,
+    ),
     hideCurrent: hideCurrent,
   );
 }
@@ -196,18 +256,25 @@ void showFahErrorSnack(
     context,
     SnackBar(
       duration: duration,
-      action: action,
-      content: Row(
-        children: [
-          Expanded(child: Text(message)),
+      content: _FahSnackContent(
+        message: message,
+        error: true,
+        trailing: [
+          ?action,
           FahErrorCopyButton(
             text: message,
+            color: FaDesignTokens.of(context).ink2,
             diagnostics: sessionId == null
                 ? null
                 : ErrorCopyDiagnostics(sessionId: sessionId),
           ),
         ],
       ),
+      behavior: SnackBarBehavior.floating,
+      margin: const EdgeInsets.all(12),
+      padding: EdgeInsets.zero,
+      backgroundColor: Colors.transparent,
+      elevation: 0,
     ),
   );
 }

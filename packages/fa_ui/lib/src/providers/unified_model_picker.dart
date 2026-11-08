@@ -15,6 +15,7 @@ import 'package:fa_ui/src/stores/provider_registry.dart';
 import 'package:fa_ui/src/stores/session_keys_store.dart';
 import 'package:fa_ui/src/strings/fa_ui_strings.dart';
 import 'package:fa_ui/src/utils/page_presentation.dart';
+import 'package:fa_ui/src/widgets/fa_route_header.dart';
 
 /// A model entry in the [UnifiedModelPickerPage]: the provider that owns it,
 /// the model id, and the display label.
@@ -509,7 +510,10 @@ class _UnifiedModelPickerPageState extends State<UnifiedModelPickerPage> {
     final strings = FaUiStrings.of(context);
     final entries = _filtered;
     return Scaffold(
-      appBar: AppBar(title: Text(strings.settingsPickModelTitle)),
+      appBar: faRouteAppBar(
+        context: context,
+        title: Text(strings.settingsPickModelTitle),
+      ),
       body: SafeArea(
         child: Column(
           children: [

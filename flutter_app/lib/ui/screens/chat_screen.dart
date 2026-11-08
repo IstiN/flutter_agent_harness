@@ -28,13 +28,15 @@ import 'package:fa/services/dap_enrollment_service.dart';
 import 'package:fa/services/flutter_session_manager.dart';
 import 'package:fa/services/image_preview_store.dart';
 import 'package:fa/services/last_connection.dart';
+import 'package:fa/services/project_mount_flow.dart' show visibleFolderRoot;
 import 'package:fa/services/provider_registry.dart';
 import 'package:fa/services/upload.dart';
+import 'package:fa/ui/screens/asr_settings_navigation.dart';
 import 'package:fa/ui/screens/settings.dart';
+import 'package:fa/ui/apps/files_presentation_panel.dart';
 import 'package:fa/ui/widgets/chat_composer.dart';
 import 'package:fa/ui/widgets/fah_wallpaper.dart';
 import 'package:fa/ui/widgets/image_drop_notice_chip.dart';
-import 'package:fa/ui/widgets/file_browser.dart';
 import 'package:fa/ui/widgets/media_player.dart';
 
 // The screen itself lives in the fa_ui package; these symbols stay
@@ -103,11 +105,14 @@ class ChatScreen extends StatefulWidget {
   const ChatScreen({
     super.key,
     required this.manager,
+    this.sessionTitle,
     this.uploadPicker,
+    this.draftStore,
     this.registry,
     this.lastConnectionStore,
     this.asr,
     this.asrTranscriber,
+    this.onOpenAsrSettings,
     this.audioControllerFactory,
     this.videoControllerFactory,
     this.onAppsToggle,
@@ -118,10 +123,15 @@ class ChatScreen extends StatefulWidget {
     this.modelChip,
     this.onModelChipTap,
     this.chipMenuLabel,
+    this.inputHeader,
   });
 
   /// The multi-session manager owning the active [AgentService].
   final FlutterSessionManager manager;
+
+  /// The selected session's display name in the centered header. Null keeps
+  /// the application-title fallback for embedders without session metadata.
+  final String? sessionTitle;
 
   /// The active session's widget.service. Convenience accessor so the rest of
   /// the screen does not need to know about the manager indirection.
@@ -144,6 +154,10 @@ class ChatScreen extends StatefulWidget {
   /// hidden); tests inject a fake.
   final UploadPicker? uploadPicker;
 
+  /// Process-lifetime unsent drafts, keyed by [FlutterSessionManager.activeId].
+  /// Null uses the shared store; tests may inject an isolated instance.
+  final fa_ui.ChatComposerDraftStore? draftStore;
+
   /// The custom-provider registry shared with the settings dialog;
   /// `null` falls back to an in-memory one inside the form (tests).
   final ProviderRegistry? registry;
@@ -161,6 +175,11 @@ class ChatScreen extends StatefulWidget {
   /// session's provider config at stop time (an OpenAI-compatible
   /// endpoint). Tests inject a fake.
   final AsrTranscriber? asrTranscriber;
+
+  /// Host navigation override for the missing-transcription dialog's
+  /// Settings action. Null opens the existing Transcription media-slot
+  /// editor (or Providers & Models when no media store is mounted).
+  final Future<void> Function()? onOpenAsrSettings;
 
   /// Playback engine factory for inline audio players (sandbox-generated
   /// `speak`/`generate_music`/`.mp3…` media); null uses the real
@@ -201,6 +220,11 @@ class ChatScreen extends StatefulWidget {
 
   /// The ⋮-menu row label for the demoted model chip (the model id).
   final String? chipMenuLabel;
+
+  /// A host widget docked between the transcript and the composer input —
+  /// the subagent switcher chips (subagent sessions owner pass). Null
+  /// docks nothing.
+  final Widget? inputHeader;
 
   @override
   State<ChatScreen> createState() => _ChatScreenState();
@@ -308,30 +332,9 @@ class _ChatScreenState extends State<ChatScreen> {
         ),
       );
     };
-    // The Apps toggle (issue #224): narrow full-chat only in v1 — tapping
-    // pops back to the launcher home (apps expand; the sheet collapses
-    // itself via [ChatScreen.onAppsToggle]). The wide apps-panel wiring is
-    // a follow-up, so the wide bar renders exactly as before (null).
-    fa_ui.FaChatHost.appsToggleButtonBuilder = (context, chatService) {
-      if (MediaQuery.sizeOf(context).width >= fa_ui.kWideLayoutBreakpoint) {
-        return null;
-      }
-      void toggle() {
-        widget.onAppsToggle?.call();
-        Navigator.of(context).maybePop();
-      }
-
-      return fa_ui.FaChatHeaderAction(
-        widget: IconButton(
-          key: const ValueKey('chatAppsToggle'),
-          icon: const Icon(Icons.apps),
-          tooltip: context.l10n.appsShowAppsTooltip,
-          onPressed: toggle,
-        ),
-        label: context.l10n.appsShowAppsTooltip,
-        onPressed: toggle,
-      );
-    };
+    // Apps is a shell destination, not a phone chat-header action. Keeping
+    // this host slot unset leaves room for Trajectory in the adaptive row.
+    fa_ui.FaChatHost.appsToggleButtonBuilder = null;
   }
 
   void _uninstallDynamicHosts() {
@@ -420,7 +423,7 @@ class _ChatScreenState extends State<ChatScreen> {
     final service = widget.service;
     return fa_ui.FaChatScreen(
       service: service,
-      title: context.l10n.appTitle,
+      title: widget.sessionTitle ?? context.l10n.appTitle,
       noticeBanner: _imageNoticeBanner,
       dynamicWidgetTileBuilder: _buildDynamicTile,
       onOpenWidgetAsApp: _openWidgetAsApp,
@@ -438,30 +441,56 @@ class _ChatScreenState extends State<ChatScreen> {
       modelChip: widget.modelChip,
       onModelChipTap: widget.onModelChipTap,
       chipMenuLabel: widget.chipMenuLabel,
+      inputHeader: widget.inputHeader,
       settingsBuilder: (_) => SettingsScreen(
         service: service,
         env: service.env,
         registry: widget.registry,
         lastConnectionStore: widget.lastConnectionStore,
       ),
-      fileBrowserBuilder: (context) =>
-          MediaQuery.sizeOf(context).width >= fa_ui.kWideLayoutBreakpoint
-          ? FileBrowser(
-              env: service.env,
-              fsRevision: service.fsRevision,
-              onProjectMountChanged: service.refreshProjectMountPrompt,
-            )
-          : FileBrowser(
-              env: service.env,
-              inlinePreview: false,
-              fsRevision: service.fsRevision,
-              onProjectMountChanged: service.refreshProjectMountPrompt,
-            ),
+      fileBrowserBuilder: (context) => FilesAppPanel(
+        presentation: FilesAppPresentation(
+          env: service.env,
+          // The listing opens in the SESSION's folder — but only when the
+          // env can actually open it ([visibleFolderRoot]): a host path
+          // outside the sandbox/mount roots would list as "could not open
+          // folder". Null keeps the env cwd, which for a mounted session
+          // already is the session's folder.
+          initialPath: visibleFolderRoot(
+            service.env,
+            service.currentSessionCwd,
+          ),
+          // The session's own folder rides along: when it is NOT the
+          // visible root the browser shows the access gate (allow-access
+          // flow switches the mount) instead of silently listing the
+          // active mount — a session in folder X must never pose as a
+          // listing of folder Y.
+          sessionFolder: service.currentSessionCwd,
+          fsRevision: service.fsRevision,
+          onProjectMountChanged: service.refreshProjectMountPrompt,
+        ),
+        // The wide docked panel previews inline; the narrow end drawer
+        // pushes the preview route.
+        // The docked pane sits beside the chat header: its band X rides
+        // the header's shared action centerline (the collapse toggle).
+        topCenterline:
+            MediaQuery.sizeOf(context).width >= fa_ui.kWideLayoutBreakpoint,
+      ),
       composerBuilder: (context, chatService, drop) => ChatComposer(
         service: chatService as AgentService,
+        draftKey: widget.manager.activeId,
+        draftStore: widget.draftStore,
         uploadPicker: widget.uploadPicker,
         asr: widget.asr,
         asrTranscriber: widget.asrTranscriber,
+        onOpenAsrSettings:
+            widget.onOpenAsrSettings ??
+            () => openAsrTranscriptionSettings(
+              context,
+              service: service,
+              registry: widget.registry,
+              lastConnectionStore: widget.lastConnectionStore,
+            ),
         dropBridge: drop,
         onSubmit: _interceptDapSubmit,
       ),

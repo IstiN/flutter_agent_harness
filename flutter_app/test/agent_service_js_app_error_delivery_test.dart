@@ -34,8 +34,11 @@ StreamFunction _always(String text) {
   };
 }
 
-bool _hasUserText(List<FaChatMessage> messages, Pattern needle) =>
-    messages.any((m) => m.role == 'user' && m.content.contains(needle));
+bool _hasUserText(List<FaChatMessage> messages, Pattern needle) => messages.any(
+  (m) =>
+      (m.role == 'user' || m.role == 'systemNotice') &&
+      m.content.contains(needle),
+);
 
 Future<void> _waitFor(
   bool Function() condition, {
@@ -152,7 +155,11 @@ void main() {
 
       await service.waitForIdle();
       final notices = service.messages
-          .where((m) => m.role == 'user' && m.content.contains('frame blew up'))
+          .where(
+            (m) =>
+                (m.role == 'user' || m.role == 'systemNotice') &&
+                m.content.contains('frame blew up'),
+          )
           .length;
       expect(
         notices,
@@ -195,10 +202,7 @@ void main() {
       expect(other.currentSessionId, isNot(boundId));
 
       // The app-open path maintains this binding on disk.
-      await env.writeFile(
-        'apps/calc/session.json',
-        '{"sessionId":"$boundId"}',
-      );
+      await env.writeFile('apps/calc/session.json', '{"sessionId":"$boundId"}');
 
       JsAppErrorChannel.instance.publish(
         JsAppErrorNotice(
@@ -310,8 +314,7 @@ void main() {
     // These guards pin main's structure so the two copies can never
     // silently diverge again (repo convention: source-structure tests,
     // cf. retired_seed_frozen_test.dart).
-    String source(String path) =>
-        File('lib/services/$path').readAsStringSync();
+    String source(String path) => File('lib/services/$path').readAsStringSync();
 
     String disposeBody() {
       final text = source('agent_service.dart');

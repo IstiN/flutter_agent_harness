@@ -8,15 +8,15 @@
 // small bar sizes (16–24 px).
 library;
 
-import 'package:fa/apps/session_chat_sheet.dart';
+import 'package:fa/ui/widgets/sessions_glyph.dart';
 import 'package:fa/ui/app_theme.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'golden_test_helper.dart';
 
-/// Pumps the sessions toggle exactly as it lives in the chat bar — an
-/// [IconButton] on the sheet's panel-alt surface — under [dark].
+/// Pumps the shared sessions glyph in a minimal [IconButton] host on the
+/// panel-alt surface under [dark].
 Future<void> _pumpToggle(WidgetTester tester, {required bool dark}) async {
   await pumpGolden(
     tester,

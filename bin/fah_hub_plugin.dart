@@ -117,6 +117,12 @@ final class HubPluginHost implements FahPlugin {
   /// Shared, idempotent clean-shutdown teardown.
   Future<void>? _dispose;
 
+  /// The fire-and-forget boot connection started by [register]. Teardown
+  /// awaits it before deleting the runtime overlay: otherwise a seed that
+  /// is already in flight can recreate channels.json and its guard after
+  /// cleanup (observed as ENOTEMPTY in host temp-dir teardown).
+  Future<void>? _connectInFlight;
+
   /// Whether the memoized [_dispose] was a no-op taken while [_scoped]
   /// was still null: such a no-op re-arms once the scoped memberships
   /// exist, so an early dispose can never permanently disable cleanup.
@@ -297,7 +303,10 @@ final class HubPluginHost implements FahPlugin {
       return _dispose = Future<void>.value();
     }
     _disposeWasNoOp = false;
-    return _dispose = scoped.cleanupOverlay();
+    return _dispose = () async {
+      await _connectInFlight;
+      await scoped.cleanupOverlay();
+    }();
   }
 
   @override
@@ -325,11 +334,11 @@ final class HubPluginHost implements FahPlugin {
       // resumed ai_kb/ai_conf). Drive the dial + joins right here.
       unawaited(_syncRuntimeMemberships().catchError((Object _) {}));
     });
-    unawaited(
-      _connect(context).catchError((Object e, StackTrace s) {
-        context.io.writeln('[hub] connect failed: $e');
-      }),
-    );
+    final connecting = _connect(context).catchError((Object e, StackTrace s) {
+      context.io.writeln('[hub] connect failed: $e');
+    });
+    _connectInFlight = connecting;
+    unawaited(connecting);
     context.registerSlashCommand(
       '/network',
       (args) => _networkSlash(context, args),

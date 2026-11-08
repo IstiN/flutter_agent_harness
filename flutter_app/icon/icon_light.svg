@@ -1,18 +1,9 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
-  <defs>
-    <linearGradient id="chev" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#5B61F6"/>
-      <stop offset="1" stop-color="#3566FF"/>
-    </linearGradient>
-    <linearGradient id="under" x1="0" y1="0" x2="1" y2="0">
-      <stop offset="0" stop-color="#2EBD9E"/>
-      <stop offset="1" stop-color="#48C7E8"/>
-    </linearGradient>
-  </defs>
-  <rect width="1024" height="1024" rx="224" fill="#fafbfe"/>
-  <rect x="16" y="16" width="992" height="992" rx="208" fill="none" stroke="#e5eaf2" stroke-width="32"/>
-  <g transform="translate(520 512) scale(1.15) translate(-520 -592)">
-  <path d="M 280 434 L 492 541 L 280 648" fill="none" stroke="url(#chev)" stroke-width="48" stroke-linecap="butt" stroke-linejoin="miter"/>
-  <rect x="512" y="712" width="248" height="38" fill="url(#under)"/>
-  </g>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 68 68">
+ <rect x="4" y="4" width="60" height="60" rx="18" fill="#FFFFFF" stroke="#3F8FF7" stroke-width="2"/>
+  <path d="M15 28 L22 34 L15 40" fill="none" stroke="#3F8FF7" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M27 42 V26 H38.5" fill="none" stroke="#1D1D1F" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M27 33.5 H35.5" fill="none" stroke="#1D1D1F" stroke-width="2.8" stroke-linecap="round"/>
+  <circle cx="43" cy="36" r="5" fill="none" stroke="#1D1D1F" stroke-width="2.6"/>
+  <path d="M48 31 V42" fill="none" stroke="#1D1D1F" stroke-width="2.6" stroke-linecap="round"/>
+  <circle cx="48" cy="22" r="3.2" fill="#4F46E5"/>
 </svg>

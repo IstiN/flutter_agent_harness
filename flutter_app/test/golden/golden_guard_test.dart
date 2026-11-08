@@ -26,11 +26,17 @@ const _coverage = <String, String>{
   'lib/ui/network/channel_key_import_dialog.dart':
       'test/golden/channel_key_import_dialog_golden_test.dart',
   'lib/ui/screens/settings.dart': 'test/golden/settings_golden_test.dart',
+  'lib/ui/screens/settings_navigation.dart':
+      'test/golden/wide_layout_shell_golden_test.dart',
+  'lib/ui/network/network_chat_page.dart':
+      'test/golden/network_chat_golden_test.dart',
   'lib/ui/screens/skills_toggles_section.dart':
       'test/golden/settings_golden_test.dart',
   'lib/ui/screens/settings_sections.dart':
       'test/golden/settings_golden_test.dart',
   'lib/ui/widgets/fah_wallpaper.dart': 'test/golden/settings_golden_test.dart',
+  'lib/ui/widgets/subagent_chat_badge.dart':
+      'test/golden/subagent_chat_badge_golden_test.dart',
   'lib/ui/screens/settings_key_dialogs.dart':
       'test/golden/dialogs_golden_test.dart',
   'lib/ui/screens/provider_editor_page.dart':
@@ -47,6 +53,8 @@ const _coverage = <String, String>{
       'test/golden/settings_golden_test.dart',
   'lib/ui/screens/dap_settings_page.dart':
       'test/golden/settings_golden_test.dart',
+  'lib/ui/screens/settings_tiles.dart':
+      'test/golden/settings_theme_directions_golden_test.dart',
   'lib/ui/screens/model_presets.dart':
       'test/golden/model_presets_golden_test.dart',
   'lib/ui/screens/onboarding_screen.dart':
@@ -66,7 +74,29 @@ const _coverage = <String, String>{
   'lib/ui/widgets/fa_mark.dart': 'test/golden/chat_golden_test.dart',
   'lib/ui/widgets/model_mark.dart': 'test/golden/widgets_golden_test.dart',
   'lib/ui/widgets/quick_model_chip.dart':
-      'test/golden/launcher_golden_test.dart',
+      'test/golden/chat_header_widths_golden_test.dart',
+  'lib/ui/widgets/sessions_glyph.dart':
+      'test/golden/sessions_glyph_golden_test.dart',
+  'lib/ui/widgets/wide_layout_shell.dart':
+      'test/golden/wide_layout_shell_golden_test.dart',
+  'lib/ui/activity/activity_surface.dart':
+      'test/golden/wide_layout_shell_golden_test.dart',
+  'lib/ui/chats/chat_list_panel.dart':
+      'test/golden/wide_layout_shell_golden_test.dart',
+  'lib/ui/apps/apps_directory_panel.dart':
+      'test/golden/wide_layout_shell_golden_test.dart',
+  'lib/ui/apps/files_presentation_panel.dart':
+      'test/golden/wide_layout_shell_golden_test.dart',
+  'lib/ui/apps/messenger_app_panel.dart':
+      'test/golden/wide_layout_shell_golden_test.dart',
+  'lib/ui/apps/presentation_panel_card.dart':
+      'test/golden/wide_layout_shell_golden_test.dart',
+  'lib/ui/apps/running_apps_dock.dart':
+      'test/golden/wide_layout_shell_golden_test.dart',
+  'lib/ui/widgets/messenger_navigation_controls.dart':
+      'test/golden/wide_layout_shell_golden_test.dart',
+  'lib/ui/widgets/messenger_section_header.dart':
+      'test/golden/wide_layout_shell_golden_test.dart',
   'lib/ui/widgets/rename_session_dialog.dart':
       'test/golden/dialogs_golden_test.dart',
   'lib/ui/widgets/file_browser.dart': 'test/golden/files_golden_test.dart',
@@ -125,14 +155,10 @@ const _exempt = <String, String>{
   // coverage (main's own guard is red for these); goldens belong to the
   // network feature work — waived here so the guard reflects #947 only.
   'lib/ui/network/channel_rail.dart': 'fa_network #955: no goldens yet',
-  'lib/ui/network/channel_composer.dart':
-      'fa_network #955: no goldens yet (#1888 added the composer; goldens '
-      'belong to the network feature work like its rail/dialog siblings)',
   'lib/ui/network/create_network_dialog.dart':
       'fa_network #955: no goldens yet',
   'lib/ui/network/join_sheet.dart': 'fa_network #955: no goldens yet',
   'lib/ui/network/network_center.dart': 'fa_network #955: no goldens yet',
-  'lib/ui/network/network_chat_page.dart': 'fa_network #955: no goldens yet',
   'lib/ui/network/network_home.dart': 'fa_network #955: no goldens yet',
   'lib/ui/network/network_mode_chip.dart': 'fa_network #955: no goldens yet',
   'lib/ui/network/networks_sidebar.dart': 'fa_network #955: no goldens yet',
@@ -159,21 +185,19 @@ const _exempt = <String, String>{
   'lib/ui/widgets/html_preview_web.dart':
       'web-only conditional implementation; the '
       'stub variant (same widget API) is covered instead',
-  'lib/ui/widgets/wide_layout_shell.dart':
-      '3-pane desktop/tablet shell; needs a full app-frame golden '
-      '(planned for a dedicated wide-layout golden test file)',
   'lib/ui/widgets/sidebar_nav_item.dart':
       'sidebar nav row; rendered inside wide_layout_shell (covered indirectly)',
   'lib/ui/widgets/sidebar_sessions_list.dart':
       'sidebar sessions list; rendered inside wide_layout_shell (covered indirectly)',
+  'lib/ui/widgets/messenger_nav_rail.dart': 'test/golden/rail_golden_test.dart',
+  'lib/ui/widgets/folder_avatar.dart': 'test/golden/rail_golden_test.dart',
+  'lib/ui/chats/local_sessions_panel.dart': 'test/golden/rail_golden_test.dart',
+  'lib/ui/chats/networks_list_panel.dart': 'test/golden/rail_golden_test.dart',
   'lib/ui/widgets/code_viewer.dart':
       'syntax-highlighted code view; rendered inside file_preview (covered indirectly)',
   'lib/apps/app_tile_host.dart':
       'tile widget engine; live JS tiles — no host golden (the engine '
       'needs a real JSRuntime, exercised in widget tests instead)',
-  'lib/apps/session_chat_sheet.dart':
-      'floating chat sheet over the launcher; covered indirectly by the '
-      'launcher chat sheet tests in test/apps/',
   'lib/ui/widgets/downloaded_models_quick_start.dart':
       'quick-start scan rows; behavior covered by '
       'test/downloaded_models_quick_start_test.dart — its golden baseline '
@@ -332,6 +356,60 @@ void main() {
         expect(problems, isEmpty, reason: problems.join('\n'));
       }
       expect(problems, isEmpty, reason: problems.join('\n'));
+    });
+  });
+
+  group('styleguide guard wiring', () {
+    // The Material-usage ratchet (Icons.*/Colors.*/raw Material widgets/
+    // nested MaterialApp/ThemeData) lives in its own guard test with its
+    // own baseline file; this wiring test keeps it from being silently
+    // deleted or drifting out of sync with its allowlist.
+    test('material-usage ratchet guard is present and wired', () {
+      const guardPath = 'test/ui/styleguide_guard_test.dart';
+      const allowlistPath = 'test/ui/styleguide_material_allowlist.txt';
+      final guard = File(guardPath);
+      expect(
+        guard.existsSync(),
+        isTrue,
+        reason: '$guardPath (material ratchet) is missing',
+      );
+      final source = guard.readAsStringSync();
+      expect(
+        source,
+        contains(allowlistPath),
+        reason: '$guardPath must read the ratchet baseline $allowlistPath',
+      );
+      expect(
+        source,
+        contains('scripts/check_material_usage.sh'),
+        reason: '$guardPath must document how to regenerate the baseline',
+      );
+
+      final allowlist = File(allowlistPath);
+      expect(
+        allowlist.existsSync(),
+        isTrue,
+        reason:
+            '$allowlistPath is missing — regenerate it from the repo root '
+            'with scripts/check_material_usage.sh > '
+            'flutter_app/$allowlistPath',
+      );
+      final content = allowlist.readAsStringSync();
+      for (final section in [
+        'icons',
+        'material_colors',
+        'material_widgets',
+        'material_app',
+        'theme_data',
+      ]) {
+        expect(
+          content,
+          contains('[$section]'),
+          reason:
+              'allowlist section [$section] missing — regenerate with '
+              'scripts/check_material_usage.sh',
+        );
+      }
     });
   });
 }

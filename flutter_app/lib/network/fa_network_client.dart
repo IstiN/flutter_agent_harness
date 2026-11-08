@@ -255,6 +255,23 @@ class FaNetworkClient {
     return items;
   }
 
+  // ------------------------------------------------------------------ inbox
+
+  /// `GET /api/inbox?limit&cursor` — the signed-in account's aggregate
+  /// inbox across every network. This is a management route: only the
+  /// ai-native JWT is sent, never a channel session token. Kind filtering
+  /// is deliberately client-side and is not part of the deployed API.
+  Future<InboxPage> listInbox({int? limit, String? cursor}) async {
+    final res = await _request(
+      'GET',
+      '/api/inbox',
+      query: {'limit': ?limit?.toString(), 'cursor': ?cursor},
+      management: true,
+      expected: {200},
+    );
+    return InboxPage.fromJson(_decodeMap(res));
+  }
+
   // ---------------------------------------------------------------- admins
 
   /// `POST /api/networks/{id}/admins` — appoint an admin (owner only).
@@ -386,6 +403,36 @@ class FaNetworkClient {
       expected: {200},
     );
     return MessagePage.fromJson(_decodeMap(res));
+  }
+
+  /// `PATCH /api/channels/{id}/read` — advances this account's read cursor.
+  /// Exactly one selector is required: [seq], [envelopeId], or [all]. The
+  /// channel id is opaque and encoded as one URL path segment.
+  Future<void> markChannelRead(
+    String channelId, {
+    int? seq,
+    String? envelopeId,
+    bool all = false,
+  }) {
+    final selectorCount =
+        (seq == null ? 0 : 1) + (envelopeId == null ? 0 : 1) + (all ? 1 : 0);
+    if (selectorCount != 1) {
+      throw ArgumentError(
+        'Exactly one read selector is required: seq, envelopeId, or all.',
+      );
+    }
+    final body = <String, Object?>{
+      'seq': ?seq,
+      'envelopeId': ?envelopeId,
+      if (all) 'all': true,
+    };
+    return _request(
+      'PATCH',
+      '/api/channels/${Uri.encodeComponent(channelId)}/read',
+      body: body,
+      management: true,
+      expected: {204},
+    ).then((_) {});
   }
 
   /// `GET /api/networks/{id}/showcase` — anonymous browsing entry of a

@@ -97,6 +97,10 @@ class LauncherLayoutStore extends ChangeNotifier {
   /// Tile key of the file-browser system tile.
   static const filesKey = 'system:files';
 
+  /// Tile key of the network-management system tile. It is present only on
+  /// hosts that provide a network manager (see [syncApps]).
+  static const networksKey = 'system:networks';
+
   /// Tile key of the JS app [appId].
   static String appKey(String appId) => 'app:$appId';
 
@@ -196,13 +200,23 @@ class LauncherLayoutStore extends ChangeNotifier {
   /// Reconciles the layout with the apps currently installed ([appIds]):
   /// drops `app:` keys (top level and inside folders) whose app is gone,
   /// dissolves folders left empty, appends new apps after the existing
-  /// tiles, and guarantees both system tiles exist. Only notifies/persists
-  /// when something actually changed.
-  void syncApps(Iterable<String> appIds) {
+  /// tiles, and guarantees the Settings tile exists. Networks and Files
+  /// are optional; disabling either also prunes its persisted entry.
+  /// Only notifies/persists when something actually changed.
+  void syncApps(
+    Iterable<String> appIds, {
+    bool includeNetworks = false,
+    bool includeFiles = true,
+  }) {
     final known = appIds.toSet();
     var changed = false;
 
     bool prune(String key) {
+      if ((key == networksKey && !includeNetworks) ||
+          (key == filesKey && !includeFiles)) {
+        changed = true;
+        return false;
+      }
       final keep = !key.startsWith('app:') || known.contains(key.substring(4));
       if (!keep) changed = true;
       return keep;
@@ -224,7 +238,11 @@ class LauncherLayoutStore extends ChangeNotifier {
       _order.add(key);
       changed = true;
     }
-    for (final key in const [settingsKey, filesKey]) {
+    for (final key in [
+      settingsKey,
+      if (includeFiles) filesKey,
+      if (includeNetworks) networksKey,
+    ]) {
       if (!_order.contains(key)) {
         _order.add(key);
         changed = true;
@@ -373,9 +391,7 @@ class LauncherLayoutStore extends ChangeNotifier {
   /// (wrong version, broken shape, or broken folder references).
   static Future<_ParsedLayout?> _read(ExecutionEnv env) async {
     try {
-      final text = (await env
-          .readTextFile('${env.cwd}/$fileName'))
-          .valueOrNull;
+      final text = (await env.readTextFile('${env.cwd}/$fileName')).valueOrNull;
       if (text == null) return null;
       final decoded = jsonDecode(text);
       if (decoded is! Map<String, dynamic>) return null;
