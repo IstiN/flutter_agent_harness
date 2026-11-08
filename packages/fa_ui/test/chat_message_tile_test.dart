@@ -6,6 +6,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:fa_ui/fa_ui.dart';
+import 'package:flutter/gestures.dart' show PointerDeviceKind;
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
@@ -23,6 +24,38 @@ void main() {
       ),
     );
   }
+
+  testWidgets('a short user bubble shrink-wraps and aligns to the right', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      wrap(
+        Align(
+          alignment: Alignment.centerRight,
+          child: SizedBox(
+            key: const ValueKey('tight-user-row'),
+            width: 600,
+            child: ChatMessageTile(
+              message: FaChatMessage(role: 'user', content: 'short'),
+              images: images(),
+            ),
+          ),
+        ),
+      ),
+    );
+    final bubble = find.byWidgetPredicate(
+      (widget) =>
+          widget is Container &&
+          widget.padding ==
+              const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+    );
+    expect(bubble, findsOneWidget);
+    expect(tester.getSize(bubble).width, lessThan(200));
+    expect(
+      tester.getTopRight(bubble).dx,
+      tester.getTopRight(find.byKey(const ValueKey('tight-user-row'))).dx,
+    );
+  });
 
   testWidgets('assistant bubble shows the avatarBuilder widget', (
     tester,
@@ -53,7 +86,7 @@ void main() {
       ),
     );
     expect(find.text('hello'), findsOneWidget);
-    // The stock avatar is the Fa brand `>_` tile.
+    // The stock avatar is the shared B3-square-accent Fa brand tile.
     expect(find.byType(FaAiAvatar), findsOneWidget);
   });
 
@@ -647,6 +680,60 @@ void main() {
       expect(find.byType(FaAiAvatar), findsNothing);
     });
 
+    testWidgets('whitespace-only user and nameless tool rows render nothing', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        themedWrap(tile(FaChatMessage(role: 'user', content: ' \n  '))),
+      );
+      expect(find.byType(MarkdownBody), findsNothing);
+      expect(tester.getSize(find.byType(ChatMessageTile)), Size.zero);
+
+      await tester.pumpWidget(
+        themedWrap(
+          tile(FaChatMessage(role: 'tool', content: ' \n', toolName: ' ')),
+        ),
+      );
+      expect(find.byIcon(Icons.keyboard_arrow_down), findsNothing);
+      expect(find.byIcon(Icons.copy_rounded), findsNothing);
+      expect(tester.getSize(find.byType(ChatMessageTile)), Size.zero);
+    });
+
+    testWidgets('hover copy action stays inside the bubble clip bounds', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        themedWrap(tile(FaChatMessage(role: 'assistant', content: 'hello'))),
+      );
+      final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
+      await mouse.addPointer(location: Offset.zero);
+      addTearDown(() => mouse.removePointer());
+      await mouse.moveTo(tester.getCenter(find.byType(ChatMessageTile)));
+      await tester.pump();
+      final positioned = find
+          .ancestor(
+            of: find.byIcon(Icons.copy_rounded),
+            matching: find.byType(Positioned),
+          )
+          .first;
+      final action = tester.widget<Positioned>(positioned);
+      expect(action.top, 0);
+      expect(action.right, 0);
+    });
+
+    testWidgets('whitespace output of a named tool keeps its honest stub', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        themedWrap(
+          tile(FaChatMessage(role: 'tool', content: ' \n', toolName: 'bash')),
+        ),
+      );
+      expect(find.text('(no output)'), findsOneWidget);
+      expect(find.byIcon(Icons.check), findsOneWidget);
+      expect(find.byIcon(Icons.keyboard_arrow_down), findsOneWidget);
+    });
+
     testWidgets('a thinking message renders the reasoning row, not a '
         'bubble', (tester) async {
       await tester.pumpWidget(
@@ -711,6 +798,93 @@ void main() {
       );
       expect(find.byType(MarkdownBody), findsNothing);
       expect(find.byIcon(Icons.keyboard_arrow_down), findsNothing);
+    });
+
+    testWidgets('the bubble body renders one notch below the theme body role '
+        '(owner call: the fa2 15-16pt body reads giant in a transcript)', (
+      tester,
+    ) async {
+      tester.view.physicalSize = const Size(500, 400);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      // The fa2 glass theme ships bodyMedium at 15pt — the transcript
+      // steps it down to 14.
+      await tester.pumpWidget(
+        FaUiThemeProvider(
+          data: const FaUiTheme(),
+          child: MaterialApp(
+            theme: buildFaTheme(
+              direction: FaVisualDirection.glass,
+              brightness: Brightness.dark,
+            ),
+            home: Scaffold(
+              body: Center(
+                child: ChatMessageTile(
+                  message: FaChatMessage(role: 'assistant', content: 'hello'),
+                  images: images(),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      expect(
+        tester
+            .widget<MarkdownBody>(find.byType(MarkdownBody))
+            .styleSheet!
+            .p!
+            .fontSize!,
+        14,
+      );
+    });
+
+    testWidgets('the legacy 14pt markdown baseline steps down to 13 too', (
+      tester,
+    ) async {
+      tester.view.physicalSize = const Size(500, 400);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(
+        wrap(
+          ChatMessageTile(
+            message: FaChatMessage(role: 'assistant', content: 'hello'),
+            images: images(),
+          ),
+        ),
+      );
+      expect(
+        tester
+            .widget<MarkdownBody>(find.byType(MarkdownBody))
+            .styleSheet!
+            .p!
+            .fontSize!,
+        13,
+      );
+    });
+
+    testWidgets('an explicit messageFontSize (the chat text-size setting) '
+        'overrides the notch-down default', (tester) async {
+      tester.view.physicalSize = const Size(500, 400);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(
+        wrap(
+          ChatMessageTile(
+            message: FaChatMessage(role: 'assistant', content: 'hello'),
+            images: images(),
+            messageFontSize: 16,
+          ),
+        ),
+      );
+      expect(
+        tester
+            .widget<MarkdownBody>(find.byType(MarkdownBody))
+            .styleSheet!
+            .p!
+            .fontSize!,
+        16,
+      );
     });
   });
 }

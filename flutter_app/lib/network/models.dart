@@ -425,6 +425,68 @@ class MessagePage {
   );
 }
 
+/// One account-scoped conversation row from `GET /api/inbox`.
+///
+/// This is a network-layer DTO: UI projections map [kind] and [presence] to
+/// their own enums. [lastEnvelope] retains the relay's opaque base64 payload.
+final class InboxItem {
+  const InboxItem({
+    required this.kind,
+    required this.networkId,
+    required this.id,
+    this.title = '',
+    this.lastActivity,
+    this.unreadCount,
+    this.lastEnvelope,
+    this.presence,
+  });
+
+  /// OpenAPI kind: `channel` or `agent`.
+  final String kind;
+  final String networkId;
+  final String id;
+  final String title;
+  final DateTime? lastActivity;
+  final int? unreadCount;
+  final Envelope? lastEnvelope;
+  final Presence? presence;
+
+  factory InboxItem.fromJson(Map<String, Object?> json) => InboxItem(
+    kind: _str(json['kind']),
+    networkId: _str(json['networkId']),
+    id: _str(json['id']),
+    title: _str(json['title']),
+    lastActivity: _date(json['lastActivity']),
+    unreadCount: _intOrNull(json['unreadCount']),
+    lastEnvelope: json['lastEnvelope'] is Map
+        ? Envelope.fromJson(
+            (json['lastEnvelope']! as Map).cast<String, Object?>(),
+          )
+        : null,
+    presence: json['presence'] is String
+        ? Presence.parse(json['presence'])
+        : null,
+  );
+}
+
+/// One page of the account-scoped aggregate inbox.
+final class InboxPage {
+  const InboxPage({required this.items, this.nextCursor});
+
+  final List<InboxItem> items;
+  final String? nextCursor;
+
+  factory InboxPage.fromJson(Map<String, Object?> json) => InboxPage(
+    items: json['items'] is List
+        ? (json['items']! as List)
+              .whereType<Map>()
+              .map((e) => InboxItem.fromJson(e.cast<String, Object?>()))
+              .toList()
+        : const [],
+    nextCursor: _strOrNull(json['nextCursor']),
+  );
+}
+
 /// A wake-up webhook registration (the secret is never returned).
 class WakeupRegistration {
   const WakeupRegistration({

@@ -25,7 +25,8 @@ Map<String, Object?> mergeProvider(
     return '';
   }
 
-  int? intField(String name) => storedIntSetting(incoming, name) ??
+  int? intField(String name) =>
+      storedIntSetting(incoming, name) ??
       (stored == null ? null : storedIntSetting(stored, name));
 
   return {

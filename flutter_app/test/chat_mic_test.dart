@@ -9,6 +9,12 @@ import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/asr_service.dart';
 import 'package:fa/ui/screens/chat_screen.dart';
 import 'package:fa/services/flutter_session_manager.dart';
+import 'package:fa_ui/fa_ui.dart'
+    show
+        MediaModelsScope,
+        MediaModelsStore,
+        MediaSlot,
+        MediaSlotProviderPickerPage;
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -193,30 +199,42 @@ void main() {
     await tester.pump(const Duration(seconds: 4));
   });
 
-  testWidgets('without an ASR-capable endpoint the snackbar says what to '
-      'configure', (tester) async {
+  testWidgets('without an ASR endpoint, Settings opens Transcription before '
+      'permission or recording', (tester) async {
     useWideSurface(tester);
     final env = MemoryExecutionEnv();
     final asr = _FakeAsrApi();
+    final mediaModels = MediaModelsStore.inMemory();
     // No asrTranscriber injected and the fake provider kind ('test') is
-    // not OpenAI-compatible — the transcriber resolves to none.
+    // not OpenAI-compatible — preflight resolves no transcriber.
     await tester.pumpWidget(
       MaterialApp(
-        home: ChatScreen(manager: _fakeManager(env), asr: asr),
+        home: MediaModelsScope(
+          store: mediaModels,
+          child: ChatScreen(manager: _fakeManager(env), asr: asr),
+        ),
       ),
     );
     await tester.pumpAndSettle();
 
     await tester.tap(find.byIcon(Icons.mic_none));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 100));
-    await tester.tap(find.byIcon(Icons.mic));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 500));
+    await tester.pumpAndSettle();
 
-    expect(asr.stopCalls, 1);
-    expect(find.textContaining('No ASR-capable endpoint'), findsOneWidget);
-    // Let the snackbar's display timer run out before the tree is torn down.
-    await tester.pump(const Duration(seconds: 4));
+    expect(asr.requestAccessCalls, 0);
+    expect(asr.startCalls, 0);
+    expect(asr.stopCalls, 0);
+    expect(find.text('Transcription is not configured'), findsOneWidget);
+    expect(find.textContaining('Recording has not started'), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('faChatAsrSettingsAction')));
+    await tester.pumpAndSettle();
+
+    final picker = tester.widget<MediaSlotProviderPickerPage>(
+      find.byType(MediaSlotProviderPickerPage),
+    );
+    expect(picker.slot, MediaSlot.transcription);
+    expect(asr.requestAccessCalls, 0);
+    expect(asr.startCalls, 0);
+    expect(asr.stopCalls, 0);
   });
 }

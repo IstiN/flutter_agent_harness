@@ -5,10 +5,14 @@
 import 'dart:io';
 
 import 'package:fa/apps/apps_store.dart';
+import 'package:fa/apps/fa_chat_overlay.dart';
+import 'package:fa/apps/fa_work_bar.dart';
 import 'package:fa/apps/js_app_engine.dart';
 import 'package:fa/apps/js_app_view.dart';
 import 'package:fa/l10n/app_localizations.dart';
+import 'package:fa/services/agent_service.dart';
 import 'package:fa/ui/app_theme.dart';
+import 'package:fa_ui/fa_ui.dart' show FaChatHost;
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -19,6 +23,117 @@ import '../native_test_guard.dart';
 /// boots a real JS engine (issue #184). Resolved once per isolate.
 final _engineSkip = quickJsBridgeAvailable ? false : kQuickJsBridgeUnavailable;
 
+/// A provider that starts a run immediately and stays open until Stop.
+AgentService _hungService() {
+  fn(Model model, dynamic context, {cancelToken}) {
+    final stream = AssistantMessageEventStream();
+    final partial = AssistantMessage(
+      content: const [],
+      api: model.api,
+      provider: model.provider,
+      model: model.id,
+      usage: Usage.zero,
+      stopReason: StopReason.stop,
+      timestamp: DateTime(2026, 1, 1),
+    );
+    stream.push(StartEvent(partial: partial));
+    cancelToken?.onCancel.then((_) {
+      stream.push(ErrorEvent(reason: StopReason.aborted, error: partial));
+      stream.end();
+    });
+    return stream;
+  }
+
+  return AgentService(
+    agent: Agent(
+      model: Model(
+        id: 'test-model',
+        api: 'test-api',
+        provider: 'test',
+        baseUrl: 'https://example.com',
+        contextWindow: 100000,
+        maxTokens: 4096,
+      ),
+      systemPrompt: 'You are Fa.',
+      streamFunction: fn,
+      toolRegistry: ToolRegistry(const []),
+    ),
+    env: MemoryExecutionEnv(),
+    sessionsRoot: '/sessions',
+    config: AgentConfig(
+      providerKind: 'test',
+      modelId: 'test-model',
+      baseUrl: 'https://example.com',
+      apiKey: '',
+    ),
+  );
+}
+
+/// Hosts the view in a wide shell's nested Apps navigator. A missing
+/// widget.js gives a deterministic engine-free start error; Fa chrome is
+/// independent of the JS renderer and remains fully testable.
+Future<void> _pumpEmbeddedView(
+  WidgetTester tester, {
+  AgentService? agentService,
+  Future<AgentService?> Function(FaAppMessage message)? onSendToAgent,
+  bool fullChrome = false,
+}) async {
+  tester.view.devicePixelRatio = 1;
+  tester.view.physicalSize = const Size(1440, 900);
+  addTearDown(tester.view.resetDevicePixelRatio);
+  addTearDown(tester.view.resetPhysicalSize);
+
+  final env = MemoryExecutionEnv();
+  await env.writeFile('apps/demo/manifest.json', '{}');
+  final permissions = await AppPermissionsStore.load(env);
+  final app = JsAppInfo.fromManifest(
+    {'id': 'demo', 'name': 'Demo', if (fullChrome) 'chrome': 'full'},
+    bundled: false,
+    fallbackId: 'demo',
+  );
+  await tester.pumpWidget(
+    MaterialApp(
+      theme: buildFahTheme(),
+      locale: const Locale('en'),
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
+      home: Scaffold(
+        body: Row(
+          children: [
+            const Expanded(child: Text('Main chat')),
+            SizedBox(
+              width: 520,
+              child: Navigator(
+                onGenerateRoute: (_) => MaterialPageRoute<void>(
+                  builder: (_) => JsAppView(
+                    app: app,
+                    env: env,
+                    permissionsStore: permissions,
+                    agentService: agentService,
+                    onSendToAgent: onSendToAgent,
+                    embeddedInPanel: true,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
+  await tester.pump();
+}
+
+Future<void> _stopRun(WidgetTester tester, AgentService service) async {
+  service.abort();
+  for (var i = 0; i < 30 && service.isStreaming; i++) {
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 100)),
+    );
+  }
+  await tester.pump();
+}
+
 /// End-to-end render check: boots the REAL calculator demo app
 /// (test/apps/fixtures/calculator_widget.js) through the real JavaScriptCore
 /// backend and renders the resulting UI tree into actual Flutter widgets
@@ -27,6 +142,192 @@ final _engineSkip = quickJsBridgeAvailable ? false : kQuickJsBridgeUnavailable;
 /// The engine is booted inside `tester.runAsync` (the JS backend needs the
 /// real event loop); the renderer itself is synchronous.
 void main() {
+  group('embedded Fa chrome (engine-free)', () {
+    testWidgets('wide panel Ask Fa sends app context to the bound service', (
+      tester,
+    ) async {
+      final activeService = _hungService();
+      final boundService = _hungService();
+      addTearDown(activeService.dispose);
+      addTearDown(boundService.dispose);
+      FaAppMessage? received;
+
+      await _pumpEmbeddedView(
+        tester,
+        agentService: activeService,
+        onSendToAgent: (message) async {
+          received = message;
+          await boundService.sendText(message.text);
+          return boundService;
+        },
+      );
+
+      final askFab = tester.widget<FloatingActionButton>(
+        find.byType(FloatingActionButton),
+      );
+      expect(askFab.onPressed, isNotNull);
+      expect(askFab.tooltip, isNotEmpty);
+
+      await tester.runAsync(() async {
+        await tester.tap(find.byType(FloatingActionButton));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 300));
+        await tester.enterText(find.byType(TextField).last, 'make it teal');
+        await tester.tap(find.byType(FilledButton));
+        // Headless screenshot capture can take its full best-effort timeout;
+        // the message must still arrive with the rest of the app context.
+        for (var i = 0; i < 70 && received == null; i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 100));
+          await tester.pump();
+        }
+      });
+      await tester.pump();
+
+      final message = received;
+      expect(message, isNotNull);
+      expect(message!.text, 'make it teal');
+      expect(message.appId, 'demo');
+      expect(message.themeLine, isNotEmpty);
+      // 520px is the Apps panel, not the 1440px shell beside it.
+      expect(message.viewportLine, startsWith('Viewport: 520x'));
+      expect(
+        boundService.messages.any(
+          (entry) => entry.role == 'user' && entry.content == 'make it teal',
+        ),
+        isTrue,
+      );
+      expect(
+        activeService.messages.any((entry) => entry.content == 'make it teal'),
+        isFalse,
+      );
+      expect(
+        tester.widget<FaWorkBar>(find.byType(FaWorkBar)).service,
+        same(boundService),
+      );
+
+      await _stopRun(tester, boundService);
+    });
+
+    testWidgets('wide panel streaming status and Stop are reachable', (
+      tester,
+    ) async {
+      final service = _hungService();
+      addTearDown(service.dispose);
+      await _pumpEmbeddedView(
+        tester,
+        agentService: service,
+        onSendToAgent: (_) async => service,
+      );
+
+      await tester.runAsync(() async {
+        await service.sendText('work');
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+      });
+      await tester.pump();
+
+      expect(service.isStreaming, isTrue);
+      expect(find.byType(FaWorkBar), findsOneWidget);
+      expect(find.text('Fa is working…'), findsOneWidget);
+      expect(find.byIcon(Icons.stop_circle_outlined), findsOneWidget);
+
+      await tester.tap(find.byIcon(Icons.stop_circle_outlined));
+      for (var i = 0; i < 30 && service.isStreaming; i++) {
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 100)),
+        );
+      }
+      await tester.pump();
+
+      expect(service.isStreaming, isFalse);
+      expect(find.byIcon(Icons.stop_circle_outlined), findsNothing);
+    });
+
+    testWidgets('wide panel work bar expands the in-app chat overlay', (
+      tester,
+    ) async {
+      final service = _hungService();
+      addTearDown(service.dispose);
+      await _pumpEmbeddedView(
+        tester,
+        agentService: service,
+        onSendToAgent: (_) async => service,
+      );
+      await tester.runAsync(() async {
+        await service.sendText('work');
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+      });
+      await tester.pump();
+
+      await tester.tap(find.byIcon(Icons.open_in_full));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 200));
+
+      expect(find.byType(JsAppView), findsOneWidget);
+      expect(find.byType(FaChatOverlay), findsOneWidget);
+      expect(find.byType(FloatingActionButton), findsNothing);
+      final appBounds = tester.getRect(find.byType(JsAppView));
+      final overlayBounds = tester.getRect(find.byType(FaChatOverlay));
+      expect(overlayBounds.left, greaterThanOrEqualTo(appBounds.left));
+      expect(overlayBounds.right, lessThanOrEqualTo(appBounds.right));
+
+      await tester.tap(find.byIcon(Icons.keyboard_arrow_down));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 200));
+      expect(find.byType(FaChatOverlay), findsNothing);
+      await _stopRun(tester, service);
+    });
+
+    testWidgets('overlay Open full chat delegates navigation to the shell', (
+      tester,
+    ) async {
+      final service = _hungService();
+      addTearDown(service.dispose);
+      var revealCalls = 0;
+      FaChatHost.revealActiveChat = () async => revealCalls++;
+      addTearDown(() => FaChatHost.revealActiveChat = null);
+      await _pumpEmbeddedView(
+        tester,
+        agentService: service,
+        onSendToAgent: (_) async => service,
+      );
+      await tester.runAsync(() async {
+        await service.sendText('work');
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+      });
+      await tester.pump();
+      await tester.tap(find.byIcon(Icons.open_in_full));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 200));
+
+      await tester.tap(find.byTooltip('Open full chat'));
+      await tester.pump();
+
+      expect(revealCalls, 1);
+      expect(find.byType(JsAppView), findsOneWidget);
+      await _stopRun(tester, service);
+    });
+
+    testWidgets('wide full-chrome panel keeps its app menu and Ask Fa', (
+      tester,
+    ) async {
+      await _pumpEmbeddedView(
+        tester,
+        fullChrome: true,
+        onSendToAgent: (_) async => null,
+      );
+
+      expect(find.byType(AppBar), findsNothing);
+      expect(find.byIcon(Icons.more_vert), findsOneWidget);
+      expect(find.byType(FloatingActionButton), findsOneWidget);
+
+      await tester.tap(find.byIcon(Icons.more_vert));
+      await tester.pumpAndSettle();
+      expect(find.text('App permissions'), findsOneWidget);
+      expect(find.text('Reload app'), findsOneWidget);
+      expect(find.text('Close app'), findsOneWidget);
+    });
+  });
+
   group('JS engine (native quickjs/JavaScriptCore bridge)', () {
     TestWidgetsFlutterBinding.ensureInitialized();
 

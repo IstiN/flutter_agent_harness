@@ -50,6 +50,12 @@ dependencies:
   # Brand SVG marks (provider tiles, see providers/provider_marks.dart).
   flutter_svg: ^2.3.0
 
+  # iOS 26/27 liquid-glass widget kit: the styleguide's glass chrome rides
+  # the kit's own AdaptiveGlass/GlassIconButton/GlassTextField (Fa adapters
+  # tune its settings with the Fa tokens), including the fake fallback it
+  # applies automatically on web/Skia.
+  liquid_glass_widgets: ^1.16.1
+
   # Shared LLM abstractions. fa_ui stays UI-only for presets/config, but
   # exposes helpers that map its connection config onto the fa_llm types
   # hosts use to build providers.

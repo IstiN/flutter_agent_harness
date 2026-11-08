@@ -57,8 +57,9 @@ List<CreateBlock> extractCreates(String runText) {
 
     // tag = first positional argument on the create line itself.
     final createLine = stripComment(cmdLines.first).trim();
-    final tagMatch = RegExp(r'gh\s+release\s+create\s+("[^"]*"|\S+)')
-        .firstMatch(createLine);
+    final tagMatch = RegExp(
+      r'gh\s+release\s+create\s+("[^"]*"|\S+)',
+    ).firstMatch(createLine);
     final tag = tagMatch?.group(1);
 
     var title = <String?>[]; // collect from any line

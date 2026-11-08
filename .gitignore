@@ -195,6 +195,10 @@ node_modules
 sdk/web/dist/
 agents/
 
+# runtime preference files written at the repo root during tests
+/session_ui_prefs.json
+/theme.json
+
 # gh-2042 review: CWD artifacts of the release scripts (release_attach_or_create.sh
 # writes release-notes.md, release_drift_check.sh defaults FA_DRIFT_DETAILS to
 # drift-details.txt) — test-run residue, never committed.

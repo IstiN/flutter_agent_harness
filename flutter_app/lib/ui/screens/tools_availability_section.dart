@@ -6,6 +6,7 @@ import 'dart:async';
 
 import 'package:fa/l10n/l10n_ext.dart';
 import 'package:fa/services/agent_service.dart';
+import 'package:fa/ui/screens/settings_tiles.dart';
 import 'package:fa_ui/fa_ui.dart' as faui;
 import 'package:flutter/material.dart';
 
@@ -25,18 +26,20 @@ class ToolsAvailabilitySection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colors = faui.FahColors.of(context);
+    final tokens = faui.FaDesignTokens.of(context);
     return ListenableBuilder(
       listenable: service,
       builder: (context, _) {
         final availability = service.toolAvailability;
         final ids = availability.keys.toList()..sort();
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
+        return SettingsGroup(
+          // One card per section: header row inside, tool rows on the
+          // card's 16pt insets with interleaved hairlines.
+          header: Padding(
+            padding: const EdgeInsets.fromLTRB(12, 4, 12, 4),
+            child: Row(
               children: [
-                Icon(Icons.tune, size: 20, color: colors.dim),
+                Icon(Icons.tune, size: 20, color: tokens.ink2),
                 const SizedBox(width: 12),
                 Expanded(
                   child: Column(
@@ -50,33 +53,30 @@ class ToolsAvailabilitySection extends StatelessWidget {
                         context.l10n.toolsAvailabilityHint,
                         style: Theme.of(
                           context,
-                        ).textTheme.bodySmall?.copyWith(color: colors.dim),
+                        ).textTheme.bodySmall?.copyWith(color: tokens.ink2),
                       ),
                     ],
                   ),
                 ),
               ],
             ),
+          ),
+          children: [
             for (final id in ids)
-              SwitchListTile(
+              SettingsSwitchRow(
                 value: availability[id]!.enabled,
                 // Absent capabilities cannot be enabled — the hard floor.
                 onChanged: availability[id]!.capabilityPresent
                     ? (enabled) =>
                           unawaited(service.setToolEnabled(id, enabled))
                     : null,
-                dense: true,
-                contentPadding: EdgeInsets.zero,
-                title: Text(id, style: Theme.of(context).textTheme.bodyMedium),
+                title: Text(id),
                 subtitle: availability[id]!.capabilityPresent
                     ? null
                     : Text(
                         context.l10n.toolsAvailabilityUnavailable(
                           availability[id]!.reason ?? '',
                         ),
-                        style: Theme.of(
-                          context,
-                        ).textTheme.bodySmall?.copyWith(color: colors.dim),
                       ),
               ),
           ],

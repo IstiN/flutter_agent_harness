@@ -13,6 +13,7 @@ import 'dart:async';
 import 'package:fa/l10n/app_localizations.dart';
 import 'package:fa/services/agent_network_controller.dart';
 import 'package:fa/ui/screens/dap_settings_page.dart';
+import 'package:fa_ui/fa_ui.dart' show FaSwitch;
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
@@ -105,7 +106,7 @@ Future<void> _pump(WidgetTester tester, _RecordingAgentNetwork controller) =>
 void main() {
   testWidgets('unsupported controller shows the honest note', (tester) async {
     await _pump(tester, _RecordingAgentNetwork(isSupported: false));
-    expect(find.byType(Switch), findsNothing);
+    expect(find.byType(FaSwitch), findsNothing);
     expect(find.byType(TextField), findsNothing);
   });
 
@@ -117,12 +118,12 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(controller.toggles, isEmpty);
-      expect(find.byType(Switch), findsOneWidget);
+      expect(find.byType(FaSwitch), findsOneWidget);
       // Opted out: no roster, no hub address.
       expect(find.text('fa-cli'), findsNothing);
       expect(find.text('a1b2c3d4e5f60718'), findsNothing);
 
-      await tester.tap(find.byType(Switch));
+      await tester.tap(find.byType(FaSwitch));
       await tester.pumpAndSettle();
 
       expect(controller.toggles, [true]);

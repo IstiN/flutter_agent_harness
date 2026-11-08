@@ -107,10 +107,6 @@ final class AppAnalytics {
         'length_bucket': _bucket(textLength, [0, 50, 200, 1000]),
       });
 
-  /// A chat session was created/switched/deleted in the sidebar.
-  void sessionAction(String action) =>
-      _log('session_action', {'action': action});
-
   /// Widget-catalog lifecycle event (`name` without the `widget_` prefix —
   /// added here so call sites stay grep-able and names stay consistent).
   void widgetEvent(String name, {Map<String, Object> params = const {}}) =>
@@ -143,10 +139,6 @@ final class AppAnalytics {
   /// the stable screen id — this is the user-path backbone.
   void screenOpened(String screen) =>
       _log('screen_opened', {'screen_name': screen});
-
-  /// The session chat sheet changed state (collapsed/mini/expanded).
-  void chatSheetState(String state) =>
-      _log('chat_sheet_state', {'state': state});
 
   /// A JS app was opened from the launcher or the open_app tool. Demo flag
   /// only — user-given app ids could carry personal naming.

@@ -21,6 +21,12 @@ const _documentedExemptions = <String, String>{
       'pre-permission screen — deliberately carries no analytics calls '
       'so nothing about a user\u0027s consent journey is tracked; the '
       'screen reconciles state locally via MobileControlContract.',
+  'lib/ui/screens/settings_tiles.dart':
+      'Not a screen — the shared settings row-control library (switch/'
+      'radio rows, token dropdown, hairline rows) extracted for the Fa2 '
+      'settings rebuild; the sections that compose these rows (settings.'
+      'dart and its part files) carry the screenOpened and section '
+      'events — the rows fire no user paths of their own.',
   'lib/ui/screens/settings_flows.dart':
       'Part file of settings.dart (gh-1848 tier-3): the connect/re-auth '
       'flow dispatch helpers; the settings analytics (screenOpened and '
@@ -85,7 +91,6 @@ Iterable<String> _trackedFiles() sync* {
   }
   yield 'lib/ui/widgets/chat_composer.dart';
   yield 'lib/apps/js_app_view.dart';
-  yield 'lib/apps/session_chat_sheet.dart';
 }
 
 /// `  void name(` method declarations on AppAnalytics (two-space indent).

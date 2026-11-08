@@ -354,7 +354,7 @@ class _AppTileHostState extends State<AppTileHost> {
         decoration: BoxDecoration(
           color: colors.panelAlt,
           borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: colors.border),
+          border: Border.all(color: colors.border.withValues(alpha: .45)),
         ),
         child: ClipRRect(
           borderRadius: BorderRadius.circular(16),

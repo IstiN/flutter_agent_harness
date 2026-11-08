@@ -166,6 +166,7 @@ class _OAuthWebViewScaffoldState<T> extends State<OAuthWebViewScaffold<T>> {
     final theme = Theme.of(context);
     return Scaffold(
       appBar: faAppBar(
+        context: context,
         title: Text(
           widget.title,
         ), // l10n:ignore — proper noun, fallback-only screen

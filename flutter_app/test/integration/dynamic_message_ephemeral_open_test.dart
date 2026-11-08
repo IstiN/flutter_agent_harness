@@ -125,7 +125,12 @@ void main() {
         findsOneWidget,
       );
       // ⋮ → Open as app (without saving).
-      await tester.tap(find.byTooltip('More actions'));
+      await tester.tap(
+        find.descendant(
+          of: find.byType(DynamicWidgetTile, skipOffstage: false),
+          matching: find.byTooltip('More actions'),
+        ),
+      );
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 400));
       await tester.tap(find.text('Open as app (without saving)'));

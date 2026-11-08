@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import 'package:fa/services/provider_registry.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:fa/ui/screens/settings_key_dialogs.dart';
+import 'package:fa_ui/fa_ui.dart' show FaFontPreset;
 import 'package:fa/services/session_keys_store.dart';
 import 'package:fa/services/theme_controller.dart';
 import 'package:fa/ui/screens/settings.dart';
@@ -68,7 +69,6 @@ UploadFile _uploadFile(String name, Uint8List bytes) =>
 void main() {
   group('ThemeModeSection', () {
     testWidgets('hides when no controller is available', (tester) async {
-
       await _pump(tester, const ThemeModeSection());
       expect(find.text('Theme'), findsNothing);
     });
@@ -327,8 +327,9 @@ void main() {
   });
 
   group('CliOnlySettingsSection (issue #288 AC4)', () {
-    testWidgets('lists every registry CLI-only setting with its reason',
-        (tester) async {
+    testWidgets('lists every registry CLI-only setting with its reason', (
+      tester,
+    ) async {
       await _pump(tester, const CliOnlySettingsSection());
 
       expect(find.text('CLI-only settings'), findsOneWidget);
@@ -347,8 +348,9 @@ void main() {
       }
     });
 
-    testWidgets('never renders an empty reason row (silent absence guard)',
-        (tester) async {
+    testWidgets('never renders an empty reason row (silent absence guard)', (
+      tester,
+    ) async {
       await _pump(tester, const CliOnlySettingsSection());
       final reasons = tester
           .widgetList<Text>(find.byType(Text))
@@ -358,6 +360,23 @@ void main() {
       expect(find.text(''), findsNothing);
     });
   });
+  group('VisualDirectionSection fonts', () {
+    testWidgets('font preset dropdown switches the controller', (tester) async {
+      final controller = ThemeController.inMemory();
+      await _pump(tester, VisualDirectionSection(controller: controller));
+
+      expect(find.text('Font'), findsOneWidget);
+      expect(find.text('System SF'), findsOneWidget);
+      await tester.tap(find.byType(DropdownButtonFormField<FaFontPreset>));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Geist').last);
+      await tester.pumpAndSettle();
+
+      expect(controller.fontPreset, FaFontPreset.geist);
+      expect(find.text('Geist'), findsOneWidget);
+    });
+  });
+
   group('ThemePacksSection', () {
     testWidgets('hides when no store scope is available', (tester) async {
       await _pump(tester, const ThemePacksSection());
@@ -413,9 +432,7 @@ void main() {
           store: store,
           child: FahThemeScope(
             controller: controller,
-            child: ThemePacksSection(
-              picker: picker,
-            ),
+            child: ThemePacksSection(picker: picker),
           ),
         ),
       );
@@ -424,7 +441,9 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(store.packs.single.name, 'Forest Walk');
-      picker.files = [_uploadFile('bad.zip', Uint8List.fromList([1, 2, 3]))];
+      picker.files = [
+        _uploadFile('bad.zip', Uint8List.fromList([1, 2, 3])),
+      ];
       expect(find.textContaining('installed'), findsOneWidget);
       // SnackBars queue: let the install report retire before tapping
       // again, or the rejection report waits out its 6s slot.

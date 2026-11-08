@@ -6,6 +6,7 @@ import 'package:fa/l10n/app_localizations.dart';
 import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/tools_availability_store.dart';
 import 'package:fa/ui/app_theme.dart';
+import 'package:fa/ui/screens/settings_tiles.dart';
 import 'package:fa/ui/screens/tools_availability_section.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
@@ -27,7 +28,7 @@ Future<AgentService> _createService([ExecutionEnv? env]) async {
 }
 
 Finder _row(String id) =>
-    find.ancestor(of: find.text(id), matching: find.byType(SwitchListTile));
+    find.ancestor(of: find.text(id), matching: find.byType(SettingsSwitchRow));
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -217,20 +218,23 @@ void main() {
       );
       await pumpN();
 
-      expect(find.byType(SwitchListTile), findsNWidgets(knownToolIds.length));
+      expect(
+        find.byType(SettingsSwitchRow),
+        findsNWidgets(knownToolIds.length),
+      );
 
       // A wired tool: switch on and interactive.
-      final bashRow = tester.widget<SwitchListTile>(_row('bash'));
+      final bashRow = tester.widget<SettingsSwitchRow>(_row('bash'));
       expect(bashRow.value, isTrue);
       expect(bashRow.onChanged, isNotNull);
 
       // An absent capability: switch off, disabled, with its reason shown.
-      final sqliteRow = tester.widget<SwitchListTile>(_row('sqlite'));
+      final sqliteRow = tester.widget<SettingsSwitchRow>(_row('sqlite'));
       expect(sqliteRow.value, isFalse);
       expect(sqliteRow.onChanged, isNull);
       expect(find.textContaining('FFI SQLite engine'), findsOneWidget);
       // Host-bound family row (issue #327 AC5): present, off, disabled.
-      final outlookRow = tester.widget<SwitchListTile>(_row('outlook'));
+      final outlookRow = tester.widget<SettingsSwitchRow>(_row('outlook'));
       expect(outlookRow.value, isFalse);
       expect(outlookRow.onChanged, isNull);
       expect(find.textContaining('Outlook add-in host'), findsOneWidget);
@@ -276,7 +280,7 @@ void main() {
         service.toolsForTest.map((tool) => tool.name),
         isNot(contains('bash')),
       );
-      expect(tester.widget<SwitchListTile>(_row('bash')).value, isFalse);
+      expect(tester.widget<SettingsSwitchRow>(_row('bash')).value, isFalse);
       expect(
         (await ToolsAvailabilityStore(env).load())?.tools['bash'],
         isFalse,

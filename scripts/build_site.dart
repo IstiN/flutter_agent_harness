@@ -327,7 +327,7 @@ String _nav(String prefix, {String? current}) =>
 <header class="nav">
   <div class="nav-inner">
     <a class="brand" href="$prefix">
-      <span class="brand-mark" aria-hidden="true">&gt;_</span>
+      <img class="brand-mark" src="${prefix}favicon.svg?v=3" width="20" height="20" alt="">
       <span class="brand-name">Fa</span>
       <span class="brand-sub">fa1.dev</span>
     </a>

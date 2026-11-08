@@ -15,6 +15,7 @@ import 'package:fa_ui/src/stores/provider_registry.dart';
 import 'package:fa_ui/src/stores/session_keys_store.dart';
 import 'package:fa_ui/src/strings/fa_ui_strings.dart';
 import 'package:fa_ui/src/utils/page_presentation.dart';
+import 'package:fa_ui/src/widgets/fa_route_header.dart';
 import 'package:fa_ui/src/widgets/settings_scaffold.dart';
 
 /// Pushes the [ProviderEditorPage] in create mode and saves the result to
@@ -486,7 +487,7 @@ class _ProviderEditorPageState extends State<ProviderEditorPage> {
     final strings = FaUiStrings.of(context);
     final preset = widget.preset;
     return Scaffold(
-      appBar: AppBar(title: Text(widget.title)),
+      appBar: faRouteAppBar(context: context, title: Text(widget.title)),
       body: SafeArea(
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(24),

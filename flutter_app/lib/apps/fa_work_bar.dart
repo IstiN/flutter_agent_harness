@@ -388,7 +388,10 @@ class FaOrbitIndicator extends StatelessWidget {
           alignment: Alignment.center,
           children: [
             Positioned.fill(
-              child: CustomPaint(painter: _OrbitPainter(animation.value)),
+              child: CustomPaint(
+                key: const ValueKey('faWorkBarOrbitPaint'),
+                painter: _OrbitPainter(animation.value),
+              ),
             ),
             FaMark(size: size * 0.45),
           ],

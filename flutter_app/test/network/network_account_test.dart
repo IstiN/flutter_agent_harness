@@ -7,6 +7,8 @@
 /// token refresh on restore, the session-expired fallback, sign-out.
 library;
 
+import 'dart:convert';
+
 import 'package:fa/network/key_wallet.dart';
 import 'package:fa/network/network_session_manager.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -30,11 +32,15 @@ Future<NetworkSessionManager> _manager({
   KeyWallet? wallet,
   FakeHttpClient? httpClient,
   DateTime Function()? clock,
+  Uri? authBaseUrl,
+  String? jwt,
 }) async => NetworkSessionManager(
   baseUrl: testBase,
+  authBaseUrl: authBaseUrl,
   wallet: wallet ?? await KeyWallet.load(MemoryWalletBackend()),
   httpClient: httpClient ?? FakeHttpClient(),
   wsConnector: FakeWsConnector(),
+  jwtToken: jwt,
   startReceiver: () async => FakeOAuthReceiver(callbackUri: kFakeOAuthCallback),
   openUrl: (_) async {},
   clock: clock,
@@ -208,6 +214,143 @@ void main() {
       await manager.restoreAccount();
       expect(manager.hasJwt, isFalse);
       expect(manager.sessionExpired, isFalse);
+      expect(httpClient.requests, isEmpty);
+    });
+
+    test('accountClient accepts a dev/injected JWT without a wallet account '
+        'or implicit account-network sync', () async {
+      final httpClient = FakeHttpClient();
+      final manager = await _manager(httpClient: httpClient, jwt: 'jwt-dev');
+
+      final client = await manager.accountClient();
+
+      expect(client, isNotNull);
+      expect(httpClient.requests, isEmpty);
+      httpClient.respond(200, body: '{"items":[]}');
+      await client!.listInbox();
+      expect(httpClient.requests.single.url.path, '/api/inbox');
+      expect(
+        httpClient.requests.single.headers['authorization'],
+        'Bearer jwt-dev',
+      );
+    });
+
+    test('accountClient refreshes an expired wallet token on FA_AUTH_URL, '
+        'persists it, and uses only the fresh JWT on the relay', () async {
+      final authBaseUrl = Uri.parse('https://auth.example.test');
+      final httpClient = FakeHttpClient()
+        ..respond(
+          200,
+          body:
+              '{"accessToken":"at-new","refreshToken":"rt-new",'
+              '"expiresIn":3600,"refreshExpiresIn":86400}',
+        )
+        ..respond(200, body: '{"items":[]}');
+      final wallet = await KeyWallet.load(MemoryWalletBackend());
+      await wallet.saveAccount(
+        _account(
+          accessExpiresAt: DateTime.utc(2026, 2, 1, 11),
+          refreshExpiresAt: DateTime.utc(2026, 3, 1),
+        ),
+      );
+      final now = DateTime.utc(2026, 2, 1, 12);
+      final manager = await _manager(
+        wallet: wallet,
+        httpClient: httpClient,
+        authBaseUrl: authBaseUrl,
+        clock: () => now,
+      );
+
+      final client = await manager.accountClient();
+      expect(client, isNotNull);
+      await client!.listInbox(limit: 10);
+
+      expect(httpClient.requests, hasLength(2));
+      final refresh = httpClient.requests.first;
+      expect(refresh.url.origin, authBaseUrl.origin);
+      expect(refresh.url.path, '/api/auth/refresh');
+      expect(jsonDecode(refresh.body), {'refreshToken': 'rt-old'});
+      final inbox = httpClient.requests.last;
+      expect(inbox.url.origin, testBase.origin);
+      expect(inbox.url.path, '/api/inbox');
+      expect(inbox.headers['authorization'], 'Bearer at-new');
+      expect(wallet.account?.accessToken, 'at-new');
+      expect(wallet.account?.refreshToken, 'rt-new');
+      expect(manager.sessionExpired, isFalse);
+      expect(
+        httpClient.requests.where((r) => r.url.path == '/api/networks/mine'),
+        isEmpty,
+      );
+    });
+
+    test(
+      'concurrent ensureFreshJwt callers coalesce one token-only refresh',
+      () async {
+        final httpClient = FakeHttpClient()
+          ..respond(
+            200,
+            body:
+                '{"accessToken":"at-new","refreshToken":"rt-new",'
+                '"expiresIn":3600}',
+          );
+        final wallet = await KeyWallet.load(MemoryWalletBackend());
+        await wallet.saveAccount(
+          _account(accessExpiresAt: DateTime.utc(2026, 2, 1, 11)),
+        );
+        final manager = await _manager(
+          wallet: wallet,
+          httpClient: httpClient,
+          clock: () => DateTime.utc(2026, 2, 1, 12),
+        );
+
+        final tokens = await Future.wait([
+          manager.ensureFreshJwt(),
+          manager.ensureFreshJwt(),
+          manager.ensureFreshJwt(),
+        ]);
+
+        expect(tokens, everyElement('at-new'));
+        expect(httpClient.requests.single.url.path, '/api/auth/refresh');
+        expect(wallet.account?.accessToken, 'at-new');
+      },
+    );
+
+    test('refresh failure returns no account client and clears a stale JWT '
+        'without making a relay request', () async {
+      final httpClient = FakeHttpClient()
+        ..respond(
+          401,
+          body: '{"error":{"code":"unauthorized","message":"bad refresh"}}',
+        );
+      final wallet = await KeyWallet.load(MemoryWalletBackend());
+      await wallet.saveAccount(
+        _account(accessExpiresAt: DateTime.utc(2026, 2, 1, 11)),
+      );
+      final manager = await _manager(
+        wallet: wallet,
+        httpClient: httpClient,
+        jwt: 'stale-jwt',
+        clock: () => DateTime.utc(2026, 2, 1, 12),
+      );
+
+      expect(await manager.accountClient(), isNull);
+
+      expect(manager.hasJwt, isFalse);
+      expect(manager.sessionExpired, isTrue);
+      expect(httpClient.requests.single.url.path, '/api/auth/refresh');
+      expect(
+        httpClient.requests.where((r) => r.url.origin == testBase.origin),
+        isEmpty,
+      );
+    });
+
+    test('signed-out accountClient and ensureFreshJwt return null without '
+        'HTTP', () async {
+      final httpClient = FakeHttpClient();
+      final manager = await _manager(httpClient: httpClient);
+
+      expect(await manager.ensureFreshJwt(), isNull);
+      expect(await manager.accountClient(), isNull);
       expect(httpClient.requests, isEmpty);
     });
 

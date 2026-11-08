@@ -71,7 +71,7 @@ extension AgentServiceHistory on AgentService {
       await _syncViewToWindow(windowed);
       await _applyViewBranch();
       if (gen != _loadGeneration) return false;
-      await _refreshHistoryAbove();
+      await _refreshHistoryAboveAfterWindowMove(windowed, gen);
       if (gen != _loadGeneration) return false;
       _historyLoadError = null;
       return true;
@@ -83,6 +83,12 @@ extension AgentServiceHistory on AgentService {
       _notify();
     }
   }
+
+  /// Loads the optional exact history counts on explicit host request.
+  /// Opening, live append, and ordinary paging never do this automatically:
+  /// for a windowed multi-GiB session the first count is a whole-file
+  /// newline scan. Scrollback needs only the bounded has-older edge flag.
+  Future<void> loadHistoryCount() => _refreshHistoryAbove();
 
   /// Recomputes [historyAboveCount] from the window's own above-count
   /// (maintained incrementally by the storage; `null` = unknown — right
@@ -98,6 +104,11 @@ extension AgentServiceHistory on AgentService {
     // without the number.
     final int? count;
     try {
+      // countAbove() quite correctly short-circuits once ordinary paging
+      // knows the edge count. An EXPLICIT metadata request must still fill
+      // the total: otherwise reaching the file top makes this API a no-op
+      // and the terminal banner can never learn its N.
+      await windowed.countRecords();
       count = await windowed.countAbove();
     } on Object {
       return;
@@ -107,6 +118,24 @@ extension AgentServiceHistory on AgentService {
       _historyAboveCount = count;
       _notify();
     }
+  }
+
+  /// Cheap banner bookkeeping after a window move. Ordinary paging must
+  /// not turn into a whole-file newline scan merely to label the button:
+  /// until an exact count was explicitly requested, `null` means "more"
+  /// and the storage's bounded edge flag tells us when the top is reached.
+  Future<void> _refreshHistoryAboveAfterWindowMove(
+    WindowedSessionStorage windowed,
+    int gen,
+  ) async {
+    if (windowed.cachedTotalRecords != null) {
+      await _refreshHistoryAbove();
+      return;
+    }
+    final count = windowed.hasOlder ? null : 0;
+    if (gen != _loadGeneration || _historyAboveCount == count) return;
+    _historyAboveCount = count;
+    _notify();
   }
 
   /// Rebuilds the visible transcript rows and the trajectory ledger
@@ -243,7 +272,7 @@ extension AgentServiceHistory on AgentService {
     // projection snapshot. The contains-check and the empty-bubble
     // guard mirror _finalizeAssistant's own invariants.
     messages.addAll(_liveTranscriptRows().toList());
-    await _refreshHistoryAbove();
+    await _refreshHistoryAboveAfterWindowMove(windowed, gen);
     return gen == _loadGeneration;
   }
 

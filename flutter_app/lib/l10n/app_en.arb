@@ -41,6 +41,114 @@
   "appsFaStatusWriting": "writing…",
   "appsFollowUpHint": "Follow up…",
   "appsGridTitle": "Apps",
+  "appsOverviewSubtitle": "My Apps · Widgets Catalog",
+  "appsMyApps": "My Apps",
+  "appsMyAppsSubtitle": "Installed apps and running widgets.",
+  "appsWidgetStore": "Widgets Catalog",
+  "appsWidgetStoreSubtitle": "Browse and install widgets into My Apps.",
+  "appsWidgetCatalog": "Widget catalog",
+  "appsInstalledCount": "{count} installed",
+  "@appsInstalledCount": {
+    "placeholders": {
+      "count": {}
+    }
+  },
+  "appsActiveCount": "{count} active apps",
+  "@appsActiveCount": {
+    "placeholders": {
+      "count": {}
+    }
+  },
+  "appsRunning": "Running",
+  "appsQuickOpen": "Quick open",
+  "appsFullTooltip": "Full",
+  "appsExitFullTooltip": "Exit full",
+  "appsPinTooltip": "Pin",
+  "appsUnpinTooltip": "Unpin",
+  "wideNavChats": "Chats",
+  "wideNavLocal": "Local",
+  "localFoldersTitle": "Local folders",
+  "localSessionsEmpty": "No sessions in this folder yet",
+  "localFoldersEmpty": "No project folders yet",
+  "localFolderBack": "Back to folders",
+  "localFoldersSearchHint": "Search folders",
+  "listSearchNoMatches": "No matches for \"{query}\"",
+  "wideChatsSearchHint": "Search chats",
+  "wideChatFallbackTitle": "New chat",
+  "chatFilterAll": "All",
+  "chatFilterUnread": "Unread",
+  "chatFilterAgents": "Agents",
+  "chatFilterChannels": "Channels",
+  "chatAllNetworks": "All networks",
+  "chatMyNetwork": "My network",
+  "chatManageNetworks": "Manage networks",
+  "chatNetworkStatusConnected": "Connected",
+  "@chatNetworkStatusConnected": {
+    "description": "Networks-list row meta for a membership with a live relay session"
+  },
+  "chatNetworkStatusOffline": "Relay offline",
+  "@chatNetworkStatusOffline": {
+    "description": "Networks-list row meta for a membership whose relay dropped (network.offline)"
+  },
+  "chatNetworkStatusIdle": "Not connected",
+  "@chatNetworkStatusIdle": {
+    "description": "Networks-list row meta for a stored membership with no live session"
+  },
+  "chatNetworkChannelsEmpty": "No channels yet",
+  "@chatNetworkChannelsEmpty": {
+    "description": "Empty channel drill-down in the chat column's networks panel"
+  },
+  "chatNetworkChannelPublic": "Public channel",
+  "@chatNetworkChannelPublic": {
+    "description": "Channel row meta for a showcase (public) channel"
+  },
+  "chatNetworkChannelPrivate": "Private channel",
+  "@chatNetworkChannelPrivate": {
+    "description": "Channel row meta for a private (keys-required) channel"
+  },
+  "chatSignInNetwork": "Sign in to Fa Network",
+  "chatProfileSettings": "Profile & settings",
+  "chatNew": "New",
+  "chatPinned": "Pinned",
+  "chatRecent": "Recent",
+  "chatNoConversationsTitle": "No chats yet",
+  "chatNoConversationsBody": "Start a local chat. Network sign-in is optional.",
+  "chatStartChat": "Start a chat",
+  "chatNoUnread": "No unread conversations.",
+  "chatNoAgents": "No agents match this filter.",
+  "chatNoChannels": "No channels match this filter.",
+  "chatNoNetworkResults": "No conversations in this network.",
+  "chatNoSearchResults": "No chats match your search.",
+  "chatClearSearch": "Clear search",
+  "chatNoPreview": "No messages yet",
+  "chatNetworkUnavailable": "Network chats are unavailable. Local chats still work.",
+  "chatLoadError": "Chats could not be loaded.",
+  "chatRetry": "Retry",
+  "chatCreateJoinNetwork": "Create or join a network",
+  "chatOpenNetwork": "Open network",
+  "chatNetworksEmpty": "No network memberships yet.",
+  "chatPin": "Pin chat",
+  "chatUnpin": "Unpin chat",
+  "chatWorking": "Working…",
+  "chatTimeNow": "now",
+  "chatMinuteSuffix": "m",
+  "chatHourSuffix": "h",
+  "chatDaySuffix": "d",
+  "chatLocal": "Local",
+  "chatSearchShortcut": "⌘F",
+  "chatMoreActions": "Chat actions",
+  "commonMore": "More",
+  "chatExpand": "Expand subagents",
+  "chatCollapse": "Collapse",
+  "wideNavActivity": "Activity",
+  "activityRunning": "Running",
+  "activityRecent": "Recent",
+  "activityAll": "All activity",
+  "activitySearchHint": "Search activity",
+  "activityChoose": "Choose an activity item",
+  "activityStatus": "Status",
+  "activityLastActivity": "Last activity",
+  "activityEmpty": "No session activity yet.",
   "appsHideAppsTooltip": "Hide apps",
   "appsLoadError": "Failed to load apps: {error}",
   "widgetsCatalogInstallFailed": "Install failed: {error}",
@@ -120,7 +228,6 @@
   "chatAttachNoName": "Could not attach \"{name}\": no usable file name.",
   "chatAttachTooltip": "Attach",
   "chatCamera": "Camera",
-  "chatCollapse": "Collapse",
   "chatCopiedToClipboard": "Session copied to clipboard",
   "chatCopySessionTooltip": "Copy session",
   "chatFilesTooltip": "Files",
@@ -154,10 +261,13 @@
   "filePreviewTooLarge": "File too large to preview",
   "filePreviewTruncated": "Showing the first {size} — truncated",
   "filesBackTooltip": "Back to files",
+  "filesCloseTooltip": "Close files",
   "filesEmptyFileName": "(empty file name)",
   "filesEmptyFolder": "Empty folder",
+  "filesFilesSection": "Files",
   "filesFolderAccessDenied": "Could not get access to that folder.",
   "filesFolderPickerError": "Could not open folder picker: {error}",
+  "filesFoldersSection": "Folders",
   "filesICloudSyncDone": "Synced {files} files ({size}) — last sync {when}",
   "filesICloudSyncFailed": "iCloud sync failed: {error}",
   "filesICloudSyncTooltip": "Sync sessions and apps with iCloud",
@@ -165,10 +275,15 @@
   "filesListFolderError": "Could not list folder",
   "filesMountUnavailableTooltip": "Previously used folder is unavailable: {path} — tap to pick again",
   "filesOpenFolderError": "Could not open folder",
+  "filesSessionFolderGateTitle": "This chat's folder is not accessible",
+  "filesSessionFolderGateBody": "Files can only browse folders Fa has access to. This conversation lives in {folder} — grant access to browse its files here.",
+  "filesSessionFolderGateAllow": "Allow access",
   "filesOpenProjectFolderTooltip": "Open project folder…",
   "filesPanelTitle": "Files",
   "filesRefreshTooltip": "Refresh",
   "filesRetryButton": "Retry",
+  "filesSearchHint": "Search files…",
+  "filesNoSearchMatches": "No matching files",
   "filesUnmountTooltip": "Unmount {path}",
   "filesUpTooltip": "Up",
   "filesUploadFailed": "Upload failed: {error}",
@@ -217,7 +332,7 @@
   },
   "launcherRemoveWidgetBody": "The widget files are deleted; its saved data (storage.json) is kept, so reinstalling restores its state.",
   "@launcherRemoveWidgetBody": {},
-  "launcherSearchHint": "Search widgets…",
+  "launcherSearchHint": "Search apps and widgets…",
   "@launcherSearchHint": {},
   "launcherTabWidgets": "Widgets",
   "@launcherTabWidgets": {},
@@ -1069,6 +1184,7 @@
     "description": "Network home back button tooltip"
   },
   "networkSearchHint": "Search networks",
+  "networkChannelsSearchHint": "Search channels",
   "@networkSearchHint": {
     "description": "Network search field hint"
   },
@@ -1398,6 +1514,9 @@
   "@networkChannelDeleted": {
     "description": "Snackbar after a channel was deleted"
   },
+  "networkInvitePerson": "Invite person…",
+  "networkInvitePersonTitle": "Invite a person",
+  "networkInvitePersonBody": "This link joins the whole network. Anyone who receives it can use it.",
   "networkAddAgent": "Add agent…",
   "@networkAddAgent": {
     "description": "Channel overflow menu item opening the agent invite"
@@ -1682,5 +1801,43 @@
   "networkAddAgentPublicHint": "Anyone with this link can read the channel — it is public. Agents join keyless.",
   "@networkAddAgentPublicHint": {
     "description": "Agent invite dialog hint for public (keyless) channels"
+  },
+  "onboardingJoinNetwork": "Join a network",
+  "@onboardingJoinNetwork": {
+    "description": "Alternative to provider setup during onboarding"
+  },
+  "onboardingJoinNetworkSubtitle": "Collaborate through a joined network — no AI provider setup required.",
+  "@onboardingJoinNetworkSubtitle": {
+    "description": "Explains the network path through onboarding"
+  },
+  "visualDirectionTitle": "Visual direction",
+  "@visualDirectionTitle": {
+    "description": "Fa 2.0 visual direction settings title"
+  },
+  "visualDirectionSubtitle": "Choose one shared language for surfaces, color and motion. Every direction supports light and dark mode.",
+  "@visualDirectionSubtitle": {
+    "description": "Fa 2.0 visual direction settings explanation"
+  },
+  "visualDirectionSelected": "Selected",
+  "@visualDirectionSelected": {
+    "description": "Accessibility label for the selected visual direction"
+  },
+  "fontPresetTitle": "Font",
+  "@fontPresetTitle": {
+    "description": "Fa 2.0 font preset settings title"
+  },
+  "chatSubagentFilterActive": "Active ({count})",
+  "@chatSubagentFilterActive": {
+    "description": "Subagent picker activity filter: active sessions",
+    "placeholders": {
+      "count": {}
+    }
+  },
+  "chatSubagentFilterDone": "Done ({count})",
+  "@chatSubagentFilterDone": {
+    "description": "Subagent picker activity filter: finished sessions",
+    "placeholders": {
+      "count": {}
+    }
   }
 }

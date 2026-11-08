@@ -7,6 +7,17 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('every direction uses clean ripple ink, never noisy InkSparkle', () {
+    for (final direction in FaVisualDirection.values) {
+      final theme = buildFaTheme(
+        brightness: Brightness.dark,
+        direction: direction,
+      );
+      expect(theme.splashFactory, same(InkRipple.splashFactory));
+      expect(theme.splashFactory, isNot(same(InkSparkle.splashFactory)));
+    }
+  });
+
   test('the dark theme uses the landing palette', () {
     final theme = buildFahTheme();
     expect(theme.brightness, Brightness.dark);

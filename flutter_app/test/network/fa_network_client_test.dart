@@ -365,6 +365,40 @@ void main() {
       );
     });
 
+    test('listInbox uses only limit+cursor, the account JWT, and OpenAPI '
+        'createdAt/base64 envelope fields', () async {
+      client = build(jwtToken: 'jwt-tok', sessionToken: 'sess-tok');
+      httpClient.respond(
+        200,
+        body:
+            '{"items":[{"kind":"channel","networkId":"net1","id":"c1",'
+            '"title":"general","lastActivity":"2026-08-01T12:00:00Z",'
+            '"unreadCount":3,"lastEnvelope":{"id":"env1",'
+            '"channelId":"c1","senderId":"member1","payload":"aGVsbG8=",'
+            '"createdAt":"2026-08-01T12:00:00Z"}}],"nextCursor":"next"}',
+      );
+
+      final page = await client.listInbox(limit: 25, cursor: 'opaque cursor');
+
+      final item = page.items.single;
+      expect(item.lastActivity, DateTime.utc(2026, 8, 1, 12));
+      expect(item.unreadCount, 3);
+      expect(item.lastEnvelope?.channelId, 'c1');
+      expect(item.lastEnvelope?.payload, 'aGVsbG8=');
+      expect(item.lastEnvelope?.createdAt, DateTime.utc(2026, 8, 1, 12));
+      expect(page.nextCursor, 'next');
+      final req = httpClient.requests.single;
+      expect(req.method, 'GET');
+      expect(req.url.origin, 'https://network.fa1.dev');
+      expect(req.url.path, '/api/inbox');
+      expect(req.url.queryParameters, {
+        'limit': '25',
+        'cursor': 'opaque cursor',
+      });
+      expect(req.url.queryParameters.containsKey('kinds'), isFalse);
+      expect(req.headers['authorization'], 'Bearer jwt-tok');
+    });
+
     test('deleteNetwork accepts 204', () async {
       httpClient.respond(204);
       await client.deleteNetwork('net1');
@@ -491,6 +525,49 @@ void main() {
       final uri = httpClient.requests.single.url;
       expect(uri.queryParameters['cursor'], 'cur1');
       expect(uri.queryParameters['limit'], '10');
+    });
+
+    test('markChannelRead sends exactly one selector and encodes the opaque '
+        'channel id path segment', () async {
+      client = build(jwtToken: 'jwt-tok', sessionToken: 'sess-tok');
+      const channelId = 'channel/ opaque?#%';
+      httpClient.respond(204);
+      await client.markChannelRead(channelId, seq: 7);
+      var req = httpClient.requests.single;
+      expect(req.method, 'PATCH');
+      expect(
+        req.url.toString(),
+        'https://network.fa1.dev/api/channels/'
+        '${Uri.encodeComponent(channelId)}/read',
+      );
+      expect(req.headers['authorization'], 'Bearer jwt-tok');
+      expect(jsonDecode(req.body), {'seq': 7});
+
+      httpClient.respond(204);
+      await client.markChannelRead('c1', envelopeId: 'env1');
+      req = httpClient.requests.last;
+      expect(jsonDecode(req.body), {'envelopeId': 'env1'});
+
+      httpClient.respond(204);
+      await client.markChannelRead('c1', all: true);
+      req = httpClient.requests.last;
+      expect(jsonDecode(req.body), {'all': true});
+    });
+
+    test('markChannelRead rejects zero or multiple selectors before HTTP', () {
+      final invalidCalls = <void Function()>[
+        () => client.markChannelRead('c1'),
+        () => client.markChannelRead('c1', seq: 1, envelopeId: 'env1'),
+        () => client.markChannelRead('c1', seq: 1, all: true),
+        () => client.markChannelRead('c1', envelopeId: 'env1', all: true),
+        () =>
+            client.markChannelRead('c1', seq: 1, envelopeId: 'env1', all: true),
+      ];
+
+      for (final call in invalidCalls) {
+        expect(call, throwsArgumentError);
+      }
+      expect(httpClient.requests, isEmpty);
     });
 
     test('sendMessage posts the envelope and parses the 202 echo', () async {

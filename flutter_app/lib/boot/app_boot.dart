@@ -315,6 +315,7 @@ Future<BootStores> loadBootStores(ExecutionEnv env) async {
     baseUrl: Uri.parse(faNetworkBaseUrl),
     authBaseUrl: Uri.parse(faAuthBaseUrl),
     wallet: networkWallet,
+    httpClient: createPlatformHttpClient(),
   );
   // Restore the persisted ai-native account (issue #955 iteration 3):
   // an unexpired token becomes the JWT, an expired one is refreshed

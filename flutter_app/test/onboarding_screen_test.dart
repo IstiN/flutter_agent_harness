@@ -4,6 +4,7 @@
 
 import 'package:fa/l10n/app_localizations.dart';
 import 'package:fa/main.dart';
+import 'package:fa/network/network_mode.dart';
 import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/analytics.dart';
 import 'package:fa/services/last_connection.dart';
@@ -14,7 +15,7 @@ import 'package:fa/services/skills_access_store.dart';
 import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/screens/onboarding_screen.dart';
 import 'package:fa/ui/widgets/fa_mark.dart';
-import 'package:fa_ui/fa_ui.dart' show ProviderEditorPage;
+import 'package:fa_ui/fa_ui.dart' show FaDesignTokens, ProviderEditorPage;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
@@ -34,6 +35,7 @@ Future<void> _pumpOnboarding(
   void Function({required bool skipped})? onFinished,
   ProviderRegistry? registry,
   LastConnectionStore? lastConnectionStore,
+  NetworkModeController? networkMode,
 }) {
   return tester.pumpWidget(
     MaterialApp(
@@ -48,6 +50,7 @@ Future<void> _pumpOnboarding(
           onFinished: onFinished,
           registry: registry,
           lastConnectionStore: lastConnectionStore,
+          networkMode: networkMode,
         ),
       ),
     ),
@@ -162,6 +165,52 @@ void main() {
       expect(find.text('Choose how Fa thinks.'), findsOneWidget);
     });
 
+    testWidgets('informational actions cannot bypass the connection gate', (
+      tester,
+    ) async {
+      final store = OnboardingStore.inMemory();
+      var finished = false;
+      await _pumpOnboarding(
+        tester,
+        initialPage: 3,
+        onboardingStore: store,
+        registry: ProviderRegistry.inMemory(),
+        onFinished: ({required bool skipped}) => finished = true,
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Skip'), findsNothing);
+      await tester.tap(find.text('Open Fa'));
+      await tester.pumpAndSettle();
+      expect(store.seen, isFalse);
+      expect(finished, isFalse);
+      expect(find.text('Your sandbox is ready.'), findsOneWidget);
+    });
+
+    testWidgets('a selected network satisfies the onboarding gate', (
+      tester,
+    ) async {
+      final store = OnboardingStore.inMemory();
+      var finished = false;
+      await _pumpOnboarding(
+        tester,
+        initialPage: 3,
+        onboardingStore: store,
+        registry: ProviderRegistry.inMemory(),
+        networkMode: NetworkModeController.inMemory(
+          mode: AppMode.network,
+          networkId: 'network-1',
+        ),
+        onFinished: ({required bool skipped}) => finished = true,
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Open Fa'));
+      await tester.pumpAndSettle();
+      expect(store.seen, isTrue);
+      expect(finished, isTrue);
+    });
+
     testWidgets('dark theme: provider cards use dark surfaces', (tester) async {
       // Regression: the cards were hardcoded Colors.white while the title
       // text is near-white in dark mode — unreadable white-on-white.
@@ -186,7 +235,10 @@ void main() {
             .first,
       );
       expect(card.color, isNot(Colors.white));
-      expect(card.color, const Color(0xFF10141F));
+      expect(
+        card.color,
+        FaDesignTokens.of(tester.element(find.text('OpenRouter'))).surface1,
+      );
     });
 
     testWidgets('dark theme: permission ghost badges stay readable', (
@@ -210,7 +262,14 @@ void main() {
           .widgetList<Text>(find.text('Ask when needed'))
           .map((t) => t.style?.color)
           .toSet();
-      expect(colors, contains(const Color(0xFF7DA2FF)));
+      expect(
+        colors,
+        contains(
+          FaDesignTokens.of(
+            tester.element(find.text('Ask when needed').first),
+          ).accent,
+        ),
+      );
     });
 
     testWidgets('configuring a provider unlocks the step and advances', (

@@ -1,9 +1,8 @@
 import 'dart:async';
 import 'dart:io';
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:fa/ui/screens/app_launcher_screen.dart';
+import 'package:fa/ui/widgets/wide_layout_shell.dart';
 import 'package:fa/services/last_connection.dart';
 import 'package:fa/main.dart';
 import 'package:fa/services/provider_registry.dart';
@@ -397,6 +396,9 @@ void main() {
   group('SetupScreen last-connection persistence', () {
     testWidgets('a successful connect is saved and pre-selects the form '
         'after a reload; the key is never persisted', (tester) async {
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
       // AgentService.create reads the real .env file through dart:io; real
       // IO futures never complete inside the fake test zone, so point the
       // current directory at an empty one (no .env → no real IO).
@@ -429,8 +431,8 @@ void main() {
         await tester.pumpAndSettle();
 
         // Connected: the home replaced the setup screen — on this narrow
-        // (800px) test surface the home is the apps launcher.
-        expect(find.byType(AppLauncherScreen), findsOneWidget);
+        // (390px) test surface the home is the messenger shell.
+        expect(find.byType(WideLayoutShell), findsOneWidget);
         // …and the connection was saved (non-secret parts only).
         final connection = store.connection;
         expect(connection, isNotNull);

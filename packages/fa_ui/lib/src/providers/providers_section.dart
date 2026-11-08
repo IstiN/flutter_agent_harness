@@ -55,6 +55,7 @@ class ProvidersSection extends StatelessWidget {
     this.onProviderReauthenticate,
     this.modelsFetcher,
     this.quotas,
+    this.showTitle = true,
   });
 
   /// The user-added providers; `null` falls back to a non-persisting
@@ -129,6 +130,10 @@ class ProvidersSection extends StatelessWidget {
   /// quota sources.
   final ProviderQuotaService? quotas;
 
+  /// Whether the standalone section paints its own title. A surrounding
+  /// grouped-settings surface disables this and supplies the shared label.
+  final bool showTitle;
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -141,11 +146,13 @@ class ProvidersSection extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text(
-              strings.settingsProvidersSectionTitle,
-              style: theme.textTheme.titleSmall,
-            ),
-            const SizedBox(height: 8),
+            if (showTitle) ...[
+              Text(
+                strings.settingsProvidersSectionTitle,
+                style: theme.textTheme.titleSmall,
+              ),
+              const SizedBox(height: 8),
+            ],
             if (registry.providers.isEmpty)
               Padding(
                 padding: const EdgeInsets.symmetric(vertical: 12),
@@ -216,11 +223,17 @@ class ProvidersSection extends StatelessWidget {
                     unawaited(_openOnDeviceRoute(context, route));
                   },
                 ),
+            Divider(
+              height: 13,
+              thickness: 1,
+              color: theme.dividerColor.withValues(alpha: .6),
+            ),
             _buildRow(
               context,
               theme,
               label: strings.settingsAddProvider,
               leadingIcon: Icons.add,
+              showChevron: false,
               onTap: () => _addProvider(context, registry),
             ),
           ],
@@ -228,17 +241,22 @@ class ProvidersSection extends StatelessWidget {
       },
     );
     final service = quotas;
-    if (service == null) return rows;
-    // Pull-to-refresh (issue #823 AC6): the widget-publications-sheet
-    // pattern — RefreshIndicator over an always-scrollable shrink-wrapped
-    // list, re-fetching every configured quota source.
-    return RefreshIndicator(
-      onRefresh: () => _refreshQuotas(registry),
-      child: ListView(
-        shrinkWrap: true,
-        physics: const AlwaysScrollableScrollPhysics(),
-        children: [rows],
-      ),
+    final content = service == null
+        ? rows
+        // Pull-to-refresh (issue #823 AC6): the widget-publications-sheet
+        // pattern — RefreshIndicator over an always-scrollable shrink-wrapped
+        // list, re-fetching every configured quota source.
+        : RefreshIndicator(
+            onRefresh: () => _refreshQuotas(registry),
+            child: ListView(
+              shrinkWrap: true,
+              physics: const AlwaysScrollableScrollPhysics(),
+              children: [rows],
+            ),
+          );
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      child: content,
     );
   }
 
@@ -308,6 +326,7 @@ class ProvidersSection extends StatelessWidget {
     Widget? leading,
     Widget? trailing,
     IconData? leadingIcon = Icons.cloud_outlined,
+    bool showChevron = true,
     required VoidCallback onTap,
   }) {
     return InkWell(
@@ -355,11 +374,12 @@ class ProvidersSection extends StatelessWidget {
               ),
             ),
             if (trailing != null) ...[trailing, const SizedBox(width: 8)],
-            Icon(
-              Icons.chevron_right,
-              size: 18,
-              color: theme.colorScheme.onSurfaceVariant,
-            ),
+            if (showChevron)
+              Icon(
+                Icons.chevron_right,
+                size: 18,
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
           ],
         ),
       ),

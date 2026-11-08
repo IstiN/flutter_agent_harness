@@ -6,7 +6,6 @@ import 'dart:io';
 
 import 'package:fa_hub_client/fa_hub_client.dart' as hub;
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
-import 'package:flutter_agent_harness/src/hub/dap_invite_import.dart';
 import 'package:test/test.dart';
 
 import '../../bin/fah_hub_plugin.dart';
@@ -30,6 +29,7 @@ void main() {
       '&priv=AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA';
 
   late Directory tmp;
+  late List<HubPluginHost> hosts;
   late List<String> scopedConnects;
   late Map<String, String> env;
   late List<Map<String, Object?>> sessionRecords;
@@ -40,10 +40,14 @@ void main() {
     env = {'DAP_KEY_PASSPHRASE': 'pass'};
     sessionRecords = [];
     scopedConnects = [];
+    hosts = [];
     io = _IO();
   });
 
   tearDown(() async {
+    for (final host in hosts) {
+      await host.dispose();
+    }
     if (await tmp.exists()) await tmp.delete(recursive: true);
   });
 
@@ -77,6 +81,7 @@ void main() {
     host.scopedConnectOverride = (hubUrl) async {
       scopedConnects.add(hubUrl);
     };
+    hosts.add(host);
     host.register(context);
     return context;
   }

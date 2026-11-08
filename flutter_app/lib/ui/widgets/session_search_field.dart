@@ -6,10 +6,19 @@ import 'package:fa/ui/widgets/sidebar_sessions_list.dart'
 import 'package:fa_ui/fa_ui.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:liquid_glass_widgets/liquid_glass_widgets.dart';
 
 /// How long typing waits before the filter re-runs — live enough to feel
 /// instant, coarse enough to keep big lists smooth while typing.
 const _searchDebounce = Duration(milliseconds: 150);
+
+/// The ONE search field height everywhere — chats sidebar, activity,
+/// apps header and the Files band capsule: the composer-adjacent 32px
+/// control row of the original sidebar search (the 32px inset), kept as
+/// THE shared height after the 40pt Files capsule briefly flattened every
+/// header (user call: search files was to become search chats, not the
+/// other way around).
+const double kSearchFieldHeight = 32.0;
 
 /// Sane cap for a pasted query (E3): long pastes stop at 100 chars.
 const _queryMaxLength = 100;
@@ -103,8 +112,9 @@ Widget sessionSearchEmptyState(
   BuildContext context,
   FahColors colors,
   String query,
-  VoidCallback onClear,
-) {
+  VoidCallback onClear, {
+  String? noMatches,
+}) {
   return Center(
     child: Padding(
       padding: const EdgeInsets.all(16),
@@ -112,7 +122,7 @@ Widget sessionSearchEmptyState(
         mainAxisSize: MainAxisSize.min,
         children: [
           Text(
-            context.l10n.sidebarSearchNoMatches(query),
+            noMatches ?? context.l10n.sidebarSearchNoMatches(query),
             textAlign: TextAlign.center,
             style: Theme.of(
               context,
@@ -129,18 +139,24 @@ Widget sessionSearchEmptyState(
   );
 }
 
-/// The filter field pinned at the top of a session list (macOS sidebar and
-/// the mobile drawer render the same one): magnifier icon, text field,
-/// clear (✕) once non-empty. Typing filters live after a short debounce;
-/// Esc clears and unfocuses. The host owns [focusNode] when it needs to
-/// focus the field itself (the sidebar's Cmd/Ctrl+F).
+/// The ONE search field — the kit's GlassTextField.search at
+/// [kSearchFieldHeight]: magnifier icon, hint, clear (✕) once non-empty.
+/// The chats sidebar, activity and apps headers and the Files band all
+/// render THIS widget, so every search reads identically. Typing filters
+/// live after a short debounce ([onQueryChanged]); Esc clears and
+/// unfocuses. The host owns [focusNode] when it needs to focus the field
+/// itself (the sidebar's Cmd/Ctrl+F).
+///
+/// Hosts that drive filtering from the [controller] themselves (the
+/// Files band) pass no [onQueryChanged] — the field stays controlled and
+/// the debounce semantics belong to the host.
 class SessionSearchField extends StatefulWidget {
   const SessionSearchField({
     super.key,
     this.focusNode,
     this.controller,
     this.hintText,
-    required this.onQueryChanged,
+    this.onQueryChanged,
   });
 
   /// Hint override for non-session lists reusing this field (the networks
@@ -158,7 +174,8 @@ class SessionSearchField extends StatefulWidget {
 
   /// Fires with the applied (debounced) query; '' once the field is
   /// cleared — the full list restores instantly (state is transient).
-  final ValueChanged<String> onQueryChanged;
+  /// Null when the host filters from the [controller] itself.
+  final ValueChanged<String>? onQueryChanged;
 
   @override
   State<SessionSearchField> createState() => _SessionSearchFieldState();
@@ -184,7 +201,12 @@ class _SessionSearchFieldState extends State<SessionSearchField> {
   void didUpdateWidget(covariant SessionSearchField oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.controller != widget.controller) {
-      oldWidget.controller?.removeListener(_onTyped);
+      final oldController = oldWidget.controller ?? _ownController;
+      oldController?.removeListener(_onTyped);
+      if (oldWidget.controller == null) {
+        _ownController?.dispose();
+        _ownController = null;
+      }
       _controller.addListener(_onTyped);
     }
     if (oldWidget.focusNode != widget.focusNode) {
@@ -195,6 +217,10 @@ class _SessionSearchFieldState extends State<SessionSearchField> {
 
   @override
   void dispose() {
+    // The host may keep an injected controller alive while collapsing this
+    // field (Local/Networks detail search). Detach FIRST: later host clears
+    // must not call setState on this defunct element.
+    _controller.removeListener(_onTyped);
     _debounce?.cancel();
     _ownController?.dispose();
     _ownFocus?.dispose();
@@ -205,10 +231,11 @@ class _SessionSearchFieldState extends State<SessionSearchField> {
     // The clear (✕) affordance follows the text; the filter itself waits
     // for the debounce.
     setState(() {});
+    if (widget.onQueryChanged == null) return;
     _debounce?.cancel();
     _debounce = Timer(
       _searchDebounce,
-      () => widget.onQueryChanged(_controller.text),
+      () => widget.onQueryChanged!(_controller.text),
     );
   }
 
@@ -216,41 +243,78 @@ class _SessionSearchFieldState extends State<SessionSearchField> {
     _debounce?.cancel();
     _controller.clear();
     _focus.unfocus();
-    widget.onQueryChanged('');
+    widget.onQueryChanged?.call('');
   }
 
   @override
   Widget build(BuildContext context) {
     final colors = FahColors.of(context);
+    final tokens = FaDesignTokens.of(context);
+    final typography = FaTypography.of(context);
+    final ridesGlass = tokens.direction == FaVisualDirection.glass;
+    final hint = widget.hintText ?? context.l10n.sidebarSearchHint;
     return CallbackShortcuts(
       bindings: {const SingleActivator(LogicalKeyboardKey.escape): _clear},
-      child: TextField(
-        controller: _controller,
-        focusNode: _focus,
-        maxLength: _queryMaxLength,
-        buildCounter:
-            (_, {required currentLength, required isFocused, maxLength}) =>
-                null,
-        autocorrect: false,
-        textInputAction: TextInputAction.done,
-        onSubmitted: (_) {
-          _debounce?.cancel();
-          widget.onQueryChanged(_controller.text);
-        },
-        style: const TextStyle(fontSize: 13),
-        decoration: InputDecoration(
-          isDense: true,
-          hintText: widget.hintText ?? context.l10n.sidebarSearchHint,
-          prefixIcon: Icon(Icons.search, size: 18, color: colors.dim),
+      child: SizedBox(
+        height: kSearchFieldHeight,
+        // The ONE search input is the liquid_glass_widgets kit's
+        // GlassTextField.search (owner call: the input type is the kit's,
+        // not our Material imitation) at OUR 32px control height. The glass
+        // direction rides the kit's own glass surface with the Fa-tuned
+        // settings; other directions keep an opaque recessed well
+        // (surfaceStyle solid, surface2 fill) per the styleguide rule.
+        // Debounce, Esc clear, the clear (✕) affordance and the 100-char
+        // paste cap stay at this layer; the kit field owns focus, the
+        // search action and its look.
+        child: GlassTextField.search(
+          key: const ValueKey('sessionSearchFieldInput'),
+          controller: _controller,
+          focusNode: _focus,
+          height: kSearchFieldHeight,
+          placeholder: hint,
+          textStyle: typography.body.copyWith(
+            color: tokens.ink1,
+            fontSize: 13,
+            height: 1.4,
+          ),
+          placeholderStyle: typography.body.copyWith(
+            color: tokens.ink3,
+            fontSize: 13,
+          ),
+          prefixIcon: Icon(Icons.search, size: 17, color: colors.dim),
+          inputFormatters: [
+            // The .search constructor pins maxLength; the 100-char paste
+            // cap (E3) rides the formatter — same hard truncation, no
+            // counter.
+            LengthLimitingTextInputFormatter(_queryMaxLength),
+          ],
+          surfaceStyle: ridesGlass
+              ? GlassSurfaceStyle.glass
+              : GlassSurfaceStyle.solid,
+          color: tokens.surface2,
+          settings: faGlassSettings(
+            tint: tokens.surface1.withValues(alpha: kFaGlassTintAlpha),
+            frost: kFaGlassFrost,
+          ),
           suffixIcon: _controller.text.isEmpty
               ? null
-              : IconButton(
-                  tooltip: context.l10n.sidebarSearchClearTooltip,
-                  icon: const Icon(Icons.cancel, size: 16),
-                  color: colors.dim,
-                  onPressed: _clear,
-                  visualDensity: VisualDensity.compact,
+              : SizedBox.square(
+                  dimension: kSearchFieldHeight,
+                  child: IconButton(
+                    tooltip: context.l10n.sidebarSearchClearTooltip,
+                    icon: const Icon(Icons.cancel, size: 16),
+                    color: colors.dim,
+                    onPressed: _clear,
+                    padding: EdgeInsets.zero,
+                    visualDensity: VisualDensity.compact,
+                  ),
                 ),
+          onSuffixTap: _controller.text.isEmpty ? null : _clear,
+          suffixSemanticLabel: context.l10n.sidebarSearchClearTooltip,
+          onSubmitted: (_) {
+            _debounce?.cancel();
+            widget.onQueryChanged?.call(_controller.text);
+          },
         ),
       ),
     );

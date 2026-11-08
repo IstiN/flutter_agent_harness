@@ -195,6 +195,37 @@ void main() {
       },
     );
 
+    test('never resurrects a force-removed widget without user data', () async {
+      final env = MemoryExecutionEnv();
+      final store = AppsStore(env);
+      await store.installWidget(
+        id: 'voxel-sandbox',
+        version: '1.0.0',
+        files: {
+          'manifest.json': utf8.encode(
+            jsonEncode({'id': 'voxel-sandbox', 'version': '1.0.0'}),
+          ),
+          'widget.js': utf8.encode('// voxel'),
+        },
+      );
+      await store.removeWidget('voxel-sandbox', force: true);
+
+      final zipHits = <String>[];
+      final updated = await autoUpdateCleanWidgets(
+        store: store,
+        catalog: _catalog(
+          env,
+          _serverFor('voxel-sandbox', '1.0.1', {
+            'widget.js': '// resurrected',
+          }, zipHits: zipHits),
+        ),
+      );
+
+      expect(updated, isEmpty);
+      expect(zipHits, isEmpty);
+      expect((await env.exists('apps/voxel-sandbox')).valueOrNull, isFalse);
+    });
+
     test('never resurrects a removed widget (storage.json leftover)', () async {
       final env = MemoryExecutionEnv();
       final store = AppsStore(env);
@@ -220,47 +251,44 @@ void main() {
       expect(files.valueOrNull?.length, 1, reason: 'storage.json only');
     });
 
-    test(
-      'IT-repair: repairs a torn install (recorded widget.js missing, '
-      'issue #201)',
-      () async {
-        final env = MemoryExecutionEnv();
-        final store = AppsStore(env);
-        await store.installWidget(
-          id: 'calculator',
-          version: '1.0.1',
-          files: {
-            'manifest.json': utf8.encode(
-              jsonEncode({'id': 'calculator', 'version': '1.0.1'}),
-            ),
-            'widget.js': utf8.encode('// calc'),
-          },
-        );
-        // A torn web FS snapshot replays only part of the install:
-        // manifest present (tile renders), widget.js lost (launch dies
-        // with FileError notFound).
-        await env.remove('apps/calculator/widget.js');
-
-        final repaired = await autoUpdateCleanWidgets(
-          store: store,
-          catalog: _catalog(
-            env,
-            _serverFor('calculator', '1.0.1', {'widget.js': '// calc'}),
+    test('IT-repair: repairs a torn install (recorded widget.js missing, '
+        'issue #201)', () async {
+      final env = MemoryExecutionEnv();
+      final store = AppsStore(env);
+      await store.installWidget(
+        id: 'calculator',
+        version: '1.0.1',
+        files: {
+          'manifest.json': utf8.encode(
+            jsonEncode({'id': 'calculator', 'version': '1.0.1'}),
           ),
-        );
+          'widget.js': utf8.encode('// calc'),
+        },
+      );
+      // A torn web FS snapshot replays only part of the install:
+      // manifest present (tile renders), widget.js lost (launch dies
+      // with FileError notFound).
+      await env.remove('apps/calculator/widget.js');
 
-        expect(repaired, contains('calculator'));
-        expect(
-          (await env.readTextFile('apps/calculator/widget.js')).valueOrNull,
-          '// calc',
-        );
-        // A launch now succeeds — no dead error screen.
-        expect(
-          (await env.readTextFile('apps/calculator/widget.js')).isOk,
-          isTrue,
-        );
-      },
-    );
+      final repaired = await autoUpdateCleanWidgets(
+        store: store,
+        catalog: _catalog(
+          env,
+          _serverFor('calculator', '1.0.1', {'widget.js': '// calc'}),
+        ),
+      );
+
+      expect(repaired, contains('calculator'));
+      expect(
+        (await env.readTextFile('apps/calculator/widget.js')).valueOrNull,
+        '// calc',
+      );
+      // A launch now succeeds — no dead error screen.
+      expect(
+        (await env.readTextFile('apps/calculator/widget.js')).isOk,
+        isTrue,
+      );
+    });
 
     test('leaves an intact install untouched (no repair download)', () async {
       final env = MemoryExecutionEnv();

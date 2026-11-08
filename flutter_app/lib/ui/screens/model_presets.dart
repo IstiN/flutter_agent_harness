@@ -16,6 +16,7 @@ import 'package:fa/services/task_models_store.dart';
 import 'package:fa/services/settings_env.dart';
 import 'package:fa/ui/screens/provider_editor_page.dart';
 import 'package:fa/ui/screens/settings.dart';
+import 'package:fa_ui/fa_ui.dart' as faui;
 
 /// Where a [ModelPreset] points the main connection (and the media slots it
 /// overrides). Sealed so further kinds — saved custom providers, on-device
@@ -346,6 +347,7 @@ class _ModelPresetsSectionState extends State<ModelPresetsSection> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final tokens = faui.FaDesignTokens.of(context);
     final store = widget.store ?? MediaModelsScope.maybeOf(context);
     if (store == null) return const SizedBox.shrink();
     final taskStore =
@@ -401,10 +403,8 @@ class _ModelPresetsSectionState extends State<ModelPresetsSection> {
                       decoration: BoxDecoration(
                         shape: BoxShape.circle,
                         color: i == _page
-                            ? theme.colorScheme.primary
-                            : theme.colorScheme.onSurfaceVariant.withValues(
-                                alpha: 0.3,
-                              ),
+                            ? tokens.accent
+                            : tokens.surface3,
                       ),
                     ),
                 ],
@@ -463,6 +463,7 @@ class _PresetCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final tokens = faui.FaDesignTokens.of(context);
     final l10n = context.l10n;
     final keyAvailable = modelPresetKeyAvailable(preset, keysStore);
     final applied = modelPresetMatches(
@@ -474,113 +475,108 @@ class _PresetCard extends StatelessWidget {
     final providerLabel = switch (preset.target) {
       HostedModelPresetTarget(:final provider) => provider.labelFor(context),
     };
-    return Card(
-      margin: EdgeInsets.zero,
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Text(preset.nameFor(l10n), style: theme.textTheme.titleMedium),
-            const SizedBox(height: 2),
-            Text(
-              preset.descriptionFor(l10n),
-              style: theme.textTheme.bodySmall,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-            ),
-            const SizedBox(height: 8),
+    return faui.FaSurface(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(preset.nameFor(l10n), style: theme.textTheme.titleMedium),
+          const SizedBox(height: 2),
+          Text(
+            preset.descriptionFor(l10n),
+            style: theme.textTheme.bodySmall,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+          ),
+          const SizedBox(height: 8),
+          _comboRow(
+            context,
+            icon: Icons.chat_bubble_outline,
+            label: l10n.modelPresetsChatLabel,
+            modelId: preset.chatModelId,
+          ),
+          _comboRow(
+            context,
+            icon: Icons.bolt_outlined,
+            label: 'Quick model', // l10n:ignore
+            modelId:
+                preset.taskSlots[TaskRole.smol] ??
+                l10n.mediaModelsFallbackSummary,
+          ),
+          _comboRow(
+            context,
+            icon: Icons.groups_outlined,
+            label: 'Subagents model', // l10n:ignore
+            modelId:
+                preset.taskSlots[TaskRole.subagent] ??
+                l10n.mediaModelsFallbackSummary,
+          ),
+          for (final slot in MediaSlot.all)
             _comboRow(
               context,
-              icon: Icons.chat_bubble_outline,
-              label: l10n.modelPresetsChatLabel,
-              modelId: preset.chatModelId,
-            ),
-            _comboRow(
-              context,
-              icon: Icons.bolt_outlined,
-              label: 'Quick model', // l10n:ignore
+              icon: MediaModelsSection.slotIcons[slot] ?? Icons.tune,
+              label: MediaModelsSection.slotLabelFor(l10n, slot),
               modelId:
-                  preset.taskSlots[TaskRole.smol] ??
-                  l10n.mediaModelsFallbackSummary,
+                  preset.mediaSlots[slot] ?? l10n.mediaModelsFallbackSummary,
             ),
-            _comboRow(
-              context,
-              icon: Icons.groups_outlined,
-              label: 'Subagents model', // l10n:ignore
-              modelId:
-                  preset.taskSlots[TaskRole.subagent] ??
-                  l10n.mediaModelsFallbackSummary,
-            ),
-            for (final slot in MediaSlot.all)
-              _comboRow(
-                context,
-                icon: MediaModelsSection.slotIcons[slot] ?? Icons.tune,
-                label: MediaModelsSection.slotLabelFor(l10n, slot),
-                modelId:
-                    preset.mediaSlots[slot] ?? l10n.mediaModelsFallbackSummary,
-              ),
-            const Spacer(),
-            if (!keyAvailable)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 8),
-                child: Row(
-                  children: [
-                    Icon(
-                      Icons.key_outlined,
-                      size: 16,
-                      color: theme.colorScheme.error,
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        l10n.modelPresetsKeyMissing(providerLabel),
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: theme.colorScheme.error,
-                        ),
+          const Spacer(),
+          if (!keyAvailable)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Row(
+                children: [
+                  Icon(Icons.key_outlined, size: 16, color: tokens.danger),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      l10n.modelPresetsKeyMissing(providerLabel),
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: tokens.danger,
                       ),
                     ),
-                    TextButton(
-                      onPressed: () => _setupKey(context),
-                      child: Text(l10n.modelPresetsSetKey),
-                    ),
-                  ],
-                ),
-              ),
-            if (applied)
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(
-                    Icons.check_circle_outline,
-                    size: 18,
-                    color: theme.colorScheme.primary,
                   ),
-                  const SizedBox(width: 8),
-                  Text(
-                    l10n.modelPresetsApplied,
-                    style: theme.textTheme.bodyMedium?.copyWith(
-                      color: theme.colorScheme.primary,
-                    ),
+                  faui.FaButton(
+                    label: l10n.modelPresetsSetKey,
+                    variant: faui.FaButtonVariant.ghost,
+                    onPressed: () => _setupKey(context),
                   ),
                 ],
-              )
-            else
-              FilledButton(
-                onPressed: keyAvailable
-                    ? () => applyModelPreset(
-                        preset: preset,
-                        service: service,
-                        store: store,
-                        keysStore: keysStore,
-                        lastConnectionStore: lastConnectionStore,
-                        taskStore: taskStore,
-                      )
-                    : null,
-                child: Text(l10n.settingsApplyButton),
               ),
-          ],
-        ),
+            ),
+          if (applied)
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(
+                  Icons.check_circle_outline,
+                  size: 18,
+                  color: tokens.success,
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  l10n.modelPresetsApplied,
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    color: tokens.success,
+                  ),
+                ),
+              ],
+            )
+          else
+            faui.FaButton(
+              label: l10n.settingsApplyButton,
+              expanded: true,
+              onPressed: keyAvailable
+                  ? () => applyModelPreset(
+                      preset: preset,
+                      service: service,
+                      store: store,
+                      keysStore: keysStore,
+                      lastConnectionStore: lastConnectionStore,
+                      taskStore: taskStore,
+                    )
+                  : null,
+            ),
+        ],
       ),
     );
   }
@@ -592,20 +588,19 @@ class _PresetCard extends StatelessWidget {
     required String modelId,
   }) {
     final theme = Theme.of(context);
+    final tokens = faui.FaDesignTokens.of(context);
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 2),
       child: Row(
         children: [
-          Icon(icon, size: 16, color: theme.colorScheme.primary),
+          Icon(icon, size: 16, color: tokens.accent),
           const SizedBox(width: 8),
           Text(label, style: theme.textTheme.bodySmall),
           const SizedBox(width: 8),
           Expanded(
             child: Text(
               modelId,
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: theme.colorScheme.onSurfaceVariant,
-              ),
+              style: theme.textTheme.bodySmall?.copyWith(color: tokens.ink2),
               textAlign: TextAlign.end,
               overflow: TextOverflow.ellipsis,
             ),

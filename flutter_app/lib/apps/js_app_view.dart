@@ -4,6 +4,7 @@
 
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math' as math;
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
@@ -13,6 +14,17 @@ import 'package:fa/apps/js_theme_bridge_host.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
+import 'package:fa_ui/fa_ui.dart'
+    show
+        FaChatHost,
+        FaChatStrings,
+        FaDesignTokens,
+        FaHeaderAction,
+        FaIcon,
+        FaIconActionBand,
+        FaSemanticIcon,
+        FaVisualDirection,
+        FahColors;
 import 'package:flutter_map/flutter_map.dart' show TileProvider;
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:fa/apps/fa_js3d_host.dart';
@@ -26,11 +38,13 @@ import 'package:fa/services/app_log.dart';
 import 'package:fa/services/asr_service.dart';
 import 'package:fa/services/media_tools.dart';
 import 'package:fa/services/video_tool.dart';
-import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/markdown_style.dart';
 import 'package:fa/ui/widgets/fa_mark.dart';
 import 'package:fa/ui/widgets/secret_request_sheet.dart';
-import 'package:fa/ui/widgets/wide_layout_shell.dart' show faAppBar;
+import 'package:fa/ui/widgets/fa_route_header.dart'
+    show FaWindowChrome, faAppBar;
+import 'package:fa/ui/widgets/messenger_section_header.dart'
+    show MessengerGlassUnderlay;
 import 'package:fa/apps/app_icon.dart';
 import 'package:fa/apps/fa_media_host.dart';
 import 'package:fa/apps/fa_webview_host.dart';
@@ -72,6 +86,31 @@ class FaAppMessage {
   final Uint8List? screenshot;
 }
 
+/// Messenger app-panel chrome: Pin, Full/Exit full, and Close are owned by
+/// the shell while permissions and reload stay with the app view.
+final class JsAppPanelChrome {
+  const JsAppPanelChrome({
+    required this.fullScreen,
+    required this.pinned,
+    required this.onFullScreen,
+    required this.onPin,
+    required this.onClose,
+    this.onMinimize,
+    this.onBack,
+  });
+
+  final bool fullScreen;
+  final bool pinned;
+  final VoidCallback onFullScreen;
+  final VoidCallback onPin;
+  final VoidCallback onClose;
+  final VoidCallback? onMinimize;
+
+  /// Leading minimize action for a shell-presented desktop app; null on the
+  /// phone root, where minimize stays in the trailing action capsule.
+  final VoidCallback? onBack;
+}
+
 /// Full-screen host for one JS app: renders the JS-driven UI via
 /// [JsonWidgetRenderer], offers reload + permissions in the app bar (or in a
 /// floating overlay menu when the app's manifest asks for `chrome: 'full'`),
@@ -95,6 +134,7 @@ class JsAppView extends StatefulWidget {
     this.mediaHost,
     this.webViewHost,
     this.embeddedInPanel = false,
+    this.panelChrome,
   });
 
   final JsAppInfo app;
@@ -151,11 +191,12 @@ class JsAppView extends StatefulWidget {
   final AgentService? agentService;
 
   /// Whether the app renders inside the wide-shell apps side panel instead
-  /// of a standalone full-screen route. When true the in-app Fa chrome
-  /// (floating button, work bar, reply sheet, chat overlay) is hidden —
-  /// the main chat is always visible alongside the panel, so the in-app
-  /// copy would just duplicate the same agent response.
+  /// of a standalone full-screen route. The Fa chrome stays available in
+  /// either host; embedded apps report their panel canvas as the viewport.
   final bool embeddedInPanel;
+
+  /// Non-null replaces route chrome with the messenger panel header.
+  final JsAppPanelChrome? panelChrome;
 
   @override
   State<JsAppView> createState() => _JsAppViewState();
@@ -511,7 +552,12 @@ class _JsAppViewState extends State<JsAppView> {
     // logical size, orientation and safe areas ride the message.
     final view = View.of(context);
     final pixelRatio = view.devicePixelRatio;
-    final logical = view.physicalSize / pixelRatio;
+    // In the shell's nested Apps navigator the window also contains the
+    // main chat. Report the actual app canvas, just like the screenshot,
+    // rather than telling the agent to design for the whole shell.
+    final logical = widget.embeddedInPanel
+        ? _boundaryKey.currentContext?.size ?? view.physicalSize / pixelRatio
+        : view.physicalSize / pixelRatio;
     final padding = MediaQuery.paddingOf(context);
     final used = await onSend(
       FaAppMessage(
@@ -572,7 +618,12 @@ class _JsAppViewState extends State<JsAppView> {
   void _forwardBackToApp() {
     final engine = _engine;
     if (engine == null) {
-      Navigator.of(context).pop();
+      final close = widget.panelChrome?.onClose;
+      if (close != null) {
+        close();
+      } else {
+        Navigator.of(context).pop();
+      }
       return;
     }
     unawaited(engine.callEvent('back'));
@@ -583,13 +634,203 @@ class _JsAppViewState extends State<JsAppView> {
   /// re-enter the back flow it came from.
   void _closeFromJs() {
     if (!mounted) return;
-    Navigator.of(context).pop();
+    final close = widget.panelChrome?.onClose;
+    if (close != null) {
+      close();
+    } else {
+      Navigator.of(context).pop();
+    }
+  }
+
+  PreferredSizeWidget? _buildAppBar(bool fullChrome) {
+    final chrome = widget.panelChrome;
+    if (fullChrome && chrome == null) return null;
+    if (chrome == null) return _defaultAppBar();
+    return _panelAppBar(chrome);
+  }
+
+  PreferredSizeWidget _defaultAppBar() {
+    return faAppBar(
+      context: context,
+      title: Row(
+        children: [
+          AppIcon(app: widget.app, env: widget.env, size: 24),
+          const SizedBox(width: 8),
+          Flexible(
+            child: Text(widget.app.name, overflow: TextOverflow.ellipsis),
+          ),
+        ],
+      ),
+      trafficLightClearance: FaWindowChrome.presentedAppClearance(
+        context,
+        embeddedInPanel: widget.embeddedInPanel,
+      ),
+      actions: [
+        IconButton(
+          icon: const Icon(Icons.shield_outlined),
+          tooltip: context.l10n.appsPermissionsTooltip,
+          onPressed: _openPermissions,
+        ),
+        IconButton(
+          icon: const Icon(Icons.refresh),
+          tooltip: context.l10n.appsReloadTooltip,
+          onPressed: () {
+            AppAnalytics.instance.jsAppReloaded();
+            unawaited(_restart());
+          },
+        ),
+      ],
+    );
+  }
+
+  PreferredSizeWidget _panelAppBar(JsAppPanelChrome chrome) {
+    // Only compact/full presented chrome owns the window's leading edge.
+    final trafficLightLeading =
+        FaWindowChrome.presentedAppClearance(
+          context,
+          embeddedInPanel: widget.embeddedInPanel,
+        )
+        ? FaWindowChrome.compactLeadingInset
+        : 0.0;
+    // The card floats 8pt below the window top, so only the remainder of
+    // the platform safe area is needed above the toolbar. Compact macOS
+    // window controls are cleared horizontally by [trafficLightLeading].
+    final titlebarTop = math.max(0.0, MediaQuery.paddingOf(context).top - 8);
+    final colors = FahColors.of(context);
+    final glass =
+        FaDesignTokens.of(context).direction == FaVisualDirection.glass;
+    final onBack = chrome.onBack;
+    return PreferredSize(
+      preferredSize: Size.fromHeight(kToolbarHeight + titlebarTop),
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          if (glass)
+            const Positioned.fill(
+              child: MessengerGlassUnderlay(
+                underlayKey: ValueKey('appChromeGlassUnderlay'),
+              ),
+            ),
+          Padding(
+            padding: EdgeInsets.only(top: titlebarTop),
+            child: AppBar(
+              backgroundColor: glass ? Colors.transparent : null,
+              surfaceTintColor: Colors.transparent,
+              elevation: 0,
+              scrolledUnderElevation: 0,
+              centerTitle: false,
+              automaticallyImplyLeading: false,
+              leadingWidth: onBack == null
+                  ? null
+                  : kToolbarHeight + trafficLightLeading,
+              leading: onBack == null
+                  ? null
+                  : Padding(
+                      padding: EdgeInsets.only(left: trafficLightLeading),
+                      child: IconButton(
+                        key: const ValueKey('presentedAppMinimizeButton'),
+                        tooltip: context.l10n.chatCollapse,
+                        onPressed: onBack,
+                        icon: const Icon(Icons.remove_rounded, size: 20),
+                      ),
+                    ),
+              title: Padding(
+                padding: EdgeInsets.only(
+                  left: onBack == null ? trafficLightLeading : 0,
+                ),
+                child: Row(
+                  children: [
+                    AppIcon(app: widget.app, env: widget.env, size: 20),
+                    const SizedBox(width: 8),
+                    Flexible(
+                      child: Text(
+                        widget.app.name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: colors.text,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                          height: 1.2,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                FaIconActionBand<String>(
+                  key: const ValueKey('appChromeActions'),
+                  glass: true,
+                  actions: [
+                    FaHeaderAction(
+                      key: const ValueKey('appFull'),
+                      icon: chrome.fullScreen
+                          ? Icons.close_fullscreen
+                          : Icons.open_in_full,
+                      label: chrome.fullScreen
+                          ? context.l10n.appsExitFullTooltip
+                          : context.l10n.appsFullTooltip,
+                      onPressed: chrome.onFullScreen,
+                    ),
+                    FaHeaderAction(
+                      key: const ValueKey('appPin'),
+                      icon: chrome.pinned
+                          ? Icons.push_pin
+                          : Icons.push_pin_outlined,
+                      label: chrome.pinned
+                          ? context.l10n.appsUnpinTooltip
+                          : context.l10n.appsPinTooltip,
+                      onPressed: chrome.onPin,
+                    ),
+                    if (onBack == null)
+                      if (chrome.onMinimize case final minimize?)
+                        FaHeaderAction(
+                          key: const ValueKey('appMinimize'),
+                          icon: Icons.remove_rounded,
+                          label: context.l10n.chatCollapse,
+                          onPressed: minimize,
+                        ),
+                    FaHeaderAction(
+                      key: const ValueKey('appClose'),
+                      icon: Icons.close,
+                      label: context.l10n.appsCloseTooltip,
+                      onPressed: chrome.onClose,
+                    ),
+                  ],
+                  overflowItems: _chromeMenuEntries(),
+                  onOverflowSelected: _onChromeMenuSelection,
+                  overflowMenuKey: const ValueKey('appOverflow'),
+                  overflowTooltip: FaChatStrings.of(context).chatMoreTooltip,
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _onAppPopInvoked(bool didPop, bool backRegistered) {
+    if (didPop) return;
+    final chrome = widget.panelChrome;
+    if (chrome != null && !backRegistered) {
+      chrome.onClose();
+    } else {
+      _forwardBackToApp();
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final fullChrome = widget.app.isFullChrome;
+    final titlebarTop = widget.panelChrome == null
+        ? 0.0
+        : math.max(0.0, MediaQuery.paddingOf(context).top - 8);
+    final canvasTopInset = widget.panelChrome == null
+        ? 0.0
+        : kToolbarHeight + titlebarTop;
     // With a jsr.onBack handler registered the app owns back navigation:
     // the native pop (iOS edge swipe, system back) is vetoed and the
     // attempt forwards to JS instead. Without one the route pops natively.
@@ -597,72 +838,44 @@ class _JsAppViewState extends State<JsAppView> {
       valueListenable: _engine?.backHandlerRegistered ?? _noBackHandler,
       builder: (context, backRegistered, _) {
         return PopScope(
-          canPop: !backRegistered,
-          onPopInvokedWithResult: (didPop, _) {
-            if (!didPop) _forwardBackToApp();
-          },
+          canPop: widget.panelChrome == null && !backRegistered,
+          onPopInvokedWithResult: (didPop, _) =>
+              _onAppPopInvoked(didPop, backRegistered),
           child: Scaffold(
-            appBar: fullChrome
-                ? null
-                // faAppBar bakes in the macOS traffic-light clearance —
-                // a plain AppBar renders the back button under them.
-                : faAppBar(
-                    title: Row(
-                      children: [
-                        AppIcon(app: widget.app, env: widget.env, size: 24),
-                        const SizedBox(width: 8),
-                        Flexible(
-                          child: Text(
-                            widget.app.name,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                      ],
-                    ),
-                    actions: [
-                      IconButton(
-                        icon: const Icon(Icons.shield_outlined),
-                        tooltip: context.l10n.appsPermissionsTooltip,
-                        onPressed: _openPermissions,
-                      ),
-                      IconButton(
-                        icon: const Icon(Icons.refresh),
-                        tooltip: context.l10n.appsReloadTooltip,
-                        onPressed: () {
-                          AppAnalytics.instance.jsAppReloaded();
-                          unawaited(_restart());
-                        },
-                      ),
-                    ],
-                  ),
+            extendBodyBehindAppBar: widget.panelChrome != null,
+            appBar: _buildAppBar(fullChrome),
             body: Stack(
               children: [
                 Positioned.fill(
-                  child: RepaintBoundary(
-                    key: _boundaryKey,
-                    child: ColoredBox(
-                      color: theme.scaffoldBackgroundColor,
-                      // Chrome apps (with the AppBar) keep their content
-                      // above the home indicator — HUD rows at the very
-                      // bottom must not clip into it. Full-chrome apps (map)
-                      // stay edge-to-edge at the bottom but drop below the
-                      // status bar: they draw their own opaque header, and
-                      // edge-to-edge top slid it under the system tray.
-                      child: fullChrome
-                          ? SafeArea(
-                              bottom: false,
-                              child: _keyboardWrappedBody(theme),
-                            )
-                          : SafeArea(
-                              top: false,
-                              child: _keyboardWrappedBody(theme),
-                            ),
+                  child: Padding(
+                    key: const ValueKey('appCanvasHeaderInset'),
+                    padding: EdgeInsets.only(top: canvasTopInset),
+                    child: RepaintBoundary(
+                      key: _boundaryKey,
+                      child: ColoredBox(
+                        color: theme.scaffoldBackgroundColor,
+                        // Chrome apps (with the AppBar) keep their content
+                        // above the home indicator — HUD rows at the very
+                        // bottom must not clip into it. Full-chrome apps (map)
+                        // stay edge-to-edge at the bottom but drop below the
+                        // status bar: they draw their own opaque header, and
+                        // edge-to-edge top slid it under the system tray.
+                        child: fullChrome && widget.panelChrome == null
+                            ? SafeArea(
+                                bottom: false,
+                                child: _keyboardWrappedBody(theme),
+                              )
+                            : SafeArea(
+                                top: false,
+                                child: _keyboardWrappedBody(theme),
+                              ),
+                      ),
                     ),
                   ),
                 ),
                 // Full chrome has no AppBar — permissions/reload live in a small
                 // floating menu so immersive apps (maps) keep the whole canvas.
-                if (fullChrome)
+                if (fullChrome && widget.panelChrome == null)
                   Positioned(
                     top: 0,
                     right: 0,
@@ -673,8 +886,10 @@ class _JsAppViewState extends State<JsAppView> {
                       ),
                     ),
                   ),
-                if (widget.onSendToAgent != null &&
-                    !widget.embeddedInPanel) ...[
+                // The local Stack keeps every Fa affordance inside the
+                // nested Apps panel; embedding must not remove app access
+                // to the same session, work controls, and app context.
+                if (widget.onSendToAgent != null) ...[
                   if (!_faChatExpanded)
                     Positioned(
                       right: 16,
@@ -719,10 +934,19 @@ class _JsAppViewState extends State<JsAppView> {
                           onSend: _sendFaMessage,
                           onCollapse: () =>
                               setState(() => _faChatExpanded = false),
-                          // Expand-to-full-chat always leaves the app (an
-                          // explicit tap, not a back gesture) — pop directly,
-                          // bypassing canPop.
-                          onOpenFullChat: () => Navigator.of(context).pop(),
+                          // The shell owns section + route changes so narrow
+                          // Apps lands on ChatScreen, not back on the grid.
+                          onOpenFullChat: () {
+                            final reveal = FaChatHost.revealActiveChat;
+                            if (reveal == null) {
+                              Navigator.of(context).pop();
+                            } else if (widget.embeddedInPanel) {
+                              unawaited(reveal());
+                            } else {
+                              Navigator.of(context).pop();
+                              unawaited(reveal());
+                            }
+                          },
                         ),
                       ),
                   ],
@@ -746,41 +970,45 @@ class _JsAppViewState extends State<JsAppView> {
       child: PopupMenuButton<String>(
         icon: const Icon(Icons.more_vert),
         onSelected: _onChromeMenuSelection,
-        itemBuilder: (context) => [
-          PopupMenuItem(
-            value: 'permissions',
-            child: Row(
-              children: [
-                const Icon(Icons.shield_outlined, size: 20),
-                const SizedBox(width: 12),
-                Text(context.l10n.appsPermissionsTooltip),
-              ],
-            ),
-          ),
-          PopupMenuItem(
-            value: 'reload',
-            child: Row(
-              children: [
-                const Icon(Icons.refresh, size: 20),
-                const SizedBox(width: 12),
-                Text(context.l10n.appsReloadTooltip),
-              ],
-            ),
-          ),
-          PopupMenuItem(
-            value: 'close',
-            child: Row(
-              children: [
-                const Icon(Icons.close, size: 20),
-                const SizedBox(width: 12),
-                Text(context.l10n.appsCloseTooltip),
-              ],
-            ),
-          ),
-        ],
+        itemBuilder: (context) => _chromeMenuEntries(),
       ),
     );
   }
+
+  /// The ⋮ menu rows shared by the app-bar circle and the floating
+  /// full-chrome menu.
+  List<PopupMenuItem<String>> _chromeMenuEntries() => [
+    PopupMenuItem(
+      value: 'permissions',
+      child: Row(
+        children: [
+          const Icon(Icons.shield_outlined, size: 20),
+          const SizedBox(width: 12),
+          Text(context.l10n.appsPermissionsTooltip),
+        ],
+      ),
+    ),
+    PopupMenuItem(
+      value: 'reload',
+      child: Row(
+        children: [
+          const Icon(Icons.refresh, size: 20),
+          const SizedBox(width: 12),
+          Text(context.l10n.appsReloadTooltip),
+        ],
+      ),
+    ),
+    PopupMenuItem(
+      value: 'close',
+      child: Row(
+        children: [
+          const Icon(Icons.close, size: 20),
+          const SizedBox(width: 12),
+          Text(context.l10n.appsCloseTooltip),
+        ],
+      ),
+    ),
+  ];
 
   /// Dispatches a full-chrome menu selection — the same actions the
   /// header AppBar offers.

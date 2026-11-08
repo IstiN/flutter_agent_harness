@@ -12,6 +12,8 @@ import 'dart:io';
 
 import 'package:fa/ui/widgets/file_browser.dart';
 import 'package:fa/ui/widgets/file_preview.dart';
+import 'package:fa_ui/fa_ui.dart'
+    show FaVisualDirection, buildFaTheme, debugFaGlassAlwaysFake;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
@@ -371,11 +373,13 @@ Future<void> _pumpBrowser(
   WidgetTester tester,
   MemoryExecutionEnv env, {
   Size size = goldenSizeDesktop,
+  ThemeData? theme,
 }) {
   return pumpGolden(
     tester,
     FileBrowser(env: env),
     size: size,
+    theme: theme,
     wrap: (child) => Scaffold(body: child),
   );
 }
@@ -385,12 +389,51 @@ void main() {
     await ensureGoldenFonts();
     await _ensureMaterialIcons();
   });
+  // The glass direction's LiquidGlass chips (breadcrumb capsule, mounted
+  // identity) render through the deterministic fake — same contract as the
+  // wide-layout-shell goldens.
+  setUp(() => debugFaGlassAlwaysFake = true);
+  tearDown(() => debugFaGlassAlwaysFake = false);
 
   group('files goldens', () {
     testWidgets('file listing of a realistic project tree', (tester) async {
       final env = await _seededEnv();
       await _pumpBrowser(tester, env);
       await expectGolden(tester, 'files_listing');
+    });
+
+    testWidgets('compact 300px panel across visual directions', (
+      tester,
+    ) async {
+      // Glass (the default app theme) in both brightnesses, plus one
+      // opaque direction per brightness — the panel must look right in all
+      // four visual languages.
+      const frames = <(String, FaVisualDirection, Brightness)>[
+        ('files_panel_dark', FaVisualDirection.glass, Brightness.dark),
+        ('files_panel_light', FaVisualDirection.glass, Brightness.light),
+        (
+          'files_panel_graphite_dark',
+          FaVisualDirection.graphite,
+          Brightness.dark,
+        ),
+        (
+          'files_panel_porcelain_light',
+          FaVisualDirection.porcelain,
+          Brightness.light,
+        ),
+      ];
+      for (final (name, direction, brightness) in frames) {
+        await tester.pumpWidget(const SizedBox());
+        await tester.pump();
+        final env = await _seededEnv();
+        await _pumpBrowser(
+          tester,
+          env,
+          size: const Size(300, 700),
+          theme: buildFaTheme(direction: direction, brightness: brightness),
+        );
+        await expectGolden(tester, name);
+      }
     });
 
     testWidgets('markdown preview with the Preview/Source segments', (

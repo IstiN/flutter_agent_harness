@@ -23,6 +23,8 @@ import 'package:fa/services/codemie_sso_flow.dart';
 import 'package:fa/services/github_account_store.dart';
 import 'package:fa/services/image_preview_store.dart';
 import 'package:fa/ui/widgets/github_account_section.dart';
+import 'package:fa/ui/widgets/fah_wallpaper.dart';
+import 'package:fa/ui/widgets/messenger_section_header.dart';
 import 'package:fa/ui/widgets/provider_selection_list.dart';
 import 'package:fa/ui/widgets/store_get_banner.dart';
 import 'package:fa/ui/app_theme.dart';
@@ -42,6 +44,8 @@ import 'package:fa/services/provider_registry.dart';
 import 'package:fa/services/session_keys_store.dart';
 import 'package:fa/services/skills_access_store.dart';
 import 'package:fa/ui/screens/settings_key_dialogs.dart';
+import 'package:fa/ui/screens/settings_navigation.dart';
+import 'package:fa/ui/screens/settings_tiles.dart';
 import 'package:fa/ui/screens/skills_toggles_section.dart';
 import 'package:fa/ui/screens/tools_availability_section.dart';
 import 'package:fa/ui/screens/redaction_section.dart';
@@ -77,6 +81,16 @@ export 'package:fa_ui/fa_ui.dart'
     show ProviderPreset, ModelIdAutocompleteField, OpenRouterOAuthButton;
 part 'settings_sections.dart';
 part 'settings_flows.dart';
+
+/// Shared Fa dialog chrome for the few confirmations that remain Material
+/// dialogs. The layout, actions, focus and route results stay unchanged.
+RoundedSuperellipseBorder _settingsDialogShape(BuildContext context) {
+  final tokens = faui.FaDesignTokens.of(context);
+  return RoundedSuperellipseBorder(
+    borderRadius: BorderRadius.circular(tokens.radiusLg),
+    side: BorderSide(color: tokens.hairline),
+  );
+}
 
 /// The key-storage notes match the platform: on secure-store surfaces
 /// (iOS/macOS Keychain, Android Keystore — see [KeychainStore]) saved keys
@@ -753,15 +767,14 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
   /// model picker over [webLlmModelPresets], the offline/WebGPU note, and —
   /// while a load is in flight — the engine-init progress bar.
   Widget _buildWebLlmFields(ThemeData theme) {
+    final tokens = faui.FaDesignTokens.of(context);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        DropdownButtonFormField<WebLlmModelPreset>(
-          initialValue: _webllmModel,
-          isExpanded: true,
-          decoration: InputDecoration(
-            labelText: context.l10n.settingsOnDeviceModelLabel,
-          ),
+        SettingsDropdown<WebLlmModelPreset>(
+          itemKey: ValueKey<WebLlmModelPreset>(_webllmModel),
+          value: _webllmModel,
+          labelText: context.l10n.settingsOnDeviceModelLabel,
           items: [
             for (final preset in webLlmModelPresets)
               DropdownMenuItem(
@@ -798,12 +811,12 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
         Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Icon(Icons.memory, size: 16, color: theme.colorScheme.primary),
+            Icon(Icons.memory, size: 16, color: tokens.accent),
             const SizedBox(width: 8),
             Expanded(
               child: Text(
                 context.l10n.settingsWebllmNote,
-                style: theme.textTheme.bodySmall,
+                style: theme.textTheme.bodySmall?.copyWith(color: tokens.ink2),
               ),
             ),
           ],
@@ -816,7 +829,7 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
             _loadStatus != null && _loadStatus!.isNotEmpty
                 ? _loadStatus!
                 : context.l10n.settingsDownloadingWeights,
-            style: theme.textTheme.bodySmall,
+            style: theme.textTheme.bodySmall?.copyWith(color: tokens.ink2),
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
           ),
@@ -830,15 +843,14 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
   /// offline/WebGPU note, and — while a load is in flight — the download
   /// progress bar. No token field: the ONNX repos are public.
   Widget _buildTransformersJsFields(ThemeData theme) {
+    final tokens = faui.FaDesignTokens.of(context);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        DropdownButtonFormField<TransformersJsModelPreset>(
-          initialValue: _transformersJsModel,
-          isExpanded: true,
-          decoration: InputDecoration(
-            labelText: context.l10n.settingsOnDeviceModelLabel,
-          ),
+        SettingsDropdown<TransformersJsModelPreset>(
+          itemKey: ValueKey<TransformersJsModelPreset>(_transformersJsModel),
+          value: _transformersJsModel,
+          labelText: context.l10n.settingsOnDeviceModelLabel,
           items: [
             for (final preset in transformersJsModelPresets)
               DropdownMenuItem(
@@ -875,12 +887,12 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
         Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Icon(Icons.memory, size: 16, color: theme.colorScheme.primary),
+            Icon(Icons.memory, size: 16, color: tokens.accent),
             const SizedBox(width: 8),
             Expanded(
               child: Text(
                 context.l10n.settingsTransformersJsNote,
-                style: theme.textTheme.bodySmall,
+                style: theme.textTheme.bodySmall?.copyWith(color: tokens.ink2),
               ),
             ),
           ],
@@ -893,7 +905,7 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
             _loadStatus != null && _loadStatus!.isNotEmpty
                 ? _loadStatus!
                 : context.l10n.settingsDownloadingWeights,
-            style: theme.textTheme.bodySmall,
+            style: theme.textTheme.bodySmall?.copyWith(color: tokens.ink2),
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
           ),
@@ -926,12 +938,38 @@ class KeysSection extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final tokens = faui.FaDesignTokens.of(context);
     final store = this.store ?? SessionKeysScope.maybeOf(context);
     final registry = this.registry;
     if (store == null && registry == null) return const SizedBox.shrink();
     return ListenableBuilder(
       listenable: Listenable.merge([?store, ?registry]),
       builder: (context, _) {
+        final keyRows = <Widget>[
+          if (store != null)
+            for (final name in _listedNames(store))
+              _buildKeyRow(
+                context,
+                theme,
+                title: name,
+                source: _sourceFor(context, store, name),
+                onSet: () => _setStoredKey(context, store, name),
+                onDelete: store.has(name)
+                    ? () => _deleteStoredKey(context, store, name)
+                    : null,
+              ),
+          if (registry != null)
+            for (final provider in registry.providers)
+              if ((registry.keyFor(provider.id) ?? '').isNotEmpty)
+                _buildKeyRow(
+                  context,
+                  theme,
+                  title: provider.name,
+                  source: context.l10n.keysSourceProviderSession,
+                  onSet: () => _setProviderKey(context, registry, provider),
+                  onDelete: () => registry.rememberKey(provider.id, ''),
+                ),
+        ];
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           mainAxisSize: MainAxisSize.min,
@@ -941,46 +979,45 @@ class KeysSection extends StatelessWidget {
                 Expanded(
                   child: Text(
                     context.l10n.keysSectionTitle,
-                    style: theme.textTheme.titleSmall,
+                    style: TextStyle(
+                      color: tokens.ink2,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      letterSpacing: .2,
+                    ),
                   ),
                 ),
                 if (store != null)
-                  TextButton.icon(
+                  faui.FaButton(
+                    label: context.l10n.keysAddButton,
+                    icon: Icons.add,
+                    variant: faui.FaButtonVariant.ghost,
                     onPressed: () => _addKey(context, store),
-                    icon: const Icon(Icons.add, size: 18),
-                    label: Text(context.l10n.keysAddButton),
                   ),
               ],
             ),
             const SizedBox(height: 4),
             Text(
               context.l10n.keysSectionNote,
-              style: theme.textTheme.bodySmall,
+              style: TextStyle(color: tokens.ink2, fontSize: 12, height: 1.35),
             ),
             const SizedBox(height: 8),
-            if (store != null)
-              for (final name in _listedNames(store))
-                _buildKeyRow(
-                  context,
-                  theme,
-                  title: name,
-                  source: _sourceFor(context, store, name),
-                  onSet: () => _setStoredKey(context, store, name),
-                  onDelete: store.has(name)
-                      ? () => _deleteStoredKey(context, store, name)
-                      : null,
-                ),
-            if (registry != null)
-              for (final provider in registry.providers)
-                if ((registry.keyFor(provider.id) ?? '').isNotEmpty)
-                  _buildKeyRow(
-                    context,
-                    theme,
-                    title: provider.name,
-                    source: context.l10n.keysSourceProviderSession,
-                    onSet: () => _setProviderKey(context, registry, provider),
-                    onDelete: () => registry.rememberKey(provider.id, ''),
+            if (keyRows.isNotEmpty)
+              faui.FaSurface(
+                borderRadius: BorderRadius.circular(14),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      for (var i = 0; i < keyRows.length; i++) ...[
+                        if (i > 0) faui.FaHairline(indent: 16, symmetry: 0),
+                        keyRows[i],
+                      ],
+                    ],
                   ),
+                ),
+              ),
           ],
         );
       },
@@ -1023,8 +1060,9 @@ class KeysSection extends StatelessWidget {
     VoidCallback? onSet,
     VoidCallback? onDelete,
   }) {
+    final tokens = faui.FaDesignTokens.of(context);
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 2),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
       child: Row(
         children: [
           Expanded(
@@ -1033,30 +1071,29 @@ class KeysSection extends StatelessWidget {
               children: [
                 Text(
                   title,
-                  style: FahPalette.mono(
-                    color: theme.colorScheme.onSurface,
-                    fontSize: 12,
-                  ),
+                  style: FahPalette.mono(color: tokens.ink1, fontSize: 12),
                   overflow: TextOverflow.ellipsis,
                 ),
-                Text(source, style: theme.textTheme.bodySmall),
+                Text(
+                  source,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: tokens.ink2,
+                  ),
+                ),
               ],
             ),
           ),
           if (onSet != null)
-            TextButton(
+            faui.FaButton(
+              label: context.l10n.keysSetButton,
+              variant: faui.FaButtonVariant.ghost,
               onPressed: onSet,
-              child: Text(context.l10n.keysSetButton),
             ),
           if (onDelete != null)
-            IconButton(
+            faui.FaIconButton(
               tooltip: context.l10n.commonDelete,
+              icon: Icons.delete_outline,
               onPressed: onDelete,
-              icon: Icon(
-                Icons.delete_outline,
-                size: 18,
-                color: theme.colorScheme.error,
-              ),
             ),
         ],
       ),
@@ -1102,16 +1139,21 @@ class KeysSection extends StatelessWidget {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
+        backgroundColor: faui.FaDesignTokens.of(dialogContext).surface1,
+        surfaceTintColor: Colors.transparent,
+        shape: _settingsDialogShape(dialogContext),
         title: Text(context.l10n.keysDeleteTitle(name)),
         content: Text(context.l10n.keysDeleteBody),
         actions: [
-          TextButton(
+          faui.FaButton(
+            label: context.l10n.commonCancel,
+            variant: faui.FaButtonVariant.ghost,
             onPressed: () => Navigator.of(dialogContext).pop(false),
-            child: Text(context.l10n.commonCancel),
           ),
-          FilledButton(
+          faui.FaButton(
+            label: context.l10n.commonDelete,
+            variant: faui.FaButtonVariant.danger,
             onPressed: () => Navigator.of(dialogContext).pop(true),
-            child: Text(context.l10n.commonDelete),
           ),
         ],
       ),
@@ -1211,6 +1253,10 @@ class SettingsScreen extends StatefulWidget {
     this.transformersJsEngine,
     this.modelsFetcher,
     this.taskModelsStore,
+    this.category,
+    this.embedded = false,
+    this.categorized = false,
+    this.onBack,
   });
 
   /// The service whose backend the default-chat-model flow reconfigures.
@@ -1254,15 +1300,55 @@ class SettingsScreen extends StatefulWidget {
   /// Task models section (tests pumping the bare form).
   final TaskModelsStore? taskModelsStore;
 
+  /// The category whose concrete controls replace the transcript in the
+  /// wide shell. Null in categorized narrow mode shows the category list.
+  final SettingsCategory? category;
+
+  /// Removes route-level chrome: the wide shell owns navigation and the
+  /// surrounding center panel.
+  final bool embedded;
+
+  /// Enables the six-category drill-down on narrow layouts. The default
+  /// keeps the legacy all-sections page for embedders that already provide
+  /// their own settings navigation.
+  final bool categorized;
+
+  /// Shell-owned back navigation. Category drill-down still returns to the
+  /// category root first; at the root this callback returns to Chats.
+  final VoidCallback? onBack;
+
   @override
   State<SettingsScreen> createState() => _SettingsScreenState();
 }
 
 class _SettingsScreenState extends State<SettingsScreen> {
+  final ScrollController _scrollController = ScrollController();
+  SettingsCategory? _selectedCategory;
+
+  bool get _isCategorized =>
+      widget.categorized || widget.embedded || widget.category != null;
+
+  SettingsCategory? get _effectiveCategory =>
+      widget.category ?? _selectedCategory;
+
   @override
   void initState() {
     super.initState();
     AppAnalytics.instance.screenOpened('settings');
+  }
+
+  @override
+  void didUpdateWidget(SettingsScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.category != widget.category && _scrollController.hasClients) {
+      _scrollController.jumpTo(0);
+    }
+  }
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
   }
 
   @override
@@ -1283,115 +1369,492 @@ class _SettingsScreenState extends State<SettingsScreen> {
     // model, media slots, approval mode, subagent manager) are
     // gated below; a small Add-provider CTA surfaces at the top so
     // the no-service case still has a clear next action.
-    return Scaffold(
-      appBar: faAppBar(title: Text(context.l10n.settingsTitle)),
-      body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              // The App Store Get banner (issue #691 AC4): web + macOS
-              // only, dismissible (persisted), non-blocking — a card at
-              // the top of the scroll, never an overlay. URLs resolve
-              // from the `links:` config section; `links.banner: false`
-              // mounts nothing (the AC7 regression switch).
-              if (widget.env != null)
-                StoreGetBanner(
-                  env: widget.env!,
-                  showOnPlatform:
-                      kIsWeb || defaultTargetPlatform == TargetPlatform.macOS,
-                ),
-              ..._noServiceHint(context, service),
-              _providersSection(context, service, onDeviceConfig),
-              const SizedBox(height: 24),
-              const Divider(),
-              const SizedBox(height: 16),
-              // The Agents section / Models row / Approval mode all read
-              // from the live service (reconfigure, subagentManager,
-              // activeBaseUrl, …). Gate them on a non-null service
-              // so the no-service case still surfaces theme / keys /
-              // layout / debug logs / onboarding replay below.
-              if (service != null)
-                ..._modelsAndAgentsSections(service, taskModels),
-              const ThemeModeSection(),
-              const ThemePacksSection(),
-
-              const SizedBox(height: 24),
-              const Divider(),
-              const SizedBox(height: 16),
-              // The DAP/1 hub connection (machine-shared `~/.dap` config,
-              // docs/dap.md §9) — service-independent, so it shows without
-              // an active agent service too.
-              const DapHubSection(),
-              const SizedBox(height: 24),
-              const Divider(),
-              const SizedBox(height: 16),
-              // The GitHub account used for widget publishing (issue #35)
-              // — resolves its store from SessionKeysScope, so it renders
-              // without an active agent service, like DapHubSection. The
-              // env wires "My publications" to the live status polling.
-              GithubAccountSection(env: widget.env),
-              const SizedBox(height: 24),
-              const Divider(),
-              const SizedBox(height: 16),
-              const ChatTextSection(),
-              const SizedBox(height: 24),
-              const Divider(),
-              const SizedBox(height: 16),
-              // Issue #207: chat image previews decode downscaled (600px)
-              // by default; this switch lifts the constraint live.
-              const ImagePreviewsSection(),
-              const SizedBox(height: 24),
-              const Divider(),
-              const SizedBox(height: 16),
-              if (widget.layoutStore != null) ...[
-                HomeGridSection(layoutStore: widget.layoutStore!),
-                const SizedBox(height: 24),
-                const Divider(),
-                const SizedBox(height: 16),
-              ],
-              if (service != null) ...[
-                ResetAppsSection(service: service),
-                const SizedBox(height: 24),
-                const Divider(),
-                const SizedBox(height: 16),
-              ],
-              KeysSection(registry: widget.registry),
-              const SizedBox(height: 24),
-              const Divider(),
-              const SizedBox(height: 16),
-              if (service != null) ..._approvalAndToolsSections(service),
-              // Registry-classified CLI-only settings, listed with their
-              // reasons — never a silent absence (issue #288 AC4).
-              // Deliberately OUTSIDE the `service != null` gate: the
-              // listing is registry-driven and static, so a fresh install
-              // with no service yet still shows WHY those settings are
-              // CLI-only.
-              const CliOnlySettingsSection(),
-              const SizedBox(height: 24),
-              const Divider(),
-              const SizedBox(height: 16),
-              WebLlmCacheSection(engine: widget.webLlmEngine),
-              ..._onDeviceCacheSections(),
-              const SizedBox(height: 24),
-              const Divider(),
-              const SizedBox(height: 16),
-              OnboardingReplaySection(
-                mediaModelsStore: MediaModelsScope.maybeOf(context),
-                lastConnectionStore: widget.lastConnectionStore,
-                registry: widget.registry,
-              ),
-              const SizedBox(height: 24),
-              const Divider(),
-              const SizedBox(height: 16),
-              const DebugLogsSection(),
-              const SizedBox(height: 24),
-            ],
+    final tokens = faui.FaDesignTokens.of(context);
+    final glass = tokens.direction == faui.FaVisualDirection.glass;
+    // Wide glass dialogs present this page over the live app (see
+    // faui.pushFaPage): the platter samples the app behind the dialog.
+    // Standalone glass routes get a local token gradient underlay
+    // instead, so the glass has something to sample there too.
+    final inGlassDialog = faui.FaGlassDialogScope.of(context);
+    final inDialog = faui.FaDialogScope.of(context);
+    if (_isCategorized) {
+      return _buildCategorized(context, service, taskModels, onDeviceConfig);
+    }
+    final header = faAppBar(
+      context: context,
+      title: Text(context.l10n.settingsTitle),
+      toolbarHeight: 48,
+      centerTitle: false,
+      trafficLightClearance: !inDialog,
+      leading: Padding(
+        padding: const EdgeInsets.only(left: 12),
+        child: Center(
+          child: faui.FaIconActionButton(
+            buttonKey: const ValueKey('settingsBackButton'),
+            diameter: 36,
+            glyphSize: 20,
+            tooltip: MaterialLocalizations.of(context).backButtonTooltip,
+            onPressed: () => Navigator.of(context).maybePop(),
+            child: const faui.FaIcon(faui.FaSemanticIcon.back),
           ),
         ),
       ),
     );
+    final theme = Theme.of(context);
+    final wide = MediaQuery.sizeOf(context).width >= 840;
+    final floatingPlatter = wide || inDialog;
+    final page = Theme(
+      // Header and body share ONE platter. A separately painted AppBar was
+      // the visible gray band/seam in both opaque and glass directions.
+      data: theme.copyWith(
+        appBarTheme: theme.appBarTheme.copyWith(
+          backgroundColor: Colors.transparent,
+          surfaceTintColor: Colors.transparent,
+          elevation: 0,
+          scrolledUnderElevation: 0,
+          shape: const Border(),
+        ),
+      ),
+      child: Scaffold(
+        backgroundColor: glass ? Colors.transparent : tokens.background,
+        body: SafeArea(
+          child: Padding(
+            // A dialog is a floating platter; a phone is a full-bleed page,
+            // not a shrunken desktop card with bright strips at its edges.
+            padding: _settingsPadding(
+              inDialog: inDialog,
+              floatingPlatter: floatingPlatter,
+            ),
+            // The page platter: real liquid glass in the glass direction,
+            // the direction's opaque background elsewhere. Sections group
+            // into SOLID SettingsGroup cards on top — never glass-in-glass.
+            child: faui.FaSurface(
+              // The dialog route already owns the glass platter. Painting a
+              // second glass surface here produced the double frame and
+              // translucent text slivers visible in the Settings screenshot.
+              glass: glass && !inDialog,
+              useBackdropGroup: glass && !inDialog,
+              color: glass && !inDialog
+                  ? tokens.surface1.withValues(
+                      alpha: theme.brightness == Brightness.light ? .92 : .78,
+                    )
+                  : tokens.background,
+              borderRadius: BorderRadius.circular(
+                _settingsPlatterRadius(
+                  floatingPlatter: floatingPlatter,
+                  inDialog: inDialog,
+                ),
+              ),
+              borderSide: inDialog
+                  ? BorderSide.none
+                  : BorderSide(color: tokens.hairline),
+              child: Column(
+                children: [
+                  SizedBox(
+                    key: const ValueKey('settingsHeader'),
+                    height: header.preferredSize.height,
+                    child: header,
+                  ),
+                  const faui.FaHairline(),
+                  Expanded(
+                    child: Scrollbar(
+                      key: const ValueKey('settingsScrollbar'),
+                      controller: _scrollController,
+                      thumbVisibility: true,
+                      thickness: 5,
+                      radius: const Radius.circular(8),
+                      child: SingleChildScrollView(
+                        controller: _scrollController,
+                        padding: const EdgeInsets.fromLTRB(16, 12, 20, 32),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            // The App Store Get banner (issue #691 AC4): web + macOS
+                            // only, dismissible (persisted), non-blocking — a card at
+                            // the top of the scroll, never an overlay. URLs resolve
+                            // from the `links:` config section; `links.banner: false`
+                            // mounts nothing (the AC7 regression switch).
+                            if (widget.env != null)
+                              StoreGetBanner(
+                                env: widget.env!,
+                                showOnPlatform:
+                                    kIsWeb ||
+                                    defaultTargetPlatform ==
+                                        TargetPlatform.macOS,
+                              ),
+                            ..._noServiceHint(context, service),
+                            SettingsGroup(
+                              label: context.l10n.settingsProvidersSectionTitle,
+                              children: [
+                                _providersSection(
+                                  context,
+                                  service,
+                                  onDeviceConfig,
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 16),
+                            // The Agents section / Models row / Approval mode all read
+                            // from the live service (reconfigure, subagentManager,
+                            // activeBaseUrl, …). Gate them on a non-null service
+                            // so the no-service case still surfaces theme / keys /
+                            // layout / debug logs / onboarding replay below.
+                            if (service != null)
+                              ..._modelsAndAgentsSections(service, taskModels),
+                            const VisualDirectionSection(
+                              includeThemeMode: true,
+                            ),
+                            const SizedBox(height: 16),
+                            const ThemePacksSection(),
+                            const SizedBox(height: 16),
+                            // The DAP/1 hub connection (machine-shared `~/.dap` config,
+                            // docs/dap.md §9) — service-independent, so it shows without
+                            // an active agent service too.
+                            const DapHubSection(),
+                            const SizedBox(height: 16),
+                            // The GitHub account used for widget publishing (issue #35)
+                            // — resolves its store from SessionKeysScope, so it renders
+                            // without an active agent service, like DapHubSection. The
+                            // env wires "My publications" to the live status polling.
+                            GithubAccountSection(env: widget.env),
+                            const SizedBox(height: 16),
+                            const ChatTextSection(),
+                            const SizedBox(height: 16),
+                            // Issue #207: chat image previews decode downscaled (600px)
+                            // by default; this switch lifts the constraint live.
+                            const ImagePreviewsSection(),
+                            const SizedBox(height: 16),
+                            if (widget.layoutStore != null) ...[
+                              HomeGridSection(layoutStore: widget.layoutStore!),
+                              const SizedBox(height: 16),
+                            ],
+                            if (service != null) ...[
+                              ResetAppsSection(service: service),
+                              const SizedBox(height: 16),
+                            ],
+                            KeysSection(registry: widget.registry),
+                            const SizedBox(height: 16),
+                            if (service != null)
+                              ..._approvalAndToolsSections(service),
+                            // Registry-classified CLI-only settings, listed with their
+                            // reasons — never a silent absence (issue #288 AC4).
+                            // Deliberately OUTSIDE the `service != null` gate: the
+                            // listing is registry-driven and static, so a fresh install
+                            // with no service yet still shows WHY those settings are
+                            // CLI-only.
+                            const CliOnlySettingsSection(),
+                            const SizedBox(height: 16),
+                            WebLlmCacheSection(engine: widget.webLlmEngine),
+                            ..._onDeviceCacheSections(),
+                            const SizedBox(height: 16),
+                            OnboardingReplaySection(
+                              mediaModelsStore: MediaModelsScope.maybeOf(
+                                context,
+                              ),
+                              lastConnectionStore: widget.lastConnectionStore,
+                              registry: widget.registry,
+                            ),
+                            const SizedBox(height: 16),
+                            const DebugLogsSection(),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    return _settingsGlassUnderlay(
+      glass: glass,
+      inGlassDialog: inGlassDialog,
+      tokens: tokens,
+      page: page,
+    );
+  }
+
+  EdgeInsets _settingsPadding({
+    required bool inDialog,
+    required bool floatingPlatter,
+  }) {
+    if (inDialog) return EdgeInsets.zero;
+    if (floatingPlatter) return const EdgeInsets.fromLTRB(8, 0, 8, 8);
+    return EdgeInsets.zero;
+  }
+
+  double _settingsPlatterRadius({
+    required bool floatingPlatter,
+    required bool inDialog,
+  }) {
+    if (floatingPlatter && !inDialog) return 18;
+    return 0;
+  }
+
+  Widget _settingsGlassUnderlay({
+    required bool glass,
+    required bool inGlassDialog,
+    required faui.FaDesignTokens tokens,
+    required Widget page,
+  }) {
+    if (!glass) return page;
+    // The wide dialog already has the live app behind it — no underlay.
+    if (inGlassDialog) return page;
+    // Standalone glass route (pushed opaque route = nothing painted
+    // below): a subtle token gradient underlay, local to this page, so
+    // the glass platter and header have something real to sample.
+    return DecoratedBox(
+      key: const ValueKey('settingsGlassUnderlay'),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [
+            tokens.background,
+            tokens.accentSoft.withValues(alpha: .20),
+            tokens.background,
+          ],
+          stops: const [0, .5, 1],
+        ),
+      ),
+      child: page,
+    );
+  }
+
+  Widget _buildCategorized(
+    BuildContext context,
+    AgentService? service,
+    TaskModelsStore? taskModels,
+    OnDeviceConfigStore? onDeviceConfig,
+  ) {
+    final tokens = faui.FaDesignTokens.of(context);
+    final category = _effectiveCategory;
+    final title = category?.label ?? context.l10n.settingsTitle;
+    final body = category == null
+        ? SettingsCategoryPanel(
+            selected: null,
+            showHeader: false,
+            topPadding: MessengerFloatingPageScaffold.bodyTop,
+            onSelected: _selectCategory,
+          )
+        : _categoryScroll(category, service, taskModels, onDeviceConfig);
+    final header = MessengerFloatingPageHeader(
+      key: const ValueKey('settingsCategoryHeader'),
+      title: title,
+      icon: Icons.settings_outlined,
+      trafficLightClearance:
+          !widget.embedded && !faui.FaDialogScope.of(context),
+      leading: !widget.embedded || widget.onBack != null
+          ? faui.FaIconActionButton(
+              buttonKey: const ValueKey('settingsBackButton'),
+              diameter: 36,
+              glyphSize: 20,
+              glass: true,
+              tooltip: MaterialLocalizations.of(context).backButtonTooltip,
+              onPressed: () {
+                if (widget.category == null && category != null) {
+                  setState(() => _selectedCategory = null);
+                } else if (widget.onBack != null) {
+                  widget.onBack!();
+                } else {
+                  Navigator.of(context).maybePop();
+                }
+              },
+              child: const faui.FaIcon(faui.FaSemanticIcon.back),
+            )
+          : null,
+    );
+    final page = MessengerFloatingPageScaffold(header: header, body: body);
+    if (widget.embedded) {
+      return Material(
+        type: MaterialType.transparency,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            const Positioned.fill(child: FahWallpaper()),
+            KeyedSubtree(
+              key: const ValueKey('settingsCategoryContent'),
+              child: page,
+            ),
+          ],
+        ),
+      );
+    }
+    return Scaffold(
+      key: const ValueKey('settingsCategoryContent'),
+      backgroundColor: tokens.background,
+      body: Stack(
+        fit: StackFit.expand,
+        children: [
+          // Match a standalone Local chat route: the short glass controls
+          // sample real wallpaper, not an opaque header slab.
+          const Positioned.fill(child: FahWallpaper()),
+          SafeArea(child: page),
+        ],
+      ),
+    );
+  }
+
+  void _selectCategory(SettingsCategory category) {
+    setState(() => _selectedCategory = category);
+    if (_scrollController.hasClients) _scrollController.jumpTo(0);
+  }
+
+  Widget _categoryScroll(
+    SettingsCategory category,
+    AgentService? service,
+    TaskModelsStore? taskModels,
+    OnDeviceConfigStore? onDeviceConfig,
+  ) {
+    return Scrollbar(
+      key: const ValueKey('settingsScrollbar'),
+      controller: _scrollController,
+      thumbVisibility: widget.embedded,
+      thickness: 5,
+      radius: const Radius.circular(8),
+      child: SingleChildScrollView(
+        controller: _scrollController,
+        padding: const EdgeInsets.fromLTRB(
+          20,
+          MessengerFloatingPageScaffold.bodyTop,
+          24,
+          32,
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: _categorySections(
+            category,
+            service,
+            taskModels,
+            onDeviceConfig,
+          ),
+        ),
+      ),
+    );
+  }
+
+  List<Widget> _categorySections(
+    SettingsCategory category,
+    AgentService? service,
+    TaskModelsStore? taskModels,
+    OnDeviceConfigStore? onDeviceConfig,
+  ) {
+    const gap = SizedBox(height: 16);
+    return switch (category) {
+      SettingsCategory.providersModels => [
+        ..._noServiceHint(context, service),
+        SettingsGroup(
+          label: context.l10n.settingsProvidersSectionTitle,
+          children: [_providersSection(context, service, onDeviceConfig)],
+        ),
+        if (service != null) ...[
+          gap,
+          ModelsSettingsPage(
+            service: service,
+            registry: widget.registry,
+            lastConnectionStore: widget.lastConnectionStore,
+            modelsFetcher: widget.modelsFetcher,
+            taskModelsStore: taskModels,
+            webLlmEngine: widget.webLlmEngine,
+            transformersJsEngine: widget.transformersJsEngine,
+            contentOnly: true,
+          ),
+        ],
+        gap,
+        WebLlmCacheSection(engine: widget.webLlmEngine),
+        if (transformersJsProviderSupported) ...[
+          gap,
+          TransformersJsCacheSection(engine: widget.transformersJsEngine),
+        ],
+      ],
+      SettingsCategory.uiTheme => [
+        const VisualDirectionSection(includeThemeMode: true),
+        gap,
+        const ThemePacksSection(),
+        gap,
+        const ChatTextSection(),
+        gap,
+        const ImagePreviewsSection(),
+        if (widget.layoutStore != null) ...[
+          gap,
+          HomeGridSection(layoutStore: widget.layoutStore!),
+        ],
+      ],
+      SettingsCategory.accountsSecrets => [
+        const DapHubSection(),
+        gap,
+        GithubAccountSection(env: widget.env),
+        gap,
+        KeysSection(registry: widget.registry),
+      ],
+      SettingsCategory.skillsTools => [
+        if (service != null) ...[
+          if (skillsConsentSurfacesVisible) ...[
+            SkillsAccessSection(service: service),
+            gap,
+          ],
+          SkillsTogglesSection(service: service),
+          gap,
+          ToolsAvailabilitySection(service: service),
+          gap,
+          RedactionSection(service: service),
+        ],
+        if (mobilePlatformSupported && mobileFlavor == 'god') ...[
+          if (service != null) gap,
+          const MobileAutomationSection(),
+        ],
+      ],
+      SettingsCategory.agentConfig => [
+        if (service != null) ...[
+          ApprovalModeSelector(service: service),
+          gap,
+          if (service.subagentManager case final manager?) ...[
+            SettingsGroup(
+              label: 'Agents', // l10n:ignore
+              children: [
+                faui.AgentsSection(
+                  manager: manager,
+                  mainDescription:
+                      '${service.agentModelId} · '
+                      '${service.messages.length} messages',
+                  observe: service.observeSubagent,
+                  send: service.sendToSubagent,
+                ),
+              ],
+            ),
+            gap,
+          ],
+          CompactionSection(
+            projectDir: service.env.sessionCwd,
+            docsUrl: Uri.parse(
+              'https://github.com/IstiN/flutter_agent_harness/tree/'
+              'main/docs',
+            ),
+          ),
+          gap,
+        ],
+        const CliOnlySettingsSection(),
+      ],
+      SettingsCategory.others => [
+        if (widget.env != null)
+          StoreGetBanner(
+            env: widget.env!,
+            showOnPlatform:
+                kIsWeb || defaultTargetPlatform == TargetPlatform.macOS,
+          ),
+        if (widget.env != null) gap,
+        if (service != null) ...[ResetAppsSection(service: service), gap],
+        OnboardingReplaySection(
+          mediaModelsStore: MediaModelsScope.maybeOf(context),
+          lastConnectionStore: widget.lastConnectionStore,
+          registry: widget.registry,
+        ),
+        gap,
+        const DebugLogsSection(),
+      ],
+    };
   }
 
   /// The connect-a-provider CTA shown only when there is no active
@@ -1405,8 +1868,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     return [
       _NoServiceSettings(onAddProvider: () => _addProviderFromCta(context)),
       const SizedBox(height: 16),
-      const Divider(),
-      const SizedBox(height: 8),
     ];
   }
 
@@ -1476,6 +1937,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       modelsFetcher: widget.modelsFetcher,
       // Quota meters + pull-to-refresh (issue #823 AC6).
       quotas: QuotaStore.instance.service,
+      showTitle: false,
       openRouterOAuthCallbackUrl:
           OpenRouterOAuthCoordinator.instance.platformCallbackUrl,
       openRouterOAuthCapture: OpenRouterOAuthCoordinator.instance.capture,
@@ -1530,10 +1992,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       onDeviceRowVisible: onDeviceConfig?.isConfigured,
       onDeviceConnected: (config) async {
         final agentConfig = agentConfigFrom(config);
-        const onDeviceKinds = {
-          webLlmProviderKind,
-          transformersJsProviderKind,
-        };
+        const onDeviceKinds = {webLlmProviderKind, transformersJsProviderKind};
         if (onDeviceKinds.contains(agentConfig.providerKind)) {
           await onDeviceConfig?.markConfigured(agentConfig.providerKind);
         }
@@ -1552,47 +2011,47 @@ class _SettingsScreenState extends State<SettingsScreen> {
     TaskModelsStore? taskModels,
   ) {
     return [
-      _ModelsRow(
-        onTap: () {
-          // pushFaPage: a centered dialog on wide canvases
-          // (desktop/tablet), a full-screen page on the phone.
-          unawaited(
-            faui.pushFaPage<void>(
-              context,
-              ModelsSettingsPage(
-                service: service,
-                registry: widget.registry,
-                lastConnectionStore: widget.lastConnectionStore,
-                modelsFetcher: widget.modelsFetcher,
-                taskModelsStore: taskModels,
-                webLlmEngine: widget.webLlmEngine,
-                transformersJsEngine: widget.transformersJsEngine,
-              ),
-            ),
-          );
-        },
+      SettingsGroup(
+        children: [
+          _ModelsRow(
+            onTap: () {
+              // pushFaPage: a centered dialog on wide canvases
+              // (desktop/tablet), a full-screen page on the phone.
+              unawaited(
+                faui.pushFaPage<void>(
+                  context,
+                  ModelsSettingsPage(
+                    service: service,
+                    registry: widget.registry,
+                    lastConnectionStore: widget.lastConnectionStore,
+                    modelsFetcher: widget.modelsFetcher,
+                    taskModelsStore: taskModels,
+                    webLlmEngine: widget.webLlmEngine,
+                    transformersJsEngine: widget.transformersJsEngine,
+                  ),
+                ),
+              );
+            },
+          ),
+        ],
       ),
-      const SizedBox(height: 24),
-      const Divider(),
       const SizedBox(height: 16),
       // The live subagent tree (CLI `/agents` panel parity):
       // main + retained children with observe/send.
       if (service.subagentManager case final manager?) ...[
-        Text(
-          'Agents', // l10n:ignore
-          style: Theme.of(context).textTheme.titleSmall,
+        SettingsGroup(
+          label: 'Agents', // l10n:ignore
+          children: [
+            faui.AgentsSection(
+              manager: manager,
+              mainDescription:
+                  '${service.agentModelId} · '
+                  '${service.messages.length} messages',
+              observe: service.observeSubagent,
+              send: service.sendToSubagent,
+            ),
+          ],
         ),
-        const SizedBox(height: 8),
-        faui.AgentsSection(
-          manager: manager,
-          mainDescription:
-              '${service.agentModelId} · '
-              '${service.messages.length} messages',
-          observe: service.observeSubagent,
-          send: service.sendToSubagent,
-        ),
-        const SizedBox(height: 24),
-        const Divider(),
         const SizedBox(height: 16),
       ],
     ];
@@ -1605,34 +2064,24 @@ class _SettingsScreenState extends State<SettingsScreen> {
   List<Widget> _approvalAndToolsSections(AgentService service) {
     return [
       ApprovalModeSelector(service: service),
-      const SizedBox(height: 24),
-      const Divider(),
       const SizedBox(height: 16),
       // Third-party skills consent — the roots don't exist on
       // mobile, so the section hides there entirely.
       if (skillsConsentSurfacesVisible) ...[
         SkillsAccessSection(service: service),
-        const SizedBox(height: 24),
-        const Divider(),
         const SizedBox(height: 16),
       ],
       // Per-skill toggles (issue #1151): the package builtins are embedded
       // data on every host — the rows render wherever the settings screen
       // does, no consent-style platform gating.
       SkillsTogglesSection(service: service),
-      const SizedBox(height: 24),
-      const Divider(),
       const SizedBox(height: 16),
       // Capability-gated tools (issue #19): live toggles, every
       // platform — the tool set exists everywhere.
       ToolsAvailabilitySection(service: service),
-      const SizedBox(height: 24),
-      const Divider(),
       const SizedBox(height: 16),
       // Secret redaction (issue #1078 AC4/E3): the live pipeline toggle.
       RedactionSection(service: service),
-      const SizedBox(height: 24),
-      const Divider(),
       const SizedBox(height: 16),
       // Compaction engine picker (issue #287): structured (2.0)
       // is the default; classic stays the in-settings rollback.
@@ -1646,8 +2095,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
           'main/docs',
         ),
       ),
-      const SizedBox(height: 24),
-      const Divider(),
       const SizedBox(height: 16),
     ];
   }
@@ -1666,8 +2113,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
       // show it.
       if (mobilePlatformSupported && mobileFlavor == 'god') ...[
         const MobileAutomationSection(),
-        const SizedBox(height: 24),
-        const Divider(),
         const SizedBox(height: 16),
       ],
     ];
@@ -1684,15 +2129,15 @@ class _ModelsRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colors = FahColors.of(context);
+    final tokens = faui.FaDesignTokens.of(context);
     return InkWell(
-      borderRadius: BorderRadius.circular(12),
+      borderRadius: BorderRadius.circular(tokens.radiusMd),
       onTap: onTap,
       child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
         child: Row(
           children: [
-            faui.FaModelGlyph(size: 20, color: colors.dim),
+            faui.FaModelGlyph(size: 20, color: tokens.ink2),
             const SizedBox(width: 12),
             Expanded(
               child: Text(
@@ -1700,7 +2145,7 @@ class _ModelsRow extends StatelessWidget {
                 style: Theme.of(context).textTheme.bodyMedium,
               ),
             ),
-            Icon(Icons.chevron_right, size: 20, color: colors.dim),
+            Icon(Icons.chevron_right, size: 20, color: tokens.ink2),
           ],
         ),
       ),
@@ -1720,14 +2165,14 @@ class HomeGridSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colors = FahColors.of(context);
+    final tokens = faui.FaDesignTokens.of(context);
     return ListenableBuilder(
       listenable: layoutStore,
       builder: (context, _) {
         final current = layoutStore.gridColumns;
         return Row(
           children: [
-            Icon(Icons.grid_view_outlined, size: 20, color: colors.dim),
+            Icon(Icons.grid_view_outlined, size: 20, color: tokens.ink2),
             const SizedBox(width: 12),
             Expanded(
               child: Column(
@@ -1741,7 +2186,7 @@ class HomeGridSection extends StatelessWidget {
                     context.l10n.settingsIconsPerRowHint,
                     style: Theme.of(
                       context,
-                    ).textTheme.bodySmall?.copyWith(color: colors.dim),
+                    ).textTheme.bodySmall?.copyWith(color: tokens.ink2),
                   ),
                 ],
               ),
@@ -1749,6 +2194,9 @@ class HomeGridSection extends StatelessWidget {
             DropdownButton<int?>(
               value: current,
               underline: const SizedBox.shrink(),
+              dropdownColor: tokens.surface2,
+              iconEnabledColor: tokens.ink2,
+              borderRadius: BorderRadius.circular(tokens.radiusMd),
               items: [
                 DropdownMenuItem<int?>(
                   child: Text(context.l10n.settingsIconsPerRowAuto),
@@ -1819,9 +2267,12 @@ class ResetAppsSection extends StatelessWidget {
     return showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
+        backgroundColor: faui.FaDesignTokens.of(dialogContext).surface1,
+        surfaceTintColor: Colors.transparent,
+        shape: _settingsDialogShape(dialogContext),
         icon: Icon(
           Icons.warning_amber_rounded,
-          color: Theme.of(dialogContext).colorScheme.error,
+          color: faui.FaDesignTokens.of(dialogContext).danger,
         ),
         title: Text(l10n.settingsResetAppsConfirmTitle),
         content: SizedBox(
@@ -1829,13 +2280,15 @@ class ResetAppsSection extends StatelessWidget {
           child: Text(l10n.settingsResetAppsConfirmBody),
         ),
         actions: [
-          TextButton(
+          faui.FaButton(
+            label: l10n.commonCancel,
+            variant: faui.FaButtonVariant.ghost,
             onPressed: () => Navigator.of(dialogContext).pop(false),
-            child: Text(l10n.commonCancel),
           ),
-          FilledButton(
+          faui.FaButton(
+            label: l10n.settingsResetApps,
+            variant: faui.FaButtonVariant.danger,
             onPressed: () => Navigator.of(dialogContext).pop(true),
-            child: Text(l10n.settingsResetApps),
           ),
         ],
       ),
@@ -1844,11 +2297,11 @@ class ResetAppsSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colors = FahColors.of(context);
+    final tokens = faui.FaDesignTokens.of(context);
     final theme = Theme.of(context);
     return Row(
       children: [
-        Icon(Icons.restart_alt, size: 20, color: colors.dim),
+        Icon(Icons.restart_alt, size: 20, color: tokens.ink2),
         const SizedBox(width: 12),
         Expanded(
           child: Column(
@@ -1860,15 +2313,15 @@ class ResetAppsSection extends StatelessWidget {
               ),
               Text(
                 context.l10n.settingsResetAppsHint,
-                style: theme.textTheme.bodySmall?.copyWith(color: colors.dim),
+                style: theme.textTheme.bodySmall?.copyWith(color: tokens.ink2),
               ),
             ],
           ),
         ),
-        TextButton(
+        faui.FaButton(
+          label: context.l10n.settingsResetApps,
+          variant: faui.FaButtonVariant.danger,
           onPressed: () => _confirmAndReset(context),
-          style: TextButton.styleFrom(foregroundColor: theme.colorScheme.error),
-          child: Text(context.l10n.settingsResetApps),
         ),
       ],
     );
@@ -1890,7 +2343,7 @@ class SkillsAccessSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colors = FahColors.of(context);
+    final tokens = faui.FaDesignTokens.of(context);
     String label(SkillsAccess access) => switch (access) {
       SkillsAccess.ask => context.l10n.skillsAccessAsk,
       SkillsAccess.granted => context.l10n.skillsAccessAllowed,
@@ -1901,7 +2354,7 @@ class SkillsAccessSection extends StatelessWidget {
       builder: (context, _) {
         return Row(
           children: [
-            Icon(Icons.extension_outlined, size: 20, color: colors.dim),
+            Icon(Icons.extension_outlined, size: 20, color: tokens.ink2),
             const SizedBox(width: 12),
             Expanded(
               child: Column(
@@ -1915,7 +2368,7 @@ class SkillsAccessSection extends StatelessWidget {
                     context.l10n.settingsSkillsAccessHint,
                     style: Theme.of(
                       context,
-                    ).textTheme.bodySmall?.copyWith(color: colors.dim),
+                    ).textTheme.bodySmall?.copyWith(color: tokens.ink2),
                   ),
                 ],
               ),
@@ -1923,6 +2376,9 @@ class SkillsAccessSection extends StatelessWidget {
             DropdownButton<SkillsAccess>(
               value: service.skillsAccess,
               underline: const SizedBox.shrink(),
+              dropdownColor: tokens.surface2,
+              iconEnabledColor: tokens.ink2,
+              borderRadius: BorderRadius.circular(tokens.radiusMd),
               items: [
                 for (final access in SkillsAccess.values)
                   DropdownMenuItem(value: access, child: Text(label(access))),
@@ -1967,9 +2423,9 @@ class OnboardingReplaySection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colors = FahColors.of(context);
+    final tokens = faui.FaDesignTokens.of(context);
     return InkWell(
-      borderRadius: BorderRadius.circular(12),
+      borderRadius: BorderRadius.circular(tokens.radiusMd),
       onTap: () {
         unawaited(
           Navigator.of(context).push(
@@ -1990,7 +2446,7 @@ class OnboardingReplaySection extends StatelessWidget {
         padding: const EdgeInsets.symmetric(vertical: 8),
         child: Row(
           children: [
-            Icon(Icons.waving_hand_outlined, size: 20, color: colors.dim),
+            Icon(Icons.waving_hand_outlined, size: 20, color: tokens.ink2),
             const SizedBox(width: 12),
             Expanded(
               child: Text(
@@ -1998,7 +2454,7 @@ class OnboardingReplaySection extends StatelessWidget {
                 style: Theme.of(context).textTheme.bodyMedium,
               ),
             ),
-            Icon(Icons.chevron_right, size: 20, color: colors.dim),
+            Icon(Icons.chevron_right, size: 20, color: tokens.ink2),
           ],
         ),
       ),
@@ -2014,9 +2470,9 @@ class MobileAutomationSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colors = FahColors.of(context);
+    final tokens = faui.FaDesignTokens.of(context);
     return InkWell(
-      borderRadius: BorderRadius.circular(12),
+      borderRadius: BorderRadius.circular(tokens.radiusMd),
       onTap: () {
         unawaited(
           Navigator.of(context).push(
@@ -2031,7 +2487,7 @@ class MobileAutomationSection extends StatelessWidget {
         padding: const EdgeInsets.symmetric(vertical: 8),
         child: Row(
           children: [
-            Icon(Icons.settings_accessibility, size: 20, color: colors.dim),
+            Icon(Icons.settings_accessibility, size: 20, color: tokens.ink2),
             const SizedBox(width: 12),
             Expanded(
               child: Text(
@@ -2039,7 +2495,7 @@ class MobileAutomationSection extends StatelessWidget {
                 style: Theme.of(context).textTheme.bodyMedium,
               ),
             ),
-            Icon(Icons.chevron_right, size: 20, color: colors.dim),
+            Icon(Icons.chevron_right, size: 20, color: tokens.ink2),
           ],
         ),
       ),
@@ -2056,20 +2512,20 @@ class DebugLogsSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colors = FahColors.of(context);
+    final tokens = faui.FaDesignTokens.of(context);
     return Column(
       children: [
         Row(
           children: [
-            IconButton(
-              icon: const Icon(Icons.bug_report_outlined),
+            faui.FaIconButton(
+              icon: Icons.bug_report_outlined,
               tooltip: context.l10n.settingsCopyDebugLogs,
               onPressed: () => _copyLogs(context),
             ),
             Expanded(
               child: Text(
                 context.l10n.settingsCopyDebugLogs,
-                style: TextStyle(color: colors.dim, fontSize: 13),
+                style: TextStyle(color: tokens.ink2, fontSize: 13),
               ),
             ),
           ],
@@ -2077,15 +2533,15 @@ class DebugLogsSection extends StatelessWidget {
         if (!kIsWeb)
           Row(
             children: [
-              IconButton(
-                icon: const Icon(Icons.emergency_share_outlined),
+              faui.FaIconButton(
+                icon: Icons.emergency_share_outlined,
                 tooltip: context.l10n.settingsSendTestCrashReport,
                 onPressed: () => _sendTestReport(context),
               ),
               Expanded(
                 child: Text(
                   context.l10n.settingsSendTestCrashReport,
-                  style: TextStyle(color: colors.dim, fontSize: 13),
+                  style: TextStyle(color: tokens.ink2, fontSize: 13),
                 ),
               ),
             ],
@@ -2138,18 +2594,16 @@ class _CoderBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
+    final tokens = faui.FaDesignTokens.of(context);
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
       decoration: BoxDecoration(
-        color: theme.colorScheme.secondaryContainer,
-        borderRadius: BorderRadius.circular(4),
+        color: tokens.accentSoft,
+        borderRadius: BorderRadius.circular(tokens.radiusXs),
       ),
       child: Text(
         context.l10n.settingsCoderBadge,
-        style: theme.textTheme.labelSmall?.copyWith(
-          color: theme.colorScheme.onSecondaryContainer,
-        ),
+        style: TextStyle(color: tokens.accent, fontSize: 11),
       ),
     );
   }
@@ -2163,18 +2617,16 @@ class _VisionBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
+    final tokens = faui.FaDesignTokens.of(context);
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
       decoration: BoxDecoration(
-        color: theme.colorScheme.tertiaryContainer,
-        borderRadius: BorderRadius.circular(4),
+        color: tokens.accentSoft,
+        borderRadius: BorderRadius.circular(tokens.radiusXs),
       ),
       child: Text(
         context.l10n.settingsVisionBadge,
-        style: theme.textTheme.labelSmall?.copyWith(
-          color: theme.colorScheme.onTertiaryContainer,
-        ),
+        style: TextStyle(color: tokens.accent, fontSize: 11),
       ),
     );
   }
@@ -2199,20 +2651,17 @@ class _NoServiceSettings extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final colors = FahColors.of(context);
+    final tokens = faui.FaDesignTokens.of(context);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Container(
+        faui.FaSurface(
           padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: colors.indigo.withValues(alpha: 0.08),
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: colors.indigo.withValues(alpha: 0.3)),
-          ),
+          color: tokens.accentSoft,
+          borderRadius: BorderRadius.circular(tokens.radiusMd),
           child: Row(
             children: [
-              Icon(Icons.cloud_outlined, color: colors.indigo, size: 22),
+              Icon(Icons.cloud_outlined, color: tokens.accent, size: 22),
               const SizedBox(width: 12),
               Expanded(
                 child: Text(
@@ -2226,10 +2675,11 @@ class _NoServiceSettings extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 12),
-        FilledButton.icon(
-          onPressed: onAddProvider,
-          icon: const Icon(Icons.add),
-          label: Text(context.l10n.settingsAddProvider),
+        faui.FaButton(
+          label: context.l10n.settingsAddProvider,
+          icon: Icons.add,
+          expanded: true,
+          onPressed: () => onAddProvider(),
         ),
       ],
     );

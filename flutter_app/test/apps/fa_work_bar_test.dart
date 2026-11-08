@@ -116,7 +116,7 @@ void main() {
       final paint = tester.widget<CustomPaint>(
         find.descendant(
           of: find.byKey(const ValueKey('faWorkBarOrbit')),
-          matching: find.byType(CustomPaint),
+          matching: find.byKey(const ValueKey('faWorkBarOrbitPaint')),
         ),
       );
       return (paint.painter as dynamic).progress as double;
@@ -282,7 +282,9 @@ void main() {
       done.status = SubagentStatus.completed; // terminal — not badgeable
     });
     await tester.pumpWidget(
-      MaterialApp(home: Scaffold(body: FaWorkBar(service: service))),
+      MaterialApp(
+        home: Scaffold(body: FaWorkBar(service: service)),
+      ),
     );
     await tester.runAsync(() async {
       await service.sendText('work');
@@ -303,7 +305,9 @@ void main() {
     final service = hungService();
     addTearDown(service.dispose);
     await tester.pumpWidget(
-      MaterialApp(home: Scaffold(body: FaWorkBar(service: service))),
+      MaterialApp(
+        home: Scaffold(body: FaWorkBar(service: service)),
+      ),
     );
     await tester.runAsync(() async {
       await service.sendText('work');

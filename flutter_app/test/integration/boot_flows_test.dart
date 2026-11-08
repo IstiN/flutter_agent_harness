@@ -3,7 +3,7 @@
 // in the LICENSE file.
 
 /// Integration coverage for the boot flows: first launch (onboarding →
-/// setup → connect → launcher home) and returning launch (restored
+/// setup → connect → messenger home) and returning launch (restored
 /// connection → straight to home, session resumed).
 library;
 
@@ -18,9 +18,9 @@ import 'package:fa/services/provider_registry.dart';
 import 'package:fa/services/session_keys_store.dart';
 import 'package:fa/services/sessions_root.dart';
 import 'package:fa/ui/app_theme.dart';
-import 'package:fa/ui/screens/app_launcher_screen.dart';
+import 'package:fa/ui/chats/chat_list_panel.dart';
 import 'package:fa/ui/screens/onboarding_screen.dart';
-import 'package:fa/ui/widgets/chat_composer.dart';
+import 'package:fa/ui/widgets/wide_layout_shell.dart';
 import 'package:fa_ui/fa_ui.dart' show ProviderEditorPage;
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
@@ -127,8 +127,11 @@ void main() {
   Directory emptyCwd() => Directory('/nonexistent-fah-test-dir');
 
   group('boot flows', () {
-    testWidgets('first boot: onboarding → skip → setup → connect → launcher '
+    testWidgets('first boot: onboarding → provider → connect → messenger '
         'home; the key never reaches last_connection.json', (tester) async {
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
       await IOOverrides.runZoned(() async {
         final env = MemoryExecutionEnv();
         final lastConnection = await LastConnectionStore.load(env);
@@ -148,8 +151,9 @@ void main() {
         expect(find.byType(OnboardingScreen), findsOneWidget);
         expect(find.byType(SetupScreen), findsNothing);
 
-        // Page 1: Skip is available…
-        expect(find.text('Skip'), findsOneWidget);
+        // The provider-or-network requirement applies from the first page:
+        // informational Skip cannot bypass it.
+        expect(find.text('Skip'), findsNothing);
         await tester.tap(find.text('Continue'));
         await tester.pumpAndSettle();
 
@@ -202,7 +206,7 @@ void main() {
         // Finishing persists the flag; the provider configured during
         // onboarding makes the boot auto-connect — no setup form at all.
         await tester.tap(find.text('Open Fa'));
-        await _settleUntil(tester, find.byType(AppLauncherScreen));
+        await _settleUntil(tester, find.byType(WideLayoutShell));
         expect(onboarding.seen, isTrue);
         expect(
           (await env.readTextFile(
@@ -213,10 +217,9 @@ void main() {
         expect(find.byType(OnboardingScreen), findsNothing);
         expect(find.byType(SetupScreen), findsNothing);
 
-        // Connected: the narrow-layout home is the apps launcher, with the
-        // mini chat bar (composer) at the bottom.
-        expect(find.byType(AppLauncherScreen), findsOneWidget);
-        expect(find.byType(ChatComposer), findsOneWidget);
+        // Connected: the narrow-layout home is the Chats conversation list.
+        expect(find.byType(WideLayoutShell), findsOneWidget);
+        expect(find.byType(ChatListPanel), findsOneWidget);
 
         // The connection persisted — non-secret parts only.
         final raw = (await env.readTextFile(
@@ -231,6 +234,9 @@ void main() {
 
     testWidgets('returning boot: saved connection + key auto-connects '
         'without onboarding and resumes the previous session', (tester) async {
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
       await IOOverrides.runZoned(() async {
         final env = MemoryExecutionEnv();
         // A previous run left: a persisted connection (no key), the key in
@@ -267,18 +273,18 @@ void main() {
             keys: keys,
           ),
         );
-        await _settleUntil(tester, find.byType(AppLauncherScreen));
+        await _settleUntil(tester, find.byType(WideLayoutShell));
 
-        // Straight to the launcher home: no onboarding, no setup form.
+        // Straight to the messenger home: no onboarding, no setup form.
         expect(find.byType(OnboardingScreen), findsNothing);
         expect(find.byType(SetupScreen), findsNothing);
-        expect(find.byType(AppLauncherScreen), findsOneWidget);
+        expect(find.byType(WideLayoutShell), findsOneWidget);
 
         // The previous session was resumed, not stacked under a fresh one.
-        final launcher = tester.widget<AppLauncherScreen>(
-          find.byType(AppLauncherScreen),
+        final shell = tester.widget<WideLayoutShell>(
+          find.byType(WideLayoutShell),
         );
-        final manager = launcher.manager;
+        final manager = shell.manager;
         expect(manager.activeId, seededId);
         expect(manager.sessions, hasLength(1));
         expect(

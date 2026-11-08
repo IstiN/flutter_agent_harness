@@ -1,6 +1,6 @@
-/// AC1 guard for the `fa-self-config` skill (issue #29): the shipped
-/// `SKILL.md` is discoverable by the skills system, its frontmatter parses
-/// into a valid [SkillManifest] with no unknown keys, and its
+/// AC1 guard for the `self-settings` skill (issue #29): the shipped
+/// `SKILL.md.pointer` resolves through the skills system, its frontmatter
+/// parses into a valid [SkillManifest] with no unknown keys, and its
 /// `allowed-tools` grants are plain tool names the per-turn approval gate
 /// can honor.
 ///
@@ -12,11 +12,13 @@ library;
 import 'dart:io';
 
 import 'package:flutter_agent_harness/io.dart';
+import 'package:flutter_agent_harness/src/skills/builtin_skills.dart';
 import 'package:flutter_agent_harness/src/skills/skills.dart';
 import 'package:test/test.dart';
 
 final _repoRoot = Directory.current.path;
-final _skillPath = '$_repoRoot/.fah/skills/fa-self-config/SKILL.md';
+final _skillPath = '$_repoRoot/.fah/skills/self-settings/SKILL.md';
+final _skillPointerPath = '$_skillPath.pointer';
 
 /// Tool ids the harness actually registers (built-ins the config skill may
 /// be granted).
@@ -40,36 +42,37 @@ const _knownToolIds = {
 void main() {
   setUpAll(() {
     expect(
-      File(_skillPath).existsSync(),
+      File(_skillPointerPath).existsSync(),
       isTrue,
       reason:
-          'the shipped skill must live at '
-          '.fah/skills/fa-self-config/SKILL.md',
+          'the shipped builtin pointer must live at '
+          '.fah/skills/self-settings/SKILL.md.pointer',
     );
   });
 
-  test('is discovered from the repo .fah/skills root', () async {
+  test('builtin is discovered and its repo pointer is materialized', () async {
     final env = LocalExecutionEnv(cwd: _repoRoot);
     final roots = defaultSkillRoots(cwd: _repoRoot);
     final skills = await discoverSkills(
       env,
       projectRoots: roots.projectRoots,
       userRoots: roots.userRoots,
+      builtins: builtinSkills(),
     );
-    final matches = skills.where((s) => s.name == 'fa-self-config').toList();
+    final matches = skills.where((s) => s.name == 'self-settings').toList();
     expect(
       matches,
       hasLength(1),
-      reason: 'exactly one fa-self-config (no name clashes in-repo)',
+      reason: 'exactly one self-settings (no name clashes in-repo)',
     );
     final skill = matches.single;
-    expect(skill.scope, SkillScope.project);
+    expect(skill.scope, SkillScope.builtin);
     expect(
       skill.source,
-      SkillSource.fah,
-      reason: 'first-party root — no third-party consent needed',
+      SkillSource.builtin,
+      reason: 'compiled-in first-party skill — no third-party consent needed',
     );
-    expect(skill.filePath, endsWith('.fah/skills/fa-self-config/SKILL.md'));
+    expect(skill.filePath, 'builtin://skills/self-settings/SKILL.md');
   });
 
   test('frontmatter is valid with deliberate invocation flags', () async {
@@ -79,8 +82,9 @@ void main() {
       env,
       projectRoots: roots.projectRoots,
       userRoots: roots.userRoots,
+      builtins: builtinSkills(),
     );
-    final skill = skills.where((s) => s.name == 'fa-self-config').single;
+    final skill = skills.where((s) => s.name == 'self-settings').single;
     final manifest = skill.manifest;
 
     expect(manifest.description, isNotNull);
@@ -110,9 +114,10 @@ void main() {
       env,
       projectRoots: roots.projectRoots,
       userRoots: roots.userRoots,
+      builtins: builtinSkills(),
     );
     final manifest = skills
-        .where((s) => s.name == 'fa-self-config')
+        .where((s) => s.name == 'self-settings')
         .single
         .manifest;
 

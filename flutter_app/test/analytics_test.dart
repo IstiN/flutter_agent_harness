@@ -50,6 +50,6 @@ void main() {
 
   test('the noop default drops events without throwing', () {
     AppAnalytics.install(null);
-    expect(() => AppAnalytics.instance.sessionAction('new'), returnsNormally);
+    expect(() => AppAnalytics.instance.screenOpened('test'), returnsNormally);
   });
 }

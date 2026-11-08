@@ -207,10 +207,12 @@ gates:
     severity: error
     dirs: [test/golden/goldens]
     exclude:
-      # false positive (only remaining): the white dock-tile row reads
-      # as solid glyph rectangles — same shape as Ahem text, no
-      # geometric discriminator; upstream issue comment documents it.
+      # false positives (manually reviewed, no geometric discriminator):
+      # - p3: the white dock-tile row reads as solid glyph rectangles.
+      # - p4 desktop: the bold lowercase "u" in "Your" has two 7x19
+      #   solid stems at x509-524/y123-141, identical to an Ahem pair.
       - 'test/golden/goldens/onboarding_p3_dark_phone.png'
+      - 'test/golden/goldens/onboarding_p4_dark_desktop.png'
 
   # Widget → golden coverage. WARNING (not error): the 0.9.5 widget
   # census is broader than the enforced test/golden/golden_guard_test.dart

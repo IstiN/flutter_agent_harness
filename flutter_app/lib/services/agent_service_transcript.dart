@@ -31,7 +31,7 @@ FahChatMessage _toChatMessage(Message message) {
       if (content is String) {
         final (visible, attachments) = _projectAttachmentText(content);
         return FahChatMessage(
-          role: 'user',
+          role: isFaSystemNoticeContent(visible) ? 'systemNotice' : 'user',
           content: visible,
           attachments: attachments,
         );
@@ -71,9 +71,10 @@ FahChatMessage _toChatMessage(Message message) {
       ];
       // Strip the agent-facing references from the visible text — the
       // attachment row carries the content, the paths are for the agent.
+      final visible = text.replaceAll(_attachedFilePattern, '').trim();
       return FahChatMessage(
-        role: 'user',
-        content: text.replaceAll(_attachedFilePattern, '').trim(),
+        role: isFaSystemNoticeContent(visible) ? 'systemNotice' : 'user',
+        content: visible,
         attachments: attachments,
       );
     case AssistantMessage(:final content):

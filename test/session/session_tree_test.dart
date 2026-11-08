@@ -517,57 +517,128 @@ void main() {
     );
   });
 
-  group('ensureWholeLedgerResident (gh-1555 W1 read-everything surfaces)', () {
+  group('ensureConversationResident (registry-only live tails)', () {
     test(
-      'a linear session longer than the window pages to the file head in '
-      'bounded blocks — the branch then matches the full open exactly '
-      '(semantic-drift property)',
+      'pages bounded older blocks to the nearest conversation record',
       () async {
         final session = await newSession();
-        for (var i = 0; i < 800; i++) {
-          await session.appendMessage(UserMessage.text('m$i'));
+        await session.appendMessage(
+          UserMessage.text('conversation above tail'),
+        );
+        for (var i = 0; i < 300; i++) {
+          await session.appendCustomEntry(
+            customType: 'subagent_registry',
+            data: {'run': i},
+          );
         }
-        final meta = await session.getMetadata();
-
-        final windowed = await repo.open(meta, windowed: true);
-        // The tail window alone does not cover 800 records.
-        expect((await windowed.getBranch()).length, lessThan(800));
-
-        await windowed.ensureWholeLedgerResident();
-        final branch = await windowed.getBranch();
-        expect(branch, hasLength(800));
-        expect(branch.last.id, await windowed.getLeafId());
-
-        final full = await repo.open(meta);
-        final fullBranch = await full.getBranch();
+        final reopened = await repo.open(
+          await session.getMetadata(),
+          windowed: true,
+        );
         expect(
-          branch.map((r) => r.id).toList(),
-          fullBranch.map((r) => r.id).toList(),
-          reason: 'paged windowed reads must not drift from the full open',
+          (await reopened.getBranch()).whereType<MessageRecord>(),
+          isEmpty,
+        );
+
+        expect(await reopened.ensureConversationResident(), isTrue);
+
+        final branch = await reopened.getBranch();
+        expect(branch.whereType<MessageRecord>(), hasLength(1));
+        expect(branch.last.id, await reopened.getLeafId());
+        final context = await reopened.buildContext();
+        expect(context.messages, hasLength(1));
+        expect(
+          (context.messages.single as UserMessage).content,
+          'conversation above tail',
         );
       },
     );
+
+    test('an already-resident custom message avoids older reads', () async {
+      final session = await newSession();
+      await session.appendMessage(UserMessage.text('old'));
+      for (var i = 0; i < 300; i++) {
+        await session.appendCustomEntry(customType: 'shell_job');
+      }
+      await session.appendCustomMessageEntry(
+        customType: 'host_notice',
+        content: 'resident conversation',
+        display: false,
+      );
+      final reopened = await repo.open(
+        await session.getMetadata(),
+        windowed: true,
+      );
+      final storage = reopened.getStorage() as WindowedSessionStorage;
+      expect(storage.hasOlder, isTrue);
+
+      expect(await reopened.ensureConversationResident(), isTrue);
+
+      expect(storage.hasOlder, isTrue, reason: 'no older page was needed');
+      expect((await reopened.getBranch()).whereType<MessageRecord>(), isEmpty);
+      expect((await reopened.buildContext()).messages, hasLength(1));
+    });
 
     test(
-      'a session below the window is already resident — a trivial true, '
-      'branch identical to the full open (no regression for the common '
-      'small session, gh-1555 AC7)',
+      'maxPages bounds a conversation-less tail and full storage is a no-op',
       () async {
         final session = await newSession();
-        await session.appendMessage(UserMessage.text('one'));
-        await session.appendMessage(assistant('two'));
-        final meta = await session.getMetadata();
-
-        final windowed = await repo.open(meta, windowed: true);
-        await windowed.ensureWholeLedgerResident();
-        final branch = await windowed.getBranch();
-        final fullBranch = await (await repo.open(meta)).getBranch();
-        expect(
-          branch.map((r) => r.id).toList(),
-          fullBranch.map((r) => r.id).toList(),
-        );
+        for (var i = 0; i < 300; i++) {
+          await session.appendCustomEntry(customType: 'subagent_registry');
+        }
+        final metadata = await session.getMetadata();
+        final reopened = await repo.open(metadata, windowed: true);
+        expect(await reopened.ensureConversationResident(maxPages: 1), isFalse);
+        expect(await session.ensureConversationResident(), isTrue);
       },
     );
+  });
+
+  group('ensureWholeLedgerResident (gh-1555 W1 read-everything surfaces)', () {
+    test('a linear session longer than the window pages to the file head in '
+        'bounded blocks — the branch then matches the full open exactly '
+        '(semantic-drift property)', () async {
+      final session = await newSession();
+      for (var i = 0; i < 800; i++) {
+        await session.appendMessage(UserMessage.text('m$i'));
+      }
+      final meta = await session.getMetadata();
+
+      final windowed = await repo.open(meta, windowed: true);
+      // The tail window alone does not cover 800 records.
+      expect((await windowed.getBranch()).length, lessThan(800));
+
+      await windowed.ensureWholeLedgerResident();
+      final branch = await windowed.getBranch();
+      expect(branch, hasLength(800));
+      expect(branch.last.id, await windowed.getLeafId());
+
+      final full = await repo.open(meta);
+      final fullBranch = await full.getBranch();
+      expect(
+        branch.map((r) => r.id).toList(),
+        fullBranch.map((r) => r.id).toList(),
+        reason: 'paged windowed reads must not drift from the full open',
+      );
+    });
+
+    test('a session below the window is already resident — a trivial true, '
+        'branch identical to the full open (no regression for the common '
+        'small session, gh-1555 AC7)', () async {
+      final session = await newSession();
+      await session.appendMessage(UserMessage.text('one'));
+      await session.appendMessage(assistant('two'));
+      final meta = await session.getMetadata();
+
+      final windowed = await repo.open(meta, windowed: true);
+      await windowed.ensureWholeLedgerResident();
+      final branch = await windowed.getBranch();
+      final fullBranch = await (await repo.open(meta)).getBranch();
+      expect(
+        branch.map((r) => r.id).toList(),
+        fullBranch.map((r) => r.id).toList(),
+      );
+    });
 
     test('a full (non-windowed) storage is a no-op reporting true', () async {
       final session = await newSession();

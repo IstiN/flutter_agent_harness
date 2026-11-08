@@ -10,27 +10,30 @@ class MainFlutterWindow: NSWindow {
     let flutterViewController = FlutterViewController()
     let windowFrame = self.frame
 
-    // Modern unified titlebar (macOS 14+, see the traffic-lights skill):
-    // the native traffic lights float over Flutter content — no solid
-    // title-bar band, no duplicated text title (it stays for Dock/Mission
-    // Control only), and the window background matches the app's dark
-    // palette (#070A10) so the seam is invisible without making the
-    // Flutter scaffold transparent.
+    // Modern unified titlebar: the native traffic lights float over
+    // Flutter content — no solid title-bar band and no duplicated text
+    // title (it stays for Dock/Mission Control only). Use the regular
+    // unified geometry rather than unifiedCompact: the latter collapses
+    // the titlebar vertically and makes the controls feel cramped against
+    // the messenger's own header. The neutral background matches the glass
+    // messenger palette without making the Flutter scaffold transparent.
     titlebarAppearsTransparent = true
     titleVisibility = .hidden
     styleMask.insert(.fullSizeContentView)
     if #available(macOS 11.0, *) {
-      toolbarStyle = .unifiedCompact
+      toolbarStyle = .unified
     }
+    // The toolbar is invisible chrome: it hosts the traffic lights at the
+    // stock position and keeps the titlebar's SafeArea geometry stable
+    // (without it the lights drift and full-size content gets clipped under
+    // the window controls). Its baseline separator stays off so no strip
+    // is painted over the messenger chrome.
     toolbar = NSToolbar(identifier: "FaToolbar")
     toolbar?.showsBaselineSeparator = false
     isMovableByWindowBackground = true
-    backgroundColor = NSColor(
-      calibratedRed: 7.0 / 255.0,
-      green: 10.0 / 255.0,
-      blue: 16.0 / 255.0,
-      alpha: 1.0,
-    )
+    // A neutral (not dark) window background: rounded-corner slivers and
+    // any pre-first-frame flash must not tint against light themes.
+    backgroundColor = NSColor.windowBackgroundColor
 
     self.contentViewController = flutterViewController
     self.setFrame(windowFrame, display: true)
@@ -78,6 +81,7 @@ class MainFlutterWindow: NSWindow {
       }
     }
   }
+
 }
 
 /// The `fah/project_folder` method channel: native directory picking via

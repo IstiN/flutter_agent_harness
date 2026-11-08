@@ -15,6 +15,7 @@ import 'package:fa/l10n/app_localizations.dart';
 import 'package:fa/services/dap_service.dart';
 import 'package:fa/services/dap_service_web_core.dart';
 import 'package:fa/ui/screens/dap_settings_page.dart';
+import 'package:fa_ui/fa_ui.dart' as faui;
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -348,7 +349,7 @@ void main() {
       // detail's bar title.
       expect(
         find.descendant(
-          of: find.byType(AppBar),
+          of: find.byType(faui.FaAdaptiveHeader),
           matching: find.text('ws://other:8787/ws'),
         ),
         findsOneWidget,

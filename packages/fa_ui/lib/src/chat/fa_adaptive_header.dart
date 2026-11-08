@@ -4,6 +4,8 @@
 
 import 'package:flutter/material.dart';
 
+import '../theme/fa2_tokens.dart';
+import '../widgets/fa2_controls.dart' show FaSurface;
 import 'chat_strings.dart';
 
 /// One action of [FaAdaptiveHeader].
@@ -12,8 +14,9 @@ import 'chat_strings.dart';
 /// [FaChatHeaderAction]); [label] feeds both the bar tooltip and the
 /// overflow-menu row. Actions render in list order — the list IS the
 /// priority order, and demotion on tight widths removes from the tail, so
-/// order primary actions first (files, trajectory) and secondary ones last
-/// (copy, ✦, apps).
+/// order primary actions first and secondary ones last (copy, ✦, apps);
+/// pinned actions always render at the head of the group regardless of
+/// list position.
 class FaHeaderAction {
   const FaHeaderAction({
     this.key,
@@ -53,6 +56,98 @@ class FaHeaderAction {
   final bool pinned;
 }
 
+/// Builds one grouped visual surface for the adaptive header's inline
+/// actions and overflow. The header still owns fit/demotion and menu
+/// routing; the builder owns only the chrome (for example
+/// `FaIconActionBand`). When supplied, it replaces [FaAdaptiveHeader.actionBuilder]
+/// and [FaAdaptiveHeader.overflowBuilder] in the regular row.
+typedef FaHeaderActionBandBuilder =
+    Widget Function(
+      BuildContext context,
+      List<FaHeaderAction> actions,
+      List<PopupMenuEntry<String>> overflowItems,
+      ValueChanged<String> onOverflowSelected,
+    );
+
+/// The ONE circular chrome for icon actions (the painter behind
+/// [FaIconActionButton], the styleguide's canonical circular icon
+/// control). Token-driven surface fill + hairline ring — the same style
+/// for every direction and brightness; call sites never pick a surface
+/// gray. The child keeps its own tooltip, disabled state and InkResponse;
+/// Material supplies the hover/press overlay, and the merged [IconTheme]
+/// pins the one ink token (ink1) at the 18px glyph scale.
+///
+/// [dimension] keeps the family parameterized: the chat header's 40pt
+/// bar chrome stays the default, while the Files chrome and every other
+/// control-scale circle run the composer's 36pt
+/// ([FaIconActionButton.defaultDiameter]).
+///
+/// [glass] is the state-conditional underlay (owner rule): flat token
+/// surface when the circle sits on a parent surface (the Files band, the
+/// narrow header slab — the parent already provides its backdrop), and a
+/// liquid-glass disc when it floats on the chat header's backdrop with
+/// no panel of its own.
+class FaHeaderCircularAction extends StatelessWidget {
+  const FaHeaderCircularAction({
+    super.key,
+    required this.child,
+    this.dimension = 40,
+    this.glass = false,
+  }) : assert(dimension > 0);
+
+  final Widget child;
+
+  /// The circle's edge length (the chat bar's chrome is 40pt; control
+  /// scale circles pass 36).
+  final double dimension;
+
+  /// Whether the chrome rides a glass underlay (floating header state).
+  /// Default false — the flat token surface, for circles on parent
+  /// surfaces.
+  final bool glass;
+
+  @override
+  Widget build(BuildContext context) {
+    final tokens = FaDesignTokens.of(context);
+    if (glass && tokens.direction == FaVisualDirection.glass) {
+      // The glass IS the surface: the kit disc (AdaptiveGlass via FaSurface,
+      // Fa-tuned per the pixel audit) replaces the opaque token fill — the
+      // old surface1@.94 fill plus surface2 chrome smothered the shader's
+      // rim and the under-disc refraction (the murky-disc regression). Only
+      // a transparent ink host rides inside so child InkResponses keep a
+      // Material ancestor.
+      return FaSurface(
+        glass: true,
+        circular: true,
+        useBackdropGroup: true,
+        color: tokens.surface1.withValues(alpha: .45),
+        child: SizedBox.square(
+          dimension: dimension,
+          child: Material(
+            type: MaterialType.transparency,
+            child: IconTheme.merge(
+              data: IconThemeData(size: 18, color: tokens.ink1),
+              child: child,
+            ),
+          ),
+        ),
+      );
+    }
+    return SizedBox.square(
+      dimension: dimension,
+      child: Material(
+        color: tokens.surface2,
+        shape: CircleBorder(side: BorderSide(color: tokens.hairline)),
+        clipBehavior: Clip.antiAlias,
+        child: IconTheme.merge(
+          data: IconThemeData(size: 18, color: tokens.ink1),
+          child: child,
+        ),
+      ),
+    );
+  }
+}
+
 /// The ONE adaptive header row (issue #225): project identity · chat title ·
 /// model chip · action icons · ⋮ overflow, in a single row that adapts at
 /// any width. Whatever the fixed-width content cannot fit demotes into the
@@ -80,18 +175,27 @@ class FaAdaptiveHeader extends StatelessWidget {
     this.onProjectTap,
     this.chip,
     this.chipMaxWidth = 132,
+    this.chipMinWidth,
     this.onChipTap,
     this.chipMenuLabel,
     this.chipMenuIcon = Icons.memory,
     this.actions = const <FaHeaderAction>[],
     this.menuItems = const <PopupMenuEntry<String>>[],
     this.onMenuSelected,
+    this.actionBuilder,
+    this.overflowBuilder,
+    this.actionBandBuilder,
     this.menuColor,
     this.overflowMenuKey,
     this.overflowTooltip,
     this.visualDensity = VisualDensity.standard,
     this.iconSize = 24,
-  });
+    this.actionGap = 0,
+  }) : assert(actionGap >= 0),
+       assert(
+         chipMinWidth == null ||
+             (chipMinWidth >= 0 && chipMinWidth <= chipMaxWidth),
+       );
 
   /// Rendered before the project slot (the sheet's sessions glyph).
   final Widget? leading;
@@ -122,10 +226,15 @@ class FaAdaptiveHeader extends StatelessWidget {
   /// actions, only under extreme width).
   final Widget? chip;
 
-  /// Width budget the fit arithmetic reserves for [chip]. The chip is
-  /// host-built and ellipsis-capped by the same value in practice; an
-  /// over-reserve only demotes an icon a few px early, never overflows.
+  /// Maximum rendered width for [chip].
   final double chipMaxWidth;
+
+  /// Optional fit reserve for an action-only header's flexible chip.
+  ///
+  /// Fit/demotion reserves this smaller width, then the inline chip may grow
+  /// into the actual remainder up to [chipMaxWidth]. Null preserves the
+  /// original fixed-reserve behavior for generic title/project headers.
+  final double? chipMinWidth;
 
   /// Invoked when the demoted model chip is picked from the ⋮ menu (the
   /// same picker the inline chip opens on tap — issue #225 AC3: model
@@ -150,6 +259,21 @@ class FaAdaptiveHeader extends StatelessWidget {
   /// Invoked with a [menuItems] value on selection.
   final ValueChanged<String>? onMenuSelected;
 
+  /// Optional chrome wrapper for an inline action (used by floating glass).
+  final Widget Function(
+    BuildContext context,
+    FaHeaderAction action,
+    Widget button,
+  )?
+  actionBuilder;
+
+  /// Optional chrome wrapper for the overflow action.
+  final Widget Function(BuildContext context, Widget button)? overflowBuilder;
+
+  /// Optional single-surface renderer for inline actions plus overflow.
+  /// Fit, demotion and menu callbacks stay owned by this header.
+  final FaHeaderActionBandBuilder? actionBandBuilder;
+
   /// The overflow menu's background color (the sheet passes its panel alt).
   final Color? menuColor;
 
@@ -163,8 +287,12 @@ class FaAdaptiveHeader extends StatelessWidget {
   /// app bar (48px slots).
   final VisualDensity visualDensity;
 
-  /// Bar icon size (24 in the app bar, 20 on the sheet).
+  /// Bar icon size (24 in the app bar, 18 for compact circular actions).
   final double iconSize;
+
+  /// Visual gap between adjacent inline/overflow action slots. Included in
+  /// fit arithmetic so adding chrome spacing only demotes actions earlier.
+  final double actionGap;
 
   /// One action slot's width: [IconButton]'s minimum interactive dimension
   /// adjusted by the density, which is exactly how the bar buttons size.
@@ -174,10 +302,10 @@ class FaAdaptiveHeader extends StatelessWidget {
   bool get _hasProject => projectIcon != null || projectLabel != null;
 
   /// The leading slot's width (0 when absent).
-  double get _leadingWidth => leading != null ? _slot : 0.0;
+  double get _leadingWidth => leading != null ? _slot + 4 : 0.0;
 
   /// Width budget the fit arithmetic reserves for the chip (0 when absent).
-  double get _chipBudget => chip != null ? chipMaxWidth : 0.0;
+  double get _chipBudget => chip != null ? (chipMinWidth ?? chipMaxWidth) : 0.0;
 
   /// The project pill's minimum width (0 when absent): a tappable pill
   /// needs its icon+label minimum, a bare identity needs less.
@@ -198,6 +326,17 @@ class FaAdaptiveHeader extends StatelessWidget {
   double _overflowSlot(int inline, int demotableCount, bool overflowVisible) =>
       (inline < demotableCount || overflowVisible) ? _slot : 0.0;
 
+  double _actionsWidth({
+    required int inline,
+    required int demotableCount,
+    required int pinnedCount,
+    required bool overflowVisible,
+  }) {
+    final overflow = _overflowSlot(inline, demotableCount, overflowVisible) > 0;
+    final count = pinnedCount + inline + (overflow ? 1 : 0);
+    return count * _slot + (count > 0 ? (count - 1) * actionGap : 0);
+  }
+
   /// Greedy-fit width: the fixed content plus [inline] demotable slots
   /// and [chipWidth] of chip budget.
   // ponytail: the chip/pill budgets are caps, not measurements — a
@@ -212,9 +351,12 @@ class FaAdaptiveHeader extends StatelessWidget {
       _leadingWidth +
       _pillMin +
       chipWidth +
-      pinnedCount * _slot +
-      inline * _slot +
-      _overflowSlot(inline, demotableCount, overflowVisible);
+      _actionsWidth(
+        inline: inline,
+        demotableCount: demotableCount,
+        pinnedCount: pinnedCount,
+        overflowVisible: overflowVisible,
+      );
 
   /// How many demotable actions stay inline at [maxWidth]: the greedy
   /// tail-first demotion (secondary before primary, issue #225).
@@ -280,25 +422,110 @@ class FaAdaptiveHeader extends StatelessWidget {
     final fixedForText =
         _leadingWidth +
         (chipInline ? chipWidth : 0.0) +
-        pinnedCount * _slot +
-        inlineCount * _slot +
-        _overflowSlot(inlineCount, demotable.length, overflowVisible);
+        _actionsWidth(
+          inline: inlineCount,
+          demotableCount: demotable.length,
+          pinnedCount: pinnedCount,
+          overflowVisible: overflowVisible,
+        );
     final availableForText = constraints.maxWidth - fixedForText;
+    final emergency = availableForText < 0;
+    var renderChipWidth = chipWidth;
+    if (chipInline && chipMinWidth != null && title == null && !_hasProject) {
+      final remainder =
+          constraints.maxWidth -
+          _leadingWidth -
+          _actionsWidth(
+            inline: inlineCount,
+            demotableCount: demotable.length,
+            pinnedCount: pinnedCount,
+            overflowVisible: overflowVisible,
+          );
+      renderChipWidth = remainder.clamp(chipWidth, chipMaxWidth).toDouble();
+    }
     return _HeaderFit(
       inlineCount: inlineCount,
       chipInline: chipInline,
-      pillCap: _pillCap(availableForText, _pillMin),
+      chipWidth: renderChipWidth,
+      pillCap: emergency ? 0 : _pillCap(availableForText, _pillMin),
       overflow: demotable.sublist(inlineCount),
       showOverflow: inlineCount < demotable.length || overflowVisible,
+      emergency: emergency,
     );
   }
 
   @override
   Widget build(BuildContext context) {
     return LayoutBuilder(
-      builder: (context, constraints) =>
-          _buildRow(context, FaChatStrings.of(context), _planFit(constraints)),
+      builder: (context, constraints) {
+        if (constraints.maxWidth < _slot) return const SizedBox.shrink();
+        final strings = FaChatStrings.of(context);
+        final fit = _planFit(constraints);
+        return fit.emergency
+            ? _buildEmergencyRow(context, strings, constraints, fit)
+            : _buildRow(context, strings, fit);
+      },
     );
+  }
+
+  /// Last-resort actions-only layout for transient/nested widths too small
+  /// for identity/title/chip content. Every rendered slot still fits; pinned
+  /// and primary actions win, and the overflow itself is shown only when its
+  /// full hit target fits. No negative constraints or unbounded flex child.
+  Widget _buildEmergencyRow(
+    BuildContext context,
+    FaChatStrings strings,
+    BoxConstraints constraints,
+    _HeaderFit fit,
+  ) {
+    var remaining = constraints.maxWidth;
+    final children = <Widget>[];
+    var inlineCount = 0;
+    var slotCount = 0;
+
+    bool reserveSlot() {
+      final needed = (slotCount == 0 ? 0.0 : actionGap) + _slot;
+      if (needed > remaining) return false;
+      remaining -= needed;
+      slotCount++;
+      return true;
+    }
+
+    void addGapIfNeeded() {
+      if (children.isNotEmpty && actionGap > 0) {
+        children.add(SizedBox(width: actionGap));
+      }
+    }
+
+    for (final action in actions) {
+      if (!action.pinned || !reserveSlot()) continue;
+      addGapIfNeeded();
+      children.add(_barButton(action));
+    }
+    final demotable = _demotable;
+    for (final action in demotable) {
+      if (!reserveSlot()) break;
+      addGapIfNeeded();
+      children.add(_barButton(action));
+      inlineCount++;
+    }
+    final emergencyFit = _HeaderFit(
+      inlineCount: inlineCount,
+      chipInline: false,
+      chipWidth: 0,
+      pillCap: 0,
+      overflow: demotable.sublist(inlineCount),
+      showOverflow:
+          inlineCount < demotable.length ||
+          fit.showOverflow ||
+          (chip != null && onChipTap != null),
+      emergency: true,
+    );
+    if (emergencyFit.showOverflow && reserveSlot()) {
+      addGapIfNeeded();
+      children.add(_overflowMenu(context, strings, emergencyFit));
+    }
+    return Row(mainAxisSize: MainAxisSize.min, children: children);
   }
 
   /// The row for one fit pass (the [LayoutBuilder] body).
@@ -309,15 +536,27 @@ class FaAdaptiveHeader extends StatelessWidget {
   ) => Row(
     children: [
       ..._leadingRegion(),
-      if (_hasProject)
+      if (_hasProject && fit.pillCap > 0)
         ConstrainedBox(
           constraints: BoxConstraints(maxWidth: fit.pillCap),
           child: _projectPill(context),
         ),
       _titleRegion(_hasProject),
-      if (fit.chipInline) chip!,
-      ..._actionsRegion(fit),
-      if (fit.showOverflow) _overflowMenu(context, strings, fit),
+      if (fit.chipInline)
+        ConstrainedBox(
+          constraints: BoxConstraints(maxWidth: fit.chipWidth),
+          child: chip!,
+        ),
+      if (actionBandBuilder != null)
+        _actionsBand(context, strings, fit)
+      else ...[
+        ..._actionsRegion(fit),
+        if (fit.showOverflow) ...[
+          if (fit.inlineCount > 0 || actions.any((action) => action.pinned))
+            SizedBox(width: actionGap),
+          _overflowMenu(context, strings, fit),
+        ],
+      ],
     ],
   );
 
@@ -342,14 +581,45 @@ class FaAdaptiveHeader extends StatelessWidget {
     );
   }
 
+  /// Pinned actions first, then the inline head of the demotable tail.
+  List<FaHeaderAction> _inlineActions(_HeaderFit fit) => [
+    for (final action in actions)
+      if (action.pinned) action,
+    ..._demotable.sublist(0, fit.inlineCount),
+  ];
+
   /// The action group: pinned actions render unconditionally at the head
   /// (only the demotable tail shrinks), then the inline head of the tail.
-  List<Widget> _actionsRegion(_HeaderFit fit) => [
-    for (final action in actions)
-      if (action.pinned) _barButton(action),
-    for (final action in _demotable.sublist(0, fit.inlineCount))
-      _barButton(action),
-  ];
+  List<Widget> _actionsRegion(_HeaderFit fit) {
+    final buttons = [
+      for (final action in _inlineActions(fit)) _barButton(action),
+    ];
+    return [
+      for (var index = 0; index < buttons.length; index++) ...[
+        if (index > 0) SizedBox(width: actionGap),
+        buttons[index],
+      ],
+    ];
+  }
+
+  /// Routes the already-fitted actions through the grouped renderer. Menu
+  /// metadata remains identical to the standalone overflow button.
+  Widget _actionsBand(
+    BuildContext context,
+    FaChatStrings strings,
+    _HeaderFit fit,
+  ) {
+    final inline = _inlineActions(fit);
+    if (inline.isEmpty && !fit.showOverflow) return const SizedBox.shrink();
+    return actionBandBuilder!(
+      context,
+      inline,
+      fit.showOverflow
+          ? _overflowItems(context, strings, fit)
+          : const <PopupMenuEntry<String>>[],
+      (value) => _onOverflowSelected(value, fit),
+    );
+  }
 
   /// The ⋮-menu row for the demoted model chip, or null when the chip
   /// rendered inline (or no tap route exists).
@@ -403,6 +673,13 @@ class FaAdaptiveHeader extends StatelessWidget {
     }
   }
 
+  /// Menu rows shared by the standalone and grouped overflow controls.
+  List<PopupMenuEntry<String>> _overflowItems(
+    BuildContext context,
+    FaChatStrings strings,
+    _HeaderFit fit,
+  ) => [?_chipMenuItem(strings, fit), ..._actionMenuItems(fit), ...menuItems];
+
   /// The ⋮ overflow menu: the demoted chip (issue #225 AC3), the demoted
   /// actions, then the host's menu-only entries.
   Widget _overflowMenu(
@@ -410,19 +687,16 @@ class FaAdaptiveHeader extends StatelessWidget {
     FaChatStrings strings,
     _HeaderFit fit,
   ) {
-    final chipItem = _chipMenuItem(strings, fit);
-    return PopupMenuButton<String>(
+    final button = PopupMenuButton<String>(
       key: overflowMenuKey,
       icon: Icon(Icons.more_vert, size: iconSize),
       tooltip: overflowTooltip ?? strings.chatMoreTooltip,
       color: menuColor,
-      itemBuilder: (context) => [
-        ?chipItem,
-        ..._actionMenuItems(fit),
-        ...menuItems,
-      ],
+      style: ButtonStyle(visualDensity: visualDensity),
+      itemBuilder: (context) => _overflowItems(context, strings, fit),
       onSelected: (value) => _onOverflowSelected(value, fit),
     );
+    return overflowBuilder?.call(context, button) ?? button;
   }
 
   /// The project identity pill: icon + ellipsized label, tappable when the
@@ -463,15 +737,18 @@ class FaAdaptiveHeader extends StatelessWidget {
   /// action carries one, otherwise a plain icon button. The action's key
   /// stays attached whichever form renders (widget actions included).
   Widget _barButton(FaHeaderAction action) {
-    if (action.widget != null) {
-      return KeyedSubtree(key: action.key, child: action.widget!);
-    }
-    return IconButton(
-      key: action.key,
-      icon: Icon(action.icon, size: iconSize),
-      tooltip: action.label,
-      visualDensity: visualDensity,
-      onPressed: action.onPressed,
+    final button = action.widget != null
+        ? KeyedSubtree(key: action.key, child: action.widget!)
+        : IconButton(
+            key: action.key,
+            icon: Icon(action.icon, size: iconSize),
+            tooltip: action.label,
+            visualDensity: visualDensity,
+            onPressed: action.onPressed,
+          );
+    return Builder(
+      builder: (context) =>
+          actionBuilder?.call(context, action, button) ?? button,
     );
   }
 }
@@ -482,9 +759,11 @@ final class _HeaderFit {
   const _HeaderFit({
     required this.inlineCount,
     required this.chipInline,
+    required this.chipWidth,
     required this.pillCap,
     required this.overflow,
     required this.showOverflow,
+    required this.emergency,
   });
 
   /// Demotable actions kept inline (the tail demotes first).
@@ -492,6 +771,9 @@ final class _HeaderFit {
 
   /// Whether the model chip renders inline (it demotes last, issue #225).
   final bool chipInline;
+
+  /// Actual render cap after any action-only remainder growth.
+  final double chipWidth;
 
   /// The project pill's max width for this pass.
   final double pillCap;
@@ -501,4 +783,7 @@ final class _HeaderFit {
 
   /// Whether the ⋮ button renders at all.
   final bool showOverflow;
+
+  /// Fixed content exceeded the local width; build uses the safe fallback.
+  final bool emergency;
 }

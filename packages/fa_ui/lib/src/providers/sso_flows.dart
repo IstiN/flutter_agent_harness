@@ -17,6 +17,7 @@ import 'package:fa_ui/src/stores/provider_registry.dart';
 import 'package:fa_ui/src/stores/session_keys_store.dart';
 import 'package:fa_ui/src/strings/fa_ui_strings.dart';
 import 'package:fa_ui/src/utils/page_presentation.dart';
+import 'package:fa_ui/src/widgets/fa_route_header.dart';
 import 'package:fa_ui/src/widgets/snackbars.dart';
 
 /// The desktop sign-in hop for CodeMie: the CLI's loopback-callback SSO
@@ -632,7 +633,8 @@ class _SsoModelPickPageState extends State<_SsoModelPickPage> {
       },
     );
     return Scaffold(
-      appBar: AppBar(
+      appBar: faRouteAppBar(
+        context: context,
         title: Text('${strings.settingsPickModelTitle} — ${widget.title}'),
       ),
       body: SafeArea(

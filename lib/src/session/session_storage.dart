@@ -466,6 +466,27 @@ final class JsonlSessionStorage implements SessionStorage, SessionHeaderCache {
   /// `stderr.writeln` at startup. Never throws.
   static void Function(String message)? onRotationWarning;
 
+  /// Issue #2053: fired after this storage mutated the segment chain on
+  /// disk — a successful rotation (primary renamed to a `.part-NN`
+  /// sibling and reseeded) or a failed-rotation restore. [JsonlSessionRepo]
+  /// wires its persisted listing-index updater here so the sidecar index
+  /// stays fresh in the same operation (AC6); hosts that pass nothing keep
+  /// today's behavior byte-identical. The storage awaits the callback
+  /// INSIDE a fail-safe wrapper, so the append path never fails for (or
+  /// outruns) its cache.
+  Future<void> Function(String primaryPath)? onMutated;
+
+  /// The fail-safe await wrapper for [onMutated].
+  Future<void> _fireMutated() async {
+    final hook = onMutated;
+    if (hook == null) return;
+    try {
+      await hook(_filePath);
+    } on Object {
+      // Cache-only: a broken index updater must never fail the append.
+    }
+  }
+
   JsonlSessionStorage._(
     this._fs,
     this._filePath,
@@ -601,20 +622,23 @@ final class JsonlSessionStorage implements SessionStorage, SessionHeaderCache {
     SessionTimingLogger? timingLog,
     int maxFullOpenBytes = defaultMaxFullOpenBytes,
     bool wholeFileOnly = false,
+    Future<void> Function(String primaryPath)? onMutated,
   }) async {
     final sw = Stopwatch()..start();
-    final storage = await withSessionFileLock(
-      filePath,
-      () => _openLocked(
-        fs,
-        filePath,
-        parseExecutor,
-        ioRetry,
-        timingLog,
-        maxFullOpenBytes,
-        wholeFileOnly,
-      ),
-    );
+    final storage =
+        await withSessionFileLock(
+            filePath,
+            () => _openLocked(
+              fs,
+              filePath,
+              parseExecutor,
+              ioRetry,
+              timingLog,
+              maxFullOpenBytes,
+              wholeFileOnly,
+            ),
+          )
+          ..onMutated = onMutated;
     timingLog?.call(
       'resume_timing open file=${filePath.split('/').last} '
       'mode=full lock_wait_ms=${sw.elapsedMilliseconds - storage._openInnerMs} '
@@ -1397,6 +1421,8 @@ final class JsonlSessionStorage implements SessionStorage, SessionHeaderCache {
     String? parentSessionPath,
     Map<String, dynamic>? metadata,
     SessionIoRetryConfig ioRetry = const SessionIoRetryConfig(),
+    int? rotateBytes,
+    Future<void> Function(String primaryPath)? onMutated,
   }) async {
     final header = SessionHeader(
       id: sessionId,
@@ -1424,7 +1450,8 @@ final class JsonlSessionStorage implements SessionStorage, SessionHeaderCache {
       null,
       ioRetry: ioRetry,
       headerLine: jsonEncode(header.toJson()),
-    );
+      rotateBytes: rotateBytes,
+    )..onMutated = onMutated;
   }
 
   @override
@@ -1475,11 +1502,12 @@ final class JsonlSessionStorage implements SessionStorage, SessionHeaderCache {
     // append itself (records reach ~0.75 MB — two serializations per
     // append, inside the file lock, was measurable).
     final line = jsonEncode(record.toJson());
+    var chainMutated = false;
     await withSessionFileLock(_filePath, () async {
       // Segment rotation + hard cap ride the same lock as the append so a
       // concurrent reader never sees a segment mid-rotation. UTF-8 bytes,
       // not UTF-16 code units: the caps guard an on-disk byte limit.
-      await _rotateIfNeededLocked(utf8.encode(line).length + 1);
+      chainMutated = await _rotateIfNeededLocked(utf8.encode(line).length + 1);
       // Issue #427: a transient ENOENT on the record append (the
       // submit-death path) rides a short capped retry instead of losing
       // the record; exhaustion still fails as a named SessionException.
@@ -1493,6 +1521,13 @@ final class JsonlSessionStorage implements SessionStorage, SessionHeaderCache {
         'Failed to append session entry ${record.id}',
       );
     });
+    if (chainMutated) {
+      // Issue #2053 AC6: the rotation/restore hook fires only AFTER the
+      // record landed, so the index sees the post-append stats (firing it
+      // mid-append would record the just-reseeded primary's size, which
+      // the very next byte of the append invalidates).
+      await _fireMutated();
+    }
     _entries.add(record);
     _byId[record.id] = record;
     updateSessionLabelCache(_labelsById, record);
@@ -1504,20 +1539,25 @@ final class JsonlSessionStorage implements SessionStorage, SessionHeaderCache {
   /// of the active segment. Best effort in both directions: any failure
   /// falls through to the plain (unbounded) append — persistence must
   /// never fail because housekeeping could not run. [incomingBytes] is
-  /// the encoded UTF-8 size of the record about to be appended.
-  Future<void> _rotateIfNeededLocked(int incomingBytes) async {
-    if (!await _recoverHeaderLineLocked()) return;
+  /// the encoded UTF-8 size of the record about to be appended. Returns
+  /// whether the segment chain was MUTATED (rotated or restored) — the
+  /// caller fires the #2053 onMutated hook after the append lands.
+  Future<bool> _rotateIfNeededLocked(int incomingBytes) async {
+    if (!await _recoverHeaderLineLocked()) return false;
     final headerLine = _headerLine;
-    if (headerLine == null) return; // unreachable after recovery
+    if (headerLine == null) return false; // unreachable after recovery
     final size = await _sessionFileSize();
-    if (size == null) return;
+    if (size == null) return false;
+    var mutated = false;
     var active = size;
     if (active >= _rotateBytes && !_rotationSuspended) {
       active = await _rotateSegmentLocked(size, headerLine);
+      mutated = true;
     }
     if (active + incomingBytes > _hardCapBytes) {
       await _truncateOldestLocked(incomingBytes);
     }
+    return mutated;
   }
 
   /// Rotation needs a header line to seed the next segment; when the
@@ -1596,6 +1636,9 @@ final class JsonlSessionStorage implements SessionStorage, SessionHeaderCache {
               'session rotation: could not seed a fresh primary '
               '($_filePath) — restored the pre-rotation segment',
             );
+            // Issue #2053: the restore rewrote the primary's bytes — the
+            // caller fires the onMutated hook after the append lands (the
+            // chain was mutated), so the index sees post-append stats.
             return preCallSize;
           }
         }

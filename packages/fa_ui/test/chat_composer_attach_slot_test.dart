@@ -142,7 +142,7 @@ void main() {
       await pumpSlot(tester);
 
       expect(find.byIcon(Icons.mic_none), findsOneWidget);
-      expect(find.byIcon(Icons.arrow_upward), findsNothing);
+      expect(find.byIcon(Icons.send_rounded), findsNothing);
       expect(find.byIcon(Icons.stop), findsNothing);
     });
 
@@ -156,9 +156,9 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.byIcon(Icons.mic_none), findsNothing);
-      expect(find.byIcon(Icons.arrow_upward), findsOneWidget);
+      expect(find.byIcon(Icons.send_rounded), findsOneWidget);
 
-      await tester.tap(find.byIcon(Icons.arrow_upward));
+      await tester.tap(find.byIcon(Icons.send_rounded));
       await tester.pumpAndSettle();
 
       expect(service.sentTexts, ['slot send']);
@@ -186,7 +186,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.byIcon(Icons.stop), findsOneWidget);
-      expect(find.byIcon(Icons.arrow_upward), findsNothing);
+      expect(find.byIcon(Icons.send_rounded), findsNothing);
 
       await tester.tap(find.byIcon(Icons.stop));
       await tester.pumpAndSettle();

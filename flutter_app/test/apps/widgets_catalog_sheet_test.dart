@@ -7,6 +7,7 @@ import 'package:fa/apps/catalog_service.dart';
 import 'package:fa/apps/widgets_catalog_sheet.dart';
 import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/flutter_session_manager.dart';
+import 'package:fa_ui/fa_ui.dart' show FaDesignTokens, FahColors;
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -173,6 +174,22 @@ void main() {
     expect(find.textContaining('Focus Timer'), findsWidgets);
     expect(find.widgetWithText(FilledButton, 'Install'), findsOneWidget);
     expect(find.textContaining('v1.0.0'), findsOneWidget);
+  });
+
+  testWidgets('catalog tiles use the messenger surface and hairline tokens', (
+    tester,
+  ) async {
+    final env = MemoryExecutionEnv();
+    await pumpSheet(tester, env: env, client: okServer());
+    final tile = find.byKey(const ValueKey('catalogTile-focus-timer'));
+    final context = tester.element(tile);
+    final decoration =
+        tester.widget<Container>(tile).decoration! as BoxDecoration;
+    expect(decoration.color, FahColors.of(context).panelAlt);
+    expect(
+      (decoration.border! as Border).top.color,
+      FaDesignTokens.of(context).hairline,
+    );
   });
 
   testWidgets('platform chips render next to the tag chips', (tester) async {
@@ -350,18 +367,27 @@ void main() {
     // Tile titles render as '<name>  ·  v<version>' — textContaining.
     expect(find.textContaining('Focus Timer'), findsOneWidget);
     expect(find.textContaining('Unit Converter'), findsOneWidget);
-    // The chip row offers All + every tag.
-    expect(find.widgetWithText(FilterChip, 'All'), findsOneWidget);
-    expect(find.widgetWithText(FilterChip, 'timer'), findsOneWidget);
-    expect(find.widgetWithText(FilterChip, 'tools'), findsOneWidget);
+    // The shared messenger chips offer All + every tag.
+    expect(
+      find.byKey(const ValueKey('widgetsCatalogFilter-all')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('widgetsCatalogFilter-timer')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('widgetsCatalogFilter-tools')),
+      findsOneWidget,
+    );
 
-    await tester.tap(find.widgetWithText(FilterChip, 'tools'));
+    await tester.tap(find.byKey(const ValueKey('widgetsCatalogFilter-tools')));
     await tester.pumpAndSettle();
     expect(find.textContaining('Focus Timer'), findsNothing);
     expect(find.textContaining('Unit Converter'), findsOneWidget);
 
     // Back to everything.
-    await tester.tap(find.widgetWithText(FilterChip, 'All'));
+    await tester.tap(find.byKey(const ValueKey('widgetsCatalogFilter-all')));
     await tester.pumpAndSettle();
     expect(find.textContaining('Focus Timer'), findsOneWidget);
     expect(find.textContaining('Unit Converter'), findsOneWidget);

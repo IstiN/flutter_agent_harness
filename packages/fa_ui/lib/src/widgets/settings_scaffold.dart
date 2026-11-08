@@ -4,6 +4,8 @@
 
 import 'package:flutter/material.dart';
 
+import '../theme/fa2_tokens.dart';
+
 /// The settings-picker row: a leading icon, a title over a one-line
 /// subtitle, and the trailing chevron, all inside a tap target. The
 /// standard row shape of the provider/model pickers and the queue tiles —
@@ -18,7 +20,7 @@ class FaSettingsRow extends StatelessWidget {
     this.borderRadius,
   });
 
-  /// The row's leading icon (filled with [ColorScheme.primary]).
+  /// The row's leading icon (filled with the active [FaDesignTokens.accent]).
   final IconData icon;
 
   /// The primary line.
@@ -36,6 +38,7 @@ class FaSettingsRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final tokens = FaDesignTokens.of(context);
     return InkWell(
       onTap: onTap,
       borderRadius: borderRadius,
@@ -43,7 +46,7 @@ class FaSettingsRow extends StatelessWidget {
         padding: const EdgeInsets.symmetric(vertical: 6),
         child: Row(
           children: [
-            Icon(icon, size: 20, color: theme.colorScheme.primary),
+            Icon(icon, size: 20, color: tokens.accent),
             const SizedBox(width: 12),
             Expanded(
               child: Column(
@@ -58,11 +61,7 @@ class FaSettingsRow extends StatelessWidget {
                 ],
               ),
             ),
-            Icon(
-              Icons.chevron_right,
-              size: 18,
-              color: theme.colorScheme.onSurfaceVariant,
-            ),
+            Icon(Icons.chevron_right, size: 18, color: tokens.ink2),
           ],
         ),
       ),

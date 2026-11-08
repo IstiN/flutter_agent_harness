@@ -1332,8 +1332,10 @@ class AppsStore {
   }
 
   /// Removes a catalog-installed widget's CODE files (`apps/<id>/` minus
-  /// `storage.json`) and drops its meta record. Returns false when there is
-  /// nothing installed under that id. With [force] the meta check is
+  /// `storage.json`) and drops its meta record. The directory itself goes
+  /// when no user data remains, so the empty-install healer cannot undo
+  /// the removal. Returns false when there is nothing installed under that
+  /// id. With [force] the meta check is
   /// skipped — used by the launcher's long-press Remove for agent-created
   /// apps that were never catalog-installed (same storage.json keep).
   Future<bool> removeWidget(String appId, {bool force = false}) async {
@@ -1354,8 +1356,21 @@ class AppsStore {
       // spaces or unicode names here.
       await _env.remove('$dir/${item.name}', recursive: true);
     }
+    // With no saved user data there is no reason to keep the directory.
+    // More importantly, an EMPTY catalog-named dir means "failed install"
+    // to the auto-update healer: leaving it here would redownload the very
+    // widget the user just removed on the next launcher pass.
+    final remaining = (await _env.listDir(dir)).valueOrNull;
+    if (remaining != null && remaining.isEmpty) {
+      await _env.remove(dir, recursive: true);
+    }
     meta.remove(appId);
     await _writeInstalled(meta);
+    // A transient later listing failure uses the parsed-cache fallback;
+    // it must not serve the removed app as a zombie row either.
+    _manifestHashes.remove(appId);
+    _parsedApps.remove(appId);
+    _refHashes.remove(appId);
     return true;
   }
 

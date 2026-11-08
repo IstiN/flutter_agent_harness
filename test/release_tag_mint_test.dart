@@ -76,6 +76,8 @@ class RaceMinter {
   final bool v7VariantShapes;
 
   late final String work;
+  String get canonicalGitDir =>
+      Directory('$work/.git').resolveSymbolicLinksSync();
   late final int gitCalls;
   int ghRunListCalls = 0;
   int exitCode = -1;
@@ -106,6 +108,9 @@ class RaceMinter {
       // entries pointing at it. (Observed verbatim in the run
       // 41393469972 post-job cleanup: "Removing includeIf entries
       // pointing to credentials config files".)
+      // Git resolves the worktree's physical path before matching gitdir;
+      // on macOS the /tmp or /var fixture alias otherwise never matches.
+      final gitDir = canonicalGitDir;
       final credsDir = '${root.path}/runner-temp';
       Directory(credsDir).createSync(recursive: true);
       final credsFile =
@@ -115,12 +120,8 @@ class RaceMinter {
         '\textraheader = AUTHORIZATION: basic am9iLXRva2Vu\n',
       );
       credentialsFile = credsFile;
-      git(['config', 'includeIf.gitdir:$work/.git.path', credsFile]);
-      git([
-        'config',
-        'includeIf.gitdir:$work/.git/worktrees/*.path',
-        credsFile,
-      ]);
+      git(['config', 'includeIf.gitdir:$gitDir.path', credsFile]);
+      git(['config', 'includeIf.gitdir:$gitDir/worktrees/*.path', credsFile]);
       // PR review thread 3 negative fixture: a benign include a
       // value-scoped strip must leave alone.
       final benignDir = '${root.path}/benign-include-$name';
@@ -128,19 +129,15 @@ class RaceMinter {
       final benignFile = '$benignDir/not-credentials.config';
       File(benignFile).writeAsStringSync('[user]\n\tname = dev\n');
       benignIncludeFile = benignFile;
-      git(['config', 'includeIf.gitdir:$work/.git/benign.path', benignFile]);
+      git(['config', 'includeIf.gitdir:$gitDir/benign.path', benignFile]);
       if (v7VariantShapes) {
         // PR review thread 2: the variant checkout shapes — the
         // case-insensitive `gitdir/i:` conditional form and a plain
         // `include.path` — carrying BOTH the credentials file and the
         // benign counterpart. The widened sweep must strip exactly the
         // credentials values.
-        git(['config', 'includeIf.gitdir/i:$work/.git.path', credsFile]);
-        git([
-          'config',
-          'includeIf.gitdir/i:$work/.git/benign.path',
-          benignFile,
-        ]);
+        git(['config', 'includeIf.gitdir/i:$gitDir.path', credsFile]);
+        git(['config', 'includeIf.gitdir/i:$gitDir/benign.path', benignFile]);
         git(['config', 'include.path', credsFile]);
         git(['config', '--add', 'include.path', benignFile]);
       }
@@ -690,7 +687,7 @@ void main() {
         'config',
         '--local',
         '--get-all',
-        'includeIf.gitdir:${m.work}/.git/benign.path',
+        'includeIf.gitdir:${m.canonicalGitDir}/benign.path',
       ], workingDirectory: m.work);
       expect(
         (benign.stdout as String).trim(),
@@ -829,7 +826,7 @@ void main() {
         'config',
         '--local',
         '--get-all',
-        'includeIf.gitdir/i:${m.work}/.git/benign.path',
+        'includeIf.gitdir/i:${m.canonicalGitDir}/benign.path',
       ], workingDirectory: m.work);
       expect(
         (benignGitdirI.stdout as String).trim(),

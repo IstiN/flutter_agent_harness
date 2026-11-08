@@ -187,87 +187,93 @@ void main() {
       );
     });
 
-    test('AC4 — the watchdog kills the whole transfer tree, not just the direct child', () {
-      // gh-2054 review thread 2 (SUGGESTION, empirically verified): a
-      // lone `kill $DL_PID` signals only the direct xcodebuild child —
-      // the transfer's helper descendants survive detached, keep
-      // consuming bandwidth/disk during the ~24-minute IPA archive and
-      // can hold a runtime-install lock that misbehaves the NEXT daily
-      // download. setsid gives the download its own process GROUP, and a
-      // NEGATIVE pid to kill(1) signals the whole group; the direct-pid
-      // kills stay as the fallback when setsid is unavailable.
-      final setsidLaunch = script.indexOf(
-        'setsid xcodebuild -downloadPlatform',
-      );
-      expect(
-        setsidLaunch,
-        greaterThan(-1),
-        reason:
-            'the download must be launched under setsid so DL_PID '
-            'is a process-GROUP leader the watchdog can signal as a '
-            'tree (gh-2054 review thread 2: grandchild helpers survived '
-            'a lone kill)',
-      );
-      final groupTerm = script.indexOf('kill -- -"\$DL_PID"');
-      final directTerm = script.indexOf('kill "\$DL_PID"');
-      final groupKill = script.indexOf('kill -9 -- -"\$DL_PID"');
-      final directKill = script.indexOf('kill -9 "\$DL_PID"');
-      expect(
-        groupTerm,
-        greaterThan(-1),
-        reason:
-            'the watchdog must signal the process GROUP (negative '
-            'pid) with TERM before escalating (gh-2054 review thread 2)',
-      );
-      expect(
-        directTerm,
-        greaterThan(groupTerm),
-        reason:
-            'the direct-pid TERM must follow the group TERM as the '
-            'no-setsid fallback — without it a setsid-less runner never '
-            'terminates the download at all',
-      );
-      expect(
-        groupKill,
-        greaterThan(groupTerm),
-        reason:
-            'the KILL backstop must target the GROUP too — hard '
-            'kills cannot trap-and-forward to descendants '
-            '(gh-2054 review thread 2)',
-      );
-      expect(
-        directKill,
-        greaterThan(groupKill),
-        reason:
-            'the direct-pid KILL must follow the group KILL so the '
-            'watchdog stays effective even when setsid was unavailable',
-      );
-    });
+    test(
+      'AC4 — the watchdog kills the whole transfer tree, not just the direct child',
+      () {
+        // gh-2054 review thread 2 (SUGGESTION, empirically verified): a
+        // lone `kill $DL_PID` signals only the direct xcodebuild child —
+        // the transfer's helper descendants survive detached, keep
+        // consuming bandwidth/disk during the ~24-minute IPA archive and
+        // can hold a runtime-install lock that misbehaves the NEXT daily
+        // download. setsid gives the download its own process GROUP, and a
+        // NEGATIVE pid to kill(1) signals the whole group; the direct-pid
+        // kills stay as the fallback when setsid is unavailable.
+        final setsidLaunch = script.indexOf(
+          'setsid xcodebuild -downloadPlatform',
+        );
+        expect(
+          setsidLaunch,
+          greaterThan(-1),
+          reason:
+              'the download must be launched under setsid so DL_PID '
+              'is a process-GROUP leader the watchdog can signal as a '
+              'tree (gh-2054 review thread 2: grandchild helpers survived '
+              'a lone kill)',
+        );
+        final groupTerm = script.indexOf('kill -- -"\$DL_PID"');
+        final directTerm = script.indexOf('kill "\$DL_PID"');
+        final groupKill = script.indexOf('kill -9 -- -"\$DL_PID"');
+        final directKill = script.indexOf('kill -9 "\$DL_PID"');
+        expect(
+          groupTerm,
+          greaterThan(-1),
+          reason:
+              'the watchdog must signal the process GROUP (negative '
+              'pid) with TERM before escalating (gh-2054 review thread 2)',
+        );
+        expect(
+          directTerm,
+          greaterThan(groupTerm),
+          reason:
+              'the direct-pid TERM must follow the group TERM as the '
+              'no-setsid fallback — without it a setsid-less runner never '
+              'terminates the download at all',
+        );
+        expect(
+          groupKill,
+          greaterThan(groupTerm),
+          reason:
+              'the KILL backstop must target the GROUP too — hard '
+              'kills cannot trap-and-forward to descendants '
+              '(gh-2054 review thread 2)',
+        );
+        expect(
+          directKill,
+          greaterThan(groupKill),
+          reason:
+              'the direct-pid KILL must follow the group KILL so the '
+              'watchdog stays effective even when setsid was unavailable',
+        );
+      },
+    );
 
-    test('AC5 — the incident trail cites the real 11-digit leg run id (41778614770)', () {
-      // gh-2054 review thread 3 (SUGGESTION): the incident run id was
-      // spelled two ways — the workflow comment and the AC1 reason both
-      // carried a truncated mangling of the leg run. The real id (the
-      // cancelled testflight-leg build-mobile dispatch, 2026-11-04) is
-      // 41778614770, the repo's established 11-digit format — one
-      // `git grep 41778614770` must hit every reference.
-      final mobileRaw = read(mobile);
-      expect(
-        mobileRaw.contains('run 41778614770'),
-        isTrue,
-        reason:
-            'the workflow incident comment must cite the real leg '
-            'run id 41778614770 (gh-2054 review thread 3)',
-      );
-      expect(
-        mobileRaw.contains('417861470'),
-        isFalse,
-        reason:
-            'the truncated 417861470 id must be gone from the '
-            'workflow — a truncated id breaks `git grep 41…` '
-            'greppability of the incident trail (gh-2054 review '
-            'thread 3)',
-      );
-    });
+    test(
+      'AC5 — the incident trail cites the real 11-digit leg run id (41778614770)',
+      () {
+        // gh-2054 review thread 3 (SUGGESTION): the incident run id was
+        // spelled two ways — the workflow comment and the AC1 reason both
+        // carried a truncated mangling of the leg run. The real id (the
+        // cancelled testflight-leg build-mobile dispatch, 2026-11-04) is
+        // 41778614770, the repo's established 11-digit format — one
+        // `git grep 41778614770` must hit every reference.
+        final mobileRaw = read(mobile);
+        expect(
+          mobileRaw.contains('run 41778614770'),
+          isTrue,
+          reason:
+              'the workflow incident comment must cite the real leg '
+              'run id 41778614770 (gh-2054 review thread 3)',
+        );
+        expect(
+          mobileRaw.contains('417861470'),
+          isFalse,
+          reason:
+              'the truncated 417861470 id must be gone from the '
+              'workflow — a truncated id breaks `git grep 41…` '
+              'greppability of the incident trail (gh-2054 review '
+              'thread 3)',
+        );
+      },
+    );
   });
 }

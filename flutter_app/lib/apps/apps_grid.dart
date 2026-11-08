@@ -5,6 +5,7 @@
 import 'dart:async';
 
 import 'package:fa/l10n/l10n_ext.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
@@ -15,7 +16,7 @@ import 'package:fa/apps/apps_store.dart';
 import 'package:fa/apps/js_app_engine.dart';
 import 'package:fa/apps/js_app_view.dart';
 import 'package:fa/l10n/app_localizations.dart';
-import 'package:fa_ui/fa_ui.dart' show FaChatHost;
+import 'package:fa_ui/fa_ui.dart';
 import 'package:fa/ui/widgets/fah_wallpaper.dart';
 
 /// Grid launcher for the JS apps living in the env's `apps/` folder.
@@ -62,6 +63,10 @@ class _AppsGridViewState extends State<AppsGridView> {
   List<JsAppInfo>? _apps;
   Object? _error;
 
+  /// Whether we're on macOS desktop (traffic lights float over the band).
+  static bool get _isMacOS =>
+      !kIsWeb && defaultTargetPlatform == TargetPlatform.macOS;
+
   @override
   void initState() {
     super.initState();
@@ -93,28 +98,74 @@ class _AppsGridViewState extends State<AppsGridView> {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
+    final colors = FahColors.of(context);
     return Scaffold(
-      appBar: AppBar(
-        title: Text(context.l10n.appsGridTitle),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.refresh),
-            tooltip: context.l10n.appsRefreshTooltip,
-            onPressed: _reload,
-          ),
-        ],
-      ),
+      // Styleguide chrome: the shell's scaffold tone, the Fa 2.0 wallpaper
+      // beneath, and ONE messenger-style band on top — no raw AppBar.
+      backgroundColor: colors.bg,
       body: Stack(
         children: [
           const Positioned.fill(child: FahWallpaper()),
-          Positioned.fill(child: _buildBody(theme)),
+          Positioned.fill(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [_buildChrome(context), Expanded(child: _buildBody())],
+            ),
+          ),
         ],
       ),
     );
   }
 
-  Widget _buildBody(ThemeData theme) {
+  /// The one chrome band: [FaAdaptiveHeader] (title + refresh circle) over
+  /// a single hairline — the same vocabulary as the Files panel's header.
+  /// Pushed routes sit under the macOS titlebar (fullSizeContentView), so
+  /// the band keeps the traffic-light clearance the old AppBar baked in.
+  Widget _buildChrome(BuildContext context) {
+    final colors = FahColors.of(context);
+    final tokens = FaDesignTokens.of(context);
+    final glass = tokens.direction == FaVisualDirection.glass;
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Container(
+          color: glass ? Colors.transparent : colors.panel,
+          padding: EdgeInsets.fromLTRB(16, _isMacOS ? 34 : 10, 8, 6),
+          child: SizedBox(
+            height: 40,
+            child: FaAdaptiveHeader(
+              title: context.l10n.appsGridTitle,
+              titleStyle: TextStyle(
+                color: colors.text,
+                fontSize: 17,
+                fontWeight: FontWeight.w600,
+                height: 1.2,
+              ),
+              actions: [
+                FaHeaderAction(
+                  key: const ValueKey('appsGridRefresh'),
+                  icon: Icons.refresh,
+                  label: context.l10n.appsRefreshTooltip,
+                  onPressed: _reload,
+                  pinned: true,
+                ),
+              ],
+              visualDensity: VisualDensity.compact,
+              iconSize: 18,
+              actionGap: 8,
+              actionBuilder: (context, action, button) =>
+                  FaHeaderCircularAction(child: button),
+            ),
+          ),
+        ),
+        Divider(height: 1, color: colors.border.withValues(alpha: .55)),
+      ],
+    );
+  }
+
+  Widget _buildBody() {
+    final theme = Theme.of(context);
     final error = _error;
     if (error != null) {
       return Center(child: Text(context.l10n.appsLoadError('$error')));
@@ -202,8 +253,11 @@ class _AppCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final locale = Localizations.localeOf(context).toLanguageTag();
-    return Card(
-      clipBehavior: Clip.antiAlias,
+    final colors = FahColors.of(context);
+    return FaSurface(
+      key: const ValueKey('appsGridCard'),
+      color: colors.panelAlt,
+      borderRadius: BorderRadius.circular(16),
       child: InkWell(
         onTap: onTap,
         child: Padding(
@@ -215,7 +269,11 @@ class _AppCard extends StatelessWidget {
               const Spacer(),
               Text(
                 app.displayName(locale),
-                style: theme.textTheme.titleSmall,
+                style: TextStyle(
+                  color: colors.text,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                ),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
               ),
@@ -229,7 +287,7 @@ class _AppCard extends StatelessWidget {
                     ? AppLocalizations.of(context).appsManifestErrorLabel
                     : app.displayDescription(locale),
                 style: theme.textTheme.bodySmall?.copyWith(
-                  color: app.error == null ? null : theme.colorScheme.error,
+                  color: app.error == null ? colors.dim : colors.error,
                 ),
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,

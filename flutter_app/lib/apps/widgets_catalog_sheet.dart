@@ -15,6 +15,7 @@ import 'package:fa/l10n/l10n_ext.dart';
 import 'package:fa/services/analytics.dart';
 import 'package:fa/services/app_log.dart';
 import 'package:fa/services/flutter_session_manager.dart';
+import 'package:fa/ui/widgets/messenger_navigation_controls.dart';
 import 'package:fa/ui/widgets/widget_status_detail_sheet.dart';
 import 'package:fa_ui/fa_ui.dart';
 import 'package:flutter/material.dart';
@@ -324,7 +325,7 @@ class _WidgetsCatalogSheetState extends State<WidgetsCatalogSheet> {
               children: [
                 Expanded(
                   child: Text(
-                    'Widgets catalog',
+                    context.l10n.appsWidgetStore,
                     style: theme.textTheme.titleMedium,
                   ),
                 ),
@@ -463,24 +464,24 @@ class _WidgetsCatalogSheetState extends State<WidgetsCatalogSheet> {
         children: [
           Padding(
             padding: const EdgeInsets.only(right: 8),
-            child: FilterChip(
-              label: Text(context.l10n.widgetsCatalogFilterAll),
+            child: MessengerCategoryChip(
+              chipKey: const ValueKey('widgetsCatalogFilter-all'),
+              icon: Icons.apps_outlined,
+              label: context.l10n.widgetsCatalogFilterAll,
               selected: _tagFilter == null,
-              showCheckmark: false,
-              visualDensity: VisualDensity.compact,
-              onSelected: (_) => setState(() => _tagFilter = null),
+              onTap: () => setState(() => _tagFilter = null),
             ),
           ),
           for (final tag in tags)
             Padding(
               padding: const EdgeInsets.only(right: 8),
-              child: FilterChip(
-                label: Text(tag),
+              child: MessengerCategoryChip(
+                chipKey: ValueKey('widgetsCatalogFilter-$tag'),
+                icon: Icons.sell_outlined,
+                label: tag,
                 selected: _tagFilter == tag,
-                showCheckmark: false,
-                visualDensity: VisualDensity.compact,
-                onSelected: (selected) =>
-                    setState(() => _tagFilter = selected ? tag : null),
+                onTap: () =>
+                    setState(() => _tagFilter = _tagFilter == tag ? null : tag),
               ),
             ),
         ],
@@ -523,11 +524,9 @@ class _WidgetsCatalogSheetState extends State<WidgetsCatalogSheet> {
             margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
-              color: theme.colorScheme.surfaceContainerLow,
+              color: FahColors.of(context).panelAlt,
               borderRadius: BorderRadius.circular(12),
-              border: Border.all(
-                color: theme.colorScheme.outlineVariant.withValues(alpha: 0.6),
-              ),
+              border: Border.all(color: FaDesignTokens.of(context).hairline),
             ),
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -656,6 +655,8 @@ class _CatalogTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final colors = FahColors.of(context);
+    final tokens = FaDesignTokens.of(context);
     final locale = Localizations.localeOf(context).toLanguageTag();
     final chips = <String>[
       for (final tag in entry.tags.take(2)) tag,
@@ -668,14 +669,15 @@ class _CatalogTile extends StatelessWidget {
     return InkWell(
       onTap: onTap,
       child: Container(
-        margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-        padding: const EdgeInsets.all(12),
+        key: ValueKey('catalogTile-${entry.id}'),
+        margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
-          color: theme.colorScheme.surfaceContainerLow,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(
-            color: theme.colorScheme.outlineVariant.withValues(alpha: 0.6),
-          ),
+          // Match My Apps' token surface instead of Material's navy
+          // surfaceContainerLow, which sat outside the messenger palette.
+          color: colors.panelAlt,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: tokens.hairline),
         ),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -688,7 +690,7 @@ class _CatalogTile extends StatelessWidget {
                 children: [
                   Text(
                     '${entry.displayName(locale)}  ·  v${entry.version}',
-                    style: theme.textTheme.titleSmall,
+                    style: theme.textTheme.titleMedium,
                     overflow: TextOverflow.ellipsis,
                   ),
                   if (entry.displayDescription(locale).isNotEmpty)
@@ -855,17 +857,17 @@ class _CatalogIcon extends StatelessWidget {
     final markup = snapshot.data;
     if (markup == null || markup.trim().isEmpty) return _fallback();
     return Container(
-      width: 40,
-      height: 40,
+      width: 56,
+      height: 56,
       decoration: BoxDecoration(
         color: theme.colorScheme.surface,
-        borderRadius: BorderRadius.circular(10),
+        borderRadius: BorderRadius.circular(16),
         border: Border.all(color: theme.colorScheme.outlineVariant),
       ),
       child: Center(
         child: SizedBox(
-          width: 26,
-          height: 26,
+          width: 36,
+          height: 36,
           child: SvgPicture.string(markup, fit: BoxFit.contain),
         ),
       ),
@@ -890,11 +892,11 @@ class _CatalogIcon extends StatelessWidget {
     final color = _palette[entry.id.hashCode.abs() % _palette.length];
     final label = entry.displayName(locale);
     return Container(
-      width: 34,
-      height: 34,
+      width: 56,
+      height: 56,
       decoration: BoxDecoration(
         color: color,
-        borderRadius: BorderRadius.circular(9),
+        borderRadius: BorderRadius.circular(16),
       ),
       child: Center(
         child: Text(
@@ -902,7 +904,7 @@ class _CatalogIcon extends StatelessWidget {
           style: const TextStyle(
             color: Colors.white,
             fontWeight: FontWeight.w700,
-            fontSize: 15,
+            fontSize: 22,
           ),
         ),
       ),

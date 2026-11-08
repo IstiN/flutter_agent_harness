@@ -19,7 +19,7 @@ import 'package:fa/ui/screens/chat_screen.dart';
 import 'package:fa/ui/screens/settings.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
-import 'package:fa_ui/fa_ui.dart' show FaChatAttachment;
+import 'package:fa_ui/fa_ui.dart' show FaChatAttachment, FaSwitch;
 import 'package:flutter_test/flutter_test.dart';
 
 /// A 2×2 teal/indigo PNG (76 bytes), generated once offline and embedded
@@ -148,11 +148,7 @@ void main() {
   testWidgets('default (setting off): the preview decodes downscaled at '
       'cacheWidth 600', (tester) async {
     final store = ImagePreviewStore(MemoryExecutionEnv());
-    await _pumpChat(
-      tester,
-      serviceWithAttachment(MemoryExecutionEnv()),
-      store,
-    );
+    await _pumpChat(tester, serviceWithAttachment(MemoryExecutionEnv()), store);
 
     expect(_attachmentImage(), findsOneWidget);
     expect(_previewCacheWidth(tester), 600);
@@ -161,13 +157,8 @@ void main() {
 
   testWidgets('setting on: the preview decodes at full resolution (no '
       'cacheWidth constraint), and the flip applies live', (tester) async {
-    final store = ImagePreviewStore(MemoryExecutionEnv())
-      ..setHighQuality(true);
-    await _pumpChat(
-      tester,
-      serviceWithAttachment(MemoryExecutionEnv()),
-      store,
-    );
+    final store = ImagePreviewStore(MemoryExecutionEnv())..setHighQuality(true);
+    await _pumpChat(tester, serviceWithAttachment(MemoryExecutionEnv()), store);
 
     expect(_attachmentImage(), findsOneWidget);
     expect(_previewCacheWidth(tester), isNull);
@@ -190,21 +181,19 @@ void main() {
         home: Scaffold(
           body: ImagePreviewScope(
             store: store,
-            child: const SingleChildScrollView(
-              child: ImagePreviewsSection(),
-            ),
+            child: const SingleChildScrollView(child: ImagePreviewsSection()),
           ),
         ),
       ),
     );
 
-    final toggle = find.byType(Switch);
+    final toggle = find.byType(FaSwitch);
     expect(toggle, findsOneWidget);
-    expect(tester.widget<Switch>(toggle).value, isFalse);
+    expect(tester.widget<FaSwitch>(toggle).value, isFalse);
 
     await tester.tap(toggle);
     await tester.pump();
     expect(store.highQuality, isTrue);
-    expect(tester.widget<Switch>(toggle).value, isTrue);
+    expect(tester.widget<FaSwitch>(toggle).value, isTrue);
   });
 }

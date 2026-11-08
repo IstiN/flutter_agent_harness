@@ -107,34 +107,31 @@ void main() {
       );
     });
 
-    test(
-      'UT-verify: a write that does not read back fails the install '
-      '(no broken tile, issue #201)',
-      () async {
-        final env = _DroppingWriteEnv();
-        final store = AppsStore(env, readAsset: (_) async => '');
-        await expectLater(
-          store.installWidget(
-            id: 'calculator',
-            version: '1.0.1',
-            files: {
-              'manifest.json': utf8.encode('{"id":"calculator"}'),
-              'widget.js': utf8.encode('// calc'),
-            },
+    test('UT-verify: a write that does not read back fails the install '
+        '(no broken tile, issue #201)', () async {
+      final env = _DroppingWriteEnv();
+      final store = AppsStore(env, readAsset: (_) async => '');
+      await expectLater(
+        store.installWidget(
+          id: 'calculator',
+          version: '1.0.1',
+          files: {
+            'manifest.json': utf8.encode('{"id":"calculator"}'),
+            'widget.js': utf8.encode('// calc'),
+          },
+        ),
+        throwsA(
+          isA<StateError>().having(
+            (e) => e.message,
+            'message',
+            contains('failed verification'),
           ),
-          throwsA(
-            isA<StateError>().having(
-              (e) => e.message,
-              'message',
-              contains('failed verification'),
-            ),
-          ),
-        );
-        // The failed install recorded nothing and left no launchable tile.
-        expect(await readMeta(env), isEmpty);
-        expect(await store.listApps(), isEmpty);
-      },
-    );
+        ),
+      );
+      // The failed install recorded nothing and left no launchable tile.
+      expect(await readMeta(env), isEmpty);
+      expect(await store.listApps(), isEmpty);
+    });
   });
 
   group('AppsStore.removeWidget', () {
@@ -159,6 +156,24 @@ void main() {
       );
       expect((await readMeta(env)).containsKey('demo'), isFalse);
       expect(await store.removeWidget('nope'), isFalse);
+    });
+
+    test('removes the empty app dir when there is no user data', () async {
+      final env = MemoryExecutionEnv();
+      final store = AppsStore(env, readAsset: (_) async => '');
+      await store.installWidget(
+        id: 'voxel-sandbox',
+        version: '1.0.0',
+        files: {
+          'manifest.json': utf8.encode('{"id":"voxel-sandbox"}'),
+          'widget.js': utf8.encode('// voxel'),
+        },
+      );
+
+      await store.removeWidget('voxel-sandbox', force: true);
+
+      expect((await env.exists('apps/voxel-sandbox')).valueOrNull, isFalse);
+      expect(await store.listAppDirIds(), isNot(contains('voxel-sandbox')));
     });
   });
 

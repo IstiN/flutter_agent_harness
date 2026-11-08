@@ -18,6 +18,7 @@ import 'package:fa_ui/src/providers/provider_editor_page.dart';
 import 'package:fa_ui/src/providers/provider_marks.dart';
 import 'package:fa_ui/src/providers/provider_preset.dart';
 import 'package:fa_ui/src/providers/sso_flows.dart';
+import 'package:fa_ui/src/widgets/fa_route_header.dart';
 import 'package:fa_ui/src/stores/provider_registry.dart';
 import 'package:fa_ui/src/strings/fa_ui_strings.dart';
 import 'package:fa_ui/src/utils/page_presentation.dart';
@@ -369,7 +370,10 @@ class AddProviderPresetPickerPage extends StatelessWidget {
       );
     }
     return Scaffold(
-      appBar: AppBar(title: Text(strings.settingsAddProvider)),
+      appBar: faRouteAppBar(
+        context: context,
+        title: Text(strings.settingsAddProvider),
+      ),
       body: SafeArea(
         child: ListView(
           padding: const EdgeInsets.symmetric(vertical: 8),

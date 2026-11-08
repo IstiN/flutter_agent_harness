@@ -4,6 +4,30 @@
 
 part of 'settings.dart';
 
+/// One aligned label for a control inside a grouped settings card.
+class _SettingsControlLabel extends StatelessWidget {
+  const _SettingsControlLabel(this.text);
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    final tokens = faui.FaDesignTokens.of(context);
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Text(
+        text,
+        style: TextStyle(
+          color: tokens.ink2,
+          fontSize: 12,
+          fontWeight: FontWeight.w600,
+          letterSpacing: .1,
+        ),
+      ),
+    );
+  }
+}
+
 /// The settings "Theme" section: a dropdown over [FahThemeMode] bound to the
 /// app-wide [ThemeController] (explicit [controller], else the nearest
 /// [FahThemeScope]). Hidden when no controller is available (tests pumping
@@ -16,7 +40,6 @@ class ThemeModeSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
     final controller = this.controller ?? FahThemeScope.maybeOf(context);
     if (controller == null) return const SizedBox.shrink();
     return ListenableBuilder(
@@ -26,17 +49,14 @@ class ThemeModeSection extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text(
-              context.l10n.settingsThemeLabel,
-              style: theme.textTheme.titleSmall,
-            ),
-            const SizedBox(height: 8),
-            DropdownButtonFormField<FahThemeMode>(
+            // The dim eyebrow: section headers stay out of the field so
+            // the capsule carries no floating M3 label.
+            _SettingsControlLabel(context.l10n.settingsThemeLabel),
+            SettingsDropdown<FahThemeMode>(
               // The key forces the FormField to re-seed when the mode is
               // changed from elsewhere.
-              key: ValueKey<FahThemeMode>(controller.mode),
-              initialValue: controller.mode,
-              isExpanded: true,
+              itemKey: ValueKey<FahThemeMode>(controller.mode),
+              value: controller.mode,
               items: [
                 DropdownMenuItem(
                   value: FahThemeMode.system,
@@ -79,16 +99,184 @@ class ImagePreviewsSection extends StatelessWidget {
     return ListenableBuilder(
       listenable: store,
       builder: (context, _) {
-        return SwitchListTile(
-          value: store.highQuality,
-          onChanged: store.setHighQuality,
-          title: Text(context.l10n.settingsImagePreviewsLabel),
-          subtitle: Text(context.l10n.settingsImagePreviewsHelper),
-          dense: true,
-          contentPadding: EdgeInsets.zero,
-          controlAffinity: ListTileControlAffinity.leading,
+        // One grouped card, like the other settings switch sections.
+        return SettingsGroup(
+          children: [
+            SettingsSwitchRow(
+              value: store.highQuality,
+              onChanged: store.setHighQuality,
+              title: Text(context.l10n.settingsImagePreviewsLabel),
+              subtitle: Text(context.l10n.settingsImagePreviewsHelper),
+            ),
+          ],
         );
       },
+    );
+  }
+}
+
+/// Selects one of the four canonical Fa 2.0 visual directions. Each preview
+/// is built by the real shared theme builder, so it cannot drift from the
+/// palette the user gets after tapping it.
+class VisualDirectionSection extends StatelessWidget {
+  const VisualDirectionSection({
+    super.key,
+    this.controller,
+    this.includeThemeMode = false,
+  });
+
+  final ThemeController? controller;
+
+  /// The full Settings page groups brightness with direction and font;
+  /// standalone design-system previews keep the narrower direction-only API.
+  final bool includeThemeMode;
+
+  @override
+  Widget build(BuildContext context) {
+    final controller = this.controller ?? FahThemeScope.maybeOf(context);
+    if (controller == null) return const SizedBox.shrink();
+    return ListenableBuilder(
+      listenable: controller,
+      builder: (context, _) => SettingsGroup(
+        label: context.l10n.visualDirectionTitle,
+        hint: context.l10n.visualDirectionSubtitle,
+        children: [
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                LayoutBuilder(
+                  builder: (context, constraints) => Wrap(
+                    spacing: 12,
+                    runSpacing: 12,
+                    children: [
+                      for (final direction in faui.FaVisualDirection.values)
+                        SizedBox(
+                          width: (constraints.maxWidth - 12) / 2,
+                          height: 88,
+                          child: _DirectionPreview(
+                            direction: direction,
+                            fontPreset: controller.fontPreset,
+                            selected: controller.visualDirection == direction,
+                            onTap: () =>
+                                controller.setVisualDirection(direction),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 20),
+                _SettingsControlLabel(context.l10n.fontPresetTitle),
+                SettingsDropdown<faui.FaFontPreset>(
+                  itemKey: ValueKey<faui.FaFontPreset>(controller.fontPreset),
+                  value: controller.fontPreset,
+                  items: [
+                    for (final preset in faui.FaFontPreset.values)
+                      DropdownMenuItem(
+                        value: preset,
+                        child: Text(
+                          switch (preset) {
+                            faui.FaFontPreset.system => 'System SF',
+                            faui.FaFontPreset.geist => 'Geist',
+                            faui.FaFontPreset.jakarta => 'Jakarta',
+                            faui.FaFontPreset.inter => 'Inter',
+                            faui.FaFontPreset.outfit => 'Outfit + Inter',
+                          },
+                          style: faui.FaTypography.forDirection(
+                            controller.visualDirection,
+                            preset: preset,
+                          ).body.copyWith(fontSize: 14),
+                        ),
+                      ),
+                  ],
+                  onChanged: (preset) {
+                    if (preset != null) controller.setFontPreset(preset);
+                  },
+                ),
+                if (includeThemeMode) ...[
+                  const SizedBox(height: 16),
+                  ThemeModeSection(controller: controller),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _DirectionPreview extends StatelessWidget {
+  const _DirectionPreview({
+    required this.direction,
+    required this.fontPreset,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final faui.FaVisualDirection direction;
+  final faui.FaFontPreset fontPreset;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final brightness = Theme.of(context).brightness;
+    final name = switch (direction) {
+      faui.FaVisualDirection.glass => 'Liquid Glass',
+      faui.FaVisualDirection.nebula => 'Nebula',
+      faui.FaVisualDirection.graphite => 'Graphite',
+      faui.FaVisualDirection.porcelain => 'Porcelain',
+    };
+    return Theme(
+      data: faui.buildFaTheme(
+        direction: direction,
+        brightness: brightness,
+        fontPreset: fontPreset,
+      ),
+      child: Builder(
+        builder: (context) {
+          final tokens = faui.FaDesignTokens.of(context);
+          return Semantics(
+            selected: selected,
+            button: true,
+            label: selected
+                ? '$name — ${context.l10n.visualDirectionSelected}'
+                : name,
+            child: faui.FaSurface(
+              onTap: onTap,
+              color: selected ? tokens.accentSoft : tokens.surface1,
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+              child: Row(
+                children: [
+                  faui.FaLogo(size: 36, semanticLabel: ''),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      name,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: tokens.ink1,
+                        fontWeight: FontWeight.w700,
+                        fontSize: 13,
+                      ),
+                    ),
+                  ),
+                  faui.FaIcon(
+                    selected
+                        ? faui.FaSemanticIcon.checkCircle
+                        : faui.FaSemanticIcon.radioUnchecked,
+                    size: 19,
+                    color: selected ? tokens.accent : tokens.ink3,
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
     );
   }
 }
@@ -190,57 +378,25 @@ class ThemePacksSection extends StatelessWidget {
     required ThemeController controller,
     required bool canPick,
   }) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      mainAxisSize: MainAxisSize.min,
+    return SettingsGroup(
+      label: context.l10n.themePacksTitle,
+      hint: context.l10n.themePacksSubtitle,
+      action: canPick
+          ? faui.FaButton(
+              label: context.l10n.themePackImport,
+              icon: Icons.upload_file,
+              variant: faui.FaButtonVariant.secondary,
+              onPressed: () => _import(context, store),
+            )
+          : null,
       children: [
-        _headerRow(context, theme, store, canPick),
-        const SizedBox(height: 4),
-        Text(context.l10n.themePacksSubtitle, style: theme.textTheme.bodySmall),
-        RadioGroup<String?>(
-          groupValue: controller.packId,
-          onChanged: (id) => controller.setPack(
-            id,
-            hasWallpaper: id != null && store.byId(id)?.spec.wallpaper != null,
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              RadioListTile<String?>(
-                value: null,
-                title: Text(context.l10n.themePackDefault),
-                contentPadding: EdgeInsets.zero,
-                dense: true,
-              ),
-              for (final pack in store.packs)
-                _packTile(context, theme, store, controller, pack),
-            ],
-          ),
+        SettingsRadioRow(
+          selected: controller.packId == null,
+          onTap: () => controller.setPack(null),
+          title: Text(context.l10n.themePackDefault),
         ),
-      ],
-    );
-  }
-
-  Widget _headerRow(
-    BuildContext context,
-    ThemeData theme,
-    ThemePackStore store,
-    bool canPick,
-  ) {
-    return Row(
-      children: [
-        Expanded(
-          child: Text(
-            context.l10n.themePacksTitle,
-            style: theme.textTheme.titleSmall,
-          ),
-        ),
-        if (canPick)
-          TextButton.icon(
-            onPressed: () => _import(context, store),
-            icon: const Icon(Icons.upload_file, size: 18),
-            label: Text(context.l10n.themePackImport),
-          ),
+        for (final pack in store.packs)
+          _packTile(context, theme, store, controller, pack),
       ],
     );
   }
@@ -252,21 +408,23 @@ class ThemePacksSection extends StatelessWidget {
     ThemeController controller,
     InstalledThemePack pack,
   ) {
-    return RadioListTile<String?>(
+    return SettingsRadioRow(
       key: ValueKey('theme-pack-${pack.id}'),
-      value: pack.id,
+      selected: controller.packId == pack.id,
+      onTap: () => controller.setPack(
+        pack.id,
+        hasWallpaper: pack.spec.wallpaper != null,
+      ),
       title: Text(pack.name),
       subtitle:
           (pack.spec.wallpaper == null && pack.spec.contrastWarnings.isEmpty)
           ? null
           : _packNotes(context, theme, pack),
-      secondary: IconButton(
+      trailing: faui.FaIconButton(
         tooltip: context.l10n.themePackDelete,
-        icon: const Icon(Icons.delete_outline, size: 20),
+        icon: Icons.delete_outline,
         onPressed: () => _remove(context, store, controller, pack),
       ),
-      contentPadding: EdgeInsets.zero,
-      dense: true,
     );
   }
 
@@ -286,7 +444,7 @@ class ThemePacksSection extends StatelessWidget {
           Text(
             pack.spec.contrastWarnings.join(' · '),
             style: theme.textTheme.bodySmall?.copyWith(
-              color: theme.colorScheme.error,
+              color: faui.FaDesignTokens.of(context).danger,
             ),
           ),
       ],
@@ -315,6 +473,8 @@ class ChatTextSection extends StatelessWidget {
         Row(
           children: [
             Expanded(
+              // Divisions keep the size whole-stepped (the store clamps
+              // but does not round); [FaSlider] has no divisions slot.
               child: Slider(
                 value: store.fontSize,
                 min: ChatTextStore.minFontSize,
@@ -462,6 +622,7 @@ class _CompactionSectionState extends State<CompactionSection> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final tokens = faui.FaDesignTokens.of(context);
     final l10n = context.l10n;
     final resolution = _resolution;
     if (!widget.supported) {
@@ -475,9 +636,7 @@ class _CompactionSectionState extends State<CompactionSection> {
           const SizedBox(height: 8),
           Text(
             l10n.settingsCompactionWebNote,
-            style: theme.textTheme.bodySmall?.copyWith(
-              color: theme.colorScheme.onSurfaceVariant,
-            ),
+            style: theme.textTheme.bodySmall?.copyWith(color: tokens.ink2),
           ),
         ],
       );
@@ -496,17 +655,14 @@ class _CompactionSectionState extends State<CompactionSection> {
         const SizedBox(height: 8),
         Text(
           l10n.settingsCompactionHelper,
-          style: theme.textTheme.bodySmall?.copyWith(
-            color: theme.colorScheme.onSurfaceVariant,
-          ),
+          style: theme.textTheme.bodySmall?.copyWith(color: tokens.ink2),
         ),
         const SizedBox(height: 8),
-        DropdownButtonFormField<CompactionEngine>(
+        SettingsDropdown<CompactionEngine>(
           // Re-seed when the effective engine changes elsewhere (config
           // edits apply without a restart — same trick as ThemeModeSection).
-          key: ValueKey<CompactionEngine>(engine),
-          initialValue: engine,
-          isExpanded: true,
+          itemKey: ValueKey<CompactionEngine>(engine),
+          value: engine,
           items: [
             DropdownMenuItem(
               value: CompactionEngine.structured,
@@ -524,23 +680,22 @@ class _CompactionSectionState extends State<CompactionSection> {
           engine == CompactionEngine.structured
               ? l10n.settingsCompactionStructuredHint
               : l10n.settingsCompactionClassicHint,
-          style: theme.textTheme.bodySmall,
+          style: theme.textTheme.bodySmall?.copyWith(color: tokens.ink2),
         ),
         const SizedBox(height: 4),
         Text(
           sourceCaption,
-          style: theme.textTheme.bodySmall?.copyWith(
-            color: theme.colorScheme.onSurfaceVariant,
-          ),
+          style: theme.textTheme.bodySmall?.copyWith(color: tokens.ink2),
         ),
         if (widget.docsUrl case final docs?)
           Align(
             alignment: Alignment.centerLeft,
-            child: TextButton.icon(
+            child: faui.FaButton(
+              label: l10n.settingsCompactionDocs,
+              icon: Icons.open_in_new,
+              variant: faui.FaButtonVariant.ghost,
               onPressed: () =>
                   launchUrl(docs, mode: LaunchMode.externalApplication),
-              icon: const Icon(Icons.open_in_new, size: 16),
-              label: Text(l10n.settingsCompactionDocs),
             ),
           ),
       ],
@@ -571,6 +726,7 @@ class CliOnlySettingsSection extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final tokens = faui.FaDesignTokens.of(context);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       mainAxisSize: MainAxisSize.min,
@@ -582,10 +738,7 @@ class CliOnlySettingsSection extends StatelessWidget {
         const SizedBox(height: 4),
         Text(
           context.l10n.settingsCliOnlyLead,
-          style: TextStyle(
-            color: theme.textTheme.bodySmall?.color,
-            fontSize: 12,
-          ),
+          style: TextStyle(color: tokens.ink2, fontSize: 12),
         ),
         const SizedBox(height: 8),
         for (final setting in cliOnlySettings)
@@ -596,11 +749,7 @@ class CliOnlySettingsSection extends StatelessWidget {
               children: [
                 Padding(
                   padding: const EdgeInsets.only(top: 2),
-                  child: Icon(
-                    Icons.terminal,
-                    size: 16,
-                    color: theme.colorScheme.primary,
-                  ),
+                  child: Icon(Icons.terminal, size: 16, color: tokens.accent),
                 ),
                 const SizedBox(width: 8),
                 Expanded(
@@ -610,10 +759,7 @@ class CliOnlySettingsSection extends StatelessWidget {
                       Text(_label(context.l10n, setting)),
                       Text(
                         cliOnlyJustifications[setting] ?? '',
-                        style: TextStyle(
-                          color: theme.textTheme.bodySmall?.color,
-                          fontSize: 12,
-                        ),
+                        style: TextStyle(color: tokens.ink2, fontSize: 12),
                       ),
                     ],
                   ),
@@ -826,6 +972,7 @@ class _ProviderQueueSectionState extends State<ProviderQueueSection> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final tokens = faui.FaDesignTokens.of(context);
     final l10n = context.l10n;
     if (!widget.supported) {
       // Web: no config yaml to read or write — say so instead of an
@@ -851,10 +998,7 @@ class _ProviderQueueSectionState extends State<ProviderQueueSection> {
         const SizedBox(height: 4),
         Text(
           l10n.settingsQueueHelper,
-          style: TextStyle(
-            color: theme.textTheme.bodySmall?.color,
-            fontSize: 12,
-          ),
+          style: TextStyle(color: tokens.ink2, fontSize: 12),
         ),
         const SizedBox(height: 8),
         if (resolution == null || !resolution.isSet)
@@ -899,17 +1043,18 @@ class _ProviderQueueSectionState extends State<ProviderQueueSection> {
             padding: const EdgeInsets.only(top: 4),
             child: Text(
               l10n.settingsQueueScopeEnv,
-              style: TextStyle(color: theme.colorScheme.tertiary, fontSize: 12),
+              style: TextStyle(color: tokens.warning, fontSize: 12),
             ),
           ),
         const SizedBox(height: 8),
         if (!envWins)
           Align(
             alignment: Alignment.centerLeft,
-            child: OutlinedButton.icon(
+            child: faui.FaButton(
+              label: l10n.settingsQueueAdd,
+              icon: Icons.add,
+              variant: faui.FaButtonVariant.secondary,
               onPressed: _addEntry,
-              icon: const Icon(Icons.add),
-              label: Text(l10n.settingsQueueAdd),
             ),
           ),
       ],
@@ -942,7 +1087,7 @@ class _QueueEntryTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
+    final tokens = faui.FaDesignTokens.of(context);
     final subtitle = [
       entry.providerType,
       if (entry.baseUrl != null) faui.providerHostOf(entry.baseUrl!),
@@ -954,10 +1099,11 @@ class _QueueEntryTile extends StatelessWidget {
         children: [
           SizedBox(
             width: 28,
+            // A bare queue ordinal ("1.") — not translatable copy.
             child: Text(
               '${index + 1}.',
-              style: TextStyle(color: theme.textTheme.bodySmall?.color),
-            ),
+              style: TextStyle(color: tokens.ink2),
+            ), // l10n:ignore
           ),
           Expanded(
             child: faui.FaSettingsRow(
@@ -965,23 +1111,23 @@ class _QueueEntryTile extends StatelessWidget {
               title: entry.model,
               subtitle: subtitle,
               onTap: enabled ? onEdit : null,
-              borderRadius: BorderRadius.circular(8),
+              borderRadius: BorderRadius.circular(tokens.radiusSm),
             ),
           ),
-          IconButton(
+          faui.FaIconButton(
             tooltip: context.l10n.settingsQueueMoveUp,
+            icon: Icons.arrow_upward,
             onPressed: enabled ? onMoveUp : null,
-            icon: const Icon(Icons.arrow_upward, size: 18),
           ),
-          IconButton(
+          faui.FaIconButton(
             tooltip: context.l10n.settingsQueueMoveDown,
+            icon: Icons.arrow_downward,
             onPressed: enabled ? onMoveDown : null,
-            icon: const Icon(Icons.arrow_downward, size: 18),
           ),
-          IconButton(
+          faui.FaIconButton(
             tooltip: context.l10n.settingsQueueRemove,
+            icon: Icons.delete_outline,
             onPressed: enabled ? onRemove : null,
-            icon: const Icon(Icons.delete_outline, size: 18),
           ),
         ],
       ),
@@ -999,17 +1145,16 @@ class _ToolsBadge extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final tokens = faui.FaDesignTokens.of(context);
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
       decoration: BoxDecoration(
-        color: theme.colorScheme.primaryContainer,
-        borderRadius: BorderRadius.circular(4),
+        color: tokens.accentSoft,
+        borderRadius: BorderRadius.circular(tokens.radiusXs),
       ),
       child: Text(
         context.l10n.settingsToolsBadge,
-        style: theme.textTheme.labelSmall?.copyWith(
-          color: theme.colorScheme.onPrimaryContainer,
-        ),
+        style: theme.textTheme.labelSmall?.copyWith(color: tokens.accent),
       ),
     );
   }
