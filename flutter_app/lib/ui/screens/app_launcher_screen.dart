@@ -1158,7 +1158,7 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
       key: const ValueKey('appsOverviewHeader'),
       title: context.l10n.appsGridTitle,
       subtitle: context.l10n.appsOverviewSubtitle,
-      icon: Icons.grid_view_rounded,
+      icon: Icons.apps_rounded,
       onIconTap: widget.onProfile,
       leading: _buildBackButton(),
     );
@@ -1169,7 +1169,7 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
       key: const ValueKey('appsOverviewHeader'),
       title: context.l10n.appsGridTitle,
       subtitle: context.l10n.appsOverviewSubtitle,
-      icon: Icons.grid_view_rounded,
+      icon: Icons.apps_rounded,
       onIconTap: widget.onProfile,
       leading: _buildBackButton(),
       actions: [

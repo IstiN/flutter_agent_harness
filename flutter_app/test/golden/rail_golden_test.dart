@@ -65,7 +65,7 @@ List<MessengerRailDestination> _railDestinations({
   _dest(Icons.public_outlined, 'Networks'),
   _dest(Icons.tag_rounded, 'Channels'),
   _dest(Icons.notifications_none_rounded, 'Activity'),
-  _dest(Icons.grid_view_rounded, 'Apps'),
+  _dest(Icons.apps_rounded, 'Apps'),
 ];
 
 ChatListEntry _session(

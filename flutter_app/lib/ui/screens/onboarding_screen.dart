@@ -1113,7 +1113,7 @@ class _FeaturesRow extends StatelessWidget {
 
   static const _items = [
     (Icons.chat_bubble, 'Answers questions', Color(0xFF5B63F0)),
-    (Icons.grid_view_rounded, 'Uses your apps', Color(0xFF2EBD9E)),
+    (Icons.apps_rounded, 'Uses your apps', Color(0xFF2EBD9E)),
     (Icons.auto_awesome, 'Builds new apps', Color(0xFF5B63F0)),
   ];
 

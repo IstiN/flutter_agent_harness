@@ -522,20 +522,24 @@ class _AppTile extends StatelessWidget {
   static Widget _filesGlyph(double s) =>
       Icon(Icons.folder, size: 24 * s, color: Colors.white);
 
-  static Widget _calculatorGlyph(double s) => Wrap(
-    spacing: 2 * s,
-    runSpacing: 2 * s,
-    children: [
-      for (var i = 0; i < 9; i++)
-        Container(
-          width: 5 * s,
-          height: 5 * s,
-          decoration: BoxDecoration(
-            color: i == 7 ? const Color(0xFFF59E0B) : const Color(0xFF8A8FA8),
-            borderRadius: BorderRadius.circular(1.2 * s),
+  static Widget _calculatorGlyph(double s) => SizedBox(
+    width: 19 * s,
+    height: 19 * s,
+    child: Wrap(
+      spacing: 2 * s,
+      runSpacing: 2 * s,
+      children: [
+        for (var i = 0; i < 9; i++)
+          Container(
+            width: 5 * s,
+            height: 5 * s,
+            decoration: BoxDecoration(
+              color: i == 7 ? const Color(0xFFF59E0B) : const Color(0xFF8A8FA8),
+              shape: BoxShape.circle,
+            ),
           ),
-        ),
-    ],
+      ],
+    ),
   );
 
   static Widget _mapsGlyph(double s) =>

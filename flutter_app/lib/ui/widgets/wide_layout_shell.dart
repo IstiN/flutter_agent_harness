@@ -1740,7 +1740,7 @@ class _WideLayoutShellState extends State<WideLayoutShell>
       ),
       sectionRow(
         _WideShellSection.apps,
-        Icons.grid_view_rounded,
+        Icons.apps_rounded,
         context.l10n.appsGridTitle,
       ),
       MessengerRailDestination(

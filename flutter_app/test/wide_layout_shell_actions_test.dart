@@ -1547,7 +1547,7 @@ void main() {
           of: action,
           matching: find.byIcon(switch (section) {
             'activity' => Icons.notifications_none_rounded,
-            _ => Icons.grid_view_rounded,
+            _ => Icons.apps_rounded,
           }),
         ),
         findsOneWidget,
