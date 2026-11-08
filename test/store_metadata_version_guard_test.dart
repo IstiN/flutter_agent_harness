@@ -2,7 +2,9 @@
 // the committed 0.0.0-dev pubspec placeholder and then called a nonexistent
 // Spaceship::ConnectAPI::App#create_app_store_version method. The workflow
 // must receive an explicit release version, and version creation must use
-// the supported ConnectAPI.post_app_store_version endpoint.
+// the supported App#ensure_version! endpoint. The latter also covers the
+// rejected macOS 1.0 version from run 42498061545: Apple rejects a second
+// version while that editable one exists, so its version string is reused.
 import 'dart:io';
 
 import 'package:test/test.dart';
@@ -34,8 +36,18 @@ void main() {
     );
   });
 
-  test('version creation uses the supported Spaceship endpoint', () {
-    expect(fastfile, contains('Spaceship::ConnectAPI.post_app_store_version('));
+  test('version sync reuses an editable version or creates a missing one', () {
+    expect(
+      fastfile,
+      contains('app.ensure_version!(version, platform: platform)'),
+    );
     expect(fastfile, isNot(contains('app.create_app_store_version(')));
+    expect(
+      fastfile,
+      isNot(contains('Spaceship::ConnectAPI.post_app_store_version(')),
+      reason:
+          'A direct POST cannot reuse the rejected macOS version; '
+          'App#ensure_version! handles both update and create.',
+    );
   });
 }

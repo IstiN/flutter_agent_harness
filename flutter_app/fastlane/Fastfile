@@ -342,10 +342,10 @@ def ensure_app_store_version!(bundle_id:, platform:, version:)
 
   UI.message("App Store version #{version} (#{platform}) does not exist yet — creating the version record before deliver (gh-1519)")
   begin
-    Spaceship::ConnectAPI.post_app_store_version(
-      app_id: app.id,
-      attributes: StoreVersionCreate.create_attributes(platform: platform, version: version)
-    )
+    # Reuse an editable version (PREPARE_FOR_SUBMISSION / REJECTED / ...)
+    # when one exists: Apple rejects a second version in that state. With
+    # no editable version this performs the same appStoreVersions POST.
+    app.ensure_version!(version, platform: platform)
   rescue => e
     # gh-1519 rework (review thread, PR #1520): ASC read lag can hide a
     # version a PREVIOUS run created, so needs_create? above answers true
@@ -355,7 +355,7 @@ def ensure_app_store_version!(bundle_id:, platform:, version:)
     # metadata-only update). Re-read once (bounded retries) and no-op
     # when the version now exists; anything else still raises.
     if StoreVersionCreate.create_conflict?(message: e.message)
-      UI.important("post_app_store_version reports #{version} (#{platform}) already exists — re-reading once to confirm (ASC read lag)")
+      UI.important("ensure_version! reports #{version} (#{platform}) already exists — re-reading once to confirm (ASC read lag)")
       existing = with_apple_retries(attempts: 3, delay: 20) do
         app.get_app_store_versions(filter: { platform: platform }).map(&:version_string)
       end
@@ -363,7 +363,7 @@ def ensure_app_store_version!(bundle_id:, platform:, version:)
     end
     raise
   end
-  UI.success("Created App Store version #{version} (#{platform}) — store-metadata can now attach metadata/screenshots to it")
+  UI.success("Synchronized App Store version #{version} (#{platform}) — store-metadata can now attach metadata/screenshots to it")
   app
 end
 
