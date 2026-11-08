@@ -67,6 +67,60 @@ void main() {
     unawaited(future.then<void>((_) {}, onError: (Object _) {}));
   }
 
+  /// Shared fixture for the close-only-413 twins (the AC2-paced test
+  /// and its REG gh-2065 twin): connects a raw client socket to the
+  /// relay port, swallows the WRITE-side error channel via
+  /// `forget(socket.done)` — the close-only 413 destroys the socket
+  /// mid-upload BY DESIGN (issue #794), so the resulting
+  /// EPIPE/ECONNRESET surfacing on socket.done is noise; the
+  /// read-side handlers below carry the 413/close signal — sends the
+  /// bare over-cap POST, and starts pumping 32 KiB chunks every 20 ms.
+  /// Returns (socket, pump, answer): [answer] completes '413' |
+  /// 'closed' | 'error' on the first wire signal; [pump] keeps
+  /// uploading until cancelled (the addTearDown covers it if the test
+  /// forgets).
+  Future<(Socket, Timer, Completer<String>)> pumpOverCapUpload() async {
+    final socket = await Socket.connect('127.0.0.1', port);
+    addTearDown(socket.destroy);
+    // gh-2065: the close-only 413 destroys the socket mid-upload by
+    // design; a loaded event loop can land a pump tick (or a pending
+    // buffered chunk) on the dead socket, and the WRITE side then
+    // reports `SocketException: Connection reset by peer` on
+    // socket.done — an unhandled async error that reddened the whole
+    // Hostile ambient env job. Swallow it; the read-side handlers
+    // below already carry the 413/close signal.
+    forget(socket.done);
+    final answer = Completer<String>();
+    final got = <String>[];
+    socket.listen(
+      (chunk) {
+        got.add(utf8.decode(chunk, allowMalformed: true));
+        if (!answer.isCompleted && got.join().contains('413')) {
+          answer.complete('413');
+        }
+      },
+      onDone: () {
+        if (!answer.isCompleted) answer.complete('closed');
+      },
+      onError: (Object _) {
+        if (!answer.isCompleted) answer.complete('error');
+      },
+    );
+    socket.write(
+      'POST /relay HTTP/1.1\r\n'
+      'Host: 127.0.0.1:$port\r\n'
+      'Authorization: Bearer ${hub.relaySecret}\r\n'
+      'Content-Type: application/json\r\n'
+      'Transfer-Encoding: chunked\r\n\r\n',
+    );
+    final fat = base64Encode(List<int>.filled(32 * 1024, 120));
+    final pump = Timer.periodic(const Duration(milliseconds: 20), (t) {
+      socket.write('${fat.length}\r\n$fat\r\n'); // 32 KiB body per chunk
+    });
+    addTearDown(pump.cancel);
+    return (socket, pump, answer);
+  }
+
   tearDown(() async {
     await hub.stop();
   });
@@ -155,36 +209,7 @@ void main() {
     // oversized body slowly (here ~2.6 s total). The cap fires on the
     // second 32 KiB chunk (~40 ms in) — the 413 must be answerable and
     // the worker freed NOW, not when the upload ends.
-    final socket = await Socket.connect('127.0.0.1', port);
-    addTearDown(socket.destroy);
-    final answer = Completer<String>();
-    final got = <String>[];
-    socket.listen(
-      (chunk) {
-        got.add(utf8.decode(chunk, allowMalformed: true));
-        if (!answer.isCompleted && got.join().contains('413')) {
-          answer.complete('413');
-        }
-      },
-      onDone: () {
-        if (!answer.isCompleted) answer.complete('closed');
-      },
-      onError: (Object _) {
-        if (!answer.isCompleted) answer.complete('error');
-      },
-    );
-    socket.write(
-      'POST /relay HTTP/1.1\r\n'
-      'Host: 127.0.0.1:$port\r\n'
-      'Authorization: Bearer ${hub.relaySecret}\r\n'
-      'Content-Type: application/json\r\n'
-      'Transfer-Encoding: chunked\r\n\r\n',
-    );
-    final fat = base64Encode(List<int>.filled(32 * 1024, 120));
-    final pump = Timer.periodic(const Duration(milliseconds: 20), (t) {
-      socket.write('${fat.length}\r\n$fat\r\n'); // 32 KiB body per chunk
-    });
-    addTearDown(pump.cancel);
+    final (_, _, answer) = await pumpOverCapUpload();
     // The upload would need ~2.6 s; the answer-or-close must arrive
     // within a second — while the client is still pumping. The wire
     // answer itself is best-effort here (a server close mid-send
@@ -196,6 +221,40 @@ void main() {
       hub.relayInFlight,
       0,
       reason: 'the worker is freed at the cap, not after the upload',
+    );
+  });
+
+  test('REG gh-2065: a pump tick landing after the close-only 413 RST '
+      'must not leak a write-side socket error', () async {
+    // The AC2-paced test above is timing-open: CI (gh-2065) reddened
+    // when a loaded event loop let one pump tick land after the hub
+    // destroyed the socket — the write side of the client Socket then
+    // reported `SocketException: Connection reset by peer` on
+    // `socket.done`, which nobody listened to, and the unhandled
+    // async error failed the test (passed 20 minutes earlier in the
+    // same run's Core shard — pure scheduling, no product defect).
+    // This twin makes that interleaving DETERMINISTIC: the grace
+    // delay guarantees the post-RST write instead of hoping CI load
+    // does. The fix is the write-side swallow on socket.done inside
+    // the shared pumpOverCapUpload fixture; the read-side
+    // onError/onDone never see the write side (Socket is Stream AND
+    // IOSink, and each reports independently).
+    hub = LocalHub(relayAllowAnyHost: true, relayMaxBodyBytes: 64 * 1024);
+    await hub.start();
+    port = hub.url.port;
+
+    final (_, pump, answer) = await pumpOverCapUpload();
+    await answer.future.timeout(const Duration(seconds: 1));
+    // The deterministic stand-in for CI load: hold the test open past
+    // at least one pump tick AFTER the hub's close-only RST, and past
+    // the write-side error surfacing on socket.done — pre-fix that
+    // error escapes as an unhandled exception and fails this test.
+    await Future<void>.delayed(const Duration(milliseconds: 100));
+    pump.cancel();
+    expect(
+      hub.relayInFlight,
+      0,
+      reason: 'the worker is freed despite the post-RST pump tick',
     );
   });
 

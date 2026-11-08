@@ -82,6 +82,10 @@ GoogleService-Info.plist
 install_local.sh
 test_tool_call.sh
 /tool/
+# Local agent-tooling state (dmtools skill dumps et al): machine-local
+# installs stay out of git — gh-2065 review thread 1 (a WIP `git add .`
+# swept the authoring env's .cursor/skills/ onto the branch once).
+.cursor/
 
 # Visual-test screen-text twins (contain timestamps, regenerated each run).
 test/integration/screenshots/*.txt
