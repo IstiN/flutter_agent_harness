@@ -1,37 +1,4 @@
 {
-  "pr-1878": [
-    {
-      "leg": "review",
-      "at": "2026-10-25T13:55:17Z",
-      "prompt": 98562,
-      "completion": 3986,
-      "total": 102548,
-      "cacheRead": 919296,
-      "model": "kimi-for-coding"
-    }
-  ],
-  "pr-1879": [
-    {
-      "leg": "review",
-      "at": "2026-10-25T14:22:10Z",
-      "prompt": 30264,
-      "completion": 7000,
-      "total": 37264,
-      "cacheRead": 770816,
-      "model": "kimi-for-coding"
-    }
-  ],
-  "pr-1880": [
-    {
-      "leg": "review",
-      "at": "2026-10-25T15:10:12Z",
-      "prompt": 62561,
-      "completion": 16988,
-      "total": 79549,
-      "cacheRead": 1167872,
-      "model": "kimi-for-coding"
-    }
-  ],
   "pr-1881": [
     {
       "leg": "review",
@@ -3275,6 +3242,17 @@
       "total": 6243,
       "cacheRead": 0,
       "model": "kimi-for-coding"
+    }
+  ],
+  "issue-2065": [
+    {
+      "leg": "dev",
+      "at": "2026-11-08T15:38:19Z",
+      "prompt": 615439,
+      "completion": 51492,
+      "total": 666931,
+      "cacheRead": 9430592,
+      "model": "glm-5.3-flash"
     }
   ]
 }
