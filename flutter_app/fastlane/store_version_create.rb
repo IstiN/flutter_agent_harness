@@ -20,8 +20,8 @@ module StoreVersionCreate
     !existing.map(&:to_s).include?(version.to_s)
   end
 
-  # Attributes for the POST /v1/appStoreVersions call (Spaceship
-  # create_app_store_version). Pure data — the Fastfile performs the POST.
+  # Attributes for the POST /v1/appStoreVersions call used when Spaceship's
+  # App#ensure_version! finds no editable version to reuse. Pure data.
   def self.create_attributes(platform:, version:)
     { platform: platform, versionString: version }
   end
