@@ -43,9 +43,6 @@ void main() {
         'favicon SVG': File('web/favicon.svg').readAsStringSync(),
         'web splash': File('web/index.html').readAsStringSync(),
         'site favicon SVG': File('../site/favicon.svg').readAsStringSync(),
-        'extension favicon SVG': File(
-          '../browser_ext/panel/app/favicon.svg',
-        ).readAsStringSync(),
       };
       for (final entry in sources.entries) {
         final isLight =
@@ -94,16 +91,25 @@ void main() {
     expect(File('web/favicon.svg').readAsStringSync(), native);
     expect(File('../site/favicon.svg').readAsStringSync(), native);
     expect(
-      File('../browser_ext/panel/app/favicon.svg').readAsStringSync(),
-      native,
-    );
-    expect(
       File('icon/icon_light.svg').readAsStringSync(),
       kFaBrandTileLightSvg,
     );
     expect(kFaMarkSvg, same(kFaBrandTileDarkSvg));
     expect(kFaBrandTileDarkSvg, contains('viewBox="0 0 68 68"'));
     expect(kFaBrandTileLightSvg, contains('viewBox="0 0 68 68"'));
+  });
+
+  test('extension favicon generator delegates to the canonical renderer', () {
+    final source = File(
+      '../browser_ext/tool/generate_icons.py',
+    ).readAsStringSync();
+    // browser_ext/panel/app is ignored Flutter build output, so the unit
+    // suite checks the source-of-truth generator instead of requiring a
+    // pre-built extension panel in every clean checkout.
+    expect(
+      source,
+      contains('favicon_svg.write_text(canonical.svg(canonical.B3_NATIVE))'),
+    );
   });
 
   test('macOS launcher uses the dark B3 reference, never the light tile', () {

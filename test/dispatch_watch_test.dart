@@ -1188,15 +1188,15 @@ void main() {
       () async {
         final dir = _fixtureDir('finish-wedge-diagnostics');
         _seed(dir, const {});
-        // The exact deferral shape CI starved past the budget: the signal
-        // lands while bash sits in a foreground child; the installed trap
-        // waits for it, so the process outlives finish()'s patience. The
-        // `ready` handshake mirrors the signal tests' poll anchor (#1924):
-        // INT must land AFTER the trap line ran, never inside the startup
-        // window.
+        // A signal-resistant, never-exiting loop makes the timeout
+        // deterministic even on a starved runner. A one-shot foreground
+        // `sleep 5` races the test itself: if the Dart isolate resumes
+        // late, bash can run its trap and exit 130 before finish()'s
+        // 300ms budget expires. Each orphan sleep here is bounded to 1s
+        // after finish() SIGKILLs the watcher.
         final process = await Process.start('bash', [
           '-c',
-          'trap "exit 130" INT; echo ready; sleep 5',
+          'trap "" INT; echo ready; while :; do sleep 1; done',
         ]);
         final live = DwLive(process, dir, '${dir.path}/log');
         await process.stdout

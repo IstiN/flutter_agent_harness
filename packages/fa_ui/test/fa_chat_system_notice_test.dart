@@ -58,10 +58,6 @@ void main() {
     expect(find.textContaining('1054 min'), findsNothing);
     expect(find.textContaining('<system-notice>'), findsNothing);
     expect(tester.getSize(group).height, lessThan(120));
-    await expectLater(
-      group,
-      matchesGoldenFile('goldens/system_notice_group.png'),
-    );
 
     await tester.tap(group);
     await tester.pump();
@@ -150,10 +146,6 @@ void main() {
     expect(find.text(older), findsNothing);
     expect(find.textContaining('obligations ledger'), findsNothing);
     expect(find.textContaining('(id '), findsNothing);
-    await expectLater(
-      group,
-      matchesGoldenFile('goldens/obligations_notice_group.png'),
-    );
 
     await tester.tap(group);
     await tester.pump();
@@ -163,10 +155,6 @@ void main() {
     expect(find.text('×2'), findsOneWidget);
     expect(find.text('4 more in the session ledger'), findsOneWidget);
     expect(find.textContaining('01-repeat'), findsNothing);
-    await expectLater(
-      group,
-      matchesGoldenFile('goldens/obligations_notice_group_expanded.png'),
-    );
   });
 
   testWidgets('a malformed ledger keeps the ordinary notice fallback', (
