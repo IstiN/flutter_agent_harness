@@ -31,7 +31,21 @@
 //   AC5  the target routing for cross-target legs is explicit: the
 //        android legs request the APK ABI triple, the iOS legs request
 //        arm64-ios, and nightly's release matrix routes per row (web
-//        builds no code assets and is excluded).
+//        builds no code assets and is excluded),
+//   AC6  every mapped prewarm runs AFTER the job's dependency resolution
+//        and under the same scope condition: the first prewarm must
+//        follow the job's first `dart pub get` step (the script reads
+//        .dart_tool/package_config.json and hard-fails without it — the
+//        fa-aot-build leg red'd exactly this way on the PR's own run), a
+//        prewarm whose pub get is scope-gated carries the identical
+//        `if:` (out-of-scope fastpass), and a job that resolves NO root
+//        package (flutter_app-only legs) declares `package-roots:`
+//        explicitly because the `.` default reads a package config that
+//        never exists,
+//   AC7  a prewarm with explicit non-auto `targets:` declares
+//        `package-roots:` explicitly — every cross-target invocation
+//        lives in a job whose ONLY resolution is the flutter-pub-get
+//        action inside flutter_app (gh-2072 review threads 3/4).
 import 'dart:io';
 
 import 'package:test/test.dart';
@@ -56,6 +70,10 @@ const pubGetActionPath = '.github/actions/flutter-pub-get/action.yml';
 /// ci.yml build-macos and build-web are intentionally absent: build-macos
 /// needs only the host-macos target, which the central flutter-pub-get
 /// prewarm (AC4) provides, and build-web compiles no code assets.
+/// browser-ext.yml is intentionally absent (gh-2072 review thread 10):
+/// its only Dart build runs in browser_ext/dart — a package graph that
+/// carries NO sqlite3 at all — and hooks_runner caches are per package
+/// root, so a repo-root prewarm there downloads a file nothing consumes.
 const sqlite3PrewarmJobs = <String, List<String>>{
   '.github/workflows/ci.yml': [
     'test-core',
@@ -77,6 +95,8 @@ const sqlite3PrewarmJobs = <String, List<String>>{
     'js-ext-integration',
     'build-android',
     'build-ios',
+    'binaries',
+    'binaries-pr',
   ],
   '.github/workflows/build-mobile.yml': [
     'build-android',
@@ -85,7 +105,6 @@ const sqlite3PrewarmJobs = <String, List<String>>{
     'build-ios',
   ],
   '.github/workflows/nightly.yml': ['build-release', 'pty-integration'],
-  '.github/workflows/browser-ext.yml': ['headless-suite'],
   '.github/workflows/coverage-gardener.yml': ['measure-and-file'],
 };
 
@@ -231,6 +250,32 @@ void main() {
             'the hook itself respects proxy environment variables; the '
             'prewarm must too or it breaks proxied runners',
       );
+      expect(
+        body,
+        contains('connectionTimeout'),
+        reason:
+            'a stalled TCP connect must fail fast and engage the retry '
+            'budget instead of riding the leg wall-clock timeout '
+            '(gh-2072 review thread 9)',
+      );
+      expect(
+        body,
+        contains('requestTimeout'),
+        reason:
+            'every attempt must carry a per-request timeout — a hung '
+            'connection (no 504, just a socket that never answers) must '
+            'engage the bounded-retry budget, not park the step until '
+            'the leg timeout kills it (gh-2072 review thread 9)',
+      );
+      expect(
+        body,
+        contains('client.close('),
+        reason:
+            'the HttpClient must be closed on EVERY path (success and '
+            'failure) — android × N packages stacks one client per file '
+            'per attempt, and a failure-path leak accumulates per leg '
+            '(gh-2072 review thread 9)',
+      );
     });
 
     for (final entry in sqlite3PrewarmJobs.entries) {
@@ -273,6 +318,96 @@ void main() {
                     'step, so a later prewarm never applies',
               );
             }
+          }
+        });
+
+        test('AC6: $workflow $jobKey prewarms after its pub get and '
+            'under the same scope condition', () {
+          final steps = jobSteps(workflow, jobKey);
+          final pubGets = [
+            for (var i = 0; i < steps.length; i++)
+              if (RegExp(
+                r'^\s*dart pub get\b',
+              ).hasMatch('${(steps[i] as YamlMap)['run'] ?? ''}'))
+                i,
+          ];
+          final prewarm = prewarmIndexes(steps);
+          expect(
+            prewarm,
+            isNotEmpty,
+            reason: 'AC3 already covers presence — this job lost it',
+          );
+          if (pubGets.isEmpty) {
+            // The job resolves a NON-root package (flutter_app through
+            // the flutter-pub-get action): the prewarm must name that
+            // root explicitly — the `.` default reads a root
+            // package_config.json that never exists here and hard-fails
+            // (gh-2072 review threads 3/4: build-android/build-ios red'd
+            // on the PR's own run exactly this way).
+            for (final index in prewarm) {
+              expect(
+                declaredPackageRoots(steps[index] as YamlMap),
+                isNotNull,
+                reason:
+                    '$workflow $jobKey runs no root `dart pub get` — its '
+                    'prewarm must declare `package-roots:` with the '
+                    'package root the job actually resolves '
+                    '(flutter_app); the `.` default would hard-fail on '
+                    'the missing root package config',
+              );
+            }
+            return;
+          }
+          final firstPubGet = pubGets.first;
+          final pubGetIf = '${(steps[firstPubGet] as YamlMap)['if'] ?? ''}';
+          for (final index in prewarm) {
+            expect(
+              index,
+              greaterThan(firstPubGet),
+              reason:
+                  '$workflow $jobKey runs the sqlite3 prewarm BEFORE its '
+                  '`dart pub get` — the script reads '
+                  '.dart_tool/package_config.json and hard-fails when '
+                  'pub get has not produced it yet (gh-2072 review '
+                  'thread 2: the fa-aot-build leg red exactly this way '
+                  'on the PR\'s own run)',
+            );
+            if (pubGetIf.isNotEmpty) {
+              expect(
+                '${(steps[index] as YamlMap)['if'] ?? ''}',
+                pubGetIf,
+                reason:
+                    '$workflow $jobKey scope-gates its pub get but runs '
+                    'the prewarm unconditionally — on an out-of-scope PR '
+                    'checkout/setup-dart/pub get are all skipped and the '
+                    'prewarm must skip with them or it reds the '
+                    'documented fastpass (gh-2072 review thread 5)',
+              );
+            }
+          }
+        });
+
+        test('AC7: every $workflow $jobKey prewarm with explicit targets '
+            'declares package-roots', () {
+          final steps = jobSteps(workflow, jobKey);
+          for (final index in prewarmIndexes(steps)) {
+            final step = steps[index] as YamlMap;
+            final withMap = step['with'];
+            final targets = withMap is YamlMap
+                ? '${withMap['targets'] ?? ''}'.trim()
+                : '';
+            if (targets.isEmpty || targets == 'auto') continue;
+            expect(
+              declaredPackageRoots(step),
+              isNotNull,
+              reason:
+                  '$workflow $jobKey prewarm requests explicit targets '
+                  '($targets) but leaves `package-roots:` at the `.` '
+                  'default — every cross-target invocation in this repo '
+                  'lives in a job that resolves ONLY flutter_app, so the '
+                  'step hard-fails on the missing root package config '
+                  '(gh-2072 review threads 3/4)',
+            );
           }
         });
 
@@ -333,20 +468,25 @@ void main() {
     }
 
     test('AC4: the shared flutter-pub-get action ends with the central '
-        'prewarm', () {
+        'prewarm (nested composite call — one implementation)', () {
       final steps =
           (loadYaml(read(pubGetActionPath)) as YamlMap)['runs'] as YamlMap;
       final list = steps['steps'] as YamlList;
       final last = list.last as YamlMap;
       expect(
-        '${last['run'] ?? ''}',
-        contains('sqlite3_native_assets_prewarm.dart'),
+        last['uses'],
+        prewarmAction,
         reason:
             'every flutter leg resolves flutter_app through '
             'flutter-pub-get (test/ci_pub_get_retry_guard_test.dart '
             'enforces that) — the central prewarm at the end of the action '
             'is what covers the flutter legs (flutter-tests, pty legs, '
-            'build-macos, exzone, …) without per-job edits',
+            'build-macos, exzone, …) without per-job edits. The nested '
+            'composite `uses` keeps ONE prewarm implementation for both '
+            'callers (gh-2072 review thread 12: the duplicated inline '
+            'copies had already drifted); best-effort semantics '
+            '(continue-on-error + fallback to the hook\'s own download) '
+            'live inside the composite itself (gh-2072 review thread 7)',
       );
     });
   });
