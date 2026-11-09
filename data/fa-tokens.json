@@ -1,15 +1,6 @@
 {
   "pr-1900": [
     {
-      "leg": "review",
-      "at": "2026-10-26T06:42:22Z",
-      "prompt": 47552,
-      "completion": 16859,
-      "total": 64411,
-      "cacheRead": 1107968,
-      "model": "kimi-for-coding"
-    },
-    {
       "leg": "rework",
       "at": "2026-10-26T07:10:16Z",
       "prompt": 41956,
@@ -3032,6 +3023,17 @@
       "completion": 27334,
       "total": 103253,
       "cacheRead": 2793024,
+      "model": "glm-5.3-flash"
+    }
+  ],
+  "issue-2074": [
+    {
+      "leg": "dev",
+      "at": "2026-11-09T07:10:00Z",
+      "prompt": 488327,
+      "completion": 78713,
+      "total": 567040,
+      "cacheRead": 17917120,
       "model": "glm-5.3-flash"
     }
   ]
