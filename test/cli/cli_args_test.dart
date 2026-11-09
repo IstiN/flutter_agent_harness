@@ -879,4 +879,41 @@ void main() {
       );
     });
   });
+
+  group('parseCliArgs --resume (issue #2083)', () {
+    test('--resume parses and stays interactive', () {
+      final args = parseCliArgs(const ['--resume']) as CliArgs;
+      expect(args.resume, isTrue);
+      expect(args.isHeadless, isFalse);
+    });
+
+    test('--r is the short alias', () {
+      final args = parseCliArgs(const ['--r']) as CliArgs;
+      expect(args.resume, isTrue);
+      expect(args.isHeadless, isFalse);
+    });
+
+    test('defaults to false', () {
+      expect((parseCliArgs(const []) as CliArgs).resume, isFalse);
+    });
+
+    test('combining --resume with --session is a usage error', () {
+      expect(
+        () => parseCliArgs(const ['--resume', '--session', 'x']),
+        throwsA(
+          isA<CliArgsException>().having(
+            (e) => e.message,
+            'message',
+            contains('cannot combine --session and --resume'),
+          ),
+        ),
+      );
+    });
+
+    test('--resume composes with a headless prompt', () {
+      final args = parseCliArgs(const ['--resume', '-p', 'hi']) as CliArgs;
+      expect(args.resume, isTrue);
+      expect(args.isHeadless, isTrue);
+    });
+  });
 }
