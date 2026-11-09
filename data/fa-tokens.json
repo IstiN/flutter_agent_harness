@@ -1,26 +1,4 @@
 {
-  "pr-1900": [
-    {
-      "leg": "rework",
-      "at": "2026-10-26T07:10:16Z",
-      "prompt": 41956,
-      "completion": 13344,
-      "total": 55300,
-      "cacheRead": 1510656,
-      "model": "kimi-for-coding"
-    }
-  ],
-  "pr-1901": [
-    {
-      "leg": "review",
-      "at": "2026-10-26T07:21:09Z",
-      "prompt": 34661,
-      "completion": 6747,
-      "total": 41408,
-      "cacheRead": 473856,
-      "model": "kimi-for-coding"
-    }
-  ],
   "pr-1905": [
     {
       "leg": "rework",
@@ -3034,6 +3012,17 @@
       "completion": 78713,
       "total": 567040,
       "cacheRead": 17917120,
+      "model": "glm-5.3-flash"
+    }
+  ],
+  "issue-2072": [
+    {
+      "leg": "dev",
+      "at": "2026-11-09T07:24:24Z",
+      "prompt": 927299,
+      "completion": 138106,
+      "total": 1065405,
+      "cacheRead": 24166912,
       "model": "glm-5.3-flash"
     }
   ]
