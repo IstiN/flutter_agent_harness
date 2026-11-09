@@ -1,0 +1,207 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-11-09T10:57:21.298Z",
+  "ticketKey": "pr-2079",
+  "headSha": "76ce7a2f3e0ddeafbcaab362d93a00e36df9a189",
+  "baseBranch": "main",
+  "reviewDecision": "NONE",
+  "labels": [],
+  "files": {
+    "ci_failures.md": {
+      "hash": "fnv1a64:322b878d3c3c2465",
+      "size": 288
+    },
+    "pr_diff.txt": {
+      "hash": "fnv1a64:945d6863240b63eb",
+      "size": 12302
+    },
+    "pr_discussions.md": {
+      "hash": "fnv1a64:e3e4a7df60fb61a0",
+      "size": 28329
+    },
+    "pr_discussions_raw.json": {
+      "hash": "fnv1a64:1f675250be69215f",
+      "size": 113
+    },
+    "pr_info.md": {
+      "hash": "fnv1a64:76bb527ca7fcc91f",
+      "size": 3855
+    },
+    "request.md": {
+      "hash": "fnv1a64:a415ad621a92aaf8",
+      "size": 3519
+    },
+    "review_policy.md": {
+      "hash": "fnv1a64:5fafdb4c1c158a34",
+      "size": 1514
+    },
+    "review_state.md": {
+      "hash": "fnv1a64:76316941f83c6868",
+      "size": 508
+    },
+    "rework_base_head.txt": {
+      "hash": "fnv1a64:57b60847c9f427bd",
+      "size": 40
+    },
+    "ticket.json": {
+      "hash": "fnv1a64:ecaa0909f35ffb98",
+      "size": 3591
+    },
+    "ticket.md": {
+      "hash": "fnv1a64:a415ad621a92aaf8",
+      "size": 3519
+    }
+  },
+  "comments": [
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-09:a8dc1043",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-09",
+      "updatedAt": "2026-11-09",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 severity: SUGGESTION —\n💡 **SUGGESTION: two resolver-preamble failure paths abort without the named `::error::` the script's contract promises**\n\nThe header contract says *\"Every failure exits nonzero BEFORE the build spends compile minutes:\nthe gh-2075 class surfaces here in seconds with a named ::error::\"* — and every **network/digest**\npath honors it. Two **pre-download** paths don't:\n\n1. `scripts/seed_sqlite3_native_assets.sh:108` — if `python3` is missing on a runner, the\n   `SQLITE_PKG=\"$(python3 ...)\"` assignment fails under `set -e` and the script exits with\n   python3's 127 and no `::error::` annotation (the leg still fails fast — good — but the\n   remediation message never renders in the GitHub UI).\n2. `scripts/seed_sqlite3_native_assets.sh:128` — `SQLITE_PKG=\"$(cd \"$SQLITE_PKG\" && pwd)\"` on a\n   stale `package_config.json` rootUri (dangling pub-cache path after a partial cache wipe on the\n   persistent self-hosted workdirs) aborts the same unnamed way. This is the realistic case:\n   `flutter_app` legs clean `.dart_tool` but the pub cache itself is external state.\n\nSuggested shape (mirrors the existing gates):\n\n```bash\nif ! SQLITE_PKG=\"$(cd \"$SQLITE_PKG\" 2>/dev/null && pwd)\"; then\n  echo \"::error::sqlite3 package root '$SQLITE_PKG' (from $CONFIG) does not exist — stale pub resolution; re-run pub get before seeding (gh-2075)\" >&2\n  exit 1\nfi\n```\n\nLow urgency: both failing leg classes already have `python3` on PATH today (the size-manifest\nstep runs `python3` on these same self-hosted runners), so this is contract-completeness, not a\nlive bug. Related, same class: a non-numeric `SQLITE3_SEED_ATTEMPTS`/`SQLITE3_SEED_MAX_TIME`\n(lines 143–144) makes the `while` test error out unnamed — a `[ \"$ATTEMPTS\" -ge 1 ]` guard would\ncover it."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-09:b5179bff",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-09",
+      "updatedAt": "2026-11-09",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ severity: IMPORTANT —\n⚠️ **IMPORTANT (re-raise of round-1 finding F1 — unchanged, thread unresolved): the \"attempt loop\" assertion still matches the wrong loop**\n\nRe-reviewed after the rework lap: the diff for this file is **byte-identical** to round 1 (`git log 0e0a8a4791..HEAD` shows zero commits touching it), so the claim stands verbatim — this is the same finding as F1 in the round-1 registry, not a new defect.\n\n`test/ci_sqlite3_native_asset_seed_guard_test.dart:251` asserts\n`matches(RegExp(r'for\\s+\\w+\\s+in\\s+'))` with `reason: 'attempt loop'`, but the seed script's\nbounded download loop is a **`while`** loop (`scripts/seed_sqlite3_native_assets.sh:186` —\n`while [ \"$ATTEMPT\" -le \"$ATTEMPTS\" ]`). The regex only ever matches the two arch loops\n(`for ARCH in \"$@\"`, script lines 93/154) and the embedded `for pkg in` inside the python3\nheredoc (line 113) — none of which is the retry loop.\n\nRound-1 mechanical proof still applies: deleting the entire `while` retry loop from the script\nleaves the regex matching, so AC3 stays green on a script with **no bounded retry at all** — the\nexact regression class this guard exists to pin. Re-verified on the merged tree today: guard\n17/17 green with the vacuous assert in place.\n\nFix (unchanged from round 1):\n\n```dart\nexpect(\n  body,\n  contains('while [ \"$ATTEMPT\" -le \"$ATTEMPTS\" ]'),\n  reason: 'bounded attempt loop (curl retried at most SQLITE3_SEED_ATTEMPTS times)',\n);\nexpect(\n  body,\n  contains('ATTEMPT=$((ATTEMPT + 1))'),\n  reason: 'the loop counter advances — an off-by-one makes the budget wrong',\n);\n```"
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-09:8ded3bdf",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-09",
+      "updatedAt": "2026-11-09",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ severity: IMPORTANT —\n⚠️ **IMPORTANT: main now carries a second, broader implementation of this exact mechanism — `scripts/sqlite3_hook_prewarm.dart` (gh-2074, merged via #2077). Two parallel tools now own the same hook-cache contract.**\n\nSince round 1, the merge from `main` (commit `6db9bbe707`, PR #2077 for gh-2074) landed a Dart\nprewarm tool for the **same incident class and the same cache**:\n\n| | this PR — `seed_sqlite3_native_assets.sh` (bash, 216 ln) | main — `sqlite3_hook_prewarm.dart` (Dart, 788 ln) |\n|---|---|---|\n| cache path | `…/hooks_runner/shared/sqlite3/build/download-<hash8>/libsqlite3.dylib` | **identical** (`cacheDirNameFor` + `cachedFilenameFor('macos')`) |\n| hash source | installed package's `asset_hashes.dart` | **identical** design |\n| download recipe | `curl --fail -L` ×4 + wall cap + sha256 pin + purge | HTTP-status-gated fetch, bounded retries + backoff, sha256 pin, tmp+rename |\n| OS scope | **macos only** (hard-exits otherwise) | linux/windows/**macos (x64+arm64, incl. per-arch `macos-arm64` tokens)**/ios/android |\n| wired in | build-macos.yml ×3 (this PR) | build-mobile.yml ×2, ci.yml ×8 (on main) |\n\nBoth tools write the same bytes to the same paths; main's is a strict superset in OS coverage and\nis **not wired into `build-macos.yml`** — so this PR does fill the only uncovered lane (the\nmacos release train), and the merge is conflict-free. But the repo now maintains **two\nproduction implementations of one prewarm contract plus two guard/selftest suites** (~870 lines\nhere vs an existing, tested 788-line tool). When sqlite3 changes its hook layout (both headers\npin `PrebuiltSqliteLibrary.dirname` by tests), the fix must land twice; a drift produces\n\"works on mobile/ci, not on macos\" failures of exactly the kind both tickets are closing.\n\nSuggested consolidation (bounded, keeps this PR's scope — the macos legs):\n\n1. Drop `scripts/seed_sqlite3_native_assets.sh` + `scripts/seed_sqlite3_native_assets_selftest.sh`.\n2. Rewire the three steps to the existing tool:\n   - app build step (line 719): `dart --disable-dart-dev scripts/sqlite3_hook_prewarm.dart --package flutter_app --targets macos-\"$SQLITE_SEED_ARCH\"` (the `x86_64 → x64` mapping line stays; `dart` rides the same PATH as `flutter`)\n   - CLI step (line 1223): `… --package . --targets macos-${{ matrix.arch }}`\n3. Repoint `test/ci_sqlite3_native_asset_seed_guard_test.dart`'s wiring asserts at the Dart\n   invocation (the AC3 script-contract asserts become `test/scripts/sqlite3_hook_prewarm_test.dart`'s\n   job — 624 lines of it already on main).\n\nIf the team prefers to keep the bash tool for the self-hosted macos legs instead, that's a\ndefensible call — but then it should be recorded as the sanctioned split (one line in AGENTS.md's\nrelease-train section) and a follow-up should own deprecating one of the two tools. Keeping both\nsilently is the state that ages badly."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-09:b9b8aeaf",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-09",
+      "updatedAt": "2026-11-09",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 severity: SUGGESTION —\n💡 **SUGGESTION (re-raise of round-1 finding F2 — unchanged, thread unresolved): two resolver-preamble failure paths still abort without the named `::error::`**\n\nRe-reviewed after the rework lap: `scripts/seed_sqlite3_native_assets.sh` is byte-identical to\nround 1 (zero commits touched it since `0e0a8a4791`), so F2 stands as filed. Same two\npre-download paths:\n\n1. `scripts/seed_sqlite3_native_assets.sh:108` — missing `python3` on a runner: the\n   `SQLITE_PKG=\"$(python3 …)\"` assignment fails under `set -e`; the script exits 127 without a\n   `::error::` annotation, so the remediation never renders in the GitHub UI.\n2. `scripts/seed_sqlite3_native_assets.sh:128` — `SQLITE_PKG=\"$(cd \"$SQLITE_PKG\" && pwd)\"` on a\n   stale `package_config.json` rootUri (dangling pub-cache path after a partial cache wipe on the\n   persistent self-hosted workdirs) aborts the same unnamed way.\n\nSuggested shape (mirrors the script's existing gates):\n\n```bash\nif ! SQLITE_PKG=\"$(cd \"$SQLITE_PKG\" 2>/dev/null && pwd)\"; then\n  echo \"::error::sqlite3 package root '$SQLITE_PKG' (from $CONFIG) does not exist — stale pub resolution; re-run pub get before seeding (gh-2075)\" >&2\n  exit 1\nfi\n```\n\nSame class, still open: non-numeric `SQLITE3_SEED_ATTEMPTS`/`SQLITE3_SEED_MAX_TIME` (lines\n143–144) makes the `while` test error out unnamed — a `[ \"$ATTEMPTS\" -ge 1 ] 2>/dev/null` guard\nwould cover it.\n\nLow urgency (both leg classes demonstrably have `python3` today — the size-manifest step runs it\non these same runners), and **moot if the consolidation in the duplication thread is taken**\n(the Dart tool handles all of this in its own resolution path)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-09:d53c9aac",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-09",
+      "updatedAt": "2026-11-09",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Re: ⚠️ the \"attempt loop\" assertion matches the wrong loop (round-1 F1)\n\n**Resolved — via the duplication-thread consolidation (commit `f8dcafcf9d`, pushed).**\n\nThe vacuous assert is gone because the mechanism it mis-pinned is gone:\n\n- `test/ci_sqlite3_native_asset_seed_guard_test.dart` no longer contains\n  `matches(RegExp(r'for\\s+\\w+\\s+in\\s+'))` — the whole AC3\n  script-contract group was removed together with\n  `scripts/seed_sqlite3_native_assets.sh` + its selftest (deleted per the\n  duplicate-mechanism thread: main's `scripts/sqlite3_hook_prewarm.dart`\n  is the one implementation of this prewarm contract now).\n- The bounded-retry contract is now pinned **where the mechanism that\n  actually retries lives** — `test/scripts/sqlite3_hook_prewarm_test.dart`\n  already pins it behaviorally and statically:\n  - `retries a brownout (non-200) and succeeds on a later attempt`\n    (504-class recovery, `calls == 3`),\n  - `exhausted retries fail loudly naming the url and the status`\n    (bounded attempts → loud failure),\n  - `a corrupt body is never written — hash gate before rename`\n    (`expect(calls, 2, reason: 'a hash mismatch is retryable like a 5xx')`).\n- The rewritten guard's **AC4** asserts that canonical suite keeps those\n  three pins and the `--disable-dart-dev` self-containment contract — so\n  the retry contract cannot silently lose its static pin again (the exact\n  trust-a-green-line-that-pins-nothing failure mode this thread\n  identified).\n\nRED→GREEN proof the new asserts are non-vacuous: the rewritten guard reds\n**7 assertions** against the pre-consolidation tree (old wiring, script\nstill present) and greens **12/12** after `f8dcafcf9d`. Full\nbuild-macos.yml parser set: 453/453 (the −5 vs round 1 = exactly the\nremoved vacuous-assert tests)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-09:daa1067a",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-09",
+      "updatedAt": "2026-11-09",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Re: 💡 two resolver-preamble failure paths abort without the named `::error::` (round-1 F2)\n\n**Resolved as moot-by-consolidation — commit `f8dcafcf9d` (pushed) removes\nthe script this finding targets**, per the duplicate-mechanism thread\n(main's `scripts/sqlite3_hook_prewarm.dart` is the one prewarm tool now;\nthis thread itself noted the finding is *\"moot if the consolidation … is\ntaken\"*).\n\nThe contract the finding asked for — every failure path named `::error::`\n— is honored by the surviving tool by construction: `main()`'s\n`catchError` renders every failure as `::error::$error` + exit 1 (usage\nerrors → `::error::` + exit 2). Verified live in this sandbox against an\nunresolved workspace — the stale-rootUri class of this thread, exact\nanalog:\n\n```text\n$ dart --disable-dart-dev scripts/sqlite3_hook_prewarm.dart --package flutter_app --targets macos-x64\n::error::flutter_app/.dart_tool/package_config.json not found — run pub get\nfor flutter_app first (the pre-warm resolves the pinned hashes from the\nresolved package)   # exit 1\n```\n\nThe same-class note about non-numeric `SQLITE3_SEED_ATTEMPTS`/`MAX_TIME`\n(script lines 143–144) is likewise gone with the script — the Dart tool\nparses its numeric flags via `int.parse` in the CLI loop, so a bad value\nis a named `::error::unknown`/usage failure, not a bare `[:` test error."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-09:f58f126a",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-09",
+      "updatedAt": "2026-11-09",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Re: ⚠️ (re-raise of round-1 F1) the \"attempt loop\" assertion still matches the wrong loop\n\n**Resolved — same fix as the round-1 thread, delivered via the\nduplication-thread consolidation (commit `f8dcafcf9d`, pushed).**\n\nThis re-raise is correct: round 2 of the lap fixed nothing in this file\n(only the merge from main landed). Rather than patching the vacuous regex\nagainst a script that was about to be deleted, the F1 fix rides the\nconsolidation:\n\n- the regex assert (`matches(RegExp(r'for\\s+\\w+\\s+in\\s+'))`) no longer\n  exists — the AC3 script-contract group was removed with\n  `scripts/seed_sqlite3_native_assets.sh` + selftest (deleted; see the\n  duplicate-mechanism thread for why);\n- the bounded-retry contract is pinned by the surviving mechanism's\n  canonical suite, `test/scripts/sqlite3_hook_prewarm_test.dart`:\n  `retries a brownout (non-200) and succeeds on a later attempt`,\n  `exhausted retries fail loudly naming the url and the status`,\n  `a corrupt body is never written — hash gate before rename`;\n- the rewritten `test/ci_sqlite3_native_asset_seed_guard_test.dart` **AC4**\n  fails if that suite ever loses those pins — the retry contract cannot\n  go statically unpinned again.\n\nVerification: rewritten guard reds 7 asserts on the pre-consolidation\ntree, greens 12/12 on `f8dcafcf9d`; build-macos.yml parser set 453/453;\nprewarm suites (unit + CI wiring) 61/61."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-09:e46ba525",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-09",
+      "updatedAt": "2026-11-09",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Re: ⚠️ main now carries a second, broader implementation — consolidate onto `sqlite3_hook_prewarm.dart`\n\n**Consolidation taken exactly as suggested — commit `f8dcafcf9d`, pushed.**\n\n1. **Dropped the bash tool**: `scripts/seed_sqlite3_native_assets.sh` and\n   `scripts/seed_sqlite3_native_assets_selftest.sh` deleted (`git rm`,\n   −480 lines) — one prewarm contract remains: gh-2074's\n   `scripts/sqlite3_hook_prewarm.dart`.\n2. **Rewired all build-macos.yml lanes** to the existing tool, keeping\n   this PR's scope (the macos legs) and the `x86_64 → x64` mapping line:\n   - app-build step (cwd `flutter_app`):\n     `dart --disable-dart-dev ../scripts/sqlite3_hook_prewarm.dart --package . --targets macos-\"$SQLITE_SEED_ARCH\"`\n   - CLI step (cwd repo root, after `dart pub get`):\n     `dart --disable-dart-dev scripts/sqlite3_hook_prewarm.dart --package . --targets macos-${{ matrix.arch }}`\n   (the `--disable-dart-dev` + `set -euo pipefail` idiom mirrors the\n   build-mobile.yml/ci.yml wiring; plain `dart run` would execute the\n   package graph's build hooks before main — the gh-2074 rework lesson).\n3. **Guard repointed** (`test/ci_sqlite3_native_asset_seed_guard_test.dart`):\n   AC1/AC2 assert the Dart invocation wiring in all macos lanes (tool\n   path, `--targets macos-`, ordering: min-platform gate → pre-warm →\n   release build; `dart pub get` → pre-warm → `dart build cli`);\n   **AC3** now asserts the single-mechanism invariant (the bash script +\n   selftest absent from the tree, no stale workflow references); **AC4**\n   asserts the canonical suites (`test/scripts/sqlite3_hook_prewarm_test.dart`\n   retry/brownout/corrupt-body pins + `test/ci_sqlite3_hook_prewarm_guard_test.dart`)\n   stay in the tree; AC5 (no literal sqlite3 asset URLs) unchanged.\n\n**Live proof on this sandbox** (exact CLI invocation shape):\n\n```text\n$ dart --disable-dart-dev scripts/sqlite3_hook_prewarm.dart --package . --targets macos-arm64\nsqlite3 hook prewarm: fetching libsqlite3.arm64.macos.dylib from\n  https://github.com/simolus3/sqlite3.dart/releases/download/sqlite3-3.9.1/libsqlite3.arm64.macos.dylib\nsqlite3 hook prewarm: 1 fetched, 0 already verified (package ., targets macos-arm64)   # exit 0\n$ find .dart_tool/hooks_runner/shared -type f\n.dart_tool/hooks_runner/shared/sqlite3/build/download-38c4a60b/libsqlite3.dylib\n```\n\n— byte-identical cache layout (`download-<hash8>/libsqlite3.dylib`) to\nwhat the removed bash tool wrote; the hook reuses it unchanged.\n\n**Suites**: rewritten guard 12/12 (red 7 asserts pre-consolidation →\ngreen after); prewarm unit + CI-wiring suites 61/61; full\nbuild-macos.yml parser set 453/453; `dart analyze` clean; `dart format`\nclean. CHANGELOG entry added under `## Unreleased`."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-09:78408447",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-09",
+      "updatedAt": "2026-11-09",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Re: 💡 (re-raise of round-1 F2) resolver-preamble failure paths still abort unnamed\n\n**Resolved as moot-by-consolidation — commit `f8dcafcf9d` (pushed) removes\n`scripts/seed_sqlite3_native_assets.sh`**, per the duplicate-mechanism\nthread (this thread itself marks the finding *\"moot if the consolidation\n… is taken\"*). The consolidation landed in the same lap.\n\nThe named-`::error::` contract the finding asks for is carried by the\nsurviving tool (`scripts/sqlite3_hook_prewarm.dart`): every failure —\nincluding the stale-rootUri/missing-resolution class — renders\n`::error::$error` + exit 1 via `main()`'s `catchError`. Live proof from\nthis sandbox:\n\n```text\n$ dart --disable-dart-dev scripts/sqlite3_hook_prewarm.dart --package flutter_app --targets macos-x64\n::error::flutter_app/.dart_tool/package_config.json not found — run pub get\nfor flutter_app first (the pre-warm resolves the pinned hashes from the\nresolved package)   # exit 1\n```\n\nThe non-numeric-env sibling note dies with the script too: the Dart tool\nparses `--attempts`/`--retry-delay-seconds` via `int.parse` → named\nusage error, never a bare `[:` abort."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-09:4b9b1c9a",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-09",
+      "updatedAt": "2026-11-09",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 severity: SUGGESTION —\n💡 **SUGGESTION: pair the hosted CLI lane's pre-warm with the `hooks-shared-` cache restore — the established ci.yml / build-mobile.yml hosted-lane pattern**\n\nThis lane runs on fresh GitHub-hosted workspaces (`macos-latest` / `macos-15-intel`), so every release train re-downloads both dylibs live from upstream. The pre-warm's bounded retries fix the gh-2075 failure class — but the repo's pinned hosted-lane pattern (`test/ci_sqlite3_hook_prewarm_guard_test.dart` AC2/AC6) is **cache restore + pre-warm**, which additionally makes warm runs skip the network entirely:\n\n```yaml\n- name: Native-assets hook cache\n  uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0\n  with:\n    path: .dart_tool/hooks_runner/shared\n    key: hooks-shared-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pubspec.lock') }}\n    restore-keys: hooks-shared-${{ runner.os }}-${{ runner.arch }}-\n```\n\nplaced immediately before this step (after checkout, so `hashFiles('pubspec.lock')` resolves the committed lockfile). On a warm cache the tool reports `0 fetched, 1 already verified` with zero egress, and a brownout window then cannot touch the leg at all — strictly closer to the \"network-independent build\" goal the PR description states. Optionally mirror the ci.yml hardening (`timeout-minutes: 2`, `continue-on-error: true`) so a cache-service hiccup can never red the leg.\n\nThe self-hosted app-build lane needs nothing extra — its persistent workdir already carries `.dart_tool/hooks_runner/shared` across runs."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-09:02d88f7b",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-09",
+      "updatedAt": "2026-11-09",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Re: 💡 pair the hosted CLI lane's pre-warm with the `hooks-shared-` cache restore\n\n**Picked up in this lap — commit `2314c32f83` (pushed).**\n\nThe step was added exactly as specified, mirroring the ci.yml AC6 idiom\nverbatim, between `dart pub get` and the pre-warm step in\n`build-macos-cli`:\n\n```yaml\n- name: Native-assets hook cache\n  uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0\n  with:\n    path: .dart_tool/hooks_runner/shared\n    key: hooks-shared-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pubspec.lock') }}\n    restore-keys: hooks-shared-${{ runner.os }}-${{ runner.arch }}-\n  timeout-minutes: 2\n  continue-on-error: true\n```\n\n- per-OS/arch lockfile-hashed key: a sqlite3 bump re-keys instead of\n  serving stale dylibs; prefix `restore-keys` still restores the old\n  cache on a bump;\n- `timeout-minutes: 2` + `continue-on-error: true` (the optional ci.yml\n  hardening, taken): a cache-service hiccup degrades to the pre-warm\n  download path — the restore itself can never red the leg.\n\n**Pinned statically (TDD)**: `test/ci_sqlite3_native_asset_seed_guard_test.dart`\nAC2 gained \"the pre-warm is paired with the hooks-shared cache restore\" —\nasserting the step's existence, ordering (`dart pub get` → cache →\npre-warm → `dart build cli`), the pinned `actions/cache` SHA, the exact\ncache path, the key/restore-keys shapes, and both hardening attributes.\nRED before the step landed (1 failed), GREEN after: guard **13/13**;\nprewarm unit + CI-wiring suites together **62/62**.\n\nThe self-hosted app-build lane is left untouched, as the thread notes —\nits persistent workdir already carries `.dart_tool/hooks_runner/shared`.\n\n(Bonus: the `2314c32f83` push also triggers the fresh CI run that\nre-runs the round-3 red shard — `session_retention_test.dart` E2, which\npasses 28/28 locally + 5/5 targeted repeats on this exact head and is\nbyte-identical to main, owned: 0.)"
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-09:34afa830",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-09",
+      "updatedAt": "2026-11-09",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ severity: IMPORTANT —\n⚠️ **IMPORTANT: the \"attempt loop\" assertion matches the wrong loop — the bounded-retry contract is not statically pinned**\n\n`test/ci_sqlite3_native_asset_seed_guard_test.dart:251` asserts\n`matches(RegExp(r'for\\s+\\w+\\s+in\\s+'))` with `reason: 'attempt loop'`, but the seed script's\nbounded download loop is a **`while`** loop (`scripts/seed_sqlite3_native_assets.sh:186` —\n`while [ \"$ATTEMPT\" -le \"$ATTEMPTS\" ]`). The regex only ever matches the two arch loops\n(`for ARCH in \"$@\"`, script lines 93/154) and even the embedded `for pkg in` inside the python3\nheredoc (line 113) — none of which is the retry loop.\n\nVerified mechanically: deleting the entire `while` retry loop from the script still leaves the\nregex matching, so this assert passes green on a script with **no bounded retry at all** — the\nexact regression class (an un-bounded, un-retried, or wrongly-bounded download) AC3 exists to\npin. The behavioral layer still catches it (the selftest's T6 EXHAUST, which this guard runs),\nbut the static layer silently asserts nothing for its stated target, and a future reader trusts\na green AC3 line that pins nothing.\n\nFix — pin the real loop shape, e.g.:\n\n```dart\nexpect(\n  body,\n  contains('while [ \"$ATTEMPT\" -le \"$ATTEMPTS\" ]'),\n  reason: 'bounded attempt loop (curl retried at most SQLITE3_SEED_ATTEMPTS times)',\n);\nexpect(\n  body,\n  contains('ATTEMPT=$((ATTEMPT + 1))'),\n  reason: 'the loop counter advances — an off-by-one makes the budget wrong',\n);\n```\n\nThe `--max-time` half of this test is fine (it really pins the per-attempt wall cap); only the\nloop regex is vacuous."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-09:3fba4b5c",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-09",
+      "updatedAt": "2026-11-09",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Automated Code Review — REQUEST_CHANGES\n\n**Summary**: The fix is sound and thoroughly verified — the seed path, digest-pin derivation and hook reuse behavior all check out against the real sqlite3 3.7.0/3.9.1 hook sources, the selftest passes 13/13, the new guard test passes 17/17 (and correctly reds against the pre-fix tree), and `dart analyze`/`shellcheck` are clean. One important finding: the guard test's \"attempt loop\" assertion matches the wrong loop, so the bounded-retry contract is not actually pinned statically.\n\n**Key Issues**:\n- ⚠️ `test/ci_sqlite3_native_asset_seed_guard_test.dart:251` — `RegExp(r'for\\s+\\w+\\s+in\\s+')` matches the arch loops, not the retry `while` loop; removing bounded retry entirely would still pass AC3. Pin `while [ \"$ATTEMPT\" -le \"$ATTEMPTS\" ]` instead.\n- 🚨 **CI note (not a diff finding)**: the red `factory / teammate` check died 26s into startup — `AgentPackException: HTTP 504` fetching the dmtools-agents `catalog.json` (see `ci_failures_full.log`, 08:03:37Z) — the review infra's own un-retried download, the same transport-flake class this PR fixes. `ci_violations.json` attributes it to no diff file (`owned: 0, unknown: 1`). **Action: re-run the check; no code change here can fix it.**\n- Digest (below thread cap, ranked): `seed_sqlite3_native_assets.sh:143-144` — non-numeric `SQLITE3_SEED_ATTEMPTS`/`MAX_TIME` aborts without `::error::`; `seed_sqlite3_native_assets_selftest.sh:64` — fixture map is `final` while upstream is `const` (cosmetic parity); `test/ci_sqlite3_native_asset_seed_guard_test.dart:24` — comment punctuation \"transport flake one un-retried request\".\n\n**Next Steps**:\n1. Fix the AC3 assertion to pin the real `while` retry loop (one-line change, comment 1).\n2. Optionally add the two named-`::error::` preamble guards (comment 2).\n3. Re-run the `factory / teammate` check — its failure is a 504 in the review-agent's pack fetch, unrelated to this diff."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-09:2300afdb",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-09",
+      "updatedAt": "2026-11-09",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Automated Code Review (round 2) — REQUEST_CHANGES\n\n**Summary**: Round-1 review posted 1 ⚠️ + 1 💡; the rework lap fixed neither (the PR's 4 files are byte-identical — only a merge from `main` landed), so both re-raise. The merge also brought main's `sqlite3_hook_prewarm.dart` (gh-2074, PR #2077) — a second, broader implementation of this PR's exact mechanism — which is now the headline ⚠️.\n\n**Key Issues**:\n- ⚠️ **NEW — duplicate mechanism**: main now carries `scripts/sqlite3_hook_prewarm.dart` (same hook cache, same hash-source design, broader OS coverage incl. `macos-arm64`/`macos-x64` tokens, wired into build-mobile.yml + ci.yml). This PR adds a second bash implementation + selftest + guard (~870 lines) for the one lane main doesn't cover. Consolidate onto the existing Dart tool (drop 2 files, rewire 3 steps) — or record the sanctioned split in AGENTS.md and file a deprecation follow-up.\n- ⚠️ **F1 re-raised (unresolved)** — `test/ci_sqlite3_native_asset_seed_guard_test.dart:251` still asserts the vacuous `for\\s+\\w+\\s+in\\s+` regex; the bounded-retry `while` loop remains statically unpinned.\n- 💡 **F2 re-raised (unresolved)** — `scripts/seed_sqlite3_native_assets.sh:108/128` still abort unnamed on missing `python3` / stale pub-cache rootUri (moot if consolidation lands).\n- ✅ CI green this round (no failing checks in input); PR guard 17/17, selftest 13/13, `dart analyze` + `shellcheck` clean, main's prewarm guard 22/22 — both mechanisms coexist green, the overlap is purely maintainability.\n- Digest: `seed_sqlite3_native_assets.sh:143-144` non-numeric env aborts unnamed; `seed_sqlite3_native_assets_selftest.sh:64` fixture `final` vs upstream `const`; `test/ci_sqlite3_native_asset_seed_guard_test.dart:24` comment punctuation.\n\n**Next Steps**:\n1. Pick the lane: consolidate onto `sqlite3_hook_prewarm.dart` (recommended — drops ~480 lines and leaves ONE prewarm contract) or document the split + deprecation follow-up.\n2. Fix the F1 assertion (pin `while [ \"$ATTEMPT\" -le \"$ATTEMPTS\" ]` + counter advance).\n3. F2 preamble guards — optional, subsumed by consolidation."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-09:b3a6baaf",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-09",
+      "updatedAt": "2026-11-09",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review (round 3) — REQUEST_CHANGES\n\n**Summary**: The round-2 consolidation is verified done — the bash seeder is gone, all three macOS lanes ride the one shared `sqlite3_hook_prewarm.dart`, and the rewritten guard pins the single-mechanism invariant plus the canonical retry contract (12/12 green locally, `dart analyze` + `dart format` clean, all five registry findings closed). The verdict is held only by the red CI gate on `f8dcafcf`, which is not attributable to this diff.\n\n**Key Issues**:\n- 🚨 **CI red — Core tests (shard 1/4)** ([run 42598320565](https://github.com/IstiN/flutter_agent_harness/actions/runs/42598320565/job/129096893724)): `test/session_retention_test.dart` E2 \"a session that becomes live mid-sweep is skipped\" failed — `expect(deleted, contains(a))` got `Actual: Set:[]` (the sweep deleted nothing); 3507 passed / 1 failed / 4 skipped. Not attributable to the diff: the test and `lib/src/session_retention.dart` are byte-identical to `main`, `ci_violations.json` attributes it to no diff file (`owned: 0`), and it passes 5/5 locally on this exact head — no change in this PR can fix it. Per gh-1537 a single red is triaged structurally, never quarantined as a flake: re-run/triage the shard (quarantine needs ≥2 distinct-SHA reds within 24h via `scripts/test_quarantine.json`).\n- ✅ Registry closed: F1/F3 (vacuous attempt-loop assert), F2/F5 (unnamed resolver aborts), F4 (duplicate prewarm mechanism) — all **fixed** by commit `f8dcafcf9d`, hunks cited in `findingReview`.\n- 💡 One suggestion posted: the hosted CLI lane rides pre-warm-only; ci.yml/build-mobile.yml hosted lanes pair the pre-warm with a `hooks-shared-` cache restore.\n- Digest: AC1's arch-mapping test pins `x86_64`/`SQLITE_SEED_ARCH` presence, not the conditional mapping itself (mitigated — a wrong token fails loud at the tool with a named unknown-target `::error::`); the guard file name still says \"seed\" from the removed bash seeder (cosmetic; rename churns the shard manifest).\n\n**Next Steps**:\n1. Triage/re-run Core tests shard 1/4 — a green gate unblocks the PR; no diff change is required for it.\n2. Optionally add the `hooks-shared-` cache restore to `build-macos-cli` (comment 1)."
+    }
+  ]
+}
