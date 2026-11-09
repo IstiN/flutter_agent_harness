@@ -17,4 +17,13 @@ runs:
       run: |
         set -euo pipefail
         dart pub get
+        # gh-2074: this run executes build hooks for the WHOLE root package
+        # graph (dart native-assets), and package:sqlite3's hook downloads
+        # prebuilt binaries from GitHub releases with no retry — one
+        # release-download brownout hashed the 504 page as a "hash
+        # mismatch" and red'd the AAB leg's very first step (the play-leg
+        # failure class; ci.yml caches the same bytes for itself).
+        # Pre-warm the hook cache with bounded retry + status gating +
+        # hash verification before the verify run needs it.
+        dart --disable-dart-dev scripts/sqlite3_hook_prewarm.dart --package . --targets host
         dart run scripts/verify_builtin_skills.dart

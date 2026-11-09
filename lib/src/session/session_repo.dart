@@ -572,7 +572,16 @@ final class JsonlSessionRepo implements SessionRepo {
   /// and its first append (and what its presence row may not cover yet),
   /// so the age guard is what makes boot-time sweeps race-safe. Null
   /// keeps the legacy sweep-everything behavior.
-  Future<int> cleanupEmptySessions({Duration? olderThan}) async {
+  ///
+  /// [exemptSessionId] skips one session id wherever it lives: the boot's
+  /// resolved resume target (`fa --resume`) is often header-only itself
+  /// (the last run crashed) and has no presence row yet, so without the
+  /// exemption the fire-and-forget boot sweep could soft-delete the exact
+  /// file the process is about to open, mid-load (issue #2083).
+  Future<int> cleanupEmptySessions({
+    Duration? olderThan,
+    String? exemptSessionId,
+  }) async {
     var removed = 0;
     final root = await _getSessionsRoot();
     final rootExists = _fsOrThrow(
@@ -599,6 +608,7 @@ final class JsonlSessionRepo implements SessionRepo {
       if (nonEmpty > 1) continue;
       final id = _sessionIdFromPath(path);
       if (id != null && live.containsKey(id)) continue;
+      if (id == exemptSessionId) continue;
       if (cutoff != null &&
           !DateTime.fromMillisecondsSinceEpoch(
             entry.mtimeMs,
