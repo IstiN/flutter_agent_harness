@@ -71,6 +71,35 @@ unsupported: true
       },
     );
 
+    test('endpoint fields alongside unsupported are rejected (#2085)', () {
+      // An unsupported slot carries no endpoint — keeping the fields would
+      // round-trip half a configuration (writeYaml drops them), so the
+      // strict parser rejects the mix instead.
+      for (final field in ['providerKind', 'baseUrl', 'modelId']) {
+        expect(
+          () => parse('unsupported: true\n$field: whatever'),
+          throwsA(
+            isA<ConfigException>().having(
+              (e) => e.message,
+              'message',
+              contains('$field is meaningless with unsupported: true'),
+            ),
+          ),
+          reason: field,
+        );
+      }
+      expect(
+        () => parse('unsupported: true\napiKeyName: SOME_KEY'),
+        throwsA(
+          isA<ConfigException>().having(
+            (e) => e.message,
+            'message',
+            contains('apiKeyName is meaningless with unsupported: true'),
+          ),
+        ),
+      );
+    });
+
     test('non-boolean unsupported is rejected (#2085)', () {
       expect(
         () => parse('unsupported: yes-please'),

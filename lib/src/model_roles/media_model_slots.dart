@@ -71,8 +71,9 @@ const mediaSlotOverrideFields = [
 final class MediaSlotModelConfig {
   /// Creates a slot override. [providerKind]/[baseUrl]/[modelId] should be
   /// non-empty for a normal override (enforced by [fromYaml] unless
-  /// `useMainConnection` is set); all default to empty for the
-  /// main-connection opt-in form.
+  /// `useMainConnection` or `unsupported` is set — and rejected outright
+  /// alongside `unsupported`); all default to empty for the
+  /// main-connection opt-in and unsupported forms.
   const MediaSlotModelConfig({
     this.providerKind = '',
     this.baseUrl = '',
@@ -124,6 +125,25 @@ final class MediaSlotModelConfig {
         'unsupported — a slot either rides the main connection or is '
         'marked unsupported',
       );
+    }
+    if (unsupported) {
+      // An unsupported slot carries no endpoint — keeping the fields would
+      // round-trip half a configuration (writeYaml drops them), so the
+      // strict parser rejects the mix (issue #2085 review).
+      for (final field in [
+        'providerKind',
+        'baseUrl',
+        'modelId',
+        'apiKeyName',
+      ]) {
+        if (node[field] != null) {
+          throw ConfigException(
+            'models.slots.$slot.$field is meaningless with unsupported: '
+            'true — an unsupported slot carries no endpoint; remove '
+            '$field',
+          );
+        }
+      }
     }
     final relaxed = useMain || unsupported;
     String required(String field) {

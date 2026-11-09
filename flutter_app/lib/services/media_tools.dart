@@ -720,6 +720,17 @@ final class MediaGateway {
     final store = _store ?? await MediaModelsStore.load(env);
     final override = store.overrideFor(slot);
     if (override != null) {
+      // Issue #2085 (review): an unsupported slot is a deliberate opt-out
+      // — the capability is removed; refuse with the un-mark guidance,
+      // never the provider-requirements text.
+      if (override.unsupported) {
+        throw StateError(
+          'The "$slot" capability is marked unsupported — media calls are '
+          'refused; clear "unsupported" for "$slot" in '
+          '${MediaModelsStore.fileName} (or Fa settings → Media models → '
+          'pick a model) to re-enable it.',
+        );
+      }
       throw StateError(
         'The "$slot" endpoint in ${MediaModelsStore.fileName} is not '
         'usable — it needs providerKind "openai-completions", a modelId, '

@@ -33,7 +33,9 @@ models:
 ```
 
 - `unsupported: true` and `useMainConnection: true` are mutually exclusive
-  (validated at load); the endpoint fields are not required in either form.
+  (validated at load); the endpoint fields are not required in either form,
+  and alongside `unsupported: true` they are rejected outright (an
+  unsupported slot carries no endpoint).
 - media tools REFUSE an unsupported slot with an actionable "marked
   unsupported" error (clear `unsupported`, or re-run the settings flow's
   "Pick a model", to re-enable) — resolution is read per call, so a
@@ -41,7 +43,7 @@ models:
 - the settings UIs (CLI `/settings` → Media models, the app's Media models
   section) offer "Use the main connection" and "Mark unsupported" per slot;
   slot rows show the state (`not configured` / `unsupported` /
-  `main connection` / `model @ host`), and the app's capability hint chips
+  `main connection` / `model @ url`), and the app's capability hint chips
   stop suggesting a slot marked unsupported.
 - default: `false`; the endpoint fields (`providerKind`, `baseUrl`,
   `modelId`) are required unless an opt-in/opt-out flag is set (validated

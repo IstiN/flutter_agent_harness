@@ -248,11 +248,27 @@ extension SettingsFlow on AgentCli {
         (id, id, _mediaSlotDescription(models, id)),
     ]);
     if (selectedSlot == null) return;
-    final action = await _pickOption('media $selectedSlot', [
-      ('pick', 'Pick a model', 'provider → model list'),
-      ('main', 'Use the main connection', 'serve the slot with the main model'),
-      ('unsupported', 'Mark unsupported', 'remove the media capability'),
-    ]);
+    // The action menu marks the slot's CURRENT state (issue #2085 review).
+    final current = models.slots[selectedSlot];
+    final action = await _pickOption(
+      'media $selectedSlot',
+      [
+        ('pick', 'Pick a model', 'provider → model list'),
+        (
+          'main',
+          'Use the main connection',
+          'serve the slot with the main model',
+        ),
+        ('unsupported', 'Mark unsupported', 'remove the media capability'),
+      ],
+      initialKey: current == null
+          ? null
+          : current.unsupported
+          ? 'unsupported'
+          : current.useMainConnection
+          ? 'main'
+          : 'pick',
+    );
     if (action == null) return;
     switch (action) {
       case 'main':
@@ -262,6 +278,11 @@ extension SettingsFlow on AgentCli {
         );
         io.writeln('slot $selectedSlot → main connection');
         config.onModelsConfigChanged?.call();
+        // gh-1984 (review thread 5): the availability pass follows the
+        // live slot — a mid-session vision/transcription pin must not
+        // leave /tools contradicting the slot until some unrelated
+        // rebuild happens to run.
+        unawaited(AgentCliTools(this).rebuildToolAvailability());
         return;
       case 'unsupported':
         models.setSlotOverride(
@@ -270,6 +291,7 @@ extension SettingsFlow on AgentCli {
         );
         io.writeln('slot $selectedSlot → unsupported (capability removed)');
         config.onModelsConfigChanged?.call();
+        unawaited(AgentCliTools(this).rebuildToolAvailability());
         return;
     }
     await runProviderModelFlow(
@@ -295,6 +317,7 @@ extension SettingsFlow on AgentCli {
           '(openai-completions)',
         );
         config.onModelsConfigChanged?.call();
+        unawaited(AgentCliTools(this).rebuildToolAvailability());
       },
     );
   }
