@@ -17,18 +17,54 @@ const projectMountSegment = '/project';
 /// Path mapping is idempotent: host paths already under the mounted
 /// directory pass through unchanged, so values the env itself hands out
 /// ([absolutePath]/[joinPath] results, [FileInfo.path]) stay valid input.
+abstract interface class AppOwnedStorage {
+  /// The app-container environment, excluding any user-mounted project view.
+  ExecutionEnv get appOwnedStorage;
+}
+
+abstract interface class LiveProjectMount {
+  /// The user-granted host folder, updated by the file-browser mount flow.
+  String? get liveMountedProjectPath;
+}
+
+/// Platform-neutral view of a host that owns a [ProjectMountEnv].
+///
+/// Mobile keeps its mount beside (rather than underneath) the persistent
+/// container so snapshots never copy the granted folder. This seam lets the
+/// shared UI/session code find that mount without importing the IO factory.
+abstract interface class ProjectMountHost {
+  /// The live mount metadata shared with the shell and mount UI.
+  ProjectMountEnv get projectMount;
+
+  /// Whether the active backend can honor a native folder grant.
+  bool get supportsNativeProjectMount;
+}
+
 final class ProjectMountEnv extends ForwardingFs
     with
         ForwardingBackgroundShell,
         ForwardingRangedReadFs,
-        ForwardingRenamableFs {
+        ForwardingRenamableFs
+    implements LiveProjectMount {
   /// Creates an env over the delegate with no active mount.
   ProjectMountEnv(super.delegate);
 
   String? _mountedRoot;
+  ExecutionEnv? _containerStorage;
+
+  /// Storage-only attachment for the mobile live-mount view. The shell uses
+  /// this mount object for metadata; the mobile env owns actual FS/shell
+  /// dispatch, so this never becomes a recursive execution delegate.
+  set containerStorage(ExecutionEnv value) => _containerStorage = value;
+
+  @override
+  ExecutionEnv get delegate => _containerStorage ?? super.delegate;
 
   /// The currently mounted host directory, or null when nothing is mounted.
   String? get mountedRoot => _mountedRoot;
+
+  @override
+  String? get liveMountedProjectPath => _mountedRoot;
 
   /// Mounts [hostPath] (null unmounts). No FS access here — the caller
   /// (store/channel) owns the security-scoped access lifecycle.
@@ -48,6 +84,7 @@ final class ProjectMountEnv extends ForwardingFs
   String _map(String path) {
     final root = _mountedRoot;
     if (root == null) return path;
+    if (path == 'project_mount.json') return path;
     if (path == projectMountSegment) return root;
     if (path.startsWith('$projectMountSegment/')) {
       return '$root/${path.substring(projectMountSegment.length + 1)}';
@@ -56,7 +93,9 @@ final class ProjectMountEnv extends ForwardingFs
   }
 
   @override
-  String get cwd => _mountedRoot != null ? projectMountSegment : delegate.cwd;
+  String get cwd => _mountedRoot != null
+      ? projectMountSegment
+      : _containerStorage?.cwd ?? delegate.cwd;
 
   @override
   String mapPath(String path) => _map(path);
@@ -107,8 +146,8 @@ final class ProjectMountEnv extends ForwardingFs
             stdinData: options?.stdinData,
             liveStdin: options?.liveStdin,
           );
-    final delegate = this.delegate;
-    if (delegate case final BackgroundShell bg) {
+    final background = delegate;
+    if (background case final BackgroundShell bg) {
       return bg.startShellJob(
         command,
         id: id,
@@ -127,6 +166,46 @@ final class ProjectMountEnv extends ForwardingFs
       ),
     );
   }
+}
+
+/// Finds the live project mount below the host's secrets/session wrappers.
+/// Returns null when this host has no native project-folder entitlement.
+ProjectMountEnv? resolveProjectMountEnv(ExecutionEnv env) {
+  ExecutionEnv current = env;
+  for (var depth = 0; depth < 8; depth++) {
+    if (current case final ProjectMountEnv mount) return mount;
+    if (current case final ProjectMountHost host) return host.projectMount;
+    if (current case final SecretsExecutionEnv secrets) {
+      current = secrets.delegate;
+      continue;
+    }
+    if (current case final SessionVarsExecutionEnv vars) {
+      current = vars.delegate;
+      continue;
+    }
+    return null;
+  }
+  return null;
+}
+
+/// Whether the active backend can access a native project folder.
+/// The MemoryShell fallback keeps the container usable but cannot satisfy
+/// this entitlement; presenting a picker there would promise a false mount.
+bool projectMountBackendAvailable(ExecutionEnv env) {
+  ExecutionEnv current = env;
+  for (var depth = 0; depth < 8; depth++) {
+    if (current case final ProjectMountHost host) {
+      return host.supportsNativeProjectMount;
+    }
+    if (current case final SecretsExecutionEnv secrets) {
+      current = secrets.delegate;
+    } else if (current case final SessionVarsExecutionEnv vars) {
+      current = vars.delegate;
+    } else {
+      break;
+    }
+  }
+  return true;
 }
 
 /// The directory used for session scoping.
@@ -148,10 +227,8 @@ extension SessionCwd on ExecutionEnv {
         break;
       }
     }
-    if (env case final ProjectMountEnv mountEnv) {
-      final root = mountEnv.mountedRoot;
-      if (root != null) return root;
-    }
+    final root = resolveProjectMountEnv(env)?.mountedRoot;
+    if (root != null) return root;
     return cwd;
   }
 }
@@ -168,6 +245,8 @@ extension AppStorageCwd on ExecutionEnv {
         env = env.delegate;
       } else if (env case final ProjectMountEnv mountEnv) {
         env = mountEnv.delegate;
+      } else if (env case final AppOwnedStorage storage) {
+        return storage.appOwnedStorage.cwd;
       } else {
         return env.cwd;
       }
@@ -192,6 +271,8 @@ extension AppOwnedEnv on ExecutionEnv {
         env = env.delegate;
       } else if (env case final ProjectMountEnv mountEnv) {
         env = mountEnv.delegate;
+      } else if (env case final AppOwnedStorage storage) {
+        return storage.appOwnedStorage;
       } else {
         return env;
       }

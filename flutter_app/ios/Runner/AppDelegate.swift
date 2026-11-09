@@ -33,6 +33,7 @@ import AuthenticationServices
     registerVideoChannel(messenger: engineBridge.applicationRegistrar.messenger())
     registerWebAuthSessionChannel(messenger: engineBridge.applicationRegistrar.messenger())
     registerClipboardFilesChannel(messenger: engineBridge.applicationRegistrar.messenger())
+    registerProjectFolderChannel(messenger: engineBridge.applicationRegistrar.messenger())
   }
 }
 

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
@@ -12,6 +13,7 @@ import 'package:fa/services/dap_home.dart';
 import 'package:fa/services/project_folder_channel.dart';
 import 'package:fa/services/project_mount_env.dart';
 import 'package:fa/services/project_mount_store.dart';
+import 'package:fa/sandbox/fs_persistence.dart' show FsSnapshotStore;
 import 'package:fa/sandbox/fs_persistence_stub.dart'
     if (dart.library.html) 'fs_persistence_web.dart';
 import 'package:fa/sandbox/memory_shell.dart';
@@ -71,7 +73,12 @@ bool _isMobilePlatform() => !kIsWeb && (Platform.isAndroid || Platform.isIOS);
 /// stack), so the app always boots to the UI.
 Future<ExecutionEnv> createMobileSandboxEnv({
   http.Client? httpClient,
-  @visibleForTesting Future<WasiSandboxShell> Function()? loadShell,
+  @visibleForTesting
+  Future<WasiSandboxShell> Function(
+    ProjectMountEnv projectMount,
+    String sandboxHostPath,
+  )?
+  loadShell,
 }) async {
   final appDir = await getApplicationDocumentsDirectory();
   final sandbox = Directory('${appDir.path}/fah_sandbox');
@@ -89,28 +96,152 @@ Future<ExecutionEnv> createMobileSandboxEnv({
   await dapDir.create(recursive: true);
   await excludePathFromBackup(dapDir.path);
 
-  // Both Android and iOS run the WASI sandbox shell; on iOS the wasm_run
-  // library is statically linked into the app binary (see setUpWasmRuntime).
+  final mountEnv = ProjectMountEnv(LocalExecutionEnv(cwd: sandbox.path));
+  final stored = await ProjectMountStore.load(mountEnv);
+  if (stored != null) {
+    applyStoredMount(
+      mountEnv,
+      stored,
+      granted: await ProjectFolderChannelOps().startAccessing(stored.bookmark),
+    );
+  }
+  // The same user-granted /project seam as macOS, over the mobile sandbox.
+  // This wrapper binds the real local/WASI env once modules are loaded;
+  // mounting and unmounting remain live without recreating the shell.
+  late final _MobileExecutionEnv mobile;
   try {
     final shell =
         await (loadShell ??
-            () => WasiSandboxShell.load(
+            (projectMount, sandboxHostPath) => WasiSandboxShell.load(
               workingDirectory: '/',
-              sandboxHostPath: sandbox.path,
+              sandboxHostPath: sandboxHostPath,
+              projectMount: projectMount,
               httpClient: httpClient,
-            ))();
-    return SandboxedExecutionEnv(
+            ))(mountEnv, sandbox.path);
+    mobile = _MobileExecutionEnv(
+      mountEnv,
       LocalExecutionEnv(cwd: sandbox.path, shell: shell),
-      sandbox.path,
+      null,
+      supportsNativeProjectMount: true,
     );
+    mountEnv.containerStorage = mobile;
+    return mobile;
   } on Object catch (e) {
     final note = 'WASM shell unavailable, falling back to MemoryShell: $e';
     debugPrint('[env_factory] $note');
     AppLog.i('sandbox', note);
+    // A restored grant cannot be honored by MemoryShell. Keep its bookmark
+    // for the next healthy boot, but never expose a fictitious /project cwd
+    // or project-mount prompt in the degraded environment.
+    mountEnv.mountedRoot = null;
     final shell = MemoryShell(httpClient: httpClient);
+    // Keep the mount metadata in the container root, but attach the live
+    // mount decorator above the persistent filesystem. The native-picker
+    // gate rejects this degraded backend until WASI can actually honor it.
     final env = MemoryExecutionEnv(cwd: '/', shell: shell);
     shell.attach(env);
-    return PersistentWebExecutionEnv.restore(env, createFsSnapshotStore());
+    final persistent = await _MobileExecutionEnv.restore(
+      mountEnv,
+      env,
+      createFsSnapshotStore(),
+    );
+    mobile = persistent;
+    mountEnv.containerStorage = persistent;
+    return persistent;
+  }
+}
+
+/// Mobile's persistent container plus a live native `/project` mount.
+///
+/// The stable mount object is retained by the WASI shell, so changing the
+/// picker grant never recreates the shell. [delegate] remains the REAL
+/// sandbox filesystem/shell (including persistence); only the explicit
+/// `/project` segment maps to the user-granted host directory.
+final class _MobileExecutionEnv extends PersistentWebExecutionEnv
+    with ForwardingRenamableFs
+    implements AppOwnedStorage, ProjectMountHost {
+  _MobileExecutionEnv(
+    this.mountEnv,
+    ExecutionEnv delegate,
+    FsSnapshotStore? store, {
+    this.supportsNativeProjectMount = false,
+  }) : super.shared(delegate, store, const Duration(milliseconds: 800));
+
+  static Future<_MobileExecutionEnv> restore(
+    ProjectMountEnv mountEnv,
+    ExecutionEnv env,
+    FsSnapshotStore store,
+  ) => PersistentWebExecutionEnv.restoreSubtype(
+    env,
+    store,
+    (delegate, store, delay) => _MobileExecutionEnv(mountEnv, delegate, store),
+  );
+
+  final ProjectMountEnv mountEnv;
+
+  @override
+  ProjectMountEnv get projectMount => mountEnv;
+
+  @override
+  final bool supportsNativeProjectMount;
+
+  late final SandboxHostRoot _containerRoot = SandboxHostRoot(delegate.cwd);
+
+  @override
+  ExecutionEnv get appOwnedStorage => delegate;
+
+  @override
+  String get cwd => mountEnv.mountedRoot == null ? delegate.cwd : '/project';
+
+  @override
+  String mapPath(String path) {
+    // Keep mount metadata and container paths under the real sandbox root;
+    // only the explicit virtual mount crosses the user-granted boundary.
+    if (path == 'project_mount.json') return path;
+    final root = mountEnv.mountedRoot;
+    if (root != null && (path == root || path.startsWith('$root/'))) {
+      return path;
+    }
+    if (_containerRoot.contains(path)) return path;
+    final mapped = mountEnv.mapPath(path);
+    if (mapped != path) return mapped;
+    if (path.startsWith('/')) return '${delegate.cwd}$path';
+    return path;
+  }
+
+  @override
+  FutureOr<ShellExecOptions?> mergeExecOptions(ShellExecOptions? options) {
+    final root = mountEnv.mountedRoot;
+    if (root == null) return options;
+    return ShellExecOptions(
+      cwd: options?.cwd == null ? root : mapPath(options!.cwd!),
+      env: options?.env,
+      timeout: options?.timeout,
+      cancelToken: options?.cancelToken,
+      onStdout: options?.onStdout,
+      onStderr: options?.onStderr,
+      stdinData: options?.stdinData,
+      liveStdin: options?.liveStdin,
+    );
+  }
+
+  @override
+  FutureOr<ShellExecOptions?> mergeJobOptions(ShellExecOptions? options) {
+    final root = mountEnv.mountedRoot;
+    if (root == null) return options;
+    return ShellExecOptions(
+      cwd: options?.cwd == null ? root : mapPath(options!.cwd!),
+      env: options?.env,
+      timeout: options?.timeout,
+      cancelToken: options?.cancelToken,
+      onStdout: options?.onStdout,
+      onStderr: options?.onStderr,
+      stdinData: options?.stdinData,
+      liveStdin: options?.liveStdin,
+      jobLogMaxBytes: options?.jobLogMaxBytes,
+      onJobLogWarning: options?.onJobLogWarning,
+      jobLogRedactor: options?.jobLogRedactor,
+    );
   }
 }
 

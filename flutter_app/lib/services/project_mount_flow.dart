@@ -1,7 +1,6 @@
 import 'dart:io';
 
 import 'package:flutter/foundation.dart' show kIsWeb;
-
 import 'package:fa/services/project_folder_channel.dart';
 import 'package:fa/services/project_mount_env.dart';
 import 'package:fa/services/project_mount_store.dart';
@@ -25,7 +24,7 @@ Future<String?> pickAndApplyProjectMount({
   void Function()? onAccessDenied,
 }) async {
   final mountEnv = _resolveMountEnv(env);
-  if (mountEnv == null) return null;
+  if (mountEnv == null || !projectMountBackendAvailable(env)) return null;
   final resolvedOps = ops ?? _defaultOps();
   if (resolvedOps == null) return null;
   final picked = await resolvedOps.pickDirectory();
@@ -171,14 +170,11 @@ ProjectMountEnv? _mountedProjectEnv(ExecutionEnv env) {
 /// Whether native directory picking is available on this platform (macOS).
 bool projectFolderPickingSupported() {
   if (kIsWeb) return false;
-  return Platform.isMacOS;
+  return Platform.isMacOS || Platform.isIOS;
 }
 
-ProjectMountEnv? _resolveMountEnv(ExecutionEnv env) {
-  var e = env;
-  if (e is SecretsExecutionEnv) e = e.delegate;
-  return e is ProjectMountEnv ? e : null;
-}
+ProjectMountEnv? _resolveMountEnv(ExecutionEnv env) =>
+    resolveProjectMountEnv(env);
 
 ProjectFolderOps? _defaultOps() => ProjectFolderChannelOps.isSupported
     ? const ProjectFolderChannelOps()

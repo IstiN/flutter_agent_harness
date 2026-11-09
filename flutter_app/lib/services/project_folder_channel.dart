@@ -1,7 +1,6 @@
 import 'dart:io';
 
-import 'package:flutter/foundation.dart'
-    show kIsWeb, visibleForTesting;
+import 'package:flutter/foundation.dart' show kIsWeb, visibleForTesting;
 
 import 'package:flutter/services.dart';
 
@@ -24,9 +23,13 @@ final class ProjectFolderChannelOps implements ProjectFolderOps {
   /// Creates the ops over the `fah/project_folder` channel.
   const ProjectFolderChannelOps();
 
-  /// Whether native project-folder picking is available (macOS only).
+  /// Whether native project-folder picking is available (desktop sandbox or
+  /// iOS document picker). Android uses the shared channel when its host
+  /// picker is available; a missing native handler is a no-grant, not a boot
+  /// failure.
   // kIsWeb first: dart:io Platform throws on the web.
-  static bool get isSupported => !kIsWeb && Platform.isMacOS;
+  static bool get isSupported =>
+      !kIsWeb && (Platform.isMacOS || Platform.isIOS);
 
   static const _channel = MethodChannel('fah/project_folder');
 

@@ -184,11 +184,7 @@ class _FileBrowserState extends State<FileBrowser> {
   /// elsewhere (the open-folder control hides then). Looks through the
   /// [SecretsExecutionEnv] wrapper the agent service always puts around
   /// the shared env.
-  ProjectMountEnv? get _mountEnv {
-    var env = widget.env;
-    if (env is SecretsExecutionEnv) env = env.delegate;
-    return env is ProjectMountEnv ? env : null;
-  }
+  ProjectMountEnv? get _mountEnv => resolveProjectMountEnv(widget.env);
 
   /// The active session's folder when Files CANNOT list it through the
   /// env's visible roots ([visibleFolderRoot] null): a host path outside
