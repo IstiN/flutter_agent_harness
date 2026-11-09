@@ -119,6 +119,8 @@ const _nestedKeySources = <String, String>{
   'models.slots.*.baseUrl': 'lib/src/model_roles/media_model_slots.dart',
   'models.slots.*.modelId': 'lib/src/model_roles/media_model_slots.dart',
   'models.slots.*.apiKeyName': 'lib/src/model_roles/media_model_slots.dart',
+  'models.slots.*.useMainConnection':
+      'lib/src/model_roles/media_model_slots.dart',
   'models.custom.*': 'lib/src/model_roles/models_config.dart',
   'models.custom.*.provider': 'lib/src/model_roles/models_config.dart',
   'models.custom.*.baseUrl': 'lib/src/model_roles/models_config.dart',

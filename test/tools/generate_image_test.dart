@@ -111,6 +111,56 @@ void main() {
     });
 
     test(
+      'aiin endpoint rides the default OpenAI image dialect (#2068)',
+      () async {
+        http.BaseRequest? seenRequest;
+        final tool = generateImageTool(
+          env: env,
+          modelsConfig: ModelsConfig(
+            slots: {
+              'imageGeneration': MediaSlotModelConfig(
+                providerKind: 'openai-completions',
+                // The aiin gateway serves POST /v1/images/generations
+                // (route verified live) — no dialect marker of its own, the
+                // default OpenAI wire handles it.
+                baseUrl: 'https://api.aiin.by/v1',
+                modelId: 'google/gemini-3.1-flash-image',
+                apiKeyName: 'AIIN_API_KEY',
+              ),
+            },
+          ),
+          mainBaseUrl: () => 'https://main.example/v1',
+          mainModelId: () => 'main-model',
+          mainApiKey: () => 'main-key',
+          resolveKey: (name) async =>
+              name == 'AIIN_API_KEY' ? 'aiin-key' : null,
+          httpClient: _captureClient((request, body) {
+            seenRequest = request;
+          }, imageBytes: Uint8List.fromList([4, 5, 6])),
+        );
+
+        final result = await tool.execute(
+          {'prompt': 'a red apple'},
+          null,
+          null,
+        );
+
+        final text = result.content
+            .whereType<TextContent>()
+            .map((b) => b.text)
+            .join();
+        expect(text, contains('saved image to generated/images_'));
+
+        final request = seenRequest!;
+        expect(
+          request.url.toString(),
+          'https://api.aiin.by/v1/images/generations',
+        );
+        expect(request.headers['authorization'], 'Bearer aiin-key');
+      },
+    );
+
+    test(
       'resolves the slot apiKeyName through the resolveKey callback',
       () async {
         final tool = generateImageTool(

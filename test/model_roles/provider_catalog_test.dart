@@ -33,6 +33,44 @@ void main() {
     expect(enabledProviders().any((s) => s.name == 'chatgpt'), isTrue);
   });
 
+  group('mediaSlotEligible (issue #2068)', () {
+    test('every OpenAI-wire catalog entry is eligible — the property', () {
+      // The eligibility set is DERIVED from the declared api wire, not
+      // hand-listed: a future own-kind provider declaring
+      // `api: 'openai-completions'` is media-eligible at birth. The only
+      // carve-outs are the two non-Bearer transports (copilot OAuth,
+      // dial Api-Key header).
+      final wire = providerCatalog.values
+          .where((spec) => spec.api == 'openai-completions')
+          .map((spec) => spec.name)
+          .toSet();
+      expect(wire, containsAll(<String>['aiin', 'zai', 'minimax', 'codemie']));
+      expect(
+        providerCatalog.values
+            .where((spec) => spec.mediaSlotEligible)
+            .map((spec) => spec.name)
+            .toSet(),
+        wire.difference(<String>{'copilot', 'dial'}),
+      );
+    });
+
+    test('own-kind OpenAI-wire providers are media-eligible', () {
+      // The reported bug: aiin/zai were invisible in the media pickers
+      // despite their catalog specs declaring the completions wire.
+      expect(providerCatalog['aiin']!.mediaSlotEligible, isTrue);
+      expect(providerCatalog['zai']!.mediaSlotEligible, isTrue);
+      expect(providerCatalog['minimax']!.mediaSlotEligible, isTrue);
+    });
+
+    test('non-OpenAI wires and non-Bearer transports stay excluded', () {
+      expect(providerCatalog['anthropic']!.mediaSlotEligible, isFalse);
+      expect(providerCatalog['google']!.mediaSlotEligible, isFalse);
+      expect(providerCatalog['chatgpt']!.mediaSlotEligible, isFalse);
+      expect(providerCatalog['copilot']!.mediaSlotEligible, isFalse);
+      expect(providerCatalog['dial']!.mediaSlotEligible, isFalse);
+    });
+  });
+
   group('resolveModelMaxOutputTokens (UT-ceilings, AC2)', () {
     test('exact catalogued versions pin their documented cap', () {
       expect(anthropicCeiling('claude-opus-4-5'), 64000);
