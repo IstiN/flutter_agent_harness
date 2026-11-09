@@ -1,0 +1,751 @@
+name: Bench ALE
+
+# Runs the fa coding agent on Agents' Last Exam (ALE-V1) — long-horizon
+# professional workflows with hidden-reference graders (issue #1686) —
+# through the upstream `ale_run` orchestrator, producing per-trial
+# trajectories + eval results in ALE's own formats plus our summary and,
+# on complete full runs, a self-reported row in the fa-results ledger
+# (gh-1682 contract).
+#
+# Shape: bench-harbor.yml (resolve → plan → shard matrix → aggregate),
+# budget ladder: bench-mls.yml (5h-class trials, ≤3 parallel shards,
+# fail-loud secret preflight, no budget overrides — task-card wall
+# budgets govern), fa invocation + ATIF contract: bench/harbor_fa.
+#
+# NO FORK of ALE: the checkout is consumed at the pinned --ale-sha; the
+# fa deployer package is VENDORED into it at stage time
+# (bench/ale/build_run.py stage → ale_run/agents/fa_code/, the same
+# in-tree path convention upstream uses for vendored third-party
+# agents) and referenced by its fully-qualified harness path —
+# resolve_agent accepts any importable FQN.
+#
+# The docker profile (configs/environments/docker.yaml) runs the
+# 78-task `selected_tasks/docker_support.txt` Linux subset as one
+# container per unit — the only GH-compatible ALE profile. It needs a
+# runner with ~150 GB disk (35 GB image + 44 GiB data archive + run
+# logs) and HF_TOKEN with APPROVED access to the gated
+# agents-last-exam/agents-last-exam-data-archive dataset — without
+# approval the run executes but cannot score (issue #1686 recon, AC1).
+# Default runner label: self-hosted (a standard hosted runner's ~14-20
+# GB disk cannot hold the image; the disk preflight fails loud anyway).
+#
+# Provider: same triple as bench.yml / bench-harbor.yml (gh-1471/1503).
+# The resolve step below is a byte-consistent copy of bench-harbor.yml's
+# gh-1471 step — keep all three in sync (cross-reference comments).
+#
+# Smoke first: subset=smoke (one task) is the default dispatch; the full
+# docker allowlist requires confirm-full=yes (E3 cost control).
+#
+# Secrets (owner-provisioned; the workflow never hardcodes them):
+#   FA_BENCH_ZAI_KEY      — z.ai key for glm-5.3-flash (shared with bench.yml)
+#   FA_BENCH_KIMI_KEY     — kimi coding key (kimi-for-coding)
+#   FA_BENCH_CUSTOM_KEY   — key for provider=custom
+#   HF_TOKEN              — gated task-data archive access (manual
+#                           approval required on the HF dataset side)
+
+run-name: fa bench-ale · ${{ inputs.provider }} · ${{ inputs.subset }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      subset:
+        description: 'smoke (1 declared task, default) | docker (full 78-task allowlist, needs confirm-full=yes) | tasks (explicit csv)'
+        required: false
+        default: 'smoke'
+        type: choice
+        options:
+          - smoke
+          - docker
+          - tasks
+      tasks:
+        description: 'Comma-separated task ids for subset=tasks — validated against the docker allowlist (Linux docker-profile tasks only)'
+        required: false
+        default: ''
+      provider:
+        description: 'LLM provider for this run (same contract as bench.yml gh-1471 / bench-harbor.yml gh-1503)'
+        required: false
+        default: 'zai-glm-5.3-flash'
+        type: choice
+        options:
+          - 'zai-glm-5.3-flash'
+          - 'kimi-for-coding'
+          - 'custom'
+      provider-config:
+        description: 'ONLY when provider=custom — the provider config JSON {"type","baseUrl","model","contextWindow","maxTokens"}. The API key NEVER rides this input — it comes only from the FA_BENCH_CUSTOM_KEY secret'
+        required: false
+        default: ''
+      ale-sha:
+        description: 'Pinned agents-last-exam commit (rdi-berkeley/agents-last-exam)'
+        required: false
+        default: '2e91edd3cd26baa35a38127c90c8e5241dfbe62f'
+      fa-release:
+        description: 'fa release tag whose fa-linux-x64.tar.gz asset runs in-VM (pinned by the release''s own SHA256SUMS)'
+        required: false
+        default: 'v1.0.698'
+      shards:
+        description: 'Shard count (capped at 3 — the #1686 quota discipline: 5h-class trials never burn into dead quota windows)'
+        required: false
+        default: '3'
+      runner:
+        description: 'Runner label hosting the shards (needs ~150 GB disk + linux amd64 docker; a standard hosted runner cannot fit the image)'
+        required: false
+        default: 'self-hosted'
+      max-attempts:
+        description: 'ale_run max_attempts per failed unit (1 = a failed trial never silently re-burns; owner picks up at dispatch)'
+        required: false
+        default: '1'
+      progress-extension:
+        description: 'fa progress-aware watch (AGENTS.md round 3): required for stall-gap/abs-ceiling to take effect'
+        required: false
+        default: ''
+      stall-gap-sec:
+        description: 'FA_STALL_GAP_SEC — no-output-growth span that kills a trial (needs progress-extension)'
+        required: false
+        default: ''
+      abs-ceiling-sec:
+        description: 'FA_AGENT_TIMEOUT_ABS_CEILING_SEC — absolute kill ceiling (needs progress-extension)'
+        required: false
+        default: ''
+      external-cap-sec:
+        description: 'FA_EXTERNAL_CAP_SEC — dispatch-level cap folded via min() (valid without progress-extension)'
+        required: false
+        default: ''
+      confirm-full:
+        description: "Must be 'yes' when subset=docker (E3 cost control)"
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+# A shard holds its runner for up to 12h (5h-class trials); queue a
+# second dispatch instead of stacking them.
+concurrency:
+  group: bench-ale
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    name: Stage deployer & plan shards
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+      count: ${{ steps.plan.outputs.count }}
+      provider_type: ${{ steps.provider.outputs.provider_type }}
+      provider_config: ${{ steps.provider.outputs.provider_config }}
+      provider_key_env: ${{ steps.provider.outputs.provider_key_env }}
+      bench_model: ${{ steps.provider.outputs.bench_model }}
+      run_label: ${{ steps.provider.outputs.run_label }}
+      bundle_url: ${{ steps.fabundle.outputs.bundle_url }}
+      bundle_sha256: ${{ steps.fabundle.outputs.bundle_sha256 }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # The pinned external dataset checkout (consumed verbatim — same
+      # no-fork contract as bench-mls.yml).
+      - name: Checkout agents-last-exam at pinned SHA
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: rdi-berkeley/agents-last-exam
+          ref: ${{ inputs.ale-sha }}
+          path: ale
+
+      # terminal-bench-era note (bench-harbor.yml): 3.13 — the bench/ale
+      # roots are stdlib-only; nothing extra to pip install.
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.13'
+
+      # Deterministic gate on the dispatch path too (bench-tests.yml is
+      # the PR-time gate; a red bench/ale test must also cost one plan
+      # minute, never shard-hours).
+      - name: Unit-test bench scripts
+        run: python -m unittest discover -s bench/ale -v
+
+      # Pin the in-VM fa bundle to the release's own SHA256SUMS before
+      # any spend: a moved/retagged release fails here, in one minute.
+      - name: Resolve fa bundle release asset
+        id: fabundle
+        env:
+          FA_RELEASE: ${{ inputs.fa-release }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          api="https://api.github.com/repos/${{ github.repository }}/releases/tags/$FA_RELEASE"
+          assets=$(curl -fsSL -H "Authorization: Bearer $GH_TOKEN" "$api")
+          url=$(printf '%s' "$assets" | jq -r '.assets[] | select(.name=="fa-linux-x64.tar.gz") | .browser_download_url')
+          sums_url=$(printf '%s' "$assets" | jq -r '.assets[] | select(.name=="SHA256SUMS") | .browser_download_url')
+          if [ -z "$url" ] || [ "$url" = "null" ] || [ -z "$sums_url" ] || [ "$sums_url" = "null" ]; then
+            echo "::error::release $FA_RELEASE has no fa-linux-x64.tar.gz / SHA256SUMS assets — pick a tagged release that ships the linux-x64 bundle"; exit 1
+          fi
+          sha=$(curl -fsSL "$sums_url" | awk '$2=="fa-linux-x64.tar.gz"{print $1}')
+          if ! printf '%s' "$sha" | grep -Eq '^[0-9a-f]{64}$'; then
+            echo "::error::SHA256SUMS carried no sha256 for fa-linux-x64.tar.gz"; exit 1
+          fi
+          {
+            echo "bundle_url=$url"
+            echo "bundle_sha256=$sha"
+          } >> "$GITHUB_OUTPUT"
+
+      # gh-1503: byte-consistent copy of bench.yml's gh-1471 resolve step
+      # (same run block, same outputs) — the single-source extraction was
+      # rejected there to keep the workflow self-contained; the
+      # cross-reference comment in both files is the sync contract.
+      - name: Resolve provider
+        id: provider
+        env:
+          PROVIDER: ${{ inputs.provider }}
+          PROVIDER_CONFIG: ${{ inputs.provider-config }}
+          # bench.yml reads this from its top-level env block; harbor has
+          # no other consumer, so the value lives here (single spelling,
+          # same as bench.yml's BENCH_MODEL).
+          BENCH_MODEL: glm-5.3-flash
+          FA_BENCH_ZAI_KEY: ${{ secrets.FA_BENCH_ZAI_KEY }}
+          FA_BENCH_KIMI_KEY: ${{ secrets.FA_BENCH_KIMI_KEY }}
+          FA_BENCH_CUSTOM_KEY: ${{ secrets.FA_BENCH_CUSTOM_KEY }}
+        run: |
+          set -euo pipefail
+          case "$PROVIDER" in
+            ''|zai-glm-5.3-flash)
+              provider_type=zai
+              choice=zai-glm-5.3-flash
+              base_url='https://api.z.ai/api/coding/paas/v4'
+              model="$BENCH_MODEL"
+              key_env=FA_KEY_API_Z_AI_Z_AI
+              secret_name=FA_BENCH_ZAI_KEY
+              secret_value=$FA_BENCH_ZAI_KEY
+              # REG-1 (gh-1471): the default must resolve today's exact
+              # 3-field config — a zai run stays byte-identical.
+              provider_config=$(printf '{"baseUrl":"%s","model":"%s","apiKeyEnvVar":"%s"}' \
+                "$base_url" "$model" "$key_env")
+              # D5: one spelling everywhere — the label derives from the
+              # dispatch choice id, matching run-name.
+              run_label="$choice ($model)"
+              ;;
+            kimi-for-coding)
+              provider_type=kimi
+              base_url='https://api.kimi.com/coding/v1'
+              # The model id IS the plan name (owner correction, gh-1471
+              # follow-up): the coding endpoint serves it as
+              # 'kimi-for-coding', not k3-256k.
+              model='kimi-for-coding'
+              key_env=FA_KEY_API_KIMI_COM_BENCH
+              secret_name=FA_BENCH_KIMI_KEY
+              secret_value=$FA_BENCH_KIMI_KEY
+              # gh-1471 D4: kimi's capability fields ride the config
+              # explicitly — the env preconfig applies them to the booted
+              # model, so a catalog drift can never silently truncate.
+              provider_config=$(printf '{"baseUrl":"%s","model":"%s","apiKeyEnvVar":"%s","contextWindow":200000,"maxTokens":16384}' \
+                "$base_url" "$model" "$key_env")
+              # model == choice by construction — no doubled label.
+              run_label="kimi-for-coding"
+              ;;
+            custom)
+              # gh-1471 D1 / AC 2a: the custom escape hatch — a new
+              # provider tomorrow needs zero workflow edits. The key
+              # NEVER rides the dispatch input (inputs are visible in
+              # run metadata): it comes only from the FA_BENCH_CUSTOM_KEY
+              # secret, injected as the fixed apiKeyEnvVar below.
+              secret_name=FA_BENCH_CUSTOM_KEY
+              secret_value=$FA_BENCH_CUSTOM_KEY
+              key_env=FA_KEY_BENCH_CUSTOM
+              if [ -z "$PROVIDER_CONFIG" ]; then
+                echo "::error::provider custom selected but the provider-config input is empty — pass the provider JSON (at least baseUrl and model)"; exit 1
+              fi
+              # jq-level validation (AC 2a): every failure names the
+              # offending input and dies BEFORE any shard starts. From
+              # here down the checks mirror the Dart env preconfig's
+              # consumer contract (lib/src/cli/env_provider_preconfig.dart)
+              # so a bad dispatch burns one setup minute, never
+              # shard-hours failing loud inside every trial.
+              if ! printf '%s' "$PROVIDER_CONFIG" | jq -e 'type == "object"' >/dev/null 2>&1; then
+                echo "::error::provider-config must be a JSON object — the raw input is not echoed (it could carry key material)"; exit 1
+              fi
+              # `apiKeyEnvVar` is injected by this step (fixed
+              # FA_KEY_BENCH_CUSTOM), never accepted from the input — a
+              # user-supplied value would be silently overridden (checked
+              # before the key-like scan below, which would otherwise
+              # flag the field first with a less precise message).
+              if printf '%s' "$PROVIDER_CONFIG" | jq -e 'has("apiKeyEnvVar")' >/dev/null 2>&1; then
+                echo "::error::provider-config must not declare apiKeyEnvVar — the resolve step injects it as the fixed FA_KEY_BENCH_CUSTOM; the key comes only from the FA_BENCH_CUSTOM_KEY secret"; exit 1
+              fi
+              # Key-like fields hard-fail: a pasted key in a dispatch
+              # input would leak through run metadata. Whole-word match
+              # on the key's split words (camelCase/snake_case divided) —
+              # so the legitimate `maxTokens` capability key passes while
+              # `token`/`accessToken`/`api_key` are caught. The scan
+              # descends into nested objects: a key field name pasted
+              # inside a header map rides through a top-level-only scan
+              # exactly like a top-level one.
+              leaked=$(printf '%s' "$PROVIDER_CONFIG" | jq -r '
+                def words: gsub("(?<l>[a-z0-9])(?<u>[A-Z])"; "\(.l)_\(.u)")
+                  | gsub("[ _-]+"; " ") | ascii_downcase | split(" ");
+                [.. | objects | keys[]
+                  | select(. | words
+                      | map(test("^(api.?key|apikey|key|token|secret)$"))
+                      | any)]
+                  | unique | join(", ")')
+              if [ -n "$leaked" ]; then
+                echo "::error::provider-config must not carry key material — dispatch inputs are visible in run metadata; offending field(s): $leaked. The key comes only from the FA_BENCH_CUSTOM_KEY secret"; exit 1
+              fi
+              # Closed key whitelist, mirroring the Dart _parseConfig
+              # consumer (baseUrl, model, apiKeyEnvVar, contextWindow,
+              # maxTokens, input, thinkingLevel): an unknown or typo'd
+              # key would otherwise fail loud at every trial's container
+              # boot after shards start. `type` is allowed here (it rides
+              # the FA_PROVIDER_TYPE output) but stripped from the
+              # emitted config below.
+              unsupported=$(printf '%s' "$PROVIDER_CONFIG" | jq -r '
+                [. | keys[]
+                  | select(. as $k
+                      | ["baseUrl","model","contextWindow","maxTokens","input","thinkingLevel","type"]
+                      | index($k) | not)]
+                  | join(", ")')
+              if [ -n "$unsupported" ]; then
+                echo "::error::provider-config has unsupported key(s): $unsupported — supported keys: baseUrl, model, contextWindow, maxTokens, input, thinkingLevel (type selects FA_PROVIDER_TYPE and is not echoed into FA_PROVIDER_CONFIG)"; exit 1
+              fi
+              # `type` feeds the container's catalog lookup via
+              # FA_PROVIDER_TYPE: when declared it must be a non-empty
+              # string (jq's `//` treats "" as present, so an explicit
+              # check is required); undeclared/null defaults to the
+              # openai-compatible catalog entry.
+              if ! printf '%s' "$PROVIDER_CONFIG" | jq -e 'if has("type") and .type != null then (.type | type == "string" and test("\\S")) else true end' >/dev/null 2>&1; then
+                echo "::error::provider-config \"type\" must be a non-empty string naming a catalog provider (e.g. \"openai\") when declared"; exit 1
+              fi
+              # The capability pair mirrors _parseCapabilityInt: JSON
+              # integers at or above the Dart resolver floors
+              # (minOverrideContextWindow 16384 / minOverrideMaxTokens
+              # 1024 — the same boundaries as the yaml overrides layer);
+              # blank string / null are ABSENT, like every other optional
+              # input; anything else throws at container boot today.
+              if ! printf '%s' "$PROVIDER_CONFIG" | jq -e '
+                def capok(min): . as $v
+                  | $v == null or (($v | type) == "string" and ($v | test("^\\s*$")))
+                  or (($v | type) == "number" and ($v | floor) == $v and $v >= min);
+                (.contextWindow | capok(16384)) and (.maxTokens | capok(1024))
+              ' >/dev/null 2>&1; then
+                echo "::error::provider-config contextWindow/maxTokens must be integers at or above the Dart resolver floors (contextWindow >= 16384, maxTokens >= 1024) — a below-floor or non-integer declaration would fail loud at every trial's container boot"; exit 1
+              fi
+              # `input` mirrors _parseInputList: a non-empty list whose
+              # entries are exactly "text"/"image".
+              if ! printf '%s' "$PROVIDER_CONFIG" | jq -e 'if has("input") then (.input | type == "array" and length > 0 and all(.[]; . == "text" or . == "image")) else true end' >/dev/null 2>&1; then
+                echo "::error::provider-config \"input\" must be a non-empty list of \"text\"/\"image\" entries (the Dart preconfig's contract)"; exit 1
+              fi
+              # `thinkingLevel` mirrors _parseThinkingLevel: a blank
+              # string is absent; otherwise one of the
+              # configThinkingLevels ladder (xhigh/max fold to high
+              # Dart-side).
+              if ! printf '%s' "$PROVIDER_CONFIG" | jq -e 'if has("thinkingLevel") then (.thinkingLevel | if type == "string" then (test("^\\s*$") or (. as $l | ["minimal","low","medium","high","xhigh","max"] | index($l) != null)) else false end) else true end' >/dev/null 2>&1; then
+                echo "::error::provider-config \"thinkingLevel\" must be one of minimal, low, medium, high, xhigh, max (the Dart preconfig's ladder)"; exit 1
+              fi
+              # Required: a non-empty https:// baseUrl and a model — the
+              # plain-http ban keeps the bench key off a cleartext wire.
+              for field in baseUrl model; do
+                if ! printf '%s' "$PROVIDER_CONFIG" | jq -e --arg f "$field" '.[$f] | type == "string" and length > 0' >/dev/null 2>&1; then
+                  echo "::error::provider-config is missing a non-empty \"$field\" — required: baseUrl, model"; exit 1
+                fi
+              done
+              if ! printf '%s' "$PROVIDER_CONFIG" | jq -e '.baseUrl | startswith("https://")' >/dev/null 2>&1; then
+                echo "::error::provider-config baseUrl must start with https:// (a plaintext endpoint would expose the bench key) — got: $(printf '%s' "$PROVIDER_CONFIG" | jq -r '.baseUrl')"; exit 1
+              fi
+              # Passthrough: every declared field rides the config
+              # verbatim EXCEPT "type" — it already rides the dedicated
+              # FA_PROVIDER_TYPE output/env, and the Dart preconfig's
+              # FA_PROVIDER_CONFIG whitelist has no "type" key (it would
+              # throw at every trial's container boot). Blank/null
+              # capability fields are dropped (Dart-side they are
+              # ABSENT, like every other optional input — the emitted
+              # config declares only what is effective). Plus the fixed
+              # key-env injection; `type` defaults to the
+              # openai-compatible catalog entry.
+              provider_type=$(printf '%s' "$PROVIDER_CONFIG" | jq -r '.type // "openai"')
+              model=$(printf '%s' "$PROVIDER_CONFIG" | jq -r '.model')
+              provider_config=$(printf '%s' "$PROVIDER_CONFIG" | jq -c --arg k "$key_env" '
+                del(.type)
+                | del(.contextWindow | select(. == null or ((. | type) == "string" and (. | test("^\\s*$")))))
+                | del(.maxTokens | select(. == null or ((. | type) == "string" and (. | test("^\\s*$")))))
+                | . + {apiKeyEnvVar: $k}')
+              run_label="custom ($model)"
+              ;;
+            *)
+              echo "::error::unknown provider '$PROVIDER' — expected 'zai-glm-5.3-flash', 'kimi-for-coding' or 'custom'"; exit 1 ;;
+          esac
+          if [ -z "$secret_value" ]; then
+            echo "::error::provider $PROVIDER selected but secret $secret_name is not set"; exit 1
+          fi
+          # fa_agent.py ships the key into the container base64-encoded;
+          # GitHub auto-masks only the raw value, so mask the base64 form.
+          echo "::add-mask::$(printf %s "$secret_value" | base64 -w0)"
+          {
+            echo "provider_type=$provider_type"
+            echo "provider_config=$provider_config"
+            echo "provider_key_env=$key_env"
+            echo "bench_model=$model"
+            echo "run_label=$run_label"
+          } >> "$GITHUB_OUTPUT"
+
+      # AC2 preflight: everything that can fail cheap fails HERE, before
+      # any shard starts. HF_TOKEN (gated archive access) is
+      # owner-provisioned — see issue #1686 recon for the approval flow.
+      - name: Check secrets (fail fast before any shard)
+        env:
+          PROVIDER_KEY_ENV: ${{ steps.provider.outputs.provider_key_env }}
+          FA_BENCH_ZAI_KEY: ${{ secrets.FA_BENCH_ZAI_KEY }}
+          FA_BENCH_KIMI_KEY: ${{ secrets.FA_BENCH_KIMI_KEY }}
+          FA_BENCH_CUSTOM_KEY: ${{ secrets.FA_BENCH_CUSTOM_KEY }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          set -euo pipefail
+          key_value=""
+          case "$PROVIDER_KEY_ENV" in
+            FA_KEY_API_Z_AI_Z_AI) key_value="$FA_BENCH_ZAI_KEY" ;;
+            FA_KEY_API_KIMI_COM_BENCH) key_value="$FA_BENCH_KIMI_KEY" ;;
+            FA_KEY_BENCH_CUSTOM) key_value="$FA_BENCH_CUSTOM_KEY" ;;
+          esac
+          missing=""
+          [ -n "$key_value" ] || missing="$missing $PROVIDER_KEY_ENV(provider-key)"
+          [ -n "$HF_TOKEN" ] || missing="$missing HF_TOKEN"
+          if [ -n "$missing" ]; then
+            echo "::error::missing secret(s):$missing — provision them as repo secrets before dispatching (HF_TOKEN needs manual-approval access to agents-last-exam/agents-last-exam-data-archive; see issue #1686)"
+            exit 1
+          fi
+          echo "secret preflight OK ($PROVIDER_KEY_ENV present, HF_TOKEN present)"
+
+      # Proves the stage path end-to-end on the plan runner; the agent
+      # shards re-derive the same files deterministically from the same
+      # pinned inputs — nothing file-based crosses the job border.
+      - name: Stage deployer package & agent preset
+        env:
+          PROVIDER_TYPE: ${{ steps.provider.outputs.provider_type }}
+          PROVIDER_CONFIG: ${{ steps.provider.outputs.provider_config }}
+          PROVIDER_KEY_ENV: ${{ steps.provider.outputs.provider_key_env }}
+          BENCH_MODEL: ${{ steps.provider.outputs.bench_model }}
+          BUNDLE_URL: ${{ steps.fabundle.outputs.bundle_url }}
+          BUNDLE_SHA256: ${{ steps.fabundle.outputs.bundle_sha256 }}
+          PROGRESS_EXTENSION: ${{ inputs.progress-extension }}
+          STALL_GAP_SEC: ${{ inputs.stall-gap-sec }}
+          ABS_CEILING_SEC: ${{ inputs.abs-ceiling-sec }}
+          EXTERNAL_CAP_SEC: ${{ inputs.external-cap-sec }}
+        run: |
+          set -euo pipefail
+          stage_args=(--ale-root ale
+            --provider-type "$PROVIDER_TYPE"
+            --provider-config "$PROVIDER_CONFIG"
+            --model "$BENCH_MODEL"
+            --bundle-url "$BUNDLE_URL"
+            --bundle-sha256 "$BUNDLE_SHA256")
+          [ -n "$PROGRESS_EXTENSION" ] && stage_args+=(--progress-extension)
+          [ -n "$STALL_GAP_SEC" ] && stage_args+=(--stall-gap-sec "$STALL_GAP_SEC")
+          [ -n "$ABS_CEILING_SEC" ] && stage_args+=(--abs-ceiling-sec "$ABS_CEILING_SEC")
+          [ -n "$EXTERNAL_CAP_SEC" ] && stage_args+=(--external-cap-sec "$EXTERNAL_CAP_SEC")
+          python bench/ale/build_run.py stage "${stage_args[@]}"
+
+      # Verifies the v1.1 asset pins (docker allowlist sha256) and
+      # computes the shard matrix + identity bundle.
+      - name: Plan subset, shards & run identity
+        id: plan
+        env:
+          SUBSET: ${{ inputs.subset }}
+          TASKS: ${{ inputs.tasks }}
+          SHARDS: ${{ inputs.shards }}
+          MAX_ATTEMPTS: ${{ inputs.max-attempts }}
+          CONFIRM_FULL: ${{ inputs.confirm-full }}
+          ALE_SHA: ${{ inputs.ale-sha }}
+          PROVIDER: ${{ inputs.provider }}
+          BENCH_MODEL: ${{ steps.provider.outputs.bench_model }}
+          BUNDLE_URL: ${{ steps.fabundle.outputs.bundle_url }}
+          BUNDLE_SHA256: ${{ steps.fabundle.outputs.bundle_sha256 }}
+        run: |
+          set -euo pipefail
+          plan_args=(--subset "$SUBSET"
+            --ale-root ale --ale-sha "$ALE_SHA" --check-pins
+            --shards "$SHARDS" --max-attempts "$MAX_ATTEMPTS"
+            --confirm-full "$CONFIRM_FULL"
+            --fa-commit '${{ github.sha }}'
+            --provider "$PROVIDER" --model "$BENCH_MODEL"
+            --bundle-url "$BUNDLE_URL" --bundle-sha256 "$BUNDLE_SHA256"
+            --out "$GITHUB_OUTPUT" --run-config-out ale-run-config.json)
+          if [ "$SUBSET" = "tasks" ]; then
+            plan_args+=(--tasks "$TASKS")
+          fi
+          python bench/ale/build_run.py plan "${plan_args[@]}"
+
+      - name: Upload run identity bundle
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ale-run-config
+          path: ale-run-config.json
+          retention-days: 90
+
+  # The self-hosted runner (or a ≥150 GB disk label) hosts one ale_run
+  # per shard: upstream provisions one task container per unit, runs fa
+  # in-VM via the vendored deployer, grades with the hidden references,
+  # and writes run.json / trajectory.json / eval_result.json per unit.
+  agent:
+    name: fa on ALE shard ${{ matrix.i }} (${{ inputs.runner }})
+    needs: plan
+    runs-on: ${{ inputs.runner }}
+    # Worst case: tasks x (task-card wall budget, 5h-class) + eval; no
+    # hosted 6h cap on self-hosted, 12h guards a hung runner.
+    timeout-minutes: 720
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Checkout agents-last-exam at pinned SHA
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: rdi-berkeley/agents-last-exam
+          ref: ${{ inputs.ale-sha }}
+          path: ale
+
+      # The image alone is ~90 GB unpacked + 44 GiB data archive. Fail
+      # loud HERE with the numbers, never mid-extraction.
+      - name: Disk preflight (≥ 150 GiB free)
+        run: |
+          set -euo pipefail
+          free_gib=$(df -BG . | awk 'NR==2{print int($4)}')
+          echo "free disk: ${free_gib} GiB"
+          if [ "$free_gib" -lt 150 ]; then
+            echo "::error::runner has ${free_gib} GiB free — the ALE docker profile needs ≥150 GiB (90 GB image + 44 GiB data archive + logs). Pick a bigger runner label."
+            exit 1
+          fi
+
+      # Same uv-managed python 3.13 as bench-mls.yml (typer-era note:
+      # never the runner's system 3.14). uv sync is the upstream
+      # canonical setup (README quickstart) — .venv for `uv run`.
+      - name: Install uv + host deps
+        working-directory: ale
+        run: |
+          export PATH="$HOME/.local/bin:$PATH"
+          command -v uv >/dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
+          export PATH="$HOME/.local/bin:$PATH"
+          uv sync --all-packages --locked
+          if sudo -n true 2>/dev/null; then
+            bash env/install_host_deps.sh || echo "::warning::install_host_deps.sh failed — env/verify_host_env.sh is the honest gate below"
+          else
+            echo "::warning::no passwordless sudo — skipping install_host_deps.sh; env/verify_host_env.sh is the honest gate below"
+          fi
+          bash env/verify_host_env.sh || true
+          uv run python -c 'import sys; print("ale python:", sys.version.split()[0])'
+
+      # Warm the pinned image BY DIGEST before shards start — a tag
+      # drift or registry hiccup costs one minute here, never
+      # shard-hours. Digest = releases/v1.1/assets.json (the provider's
+      # own baked docker_image pin).
+      - name: Preflight docker image (digest pin)
+        run: |
+          set -euo pipefail
+          docker pull agentslastexam/ale-ubuntu22-docker@sha256:0b223c5042bedfa78f37f17881f6b410aa3d745310b667e5dff62637363c5085
+
+      # Re-derive stage + plan deterministically from the pinned inputs
+      # (same files the plan job produced — allowlist order is stable at
+      # the pinned SHA).
+      - name: Stage deployer & re-derive shard experiment
+        env:
+          PROVIDER_TYPE: ${{ needs.plan.outputs.provider_type }}
+          PROVIDER_CONFIG: ${{ needs.plan.outputs.provider_config }}
+          PROVIDER_KEY_ENV: ${{ needs.plan.outputs.provider_key_env }}
+          BENCH_MODEL: ${{ needs.plan.outputs.bench_model }}
+          BUNDLE_URL: ${{ needs.plan.outputs.bundle_url }}
+          BUNDLE_SHA256: ${{ needs.plan.outputs.bundle_sha256 }}
+          SUBSET: ${{ inputs.subset }}
+          TASKS: ${{ inputs.tasks }}
+          ALE_SHA: ${{ inputs.ale-sha }}
+          CONFIRM_FULL: ${{ inputs.confirm-full }}
+          PROGRESS_EXTENSION: ${{ inputs.progress-extension }}
+          STALL_GAP_SEC: ${{ inputs.stall-gap-sec }}
+          ABS_CEILING_SEC: ${{ inputs.abs-ceiling-sec }}
+          EXTERNAL_CAP_SEC: ${{ inputs.external-cap-sec }}
+          SHARDS: ${{ inputs.shards }}
+          MAX_ATTEMPTS: ${{ inputs.max-attempts }}
+          FA_COMMIT: ${{ github.sha }}
+          PROVIDER: ${{ inputs.provider }}
+          JOB_INDEX: ${{ matrix.i }}
+        run: |
+          set -euo pipefail
+          stage_args=(--ale-root ale
+            --provider-type "$PROVIDER_TYPE"
+            --provider-config "$PROVIDER_CONFIG"
+            --model "$BENCH_MODEL"
+            --bundle-url "$BUNDLE_URL"
+            --bundle-sha256 "$BUNDLE_SHA256")
+          [ -n "$PROGRESS_EXTENSION" ] && stage_args+=(--progress-extension)
+          [ -n "$STALL_GAP_SEC" ] && stage_args+=(--stall-gap-sec "$STALL_GAP_SEC")
+          [ -n "$ABS_CEILING_SEC" ] && stage_args+=(--abs-ceiling-sec "$ABS_CEILING_SEC")
+          [ -n "$EXTERNAL_CAP_SEC" ] && stage_args+=(--external-cap-sec "$EXTERNAL_CAP_SEC")
+          python bench/ale/build_run.py stage "${stage_args[@]}"
+          plan_args=(--subset "$SUBSET"
+            --ale-root ale --ale-sha "$ALE_SHA" --no-check-pins
+            --shards "$SHARDS" --max-attempts "$MAX_ATTEMPTS"
+            --confirm-full "$CONFIRM_FULL"
+            --fa-commit "$FA_COMMIT"
+            --provider "$PROVIDER" --model "$BENCH_MODEL"
+            --bundle-url "$BUNDLE_URL" --bundle-sha256 "$BUNDLE_SHA256"
+            --out /tmp/plan-shard-output.txt --run-config-out /tmp/shard-run-config.json)
+          if [ "$SUBSET" = "tasks" ]; then
+            plan_args+=(--tasks "$TASKS")
+          fi
+          python bench/ale/build_run.py plan "${plan_args[@]}"
+          test -f "ale/exp-fa-shard-$JOB_INDEX.yaml"
+          test -f "ale/selected_tasks/fa-shard-$JOB_INDEX.txt"
+
+      # Gated task-data archive (44 GiB). Cached in a persistent HOME
+      # dir OUTSIDE the checkout: actions/checkout (clean: true) wipes
+      # everything untracked inside ale/ at the start of every job, so
+      # a checkout-internal marker can never hit — the archive would
+      # re-download on every shard (review gh-2081). The immutable
+      # revision is the cache key; the upstream script verifies
+      # revision + sha256 on every real fetch. The checkout only sees
+      # a symlink into the persistent dir.
+      - name: Fetch task data (pinned revision)
+        working-directory: ale
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          set -euo pipefail
+          rev="46225f1caa4f43c275cc06a5da47d886f64feb6c"
+          sha="a7fd6eafbffcebf393580c45ce7afa4908dcd1e2ceaabcebbc867e28c7cea0a2"
+          cache="$HOME/.cache/fa-ale-task-data"
+          mkdir -p "$cache"
+          if [ -f "$cache/task-data-v1.1/.fetched-revision" ] && [ "$(cat "$cache/task-data-v1.1/.fetched-revision")" = "$rev" ]; then
+            echo "task data already at pinned revision $rev — reusing persistent cache"
+          else
+            rm -rf "$cache/task-data-v1.1"
+            (cd "$cache" && bash "$GITHUB_WORKSPACE/ale/scripts/fetch_task_data.sh" --revision "$rev" --sha256 "$sha")
+            echo "$rev" > "$cache/task-data-v1.1/.fetched-revision"
+          fi
+          ln -sfn "$cache/task-data-v1.1" task-data-v1.1
+
+      # The experiment's secret_file (secret/.env) + the preset's
+      # ${env:FA_BENCH_*} resolve from this step's env — GitHub masks
+      # the raw secret; values are never echoed by us.
+      - name: Run ale_run (shard ${{ matrix.i }})
+        working-directory: ale
+        env:
+          API_KEY_ENV: ${{ needs.plan.outputs.provider_key_env }}
+          FA_BENCH_ZAI_KEY: ${{ secrets.FA_BENCH_ZAI_KEY }}
+          FA_BENCH_KIMI_KEY: ${{ secrets.FA_BENCH_KIMI_KEY }}
+          FA_BENCH_CUSTOM_KEY: ${{ secrets.FA_BENCH_CUSTOM_KEY }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          set -euo pipefail
+          key_value=""
+          case "$API_KEY_ENV" in
+            FA_KEY_API_Z_AI_Z_AI) key_value="$FA_BENCH_ZAI_KEY" ;;
+            FA_KEY_API_KIMI_COM_BENCH) key_value="$FA_BENCH_KIMI_KEY" ;;
+            FA_KEY_BENCH_CUSTOM) key_value="$FA_BENCH_CUSTOM_KEY" ;;
+          esac
+          [ -n "$key_value" ] || { echo "::error::provider key env $API_KEY_ENV resolved empty"; exit 1; }
+          umask 077
+          mkdir -p secret
+          # The preset references the CANONICAL secret env (config.py
+          # constant FA_BENCH_ZAI_KEY) — guarantee the selected
+          # provider's key always sits under that one name; the
+          # provider-specific child env line stays for fa's preconfig.
+          printf 'FA_BENCH_ZAI_KEY=%s\n%s=%s\nHF_TOKEN=%s\n' \
+            "$key_value" "$API_KEY_ENV" "$key_value" "$HF_TOKEN" > secret/.env
+          cmd="$(python "$GITHUB_WORKSPACE/bench/ale/build_run.py" command \
+            --ale-root . --exp "exp-fa-shard-${{ matrix.i }}.yaml")"
+          echo "+ $cmd"
+          eval "$cmd"
+
+      - name: Upload shard run logs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ale-shard-${{ matrix.i }}
+          path: ale/.logs/ale-shard-${{ matrix.i }}/
+          retention-days: 90
+          if-no-files-found: warn
+
+  summary:
+    name: Aggregate & submission bundle
+    needs: [plan, agent]
+    # A 5h-class run losing one shard is the EXPECTED failure mode —
+    # the verdict/bundle/diagnostics are needed exactly then, so this
+    # job must run even when a shard failed (gh-1658 C3 parity;
+    # bench-harbor.yml summary shape).
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # gh-1682: the ledger step commits the updated fa-results ledger +
+    # regenerated README table back to the repo. Job-level least
+    # privilege — the workflow default stays contents: read.
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: ale-shard-*
+          path: jobs/
+
+      # Verdict rules mirror bench-harbor's summary: a shard that
+      # contributed zero trials fails by name (gh-1658 C3); coverage is
+      # measured over the planned task set. The markdown lands in the
+      # run summary; the submission bundle (ALE's own run dirs —
+      # run.json + trajectory.json + eval_result.json per unit) rides
+      # the artifact. The official ALE Submit-Results form itself
+      # remains owner-gated: the Clerk-walled form's field list is
+      # pending (issue #1686 recon decision 2) — until the form fields
+      # are logged, this bundle is everything their docs describe as
+      # submittable evidence.
+      - name: Resolution summary & verdict
+        if: always()
+        env:
+          EXPECTED_TASKS: ${{ needs.plan.outputs.count }}
+          MATRIX_JSON: ${{ needs.plan.outputs.matrix }}
+          MODEL: ${{ needs.plan.outputs.bench_model }}
+          RUN_LABEL: ${{ needs.plan.outputs.run_label }}
+          FA_REF: ${{ github.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          expected_shards=$(printf '%s' "$MATRIX_JSON" | jq '.include | length')
+          status=0
+          python bench/ale/summary_ale.py jobs/* \
+            --expected-tasks "$EXPECTED_TASKS" \
+            --expected-shards "$expected_shards" \
+            --model "$MODEL" --run-label "$RUN_LABEL" \
+            --fa-ref "$FA_REF" --run-url "$RUN_URL" \
+            --json-summary ale-summary.json | tee "$GITHUB_STEP_SUMMARY" || status=$?
+          exit "$status"
+
+      - name: Upload submission bundle & summary
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: bench-ale-submission
+          path: |
+            jobs/
+            ale-summary.json
+          retention-days: 90
+
+      # gh-1682 parity: a COMPLETE full-allowlist run upserts the
+      # self-reported ledger row + regenerates the README table. Smoke
+      # and tasks-filtered dispatches never touch the ledger.
+      - name: Update leaderboard ledger & table
+        if: success() && inputs.tasks == '' && inputs.subset == 'docker'
+        env:
+          MODEL: ${{ needs.plan.outputs.bench_model }}
+          FA_REF: ${{ github.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          python bench/leaderboard/record.py --summary ale-summary.json
+          python bench/leaderboard/render.py
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add README.md bench/leaderboard
+          if git diff --cached --quiet; then
+            echo "leaderboard: ledger and table already up to date"
+          else
+            git commit -m "bench: leaderboard ledger update · ALE-v1.1-docker · ${MODEL} (gh-1686)"
+            git push origin "HEAD:${GITHUB_REF#refs/heads/}"
+          fi
