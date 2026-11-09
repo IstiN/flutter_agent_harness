@@ -24,10 +24,12 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import shutil
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import NoReturn
 
 ALE_REPO = "rdi-berkeley/agents-last-exam"
 DEFAULT_ALE_SHA = "2e91edd3cd26baa35a38127c90c8e5241dfbe62f"  # main, 2026-11-09
@@ -55,15 +57,134 @@ STAGED_PKG_DIR = "ale_run/agents/fa_code"
 PRESET_PATH = "configs/agents/fa.yaml"
 
 
-def _die(msg: str) -> "NoReturn":  # type: ignore[name-defined]
+def _die(msg: str) -> NoReturn:
     print(f"::error::{msg}", file=sys.stderr)
     raise SystemExit(2)
+
+
+# ── CodeQL taint barriers (gh-1686 review) ────────────────────────────────
+# The dispatch-supplied strings that flow into the two flagged sinks —
+# _die's log line and the staged preset file — are validated BEFORE any
+# of them can reach a sink, and each barrier returns only a value whose
+# shape proves it carries no credential material:
+#
+#   * --api-key-env / apiKeyEnvVar hold an env var NAME (the
+#     ${env:NAME} reference the ALE config_loader substitutes host-side
+#     at parse time); only an UPPER_SNAKE name passes. The key VALUE
+#     itself never crosses this CLI at all — fa reads it from its own
+#     env at runtime.
+#   * --provider-config is re-serialized field-by-field from the
+#     allowlisted set (same policy the gh-1471 resolve step enforces in
+#     the workflow — mirrored here so a stage invocation cannot bypass
+#     it): any off-whitelist field, any key-like field beyond
+#     apiKeyEnvVar, a non-https baseUrl, or a non-name apiKeyEnvVar
+#     refuses the stage. The preset therefore provably contains only
+#     the ${env:NAME} reference and key-free config fields.
+_ENV_NAME_RE = re.compile(r"[A-Z][A-Z0-9_]*\Z")
+_PROVIDER_CONFIG_KEYS = (
+    "baseUrl", "model", "apiKeyEnvVar", "contextWindow", "maxTokens",
+    "input", "thinkingLevel", "type",
+)
+# gh-1471 parity: whole-WORD match on the field name split into
+# camelCase/snake words — "maxTokens" (→ max, tokens) passes, while
+# "accessToken" (→ access, token) and "apiKey" are caught.
+_WORD_SPLIT_RE = re.compile(r"([a-z0-9])([A-Z])")
+_KEY_WORD_RE = re.compile(
+    r"^(api[_-]?key|apikey|key|token|secret|password|passwd|credential)$",
+    re.IGNORECASE,
+)
+_MODEL_RE = re.compile(r"[A-Za-z0-9._/+-]{1,100}\Z")
+_PROVIDER_TYPE_RE = re.compile(r"[a-z0-9_-]{1,64}\Z")
+_SHA256_RE = re.compile(r"[0-9a-f]{64}\Z")
+
+
+def _field_is_keylike(name: str) -> bool:
+    snake = _WORD_SPLIT_RE.sub(r"\1_\2", name)
+    words = [w.lower() for w in snake.replace("-", "_").split("_") if w]
+    return any(_KEY_WORD_RE.fullmatch(w) for w in words)
+
+
+def _validated_key_env_name(raw: str, flag: str) -> str:
+    if _ENV_NAME_RE.fullmatch(raw):
+        return raw
+    _die(f"{flag} must be an UPPER_SNAKE env var name (e.g. FA_BENCH_ZAI_KEY) — a value of any other shape cannot name an environment variable, so it is refused before it can reach a log line or the preset file")
+    raise AssertionError  # unreachable; keeps type checkers honest
+
+
+def _validated_provider_config(raw: str) -> str:
+    try:
+        obj = json.loads(raw)
+    except ValueError:
+        _die("--provider-config must be a JSON object")
+        raise AssertionError
+    if not isinstance(obj, dict):
+        _die("--provider-config must be a JSON object")
+    unsupported = sorted(k for k in obj if k not in _PROVIDER_CONFIG_KEYS)
+    if unsupported:
+        _die(
+            "--provider-config has unsupported key(s): "
+            + ", ".join(unsupported)
+            + " — supported: " + ", ".join(_PROVIDER_CONFIG_KEYS)
+        )
+    keylike = sorted(k for k in obj if k != "apiKeyEnvVar" and _field_is_keylike(k))
+    if keylike:
+        # Field NAMES matching key/token/secret/password are refused
+        # outright (e.g. a pasted "apiKey"/"token" field) — the sole
+        # key-worded field allowed is apiKeyEnvVar, and it must hold a
+        # NAME, not a value.
+        _die(
+            "--provider-config must not carry key material — offending "
+            "field name(s): " + ", ".join(keylike)
+            + "; the key comes only from the secret env the preset references"
+        )
+    rebuilt: dict = {}
+    for key in _PROVIDER_CONFIG_KEYS:
+        if key not in obj:
+            continue
+        value = obj[key]
+        if isinstance(value, str) and not value.strip():
+            continue  # blank = absent (the Dart preconfig's contract)
+        if key in ("contextWindow", "maxTokens") and (
+            not isinstance(value, int) or isinstance(value, bool)
+        ):
+            _die(f"--provider-config {key} must be an integer capability cap")
+        if key == "baseUrl":
+            if not isinstance(value, str) or not value.startswith("https://"):
+                _die("--provider-config baseUrl must start with https:// (a plaintext endpoint would expose the bench key)")
+        if key == "apiKeyEnvVar":
+            value = _validated_key_env_name(value, "--provider-config apiKeyEnvVar")
+        rebuilt[key] = value
+    return json.dumps(rebuilt, separators=(",", ":"), sort_keys=True)
+
+
+def _validated_stage_args(args: argparse.Namespace) -> argparse.Namespace:
+    """Validate every dispatch-supplied string that a sink consumes
+    (single funnel — cmd_stage runs this FIRST)."""
+    args.api_key_env = _validated_key_env_name(args.api_key_env, "--api-key-env")
+    args.provider_config = _validated_provider_config(args.provider_config)
+    if not _PROVIDER_TYPE_RE.fullmatch(args.provider_type):
+        _die("--provider-type must be a short lowercase provider id (e.g. zai, openai)")
+    if not _MODEL_RE.fullmatch(args.model):
+        _die("--model must be a plain model id (letters/digits/._/+-) — a newline or quote would break the preset YAML")
+    if not args.bundle_url.startswith("https://"):
+        _die("--bundle-url must be an https:// URL")
+    if args.bundle_sha256 and not _SHA256_RE.fullmatch(args.bundle_sha256):
+        _die("--bundle-sha256 must be 64 lowercase hex chars (the release SHA256SUMS value)")
+    for knob in ("stall_gap_sec", "abs_ceiling_sec", "external_cap_sec"):
+        value = getattr(args, knob)
+        if value is not None and (value <= 0 or value > 1e9):
+            _die(f"--{knob.replace('_', '-')} must be a positive second count")
+    return args
 
 
 # ─────────────────────────────────────────────────────────────── stage ────
 
 
 def cmd_stage(args: argparse.Namespace) -> int:
+    # Taint barrier FIRST: every sink-consumed string (the ::error log
+    # line below and the preset file write) is validated/normalized
+    # before any of them runs.
+    args = _validated_stage_args(args)
     ale = Path(args.ale_root)
     if not (ale / "ale_run" / "orchestration" / "factory.py").is_file():
         _die(f"not an agents-last-exam checkout: {ale} — pass --ale-root")
@@ -277,6 +398,9 @@ def _experiment_yaml(args: argparse.Namespace, index: int) -> str:
 
 
 def cmd_check_env(args: argparse.Namespace) -> int:
+    # Barrier first: the message below names the (validated) env var
+    # NAME only — a non-name value is refused before any log line.
+    args.api_key_env = _validated_key_env_name(args.api_key_env, "--api-key-env")
     missing = []
     if not os.environ.get(args.api_key_env):
         missing.append(args.api_key_env)

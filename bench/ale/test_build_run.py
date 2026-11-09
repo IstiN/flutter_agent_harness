@@ -171,7 +171,7 @@ class StageTest(unittest.TestCase):
             "api_key_env": "FA_BENCH_ZAI_KEY",
             "model": "glm-5.3-flash",
             "bundle_url": "https://example.com/fa-linux-x64.tar.gz",
-            "bundle_sha256": "cafebabe",
+            "bundle_sha256": "cafe" * 16,
             "tool_call_timeout_ms": 120000,
             "progress_extension": False,
             "stall_gap_sec": None,
@@ -212,7 +212,7 @@ class StageTest(unittest.TestCase):
         # Key material never rides the preset — only the env var NAME.
         self.assertNotIn("sk-", preset)
         self.assertIn("bundle_url: https://example.com/fa-linux-x64.tar.gz", preset)
-        self.assertIn("bundle_sha256: cafebabe", preset)
+        self.assertIn("bundle_sha256: " + "cafe" * 16, preset)
 
     def test_stage_knobs_landed_in_preset(self):
         self._stage(
@@ -226,6 +226,45 @@ class StageTest(unittest.TestCase):
     def test_stage_refuses_non_ale_root(self):
         with self.assertRaises(SystemExit):
             self._stage(ale_root=str(self.tmp.name))
+
+    # ── CodeQL taint barriers (gh-1686 review) ────────────────────────
+    # A password-shaped value supplied where an env var NAME belongs is
+    # refused BEFORE it can reach the ::error log line or the preset
+    # file — and nothing key-shaped ever reaches the preset.
+
+    def test_stage_refuses_keylike_api_key_env(self):
+        with self.assertRaises(SystemExit):
+            self._stage(api_key_env="sk-live-abcdefg")
+        # Refusal happens before any file write.
+        self.assertFalse(
+            (self.ale / "configs" / "agents" / "fa.yaml").exists()
+        )
+
+    def test_stage_refuses_keylike_field_in_provider_config(self):
+        for hostile in (
+            '{"baseUrl":"https://x","model":"m","apiKey":"sk-123"}',
+            '{"baseUrl":"https://x","model":"m","token":"tok-123"}',
+            '{"baseUrl":"https://x","model":"m","apiKeyEnvVar":"sk-123"}',
+            '{"baseUrl":"http://x","model":"m"}',
+            '{"baseUrl":"https://x","model":"m","mystery":"v"}',
+        ):
+            with self.subTest(hostile=hostile):
+                with self.assertRaises(SystemExit):
+                    self._stage(provider_config=hostile)
+        self.assertFalse(
+            (self.ale / "configs" / "agents" / "fa.yaml").exists()
+        )
+
+    def test_valid_provider_config_rebuilt_keyfree_into_preset(self):
+        self._stage(provider_config='{"baseUrl":"https://api.z.ai/v4","model":"glm-5.3-flash","apiKeyEnvVar":"FA_KEY_API_Z_AI_Z_AI","contextWindow":200000,"maxTokens":16384}')
+        preset = (self.ale / "configs" / "agents" / "fa.yaml").read_text()
+        # The api-key line is the ${env:NAME} reference — never a value.
+        self.assertIn('api_key: "${env:FA_BENCH_ZAI_KEY}"', preset)
+        self.assertNotIn("sk-", preset)
+        # The rebuilt, key-free config fields (escaped JSON in the YAML).
+        self.assertIn("FA_KEY_API_Z_AI_Z_AI", preset)
+        self.assertIn("https://api.z.ai/v4", preset)
+        self.assertIn("200000", preset)
 
 
 class CheckEnvTest(unittest.TestCase):
@@ -256,6 +295,10 @@ class CheckEnvTest(unittest.TestCase):
         self.assertEqual(self._check({"FA_BENCH_ZAI_KEY": "x"}), 0)
         with self.assertRaises(SystemExit):
             self._check({})
+
+    def test_refuses_keylike_name_before_any_log(self):
+        with self.assertRaises(SystemExit):
+            self._check({}, api_key_env="some secret value")
 
     def test_agent_stage_also_needs_hf_token(self):
         self.assertEqual(
