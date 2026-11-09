@@ -145,7 +145,6 @@ final class RemoteModelPricing {
   final double output;
 }
 
-
 /// The catalog endpoint — overridable via `fa1.dev/models-catalog-url`
 /// (the `models:` yaml section keys ride the same resolver) for staging
 /// or self-hosted mirrors.
@@ -176,6 +175,7 @@ Future<RemoteModelsCatalog?> fetchRemoteModelsCatalog({
     if (ownsClient) httpClient.close();
   }
 }
+
 /// Bundled fallback catalog — ships in-process so the picker still
 /// works when the remote URL is down (the user just reported "только
 /// одна m3 захардкожена" because the GitHub Pages site at fa1.dev
@@ -218,6 +218,31 @@ final RemoteModelsCatalog bundledRemoteModelsCatalog =
             'musicGeneration': ['music-3.0', 'music-2.6'],
             'speech': ['speech-2.8-hd', 'speech-2.6-hd'],
             'transcription': <String>[],
+          },
+        },
+        // AIIN (aiin.by) media ids — extracted from the live gateway's
+        // public `GET /v1/models` answer (`output_modalities` contains
+        // `image`; fetched 2026-11-09). Each id is the literal alias the
+        // endpoint accepts as `model`. The gateway serves
+        // `POST /v1/images/generations` (auth-gated 401, route present),
+        // so these ride the default OpenAI image dialect. Its
+        // `/v1/videos`, `/v1/audio/speech`, and `/v1/audio/transcriptions`
+        // routes do NOT exist (404 verified the same day) — the
+        // videoGeneration/audioTts/transcription slots stay manual-entry
+        // only for aiin, so no ids are seeded for them.
+        'aiin': {
+          'media': {
+            'imageGeneration': [
+              'google/gemini-3.1-flash-image',
+              'google/gemini-3-pro-image',
+              'google/gemini-nano-banana-2.1',
+              'google/gemini-2.5-flash-image',
+              'openai/gpt-5.4-image-2',
+              'siliconflow/black-forest-labs/FLUX.1-Kontext-pro',
+              'siliconflow/black-forest-labs/FLUX-1.1-pro',
+              'siliconflow/Qwen/Qwen-Image',
+              'siliconflow/Tongyi-MAI/Z-Image-Turbo',
+            ],
           },
         },
       },

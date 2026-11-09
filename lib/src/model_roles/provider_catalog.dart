@@ -82,11 +82,29 @@ final class ProviderSpec {
   /// The wire serves ONLY this spec's own [defaultBaseUrl]: the credentials
   /// are account-scoped (OAuth) and the endpoint dialect is not spoken by
   /// other hosts (`chatgpt-codex` — the Codex Responses wire on
-  /// chatgpt.com). A persisted provider/baseUrl PAIR pointing an
+  /// A persisted provider/baseUrl PAIR pointing an
   /// endpoint-locked kind elsewhere is not servable; the boot restore
   /// degrades the pair (loud warning + fallback) instead of refusing to
   /// boot or mis-resolving keys (gh-760 review).
   final bool endpointLocked;
+
+  /// Whether the media tools (image/video/tts/asr) can serve this provider
+  /// on its declared wire: [api] is the OpenAI completions wire AND media
+  /// requests authenticate with the plain Bearer key from [apiKeyEnvNames].
+  ///
+  /// Keyed on [api] — the wire the provider DECLARES — never on [kind]:
+  /// own-kind providers (minimax, zai, aiin) declare
+  /// `api: 'openai-completions'` and are exactly as media-eligible as the
+  /// shared kind (issue #2068 — the settings-hub media pickers used to
+  /// filter on kind, which hid aiin/zai behind their own kinds and needed
+  /// a per-provider carve-out for minimax). The two wire exceptions are
+  /// transports, not wires: `copilot` authenticates media calls through
+  /// its OAuth token exchange and `dial` through its Api-Key header —
+  /// neither is the Bearer key the media tools attach. This getter is the
+  /// ONE media-pickers eligibility rule; the settings flow reads it for
+  /// catalog entries and saved customs alike.
+  bool get mediaSlotEligible =>
+      api == 'openai-completions' && kind != 'copilot' && kind != 'dial';
 }
 
 /// The built-in provider table.

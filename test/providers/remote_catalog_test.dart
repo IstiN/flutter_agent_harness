@@ -562,5 +562,51 @@ void main() {
         expect(merged.$1, contains('image-01-live'));
       },
     );
+
+    test('bundledRemoteModelsCatalog ships the aiin image seeds (#2068)', () {
+      final aiin = bundledRemoteModelsCatalog.providers['aiin'];
+      expect(aiin, isNotNull);
+      // The verified image-generation ids (live /v1/models, 2026-11-09).
+      expect(
+        aiin!.media['imageGeneration'],
+        contains('google/gemini-3.1-flash-image'),
+      );
+      // No video/tts/asr routes exist on the gateway — nothing seeded.
+      expect(aiin.media['videoGeneration'], isNull);
+      expect(aiin.media['speech'], isNull);
+      expect(aiin.media['transcription'], isNull);
+    });
+
+    test(
+      'aiin media merge answers the seeded ids, not the chat ids (#2068)',
+      () {
+        final merged = mergeWithRemoteCatalog(
+          endpointInfo: (
+            const <String>['aiin/aiin_free', 'aiin/aiin_flash'],
+            const <String, int>{},
+            const <String, int>{},
+          ),
+          providerKind: 'aiin',
+          catalog: bundledRemoteModelsCatalog,
+          mediaSlot: const ['imageGeneration'],
+        );
+        expect(merged.$1, contains('google/gemini-3.1-flash-image'));
+        expect(merged.$1, isNot(contains('aiin/aiin_free')));
+        expect(merged.$1, isNot(contains('aiin/aiin_flash')));
+        // An unseeded slot (the gateway serves no /videos route) stays
+        // empty — the picker falls through to manual entry.
+        final video = mergeWithRemoteCatalog(
+          endpointInfo: (
+            const <String>['aiin/aiin_free'],
+            const <String, int>{},
+            const <String, int>{},
+          ),
+          providerKind: 'aiin',
+          catalog: bundledRemoteModelsCatalog,
+          mediaSlot: const ['videoGeneration'],
+        );
+        expect(video.$1, isEmpty);
+      },
+    );
   });
 }
