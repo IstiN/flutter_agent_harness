@@ -37,6 +37,7 @@ jobs:
           python-version: '3.x'
       - run: dart pub get
 
+      - uses: ./.github/actions/sqlite3-native-assets-prewarm
       - name: Run PTY/CLI integration suites with coverage
         env:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
