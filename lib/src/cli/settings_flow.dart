@@ -105,31 +105,31 @@ extension SettingsFlow on AgentCli {
   /// The provider list of [_pickProviderStep]: saved custom entries first
   /// (`saved:<name>` keys), then the catalog (`catalog:<name>` keys),
   /// optionally restricted to the wire format the media tools speak.
-  /// "OpenAI-compatible" is read as "any provider whose media tools can
-  /// ride the same OpenAI completions wire" — that includes MiniMax
-  /// (its image/video/music/tts/asr endpoints all use Bearer + JSON, the
-  /// same shape the OpenAI adapter speaks) and the literal
-  /// `openai-completions` catalog kind. Without this opt-in a MiniMax
-  /// entry never shows up in the media picker (the user just reported
-  /// exactly that).
+  /// "OpenAI-compatible" is read as the DECLARED wire
+  /// ([ProviderSpec.mediaSlotEligible] — [ProviderSpec.api] plus the
+  /// Bearer-key transport check), never the identity kind: own-kind
+  /// providers (minimax, zai, aiin) declare `api: 'openai-completions'`
+  /// and are media-eligible exactly like the shared kind. The old
+  /// kind-keyed allowlist (`openai-completions` + a hardcoded `minimax`)
+  /// hid every next own-kind provider from the media pickers (issue
+  /// #2068: aiin invisible despite chat working; the minimax carve-out
+  /// was the same bug patched one provider at a time).
   List<FlowOption> _providerFlowOptions(
     List<CustomProviderEntry> saved, {
     required bool openAiCompatibleOnly,
   }) {
-    bool mediaOk(String kind) =>
-        !openAiCompatibleOnly ||
-        kind == _factoryProviderKind ||
-        kind == 'minimax';
+    bool mediaOk(ProviderSpec spec) =>
+        !openAiCompatibleOnly || spec.mediaSlotEligible;
     return [
       for (final entry in saved)
-        if (mediaOk(entry.spec.kind))
+        if (mediaOk(entry.spec))
           (
             'saved:${entry.name}',
             entry.name,
             '${entry.baseUrl} · ${entry.modelId}',
           ),
       for (final spec in enabledProviders())
-        if (mediaOk(spec.kind))
+        if (mediaOk(spec))
           ('catalog:${spec.name}', spec.name, spec.defaultBaseUrl),
     ];
   }
@@ -148,9 +148,14 @@ extension SettingsFlow on AgentCli {
     String? token,
     String? mediaSlot,
   }) async {
-    if (spec.kind == _factoryProviderKind ||
-        spec.kind == 'minimax' ||
-        spec.name == 'dial') {
+    // The declared wire decides the fetch: every openai-completions spec
+    // (shared kind, minimax/zai/aiin own kinds, copilot's OAuth dialect —
+    // dispatched per provider inside _fetchProviderModelIds) offers its
+    // real `/models` list; DIAL rides the same check (its api is the
+    // completions wire and its deployments dispatch is name-keyed there).
+    // The old kind-keyed check hid aiin/zai behind manual entry (issue
+    // #2068).
+    if (spec.api == _factoryProviderKind) {
       io.writeln('fetching models from $baseUrl ...');
       final models = await _fetchModelsForFlow(
         spec,
