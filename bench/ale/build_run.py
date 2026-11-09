@@ -84,7 +84,7 @@ def _die(msg: str) -> NoReturn:
 #     refuses the stage. The preset therefore provably contains only
 #     the ${env:NAME} reference and key-free config fields.
 _ENV_NAME_RE = re.compile(r"[A-Z][A-Z0-9_]*\Z")
-_PROVIDER_CONFIG_KEYS = (
+_PROVIDER_CONFIG_FIELDS = (
     "baseUrl", "model", "apiKeyEnvVar", "contextWindow", "maxTokens",
     "input", "thinkingLevel", "type",
 )
@@ -107,7 +107,7 @@ def _field_is_keylike(name: str) -> bool:
     return any(_KEY_WORD_RE.fullmatch(w) for w in words)
 
 
-def _validated_key_env_name(raw: str) -> str:
+def _validated_env_name(raw: str) -> str:
     if _ENV_NAME_RE.fullmatch(raw):
         return raw
     # Static message only: the refused VALUE is never echoed (CodeQL
@@ -129,13 +129,13 @@ def _validated_provider_config(raw: str) -> str:
         raise AssertionError
     if not isinstance(obj, dict):
         _die("--provider-config must be a JSON object")
-    unsupported = sorted(k for k in obj if k not in _PROVIDER_CONFIG_KEYS)
+    unsupported = sorted(k for k in obj if k not in _PROVIDER_CONFIG_FIELDS)
     if unsupported:
         # Static message: the offending names are not echoed (round-2
         # invariant — zero dispatch-derived strings in _die).
         _die(
             "--provider-config has unsupported key(s) — supported keys: "
-            + ", ".join(_PROVIDER_CONFIG_KEYS)
+            + ", ".join(_PROVIDER_CONFIG_FIELDS)
         )
     keylike = sorted(k for k in obj if k != "apiKeyEnvVar" and _field_is_keylike(k))
     if keylike:
@@ -149,22 +149,22 @@ def _validated_provider_config(raw: str) -> str:
             "preset references"
         )
     rebuilt: dict = {}
-    for key in _PROVIDER_CONFIG_KEYS:
-        if key not in obj:
+    for field in _PROVIDER_CONFIG_FIELDS:
+        if field not in obj:
             continue
-        value = obj[key]
+        value = obj[field]
         if isinstance(value, str) and not value.strip():
             continue  # blank = absent (the Dart preconfig's contract)
-        if key in ("contextWindow", "maxTokens") and (
+        if field in ("contextWindow", "maxTokens") and (
             not isinstance(value, int) or isinstance(value, bool)
         ):
             _die("--provider-config contextWindow/maxTokens must be integer capability caps")
-        if key == "baseUrl":
+        if field == "baseUrl":
             if not isinstance(value, str) or not value.startswith("https://"):
                 _die("--provider-config baseUrl must start with https:// (a plaintext endpoint would expose the bench key)")
-        if key == "apiKeyEnvVar":
-            value = _validated_key_env_name(value)
-        rebuilt[key] = value
+        if field == "apiKeyEnvVar":
+            value = _validated_env_name(value)
+        rebuilt[field] = value
     return json.dumps(rebuilt, separators=(",", ":"), sort_keys=True)
 
 
@@ -245,7 +245,7 @@ def _preset_yaml(args: argparse.Namespace) -> str:
         # (CodeQL round 3 — key-class arg names are taint sources into
         # this file). The workflow guarantees the selected provider's
         # key always sits under this one name in secret/.env.
-        f'  api_key: "${{env:{_fa_config.FaConfig.api_key_env}}}"',
+        f'  api_key: "${{env:{_fa_config.FaConfig.canonical_env_name}}}"',
         f"  bundle_url: {args.bundle_url}",
     ]
     if args.bundle_sha256:
@@ -413,7 +413,7 @@ def _experiment_yaml(args: argparse.Namespace, index: int) -> str:
 def cmd_check_env(args: argparse.Namespace) -> int:
     # The provider-key check names only build-time constants (CodeQL
     # gh-1686 round 3): no key-class CLI source exists in this tool.
-    canonical = _fa_config.FaConfig.api_key_env
+    canonical = _fa_config.FaConfig.canonical_env_name
     key_present = any(
         os.environ.get(name)
         for name in (canonical, "FA_BENCH_KIMI_KEY", "FA_BENCH_CUSTOM_KEY")

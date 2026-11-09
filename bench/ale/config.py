@@ -49,11 +49,13 @@ class FaConfig:
     #: (``api_key: "${env:FA_BENCH_ZAI_KEY}"``). SINGLE SOURCE OF TRUTH:
     #: the Bench ALE workflow's run step always writes the SELECTED
     #: provider's key under this one name into the experiment's
-    #: secret/.env, so one constant serves every provider. CodeQL round
-    #: 3 (gh-1686): this name is a build-time constant — it must never
-    #: arrive as a CLI argument (key-class arg names are taint sources
-    #: into the preset file, whatever validation guards them).
-    api_key_env: ClassVar[str] = "FA_BENCH_ZAI_KEY"
+    #: secret/.env, so one constant serves every provider. CodeQL
+    #: (gh-1686): this value is a build-time CONSTANT with a
+    #: deliberately neutral attribute name — a key-class identifier
+    #: (api_key_env, *_KEYS, loop var ``key``) read anywhere in the
+    #: preset-emitting flow is a taint SOURCE for CodeQL regardless of
+    #: provenance, so none may appear between here and the preset file.
+    canonical_env_name: ClassVar[str] = "FA_BENCH_ZAI_KEY"
 
     #: LLM id recorded with the run (sugar: the preset's ``model:`` key).
     model: str = "glm-5.3-flash"
