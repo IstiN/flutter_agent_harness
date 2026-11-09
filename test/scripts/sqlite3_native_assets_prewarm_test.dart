@@ -717,5 +717,56 @@ void main() {
       // exception (raw dart crash, no trailer) is the defect shape.
       expect(result.stderr, isNot(contains('Unhandled exception')));
     });
+
+    test(
+      'AC13: valid-JSON-wrong-shape package_config.json variants fail '
+      'through the PREWARM FAILED trailer too, not a raw stack trace',
+      () async {
+        // gh-2072 review thread 18: the round-2 try owned only the decode
+        // plus the root-object cast, so a config that IS valid JSON but has
+        // the wrong member shapes leaked raw `Unhandled exception`
+        // TypeErrors from the member casts below it (`packages` not a
+        // list / missing, a scalar list entry, a malformed sqlite3 entry).
+        // The uniform-error contract covers all four shapes.
+        final shapes = <String, String>{
+          'packages is a string':
+              '{"configVersion": 2, "packages": "not-a-list"}',
+          'packages member missing': '{"configVersion": 2}',
+          'a scalar entry in packages':
+              '{"configVersion": 2, "packages": [42]}',
+          'sqlite3 entry without rootUri':
+              '{"configVersion": 2, "packages": [{"name": "sqlite3"}]}',
+        };
+        for (final shape in shapes.entries) {
+          final pkg = await fixturePackage(
+            sandbox,
+            assetHashes: {
+              'libsqlite3.x64.linux.so': sha('C', utf8.encode('x')),
+            },
+          );
+          File(
+            '${pkg.path}/.dart_tool/package_config.json',
+          ).writeAsStringSync(shape.value);
+          final result = await runScript(['--package-root', pkg.path]);
+          expect(result.exitCode, isNot(0), reason: shape.key);
+          expect(result.stderr, contains('PREWARM FAILED'), reason: shape.key);
+          expect(
+            result.stderr,
+            contains('unexpected shape'),
+            reason: shape.key,
+          );
+          expect(
+            result.stderr,
+            contains('re-run `dart pub get`'),
+            reason: shape.key,
+          );
+          expect(
+            result.stderr,
+            isNot(contains('Unhandled exception')),
+            reason: '${shape.key}: ${result.stderr}',
+          );
+        }
+      },
+    );
   });
 }

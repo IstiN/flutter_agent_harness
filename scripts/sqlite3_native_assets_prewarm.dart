@@ -550,20 +550,35 @@ Future<List<String>> prewarmPackageRoot({
       '(not a JSON object) — re-run `dart pub get`',
     );
   }
-  final packages = config['packages'] as List<Object?>;
+  // The WHOLE parse block owns the same contract (gh-2072 review thread
+  // 18): a config that IS valid JSON but carries a wrong member shape
+  // (`packages` missing / not a list, a scalar list entry, a malformed
+  // sqlite3 entry) throws TypeError from these raw casts exactly like a
+  // truncated file throws FormatException above — both must surface
+  // through the PREWARM FAILED trailer, never a raw stack trace.
   Map<String, Object?>? sqliteEntry;
-  for (final pkg in packages) {
-    final entry = pkg as Map<String, Object?>;
-    if (entry['name'] == 'sqlite3') {
-      sqliteEntry = entry;
-      break;
+  final String rootUri;
+  try {
+    final packages = config['packages'] as List<Object?>;
+    for (final pkg in packages) {
+      final entry = pkg as Map<String, Object?>;
+      if (entry['name'] == 'sqlite3') {
+        sqliteEntry = entry;
+        break;
+      }
     }
+    if (sqliteEntry == null) {
+      log('$root: sqlite3 not in the package graph — no prewarm needed');
+      return const [];
+    }
+    rootUri = sqliteEntry['rootUri'] as String;
+  } on TypeError catch (e) {
+    throw PrewarmException(
+      '$root/.dart_tool/package_config.json has an unexpected shape '
+      '(valid JSON, wrong member types — interrupted pub get?) — '
+      're-run `dart pub get`: $e',
+    );
   }
-  if (sqliteEntry == null) {
-    log('$root: sqlite3 not in the package graph — no prewarm needed');
-    return const [];
-  }
-  final rootUri = sqliteEntry['rootUri'] as String;
   final base = Directory('$root/.dart_tool').uri;
   var sqliteRoot = base.resolve(rootUri).toFilePath();
   if (sqliteRoot.endsWith('/')) {
