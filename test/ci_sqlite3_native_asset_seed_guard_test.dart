@@ -113,12 +113,19 @@ void main() {
     });
 
     test('seed runs after the min-platform gate, before the release build', () {
-      final lines = steps.map(runOf).toList();
-      final gate = lines.indexWhere((l) => l.contains('assert_macos_min_platform'));
-      final seed = lines.indexWhere((l) => l.contains('seed_sqlite3_native_assets.sh'));
-      final release = lines.indexWhere(
-        (l) => l.contains('flutter build macos --release'),
-      );
+      // Steps AND the lines inside a step, in order — the gate and the
+      // seed intentionally share the release build step (the seed must
+      // run inside it: `flutter clean` wipes .dart_tool mid-step).
+      final combined = StringBuffer();
+      for (final step in steps) {
+        combined
+          ..writeln(runOf(step))
+          ..writeln((step['working-directory'] ?? '').toString());
+      }
+      final text = combined.toString();
+      final gate = text.indexOf('assert_macos_min_platform');
+      final seed = text.indexOf('seed_sqlite3_native_assets.sh');
+      final release = text.indexOf('flutter build macos --release');
       expect(gate, greaterThanOrEqualTo(0), reason: 'gate step must exist');
       expect(release, greaterThanOrEqualTo(0), reason: 'release build must exist');
       expect(
