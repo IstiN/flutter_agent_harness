@@ -432,7 +432,6 @@ jobs:
           stage_args=(--ale-root ale
             --provider-type "$PROVIDER_TYPE"
             --provider-config "$PROVIDER_CONFIG"
-            --api-key-env "$PROVIDER_KEY_ENV"
             --model "$BENCH_MODEL"
             --bundle-url "$BUNDLE_URL"
             --bundle-sha256 "$BUNDLE_SHA256")
@@ -563,7 +562,6 @@ jobs:
           stage_args=(--ale-root ale
             --provider-type "$PROVIDER_TYPE"
             --provider-config "$PROVIDER_CONFIG"
-            --api-key-env "$PROVIDER_KEY_ENV"
             --model "$BENCH_MODEL"
             --bundle-url "$BUNDLE_URL"
             --bundle-sha256 "$BUNDLE_SHA256")
@@ -628,7 +626,12 @@ jobs:
           [ -n "$key_value" ] || { echo "::error::provider key env $API_KEY_ENV resolved empty"; exit 1; }
           mkdir -p secret
           umask 077
-          printf '%s=%s\nHF_TOKEN=%s\n' "$API_KEY_ENV" "$key_value" "$HF_TOKEN" > secret/.env
+          # The preset references the CANONICAL secret env (config.py
+          # constant FA_BENCH_ZAI_KEY) — guarantee the selected
+          # provider's key always sits under that one name; the
+          # provider-specific child env line stays for fa's preconfig.
+          printf 'FA_BENCH_ZAI_KEY=%s\n%s=%s\nHF_TOKEN=%s\n' \
+            "$key_value" "$API_KEY_ENV" "$key_value" "$HF_TOKEN" > secret/.env
           cmd="$(python "$GITHUB_WORKSPACE/bench/ale/build_run.py" command \
             --ale-root . --exp "exp-fa-shard-${{ matrix.i }}.yaml")"
           echo "+ $cmd"

@@ -168,7 +168,6 @@ class StageTest(unittest.TestCase):
             "ale_root": str(self.ale),
             "provider_type": "zai",
             "provider_config": '{"baseUrl":"https://x","model":"m","apiKeyEnvVar":"FA_KEY_API_Z_AI_Z_AI"}',
-            "api_key_env": "FA_BENCH_ZAI_KEY",
             "model": "glm-5.3-flash",
             "bundle_url": "https://example.com/fa-linux-x64.tar.gz",
             "bundle_sha256": "cafe" * 16,
@@ -232,10 +231,17 @@ class StageTest(unittest.TestCase):
     # refused BEFORE it can reach the ::error log line or the preset
     # file — and nothing key-shaped ever reaches the preset.
 
-    def test_stage_refuses_keylike_api_key_env(self):
+    def test_stage_rejects_removed_api_key_env_flag(self):
+        # CodeQL round 3: the env-var NAME is a config.py constant — the
+        # flag no longer exists, so a caller passing it dies at argparse
+        # (fail-loud) before any code runs.
         with self.assertRaises(SystemExit):
-            self._stage(api_key_env="sk-live-abcdefg")
-        # Refusal happens before any file write.
+            build_run.main([
+                "stage", "--ale-root", str(self.ale),
+                "--provider-config", '{"baseUrl":"https://x","model":"m"}',
+                "--api-key-env", "FA_BENCH_ZAI_KEY",
+                "--bundle-url", "https://x/y.tar.gz",
+            ])
         self.assertFalse(
             (self.ale / "configs" / "agents" / "fa.yaml").exists()
         )
@@ -268,7 +274,7 @@ class StageTest(unittest.TestCase):
 
 
 class CheckEnvTest(unittest.TestCase):
-    def _check(self, env, stage="plan", api_key_env="FA_BENCH_ZAI_KEY"):
+    def _check(self, env, stage="plan"):
         old = {k: os.environ.get(k) for k in ("FA_BENCH_ZAI_KEY", "HF_TOKEN")}
         try:
             for key, value in old.items():
@@ -280,7 +286,6 @@ class CheckEnvTest(unittest.TestCase):
 
             ns = _Ns()
             ns.stage = stage
-            ns.api_key_env = api_key_env
             ns.func = build_run.cmd_check_env
             ns.cmd = "check-env"
             return build_run.cmd_check_env(ns)
@@ -296,9 +301,9 @@ class CheckEnvTest(unittest.TestCase):
         with self.assertRaises(SystemExit):
             self._check({})
 
-    def test_refuses_keylike_name_before_any_log(self):
+    def test_check_env_rejects_removed_api_key_env_flag(self):
         with self.assertRaises(SystemExit):
-            self._check({}, api_key_env="some secret value")
+            build_run.main(["check-env", "--api-key-env", "FA_BENCH_ZAI_KEY"])
 
     def test_agent_stage_also_needs_hf_token(self):
         self.assertEqual(

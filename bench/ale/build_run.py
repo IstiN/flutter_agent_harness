@@ -31,6 +31,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import NoReturn
 
+# Same directory (script dir / discovery root is on sys.path). The
+# canonical bench secret env lives there as the single source of truth.
+import config as _fa_config
+
 ALE_REPO = "rdi-berkeley/agents-last-exam"
 DEFAULT_ALE_SHA = "2e91edd3cd26baa35a38127c90c8e5241dfbe62f"  # main, 2026-11-09
 
@@ -167,7 +171,6 @@ def _validated_provider_config(raw: str) -> str:
 def _validated_stage_args(args: argparse.Namespace) -> argparse.Namespace:
     """Validate every dispatch-supplied string that a sink consumes
     (single funnel — cmd_stage runs this FIRST)."""
-    args.api_key_env = _validated_key_env_name(args.api_key_env)
     args.provider_config = _validated_provider_config(args.provider_config)
     if not _PROVIDER_TYPE_RE.fullmatch(args.provider_type):
         _die("--provider-type must be a short lowercase provider id (e.g. zai, openai)")
@@ -238,7 +241,11 @@ def _preset_yaml(args: argparse.Namespace) -> str:
         "config:",
         f"  provider_type: {args.provider_type}",
         f"  provider_config: {json.dumps(args.provider_config)}",
-        f"  api_key: \"${{env:{args.api_key_env}}}\"",
+        # Canonical secret env: config.py CONSTANT, never a CLI arg
+        # (CodeQL round 3 — key-class arg names are taint sources into
+        # this file). The workflow guarantees the selected provider's
+        # key always sits under this one name in secret/.env.
+        f'  api_key: "${{env:{_fa_config.FaConfig.api_key_env}}}"',
         f"  bundle_url: {args.bundle_url}",
     ]
     if args.bundle_sha256:
@@ -404,15 +411,19 @@ def _experiment_yaml(args: argparse.Namespace, index: int) -> str:
 
 
 def cmd_check_env(args: argparse.Namespace) -> int:
-    # CodeQL gh-1686 round 2: args.api_key_env is sensitive-by-name —
-    # it is USED (the env lookup below) but must never reach a _die
-    # message or any log line. Both failure messages are static.
-    key_present = bool(os.environ.get(args.api_key_env))
+    # The provider-key check names only build-time constants (CodeQL
+    # gh-1686 round 3): no key-class CLI source exists in this tool.
+    canonical = _fa_config.FaConfig.api_key_env
+    key_present = any(
+        os.environ.get(name)
+        for name in (canonical, "FA_BENCH_KIMI_KEY", "FA_BENCH_CUSTOM_KEY")
+    )
     hf_present = bool(os.environ.get("HF_TOKEN"))
     if not key_present:
         _die(
-            "provider key secret missing — provision the FA_BENCH_* key "
-            "selected by the provider resolve as a repo secret (docs/bench.md)"
+            "provider key secret missing — provision one of FA_BENCH_ZAI_KEY "
+            "/ FA_BENCH_KIMI_KEY / FA_BENCH_CUSTOM_KEY as a repo secret "
+            "(docs/bench.md)"
         )
     if args.stage != "plan" and not hf_present:
         _die(
@@ -445,7 +456,6 @@ def main(argv: list[str] | None = None) -> int:
     stage.add_argument("--ale-root", default="ale")
     stage.add_argument("--provider-type", default="zai")
     stage.add_argument("--provider-config", required=True)
-    stage.add_argument("--api-key-env", default="FA_BENCH_ZAI_KEY")
     stage.add_argument("--model", default="glm-5.3-flash")
     stage.add_argument("--bundle-url", required=True)
     stage.add_argument("--bundle-sha256", default="")
@@ -477,13 +487,6 @@ def main(argv: list[str] | None = None) -> int:
 
     check = sub.add_parser("check-env", help="fail fast on missing secrets")
     check.add_argument("--stage", choices=["plan", "agent"], default="plan")
-    check.add_argument(
-        "--api-key-env",
-        default="FA_BENCH_ZAI_KEY",
-        help="the env var carrying the provider key in THIS shell — "
-        "the GH secret name (FA_BENCH_*) for the workflow preflight, "
-        "or the resolved key env name if you export it directly",
-    )
     check.set_defaults(func=cmd_check_env)
 
     command = sub.add_parser("command", help="emit the shard's ale_run command")
