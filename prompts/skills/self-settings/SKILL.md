@@ -268,6 +268,10 @@ models:                        # media slots + named custom models
     audioTts:
       useMainConnection: true    # explicit per-slot opt-in: this slot is
                                  # served by the main connection itself
+    musicGeneration:
+      unsupported: true          # explicit per-slot opt-OUT (issue #2085):
+                                 # the capability is removed — media tools
+                                 # refuse the slot, pickers stop suggesting it
   custom:
     fast:
       provider: openai
@@ -289,8 +293,12 @@ and the stall line names the override (`idle window 1800s (role default
 override)`) so a wide window never reads as a hang.
 
 Media slot names (exact): `imageGeneration`, `audioTts`, `musicGeneration`,
-`videoGeneration`, `vision`, `transcription`. A slot without an override falls
-back to the main connection.
+`videoGeneration`, `vision`, `transcription`. A slot without an override is
+UNCONFIGURED — media calls fail with an actionable "configure the slot"
+error; the main connection serves a slot only through the explicit
+`useMainConnection: true` opt-in, and `unsupported: true` removes the
+capability entirely (media tools refuse the slot, the pickers drop it from
+capability hints).
 
 The `images:` section has no settings-hub editor — the registry is runtime
 state, not a persisted setting: `/images` (CLI) and the app's image-drop

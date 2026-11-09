@@ -44,10 +44,44 @@ Future<void> _open(WidgetTester tester) async {
   await tester.pumpAndSettle();
 }
 
+/// Pumps an "open" button that pushes the imageGeneration model page UNDER
+/// [store]'s scope (the scope sits above MaterialApp so the pushed route
+/// sees it, like the app shell) — the capability chips read the scope.
+Future<void> _pumpScopedModelPage(WidgetTester tester, MediaModelsStore store) {
+  return tester.pumpWidget(
+    MediaModelsScope(
+      store: store,
+      child: MaterialApp(
+        home: Builder(
+          builder: (context) => Scaffold(
+            body: FilledButton(
+              onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => const MediaSlotModelPage(
+                    slot: MediaSlot.imageGeneration,
+                    provider: ProviderPreset.openrouter,
+                    modelsFetcher: _someModels,
+                  ),
+                ),
+              ),
+              child: const Text('open'),
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
 void main() {
   group('MediaSlotProviderPickerPage', () {
     testWidgets('renders the main connection, presets, custom providers and '
         'the add row; the override provider is checked', (tester) async {
+      // The #2085 Unsupported row joined the list — a taller surface keeps
+      // every row built (the lazy ListView builds visible children only).
+      tester.view.physicalSize = const Size(800, 1400);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
       final registry = ProviderRegistry.inMemory();
       await registry.add(
         name: 'Acme',
@@ -265,6 +299,40 @@ void main() {
             .text,
         'dall-e-3',
       );
+    });
+
+    testWidgets('capability chips drop slots marked unsupported (#2085)', (
+      tester,
+    ) async {
+      // _someModels suggests imageGeneration (gpt-image-1, dall-e-3) and
+      // vision (gpt-4o). Control: without the unsupported mark both chips
+      // show.
+      final plain = MediaModelsStore.inMemory();
+      await _pumpScopedModelPage(tester, plain);
+      await _open(tester);
+      expect(find.text('Image generation'), findsOneWidget);
+      expect(find.text('Vision (image reading)'), findsOneWidget);
+    });
+
+    testWidgets('a marked-unsupported slot loses its capability chip (#2085)', (
+      tester,
+    ) async {
+      // Marking vision unsupported drops ONLY its chip — the removed
+      // capability is not re-advertised by the provider's model ids.
+      final store = MediaModelsStore.inMemory();
+      await store.setOverride(
+        MediaSlot.vision,
+        const MediaSlotOverride(
+          providerKind: '',
+          baseUrl: '',
+          modelId: '',
+          unsupported: true,
+        ),
+      );
+      await _pumpScopedModelPage(tester, store);
+      await _open(tester);
+      expect(find.text('Image generation'), findsOneWidget);
+      expect(find.text('Vision (image reading)'), findsNothing);
     });
 
     testWidgets('a hosted preset save maps to its well-known key name', (

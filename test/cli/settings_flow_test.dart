@@ -317,11 +317,15 @@ void main() {
 
     final flow = cli.startMediaSlotFlow();
     await waitForIt(() => io.out.toString().contains('media slot'));
-    // No overrides yet: every slot falls back to the main connection.
+    // No overrides yet: every slot shows unconfigured (never an inherited
+    // main endpoint — gh-1844).
     await waitForIt(
-      () => io.out.toString().contains('1) imageGeneration — main connection'),
+      () => io.out.toString().contains('1) imageGeneration — not configured'),
     );
     io.sendLine('1'); // imageGeneration
+    // The #2085 action step: pick a model → the provider list.
+    await waitForIt(() => io.out.toString().contains('Pick a model'));
+    io.sendLine('1');
     await waitForIt(
       () => io.out.toString().contains('media imageGeneration — provider'),
     );
@@ -379,6 +383,9 @@ void main() {
     final flow = cli.startMediaSlotFlow();
     await waitForIt(() => io.out.toString().contains('media slot'));
     io.sendLine('4'); // videoGeneration
+    // The #2085 action step: pick a model → the provider list.
+    await waitForIt(() => io.out.toString().contains('Pick a model'));
+    io.sendLine('1');
     await waitForIt(
       () => io.out.toString().contains('media videoGeneration — provider'),
     );
@@ -423,6 +430,9 @@ void main() {
     final flow = cli.startMediaSlotFlow();
     await waitForIt(() => io.out.toString().contains('media slot'));
     io.sendLine(slotKey);
+    // The #2085 action step: pick a model → the provider list.
+    await waitForIt(() => io.out.toString().contains('Pick a model'));
+    io.sendLine('1');
     // The prompt and its option list render in one write burst — assert
     // both off the whole (fresh-io) buffer.
     await waitForIt(
@@ -512,6 +522,9 @@ void main() {
       final flow = cli.startMediaSlotFlow();
       await waitForIt(() => io.out.toString().contains('media slot'));
       io.sendLine('1'); // imageGeneration
+      // The #2085 action step: pick a model → the provider list.
+      await waitForIt(() => io.out.toString().contains('Pick a model'));
+      io.sendLine('1');
       await waitForIt(
         () => io.out.toString().contains('media imageGeneration — provider'),
       );
@@ -559,6 +572,9 @@ void main() {
       final flow = cli.startMediaSlotFlow();
       await waitForIt(() => io.out.toString().contains('media slot'));
       io.sendLine('1'); // imageGeneration
+      // The #2085 action step: pick a model → the provider list.
+      await waitForIt(() => io.out.toString().contains('Pick a model'));
+      io.sendLine('1');
       await waitForIt(
         () => io.out.toString().contains('media imageGeneration — provider'),
       );
@@ -612,6 +628,9 @@ void main() {
       final flow = cli.startMediaSlotFlow();
       await waitForIt(() => io.out.toString().contains('media slot'));
       io.sendLine('1'); // imageGeneration
+      // The #2085 action step: pick a model → the provider list.
+      await waitForIt(() => io.out.toString().contains('Pick a model'));
+      io.sendLine('1');
       await waitForIt(
         () => io.out.toString().contains('media imageGeneration — provider'),
       );
@@ -731,6 +750,9 @@ void main() {
     final flow = cli.startMediaSlotFlow();
     await waitForIt(() => io.out.toString().contains('media slot'));
     io.sendLine('1'); // imageGeneration
+    // The #2085 action step: pick a model → the provider list.
+    await waitForIt(() => io.out.toString().contains('Pick a model'));
+    io.sendLine('1');
     await waitForIt(
       () => io.out.toString().contains('media imageGeneration — provider'),
     );
@@ -742,6 +764,122 @@ void main() {
 
     expect(models.slots, isEmpty);
     expect(persisted, 0);
+    expect(fake.calls, 0);
+  });
+
+  test(
+    'media-slot flow: main-connection action pins the opt-in (#2085)',
+    () async {
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final models = ModelsConfig();
+      var persisted = 0;
+      final cli = cliFor(
+        fake.call,
+        modelsConfig: models,
+        onModelsConfigChanged: () => persisted++,
+        envVarValue: (_) => null,
+      );
+      final run = cli.run();
+
+      final flow = cli.startMediaSlotFlow();
+      await waitForIt(() => io.out.toString().contains('media slot'));
+      io.sendLine('2'); // audioTts
+      await waitForIt(() => io.out.toString().contains('Pick a model'));
+      io.sendLine('2'); // Use the main connection
+      await waitForIt(
+        () => io.out.toString().contains('slot audioTts → main connection'),
+      );
+      await flow;
+      io.sendLine('/exit');
+      await run;
+
+      final override = models.slots['audioTts'];
+      expect(override?.useMainConnection, isTrue);
+      expect(override?.modelId, isEmpty);
+      expect(persisted, 1);
+      expect(fake.calls, 0);
+    },
+  );
+
+  test(
+    'media-slot flow: unsupported action removes the capability (#2085)',
+    () async {
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final models = ModelsConfig();
+      var persisted = 0;
+      final cli = cliFor(
+        fake.call,
+        modelsConfig: models,
+        onModelsConfigChanged: () => persisted++,
+        envVarValue: (_) => null,
+      );
+      final run = cli.run();
+
+      final flow = cli.startMediaSlotFlow();
+      await waitForIt(() => io.out.toString().contains('media slot'));
+      io.sendLine('3'); // musicGeneration
+      await waitForIt(() => io.out.toString().contains('Pick a model'));
+      io.sendLine('3'); // Mark unsupported
+      await waitForIt(
+        () => io.out.toString().contains(
+          'slot musicGeneration → unsupported (capability removed)',
+        ),
+      );
+      await flow;
+      io.sendLine('/exit');
+      await run;
+
+      final override = models.slots['musicGeneration'];
+      expect(override?.unsupported, isTrue);
+      expect(override?.useMainConnection, isFalse);
+      expect(override?.modelId, isEmpty);
+      expect(persisted, 1);
+      expect(fake.calls, 0);
+    },
+  );
+
+  test('media-slot list shows the four per-slot states (#2085)', () async {
+    final fake = FakeStreamFunction([textTurn('ok')]);
+    final models = ModelsConfig()
+      ..setSlotOverride(
+        'imageGeneration',
+        const MediaSlotModelConfig(
+          providerKind: 'openai-completions',
+          baseUrl: 'http://img.local/v1',
+          modelId: 'img-v1',
+        ),
+      )
+      ..setSlotOverride(
+        'audioTts',
+        const MediaSlotModelConfig(useMainConnection: true),
+      )
+      ..setSlotOverride(
+        'musicGeneration',
+        const MediaSlotModelConfig(unsupported: true),
+      );
+    final cli = cliFor(fake.call, modelsConfig: models);
+    final run = cli.run();
+
+    final flow = cli.startMediaSlotFlow();
+    await waitForIt(
+      () => io.out.toString().contains('1) imageGeneration — img-v1'),
+    );
+    await waitForIt(
+      () => io.out.toString().contains('2) audioTts — main connection'),
+    );
+    await waitForIt(
+      () => io.out.toString().contains(
+        '3) musicGeneration — unsupported (capability removed)',
+      ),
+    );
+    await waitForIt(
+      () => io.out.toString().contains('4) videoGeneration — not configured'),
+    );
+    io.interrupt(); // cancel the slot pick
+    await flow;
+    io.sendLine('/exit');
+    await run;
+
     expect(fake.calls, 0);
   });
 

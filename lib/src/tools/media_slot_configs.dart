@@ -39,7 +39,13 @@ Future<InspectImageConfig?> resolveVisionSlotInspectConfig(
   String mainApiKey = '',
 }) async {
   final override = modelsConfig?.slots['vision'];
-  if (override == null || override.isMainConnectionOptIn) return null;
+  // Issue #2085: an unsupported slot removes the capability — null keeps
+  // the tool unregistered exactly like the main-connection opt-in.
+  if (override == null ||
+      override.isMainConnectionOptIn ||
+      override.unsupported) {
+    return null;
+  }
   final key = await resolveMediaSlotKey(
     override,
     mainBaseUrl: mainBaseUrl,
@@ -65,7 +71,13 @@ Future<TranscribeAudioConfig?> resolveTranscriptionSlotConfig(
   String mainApiKey = '',
 }) async {
   final override = modelsConfig?.slots['transcription'];
-  if (override == null || override.isMainConnectionOptIn) return null;
+  // Issue #2085: an unsupported slot removes the capability — null keeps
+  // the tool unregistered exactly like the main-connection opt-in.
+  if (override == null ||
+      override.isMainConnectionOptIn ||
+      override.unsupported) {
+    return null;
+  }
   final key = await resolveMediaSlotKey(
     override,
     mainBaseUrl: mainBaseUrl,

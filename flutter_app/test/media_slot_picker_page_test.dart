@@ -53,6 +53,11 @@ void main() {
   group('MediaSlotProviderPickerPage', () {
     testWidgets('renders the main connection, presets, custom providers and '
         'the add row; the override provider is checked', (tester) async {
+      // The #2085 Unsupported row joined the list — a taller surface keeps
+      // every row built (the lazy ListView builds visible children only).
+      tester.view.physicalSize = const Size(800, 1400);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
       final registry = ProviderRegistry.inMemory();
       await registry.add(
         name: 'Acme',
@@ -210,6 +215,12 @@ void main() {
 
     testWidgets('add provider routes through the settings preset picker; '
         'the saved provider opens its model page', (tester) async {
+      // The #2085 Unsupported row joined the list — a taller surface keeps
+      // the trailing add row built (the lazy ListView builds visible
+      // children only).
+      tester.view.physicalSize = const Size(800, 1400);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
       final registry = ProviderRegistry.inMemory();
       await _pumpWithOpener(
         tester,

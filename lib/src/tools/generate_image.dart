@@ -92,6 +92,15 @@ Future<MediaEndpoint?> resolveImageGenerationEndpoint(
 }) async {
   final override = modelsConfig?.slots['imageGeneration'];
   if (override == null) return null;
+  if (override.unsupported) {
+    // Issue #2085: the capability is removed — the tool refuses the slot
+    // with the un-mark path, never the "configure the slot" guidance.
+    throw MediaException(
+      'the imageGeneration slot is marked unsupported — the capability is '
+      'removed; clear models.slots.imageGeneration.unsupported (or '
+      '/settings → Media models → Pick a model) to re-enable it',
+    );
+  }
   if (override.useMainConnection) {
     if (mainBaseUrl.isEmpty || mainModelId.isEmpty) return null;
     return MediaEndpoint(

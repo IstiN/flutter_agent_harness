@@ -231,8 +231,12 @@ extension SettingsFlow on AgentCli {
     );
   }
 
-  /// Settings → Media models: pick the slot, then provider → model, then
-  /// pin the slot override (same persistence as `/models set`).
+  /// Settings → Media models: pick the slot, then how the slot is served —
+  /// a dedicated provider/model, the main connection (the explicit gh-1844
+  /// opt-in, i.e. "same model as main"), or marked unsupported (issue
+  /// #2085: the media capability is removed — media tools refuse the slot
+  /// and the pickers stop suggesting it). The choice pins immediately and
+  /// applies live (the media resolvers read the config per call).
   Future<void> startMediaSlotFlow() async {
     final models = config.modelsConfig;
     if (models == null) {
@@ -244,6 +248,30 @@ extension SettingsFlow on AgentCli {
         (id, id, _mediaSlotDescription(models, id)),
     ]);
     if (selectedSlot == null) return;
+    final action = await _pickOption('media $selectedSlot', [
+      ('pick', 'Pick a model', 'provider → model list'),
+      ('main', 'Use the main connection', 'serve the slot with the main model'),
+      ('unsupported', 'Mark unsupported', 'remove the media capability'),
+    ]);
+    if (action == null) return;
+    switch (action) {
+      case 'main':
+        models.setSlotOverride(
+          selectedSlot,
+          MediaSlotModelConfig(useMainConnection: true),
+        );
+        io.writeln('slot $selectedSlot → main connection');
+        config.onModelsConfigChanged?.call();
+        return;
+      case 'unsupported':
+        models.setSlotOverride(
+          selectedSlot,
+          MediaSlotModelConfig(unsupported: true),
+        );
+        io.writeln('slot $selectedSlot → unsupported (capability removed)');
+        config.onModelsConfigChanged?.call();
+        return;
+    }
     await runProviderModelFlow(
       title: 'media $selectedSlot',
       openAiCompatibleOnly: true,
@@ -364,11 +392,14 @@ extension SettingsFlow on AgentCli {
     return resolver;
   }
 
-  /// The media-slot picker's description: the current override or the
-  /// main-connection fallback.
+  /// The media-slot picker's description: which of the four per-slot
+  /// states the slot is in — unconfigured, unsupported, the explicit
+  /// main-connection opt-in, or the pinned override.
   String _mediaSlotDescription(ModelsConfig models, String slot) {
     final override = models.slots[slot];
-    if (override == null) return 'main connection';
+    if (override == null) return 'not configured';
+    if (override.unsupported) return 'unsupported (capability removed)';
+    if (override.useMainConnection) return 'main connection';
     return '${override.modelId} @ ${override.baseUrl}';
   }
 

@@ -63,11 +63,36 @@ void main() {
       expect(restored!.useMainConnection, isTrue);
       // Absent in the JSON → default false on a plain override.
       await store.setOverride(MediaSlot.imageGeneration, override);
-      final plain =
-          (await MediaModelsStore.load(env)).overrideFor(
-            MediaSlot.imageGeneration,
-          );
+      final plain = (await MediaModelsStore.load(
+        env,
+      )).overrideFor(MediaSlot.imageGeneration);
       expect(plain!.useMainConnection, isFalse);
+    });
+
+    test('unsupported survives the JSON round-trip (#2085)', () async {
+      final env = MemoryExecutionEnv();
+      final store = await MediaModelsStore.load(env);
+      await store.setOverride(
+        MediaSlot.musicGeneration,
+        const MediaSlotOverride(
+          providerKind: '',
+          baseUrl: '',
+          modelId: '',
+          unsupported: true,
+        ),
+      );
+
+      final reloaded = await MediaModelsStore.load(env);
+      final restored = reloaded.overrideFor(MediaSlot.musicGeneration);
+      expect(restored, isNotNull);
+      expect(restored!.unsupported, isTrue);
+      expect(restored.useMainConnection, isFalse);
+      // Absent in the JSON → default false on a plain override.
+      await store.setOverride(MediaSlot.imageGeneration, override);
+      final plain = (await MediaModelsStore.load(
+        env,
+      )).overrideFor(MediaSlot.imageGeneration);
+      expect(plain!.unsupported, isFalse);
     });
 
     test('overrides round-trip through the env filesystem', () async {
@@ -191,6 +216,31 @@ void main() {
       }
     });
 
+    test('an unsupported slot resolves to nothing (#2085)', () async {
+      final store = MediaModelsStore.inMemory();
+      await store.setOverride(
+        MediaSlot.imageGeneration,
+        const MediaSlotOverride(
+          providerKind: '',
+          baseUrl: '',
+          modelId: '',
+          unsupported: true,
+        ),
+      );
+      // The capability is removed: resolve serves nothing, and the change
+      // is live — clearing the mark restores service without a rebuild.
+      expect(await store.resolve(MediaSlot.imageGeneration, fallback), isNull);
+      await store.setOverride(MediaSlot.imageGeneration, override);
+      expect(
+        await store.resolve(
+          MediaSlot.imageGeneration,
+          fallback,
+          resolveKey: (name) async => 'sk-$name',
+        ),
+        isNotNull,
+      );
+    });
+
     test(
       'useMainConnection: true opts every slot into the main connection',
       () async {
@@ -239,28 +289,31 @@ void main() {
       },
     );
 
-    test('an on-device main connection is never usable, even opted in', () async {
-      final store = MediaModelsStore.inMemory();
-      await store.setOverride(
-        MediaSlot.imageGeneration,
-        const MediaSlotOverride(
-          providerKind: '',
-          baseUrl: '',
-          modelId: '',
-          useMainConnection: true,
-        ),
-      );
-      final onDevice = await store.resolve(
-        MediaSlot.imageGeneration,
-        const MediaFallback(
-          providerKind: 'gemma',
-          baseUrl: '',
-          modelId: 'gemma3n',
-          apiKey: '',
-        ),
-      );
-      expect(onDevice, isNull);
-    });
+    test(
+      'an on-device main connection is never usable, even opted in',
+      () async {
+        final store = MediaModelsStore.inMemory();
+        await store.setOverride(
+          MediaSlot.imageGeneration,
+          const MediaSlotOverride(
+            providerKind: '',
+            baseUrl: '',
+            modelId: '',
+            useMainConnection: true,
+          ),
+        );
+        final onDevice = await store.resolve(
+          MediaSlot.imageGeneration,
+          const MediaFallback(
+            providerKind: 'gemma',
+            baseUrl: '',
+            modelId: 'gemma3n',
+            apiKey: '',
+          ),
+        );
+        expect(onDevice, isNull);
+      },
+    );
 
     test('an override resolves its named key through the resolver', () async {
       final store = MediaModelsStore.inMemory();
