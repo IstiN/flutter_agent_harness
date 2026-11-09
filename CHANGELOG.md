@@ -13,6 +13,29 @@ block a release again.
 
 ## Unreleased
 
+- fix(gh-2074): the daily-publish `play` leg no longer reds on a GitHub
+  release-download brownout. Three build-mobile.yml Android jobs died in
+  package:sqlite3's native-assets build hook with `Bad state: Hash of
+  downloaded file libsqlite3.x64.android.so is bef140a1…` — the hook
+  (released ≤3.9.1; the lockfile pins 3.7.0, the root floats 3.9.1)
+  hashes the download WITHOUT honoring the HTTP status, so GitHub's 504
+  page (a constant hash, upstream simolus3/sqlite3.dart#435) failed the
+  pin check and the build exited 255. The assets themselves were intact;
+  ci.yml had solved this exact class for itself on 2026-09-21 by caching
+  `.dart_tool/hooks_runner/shared`, but build-mobile.yml never got the
+  protection. Cure: new `scripts/sqlite3_hook_prewarm.dart` — derives the
+  release tag + pinned hashes from the RESOLVED sqlite3 package (no
+  second pin), gates on the HTTP status before hashing, bounded-retries
+  with backoff, verifies SHA-256 before any cache write (tmp+rename),
+  skips idempotently on a verified cache hit — wired as the
+  `Native-assets hook cache` + `Pre-warm sqlite3 hook assets` steps in
+  the two Android build jobs (both roots, `hooks-shared-mobile-` keys)
+  and inside `assert-builtin-skills` for the root host asset (the step
+  that failed first). Guard test `test/ci_sqlite3_hook_prewarm_guard_
+  test.dart` pins the wiring (AC1-AC4); the script's byte-level behavior
+  and the live hook-reuse layout are pinned in
+  `test/scripts/sqlite3_hook_prewarm_test.dart`.
+
 - feat(gh-2059): browser-extension compaction parity with CLI — over-window
   relief, `/compact` with visible receipts, and the shared under-window
   guarantee ride the same `CompactionHostWiring` resolution as the CLI and
