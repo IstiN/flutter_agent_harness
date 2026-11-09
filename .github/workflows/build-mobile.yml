@@ -159,6 +159,23 @@ jobs:
           channel: 'stable'
           cache: true
 
+      # gh-2074: package:sqlite3's native-assets hook downloads prebuilt
+      # libsqlite3 binaries from GitHub releases and hashes whatever comes
+      # back — the released hook versions honor neither the HTTP status
+      # (3.7.0) nor retry (any released ≤3.9.1), so one release-download
+      # brownout (504 page hashed as a mismatch, the 2026-09-21 ci.yml
+      # incident) reds every job mid-build. Restore the content-addressed
+      # hook cache for BOTH roots here (the pre-warm step below seeds and
+      # repairs it; the builds never download bare) — the same protection
+      # ci.yml already carries for the root lane.
+      - name: Native-assets hook cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            .dart_tool/hooks_runner/shared
+            flutter_app/.dart_tool/hooks_runner/shared
+          key: hooks-shared-mobile-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('flutter_app/pubspec.lock') }}
+          restore-keys: hooks-shared-mobile-${{ runner.os }}-${{ runner.arch }}-
       # gh-1275 AC3: fail fast before any build minute is spent — the full
       # gate rationale lives in .github/actions/assert-builtin-skills.
       - uses: ./.github/actions/assert-builtin-skills
@@ -183,6 +200,16 @@ jobs:
       - name: Install dependencies
         uses: ./.github/actions/flutter-pub-get
 
+      # gh-2074: seed the sqlite3 native-assets hook cache with bounded
+      # retry + HTTP-status gating + SHA-256 verification (the hook itself
+      # has no retry and — for the lockfile-pinned 3.7.0 — no status
+      # check, so a GitHub brownout hashed the 504 page and red'd the leg).
+      # The pinned release tag + hashes come from the RESOLVED sqlite3
+      # package, so a sqlite3 bump re-points this automatically.
+      - name: Pre-warm sqlite3 hook assets
+        run: |
+          set -euo pipefail
+          dart --disable-dart-dev scripts/sqlite3_hook_prewarm.dart --package flutter_app --targets android
       # Mirrors the iOS GoogleService-Info.plist step: the committed
       # google-services.json is a placeholder (the google-services Gradle
       # plugin hard-fails without the file); overwrite it from the secret
@@ -410,6 +437,16 @@ jobs:
           channel: 'stable'
           cache: true
 
+      # gh-2074: same hooks-shared cache restore as build-android — the
+      # flavor matrix downloads the same release assets bare otherwise.
+      - name: Native-assets hook cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            .dart_tool/hooks_runner/shared
+            flutter_app/.dart_tool/hooks_runner/shared
+          key: hooks-shared-mobile-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('flutter_app/pubspec.lock') }}
+          restore-keys: hooks-shared-mobile-${{ runner.os }}-${{ runner.arch }}-
       # gh-1275 AC3: fail fast before any build minute is spent — the full
       # gate rationale lives in .github/actions/assert-builtin-skills.
       - uses: ./.github/actions/assert-builtin-skills
@@ -431,6 +468,13 @@ jobs:
       - name: Install dependencies
         uses: ./.github/actions/flutter-pub-get
 
+      # gh-2074: same sqlite3 hook pre-warm as build-android — bounded
+      # retry + status gating + hash verification before any build minute
+      # is spent on a bare release-asset download.
+      - name: Pre-warm sqlite3 hook assets
+        run: |
+          set -euo pipefail
+          dart --disable-dart-dev scripts/sqlite3_hook_prewarm.dart --package flutter_app --targets android
       # Mirrors build-android, gated to the store flavor: the secret file
       # carries ONLY the dev.fa1.app client, while the god applicationId is
       # dev.fa1.app.god — overwriting it would hard-fail the google-services
