@@ -90,6 +90,7 @@ final class CliArgs extends CliArgsResult {
     this.cwd,
     this.sessionRoot,
     this.session,
+    this.resume = false,
     this.prompt,
     this.promptFile,
     this.cubeName,
@@ -176,6 +177,12 @@ final class CliArgs extends CliArgsResult {
   /// otherwise create a new session with that name. Applies to both the
   /// interactive REPL and headless mode.
   final String? session;
+
+  /// `--resume` / `--r` (issue #2083): boot the newest session recorded for
+  /// the launch folder; a folder with no sessions starts a fresh one.
+  /// Interactive TUI mode when no prompt rides the invocation (the default
+  /// interactive boot rules apply). Usage error together with `--session`.
+  final bool resume;
 
   /// `--cube <name>`: apply the cube sandbox profile
   /// `<cwd>/.fah/cubes/<name>.yaml` for this run. Wins over the `cube:`
@@ -347,11 +354,16 @@ const Map<String, CliArgsResult Function(List<String>)> _cliSubcommands = {
 
 /// Applies the no-value boolean flags (`--wait-for-jobs`, `--pi`,
 /// `--omp`, `--debug-secrets`, `--no-format`, `--stream-thinking`,
-/// `--no-stream-thinking`) to [values]; returns false when [arg] is none
-/// of them (the caller falls through to the value-flag table).
+/// `--no-stream-thinking`, `--resume`/`--r`) to [values]; returns false
+/// when [arg] is none of them (the caller falls through to the value-flag
+/// table).
 bool _applyBooleanFlag(_CliArgValues values, String arg) {
   if (arg == '--wait-for-jobs') {
     values.waitForJobs = true;
+    return true;
+  }
+  if (arg == '--resume' || arg == '--r') {
+    values.resume = true;
     return true;
   }
   if (arg == '--pi') {
@@ -1415,6 +1427,7 @@ final class _CliArgValues {
   String? cwd;
   String? sessionRoot;
   String? session;
+  bool resume = false;
   String? cubeName;
   String? cubeConfigPath;
   ToolsConfig? tools;
@@ -1441,6 +1454,12 @@ final class _CliArgValues {
       );
     }
     _validatePromptFlags();
+    if (resume && session != null) {
+      throw const CliArgsException(
+        'cannot combine --session and --resume '
+        '(--resume opens the newest session of this folder)',
+      );
+    }
     if (streamThinking && noStreamThinking) {
       throw const CliArgsException(
         'cannot combine --stream-thinking and --no-stream-thinking',
@@ -1465,6 +1484,7 @@ final class _CliArgValues {
       cwd: cwd,
       sessionRoot: sessionRoot,
       session: session,
+      resume: resume,
       cubeName: cubeName,
       cubeConfigPath: cubeConfigPath,
       tools: tools,

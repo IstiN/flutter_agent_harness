@@ -311,6 +311,7 @@ EffectiveCliArgs resolveEffectiveCliArgs(
     cwd: parsed.cwd,
     sessionRoot: parsed.sessionRoot,
     session: parsed.session,
+    resume: parsed.resume,
   );
   // gh-1570 (AC3/H2): an explicit `--model`/`--base-url` over a restored
   // or preconfigured binding is a PARTIAL override — the effective

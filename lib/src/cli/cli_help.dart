@@ -95,6 +95,9 @@ OPTIONS
   --session-root <dir>         Session storage root (default: ~/.fah/sessions;
                                macOS: ~/Library/Group Containers/group.dev.fa1.shared/fa/sessions)
   --session <name>             Resume or create a named session for this cwd
+  --resume, --r                Start the newest session of this folder
+                               (interactive TUI; headless when a prompt
+                               is given)
   FAH_JOB_LOG_DIR=<dir>        Relocate the background-job logs (default
                                <cwd>/.fah/bash_jobs); bench/unattended runs
                                point it outside the task workspace. Job logs

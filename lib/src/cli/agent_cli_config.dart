@@ -33,6 +33,7 @@ final class AgentCliConfig {
     this.leaseStore,
     this.parseExecutor,
     this.sessionName,
+    this.resume = false,
     this.steeringStaleAfter = const Duration(minutes: 2),
     this.providerKind = 'openai-completions',
     this.envVarIsSet,
@@ -793,6 +794,11 @@ final class AgentCliConfig {
 
   /// Optional session name to resume or create on startup.
   final String? sessionName;
+
+  /// `fa --resume` / `--r` (issue #2083): boot the newest session of the
+  /// launch folder; a fresh session when the folder has none. Mutually
+  /// exclusive with [sessionName] at the CLI (a parse-time usage error).
+  final bool resume;
 
   /// How long a busy run may stream NO agent events before mid-run
   /// steering panels flip to `dead` (issue #437 E4): honest tool work
