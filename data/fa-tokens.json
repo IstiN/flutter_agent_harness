@@ -41,15 +41,6 @@
   ],
   "pr-1909": [
     {
-      "leg": "review",
-      "at": "2026-10-26T13:14:35Z",
-      "prompt": 46833,
-      "completion": 15722,
-      "total": 62555,
-      "cacheRead": 2008013,
-      "model": "kimi-for-coding"
-    },
-    {
       "leg": "rework",
       "at": "2026-10-26T13:51:36Z",
       "prompt": 34149,
@@ -3035,6 +3026,15 @@
       "completion": 23281,
       "total": 310774,
       "cacheRead": 4035520,
+      "model": "glm-5.3-flash"
+    },
+    {
+      "leg": "rework",
+      "at": "2026-11-09T13:17:16Z",
+      "prompt": 521711,
+      "completion": 78147,
+      "total": 599858,
+      "cacheRead": 87429760,
       "model": "glm-5.3-flash"
     }
   ],
