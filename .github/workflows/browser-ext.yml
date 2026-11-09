@@ -68,6 +68,7 @@ jobs:
 
       # browser_ext/dart is a separate package (path dep on this root), so
       # its pub get must follow the root's.
+      - uses: ./.github/actions/sqlite3-native-assets-prewarm
       - name: Dart unit tests (browser_ext/dart)
         run: cd browser_ext/dart && dart pub get && dart test
 

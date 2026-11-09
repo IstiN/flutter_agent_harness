@@ -187,6 +187,9 @@ jobs:
       # google-services.json is a placeholder (the google-services Gradle
       # plugin hard-fails without the file); overwrite it from the secret
       # when available.
+      - uses: ./.github/actions/sqlite3-native-assets-prewarm
+        with:
+          targets: android
       - name: Write google-services.json (Android)
         env:
           GOOGLE_SERVICES_JSON_BASE64: ${{ secrets.GOOGLE_SERVICES_JSON_BASE64 }}
@@ -437,6 +440,9 @@ jobs:
       # plugin ("No matching client found for package name
       # 'dev.fa1.app.god'"). god builds with the committed placeholder
       # google-services.json, which carries both clients.
+      - uses: ./.github/actions/sqlite3-native-assets-prewarm
+        with:
+          targets: android
       - name: Write google-services.json (Android)
         env:
           GOOGLE_SERVICES_JSON_BASE64: ${{ secrets.GOOGLE_SERVICES_JSON_BASE64 }}
@@ -590,6 +596,9 @@ jobs:
       - name: Install dependencies
         uses: ./.github/actions/flutter-pub-get
 
+      - uses: ./.github/actions/sqlite3-native-assets-prewarm
+        with:
+          targets: android
       - name: Boot emulator
         run: |
           set -euo pipefail
@@ -853,6 +862,9 @@ jobs:
       # the bundled JS apps — only the package's own tests load it, and
       # those live in the package repo). Removing the file is safe: the
       # pubspec declares the directory, not individual files.
+      - uses: ./.github/actions/sqlite3-native-assets-prewarm
+        with:
+          targets: arm64-ios
       - name: Prune never-loaded package test fixture (#1331)
         run: |
           set -euo pipefail

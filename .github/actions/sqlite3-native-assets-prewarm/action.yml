@@ -1,0 +1,80 @@
+name: sqlite3-native-assets-prewarm
+description: >-
+  Prewarm the sqlite3 package's native-assets hook cache with bounded
+  retry. gh-2072: the hook downloads `libsqlite3.<abi>.<os>` from the
+  simolus3/sqlite3.dart GitHub release at build time in a SINGLE attempt
+  with NO HTTP status check — at v1.0.697 the runner egress answered a
+  transient `504 Gateway Time-out` HTML page, the hook saved that page as
+  the library file, its own sha256 check threw
+  `Bad state: Hash of downloaded file … is bef140a1… expected …`, and
+  four CI legs (Terminal visual, Flutter app tests shards 0/2 + 1/2,
+  Build Android APK) plus the aggregate Quality gate went red on a tree
+  that had passed the same legs hours earlier. The same head later built
+  green: pure network roulette, and every `dart test`/`dart run`/`dart
+  build` leg and every `flutter test`/`flutter build` leg rolls it once
+  per run.
+  The prewarm reads the pinned hashes from the INSTALLED sqlite3 package
+  (asset_hashes.dart — single source of truth, no second pin to drift),
+  downloads with bounded retry + status check + sha256 verification, and
+  writes atomically into the hook's own reuse cache
+  (<root>/.dart_tool/hooks_runner/shared/sqlite3/build/download-<hash8>/),
+  so the hook never touches the network. Idempotent: a matching cached
+  file is a no-op. Companion guard:
+  test/ci_sqlite3_prewarm_guard_test.dart; script contract tested by
+  test/scripts/sqlite3_native_assets_prewarm_test.dart.
+inputs:
+  package-roots:
+    description: >-
+      Space-separated package directories whose dependency graph carries
+      sqlite3 (each must have .dart_tool/package_config.json — run this
+      AFTER pub get). Defaults to the working directory.
+    required: false
+    default: '.'
+  targets:
+    description: >-
+      `auto` (the host platform — the default), `android` (the three APK
+      ABIs: arm, arm64, x64), `arm64-ios`, or explicit `<abi>-<os>` names
+      (comma/space separated, e.g. `arm64-linux, x64-linux`). Targets
+      whose pinned hash the installed sqlite3 package does not ship fail
+      the step EXCEPT the auto host target, which skips cleanly when the
+      release ships no prebuilt for that host (every host CI uses today —
+      linux, macos, windows — has one; windows assets carry no lib
+      prefix: `sqlite3.x64.windows.dll`).
+    required: false
+    default: 'auto'
+  attempts:
+    description: 'Bounded-retry budget per file (default 4, backoff 5s/10s/20s).'
+    required: false
+    default: '4'
+runs:
+  using: composite
+  steps:
+    - name: Prewarm sqlite3 native-assets (bounded retry, gh-2072)
+      shell: bash
+      run: |
+        set -euo pipefail
+        DART_BIN="$(command -v dart || true)"
+        if [ -z "$DART_BIN" ]; then
+          echo "::error::cannot locate dart on PATH — the sqlite3 native-assets prewarm needs the Dart SDK (wire it after pub get, before the first build/test step)"
+          exit 1
+        fi
+        # Copy the script OUT of the workspace before invoking it: plain
+        # `dart <path>` inside a package whose graph carries sqlite3
+        # would build that package's OWN native-assets hooks first — the
+        # exact single-attempt download this action exists to bypass —
+        # and die on the very 504 it is defending against. A script
+        # outside any package resolves no package config, builds no
+        # hooks, and only reads the target packages' configs as data.
+        SCRIPT_COPY="$RUNNER_TEMP/fa-sqlite3-native-assets-prewarm.dart"
+        cp scripts/sqlite3_native_assets_prewarm.dart "$SCRIPT_COPY"
+        ARGS=()
+        for root in ${{ inputs.package-roots }}; do
+          ARGS+=(--package-root "$root")
+        done
+        ARGS+=(--targets "${{ inputs.targets }}")
+        ARGS+=(--attempts "${{ inputs.attempts }}")
+        if "$DART_BIN" "$SCRIPT_COPY" "${ARGS[@]}"; then
+          exit 0
+        fi
+        echo "::error::sqlite3 native-assets prewarm failed after ${{ inputs.attempts }} attempts per target — gh-2072: the sqlite3 hook downloads prebuilt binaries mid-build with no status check and no retry; one transient GitHub error page reds the leg and the aggregate Quality gate. Inspect the attempts above; the guard (test/ci_sqlite3_prewarm_guard_test.dart) pins this wiring."
+        exit 1
