@@ -55,3 +55,25 @@ runs:
           echo "::warning::flutter pub get failed (attempt $attempt/3) — retrying in 15s"
           sleep 15
         done
+
+    # gh-2072: prewarm the sqlite3 package's native-assets hook cache —
+    # the hook downloads `libsqlite3.<abi>.<os>` from GitHub releases at
+    # build time in a single attempt with no status check, and one
+    # transient `504 Gateway Time-out` error page red'd four legs and the
+    # aggregate Quality gate at v1.0.697 (a tree that had passed the same
+    # legs hours earlier). Every flutter leg resolves flutter_app THROUGH
+    # THIS ACTION, so the nested prewarm here covers the whole flutter
+    # class with one edit; root-package (`dart test`) legs carry the
+    # explicit invocation pinned by test/ci_sqlite3_prewarm_guard_test.dart.
+    # Nested composite `uses` (gh-2072 review thread 12): ONE prewarm
+    # implementation, two callers — the duplicated ~35-line inline copies
+    # had already drifted. The composite is best-effort internally
+    # (continue-on-error, gh-2072 review thread 7): a prewarm failure
+    # degrades to the hook's own single-attempt download instead of reding
+    # legs that build no sqlite3 hook at all (web stayed green through the
+    # v1.0.697 storm — fail-closed turned it red on this PR's run).
+    - uses: ./.github/actions/sqlite3-native-assets-prewarm
+      with:
+        package-roots: ${{ inputs.working-directory }}
+        targets: auto
+

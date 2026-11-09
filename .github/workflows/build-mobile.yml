@@ -200,20 +200,24 @@ jobs:
       - name: Install dependencies
         uses: ./.github/actions/flutter-pub-get
 
-      # gh-2074: seed the sqlite3 native-assets hook cache with bounded
-      # retry + HTTP-status gating + SHA-256 verification (the hook itself
-      # has no retry and — for the lockfile-pinned 3.7.0 — no status
-      # check, so a GitHub brownout hashed the 504 page and red'd the leg).
-      # The pinned release tag + hashes come from the RESOLVED sqlite3
-      # package, so a sqlite3 bump re-points this automatically.
-      - name: Pre-warm sqlite3 hook assets
-        run: |
-          set -euo pipefail
-          dart --disable-dart-dev scripts/sqlite3_hook_prewarm.dart --package flutter_app --targets android
+      # gh-2072 (review round 2, thread 4): the legacy gh-2074
+      # `Pre-warm sqlite3 hook assets` run-step that used to sit here is
+      # GONE — the composite below supersedes it (identical hook-cache
+      # layout, so running both back-to-back made the second a guaranteed
+      # no-op; scripts/sqlite3_hook_prewarm.dart stays alive for
+      # .github/actions/assert-builtin-skills).
       # Mirrors the iOS GoogleService-Info.plist step: the committed
       # google-services.json is a placeholder (the google-services Gradle
       # plugin hard-fails without the file); overwrite it from the secret
       # when available.
+      # gh-2072 (review thread 4): package-roots is REQUIRED on every
+      # explicit-target prewarm in this workflow — the jobs resolve ONLY
+      # flutter_app (via flutter-pub-get), so the `.` default would read a
+      # root package config that never exists and hard-fail the leg.
+      - uses: ./.github/actions/sqlite3-native-assets-prewarm
+        with:
+          targets: android
+          package-roots: flutter_app
       - name: Write google-services.json (Android)
         env:
           GOOGLE_SERVICES_JSON_BASE64: ${{ secrets.GOOGLE_SERVICES_JSON_BASE64 }}
@@ -468,19 +472,21 @@ jobs:
       - name: Install dependencies
         uses: ./.github/actions/flutter-pub-get
 
-      # gh-2074: same sqlite3 hook pre-warm as build-android — bounded
-      # retry + status gating + hash verification before any build minute
-      # is spent on a bare release-asset download.
-      - name: Pre-warm sqlite3 hook assets
-        run: |
-          set -euo pipefail
-          dart --disable-dart-dev scripts/sqlite3_hook_prewarm.dart --package flutter_app --targets android
+      # gh-2072 (review round 2, thread 4): the legacy gh-2074 pre-warm
+      # run-step that used to sit here is GONE — the composite below
+      # supersedes it (see the build-android note).
       # Mirrors build-android, gated to the store flavor: the secret file
       # carries ONLY the dev.fa1.app client, while the god applicationId is
       # dev.fa1.app.god — overwriting it would hard-fail the google-services
       # plugin ("No matching client found for package name
       # 'dev.fa1.app.god'"). god builds with the committed placeholder
       # google-services.json, which carries both clients.
+      # gh-2072 (review thread 4): package-roots required — flutter_app-only
+      # job (see the build-android prewarm above).
+      - uses: ./.github/actions/sqlite3-native-assets-prewarm
+        with:
+          targets: android
+          package-roots: flutter_app
       - name: Write google-services.json (Android)
         env:
           GOOGLE_SERVICES_JSON_BASE64: ${{ secrets.GOOGLE_SERVICES_JSON_BASE64 }}
@@ -634,6 +640,12 @@ jobs:
       - name: Install dependencies
         uses: ./.github/actions/flutter-pub-get
 
+      # gh-2072 (review thread 4): package-roots required — flutter_app-only
+      # job (see the build-android prewarm above).
+      - uses: ./.github/actions/sqlite3-native-assets-prewarm
+        with:
+          targets: android
+          package-roots: flutter_app
       - name: Boot emulator
         run: |
           set -euo pipefail
@@ -897,6 +909,12 @@ jobs:
       # the bundled JS apps — only the package's own tests load it, and
       # those live in the package repo). Removing the file is safe: the
       # pubspec declares the directory, not individual files.
+      # gh-2072 (review thread 4): package-roots required — flutter_app-only
+      # job (see the build-android prewarm above).
+      - uses: ./.github/actions/sqlite3-native-assets-prewarm
+        with:
+          targets: arm64-ios
+          package-roots: flutter_app
       - name: Prune never-loaded package test fixture (#1331)
         run: |
           set -euo pipefail
