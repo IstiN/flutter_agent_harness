@@ -184,7 +184,9 @@ void main() {
       expect(merged.$1, ['image-01', 'image-02']);
     });
 
-    test('null providerKind is a passthrough', () {
+    test('null providerKind in media mode answers empty (no chat leak)', () {
+      // Issue #2068 review: an unseeded provider in MEDIA mode must NOT
+      // pass the chat list through — the picker falls to manual entry.
       final catalog = RemoteModelsCatalog.fromJson({
         'providers': {
           'minimax': {
@@ -201,10 +203,10 @@ void main() {
         catalog: catalog,
         mediaSlot: ['imageGeneration'],
       );
-      expect(merged.$1, ['m1']);
+      expect(merged.$1, isEmpty);
     });
 
-    test('unknown providerKind is a passthrough', () {
+    test('unknown providerKind in media mode answers empty (no chat leak)', () {
       final catalog = RemoteModelsCatalog.fromJson({
         'providers': {
           'minimax': {
@@ -221,7 +223,7 @@ void main() {
         catalog: catalog,
         mediaSlot: ['imageGeneration'],
       );
-      expect(merged.$1, ['m1']);
+      expect(merged.$1, isEmpty);
     });
 
     test('media slot path: drops chat ids, answers only catalog seeds', () {
@@ -576,6 +578,55 @@ void main() {
       expect(aiin.media['speech'], isNull);
       expect(aiin.media['transcription'], isNull);
     });
+
+    test(
+      'media merge NEVER surfaces chat ids for an unseeded provider (#2068 review)',
+      () {
+        // zai has NO catalog entry: the /v1/models answer (chat ids) must
+        // not leak into a media pick — empty answer, manual entry.
+        final unseeded = mergeWithRemoteCatalog(
+          endpointInfo: (
+            const <String>['glm-5.3-flash', 'glm-5.3-flash-flash'],
+            const <String, int>{},
+            const <String, int>{},
+          ),
+          providerKind: 'zai',
+          catalog: bundledRemoteModelsCatalog,
+          mediaSlot: const ['imageGeneration'],
+        );
+        expect(unseeded.$1, isEmpty);
+        // No catalog at all: same rule — media mode never offers the
+        // endpoint's chat list.
+        final noCatalog = mergeWithRemoteCatalog(
+          endpointInfo: (
+            const <String>['glm-5.3-flash'],
+            const <String, int>{},
+            const <String, int>{},
+          ),
+          providerKind: 'zai',
+          catalog: null,
+          mediaSlot: const ['audioTts'],
+        );
+        expect(noCatalog.$1, isEmpty);
+      },
+    );
+
+    test(
+      'chat merge without a catalog entry stays verbatim (#2068 review)',
+      () {
+        // Chat mode keeps the endpoint list (the fix above is media-only).
+        final chat = mergeWithRemoteCatalog(
+          endpointInfo: (
+            const <String>['glm-5.3-flash'],
+            const <String, int>{},
+            const <String, int>{},
+          ),
+          providerKind: 'zai',
+          catalog: bundledRemoteModelsCatalog,
+        );
+        expect(chat.$1, ['glm-5.3-flash']);
+      },
+    );
 
     test(
       'aiin media merge answers the seeded ids, not the chat ids (#2068)',
