@@ -413,13 +413,16 @@ void main() {
             for (final index in prewarm) {
               expect(
                 declaredPackageRoots(steps[index] as YamlMap),
-                isNotNull,
+                'flutter_app',
                 reason:
                     '$workflow $jobKey runs no root `dart pub get` — its '
-                    'prewarm must declare `package-roots:` with the '
-                    'package root the job actually resolves '
-                    '(flutter_app); the `.` default would hard-fail on '
-                    'the missing root package config',
+                    'prewarm must declare `package-roots:` with exactly '
+                    'the root the job actually resolves (flutter_app, '
+                    'via flutter-pub-get). Declaring the value is not '
+                    'enough: a typo\'d root (or `.`) fails per-root and '
+                    'the composite degrades the prewarm to a silent '
+                    '::warning fallback (gh-2072 review round 3, thread '
+                    '17; round 2 threads 3/4 wired the value in)',
               );
             }
             return;
@@ -465,14 +468,17 @@ void main() {
             if (targets.isEmpty || targets == 'auto') continue;
             expect(
               declaredPackageRoots(step),
-              isNotNull,
+              'flutter_app',
               reason:
                   '$workflow $jobKey prewarm requests explicit targets '
-                  '($targets) but leaves `package-roots:` at the `.` '
-                  'default — every cross-target invocation in this repo '
-                  'lives in a job that resolves ONLY flutter_app, so the '
-                  'step hard-fails on the missing root package config '
-                  '(gh-2072 review threads 3/4)',
+                  '($targets) but does not point `package-roots:` at '
+                  'exactly the root the job resolves — every '
+                  'cross-target invocation in this repo lives in a '
+                  'flutter_app-only job (via flutter-pub-get), and a '
+                  'wrong value fails per-root while the composite '
+                  'degrades the prewarm to a silent ::warning fallback '
+                  '(gh-2072 review round 3, thread 17; round 2 threads '
+                  '3/4 wired the value in)',
             );
           }
         });
