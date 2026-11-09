@@ -223,81 +223,81 @@ void main() {
               'prefix restore-keys keep the cache warm across lockfile bumps',
         );
       });
-      test(
-        'pre-warms flutter_app android assets after pub get, before build '
-        '(composite — gh-2072 migration)',
-        () {
-          final cacheIdx = stepIndexByPredicate(steps, isCacheStep, 'cache');
-          final assertIdx = stepIndexByPredicate(
-            steps,
-            (s) => s['uses'] == './.github/actions/assert-builtin-skills',
-            'assert-builtin-skills',
-          );
-          final pubGetIdx = stepIndexByPredicate(
-            steps,
-            isPubGetStep,
-            'flutter-pub-get',
-          );
-          final prewarmIdx = stepIndexByPredicate(
-            steps,
-            isCompositePrewarmStep,
-            'composite prewarm',
-          );
-          final buildIdx = stepIndexByPredicate(
-            steps,
-            (s) =>
-                (s['name'] as String?) == 'Build Android AAB' ||
-                (s['name'] as String?) == 'Build flavor APK',
-            'build step',
-          );
-          expect(
-            prewarmIdx,
-            greaterThanOrEqualTo(0),
-            reason: '$job must pre-warm the sqlite3 hook assets through '
-                '$prewarmComposite (gh-2072 moved the wiring there — the '
-                'legacy scripts/sqlite3_hook_prewarm.dart run-step is '
-                'gone: two back-to-back prewarms writing the same cache '
-                'layout made the second a guaranteed no-op)',
-          );
-          expect(
-            prewarmIdx,
-            greaterThan(pubGetIdx),
-            reason:
-                'the pre-warm reads flutter_app/.dart_tool/package_config.json '
-                '— it can only run after the resolution step',
-          );
-          expect(
-            prewarmIdx,
-            lessThan(buildIdx),
-            reason: 'the build must never be the first hook-download site',
-          );
-          expect(
-            cacheIdx,
-            lessThan(assertIdx),
-            reason:
-                'the assert gate runs a root dart run (hook consumer) — the '
-                'cache restore must land before it',
-          );
-          // The legacy script's `--package flutter_app --targets android`
-          // shape lives on as the composite's `with:` block — the
-          // cross-target invocation must keep naming the package root it
-          // actually resolves (the `.` default hard-fails here) and the
-          // APK ABI keyword the build produces.
-          final withMap = steps[prewarmIdx]['with'] as YamlMap?;
-          expect(
-            withMap?['package-roots'],
-            'flutter_app',
-            reason: '$job resolves ONLY flutter_app — the prewarm must '
-                'declare that root explicitly (gh-2072 review threads 3/4)',
-          );
-          expect(
-            '${withMap?['targets'] ?? ''}',
-            'android',
-            reason: '$job builds the APK ABIs — the prewarm must request '
-                'the `android` triple, not the host-auto default',
-          );
-        },
-      );
+      test('pre-warms flutter_app android assets after pub get, before build '
+          '(composite — gh-2072 migration)', () {
+        final cacheIdx = stepIndexByPredicate(steps, isCacheStep, 'cache');
+        final assertIdx = stepIndexByPredicate(
+          steps,
+          (s) => s['uses'] == './.github/actions/assert-builtin-skills',
+          'assert-builtin-skills',
+        );
+        final pubGetIdx = stepIndexByPredicate(
+          steps,
+          isPubGetStep,
+          'flutter-pub-get',
+        );
+        final prewarmIdx = stepIndexByPredicate(
+          steps,
+          isCompositePrewarmStep,
+          'composite prewarm',
+        );
+        final buildIdx = stepIndexByPredicate(
+          steps,
+          (s) =>
+              (s['name'] as String?) == 'Build Android AAB' ||
+              (s['name'] as String?) == 'Build flavor APK',
+          'build step',
+        );
+        expect(
+          prewarmIdx,
+          greaterThanOrEqualTo(0),
+          reason:
+              '$job must pre-warm the sqlite3 hook assets through '
+              '$prewarmComposite (gh-2072 moved the wiring there — the '
+              'legacy scripts/sqlite3_hook_prewarm.dart run-step is '
+              'gone: two back-to-back prewarms writing the same cache '
+              'layout made the second a guaranteed no-op)',
+        );
+        expect(
+          prewarmIdx,
+          greaterThan(pubGetIdx),
+          reason:
+              'the pre-warm reads flutter_app/.dart_tool/package_config.json '
+              '— it can only run after the resolution step',
+        );
+        expect(
+          prewarmIdx,
+          lessThan(buildIdx),
+          reason: 'the build must never be the first hook-download site',
+        );
+        expect(
+          cacheIdx,
+          lessThan(assertIdx),
+          reason:
+              'the assert gate runs a root dart run (hook consumer) — the '
+              'cache restore must land before it',
+        );
+        // The legacy script's `--package flutter_app --targets android`
+        // shape lives on as the composite's `with:` block — the
+        // cross-target invocation must keep naming the package root it
+        // actually resolves (the `.` default hard-fails here) and the
+        // APK ABI keyword the build produces.
+        final withMap = steps[prewarmIdx]['with'] as YamlMap?;
+        expect(
+          withMap?['package-roots'],
+          'flutter_app',
+          reason:
+              '$job resolves ONLY flutter_app — the prewarm must '
+              'declare that root explicitly (gh-2072 review threads 3/4)',
+        );
+        expect(
+          '${withMap?['targets'] ?? ''}',
+          'android',
+          reason:
+              '$job builds the APK ABIs — the prewarm must request '
+              'the `android` triple, not the host-auto default',
+        );
+      });
     });
   }
 
@@ -408,7 +408,8 @@ void main() {
         expect(
           withMap,
           anyOf(isNull, isA<YamlMap>()),
-          reason: '$job prewarms the ROOT graph for the HOST platform — '
+          reason:
+              '$job prewarms the ROOT graph for the HOST platform — '
               'leave the composite defaults in place (package-roots `.`, '
               'targets `auto`)',
         );
@@ -416,7 +417,8 @@ void main() {
           expect(
             '${withMap['targets'] ?? 'auto'}',
             'auto',
-            reason: '$job builds for the machine it runs on — the prewarm '
+            reason:
+                '$job builds for the machine it runs on — the prewarm '
                 'must stay on the `auto` (host) target',
           );
         }
@@ -435,8 +437,11 @@ void main() {
     for (final path in [ciPath, mobilePath, actionPath]) {
       final lines = read(path).split('\n');
       for (var i = 0; i < lines.length; i++) {
-        if (lines[i].contains('scripts/sqlite3_hook_prewarm.dart') &&
-            lines[i].contains('dart ')) {
+        final line = lines[i];
+        final isComment = line.trimLeft().startsWith('#');
+        if (!isComment &&
+            line.contains('scripts/sqlite3_hook_prewarm.dart') &&
+            line.contains('dart ')) {
           expect(
             lines[i],
             contains('--disable-dart-dev'),
@@ -456,7 +461,8 @@ void main() {
         r'dart --disable-dart-dev scripts/sqlite3_hook_prewarm\.dart',
       ).allMatches(read(actionPath)),
       hasLength(1),
-      reason: 'assert-builtin-skills is the legacy script\'s last CI '
+      reason:
+          'assert-builtin-skills is the legacy script\'s last CI '
           'caller — if it drops the invocation the script (and AC1/AC3 '
           'of this guard) should be retired deliberately, not silently',
     );
@@ -466,10 +472,17 @@ void main() {
     //    test/ci_sqlite3_prewarm_guard_test.dart AC3–AC8). A legacy step
     //    re-appearing next to the composite would be a silent no-op twin.
     for (final path in [ciPath, mobilePath]) {
+      final legacyRunSteps = [
+        for (final line in read(path).split('\n'))
+          if (!line.trimLeft().startsWith('#') &&
+              line.contains('scripts/sqlite3_hook_prewarm.dart'))
+            line,
+      ];
       expect(
-        read(path).contains('scripts/sqlite3_hook_prewarm.dart'),
-        isFalse,
-        reason: '$path must prewarm through $prewarmComposite — a legacy '
+        legacyRunSteps,
+        isEmpty,
+        reason:
+            '$path must prewarm through $prewarmComposite — a legacy '
             'scripts/sqlite3_hook_prewarm.dart run-step beside it would '
             'run two prewarms back-to-back writing the same cache layout '
             '(the second a guaranteed no-op)',
@@ -484,17 +497,27 @@ void main() {
     );
     expect(
       action,
-      contains('cp scripts/sqlite3_native_assets_prewarm.dart "$RUNNER_TEMP'),
-      reason: 'the composite must run the script from a packageless copy '
+      contains(
+        r'SCRIPT_COPY="$RUNNER_TEMP/fa-sqlite3-native-assets-prewarm.dart"',
+      ),
+      reason:
+          'the composite must run the script from a packageless copy '
           '— in-package `dart run` executes the graph\'s build hooks '
           'before main() (the gh-2074 chicken-and-egg)',
     );
     expect(
       action,
-      contains('"$DART_BIN" "$SCRIPT_COPY"'),
-      reason: 'the composite must invoke the script copy directly '
+      contains(r'cp scripts/sqlite3_native_assets_prewarm.dart "$SCRIPT_COPY"'),
+      reason:
+          'the composite must copy the script to that packageless '
+          'path before invoking it',
+    );
+    expect(
+      action,
+      contains(r'"$DART_BIN" "$SCRIPT_COPY"'),
+      reason:
+          'the composite must invoke the script copy directly '
           '(`dart <path>`, not `dart run`) — same hook-free discipline',
     );
   });
-}
 }
