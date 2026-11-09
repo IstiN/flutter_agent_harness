@@ -200,7 +200,7 @@ class IosFaBaselineRatchetTest(unittest.TestCase):
 
     gh-2073: PR #2063 (Fa 2 / Squircle-V2 brand mark) deliberately rewrote
     every AppIcon.appiconset PNG ~3-5x bigger, so actool's compiled
-    Payload/Runner.app/Assets.car jumped 82008 -> 21944 bytes (+170.6%)
+    Payload/Runner.app/Assets.car jumped 82008 -> 221944 bytes (+170.6%)
     and the testflight leg reds on the +5% per-line budget. The ratchet's
     own escape hatch for intentional growth is a baseline re-seed; this
     test pins the ack end-to-end: a synthetic IPA carrying the observed
@@ -210,7 +210,7 @@ class IosFaBaselineRatchetTest(unittest.TestCase):
     (committed baseline + the --forbid deny-list).
     """
 
-    OBSERVED_ASSETS_CAR = 21944  # v1.0.697 actool output (gh-2073 run log)
+    OBSERVED_ASSETS_CAR = 221944  # v1.0.697 actool output (gh-2073 run log)
     ASSETS_CAR = "Payload/Runner.app/Assets.car"
 
     def setUp(self):
