@@ -32,7 +32,7 @@
 # Run from anywhere:  bash scripts/seed_sqlite3_native_assets_selftest.sh
 
 set -u
-cd "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"   # repo root, any cwd
+cd "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)" || exit 1   # repo root, any cwd
 
 SCRIPT="scripts/seed_sqlite3_native_assets.sh"
 [ -f "$SCRIPT" ] || { echo "❌ $SCRIPT missing — run this selftest from the repo root" >&2; exit 1; }
@@ -157,6 +157,16 @@ check() { # check <name> <expected 0|nonzero> <logfile> <grep-pattern>
   fi
 }
 
+# sha256 of a file, whatever the host provides (macOS: shasum; some Linux
+# images: only sha256sum) — explicit if/else, no `A && B || C` foot-gun.
+sha256_of() {
+  if command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$1" | cut -d' ' -f1
+  else
+    sha256sum "$1" | cut -d' ' -f1
+  fi
+}
+
 cache_path() { # $1 = ws, $2 = hash — the hook's stable shared cache path
   echo "$1/.dart_tool/hooks_runner/shared/sqlite3/build/download-${2:0:8}/libsqlite3.dylib"
 }
@@ -167,7 +177,7 @@ WS="$WORK/ws-t1"; make_ws "$WS" yes
 LOG="$WORK/t1.log"; run_seed "$WS" >"$LOG" 2>&1; code=$?
 check 1 0 "$LOG" "installed libsqlite3.arm64.macos.dylib" "$code"
 if [ -f "$(cache_path "$WS" "$ARM64_HASH")" ] \
-   && [ "$( (command -v shasum >/dev/null 2>&1 && shasum -a 256 "$(cache_path "$WS" "$ARM64_HASH")" || sha256sum "$(cache_path "$WS" "$ARM64_HASH")") | cut -d' ' -f1)" = "$ARM64_HASH" ] \
+   && [ "$(sha256_of "$(cache_path "$WS" "$ARM64_HASH")")" = "$ARM64_HASH" ] \
    && [ -f "$(cache_path "$WS" "$X64_HASH")" ]; then
   echo "PASS T1 (cache files at download-<hash8>/libsqlite3.dylib, sha-valid)"; pass=$((pass + 1))
 else
@@ -242,7 +252,7 @@ mkdir -p "$(dirname "$STALE")"
 printf 'stale-corrupt-bytes' > "$STALE"
 LOG="$WORK/t7.log"; run_seed "$WS" >"$LOG" 2>&1; code=$?
 check 7 0 "$LOG" "re-downloading" "$code"
-GOT="$( (command -v shasum >/dev/null 2>&1 && shasum -a 256 "$STALE" || sha256sum "$STALE") | cut -d' ' -f1)"
+GOT="$(sha256_of "$STALE")"
 if [ "$GOT" = "$ARM64_HASH" ]; then
   echo "PASS T7 (stale cache replaced with pinned bytes)"; pass=$((pass + 1))
 else
