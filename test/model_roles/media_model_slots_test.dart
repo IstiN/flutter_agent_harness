@@ -41,6 +41,89 @@ useMainConnection: true
       expect(config.apiKeyName, isNull);
     });
 
+    test('parses the unsupported opt-out without endpoint fields (#2085)', () {
+      final config = parse('''
+unsupported: true
+''');
+      expect(config.unsupported, isTrue);
+      expect(config.useMainConnection, isFalse);
+      expect(config.providerKind, isEmpty);
+      expect(config.baseUrl, isEmpty);
+      expect(config.modelId, isEmpty);
+    });
+
+    test(
+      'useMainConnection and unsupported are mutually exclusive (#2085)',
+      () {
+        expect(
+          () => parse('''
+useMainConnection: true
+unsupported: true
+'''),
+          throwsA(
+            isA<ConfigException>().having(
+              (e) => e.message,
+              'message',
+              contains('cannot set both useMainConnection and unsupported'),
+            ),
+          ),
+        );
+      },
+    );
+
+    test('endpoint fields alongside unsupported are rejected (#2085)', () {
+      // An unsupported slot carries no endpoint — keeping the fields would
+      // round-trip half a configuration (writeYaml drops them), so the
+      // strict parser rejects the mix instead.
+      for (final field in ['providerKind', 'baseUrl', 'modelId']) {
+        expect(
+          () => parse('unsupported: true\n$field: whatever'),
+          throwsA(
+            isA<ConfigException>().having(
+              (e) => e.message,
+              'message',
+              contains('$field is meaningless with unsupported: true'),
+            ),
+          ),
+          reason: field,
+        );
+      }
+      expect(
+        () => parse('unsupported: true\napiKeyName: SOME_KEY'),
+        throwsA(
+          isA<ConfigException>().having(
+            (e) => e.message,
+            'message',
+            contains('apiKeyName is meaningless with unsupported: true'),
+          ),
+        ),
+      );
+    });
+
+    test('non-boolean unsupported is rejected (#2085)', () {
+      expect(
+        () => parse('unsupported: yes-please'),
+        throwsA(
+          isA<ConfigException>().having(
+            (e) => e.message,
+            'message',
+            'models.slots.imageGeneration.unsupported must be a boolean',
+          ),
+        ),
+      );
+    });
+
+    test('unsupported round-trips through writeYaml (#2085)', () {
+      final buffer = StringBuffer()..writeln('slots:');
+      const MediaSlotModelConfig(unsupported: true).writeYaml(buffer, '  ');
+      expect(buffer.toString(), 'slots:\n  unsupported: true\n');
+      final reparsed = MediaSlotModelConfig.fromYaml(
+        loadYaml('unsupported: true'),
+        slot: 'imageGeneration',
+      );
+      expect(reparsed.unsupported, isTrue);
+    });
+
     test('non-boolean useMainConnection is rejected', () {
       expect(
         () => parse('''

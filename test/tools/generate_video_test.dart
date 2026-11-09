@@ -483,6 +483,27 @@ void main() {
     });
 
     test(
+      'unsupported slot refuses with the un-mark guidance (#2085)',
+      () async {
+        final config = ModelsConfig(
+          slots: {
+            'videoGeneration': const MediaSlotModelConfig(unsupported: true),
+          },
+        );
+        expect(
+          resolveVideoGenerationEndpoint(config),
+          throwsA(
+            isA<MediaException>().having(
+              (e) => e.toString(),
+              'message',
+              contains('videoGeneration slot is marked unsupported'),
+            ),
+          ),
+        );
+      },
+    );
+
+    test(
       'slot override without a key name reuses the main key same-host',
       () async {
         final config = ModelsConfig(

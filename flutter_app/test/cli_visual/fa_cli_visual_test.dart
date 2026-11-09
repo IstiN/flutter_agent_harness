@@ -708,8 +708,16 @@ void main() {
       );
       await harness.screenshot(shotsDir, '86_settings_media_slot');
 
-      // Pick imageGeneration → the provider picker (openai-compatible).
+      // Pick imageGeneration → the #2085 action menu ("Pick a model" /
+      // "Use the main connection" / "Mark unsupported"), then "Pick a
+      // model" → the provider picker (openai-compatible).
       harness.sendEnter();
+      await harness.liveWaitForText(
+        'Pick a model',
+        timeout: const Duration(seconds: 15),
+      );
+      await harness.screenshot(shotsDir, '86b_settings_media_action');
+      harness.sendEnter(); // the first action row = Pick a model
       await harness.liveWaitForText(
         'test-provider',
         timeout: const Duration(seconds: 15),
@@ -1208,9 +1216,9 @@ http.server.HTTPServer(("127.0.0.1", $port), H).serve_forever()
 
       // Job ids carry a unique suffix (sh-1-<uniq>) — cancel the EXACT id
       // the listing shows.
-      final shellJobId = RegExp('sh-[A-Za-z0-9-]+')
-          .firstMatch(harness.screenText)
-          ?.group(0);
+      final shellJobId = RegExp(
+        'sh-[A-Za-z0-9-]+',
+      ).firstMatch(harness.screenText)?.group(0);
       expect(shellJobId, isNotNull);
 
       await harness.runSlashCommand('/tasks cancel $shellJobId');

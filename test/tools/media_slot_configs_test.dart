@@ -75,6 +75,31 @@ void main() {
       );
     });
 
+    test('unsupported vision slot removes the capability (#2085)', () async {
+      // Issue #2085: null keeps inspect_image unregistered, exactly like
+      // the main-connection opt-in — the capability is off.
+      expect(
+        await resolveVisionSlotInspectConfig(
+          ModelsConfig(
+            slots: {'vision': const MediaSlotModelConfig(unsupported: true)},
+          ),
+          resolveKey: (_) async => 'k',
+        ),
+        isNull,
+      );
+      expect(
+        await resolveTranscriptionSlotConfig(
+          ModelsConfig(
+            slots: {
+              'transcription': const MediaSlotModelConfig(unsupported: true),
+            },
+          ),
+          resolveKey: (_) async => 'k',
+        ),
+        isNull,
+      );
+    });
+
     test('an unresolvable key still builds the config (empty key)', () async {
       // Honesty at call time: the tool registers (the slot IS configured),
       // the call fails with the provider's auth error, and the auto-route
@@ -238,6 +263,38 @@ void main() {
       expect(config!.modelId, 'slot-model');
       // …and withdrawing it live degrades to null (no stale config).
       expect(liveModels.removeSlotOverride('vision'), isTrue);
+      expect(await resolve(), isNull);
+    });
+
+    test('flagless: marking the slot unsupported mid-session removes the '
+        'capability live (#2085)', () async {
+      final liveModels = ModelsConfig(
+        slots: {
+          'vision': MediaSlotModelConfig(
+            providerKind: 'openai-completions',
+            baseUrl: 'https://api.example.com/v1',
+            modelId: 'slot-model',
+          ),
+        },
+      );
+      final resolve = cliVisionSlotResolver(
+        modelsConfig: liveModels,
+        resolveKey: (_) async => 'slot-key',
+        mainBaseUrl: () => 'https://main.example.com/v1',
+        mainApiKey: () => 'main-key',
+        flagConfig: (modelId, baseUrl) => InspectImageConfig(
+          modelId: modelId,
+          apiKey: 'flag-key',
+          baseUrl: baseUrl,
+        ),
+      );
+      expect((await resolve())!.modelId, 'slot-model');
+      // The /settings flow (or the app) pins the opt-out on the SAME live
+      // instance — the next resolution refuses without a restart.
+      liveModels.setSlotOverride(
+        'vision',
+        const MediaSlotModelConfig(unsupported: true),
+      );
       expect(await resolve(), isNull);
     });
 

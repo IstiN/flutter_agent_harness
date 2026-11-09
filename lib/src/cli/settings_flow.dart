@@ -231,46 +231,6 @@ extension SettingsFlow on AgentCli {
     );
   }
 
-  /// Settings → Media models: pick the slot, then provider → model, then
-  /// pin the slot override (same persistence as `/models set`).
-  Future<void> startMediaSlotFlow() async {
-    final models = config.modelsConfig;
-    if (models == null) {
-      io.writeln('models config is unavailable on this host');
-      return;
-    }
-    final selectedSlot = await _pickOption('media slot', [
-      for (final id in mediaModelSlotIds)
-        (id, id, _mediaSlotDescription(models, id)),
-    ]);
-    if (selectedSlot == null) return;
-    await runProviderModelFlow(
-      title: 'media $selectedSlot',
-      openAiCompatibleOnly: true,
-      mediaSlot: selectedSlot,
-      apply: (choice) async {
-        models.setSlotOverride(
-          selectedSlot,
-          MediaSlotModelConfig(
-            providerKind: _factoryProviderKind,
-            baseUrl: choice.baseUrl,
-            modelId: choice.modelId,
-            // The saved custom provider's key authenticates the media
-            // endpoint; without it fall back to the host-scoped key.
-            apiKeyName:
-                choice.savedEntry?.keyName ??
-                CustomProviderRegistry.keyNameFor(choice.baseUrl),
-          ),
-        );
-        io.writeln(
-          'slot $selectedSlot → ${choice.modelId} @ ${choice.baseUrl} '
-          '(openai-completions)',
-        );
-        config.onModelsConfigChanged?.call();
-      },
-    );
-  }
-
   /// Settings → Agent models: pick the task role (Quick model / Subagents
   /// model), then provider → model through the shared two-level flow, and
   /// the role's chain is pinned — live on the resolver from the next spawn
@@ -362,14 +322,6 @@ extension SettingsFlow on AgentCli {
     );
     config.modelRolesResolver = resolver;
     return resolver;
-  }
-
-  /// The media-slot picker's description: the current override or the
-  /// main-connection fallback.
-  String _mediaSlotDescription(ModelsConfig models, String slot) {
-    final override = models.slots[slot];
-    if (override == null) return 'main connection';
-    return '${override.modelId} @ ${override.baseUrl}';
   }
 
   /// Settings → DAP / Hub: view the live hub snapshot (url, agent name,

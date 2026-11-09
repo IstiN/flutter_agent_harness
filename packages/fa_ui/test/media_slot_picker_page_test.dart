@@ -44,10 +44,44 @@ Future<void> _open(WidgetTester tester) async {
   await tester.pumpAndSettle();
 }
 
+/// Pumps an "open" button that pushes the imageGeneration model page UNDER
+/// [store]'s scope (the scope sits above MaterialApp so the pushed route
+/// sees it, like the app shell) — the capability chips read the scope.
+Future<void> _pumpScopedModelPage(WidgetTester tester, MediaModelsStore store) {
+  return tester.pumpWidget(
+    MediaModelsScope(
+      store: store,
+      child: MaterialApp(
+        home: Builder(
+          builder: (context) => Scaffold(
+            body: FilledButton(
+              onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => const MediaSlotModelPage(
+                    slot: MediaSlot.imageGeneration,
+                    provider: ProviderPreset.openrouter,
+                    modelsFetcher: _someModels,
+                  ),
+                ),
+              ),
+              child: const Text('open'),
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
 void main() {
   group('MediaSlotProviderPickerPage', () {
     testWidgets('renders the main connection, presets, custom providers and '
         'the add row; the override provider is checked', (tester) async {
+      // The #2085 Unsupported row joined the list — a taller surface keeps
+      // every row built (the lazy ListView builds visible children only).
+      tester.view.physicalSize = const Size(800, 1400);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
       final registry = ProviderRegistry.inMemory();
       await registry.add(
         name: 'Acme',
@@ -155,6 +189,180 @@ void main() {
       expect(result, isNotNull);
       expect(result!.cleared, isFalse);
       expect(result!.override!.modelId, 'gpt-image-1');
+    });
+
+    testWidgets('connectedOnly hides hosted presets whose key does not '
+        'resolve (the agent-role flow)', (tester) async {
+      final registry = ProviderRegistry.inMemory();
+      await registry.add(
+        name: 'Acme',
+        baseUrl: 'https://acme.example/v1',
+        modelId: 'acme-1',
+      );
+      await _pumpWithOpener(
+        tester,
+        MediaSlotProviderPickerPage(
+          slot: null, // the generic provider→model role flow
+          title: 'Quick model',
+          mainBaseUrl: 'https://openrouter.ai/api/v1',
+          registry: registry,
+          modelsFetcher: _someModels,
+          connectedOnly: true,
+        ),
+        (_) {},
+      );
+      await _open(tester);
+
+      // No keys configured in the test environment: hosted presets hide,
+      // the main connection + saved custom providers stay.
+      expect(find.text('Main connection'), findsOneWidget);
+      expect(find.text('Acme'), findsOneWidget);
+      expect(find.text('OpenRouter'), findsNothing);
+      expect(find.text('Ollama'), findsNothing);
+      expect(find.text('Add provider'), findsOneWidget);
+    });
+
+    testWidgets('a custom provider on a hosted preset endpoint dedupes it', (
+      tester,
+    ) async {
+      final registry = ProviderRegistry.inMemory();
+      await registry.add(
+        name: 'My OpenRouter',
+        baseUrl: 'https://openrouter.ai/api/v1',
+        modelId: 'acme-1',
+      );
+      await _pumpWithOpener(
+        tester,
+        MediaSlotProviderPickerPage(
+          slot: null,
+          title: 'Quick model',
+          registry: registry,
+          modelsFetcher: _someModels,
+        ),
+        (_) {},
+      );
+      await _open(tester);
+
+      // The hosted OpenRouter preset is covered by the saved instance.
+      expect(find.text('My OpenRouter'), findsOneWidget);
+      expect(find.text('OpenRouter'), findsNothing);
+      expect(find.text('Ollama'), findsOneWidget);
+    });
+
+    testWidgets('connectedOnly: a preset with a host-scoped FA_KEY_<HOST> '
+        'key still lists (CLI parity)', (tester) async {
+      FaUiHost.keyResolver = (name) =>
+          name == 'FA_KEY_OPENROUTER_AI' ? 'sk-or-scoped' : '';
+      addTearDown(() => FaUiHost.keyResolver = null);
+      await _pumpWithOpener(
+        tester,
+        const MediaSlotProviderPickerPage(
+          slot: null,
+          title: 'Quick model',
+          connectedOnly: true,
+        ),
+        (_) {},
+      );
+      await _open(tester);
+
+      expect(find.text('OpenRouter'), findsOneWidget);
+      expect(find.text('Ollama'), findsNothing);
+    });
+
+    testWidgets('add provider routes through the settings preset picker; '
+        'the saved provider opens its model page', (tester) async {
+      // The #2085 Unsupported row joined the list — a taller surface keeps
+      // the trailing add row built (the lazy ListView builds visible
+      // children only).
+      tester.view.physicalSize = const Size(800, 1400);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+      final registry = ProviderRegistry.inMemory();
+      await _pumpWithOpener(
+        tester,
+        MediaSlotProviderPickerPage(
+          slot: MediaSlot.imageGeneration,
+          title: 'Edit Image generation',
+          registry: registry,
+          modelsFetcher: _someModels,
+        ),
+        (_) {},
+      );
+      await _open(tester);
+
+      await tester.tap(find.text('Add provider'));
+      await tester.pumpAndSettle();
+      // Issue #975 (d54180f0): EVERY add-provider entry opens the ONE
+      // settings flow — the preset picker, never the bare editor push.
+      expect(find.byType(AddProviderPresetPickerPage), findsOneWidget);
+      expect(find.byType(ProviderEditorPage), findsNothing);
+
+      // The preset list is a lazy ListView — scroll the trailing Custom
+      // tile into view before tapping it.
+      await tester.scrollUntilVisible(
+        find.text('Custom'),
+        200,
+        scrollable: find.descendant(
+          of: find.byType(AddProviderPresetPickerPage),
+          matching: find.byType(Scrollable),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Custom'));
+      await tester.pumpAndSettle();
+      expect(find.byType(ProviderEditorPage), findsOneWidget);
+
+      await tester.enterText(find.widgetWithText(TextField, 'Name'), 'Acme');
+      await tester.enterText(
+        find.widgetWithText(TextField, 'Base URL'),
+        'https://acme.example/v1',
+      );
+      // The model row opens the shared model selector (the editor itself
+      // has no model text field anymore).
+      await tester.tap(
+        find.descendant(
+          of: find.byType(ProviderEditorPage),
+          matching: find.widgetWithText(InkWell, 'Model id (optional)'),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final editorPicker = find.byType(MediaSlotModelPage);
+      expect(editorPicker, findsOneWidget);
+      await tester.enterText(
+        find.descendant(
+          of: editorPicker,
+          matching: find.widgetWithText(TextField, 'Model id'),
+        ),
+        'acme-img',
+      );
+      await tester.tap(
+        find.descendant(
+          of: editorPicker,
+          matching: find.widgetWithText(FilledButton, 'Save'),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilledButton, 'Save'));
+      await tester.pumpAndSettle();
+
+      // The provider was added and the whole add flow unwound back to the
+      // media-slot picker (editor + preset picker both popped).
+      expect(registry.providers, hasLength(1));
+      expect(find.byType(AddProviderPresetPickerPage), findsNothing);
+      expect(find.byType(ProviderEditorPage), findsNothing);
+
+      // The added provider lists and its model page opens, prefilled with
+      // the provider's model.
+      await tester.tap(find.text('Acme'));
+      await tester.pumpAndSettle();
+      expect(find.byType(MediaSlotModelPage), findsOneWidget);
+      expect(
+        tester
+            .widget<TextField>(find.widgetWithText(TextField, 'Model id'))
+            .controller!
+            .text,
+        'acme-img',
+      );
     });
   });
 
@@ -265,6 +473,40 @@ void main() {
             .text,
         'dall-e-3',
       );
+    });
+
+    testWidgets('capability chips drop slots marked unsupported (#2085)', (
+      tester,
+    ) async {
+      // _someModels suggests imageGeneration (gpt-image-1, dall-e-3) and
+      // vision (gpt-4o). Control: without the unsupported mark both chips
+      // show.
+      final plain = MediaModelsStore.inMemory();
+      await _pumpScopedModelPage(tester, plain);
+      await _open(tester);
+      expect(find.text('Image generation'), findsOneWidget);
+      expect(find.text('Vision (image reading)'), findsOneWidget);
+    });
+
+    testWidgets('a marked-unsupported slot loses its capability chip (#2085)', (
+      tester,
+    ) async {
+      // Marking vision unsupported drops ONLY its chip — the removed
+      // capability is not re-advertised by the provider's model ids.
+      final store = MediaModelsStore.inMemory();
+      await store.setOverride(
+        MediaSlot.vision,
+        const MediaSlotOverride(
+          providerKind: '',
+          baseUrl: '',
+          modelId: '',
+          unsupported: true,
+        ),
+      );
+      await _pumpScopedModelPage(tester, store);
+      await _open(tester);
+      expect(find.text('Image generation'), findsOneWidget);
+      expect(find.text('Vision (image reading)'), findsNothing);
     });
 
     testWidgets('a hosted preset save maps to its well-known key name', (
