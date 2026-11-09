@@ -145,7 +145,6 @@ final class RemoteModelPricing {
   final double output;
 }
 
-
 /// The catalog endpoint — overridable via `fa1.dev/models-catalog-url`
 /// (the `models:` yaml section keys ride the same resolver) for staging
 /// or self-hosted mirrors.
@@ -176,6 +175,7 @@ Future<RemoteModelsCatalog?> fetchRemoteModelsCatalog({
     if (ownsClient) httpClient.close();
   }
 }
+
 /// Bundled fallback catalog — ships in-process so the picker still
 /// works when the remote URL is down (the user just reported "только
 /// одна m3 захардкожена" because the GitHub Pages site at fa1.dev
@@ -220,6 +220,31 @@ final RemoteModelsCatalog bundledRemoteModelsCatalog =
             'transcription': <String>[],
           },
         },
+        // AIIN (aiin.by) media ids — extracted from the live gateway's
+        // public `GET /v1/models` answer (`output_modalities` contains
+        // `image`; fetched 2026-11-09). Each id is the literal alias the
+        // endpoint accepts as `model`. The gateway serves
+        // `POST /v1/images/generations` (auth-gated 401, route present),
+        // so these ride the default OpenAI image dialect. Its
+        // `/v1/videos`, `/v1/audio/speech`, and `/v1/audio/transcriptions`
+        // routes do NOT exist (404 verified the same day) — the
+        // videoGeneration/audioTts/transcription slots stay manual-entry
+        // only for aiin, so no ids are seeded for them.
+        'aiin': {
+          'media': {
+            'imageGeneration': [
+              'google/gemini-3.1-flash-image',
+              'google/gemini-3-pro-image',
+              'google/gemini-nano-banana-2.1',
+              'google/gemini-2.5-flash-image',
+              'openai/gpt-5.4-image-2',
+              'siliconflow/black-forest-labs/FLUX.1-Kontext-pro',
+              'siliconflow/black-forest-labs/FLUX-1.1-pro',
+              'siliconflow/Qwen/Qwen-Image',
+              'siliconflow/Tongyi-MAI/Z-Image-Turbo',
+            ],
+          },
+        },
       },
     });
 
@@ -246,33 +271,39 @@ ModelsEndpointInfo mergeWithRemoteCatalog({
   required RemoteModelsCatalog? catalog,
   List<String> mediaSlot = const [],
 }) {
-  if (catalog == null) return endpointInfo;
-  final entry = catalog.providers[providerKind ?? ''];
-  if (entry == null) return endpointInfo;
+  final entry = catalog?.providers[providerKind ?? ''];
   final (_, windows, maxTokens) = endpointInfo;
-  final List<String> mergedIds;
   if (mediaSlot.isEmpty) {
-    // Chat path: keep the endpoint's id list verbatim, the catalog
-    // never augments chat ids.
-    mergedIds = <String>[...endpointInfo.$1];
-  } else {
-    // Media path: drop the chat list, answer exactly the catalog's
-    // per-slot media ids. Picker sees only the right model kind.
-    mergedIds = <String>[];
-    for (final slot in mediaSlot) {
-      final seed = entry.media[slot];
-      if (seed == null) continue;
-      for (final id in seed) {
-        if (!mergedIds.contains(id)) mergedIds.add(id);
-      }
+    // Chat path: the endpoint's id list stays verbatim — the catalog
+    // never augments chat ids. No catalog entry = nothing to enrich.
+    if (entry == null) return endpointInfo;
+    final mergedIds = <String>[...endpointInfo.$1];
+    final mergedWindows = <String, int>{
+      ...entry.contextWindows,
+      ...windows, // endpoint reported limits override catalog defaults
+    };
+    return (mergedIds, mergedWindows, {...maxTokens});
+  }
+  // Media path: the endpoint's /v1/models answer is DISCARDED — chat ids
+  // (MiniMax-M3, glm-5.3-flash) are useless in a media picker. An
+  // UNSEEDED provider/slot (no catalog at all, no catalog entry, or no
+  // list for the slot) answers EMPTY so the pick falls through to manual
+  // entry: surfacing the raw chat list here pinned chat ids into media
+  // slots (issue #2068 review — zai offered glm-5.3-flash in the image
+  // pick). The catalog is the only source of media ids on this path.
+  final mergedIds = <String>[];
+  for (final slot in mediaSlot) {
+    for (final id in entry?.media[slot] ?? const <String>[]) {
+      if (!mergedIds.contains(id)) mergedIds.add(id);
     }
   }
-  final mergedWindows = <String, int>{
-    ...entry.contextWindows,
-    ...windows, // endpoint reported limits override catalog defaults
-  };
-  final mergedMaxTokens = <String, int>{...maxTokens};
-  return (mergedIds, mergedWindows, mergedMaxTokens);
+  final mergedWindows = entry == null
+      ? <String, int>{...windows}
+      : <String, int>{
+          ...entry.contextWindows,
+          ...windows, // endpoint reported limits override catalog defaults
+        };
+  return (mergedIds, mergedWindows, {...maxTokens});
 }
 
 /// The media-model list the picker shows for the slot when no override

@@ -70,7 +70,7 @@ void main() {
     final cli = cliFor(
       fake.call,
       homeDir: '/home/u',
-      modelsFetcher: (baseUrl, {required apiKey}) async => ['glm-5.3-flash'],
+      modelsFetcher: (baseUrl, {required apiKey}) async => const [],
     );
     final run = cli.run();
 
@@ -81,8 +81,11 @@ void main() {
       () => io.out.toString().contains('model capabilities — provider'),
     );
     io.sendLine('${providerRow('zai')}'); // the zai catalog row
+    // zai fetches /models now that it declares the completions wire
+    // (issue #2068); the stub answers empty, so the flow drops straight
+    // to manual entry.
     await waitForIt(() => io.out.toString().contains("model id (empty keeps"));
-    io.sendLine('glm-5.3-flash'); // manual entry (the zai kind has no list)
+    io.sendLine('glm-5.3-flash');
     await waitForIt(
       () => io.out.toString().contains('capabilities — zai/glm-5.3-flash'),
     );
@@ -164,7 +167,7 @@ void main() {
       final cli = cliFor(
         fake.call,
         homeDir: '/home/u',
-        modelsFetcher: (baseUrl, {required apiKey}) async => ['glm-5.3-flash'],
+        modelsFetcher: (baseUrl, {required apiKey}) async => const [],
       );
       final run = cli.run();
 
@@ -175,6 +178,9 @@ void main() {
         () => io.out.toString().contains('model capabilities — provider'),
       );
       io.sendLine('${providerRow('zai')}');
+      // zai fetches /models now that it declares the completions wire
+      // (issue #2068); the stub answers empty, so the flow drops straight
+      // to manual entry.
       await waitForIt(
         () => io.out.toString().contains("model id (empty keeps"),
       );
@@ -222,7 +228,13 @@ note: second
 ''';
     await env.writeFile('/home/u/.fah/config.yaml', duplicatedSeed);
     final fake = FakeStreamFunction([textTurn('ok')]);
-    final cli = cliFor(fake.call, homeDir: '/home/u');
+    final cli = cliFor(
+      fake.call,
+      homeDir: '/home/u',
+      // The zai pick fetches /models (issue #2068); keep the flow offline
+      // and empty so it drops straight to manual entry.
+      modelsFetcher: (baseUrl, {required apiKey}) async => const [],
+    );
     final run = cli.run();
 
     final flow = cli.startModelCapsFlow();
@@ -232,6 +244,9 @@ note: second
       () => io.out.toString().contains('model capabilities — provider'),
     );
     io.sendLine('${providerRow('zai')}');
+    // zai fetches /models now that it declares the completions wire
+    // (issue #2068); the stub answers empty, so the flow drops straight
+    // to manual entry.
     await waitForIt(() => io.out.toString().contains('model id (empty keeps'));
     io.sendLine('glm-5.3-flash');
     await waitForIt(
