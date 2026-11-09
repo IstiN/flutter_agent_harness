@@ -453,6 +453,11 @@ extension on AgentCli {
           _startupAmbiguousName = name;
         },
       );
+    } else if (config.resume) {
+      // `fa --resume` (issue #2083): the newest session of the launch
+      // folder. Resolved BEFORE the retention sweep so the boot sweeper
+      // exempts the exact session this process is about to open.
+      metadata = await _latestFolderSession();
     }
     await _retentionBootCheck(currentSessionId: metadata?.id);
     // gh-1660 boot hygiene: crashed/killed runs leave header-only session
@@ -474,7 +479,24 @@ extension on AgentCli {
       }
       return _createSession(name: name);
     }
+    if (metadata != null) return _loadSession(metadata);
+    if (config.resume) {
+      io.writeln(
+        _style.dim('no sessions to resume in this folder — starting a new one'),
+      );
+    }
     return _createSession();
+  }
+
+  /// The newest session of the launch folder (`fa --resume`, issue #2083):
+  /// `_repo.list()` is already newest-activity first, so the first entry
+  /// whose cwd matches the launch folder IS the last folder session.
+  Future<SessionMetadata?> _latestFolderSession() async {
+    final cwd = _env.cwd;
+    for (final metadata in await _repo.list()) {
+      if (metadata.cwd == cwd) return metadata;
+    }
+    return null;
   }
 
   /// The boot-time header-only sweep (gh-1660): trashes one-line session

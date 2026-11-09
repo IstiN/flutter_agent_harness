@@ -1531,7 +1531,8 @@ Future<void> _runApp(List<String> args) async {
   // provider's "no key set" banner noise. Headless (-p / prompt args)
   // never gets the flag; its hard key gate stays byte-identical. Two
   // explicit boot modes are also excluded: a named `--session` resume is
-  // never a fresh install, and the pi benchmark profile (`--pi` /
+  // never a fresh install, a `--resume` boot re-enters an existing folder
+  // the same way, and the pi benchmark profile (`--pi` /
   // FA_PI_MODE / `agent.mode: pi`) must stay deterministic.
   final freshInstallProviderFlow =
       headlessPrompt == null &&
@@ -1544,6 +1545,7 @@ Future<void> _runApp(List<String> args) async {
       !defaultRoleResolved &&
       queueRuntime == null &&
       effective.session == null &&
+      !effective.resume &&
       harnessMode == null &&
       saved.providerKind == 'openai-completions' &&
       saved.baseUrl == providerCatalog['openrouter']!.defaultBaseUrl &&
@@ -1722,6 +1724,7 @@ Future<void> _runApp(List<String> args) async {
         quotaBadge: saved.quota.badge,
         quotaTtl: Duration(minutes: saved.quota.ttlMinutes),
         sessionName: effective.session,
+        resume: effective.resume,
         visionConfig: visionConfig,
         transcribeConfig: transcribeConfig,
         // gh-1984: the read auto-route re-resolves the slot per read
