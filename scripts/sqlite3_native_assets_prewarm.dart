@@ -532,8 +532,24 @@ Future<List<String>> prewarmPackageRoot({
       'location from the package config)',
     );
   }
-  final config =
-      jsonDecode(configFile.readAsStringSync()) as Map<String, Object?>;
+  // A corrupt/truncated package_config.json (interrupted pub get) throws
+  // FormatException/TypeError from the raw casts — catch and rethrow as a
+  // PrewarmException so the CLI's PREWARM FAILED trailer stays uniform
+  // instead of leaking a stack trace (gh-2072 review round 2 digest).
+  final Map<String, Object?> config;
+  try {
+    config = jsonDecode(configFile.readAsStringSync()) as Map<String, Object?>;
+  } on FormatException catch (e) {
+    throw PrewarmException(
+      '$root/.dart_tool/package_config.json is not valid JSON '
+      '(interrupted pub get?) — re-run `dart pub get`: $e',
+    );
+  } on TypeError {
+    throw PrewarmException(
+      '$root/.dart_tool/package_config.json has an unexpected shape '
+      '(not a JSON object) — re-run `dart pub get`',
+    );
+  }
   final packages = config['packages'] as List<Object?>;
   Map<String, Object?>? sqliteEntry;
   for (final pkg in packages) {

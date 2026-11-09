@@ -169,24 +169,32 @@ jobs:
           - target: macos
             runner: macos-latest
             cmd: flutter build macos --release
-            # `auto` resolves to the host triple (macos-arm64/macos-x64)
-            sqlite3_targets: auto
+            # Host rows carry no sqlite3_targets: the prewarm step below
+            # runs only on the android/ios rows (`if: matrix.target ==
+            # 'android' || matrix.target == 'ios'`), and each runner's
+            # OWN platform is already covered by the embedded auto
+            # prewarm in flutter-pub-get. (The script's grammar is
+            # <abi>-<os> — `arm64-macos`, not `macos-arm64`.)
           - target: ios
             runner: macos-latest
             cmd: flutter build ios --release --no-codesign
+            # gh-2072: the iOS device binary (arm64)
             sqlite3_targets: arm64-ios
           - target: android
             runner: ubuntu-latest
             cmd: flutter build apk --flavor store --release
-            # gh-2072: default APK ABIs (armeabi-v7a, arm64-v8a, x86_64)
-            sqlite3_targets: android-arm,android-arm64,android-x64
+            # gh-2072: default APK ABIs (armeabi-v7a, arm64-v8a, x86_64).
+            # The script's grammar is <abi>-<os> — review round 2,
+            # thread 13: `android-arm,...` parsed as OS "arm", failed
+            # 3/3 per-target, and the store-APK build silently stayed on
+            # the unprotected hook download. Pinned by guard AC5/AC8.
+            sqlite3_targets: arm-android,arm64-android,x64-android
           - target: web
             runner: ubuntu-latest
             cmd: flutter build web --release
           - target: linux
             runner: ubuntu-latest
             cmd: flutter build linux --release
-            sqlite3_targets: auto
           - target: windows
             runner: windows-latest
             cmd: flutter build windows --release

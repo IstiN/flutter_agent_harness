@@ -1647,6 +1647,20 @@ jobs:
       # Issue #943 (vector 3): warm the build hooks — the cli_visual harness
       # spawns `dart bin/fah.dart` from the repo root and its boot budget
       # must not pay the cold-hook cost (tui_prototype_snapshot ×5).
+      # gh-2074 rework: this leg had NO hooks cache and its boot prewarm
+      # below was the first hook consumer — the bare libsqlite3.arm64.linux.so
+      # download 504'd (exit 255) in the 2026-11-09 brownout. Restore the
+      # shared cache (same key family as the other hosted lanes) and seed
+      # it hook-free before the boot prewarm. (gh-2072 review round 2,
+      # thread 3: the origin/main merge dropped this restore while every
+      # sibling leg kept it — restored verbatim so the prewarm below is a
+      # clean `already cached` no-op on warm runs.)
+      - name: Native-assets hook cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .dart_tool/hooks_runner/shared
+          key: hooks-shared-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pubspec.lock') }}
+          restore-keys: hooks-shared-${{ runner.os }}-${{ runner.arch }}-
       - uses: ./.github/actions/sqlite3-native-assets-prewarm
       - name: Prewarm build hooks + fa boot
         run: |

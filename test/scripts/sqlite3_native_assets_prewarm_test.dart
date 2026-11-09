@@ -693,5 +693,29 @@ void main() {
       expect(paths, contains('/libsqlite3.arm64.android.so'));
       expect(paths, contains('/libsqlite3.x64.android.so'));
     });
+
+    test('AC13: a corrupt package_config.json fails through the PREWARM '
+        'FAILED trailer, not a raw stack trace', () async {
+      final pkg = await fixturePackage(
+        sandbox,
+        assetHashes: {'libsqlite3.x64.linux.so': sha('C', utf8.encode('x'))},
+      );
+      // Simulate an interrupted pub get: the config file exists but is
+      // not valid JSON. The CLI must surface a PrewarmException (single
+      // PREWARM FAILED trailer) — an unhandled FormatException would
+      // bypass the friendly trailer and leak a stack trace (gh-2072
+      // review round 2 digest; cosmetic under continue-on-error, but
+      // the CLI's error contract should stay uniform).
+      File('${pkg.path}/.dart_tool/package_config.json').writeAsStringSync(
+        '{"configVersion": 2, "packages": [', // truncated
+      );
+      final result = await runScript(['--package-root', pkg.path]);
+      expect(result.exitCode, isNot(0));
+      expect(result.stderr, contains('PREWARM FAILED'));
+      expect(result.stderr, contains('not valid JSON'));
+      // The friendly trailer must own the failure — an UNHANDLED
+      // exception (raw dart crash, no trailer) is the defect shape.
+      expect(result.stderr, isNot(contains('Unhandled exception')));
+    });
   });
 }

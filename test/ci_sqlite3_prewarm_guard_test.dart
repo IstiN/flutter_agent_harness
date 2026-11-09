@@ -45,11 +45,20 @@
 //   AC7  a prewarm with explicit non-auto `targets:` declares
 //        `package-roots:` explicitly — every cross-target invocation
 //        lives in a job whose ONLY resolution is the flutter-pub-get
-//        action inside flutter_app (gh-2072 review threads 3/4).
+//        action inside flutter_app (gh-2072 review threads 3/4),
+//   AC8  every mapped prewarm's target VALUES resolve through the
+//        script's own grammar (expandTargets → sourceFilenameForTarget)
+//        — presence alone let the nightly android release row ride
+//        97/97 green with the reversed <os>-<abi> grammar
+//        `android-arm,android-arm64,android-x64` (gh-2072 review thread
+//        14, round 2): AC5/AC8 resolve the matrix placeholder and pin
+//        `arm-android,arm64-android,x64-android` + `arm64-ios`.
 import 'dart:io';
 
 import 'package:test/test.dart';
 import 'package:yaml/yaml.dart';
+import '../scripts/sqlite3_native_assets_prewarm.dart'
+    show expandTargets, hostTarget, sourceFilenameForTarget;
 
 String read(String path) => File(path).readAsStringSync();
 
@@ -128,14 +137,22 @@ final hookBuildingSignatures = [
 /// prewarm cannot cover them, so the map entries must pass explicit
 /// targets. The APK ABI triple is what `flutter build apk` produces by
 /// default (armeabi-v7a, arm64-v8a, x86_64 — no x86/ia32 row since
-/// Flutter 3.22); iOS device builds are arm64.
-const explicitTargetJobs = <String, String>{
-  'ci.yml/build-android': 'android',
-  'build-mobile.yml/build-android': 'android',
-  'build-mobile.yml/build-android-apks': 'android',
-  'build-mobile.yml/test-android-emulator': 'android',
-  'ci.yml/build-ios': 'arm64-ios',
-  'build-mobile.yml/build-ios': 'arm64-ios',
+/// Flutter 3.22); iOS device builds are arm64. `nightly.yml/build-release`
+/// reads `targets: ${{ matrix.sqlite3_targets }}` — AC5/AC8 resolve the
+/// placeholder through `strategy.matrix.include` and pin the per-row
+/// values (gh-2072 review thread 13, round 2: the android release row
+/// rode 97/97 green with the reversed `<os>-<abi>` grammar until this pin).
+const explicitTargetJobs = <String, List<String>>{
+  'ci.yml/build-android': ['android'],
+  'build-mobile.yml/build-android': ['android'],
+  'build-mobile.yml/build-android-apks': ['android'],
+  'build-mobile.yml/test-android-emulator': ['android'],
+  'ci.yml/build-ios': ['arm64-ios'],
+  'build-mobile.yml/build-ios': ['arm64-ios'],
+  'nightly.yml/build-release': [
+    'arm-android,arm64-android,x64-android',
+    'arm64-ios',
+  ],
 };
 
 YamlMap workflowRoot(String workflowPath) =>
@@ -145,6 +162,46 @@ YamlList jobSteps(String workflowPath, String jobKey) {
   final jobs = workflowRoot(workflowPath)['jobs'] as YamlMap;
   final job = jobs[jobKey] as YamlMap;
   return job['steps'] as YamlList;
+}
+
+/// The `sqlite3_targets` values of a job's `strategy.matrix.include` rows
+/// (nightly build-release), or null when the job has no matrix — AC5/AC8
+/// resolve the `${{ matrix.sqlite3_targets }}` placeholder through this.
+List<String>? matrixSqlite3Targets(String workflowPath, String jobKey) {
+  final job = (workflowRoot(workflowPath)['jobs'] as YamlMap)[jobKey];
+  if (job is! YamlMap) return null;
+  final strategy = job['strategy'];
+  if (strategy is! YamlMap) return null;
+  final matrix = strategy['matrix'];
+  if (matrix is! YamlMap) return null;
+  final include = matrix['include'];
+  if (include is! YamlList) return null;
+  return [
+    for (final row in include.whereType<YamlMap>())
+      if (row['sqlite3_targets'] != null) '${row['sqlite3_targets']}',
+  ];
+}
+
+/// The `targets:` strings a mapped job's prewarms request — literal
+/// `with.targets` values pass through; the `${{ matrix.sqlite3_targets }}`
+/// placeholder (nightly build-release) resolves to every matrix row's
+/// `sqlite3_targets`. `auto`/empty steps contribute nothing (AC8 is about
+/// explicit-target values; AC6 already pins the host-auto wiring).
+List<String> requestedTargetSpecs(String workflowPath, String jobKey) {
+  final steps = jobSteps(workflowPath, jobKey);
+  final matrixValues = matrixSqlite3Targets(workflowPath, jobKey);
+  final out = <String>[];
+  for (final step in steps.whereType<YamlMap>()) {
+    if (step['uses'] != prewarmAction || step['with'] is! YamlMap) continue;
+    final raw = '${(step['with'] as YamlMap)['targets'] ?? ''}'.trim();
+    if (raw.isEmpty || raw == 'auto') continue;
+    if (raw.contains(r'${{ matrix.')) {
+      out.addAll(matrixValues ?? const <String>[]);
+    } else {
+      out.add(raw);
+    }
+  }
+  return out;
 }
 
 List<int> prewarmIndexes(YamlList steps) => [
@@ -422,31 +479,69 @@ void main() {
 
         final explicitKey = '${workflow.split('/').last}/$jobKey';
         final expectedTargets = explicitTargetJobs[explicitKey];
+
+        // AC8 (gh-2072 review thread 14 — round 2): the guard must
+        // validate target VALUES, not just their presence — the nightly
+        // android release row rode AC3/AC5/AC6/AC7 97/97 green with
+        // `android-arm,android-arm64,android-x64`, the reversed
+        // `<os>-<abi>` grammar the script rejects: every target failed
+        // per-target, the composite's continue-on-error downgraded it to
+        // a ::warning, and the store-APK release build silently stayed on
+        // the unprotected hook download. Importing the script's own
+        // resolver keeps this test and the script in one grammar.
+        test('AC8: every $workflow $jobKey prewarm target value expands '
+            'to a release asset the script can download', () {
+          for (final spec in requestedTargetSpecs(workflow, jobKey)) {
+            for (final target in expandTargets(
+              spec,
+              hostTarget: hostTarget(),
+            )) {
+              expect(
+                () => sourceFilenameForTarget(target),
+                returnsNormally,
+                reason:
+                    '$workflow $jobKey requests target "$target" '
+                    '(from "$spec") which the prewarm script cannot '
+                    'resolve to a release asset — every such target '
+                    'fails per-target and the composite\'s '
+                    'continue-on-error silently falls back to the '
+                    'hook\'s single-attempt download (gh-2072 review '
+                    'thread 13: the nightly android row used the '
+                    'reversed <os>-<abi> grammar)',
+              );
+            }
+          }
+        });
+
         if (expectedTargets != null) {
           test('AC5: $workflow $jobKey requests explicit targets '
-              '($expectedTargets)', () {
-            final steps = jobSteps(workflow, jobKey);
-            final targets = [
-              for (final step in steps.whereType<YamlMap>())
-                if (step['uses'] == prewarmAction && step['with'] is YamlMap)
-                  '${(step['with'] as YamlMap)['targets'] ?? ''}',
-            ];
+              '(${expectedTargets.join(', ')})', () {
+            final targets = requestedTargetSpecs(workflow, jobKey);
             expect(
               targets,
               isNotEmpty,
               reason:
                   '$explicitKey compiles for a non-host target — the '
-                  'host-auto prewarm cannot provision those binaries. Pass '
-                  "targets: $expectedTargets to the prewarm action",
+                  'host-auto prewarm cannot provision those binaries. '
+                  'Pass targets: ${expectedTargets.join(', ')} to the '
+                  'prewarm action',
             );
             expect(
-              targets.any((t) => t.contains(expectedTargets)),
+              // Every expected value must be covered by some requested
+              // spec — `any` over the specs would let a single valid ios
+              // row mask an invalid android row (exactly the round-2
+              // nightly defect shape).
+              expectedTargets.every(
+                (expected) => targets.any((t) => t.contains(expected)),
+              ),
               isTrue,
               reason:
-                  '$explicitKey must request targets: $expectedTargets — '
-                  'the host-auto default provisions only the runner\'s own '
-                  'platform, not the APK ABIs / iOS device binaries the '
-                  'hook will ask for',
+                  '$explicitKey must request targets: '
+                  '${expectedTargets.join(', ')} — the host-auto default '
+                  'provisions only the runner\'s own platform, not the '
+                  'APK ABIs / iOS device binaries the hook will ask for '
+                  '(gh-2072 review thread 13: the nightly android row '
+                  'read the reversed grammar and provisioned nothing)',
             );
           });
         }
