@@ -152,6 +152,15 @@ List<int> prewarmIndexes(YamlList steps) => [
     if ((steps[i] as YamlMap)['uses'] == prewarmAction) i,
 ];
 
+/// The `with.package-roots` value of a prewarm step, or null when the
+/// step leaves it at the action default (`.` — the repo root).
+String? declaredPackageRoots(YamlMap step) {
+  final withMap = step['with'];
+  if (withMap is! YamlMap) return null;
+  final value = '${withMap['package-roots'] ?? ''}'.trim();
+  return value.isEmpty ? null : value;
+}
+
 List<int> signatureIndexes(YamlList steps) => [
   for (var i = 0; i < steps.length; i++)
     if (hookBuildingSignatures.any(

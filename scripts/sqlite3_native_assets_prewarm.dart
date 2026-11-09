@@ -37,6 +37,14 @@
 //                   (the three APK ABIs), `arm64-ios`, or explicit
 //                   `<abi>-<os>` names (e.g. `arm64-linux,x64-linux`).
 //   --attempts      bounded-retry budget per file (default 4).
+//   --connect-timeout-seconds   TCP connect budget per attempt
+//                               (default 30 — a stalled connect fails
+//                               fast and engages the retry budget).
+//   --request-timeout-seconds   per-attempt budget for response headers
+//                               AND body (default 120 — a hung
+//                               connection must engage the bounded
+//                               retry, never park the step until the
+//                               CI leg's wall-clock timeout kills it).
 //   --url-pattern   the release URL pattern; defaults to the sqlite3
 //                   hook's own default. `$RELEASE_TAG` and `$FILENAME`
 //                   are substituted. Overridable so tests can point the
@@ -53,6 +61,7 @@ library;
 
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math' as math;
 import 'dart:typed_data';
 
 // ── SHA-256 (stdlib has no crypto; the script must run standalone, with
@@ -384,42 +393,69 @@ class PrewarmException implements Exception {
   String toString() => message;
 }
 
+/// Per-attempt TCP connect budget (gh-2072 review thread 9): a stalled
+/// connect fails fast and engages the retry budget instead of riding the
+/// CI leg's wall-clock timeout.
+const _defaultConnectTimeout = Duration(seconds: 30);
+
+/// Per-attempt budget for response headers AND body (gh-2072 review
+/// thread 9): a hung connection — no 504, just a socket that never
+/// answers — must engage the bounded retry, never park the step until
+/// the leg timeout kills it.
+const _defaultRequestTimeout = Duration(seconds: 120);
+
+/// ±30% jitter source for the retry backoff (gh-2072 review thread 11):
+/// during a repo-wide egress storm every leg retries against the same
+/// saturated path — lockstep retries amplify the outage instead of
+/// smoothing it.
+final math.Random _backoffJitter = math.Random();
+
 Future<File> downloadVerified({
   required Uri uri,
   required String expectedSha256,
   required File target,
   required int attempts,
   required int backoffBaseSeconds,
+  required Duration connectTimeout,
+  required Duration requestTimeout,
   required void Function(String line) log,
 }) async {
   target.parent.createSync(recursive: true);
   final tmp = File('${target.path}.tmp');
   Object? lastError;
   for (var attempt = 1; attempt <= attempts; attempt++) {
+    // One client per attempt, closed in the `finally` on EVERY path: the
+    // failure path used to leak the client until process exit (android
+    // × N packages stacks one per file per attempt — gh-2072 review
+    // thread 9).
+    final client = HttpClient()
+      // The hook itself resolves proxies from the environment
+      // (sqlite3.dart #335); the prewarm must behave identically or it
+      // breaks proxied runners the hook otherwise serves.
+      ..findProxy = HttpClient.findProxyFromEnvironment
+      ..connectionTimeout = connectTimeout;
     try {
       if (tmp.existsSync()) {
         tmp.deleteSync();
       }
-      final client = HttpClient()
-        // The hook itself resolves proxies from the environment
-        // (sqlite3.dart #335); the prewarm must behave identically or it
-        // breaks proxied runners the hook otherwise serves.
-        ..findProxy = HttpClient.findProxyFromEnvironment;
       final request = await client.getUrl(uri);
       request.headers.add('User-Agent', 'fa sqlite3 native-assets prewarm');
-      final response = await request.close();
+      final response = await request.close().timeout(requestTimeout);
       if (response.statusCode != HttpStatus.ok) {
         // Drain so the connection is not left dangling, then reject the
         // attempt explicitly — THIS is the check the sqlite3 hook lacks:
         // at v1.0.697 it piped a 504 error page straight into the output
         // file and only tripped on the hash afterwards.
-        await response.drain<void>();
+        await response.drain<void>().timeout(requestTimeout);
         throw PrewarmException('HTTP ${response.statusCode} for $uri');
       }
       final builder = BytesBuilder(copy: false);
-      await for (final chunk in response) {
-        builder.add(chunk);
-      }
+      // The body read carries its own budget too: a transfer that stalls
+      // mid-stream dies here instead of hanging the step (the hook's own
+      // download has no such bound — gh-2072 review thread 9).
+      await response.listen(builder.add).asFuture<void>().timeout(
+            requestTimeout,
+          );
       final bytes = builder.takeBytes();
       final digest = sha256Hex(bytes);
       if (digest != expectedSha256) {
@@ -430,7 +466,6 @@ Future<File> downloadVerified({
       }
       await tmp.writeAsBytes(bytes, flush: true);
       tmp.renameSync(target.path);
-      client.close();
       return target;
     } on PrewarmException catch (e) {
       lastError = e;
@@ -438,6 +473,8 @@ Future<File> downloadVerified({
     } catch (e) {
       lastError = e;
       log('attempt $attempt/$attempts failed: $e');
+    } finally {
+      client.close(force: true);
     }
     if (tmp.existsSync()) {
       try {
@@ -447,8 +484,12 @@ Future<File> downloadVerified({
       }
     }
     if (attempt < attempts) {
-      final wait = backoffBaseSeconds * (1 << (attempt - 1));
-      await Future<void>.delayed(Duration(seconds: wait));
+      final raw = backoffBaseSeconds * (1 << (attempt - 1));
+      // ±30% jitter (gh-2072 review thread 11): a repo-wide storm must
+      // not have every leg retry in lockstep against the same saturated
+      // egress.
+      final wait = (raw * (0.7 + 0.6 * _backoffJitter.nextDouble())).round();
+      await Future<void>.delayed(Duration(seconds: wait < 1 ? 1 : wait));
     }
   }
   throw PrewarmException(
@@ -474,6 +515,8 @@ Future<List<String>> prewarmPackageRoot({
   required String targetSpec,
   required int attempts,
   required int backoffBaseSeconds,
+  required Duration connectTimeout,
+  required Duration requestTimeout,
   required String urlPattern,
   required void Function(String line) log,
 }) async {
@@ -587,6 +630,8 @@ Future<List<String>> prewarmPackageRoot({
         target: cachedFile,
         attempts: attempts,
         backoffBaseSeconds: backoffBaseSeconds,
+        connectTimeout: connectTimeout,
+        requestTimeout: requestTimeout,
         log: (line) => log('$root: $target $line'),
       );
       log('$root: $target cached at download-${pinnedHash.substring(0, 8)}');
@@ -615,6 +660,8 @@ Future<int> runMain(List<String> args) async {
   var targetSpec = 'auto';
   var attempts = 4;
   var backoffBaseSeconds = 5;
+  var connectTimeout = _defaultConnectTimeout;
+  var requestTimeout = _defaultRequestTimeout;
   var urlPattern =
       r'https://github.com/simolus3/sqlite3.dart/releases/download/$RELEASE_TAG/$FILENAME';
   var quiet = false;
@@ -629,6 +676,10 @@ Future<int> runMain(List<String> args) async {
         attempts = int.parse(args[++i]);
       case '--backoff-base-seconds':
         backoffBaseSeconds = int.parse(args[++i]);
+      case '--connect-timeout-seconds':
+        connectTimeout = Duration(seconds: int.parse(args[++i]));
+      case '--request-timeout-seconds':
+        requestTimeout = Duration(seconds: int.parse(args[++i]));
       case '--url-pattern':
         urlPattern = args[++i];
       case '--quiet':
@@ -656,6 +707,8 @@ Future<int> runMain(List<String> args) async {
         targetSpec: targetSpec,
         attempts: attempts,
         backoffBaseSeconds: backoffBaseSeconds,
+        connectTimeout: connectTimeout,
+        requestTimeout: requestTimeout,
         urlPattern: urlPattern,
         log: log,
       );
@@ -683,8 +736,9 @@ Future<int> runMain(List<String> args) async {
 const _usage =
     'usage: dart run scripts/sqlite3_native_assets_prewarm.dart '
     '[--package-root <dir>]... [--targets auto|android|arm64-ios|<abi>-<os>] '
-    '[--attempts <n>] [--backoff-base-seconds <s>] [--url-pattern <p>] '
-    '[--quiet]\n';
+    '[--attempts <n>] [--backoff-base-seconds <s>] '
+    '[--connect-timeout-seconds <s>] [--request-timeout-seconds <s>] '
+    '[--url-pattern <p>] [--quiet]\n';
 
 Future<void> main(List<String> args) async {
   exitCode = await runMain(args);

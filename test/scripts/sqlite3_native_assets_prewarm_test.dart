@@ -39,7 +39,12 @@
 //        sqlite3 checkout is resolvable (env-dependent, gh-1655 AC5
 //        posture),
 //   AC11 pure SHA-256 matches the FIPS vectors (the script must not
-//        trust-download without an independent digest check).
+//        trust-download without an independent digest check),
+//   AC12 a hung connection (accepted, never answered) is bounded by the
+//        per-attempt request timeout — the retry budget engages instead
+//        of the step parking until the leg wall-clock timeout (gh-2072
+//        review thread 9).
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -219,6 +224,73 @@ void main() {
       // > 64 bytes: forces multiple compression blocks (> 55-byte tail).
       final long = utf8.encode('a' * 1000);
       expect(prewarm.sha256Hex(long).length, 64);
+    });
+
+    test('AC12: a hung connection (accepted, never answered) is bounded '
+        'by the per-attempt request timeout', () async {
+      final contentA = utf8.encode('sqlite3-arm-android-content');
+      final hashA = sha('A', contentA);
+      final pkg = await fixturePackage(
+        sandbox,
+        assetHashes: {'libsqlite3.arm.android.so': hashA},
+      );
+      // gh-2072 review thread 9: a socket that accepts the request and
+      // then goes silent (no 504 — just a stalled connection) must be
+      // cut by the per-attempt timeout and engaged with the retry
+      // budget; the pre-timeout code parked on it until the CI leg's
+      // wall-clock timeout killed the whole step.
+      final server = await FixtureServer.start((req, f) async {
+        // Intentionally NO response and NO close: the request hangs.
+        await Completer<void>().future;
+      });
+
+      final sw = Stopwatch()..start();
+      final result = await runScript([
+        '--package-root',
+        pkg.path,
+        '--targets',
+        'arm-android',
+        '--attempts',
+        '1',
+        '--request-timeout-seconds',
+        '1',
+        '--url-pattern',
+        '${server.url}/\$FILENAME',
+      ]);
+      sw.stop();
+      expect(
+        result.exitCode,
+        isNot(0),
+        reason: 'the hung attempt must fail, not hang forever',
+      );
+      expect(result.stderr, contains('TimeoutException'));
+      expect(
+        sw.elapsed,
+        lessThan(const Duration(seconds: 20)),
+        reason:
+            'the request timeout must bound the stalled attempt — the '
+            'whole run (script boot + 1 hung attempt + 1s budget) stays '
+            'seconds-scale, never leg-timeout-scale\n'
+            '${result.stdout}\n${result.stderr}',
+      );
+      final cacheDir = Directory(
+        '${pkg.path}/.dart_tool/hooks_runner/shared/sqlite3/build',
+      );
+      final strays = cacheDir.existsSync()
+          ? cacheDir
+                .listSync(recursive: true)
+                .whereType<File>()
+                .where((f) => !f.path.endsWith('.lock'))
+                .toList()
+          : <File>[];
+      expect(
+        strays,
+        isEmpty,
+        reason:
+            'a timed-out attempt must not cache anything — the hook must '
+            'never find a poisoned entry (empty directories are fine: the '
+            'hook creates the same tree itself)',
+      );
     });
 
     test('AC9: target expansion — android triple, auto host, pass-through', () {
