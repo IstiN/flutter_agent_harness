@@ -229,6 +229,45 @@ void main() {
       expect('${t.single.os}-${t.single.arch}', 'linux-x64');
     });
 
+    // The 2026-11-09 CI red: this shard ran on ubuntu-24.04-arm and the
+    // injected platform was IGNORED — expandTargets fell back to the real
+    // machine (linux-arm64) and expected 'linux-x64' failed. A fully
+    // injected platform must be host-independent: this assertion reds on
+    // ANY host when the injection is dropped (an x64 dev box could never
+    // see it — the real platform coincidentally matched the injection).
+    test('a fully injected host never consults the real machine', () {
+      final t =
+          prewarm.expandTargets('host', hostOs: 'macos', hostArch: 'arm64');
+      expect('${t.single.os}-${t.single.arch}', 'macos-arm64',
+          reason:
+              'the injected platform must win over Platform.operatingSystem/'
+              'Abi.current() — the unit tests run on x64 AND arm64 shards');
+    });
+
+    test('a partial host injection fills the missing side from the machine',
+        () {
+      final osInjected = prewarm.expandTargets('host', hostOs: 'linux');
+      expect(osInjected.single.os, 'linux',
+          reason: 'the injected os overrides, the real machine fills the arch');
+      final archInjected = prewarm.expandTargets('host', hostArch: 'x64');
+      expect(archInjected.single.arch, 'x64',
+          reason: 'the injected arch overrides, the real machine fills the os');
+    });
+
+    test('an injected platform is still validated (loud on unknown os/arch)',
+        () {
+      expect(
+        () => prewarm.expandTargets('host',
+            hostOs: 'fuchsia', hostArch: 'x64'),
+        throwsA(isA<ArgumentError>()),
+      );
+      expect(
+        () => prewarm.expandTargets('host',
+            hostOs: 'linux', hostArch: 'mips'),
+        throwsA(isA<ArgumentError>()),
+      );
+    });
+
     test('unknown os or arch is a loud error, never a silent no-op', () {
       expect(() => prewarm.expandTargets('fuchsia'),
           throwsA(isA<ArgumentError>()));
