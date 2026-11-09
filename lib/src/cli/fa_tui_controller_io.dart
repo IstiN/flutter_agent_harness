@@ -10,9 +10,20 @@ extension FaTuiControllerIo on FaTuiController {
     // concatenates and the newline flag is a trailing '\n' (the model's
     // _appendOutput splits on '\n' and its trailing empty part plays the
     // role of the flag's extra empty line).
+    // Issue #2069 — except across a line boundary. A newline-terminated
+    // write is a COMPLETE line (a steering/watchdog/job notice, a tool
+    // row, command output); when the buffer holds an unterminated
+    // streamed delta, that line is closed first so the notice renders
+    // intact on its own row above the busy row instead of gluing onto
+    // the mid-word tail of streamed answer text. Plain write() deltas
+    // still merge (streaming paragraph shapes are unchanged).
+    final boundary = newline && _outputTailOpen;
+    if (boundary) _outputBuffer.write('\n');
     _outputBuffer.write(text);
     if (newline) _outputBuffer.write('\n');
-    _sentNewlines += '\n'.allMatches(text).length + (newline ? 1 : 0);
+    _sentNewlines +=
+        '\n'.allMatches(text).length + (newline ? 1 : 0) + (boundary ? 1 : 0);
+    _outputTailOpen = !newline && !text.endsWith('\n');
     if (_running) {
       _outputFlushTimer ??= Timer(
         FaTuiController._outputFlushInterval,
@@ -32,6 +43,7 @@ extension FaTuiControllerIo on FaTuiController {
     if (_outputBuffer.isEmpty) return;
     final text = _outputBuffer.toString();
     _outputBuffer.clear();
+    _outputTailOpen = false;
     _send(OutputMsg(text));
   }
 
@@ -101,7 +113,6 @@ extension FaTuiControllerIo on FaTuiController {
     _flushOutput();
     _send(SetBootAnchorMsg(_sentNewlines));
   }
-
 
   /// Opens the interactive prompt zone (ask/secret/approval) and resolves
   /// when the user answers (or cancels). The caller awaits the returned
