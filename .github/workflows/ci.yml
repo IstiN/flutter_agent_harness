@@ -1163,6 +1163,7 @@ jobs:
       - uses: ./.github/actions/sqlite3-native-assets-prewarm
       - name: dart test under hostile ambient env
         run: dart test --exclude-tags integration
+
   # ─────────────────────────────────────────────────────────────────────────
   # Nightly parity (2026-09-23): the two legs that stayed nightly-only went
   # red on main night after night before anyone looked — the CLI-coverage
