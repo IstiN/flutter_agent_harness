@@ -13,6 +13,19 @@ block a release again.
 
 ## Unreleased
 
+- fix(gh-2075): the daily-publish macOS legs no longer depend on the
+  package:sqlite3 native-assets hook's single un-retried build-time
+  download. The `build-macos.yml` app-build and CLI-bundle steps now
+  pre-warm the hook's digest-checked cache via the ONE shared tool
+  (`scripts/sqlite3_hook_prewarm.dart`, gh-2074 — the same contract
+  build-mobile.yml + ci.yml already ride) after pub/config resolution and
+  before the build; a brownout fails there in seconds with a named
+  `::error::` instead of killing a release build ~20 minutes in. The
+  interim bash seeder (`scripts/seed_sqlite3_native_assets.sh` + selftest)
+  is removed — round-2 review flagged it as a second implementation of the
+  same hook-cache contract; the lane wiring + the single-mechanism
+  invariant are pinned by `test/ci_sqlite3_native_asset_seed_guard_test.dart`.
+
 - fix(gh-2074): the daily-publish `play` leg no longer reds on a GitHub
   release-download brownout. Three build-mobile.yml Android jobs died in
   package:sqlite3's native-assets build hook with `Bad state: Hash of
