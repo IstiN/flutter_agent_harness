@@ -2535,6 +2535,12 @@ final class FaTuiController {
   /// keystrokes queued up behind them (typing lag while a run streamed).
   final _outputBuffer = StringBuffer();
 
+  /// Whether [_outputBuffer] currently ends mid-line — an unterminated
+  /// streamed delta (a write() tail). The line-boundary rule (#2069) reads
+  /// this: a newline-terminated write closes such a tail FIRST, so a
+  /// notice never glues onto streamed answer text.
+  bool _outputTailOpen = false;
+
   /// Newlines handed to [sendOutput] so far — the transcript index the
   /// next write lands on. The boot replay anchor captures this at its
   /// call site; a model-side count would race the boot backlog drain.
