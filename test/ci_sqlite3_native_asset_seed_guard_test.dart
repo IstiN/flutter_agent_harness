@@ -101,13 +101,17 @@ void main() {
 
     test('the build step invokes the seed script', () {
       final build = steps
-          .where((s) => (s['name'] ?? '').toString().startsWith('Build macOS release'))
+          .where(
+            (s) =>
+                (s['name'] ?? '').toString().startsWith('Build macOS release'),
+          )
           .toList();
       expect(build, hasLength(1), reason: 'the release build step must exist');
       expect(
         runOf(build.single),
         contains('seed_sqlite3_native_assets.sh'),
-        reason: 'the release build step must seed the hook cache '
+        reason:
+            'the release build step must seed the hook cache '
             '(the hook runs inside `flutter build macos --release`)',
       );
     });
@@ -127,36 +131,55 @@ void main() {
       final seed = text.indexOf('seed_sqlite3_native_assets.sh');
       final release = text.indexOf('flutter build macos --release');
       expect(gate, greaterThanOrEqualTo(0), reason: 'gate step must exist');
-      expect(release, greaterThanOrEqualTo(0), reason: 'release build must exist');
       expect(
-        seed, greaterThan(gate),
-        reason: 'seed must run after `flutter clean` + the config-only pass '
+        release,
+        greaterThanOrEqualTo(0),
+        reason: 'release build must exist',
+      );
+      expect(
+        seed,
+        greaterThan(gate),
+        reason:
+            'seed must run after `flutter clean` + the config-only pass '
             'wiped/recreated .dart_tool — seeding earlier is wiped away',
       );
       expect(
-        seed, lessThan(release),
-        reason: 'seed must run BEFORE the release build — the hook downloads '
+        seed,
+        lessThan(release),
+        reason:
+            'seed must run BEFORE the release build — the hook downloads '
             'mid-build (the gh-2075 failure landed ~20 min into the build)',
       );
     });
 
-    test('both matrix archs are seeded with the x86_64 → x64 asset mapping', () {
-      final build = steps
-          .where((s) => (s['name'] ?? '').toString().startsWith('Build macOS release'))
-          .single;
-      final run = runOf(build);
-      expect(
-        run, contains('x86_64'),
-        reason: 'the matrix arch is x86_64; the release asset is named '
-            'libsqlite3.x64.macos.dylib — the x86_64 → x64 mapping (the '
-            'size-manifest step idiom) must be applied before seeding',
-      );
-      expect(
-        run, contains('SQLITE_SEED_ARCH'),
-        reason: 'the mapped arch must go through a variable — seeding the '
-            'raw matrix arch would request an asset that does not exist',
-      );
-    });
+    test(
+      'both matrix archs are seeded with the x86_64 → x64 asset mapping',
+      () {
+        final build = steps
+            .where(
+              (s) => (s['name'] ?? '').toString().startsWith(
+                'Build macOS release',
+              ),
+            )
+            .single;
+        final run = runOf(build);
+        expect(
+          run,
+          contains('x86_64'),
+          reason:
+              'the matrix arch is x86_64; the release asset is named '
+              'libsqlite3.x64.macos.dylib — the x86_64 → x64 mapping (the '
+              'size-manifest step idiom) must be applied before seeding',
+        );
+        expect(
+          run,
+          contains('SQLITE_SEED_ARCH'),
+          reason:
+              'the mapped arch must go through a variable — seeding the '
+              'raw matrix arch would request an asset that does not exist',
+        );
+      },
+    );
   });
 
   group('gh-2075 AC2 — CLI bundle legs seed before dart build cli', () {
@@ -167,24 +190,34 @@ void main() {
           .map(stepText)
           .where((t) => t.contains('seed_sqlite3_native_assets.sh'))
           .toList();
-      expect(seeds, hasLength(1), reason: 'exactly one seed step in the CLI job');
+      expect(
+        seeds,
+        hasLength(1),
+        reason: 'exactly one seed step in the CLI job',
+      );
       expect(seeds.single, contains('macos'), reason: 'the CLI targets macOS');
     });
 
     test('seed runs after pub get, before dart build cli', () {
       final texts = steps.map(stepText).toList();
       final pubGet = texts.indexWhere((t) => t.contains('dart pub get'));
-      final seed = texts.indexWhere((t) => t.contains('seed_sqlite3_native_assets.sh'));
+      final seed = texts.indexWhere(
+        (t) => t.contains('seed_sqlite3_native_assets.sh'),
+      );
       final build = texts.indexWhere((t) => t.contains('dart build cli'));
       expect(pubGet, greaterThanOrEqualTo(0));
       expect(
-        seed, greaterThan(pubGet),
-        reason: 'the seed resolves sqlite3 from .dart_tool/package_config.json '
+        seed,
+        greaterThan(pubGet),
+        reason:
+            'the seed resolves sqlite3 from .dart_tool/package_config.json '
             '— it needs the pub resolution first',
       );
       expect(
-        seed, lessThan(build),
-        reason: '`dart build cli` triggers the hook download — the 504 class '
+        seed,
+        lessThan(build),
+        reason:
+            '`dart build cli` triggers the hook download — the 504 class '
             'must be caught in the seed (seconds, retried), never mid-build',
       );
     });
@@ -202,20 +235,35 @@ void main() {
     });
 
     test('curl runs with --fail (a 5xx must engage the retry loop)', () {
-      expect(body, contains('--fail'), reason: 'gh-1759: without --fail, curl '
-          'exits 0 on HTTP errors and writes the error page into the output');
+      expect(
+        body,
+        contains('--fail'),
+        reason:
+            'gh-1759: without --fail, curl '
+            'exits 0 on HTTP errors and writes the error page into the output',
+      );
     });
 
     test('the download is bounded (attempt loop + per-attempt wall cap)', () {
       expect(body, contains('--max-time'), reason: 'per-attempt wall cap');
-      expect(body, matches(RegExp(r'for\s+\w+\s+in\s+')), reason: 'attempt loop');
+      expect(
+        body,
+        matches(RegExp(r'for\s+\w+\s+in\s+')),
+        reason: 'attempt loop',
+      );
     });
 
     test('the downloaded bytes are sha256-pinned before install', () {
-      expect(body, contains('sha256'), reason: 'verify against the pinned digest');
       expect(
-        body, contains('asset_hashes.dart'),
-        reason: 'version + release tag + hashes come from the INSTALLED '
+        body,
+        contains('sha256'),
+        reason: 'verify against the pinned digest',
+      );
+      expect(
+        body,
+        contains('asset_hashes.dart'),
+        reason:
+            'version + release tag + hashes come from the INSTALLED '
             'package — no literals pinned in the script, a lockfile bump '
             'self-updates',
       );
@@ -223,22 +271,28 @@ void main() {
 
     test('wrong content is purged, never installed', () {
       expect(
-        body, contains('::error::'),
-        reason: 'digest mismatch / exhausted attempts fail LOUD with a named '
+        body,
+        contains('::error::'),
+        reason:
+            'digest mismatch / exhausted attempts fail LOUD with a named '
             'annotation — the gh-2075 failure must surface here in seconds, '
             'not ~20 min into the build',
       );
       expect(
-        body, matches(RegExp(r'rm -f')),
-        reason: 'a hash-mismatched download is purged before install '
+        body,
+        matches(RegExp(r'rm -f')),
+        reason:
+            'a hash-mismatched download is purged before install '
             '(the WasmRun digest-purge precedent)',
       );
     });
 
     test('a hash-valid cached file skips the download (warm path)', () {
       expect(
-        body, contains('already cached'),
-        reason: 'the hook cache persists across builds in the same job '
+        body,
+        contains('already cached'),
+        reason:
+            'the hook cache persists across builds in the same job '
             '(release + no-sandbox build share the workspace); re-downloading '
             'a warm cache would re-expose every build to the egress flake',
       );
@@ -246,8 +300,10 @@ void main() {
 
     test('seeds the stable hooks_runner shared cache path', () {
       expect(
-        body, contains('hooks_runner/shared/sqlite3/build'),
-        reason: 'the hook cache is shared/<package>/<hook>/ under '
+        body,
+        contains('hooks_runner/shared/sqlite3/build'),
+        reason:
+            'the hook cache is shared/<package>/<hook>/ under '
             '.dart_tool/hooks_runner — a per-input-hash path can not be '
             'seeded (its name is a config checksum)',
       );
@@ -255,8 +311,10 @@ void main() {
 
     test('requires package resolution first (package_config.json gate)', () {
       expect(
-        body, contains('package_config.json'),
-        reason: 'the seed resolves the installed sqlite3 from the workspace '
+        body,
+        contains('package_config.json'),
+        reason:
+            'the seed resolves the installed sqlite3 from the workspace '
             'package config; a missing one must fail loud, not silently skip',
       );
     });
@@ -267,30 +325,46 @@ void main() {
       expect(File(selftest).existsSync(), isTrue);
       final body = read(selftest);
       expect(
-        body, contains('seed_sqlite3_native_assets.sh'),
-        reason: 'the selftest runs the REAL script (update_git_mirror_selftest '
+        body,
+        contains('seed_sqlite3_native_assets.sh'),
+        reason:
+            'the selftest runs the REAL script (update_git_mirror_selftest '
             'pattern) — never a copy that can drift',
       );
     });
 
     test('the selftest pins the incident scenarios', () {
       final body = read(selftest);
-      expect(body, contains('fault'), reason: 'fault-injected curl shim — '
-          'the selftest must be hermetic, no real egress');
+      expect(
+        body,
+        contains('fault'),
+        reason:
+            'fault-injected curl shim — '
+            'the selftest must be hermetic, no real egress',
+      );
       // T-matrix: transient failure recovery, wrong-content purge,
       // warm-cache skip, missing-dependency fail-loud, exhaustion.
       expect(body, contains('RETRY'), reason: 'transient 504-class recovery');
-      expect(body, contains('GARBAGE'), reason: 'the bef140a1a wrong-body signature');
+      expect(
+        body,
+        contains('GARBAGE'),
+        reason: 'the bef140a1a wrong-body signature',
+      );
       expect(body, contains('WARM'), reason: 'warm-cache skip');
       expect(body, contains('MISSING'), reason: 'missing sqlite3 fail-loud');
-      expect(body, contains('EXHAUST'), reason: 'attempts exhausted → loud red');
+      expect(
+        body,
+        contains('EXHAUST'),
+        reason: 'attempts exhausted → loud red',
+      );
     });
 
     test('the guard runs the selftest', () {
       final result = Process.runSync('bash', [selftest]);
       final out = '${result.stdout}${result.stderr}';
       expect(
-        result.exitCode, 0,
+        result.exitCode,
+        0,
         reason: 'selftest must pass: ${result.exitCode}\n$out',
       );
       expect(out, contains('PASS'), reason: 'scenario verdicts are visible');
@@ -303,7 +377,8 @@ void main() {
       expect(
         RegExp(r'libsqlite3\.[a-z0-9]+\.macos\.dylib').allMatches(rootText),
         isEmpty,
-        reason: 'the ONLY sqlite3 download path is the seed script, which '
+        reason:
+            'the ONLY sqlite3 download path is the seed script, which '
             'derives the asset name + pinned hash from the installed package '
             '— a literal URL in the workflow re-creates the un-pinned '
             'download gh-2075 exists to remove',
