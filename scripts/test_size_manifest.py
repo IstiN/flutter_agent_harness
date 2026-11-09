@@ -194,5 +194,67 @@ class PagesDryPathTest(unittest.TestCase):
             self.assertIn("TOTAL", manifest)
 
 
+class IosFaBaselineRatchetTest(unittest.TestCase):
+    """REG (gh-2073): the committed fa-ios.tsv floor must accept the
+    shipped iOS asset-catalog shape.
+
+    gh-2073: PR #2063 (Fa 2 / Squircle-V2 brand mark) deliberately rewrote
+    every AppIcon.appiconset PNG ~3-5x bigger, so actool's compiled
+    Payload/Runner.app/Assets.car jumped 82008 -> 21944 bytes (+170.6%)
+    and the testflight leg reds on the +5% per-line budget. The ratchet's
+    own escape hatch for intentional growth is a baseline re-seed; this
+    test pins the ack end-to-end: a synthetic IPA carrying the observed
+    v1.0.697 manifest shape (every committed baseline row, with the
+    observed Assets.car bytes and the matching TOTAL delta) must pass
+    through the exact invocation shape the build-mobile workflow uses
+    (committed baseline + the --forbid deny-list).
+    """
+
+    OBSERVED_ASSETS_CAR = 21944  # v1.0.697 actool output (gh-2073 run log)
+    ASSETS_CAR = "Payload/Runner.app/Assets.car"
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.td = Path(self._tmp.name)
+
+    def load_committed_baseline(self) -> tuple[Path, "dict[str, int]"]:
+        baseline_path = (Path(__file__).resolve().parent
+                         / "size_budget" / "fa-ios.tsv")
+        return baseline_path, size_manifest.load_baseline(baseline_path)
+
+    def write_shipped_shape_zip(self, path: Path, baseline: "dict[str, int]"):
+        """Fixture: the fa.ipa shape the failing run actually produced —
+        every committed baseline row with Assets.car swapped to the
+        observed bytes. TOTAL is synthesized by the gate from the scan."""
+        rows = {name: size for name, size in baseline.items()
+                if name != "TOTAL"}
+        rows[self.ASSETS_CAR] = self.OBSERVED_ASSETS_CAR
+        with zipfile.ZipFile(path, "w") as zf:
+            for name, size in rows.items():
+                zf.writestr(name, b"\0" * size)
+
+    def test_committed_floor_accepts_shipped_shape(self):
+        baseline_path, baseline = self.load_committed_baseline()
+        artifact = Path(self.td) / "fa.ipa"
+        self.write_shipped_shape_zip(artifact, baseline)
+        self.assertEqual(
+            size_manifest.check(
+                artifact, baseline_path, 5.0,
+                forbid=[r"^Symbols/", r"coach_anny\.glb$"]),
+            0, "the committed fa-ios.tsv floor must accept the shipped "
+               "Assets.car shape — re-seed the floor when growth is "
+               "intentional (gh-2073)")
+
+    def test_floor_was_reseeded_to_observed_brand_mark(self):
+        baseline_path, baseline = self.load_committed_baseline()
+        self.assertGreaterEqual(
+            baseline[self.ASSETS_CAR], self.OBSERVED_ASSETS_CAR,
+            f"{baseline_path}: the Assets.car floor still carries the "
+            f"pre-Fa2 {baseline[self.ASSETS_CAR]} bytes; the Squircle-V2 "
+            f"brand mark compiles to {self.OBSERVED_ASSETS_CAR} — re-seed "
+            "the floor (intentional-growth ack, gh-2073)")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
