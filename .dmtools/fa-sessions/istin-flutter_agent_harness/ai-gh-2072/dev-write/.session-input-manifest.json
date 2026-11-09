@@ -1,0 +1,427 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-11-09T11:21:47.722Z",
+  "ticketKey": "gh-2072",
+  "headSha": "5320f0d3d07dc9660d00ffe6d544ecbb7552010d",
+  "baseBranch": "main",
+  "reviewDecision": "NONE",
+  "labels": [],
+  "files": {
+    "ci_failures.md": {
+      "hash": "fnv1a64:322b878d3c3c2465",
+      "size": 288
+    },
+    "pr_diff.txt": {
+      "hash": "fnv1a64:1ef67e7cd4dcf2f5",
+      "size": 12304
+    },
+    "pr_discussions.md": {
+      "hash": "fnv1a64:286ccd31de704bfb",
+      "size": 63488
+    },
+    "pr_discussions_raw.json": {
+      "hash": "fnv1a64:4b6098c6c5659968",
+      "size": 1619
+    },
+    "pr_info.md": {
+      "hash": "fnv1a64:55f42774bef17dab",
+      "size": 4839
+    },
+    "request.md": {
+      "hash": "fnv1a64:6f368e9b3840ac5c",
+      "size": 1095
+    },
+    "review_policy.md": {
+      "hash": "fnv1a64:5fafdb4c1c158a34",
+      "size": 1514
+    },
+    "review_state.md": {
+      "hash": "fnv1a64:5dc3dae06d46fc1c",
+      "size": 721
+    },
+    "rework_base_head.txt": {
+      "hash": "fnv1a64:de4711d3c9f427bd",
+      "size": 40
+    },
+    "ticket.json": {
+      "hash": "fnv1a64:2c324f3af38a4bfb",
+      "size": 1157
+    },
+    "ticket.md": {
+      "hash": "fnv1a64:6f368e9b3840ac5c",
+      "size": 1095
+    }
+  },
+  "comments": [
+    {
+      "id": "PRRT_kwDOTXdlLc61Oez6",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "test/ci_sqlite3_prewarm_guard_test.dart:467",
+      "resolved": false,
+      "body": "💡 severity: SUGGESTION —\n💡 **SUGGESTION: AC6/AC7 pin that `package-roots:` is *declared* — never that the value is the root the job actually resolves**\n\n`declaredPackageRoots(step)` only checks non-null (`test/ci_sqlite3_prewarm_guard_test.dart:467`). Any non-empty value passes the guard — including a typo'd root (`flutterapps`, `packages/fa_ui` in a `flutter_app`-only job). The runtime failure mode of a wrong value is exactly the silent-degradation class thread 13/F13 documented one level up: the script fails per-root, the composite's `continue-on-error` downgrades it to a `::warning`, and the leg continues with the prewarm coverage silently gone.\n\nSince every explicit-target prewarm in this repo is a `flutter_app`-only job, the check can be exact instead of existential:\n\n```dart\nexpect(\n  declaredPackageRoots(step),\n  'flutter_app',\n  reason:\n      '$workflow $jobKey resolves only flutter_app (via flutter-pub-get) — '\n      'a package-roots value pointing anywhere else fails per-root and '\n      'the composite degrades the prewarm to a silent ::warning fallback',\n);\n```\n\n(If a future job legitimately prewarms a second root, the map entry can grow a per-job expected-roots list — same shape as `explicitTargetJobs`.)"
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-09:6cc19d72",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-09",
+      "updatedAt": "2026-11-09",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread 11 — 4 attempts ≈ 35s retry window vs multi-minute outage (`.github/actions/flutter-pub-get/action.yml:101`)\n\n**Fixed** — the first and third options from the thread (head `10403aaa1f`):\n\n- **Budget raised**: the composite action's `attempts` input default is now **8** (backoff 5s → 5/10/20/40/80/160/320s ≈ a **~10.6-minute** covered outage window before the fallback, up from ~35s). The flutter-pub-get prewarm inherits it through the nested composite call (thread 12's dedupe — there is no second inline copy left to wire separately, which was exactly the drift risk this thread and thread 12 both flagged).\n- **Jitter added**: the script's backoff now applies ±30% multiplicative jitter (uniform 0.7×–1.3× per wait), so a repo-wide egress storm no longer has every leg retry in lockstep against the same saturated path.\n- **Residual risk documented**: the composite action's `description:` now states the best-effort contract and the remaining exposure — a sustained egress outage longer than the ~10-minute window can still red a hook-building leg through the hook's own single-attempt fallback.\n\nThe `attempts` input stays overridable per invocation for legs that want a different budget. The android leg's attempt-4 survival on this PR's own run (the thread's own evidence) carries over: short blips keep recovering on early attempts; the window now matches the observed incident class (5+ minutes)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-09:3f5dbd64",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-09",
+      "updatedAt": "2026-11-09",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🚨 severity: BLOCKING —\n🚨 **BLOCKING: prewarm runs BEFORE `dart pub get` in this job — guaranteed red on every run**\n\nThe step order here is:\n\n1. Native-assets hook cache restore\n2. **sqlite3-native-assets-prewarm** ← line 1205\n3. `dart pub get` ← line 1206\n4. `dart build cli`\n\nThe prewarm script reads `<root>/.dart_tool/package_config.json` and **hard-fails when it is missing** (`scripts/sqlite3_native_assets_prewarm.dart`: \"package_config.json not found — run pub get before the prewarm\"). On a fresh checkout there is no package config until step 3 runs, so this step fails structurally — not transiently.\n\nIt already did: on this PR's own run (commit de262fc9), the **AOT fa binary** leg failed at 07:54:02 with\n\n```\nPREWARM FAILED — .: ./.dart_tool/package_config.json not found — run pub get before the prewarm\n```\n\nFix: move this `- uses:` line to **after** `- run: dart pub get` (line 1206) and before `dart build cli`.\n\nNote the guard test cannot catch this: it only checks \"prewarm before the first hook-building step\", and `dart pub get` is deliberately not a hook-building signature. See also the AC-hardening comment on the guard test."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-09:498f9977",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-09",
+      "updatedAt": "2026-11-09",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🚨 severity: BLOCKING —\n🚨 **BLOCKING: cross-target prewarm reads the wrong package root — `.` has no package config in this job**\n\nThis explicit invocation relies on the action's `package-roots` default (`.`), but this job's only dependency resolution is `flutter-pub-get` with `working-directory: flutter_app` — there is **no root `dart pub get`** anywhere in the build-android steps. So the script looks for `./.dart_tool/package_config.json` at the repo root, which never exists here, and hard-fails.\n\nIt already did, twice, on this PR's own run (commit de262fc9):\n\n- **Build Android APK (debug)**, 07:59:09: `PREWARM FAILED — .: ./.dart_tool/package_config.json not found — run pub get before the prewarm` → exit 1 → leg red (the embedded flutter-pub-get prewarm above it had already succeeded for `flutter_app` at 07:58:39 — the wiring, not the network, is what failed).\n- **Build iOS (debug, unsigned)**, 07:59:04: same error (same cause, `targets: arm64-ios` at ci.yml:3039).\n\nFix for both cross-target invocations (`build-android` here and `build-ios` at ci.yml:3039):\n\n```yaml\n- uses: ./.github/actions/sqlite3-native-assets-prewarm\n  with:\n    targets: android\n    package-roots: flutter_app   # ← the root whose package config actually exists here\n```\n\n(The same `package-roots: flutter_app` correction applies to all four explicit invocations in build-mobile.yml — see that file's comment.)"
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-09:f0be241f",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-09",
+      "updatedAt": "2026-11-09",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🚨 severity: BLOCKING —\n🚨 **BLOCKING: all four explicit prewarms in this workflow use the default `package-roots: '.'` — none of these jobs has a root package config**\n\nSame defect as ci.yml's build-android/build-ios legs, now in build-mobile.yml at four sites:\n\n- line 190 — `build-android` (`targets: android`)\n- line 443 — `build-android-apks` (`targets: android`)\n- line 599 — `test-android-emulator` (`targets: android`)\n- line 865 — `build-ios` (`targets: arm64-ios`)\n\nEvery one of these jobs resolves dependencies exclusively through `./.github/actions/flutter-pub-get` (which runs `flutter pub get --enforce-lockfile` inside `flutter_app/` — that is the action's own `working-directory` default and the guard `test/ci_pub_get_retry_guard_test.dart` forbids workflows from resolving flutter_app any other way). None of them runs a root `dart pub get`, so `./.dart_tool/package_config.json` never exists and the prewarm script exits 1 with\n\n```\nPREWARM FAILED — .: ./.dart_tool/package_config.json not found — run pub get before the prewarm\n```\n\nThese legs did not run in this dispatch (build-mobile is manual/nightly), so the breakage is latent — but it is structural, not transient: the first nightly/manual run after merge reds all four legs.\n\nFix: add `package-roots: flutter_app` to each of the four `with:` blocks.\n\n(Sweep suggestion: extend the AC5 branch of `test/ci_sqlite3_prewarm_guard_test.dart` so any prewarm with explicit `targets:` must also declare `package-roots:` explicitly — that would have pinned this.)"
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-09:43d0a944",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-09",
+      "updatedAt": "2026-11-09",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🚨 severity: BLOCKING —\n🚨 **BLOCKING: unconditional prewarm breaks the documented out-of-scope fastpass in this job (and two siblings)**\n\nEvery setup step in this job is conditional on `needs.changes.outputs.core/shared` — checkout, setup-dart, pub cache, and `dart pub get` are all skipped on out-of-scope PRs so the leg stays green via the \"Scope fastpass\" step (\"out-of-scope → green in seconds\"). The new prewarm step (this line) has **no `if:`**.\n\nOn an app-only or docs-only PR at the next release-pending dispatch this leg goes red by construction:\n\n- `test-core` (this job, shards 0–3): checkout AND setup-dart are skipped → the local composite action can't even resolve (`./.github/actions/...` is not on disk) → all four required shard contexts fail.\n- `guards` (ci.yml:1764, same insertion): checkout/setup-dart DO run there (`core||shared||app||docs`), but `dart pub get` is gated `core||shared` only — skipped for app/docs PRs → the prewarm dies on the missing package config. The job itself documents the invariant this violates, four lines above the pub get: *\"on a skipped (app-only) PR no dart SDK is set up, so an unconditional pub get dies with 127\"* — the prewarm has exactly the same dependency set (dart + package config).\n- `model-switch-reg` (ci.yml:1939, same insertion): same shape as guards.\n\nFix: give each of the three inserted steps the same `if:` as the pub get it depends on:\n\n```yaml\n- uses: ./.github/actions/sqlite3-native-assets-prewarm\n  if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'\n```\n\nThis run's dispatch happened to be core-in-scope, so the failure is latent here — but it will red the required contexts on the first out-of-scope PR, which is precisely the case the fastpass design exists to keep green."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-09:66fc725b",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-09",
+      "updatedAt": "2026-11-09",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🚨 severity: BLOCKING —\n🚨 **BLOCKING: the integration (tag-only provider smoke) job has NO `dart pub get` before this prewarm**\n\nStep order in this job: checkout → setup-dart → hooks cache → **prewarm** → `dart test --tags \"integration && llm\"`. There is no explicit pub-get step at all — `dart test` would do an implicit one, but the prewarm runs first and requires `./.dart_tool/package_config.json` to already exist. It doesn't on a fresh checkout, so the script exits 1:\n\n```\nPREWARM FAILED — .: ./.dart_tool/package_config.json not found — run pub get before the prewarm\n```\n\nThis job is the ONLY tag-only LLM leg and `publish` waits on it (`needs.quality-gate.outputs.dart_ok` gating) — i.e. every `v*` tag push / release publish would red here, structurally, on every run.\n\nFix: add `- run: dart pub get` immediately before this prewarm step (the other root-package legs — `usage-fold`, `perf-gate`, `dep-audit`, `js-ext-integration` — all already have it; this one is the exception)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-09:689e4aa7",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-09",
+      "updatedAt": "2026-11-09",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🚨 severity: BLOCKING —\n🚨 **BLOCKING: the prewarm fails closed, converting legs that were IMMUNE to the 504 into prewarm-dependent legs — Build web proved it on this very run**\n\nThis `exit 1` makes the prewarm a hard gate on every leg that carries it. But a prewarm can only *help* legs that actually build sqlite3 hooks; on legs with no hook to protect it is pure added risk. Concretely:\n\n- **Build web (debug)** failed on this PR's run (07:59:27): `PREWARM FAILED — flutter_app: 1 of 1 targets failed for flutter_app (first: x64-linux: download failed after 4 attempts: HTTP 504 ...)`. Web builds no code assets — the PR's own analysis says so (`nightly.yml`: \"web builds no code assets — nothing to prewarm\"). At v1.0.697, during the same egress 504 storm, the web leg stayed **green** (only the four hook-building legs red'd). This PR turned an immune leg into a failing one.\n- The same storm red'd `usage-fold`, `build-web` (embedded prewarm), `flutter-tests` shard 0 and `terminal-visual` on this run — the 504 outage lasted 5+ minutes while the bounded retry covers ~35s (4 attempts, 5/10/20s backoff), so for hook legs the fix shifts the failure earlier but for this window does not prevent it (the android leg surviving on attempt 4 shows it does help for short blips).\n\nRecommended fix (best-effort semantics, matching gh-1655/gh-1757's \"pre-install is an optimization, not a gate\" spirit):\n\n```yaml\n- name: Prewarm sqlite3 native-assets (bounded retry, gh-2072)\n  continue-on-error: true\n  ...\n  if ! \"$DART_BIN\" \"$SCRIPT_COPY\" \"${ARGS[@]}\"; then\n    echo \"::warning::sqlite3 native-assets prewarm failed — falling back to the hook's own (single-attempt) download\"\n```\n\nWith `continue-on-error: true` the outcome strictly dominates today's: hook-building legs lose nothing (the hook keeps its own download path when the prewarm can't run), and legs with no hook (web, static, dep-audit) regain their immunity to egress outages."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-09:81b1f51d",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-09",
+      "updatedAt": "2026-11-09",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ severity: IMPORTANT —\n⚠️ **IMPORTANT: the guard passed 41/41 on this tree while the actual CI wiring fails at six points — three AC blind spots**\n\nI ran `dart test test/ci_sqlite3_prewarm_guard_test.dart` on this PR's head: **41/41 green**, yet the same commit red'd CI at:\n\n1. `binaries-pr` + `binaries` — not in the map at all (hook 504, exit 255, this run)\n2. `fa-aot-build` — prewarm placed **before** `dart pub get` (missing package config, this run)\n3. `build-android`/`build-ios` — default `package-roots: '.'` where only flutter_app is resolved (missing package config, this run)\n4. `build-mobile.yml` ×4 — same wrong package root (latent)\n5. `test-core`/`guards`/`model-switch-reg` — unconditional prewarm vs conditional checkout/pub-get (latent)\n6. `integration` — no pub get before the prewarm at all (latent, blocks publish)\n\nThe guard validates presence, order-vs-hook-building-step, and explicit targets — but:\n\n- **No AC asserts prewarm AFTER the job's pub get.** `dart pub get` is deliberately excluded from `hookBuildingSignatures`, so `fa-aot-build` (prewarm → pub get → build) passes even though the script hard-fails without the pub get first. Add: for each mapped job, the first prewarm index must be greater than the first `dart pub get` index (or an explicit `package-roots` must be present whose path the job actually resolves).\n- **AC5 checks `targets` but never `package-roots`.** Every build-android/build-ios/build-mobile step sailed through with the broken `.` default. Add: a step with explicit cross-targets must declare `package-roots:` and the value must match where the job runs pub get.\n- **The map's completeness claim is unenforced for binaries.** The AC3 count assertion only compares against the map itself; a job missing from the map is invisible. Add `ci.yml/binaries-pr` and `ci.yml/binaries` (both run `dart build cli` — they match this file's own `hookBuildingSignatures`).\n\nThe guard's header says \"a future leg must red HERE, not silently re-enter the download roulette\" — today the roulette is still spinning while the guard applauds. The wiring fixes above must land together with these AC additions, or the next refactor re-introduces this silently."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-09:5f4e7a1d",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-09",
+      "updatedAt": "2026-11-09",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 severity: SUGGESTION —\n💡 **SUGGESTION: per-attempt `HttpClient` is never closed on the failure path, and no attempt has a request timeout**\n\nIn `downloadVerified` the client is created inside the retry loop (line 403) and `client.close()` only runs on the success path (line 433) — after a non-200 or a hash mismatch the client leaks until process exit. Harmless for one file, but `targets: android` × N packages can stack several per leg.\n\nAlso, neither the request nor the body read (`await for (final chunk in response)`, line 420) has a timeout: a connection that hangs open (no 504, just a stalled socket) parks the step until the *leg's* wall-clock timeout kills it — the bounded-retry budget never engages. Two small fixes:\n\n```dart\nfinal client = HttpClient()\n  ..findProxyFromEnvironment = ... // unchanged\n  ..connectionTimeout = const Duration(seconds: 30);\n...\nrequest.timeout = const Duration(seconds: 120); // per-attempt budget\n// and on the failure paths:\nclient.close(force: true);\n```\n\n(or hoist one client out of the loop and close it in a `finally`). Add a `SocketException`-style hang to the fixture tests if you take the timeout."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-09:76f857f2",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-09",
+      "updatedAt": "2026-11-09",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 severity: SUGGESTION —\n💡 **SUGGESTION: this prewarm protects nothing on this leg — wrong package root, wrong package**\n\nTwo mismatches:\n\n1. With the default `package-roots: '.'` the script reads the **repo root's** package config and downloads `libsqlite3` into the **repo root's** `.dart_tool/hooks_runner/shared/...` cache. But the only Dart code built in this leg runs under `browser_ext/dart` (`cd browser_ext/dart && dart pub get && dart test`), and hooks_runner caches are per-package-root — the root cache this step fills is never read here.\n2. `browser_ext/dart` doesn't depend on sqlite3 at all (nothing in its pubspec/lockfile), so its graph can never trigger the sqlite3 hook in the first place — there is nothing on this leg to protect.\n\nNet effect: every headless-suite run pays up to ~1 minute of download (plus the retry window on a bad-egress day) for a file nothing consumes. Either drop this line, or — if the intent is future-proofing — point it at the package that matters, after its pub get:\n\n```yaml\n- name: Dart unit tests (browser_ext/dart)\n  run: cd browser_ext/dart && dart pub get && dart test\n```\n\nwith the prewarm removed from this leg entirely (a `package-roots: browser_ext/dart` invocation would be a clean \"no prewarm needed\" no-op today — not worth a step). Also update the AC3 map entry for `browser-ext.yml/headless-suite` accordingly."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-09:a3679606",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-09",
+      "updatedAt": "2026-11-09",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 severity: SUGGESTION —\n💡 **SUGGESTION: 4 attempts ≈ 35s of retry window vs a multi-minute egress outage — the observed incident class still wins**\n\nDefault budget: 4 attempts with 5/10/20s backoff ≈ 35s of covered outage (plus transfer time). This PR's own CI run hit a **504 storm lasting 5+ minutes** (07:54–07:59): four prewarm-covered legs (`usage-fold`, `build-web` embedded, `flutter-tests` shard 0, `terminal-visual`) exhausted all 4 attempts and red'd anyway, while the android leg survived on attempt 4 — proof the fix works for short blips but not for the sustained outage that motivated gh-2072 (v1.0.697's four-leg red was also a multi-minute window).\n\nOptions, cheapest first:\n\n- Raise the CI-leg budget to attempts 6–8 (backoff 5s base → ≈2–9.5min window) — the `attempts` input already exists; wire it in the shared `flutter-pub-get` copy and the composite default.\n- Add jitter (±30%) so a repo-wide storm doesn't have every leg retry in lockstep against the same saturated egress.\n- Document the residual risk in the action description: a sustained egress outage still reds hook legs; the prewarm (with `continue-on-error`, see the fail-closed thread) only shortens the recovery tail.\n\nNot blocking — for the transient-blip case the current budget demonstrably works (android leg this run) — but the tuning is one line per workflow and matches the incident being fixed."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-09:31be20a2",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-09",
+      "updatedAt": "2026-11-09",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 severity: SUGGESTION —\n💡 **SUGGESTION: ~35 lines of prewarm bash are duplicated between this action and the composite action — and the copies already drift**\n\n`.github/actions/flutter-pub-get/action.yml` (this hunk) and `.github/actions/sqlite3-native-assets-prewarm/action.yml` carry near-identical step bodies: dart detection, the RUNNER_TEMP copy-out trick, the args loop, and a long `::error::` trailer. They are already diverging: different error texts (\"cannot locate dart on PATH — the sqlite3 native-assets prewarm needs the Dart SDK\" vs \"...(wire it after pub get, before the first build/test step)\"), different control flow (`if ! ... exit 1` vs `if ... exit 0; echo; exit 1`), and the inline copy hardcodes `--attempts 4` where the composite takes an input. The next contract change (e.g. the `continue-on-error`/`package-roots` fixes this PR needs) lands in one copy and not the other.\n\nPrefer a single implementation:\n\n```yaml\n- uses: ./.github/actions/sqlite3-native-assets-prewarm\n  with:\n    package-roots: ${{ inputs.working-directory }}\n    targets: auto\n```\n\nNested composite `uses:` from a composite action is supported on current GitHub-hosted runners. If you'd rather not nest (AC4 in the guard test currently greps for the script name in this action's last step — adjust that assertion either way), extract the body to `scripts/` and have both actions `bash scripts/sqlite3_prewarm_step.sh` — one copy, two callers."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-09:2e53b9da",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-09",
+      "updatedAt": "2026-11-09",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread 1 — binaries-pr / binaries unwired (`test/ci_sqlite3_prewarm_guard_test.dart:59`)\n\n**Fixed** — both findings adopted exactly as asked:\n\n1. **Workflow wiring** (`.github/workflows/ci.yml`, head `10403aaa1f`):\n   - `binaries` — `- uses: ./.github/actions/sqlite3-native-assets-prewarm` added directly after the `Native-assets hook cache` step, i.e. after `dart pub get` and before the `dart build cli` bundle build (host-auto targets — host builds only, as prescribed).\n   - `binaries-pr` — same insertion after its `Native-assets hook cache` step, before `dart build cli`.\n2. **Guard map** (`test/ci_sqlite3_prewarm_guard_test.dart`): both jobs added to `sqlite3PrewarmJobs` — `.github/workflows/ci.yml` now pins **21** jobs, and the per-workflow count assertion (`references the prewarm action exactly (21 job(s))`) enforces the map, so a refactor that drops either prewarm reds the guard, not the release train.\n\nThe new AC6 in the same guard additionally pins, for both jobs, that the prewarm runs **after** `dart pub get` — the exact ordering failure mode that red'd `fa-aot-build` on the PR's own run."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-09:cd1a7ba5",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-09",
+      "updatedAt": "2026-11-09",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread 2 — fa-aot-build: prewarm before `dart pub get` (`.github/workflows/ci.yml:1205`)\n\n**Fixed** — root-caused and reproduced before the fix (TDD):\n\n- **RED**: the new guard AC6 (\"prewarms after its pub get and under the same scope condition\") failed against the pre-fix tree with exactly this job named in the reason.\n- **GREEN**: in `fa-aot-build` the `- run: dart pub get` step now sits **before** `- uses: ./.github/actions/sqlite3-native-assets-prewarm` (pub get → hook cache → prewarm → `dart build cli`), with a comment quoting the failure signature from the PR's own run (`PREWARM FAILED — .: ./.dart_tool/package_config.json not found — run pub get before the prewarm`) so the order cannot be \"cleaned up\" back into the broken shape.\n\nThe AC6 rule applies to **every** mapped job (first prewarm index must be greater than the first `dart pub get` index), so a future job that reintroduces this order reds `test/ci_sqlite3_prewarm_guard_test.dart` instead of the leg. Confirmed passing: all 21 ci.yml jobs plus build-mobile/nightly/coverage-gardener.\n\nFix carried on head `10403aaa1f`."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-09:6e0f3b8d",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-09",
+      "updatedAt": "2026-11-09",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread 3 — cross-target prewarms read the wrong package root (`.github/workflows/ci.yml:2928`)\n\n**Fixed** — both cross-target invocations in ci.yml now declare the package root the job actually resolves:\n\n- `build-android` (targets: android) — `package-roots: flutter_app` added.\n- `build-ios` (targets: arm64-ios) — `package-roots: flutter_app` added.\n\nBoth steps carry a comment citing this thread and the observed failure (`PREWARM FAILED — .: ./.dart_tool/package_config.json not found` on the PR's own run at 07:59), since the embedded flutter-pub-get prewarm for `flutter_app` had already succeeded above them — the wiring, not the network, was the defect.\n\n**Guard enforcement added so this class cannot re-enter silently** (the sweep suggestion from thread 4, adopted):\n- **AC6**: a mapped job that runs **no root `dart pub get`** must declare `package-roots:` on its prewarm steps — `build-android`/`build-ios` (and every build-mobile/nightly cross-target site) fail the guard without it.\n- **AC7**: any prewarm with explicit non-auto `targets:` must declare `package-roots:`.\n\nRED proof: both ACs failed against the pre-fix tree naming these jobs; all GREEN after the fix (head `10403aaa1f`)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-09:e997a3db",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-09",
+      "updatedAt": "2026-11-09",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread 4 — build-mobile.yml: four prewarms on the `.` default (`.github/workflows/build-mobile.yml:190`)\n\n**Fixed** — all four explicit prewarms now carry `package-roots: flutter_app`:\n\n- `build-android` (targets: android)\n- `build-android-apks` (targets: android)\n- `test-android-emulator` (targets: android)\n- `build-ios` (targets: arm64-ios)\n\n**Sweep suggestion adopted**: the new guard AC7 makes \"a prewarm with explicit `targets:` must declare `package-roots:`\" a hard assertion for every mapped job, and AC6 additionally requires `package-roots:` on any mapped job that runs no root `dart pub get` (the shape of every job in this workflow). Both ACs were RED against the pre-fix tree for all four jobs and are GREEN now (head `10403aaa1f`).\n\n**Same-defect sweep beyond the thread's four sites**: `nightly.yml build-release`'s cross-target prewarm (`targets: ${{ matrix.sqlite3_targets }}` under the android/ios-only `if:`) had the identical latent defect — flutter_app-only job, `.` default, and the nightly is exactly the manual/scheduled run class this thread flags as latent. It got `package-roots: flutter_app` in the same pass and is covered by the same AC6/AC7 assertions."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-09:c9f5d106",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-09",
+      "updatedAt": "2026-11-09",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread 5 — unconditional prewarm vs the scope fastpass (`.github/workflows/ci.yml:943`)\n\n**Fixed** — all three inserted steps now carry the identical scope condition as the pub get they depend on:\n\n- `test-core` (this job, shards 0–3): `if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'`\n- `guards` (ci.yml:1764): same `if:`\n- `model-switch-reg` (ci.yml:1939): same `if:`\n\nEach step carries a comment citing this thread: on an out-of-scope PR checkout/setup-dart/pub get are all skipped, the composite action file is not even on disk without checkout, and the script hard-fails without the pub get's package config — so the prewarm must skip with them to keep the documented \"out-of-scope → green in seconds\" fastpass intact.\n\n**Guard enforcement added**: new AC6 asserts that when a mapped job's pub get is scope-gated, every prewarm step in that job carries the **identical** `if:` string. RED against the pre-fix tree for exactly `test-core`/`guards`/`model-switch-reg`; GREEN now (head `10403aaa1f`)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-09:ffd18843",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-09",
+      "updatedAt": "2026-11-09",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread 6 — integration (tag-only provider smoke) has no pub get (`.github/workflows/ci.yml:3819`)\n\n**Fixed** — `- run: dart pub get` added immediately after `setup-dart`, before the `Native-assets hook cache` restore and the prewarm step (the same order every other root-package leg uses: `js-ext-integration`, `usage-fold`, `perf-gate`, `dep-audit`). A comment cites this thread and the blast radius: this is the only tag-only LLM leg and `publish` waits on it, so the missing pub get would have red every `v*` tag run structurally.\n\n**Guard enforcement added**: new AC6 requires, for every mapped job, that the first prewarm runs **after** the job's first `dart pub get` — a job that loses its pub get in a refactor now reds `test/ci_sqlite3_prewarm_guard_test.dart` (against the pre-fix tree AC6 flagged this job via its package-roots/order branch; GREEN after the fix, head `10403aaa1f`)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-09:f0290354",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-09",
+      "updatedAt": "2026-11-09",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread 7 — fail-closed prewarm converts immune legs into prewarm-dependent legs (`.github/actions/flutter-pub-get/action.yml:104`)\n\n**Fixed** — best-effort semantics exactly as recommended (gh-1655/gh-1757 \"pre-install is an optimization, not a gate\" posture):\n\n- The composite action's prewarm step (`.github/actions/sqlite3-native-assets-prewarm/action.yml`) now carries **`continue-on-error: true`**, emits **`::warning::sqlite3 native-assets prewarm failed after N attempts per target — falling back to the hook's own (single-attempt) download …`** instead of `::error::`, and no longer reds the leg.\n- The flutter-pub-get copy inherits this through the nested composite call (thread 12's dedupe), so every flutter leg's embedded prewarm is best-effort too; the cross-target invocations (android/iOS) inherit it as well — worst case there is the status quo ante (the hook's own single-attempt download), never worse.\n\nOutcome strictly dominates fail-closed, as argued in the thread: hook-building legs lose nothing — the hook keeps its own download path when the prewarm can't run, and the hook **re-verifies the sha256 of any file it reuses** (`sqlite3` 3.7.0 `lib/src/hook/compile/description.dart`, `downloadIntoOutputDirectoryShared`: a cached file whose hash mismatches is re-downloaded), so even a corrupt-cache edge cannot become a new silent failure class. Legs with no hook to protect (web, static, dep-audit) regain their egress-outage immunity — `Build web` red'd on this PR's run precisely because fail-closed turned them prewarm-dependent.\n\nThe residual-risk trade-off the thread names is documented in the action's `description:` (a sustained egress outage longer than the retry window can still red a hook leg — through the hook fallback, not the prewarm). Fix on head `10403aaa1f`."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-09:f762095e",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-09",
+      "updatedAt": "2026-11-09",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread 8 — guard passed 41/41 while CI wiring failed at six points (`test/ci_sqlite3_prewarm_guard_test.dart:131`)\n\n**Fixed** — the wiring fixes landed together with the AC additions; the guard now reds on every one of the six blind spots. All new ACs were first run RED against the pre-fix tree (failing for exactly the jobs this thread lists), then GREEN after the fixes.\n\n1. **binaries-pr + binaries in the map**: both added to `sqlite3PrewarmJobs` (ci.yml now pins 21 jobs; the per-workflow count assertion enforces both invocations). AC3 was RED for both pre-fix.\n2. **Prewarm-after-pub-get AC added (AC6)**: for every mapped job, the first prewarm index must be greater than the first `dart pub get` index. Caught `fa-aot-build` RED pre-fix — the exact leg that red'd on the PR's own run.\n3. **package-roots AC added (AC6/AC7)**: a mapped job that runs no root `dart pub get` must declare `package-roots:` on its prewarm steps (AC6), and any prewarm with explicit non-auto `targets:` must declare `package-roots:` (AC7 — this is also the sweep suggestion from thread 4). Caught `build-android`/`build-ios`, all four build-mobile sites, and nightly `build-release` RED pre-fix.\n4. **Scope-gate parity AC added (AC6)**: when a mapped job's pub get carries an `if:`, every prewarm step must carry the identical `if:`. Caught `test-core`/`guards`/`model-switch-reg` RED pre-fix.\n5. **integration**: the pub get is added (thread 6) and AC6 pins the order; pre-fix AC6 flagged the job as unwired/unrooted.\n6. **browser-ext.yml** (thread 10) left the map entirely, with the reason documented in the map's doc comment (its only Dart build, `browser_ext/dart`, carries no sqlite3; hooks_runner caches are per package root).\n\nResult: `dart test test/ci_sqlite3_prewarm_guard_test.dart` → **97 passed** on the fixed tree, and every AC added names the gh-2072 review thread it encodes so the next reviewer can trace enforcement to finding. Fix on head `10403aaa1f`."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-09:5f5d6bbd",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-09",
+      "updatedAt": "2026-11-09",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread 9 — HttpClient leak on failure paths + no attempt timeout (`scripts/sqlite3_native_assets_prewarm.dart:403`)\n\n**Fixed** — both findings, in `downloadVerified` (head `10403aaa1f`):\n\n- **No leak**: one `HttpClient` per attempt, closed via `finally { client.close(force: true); }` on **every** path — success, `PrewarmException`, and unexpected errors. (Per-attempt + force-close rather than a hoisted client: a stalled attempt's poisoned connection pool is destroyed instead of reused by the next attempt.)\n- **Timeouts**: `..connectionTimeout = connectTimeout` (default 30s) bounds a stalled TCP connect, and every attempt is bounded by `requestTimeout` (default 120s) applied to **both** the response-headers wait (`request.close().timeout`) and the body read (`response.listen(builder.add).asFuture().timeout`) — a connection that hangs open engages the bounded-retry budget instead of parking the step until the leg's wall-clock timeout kills it. The non-200 `drain` is bounded by the same budget.\n\nBoth budgets are CLI-tunable (`--connect-timeout-seconds`, `--request-timeout-seconds`) so tests run seconds-scale; CI uses the defaults.\n\n**Test added (as requested)**: AC12 in `test/scripts/sqlite3_native_assets_prewarm_test.dart` — a fixture HTTP server that accepts the connection and never answers. RED pre-fix (the flag didn't exist / the run would hang); now asserts: non-zero exit, `TimeoutException` on stderr, whole run completes in seconds (< 20s wall clock with a 1s budget), and nothing cached. Full script suite: 14 passed."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-09:df4c44c8",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-09",
+      "updatedAt": "2026-11-09",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread 10 — browser-ext prewarm protects nothing (`.github/workflows/browser-ext.yml:71`)\n\n**Fixed** — the prewarm step is **removed** from the `headless-suite` leg (the thread's preferred option: \"drop this line\"), with a comment in the workflow recording why: `browser_ext/dart`'s package graph carries no sqlite3 at all (verified — no match in `browser_ext/dart/pubspec.yaml` or `pubspec.lock`), and hooks_runner caches are per package root, so a repo-root prewarm downloaded a file nothing on this leg consumes (up to ~1 minute + retry window per run for nothing).\n\n**Map updated accordingly** (as the thread instructs): `.github/workflows/browser-ext.yml` removed from `sqlite3PrewarmJobs` in `test/ci_sqlite3_prewarm_guard_test.dart`, and the map's doc comment now records the intentional absence + reason, so a future \"restore coverage here\" edit resurfaces as a deliberate map change rather than silent drift. The per-workflow count assertion and AC3/AC6/AC7 loops no longer reference the workflow. All 97 guard tests green on the fixed tree (head `10403aaa1f`).\n\nA `package-roots: browser_ext/dart` invocation was rejected per the thread's own analysis — a permanent \"no prewarm needed\" no-op step is not worth its place in the leg."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-09:34935d01",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-09",
+      "updatedAt": "2026-11-09",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🚨 severity: BLOCKING —\n🚨 **BLOCKING: the AC3 coverage map omits the `binaries-pr` and `binaries` jobs — the exact legs that failed on this PR's own CI run with the bug this PR fixes**\n\nThe map pins 19 ci.yml jobs but not `binaries-pr` (ci.yml:4842, 5 matrix legs, required \"Binaries smoke gate\" context) nor the release-path `binaries` matrix (ci.yml:4034). Both jobs resolve the root package and then run `dart build cli` (`dart build cli --target=bin/fah.dart` at ci.yml:4889 and ci.yml:4148) — a hook-building step per this guard's own `hookBuildingSignatures`.\n\nThis is not hypothetical: on this PR's head commit (run 42582141385, commit de262fc9), the `Binaries (PR)` ubuntu-x64 and macos-x64 legs failed with exactly the sqlite3 hook 504 this PR exists to prevent — `Unexpected response code: 504 Gateway Time-out` from `PrecompiledFromGithubAssets._fetchFromSource` inside `dart build cli`, exit 255 — and the aggregate `Binaries smoke gate` red'd with them. No prewarm step appears anywhere in those legs' logs. The PR description's claim \"wired before the first build/test step in every hook-building leg\" is false for the legs that carry the same `dart build cli` this PR wires into `fa-aot-build`.\n\nFix:\n1. Add `- uses: ./.github/actions/sqlite3-native-assets-prewarm` after the `dart pub get` step in **both** `binaries-pr` and `binaries` (default `auto` targets are correct — host builds only).\n2. Add both jobs to `sqlite3PrewarmJobs` so the count assertions keep them wired (\"cover the whole release-blocking class, not just the four legs that happened to lose the dice\" — this map's own stated contract)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-09:0e01b321",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-09",
+      "updatedAt": "2026-11-09",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread 12 — ~35 duplicated prewarm lines, already drifting (`.github/actions/flutter-pub-get/action.yml:90`)\n\n**Fixed** — the thread's preferred option: the entire inline block in `.github/actions/flutter-pub-get/action.yml` is replaced by a nested composite call:\n\n```yaml\n- uses: ./.github/actions/sqlite3-native-assets-prewarm\n  with:\n    package-roots: ${{ inputs.working-directory }}\n    targets: auto\n```\n\nOne implementation, two callers — the drift surface the thread documented (different error texts, different control flow, hardcoded `--attempts 4`) is gone: the `continue-on-error`/`package-roots`/`attempts` fixes from threads 7/11 landed **once** in the composite and both call sites inherit them. `package-roots` is bound to the action's existing `working-directory` input (default `flutter_app`), preserving the original wiring semantics exactly.\n\n**AC4 in the guard test adjusted as anticipated** (the thread: \"AC4 in the guard test currently greps for the script name in this action's last step — adjust that assertion either way\"): AC4 now asserts the flutter-pub-get action's **last step `uses` the composite action** (`./.github/actions/sqlite3-native-assets-prewarm`), with the one-implementation rationale in the reason string. GREEN on the fixed tree; `test/ci_pub_get_retry_guard_test.dart` (the action's other guard) unaffected — the pub-get step itself is untouched. Fix on head `10403aaa1f`.\n\nNested local composite `uses` is supported on current GitHub-hosted runners (the runner resolves the local path against the checked-out workspace, which every caller of this action guarantees by ordering it after checkout)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-09:d68dc6ad",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-09",
+      "updatedAt": "2026-11-09",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🚨 severity: BLOCKING —\n🚨 **BLOCKING: the nightly android row's `sqlite3_targets` use the reversed `<os>-<abi>` grammar — the script rejects all three targets and the store-APK release build is silently unprotected**\n\n`nightly.yml:182` passes `android-arm,android-arm64,android-x64`, but the script's grammar is `<abi>-<os>` (`scripts/sqlite3_native_assets_prewarm.dart`: `expandTargets` treats bare `android` as the keyword expanding to `arm-android,arm64-android,x64-android`; explicit names go through `sourceFilenameForTarget`, which takes the **second** dash-part as the OS). `android-arm` parses as OS `arm` → not in `{linux, android, macos, ios, ios_sim, windows}` → `PrewarmException` for every target.\n\nReproduced on this PR's head (fixture package graph pointing at the real installed `sqlite3` `asset_hashes.dart`):\n\n```\n$ dart run scripts/sqlite3_native_assets_prewarm.dart \\\n    --package-root <fixture> --targets 'android-arm,android-arm64,android-x64' --attempts 1\nPREWARM FAILED — <fixture>: 3 of 3 targets failed (first: android-arm:\ninvalid target \"android-arm\" — unknown OS \"arm\" (known: linux, android,\nmacos, ios, ios_sim, windows))\n```\n\nEffect on the nightly `build-release` android row: the step fails internally, the composite's `continue-on-error` downgrades it to a `::warning`, and the leg continues with **no android binaries prewarmed** — the store-release APK build (`flutter build apk --flavor store --release`) then runs the hook's single-attempt, status-blind downloads for the three APK ABIs. That is exactly the v1.0.697 incident class this PR exists to prevent, silently degraded to status-quo-ante on the release path, while the step's comment and the PR description claim the row is protected. (The guard stays green — see the AC5 thread.)\n\nFix:\n\n```yaml\n# gh-2072: default APK ABIs (armeabi-v7a, arm64-v8a, x86_64)\nsqlite3_targets: arm-android,arm64-android,x64-android\n```\n\n(or simply `android` — the keyword expands to the same triple), and pin the value in the guard's AC5 map (filed separately) so the grammar cannot drift back."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-09:83e8a0b6",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-09",
+      "updatedAt": "2026-11-09",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ severity: IMPORTANT —\n⚠️ **IMPORTANT: AC5/AC7 validate that a target string exists and has a package root — never that the value is a target the script can parse. The nightly bug (see the `nightly.yml:182` thread) passed this guard 97/97**\n\nThree gaps compose into the blind spot:\n\n1. `explicitTargetJobs` (this line) pins only `ci.yml/build-android`, the three build-mobile android/ios jobs, and `ci.yml/build-ios` — `nightly.yml/build-release` is absent, so its `${{ matrix.sqlite3_targets }}` values are never checked against anything.\n2. AC7 only asserts `package-roots:` presence for explicit-target steps — it reads the value of `targets:` but never its contents.\n3. The AC3 count assertion compares the number of prewarm steps against the map itself — a step whose `targets:` value is garbage counts exactly like a correct one.\n\nResult: the guard's header promise — \"a future leg must red HERE, not silently re-enter the download roulette\" — failed one level deeper: the wiring is present and counted, the *payload* is invalid, and the first nightly dispatch is the only thing that would have noticed (as a `::warning`, no less). This is the same failure shape F8 described last round (guard green over broken wiring), one abstraction up.\n\nSuggested fix (small, and the script is importable as-is — it carries no package imports):\n\n```dart\nimport '../../scripts/sqlite3_native_assets_prewarm.dart'\n    show expandTargets, sourceFilenameForTarget, hostTarget;\n\n// For every mapped prewarm step with non-auto `targets:`:\nfor (final t in expandTargets(targets, hostTarget: hostTarget())) {\n  expect(\n    () => sourceFilenameForTarget(t),\n    returnsNormally,\n    reason: '$workflow $jobKey requests target \"$t\" which the prewarm '\n        'script cannot resolve to a release asset — the step would fail '\n        'per-target and silently fall back to the hook (gh-2072 nightly '\n        'android row: android-arm,android-arm64,android-x64)',\n  );\n}\n```\n\nplus `nightly.yml/build-release` entries in `explicitTargetJobs` for the android (`arm-android,arm64-android,x64-android`) and ios (`arm64-ios`) rows. That turns the nightly defect RED in `dart test` today instead of leaving it to the next release dispatch."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-09:fa2b3c39",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-09",
+      "updatedAt": "2026-11-09",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ severity: IMPORTANT —\n⚠️ **IMPORTANT: this leg lost its `Native-assets hook cache` restore — a gh-2074-rework mitigation silently reverted**\n\nThe diff deletes the `actions/cache` restore (`hooks-shared-<os>-<arch>-<hashFiles('pubspec.lock')>`) that gh-2074's rework deliberately added to this job — its own removed comment says: *\"this leg had NO hooks cache and its boot prewarm below was the first hook consumer — the bare libsqlite3.arm64.linux.so download 504'd (exit 255) in the 2026-11-09 brownout. Restore the shared cache (same key family as the other hosted lanes)\"*.\n\nSibling legs keep it: `pty-integration-linux` (ci.yml ~1052) retains the cache restore and only swapped the old run-step for this composite, as do `test-core`, `guards`, `fa-aot-build`, `binaries*`, and every other mapped job. `pty-visual` — one of the four legs named in the gh-2072 ticket — is now the **only** hook-building leg that starts every run with an empty `hooks_runner/shared` cache:\n\n- the prewarm re-downloads the binary every run (bounded-retried + hash-verified, so correctness is fine — but the download is pure per-run cost the cache used to erase),\n- the `Prewarm build hooks + fa boot` step below rebuilds hooks cold each run — exactly the boot-budget cost Issue #943 (vector 3) added caching for on this leg,\n- and the removal contradicts the in-file gh-2074 rationale with no replacement comment and no mention in the PR description (unflagged scope creep).\n\nFix: restore the cache-restore steps above this prewarm (they compose — a restored cache makes the prewarm a clean `already cached` no-op). If the removal is intentional, a comment here + a PR-description note saying why this leg alone skips the shared cache."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-09:2553fb05",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-09",
+      "updatedAt": "2026-11-09",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 severity: SUGGESTION —\n💡 **SUGGESTION: this job now runs TWO prewarms back-to-back — the gh-2074 script and the new composite; the second is a guaranteed no-op**\n\n`build-android` (and `build-android-apks` at line ~484 → step 494) still carry the gh-2074 legacy step\n\n```yaml\n- name: Pre-warm sqlite3 hook assets\n  run: dart --disable-dart-dev scripts/sqlite3_hook_prewarm.dart --package flutter_app --targets android\n```\n\nimmediately followed by the new `- uses: ./.github/actions/sqlite3-native-assets-prewarm` (this line). Both scripts write the identical hook cache layout (`download-<hash8>` under `.dart_tool/hooks_runner/shared/sqlite3/build/`), so whichever runs second finds every file already cached and no-ops — one of the two steps is pure redundancy (~run time of a second pub-config parse + hash check per leg).\n\nMeanwhile `test-android-emulator` and `build-ios` in this same workflow carry ONLY the composite — the pattern is inconsistent within one file.\n\nSuggested cleanup: drop the two legacy run-steps (the composite supersedes them, and AC3/AC6/AC7 of the new guard keep the composite wired; `scripts/sqlite3_hook_prewarm.dart` stays alive for `.github/actions/assert-builtin-skills`, so nothing is orphaned). One implementation per leg, matching the one-implementation-two-callers shape this PR established for flutter-pub-get (thread 12)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-09:108dc957",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-09",
+      "updatedAt": "2026-11-09",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread 13 — nightly android release row: reversed `<os>-<abi>` grammar (🚨 BLOCKING)\n\n**threadId (verbatim):** `PRRT_kwDOTXdlLc61NJKW`\n**inReplyToId (root comment, verbatim):** `4511470925`\n**Disposition:** ✅ **Fixed** — root-caused and reproduced via the new guard ACs before the fix (TDD).\n\n## What was wrong\n\n`nightly.yml:182` passed `sqlite3_targets: android-arm,android-arm64,android-x64` — the reversed grammar. The script's `sourceFilenameForTarget` takes the **second** dash-part as the OS, so `android-arm` parsed as OS `arm` → `PrewarmException` 3/3 → the composite's `continue-on-error` downgraded it to a `::warning` → the store-APK release build silently ran the hook's single-attempt downloads. Exactly the v1.0.697 incident class, degraded to status quo ante on the release path.\n\n## Fix (`.github/workflows/nightly.yml`, android row)\n\n```yaml\n# gh-2072: default APK ABIs (armeabi-v7a, arm64-v8a, x86_64).\n# The script's grammar is <abi>-<os> — review round 2, thread 13:\n# `android-arm,...` parsed as OS \"arm\", failed 3/3 per-target, and the\n# store-APK build silently stayed on the unprotected hook download.\n# Pinned by guard AC5/AC8.\nsqlite3_targets: arm-android,arm64-android,x64-android\n```\n\n(kept explicit rather than the `android` keyword — the reviewer allowed either; the explicit triple documents the APK ABIs in the matrix itself)\n\n## Guard enforcement so the grammar cannot drift back (thread 14's fix, landed together)\n\n- **AC8** (`test/ci_sqlite3_prewarm_guard_test.dart`): for every mapped prewarm, every resolved target must pass the **script's own** `expandTargets` → `sourceFilenameForTarget` (the guard imports `scripts/sqlite3_native_assets_prewarm.dart` — one grammar, test and script can never diverge).\n- **AC5 (matrix-aware)**: `nightly.yml/build-release` added to `explicitTargetJobs` with a matrix resolver (`strategy.matrix.include` rows → `sqlite3_targets`), pinned to `arm-android,arm64-android,x64-android` (android row) + `arm64-ios` (ios row). The expected-coverage assertion is `every(expected → any(spec))` — a single valid ios row cannot mask an invalid android row (exactly this defect's shape).\n\n**RED proof**: both ACs failed against the pre-fix tree naming `nightly.yml build-release` and the literal `\"android-arm\"` (`unknown OS \"arm\"`); **GREEN** after the fix: guard **126 passed**, script suite **15 passed**.\n\n## Digest items from the same matrix (cleaned in the same pass)\n\n- The dead `sqlite3_targets: auto` rows (macos, linux) under the `android||ios`-only step `if:` — **removed** (the values were never consumed; host rows are covered by the embedded auto prewarm in flutter-pub-get).\n- The macos comment echoing the reversed grammar (`macos-arm64/macos-x64`) — **replaced** with a note stating the script's real `<abi>-<os>` form (`arm64-macos`) and why host rows carry no `sqlite3_targets`."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-09:23690334",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-09",
+      "updatedAt": "2026-11-09",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread 14 — AC5/AC7 validated target *presence*, never *values* (⚠️ IMPORTANT)\n\n**threadId (verbatim):** `PRRT_kwDOTXdlLc61NJQF`\n**inReplyToId (root comment, verbatim):** `4511471466`\n**Disposition:** ✅ **Fixed** — the suggested fix adopted in full, plus the every-expected-covered semantics that make the exact nightly defect shape impossible to mask.\n\n## What was wrong\n\nThe guard validated that a target string exists and has a package root — never that the value is something the script can parse. The nightly android row rode AC3/AC5/AC6/AC7 97/97 green with `android-arm,...` garbage. Three composing gaps: (1) `explicitTargetJobs` lacked `nightly.yml/build-release`; (2) AC7 read `targets:` presence but not contents; (3) AC3's count compares steps to the map — garbage payload counts like a correct one.\n\n## Fix (`test/ci_sqlite3_prewarm_guard_test.dart`)\n\nAdopted the suggested shape exactly, with two strengthenings:\n\n```dart\nimport '../scripts/sqlite3_native_assets_prewarm.dart'\n    show expandTargets, hostTarget, sourceFilenameForTarget;\n```\n\n- **AC8 (new, every mapped job)**: for every prewarm step with non-auto `targets:`, resolve the spec (literal values pass through; the `${{ matrix.sqlite3_targets }}` placeholder resolves through `strategy.matrix.include` rows) and assert each expanded target passes `sourceFilenameForTarget` `returnsNormally` — the script's own resolver, so the guard and the script share one grammar by construction.\n- **AC5 (matrix-aware + every-expected-covered)**: `explicitTargetJobs` is now `<String, List<String>>` and gains `nightly.yml/build-release: ['arm-android,arm64-android,x64-android', 'arm64-ios']`. The assertion is `expectedTargets.every((e) => specs.any((t) => t.contains(e)))` — **every** expected value must be covered. The reviewer's original `any` shape would have let a single valid ios row mask the invalid android row (the exact failure shape of the defect this thread describes).\n- AC3's completeness gap (map self-comparison) remains closed by AC6/AC7 from round 1 (order/scope/package-roots) plus the new AC8 value gate; the map itself pins `build-release` presence via AC3's count (nightly.yml = 2 prewarms).\n\n**RED proof**: against the pre-fix tree, AC8 failed with `requests target \"android-arm\" (from \"android-arm,android-arm64,android-x64\") which the prewarm script cannot resolve to a release asset…` and AC5 failed with `must request targets: arm-android,arm64-android,x64-android, arm64-ios`; all other 122 tests stayed green. **GREEN** after: **126 passed**.\n\n## Bonus: the same shape one file over (self-caught during this round's verification)\n\n`test/ci_sqlite3_hook_prewarm_guard_test.dart` (the gh-2074 guard) had been silently red since round 1 — its AC2/AC6/AC7 pinned the **legacy script run-steps** the composite replaced, and nobody (reviewer included) re-ran it (17 failures on the round-1 head). Migrated to the post-gh-2072 reality in this round: AC2/AC6 now pin the composite placement (keeping the cache-restore invariants), AC7 now pins the one-implementation split (composite owns CI wiring; `assert-builtin-skills` is the legacy script's last caller, hook-free; a legacy run-step re-appearing beside the composite is a hard red). **15 passed.**"
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-09:39c6cb78",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-09",
+      "updatedAt": "2026-11-09",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread 15 — pty-visual lost its `Native-assets hook cache` restore (⚠️ IMPORTANT)\n\n**threadId (verbatim):** `PRRT_kwDOTXdlLc61NJWp`\n**inReplyToId (root comment, verbatim):** `4511472052`\n**Disposition:** ✅ **Fixed** — restored verbatim (the removal was a merge artifact, not intentional).\n\n## What was wrong\n\nThe `origin/main` merge into `ai/gh-2072` resolved the pty-visual region with our branch's pre-gh-2074-rework version, silently dropping the `actions/cache` restore that gh-2074's rework deliberately added — while every sibling lane kept it. pty-visual became the only hook-building leg starting each run with an empty `hooks_runner/shared` cache (pure per-run download cost + cold hook rebuild — the exact Issue #943 vector-3 cost the cache exists to erase).\n\nVerified against `origin/main` before restoring — main's block carries its own rationale comment (*\"this leg had NO hooks cache and its boot prewarm below was the first hook consumer — the bare libsqlite3.arm64.linux.so download 504'd (exit 255) in the 2026-11-09 brownout\"*).\n\n## Fix (`.github/workflows/ci.yml`, pty-visual, after the root `dart pub get`, before the prewarm)\n\n```yaml\n# gh-2074 rework: this leg had NO hooks cache and its boot prewarm\n# below was the first hook consumer — the bare libsqlite3.arm64.linux.so\n# download 504'd (exit 255) in the 2026-11-09 brownout. Restore the\n# shared cache (same key family as the other hosted lanes) and seed\n# it hook-free before the boot prewarm. (gh-2072 review round 2,\n# thread 3: the origin/main merge dropped this restore while every\n# sibling leg kept it — restored verbatim so the prewarm below is a\n# clean `already cached` no-op on warm runs.)\n- name: Native-assets hook cache\n  uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0\n  with:\n    path: .dart_tool/hooks_runner/shared\n    key: hooks-shared-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pubspec.lock') }}\n    restore-keys: hooks-shared-${{ runner.os }}-${{ runner.arch }}-\n```\n\nNote: main's version of this region also carried the **legacy** `Pre-warm sqlite3 hook assets` script step; that one is deliberately NOT restored — the composite supersedes it (thread 16, this round; two back-to-back prewarms writing the identical cache layout make the second a guaranteed no-op). Only the cache restore was a genuine silent revert.\n\nThe restored block composes with the prewarm exactly as the reviewer described: a warm cache makes the composite a `already cached` no-op; a cold cache falls through to the bounded-retry download — the gh-2074 ordering invariant (cache restore lands after pub get, before the first hook consumer) is preserved, and the migrated gh-2074 guard (`test/ci_sqlite3_hook_prewarm_guard_test.dart` AC6) re-pins it for this lane: cache < prewarm < `dart bin/fah.dart`, 15/15 green."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-09:ca98f6f5",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-09",
+      "updatedAt": "2026-11-09",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread 16 — legacy gh-2074 prewarm stacked beside the composite (💡 SUGGESTION)\n\n**threadId (verbatim):** `PRRT_kwDOTXdlLc61NJc2`\n**inReplyToId (root comment, verbatim):** `4511472605`\n**Disposition:** ✅ **Fixed** — both legacy run-steps dropped; the composite supersedes them.\n\n## What was wrong\n\n`build-android` (line ~209) and `build-android-apks` (line ~482) carried the gh-2074 legacy step\n\n```yaml\n- name: Pre-warm sqlite3 hook assets\n  run: dart --disable-dart-dev scripts/sqlite3_hook_prewarm.dart --package flutter_app --targets android\n```\n\nimmediately before the new composite — same hook-cache layout (`download-<hash8>` under `.dart_tool/hooks_runner/shared/sqlite3/build/`), so the second prewarm was a guaranteed no-op: one of the two steps was pure redundancy, and the pattern was inconsistent with `test-android-emulator`/`build-ios` in the same file (composite only).\n\n## Fix (`.github/workflows/build-mobile.yml`)\n\n- `build-android`: legacy comment + run-step **removed**; a comment at the site records the supersession and that `scripts/sqlite3_hook_prewarm.dart` stays alive for `.github/actions/assert-builtin-skills` (nothing orphaned — verified by grep).\n- `build-android-apks`: same removal, same note.\n\nOne implementation per leg, matching the one-implementation-two-callers shape of round-1 thread 12 (flutter-pub-get nests the composite).\n\n## Guard enforcement added (migrated gh-2074 guard — `test/ci_sqlite3_hook_prewarm_guard_test.dart`)\n\n- **AC2** now pins the composite placement in both jobs: after `flutter-pub-get`, before the build step, with `with: {targets: android, package-roots: flutter_app}` (the legacy script's `--package flutter_app --targets android` shape lives on as the composite's `with:`), cache restore before the assert-gate — 15/15 green.\n- **AC7 (rewritten)** now pins the one-implementation split as a hard red: every remaining legacy-script invocation in `.github` must be hook-free (`--disable-dart-dev`), `assert-builtin-skills` keeps exactly one, and **ci.yml + build-mobile.yml must carry no legacy run-step** — a legacy step re-appearing beside the composite (the silent no-op twin this thread describes) is now a test failure, not a slow-drift mystery.\n\nWhile migrating this guard we found it had been silently red since round 1 (17 failures on the round-1 head — its AC2/AC6/AC7 still pinned the legacy run-steps everywhere; neither we nor round 2 re-ran it). Disclosed in thread 14's reply; the migration landed in this round."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-09:ac6bdc63",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-09",
+      "updatedAt": "2026-11-09",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 severity: SUGGESTION —\n💡 **SUGGESTION: AC6/AC7 pin that `package-roots:` is *declared* — never that the value is the root the job actually resolves**\n\n`declaredPackageRoots(step)` only checks non-null (`test/ci_sqlite3_prewarm_guard_test.dart:467`). Any non-empty value passes the guard — including a typo'd root (`flutterapps`, `packages/fa_ui` in a `flutter_app`-only job). The runtime failure mode of a wrong value is exactly the silent-degradation class thread 13/F13 documented one level up: the script fails per-root, the composite's `continue-on-error` downgrades it to a `::warning`, and the leg continues with the prewarm coverage silently gone.\n\nSince every explicit-target prewarm in this repo is a `flutter_app`-only job, the check can be exact instead of existential:\n\n```dart\nexpect(\n  declaredPackageRoots(step),\n  'flutter_app',\n  reason:\n      '$workflow $jobKey resolves only flutter_app (via flutter-pub-get) — '\n      'a package-roots value pointing anywhere else fails per-root and '\n      'the composite degrades the prewarm to a silent ::warning fallback',\n);\n```\n\n(If a future job legitimately prewarms a second root, the map entry can grow a per-job expected-roots list — same shape as `explicitTargetJobs`.)"
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-09:864d8098",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-09",
+      "updatedAt": "2026-11-09",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — REQUEST_CHANGES\n\n**Summary**: The prewarm script and its 54 tests are solid (FIPS-vectored sha256, 504-retry proof, corrupt-cache repair), but the CI wiring reds this PR's own run at four points and breaks four more paths by construction — while the new guard test passes 41/41 over all of it.\n\n**Key Issues** (🚨 7 · ⚠️ 1 — details in inline threads):\n1. 🚨 `binaries-pr`/`binaries` jobs unwired — those legs failed THIS run with the exact hook 504 this PR fixes (guard map omits them).\n2. 🚨 `fa-aot-build`: prewarm before `dart pub get` → `package_config.json not found` (red THIS run).\n3. 🚨 `build-android`/`build-ios` + `build-mobile.yml` ×4: cross-target prewarms read `package-roots: '.'` where only `flutter_app` is resolved (2 red THIS run, 4 latent).\n4. 🚨 `test-core`/`guards`/`model-switch-reg`: unconditional prewarm vs conditional checkout/pub-get → required contexts red on out-of-scope PRs (violates the invariant at ci.yml:1749).\n5. 🚨 `integration` (tag-only provider smoke, gates `publish`): no pub get before the prewarm → reds every v* tag run.\n6. 🚨 Fail-closed prewarm converts previously-immune legs into prewarm-dependent: `Build web` red'd THIS run; web was green during the v1.0.697 storm. Recommend `continue-on-error: true`.\n7. ⚠️ Guard test blind spots: never asserts prewarm-after-pub-get, never checks `package-roots`, omits the binaries jobs (41/41 green on a red tree).\n\n**Digest** (🪶/💡 overflow): nightly.yml:172–173,189 — dead `sqlite3_targets: auto` rows under an `if` that excludes macos/linux (the embedded auto prewarm covers them); misleading comments. PR description — `GATE_RESULT_PLACEHOLDER` left unsubstituted.\n\n**Next Steps**:\n1. Fix the six wiring defects above (each thread carries the exact step order/`package-roots`/`if:` fix).\n2. Land the guard-test AC additions together with them.\n3. Re-run the dispatch — the Build Android leg's attempt-4 success this run shows the script itself works once wired correctly."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-09:832a9a0e",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-09",
+      "updatedAt": "2026-11-09",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — REQUEST_CHANGES\n\n**Summary**: All 12 previous findings are verifiably fixed on this head (verified disposition-by-disposition below; guard 97/97 + script suite 14/14 re-run locally). One new 🚨: the nightly release-matrix android row requests targets in the reversed `<os>-<abi>` grammar (`android-arm,android-arm64,android-x64`), which the prewarm script rejects 3/3 (`unknown OS \"arm\"` — reproduced on head), silently leaving the store-APK release build on the unprotected hook download — plus one guard gap that let it through and one silently reverted gh-2074 cache mitigation.\n\n**Key Issues** (🚨 1 · ⚠️ 2 · 💡 1 — details in inline threads; 🪶/💡 digest below):\n1. 🚨 `nightly.yml:182` — android release row's `sqlite3_targets` invalid per the script's `<abi>-<os>` grammar → prewarm no-ops on the nightly store-APK build (fix: `arm-android,arm64-android,x64-android` or `android`).\n2. ⚠️ `test/ci_sqlite3_prewarm_guard_test.dart:132` — AC5 pins target *presence* only; nothing validates target *values*, so garbage passes 97/97 (F8's shape, one level up).\n3. ⚠️ `ci.yml:1650` — pty-visual lost its `Native-assets hook cache` restore (gh-2074 added it for this exact leg; every sibling leg keeps it).\n4. 💡 `build-mobile.yml:21` — legacy gh-2074 prewarm stacked before the new composite (no-op redundancy; two sibling jobs in the same file carry only the composite).\n\n**Digest** (🪶/💡 overflow): `nightly.yml:173,189` — dead `sqlite3_targets: auto` rows under the `android||ios`-only `if` (host rows are covered by the central flutter-pub-get prewarm); the added macos comment even echoes the reversed grammar (\"macos-arm64/macos-x64\" — the script's form is `arm64-macos`). · PR description — `GATE_RESULT_PLACEHOLDER` left unsubstituted; \"54 tests\" claim vs 14 in `test/scripts/sqlite3_native_assets_prewarm_test.dart`. · `scripts/sqlite3_native_assets_prewarm.dart:536` — a corrupt `package_config.json` throws an unhandled `FormatException` (bypasses the friendly `PREWARM FAILED` trailer; cosmetic under `continue-on-error`).\n\n**Next Steps**:\n1. Fix the nightly android row (`arm-android,arm64-android,x64-android`) and land the guard AC5 value-validation with it.\n2. Restore (or consciously document) the pty-visual hooks-cache restore.\n3. Optional cleanup: drop the two legacy prewarm run-steps in build-mobile."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-09:ed1d067f",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-09",
+      "updatedAt": "2026-11-09",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — REQUEST_CHANGES\n\n**Summary**: The round-2 rework is verified good — all four registry findings (F13–F16) and all 16 threads are fixed with citable hunks, the guard now validates target *values* through the script's own resolver (AC5–AC8, matrix-aware), and all 156 sqlite3 tests pass on this head (run locally). The only red on this PR's head is one unrelated PTY-integration test, but a red gate blocks merge either way.\n\n**Key Issues**:\n1. 🚨 BLOCKING — CI red on head `dc48d11b`: `PTY/CLI integration (linux, shard 0/3)` — `test/integration/self_config_e2e_test.dart` AC4 failed (line 95:5, `Expected: true / Actual: false`, \"the live re-read swapped the store to the new path\"). **Unattributable to this diff**: the test boots the CLI in a temp project with a fake LM stream; this PR touches no `lib/` code (workflows, scripts, tests, one memory note). Not yet a proven flake — AGENTS.md:1815-1817 requires ≥2 distinct-SHA reds within 24h before quarantine.\n2. 💡 SUGGESTION — guard AC6/AC7 check that `package-roots:` is declared but never validate the value; a typo'd root degrades silently to the `::warning` fallback (inline thread).\n\n**Registry dispositions** (all verified against this head): F13 fixed (`nightly.yml:184-191` — `<abi>-<os>` grammar) · F14 fixed (`ci_sqlite3_prewarm_guard_test.dart:492` AC8 + matrix-aware AC5) · F15 fixed (`ci.yml:1658` restore restored verbatim) · F16 fixed (`build-mobile.yml` legacy twins dropped; migrated guard AC7 reds on a twin re-appearing).\n\n**Next Steps**:\n1. Re-run the `PTY/CLI integration (linux)` leg; if AC4 reproduces on a second distinct SHA within 24h, take the AGENTS.md flake-intake path (`scripts/test_quarantine.json` PR) — no code change in this PR is implicated.\n2. Optionally tighten AC6/AC7 to assert the `package-roots` *value* (see inline thread).\n3. Everything else is merge-ready: the prewarm wiring now provably works end-to-end on the real toolchain (every leg this run hit its cache; zero fallback warnings)."
+    }
+  ]
+}
