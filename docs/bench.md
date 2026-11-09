@@ -457,6 +457,112 @@ decision. Per the official submission guide:
 Task images are x86_64-only (dockerhub `programbench/*:task_cleanroom_v6`)
 — hosted ubuntu runners only, no arm/self-hosted-mac path.
 
+## Agents' Last Exam (ALE-V1)
+
+`bench/ale/` + `Bench ALE` workflow — runs fa on
+[Agents' Last Exam](https://github.com/rdi-berkeley/agents-last-exam)
+(ALE-V1: long-horizon professional workflows with hidden-reference
+graders, 55 sub-industries) through the upstream `ale_run` orchestrator.
+The docker profile runs the 78-task `selected_tasks/docker_support.txt`
+Linux subset as one container per unit — the only GH-runner-compatible
+ALE profile.
+
+No fork: the workflow checks out `rdi-berkeley/agents-last-exam` at a
+pinned SHA and stages the fa deployer INTO that checkout at run time
+(`bench/ale/build_run.py stage` copies `bench/ale/{__init__,config,
+deployer}.py` + the shared `bench/fa_agent_timeout.py` to
+`ale_run/agents/fa_code/`, the same in-tree path convention upstream
+uses for vendored third-party agents). The experiment references the
+deployer by its fully-qualified harness path
+(`ale_run.agents.fa_code.deployer.FaDeployer`) — ALE's
+`resolve_agent` accepts any importable FQN, no registry edit.
+
+### How fa plugs in
+
+The deployer (`bench/ale/deployer.py`, modeled on upstream's
+`claude_code` reference deployer) runs INSIDE the task VM (ALE's
+`SandboxExecutor` ships and supervises it there): fa's native bash/file
+tools act on the task machine directly, and the cua MCP bridge (written
+into `~/.fah/config.yaml` by the deployer) adds the GUI action space.
+The fa CLI bundle arrives by URL — the repo's published release asset
+(`fa-linux-x64.tar.gz`), pinned by the release's own `SHA256SUMS` and
+verified in-VM before unpacking. After each trial the deployer exports
+the ATIF trajectory (`fa trajectory export --format atif`, gh-1681's
+single-conversion-source contract) and maps it onto ALE's canonical
+trajectory schema — the mapping is unit-tested against the same
+`atif_sample.json` fixture `bench/harbor_fa/test_atif_contract.py`
+cross-validates.
+
+### Budget & quota discipline
+
+Task-card wall budgets (18000 s-class) govern — the builder never emits
+a `wall_time_s` override (mls precedent: changing the budget voids
+comparability). fa-side timeout knobs (`FA_STALL_GAP_SEC` /
+`FA_AGENT_TIMEOUT_ABS_CEILING_SEC` / `FA_EXTERNAL_CAP_SEC`,
+AGENTS.md "Bench round 3 knobs") ride the deployer config, not the env
+passthrough whitelist; watch knobs require `progress-extension` (the
+deployer fails loud on the half-declared watch that would otherwise
+hand fa a surprise 360 s clock), every trial writes a
+`fa-timeout-metadata.json` audit, and `max_attempts` defaults to 1 — a
+failed trial never silently re-burns. Shards are capped at 3
+(`MAX_PARALLEL_SHARDS`) and runs serialize (`concurrency: bench-ale`).
+
+### Secrets (owner-provisioned, env-only, never echoed)
+
+| Secret | Used for |
+|---|---|
+| `FA_BENCH_ZAI_KEY` | z.ai key for glm-5.3-flash (shared with the other benches) |
+| `FA_BENCH_KIMI_KEY` | provider=kimi-for-coding |
+| `FA_BENCH_CUSTOM_KEY` | provider=custom |
+| `HF_TOKEN` | gated task-data archive (manual approval on HF) |
+
+A missing secret fails the `plan` job before any spend, naming the key.
+
+### How to run
+
+Dispatch `Bench ALE`:
+
+* `subset=smoke` (default) — one declared task (`computing_math/
+  cost_optimization_1`), the cheap end-to-end check;
+* `subset=docker` — the full 78-task allowlist, requires
+  `confirm-full=yes` and needs shards x ≤5 h of runner time;
+* `subset=tasks` + `tasks=<csv>` — validated against the allowlist
+  (Windows/GPU/nested-docker tasks need a VM provider, not docker);
+* `runner` — needs ~150 GB disk + linux amd64 docker (image ≈ 90 GB
+  unpacked + 44 GiB data archive); the disk preflight fails loud on a
+  standard hosted runner;
+* `ale-sha` pins the framework (default = the commit the v1.1 asset
+  pins in `build_run.py` were verified against; the plan re-verifies
+  the allowlist sha256, so a drifted pin fails in one minute).
+
+Jobs: `plan` (unit tests + provider/bundle/secret preflight + shard
+matrix) → `agent` (one `ale_run` per shard on the chosen runner) →
+`summary` (verdict + step-summary table + bundle).
+
+### Results & submission
+
+1. **Job summary** — per-trial table (status, eval score in [0,1],
+   duration, tokens) plus a completeness verdict (a shard with zero
+   trials fails by name, harbor gh-1658 C3 parity).
+2. **Submission bundle** — `bench-ale-submission` artifact (90-day
+   retention): ALE's own run dirs per unit (`run.json` +
+   `trajectory.json` + `eval_result.json` + `events.jsonl` +
+   `origin_log/`), i.e. the
+   trajectory + evaluation evidence their leaderboard docs describe.
+3. **fa-results ledger** — a complete full-allowlist run upserts a
+   self-reported `ALE-v1.1-docker` row (`bench/leaderboard/
+   record.py`, gh-1682 contract) feeding the #1682 fa table.
+
+**Submitting through agents-last-exam.org/leaderboard/submit is
+owner-gated for now**: the form sits behind a Clerk sign-in wall, so
+its exact required fields were never documented (issue #1686 recon,
+decision 2), and the scoring path additionally requires approved
+access to the gated `agents-last-exam/agents-last-exam-data-archive`
+HF dataset (decision 1 — without it a run executes but cannot score)
+plus a ≥150 GB runner class (decision 3) and the v1-vs-v1.1 naming
+choice (decision 4). Until those land, the workflow's bundle is the
+submittable evidence and the ledger row is the self-reported feed.
+
 ## Legacy: terminal-bench-core 0.1.1
 
 `bench/terminal_bench/` + `Bench` workflow — kept for regression runs of
