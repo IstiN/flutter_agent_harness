@@ -13,6 +13,48 @@ block a release again.
 
 ## Unreleased
 
+- fix(gh-2074): the daily-publish `play` leg no longer reds on a GitHub
+  release-download brownout. Three build-mobile.yml Android jobs died in
+  package:sqlite3's native-assets build hook with `Bad state: Hash of
+  downloaded file libsqlite3.x64.android.so is bef140a1…` — the hook
+  (released ≤3.9.1; the lockfile pins 3.7.0, the root floats 3.9.1)
+  hashes the download WITHOUT honoring the HTTP status, so GitHub's 504
+  page (a constant hash, upstream simolus3/sqlite3.dart#435) failed the
+  pin check and the build exited 255. The assets themselves were intact;
+  ci.yml had solved this exact class for itself on 2026-09-21 by caching
+  `.dart_tool/hooks_runner/shared`, but build-mobile.yml never got the
+  protection. Cure: new `scripts/sqlite3_hook_prewarm.dart` — derives the
+  release tag + pinned hashes from the RESOLVED sqlite3 package (no
+  second pin), gates on the HTTP status before hashing, bounded-retries
+  with backoff, verifies SHA-256 before any cache write (tmp+rename),
+  skips idempotently on a verified cache hit — wired as the
+  `Native-assets hook cache` + `Pre-warm sqlite3 hook assets` steps in
+  the two Android build jobs (both roots, `hooks-shared-mobile-` keys)
+  and inside `assert-builtin-skills` for the root host asset (the step
+  that failed first). Guard test `test/ci_sqlite3_hook_prewarm_guard_
+  test.dart` pins the wiring (AC1-AC4); the script's byte-level behavior
+  and the live hook-reuse layout are pinned in
+  `test/scripts/sqlite3_hook_prewarm_test.dart`.
+  Rework (2026-11-09, the PR's own CI run): five reds, two root causes,
+  both fixed. (1) `expandTargets` accepted its `hostOs`/`hostArch`
+  injection but ignored it — `expandTargets('host', hostOs: 'linux',
+  hostArch: 'x64')` resolved against the REAL machine and failed on the
+  ubuntu-24.04-arm Core-tests shard; a fully injected platform now never
+  consults the host (unit-provable on x64 and arm64 alike). (2) The
+  pre-warm was wired as plain `dart run` — which executes the whole
+  package graph's build hooks BEFORE the script's main(), so on exactly
+  the gh-2074 conditions (cold cache + brownout) the pre-warm died before
+  it could pre-warm (proven live; the pty-visual red was this same shape).
+  Every invocation is now `dart --disable-dart-dev` (no hook machinery)
+  and the script is self-contained (no `package:` imports — SHA-256
+  inlined) so that mode can load it. The same protection extended to
+  ci.yml: the lanes whose first hook consumer is a plain dart command
+  (`test-core`, `integration-mock`, `hostile-env`, `fa-aot-build`,
+  `pty-integration-linux`, `binaries-pr`, `pty-visual` — the last had no
+  hooks cache at all) now restore `hooks-shared-` + pre-warm the host
+  asset after pub get and before that consumer; the guard pins it as
+  AC6/AC7.
+
 - feat(gh-2059): browser-extension compaction parity with CLI — over-window
   relief, `/compact` with visible receipts, and the shared under-window
   guarantee ride the same `CompactionHostWiring` resolution as the CLI and
