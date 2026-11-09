@@ -209,7 +209,7 @@ jobs:
       - name: Pre-warm sqlite3 hook assets
         run: |
           set -euo pipefail
-          dart run scripts/sqlite3_hook_prewarm.dart --package flutter_app --targets android
+          dart --disable-dart-dev scripts/sqlite3_hook_prewarm.dart --package flutter_app --targets android
       # Mirrors the iOS GoogleService-Info.plist step: the committed
       # google-services.json is a placeholder (the google-services Gradle
       # plugin hard-fails without the file); overwrite it from the secret
@@ -474,7 +474,7 @@ jobs:
       - name: Pre-warm sqlite3 hook assets
         run: |
           set -euo pipefail
-          dart run scripts/sqlite3_hook_prewarm.dart --package flutter_app --targets android
+          dart --disable-dart-dev scripts/sqlite3_hook_prewarm.dart --package flutter_app --targets android
       # Mirrors build-android, gated to the store flavor: the secret file
       # carries ONLY the dev.fa1.app client, while the god applicationId is
       # dev.fa1.app.god — overwriting it would hard-fail the google-services

@@ -25,5 +25,5 @@ runs:
         # failure class; ci.yml caches the same bytes for itself).
         # Pre-warm the hook cache with bounded retry + status gating +
         # hash verification before the verify run needs it.
-        dart run scripts/sqlite3_hook_prewarm.dart --package . --targets host
+        dart --disable-dart-dev scripts/sqlite3_hook_prewarm.dart --package . --targets host
         dart run scripts/verify_builtin_skills.dart

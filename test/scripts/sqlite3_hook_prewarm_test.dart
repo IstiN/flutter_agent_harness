@@ -41,8 +41,7 @@ Uint8List bytesOf(String s) => Uint8List.fromList(s.codeUnits);
 /// for [assets] — the same invariant the released file carries.
 String fixtureAssetHashesSource(String releaseTag, Iterable<String> assets) {
   final entries = [
-    for (final asset in assets)
-      "  '$asset': '${shaOf(contentFor(asset))}',",
+    for (final asset in assets) "  '$asset': '${shaOf(contentFor(asset))}',",
   ].join('\n');
   return '''
 // This file contains hashes of SQLite binaries downloaded by the default hook.
@@ -81,15 +80,13 @@ Uint8List contentFor(String asset) => bytesOf('content-of-$asset');
     ..writeAsStringSync(fixtureAssetHashesSource(releaseTag, assets));
   final appDir = Directory('${tmp.path}${Platform.pathSeparator}app')
     ..createSync();
-  final dotDartTool = Directory('${appDir.path}${Platform.pathSeparator}.dart_tool')
-    ..createSync();
+  final dotDartTool = Directory(
+    '${appDir.path}${Platform.pathSeparator}.dart_tool',
+  )..createSync();
   final config = {
     'packages': [
       {'name': 'other_pkg', 'rootUri': 'file:///nowhere/other'},
-      {
-        'name': 'sqlite3',
-        'rootUri': Uri.file(pkgRoot.path).toString(),
-      },
+      {'name': 'sqlite3', 'rootUri': Uri.file(pkgRoot.path).toString()},
     ],
   };
   File(
@@ -109,48 +106,52 @@ void main() {
     // entirely — and that mode resolves no package config, so the script
     // must import ONLY dart: libraries to be invocable at all.
     test('the script imports no package: library', () {
-      final source = File('scripts/sqlite3_hook_prewarm.dart')
-          .readAsStringSync();
+      final source = File(
+        'scripts/sqlite3_hook_prewarm.dart',
+      ).readAsStringSync();
       final packageImports = RegExp(
         r"^import\s+'package:",
         multiLine: true,
       ).allMatches(source).map((m) => m.pattern).toList();
-      expect(packageImports, isEmpty,
-          reason:
-              'the script must stay invocable via `dart --disable-dart-dev` '
-              '(no package config is resolved in that mode) — inline the '
-              'hashing instead of importing package:crypto');
+      expect(
+        packageImports,
+        isEmpty,
+        reason:
+            'the script must stay invocable via `dart --disable-dart-dev` '
+            '(no package config is resolved in that mode) — inline the '
+            'hashing instead of importing package:crypto',
+      );
     });
   });
 
   group('parseAssetHashes', () {
     test('parses release tag and hash map', () {
       final hashes = prewarm.parseAssetHashes(
-        fixtureAssetHashesSource(
-          'sqlite3-3.7.0',
-          ['libsqlite3.x64.linux.so', 'libsqlite3.arm64.android.so'],
-        ),
+        fixtureAssetHashesSource('sqlite3-3.7.0', [
+          'libsqlite3.x64.linux.so',
+          'libsqlite3.arm64.android.so',
+        ]),
       );
       expect(hashes.releaseTag, 'sqlite3-3.7.0');
-      expect(hashes.assetNameToSha256Hash['libsqlite3.x64.linux.so'],
-          shaOf(contentFor('libsqlite3.x64.linux.so')));
+      expect(
+        hashes.assetNameToSha256Hash['libsqlite3.x64.linux.so'],
+        shaOf(contentFor('libsqlite3.x64.linux.so')),
+      );
       expect(hashes.assetNameToSha256Hash, hasLength(2));
     });
 
     test('parses a null release tag (pre-release shape)', () {
-      final source = fixtureAssetHashesSource(
-        'sqlite3-3.7.0',
-        ['libsqlite3.x64.linux.so'],
-      ).replaceFirst("= 'sqlite3-3.7.0'", '= null');
+      final source = fixtureAssetHashesSource('sqlite3-3.7.0', [
+        'libsqlite3.x64.linux.so',
+      ]).replaceFirst("= 'sqlite3-3.7.0'", '= null');
       final hashes = prewarm.parseAssetHashes(source);
       expect(hashes.releaseTag, isNull);
     });
 
     test('a null release tag cannot build a download URL', () {
-      final source = fixtureAssetHashesSource(
-        'x',
-        ['libsqlite3.x64.linux.so'],
-      ).replaceFirst("= 'x'", '= null');
+      final source = fixtureAssetHashesSource('x', [
+        'libsqlite3.x64.linux.so',
+      ]).replaceFirst("= 'x'", '= null');
       final hashes = prewarm.parseAssetHashes(source);
       expect(
         () => prewarm.downloadUriFor(
@@ -165,26 +166,40 @@ void main() {
 
   group('asset filename mapping (mirrors package:sqlite3 releases)', () {
     test('linux/android assets are .so with the lib prefix', () {
-      expect(prewarm.assetFilenameFor('linux', 'x64'),
-          'libsqlite3.x64.linux.so');
-      expect(prewarm.assetFilenameFor('android', 'arm64'),
-          'libsqlite3.arm64.android.so');
-      expect(prewarm.assetFilenameFor('android', 'ia32'),
-          'libsqlite3.ia32.android.so');
+      expect(
+        prewarm.assetFilenameFor('linux', 'x64'),
+        'libsqlite3.x64.linux.so',
+      );
+      expect(
+        prewarm.assetFilenameFor('android', 'arm64'),
+        'libsqlite3.arm64.android.so',
+      );
+      expect(
+        prewarm.assetFilenameFor('android', 'ia32'),
+        'libsqlite3.ia32.android.so',
+      );
     });
 
     test('apple assets are .dylib (ios_sim is the release os name)', () {
-      expect(prewarm.assetFilenameFor('macos', 'arm64'),
-          'libsqlite3.arm64.macos.dylib');
-      expect(prewarm.assetFilenameFor('ios', 'arm64'),
-          'libsqlite3.arm64.ios.dylib');
-      expect(prewarm.assetFilenameFor('ios_sim', 'x64'),
-          'libsqlite3.x64.ios_sim.dylib');
+      expect(
+        prewarm.assetFilenameFor('macos', 'arm64'),
+        'libsqlite3.arm64.macos.dylib',
+      );
+      expect(
+        prewarm.assetFilenameFor('ios', 'arm64'),
+        'libsqlite3.arm64.ios.dylib',
+      );
+      expect(
+        prewarm.assetFilenameFor('ios_sim', 'x64'),
+        'libsqlite3.x64.ios_sim.dylib',
+      );
     });
 
     test('windows assets carry no lib prefix and are .dll', () {
-      expect(prewarm.assetFilenameFor('windows', 'x64'),
-          'sqlite3.x64.windows.dll');
+      expect(
+        prewarm.assetFilenameFor('windows', 'x64'),
+        'sqlite3.x64.windows.dll',
+      );
     });
   });
 
@@ -224,7 +239,8 @@ void main() {
     test('dir name is the first 8 hex of the asset hash', () {
       expect(
         prewarm.cacheDirNameFor(
-            '949965f0eba976f707ae364cdcb42c342b5f0626081f8d7f0378fb7b52848772'),
+          '949965f0eba976f707ae364cdcb42c342b5f0626081f8d7f0378fb7b52848772',
+        ),
         'download-949965f0',
       );
     });
@@ -260,43 +276,63 @@ void main() {
     // ANY host when the injection is dropped (an x64 dev box could never
     // see it — the real platform coincidentally matched the injection).
     test('a fully injected host never consults the real machine', () {
-      final t =
-          prewarm.expandTargets('host', hostOs: 'macos', hostArch: 'arm64');
-      expect('${t.single.os}-${t.single.arch}', 'macos-arm64',
-          reason:
-              'the injected platform must win over Platform.operatingSystem/'
-              'Abi.current() — the unit tests run on x64 AND arm64 shards');
-    });
-
-    test('a partial host injection fills the missing side from the machine',
-        () {
-      final osInjected = prewarm.expandTargets('host', hostOs: 'linux');
-      expect(osInjected.single.os, 'linux',
-          reason: 'the injected os overrides, the real machine fills the arch');
-      final archInjected = prewarm.expandTargets('host', hostArch: 'x64');
-      expect(archInjected.single.arch, 'x64',
-          reason: 'the injected arch overrides, the real machine fills the os');
-    });
-
-    test('an injected platform is still validated (loud on unknown os/arch)',
-        () {
-      expect(
-        () => prewarm.expandTargets('host',
-            hostOs: 'fuchsia', hostArch: 'x64'),
-        throwsA(isA<ArgumentError>()),
+      final t = prewarm.expandTargets(
+        'host',
+        hostOs: 'macos',
+        hostArch: 'arm64',
       );
       expect(
-        () => prewarm.expandTargets('host',
-            hostOs: 'linux', hostArch: 'mips'),
-        throwsA(isA<ArgumentError>()),
+        '${t.single.os}-${t.single.arch}',
+        'macos-arm64',
+        reason:
+            'the injected platform must win over Platform.operatingSystem/'
+            'Abi.current() — the unit tests run on x64 AND arm64 shards',
       );
     });
+
+    test(
+      'a partial host injection fills the missing side from the machine',
+      () {
+        final osInjected = prewarm.expandTargets('host', hostOs: 'linux');
+        expect(
+          osInjected.single.os,
+          'linux',
+          reason: 'the injected os overrides, the real machine fills the arch',
+        );
+        final archInjected = prewarm.expandTargets('host', hostArch: 'x64');
+        expect(
+          archInjected.single.arch,
+          'x64',
+          reason: 'the injected arch overrides, the real machine fills the os',
+        );
+      },
+    );
+
+    test(
+      'an injected platform is still validated (loud on unknown os/arch)',
+      () {
+        expect(
+          () =>
+              prewarm.expandTargets('host', hostOs: 'fuchsia', hostArch: 'x64'),
+          throwsA(isA<ArgumentError>()),
+        );
+        expect(
+          () =>
+              prewarm.expandTargets('host', hostOs: 'linux', hostArch: 'mips'),
+          throwsA(isA<ArgumentError>()),
+        );
+      },
+    );
 
     test('unknown os or arch is a loud error, never a silent no-op', () {
-      expect(() => prewarm.expandTargets('fuchsia'),
-          throwsA(isA<ArgumentError>()));
-      expect(() => prewarm.expandTargets('android-mips'),
-          throwsA(isA<ArgumentError>()));
+      expect(
+        () => prewarm.expandTargets('fuchsia'),
+        throwsA(isA<ArgumentError>()),
+      );
+      expect(
+        () => prewarm.expandTargets('android-mips'),
+        throwsA(isA<ArgumentError>()),
+      );
     });
   });
 
@@ -323,63 +359,73 @@ void main() {
       );
       expect(got.readAsStringSync(), 'real sqlite3 binary bytes');
       expect(
-        dest.parent
-            .listSync()
-            .whereType<File>()
-            .where((f) => f.path.endsWith('.tmp')),
+        dest.parent.listSync().whereType<File>().where(
+          (f) => f.path.endsWith('.tmp'),
+        ),
         isEmpty,
       );
     });
 
-    test('retries a brownout (non-200) and succeeds on a later attempt',
-        () async {
-      final content = bytesOf('good bytes after the 504s');
-      final dest = File('${tmp.path}${Platform.pathSeparator}libsqlite3.so');
-      var calls = 0;
-      final got = await prewarm.fetchVerified(
-        fetch: (_) async {
-          calls++;
-          if (calls <= 2) {
-            throw prewarm.HttpStatusException(uriFor('x'), 504);
-          }
-          return Stream.value(content);
-        },
-        uri: uriFor('x'),
-        expectedSha256: shaOf(content),
-        destination: dest,
-        attempts: 3,
-        retryDelay: Duration.zero,
-        timeoutPerAttempt: const Duration(seconds: 10),
-      );
-      expect(calls, 3);
-      expect(got.readAsStringSync(), 'good bytes after the 504s');
-    });
-
-    test('exhausted retries fail loudly naming the url and the status',
-        () async {
-      final dest = File('${tmp.path}${Platform.pathSeparator}libsqlite3.so');
-      await expectLater(
-        prewarm.fetchVerified(
-          fetch: (_) async => throw prewarm.HttpStatusException(uriFor('x'), 429),
+    test(
+      'retries a brownout (non-200) and succeeds on a later attempt',
+      () async {
+        final content = bytesOf('good bytes after the 504s');
+        final dest = File('${tmp.path}${Platform.pathSeparator}libsqlite3.so');
+        var calls = 0;
+        final got = await prewarm.fetchVerified(
+          fetch: (_) async {
+            calls++;
+            if (calls <= 2) {
+              throw prewarm.HttpStatusException(uriFor('x'), 504);
+            }
+            return Stream.value(content);
+          },
           uri: uriFor('x'),
-          expectedSha256: shaOf(bytesOf('unused')),
+          expectedSha256: shaOf(content),
           destination: dest,
           attempts: 3,
           retryDelay: Duration.zero,
           timeoutPerAttempt: const Duration(seconds: 10),
-        ),
-        throwsA(
-          isA<prewarm.PrewarmException>()
-              .having((e) => e.message, 'message', contains('https://example.test/x'))
-              .having((e) => e.message, 'message', contains('429')),
-        ),
-      );
-      expect(dest.existsSync(), isFalse,
-          reason: 'a failed download must never leave bytes in the cache');
-    });
+        );
+        expect(calls, 3);
+        expect(got.readAsStringSync(), 'good bytes after the 504s');
+      },
+    );
 
-    test('a corrupt body is never written — hash gate before rename',
-        () async {
+    test(
+      'exhausted retries fail loudly naming the url and the status',
+      () async {
+        final dest = File('${tmp.path}${Platform.pathSeparator}libsqlite3.so');
+        await expectLater(
+          prewarm.fetchVerified(
+            fetch: (_) async =>
+                throw prewarm.HttpStatusException(uriFor('x'), 429),
+            uri: uriFor('x'),
+            expectedSha256: shaOf(bytesOf('unused')),
+            destination: dest,
+            attempts: 3,
+            retryDelay: Duration.zero,
+            timeoutPerAttempt: const Duration(seconds: 10),
+          ),
+          throwsA(
+            isA<prewarm.PrewarmException>()
+                .having(
+                  (e) => e.message,
+                  'message',
+                  contains('https://example.test/x'),
+                )
+                .having((e) => e.message, 'message', contains('429')),
+          ),
+        );
+        expect(
+          dest.existsSync(),
+          isFalse,
+          reason: 'a failed download must never leave bytes in the cache',
+        );
+      },
+    );
+
+    test('a corrupt body is never written — hash gate before rename', () async {
       final dest = File('${tmp.path}${Platform.pathSeparator}libsqlite3.so');
       var calls = 0;
       await expectLater(
@@ -437,8 +483,9 @@ void main() {
         packageDir: appDir,
         targets: prewarm.expandTargets('linux-x64'),
         urlPatternOverride: defaultUrlPattern,
-        sharedDirOverride:
-            Directory('${tmp.path}${Platform.pathSeparator}shared'),
+        sharedDirOverride: Directory(
+          '${tmp.path}${Platform.pathSeparator}shared',
+        ),
         fetchOverride: fetcher({
           'libsqlite3.x64.linux.so': contentFor('libsqlite3.x64.linux.so'),
         }),
@@ -451,9 +498,12 @@ void main() {
         '${Platform.pathSeparator}sqlite3${Platform.pathSeparator}build'
         '${Platform.pathSeparator}download-${shaOf(contentFor('libsqlite3.x64.linux.so')).substring(0, 8)}'
         '${Platform.pathSeparator}libsqlite3.so',
-      );      expect(cached.existsSync(), isTrue);
-      expect(shaOf(cached.readAsBytesSync()),
-          shaOf(contentFor('libsqlite3.x64.linux.so')));
+      );
+      expect(cached.existsSync(), isTrue);
+      expect(
+        shaOf(cached.readAsBytesSync()),
+        shaOf(contentFor('libsqlite3.x64.linux.so')),
+      );
     });
 
     test('is idempotent — a verified cache hit performs no fetch', () async {
@@ -476,7 +526,8 @@ void main() {
         urlPatternOverride: defaultUrlPattern,
         sharedDirOverride: shared,
         fetchOverride: (uri) => throw StateError(
-            'must not fetch $uri — the cache was already verified'),
+          'must not fetch $uri — the cache was already verified',
+        ),
         onNote: (_) {},
       );
       expect(report.downloaded, isEmpty);
@@ -510,7 +561,11 @@ void main() {
         fetchOverride: fetcher({'libsqlite3.x64.linux.so': good}),
         onNote: (_) {},
       );
-      expect(report.downloaded, hasLength(1), reason: 'corrupt entry re-fetched');
+      expect(
+        report.downloaded,
+        hasLength(1),
+        reason: 'corrupt entry re-fetched',
+      );
       expect(shaOf(cached.readAsBytesSync()), shaOf(good));
     });
 
@@ -523,9 +578,12 @@ void main() {
         sharedDirOverride: shared,
         fetchOverride: fetcher({
           'libsqlite3.arm.android.so': contentFor('libsqlite3.arm.android.so'),
-          'libsqlite3.arm64.android.so':
-              contentFor('libsqlite3.arm64.android.so'),
-          'libsqlite3.ia32.android.so': contentFor('libsqlite3.ia32.android.so'),
+          'libsqlite3.arm64.android.so': contentFor(
+            'libsqlite3.arm64.android.so',
+          ),
+          'libsqlite3.ia32.android.so': contentFor(
+            'libsqlite3.ia32.android.so',
+          ),
           'libsqlite3.x64.android.so': contentFor('libsqlite3.x64.android.so'),
         }),
         onNote: (_) {},
@@ -536,20 +594,27 @@ void main() {
     test('a missing sqlite3 in the package config is a loud error', () async {
       final empty = Directory.systemTemp.createTempSync('fah-prewarm-empty-');
       addTearDown(() => empty.deleteSync(recursive: true));
-      Directory('${empty.path}${Platform.pathSeparator}.dart_tool')
-          .createSync();
+      Directory(
+        '${empty.path}${Platform.pathSeparator}.dart_tool',
+      ).createSync();
       File(
         '${empty.path}${Platform.pathSeparator}.dart_tool'
         '${Platform.pathSeparator}package_config.json',
-      ).writeAsStringSync(jsonEncode({
-        'packages': [
-          {'name': 'a', 'rootUri': 'file:///nowhere/a'},
-        ],
-      }));
+      ).writeAsStringSync(
+        jsonEncode({
+          'packages': [
+            {'name': 'a', 'rootUri': 'file:///nowhere/a'},
+          ],
+        }),
+      );
       await expectLater(
         prewarm.prewarmPackage(
           packageDir: empty,
-          targets: prewarm.expandTargets('host', hostOs: 'linux', hostArch: 'x64'),
+          targets: prewarm.expandTargets(
+            'host',
+            hostOs: 'linux',
+            hostArch: 'x64',
+          ),
           onNote: (_) {},
         ),
         throwsA(isA<prewarm.PrewarmException>()),
