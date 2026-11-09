@@ -60,3 +60,6 @@ jobs:
           python -m unittest discover -s bench/mls_bench -v
           python -m unittest discover -s bench/leaderboard -v
           python -m unittest discover -s bench/programbench -v
+          # gh-1686: bench/ale is stdlib-only (its deployer stubs the
+          # ale_run import surface in tests) — no extra pip installs.
+          python -m unittest discover -s bench/ale -v
