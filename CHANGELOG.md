@@ -35,6 +35,25 @@ block a release again.
   test.dart` pins the wiring (AC1-AC4); the script's byte-level behavior
   and the live hook-reuse layout are pinned in
   `test/scripts/sqlite3_hook_prewarm_test.dart`.
+  Rework (2026-11-09, the PR's own CI run): five reds, two root causes,
+  both fixed. (1) `expandTargets` accepted its `hostOs`/`hostArch`
+  injection but ignored it — `expandTargets('host', hostOs: 'linux',
+  hostArch: 'x64')` resolved against the REAL machine and failed on the
+  ubuntu-24.04-arm Core-tests shard; a fully injected platform now never
+  consults the host (unit-provable on x64 and arm64 alike). (2) The
+  pre-warm was wired as plain `dart run` — which executes the whole
+  package graph's build hooks BEFORE the script's main(), so on exactly
+  the gh-2074 conditions (cold cache + brownout) the pre-warm died before
+  it could pre-warm (proven live; the pty-visual red was this same shape).
+  Every invocation is now `dart --disable-dart-dev` (no hook machinery)
+  and the script is self-contained (no `package:` imports — SHA-256
+  inlined) so that mode can load it. The same protection extended to
+  ci.yml: the lanes whose first hook consumer is a plain dart command
+  (`test-core`, `integration-mock`, `hostile-env`, `fa-aot-build`,
+  `pty-integration-linux`, `binaries-pr`, `pty-visual` — the last had no
+  hooks cache at all) now restore `hooks-shared-` + pre-warm the host
+  asset after pub get and before that consumer; the guard pins it as
+  AC6/AC7.
 
 - feat(gh-2059): browser-extension compaction parity with CLI — over-window
   relief, `/compact` with visible receipts, and the shared under-window
