@@ -99,6 +99,30 @@ Uint8List contentFor(String asset) => bytesOf('content-of-$asset');
 }
 
 void main() {
+  group('self-containment (the hook-free invocation contract)', () {
+    // gh-2074 rework: `dart run scripts/sqlite3_hook_prewarm.dart` INSIDE
+    // the package executes the root package graph's build hooks BEFORE
+    // main() — package:sqlite3's hook downloads bare, and on a live
+    // brownout (cold cache + 504s) the pre-warm dies before it can run:
+    // chicken-and-egg, proven live on 2026-11-09. The cure is the
+    // --disable-dart-dev VM invocation, which skips the pub run machinery
+    // entirely — and that mode resolves no package config, so the script
+    // must import ONLY dart: libraries to be invocable at all.
+    test('the script imports no package: library', () {
+      final source = File('scripts/sqlite3_hook_prewarm.dart')
+          .readAsStringSync();
+      final packageImports = RegExp(
+        r"^import\s+'package:",
+        multiLine: true,
+      ).allMatches(source).map((m) => m.pattern).toList();
+      expect(packageImports, isEmpty,
+          reason:
+              'the script must stay invocable via `dart --disable-dart-dev` '
+              '(no package config is resolved in that mode) — inline the '
+              'hashing instead of importing package:crypto');
+    });
+  });
+
   group('parseAssetHashes', () {
     test('parses release tag and hash map', () {
       final hashes = prewarm.parseAssetHashes(

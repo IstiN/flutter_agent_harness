@@ -46,7 +46,13 @@ import 'dart:ffi' show Abi;
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:crypto/crypto.dart' as crypto;
+/// SHA-256 is inlined (below) instead of imported from package:crypto —
+/// this script must be invocable with `dart --disable-dart-dev`, which
+/// skips the pub run machinery (a plain `dart run` inside the package
+/// executes the whole package graph's build hooks BEFORE main(), so on a
+/// live brownout the pre-warm died before it could pre-warm). The
+/// --disable-dart-dev mode resolves no package config, so no `package:`
+/// import may appear here.
 
 /// Default release-download pattern (mirrors the hook's
 /// `PrecompiledFromGithubAssets.defaultUrlPattern`).
@@ -171,9 +177,18 @@ List<PrewarmTarget> expandTargets(String token, {String? hostOs, String? hostArc
   String os;
   String? arch;
   if (token == 'host') {
-    final resolved = _hostTarget();
-    os = resolved.$1;
-    arch = resolved.$2;
+    // A fully injected platform never consults the real machine — the
+    // unit tests must resolve identically on every CI shard (x64 and
+    // arm64 alike; the 2026-11-09 red was an arm64 shard where the
+    // injection parameters were dropped and the real host leaked in).
+    if (hostOs != null && hostArch != null) {
+      os = hostOs;
+      arch = hostArch;
+    } else {
+      final resolved = _hostTarget();
+      os = hostOs ?? resolved.$1;
+      arch = hostArch ?? resolved.$2;
+    }
   } else {
     final parts = token.split('-');
     os = parts.first;
@@ -360,7 +375,7 @@ Future<File> fetchVerified({
           )
           .timeout(timeoutPerAttempt);
       final bytes = builder.takeBytes();
-      final digest = crypto.sha256.convert(bytes).toString();
+      final digest = sha256Hex(bytes);
       if (digest != expectedSha256.toLowerCase()) {
         // The gh-2074 signature: an error page (or truncated body) whose
         // hash ≠ the pin. Never write it — the hook would reject it (or
@@ -498,7 +513,7 @@ Future<PrewarmReport> prewarmPackage({
       ),
     );
     if (destination.existsSync()) {
-      final cached = crypto.sha256.convert(destination.readAsBytesSync()).toString();
+      final cached = sha256Hex(destination.readAsBytesSync());
       if (cached == expectedSha256) {
         note('sqlite3 hook prewarm: ${destination.path} already verified — skip');
         skipped.add(assetName);
