@@ -453,9 +453,10 @@ Future<File> downloadVerified({
       // The body read carries its own budget too: a transfer that stalls
       // mid-stream dies here instead of hanging the step (the hook's own
       // download has no such bound — gh-2072 review thread 9).
-      await response.listen(builder.add).asFuture<void>().timeout(
-            requestTimeout,
-          );
+      await response
+          .listen(builder.add)
+          .asFuture<void>()
+          .timeout(requestTimeout);
       final bytes = builder.takeBytes();
       final digest = sha256Hex(bytes);
       if (digest != expectedSha256) {

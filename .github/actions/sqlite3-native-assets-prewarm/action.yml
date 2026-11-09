@@ -19,9 +19,14 @@ description: >-
   writes atomically into the hook's own reuse cache
   (<root>/.dart_tool/hooks_runner/shared/sqlite3/build/download-<hash8>/),
   so the hook never touches the network. Idempotent: a matching cached
-  file is a no-op. Companion guard:
-  test/ci_sqlite3_prewarm_guard_test.dart; script contract tested by
-  test/scripts/sqlite3_native_assets_prewarm_test.dart.
+  file is a no-op. BEST-EFFORT (gh-2072 review thread 7): the step is
+  continue-on-error — a failed prewarm degrades to the hook's own
+  single-attempt download (the hook re-verifies the sha256 of anything it
+  reuses), never reds the leg by itself. Residual risk (review thread
+  11): a sustained egress outage longer than the ~10 minute retry window
+  can still red a hook-building leg through that hook fallback.
+  Companion guard: test/ci_sqlite3_prewarm_guard_test.dart; script
+  contract tested by test/scripts/sqlite3_native_assets_prewarm_test.dart.
 inputs:
   package-roots:
     description: >-
@@ -43,19 +48,36 @@ inputs:
     required: false
     default: 'auto'
   attempts:
-    description: 'Bounded-retry budget per file (default 4, backoff 5s/10s/20s).'
+    description: >-
+      Bounded-retry budget per file (default 8 — with the 5s/10s/20s/…
+      exponential backoff and ±30% jitter that covers a ~10 minute egress
+      outage window, not just the ~35s of the original 4-attempt budget:
+      the v1.0.697 incident was a 5+ minute 504 storm).
     required: false
-    default: '4'
+    default: '8'
 runs:
   using: composite
   steps:
+    # Best-effort by design (gh-2072 review thread 7, matching the
+    # gh-1655/gh-1757 "pre-install is an optimization, not a gate"
+    # posture): `continue-on-error` keeps a prewarm failure from reding
+    # the leg. Outcome strictly dominates fail-closed — hook-building
+    # legs lose nothing (the hook keeps its own single-attempt download
+    # path, and the hook re-verifies the sha256 of anything it reuses),
+    # and legs with no sqlite3 hook at all (web, static, dep-audit)
+    # regain their immunity to egress outages instead of becoming
+    # prewarm-dependent (Build web proved the fail-closed hazard on this
+    # PR's own run). Residual risk, documented (review thread 11): a
+    # sustained egress outage longer than the ~10 min retry window can
+    # still red a hook leg — via the hook's own unretryable download.
     - name: Prewarm sqlite3 native-assets (bounded retry, gh-2072)
       shell: bash
+      continue-on-error: true
       run: |
         set -euo pipefail
         DART_BIN="$(command -v dart || true)"
         if [ -z "$DART_BIN" ]; then
-          echo "::error::cannot locate dart on PATH — the sqlite3 native-assets prewarm needs the Dart SDK (wire it after pub get, before the first build/test step)"
+          echo "::warning::cannot locate dart on PATH — the sqlite3 native-assets prewarm is skipped; the hook will run its own (single-attempt) download"
           exit 1
         fi
         # Copy the script OUT of the workspace before invoking it: plain
@@ -76,5 +98,5 @@ runs:
         if "$DART_BIN" "$SCRIPT_COPY" "${ARGS[@]}"; then
           exit 0
         fi
-        echo "::error::sqlite3 native-assets prewarm failed after ${{ inputs.attempts }} attempts per target — gh-2072: the sqlite3 hook downloads prebuilt binaries mid-build with no status check and no retry; one transient GitHub error page reds the leg and the aggregate Quality gate. Inspect the attempts above; the guard (test/ci_sqlite3_prewarm_guard_test.dart) pins this wiring."
+        echo "::warning::sqlite3 native-assets prewarm failed after ${{ inputs.attempts }} attempts per target — falling back to the hook's own (single-attempt) download. gh-2072 context: the sqlite3 hook downloads prebuilt binaries mid-build with no status check and no retry; a transient GitHub error page red'd four legs plus the aggregate Quality gate at v1.0.697. Inspect the attempts above; the wiring guard (test/ci_sqlite3_prewarm_guard_test.dart) pins this step."
         exit 1

@@ -930,6 +930,16 @@ jobs:
         timeout-minutes: 2
         continue-on-error: true
 
+      # gh-2072 (review thread 5): the prewarm is scope-gated EXACTLY like
+      # the pub get above it — on an out-of-scope PR checkout/setup-dart/
+      # pub get are all skipped (the fastpass keeps the leg green in
+      # seconds) and an unconditional prewarm would red the required
+      # contexts: the composite action file isn't even on disk without
+      # checkout, and the script hard-fails without the pub get's package
+      # config.
+      - uses: ./.github/actions/sqlite3-native-assets-prewarm
+        if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
+
       # Duration-balanced shards (issue #177 AC3): scripts/test_shards.json
       # maps test FILES to shards (file-level units — test/cli alone was
       # half the suite's runtime and undivisible as a dir-unit); rebalanced
@@ -940,7 +950,6 @@ jobs:
       # it. The json file-reporter (converted to junit below — dart test
       # has no built-in junit reporter) feeds the rebalancer real durations
       # (issue #194 AC3).
-      - uses: ./.github/actions/sqlite3-native-assets-prewarm
       - name: dart test --coverage (shard ${{ matrix.shard }})
         if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
         run: |
@@ -1154,7 +1163,6 @@ jobs:
       - uses: ./.github/actions/sqlite3-native-assets-prewarm
       - name: dart test under hostile ambient env
         run: dart test --exclude-tags integration
-
   # ─────────────────────────────────────────────────────────────────────────
   # Nightly parity (2026-09-23): the two legs that stayed nightly-only went
   # red on main night after night before anyone looked — the CLI-coverage
@@ -1202,8 +1210,13 @@ jobs:
           path: .dart_tool/hooks_runner/shared
           key: hooks-shared-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pubspec.lock') }}
           restore-keys: hooks-shared-${{ runner.os }}-${{ runner.arch }}-
-      - uses: ./.github/actions/sqlite3-native-assets-prewarm
       - run: dart pub get
+      # gh-2072 (review thread 2): the prewarm MUST run AFTER pub get —
+      # the script reads .dart_tool/package_config.json and hard-fails
+      # without it ("PREWARM FAILED — .: package_config.json not found"
+      # red'd this leg on the PR's own run when the prewarm sat above the
+      # pub get).
+      - uses: ./.github/actions/sqlite3-native-assets-prewarm
       - name: dart build cli (AOT bundle, same shape install_local.sh ships)
         run: |
           dart build cli --target=bin/fah.dart --output=fa-local
@@ -1761,7 +1774,11 @@ jobs:
           key: hooks-shared-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pubspec.lock') }}
           restore-keys: hooks-shared-${{ runner.os }}-${{ runner.arch }}-
 
+      # gh-2072 (review thread 5): same scope gate as the pub get above —
+      # the prewarm depends on exactly the same setup set (dart SDK +
+      # package config) and must skip with it on app/docs-only PRs.
       - uses: ./.github/actions/sqlite3-native-assets-prewarm
+        if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
         with:
@@ -1936,7 +1953,11 @@ jobs:
       - run: dart pub get
         if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
 
+      # gh-2072 (review thread 5): same scope gate as the pub get above —
+      # the prewarm depends on exactly the same setup set (dart SDK +
+      # package config) and must skip with it on out-of-scope PRs.
       - uses: ./.github/actions/sqlite3-native-assets-prewarm
+        if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
       - name: REG — model-switch coherence gates (red blocks merge)
         if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
         run: dart test test/cli/model_switch_coherence_test.dart test/cli/agent_cli_model_coherence_test.dart
@@ -2924,10 +2945,14 @@ jobs:
       # (armeabi-v7a/arm64-v8a/x86_64) before the debug APK build — the
       # build-time hook downloads the prebuilt libsqlite3 per triple with a
       # single unretried attempt (gh-2072: one 504 error page red'd this leg
-      # at v1.0.697).
+      # at v1.0.697). package-roots is REQUIRED here (gh-2072 review thread
+      # 3): this job resolves ONLY flutter_app (via flutter-pub-get), so the
+      # `.` default would read a root package config that never exists —
+      # the PR's own run red'd this leg exactly that way.
       - uses: ./.github/actions/sqlite3-native-assets-prewarm
         with:
           targets: android
+          package-roots: flutter_app
 
       - name: flutter build apk (debug)
         run: cd flutter_app && flutter build apk --debug --flavor store
@@ -3036,9 +3061,14 @@ jobs:
       # gh-2072: prewarm the sqlite3 hook cache for the arm64-ios device
       # binary before the debug iOS build (single-attempt download in the
       # build hook — one 504 error page red'd legs at v1.0.697).
+      # package-roots is REQUIRED here (gh-2072 review thread 3): this job
+      # resolves ONLY flutter_app (via flutter-pub-get), so the `.` default
+      # would read a root package config that never exists — the PR's own
+      # run red'd this leg exactly that way.
       - uses: ./.github/actions/sqlite3-native-assets-prewarm
         with:
           targets: arm64-ios
+          package-roots: flutter_app
 
       - name: flutter build ios (debug, unsigned)
         # E2, corrected by gh-1296: classify the failure by EVIDENCE in the
@@ -3803,6 +3833,12 @@ jobs:
       - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1
         with:
           sdk: stable
+      # gh-2072 (review thread 6): this job had NO pub get at all — the
+      # prewarm below reads .dart_tool/package_config.json and hard-failed
+      # on every fresh checkout, i.e. every v* tag run would red this leg
+      # (and publish waits on it). Every other root-package leg already
+      # carries the explicit pub get; this was the exception.
+      - run: dart pub get
       # Issue #551: the ONLY tag-only LLM job — a small provider smoke.
       # `--tags "integration && llm"` selects the real-provider files
       # (anthropic / google / openrouter / ollama round-trips; copilot,
@@ -4129,6 +4165,13 @@ jobs:
           path: .dart_tool/hooks_runner/shared
           key: hooks-shared-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pubspec.lock') }}
           restore-keys: hooks-shared-${{ runner.os }}-${{ runner.arch }}-
+
+      # gh-2072 (review thread 1): the release binaries matrix runs
+      # `dart build cli` — a hook-building step that failed on the PR's own
+      # run with the exact sqlite3 hook 504 this PR exists to prevent
+      # (`Unexpected response code: 504` from the hook's single-attempt
+      # fetch, exit 255). Prewarm before it, host-auto targets.
+      - uses: ./.github/actions/sqlite3-native-assets-prewarm
 
       - name: Build CLI bundle
         shell: bash
@@ -4886,6 +4929,13 @@ jobs:
           path: .dart_tool/hooks_runner/shared
           key: hooks-shared-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pubspec.lock') }}
           restore-keys: hooks-shared-${{ runner.os }}-${{ runner.arch }}-
+
+      # gh-2072 (review thread 1): `Binaries (PR)` ubuntu-x64/macos-x64
+      # failed on the PR's own run with the exact sqlite3 hook 504 this PR
+      # exists to prevent (`dart build cli` below is a hook-building step;
+      # the required "Binaries smoke gate" context red'd with it). Prewarm
+      # before it, host-auto targets.
+      - uses: ./.github/actions/sqlite3-native-assets-prewarm
 
       - name: Build CLI bundle
         shell: bash
