@@ -11,7 +11,6 @@ Subcommands (stdlib-only, mirroring bench/mls_bench/build_run.py):
              — the quota discipline from the kimi saga: few parallel
              shards, never burn trials into dead quota windows), emit
              the experiment yamls + the run identity bundle.
-  check-env  fail fast on missing secrets, naming the exact key.
   command    print the per-shard ale_run invocation.
 
 Pins (releases/v1.1/assets.json, published 2026-10-14; verified live
@@ -23,11 +22,9 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import os
 import re
 import shutil
 import sys
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import NoReturn
 
@@ -99,6 +96,10 @@ _KEY_WORD_RE = re.compile(
 _MODEL_RE = re.compile(r"[A-Za-z0-9._/+-]{1,100}\Z")
 _PROVIDER_TYPE_RE = re.compile(r"[a-z0-9_-]{1,64}\Z")
 _SHA256_RE = re.compile(r"[0-9a-f]{64}\Z")
+# https:// URL with no whitespace, quotes or backslash — anything else
+# could break out of the preset YAML line it is written verbatim into
+# (same taint barrier as the other sink-consumed strings, review gh-2081).
+_BUNDLE_URL_RE = re.compile(r"https://[^\s\"'\\\\]{1,300}\Z")
 
 
 def _field_is_keylike(name: str) -> bool:
@@ -176,8 +177,8 @@ def _validated_stage_args(args: argparse.Namespace) -> argparse.Namespace:
         _die("--provider-type must be a short lowercase provider id (e.g. zai, openai)")
     if not _MODEL_RE.fullmatch(args.model):
         _die("--model must be a plain model id (letters/digits/._/+-) — a newline or quote would break the preset YAML")
-    if not args.bundle_url.startswith("https://"):
-        _die("--bundle-url must be an https:// URL")
+    if not _BUNDLE_URL_RE.fullmatch(args.bundle_url):
+        _die("--bundle-url must be an https:// URL with no whitespace or quotes")
     if args.bundle_sha256 and not _SHA256_RE.fullmatch(args.bundle_sha256):
         _die("--bundle-sha256 must be 64 lowercase hex chars (the release SHA256SUMS value)")
     for knob in ("stall_gap_sec", "abs_ceiling_sec", "external_cap_sec"):
@@ -407,34 +408,6 @@ def _experiment_yaml(args: argparse.Namespace, index: int) -> str:
     ) + "\n"
 
 
-# ──────────────────────────────────────────────────────────── check-env ────
-
-
-def cmd_check_env(args: argparse.Namespace) -> int:
-    # The provider-key check names only build-time constants (CodeQL
-    # gh-1686 round 3): no key-class CLI source exists in this tool.
-    canonical = _fa_config.FaConfig.canonical_env_name
-    key_present = any(
-        os.environ.get(name)
-        for name in (canonical, "FA_BENCH_KIMI_KEY", "FA_BENCH_CUSTOM_KEY")
-    )
-    hf_present = bool(os.environ.get("HF_TOKEN"))
-    if not key_present:
-        _die(
-            "provider key secret missing — provision one of FA_BENCH_ZAI_KEY "
-            "/ FA_BENCH_KIMI_KEY / FA_BENCH_CUSTOM_KEY as a repo secret "
-            "(docs/bench.md)"
-        )
-    if args.stage != "plan" and not hf_present:
-        _die(
-            "HF_TOKEN missing — manual-approval access to "
-            "agents-last-exam/agents-last-exam-data-archive is required "
-            "for scoring (issue #1686)"
-        )
-    print("check-env: OK")
-    return 0
-
-
 # ────────────────────────────────────────────────────────────── command ────
 
 
@@ -485,9 +458,6 @@ def main(argv: list[str] | None = None) -> int:
     plan.add_argument("--run-config-out", required=True)
     plan.set_defaults(func=cmd_plan)
 
-    check = sub.add_parser("check-env", help="fail fast on missing secrets")
-    check.add_argument("--stage", choices=["plan", "agent"], default="plan")
-    check.set_defaults(func=cmd_check_env)
 
     command = sub.add_parser("command", help="emit the shard's ale_run command")
     command.add_argument("--ale-root", default="ale")

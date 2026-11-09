@@ -1,4 +1,4 @@
-"""build_run.py tests (issue #1686) — stage/plan/check-env/command.
+"""build_run.py tests (issue #1686) — stage/plan/command.
 
 The pins these tests enforce are the gh-1686 recon's AC1 output: a
 drifted --ale-sha must fail the plan in one setup minute (sha256 check
@@ -7,7 +7,6 @@ confirm-gate on the full allowlist, allowlist membership) is enforced
 by the planner, not by operator discipline.
 """
 import json
-import os
 import sys
 import tempfile
 import unittest
@@ -226,6 +225,20 @@ class StageTest(unittest.TestCase):
         with self.assertRaises(SystemExit):
             self._stage(ale_root=str(self.tmp.name))
 
+    def test_stage_refuses_bundle_url_with_injection_shapes(self):
+        # Same taint barrier as model/provider_type/sha256: a newline,
+        # quote or backslash in bundle_url would corrupt the preset
+        # YAML line it is written verbatim into (review gh-2081).
+        for hostile in (
+            "https://example.com/x.tar.gz\nkey:Injected",
+            "https://example.com/x.tar.gz' --trace",
+            'https://example.com/"x"',
+            "https://example.com/\\x.tar.gz",
+            "ftp://example.com/x.tar.gz",
+        ):
+            with self.assertRaises(SystemExit):
+                self._stage(bundle_url=hostile)
+
     # ── CodeQL taint barriers (gh-1686 review) ────────────────────────
     # A password-shaped value supplied where an env var NAME belongs is
     # refused BEFORE it can reach the ::error log line or the preset
@@ -271,46 +284,6 @@ class StageTest(unittest.TestCase):
         self.assertIn("FA_KEY_API_Z_AI_Z_AI", preset)
         self.assertIn("https://api.z.ai/v4", preset)
         self.assertIn("200000", preset)
-
-
-class CheckEnvTest(unittest.TestCase):
-    def _check(self, env, stage="plan"):
-        old = {k: os.environ.get(k) for k in ("FA_BENCH_ZAI_KEY", "HF_TOKEN")}
-        try:
-            for key, value in old.items():
-                os.environ.pop(key, None)
-            os.environ.update({k: v for k, v in env.items() if v is not None})
-
-            class _Ns:
-                pass
-
-            ns = _Ns()
-            ns.stage = stage
-            ns.func = build_run.cmd_check_env
-            ns.cmd = "check-env"
-            return build_run.cmd_check_env(ns)
-        finally:
-            for key, value in old.items():
-                if value is None:
-                    os.environ.pop(key, None)
-                else:
-                    os.environ[key] = value
-
-    def test_plan_stage_needs_only_the_provider_key(self):
-        self.assertEqual(self._check({"FA_BENCH_ZAI_KEY": "x"}), 0)
-        with self.assertRaises(SystemExit):
-            self._check({})
-
-    def test_check_env_rejects_removed_api_key_env_flag(self):
-        with self.assertRaises(SystemExit):
-            build_run.main(["check-env", "--api-key-env", "FA_BENCH_ZAI_KEY"])
-
-    def test_agent_stage_also_needs_hf_token(self):
-        self.assertEqual(
-            self._check({"FA_BENCH_ZAI_KEY": "x", "HF_TOKEN": "hf_x"}, stage="agent"), 0
-        )
-        with self.assertRaises(SystemExit):
-            self._check({"FA_BENCH_ZAI_KEY": "x"}, stage="agent")
 
 
 class CommandTest(unittest.TestCase):

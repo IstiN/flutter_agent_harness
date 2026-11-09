@@ -58,9 +58,9 @@ class CollectTrialsTest(unittest.TestCase):
 
 
 class VerdictTest(unittest.TestCase):
-    def _rows(self, tasks):
+    def _rows(self, tasks, shard="ale-shard-0"):
         return [
-            {"shard": "ale-shard-0", "task": t, "eval_status": "success",
+            {"shard": shard, "task": t, "eval_status": "success",
              "score": 1.0, "status": "completed"}
             for t in tasks
         ]
@@ -77,12 +77,34 @@ class VerdictTest(unittest.TestCase):
         self.assertFalse(ok)
         self.assertTrue(any("coverage 1/2" in p for p in problems))
 
-    def test_missing_shard_artifacts_named(self):
+    def test_zero_trial_shards_named(self):
+        # gh-1658 C3: a shard that planned but contributed nothing is
+        # NAMED from the plan matrix count, not just counted (review
+        # gh-2081: expected - contributing, not "rows happen to be few").
         ok, problems = summary_ale.build_verdict(
             self._rows(["t1", "t2"]), expected_tasks=2, expected_shards=3
         )
         self.assertFalse(ok)
-        self.assertTrue(any("1/3 shards" in p for p in problems))
+        named = [p for p in problems if "zero trials" in p]
+        self.assertTrue(named, problems)
+        self.assertIn("ale-shard-1", named[0])
+        self.assertIn("ale-shard-2", named[0])
+
+    def test_all_planned_shards_present_passes(self):
+        rows = self._rows(["t1"]) + self._rows(["t2"], shard="ale-shard-1")
+        ok, problems = summary_ale.build_verdict(
+            rows, expected_tasks=2, expected_shards=2
+        )
+        self.assertTrue(ok, problems)
+        self.assertFalse(any("zero trials" in p for p in problems))
+
+    def test_expected_shards_zero_skips_naming(self):
+        rows = self._rows(["t1"])
+        ok, problems = summary_ale.build_verdict(
+            rows, expected_tasks=5, expected_shards=0
+        )
+        self.assertFalse(ok)
+        self.assertFalse(any("zero trials" in p for p in problems))
 
     def test_complete_run_passes(self):
         ok, problems = summary_ale.build_verdict(

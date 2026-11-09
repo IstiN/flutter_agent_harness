@@ -96,22 +96,27 @@ def build_verdict(
     expected_shards: int,
 ) -> tuple[bool, list[str]]:
     problems: list[str] = []
-    shards_seen = sorted({row["shard"] for row in rows})
-    counts: dict[str, int] = {shard: 0 for shard in shards_seen}
-    for row in rows:
-        counts[row["shard"]] = counts.get(row["shard"], 0) + 1
     if len(rows) == 0:
         problems.append("no trials found under the shard roots")
-    else:
-        empty = [s for s, n in counts.items() if n == 0]
-        if empty:
-            problems.append("shards with zero trials: " + ", ".join(empty))
+    # gh-1658 C3: name every PLANNED shard that contributed zero
+    # trials. The expected shard count comes from the plan job's
+    # matrix (ale-shard-<i> artifact names); expected - contributing,
+    # by name — never derived from the rows themselves, which by
+    # construction cannot mention a shard that produced nothing.
+    missing = [
+        f"ale-shard-{i}"
+        for i in range(expected_shards)
+        if not any(row["shard"] == f"ale-shard-{i}" for row in rows)
+    ]
+    if missing:
+        problems.append("shards with zero trials: " + ", ".join(missing))
     seen_tasks = {row["task"] for row in rows}
     if expected_tasks and len(rows) and len(seen_tasks) < expected_tasks:
-        missing = expected_tasks - len(seen_tasks)
-        problems.append(f"coverage {len(seen_tasks)}/{expected_tasks} ({missing} task(s) produced no run dir)")
-    if expected_shards and len(rows) and len(shards_seen) < expected_shards:
-        problems.append(f"only {len(shards_seen)}/{expected_shards} shards contributed artifacts")
+        missing_tasks = expected_tasks - len(seen_tasks)
+        problems.append(
+            f"coverage {len(seen_tasks)}/{expected_tasks} "
+            f"({missing_tasks} task(s) produced no run dir)"
+        )
     return (not problems), problems
 
 

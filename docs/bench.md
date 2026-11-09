@@ -546,7 +546,8 @@ matrix) → `agent` (one `ale_run` per shard on the chosen runner) →
    trials fails by name, harbor gh-1658 C3 parity).
 2. **Submission bundle** — `bench-ale-submission` artifact (90-day
    retention): ALE's own run dirs per unit (`run.json` +
-   `trajectory.json` + `eval_result.json` + `origin_log/`), i.e. the
+   `trajectory.json` + `eval_result.json` + `events.jsonl` +
+   `origin_log/`), i.e. the
    trajectory + evaluation evidence their leaderboard docs describe.
 3. **fa-results ledger** — a complete full-allowlist run upserts a
    self-reported `ALE-v1.1-docker` row (`bench/leaderboard/

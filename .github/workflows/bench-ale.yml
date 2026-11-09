@@ -557,6 +557,15 @@ jobs:
           TASKS: ${{ inputs.tasks }}
           ALE_SHA: ${{ inputs.ale-sha }}
           CONFIRM_FULL: ${{ inputs.confirm-full }}
+          PROGRESS_EXTENSION: ${{ inputs.progress-extension }}
+          STALL_GAP_SEC: ${{ inputs.stall-gap-sec }}
+          ABS_CEILING_SEC: ${{ inputs.abs-ceiling-sec }}
+          EXTERNAL_CAP_SEC: ${{ inputs.external-cap-sec }}
+          SHARDS: ${{ inputs.shards }}
+          MAX_ATTEMPTS: ${{ inputs.max-attempts }}
+          FA_COMMIT: ${{ github.sha }}
+          PROVIDER: ${{ inputs.provider }}
+          JOB_INDEX: ${{ matrix.i }}
         run: |
           set -euo pipefail
           stage_args=(--ale-root ale
@@ -565,29 +574,34 @@ jobs:
             --model "$BENCH_MODEL"
             --bundle-url "$BUNDLE_URL"
             --bundle-sha256 "$BUNDLE_SHA256")
-          [ -n "${{ inputs.progress-extension }}" ] && stage_args+=(--progress-extension)
-          [ -n "${{ inputs.stall-gap-sec }}" ] && stage_args+=(--stall-gap-sec '${{ inputs.stall-gap-sec }}')
-          [ -n "${{ inputs.abs-ceiling-sec }}" ] && stage_args+=(--abs-ceiling-sec '${{ inputs.abs-ceiling-sec }}')
-          [ -n "${{ inputs.external-cap-sec }}" ] && stage_args+=(--external-cap-sec '${{ inputs.external-cap-sec }}')
+          [ -n "$PROGRESS_EXTENSION" ] && stage_args+=(--progress-extension)
+          [ -n "$STALL_GAP_SEC" ] && stage_args+=(--stall-gap-sec "$STALL_GAP_SEC")
+          [ -n "$ABS_CEILING_SEC" ] && stage_args+=(--abs-ceiling-sec "$ABS_CEILING_SEC")
+          [ -n "$EXTERNAL_CAP_SEC" ] && stage_args+=(--external-cap-sec "$EXTERNAL_CAP_SEC")
           python bench/ale/build_run.py stage "${stage_args[@]}"
           plan_args=(--subset "$SUBSET"
             --ale-root ale --ale-sha "$ALE_SHA" --no-check-pins
-            --shards ${{ inputs.shards }} --max-attempts ${{ inputs.max-attempts }}
+            --shards "$SHARDS" --max-attempts "$MAX_ATTEMPTS"
             --confirm-full "$CONFIRM_FULL"
-            --fa-commit '${{ github.sha }}'
-            --provider '${{ inputs.provider }}' --model "$BENCH_MODEL"
+            --fa-commit "$FA_COMMIT"
+            --provider "$PROVIDER" --model "$BENCH_MODEL"
             --bundle-url "$BUNDLE_URL" --bundle-sha256 "$BUNDLE_SHA256"
             --out /tmp/plan-shard-output.txt --run-config-out /tmp/shard-run-config.json)
           if [ "$SUBSET" = "tasks" ]; then
             plan_args+=(--tasks "$TASKS")
           fi
           python bench/ale/build_run.py plan "${plan_args[@]}"
-          test -f "ale/exp-fa-shard-${{ matrix.i }}.yaml"
-          test -f "ale/selected_tasks/fa-shard-${{ matrix.i }}.txt"
+          test -f "ale/exp-fa-shard-$JOB_INDEX.yaml"
+          test -f "ale/selected_tasks/fa-shard-$JOB_INDEX.txt"
 
-      # Gated task-data archive (44 GiB). Cached on the runner keyed by
-      # the immutable revision; the upstream script verifies revision +
-      # sha256 on every real fetch.
+      # Gated task-data archive (44 GiB). Cached in a persistent HOME
+      # dir OUTSIDE the checkout: actions/checkout (clean: true) wipes
+      # everything untracked inside ale/ at the start of every job, so
+      # a checkout-internal marker can never hit — the archive would
+      # re-download on every shard (review gh-2081). The immutable
+      # revision is the cache key; the upstream script verifies
+      # revision + sha256 on every real fetch. The checkout only sees
+      # a symlink into the persistent dir.
       - name: Fetch task data (pinned revision)
         working-directory: ale
         env:
@@ -596,13 +610,16 @@ jobs:
           set -euo pipefail
           rev="46225f1caa4f43c275cc06a5da47d886f64feb6c"
           sha="a7fd6eafbffcebf393580c45ce7afa4908dcd1e2ceaabcebbc867e28c7cea0a2"
-          if [ -f task-data-v1.1/.fetched-revision ] && [ "$(cat task-data-v1.1/.fetched-revision)" = "$rev" ]; then
-            echo "task data already at pinned revision $rev — skipping fetch"
+          cache="$HOME/.cache/fa-ale-task-data"
+          mkdir -p "$cache"
+          if [ -f "$cache/task-data-v1.1/.fetched-revision" ] && [ "$(cat "$cache/task-data-v1.1/.fetched-revision")" = "$rev" ]; then
+            echo "task data already at pinned revision $rev — reusing persistent cache"
           else
-            rm -rf task-data-v1.1
-            bash scripts/fetch_task_data.sh --revision "$rev" --sha256 "$sha"
-            echo "$rev" > task-data-v1.1/.fetched-revision
+            rm -rf "$cache/task-data-v1.1"
+            (cd "$cache" && bash "$GITHUB_WORKSPACE/ale/scripts/fetch_task_data.sh" --revision "$rev" --sha256 "$sha")
+            echo "$rev" > "$cache/task-data-v1.1/.fetched-revision"
           fi
+          ln -sfn "$cache/task-data-v1.1" task-data-v1.1
 
       # The experiment's secret_file (secret/.env) + the preset's
       # ${env:FA_BENCH_*} resolve from this step's env — GitHub masks
@@ -624,8 +641,8 @@ jobs:
             FA_KEY_BENCH_CUSTOM) key_value="$FA_BENCH_CUSTOM_KEY" ;;
           esac
           [ -n "$key_value" ] || { echo "::error::provider key env $API_KEY_ENV resolved empty"; exit 1; }
-          mkdir -p secret
           umask 077
+          mkdir -p secret
           # The preset references the CANONICAL secret env (config.py
           # constant FA_BENCH_ZAI_KEY) — guarantee the selected
           # provider's key always sits under that one name; the
@@ -649,8 +666,18 @@ jobs:
   summary:
     name: Aggregate & submission bundle
     needs: [plan, agent]
+    # A 5h-class run losing one shard is the EXPECTED failure mode —
+    # the verdict/bundle/diagnostics are needed exactly then, so this
+    # job must run even when a shard failed (gh-1658 C3 parity;
+    # bench-harbor.yml summary shape).
+    if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # gh-1682: the ledger step commits the updated fa-results ledger +
+    # regenerated README table back to the repo. Job-level least
+    # privilege — the workflow default stays contents: read.
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
