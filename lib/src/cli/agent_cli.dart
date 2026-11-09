@@ -416,6 +416,15 @@ class AgentCli {
          runProcess: config.herdrSpawn,
          clock: waitingClock,
        ) {
+    // Mid-run session-rotation warnings join the CLI's notice channel
+    // (issue #2069): a rotation fires DURING a run (appendEntry), and the
+    // stderr default prints over the TUI's live region — the frame
+    // renderer never sees those bytes. `writeln` keeps headless on stderr
+    // (byte-identical pipes) and routes TUI/line surfaces through the one
+    // output arbiter; the bin boot default still covers the
+    // pre-construction window. `this.io` — the param still shadows here,
+    // and the field may be the _TuiCliIO wrapper.
+    JsonlSessionStorage.onRotationWarning = this.io.writeln;
     // Sleep prevention (issue #325): null runner (tests, web) → none.
     _powerAssertions = sessionPowerAssertions(config, this.io.writeln);
     _env = CwdOverrideEnv(config.env);
