@@ -707,16 +707,18 @@ jobs:
           # build (run 42566734746: the hosted CLI leg got a 504, BOTH
           # self-hosted legs got a proxy error page with HTTP 200 — the
           # hook's sha256 pin caught the wrong bytes ~20 min into each
-          # build). Seed the hook's own digest-checked cache now —
+          # build). Pre-warm the hook's own digest-checked cache now —
           # post-clean, post-config-only (this step's flutter clean wipes
-          # .dart_tool; the config pass just recreated it) — with the
-          # gh-1759 WasmRun download recipe: bounded retries, sha256 pin,
-          # purge on mismatch. A wrong file fails HERE in seconds, never
+          # .dart_tool; the config pass just recreated it) — via the ONE
+          # prewarm tool (gh-2074's scripts/sqlite3_hook_prewarm.dart,
+          # shared with build-mobile.yml + ci.yml): HTTP-status-gated
+          # fetch, bounded retries, sha256 pin from the resolved package,
+          # tmp+rename writes. A wrong file fails HERE in seconds, never
           # mid-build; a warm cache skips the network entirely. The hook
           # re-validates any cached file against the same pinned digest,
-          # so seeding is integrity-neutral.
+          # so pre-warming is integrity-neutral.
           if [ "$ARCH" = "x86_64" ]; then SQLITE_SEED_ARCH="x64"; else SQLITE_SEED_ARCH="$ARCH"; fi
-          bash ../scripts/seed_sqlite3_native_assets.sh . macos "$SQLITE_SEED_ARCH"
+          dart --disable-dart-dev ../scripts/sqlite3_hook_prewarm.dart --package . --targets macos-"$SQLITE_SEED_ARCH"
           FLUTTER_XCODE_ARCHS="$ARCH" flutter build macos --release \
             --build-name=$BUILD_VERSION \
             --build-number=$BUILD_NUMBER
@@ -1213,14 +1215,17 @@ jobs:
       # gh-2075 (run 42566734746): `dart build cli` triggers the
       # package:sqlite3 native-assets hook, which downloads its prebuilt
       # dylib with ONE un-retried GET — this leg died on a 504 Gateway
-      # Time-out. Seed the hook's digest-checked cache with the
-      # gh-1759 WasmRun recipe (bounded retries + sha256 pin + purge on
-      # mismatch) BEFORE the build: a flaky egress window fails here in
-      # seconds, retried, instead of killing the bundle leg; the hook
-      # re-validates any cached file against the same pinned digest, so
-      # the seed is integrity-neutral.
-      - name: Seed sqlite3 native-asset cache (gh-2075)
-        run: bash scripts/seed_sqlite3_native_assets.sh . macos ${{ matrix.arch }}
+      # Time-out. Pre-warm the hook's digest-checked cache with the ONE
+      # shared tool (gh-2074's scripts/sqlite3_hook_prewarm.dart — the
+      # same contract build-mobile.yml + ci.yml already ride) BEFORE the
+      # build: a flaky egress window fails here in seconds, retried,
+      # instead of killing the bundle leg; the hook re-validates any
+      # cached file against the same pinned digest, so pre-warming is
+      # integrity-neutral.
+      - name: Pre-warm sqlite3 hook assets (gh-2075)
+        run: |
+          set -euo pipefail
+          dart --disable-dart-dev scripts/sqlite3_hook_prewarm.dart --package . --targets macos-${{ matrix.arch }}
 
       - name: Build CLI bundle
         run: |
