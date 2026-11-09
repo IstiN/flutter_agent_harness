@@ -14,12 +14,20 @@ void main() {
   late MemoryExecutionEnv env;
   late FakeCliIO io;
 
+  // The process-wide catalog singleton some media-flow tests reseed —
+  // restored after every test so the suite stays order-independent.
+  late RemoteCatalogEnrichment originalEnrichment;
+
   setUp(() {
     env = MemoryExecutionEnv(cwd: '/work');
     io = FakeCliIO();
+    originalEnrichment = remoteCatalogEnrichment;
   });
 
-  tearDown(() => io.close());
+  tearDown(() {
+    io.close();
+    setRemoteCatalogEnrichmentForTesting(originalEnrichment);
+  });
 
   AgentCli cliFor(
     StreamFunction streamFunction, {
@@ -318,10 +326,11 @@ void main() {
       () => io.out.toString().contains('media imageGeneration — provider'),
     );
     await waitForIt(() => io.out.toString().contains('1) my-ollama'));
-    // Catalog order is openrouter, kimi, openai, ... — openai is #4 after
-    // the saved entry.
-    await waitForIt(() => io.out.toString().contains('4) openai'));
-    io.sendLine('4'); // openai
+    // Catalog order is aiin, openrouter, kimi, openai, ... — openai is #5
+    // after the saved entry and aiin (issue #2068 added aiin to the media
+    // list; it now precedes the shared-kind entries in catalog order).
+    await waitForIt(() => io.out.toString().contains('5) openai'));
+    io.sendLine('5'); // openai
     await waitForIt(
       () => io.out.toString().contains("model id (empty keeps 'test-model')"),
     );
@@ -392,6 +401,270 @@ void main() {
     expect(override?.modelId, 'MiniMax-H3');
     expect(override?.baseUrl, 'https://api.minimax.io/v1');
     expect(override?.apiKeyName, 'FA_KEY_API_MINIMAX_IO_MINIMAX');
+    expect(fake.calls, 0);
+  });
+
+  /// Drives ONE media-slot flow to the provider pick (a fresh REPL —
+  /// [FakeCliIO.lines] is single-subscription, one run per test) and
+  /// asserts the openai-wire own-kind rows (aiin, zai) render.
+  Future<void> expectMediaSlotListsOpenAiWireKinds(
+    String slotKey,
+    String title,
+  ) async {
+    final fake = FakeStreamFunction([textTurn('ok')]);
+    final models = ModelsConfig();
+    final cli = cliFor(
+      fake.call,
+      modelsConfig: models,
+      envVarValue: (_) => null,
+      modelsFetcher: (baseUrl, {required apiKey}) async => const [],
+    );
+    final run = cli.run();
+    final flow = cli.startMediaSlotFlow();
+    await waitForIt(() => io.out.toString().contains('media slot'));
+    io.sendLine(slotKey);
+    // The prompt and its option list render in one write burst — assert
+    // both off the whole (fresh-io) buffer.
+    await waitForIt(
+      () => io.out.toString().contains(title),
+      reason: '$title provider prompt',
+    );
+    await waitForIt(
+      () => RegExp(r'\d\) aiin').hasMatch(io.out.toString()),
+      reason: 'aiin row in the $title list',
+    );
+    await waitForIt(
+      () => RegExp(r'\d\) zai').hasMatch(io.out.toString()),
+      reason: 'zai row in the $title list',
+    );
+    io.interrupt(); // cancel the provider pick
+    await flow;
+    io.sendLine('/exit');
+    await run;
+    expect(models.slots, isEmpty);
+    expect(fake.calls, 0);
+  }
+
+  // Slot pick numbers: 1 imageGeneration, 2 audioTts, 3 musicGeneration,
+  // 4 videoGeneration, 5 vision, 6 transcription. The incident slot is
+  // imageGeneration; the AC covers the image/video/tts/asr pickers alike.
+  test(
+    'aiin is selectable in the imageGeneration media pick (#2068)',
+    () async {
+      await expectMediaSlotListsOpenAiWireKinds(
+        '1',
+        'media imageGeneration — provider',
+      );
+    },
+  );
+
+  test('aiin is selectable in the audioTts media pick (#2068)', () async {
+    await expectMediaSlotListsOpenAiWireKinds('2', 'media audioTts — provider');
+  });
+
+  test(
+    'aiin is selectable in the videoGeneration media pick (#2068)',
+    () async {
+      await expectMediaSlotListsOpenAiWireKinds(
+        '4',
+        'media videoGeneration — provider',
+      );
+    },
+  );
+
+  test('aiin is selectable in the transcription media pick (#2068)', () async {
+    await expectMediaSlotListsOpenAiWireKinds(
+      '6',
+      'media transcription — provider',
+    );
+  });
+
+  test(
+    'media flow: openai-wire saved entry listed, anthropic entry not',
+    () async {
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final models = ModelsConfig();
+      final registry = CustomProviderRegistry([
+        CustomProviderEntry(
+          name: 'my-relay',
+          apiType: 'openai',
+          baseUrl: 'https://relay.example/v1',
+          modelId: 'm1',
+          keyName: 'MY_RELAY_KEY',
+        ),
+        CustomProviderEntry(
+          name: 'my-claude',
+          apiType: 'anthropic',
+          baseUrl: 'https://api.anthropic.com',
+          modelId: 'claude-sonnet-4-6',
+          keyName: 'MY_CLAUDE_KEY',
+        ),
+      ]);
+      final cli = cliFor(
+        fake.call,
+        modelsConfig: models,
+        customProviders: registry,
+        envVarValue: (_) => null,
+        modelsFetcher: (baseUrl, {required apiKey}) async => const [],
+      );
+      final run = cli.run();
+
+      final flow = cli.startMediaSlotFlow();
+      await waitForIt(() => io.out.toString().contains('media slot'));
+      io.sendLine('1'); // imageGeneration
+      await waitForIt(
+        () => io.out.toString().contains('media imageGeneration — provider'),
+      );
+      // The saved entry's spec api (openai-completions) keeps it eligible;
+      // the anthropic-wire entry stays hidden.
+      await waitForIt(() => io.out.toString().contains('my-relay'));
+      io.interrupt();
+      await flow;
+      io.sendLine('/exit');
+      await run;
+
+      expect(io.out.toString(), isNot(contains('my-claude')));
+      expect(fake.calls, 0);
+    },
+  );
+
+  test(
+    'aiin media pick fetches /models and lists the seeded image ids',
+    () async {
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final models = ModelsConfig();
+      final fetchedBaseUrls = <String>[];
+      // Seed the process catalog with the bundled fallback (the fetch 404s —
+      // the bundled aiin entry is what the picker must show).
+      final enrichment = RemoteCatalogEnrichment();
+      await enrichment.preload(
+        client: http_testing.MockClient(
+          (_) async => http.Response('nope', 404),
+        ),
+      );
+      setRemoteCatalogEnrichmentForTesting(enrichment);
+      final cli = cliFor(
+        fake.call,
+        modelsConfig: models,
+        envVarValue: (_) => null,
+        modelsFetcher: (baseUrl, {required apiKey}) async {
+          fetchedBaseUrls.add(baseUrl);
+          // The endpoint's real answer is a CHAT id list — the media pick
+          // must replace it with the catalog's per-slot seeding (AC5).
+          return const ['aiin/aiin_free', 'aiin/aiin_flash'];
+        },
+      );
+      final run = cli.run();
+
+      final flow = cli.startMediaSlotFlow();
+      await waitForIt(() => io.out.toString().contains('media slot'));
+      io.sendLine('1'); // imageGeneration
+      await waitForIt(
+        () => io.out.toString().contains('media imageGeneration — provider'),
+      );
+      await waitForIt(() => RegExp(r'\d\) aiin').hasMatch(io.out.toString()));
+      io.sendLine('1'); // aiin (first catalog row, no saved entries)
+      await waitForIt(
+        () => io.out.toString().contains(
+          'fetching models from https://api.aiin.by/v1 ...',
+        ),
+      );
+      // The seeded image ids are offered; the chat answer is not.
+      await waitForIt(
+        () => io.out.toString().contains('google/gemini-3.1-flash-image'),
+      );
+      expect(io.out.toString(), isNot(contains('aiin/aiin_free')));
+      await waitForIt(() => io.out.toString().contains('+ enter manually'));
+      io.sendLine('1'); // the first seeded image id
+      await waitForIt(
+        () => io.out.toString().contains(
+          'slot imageGeneration → google/gemini-3.1-flash-image '
+          '@ https://api.aiin.by/v1',
+        ),
+      );
+      await flow;
+      io.sendLine('/exit');
+      await run;
+
+      expect(fetchedBaseUrls, ['https://api.aiin.by/v1']);
+      final override = models.slots['imageGeneration'];
+      expect(override?.modelId, 'google/gemini-3.1-flash-image');
+      expect(override?.baseUrl, 'https://api.aiin.by/v1');
+      expect(override?.providerKind, 'openai-completions');
+      expect(fake.calls, 0);
+    },
+  );
+
+  test(
+    'aiin media pick falls back to manual entry when the fetch fails',
+    () async {
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final models = ModelsConfig();
+      final cli = cliFor(
+        fake.call,
+        modelsConfig: models,
+        envVarValue: (_) => null,
+        modelsFetcher: (baseUrl, {required apiKey}) async =>
+            throw StateError('endpoint down'),
+      );
+      final run = cli.run();
+
+      final flow = cli.startMediaSlotFlow();
+      await waitForIt(() => io.out.toString().contains('media slot'));
+      io.sendLine('1'); // imageGeneration
+      await waitForIt(
+        () => io.out.toString().contains('media imageGeneration — provider'),
+      );
+      await waitForIt(() => RegExp(r'\d\) aiin').hasMatch(io.out.toString()));
+      io.sendLine('1'); // aiin
+      // The fetch failure answers an empty list — no crash, manual entry.
+      await waitForIt(
+        () => io.out.toString().contains("model id (empty keeps 'test-model')"),
+      );
+      io.sendLine('my-image-model');
+      await waitForIt(
+        () => io.out.toString().contains(
+          'slot imageGeneration → my-image-model @ https://api.aiin.by/v1',
+        ),
+      );
+      await flow;
+      io.sendLine('/exit');
+      await run;
+
+      expect(models.slots['imageGeneration']?.modelId, 'my-image-model');
+      expect(fake.calls, 0);
+    },
+  );
+
+  test('aiin chat pick offers the fetched /models ids (#2068)', () async {
+    final fake = FakeStreamFunction([textTurn('ok')]);
+    final cli = cliFor(
+      fake.call,
+      envVarValue: (_) => null,
+      modelsFetcher: (baseUrl, {required apiKey}) async => const [
+        'aiin/aiin_free',
+        'aiin/aiin_flash',
+      ],
+    );
+    final run = cli.run();
+
+    final flow = cli.startChatModelFlow();
+    await waitForIt(() => io.out.toString().contains('chat model — provider'));
+    await waitForIt(() => RegExp(r'\d\) aiin').hasMatch(io.out.toString()));
+    io.sendLine('1'); // aiin (first catalog row)
+    await waitForIt(
+      () => io.out.toString().contains(
+        'fetching models from https://api.aiin.by/v1 ...',
+      ),
+    );
+    // The fetched chat ids are offered with the manual-entry escape.
+    await waitForIt(() => io.out.toString().contains('aiin/aiin_flash'));
+    await waitForIt(() => io.out.toString().contains('+ enter manually'));
+    io.interrupt();
+    await flow;
+    io.sendLine('/exit');
+    await run;
+
     expect(fake.calls, 0);
   });
 
