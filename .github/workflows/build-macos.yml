@@ -702,6 +702,21 @@ jobs:
           rm -rf macos/Flutter/ephemeral macos/Pods macos/.symlinks
           FLUTTER_XCODE_ARCHS="$ARCH" flutter build macos --config-only
           bash ../scripts/assert_macos_min_platform.sh 14.0
+          # gh-2075: the package:sqlite3 native-assets hook downloads its
+          # prebuilt dylib with ONE un-retried GET during the release
+          # build (run 42566734746: the hosted CLI leg got a 504, BOTH
+          # self-hosted legs got a proxy error page with HTTP 200 — the
+          # hook's sha256 pin caught the wrong bytes ~20 min into each
+          # build). Seed the hook's own digest-checked cache now —
+          # post-clean, post-config-only (this step's flutter clean wipes
+          # .dart_tool; the config pass just recreated it) — with the
+          # gh-1759 WasmRun download recipe: bounded retries, sha256 pin,
+          # purge on mismatch. A wrong file fails HERE in seconds, never
+          # mid-build; a warm cache skips the network entirely. The hook
+          # re-validates any cached file against the same pinned digest,
+          # so seeding is integrity-neutral.
+          if [ "$ARCH" = "x86_64" ]; then SQLITE_SEED_ARCH="x64"; else SQLITE_SEED_ARCH="$ARCH"; fi
+          bash ../scripts/seed_sqlite3_native_assets.sh . macos "$SQLITE_SEED_ARCH"
           FLUTTER_XCODE_ARCHS="$ARCH" flutter build macos --release \
             --build-name=$BUILD_VERSION \
             --build-number=$BUILD_NUMBER
@@ -1194,6 +1209,18 @@ jobs:
           sdk: stable
 
       - run: dart pub get
+
+      # gh-2075 (run 42566734746): `dart build cli` triggers the
+      # package:sqlite3 native-assets hook, which downloads its prebuilt
+      # dylib with ONE un-retried GET — this leg died on a 504 Gateway
+      # Time-out. Seed the hook's digest-checked cache with the
+      # gh-1759 WasmRun recipe (bounded retries + sha256 pin + purge on
+      # mismatch) BEFORE the build: a flaky egress window fails here in
+      # seconds, retried, instead of killing the bundle leg; the hook
+      # re-validates any cached file against the same pinned digest, so
+      # the seed is integrity-neutral.
+      - name: Seed sqlite3 native-asset cache (gh-2075)
+        run: bash scripts/seed_sqlite3_native_assets.sh . macos ${{ matrix.arch }}
 
       - name: Build CLI bundle
         run: |
