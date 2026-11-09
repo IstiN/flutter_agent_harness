@@ -1531,8 +1531,8 @@ Future<void> _runApp(List<String> args) async {
   // provider's "no key set" banner noise. Headless (-p / prompt args)
   // never gets the flag; its hard key gate stays byte-identical. Two
   // explicit boot modes are also excluded: a named `--session` resume is
-  // never a fresh install, a `--resume` boot re-enters an existing folder
-  // the same way, and the pi benchmark profile (`--pi` /
+  // never a fresh install, a `--resume` boot re-enters an existing
+  // session the same way, and the pi benchmark profile (`--pi` /
   // FA_PI_MODE / `agent.mode: pi`) must stay deterministic.
   final freshInstallProviderFlow =
       headlessPrompt == null &&

@@ -85,4 +85,42 @@ void main() {
     io.sendLine('/exit');
     await run;
   });
+
+  test('a stale header-only resume target survives the boot sweep', () async {
+    // The flag's core scenario: the last run crashed before any content,
+    // so the newest folder session is a 1-line file past the sweep grace.
+    // The boot sweep must exempt the resolved target (it has no presence
+    // row yet) and still sweep OTHER stale header-only files.
+    final target = await repo.create(JsonlSessionCreateOptions(cwd: '/work'));
+    final targetId = (await target.getMetadata()).id;
+    final targetPath = (await target.getMetadata()).path;
+    final other = await repo.create(JsonlSessionCreateOptions(cwd: '/other'));
+    final otherPath = (await other.getMetadata()).path;
+    final past = DateTime.now().subtract(const Duration(minutes: 30));
+    env.setMtime(targetPath, past.millisecondsSinceEpoch);
+    env.setMtime(otherPath, past.millisecondsSinceEpoch);
+
+    final fake = FakeStreamFunction([textTurn('ok')]);
+    final cli = cliFor(fake.call);
+    final run = cli.run();
+    await waitForIt(
+      () => io.out.toString().contains(targetId),
+      reason: 'the stale header-only target still opens',
+    );
+    // While the session is open the file must still be on disk: the boot
+    // sweep exempted the resolved target. (After /exit the clean-exit
+    // deleteSessionIfEmpty may legitimately trash the empty file — that
+    // is gh-1660's other mechanism, not the race under test here.)
+    expect(
+      (await env.exists(targetPath)).valueOrNull,
+      isTrue,
+      reason: 'the resume target is exempt from the boot header-only sweep',
+    );
+    io.sendLine('/exit');
+    await run;
+    await waitForIt(
+      () async => (await env.exists(otherPath)).valueOrNull == false,
+      reason: 'a stale header-only file outside the target still gets swept',
+    );
+  });
 }

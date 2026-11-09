@@ -463,7 +463,10 @@ extension on AgentCli {
     // gh-1660 boot hygiene: crashed/killed runs leave header-only session
     // files behind (the clean-exit `deleteSessionIfEmpty` never ran for
     // them). Fire-and-forget, best-effort — never delays the first turn.
-    unawaited(_sweepHeaderOnlySessions());
+    // The resolved target is exempt: `fa --resume` often targets a
+    // header-only file (the last run crashed) that the sweep could
+    // otherwise soft-delete mid-load (issue #2083).
+    unawaited(_sweepHeaderOnlySessions(exemptSessionId: metadata?.id));
     if (name != null && name.isNotEmpty) {
       if (metadata != null) {
         if (matches.length > 1) {
@@ -489,14 +492,11 @@ extension on AgentCli {
   }
 
   /// The newest session of the launch folder (`fa --resume`, issue #2083):
-  /// `_repo.list()` is already newest-activity first, so the first entry
-  /// whose cwd matches the launch folder IS the last folder session.
+  /// `list(cwd:)` filters to one directory and stays newest-activity
+  /// first, so the first row is the last folder session.
   Future<SessionMetadata?> _latestFolderSession() async {
-    final cwd = _env.cwd;
-    for (final metadata in await _repo.list()) {
-      if (metadata.cwd == cwd) return metadata;
-    }
-    return null;
+    final sessions = await _repo.list(cwd: _env.cwd);
+    return sessions.isEmpty ? null : sessions.first;
   }
 
   /// The boot-time header-only sweep (gh-1660): trashes one-line session
@@ -507,11 +507,14 @@ extension on AgentCli {
   /// keeps concurrently booting processes' brand-new files safe.
   static const _headerOnlySweepGrace = Duration(minutes: 10);
 
-  Future<void> _sweepHeaderOnlySessions() async {
+  Future<void> _sweepHeaderOnlySessions({String? exemptSessionId}) async {
     final repo = _repo;
     if (repo is! JsonlSessionRepo) return;
     try {
-      await repo.cleanupEmptySessions(olderThan: _headerOnlySweepGrace);
+      await repo.cleanupEmptySessions(
+        olderThan: _headerOnlySweepGrace,
+        exemptSessionId: exemptSessionId,
+      );
     } on Object {
       // Best-effort: never let hygiene delay or fail the boot.
     }

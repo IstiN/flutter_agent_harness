@@ -909,5 +909,11 @@ void main() {
         ),
       );
     });
+
+    test('--resume composes with a headless prompt', () {
+      final args = parseCliArgs(const ['--resume', '-p', 'hi']) as CliArgs;
+      expect(args.resume, isTrue);
+      expect(args.isHeadless, isTrue);
+    });
   });
 }
