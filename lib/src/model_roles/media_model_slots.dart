@@ -41,7 +41,10 @@ const mediaModelSlotIds = [
 /// key, never the key itself — key values are never written to config.
 /// `useMainConnection` is the explicit per-slot opt-in to serve the slot
 /// from the main connection (default false — without an override the slot
-/// is UNCONFIGURED, never silently inherited). `input`/`output` declare
+/// is UNCONFIGURED, never silently inherited). `unsupported` is the
+/// explicit per-slot opt-OUT (issue #2085): the media capability is
+/// removed — UIs drop it from capability lists, media calls refuse the
+/// slot with an actionable error. `input`/`output` declare
 /// the endpoint's modalities for capability checks (e.g. reference images
 /// need `input: [text, image]`).
 const mediaSlotOverrideFields = [
@@ -50,6 +53,7 @@ const mediaSlotOverrideFields = [
   'modelId',
   'apiKeyName',
   'useMainConnection',
+  'unsupported',
   'input',
   'output',
 ];
@@ -67,14 +71,16 @@ const mediaSlotOverrideFields = [
 final class MediaSlotModelConfig {
   /// Creates a slot override. [providerKind]/[baseUrl]/[modelId] should be
   /// non-empty for a normal override (enforced by [fromYaml] unless
-  /// `useMainConnection` is set); all default to empty for the
-  /// main-connection opt-in form.
+  /// `useMainConnection` or `unsupported` is set — and rejected outright
+  /// alongside `unsupported`); all default to empty for the
+  /// main-connection opt-in and unsupported forms.
   const MediaSlotModelConfig({
     this.providerKind = '',
     this.baseUrl = '',
     this.modelId = '',
     this.apiKeyName,
     this.useMainConnection = false,
+    this.unsupported = false,
     this.inputModalities = const [],
     this.outputModalities = const [],
   });
@@ -82,9 +88,12 @@ final class MediaSlotModelConfig {
   /// Parses one slot entry from yaml, strictly: unknown fields, missing
   /// required strings, and empty values throw [ConfigException] (a bad
   /// `models:` section must surface, never silently vanish). With
-  /// `useMainConnection: true` the endpoint fields are not required (the
-  /// main connection supplies them); without it they are, exactly as
-  /// before gh-1844.
+  /// `useMainConnection: true` or `unsupported: true` the endpoint fields
+  /// are not required (the main connection supplies them / the slot serves
+  /// nothing); `useMainConnection` and `unsupported` are mutually
+  /// exclusive — a slot cannot simultaneously ride the main connection and
+  /// be marked unsupported. Without either flag the endpoint fields are
+  /// required, exactly as before gh-1844.
   factory MediaSlotModelConfig.fromYaml(Object? node, {required String slot}) {
     if (node is! YamlMap) {
       throw ConfigException(
@@ -100,7 +109,43 @@ final class MediaSlotModelConfig {
         );
       }
     }
-    final useMain = _parseUseMainConnection(node['useMainConnection'], slot);
+    final useMain = _parseBoolField(
+      node['useMainConnection'],
+      slot,
+      'useMainConnection',
+    );
+    final unsupported = _parseBoolField(
+      node['unsupported'],
+      slot,
+      'unsupported',
+    );
+    if (useMain && unsupported) {
+      throw ConfigException(
+        'models.slots.$slot cannot set both useMainConnection and '
+        'unsupported — a slot either rides the main connection or is '
+        'marked unsupported',
+      );
+    }
+    if (unsupported) {
+      // An unsupported slot carries no endpoint — keeping the fields would
+      // round-trip half a configuration (writeYaml drops them), so the
+      // strict parser rejects the mix (issue #2085 review).
+      for (final field in [
+        'providerKind',
+        'baseUrl',
+        'modelId',
+        'apiKeyName',
+      ]) {
+        if (node[field] != null) {
+          throw ConfigException(
+            'models.slots.$slot.$field is meaningless with unsupported: '
+            'true — an unsupported slot carries no endpoint; remove '
+            '$field',
+          );
+        }
+      }
+    }
+    final relaxed = useMain || unsupported;
     String required(String field) {
       final value = node[field];
       if (value is! String || value.trim().isEmpty) {
@@ -119,13 +164,14 @@ final class MediaSlotModelConfig {
       );
     }
     return MediaSlotModelConfig(
-      providerKind: useMain
+      providerKind: relaxed
           ? _optString(node['providerKind'])
           : required('providerKind'),
-      baseUrl: useMain ? _optString(node['baseUrl']) : required('baseUrl'),
-      modelId: useMain ? _optString(node['modelId']) : required('modelId'),
+      baseUrl: relaxed ? _optString(node['baseUrl']) : required('baseUrl'),
+      modelId: relaxed ? _optString(node['modelId']) : required('modelId'),
       apiKeyName: (apiKeyName as String?)?.trim(),
       useMainConnection: useMain,
+      unsupported: unsupported,
       inputModalities: _parseModalities(node['input'], slot, 'input'),
       outputModalities: _parseModalities(node['output'], slot, 'output'),
     );
@@ -134,12 +180,10 @@ final class MediaSlotModelConfig {
   static String _optString(Object? value) =>
       value is String ? value.trim() : '';
 
-  static bool _parseUseMainConnection(Object? value, String slot) {
+  static bool _parseBoolField(Object? value, String slot, String field) {
     if (value == null) return false;
     if (value is! bool) {
-      throw ConfigException(
-        'models.slots.$slot.useMainConnection must be a boolean',
-      );
+      throw ConfigException('models.slots.$slot.$field must be a boolean');
     }
     return value;
   }
@@ -188,6 +232,12 @@ final class MediaSlotModelConfig {
   /// UNCONFIGURED, never silently inherited from the main connection.
   final bool useMainConnection;
 
+  /// Explicit per-slot opt-OUT (issue #2085): the media capability is
+  /// marked unsupported — the media tools refuse the slot with an
+  /// actionable error and the UIs drop it from capability lists. Mutually
+  /// exclusive with [useMainConnection] (enforced at parse).
+  final bool unsupported;
+
   /// Declared input modalities of the endpoint (e.g. `[text, image]`) —
   /// drives capability checks (reference images require `image`). Empty =
   /// undeclared (OpenRouter endpoints may be discovered at call time).
@@ -205,6 +255,10 @@ final class MediaSlotModelConfig {
   void writeYaml(StringBuffer buffer, String indent) {
     if (useMainConnection) {
       buffer.write('${indent}useMainConnection: true\n');
+      return;
+    }
+    if (unsupported) {
+      buffer.write('${indent}unsupported: true\n');
       return;
     }
     buffer

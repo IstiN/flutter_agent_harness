@@ -205,6 +205,14 @@ abstract class FaUiStrings {
   /// The "Same as main connection" media slot row.
   String get mediaModelsMainConnection;
 
+  /// The "Unsupported" media slot row (issue #2085) and the slot-row
+  /// summary of a slot marked unsupported.
+  String get mediaModelsUnsupported;
+
+  /// Hint under the "Unsupported" row (what marking a slot unsupported
+  /// does).
+  String get mediaModelsUnsupportedHint;
+
   /// Note above the capability hint chips.
   String get mediaModelsCapabilitiesNote;
 
@@ -476,6 +484,11 @@ class FaUiStringsEn extends FaUiStrings {
   @override
   String get mediaModelsMainConnection => 'Main connection';
   @override
+  String get mediaModelsUnsupported => 'Unsupported';
+  @override
+  String get mediaModelsUnsupportedHint =>
+      'Remove the capability — media tools refuse this slot';
+  @override
   String get mediaModelsCapabilitiesNote =>
       "This endpoint's models suggest support for:";
   @override
@@ -703,8 +716,7 @@ class FaUiStringsRu extends FaUiStrings {
   @override
   String get settingsPresetWebllm => 'На устройстве (WebLLM)';
   @override
-  String get settingsPresetTransformersJs =>
-      'На устройстве (transformers.js)';
+  String get settingsPresetTransformersJs => 'На устройстве (transformers.js)';
   @override
   String get settingsModelsFetching => 'Загрузка списка моделей с эндпоинта…';
   @override
@@ -720,6 +732,11 @@ class FaUiStringsRu extends FaUiStrings {
       'Живой список недоступен — показан встроенный каталог';
   @override
   String get mediaModelsMainConnection => 'Основное подключение';
+  @override
+  String get mediaModelsUnsupported => 'Не поддерживается';
+  @override
+  String get mediaModelsUnsupportedHint =>
+      'Убрать возможность — медиа-инструменты отклоняют этот слот';
   @override
   String get mediaModelsCapabilitiesNote =>
       'Модели этого эндпоинта поддерживают:';

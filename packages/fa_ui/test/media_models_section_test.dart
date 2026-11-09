@@ -157,5 +157,52 @@ void main() {
       expect(find.text('Not configured'), findsNWidgets(5));
       expect(find.text('Same as main connection'), findsOneWidget);
     });
+
+    testWidgets('the unsupported row marks the slot (#2085)', (tester) async {
+      final store = MediaModelsStore.inMemory();
+      await _pump(
+        tester,
+        MediaModelsSection(
+          store: store,
+          mainBaseUrl: 'https://api.test/v1',
+          modelsFetcher: _noModels,
+        ),
+      );
+
+      await tester.tap(find.text('Music generation'));
+      await tester.pumpAndSettle();
+      expect(find.byType(MediaSlotProviderPickerPage), findsOneWidget);
+      await tester.tap(find.text('Unsupported'));
+      await tester.pumpAndSettle();
+
+      final saved = store.overrideFor(MediaSlot.musicGeneration);
+      expect(saved, isNotNull);
+      expect(saved!.unsupported, isTrue);
+      // The row summary shows the opt-out state; the picker is gone.
+      expect(find.text('Unsupported'), findsOneWidget);
+      expect(find.byType(MediaSlotProviderPickerPage), findsNothing);
+    });
+
+    testWidgets('a pre-seeded unsupported slot shows the summary (#2085)', (
+      tester,
+    ) async {
+      final store = MediaModelsStore.inMemory();
+      await store.setOverride(
+        MediaSlot.vision,
+        const MediaSlotOverride(
+          providerKind: '',
+          baseUrl: '',
+          modelId: '',
+          unsupported: true,
+        ),
+      );
+      await _pump(
+        tester,
+        MediaModelsSection(store: store, modelsFetcher: _noModels),
+      );
+
+      expect(find.text('Unsupported'), findsOneWidget);
+      expect(find.text('Not configured'), findsNWidgets(5));
+    });
   });
 }
