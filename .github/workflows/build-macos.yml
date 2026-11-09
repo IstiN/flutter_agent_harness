@@ -1212,6 +1212,22 @@ jobs:
 
       - run: dart pub get
 
+      # gh-2075 (round-3 review): the hosted CLI lane runs on fresh GitHub
+      # workspaces — pair the pre-warm with the hooks-shared restore (the
+      # pinned ci.yml/build-mobile.yml hosted-lane pattern): a warm cache
+      # reports "0 fetched, N already verified" with zero egress, so a
+      # brownout window cannot touch the leg at all. Hardened like ci.yml
+      # (timeout + continue-on-error): a cache-service hiccup degrades to
+      # the pre-warm download path, never a red leg from the restore.
+      - name: Native-assets hook cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .dart_tool/hooks_runner/shared
+          key: hooks-shared-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pubspec.lock') }}
+          restore-keys: hooks-shared-${{ runner.os }}-${{ runner.arch }}-
+        timeout-minutes: 2
+        continue-on-error: true
+
       # gh-2075 (run 42566734746): `dart build cli` triggers the
       # package:sqlite3 native-assets hook, which downloads its prebuilt
       # dylib with ONE un-retried GET — this leg died on a 504 Gateway

@@ -257,6 +257,82 @@ void main() {
             'mid-build',
       );
     });
+
+    test('the pre-warm is paired with the hooks-shared cache restore', () {
+      // The hosted CLI lane runs on fresh GitHub workspaces — without
+      // the restore every release train re-downloads both dylibs live.
+      // The pinned hosted-lane pattern (ci.yml AC6, build-mobile.yml
+      // AC2) is cache restore + pre-warm: a warm cache makes the leg
+      // network-independent, and the restore is hardened so a cache
+      // service hiccup can never red the leg.
+      final texts = steps.map(stepText).toList();
+      final pubGet = texts.indexWhere((t) => t.contains('dart pub get'));
+      final cache = texts.indexWhere((t) => t.contains('hooks-shared-'));
+      final prewarm = texts.indexWhere(
+        (t) => t.contains('sqlite3_hook_prewarm.dart'),
+      );
+      expect(
+        cache,
+        greaterThanOrEqualTo(0),
+        reason:
+            'the hosted lane must restore .dart_tool/hooks_runner/shared '
+            'before the pre-warm (gh-2075 round-3 review, the ci.yml '
+            'hosted-lane pattern)',
+      );
+      expect(
+        cache,
+        greaterThan(pubGet),
+        reason:
+            'the restore lands after pub get — the ci.yml idiom '
+            '(the cache path exists to receive the restore)',
+      );
+      expect(
+        prewarm,
+        greaterThan(cache),
+        reason:
+            'pre-warm runs AFTER the restore: a warm cache reports '
+            '"0 fetched, N already verified" with zero egress and a '
+            'brownout window cannot touch the leg at all',
+      );
+      final cacheStep = steps[cache];
+      expect(
+        cacheStep['uses'].toString(),
+        contains('55cc8345863c7cc4c66a329aec7e433d2d1c52a9'),
+        reason: 'the repo-pinned actions/cache v6.1.0 SHA',
+      );
+      final with_ = cacheStep['with'] as YamlMap;
+      expect(
+        with_['path'].toString(),
+        '.dart_tool/hooks_runner/shared',
+        reason: 'exactly the hook cache the pre-warm fills',
+      );
+      expect(
+        with_['key'].toString(),
+        contains(
+          r'hooks-shared-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles(',
+        ),
+        reason:
+            'per-OS/arch key hashed on the lockfile — a sqlite3 bump '
+            're-keys the cache instead of serving stale dylibs',
+      );
+      expect(
+        with_['restore-keys'].toString(),
+        contains(r'hooks-shared-${{ runner.os }}-${{ runner.arch }}-'),
+        reason: 'prefix restore — a lockfile bump still restores the old cache',
+      );
+      expect(
+        cacheStep['timeout-minutes'],
+        2,
+        reason: 'a hung cache service cannot stall the leg (ci.yml hardening)',
+      );
+      expect(
+        cacheStep['continue-on-error'],
+        true,
+        reason:
+            'a cache-service hiccup degrades to the pre-warm download '
+            'path — never a red leg from the restore itself',
+      );
+    });
   });
 
   group('gh-2075 AC3 — ONE prewarm mechanism (the bash duplicate is gone)', () {
