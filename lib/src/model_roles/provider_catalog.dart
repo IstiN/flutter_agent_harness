@@ -28,6 +28,15 @@ import '../providers/google.dart';
 import '../providers/openai_completions.dart';
 import 'capability_resolver.dart';
 
+/// The kinds whose chat wire IS the completions api but whose media calls
+/// authenticate with a transport the media tools do not speak: `copilot`
+/// exchanges the GitHub token for an OAuth credential (a plain Bearer key
+/// 401s) and `dial` signs media requests with its Api-Key header. A future
+/// own-kind provider that authenticates media calls with the plain Bearer
+/// key needs NO entry here — [ProviderSpec.mediaSlotEligible]'s api check
+/// already admits it; one that needs an OAuth/header dialect DOES.
+const _mediaNonBearerTransports = {'copilot', 'dial'};
+
 /// Static description of a supported provider.
 final class ProviderSpec {
   /// Creates a provider spec.
@@ -87,6 +96,23 @@ final class ProviderSpec {
   /// degrades the pair (loud warning + fallback) instead of refusing to
   /// boot or mis-resolving keys (gh-760 review).
   final bool endpointLocked;
+
+  /// Whether the media tools (image/video/tts/asr) can serve this provider
+  /// on its declared wire: [api] is the OpenAI completions wire AND media
+  /// requests authenticate with the plain Bearer key from [apiKeyEnvNames].
+  ///
+  /// Keyed on [api] — the wire the provider DECLARES — never on [kind]:
+  /// own-kind providers (minimax, zai, aiin) declare
+  /// `api: 'openai-completions'` and are exactly as media-eligible as the
+  /// shared kind (issue #2068 — the settings-hub media pickers used to
+  /// filter on kind, which hid aiin/zai behind their own kinds and needed
+  /// a per-provider carve-out for minimax). The exceptions are transports,
+  /// not wires — the kinds in [_mediaNonBearerTransports] authenticate
+  /// media calls with something other than the Bearer key the media tools
+  /// attach. This getter is the ONE media-pickers eligibility rule; the
+  /// settings flow reads it for catalog entries and saved customs alike.
+  bool get mediaSlotEligible =>
+      api == 'openai-completions' && !_mediaNonBearerTransports.contains(kind);
 }
 
 /// The built-in provider table.

@@ -260,6 +260,14 @@ models:                        # media slots + named custom models
       baseUrl: https://api.openai.com/v1
       modelId: gpt-4o
       apiKeyName: OPENAI_API_KEY
+    imageGeneration:           # aiin media example (any OpenAI-wire
+      providerKind: openai-completions   # provider works the same way:
+      baseUrl: https://api.aiin.by/v1    # minimax, zai, a saved custom…)
+      modelId: google/gemini-3.1-flash-image
+      apiKeyName: AIIN_API_KEY   # sk-aiin-… key name (/key set AIIN_API_KEY)
+    audioTts:
+      useMainConnection: true    # explicit per-slot opt-in: this slot is
+                                 # served by the main connection itself
   custom:
     fast:
       provider: openai
