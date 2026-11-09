@@ -50,7 +50,6 @@ SMOKE_TASKS = ["computing_math/cost_optimization_1"]
 
 # Quota discipline (issue #1686 design sketch): ≤3 parallel shards.
 MAX_PARALLEL_SHARDS = 3
-FULL_RUN_TASK_COUNT = 78
 
 PKG_FILES = ("__init__.py", "config.py", "deployer.py")
 STAGED_PKG_DIR = "ale_run/agents/fa_code"
@@ -104,10 +103,17 @@ def _field_is_keylike(name: str) -> bool:
     return any(_KEY_WORD_RE.fullmatch(w) for w in words)
 
 
-def _validated_key_env_name(raw: str, flag: str) -> str:
+def _validated_key_env_name(raw: str) -> str:
     if _ENV_NAME_RE.fullmatch(raw):
         return raw
-    _die(f"{flag} must be an UPPER_SNAKE env var name (e.g. FA_BENCH_ZAI_KEY) — a value of any other shape cannot name an environment variable, so it is refused before it can reach a log line or the preset file")
+    # Static message only: the refused VALUE is never echoed (CodeQL
+    # gh-1686 round 2 — args-derived strings never reach _die).
+    _die(
+        "--api-key-env / provider-config apiKeyEnvVar must be an UPPER_SNAKE "
+        "env var name (e.g. FA_BENCH_ZAI_KEY) — a value of any other shape "
+        "cannot name an environment variable, so it is refused before it can "
+        "reach a log line or the preset file"
+    )
     raise AssertionError  # unreachable; keeps type checkers honest
 
 
@@ -121,21 +127,22 @@ def _validated_provider_config(raw: str) -> str:
         _die("--provider-config must be a JSON object")
     unsupported = sorted(k for k in obj if k not in _PROVIDER_CONFIG_KEYS)
     if unsupported:
+        # Static message: the offending names are not echoed (round-2
+        # invariant — zero dispatch-derived strings in _die).
         _die(
-            "--provider-config has unsupported key(s): "
-            + ", ".join(unsupported)
-            + " — supported: " + ", ".join(_PROVIDER_CONFIG_KEYS)
+            "--provider-config has unsupported key(s) — supported keys: "
+            + ", ".join(_PROVIDER_CONFIG_KEYS)
         )
     keylike = sorted(k for k in obj if k != "apiKeyEnvVar" and _field_is_keylike(k))
     if keylike:
         # Field NAMES matching key/token/secret/password are refused
         # outright (e.g. a pasted "apiKey"/"token" field) — the sole
         # key-worded field allowed is apiKeyEnvVar, and it must hold a
-        # NAME, not a value.
+        # NAME, not a value. Static message; offending names unechoed.
         _die(
-            "--provider-config must not carry key material — offending "
-            "field name(s): " + ", ".join(keylike)
-            + "; the key comes only from the secret env the preset references"
+            "--provider-config must not carry key material — a key-like "
+            "field was found; the key comes only from the secret env the "
+            "preset references"
         )
     rebuilt: dict = {}
     for key in _PROVIDER_CONFIG_KEYS:
@@ -147,12 +154,12 @@ def _validated_provider_config(raw: str) -> str:
         if key in ("contextWindow", "maxTokens") and (
             not isinstance(value, int) or isinstance(value, bool)
         ):
-            _die(f"--provider-config {key} must be an integer capability cap")
+            _die("--provider-config contextWindow/maxTokens must be integer capability caps")
         if key == "baseUrl":
             if not isinstance(value, str) or not value.startswith("https://"):
                 _die("--provider-config baseUrl must start with https:// (a plaintext endpoint would expose the bench key)")
         if key == "apiKeyEnvVar":
-            value = _validated_key_env_name(value, "--provider-config apiKeyEnvVar")
+            value = _validated_key_env_name(value)
         rebuilt[key] = value
     return json.dumps(rebuilt, separators=(",", ":"), sort_keys=True)
 
@@ -160,7 +167,7 @@ def _validated_provider_config(raw: str) -> str:
 def _validated_stage_args(args: argparse.Namespace) -> argparse.Namespace:
     """Validate every dispatch-supplied string that a sink consumes
     (single funnel — cmd_stage runs this FIRST)."""
-    args.api_key_env = _validated_key_env_name(args.api_key_env, "--api-key-env")
+    args.api_key_env = _validated_key_env_name(args.api_key_env)
     args.provider_config = _validated_provider_config(args.provider_config)
     if not _PROVIDER_TYPE_RE.fullmatch(args.provider_type):
         _die("--provider-type must be a short lowercase provider id (e.g. zai, openai)")
@@ -173,7 +180,7 @@ def _validated_stage_args(args: argparse.Namespace) -> argparse.Namespace:
     for knob in ("stall_gap_sec", "abs_ceiling_sec", "external_cap_sec"):
         value = getattr(args, knob)
         if value is not None and (value <= 0 or value > 1e9):
-            _die(f"--{knob.replace('_', '-')} must be a positive second count")
+            _die("--stall-gap-sec / --abs-ceiling-sec / --external-cap-sec must be positive second counts")
     return args
 
 
@@ -187,11 +194,11 @@ def cmd_stage(args: argparse.Namespace) -> int:
     args = _validated_stage_args(args)
     ale = Path(args.ale_root)
     if not (ale / "ale_run" / "orchestration" / "factory.py").is_file():
-        _die(f"not an agents-last-exam checkout: {ale} — pass --ale-root")
+        _die("not an agents-last-exam checkout — pass --ale-root pointing at one (expected ale_run/orchestration/factory.py inside it)")
     src = Path(__file__).resolve().parent
     timeout_src = src.parent / "fa_agent_timeout.py"
     if not timeout_src.is_file():
-        _die(f"missing shared knobs module: {timeout_src}")
+        _die("missing shared knobs module bench/fa_agent_timeout.py next to bench/ale/")
 
     pkg_dir = ale / STAGED_PKG_DIR
     pkg_dir.mkdir(parents=True, exist_ok=True)
@@ -255,16 +262,15 @@ def cmd_plan(args: argparse.Namespace) -> int:
     ale = Path(args.ale_root)
     allowlist = ale / "selected_tasks" / "docker_support.txt"
     if not allowlist.is_file():
-        _die(f"missing docker allowlist: {allowlist}")
+        _die("missing docker allowlist selected_tasks/docker_support.txt under the --ale-root checkout")
 
     raw = allowlist.read_bytes()
     digest = hashlib.sha256(raw).hexdigest()
     if args.check_pins and digest != DOCKER_SUPPORT_SHA256:
         _die(
-            "docker_support.txt sha256 drifted: expected "
-            f"{DOCKER_SUPPORT_SHA256}, got {digest} — the ale-sha pin no "
-            "longer matches the v1.1 assets; re-pin deliberately or pick "
-            "the matching --ale-sha"
+            "docker_support.txt sha256 drifted from the pinned v1.1 value — "
+            "the --ale-sha no longer matches the v1.1 assets; re-pin "
+            "deliberately or pass the matching --ale-sha"
         )
     tasks_all = [
         line.strip()
@@ -327,9 +333,9 @@ def _resolve_tasks(args: argparse.Namespace, tasks_all: list[str]) -> list[str]:
     elif args.subset == "docker":
         if args.confirm_full != "yes":
             _die(
-                f"subset=docker runs the full {FULL_RUN_TASK_COUNT}-task "
-                "allowlist (multi-hour, token-burning) — dispatch with "
-                "confirm-full=yes. Smoke first: subset=smoke."
+                "subset=docker runs the full 78-task allowlist (multi-hour, "
+                "token-burning) — dispatch with confirm-full=yes. Smoke "
+                "first: subset=smoke."
             )
         requested = tasks_all
     else:
@@ -338,12 +344,12 @@ def _resolve_tasks(args: argparse.Namespace, tasks_all: list[str]) -> list[str]:
             _die("subset=tasks requires a non-empty --tasks csv")
     unknown = [t for t in requested if t not in known]
     if unknown:
+        # Static message: requested task ids are not echoed (round-2
+        # invariant). Compare against selected_tasks/docker_support.txt.
         _die(
             "task(s) not in the docker allowlist (the docker profile runs "
-            "the 78-task Linux subset only): "
-            + ", ".join(unknown)
-            + " — Windows/GPU/nested-docker tasks need a VM provider, "
-            "not configs/environments/docker.yaml"
+            "the 78-task Linux subset only) — Windows/GPU/nested-docker "
+            "tasks need a VM provider, not configs/environments/docker.yaml"
         )
     return [t for t in tasks_all if t in set(requested)]  # allowlist order
 
@@ -351,12 +357,12 @@ def _resolve_tasks(args: argparse.Namespace, tasks_all: list[str]) -> list[str]:
 def _resolve_shards(args: argparse.Namespace, tasks: list[str]) -> list[tuple[int, int]]:
     count = args.shards
     if count < 1:
-        _die(f"--shards must be >= 1, got {count}")
+        _die("--shards must be >= 1")
     if count > MAX_PARALLEL_SHARDS:
         _die(
-            f"--shards {count} exceeds the quota cap ({MAX_PARALLEL_SHARDS} "
-            "parallel shards — issue #1686: 5h-class trials must never burn "
-            "into dead quota windows)"
+            "--shards exceeds the quota cap of 3 parallel shards "
+            "(issue #1686: 5h-class trials must never burn into dead "
+            "quota windows)"
         )
     if count > len(tasks):
         count = len(tasks)
@@ -398,23 +404,23 @@ def _experiment_yaml(args: argparse.Namespace, index: int) -> str:
 
 
 def cmd_check_env(args: argparse.Namespace) -> int:
-    # Barrier first: the message below names the (validated) env var
-    # NAME only — a non-name value is refused before any log line.
-    args.api_key_env = _validated_key_env_name(args.api_key_env, "--api-key-env")
-    missing = []
-    if not os.environ.get(args.api_key_env):
-        missing.append(args.api_key_env)
-    if args.stage != "plan" and not os.environ.get("HF_TOKEN"):
-        missing.append("HF_TOKEN")
-    if missing:
+    # CodeQL gh-1686 round 2: args.api_key_env is sensitive-by-name —
+    # it is USED (the env lookup below) but must never reach a _die
+    # message or any log line. Both failure messages are static.
+    key_present = bool(os.environ.get(args.api_key_env))
+    hf_present = bool(os.environ.get("HF_TOKEN"))
+    if not key_present:
         _die(
-            "missing required secret(s): "
-            + ", ".join(missing)
-            + " — provision them as repo secrets before dispatching "
-            "(HF_TOKEN needs manual-approval access to "
-            "agents-last-exam/agents-last-exam-data-archive; see issue #1686)"
+            "provider key secret missing — provision the FA_BENCH_* key "
+            "selected by the provider resolve as a repo secret (docs/bench.md)"
         )
-    print(f"check-env: OK ({args.stage})")
+    if args.stage != "plan" and not hf_present:
+        _die(
+            "HF_TOKEN missing — manual-approval access to "
+            "agents-last-exam/agents-last-exam-data-archive is required "
+            "for scoring (issue #1686)"
+        )
+    print("check-env: OK")
     return 0
 
 
