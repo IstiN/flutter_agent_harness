@@ -28,7 +28,7 @@ class LocalSessionsPanel extends StatefulWidget {
     required this.onSelectFolder,
     required this.selectedSessionId,
     required this.onOpenSession,
-    required this.onNew,
+    this.onNew,
     this.onCollapse,
     this.onSettings,
     this.compact = false,
@@ -61,7 +61,7 @@ class LocalSessionsPanel extends StatefulWidget {
   /// manager slot) — the same value the sidebar rows highlight with.
   final String? selectedSessionId;
   final ValueChanged<ChatListEntry> onOpenSession;
-  final VoidCallback onNew;
+  final VoidCallback? onNew;
   final VoidCallback? onCollapse;
   final VoidCallback? onSettings;
   final FolderIconResolver? iconResolver;

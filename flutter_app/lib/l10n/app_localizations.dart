@@ -164,6 +164,42 @@ abstract class AppLocalizations {
   /// **'New session — folder'**
   String get newSessionFolderTitle;
 
+  /// No description provided for @newSessionChooseFolder.
+  ///
+  /// In en, this message translates to:
+  /// **'Choose folder from Files…'**
+  String get newSessionChooseFolder;
+
+  /// No description provided for @newSessionSandboxFolder.
+  ///
+  /// In en, this message translates to:
+  /// **'New folder in Personal sandbox…'**
+  String get newSessionSandboxFolder;
+
+  /// No description provided for @newSessionSandboxNameTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'New sandbox folder'**
+  String get newSessionSandboxNameTitle;
+
+  /// No description provided for @newSessionSandboxNameLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Folder name'**
+  String get newSessionSandboxNameLabel;
+
+  /// No description provided for @newSessionSandboxNameError.
+  ///
+  /// In en, this message translates to:
+  /// **'Enter a name without / or \\\\.'**
+  String get newSessionSandboxNameError;
+
+  /// No description provided for @newSessionCreate.
+  ///
+  /// In en, this message translates to:
+  /// **'Create chat'**
+  String get newSessionCreate;
+
   /// No description provided for @newSessionCurrentFolder.
   ///
   /// In en, this message translates to:

@@ -758,16 +758,31 @@ Future<bool> _reauthenticateAiin({
   required String apiKey,
   required CustomProvider existing,
 }) async {
-  registry.rememberKey(existing.id, apiKey);
+  final baseUrl = normalizeAiinBaseUrl(existing.baseUrl);
+  var provider = existing;
+  if (baseUrl != existing.baseUrl &&
+      registry.providers.any((entry) => entry.id == existing.id)) {
+    provider = CustomProvider(
+      id: existing.id,
+      name: existing.name,
+      baseUrl: baseUrl,
+      modelId: existing.modelId,
+      requiresKey: existing.requiresKey,
+      provenance: existing.provenance,
+      kind: existing.kind,
+    );
+    await registry.update(provider);
+  }
+  registry.rememberKey(provider.id, apiKey);
   final keyName = CustomProviderRegistry.keyNameFor(
-    existing.baseUrl,
-    providerName: existing.name,
+    baseUrl,
+    providerName: provider.name,
   );
   await _persistAiinKey(keyName, apiKey, sessionKeysStore, keychainStore);
   final config = AgentConfig(
     providerKind: 'aiin',
-    modelId: existing.modelId,
-    baseUrl: existing.baseUrl,
+    modelId: provider.modelId,
+    baseUrl: baseUrl,
     apiKey: apiKey,
   );
   if (service != null) {

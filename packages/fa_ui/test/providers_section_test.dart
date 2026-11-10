@@ -274,6 +274,75 @@ void main() {
       expect(find.text('Google Gemini'), findsNothing);
     });
 
+    testWidgets('a connected AIIN catalog row does not show the empty state', (
+      tester,
+    ) async {
+      FaUiHost.keyResolver = (name) =>
+          name == 'AIIN_API_KEY' ? 'connected' : '';
+      addTearDown(() => FaUiHost.keyResolver = null);
+      await _pump(
+        tester,
+        ProvidersSection(registry: ProviderRegistry.inMemory()),
+      );
+
+      expect(find.text('AIIN (aiin.by)'), findsOneWidget);
+      expect(find.textContaining('No providers configured'), findsNothing);
+    });
+
+    testWidgets('a connected AIIN catalog row opens its editor with re-auth', (
+      tester,
+    ) async {
+      FaUiHost.keyResolver = (name) =>
+          name == 'AIIN_API_KEY' ? 'connected' : '';
+      addTearDown(() => FaUiHost.keyResolver = null);
+      CustomProvider? reauthed;
+      await _pump(
+        tester,
+        ProvidersSection(
+          registry: ProviderRegistry.inMemory(),
+          onProviderReauthenticate: (context, provider) async {
+            reauthed = provider;
+            return true;
+          },
+        ),
+      );
+
+      await tester.tap(find.text('AIIN (aiin.by)'));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(ProviderEditorPage), findsOneWidget);
+      expect(
+        tester.widget<TextField>(_editorField('Base URL')).controller!.text,
+        ProviderPreset.aiin.baseUrl,
+      );
+      await tester.tap(find.text('Re-authenticate'));
+      await tester.pumpAndSettle();
+
+      expect(reauthed?.id, ProviderPreset.aiin.name);
+      expect(reauthed?.baseUrl, ProviderPreset.aiin.baseUrl);
+      expect(find.byType(ProviderEditorPage), findsNothing);
+    });
+
+    testWidgets('saving an AIIN editor normalizes a scheme-less endpoint', (
+      tester,
+    ) async {
+      final registry = ProviderRegistry.inMemory();
+      await registry.add(
+        name: 'AIIN',
+        baseUrl: ProviderPreset.aiin.baseUrl!,
+        modelId: 'openai/gpt-4o-mini',
+      );
+      await _pump(tester, ProvidersSection(registry: registry));
+
+      await tester.tap(find.text('AIIN'));
+      await tester.pumpAndSettle();
+      await tester.enterText(_editorField('Base URL'), 'api.aiin.by/v1');
+      await tester.tap(find.widgetWithText(FilledButton, 'Save'));
+      await tester.pumpAndSettle();
+
+      expect(registry.providers.single.baseUrl, ProviderPreset.aiin.baseUrl);
+    });
+
     testWidgets('a custom provider on the preset endpoint covers the preset '
         '(never both in the list)', (tester) async {
       FaUiHost.keyResolver = (name) =>

@@ -25,6 +25,7 @@
 		FA51AC0300000000000000B4 /* FaLiveActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA51AC0300000000000000E3 /* FaLiveActivityAttributes.swift */; };
 		FA51AC0300000000000000B5 /* FaLiveActivity.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = FA51AC0300000000000000E5 /* FaLiveActivity.appex */; };
 		FA5A00010000000000000001 /* ProjectFolderChannel.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA5A00010000000000000002 /* ProjectFolderChannel.swift */; };
+		FA5A00010000000000000003 /* DuoLayoutChannel.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA5A00010000000000000004 /* DuoLayoutChannel.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -101,6 +102,7 @@
 		FA51AC0300000000000000E4 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		FA51AC0300000000000000E5 /* FaLiveActivity.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = FaLiveActivity.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		FA5A00010000000000000002 /* ProjectFolderChannel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectFolderChannel.swift; sourceTree = "<group>"; };
+		FA5A00010000000000000004 /* DuoLayoutChannel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DuoLayoutChannel.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -184,6 +186,7 @@
 				1498D2331E8E89220040F4C2 /* GeneratedPluginRegistrant.m */,
 				74858FAE1ED2DC5600515810 /* AppDelegate.swift */,
 				FA5A00010000000000000002 /* ProjectFolderChannel.swift */,
+				FA5A00010000000000000004 /* DuoLayoutChannel.swift */,
 				7884E8672EC3CC0400C636F2 /* SceneDelegate.swift */,
 				74858FAD1ED2DC5600515810 /* Runner-Bridging-Header.h */,
 				1BF290752CC42685CC316A4B /* GoogleService-Info.plist */,
@@ -494,6 +497,7 @@
 			files = (
 				74858FAF1ED2DC5600515810 /* AppDelegate.swift in Sources */,
 				FA5A00010000000000000001 /* ProjectFolderChannel.swift in Sources */,
+				FA5A00010000000000000003 /* DuoLayoutChannel.swift in Sources */,
 				1498D2341E8E89220040F4C2 /* GeneratedPluginRegistrant.m in Sources */,
 				7884E8682EC3CC0700C636F2 /* SceneDelegate.swift in Sources */,
 				FA51AC0300000000000000B4 /* FaLiveActivityAttributes.swift in Sources */,

@@ -39,10 +39,28 @@ const aiinApiBaseUrl = 'https://api.aiin.by';
 /// be fetched (offline, standalone mode).
 const aiinDefaultOAuthProvider = 'google';
 
+/// Adds the HTTPS scheme to a scheme-less AIIN endpoint. Other endpoints
+/// pass through unchanged, so callers can normalize at shared UI/transport
+/// boundaries without rewriting custom providers.
+String normalizeAiinBaseUrl(String baseUrl) {
+  final trimmed = baseUrl.trim();
+  final parsed = Uri.tryParse(trimmed);
+  if (trimmed.isEmpty ||
+      (parsed?.hasScheme == true && parsed?.host.isNotEmpty == true)) {
+    return trimmed;
+  }
+  final candidate = trimmed.startsWith('//')
+      ? 'https:$trimmed'
+      : 'https://$trimmed';
+  final host = Uri.tryParse(candidate)?.host.toLowerCase();
+  return host == 'api.aiin.by' || host == 'auth.aiin.by' ? candidate : trimmed;
+}
+
 /// True when [baseUrl] points at an AIIN endpoint (`api.aiin.by` or
-/// `auth.aiin.by`, host-exact — path/query text does not count).
+/// `auth.aiin.by`, host-exact — path/query text does not count). A missing
+/// scheme does not hide an otherwise valid AIIN entry from re-auth UI.
 bool isAiinBaseUrl(String baseUrl) {
-  final host = Uri.tryParse(baseUrl)?.host.toLowerCase();
+  final host = Uri.tryParse(normalizeAiinBaseUrl(baseUrl))?.host.toLowerCase();
   return host == 'api.aiin.by' || host == 'auth.aiin.by';
 }
 

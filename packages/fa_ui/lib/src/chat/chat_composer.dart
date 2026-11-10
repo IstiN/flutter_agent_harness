@@ -18,6 +18,8 @@ import 'chat_strings.dart';
 import 'fa_chat_features.dart';
 import 'fa_chat_host.dart';
 import 'fa_chat_service.dart';
+import 'fa_duo_control_rail.dart';
+import 'fa_duo_layout.dart';
 import 'system_notice_tile.dart';
 import 'fa_glyphs.dart';
 import 'upload_utils.dart';
@@ -1174,6 +1176,9 @@ class ChatComposerState extends State<ChatComposer>
     // clipped inside the same floating bounds in every visual direction.
     return SafeArea(
       top: false,
+      // The transcript reserves the vertical rail above; the composer owns
+      // the free bottom lane. Applying right again would shrink it twice.
+      right: !FaDuoControlRail.isActive(context),
       child: Padding(
         padding: const EdgeInsets.fromLTRB(8, 4, 8, 8),
         child: Column(
@@ -1380,6 +1385,13 @@ class ChatComposerState extends State<ChatComposer>
               FaChatStrings.of(context).chatInputHint,
             ).copyWith(
               contentPadding: const EdgeInsets.fromLTRB(4, 8, 10, 8),
+              // A narrow rotated Duo lane ellipsizes the hint instead of
+              // growing the floating composer into a two-line placeholder.
+              hintMaxLines:
+                  (FaDuoLayoutScope.maybeOf(context)?.isDuo ??
+                      FaDuoControlRail.isActive(context))
+                  ? 1
+                  : null,
               isDense: true,
               // The outer FaSurface is the composer's ONLY filled, bordered
               // surface. A nested InputDecorator fill/outline produced doubled

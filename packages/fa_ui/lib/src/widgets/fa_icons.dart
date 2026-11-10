@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 /// Semantic glyphs used by Fa chrome instead of app-side Material/Cupertino
 /// icon constants.
 enum FaSemanticIcon {
+  memory,
   search,
   back,
   close,
@@ -30,6 +31,7 @@ class FaIconThemeData extends ThemeExtension<FaIconThemeData> {
   final Map<FaSemanticIcon, IconData> icons;
 
   static const Map<FaSemanticIcon, IconData> _defaults = {
+    FaSemanticIcon.memory: Icons.memory,
     FaSemanticIcon.search: Icons.search_rounded,
     FaSemanticIcon.back: Icons.chevron_left_rounded,
     FaSemanticIcon.close: Icons.close_rounded,

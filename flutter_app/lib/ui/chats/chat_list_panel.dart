@@ -75,7 +75,7 @@ class ChatListPanel extends StatefulWidget {
     super.key,
     required this.controller,
     required this.onOpen,
-    required this.onNew,
+    this.onNew,
     this.title,
     this.compact = false,
     this.onProfile,
@@ -108,7 +108,7 @@ class ChatListPanel extends StatefulWidget {
 
   final ChatListController controller;
   final Future<void> Function(ChatListEntry entry) onOpen;
-  final VoidCallback onNew;
+  final VoidCallback? onNew;
 
   /// Section-owned label; null keeps the ordinary Chats title.
   final String? title;
@@ -264,7 +264,7 @@ class _ChatListPanelState extends State<ChatListPanel> {
         _isTyping) {
       return false;
     }
-    widget.onNew();
+    widget.onNew?.call();
     return true;
   }
 

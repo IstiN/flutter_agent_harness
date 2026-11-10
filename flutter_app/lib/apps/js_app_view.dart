@@ -19,10 +19,9 @@ import 'package:fa_ui/fa_ui.dart'
         FaChatHost,
         FaChatStrings,
         FaDesignTokens,
+        FaDuoControlRail,
         FaHeaderAction,
-        FaIcon,
         FaIconActionBand,
-        FaSemanticIcon,
         FaVisualDirection,
         FahColors;
 import 'package:flutter_map/flutter_map.dart' show TileProvider;
@@ -97,6 +96,7 @@ final class JsAppPanelChrome {
     required this.onClose,
     this.onMinimize,
     this.onBack,
+    this.onQuickApps,
   });
 
   final bool fullScreen;
@@ -109,6 +109,10 @@ final class JsAppPanelChrome {
   /// Leading minimize action for a shell-presented desktop app; null on the
   /// phone root, where minimize stays in the trailing action capsule.
   final VoidCallback? onBack;
+
+  /// Opens the shell's installed/running app chooser without replacing the
+  /// center destination. Exposed as a Duo rail action only.
+  final VoidCallback? onQuickApps;
 }
 
 /// Full-screen host for one JS app: renders the JS-driven UI via
@@ -683,6 +687,77 @@ class _JsAppViewState extends State<JsAppView> {
     );
   }
 
+  List<FaHeaderAction> _panelChromeActions(
+    JsAppPanelChrome chrome,
+    double duoRailWidth,
+  ) {
+    final onBack = chrome.onBack;
+    final returnAction = onBack ?? chrome.onMinimize;
+    return <FaHeaderAction>[
+      if (duoRailWidth > 0 && returnAction != null)
+        FaHeaderAction(
+          key: const ValueKey('duoAppBack'),
+          icon: Icons.arrow_back_ios_new_rounded,
+          label: MaterialLocalizations.of(context).backButtonTooltip,
+          onPressed: returnAction,
+        ),
+      if (duoRailWidth > 0 && chrome.onQuickApps != null)
+        FaHeaderAction(
+          key: const ValueKey('appQuickApps'),
+          icon: Icons.apps_outlined,
+          label: context.l10n.appsQuickOpen,
+          onPressed: chrome.onQuickApps!,
+        ),
+      FaHeaderAction(
+        key: const ValueKey('appFull'),
+        icon: chrome.fullScreen ? Icons.close_fullscreen : Icons.open_in_full,
+        label: chrome.fullScreen
+            ? context.l10n.appsExitFullTooltip
+            : context.l10n.appsFullTooltip,
+        onPressed: chrome.onFullScreen,
+      ),
+      FaHeaderAction(
+        key: const ValueKey('appPin'),
+        icon: chrome.pinned ? Icons.push_pin : Icons.push_pin_outlined,
+        label: chrome.pinned
+            ? context.l10n.appsUnpinTooltip
+            : context.l10n.appsPinTooltip,
+        onPressed: chrome.onPin,
+      ),
+      if (onBack == null && duoRailWidth == 0)
+        if (chrome.onMinimize case final minimize?)
+          FaHeaderAction(
+            key: const ValueKey('appMinimize'),
+            icon: Icons.remove_rounded,
+            label: context.l10n.chatCollapse,
+            onPressed: minimize,
+          ),
+      if (duoRailWidth > 0) ...[
+        FaHeaderAction(
+          key: const ValueKey('appPermissions'),
+          icon: Icons.shield_outlined,
+          label: context.l10n.appsPermissionsTooltip,
+          onPressed: () => unawaited(_openPermissions()),
+        ),
+        FaHeaderAction(
+          key: const ValueKey('appReload'),
+          icon: Icons.refresh,
+          label: context.l10n.appsReloadTooltip,
+          onPressed: () {
+            AppAnalytics.instance.jsAppReloaded();
+            unawaited(_restart());
+          },
+        ),
+      ],
+      FaHeaderAction(
+        key: const ValueKey('appClose'),
+        icon: Icons.close,
+        label: context.l10n.appsCloseTooltip,
+        onPressed: chrome.onClose,
+      ),
+    ];
+  }
+
   PreferredSizeWidget _panelAppBar(JsAppPanelChrome chrome) {
     // Only compact/full presented chrome owns the window's leading edge.
     final trafficLightLeading =
@@ -700,8 +775,50 @@ class _JsAppViewState extends State<JsAppView> {
     final glass =
         FaDesignTokens.of(context).direction == FaVisualDirection.glass;
     final onBack = chrome.onBack;
+    final duoRailWidth = FaDuoControlRail.widthOf(context);
+    final chromeActions = _panelChromeActions(chrome, duoRailWidth);
+    final chromeMenuEntries = _chromeMenuEntries();
+    final panelWidth = MediaQuery.sizeOf(context).width;
+    final densePanel = duoRailWidth == 0 && panelWidth <= 360;
+    final denseActionsInline = panelWidth >= 280;
+    final denseChromeActions = <FaHeaderAction>[
+      ...chromeActions.take(chromeActions.length - 1),
+      FaHeaderAction(
+        key: const ValueKey('appPermissions'),
+        icon: Icons.shield_outlined,
+        label: context.l10n.appsPermissionsTooltip,
+        onPressed: () => unawaited(_openPermissions()),
+      ),
+      FaHeaderAction(
+        key: const ValueKey('appReload'),
+        icon: Icons.refresh,
+        label: context.l10n.appsReloadTooltip,
+        onPressed: () {
+          AppAnalytics.instance.jsAppReloaded();
+          unawaited(_restart());
+        },
+      ),
+      chromeActions.last,
+    ];
+    final denseChromeMenuEntries = <PopupMenuItem<String>>[
+      for (final action in denseChromeActions)
+        _chromeMenuEntry(
+          value: switch ((action.key as ValueKey<String>).value) {
+            'appFull' => 'full',
+            'appPin' => 'pin',
+            'appMinimize' => 'minimize',
+            'appPermissions' => 'permissions',
+            'appReload' => 'reload',
+            _ => 'close',
+          },
+          icon: action.icon!,
+          label: action.label,
+        ),
+    ];
     return PreferredSize(
-      preferredSize: Size.fromHeight(kToolbarHeight + titlebarTop),
+      // The vertical rail is a body overlay, never an app-bar height input.
+      // Only this ordinary horizontal title band offsets the JS canvas.
+      preferredSize: Size.fromHeight(titlebarTop + kToolbarHeight),
       child: Stack(
         fit: StackFit.expand,
         children: [
@@ -711,19 +828,26 @@ class _JsAppViewState extends State<JsAppView> {
                 underlayKey: ValueKey('appChromeGlassUnderlay'),
               ),
             ),
-          Padding(
-            padding: EdgeInsets.only(top: titlebarTop),
+          Positioned(
+            top: titlebarTop,
+            left: 0,
+            right: 0,
+            height: kToolbarHeight,
             child: AppBar(
+              // This toolbar is manually positioned below the platform inset
+              // by titlebarTop. primary=true would SafeArea its 56pt child
+              // again and clip the whole title to 56 - 59 = 0 on folded Duo.
+              primary: false,
               backgroundColor: glass ? Colors.transparent : null,
               surfaceTintColor: Colors.transparent,
               elevation: 0,
               scrolledUnderElevation: 0,
               centerTitle: false,
               automaticallyImplyLeading: false,
-              leadingWidth: onBack == null
+              leadingWidth: onBack == null || duoRailWidth > 0
                   ? null
                   : kToolbarHeight + trafficLightLeading,
-              leading: onBack == null
+              leading: onBack == null || duoRailWidth > 0
                   ? null
                   : Padding(
                       padding: EdgeInsets.only(left: trafficLightLeading),
@@ -759,54 +883,52 @@ class _JsAppViewState extends State<JsAppView> {
                 ),
               ),
               actions: [
-                FaIconActionBand<String>(
-                  key: const ValueKey('appChromeActions'),
-                  glass: true,
-                  actions: [
-                    FaHeaderAction(
-                      key: const ValueKey('appFull'),
-                      icon: chrome.fullScreen
-                          ? Icons.close_fullscreen
-                          : Icons.open_in_full,
-                      label: chrome.fullScreen
-                          ? context.l10n.appsExitFullTooltip
-                          : context.l10n.appsFullTooltip,
-                      onPressed: chrome.onFullScreen,
-                    ),
-                    FaHeaderAction(
-                      key: const ValueKey('appPin'),
-                      icon: chrome.pinned
-                          ? Icons.push_pin
-                          : Icons.push_pin_outlined,
-                      label: chrome.pinned
-                          ? context.l10n.appsUnpinTooltip
-                          : context.l10n.appsPinTooltip,
-                      onPressed: chrome.onPin,
-                    ),
-                    if (onBack == null)
-                      if (chrome.onMinimize case final minimize?)
-                        FaHeaderAction(
-                          key: const ValueKey('appMinimize'),
-                          icon: Icons.remove_rounded,
-                          label: context.l10n.chatCollapse,
-                          onPressed: minimize,
-                        ),
-                    FaHeaderAction(
-                      key: const ValueKey('appClose'),
-                      icon: Icons.close,
-                      label: context.l10n.appsCloseTooltip,
-                      onPressed: chrome.onClose,
-                    ),
-                  ],
-                  overflowItems: _chromeMenuEntries(),
-                  onOverflowSelected: _onChromeMenuSelection,
-                  overflowMenuKey: const ValueKey('appOverflow'),
-                  overflowTooltip: FaChatStrings.of(context).chatMoreTooltip,
-                ),
+                // The vertical Duo rail overlays the canvas's right edge;
+                // the title band keeps its actions clear of it.
+                if (duoRailWidth > 0)
+                  SizedBox(width: duoRailWidth)
+                else if (densePanel)
+                  FaIconActionBand<String>(
+                    key: const ValueKey('appChromeActions'),
+                    glass: true,
+                    actionSize: 28,
+                    iconSize: 16,
+                    actions: denseActionsInline ? denseChromeActions : const [],
+                    overflowItems: denseActionsInline
+                        ? const []
+                        : denseChromeMenuEntries,
+                    onOverflowSelected: _onChromeMenuSelection,
+                    overflowMenuKey: const ValueKey('appOverflow'),
+                    overflowTooltip: FaChatStrings.of(context).chatMoreTooltip,
+                  )
+                else
+                  FaIconActionBand<String>(
+                    key: const ValueKey('appChromeActions'),
+                    glass: true,
+                    actions: chromeActions,
+                    overflowItems: chromeMenuEntries,
+                    onOverflowSelected: _onChromeMenuSelection,
+                    overflowMenuKey: const ValueKey('appOverflow'),
+                    overflowTooltip: FaChatStrings.of(context).chatMoreTooltip,
+                  ),
               ],
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _duoPanelRail(JsAppPanelChrome chrome, double width) {
+    return Positioned(
+      top: FaDuoControlRail.topOf(context),
+      right: 0,
+      bottom: 0,
+      width: width,
+      child: FaDuoControlRail(
+        key: const ValueKey('appChromeActions'),
+        actions: _panelChromeActions(chrome, width),
+        menuColor: FahColors.of(context).panelAlt,
       ),
     );
   }
@@ -821,16 +943,38 @@ class _JsAppViewState extends State<JsAppView> {
     }
   }
 
+  Widget _appCanvas(ThemeData theme, bool fullChrome, double topInset) {
+    return Padding(
+      key: const ValueKey('appCanvasHeaderInset'),
+      padding: EdgeInsets.only(top: topInset),
+      child: RepaintBoundary(
+        key: _boundaryKey,
+        child: ColoredBox(
+          color: theme.scaffoldBackgroundColor,
+          child: fullChrome && widget.panelChrome == null
+              ? SafeArea(bottom: false, child: _keyboardWrappedBody(theme))
+              : SafeArea(top: false, child: _keyboardWrappedBody(theme)),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final fullChrome = widget.app.isFullChrome;
+    final duoRailWidth = FaDuoControlRail.widthOf(context);
     final titlebarTop = widget.panelChrome == null
         ? 0.0
         : math.max(0.0, MediaQuery.paddingOf(context).top - 8);
     final canvasTopInset = widget.panelChrome == null
         ? 0.0
-        : kToolbarHeight + titlebarTop;
+        : titlebarTop +
+              kToolbarHeight +
+              // Scaffold adds the view's top padding to the appBar slot even
+              // for our custom PreferredSize. Match that REAL horizontal
+              // slot; the independent vertical rail never moves the canvas.
+              MediaQuery.paddingOf(context).top;
     // With a jsr.onBack handler registered the app owns back navigation:
     // the native pop (iOS edge swipe, system back) is vetoed and the
     // attempt forwards to JS instead. Without one the route pops natively.
@@ -847,32 +991,10 @@ class _JsAppViewState extends State<JsAppView> {
             body: Stack(
               children: [
                 Positioned.fill(
-                  child: Padding(
-                    key: const ValueKey('appCanvasHeaderInset'),
-                    padding: EdgeInsets.only(top: canvasTopInset),
-                    child: RepaintBoundary(
-                      key: _boundaryKey,
-                      child: ColoredBox(
-                        color: theme.scaffoldBackgroundColor,
-                        // Chrome apps (with the AppBar) keep their content
-                        // above the home indicator — HUD rows at the very
-                        // bottom must not clip into it. Full-chrome apps (map)
-                        // stay edge-to-edge at the bottom but drop below the
-                        // status bar: they draw their own opaque header, and
-                        // edge-to-edge top slid it under the system tray.
-                        child: fullChrome && widget.panelChrome == null
-                            ? SafeArea(
-                                bottom: false,
-                                child: _keyboardWrappedBody(theme),
-                              )
-                            : SafeArea(
-                                top: false,
-                                child: _keyboardWrappedBody(theme),
-                              ),
-                      ),
-                    ),
-                  ),
+                  child: _appCanvas(theme, fullChrome, canvasTopInset),
                 ),
+                if (widget.panelChrome != null && duoRailWidth > 0)
+                  _duoPanelRail(widget.panelChrome!, duoRailWidth),
                 // Full chrome has no AppBar — permissions/reload live in a small
                 // floating menu so immersive apps (maps) keep the whole canvas.
                 if (fullChrome && widget.panelChrome == null)
@@ -975,38 +1097,40 @@ class _JsAppViewState extends State<JsAppView> {
     );
   }
 
+  PopupMenuItem<String> _chromeMenuEntry({
+    required String value,
+    required IconData icon,
+    required String label,
+  }) => PopupMenuItem(
+    value: value,
+    // Popup menus measure intrinsic rows. Flexible keeps a narrow Duo label
+    // inside its bounds without LayoutBuilder, which intrinsics forbid.
+    child: Row(
+      children: [
+        Icon(icon, size: 20),
+        const SizedBox(width: 12),
+        Flexible(child: Text(label, overflow: TextOverflow.ellipsis)),
+      ],
+    ),
+  );
+
   /// The ⋮ menu rows shared by the app-bar circle and the floating
   /// full-chrome menu.
   List<PopupMenuItem<String>> _chromeMenuEntries() => [
-    PopupMenuItem(
+    _chromeMenuEntry(
       value: 'permissions',
-      child: Row(
-        children: [
-          const Icon(Icons.shield_outlined, size: 20),
-          const SizedBox(width: 12),
-          Text(context.l10n.appsPermissionsTooltip),
-        ],
-      ),
+      icon: Icons.shield_outlined,
+      label: context.l10n.appsPermissionsTooltip,
     ),
-    PopupMenuItem(
+    _chromeMenuEntry(
       value: 'reload',
-      child: Row(
-        children: [
-          const Icon(Icons.refresh, size: 20),
-          const SizedBox(width: 12),
-          Text(context.l10n.appsReloadTooltip),
-        ],
-      ),
+      icon: Icons.refresh,
+      label: context.l10n.appsReloadTooltip,
     ),
-    PopupMenuItem(
+    _chromeMenuEntry(
       value: 'close',
-      child: Row(
-        children: [
-          const Icon(Icons.close, size: 20),
-          const SizedBox(width: 12),
-          Text(context.l10n.appsCloseTooltip),
-        ],
-      ),
+      icon: Icons.close,
+      label: context.l10n.appsCloseTooltip,
     ),
   ];
 
@@ -1014,6 +1138,12 @@ class _JsAppViewState extends State<JsAppView> {
   /// header AppBar offers.
   void _onChromeMenuSelection(String value) {
     switch (value) {
+      case 'full':
+        widget.panelChrome?.onFullScreen();
+      case 'pin':
+        widget.panelChrome?.onPin();
+      case 'minimize':
+        widget.panelChrome?.onMinimize?.call();
       case 'permissions':
         unawaited(_openPermissions());
       case 'reload':

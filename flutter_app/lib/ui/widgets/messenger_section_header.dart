@@ -88,6 +88,7 @@ final class MessengerFloatingPageHeader extends StatelessWidget {
     this.leading,
     this.actions = const <Widget>[],
     this.trafficLightClearance = false,
+    this.duoLeadingToTrailing = false,
   });
 
   final String title;
@@ -101,6 +102,10 @@ final class MessengerFloatingPageHeader extends StatelessWidget {
   /// The title/icon and page body keep their ordinary vertical position.
   final bool trafficLightClearance;
 
+  /// Places [leading] at the usable trailing edge on Duo only. Ordinary
+  /// phone/desktop headers keep their conventional leading navigation.
+  final bool duoLeadingToTrailing;
+
   @override
   Widget build(BuildContext context) {
     final tokens = FaDesignTokens.of(context);
@@ -111,17 +116,35 @@ final class MessengerFloatingPageHeader extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(8, 6, 8, 6),
       child: LayoutBuilder(
         builder: (context, constraints) {
-          final actionWidth = math.min(360.0, constraints.maxWidth * .38);
+          final duoRailWidth = FaDuoControlRail.widthOf(context);
+          final contentWidth = math.max(
+            0.0,
+            constraints.maxWidth - duoRailWidth,
+          );
+          final actionWidth = math.min(360.0, contentWidth * .38);
           final titleWidth = math.min(
             320.0,
-            math.max(200.0, constraints.maxWidth - 2 * (actionWidth + 12)),
+            math.max(200.0, contentWidth - 2 * (actionWidth + 12)),
+          );
+          final duoTop = FaDuoControlRail.topOf(context);
+          final duoHeight = math.min(
+            400.0,
+            duoTop +
+                actions.length *
+                    (FaDuoControlRail.actionDimension +
+                        FaDuoControlRail.spacing) +
+                FaDuoControlRail.spacing,
           );
           return SizedBox(
-            height: 91,
+            height: duoRailWidth > 0 && actions.isNotEmpty
+                ? math.max(91.0, duoHeight)
+                : 91,
             child: Stack(
               children: [
-                Align(
-                  alignment: Alignment.topCenter,
+                Positioned(
+                  top: 0,
+                  left: 0,
+                  right: duoRailWidth,
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
@@ -193,8 +216,16 @@ final class MessengerFloatingPageHeader extends StatelessWidget {
                   ),
                 ),
                 if (leading case final leading?)
-                  Positioned(top: leadingTop, left: 0, child: leading),
-                if (actions.isNotEmpty)
+                  Positioned(
+                    top: leadingTop,
+                    left: duoLeadingToTrailing && duoRailWidth > 0 ? null : 0,
+                    // Settings already owns the Duo/SafeArea lane. Zero is
+                    // its usable trailing edge; subtracting the rail again
+                    // would put Back on top of the centered title.
+                    right: duoLeadingToTrailing && duoRailWidth > 0 ? 0 : null,
+                    child: leading,
+                  ),
+                if (actions.isNotEmpty && duoRailWidth == 0)
                   Positioned(
                     top: 9,
                     right: 0,
@@ -207,6 +238,14 @@ final class MessengerFloatingPageHeader extends StatelessWidget {
                         ],
                       ],
                     ),
+                  ),
+                if (actions.isNotEmpty && duoRailWidth > 0)
+                  Positioned(
+                    top: duoTop,
+                    right: -8,
+                    bottom: 0,
+                    width: duoRailWidth,
+                    child: FaDuoControlRail(leading: actions),
                   ),
               ],
             ),

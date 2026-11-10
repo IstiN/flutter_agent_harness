@@ -1632,6 +1632,24 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final tokens = faui.FaDesignTokens.of(context);
     final category = _effectiveCategory;
     final title = category?.label ?? context.l10n.settingsTitle;
+    final duoRailWidth = faui.FaDuoControlRail.widthOf(context);
+    final backButton = faui.FaIconActionButton(
+      buttonKey: const ValueKey('settingsBackButton'),
+      diameter: 36,
+      glyphSize: 20,
+      glass: true,
+      tooltip: MaterialLocalizations.of(context).backButtonTooltip,
+      onPressed: () {
+        if (widget.category == null && category != null) {
+          setState(() => _selectedCategory = null);
+        } else if (widget.onBack != null) {
+          widget.onBack!();
+        } else {
+          Navigator.of(context).maybePop();
+        }
+      },
+      child: const faui.FaIcon(faui.FaSemanticIcon.back),
+    );
     final body = category == null
         ? SettingsCategoryPanel(
             selected: null,
@@ -1646,27 +1664,24 @@ class _SettingsScreenState extends State<SettingsScreen> {
       icon: Icons.settings_outlined,
       trafficLightClearance:
           !widget.embedded && !faui.FaDialogScope.of(context),
-      leading: !widget.embedded || widget.onBack != null
-          ? faui.FaIconActionButton(
-              buttonKey: const ValueKey('settingsBackButton'),
-              diameter: 36,
-              glyphSize: 20,
-              glass: true,
-              tooltip: MaterialLocalizations.of(context).backButtonTooltip,
-              onPressed: () {
-                if (widget.category == null && category != null) {
-                  setState(() => _selectedCategory = null);
-                } else if (widget.onBack != null) {
-                  widget.onBack!();
-                } else {
-                  Navigator.of(context).maybePop();
-                }
-              },
-              child: const faui.FaIcon(faui.FaSemanticIcon.back),
-            )
+      leading: duoRailWidth == 0 && (!widget.embedded || widget.onBack != null)
+          ? backButton
           : null,
+      actions: [
+        if (duoRailWidth > 0 && (!widget.embedded || widget.onBack != null))
+          backButton,
+      ],
     );
-    final page = MessengerFloatingPageScaffold(header: header, body: body);
+    final page = MessengerFloatingPageScaffold(
+      header: header,
+      body: Padding(
+        padding: EdgeInsets.only(right: duoRailWidth),
+        child: SizedBox.expand(
+          key: const ValueKey('settingsBodyContentLane'),
+          child: body,
+        ),
+      ),
+    );
     if (widget.embedded) {
       return Material(
         type: MaterialType.transparency,
@@ -1691,7 +1706,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
           // Match a standalone Local chat route: the short glass controls
           // sample real wallpaper, not an opaque header slab.
           const Positioned.fill(child: FahWallpaper()),
-          SafeArea(child: page),
+          // The floating header owns the full-width Duo rail and the body
+          // reserves that lane once; a SafeArea here would inset it twice.
+          SafeArea(right: duoRailWidth == 0, child: page),
         ],
       ),
     );
@@ -2029,6 +2046,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     webLlmEngine: widget.webLlmEngine,
                     transformersJsEngine: widget.transformersJsEngine,
                   ),
+                  allowDuoDialog: true,
                 ),
               );
             },

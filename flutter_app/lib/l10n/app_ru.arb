@@ -11,6 +11,12 @@
   "sessionFolderPersonal": "Личное",
   "sessionInfoNameLabel": "Имя сессии",
   "newSessionFolderTitle": "Новая сессия — папка",
+  "newSessionChooseFolder": "Выбрать папку в Файлах…",
+  "newSessionSandboxFolder": "Новая папка в личном sandbox…",
+  "newSessionSandboxNameTitle": "Новая папка в sandbox",
+  "newSessionSandboxNameLabel": "Имя папки",
+  "newSessionSandboxNameError": "Введите имя без / или \\\\.",
+  "newSessionCreate": "Создать чат",
   "newSessionCurrentFolder": "Текущая папка ({folder})",
   "@newSessionCurrentFolder": {
     "placeholders": {

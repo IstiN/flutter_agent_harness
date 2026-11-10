@@ -13,9 +13,13 @@ import 'package:fa_ui/fa_ui.dart'
     show
         FahColors,
         FaChatModelConfig,
+        FaIcon,
+        FaSemanticIcon,
         FaUiHost,
         MediaSlotEditorResult,
         MediaSlotProviderPickerPage,
+        ProviderMark,
+        providerMarkKeyForBaseUrl,
         pushFaPage,
         showFahErrorSnack;
 
@@ -36,6 +40,8 @@ class QuickModelChip extends StatelessWidget {
     this.onLongPress,
     this.tooltip,
     this.maxWidth,
+    this.compact = false,
+    this.providerBaseUrl,
   });
 
   /// The active session's model id (the label).
@@ -54,8 +60,24 @@ class QuickModelChip extends StatelessWidget {
   /// overflowing the header (narrow layouts).
   final double? maxWidth;
 
+  /// A 32pt memory-glyph control for a docked Duo pane. The complete model
+  /// id stays in the tooltip; the tap and long-press routes are unchanged.
+  final bool compact;
+
+  /// Endpoint backing the current model; selects the real provider mark.
+  final String? providerBaseUrl;
+
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, constraints) => _build(
+      context,
+      compact:
+          compact ||
+          (constraints.hasBoundedWidth && constraints.maxWidth <= 36),
+    ),
+  );
+
+  Widget _build(BuildContext context, {required bool compact}) {
     final colors = FahColors.of(context);
     Widget chip = Material(
       color: Colors.transparent,
@@ -65,25 +87,46 @@ class QuickModelChip extends StatelessWidget {
         onLongPress: onLongPress,
         borderRadius: BorderRadius.circular(8),
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(Icons.memory, size: 14, color: colors.indigo),
-              const SizedBox(width: 4),
-              Flexible(
-                child: Text(
-                  modelId,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: colors.dim,
-                    fontSize: 12,
-                  ),
+          padding: compact
+              ? const EdgeInsets.all(4)
+              : const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          child: compact
+              ? SizedBox.square(
+                  dimension: 24,
+                  child: providerBaseUrl == null
+                      ? FaIcon(
+                          FaSemanticIcon.memory,
+                          size: 18,
+                          color: colors.indigo,
+                        )
+                      : ProviderMark(
+                          providerMarkKeyForBaseUrl(providerBaseUrl!),
+                          size: 24,
+                        ),
+                )
+              : Row(
+                  key: const ValueKey('quickModelChipLabel'),
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    FaIcon(
+                      FaSemanticIcon.memory,
+                      size: 14,
+                      color: colors.indigo,
+                    ),
+                    const SizedBox(width: 4),
+                    Flexible(
+                      child: Text(
+                        modelId,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: colors.dim,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
-              ),
-            ],
-          ),
         ),
       ),
     );
@@ -93,8 +136,11 @@ class QuickModelChip extends StatelessWidget {
         child: chip,
       );
     }
-    if (tooltip != null) {
-      chip = Tooltip(message: tooltip!, child: chip);
+    if (tooltip != null || compact) {
+      chip = Tooltip(
+        message: [?tooltip, if (compact) modelId].join('\n'),
+        child: chip,
+      );
     }
     return chip;
   }

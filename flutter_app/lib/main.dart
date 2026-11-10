@@ -50,6 +50,7 @@ import 'package:fa/webllm/webllm_types.dart';
 import 'package:fa_ui/fa_ui.dart'
     show
         buildFaTheme,
+        FaDuoLayoutScope,
         MediaModelsScope,
         SandboxAudioControllerFactory,
         SandboxVideoControllerFactory,
@@ -344,7 +345,9 @@ class MyApp extends StatelessWidget {
   /// The scope wrappers over the optional stores: every present store gets
   /// its InheritedWidget down the tree.
   Widget _wrapScopes(ThemeController theme, Widget child) {
-    child = FahThemeScope(controller: theme, child: child);
+    child = FaDuoLayoutScope(
+      child: FahThemeScope(controller: theme, child: child),
+    );
     return _wrapPreviewScopes(_wrapModelScopes(_wrapCoreScopes(child)));
   }
 

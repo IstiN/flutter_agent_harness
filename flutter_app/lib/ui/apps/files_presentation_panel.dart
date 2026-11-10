@@ -55,6 +55,7 @@ final class FilesAppPanel extends StatelessWidget {
     this.onClose,
     this.inlinePreview = false,
     this.topCenterline = false,
+    this.duoRailInset = false,
   });
 
   final FilesAppPresentation presentation;
@@ -76,13 +77,17 @@ final class FilesAppPanel extends StatelessWidget {
   /// symmetric centering.
   final bool topCenterline;
 
+  /// Reserves the physical Duo system lane for a full-width Files surface.
+  /// Drawer/in-chat hosts already own their safe insets and keep this false.
+  final bool duoRailInset;
+
   @override
   Widget build(BuildContext context) {
     // Explicit onClose wins; otherwise the host's docked-panel scope (the
     // in-chat panel) carries the close, and surfaces without either (the
     // end drawer) keep no circle.
     final close = onClose ?? FaFilesPanelScope.maybeOf(context)?.closePanel;
-    return FaPresentationPanelCard(
+    final panel = FaPresentationPanelCard(
       key: const ValueKey('filesAppPanel'),
       cardKey: const ValueKey('filesAppPanelCard'),
       // The docked header shares y=35 with the sidebar and chat actions.
@@ -104,6 +109,13 @@ final class FilesAppPanel extends StatelessWidget {
         closeKey: const ValueKey('filesAppClose'),
       ),
     );
+    final duoRailWidth = duoRailInset ? FaDuoControlRail.widthOf(context) : 0.0;
+    if (duoRailWidth == 0) return panel;
+    return Padding(
+      key: const ValueKey('duoFilesContentLane'),
+      padding: EdgeInsets.only(right: duoRailWidth),
+      child: panel,
+    );
   }
 }
 
@@ -124,17 +136,19 @@ final class FilesAppPage extends StatelessWidget {
     final isMac = !kIsWeb && defaultTargetPlatform == TargetPlatform.macOS;
     final wideMac = isMac && MediaQuery.sizeOf(context).width >= 700;
     final trafficClearance = isMac && !wideMac ? 32.0 : 0.0;
+    final panel = FilesAppPanel(
+      presentation: presentation,
+      inlinePreview: false,
+      // The wide route sits to the right of the traffic lights, just like
+      // the docked pane: no second-row clearance, one shared y=35 band.
+      // A narrow macOS window still needs the native titlebar inset.
+      topCenterline: wideMac,
+      duoRailInset: true,
+      onClose: () => Navigator.of(context).maybePop(),
+    );
     return Padding(
       padding: EdgeInsets.only(top: trafficClearance),
-      child: FilesAppPanel(
-        presentation: presentation,
-        inlinePreview: false,
-        // The wide route sits to the right of the traffic lights, just like
-        // the docked pane: no second-row clearance, one shared y=35 band.
-        // A narrow macOS window still needs the native titlebar inset.
-        topCenterline: wideMac,
-        onClose: () => Navigator.of(context).maybePop(),
-      ),
+      child: panel,
     );
   }
 }

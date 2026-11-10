@@ -147,24 +147,33 @@ class VisualDirectionSection extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 LayoutBuilder(
-                  builder: (context, constraints) => Wrap(
-                    spacing: 12,
-                    runSpacing: 12,
-                    children: [
-                      for (final direction in faui.FaVisualDirection.values)
-                        SizedBox(
-                          width: (constraints.maxWidth - 12) / 2,
-                          height: 88,
-                          child: _DirectionPreview(
-                            direction: direction,
-                            fontPreset: controller.fontPreset,
-                            selected: controller.visualDirection == direction,
-                            onTap: () =>
-                                controller.setVisualDirection(direction),
+                  builder: (context, constraints) {
+                    // Duo folded leaves a 306pt settings lane. Two preview
+                    // columns there reduce the names to "LIq…"/"Neb…"; one
+                    // readable column is preferable, while the ordinary
+                    // phone and desktop keep the compact two-column grid.
+                    final columns = constraints.maxWidth < 280 ? 1 : 2;
+                    return Wrap(
+                      spacing: 12,
+                      runSpacing: 12,
+                      children: [
+                        for (final direction in faui.FaVisualDirection.values)
+                          SizedBox(
+                            width:
+                                (constraints.maxWidth - (columns - 1) * 12) /
+                                columns,
+                            height: 88,
+                            child: _DirectionPreview(
+                              direction: direction,
+                              fontPreset: controller.fontPreset,
+                              selected: controller.visualDirection == direction,
+                              onTap: () =>
+                                  controller.setVisualDirection(direction),
+                            ),
                           ),
-                        ),
-                    ],
-                  ),
+                      ],
+                    );
+                  },
                 ),
                 const SizedBox(height: 20),
                 _SettingsControlLabel(context.l10n.fontPresetTitle),

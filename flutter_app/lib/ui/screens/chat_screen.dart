@@ -332,9 +332,23 @@ class _ChatScreenState extends State<ChatScreen> {
         ),
       );
     };
-    // Apps is a shell destination, not a phone chat-header action. Keeping
-    // this host slot unset leaves room for Trajectory in the adaptive row.
-    fa_ui.FaChatHost.appsToggleButtonBuilder = null;
+    // The shell opts in only when Duo has running apps. The callback is read
+    // at build time so minimizing/closing the last app updates the rail
+    // without remounting the chat or leaving a stale global host action.
+    fa_ui.FaChatHost.appsToggleButtonBuilder = (context, chatService) {
+      final onPressed = widget.onAppsToggle;
+      if (onPressed == null) return null;
+      return fa_ui.FaChatHeaderAction(
+        widget: IconButton(
+          key: const ValueKey('chatQuickApps'),
+          tooltip: context.l10n.appsQuickOpen,
+          onPressed: onPressed,
+          icon: const Icon(Icons.apps_outlined),
+        ),
+        label: context.l10n.appsQuickOpen,
+        onPressed: onPressed,
+      );
+    };
   }
 
   void _uninstallDynamicHosts() {

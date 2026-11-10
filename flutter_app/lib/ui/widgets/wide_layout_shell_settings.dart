@@ -37,6 +37,8 @@ extension _WideLayoutShellSettings on _WideLayoutShellState {
     if (!mounted) return;
     final service = widget.manager.active?.service;
     if (_isNarrow) {
+      // SettingsScreen owns its SafeArea. Wrapping the route in another
+      // right inset would shrink every category twice on Duo.
       await pushFaPage<void>(
         context,
         SettingsScreen(

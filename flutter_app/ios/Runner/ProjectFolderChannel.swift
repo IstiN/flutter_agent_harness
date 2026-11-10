@@ -20,7 +20,14 @@ private final class FaProjectFolderPicker: NSObject, UIDocumentPickerDelegate {
       completion(nil)
       return
     }
-    controller.present(picker, animated: true)
+    #if DEBUG
+    print("[fah] project folder picker: presenting from \(type(of: controller))")
+    #endif
+    controller.present(picker, animated: true) {
+      #if DEBUG
+      print("[fah] project folder picker: presented")
+      #endif
+    }
   }
 
   func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
@@ -45,6 +52,34 @@ private final class FaProjectFolderPicker: NSObject, UIDocumentPickerDelegate {
 private let faProjectFolderPicker = FaProjectFolderPicker()
 private var faProjectFolderBookmarks: [String: URL] = [:]
 
+/// The visible controller in the foreground scene. Presenting on the root
+/// controller is unreliable with scene-based Flutter and native presented
+/// flows: UIKit can reject the picker without invoking any Dart callback.
+private func faVisibleViewController() -> UIViewController? {
+  let scenes = UIApplication.shared.connectedScenes
+    .compactMap { $0 as? UIWindowScene }
+  let foreground = scenes.filter { $0.activationState == .foregroundActive }
+  let candidates = foreground.isEmpty ? scenes : foreground
+  let windows = candidates.flatMap { $0.windows }
+  let window = windows.first { $0.isKeyWindow } ?? windows.first {
+    !$0.isHidden && $0.alpha > 0
+  }
+  func top(_ base: UIViewController?) -> UIViewController? {
+    guard let base else { return nil }
+    if let presented = base.presentedViewController {
+      return top(presented)
+    }
+    if let navigation = base as? UINavigationController {
+      return top(navigation.visibleViewController)
+    }
+    if let tabs = base as? UITabBarController {
+      return top(tabs.selectedViewController)
+    }
+    return base
+  }
+  return top(window?.rootViewController)
+}
+
 /// The iOS implementation of the shared `fah/project_folder` channel used by
 /// the existing macOS mount flow. Bookmarks never contain file contents.
 func registerProjectFolderChannel(messenger: FlutterBinaryMessenger) {
@@ -52,11 +87,7 @@ func registerProjectFolderChannel(messenger: FlutterBinaryMessenger) {
   channel.setMethodCallHandler { call, result in
     switch call.method {
     case "pickDirectory":
-      let controller = UIApplication.shared.connectedScenes
-        .compactMap { $0 as? UIWindowScene }
-        .flatMap { $0.windows }
-        .first { $0.isKeyWindow }?.rootViewController
-      faProjectFolderPicker.pick(from: controller) { url in
+      faProjectFolderPicker.pick(from: faVisibleViewController()) { url in
         guard let url else {
           result(nil)
           return

@@ -14,6 +14,12 @@
   "sessionFolderPersonal": "Personal",
   "sessionInfoNameLabel": "Session name",
   "newSessionFolderTitle": "New session — folder",
+  "newSessionChooseFolder": "Choose folder from Files…",
+  "newSessionSandboxFolder": "New folder in Personal sandbox…",
+  "newSessionSandboxNameTitle": "New sandbox folder",
+  "newSessionSandboxNameLabel": "Folder name",
+  "newSessionSandboxNameError": "Enter a name without / or \\\\.",
+  "newSessionCreate": "Create chat",
   "newSessionCurrentFolder": "Current folder ({folder})",
   "@newSessionCurrentFolder": {
     "placeholders": {
