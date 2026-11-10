@@ -18,6 +18,7 @@ import 'package:http/http.dart' as http;
 import 'package:archive/archive.dart';
 import 'package:crypto/crypto.dart' show sha256;
 import 'package:cryptography/cryptography.dart' show RsaPublicKey;
+import 'package:flutter_agent_harness/src/cli/binary_swap.dart';
 import 'package:pointycastle/export.dart'
     show
         PublicKeyParameter,
@@ -961,7 +962,7 @@ Future<int> _binaryUpdate(
       _warn('update aborted: release provenance check failed for $archive');
       return 1;
     }
-    return _extractAndSwap(
+    final swapCode = await _extractAndSwap(
       outcome.bytes,
       archive,
       target,
@@ -969,6 +970,8 @@ Future<int> _binaryUpdate(
       latest,
       runProcess,
     );
+    // A refused swap already printed its reason; the command still fails.
+    return swapCode == _swapRefusedCode ? 1 : swapCode;
   }
   // Fallback: macOS release may only have the versioned .zip (the sandboxed
   // app bundle). Try the stable zip name and extract the binary from the app
@@ -1021,32 +1024,18 @@ List<int>? _extractMacBinary(Archive archive) {
   return null;
 }
 
-/// Atomically replaces [target] with the file at [staging]. On Windows the
-/// locked executable is moved aside first; on Unix [staging] is renamed over
-/// [target] and made executable.
+/// Replaces [target] with the file at [staging] (issue #2052).
+///
+/// The swap itself lives in `lib/src/cli/binary_swap.dart`: a bare
+/// rename-aside + rename-in pair left the install with `fa.exe.old` and no
+/// `fa.exe` whenever the second rename failed or the process died between
+/// them, and nothing verified the result. The module validates the staged
+/// file, rolls the parked binary back on failure and verifies the target.
 Future<void> _atomicSwap(
   String staging,
   String target,
   Future<ProcessResult> Function(String, List<String>) runProcess,
-) async {
-  if (Platform.isWindows) {
-    final aside = '$target.old';
-    try {
-      File(aside).deleteSync();
-    } on PathNotFoundException {
-      // No stale aside file to clean up — safe to proceed.
-    }
-    File(target).renameSync(aside);
-    File(staging).renameSync(target);
-  } else {
-    if (File(target).existsSync()) {
-      // One-generation rollback copy, overwritten on every update.
-      await File(target).copy('$target.bak');
-    }
-    await File(staging).rename(target);
-    await runProcess('chmod', ['+x', target]);
-  }
-}
+) => swapBinary(staging: staging, target: target, runProcess: runProcess);
 
 /// Extracts a tar.gz archive into [tmpDir] via the system `tar` command.
 ///
@@ -1123,6 +1112,10 @@ Future<void> copyBundleLibs(Directory bundleDir, Directory installDir) async {
 /// The archive contains a `bundle/` directory with `bin/fa[.exe]` and
 /// `lib/*.dylib|.so|.dll`. We extract to a temp dir, copy the binary over
 /// the target, and copy the lib files next to it.
+/// Exit code for "the swap refused the archive" — distinct from a download
+/// failure so the autonomous path can name it (issue #2052 review).
+const int _swapRefusedCode = 2;
+
 Future<int> _extractAndSwap(
   List<int> archiveBytes,
   String archiveName,
@@ -1156,7 +1149,15 @@ Future<int> _extractAndSwap(
     }
     final staging = '$target.new';
     await File(staging).writeAsBytes(srcExe.readAsBytesSync());
-    await _atomicSwap(staging, target, runProcess);
+    // issue #2052 review: a refused swap (missing staged binary, locked side
+    // copy, unrepairable install) is not a crash and not a download failure -
+    // print the named reason and hand the caller a distinct code.
+    try {
+      await _atomicSwap(staging, target, runProcess);
+    } on StateError catch (error) {
+      _warn(error.message);
+      return _swapRefusedCode;
+    }
     await copyBundleLibs(bundleDir, installDir);
     // gh-2040: the native fa-clip pasteboard helper rides the bundle —
     // keep it beside the swapped binary so image paste survives updates
@@ -1255,7 +1256,12 @@ Future<int> fallbackZipUpdate(
   }
   final staging = '$target.new';
   await File(staging).writeAsBytes(data);
-  await _atomicSwap(staging, target, runProcess);
+  try {
+    await _atomicSwap(staging, target, runProcess);
+  } on StateError catch (error) {
+    _warn(error.message);
+    return _swapRefusedCode;
+  }
   _say('updated to $latest — restart fa to use it.');
   return 0;
 }
@@ -1333,6 +1339,12 @@ enum ApplyUpdateOutcome {
   refusedDevRun,
   provenanceFailed,
   downloadFailed,
+
+  /// The archive arrived and verified, but swapping it in was REFUSED by the
+  /// swap module (missing/empty staged binary, locked side copy, an install
+  /// that cannot be repaired). Distinct from [downloadFailed]: reporting it as
+  /// a download failure hid the actionable reason (issue #2052 review).
+  swapFailed,
   unsupportedPlatform,
   restartFailed,
   convergenceGuard,
@@ -1431,6 +1443,11 @@ Future<ApplyUpdateOutcome> applyUpdate({
       settleDelay: settleDelay,
       log: log,
     );
+  } on StateError catch (error) {
+    // A refused swap (issue #2052): name it, never report it as a download
+    // failure — the reason is actionable and the binary is untouched.
+    log('update aborted: ${error.message}');
+    return ApplyUpdateOutcome.swapFailed;
   } catch (_) {
     // The update must never crash the boot: any surprise (socket reset,
     // file error) is just a failed update.
@@ -1598,6 +1615,7 @@ Future<ApplyUpdateOutcome> _swapAndRestartArchive({
     latest,
     runProcess,
   );
+  if (swapCode == _swapRefusedCode) return ApplyUpdateOutcome.swapFailed;
   if (swapCode != 0) return ApplyUpdateOutcome.downloadFailed;
   log('fa update applied: v$currentVersion -> v$latest');
   if (Platform.isWindows) {

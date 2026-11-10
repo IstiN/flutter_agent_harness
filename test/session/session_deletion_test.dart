@@ -341,6 +341,10 @@ void main() {
       //   temp the streamed open itself just wrote (never a session file;
       //   the session file is only ever replaced via renamePath)
       const allowed = {
+        // issue #2052: the binary swap deletes the PREVIOUS GENERATION of the
+        // CLI executable (`fa.exe.old`) — an install artifact, never a session
+        // file. The session journal/trash/live guard has nothing to do here.
+        'lib/src/cli/binary_swap.dart',
         'lib/src/cli/clipboard_reader.dart',
         'flutter_app/lib/services/sessions_root.dart',
         'flutter_app/lib/services/widget_publish_service.dart',
@@ -354,12 +358,17 @@ void main() {
           if (entity is! File || !entity.path.endsWith('.dart')) continue;
           // session_repo.dart is the gate itself — the one allowed site.
           if (entity.path.endsWith('session_repo.dart')) continue;
-          if (allowed.contains(entity.path)) continue;
+          // Normalise separators: a Windows run yields
+          // 'lib/src/cli\\binary_swap.dart', which never matches the
+          // forward-slash allowlist (and reported every allowed file as an
+          // offender there).
+          final relPath = entity.path.replaceAll('\\', '/');
+          if (allowed.contains(relPath)) continue;
           final text = entity.readAsStringSync();
           if (text.contains('_fs.remove(') ||
               text.contains('fs.remove(') ||
               text.contains('deleteSync(')) {
-            offenders.add(entity.path);
+            offenders.add(relPath);
           }
         }
       }
