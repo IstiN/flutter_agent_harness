@@ -434,6 +434,38 @@ void main() {
       await run;
     });
 
+    test(
+      'cicd usage: unknown flags and extra operands print usage',
+      () async {
+        final fake = FakeStreamFunction([textTurn('ok')]);
+        final store = FakeSecureKeyStore()
+          ..map['FA_KEY_API_ACME_IO'] = _acmeKey;
+        final cache = SecureKeyCache(store);
+        await cache.preload(const ['FA_KEY_API_ACME_IO']);
+        final entry = _acmeEntry();
+        final cli = cliFor(
+          fake.call,
+          model: _entryModel(entry),
+          secureKeys: cache,
+          customProviders: CustomProviderRegistry([entry]),
+          activeCustomName: 'acme',
+        );
+        final run = cli.run();
+
+        await step(
+          '/provider export cicd --wat a b',
+          'usage: /provider export cicd [path|--clipboard] [--yes]',
+        );
+        await step(
+          '/provider export cicd auth --wat x y',
+          'usage: /provider export cicd auth',
+        );
+        expect(clipboardBox, isNull);
+        io.sendLine('/exit');
+        await run;
+      },
+    );
+
     test('a non-exportable current provider is refused', () async {
       final fake = FakeStreamFunction([textTurn('ok')]);
       final cli = cliFor(fake.call);
@@ -583,13 +615,15 @@ void main() {
       required CustomProviderRegistry registry,
       void Function(String name, String value)? onSecretStored,
       required List<(String, String)> answers,
+      Future<PasteboardRead> Function()? clipboardRead,
     }) async {
       final ioB = machineB();
       final cli = cliFor(
         FakeStreamFunction([textTurn('ok')]).call,
         secureKeys: secureKeys,
         customProviders: registry,
-        clipboardRead: () async => PasteboardText(clipboardBox!),
+        clipboardRead:
+            clipboardRead ?? () async => PasteboardText(clipboardBox!),
         onSecretStored: onSecretStored,
         ioOverride: ioB,
       );
@@ -935,6 +969,114 @@ void main() {
       expect(registryB.entries, isEmpty);
       expect(storeB.map, isEmpty);
     });
+
+    test('a path operand imports from the file, not the clipboard', () async {
+      final entry = _acmeEntry();
+      final container = await exportContainer(
+        cliFor(
+          FakeStreamFunction([textTurn('ok')]).call,
+          model: _entryModel(entry),
+          secureKeys: await freshCache({'FA_KEY_API_ACME_IO': _acmeKey}),
+          customProviders: CustomProviderRegistry([entry]),
+          activeCustomName: 'acme',
+        ),
+      );
+      await env.writeFile('/work/c.fahx', container);
+      clipboardBox = null; // Proves the read came from the file.
+
+      final registryB = CustomProviderRegistry([]);
+      final storeB = FakeSecureKeyStore();
+      final cacheB = SecureKeyCache(storeB);
+      await cacheB.probe();
+      await runImport(
+        secureKeys: cacheB,
+        registry: registryB,
+        answers: const [
+          ('/provider import /work/c.fahx', 'container passphrase'),
+          ('pass-phrase-1', 'imported provider acme (api-key)'),
+          ('', 'switched provider to openai'),
+        ],
+      );
+
+      final landed = registryB.find('acme');
+      expect(landed, isNotNull);
+      expect(storeB.map['FA_KEY_API_ACME_IO'], _acmeKey);
+    });
+
+    test('a missing container file is refused with zero writes', () async {
+      final registryB = CustomProviderRegistry([]);
+      final storeB = FakeSecureKeyStore();
+      final cacheB = SecureKeyCache(storeB);
+      await cacheB.probe();
+      // Fails before any passphrase prompt.
+      await runImport(
+        secureKeys: cacheB,
+        registry: registryB,
+        answers: const [
+          ('/provider import /work/none.fahx', 'container file not found'),
+        ],
+      );
+
+      expect(registryB.entries, isEmpty);
+      expect(storeB.map, isEmpty);
+    });
+
+    test('a directory operand is refused as unreadable, zero writes', () async {
+      // writeFile auto-creates parent directories: /work/d becomes one.
+      await env.writeFile('/work/d/inner.txt', 'x');
+
+      final registryB = CustomProviderRegistry([]);
+      final storeB = FakeSecureKeyStore();
+      final cacheB = SecureKeyCache(storeB);
+      await cacheB.probe();
+      await runImport(
+        secureKeys: cacheB,
+        registry: registryB,
+        answers: const [('/provider import /work/d', 'cannot read /work/d')],
+      );
+
+      expect(registryB.entries, isEmpty);
+      expect(storeB.map, isEmpty);
+    });
+
+    test('an unavailable pasteboard points at the path operand', () async {
+      final registryB = CustomProviderRegistry([]);
+      final storeB = FakeSecureKeyStore();
+      final cacheB = SecureKeyCache(storeB);
+      await cacheB.probe();
+      await runImport(
+        secureKeys: cacheB,
+        registry: registryB,
+        clipboardRead: () async => const PasteboardUnavailable('no pasteboard'),
+        answers: const [
+          ('/provider import', 'clipboard holds no container (no pasteboard)'),
+        ],
+      );
+
+      expect(registryB.entries, isEmpty);
+      expect(storeB.map, isEmpty);
+    });
+
+    test(
+      'an image clipboard is refused with a path hint, zero writes',
+      () async {
+        final registryB = CustomProviderRegistry([]);
+        final storeB = FakeSecureKeyStore();
+        final cacheB = SecureKeyCache(storeB);
+        await cacheB.probe();
+        await runImport(
+          secureKeys: cacheB,
+          registry: registryB,
+          clipboardRead: () async => const PasteboardImage(<int>[]),
+          answers: const [
+            ('/provider import', 'clipboard holds an image, not a container'),
+          ],
+        );
+
+        expect(registryB.entries, isEmpty);
+        expect(storeB.map, isEmpty);
+      },
+    );
 
     test('a legacy all-providers .fahx export is refused by name', () async {
       clipboardBox = jsonEncode(
