@@ -333,7 +333,7 @@ ProcessResult runGate({
 
 void main() {
   test(
-    'arm64 size floor gates the v1.0.634 artifact shape green (gh-2088)',
+    'arm64 size floor gates the v1.0.702 artifact shape green (gh-2088)',
     () {
       final artifact = buildArtifactFixture();
       final result = runGate(artifact: artifact, baselinePath: baseline);
@@ -342,9 +342,9 @@ void main() {
         0,
         reason:
             'the committed arm64 floor must accept the shipped v1.0.702 '
-            'shape — run 4004758753 red the leg with `GREW +5.1% '
-            'App.framework/App` (intentional AOT growth, the gate\'s own '
-            'reseed case). Gate output:\n'
+            'shape — run 42761496337 red the leg with `GREW +101.6% '
+            'Assets.car  93640 -> 188792` (intentional icon growth, the '
+            'gate\'s own reseed case). Gate output:\n'
             '${result.stdout}\n${result.stderr}',
       );
       expect(result.stdout, contains('size budget OK'));
