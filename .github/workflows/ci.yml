@@ -2986,11 +2986,16 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      # gh-1736 guard (test/setup_flutter_selfhosted_test.dart): a
+      # self-hosted leg may pair subosito/flutter-action with cache —
+      # never cache: true (the action's shared-cache poisoning is a
+      # hosted-only convenience). The box keeps its own warm pub cache.
+      # Exact patch (#1100 parity + #1431): the golden baselines and the
+      # nightly leg pin 3.47.4 — a release-path build must share it.
       - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
         with:
-          flutter-version: '3.47.x'
+          flutter-version: '3.47.4'
           channel: stable
-          cache: true
 
       - name: Create placeholder .env asset
         working-directory: flutter_app

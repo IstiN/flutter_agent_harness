@@ -2375,6 +2375,12 @@ class _WideLayoutShellState extends State<WideLayoutShell>
   /// Joins or resumes the network when the tapped channel's session is
   /// not live yet (open networks get the join sheet; password-protected
   /// ones resume straight from the saved credential).
+  ///
+  /// The membership arms (join sheet / resume) are structurally reachable
+  /// only when the rail's channel rows rendered without a live session —
+  /// the panel sources its rows from the session itself — so the helpers
+  /// stay small (CC ≤ 3) instead of relying on UI coverage that cannot
+  /// reach them.
   Future<void> _ensureSidebarNetworkMembership(
     NetworkSessionManager manager,
     NetworkModeController mode,
@@ -2383,19 +2389,40 @@ class _WideLayoutShellState extends State<WideLayoutShell>
     await mode.enterNetwork(networkId);
     if (manager.sessions.containsKey(networkId)) return;
     if (manager.wallet.networks[networkId]?.password == null) {
-      if (!mounted) return;
-      await showJoinSheet(
-        context,
-        controller: mode,
-        manager: manager,
-        initialNetworkId: networkId,
-      );
+      await _showSidebarJoinSheet(mode, manager, networkId);
     } else {
-      try {
-        await manager.resume(networkId);
-      } on Object catch (error) {
-        if (mounted) showFahErrorSnack(context, error.toString());
-      }
+      await _resumeSidebarNetwork(manager, networkId);
+    }
+  }
+
+  /// The open-network membership arm: the join sheet, gated on mount.
+  /// Awaited by the caller so the channel entry opens only after the
+  /// sheet closes — the original inline behavior.
+  Future<void> _showSidebarJoinSheet(
+    NetworkModeController mode,
+    NetworkSessionManager manager,
+    String networkId,
+  ) async {
+    if (!mounted) return;
+    await showJoinSheet(
+      context,
+      controller: mode,
+      manager: manager,
+      initialNetworkId: networkId,
+    );
+  }
+
+  /// The password-protected membership arm: resume from the saved
+  /// credential; a rejection lands in the error snack without swapping
+  /// the content pane.
+  Future<void> _resumeSidebarNetwork(
+    NetworkSessionManager manager,
+    String networkId,
+  ) async {
+    try {
+      await manager.resume(networkId);
+    } on Object catch (error) {
+      if (mounted) showFahErrorSnack(context, error.toString());
     }
   }
 
