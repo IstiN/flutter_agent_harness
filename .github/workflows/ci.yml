@@ -2293,7 +2293,9 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: golden-failure-diffs
-          path: flutter_app/test/golden/goldens/failures/
+          # flutter_test writes the failure triple relative to the TEST
+          # dir (test/golden/failures/), not the goldens/ dir.
+          path: flutter_app/test/golden/failures/
           if-no-files-found: ignore
 
   flutter-app-lock-smoke:

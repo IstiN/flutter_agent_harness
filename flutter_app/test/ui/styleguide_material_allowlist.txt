@@ -64,9 +64,10 @@ lib/ui/widgets/provider_selection_list.dart 5
 lib/ui/widgets/session_search_field.dart 2
 lib/ui/widgets/sidebar_sessions_list.dart 7
 lib/ui/widgets/subagent_chat_badge.dart 1
+lib/ui/widgets/wide_layout_shell_chat_area.dart 1
 lib/ui/widgets/wide_layout_shell_navigation.dart 2
 lib/ui/widgets/wide_layout_shell_session_actions.dart 3
-lib/ui/widgets/wide_layout_shell.dart 16
+lib/ui/widgets/wide_layout_shell.dart 15
 lib/ui/widgets/widget_publications_sheet.dart 2
 lib/ui/widgets/widget_publish_sheet.dart 2
 lib/ui/widgets/widget_status_detail_sheet.dart 1
