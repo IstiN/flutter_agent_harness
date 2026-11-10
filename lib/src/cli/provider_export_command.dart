@@ -18,6 +18,20 @@
 /// class's private members.
 part of 'agent_cli.dart';
 
+/// The current-provider identity the transfer commands export.
+typedef _TransferSubject = ({
+  ProviderSpec spec,
+  CustomProviderEntry? entry,
+  String baseUrl,
+});
+
+/// The resolved credential for a transfer subject.
+typedef _TransferKey = ({
+  ProviderTransferKeyKind kind,
+  String slot,
+  String value,
+});
+
 extension on AgentCli {
   /// The `/provider export ...` branch: usage + dispatch into the UC1/UC2
   /// flows. Returns true when the command targeted the export family.
@@ -220,35 +234,10 @@ extension on AgentCli {
       return;
     }
     _warnExpiredOAuthBlob(key);
-    final String what;
-    final String content;
-    if (authOnly) {
-      if (key.kind == ProviderTransferKeyKind.apiKey) {
-        what = '${key.slot}=<value>';
-        content = '${key.slot}=${key.value}';
-      } else {
-        what = 'the ${key.kind.wireName} blob';
-        content = key.value;
-      }
-    } else {
-      final model = _agent.state.model;
-      what = 'the cicd JSON';
-      content = const JsonEncoder.withIndent('  ').convert({
-        'v': 1,
-        'provider': subject.spec.name,
-        'baseUrl': subject.baseUrl,
-        'model': model.id,
-        'kind': subject.spec.kind,
-        'api': model.api,
-        'contextWindow': model.contextWindow,
-        'maxTokens': model.maxTokens,
-        'auth': {
-          'type': key.kind.wireName,
-          'env': key.slot,
-          'value': key.value,
-        },
-      });
-    }
+    final model = _agent.state.model;
+    final (what, content) = authOnly
+        ? _cicdSecretPresentation(key)
+        : _cicdJsonContent(subject, key, model);
     final destination = parsed.operands.isNotEmpty
         ? parsed.operands.first
         : stdout
@@ -270,6 +259,36 @@ extension on AgentCli {
           ? key.slot
           : null,
     );
+  }
+
+  /// The `cicd auth` presentation: the bare secret value for the secrets
+  /// store — `SLOT=<value>` for an api key, the raw blob otherwise.
+  (String, String) _cicdSecretPresentation(_TransferKey key) {
+    if (key.kind == ProviderTransferKeyKind.apiKey) {
+      return ('${key.slot}=<value>', '${key.slot}=${key.value}');
+    }
+    return ('the ${key.kind.wireName} blob', key.value);
+  }
+
+  /// The full `cicd` JSON: the current provider's config with the
+  /// embedded secret under `auth`.
+  (String, String) _cicdJsonContent(
+    _TransferSubject subject,
+    _TransferKey key,
+    Model model,
+  ) {
+    final content = const JsonEncoder.withIndent('  ').convert({
+      'v': 1,
+      'provider': subject.spec.name,
+      'baseUrl': subject.baseUrl,
+      'model': model.id,
+      'kind': subject.spec.kind,
+      'api': model.api,
+      'contextWindow': model.contextWindow,
+      'maxTokens': model.maxTokens,
+      'auth': {'type': key.kind.wireName, 'env': key.slot, 'value': key.value},
+    });
+    return ('the cicd JSON', content);
   }
 
   /// Parses the UC2 export args and runs the flow: a bare path operand
@@ -314,34 +333,75 @@ extension on AgentCli {
 
   /// The subject + key + passphrase + gate + delivery of the UC2 export.
   /// Returns false when nothing was written (refusal/cancel/clipboard
-  /// failure without fallback). Split from [_startProviderTransferExport]
-  /// so tests can drive the flow with parsed destinations directly.
+  /// failure without fallback). Each stage is a helper: resolution,
+  /// passphrase, container build, delivery.
   Future<bool> _transferExportGateAndDeliver({
     required String? direct,
     required String? fallback,
     required bool yes,
   }) async {
+    final resolved = _resolveExportSubject();
+    if (resolved == null) return false;
+    final (subject, key) = resolved;
+    final passphrase = await _readExportPassphrases();
+    if (passphrase == null) return false;
+    final (container, name, bytes) = _buildTransferContainer(
+      subject: subject,
+      key: key,
+      passphrase: passphrase,
+    );
+    return _deliverTransferContainer(
+      container: container,
+      name: name,
+      bytes: bytes,
+      kindWireName: key.kind.wireName,
+      direct: direct,
+      fallback: fallback,
+      yes: yes,
+    );
+  }
+
+  /// The UC2 subject + credential, with the loud refusals printed. Null
+  /// when the current provider is not exportable or has no credential.
+  (_TransferSubject, _TransferKey)? _resolveExportSubject() {
     final subject = _transferSubject();
     if (subject == null) {
       _printNonExportableRefusal();
-      return false;
+      return null;
     }
     final key = _transferKeyFor(subject.spec, subject.entry, subject.baseUrl);
     if (key == null) {
       _printNoCredentialRefusal(subject.spec);
-      return false;
+      return null;
     }
     _warnExpiredOAuthBlob(key);
+    return (subject, key);
+  }
+
+  /// The export double prompt: empty or mismatched pair cancels loudly.
+  /// Null = cancelled, nothing written.
+  Future<String?> _readExportPassphrases() async {
     final passphrase = await _askLine('export passphrase: ', secret: true);
     if (passphrase == null || passphrase.isEmpty) {
       io.writeln('export cancelled — nothing written');
-      return false;
+      return null;
     }
     final confirm = await _askLine('confirm passphrase: ', secret: true);
     if (confirm != passphrase) {
       io.writeln('passphrases do not match — export cancelled');
-      return false;
+      return null;
     }
+    return passphrase;
+  }
+
+  /// Encrypts the current provider's transfer bundle into the clipboard
+  /// container; returns the container text, the subject label, and the
+  /// byte size the transcript may quote (never the secret).
+  (String, String, int) _buildTransferContainer({
+    required _TransferSubject subject,
+    required _TransferKey key,
+    required String passphrase,
+  }) {
     final bundle = ProviderTransferBundle(
       entry: subject.entry,
       catalog: subject.entry == null ? subject.spec.name : null,
@@ -356,10 +416,27 @@ extension on AgentCli {
     );
     final container =
         '${jsonEncode(encryptFahxEnvelope(jsonEncode(bundle.toJson()), passphrase))}\n';
-    final bytes = utf8.encode(container).length;
-    final name = subject.entry?.name ?? subject.spec.name;
+    return (
+      container,
+      subject.entry?.name ?? subject.spec.name,
+      utf8.encode(container).length,
+    );
+  }
+
+  /// The UC2 delivery arms: direct file operand, clipboard (with the
+  /// `--path` fallback on clipboard failure). Returns whether anything
+  /// was written; the transcript names provider, kind, and bytes only.
+  Future<bool> _deliverTransferContainer({
+    required String container,
+    required String name,
+    required int bytes,
+    required String kindWireName,
+    required String? direct,
+    required String? fallback,
+    required bool yes,
+  }) async {
     if (!await _confirmTransferGate(
-      '$name (${key.kind.wireName}, $bytes bytes)',
+      '$name ($kindWireName, $bytes bytes)',
       direct != null ? 'file $direct' : 'the clipboard',
       yes: yes,
     )) {
@@ -373,8 +450,7 @@ extension on AgentCli {
     final failure = await _copyToClipboard(container);
     if (failure == null) {
       io.writeln(
-        'container copied to clipboard: $name '
-        '(${key.kind.wireName}, $bytes bytes)',
+        'container copied to clipboard: $name ($kindWireName, $bytes bytes)',
       );
       return true;
     }
@@ -394,79 +470,23 @@ extension on AgentCli {
   /// The UC2 `/provider import [--force] [path]` flow: reads the container
   /// (clipboard default, path operand file), decrypts LOUDLY (zero writes
   /// on wrong passphrase/tamper), then applies through the existing
-  /// storage paths and offers the switch.
+  /// storage paths and offers the switch. Each stage is its own helper so
+  /// a failure reports and aborts before any mutation.
   Future<void> _runProviderTransferImport({
     required bool force,
     required String? path,
   }) async {
-    final String container;
-    if (path != null) {
-      final home = config.homeDir ?? config.env.cwd;
-      switch (await config.env.readTextFile(_expandHomePath(path, home))) {
-        case Ok(:final value):
-          container = value;
-        case Err(:final error) when error.code == FileErrorCode.notFound:
-          io.writeln('container file not found: $path');
-          return;
-        case Err(:final error):
-          io.writeln('cannot read $path: $error');
-          return;
-      }
-    } else {
-      switch (await (config.clipboardRead?.call() ?? readPasteboardText())) {
-        case PasteboardText(:final text):
-          container = text;
-        case PasteboardUnavailable(:final reason):
-          io.writeln(
-            'clipboard holds no container ($reason) — pass the container '
-            'path: /provider import <path>',
-          );
-          return;
-        case PasteboardImage():
-          io.writeln(
-            'clipboard holds an image, not a container — pass the '
-            'container path: /provider import <path>',
-          );
-          return;
-      }
-    }
-    final Map<String, dynamic> envelope;
-    try {
-      final decoded = jsonDecode(container);
-      if (decoded is! Map<String, dynamic>) {
-        throw const FahxException('not a provider export container');
-      }
-      envelope = decoded;
-    } on FormatException {
-      io.writeln(
-        'import failed: not a provider export container — nothing was '
-        'written',
-      );
-      return;
-    } on FahxException catch (error) {
-      io.writeln('import failed: ${error.message} — nothing was written');
-      return;
-    }
+    final container = await _readTransferContainer(path: path);
+    if (container == null) return;
+    final envelope = _decodeTransferEnvelope(container);
+    if (envelope == null) return;
     final passphrase = await _askLine('container passphrase: ', secret: true);
     if (passphrase == null || passphrase.isEmpty) {
       io.writeln('import cancelled — nothing written');
       return;
     }
-    final Object? payload;
-    try {
-      payload = jsonDecode(
-        decryptFahxEnvelope(envelope, passphrase, version: 1),
-      );
-    } on FahxException catch (error) {
-      io.writeln('import failed: ${error.message} — nothing was written');
-      return;
-    } on FormatException {
-      io.writeln(
-        'import failed: container payload is malformed — nothing was '
-        'written',
-      );
-      return;
-    }
+    final payload = _unlockTransferPayload(envelope, passphrase);
+    if (payload == null) return;
     final ProviderTransferBundle bundle;
     try {
       bundle = ProviderTransferBundle.parse(payload);
@@ -484,6 +504,82 @@ extension on AgentCli {
       await _applyImportedCatalogPreset(bundle);
     } on ConfigException catch (error) {
       io.writeln('import failed: ${error.message}');
+    }
+  }
+
+  /// Import stage 1 — the raw container text: the `path` operand file, or
+  /// the clipboard default. Null = reported failure; nothing written.
+  Future<String?> _readTransferContainer({required String? path}) async {
+    if (path != null) {
+      final home = config.homeDir ?? config.env.cwd;
+      switch (await config.env.readTextFile(_expandHomePath(path, home))) {
+        case Ok(:final value):
+          return value;
+        case Err(:final error) when error.code == FileErrorCode.notFound:
+          io.writeln('container file not found: $path');
+          return null;
+        case Err(:final error):
+          io.writeln('cannot read $path: $error');
+          return null;
+      }
+    }
+    switch (await (config.clipboardRead?.call() ?? readPasteboardText())) {
+      case PasteboardText(:final text):
+        return text;
+      case PasteboardUnavailable(:final reason):
+        io.writeln(
+          'clipboard holds no container ($reason) — pass the container '
+          'path: /provider import <path>',
+        );
+        return null;
+      case PasteboardImage():
+        io.writeln(
+          'clipboard holds an image, not a container — pass the '
+          'container path: /provider import <path>',
+        );
+        return null;
+    }
+  }
+
+  /// Import stage 2 — the envelope JSON: a truncated body or a non-object
+  /// document is not a container. Null = reported failure.
+  Map<String, dynamic>? _decodeTransferEnvelope(String container) {
+    try {
+      final decoded = jsonDecode(container);
+      if (decoded is! Map<String, dynamic>) {
+        throw const FahxException('not a provider export container');
+      }
+      return decoded;
+    } on FormatException {
+      io.writeln(
+        'import failed: not a provider export container — nothing was '
+        'written',
+      );
+      return null;
+    } on FahxException catch (error) {
+      io.writeln('import failed: ${error.message} — nothing was written');
+      return null;
+    }
+  }
+
+  /// Import stage 3 — passphrase + decrypt + payload decode. A wrong
+  /// passphrase, a tampered envelope, or a malformed decrypted payload
+  /// all fail loudly; null = reported failure, nothing written.
+  Object? _unlockTransferPayload(
+    Map<String, dynamic> envelope,
+    String passphrase,
+  ) {
+    try {
+      return jsonDecode(decryptFahxEnvelope(envelope, passphrase, version: 1));
+    } on FahxException catch (error) {
+      io.writeln('import failed: ${error.message} — nothing was written');
+      return null;
+    } on FormatException {
+      io.writeln(
+        'import failed: container payload is malformed — nothing was '
+        'written',
+      );
+      return null;
     }
   }
 

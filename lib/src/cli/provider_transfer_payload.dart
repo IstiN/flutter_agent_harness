@@ -143,6 +143,8 @@ final class ProviderTransferBundle {
   /// Decodes + validates a payload map. Every problem is a loud
   /// [FahxException] (wrong passphrase/tamper surfaces earlier, at the
   /// envelope; this catches a wrong-kind container with zero writes).
+  /// Header checks here; the two subject shapes parse in their own
+  /// helpers below.
   static ProviderTransferBundle parse(Object? payload) {
     if (payload is! Map) {
       throw const FahxException('not a provider-transfer container');
@@ -174,21 +176,40 @@ final class ProviderTransferBundle {
         : ProviderTransferKey.parse(payload['key']);
     final exportedAt = payload['exportedAt'];
     if (provider['apiType'] is String) {
-      CustomProviderEntry entry;
-      try {
-        entry = CustomProviderEntry.fromYaml(provider);
-      } on ConfigException catch (error) {
-        throw FahxException(
-          'provider-transfer payload entry is malformed: ${error.message}',
-        );
-      }
-      return ProviderTransferBundle(
-        entry: entry,
-        modelId: entry.modelId,
-        key: key,
-        exportedAt: exportedAt is String ? exportedAt : null,
+      return _parseEntrySubject(provider, key, exportedAt);
+    }
+    return _parseCatalogSubject(provider, key, exportedAt);
+  }
+
+  /// The saved-entry subject shape (`provider.apiType` present). Throws
+  /// [FahxException] when the entry does not round-trip.
+  static ProviderTransferBundle _parseEntrySubject(
+    Map provider,
+    ProviderTransferKey? key,
+    Object? exportedAt,
+  ) {
+    CustomProviderEntry entry;
+    try {
+      entry = CustomProviderEntry.fromYaml(provider);
+    } on ConfigException catch (error) {
+      throw FahxException(
+        'provider-transfer payload entry is malformed: ${error.message}',
       );
     }
+    return ProviderTransferBundle(
+      entry: entry,
+      modelId: entry.modelId,
+      key: key,
+      exportedAt: exportedAt is String ? exportedAt : null,
+    );
+  }
+
+  /// The catalog-preset subject shape (`provider.catalog` + `modelId`).
+  static ProviderTransferBundle _parseCatalogSubject(
+    Map provider,
+    ProviderTransferKey? key,
+    Object? exportedAt,
+  ) {
     final catalog = provider['catalog'];
     final modelId = provider['modelId'];
     if (catalog is! String || catalog.isEmpty || modelId is! String) {

@@ -279,6 +279,97 @@ void main() {
         throwsA(isA<FahxException>()),
       );
     });
+
+    test('refuses a non-map payload', () {
+      expect(
+        () => ProviderTransferBundle.parse(42),
+        throwsA(
+          isA<FahxException>().having(
+            (e) => e.message,
+            'message',
+            'not a provider-transfer container',
+          ),
+        ),
+      );
+      expect(
+        () => ProviderTransferBundle.parse(['x']),
+        throwsA(isA<FahxException>()),
+      );
+    });
+
+    test('refuses an unsupported payload version by number', () {
+      expect(
+        () => ProviderTransferBundle.parse({
+          'payloadKind': 'provider-transfer',
+          'version': 99,
+          'provider': {'catalog': 'anthropic', 'modelId': 'm'},
+        }),
+        throwsA(
+          isA<FahxException>().having(
+            (e) => e.message,
+            'message',
+            contains('unsupported provider-transfer payload version: 99'),
+          ),
+        ),
+      );
+    });
+
+    test('refuses a provider section that is not a map', () {
+      expect(
+        () => ProviderTransferBundle.parse({
+          'payloadKind': 'provider-transfer',
+          'version': 1,
+          'provider': 'anthropic',
+        }),
+        throwsA(
+          isA<FahxException>().having(
+            (e) => e.message,
+            'message',
+            'provider-transfer payload is malformed',
+          ),
+        ),
+      );
+    });
+
+    test('refuses a catalog subject without catalog or model', () {
+      for (final provider in [
+        {'catalog': '', 'modelId': 'm'},
+        {'catalog': 'anthropic'},
+      ]) {
+        expect(
+          () => ProviderTransferBundle.parse({
+            'payloadKind': 'provider-transfer',
+            'version': 1,
+            'provider': provider,
+          }),
+          throwsA(
+            isA<FahxException>().having(
+              (e) => e.message,
+              'message',
+              'provider-transfer payload is malformed',
+            ),
+          ),
+        );
+      }
+    });
+
+    test('wraps a malformed entry subject with the config reason', () {
+      expect(
+        () => ProviderTransferBundle.parse({
+          'payloadKind': 'provider-transfer',
+          'version': 1,
+          // apiType present (so the entry shape is chosen) but no name.
+          'provider': {'apiType': 'openai'},
+        }),
+        throwsA(
+          isA<FahxException>().having(
+            (e) => e.message,
+            'message',
+            contains('provider-transfer payload entry is malformed'),
+          ),
+        ),
+      );
+    });
   });
 
   group('UC1 /provider export cicd', () {
@@ -766,6 +857,78 @@ void main() {
         answers: const [
           ('/provider import', 'container passphrase'),
           ('pass-phrase-1', 'wrong passphrase or corrupted'),
+        ],
+      );
+
+      expect(registryB.entries, isEmpty);
+      expect(storeB.map, isEmpty);
+    });
+
+    test('a truncated container is not a container: zero writes', () async {
+      final entry = _acmeEntry();
+      final container = await exportContainer(
+        cliFor(
+          FakeStreamFunction([textTurn('ok')]).call,
+          model: _entryModel(entry),
+          secureKeys: await freshCache({'FA_KEY_API_ACME_IO': _acmeKey}),
+          customProviders: CustomProviderRegistry([entry]),
+          activeCustomName: 'acme',
+        ),
+      );
+      clipboardBox = container.substring(0, container.length ~/ 2);
+
+      final registryB = CustomProviderRegistry([]);
+      final storeB = FakeSecureKeyStore();
+      final cacheB = SecureKeyCache(storeB);
+      await cacheB.probe();
+      // Fails at the envelope JSON before any passphrase prompt.
+      await runImport(
+        secureKeys: cacheB,
+        registry: registryB,
+        answers: const [
+          ('/provider import', 'not a provider export container'),
+        ],
+      );
+
+      expect(registryB.entries, isEmpty);
+      expect(storeB.map, isEmpty);
+    });
+
+    test('a wrong key-kind tag inside the container fails loudly with zero '
+        'writes', () async {
+      final entry = _acmeEntry();
+      final container = await exportContainer(
+        cliFor(
+          FakeStreamFunction([textTurn('ok')]).call,
+          model: _entryModel(entry),
+          secureKeys: await freshCache({'FA_KEY_API_ACME_IO': _acmeKey}),
+          customProviders: CustomProviderRegistry([entry]),
+          activeCustomName: 'acme',
+        ),
+      );
+      // Rewrite the decrypted payload's key kind and re-encrypt: the
+      // envelope opens fine, the payload parse refuses.
+      final envelope = jsonDecode(container) as Map<String, dynamic>;
+      final payload =
+          jsonDecode(decryptFahxEnvelope(envelope, 'pass-phrase-1', version: 1))
+              as Map<String, dynamic>;
+      payload['key'] = {'name': 'K', 'kind': 'rot13', 'value': 'v'};
+      final resealed = encryptFahxEnvelope(
+        jsonEncode(payload),
+        'pass-phrase-1',
+      );
+      clipboardBox = jsonEncode(resealed);
+
+      final registryB = CustomProviderRegistry([]);
+      final storeB = FakeSecureKeyStore();
+      final cacheB = SecureKeyCache(storeB);
+      await cacheB.probe();
+      await runImport(
+        secureKeys: cacheB,
+        registry: registryB,
+        answers: const [
+          ('/provider import', 'container passphrase'),
+          ('pass-phrase-1', 'is not one of'),
         ],
       );
 
