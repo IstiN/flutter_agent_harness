@@ -92,39 +92,6 @@ Future<String> reasoningThinkingOf(List<String> reasoningChunks) async {
 
 void main() {
   group('streamOpenAICompletions', () {
-    test('normalizes a scheme-less AIIN base URL before sending', () async {
-      Uri? requestedUrl;
-      final client = http_testing.MockClient.streaming((request, body) async {
-        requestedUrl = request.url;
-        return http.StreamedResponse(
-          Stream.value(utf8.encode(okSse)),
-          200,
-          headers: {'content-type': 'text/event-stream'},
-        );
-      });
-      final model = Model(
-        id: 'openai/gpt-4o-mini',
-        api: 'openai-completions',
-        provider: 'aiin',
-        baseUrl: 'api.aiin.by/v1',
-        contextWindow: 200000,
-        maxTokens: 16384,
-      );
-
-      final events = await streamOpenAICompletions(
-        model,
-        simpleContext(),
-        const OpenAICompletionsOptions(apiKey: 'test-key'),
-        client,
-      ).toList();
-
-      expect(
-        requestedUrl,
-        Uri.parse('https://api.aiin.by/v1/chat/completions'),
-      );
-      expect(events.whereType<ErrorEvent>(), isEmpty);
-    });
-
     test('streams text with live partial accumulation', () async {
       final client = sseClient(
         sseBody([

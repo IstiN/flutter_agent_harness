@@ -2974,7 +2974,10 @@ jobs:
 
   build-ios:
     name: Build iOS (debug, unsigned)
-    runs-on: macos-latest
+    # macos-26 (Xcode 26.2+): the Duo layout channel reads the iOS 26
+    # UIKit fold APIs (UIView.reservedRegions, UITraitCollection.verticalBarEdge)
+    # for TestFlight; macos-latest's older SDK does not carry those symbols.
+    runs-on: macos-26
     needs: [release-pending, release-dedupe, changes]
     if: (needs.changes.outputs.app == 'true' || needs.changes.outputs.shared == 'true') && needs.release-pending.outputs.pending == 'true' && needs.release-dedupe.outputs.dedupe != 'true'
     timeout-minutes: 30

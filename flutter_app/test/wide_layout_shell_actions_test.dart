@@ -854,6 +854,61 @@ void main() {
     expect(find.byKey(const ValueKey('collapsedAppsList')), findsNothing);
   });
 
+  testWidgets('Duo: the quick apps menu lists running + installed apps '
+      'and presents a selection', (tester) async {
+    final env = MemoryExecutionEnv();
+    await env.writeFile('apps/alpha/manifest.json', '''
+{
+  "id": "alpha",
+  "name": "Alpha Widget",
+  "description": "A custom widget",
+  "icon": "A"
+}
+''');
+    await env.writeFile(
+      'apps/alpha/widget.js',
+      '(function(){ jsr.render({type:"text",data:"hi"}); })();',
+    );
+    final service = _fakeService(env);
+    final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
+      ..addSession('design-session', service);
+    const app = JsAppInfo(
+      id: 'demo',
+      name: 'Demo app',
+      description: 'Demo',
+      icon: 'D',
+      declaredPermissions: AppPermissions(),
+    );
+
+    await pumpShell(tester, manager: manager, size: const Size(1230, 880));
+    tester.view.padding = const FakeViewPadding(right: 84);
+    addTearDown(tester.view.reset);
+    await tester.pumpAndSettle();
+
+    await pushJsApp(
+      tester.element(find.byType(ChatScreen)),
+      manager: manager,
+      app: app,
+      source: 'test',
+    );
+    await tester.pumpAndSettle();
+
+    // The presented app's chrome quick-apps control opens the menu; the
+    // running app comes first, then the installed-not-running ones.
+    await tester.tap(find.byKey(const ValueKey('appQuickApps')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('quickApp-demo')), findsOneWidget);
+    expect(find.byKey(const ValueKey('quickApp-alpha')), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('quickApp-alpha')));
+    await tester.pumpAndSettle();
+    expect(find.text('Alpha Widget'), findsWidgets);
+    // The presented engine's _watchUiTree arms a 10s fake-async Timer the
+    // settle does not flush; drain it before ending (the pattern at the
+    // dock-full test above).
+    await tester.pump(const Duration(seconds: 10));
+  });
+
   testWidgets('Duo: the chat files panel collapses the chats list and '
       'restores it on close', (tester) async {
     final env = MemoryExecutionEnv();
