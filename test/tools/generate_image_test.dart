@@ -213,6 +213,39 @@ void main() {
     );
 
     test(
+      'an unsupported slot refuses the call with the un-mark guidance (#2085)',
+      () async {
+        final tool = generateImageTool(
+          env: env,
+          modelsConfig: ModelsConfig(
+            slots: {'imageGeneration': MediaSlotModelConfig(unsupported: true)},
+          ),
+          mainBaseUrl: () => 'https://main.example/v1',
+          mainModelId: () => 'main-model',
+          mainApiKey: () => 'main-key',
+          httpClient: _captureClient(
+            (request, body) {},
+            imageBytes: Uint8List.fromList([5]),
+          ),
+        );
+
+        expect(
+          tool.execute({'prompt': 'x'}, null, null),
+          throwsA(
+            isA<MediaException>().having(
+              (e) => e.toString(),
+              'message',
+              allOf(
+                contains('imageGeneration slot is marked unsupported'),
+                isNot(contains('no endpoint configured')),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+
+    test(
       'useMainConnection: true serves the slot from the main connection',
       () async {
         http.BaseRequest? seenRequest;

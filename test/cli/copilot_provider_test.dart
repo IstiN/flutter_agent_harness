@@ -1,4 +1,8 @@
+import 'dart:convert';
+
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
+import 'package:flutter_agent_harness/src/cli/provider_transfer_payload.dart';
+import 'package:flutter_agent_harness/src/providers/fahx_codec.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart' as http_testing;
 import 'package:test/test.dart';
@@ -52,6 +56,7 @@ void main() {
     onProviderChanged,
     SecureKeyCache? secureKeys,
     CustomProviderRegistry? customProviders,
+    String? activeCustomName,
     void Function(String name, String value)? onSecretStored,
     String? providerKind,
     Future<OpenRouterOAuthKey> Function({
@@ -103,6 +108,7 @@ void main() {
         onProviderChanged: onProviderChanged,
         secureKeys: secureKeys,
         customProviders: customProviders,
+        activeCustomName: activeCustomName,
         chatGptOAuthExchangeFn: chatGptOAuthExchangeFn,
         onSecretStored: onSecretStored,
         copilotDeviceFlowFn: copilotDeviceFlowFn,
@@ -708,60 +714,23 @@ void main() {
     );
   });
 
-  group('/provider export', () {
-    test('single account: copies the stored token to the clipboard', () async {
+  group('/provider export (issue #2090 absorbed gh-1606)', () {
+    test('current copilot account: the container carries its token', () async {
       final fake = FakeStreamFunction([textTurn('ok')]);
       final store = FakeSecureKeyStore()
         ..map['FA_KEY_COPILOT_COPILOT_B'] = 'tok-export-me';
       final cache = SecureKeyCache(store);
       await cache.preload(const ['FA_KEY_COPILOT_COPILOT_B']);
-      final registry = CustomProviderRegistry([
-        CustomProviderEntry(
-          name: 'copilot-b',
-          apiType: 'copilot',
-          baseUrl: 'https://api.business.githubcopilot.com',
-          modelId: 'gpt-4.1',
-          keyName: 'FA_KEY_COPILOT_COPILOT_B',
-        ),
-      ]);
-      String? clipboard;
-      final cli = cliFor(
-        modelsHttpClient: _copilotModelsMockClient,
-        fake.call,
-        envVarValue: (_) => null,
-        secureKeys: cache,
-        customProviders: registry,
-        clipboardWrite: (text) async {
-          clipboard = text;
-          return null;
-        },
+      final entry = CustomProviderEntry(
+        name: 'copilot-b',
+        apiType: 'copilot',
+        baseUrl: 'https://api.business.githubcopilot.com',
+        modelId: 'gpt-4.1',
+        keyName: 'FA_KEY_COPILOT_COPILOT_B',
       );
-      final run = cli.run();
-
-      io.sendLine('/provider export');
-      await waitForIt(
-        () => io.out.toString().contains('token copied to clipboard'),
-      );
-      io.sendLine('/exit');
-      await run;
-
-      expect(clipboard, 'tok-export-me');
-      // One line, and the token never reaches the transcript.
-      expect(io.out.toString(), contains('token copied to clipboard'));
-      expect(io.out.toString(), isNot(contains('tok-export-me')));
-    });
-
-    test('several accounts: the picker picks the account', () async {
-      final fake = FakeStreamFunction([textTurn('ok')]);
-      final store = FakeSecureKeyStore()
-        ..map['FA_KEY_COPILOT_COPILOT_A'] = 'tok-a'
-        ..map['FA_KEY_COPILOT_COPILOT_B'] = 'tok-b';
-      final cache = SecureKeyCache(store);
-      await cache.preload(const [
-        'FA_KEY_COPILOT_COPILOT_A',
-        'FA_KEY_COPILOT_COPILOT_B',
-      ]);
       final registry = CustomProviderRegistry([
+        entry,
+        // A second account: never exported — the current provider only.
         CustomProviderEntry(
           name: 'copilot-a',
           apiType: 'copilot',
@@ -769,41 +738,57 @@ void main() {
           modelId: 'gpt-4.1',
           keyName: 'FA_KEY_COPILOT_COPILOT_A',
         ),
-        CustomProviderEntry(
-          name: 'copilot-b',
-          apiType: 'copilot',
-          baseUrl: 'https://api.business.githubcopilot.com',
-          modelId: 'gpt-4.1',
-          keyName: 'FA_KEY_COPILOT_COPILOT_B',
-        ),
       ]);
-      final copied = <String>[];
+      String? clipboard;
       final cli = cliFor(
         modelsHttpClient: _copilotModelsMockClient,
         fake.call,
+        model: Model(
+          id: 'gpt-4.1',
+          api: 'openai-completions',
+          provider: 'copilot',
+          baseUrl: entry.baseUrl,
+          contextWindow: 1000000,
+          maxTokens: 32768,
+        ),
         envVarValue: (_) => null,
         secureKeys: cache,
         customProviders: registry,
+        activeCustomName: 'copilot-b',
         clipboardWrite: (text) async {
-          copied.add(text);
+          clipboard = text;
           return null;
         },
       );
       final run = cli.run();
 
-      io.sendLine('/provider export');
-      await waitForIt(() => io.out.toString().contains('Copilot account'));
-      io.sendLine('2'); // copilot-b
+      io.sendLine('/provider export --yes');
+      await waitForIt(() => io.out.toString().contains('export passphrase'));
+      io.sendLine('pass-phrase-1');
+      await waitForIt(() => io.out.toString().contains('confirm passphrase'));
+      io.sendLine('pass-phrase-1');
       await waitForIt(
-        () => io.out.toString().contains('token copied to clipboard'),
+        () => io.out.toString().contains('container copied to clipboard'),
       );
       io.sendLine('/exit');
       await run;
 
-      expect(copied, ['tok-b']);
+      expect(io.out.toString(), contains('copilot-b (oauth'));
+      expect(io.out.toString(), isNot(contains('tok-export-me')));
+      final bundle = ProviderTransferBundle.parse(
+        jsonDecode(
+          decryptFahxEnvelope(
+            jsonDecode(clipboard!) as Map<String, dynamic>,
+            'pass-phrase-1',
+            version: 1,
+          ),
+        ),
+      );
+      expect(bundle.entry!.name, 'copilot-b');
+      expect(bundle.key!.value, 'tok-export-me');
     });
 
-    test('no accounts: a hint instead of a copy', () async {
+    test('no current provider: a named refusal', () async {
       final fake = FakeStreamFunction([textTurn('ok')]);
       final cli = cliFor(
         modelsHttpClient: _copilotModelsMockClient,
@@ -813,12 +798,12 @@ void main() {
       );
       final run = cli.run();
 
-      io.sendLine('/provider export');
-      await waitForIt(() => io.out.toString().contains('no saved Copilot'));
+      io.sendLine('/provider export --yes');
+      await waitForIt(
+        () => io.out.toString().contains('is not an exportable provider'),
+      );
       io.sendLine('/exit');
       await run;
-
-      expect(io.out.toString(), contains('no saved Copilot account'));
     });
 
     test('no stored token: a named reconnect hint', () async {
@@ -826,75 +811,95 @@ void main() {
       final store = FakeSecureKeyStore();
       final cache = SecureKeyCache(store);
       await cache.preload(const ['FA_KEY_COPILOT_COPILOT_B']);
-      final registry = CustomProviderRegistry([
-        CustomProviderEntry(
-          name: 'copilot-b',
-          apiType: 'copilot',
-          baseUrl: 'https://api.business.githubcopilot.com',
-          modelId: 'gpt-4.1',
-          keyName: 'FA_KEY_COPILOT_COPILOT_B',
-        ),
-      ]);
+      final entry = CustomProviderEntry(
+        name: 'copilot-b',
+        apiType: 'copilot',
+        baseUrl: 'https://api.business.githubcopilot.com',
+        modelId: 'gpt-4.1',
+        keyName: 'FA_KEY_COPILOT_COPILOT_B',
+      );
+      final registry = CustomProviderRegistry([entry]);
       final cli = cliFor(
         modelsHttpClient: _copilotModelsMockClient,
         fake.call,
+        model: Model(
+          id: 'gpt-4.1',
+          api: 'openai-completions',
+          provider: 'copilot',
+          baseUrl: entry.baseUrl,
+          contextWindow: 1000000,
+          maxTokens: 32768,
+        ),
         envVarValue: (_) => null,
         secureKeys: cache,
         customProviders: registry,
+        activeCustomName: 'copilot-b',
         clipboardWrite: (_) async => null,
       );
       final run = cli.run();
 
-      io.sendLine('/provider export');
-      await waitForIt(() => io.out.toString().contains('no stored token'));
+      io.sendLine('/provider export --yes');
+      await waitForIt(() => io.out.toString().contains('no credential'));
       io.sendLine('/exit');
       await run;
 
-      expect(io.out.toString(), contains('no stored token for copilot-b'));
+      expect(io.out.toString(), contains('no credential stored for copilot'));
     });
 
     test(
-      'a failed clipboard write names the reason, never the token',
+      'a failed clipboard write names the reason, never the container',
       () async {
         final fake = FakeStreamFunction([textTurn('ok')]);
         final store = FakeSecureKeyStore()
           ..map['FA_KEY_COPILOT_COPILOT_B'] = 'tok-secret';
         final cache = SecureKeyCache(store);
         await cache.preload(const ['FA_KEY_COPILOT_COPILOT_B']);
-        final registry = CustomProviderRegistry([
-          CustomProviderEntry(
-            name: 'copilot-b',
-            apiType: 'copilot',
-            baseUrl: 'https://api.business.githubcopilot.com',
-            modelId: 'gpt-4.1',
-            keyName: 'FA_KEY_COPILOT_COPILOT_B',
-          ),
-        ]);
+        final entry = CustomProviderEntry(
+          name: 'copilot-b',
+          apiType: 'copilot',
+          baseUrl: 'https://api.business.githubcopilot.com',
+          modelId: 'gpt-4.1',
+          keyName: 'FA_KEY_COPILOT_COPILOT_B',
+        );
+        final registry = CustomProviderRegistry([entry]);
         final cli = cliFor(
           modelsHttpClient: _copilotModelsMockClient,
           fake.call,
+          model: Model(
+            id: 'gpt-4.1',
+            api: 'openai-completions',
+            provider: 'copilot',
+            baseUrl: entry.baseUrl,
+            contextWindow: 1000000,
+            maxTokens: 32768,
+          ),
           envVarValue: (_) => null,
           secureKeys: cache,
           customProviders: registry,
+          activeCustomName: 'copilot-b',
           clipboardWrite: (_) async => 'xclip unavailable',
         );
         final run = cli.run();
 
-        io.sendLine('/provider export');
+        io.sendLine('/provider export --yes');
+        await waitForIt(() => io.out.toString().contains('export passphrase'));
+        io.sendLine('pass-phrase-1');
+        await waitForIt(() => io.out.toString().contains('confirm passphrase'));
+        io.sendLine('pass-phrase-1');
         await waitForIt(
-          () => io.out.toString().contains('could not copy the token'),
+          () => io.out.toString().contains('could not copy to the clipboard'),
         );
         io.sendLine('/exit');
         await run;
 
         final output = io.out.toString();
-        expect(output, contains('could not copy the token to the clipboard'));
+        expect(output, contains('could not copy to the clipboard'));
         expect(output, contains('xclip unavailable'));
         expect(output, isNot(contains('tok-secret')));
       },
     );
 
-    test('/provider export rejects extra args', () async {
+    test('/provider export rejects a non-flag operand', () async {
       final fake = FakeStreamFunction([textTurn('ok')]);
       final cli = cliFor(fake.call);
       final run = cli.run();

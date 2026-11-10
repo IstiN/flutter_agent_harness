@@ -65,6 +65,7 @@ final class MediaSlotOverride {
     this.voice,
     this.providerId,
     this.useMainConnection = false,
+    this.unsupported = false,
   });
 
   /// Restores an override from its JSON form (see [toJson]).
@@ -77,6 +78,7 @@ final class MediaSlotOverride {
         voice: json['voice']?.toString(),
         providerId: json['providerId']?.toString(),
         useMainConnection: json['useMainConnection'] == true,
+        unsupported: json['unsupported'] == true,
       );
 
   /// Provider adapter kind; the media tools speak the OpenAI-compatible
@@ -110,6 +112,12 @@ final class MediaSlotOverride {
   /// slot" error — the main connection is never an implicit fallback.
   final bool useMainConnection;
 
+  /// Explicit per-slot opt-OUT (issue #2085): the media capability is
+  /// removed — media calls refuse the slot ([MediaModelsStore.resolve]
+  /// returns null, like unconfigured) and the pickers stop suggesting the
+  /// slot as a capability. Mutually exclusive with [useMainConnection].
+  final bool unsupported;
+
   /// JSON form persisted in the store file; absent fields stay absent.
   Map<String, dynamic> toJson() => {
     'providerKind': providerKind,
@@ -119,6 +127,7 @@ final class MediaSlotOverride {
     if (voice != null && voice!.isNotEmpty) 'voice': voice,
     'providerId': providerId,
     if (useMainConnection) 'useMainConnection': true,
+    if (unsupported) 'unsupported': true,
   };
 
   @override
@@ -314,6 +323,9 @@ class MediaModelsStore extends ChangeNotifier {
     if (override == null) {
       return null; // UNCONFIGURED — never an implicit fallback
     }
+    // Issue #2085: the capability is removed — an unsupported slot serves
+    // nothing (the caller surfaces the actionable error).
+    if (override.unsupported) return null;
     if (override.useMainConnection) {
       final modelId = slot == MediaSlot.vision
           ? fallback.modelId

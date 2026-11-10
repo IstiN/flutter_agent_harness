@@ -73,7 +73,11 @@ void main() {
         );
       });
       final tool = generateImageTool(
-        gateway(env, client, store: await optedInStore(MediaSlot.imageGeneration)),
+        gateway(
+          env,
+          client,
+          store: await optedInStore(MediaSlot.imageGeneration),
+        ),
       );
       expect(tool.tier, ApprovalTier.write);
 
@@ -119,7 +123,11 @@ void main() {
         return http.Response.bytes(Uint8List.fromList([9, 9]), 200);
       });
       final tool = generateImageTool(
-        gateway(env, client, store: await optedInStore(MediaSlot.imageGeneration)),
+        gateway(
+          env,
+          client,
+          store: await optedInStore(MediaSlot.imageGeneration),
+        ),
       );
 
       final result = await tool.execute(const {'prompt': 'x'}, null, null);
@@ -154,13 +162,47 @@ void main() {
       expect(calls, 0); // never hit the network
     });
 
+    test(
+      'a slot marked unsupported refuses with the un-mark guidance (#2085)',
+      () async {
+        final env = MemoryExecutionEnv();
+        var calls = 0;
+        final client = http_testing.MockClient((request) async {
+          calls++;
+          return http.Response('{}', 500);
+        });
+        final store = MediaModelsStore.inMemory();
+        await store.setOverride(
+          MediaSlot.imageGeneration,
+          const MediaSlotOverride(
+            providerKind: '',
+            baseUrl: '',
+            modelId: '',
+            unsupported: true,
+          ),
+        );
+        final tool = generateImageTool(gateway(env, client, store: store));
+
+        final result = await tool.execute(const {'prompt': 'x'}, null, null);
+        final text = textOf(result);
+        expect(text, startsWith('Error:'));
+        expect(text, contains('marked unsupported'));
+        expect(text, isNot(contains('needs providerKind')));
+        expect(calls, 0); // never hit the network
+      },
+    );
+
     test('endpoint HTTP errors surface the status and body', () async {
       final env = MemoryExecutionEnv();
       final client = http_testing.MockClient(
         (request) async => http.Response('quota exceeded', 429),
       );
       final tool = generateImageTool(
-        gateway(env, client, store: await optedInStore(MediaSlot.imageGeneration)),
+        gateway(
+          env,
+          client,
+          store: await optedInStore(MediaSlot.imageGeneration),
+        ),
       );
 
       final result = await tool.execute(const {'prompt': 'x'}, null, null);
@@ -675,16 +717,14 @@ void main() {
         });
       }
 
-      MediaGateway minimaxGateway(
-        MemoryExecutionEnv env,
-        http.Client client,
-      ) => MediaGateway(
-        env: env,
-        fallback: () => fallback,
-        store: minimaxStore(),
-        resolveKey: slotKeyResolver,
-        httpClient: client,
-      );
+      MediaGateway minimaxGateway(MemoryExecutionEnv env, http.Client client) =>
+          MediaGateway(
+            env: env,
+            fallback: () => fallback,
+            store: minimaxStore(),
+            resolveKey: slotKeyResolver,
+            httpClient: client,
+          );
 
       test('polls through a pending status to Success and downloads', () async {
         final env = MemoryExecutionEnv();

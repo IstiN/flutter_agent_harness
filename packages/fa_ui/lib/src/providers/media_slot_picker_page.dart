@@ -165,6 +165,29 @@ class MediaSlotProviderPickerPage extends StatelessWidget {
                             ),
                     ),
                   ),
+                // Issue #2085: a media slot can be marked UNSUPPORTED —
+                // the capability is removed (media calls refuse the slot,
+                // the capability hints stop suggesting it). Media slots
+                // only; the generic role flow has no such state.
+                if (slot != null)
+                  _providerTile(
+                    context,
+                    theme,
+                    label: strings.mediaModelsUnsupported,
+                    subtitle: strings.mediaModelsUnsupportedHint,
+                    leading: Icons.block_outlined,
+                    checked: initial?.unsupported ?? false,
+                    onTap: () => Navigator.of(context).pop(
+                      const MediaSlotEditorResult.save(
+                        MediaSlotOverride(
+                          providerKind: '',
+                          baseUrl: '',
+                          modelId: '',
+                          unsupported: true,
+                        ),
+                      ),
+                    ),
+                  ),
                 // Dedupe: a saved custom provider on a hosted preset's
                 // endpoint covers it (the CodeMie/ChatGPT/OpenRouter flows
                 // register their instance there) — never show both.
@@ -554,13 +577,15 @@ class _MediaSlotModelPageState extends State<MediaSlotModelPage> {
 
   /// The media capabilities the fetched model ids suggest, in [MediaSlot.all]
   /// order. Empty when nothing was fetched or nothing matched — the hints
-  /// stay hidden rather than claiming "no support".
-  /// The media capabilities the fetched model ids suggest, in [MediaSlot.all]
-  /// order. Empty when nothing was fetched or nothing matched — the hints
   /// stay hidden rather than claiming "no support". Always empty in the
-  /// generic role flow (no slot).
+  /// generic role flow (no slot). Slots marked unsupported (issue #2085)
+  /// are dropped: the user removed that capability, so the provider's
+  /// model ids must not re-advertise it.
   List<String> get _suggestedCapabilities {
     if (widget.slot == null || _endpointModels.isEmpty) return const [];
+    final store = MediaModelsScope.maybeOf(context);
+    bool excluded(String slot) =>
+        store?.overrideFor(slot)?.unsupported ?? false;
     bool suggests(String slot, String id) {
       if (slot == MediaSlot.vision) return modelIdSuggestsVision(id);
       final markers = _capabilityMarkers[slot];
@@ -569,9 +594,10 @@ class _MediaSlotModelPageState extends State<MediaSlotModelPage> {
 
     return [
       for (final slot in MediaSlot.all)
-        if (_endpointModels
-            .map((id) => id.toLowerCase())
-            .any((id) => suggests(slot, id)))
+        if (!excluded(slot) &&
+            _endpointModels
+                .map((id) => id.toLowerCase())
+                .any((id) => suggests(slot, id)))
           slot,
     ];
   }

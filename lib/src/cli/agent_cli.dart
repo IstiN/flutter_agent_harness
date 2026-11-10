@@ -287,6 +287,10 @@ import '../env/process_probe_stub.dart'
 import 'fa_tui_stub.dart' if (dart.library.io) 'fa_tui.dart';
 import 'jsr_cli.dart';
 import 'prompt_templates.dart';
+// The one-provider transfer container codec (issue #2090) and its `.fahx`
+// envelope crypto — pure, shared with the headless export.
+import 'provider_transfer_payload.dart';
+import '../providers/fahx_codec.dart';
 import 'ask_menu.dart';
 import 'slash_menu.dart';
 import 'task_list.dart';
@@ -323,6 +327,7 @@ part 'provider_keys.dart';
 part 'agent_cli_mcp.dart';
 part 'agent_cli_config.dart';
 part 'settings_flow.dart';
+part 'settings_flow_media_slots.dart';
 part 'settings_flow_consts.dart';
 part 'settings_flow_auto_update.dart';
 part 'settings_flow_harness_mode.dart';
